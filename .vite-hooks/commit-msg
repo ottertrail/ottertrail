@@ -1,0 +1,32 @@
+#!/bin/sh
+# Checks the commit header against Conventional Commits 1.0.0.
+# Format and allowed types: see "Commits" in README.md.
+
+header=$(sed -e '/^#/d' -e '/^[[:space:]]*$/d' "$1" | head -n 1)
+
+# Messages that git writes itself.
+case "$header" in
+  "Merge "* | "Revert \""* | "fixup! "* | "squash! "* | "amend! "*) exit 0 ;;
+esac
+
+types="feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert"
+pattern="^($types)(\([a-z0-9][a-z0-9-]*\))?!?: [^ ].*"
+
+if ! printf '%s\n' "$header" | grep -Eq "$pattern"; then
+  cat >&2 <<MSG
+commit-msg: not a Conventional Commit: "$header"
+
+Use: <type>(<optional scope>): <description>
+Types: feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert
+Examples:
+  feat(api): add event ingestion endpoint
+  fix(web): keep the sidebar open after reload
+  feat(sdk)!: rename init() to start()
+MSG
+  exit 1
+fi
+
+if [ "${#header}" -gt 100 ]; then
+  echo "commit-msg: the first line is ${#header} characters; keep it to 100 or fewer." >&2
+  exit 1
+fi

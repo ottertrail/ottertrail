@@ -1,0 +1,121 @@
+# Ottertrail
+
+Analytics, error tracking, and email engagement for developers and small teams. Each customer runs a dedicated instance. See [CLAUDE.md](CLAUDE.md) for the architecture rules and [docs/roadmap.md](docs/roadmap.md) for the build order.
+
+## Current state
+
+This repository is a foundation, not a working product yet. It contains:
+
+- `apps/web`: React dashboard (Vite, Tailwind CSS v4, shadcn/ui on Base UI) with the Ottertrail design system and its reference page. Analytics, users, errors, and email are listed in the sidebar as **Planned**; none of them exist yet.
+- `apps/api`: Fastify API with one route, `GET /api/health`, a liveness check. There is no database, authentication, ingestion, or job queue yet.
+
+The design system is documented in [docs/design-system.md](docs/design-system.md).
+
+## Toolchain
+
+| Tool                                        | Version | Notes                                                                                                                                               |
+| ------------------------------------------- | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Node.js                                     | 26 LTS  | `.node-version`; `engines` requires >= 26                                                                                                           |
+| pnpm                                        | 12.21.0 | Pinned in `devEngines`; downloaded automatically if missing                                                                                         |
+| [Vite+](https://viteplus.dev/guide/) (`vp`) | 1.6.0   | Dev server, build (Vite/Rolldown), tests (Vitest), lint (Oxlint), format (Oxfmt), type checks (TypeScript 7 via tsgolint), library packing (tsdown) |
+| TypeScript                                  | 7.0     |                                                                                                                                                     |
+| React                                       | 19.3    |                                                                                                                                                     |
+| Fastify                                     | 5.12    |                                                                                                                                                     |
+| Tailwind CSS                                | 4.3     |                                                                                                                                                     |
+
+Lint and format configuration lives only in the root `vite.config.ts` (`lint` and `fmt` blocks), with per-package `overrides`. Do not add `.oxlintrc.json`, `.oxfmtrc.json`, ESLint, or Prettier configs. Oxfmt also sorts imports and Tailwind classes (including inside `cn()` and `cva()`).
+
+## Setup
+
+Install the Vite+ CLI once ([instructions](https://viteplus.dev/guide/)), then:
+
+```sh
+vp install
+```
+
+`vp install` also installs the git hooks (through the `prepare` script, which runs `vp config --no-agent`). Install [gitleaks](https://github.com/gitleaks/gitleaks) too (`brew install gitleaks`), so commits are scanned for secrets. See [Commits](#commits).
+
+## Commands
+
+Run from the repository root.
+
+| Command           | What it does                                                                                                                                             |
+| ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `vp run dev`      | Starts the API (port 3000, restarts on change) and the dashboard dev server (port 5173, or the next free port). The dashboard proxies `/api` to the API. |
+| `vp check`        | Formats, lints, and type-checks the whole workspace. `vp check --fix` applies fixes.                                                                     |
+| `vp run -r test`  | Runs the tests in every package.                                                                                                                         |
+| `vp run -r build` | Builds the dashboard (`apps/web/dist`) and bundles the API (`apps/api/dist/server.mjs`).                                                                 |
+| `vp run ready`    | `vp check`, then all tests, then all builds. Run before committing.                                                                                      |
+
+Inside one package: `vp -C apps/api run dev`, `vp -C apps/web test`, and so on.
+
+Note: `vp dev` (built-in) and `vp run dev` (the root script) differ. `vp dev` starts only the dashboard.
+
+## Commits
+
+Commit messages follow [Conventional Commits 1.0.0](https://www.conventionalcommits.org/en/v1.0.0/):
+
+```text
+<type>(<optional scope>): <description>
+
+<optional body>
+
+<optional footers>
+```
+
+| Type       | Use for                                                   |
+| ---------- | --------------------------------------------------------- |
+| `feat`     | A new user-visible feature                                |
+| `fix`      | A bug fix                                                 |
+| `docs`     | Documentation only                                        |
+| `style`    | Formatting only, no behavior change                       |
+| `refactor` | A code change that neither fixes a bug nor adds a feature |
+| `perf`     | A performance improvement                                 |
+| `test`     | Adding or fixing tests                                    |
+| `build`    | Build system, toolchain, or dependency changes            |
+| `ci`       | GitHub Actions and other CI configuration                 |
+| `chore`    | Other maintenance                                         |
+| `revert`   | Reverting an earlier commit                               |
+
+- The scope is optional, lowercase, and names the area: `api`, `web`, `sdk`, `worker`, `email`, `ui`, `deps`.
+- Mark a breaking change with `!` after the type or scope, and explain it in a `BREAKING CHANGE:` footer.
+- Keep the first line to 100 characters or fewer.
+
+Examples: `feat(api): add event ingestion endpoint`, `fix(web): keep the sidebar open after reload`, `feat(sdk)!: rename init() to start()`.
+
+Two git hooks in `.vite-hooks/` run on every commit:
+
+- `pre-commit` scans the staged changes for secrets with gitleaks and stops the commit if it finds one. It then runs `vp staged`, which runs `vp check --fix` on the staged files. Without gitleaks installed, the scan is skipped with a warning.
+- `commit-msg` rejects a first line that does not match the format above. Merge, revert, `fixup!`, and `squash!` messages that git writes are allowed.
+
+`VP_GIT_HOOKS=0 git commit ...` skips both hooks for one commit. Use it only in an emergency.
+
+## Configuration
+
+API (`apps/api`), read from the environment:
+
+| Variable    | Default     | Meaning                                                          |
+| ----------- | ----------- | ---------------------------------------------------------------- |
+| `HOST`      | `127.0.0.1` | Interface to listen on. Use `0.0.0.0` inside a container.        |
+| `PORT`      | `3000`      | Port, 1 to 65535.                                                |
+| `LOG_LEVEL` | `info`      | `fatal`, `error`, `warn`, `info`, `debug`, `trace`, or `silent`. |
+
+Invalid values stop the server at startup with a message naming the variable.
+
+Dashboard dev server (`apps/web`):
+
+| Variable                | Default                 | Meaning                              |
+| ----------------------- | ----------------------- | ------------------------------------ |
+| `OTTERTRAIL_API_ORIGIN` | `http://127.0.0.1:3000` | Where the dev server proxies `/api`. |
+
+Production serving of the dashboard (from the API or a separate static server), Docker images, and Compose files are not set up yet.
+
+## Adding UI components
+
+From `apps/web`:
+
+```sh
+pnpm dlx shadcn@latest add <component>
+```
+
+Then run `vp check --fix` from the root. See [docs/design-system.md](docs/design-system.md#components) for the local changes to keep when updating generated components.
