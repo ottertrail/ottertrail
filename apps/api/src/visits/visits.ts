@@ -82,8 +82,10 @@ interface VisitRow {
  *   a run of only engagement events is not a visit.
  * - A visit crossing midnight continues: an event in the first 30 minutes
  *   of a day carries the visitor's ID under the previous day's salt
- *   (previous_visitor_id), and the two IDs are joined when that visitor
- *   had an event in the 30 minutes before. Only one midnight is joined.
+ *   (previous_visitor_id), and the two IDs are linked when that visitor
+ *   had an event in the 30 minutes before. Links chain, so a visit can
+ *   cross several midnights, and the visits of someone who is around at
+ *   midnight on several nights are each joined correctly.
  * - Entry and exit pages are the first and last pageviews. Referrer,
  *   campaign, browser, and location come from the first event.
  */
@@ -98,7 +100,7 @@ export async function findVisits(
   const readTo = new Date(to.getTime() + VISIT_LOOKAHEAD_MS);
 
   const { rows } = await sql<VisitRow>`
-    with range_events as (
+    with recursive range_events as (
       select event_id, visitor_id, previous_visitor_id, name, occurred_at, path, referrer,
              utm_source, utm_medium, utm_campaign, utm_term, utm_content,
              browser, os, device_type, country, region, city, properties
@@ -121,10 +123,21 @@ export async function findVisits(
       where today.previous_visitor_id is not null
       order by today.visitor_id, today.occurred_at
     ),
+    -- Someone who is around at midnight on several nights has a chain of
+    -- links: Wednesday's ID to Tuesday's, Tuesday's to Monday's. Every ID in
+    -- a chain gets the chain's first ID as its person key. (Recursive: start
+    -- at the links whose earlier ID is not linked itself, then follow them.)
+    people (visitor_id, person) as (
+      select today_id, yesterday_id from links
+      where yesterday_id not in (select today_id from links)
+      union
+      select links.today_id, people.person
+      from links join people on links.yesterday_id = people.visitor_id
+    ),
     keyed as (
-      select range_events.*, coalesce(links.yesterday_id, range_events.visitor_id) as person
+      select range_events.*, coalesce(people.person, range_events.visitor_id) as person
       from range_events
-      left join links on links.today_id = range_events.visitor_id
+      left join people on people.visitor_id = range_events.visitor_id
     ),
     -- A new visit starts at a person's first event, or after a gap over 30 minutes.
     marked as (

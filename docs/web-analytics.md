@@ -486,9 +486,9 @@ A visit counts in the range in which it **started**. The query reads events from
 
 ### Midnight
 
-Visitor IDs change at midnight in the instance's timezone (step 5), which would split a visit that crosses it. For events in the first 30 minutes after local midnight, ingestion also stores `previous_visitor_id`: the visitor's ID under the previous day's salt, which still exists then (salts last 25 hours past their day). The visit query joins the new ID to the old one when the old ID has an event in the 30 minutes before.
+Visitor IDs change at midnight in the instance's timezone (step 5), which would split a visit that crosses it. For events in the first 30 minutes after local midnight, ingestion also stores `previous_visitor_id`: the visitor's ID under the previous day's salt, which still exists then (salts last 25 hours past their day). The visit query links the new ID to the old one when the old ID has an event in the 30 minutes before.
 
-Only one midnight is joined: a single visit spanning two midnights is split at the second.
+Links can chain. Someone who is around at midnight on Monday and again on Tuesday has three IDs: Wednesday's links to Tuesday's, and Tuesday's to Monday's. The query follows each chain back to its first ID (a recursive CTE, `people`) and groups all of the chain's events under that ID. Each crossing is then joined, and a visit that runs through two midnights stays one visit. The first version followed only one link, which split the Tuesday-night visit in two; a test covers it now. The chain only groups events into visits: visitor counts still use the daily IDs.
 
 ### Try it
 
@@ -503,4 +503,4 @@ Times are shown in the instance's `TIMEZONE`.
 
 - Reports built on visits: counts, bounce rate, average duration, entry and exit pages (step 7).
 - A precomputed visits table, if step 7 shows report queries are too slow.
-- Scroll depth, and visits that span two midnights.
+- Scroll depth.

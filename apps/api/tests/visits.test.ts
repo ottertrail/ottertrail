@@ -244,6 +244,53 @@ describe("findVisits", () => {
       });
       expect(visits.map((v) => v.visitorId)).toEqual([YESTERDAY_ID, TODAY_ID]);
     });
+
+    test("joins each midnight on its own for a visitor who comes back the next night", async () => {
+      const projectId = await createProject();
+      const [MONDAY, TUESDAY, WEDNESDAY] = ["111", "112", "113"];
+      await storeEvents(db(), projectId, [
+        event(MONDAY, "2026-11-16T23:50:00Z", "/"),
+        event(TUESDAY, "2026-11-17T00:05:00Z", "/docs", { previousVisitorId: MONDAY }),
+        // The same person late on Tuesday night, reading into Wednesday.
+        event(TUESDAY, "2026-11-17T23:50:00Z", "/"),
+        event(WEDNESDAY, "2026-11-18T00:05:00Z", "/pricing", { previousVisitorId: TUESDAY }),
+      ]);
+      const visits = await findVisits(db(), {
+        projectId,
+        from: new Date("2026-11-16T00:00:00Z"),
+        to: new Date("2026-11-19T00:00:00Z"),
+      });
+      expect(visits.map((v) => [v.visitorId, v.pageviews, v.exitPath])).toEqual([
+        [MONDAY, 2, "/docs"],
+        [TUESDAY, 2, "/pricing"],
+      ]);
+    });
+
+    test("continues a visit through two midnights", async () => {
+      const projectId = await createProject();
+      const TOMORROW_ID = "103";
+      // A page every 20 minutes from 23:50 on 16 November to 00:10 on 18 November.
+      const allDay = Array.from({ length: 72 }, (_, i) => {
+        const at = new Date(Date.parse("2026-11-17T00:10:00Z") + minutes(20 * i));
+        return event(
+          TODAY_ID,
+          at.toISOString(),
+          "/",
+          i === 0 ? { previousVisitorId: YESTERDAY_ID } : {},
+        );
+      });
+      await storeEvents(db(), projectId, [
+        event(YESTERDAY_ID, "2026-11-16T23:50:00Z", "/"),
+        ...allDay,
+        event(TOMORROW_ID, "2026-11-18T00:10:00Z", "/", { previousVisitorId: TODAY_ID }),
+      ]);
+      const visits = await findVisits(db(), {
+        projectId,
+        from: new Date("2026-11-16T00:00:00Z"),
+        to: new Date("2026-11-19T00:00:00Z"),
+      });
+      expect(visits.map((v) => [v.visitorId, v.pageviews])).toEqual([[YESTERDAY_ID, 74]]);
+    });
   });
 
   describe("the time range", () => {
