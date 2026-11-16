@@ -354,8 +354,10 @@ describe("POST /api/events", () => {
         headers: { origin: `https://${SITE}` },
       });
       expect(fromBrowser.statusCode).toBe(429);
-      // The tracker can read Retry-After only if the browser lets it see the response.
+      // The tracker can read Retry-After only if the browser lets it see the response
+      // and that header: it is not one browsers show cross-site pages by default.
       expect(fromBrowser.headers["access-control-allow-origin"]).toBe(`https://${SITE}`);
+      expect(fromBrowser.headers["access-control-expose-headers"]).toBe("Retry-After");
 
       // Another address has its own bucket.
       const other = await send(body, { instance: limited, remoteAddress: "198.51.100.7" });

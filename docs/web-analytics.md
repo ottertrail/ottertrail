@@ -156,6 +156,7 @@ The tracker runs on the customer's site (`example.com`) but sends to the Ottertr
 
 - A request with a JSON content type first triggers an `OPTIONS` "preflight" request that asks the server for permission. A `text/plain` POST is a "simple request" and is sent directly, so the tracker sends JSON as `text/plain`. The endpoint does not answer preflight requests.
 - The browser still sends a simple request, but hides the response from the page unless the server allows it. Every response from this endpoint, including 403, 429, and 503, returns `Access-Control-Allow-Origin` for the request's origin, so the tracker can read the status and decide whether retrying can help. Without it, a rejected tracker would see only a network failure and retry a request that can never succeed. This is safe because the endpoint uses no cookies or credentials and its responses hold nothing private; the origin check still decides what is stored.
+- Even then, a page sees only a few headers of a cross-site response. `Retry-After` is not one of them, so every response also sends `Access-Control-Expose-Headers: Retry-After`. Without it, the tracker could not read how long the server asked it to wait.
 
 ### Rules for a batch
 

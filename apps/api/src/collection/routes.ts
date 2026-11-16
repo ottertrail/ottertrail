@@ -208,10 +208,15 @@ export const collectionRoutes: FastifyPluginCallback<CollectionOptions> = (app, 
   // see a network failure and retry a request that can never succeed. Safe
   // because the endpoint uses no cookies or credentials and its responses
   // hold nothing private. Origin checks still decide what is accepted.
+  // Retry-After must be exposed too: it is not one of the headers a browser
+  // shows a cross-site page by default, and the tracker waits as it says.
   app.addHook("onSend", async (request, reply) => {
     const origin = request.headers.origin;
     if (origin !== undefined) {
-      reply.header("access-control-allow-origin", origin).header("vary", "Origin");
+      reply
+        .header("access-control-allow-origin", origin)
+        .header("access-control-expose-headers", "Retry-After")
+        .header("vary", "Origin");
     }
   });
 
