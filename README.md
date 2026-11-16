@@ -7,7 +7,7 @@ Analytics, error tracking, and email engagement for developers and small teams. 
 This repository is a foundation, not a working product yet. It contains:
 
 - `apps/web`: React dashboard (Vite, Tailwind CSS v4, shadcn/ui on Base UI) with the Ottertrail design system and its reference page. Analytics, users, errors, and email are listed in the sidebar as **Planned**; none of them exist yet.
-- `apps/api`: Fastify API with one route, `GET /api/health`, a liveness check. It has a PostgreSQL schema for projects and events, and code that stores events without duplicates, but no ingestion endpoint yet. There is no authentication or job queue yet.
+- `apps/api`: Fastify API with `GET /api/health` (a liveness check) and `POST /api/events`, which collects events into PostgreSQL. There is no tracker script, report, authentication, or job queue yet.
 
 The design system is documented in [docs/design-system.md](docs/design-system.md). How web analytics works, and the decisions behind it, are in [docs/web-analytics.md](docs/web-analytics.md).
 
@@ -106,12 +106,13 @@ Two git hooks in `.vite-hooks/` run on every commit:
 
 API (`apps/api`), read from the environment:
 
-| Variable       | Default                                | Meaning                                                                                                                        |
-| -------------- | -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| `HOST`         | `127.0.0.1`                            | Interface to listen on. Use `0.0.0.0` inside a container.                                                                      |
-| `PORT`         | `3000`                                 | Port, 1 to 65535.                                                                                                              |
-| `LOG_LEVEL`    | `info`                                 | `fatal`, `error`, `warn`, `info`, `debug`, `trace`, or `silent`.                                                               |
-| `DATABASE_URL` | The local database from `compose.yaml` | PostgreSQL connection URL. Required when `NODE_ENV=production`, so a deployed instance never falls back to the local database. |
+| Variable       | Default                                | Meaning                                                                                                                                                                                                                                                |
+| -------------- | -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `HOST`         | `127.0.0.1`                            | Interface to listen on. Use `0.0.0.0` inside a container.                                                                                                                                                                                              |
+| `PORT`         | `3000`                                 | Port, 1 to 65535.                                                                                                                                                                                                                                      |
+| `LOG_LEVEL`    | `info`                                 | `fatal`, `error`, `warn`, `info`, `debug`, `trace`, or `silent`.                                                                                                                                                                                       |
+| `DATABASE_URL` | The local database from `compose.yaml` | PostgreSQL connection URL. Required when `NODE_ENV=production`, so a deployed instance never falls back to the local database.                                                                                                                         |
+| `TRUST_PROXY`  | unset (trust no proxy)                 | Set when the API runs behind a proxy, so rate limits see client addresses: a number of proxy hops (`1` behind one proxy) or a comma-separated list of proxy IPs or CIDRs. Without a proxy, leave it unset: otherwise clients could fake their address. |
 
 Invalid values stop the server at startup with a message naming the variable. Error messages never repeat `DATABASE_URL`, because it can contain a password.
 

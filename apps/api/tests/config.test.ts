@@ -9,6 +9,7 @@ describe("loadConfig", () => {
       port: 3000,
       logLevel: "info",
       databaseUrl: LOCAL_DATABASE_URL,
+      trustProxy: false,
     });
   });
 
@@ -19,12 +20,14 @@ describe("loadConfig", () => {
         PORT: "8080",
         LOG_LEVEL: "debug",
         DATABASE_URL: "postgresql://app@db.internal:5432/ottertrail",
+        TRUST_PROXY: "1",
       }),
     ).toEqual({
       host: "0.0.0.0",
       port: 8080,
       logLevel: "debug",
       databaseUrl: "postgresql://app@db.internal:5432/ottertrail",
+      trustProxy: 1,
     });
   });
 
@@ -43,6 +46,21 @@ describe("loadConfig", () => {
   test.each(["not a url", "mysql://app@db/ottertrail"])("rejects DATABASE_URL %j", (url) => {
     expect(() => loadConfig({ DATABASE_URL: url })).toThrow(ConfigError);
   });
+
+  test("reads TRUST_PROXY as a list of proxy addresses", () => {
+    expect(loadConfig({ TRUST_PROXY: "10.0.0.0/8, 172.16.0.1, ::1" }).trustProxy).toEqual([
+      "10.0.0.0/8",
+      "172.16.0.1",
+      "::1",
+    ]);
+  });
+
+  test.each(["0", "11", "proxy.internal", "10.0.0.0/33", "10.0.0.1/8/1"])(
+    "rejects TRUST_PROXY %j",
+    (value) => {
+      expect(() => loadConfig({ TRUST_PROXY: value })).toThrow(ConfigError);
+    },
+  );
 
   test("never repeats DATABASE_URL in errors, because it may contain a password", () => {
     const url = "mysql://app:s3cret-value@db/ottertrail";

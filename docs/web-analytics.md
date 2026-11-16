@@ -5,7 +5,7 @@ How Ottertrail's web analytics works, the concepts behind it, and the decisions 
 | Step               | Status      |
 | ------------------ | ----------- |
 | 1. The event       | Done        |
-| 2. Collecting      | Not started |
+| 2. Collecting      | Done        |
 | 3. The tracker     | Not started |
 | 4. Enrichment      | Not started |
 | 5. Visitors        | Not started |
@@ -41,7 +41,17 @@ Later steps add columns in new migrations: browser, OS, device, and country (ste
 
 ### Two timestamps
 
-The sender's clock can be wrong, and events can arrive late: a phone goes offline, or a browser retries. `occurred_at` is what reports use; `received_at` is the server's trusted clock, used to spot bad clocks and late data. Step 2 decides how far apart the two may be.
+- `occurred_at` is event time: when the visitor did something, in their browser. Reports group by it ("pageviews on Monday").
+- `received_at` is arrival time: when Ottertrail's database stored the row, by its own clock.
+
+They are usually milliseconds to seconds apart, but not always. A phone on a train records a pageview at 09:58 and sends it at 10:20 when it is back online: reports must count it at 09:58. The gap is also useful on its own:
+
+- Late data: a report for yesterday, computed at midnight, misses events that arrive afterwards. Rows with `received_at` after midnight and `occurred_at` before it are exactly those events, so the day can be recomputed.
+- Monitoring: `received_at - occurred_at` is the delivery delay. If it grows, trackers are stuck retrying or the server is slow.
+
+Why not `created_at`? It would mean `received_at`, but in an events table it is ambiguous: the event is created in the browser and the row in the database, on two different clocks. Naming both prevents a report from grouping by the wrong one. Tables with a single moment, such as `projects`, keep `created_at`.
+
+The sender's clock can also simply be wrong. Step 2 corrects for that ([Clock correction](#clock-correction)).
 
 ### Event IDs make retries harmless
 
@@ -69,5 +79,126 @@ Almost every report asks "this project, between these two times", so the table h
 
 ### Not done yet
 
-- Removing query strings from URLs happens in the collection endpoint (step 2) and the tracker (step 3). The table only stores what it is given.
 - There is no retention or deletion policy for events yet.
+
+## 2. Collecting
+
+`POST /api/events` receives events from browsers (the tracker, step 3) and servers. Code: `apps/api/src/collection/`.
+
+### The request
+
+```json
+{
+  "v": 1,
+  "key": "pk_00000000000000000000000000000000",
+  "sentAt": 1794823396705,
+  "events": [
+    {
+      "id": "0b9c6a4e-5d1f-4b8a-9a43-2f7d1c3e8b10",
+      "name": "pageview",
+      "occurredAt": 1794823394705,
+      "url": "https://example.com/pricing?utm_source=newsletter",
+      "referrer": "https://news.ycombinator.com/item?id=1",
+      "properties": { "plan": "free" }
+    }
+  ]
+}
+```
+
+- `v` is the version of this format, so it can change later without breaking old trackers.
+- `key` is the project's public key (the zeros above are a placeholder; find a project's key in the `projects` table).
+- Times are milliseconds since 1970 by the sender's clock.
+- Send it as `text/plain` from browsers (see [Cross-site requests](#cross-site-requests)); `application/json` also works.
+- Unknown fields are removed, not rejected, so a server accepts batches from a newer tracker.
+
+### The responses
+
+| Status | Body `error`                                                | Meaning                                                  | Should the sender retry? |
+| ------ | ----------------------------------------------------------- | -------------------------------------------------------- | ------------------------ |
+| 202    | none: `{ "stored", "duplicates", "tooOld" }`                | Saved in PostgreSQL                                      | No                       |
+| 400    | `invalid_request`                                           | The batch breaks a rule below                            | No: it will fail again   |
+| 403    | `unknown_key`, `origin_not_allowed`, `hostname_not_allowed` | Wrong key, or a site the project does not allow          | No                       |
+| 413    | `payload_too_large`                                         | Body over 64 KB                                          | No: send smaller batches |
+| 415    | `unsupported_media_type`                                    | Not `text/plain` or `application/json`                   | No                       |
+| 429    | `rate_limited`                                              | Too many requests or events                              | Yes, after `Retry-After` |
+| 503    | `storage_unavailable`                                       | PostgreSQL could not save the events; nothing was stored | Yes, after `Retry-After` |
+
+Ottertrail answers 202 only after PostgreSQL has committed the events. A batch is saved completely or not at all: if one event breaks a rule, nothing from the batch is stored.
+
+### Cheapest checks first
+
+The endpoint is public, so anyone can send it anything. Each check costs more than the one before it, so floods and garbage are turned away before they cost a database query:
+
+1. Rate limit per client IP address, before the body is even read.
+2. Body size, content type, and the JSON schema (Fastify validates before the handler runs).
+3. Project key, from a 60-second in-memory cache. Unknown keys are cached too, so a flood of made-up keys cannot become a flood of queries.
+4. The `Origin` header and every event's page hostname against the project's allowed hostnames.
+5. Event budget per project.
+6. URL cleanup and clock correction.
+7. One `INSERT` for the whole batch.
+
+### Keys and allowed hostnames
+
+Each project has a `public_key` (`pk_` plus 32 hex characters). It sits in every page's HTML, so it is not a secret: it only identifies the project and only allows sending events.
+
+Each project also lists `allowed_hostnames`, such as `example.com` and `www.example.com`. Matching is exact: `example.com` does not allow `www.example.com`. An empty list accepts nothing, so a new project collects nothing until its sites are listed.
+
+Two hostname checks run:
+
+- Every event's page URL must be on an allowed hostname.
+- If the request has an `Origin` header, its hostname must be allowed too. Browsers always send `Origin` on cross-site requests, and a page cannot change it. Scripts and servers can leave it out or fake it, so this stops misuse from other websites but is not authentication.
+
+There is no dashboard for projects yet. Set them in SQL, for example: `update projects set allowed_hostnames = '{localhost}' where name = 'Playground';`
+
+### Cross-site requests
+
+The tracker runs on the customer's site (`example.com`) but sends to the Ottertrail instance (another domain). Browsers restrict such cross-site requests (CORS):
+
+- A request with a JSON content type first triggers an `OPTIONS` "preflight" request that asks the server for permission. A `text/plain` POST is a "simple request" and is sent directly, so the tracker sends JSON as `text/plain`. The endpoint does not answer preflight requests.
+- The browser still sends a simple request, but hides the response from the page unless the server allows it. Every response from this endpoint, including 403, 429, and 503, returns `Access-Control-Allow-Origin` for the request's origin, so the tracker can read the status and decide whether retrying can help. Without it, a rejected tracker would see only a network failure and retry a request that can never succeed. This is safe because the endpoint uses no cookies or credentials and its responses hold nothing private; the origin check still decides what is stored.
+
+### Rules for a batch
+
+| Rule             | Limit                                                                                                                                              |
+| ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Body             | 64 KB, uncompressed (`Content-Encoding` is not supported)                                                                                          |
+| Events per batch | 1 to 50                                                                                                                                            |
+| Event ID         | A UUID                                                                                                                                             |
+| Event name       | 1 to 200 characters, no control characters                                                                                                         |
+| Page URL         | Valid `http` or `https` URL, at most 8,192 characters, path at most 2,048                                                                          |
+| Properties       | Flat object: at most 30 keys of up to 100 characters; values are strings (up to 500 characters), numbers, booleans, or null; at most 8 KB in total |
+
+### URL cleanup
+
+Query strings can hold secrets (`/reset?token=…`, session IDs). The endpoint keeps only the path and the five UTM tags (`utm_source`, `utm_medium`, `utm_campaign`, `utm_term`, `utm_content`) and drops the rest of the query string and the fragment. UTM values are trimmed and cut to 200 characters.
+
+Referrers lose their query string and fragment too: `https://news.ycombinator.com/item?id=1` is stored as `https://news.ycombinator.com/item`. App referrers keep their scheme and host (`android-app://com.google.android.gm`). A referrer that cannot be parsed is dropped, not rejected: a bad referrer is not a reason to lose the event.
+
+### Clock correction
+
+The sender's clock can be wrong by minutes or days. The batch carries two times from that clock: when each event happened (`occurredAt`) and when the batch was sent (`sentAt`). Their difference is reliable even when the clock is wrong, so the server computes:
+
+```
+occurred_at = (time the server received the batch) - (sentAt - occurredAt)
+```
+
+A phone whose clock is two hours slow still gets correct times. An `occurredAt` after `sentAt` is impossible and is treated as `sentAt`. Events that happened more than 24 hours before sending are not stored and are counted in `tooOld`. The small error this leaves is the network delay, usually well under a second.
+
+### Rate limits
+
+Both limits use a token bucket: each key has a bucket of tokens that refills at a steady rate. A request (or each event in it) spends tokens; a full bucket allows a short burst, and the refill rate is the sustained limit. An empty bucket answers 429 with `Retry-After`, the seconds until enough tokens return.
+
+| Limit         | Burst        | Sustained         | Checked                 |
+| ------------- | ------------ | ----------------- | ----------------------- |
+| Per client IP | 120 requests | 2 requests/second | Before the body is read |
+| Per project   | 2,000 events | 200 events/second | After the key is known  |
+
+The buckets live in the API process's memory: each process enforces its own limits, and a restart resets them. Ottertrail runs one API process per instance for now.
+
+Behind a proxy (Cloudflare, Caddy), every request seems to come from the proxy's address. Set `TRUST_PROXY` (see the README) so the API reads the client's address from `X-Forwarded-For`. Leave it unset without a proxy: otherwise any client could claim any address.
+
+### Not done yet
+
+- Bot filtering (step 4).
+- Project management in the dashboard, key rotation, and wildcard hostnames such as `*.example.com`.
+- Compressed request bodies.

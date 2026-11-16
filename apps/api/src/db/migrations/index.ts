@@ -1,6 +1,7 @@
 import type { Migration } from "kysely/migration";
 
 import * as createProjectsAndEvents from "./0001_create_projects_and_events.ts";
+import * as addProjectKeysAndHostnames from "./0002_add_project_keys_and_hostnames.ts";
 
 /**
  * Every migration, in order. Kysely runs them by name, alphabetically, and
@@ -11,4 +12,5 @@ import * as createProjectsAndEvents from "./0001_create_projects_and_events.ts";
  */
 export const migrations: Record<string, Migration> = {
   "0001_create_projects_and_events": createProjectsAndEvents,
+  "0002_add_project_keys_and_hostnames": addProjectKeysAndHostnames,
 };

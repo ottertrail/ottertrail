@@ -20,6 +20,10 @@ export interface ProjectsTable {
   id: ColumnType<string, string | undefined, never>;
   name: string;
   created_at: DatabaseDefault<Date>;
+  /** "pk_" + 32 hex characters. Public: identifies the project to the collection endpoint. */
+  public_key: ColumnType<string, string | undefined, string>;
+  /** Sites whose pages may send events, such as "example.com". Empty accepts nothing. */
+  allowed_hostnames: ColumnType<string[], string[] | undefined, string[]>;
 }
 
 /**

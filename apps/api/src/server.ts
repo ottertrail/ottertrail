@@ -1,8 +1,25 @@
 import { buildApp } from "./app.ts";
 import { loadConfig } from "./config.ts";
+import { createDatabase } from "./db/database.ts";
 
 const config = loadConfig();
-const app = buildApp({ logger: { level: config.logLevel } });
+const db = createDatabase({ connectionString: config.databaseUrl });
+const app = buildApp({
+  db,
+  logger: { level: config.logLevel },
+  // A number means "trust this many proxy hops in front of the API".
+  trustProxy:
+    typeof config.trustProxy === "number"
+      ? (
+          (hops) => (_address: string, hop: number) =>
+            hop < hops
+        )(config.trustProxy)
+      : config.trustProxy,
+});
+// Close database connections after the server stops accepting requests.
+app.addHook("onClose", async () => {
+  await db.destroy();
+});
 
 async function shutdown(signal: NodeJS.Signals) {
   app.log.info({ signal }, "shutting down");

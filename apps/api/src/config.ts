@@ -1,3 +1,5 @@
+import { isIP } from "node:net";
+
 const LOG_LEVELS = ["fatal", "error", "warn", "info", "debug", "trace", "silent"] as const;
 
 export type LogLevel = (typeof LOG_LEVELS)[number];
@@ -10,6 +12,11 @@ export interface Config {
   port: number;
   logLevel: LogLevel;
   databaseUrl: string;
+  /**
+   * Which proxies may report the client's IP address in X-Forwarded-For:
+   * false (none), a number of proxy hops, or a list of proxy IPs or CIDRs.
+   */
+  trustProxy: false | number | string[];
 }
 
 export class ConfigError extends Error {
@@ -53,6 +60,34 @@ function parseDatabaseUrl(env: NodeJS.ProcessEnv): string {
   return raw;
 }
 
+function parseTrustProxy(raw: string | undefined): false | number | string[] {
+  if (raw === undefined || raw.trim() === "" || raw.trim() === "false") {
+    return false;
+  }
+  const trimmed = raw.trim();
+  if (/^\d+$/.test(trimmed)) {
+    const hops = Number(trimmed);
+    if (hops < 1 || hops > 10) {
+      throw new ConfigError(`TRUST_PROXY hops must be between 1 and 10, received "${raw}"`);
+    }
+    return hops;
+  }
+  const entries = trimmed.split(",").map((entry) => entry.trim());
+  for (const entry of entries) {
+    const [address = "", prefix, extra] = entry.split("/");
+    const version = isIP(address);
+    const validPrefix =
+      prefix === undefined ||
+      (/^\d+$/.test(prefix) && Number(prefix) <= (version === 6 ? 128 : 32));
+    if (version === 0 || !validPrefix || extra !== undefined) {
+      throw new ConfigError(
+        `TRUST_PROXY must be false, a number of hops, or a comma-separated list of IPs or CIDRs; "${entry}" is not valid`,
+      );
+    }
+  }
+  return entries;
+}
+
 /**
  * Reads instance configuration from environment variables.
  * Every instance is configured independently; there are no shared defaults
@@ -64,5 +99,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     port: parsePort(env.PORT ?? "3000"),
     logLevel: parseLogLevel(env.LOG_LEVEL ?? "info"),
     databaseUrl: parseDatabaseUrl(env),
+    trustProxy: parseTrustProxy(env.TRUST_PROXY),
   };
 }
