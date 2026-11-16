@@ -482,7 +482,7 @@ A visit counts in the range in which it **started**. Visitor IDs change at midni
 
 **Bounce.** One pageview and no custom event. Engagement events do not count, so a long read of one page is still a bounce; `engagedMs` tells a quick exit from a long read. Other tools define a bounce differently, so bounce rates from different tools are not comparable.
 
-**Engagement.** Engagement events extend a visit but never start one. A page left visible for over 30 minutes with no other event reports its time too late to belong to the visit, and that time is not counted.
+**Engagement.** Engagement events extend a visit but never start one. A page left visible for over 30 minutes with no other event reports its time too late to belong to the visit, and that time is not counted, not even when the visitor then clicks a link and starts a new visit at the same moment. At the same timestamp, an engagement event is ordered before a pageview, since it reports the time up to that moment.
 
 ### Midnight
 
@@ -561,27 +561,27 @@ The last day is today, so it is partial.
 
 `vp run bench:reports -- <visits> <days>` fills a temporary schema with fake data, times each report (the median of three runs after a warm-up), and drops the schema. Each fake visit has 1-5 pages two minutes apart and an engagement report per page. Results on an Apple M4 Max, PostgreSQL 18 in Podman with default settings:
 
-| 200,000 visits in 30 days (1.2 million events) | 1 day | 7 days | 30 days  |
-| ---------------------------------------------- | ----- | ------ | -------- |
-| Summary                                        | 72 ms | 674 ms | 2,354 ms |
-| Visitors per day                               | 55 ms | 520 ms | 2,127 ms |
-| Top pages                                      | 26 ms | 122 ms | 382 ms   |
-| Sources                                        | 84 ms | 667 ms | 3,172 ms |
-| Countries                                      | 66 ms | 551 ms | 2,090 ms |
-| Custom events                                  | 6 ms  | 43 ms  | 51 ms    |
+| 200,000 visits in 30 days (1.2 million events) | 1 day  | 7 days | 30 days  |
+| ---------------------------------------------- | ------ | ------ | -------- |
+| Summary                                        | 129 ms | 701 ms | 2,262 ms |
+| Visitors per day                               | 76 ms  | 418 ms | 1,281 ms |
+| Top pages                                      | 26 ms  | 120 ms | 385 ms   |
+| Sources                                        | 100 ms | 515 ms | 2,103 ms |
+| Countries                                      | 83 ms  | 395 ms | 1,207 ms |
+| Custom events                                  | 6 ms   | 41 ms  | 52 ms    |
 
-| 30,000 visits in 30 days (183,000 events) | 1 day | 7 days | 30 days |
+| 30,000 visits in 30 days (184,000 events) | 1 day | 7 days | 30 days |
 | ----------------------------------------- | ----- | ------ | ------- |
-| Summary                                   | 11 ms | 73 ms  | 388 ms  |
-| Visitors per day                          | 9 ms  | 54 ms  | 244 ms  |
-| Top pages                                 | 4 ms  | 31 ms  | 76 ms   |
-| Sources                                   | 14 ms | 83 ms  | 339 ms  |
-| Countries                                 | 11 ms | 67 ms  | 272 ms  |
+| Summary                                   | 20 ms | 80 ms  | 299 ms  |
+| Visitors per day                          | 11 ms | 45 ms  | 163 ms  |
+| Top pages                                 | 4 ms  | 29 ms  | 76 ms   |
+| Sources                                   | 19 ms | 66 ms  | 240 ms  |
+| Countries                                 | 13 ms | 48 ms  | 172 ms  |
 | Custom events                             | 1 ms  | 5 ms   | 13 ms   |
 
-Repeated runs differ: the 30-day sources report took between 2.3 and 3.3 seconds over several runs.
+Times vary between runs: one report's time differed by up to 30% over several runs.
 
-Reports that only count events (top pages, custom events) read the range's events once. Reports on visits cost more, and the cost grows with the number of events in the range: working out visits sorts every event by visitor and time, then groups them. At 1,000 visits a day, each 30-day report takes under half a second; at about 7,000 a day, 2-3 seconds.
+Reports that only count events (top pages, custom events) read the range's events once. Reports on visits cost more, and the cost grows with the number of events in the range: working out visits sorts every event by visitor and time, then groups them. At 1,000 visits a day, each 30-day report takes under 0.3 seconds; at about 7,000 a day, 1.2-2.3 seconds.
 
 **What was tried.** Several versions of the visit query were measured against the step 6 query on the same data, and none was faster:
 
@@ -589,7 +589,7 @@ Reports that only count events (top pages, custom events) read the range's event
 - Finding each visitor ID's runs first, then joining runs across midnight: no faster over 30 days, and 10 to 20 times slower over 1 day (0.1 seconds became 1-2). PostgreSQL estimated far fewer rows than there were and chose nested loops, which compare every row with every other.
 - A larger `work_mem` (64 MB instead of 4 MB) changed nothing. Turning off JIT compilation saved 5-10%.
 
-`EXPLAIN ANALYZE` misled the first attempt: timing each step slows the steps that handle many rows, which hides where a query spends its time. Timing the whole query is the reliable measure. The query kept is the step 6 query, except that reports that only count visits skip the first-event columns, so the large sort carries less data.
+`EXPLAIN ANALYZE` misled the first attempt: timing each step slows the steps that handle many rows, which hides where a query spends its time. Timing the whole query is the reliable measure. The query kept is the step 6 query, except that reports that only count visits skip the first-event columns, so the large sort carries less data. Removing the midnight links (section 6) then made 30-day reports up to twice as fast: the query no longer joins the range's events to themselves, so PostgreSQL no longer writes them to a temporary store on disk and reads them twice. 1-day reports got slightly slower, because the query now reads 25 hours on each side of the range.
 
 **If reports get too slow**, in order of effort:
 

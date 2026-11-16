@@ -163,6 +163,27 @@ describe("findVisits", () => {
       expect(visits[0]).toMatchObject({ visitorId: "1", durationMs: 0, engagedMs: 0 });
     });
 
+    test("does not give a late report's time to the visit that starts after it", async () => {
+      const projectId = await createProject();
+      await storeEvents(db(), projectId, [
+        event("1", "10:00", "/blog/post"),
+        // After a 45-minute read, the visitor clicks a link. The tracker reports the
+        // old page's time and the new pageview at the same moment. These IDs sort the
+        // pageview first, so only the engagement-first rule puts the report before it.
+        {
+          ...engagement("1", "10:45", "/blog/post", minutes(45)),
+          eventId: "ffffffff-ffff-4fff-bfff-ffffffffffff",
+        },
+        { ...event("1", "10:45", "/pricing"), eventId: "00000000-0000-4000-8000-000000000000" },
+        engagement("1", "10:47", "/pricing", minutes(2)),
+      ]);
+      const visits = await findVisits(db(), { projectId, ...DAY });
+      expect(visits.map((v) => [v.entryPath, v.engagedMs])).toEqual([
+        ["/blog/post", 0],
+        ["/pricing", minutes(2)], // Only the new page's own time.
+      ]);
+    });
+
     test("counts a malformed engagement time as 0 instead of failing the report", async () => {
       const projectId = await createProject();
       await storeEvents(db(), projectId, [

@@ -81,8 +81,12 @@ interface VisitRow {
  *
  * Rules:
  * - A visit is one visitor ID's run of events with no gap over 30 minutes.
- * - Engagement events (time on page) extend a visit but never start one:
- *   a run of only engagement events is not a visit.
+ * - Engagement events (time on page) extend a visit but never start one.
+ *   An engagement event that arrives over 30 minutes after the visitor's
+ *   last event reports time for a visit that has already ended, so it is
+ *   not counted, even when a new visit starts right after it. At the same
+ *   moment, an engagement event comes before a pageview: it reports the
+ *   time up to that moment.
  * - Visitor IDs change at midnight in the instance's timezone, so a visit
  *   that crosses midnight counts as two. Joining them would link a visitor's
  *   IDs on two days, which daily salts exist to prevent.
@@ -143,6 +147,10 @@ export function visitsQuery(
       )}`
     : sql``;
 
+  // Event order within a visitor: by time, engagement reports before other
+  // events at the same moment, then by ID so the order is always the same.
+  const eventOrder = sql`occurred_at, case when name = ${ENGAGEMENT} then 0 else 1 end, event_id`;
+
   return sql`
     with range_events as (
       select event_id, visitor_id, name, occurred_at, path,
@@ -166,21 +174,27 @@ export function visitsQuery(
                else 0
              end as starts_visit
       from range_events
-      window by_visitor as (partition by visitor_id order by occurred_at, event_id)
+      window by_visitor as (partition by visitor_id order by ${eventOrder})
     ),
     -- A running count of visit starts numbers each visitor's visits: 1, 2, 3 …
+    -- An engagement event is stale when the visitor has had no other event
+    -- since the current run started: the visit it reports on has ended.
     numbered as (
       select marked.*,
-             sum(starts_visit) over (partition by visitor_id order by occurred_at, event_id
-                                     rows unbounded preceding) as visit_number
+             sum(starts_visit) over so_far as visit_number,
+             name = ${ENGAGEMENT}
+               and coalesce(max(occurred_at) filter (where name <> ${ENGAGEMENT}) over so_far
+                              < max(occurred_at) filter (where starts_visit = 1) over so_far,
+                            true) as stale
       from marked
+      window so_far as (partition by visitor_id order by ${eventOrder} rows unbounded preceding)
     ),
     visits as (
       select
         visitor_id,
         min(occurred_at) filter (where name <> ${ENGAGEMENT}) as started_at,
         max(occurred_at) as ended_at,
-        sum(engaged_ms) as engaged_ms,
+        coalesce(sum(engaged_ms) filter (where not stale), 0) as engaged_ms,
         count(*) filter (where name = ${PAGEVIEW}) as pageviews,
         count(*) filter (where name not in (${PAGEVIEW}, ${ENGAGEMENT})) as interactions,
         (array_agg(path order by occurred_at, event_id) filter (where name = ${PAGEVIEW}))[1] as entry_path,
