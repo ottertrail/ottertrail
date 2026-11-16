@@ -38,6 +38,12 @@ vp install
 
 `vp install` also installs the git hooks (through the `prepare` script, which runs `vp config --no-agent`). Install [gitleaks](https://github.com/gitleaks/gitleaks) too (`brew install gitleaks`), so commits are scanned for secrets. See [Commits](#commits).
 
+The dashboard's browser tests run in headless Chromium. Download it once per machine (about 100 MB):
+
+```sh
+vp -C apps/web exec playwright install --only-shell chromium
+```
+
 Start the local database and create its tables:
 
 ```sh
@@ -64,7 +70,7 @@ Run from the repository root.
 | `vp run report`        | Prints a project's reports (summary, visitors per day, top pages, breakdowns, custom events) for the last days in `TIMEZONE`: `vp run report -- <project name> <days>` (default: the first project, 7 days). |
 | `vp run bench:reports` | Times the report queries on fake data in a temporary schema, then drops it: `vp run bench:reports -- <visits> <days>` (default: 200,000 visits, 30 days).                                                    |
 | `vp check`             | Formats, lints, and type-checks the whole workspace. `vp check --fix` applies fixes.                                                                                                                         |
-| `vp run -r test`       | Runs the tests in every package. The API tests need the local database running; each test file uses its own temporary schema.                                                                                |
+| `vp run -r test`       | Runs the tests in every package. The API tests need the local database running; each test file uses its own temporary schema. The dashboard's browser tests need Chromium (see Setup).                       |
 | `vp run -r build`      | Builds the dashboard (`apps/web/dist`) and bundles the API (`apps/api/dist/server.mjs` and `apps/api/dist/migrate.mjs`).                                                                                     |
 | `vp run ready`         | `vp check`, then all tests, then all builds. Run before committing.                                                                                                                                          |
 

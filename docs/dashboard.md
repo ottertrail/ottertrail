@@ -184,9 +184,18 @@ They follow the chart rules in [the design system](design-system.md#charts): one
 
 The page loads its data again every minute while it is open. When the period changes, the previous numbers stay on screen, dimmed, until the new ones arrive. If a load fails, the last numbers stay, with the error and a Retry button.
 
+### Tests
+
+`apps/web/tests/browser/analytics-page.test.tsx` renders the whole dashboard in headless Chromium (Vitest browser mode with Playwright), at an address such as `/analytics/<id>?period=7d`, so each test goes through the same routes, redirects, and layout as a person would. A fake API answers its requests (`tests/browser/fake-api.ts`); the API's own tests run against PostgreSQL, and the page checks the fake answers with the same shape checks as real ones.
+
+They cover the numbers, days, and lists from a response; changing the period and the project; the dimmed previous numbers while a period loads; an unknown period in the address; the chart's metric tabs, keyboard readout, hover readout, and table; a single day; a project without events, an empty period, a missing project, and a failed load with Retry; and the ways to reach the page (home page, last project, no projects, signed out, the project list). A test also fails when the page logs an error to the console.
+
+Putting back three bugs (an unknown period reaching the API, a chart that ignores the arrow keys, no dimming while a period loads) made exactly the three tests that guard them fail. Writing the tests found a fourth: buttons that act as links were announced as buttons by screen readers. They are now real links styled as buttons (`ButtonLink`, see [the design system](design-system.md#components)).
+
+Unit tests in `apps/web/tests/analytics.test.ts` cover the number and date formats and the check of the API's response.
+
 ### Not done yet
 
 - Hourly detail for one day, and a custom range of days (the API accepts `from` and `to`; the page offers only the fixed periods).
 - More than 10 rows per list.
 - Comparison with the previous period, and filters (8.3).
-- Browser tests for the page. The formatting and the check of the API's response have unit tests; the page itself was checked by hand against a throwaway database of fake visits.

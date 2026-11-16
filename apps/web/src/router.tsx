@@ -1,12 +1,14 @@
 import { QueryCache, QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
-  createRootRoute,
+  createRootRouteWithContext,
   createRoute,
   createRouter,
   Outlet,
   redirect,
+  type RouterHistory,
   type SearchSchemaInput,
 } from "@tanstack/react-router";
+import type * as React from "react";
 
 import { AppLayout } from "@/app";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -30,33 +32,13 @@ async function signedIn(): Promise<boolean> {
 const isClientError = (error: unknown) =>
   error instanceof ApiError && error.status >= 400 && error.status < 500;
 
-const queryClient = new QueryClient({
-  queryCache: new QueryCache({
-    // A session that ended (signed out elsewhere, or expired) sends the
-    // visitor to sign-in instead of showing errors.
-    onError: (error) => {
-      if (error instanceof ApiError && error.status === 401) {
-        void router.navigate({ to: "/sign-in" });
-      }
-    },
-  }),
-  defaultOptions: {
-    queries: {
-      staleTime: 15_000,
-      // A 4xx answer (not found, forbidden) will not change on a retry.
-      retry: (failures, error) => !isClientError(error) && failures < 2,
-    },
-  },
-});
+/** What every route can read from the router. */
+interface RouterContext {
+  queryClient: QueryClient;
+}
 
-const rootRoute = createRootRoute({
-  component: () => (
-    <QueryClientProvider client={queryClient}>
-      <TooltipProvider>
-        <Outlet />
-      </TooltipProvider>
-    </QueryClientProvider>
-  ),
+const rootRoute = createRootRouteWithContext<RouterContext>()({
+  component: Outlet,
 });
 
 const signInRoute = createRoute({
@@ -100,8 +82,8 @@ const homeRoute = createRoute({
 const analyticsIndexRoute = createRoute({
   getParentRoute: () => appRoute,
   path: "/analytics",
-  beforeLoad: async () => {
-    const projects = await queryClient.ensureQueryData(projectsQuery());
+  beforeLoad: async ({ context }) => {
+    const projects = await context.queryClient.ensureQueryData(projectsQuery());
     const last = lastAnalyticsProject();
     const project = projects.find((item) => item.id === last) ?? projects[0];
     if (project === undefined) {
@@ -154,24 +136,67 @@ const designSystemRoute = createRoute({
   component: DesignSystemPage,
 });
 
-export const router = createRouter({
-  routeTree: rootRoute.addChildren([
-    signInRoute,
-    setupRoute,
-    appRoute.addChildren([
-      homeRoute,
-      analyticsIndexRoute,
-      analyticsRoute,
-      projectsRoute,
-      projectRoute,
-      designSystemRoute,
-    ]),
+const routeTree = rootRoute.addChildren([
+  signInRoute,
+  setupRoute,
+  appRoute.addChildren([
+    homeRoute,
+    analyticsIndexRoute,
+    analyticsRoute,
+    projectsRoute,
+    projectRoute,
+    designSystemRoute,
   ]),
-});
+]);
+
+/**
+ * The dashboard's router, with its own query cache. The app makes one at
+ * start-up; tests make one per test, with an in-memory history, so no state
+ * carries over between them.
+ */
+export function createAppRouter({
+  history,
+  retryDelayMs,
+}: {
+  history?: RouterHistory;
+  /** Wait before retrying a failed request; React Query's backoff when left out. Tests set 0. */
+  retryDelayMs?: number;
+} = {}) {
+  const queryClient = new QueryClient({
+    queryCache: new QueryCache({
+      // A session that ended (signed out elsewhere, or expired) sends the
+      // visitor to sign-in instead of showing errors.
+      onError: (error) => {
+        if (error instanceof ApiError && error.status === 401) {
+          void router.navigate({ to: "/sign-in" });
+        }
+      },
+    }),
+    defaultOptions: {
+      queries: {
+        staleTime: 15_000,
+        // A 4xx answer (not found, forbidden) will not change on a retry.
+        retry: (failures, error) => !isClientError(error) && failures < 2,
+        ...(retryDelayMs === undefined ? {} : { retryDelay: retryDelayMs }),
+      },
+    },
+  });
+  const router = createRouter({
+    routeTree,
+    ...(history === undefined ? {} : { history }),
+    context: { queryClient },
+    Wrap: ({ children }: { children: React.ReactNode }) => (
+      <QueryClientProvider client={queryClient}>
+        <TooltipProvider>{children}</TooltipProvider>
+      </QueryClientProvider>
+    ),
+  });
+  return router;
+}
 
 declare module "@tanstack/react-router" {
   interface Register {
-    router: typeof router;
+    router: ReturnType<typeof createAppRouter>;
   }
   interface StaticDataRouteOption {
     /** Shown in the header of signed-in pages. */

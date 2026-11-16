@@ -3,8 +3,9 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 
 import "./styles/globals.css";
-import { router } from "./router.tsx";
+import { createAppRouter } from "./router.tsx";
 
+const router = createAppRouter();
 const root = document.getElementById("root");
 if (root === null) {
   throw new Error("Missing #root element in index.html");

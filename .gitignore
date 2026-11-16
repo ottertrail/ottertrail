@@ -9,6 +9,8 @@ lerna-debug.log*
 
 node_modules
 dist
+# Vitest browser-test failure screenshots
+.vitest
 dist-ssr
 *.local
 
