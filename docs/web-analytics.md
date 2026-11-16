@@ -549,6 +549,17 @@ A referrer on one of the project's own allowed hostnames is not a source. It mea
 
 **Region and city** keep their country (`Springfield, US`), because the same names exist in several countries.
 
+### Filters
+
+A filter narrows every report to the visits that match it, and to those visits' events. Several filters must all match. Two kinds:
+
+- **A breakdown's value** (`source`, `entryPage`, `exitPage`, `utmSource`, `utmMedium`, `utmCampaign`, `country`, `region`, `city`, `deviceType`, `browser`, `os`): visits whose property has exactly the value its breakdown row shows, such as `google.com`, `Direct / none`, or `Munich, DE`. The filter and the breakdown use the same SQL expression, so a row's filter keeps exactly the visits that row counted, and a test checks that filtering by each row of a breakdown adds up to all visits. An empty value matches visits where the property is unknown, the "Unknown" row.
+- **A page** (`page`): visits with a pageview of that path. Every number then describes those visits, so the pageviews count all their pages, not only the filtered one: filtering by `/pricing` shows what else visitors who saw the pricing page looked at.
+
+"Their events" is exact because a visit lies within one local day (visitor IDs change at midnight) and reports cover whole local days: every pageview and custom event in a range belongs to exactly one of the range's visits, from its first event to its last. Visitors and pageviews under a filter therefore count the matching visits' events. One small difference from the unfiltered page: the average time on a page leaves out stale engagement reports (section 6), which belong to no visit.
+
+Filter values are compared, never parsed or run: each name maps to a fixed expression and the value is a query parameter.
+
 ### Who can read reports
 
 Signed-in dashboard users, through one endpoint per page ([dashboard.md](dashboard.md#83-report-endpoints)), and anyone with database access through `vp run report`. A public project key never reads data (section 2). Each breakdown name maps to a fixed SQL expression, so request text never becomes SQL, and row limits are clamped to 1-100.
@@ -604,4 +615,4 @@ Reports that only count events (top pages, custom events) read the range's event
 
 ### Not done yet
 
-- Filters (only visits from Google), comparison with the previous period, goals, and funnels.
+- Comparison with the previous period, goals, and funnels; a filter for custom events (visits that signed up).

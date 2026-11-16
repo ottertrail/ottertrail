@@ -133,6 +133,17 @@ describe("inside a project", () => {
     await expect.poll(breadcrumb).toBe("Docs / Web analytics");
   });
 
+  test("the switcher keeps the period but not the filters", async () => {
+    installFakeApi({ projects: [PROJECT, OTHER_PROJECT] });
+    const router = renderApp(`${ANALYTICS}?period=90d&country=DE`);
+
+    await switcher("Main site").click();
+    await page.getByRole("menuitem", { name: "Docs" }).click();
+
+    await expect.poll(() => router.state.location.search).toEqual({ period: "90d" });
+    expect(currentPath(router)).toBe(`/projects/${OTHER_PROJECT.id}/web-analytics?period=90d`);
+  });
+
   test("the switcher keeps you on Settings", async () => {
     installFakeApi({ projects: [PROJECT, OTHER_PROJECT] });
     const router = renderApp(SETTINGS);

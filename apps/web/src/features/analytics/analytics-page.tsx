@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
-import { useNavigate } from "@tanstack/react-router";
-import { ChartLineIcon, OctagonAlertIcon } from "lucide-react";
+import { Link, useNavigate } from "@tanstack/react-router";
+import { ChartLineIcon, FilterXIcon, OctagonAlertIcon, XIcon } from "lucide-react";
 import * as React from "react";
 
 import { ButtonLink } from "@/components/button-link";
@@ -25,10 +25,15 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
+  activeFilters,
   type Analytics,
   analyticsQuery,
   type BreakdownRow,
   type DayPoint,
+  DEFAULT_PERIOD,
+  FILTER_LABELS,
+  type FilterName,
+  type Filters,
   isPeriod,
   PERIODS,
   type Period,
@@ -61,36 +66,82 @@ type Metric = (typeof METRICS)[number]["key"];
 const isMetric = (value: unknown): value is Metric =>
   METRICS.some((metric) => metric.key === value);
 
-function Unknown({ children = "Unknown" }: { children?: React.ReactNode }) {
-  return <span className="text-ink-subtle">{children}</span>;
-}
-
 function capitalize(text: string): string {
   return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+/** How a list row or filter names a value: a country's name, "Desktop", "Unknown" … */
+function valueText(name: FilterName, value: string): string {
+  if (value === "") {
+    return name === "utmCampaign" ? "No campaign" : "Unknown";
+  }
+  if (name === "country") {
+    return countryName(value);
+  }
+  return name === "deviceType" ? capitalize(value) : value;
+}
+
+/** "Country: Germany" */
+const filterText = (name: FilterName, value: string) =>
+  `${FILTER_LABELS[name]}: ${valueText(name, value)}`;
+
+/** The page's address query: the period (left out when it is the default) and the filters. */
+interface PageSearch {
+  period?: Period;
+  filters: Filters;
+}
+
+const searchOf = ({ period, filters }: PageSearch) => ({
+  ...(period === undefined || period === DEFAULT_PERIOD ? {} : { period }),
+  ...filters,
+});
+
+/** A list row's name, linking to the page filtered by it. */
+function FilterLink({
+  projectId,
+  search,
+  name,
+  value,
+}: {
+  projectId: string;
+  search: PageSearch;
+  name: FilterName;
+  /** "" for an unknown value. */
+  value: string;
+}) {
+  return (
+    <Link
+      to="/projects/$projectId/web-analytics"
+      params={{ projectId }}
+      search={searchOf({ ...search, filters: { ...search.filters, [name]: value } })}
+      aria-label={`Filter by ${filterText(name, value)}`}
+      className={
+        value === ""
+          ? "text-ink-subtle hover:text-ink hover:underline"
+          : "hover:text-link hover:underline"
+      }
+    >
+      {valueText(name, value)}
+    </Link>
+  );
 }
 
 /** Breakdown rows for the ranked list: visitors set the bar, visits follow. */
 function breakdownRows(
   rows: BreakdownRow[],
-  label: (value: string) => string = (value) => value,
-  unknown = "Unknown",
+  name: FilterName,
+  link: (name: FilterName, value: string) => React.ReactNode,
 ): RankedRow[] {
-  return rows.map((row) =>
-    row.value === null
-      ? {
-          key: "\u0000unknown",
-          label: <Unknown>{unknown}</Unknown>,
-          primary: row.visitors,
-          secondary: row.visits,
-        }
-      : {
-          key: row.value,
-          label: label(row.value),
-          title: label(row.value),
-          primary: row.visitors,
-          secondary: row.visits,
-        },
-  );
+  return rows.map((row) => {
+    const value = row.value ?? "";
+    return {
+      key: row.value ?? "\u0000unknown",
+      label: link(name, value),
+      title: valueText(name, value),
+      primary: row.visitors,
+      secondary: row.visits,
+    };
+  });
 }
 
 interface ListTab {
@@ -306,11 +357,22 @@ function TrendCard({ days }: { days: DayPoint[] }) {
   );
 }
 
-function Reports({ analytics }: { analytics: Analytics }) {
+function Reports({
+  analytics,
+  projectId,
+  search,
+}: {
+  analytics: Analytics;
+  projectId: string;
+  search: PageSearch;
+}) {
   const { breakdowns } = analytics;
+  const link = (name: FilterName, value: string) => (
+    <FilterLink projectId={projectId} search={search} name={name} value={value} />
+  );
   const pages: RankedRow[] = analytics.pages.map((row) => ({
     key: row.path,
-    label: row.path,
+    label: link("page", row.path),
     title: row.path,
     primary: row.visitors,
     secondary: row.pageviews,
@@ -338,19 +400,29 @@ function Reports({ analytics }: { analytics: Analytics }) {
               empty: "No pageviews in this period.",
               rows: pages,
             },
-            visitsTab("entry", "Entry", "Path", breakdownRows(breakdowns.entryPage)),
-            visitsTab("exit", "Exit", "Path", breakdownRows(breakdowns.exitPage)),
+            visitsTab(
+              "entry",
+              "Entry",
+              "Path",
+              breakdownRows(breakdowns.entryPage, "entryPage", link),
+            ),
+            visitsTab("exit", "Exit", "Path", breakdownRows(breakdowns.exitPage, "exitPage", link)),
           ]}
         />
         <ListCard
           title="Sources"
           tabs={[
-            visitsTab("source", "Sources", "Source", breakdownRows(breakdowns.source)),
+            visitsTab(
+              "source",
+              "Sources",
+              "Source",
+              breakdownRows(breakdowns.source, "source", link),
+            ),
             visitsTab(
               "campaign",
               "Campaigns",
               "Campaign",
-              breakdownRows(breakdowns.utmCampaign, undefined, "No campaign"),
+              breakdownRows(breakdowns.utmCampaign, "utmCampaign", link),
             ),
           ]}
         />
@@ -361,10 +433,15 @@ function Reports({ analytics }: { analytics: Analytics }) {
               "country",
               "Countries",
               "Country",
-              breakdownRows(breakdowns.country, countryName),
+              breakdownRows(breakdowns.country, "country", link),
             ),
-            visitsTab("region", "Regions", "Region", breakdownRows(breakdowns.region)),
-            visitsTab("city", "Cities", "City", breakdownRows(breakdowns.city)),
+            visitsTab(
+              "region",
+              "Regions",
+              "Region",
+              breakdownRows(breakdowns.region, "region", link),
+            ),
+            visitsTab("city", "Cities", "City", breakdownRows(breakdowns.city, "city", link)),
           ]}
         />
         <ListCard
@@ -374,10 +451,20 @@ function Reports({ analytics }: { analytics: Analytics }) {
               "device",
               "Devices",
               "Device",
-              breakdownRows(breakdowns.deviceType, capitalize),
+              breakdownRows(breakdowns.deviceType, "deviceType", link),
             ),
-            visitsTab("browser", "Browsers", "Browser", breakdownRows(breakdowns.browser)),
-            visitsTab("os", "Systems", "Operating system", breakdownRows(breakdowns.os)),
+            visitsTab(
+              "browser",
+              "Browsers",
+              "Browser",
+              breakdownRows(breakdowns.browser, "browser", link),
+            ),
+            visitsTab(
+              "os",
+              "Systems",
+              "Operating system",
+              breakdownRows(breakdowns.os, "os", link),
+            ),
           ]}
         />
         <ListCard
@@ -411,17 +498,88 @@ function LoadingReports() {
   );
 }
 
-/** No data in the range: either nothing ever arrived, or just nothing lately. */
+/** The active filters, each with a way to remove it, and a way to remove them all. */
+function FilterBar({ projectId, search }: { projectId: string; search: PageSearch }) {
+  const active = activeFilters(search.filters);
+  if (active.length === 0) {
+    return null;
+  }
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <ul aria-label="Filters" className="flex flex-wrap items-center gap-2">
+        {active.map(([name, value]) => {
+          const text = filterText(name, value);
+          const others = Object.fromEntries(active.filter(([other]) => other !== name));
+          return (
+            <li
+              key={name}
+              className="inline-flex max-w-full items-center gap-0.5 rounded-md bg-muted py-0.5 pr-0.5 pl-2 text-sm text-ink"
+            >
+              <span className="truncate" title={text}>
+                {text}
+              </span>
+              <Link
+                to="/projects/$projectId/web-analytics"
+                params={{ projectId }}
+                search={searchOf({ ...search, filters: others })}
+                aria-label={`Remove the filter ${text}`}
+                className="rounded p-1 text-ink-subtle hover:bg-background/60 hover:text-ink"
+              >
+                <XIcon aria-hidden="true" className="size-3.5" />
+              </Link>
+            </li>
+          );
+        })}
+      </ul>
+      <Link
+        to="/projects/$projectId/web-analytics"
+        params={{ projectId }}
+        search={searchOf({ ...search, filters: {} })}
+        className="text-sm text-link hover:underline"
+      >
+        Clear filters
+      </Link>
+    </div>
+  );
+}
+
+/** No data in the range: nothing ever arrived, nothing matches the filters, or nothing lately. */
 function NoData({
   projectId,
   project,
-  period,
+  search,
 }: {
   projectId: string;
   project: Project | undefined;
-  period: Period;
+  search: PageSearch;
 }) {
   const neverReceived = project?.lastEventAt === null;
+  const period = search.period ?? DEFAULT_PERIOD;
+  if (!neverReceived && activeFilters(search.filters).length > 0) {
+    return (
+      <Empty className="border border-dashed p-10">
+        <EmptyHeader>
+          <EmptyMedia variant="icon">
+            <FilterXIcon />
+          </EmptyMedia>
+          <EmptyTitle>No visits match these filters</EmptyTitle>
+          <EmptyDescription>
+            No visit in this period matches all of them. Remove a filter, or choose a longer period.
+          </EmptyDescription>
+        </EmptyHeader>
+        <EmptyContent>
+          <ButtonLink
+            variant="outline"
+            to="/projects/$projectId/web-analytics"
+            params={{ projectId }}
+            search={searchOf({ ...search, filters: {} })}
+          >
+            Clear filters
+          </ButtonLink>
+        </EmptyContent>
+      </Empty>
+    );
+  }
   return (
     <Empty className="border border-dashed p-10">
       <EmptyHeader>
@@ -448,7 +606,7 @@ function NoData({
             variant="outline"
             to="/projects/$projectId/web-analytics"
             params={{ projectId }}
-            search={{ period: "12m" }}
+            search={searchOf({ period: "12m", filters: {} })}
           >
             Show the last 12 months
           </ButtonLink>
@@ -467,10 +625,19 @@ const hasData = (analytics: Analytics) =>
  * Web analytics for one project: the numbers, a trend, and ranked lists,
  * all for one period that ends today in the instance's timezone.
  */
-export function AnalyticsPage({ projectId, period }: { projectId: string; period: Period }) {
+export function AnalyticsPage({
+  projectId,
+  period,
+  filters,
+}: {
+  projectId: string;
+  period: Period;
+  filters: Filters;
+}) {
   const navigate = useNavigate();
   const project = useQuery(projectQuery(projectId));
-  const analytics = useQuery(analyticsQuery(projectId, period));
+  const analytics = useQuery(analyticsQuery(projectId, period, filters));
+  const search: PageSearch = { period, filters };
 
   if (analytics.error instanceof ApiError && analytics.error.status === 404) {
     return <NoSuchProject />;
@@ -490,7 +657,8 @@ export function AnalyticsPage({ projectId, period }: { projectId: string; period
               void navigate({
                 to: "/projects/$projectId/web-analytics",
                 params: { projectId },
-                search: { period: value },
+                // A new period keeps the filters.
+                search: searchOf({ period: value, filters }),
               });
             }
           }}
@@ -512,6 +680,7 @@ export function AnalyticsPage({ projectId, period }: { projectId: string; period
           </p>
         )}
       </div>
+      <FilterBar projectId={projectId} search={search} />
 
       {analytics.isError && (
         <Alert variant="destructive">
@@ -544,9 +713,9 @@ export function AnalyticsPage({ projectId, period }: { projectId: string; period
           aria-busy={refreshing}
         >
           {hasData(data) ? (
-            <Reports analytics={data} />
+            <Reports analytics={data} projectId={projectId} search={search} />
           ) : (
-            <NoData projectId={projectId} project={project.data} period={period} />
+            <NoData projectId={projectId} project={project.data} search={search} />
           )}
         </div>
       )}

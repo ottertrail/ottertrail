@@ -138,12 +138,14 @@ Code: `apps/api/src/reports/analytics.ts` and `apps/api/src/reports/routes.ts`.
 
 ```text
 GET /api/projects/:id/analytics?from=2026-11-01&to=2026-11-16[&limit=10]
-GET /api/projects/:id/analytics?period=7d[&limit=10]
+GET /api/projects/:id/analytics?period=7d[&limit=10][&country=DE&page=/pricing …]
 ```
 
 A `period` (`today`, `7d`, `30d`, `90d`, or `12m`) ends today, and the API works out "today" in the instance's timezone: the browser showing the dashboard may be in another one. `7d` is today and the six days before it; `12m` starts the day after the same date last year.
 
 One request returns every report of the analytics page, for whole days in the instance's `TIMEZONE`, `from` and `to` included: the summary, visitors per day, top pages, ten breakdowns (sources, campaigns, entry and exit pages, countries, regions, cities, devices, browsers, operating systems), and custom events. It needs a signed-in user. A range covers at most 366 days, and lists hold at most `limit` rows (default 10, at most 100).
+
+Filters narrow every report to the matching visits (defined in section 7 of [web analytics](web-analytics.md#filters)): one parameter per filter, named after the breakdown (`source`, `country`, `deviceType` …) or `page`, at most 2,048 characters. An empty value means unknown. Several filters must all match. An unknown parameter is refused with 400: Fastify's validator would otherwise drop it silently, so a mistyped filter (`contry=DE`) would return unfiltered numbers.
 
 ### Visits worked out once
 
@@ -156,13 +158,15 @@ Most reports count visits, and working out visits is the expensive part: it sort
 | about 7,000    | 1 day   | 1,151 ms               | 295 ms      |
 | about 7,000    | 30 days | 16,710 ms              | 5,254 ms    |
 
+With filters, the temporary table holds only the matching visits, so the reports after it have less to read. At 1,000 visits a day over 30 days, the whole page took 864 ms unfiltered, 539 ms filtered by a country, and 745 ms filtered by a page (which looks up the page's pageviews for each visit).
+
 The transaction also uses PostgreSQL's REPEATABLE READ isolation: every report sees the same snapshot of the data, so the numbers on the page agree with each other even while new events arrive. Run as separate requests, a pageview stored between two of them could appear in one card and not the next.
 
 The individual report functions (`summary`, `breakdown`, …) still work on their own, as `vp run report` uses them; a test checks that both ways give the same numbers.
 
 ### Not done yet
 
-- Comparison with the previous period, and filters (only visits from Google, only one page).
+- Comparison with the previous period.
 - Caching. Each request works the reports out again; at the volumes measured above, that takes about a second for a month at 1,000 visits a day.
 
 ## 8.4 Analytics page
@@ -179,6 +183,12 @@ From top to bottom, the page shows:
 4. Ranked lists, most visitors first, each with a bar for its visitors: pages (top, entry, and exit), sources and campaigns, countries, regions, and cities, devices, browsers, and operating systems, and custom events. Each list shows its first 10 rows. A missing value (no location, an unknown browser) shows as "Unknown", and a visit without a campaign as "No campaign".
 
 A project without events shows how to install the snippet instead; a period without events offers the last 12 months.
+
+### Filters
+
+Every row of a list is a link that filters the page to its visits: a source, a country, "Unknown", a page from Top pages, and so on (custom events are not filters yet). Active filters show under the period picker, each with a button to remove it, and "Clear filters" removes them all. They live in the address (`?country=DE&page=/pricing`), so a filtered view can be linked, reloaded, and left with Back. A new period keeps the filters; switching to another project keeps the period but drops them, since a page or campaign belongs to one project. When nothing matches, the page says so and offers to clear them.
+
+The router reads an address value as JSON only when it is written exactly as JSON writes it, so a hand-written value such as `2024.10` or `1e3` stays as typed, and the page turns the numbers it does read (`2024`) back into text. Links the app builds quote such values (`city=%222024%22`), so they read back the same. The page ignores a value it cannot use (an object, a NUL character, over 2,048 characters) rather than sending it.
 
 ### Charts without a chart library
 
@@ -203,6 +213,8 @@ The browser tests in `apps/web/tests/browser/` render the whole dashboard in hea
 
 `navigation.test.tsx` covers the two levels: the workspace menu; a project's menu, with planned modules disabled and labeled; the header's project name; Settings; a new project opening on its snippet; the switcher keeping the page and the period; the way back to all projects; an unknown project; and the home page (first project, last project, no projects, signed out).
 
+`filters.test.tsx` covers adding a filter from a row, a page, and an Unknown row; combining, removing, and clearing filters; a new period keeping them; values the address bar turns into numbers or cannot use; and a filtered view with no matching visits. The filter definitions themselves are tested against PostgreSQL in `apps/api/tests/analytics.test.ts`.
+
 Any test fails when the page logs an error to the console.
 
 Putting back six bugs, in two batches of three, made exactly the tests that guard them fail: an unknown period reaching the API, a chart that ignores the arrow keys, no dimming while a period loads, a switcher that drops the period, a switcher that always opens web analytics, and a home page that forgets the last project. Writing the tests found a fourth: buttons that act as links were announced as buttons by screen readers. They are now real links styled as buttons (`ButtonLink`, see [the design system](design-system.md#components)).
@@ -213,4 +225,4 @@ Unit tests in `apps/web/tests/analytics.test.ts` cover the number and date forma
 
 - Hourly detail for one day, and a custom range of days (the API accepts `from` and `to`; the page offers only the fixed periods).
 - More than 10 rows per list.
-- Comparison with the previous period, and filters (8.3).
+- Comparison with the previous period (8.3).

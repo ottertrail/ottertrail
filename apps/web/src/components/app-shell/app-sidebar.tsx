@@ -83,7 +83,8 @@ function WorkspaceMenu() {
 
 /**
  * Names the current project and switches to another one, staying on the
- * same page (web analytics stays web analytics, with its period).
+ * same page (web analytics stays web analytics, with its period, but not
+ * its filters).
  */
 function ProjectSwitcher({ projectId }: { projectId: string }) {
   const navigate = useNavigate();
@@ -125,7 +126,11 @@ function ProjectSwitcher({ projectId }: { projectId: string }) {
                 void navigate({
                   to: ".",
                   params: (previous) => ({ ...previous, projectId: project.id }),
-                  search: (previous) => previous,
+                  // Keep the period; filters (a page, a campaign) belong to one project.
+                  search: (previous) =>
+                    "period" in previous && previous.period !== undefined
+                      ? { period: previous.period }
+                      : {},
                 })
               }
             >

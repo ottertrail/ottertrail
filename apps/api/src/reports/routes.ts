@@ -7,7 +7,7 @@ import type { Database } from "../db/schema.ts";
 import { findProject } from "../projects/projects.ts";
 import { dayIn } from "../visitors/visitor-ids.ts";
 import { projectAnalytics } from "./analytics.ts";
-import { MAX_LIMIT } from "./reports.ts";
+import { FILTER_NAMES, type FilterName, MAX_LIMIT, type ReportFilter } from "./reports.ts";
 
 /** The longest range one request may cover, to bound the work it causes. */
 export const MAX_RANGE_DAYS = 366;
@@ -57,13 +57,40 @@ function problem(code: string, message: string) {
   return { error: code, message };
 }
 
+/** As long as the longest stored path; values are compared, never parsed. */
+const MAX_FILTER_LENGTH = 2048;
+
+/** One query parameter per filter. An empty value matches visits where it is unknown. */
+const FILTER_PROPERTIES = Object.fromEntries(
+  FILTER_NAMES.map((name) => [
+    name,
+    // No NUL: PostgreSQL text cannot hold it, so it could never match.
+    { type: "string", maxLength: MAX_FILTER_LENGTH, pattern: "^[^\\u0000]*$" },
+  ]),
+);
+
+/**
+ * Query parameters the endpoint knows. Fastify's validator drops others
+ * silently, so a mistyped filter ("contry") would return unfiltered
+ * numbers; the route refuses them instead.
+ */
+const QUERY_NAMES = new Set<string>(["from", "to", "period", "limit", ...FILTER_NAMES]);
+
+function requestFilters(query: Partial<Record<FilterName, string>>): ReportFilter[] {
+  return FILTER_NAMES.flatMap((name) => {
+    const value = query[name];
+    return value === undefined ? [] : [{ name, value: value === "" ? null : value }];
+  });
+}
+
 /**
  * GET /api/projects/:id/analytics?from=YYYY-MM-DD&to=YYYY-MM-DD[&limit=10]
- * GET /api/projects/:id/analytics?period=7d[&limit=10]
+ * GET /api/projects/:id/analytics?period=7d[&limit=10][&country=DE&page=/pricing …]
  *
  * Every report of the analytics page for whole days in the instance's
  * timezone, from and to included (see analytics.ts). A period (today, 7d,
- * 30d, 90d, 12m) ends today in that timezone.
+ * 30d, 90d, 12m) ends today in that timezone. Filters (FILTER_NAMES) narrow
+ * every report to the visits that match all of them.
  */
 export const reportRoutes: FastifyPluginCallback<{
   db: Kysely<Database>;
@@ -74,11 +101,24 @@ export const reportRoutes: FastifyPluginCallback<{
   const today = dayIn(timeZone);
   app.get<{
     Params: { id: string };
-    Querystring: { from?: string; to?: string; period?: Period; limit?: number };
+    Querystring: { from?: string; to?: string; period?: Period; limit?: number } & Partial<
+      Record<FilterName, string>
+    >;
   }>(
     "/projects/:id/analytics",
     {
       preHandler: requireSession(auth),
+      // Runs before validation, while the query still holds every parameter sent.
+      preValidation: async (request, reply) => {
+        const unknown = Object.keys(request.query).filter((name) => !QUERY_NAMES.has(name));
+        if (unknown.length > 0) {
+          return reply
+            .code(400)
+            .send(problem("invalid_query", `Unknown query parameter: ${unknown.join(", ")}.`));
+        }
+        // Nothing sent: Fastify goes on to validation.
+        return undefined;
+      },
       schema: {
         params: {
           type: "object",
@@ -93,6 +133,7 @@ export const reportRoutes: FastifyPluginCallback<{
             to: { type: "string", pattern: DAY_PATTERN },
             period: { type: "string", enum: PERIODS },
             limit: { type: "integer", minimum: 1, maximum: MAX_LIMIT },
+            ...FILTER_PROPERTIES,
           },
         },
       },
@@ -138,6 +179,7 @@ export const reportRoutes: FastifyPluginCallback<{
         firstDay: from,
         lastDay: to,
         timeZone,
+        filters: requestFilters(request.query),
         ...(limit === undefined ? {} : { limit }),
       });
     },

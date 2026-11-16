@@ -208,8 +208,24 @@ try {
       ...page["visits worked out once"],
       [label]: `${Math.round(once)} ms`,
     };
+    // Filtered pages: a visit property, and a page (visits that viewed it).
+    for (const [name, filter] of [
+      ["filtered by a country", { name: "country", value: "DE" }],
+      ["filtered by a page", { name: "page", value: "/pricing" }],
+    ] as const) {
+      const ms = await measure(() =>
+        projectAnalytics(bench, {
+          projectId: project.id,
+          firstDay: from,
+          lastDay: LAST_DAY,
+          timeZone: "UTC",
+          filters: [filter],
+        }),
+      );
+      page[name] = { ...page[name], [label]: `${Math.round(ms)} ms` };
+    }
   }
-  console.log("\nA whole analytics page (14 reports):");
+  console.log("\nA whole analytics page (14 reports), unfiltered and filtered:");
   console.table(page);
 } finally {
   await db?.destroy();

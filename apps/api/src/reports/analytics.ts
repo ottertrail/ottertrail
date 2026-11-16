@@ -9,8 +9,10 @@ import {
   customEvents,
   type DayPoint,
   DEFAULT_LIMIT,
+  filterVisits,
   localDays,
   type PageRow,
+  type ReportFilter,
   type Summary,
   summary,
   timeseries,
@@ -63,6 +65,9 @@ const VISIT_COLUMNS = sql`
  * report reads that table. The transaction also gives every report the same
  * snapshot of the data (REPEATABLE READ), so the numbers agree with each
  * other even while new events arrive.
+ *
+ * With filters, the table holds only the matching visits, and every report
+ * counts those visits and their events.
  */
 export async function projectAnalytics(
   db: Kysely<Database>,
@@ -72,14 +77,20 @@ export async function projectAnalytics(
     lastDay: string;
     timeZone: string;
     limit?: number;
+    filters?: readonly ReportFilter[];
   },
 ): Promise<Analytics> {
-  const { projectId, firstDay, lastDay, timeZone, limit = DEFAULT_LIMIT } = options;
+  const { projectId, firstDay, lastDay, timeZone, limit = DEFAULT_LIMIT, filters = [] } = options;
   return db
     .transaction()
     .setIsolationLevel("repeatable read")
     .execute(async (trx) => {
-      const range = { projectId, timeZone, ...(await localDays(trx, firstDay, lastDay, timeZone)) };
+      const range = {
+        projectId,
+        timeZone,
+        filters,
+        ...(await localDays(trx, firstDay, lastDay, timeZone)),
+      };
 
       // PostgreSQL cannot take query parameters in CREATE TABLE … AS, so
       // the table is declared first, then filled.
@@ -94,11 +105,11 @@ export async function projectAnalytics(
       `.execute(trx);
       await sql`
         insert into analytics_visits (${VISIT_COLUMNS})
-        select ${VISIT_COLUMNS} from (${visitsQuery(range)}) as visits
+        select ${VISIT_COLUMNS} from (${filterVisits(range, visitsQuery(range))}) as visits
       `.execute(trx);
       // A new table has no statistics; without them PostgreSQL can pick a bad plan.
       await sql`analyze analytics_visits`.execute(trx);
-      const visits = sql`select * from analytics_visits`;
+      const visits = { sql: sql`select * from analytics_visits`, filters };
 
       const by = (dimension: AnalyticsBreakdown) => breakdown(trx, range, dimension, limit, visits);
       // One connection runs the transaction, so the queries run one after another.
@@ -120,9 +131,9 @@ export async function projectAnalytics(
         lastDay,
         summary: await summary(trx, range, visits),
         days: await timeseries(trx, range, visits),
-        pages: await topPages(trx, range, limit),
+        pages: await topPages(trx, range, limit, visits),
         breakdowns,
-        customEvents: await customEvents(trx, range, limit),
+        customEvents: await customEvents(trx, range, limit, visits),
       };
     });
 }

@@ -13,6 +13,7 @@ export interface FakeApi {
   analytics: (
     projectId: string,
     period: string | null,
+    query: URLSearchParams,
   ) => Analytics | Response | Promise<Analytics | Response>;
   /** Every path the page asked for, with its query, in order. */
   requests: string[];
@@ -182,7 +183,11 @@ async function answer(api: FakeApi, url: URL, init: RequestInit | undefined): Pr
   }
   const analytics = /^\/api\/projects\/([^/]+)\/analytics$/.exec(path);
   if (analytics?.[1] !== undefined) {
-    const result = await api.analytics(analytics[1], url.searchParams.get("period"));
+    const result = await api.analytics(
+      analytics[1],
+      url.searchParams.get("period"),
+      url.searchParams,
+    );
     return result instanceof Response ? result : json(result);
   }
   const project = /^\/api\/projects\/([^/]+)$/.exec(path);

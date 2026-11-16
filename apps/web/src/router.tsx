@@ -4,9 +4,11 @@ import {
   createRoute,
   createRouter,
   Outlet,
+  parseSearchWith,
   redirect,
   type RouterHistory,
   type SearchSchemaInput,
+  stringifySearchWith,
 } from "@tanstack/react-router";
 import type * as React from "react";
 
@@ -19,7 +21,13 @@ import { DesignSystemPage } from "@/features/design-system/design-system-page";
 import { ProjectLayout } from "@/features/projects/project-layout";
 import { ProjectSettingsPage } from "@/features/projects/project-settings-page";
 import { ProjectsPage } from "@/features/projects/projects-page";
-import { DEFAULT_PERIOD, isPeriod, type Period } from "@/lib/analytics-api";
+import {
+  DEFAULT_PERIOD,
+  type Filters,
+  filtersFrom,
+  isPeriod,
+  type Period,
+} from "@/lib/analytics-api";
 import { ApiError } from "@/lib/api";
 import { authClient } from "@/lib/auth-client";
 import { lastProject } from "@/lib/last-project";
@@ -28,6 +36,21 @@ import { projectsQuery } from "@/lib/projects-api";
 async function signedIn(): Promise<boolean> {
   const { data } = await authClient.getSession();
   return data !== null;
+}
+
+/**
+ * Reads a query value as JSON only when writing that JSON back gives the
+ * same text, so the router's JSON reading never changes a value: "2024"
+ * and "true" still read as values, while "2024.10", "1e3", or a 20-digit
+ * number stay text, exactly as a hand-written filter has them. Links the
+ * app builds quote such values, so they read back the same either way.
+ */
+function parseExactJson(text: string): unknown {
+  const value: unknown = JSON.parse(text);
+  if (JSON.stringify(value) !== text) {
+    throw new Error("Not JSON as JSON.stringify writes it");
+  }
+  return value;
 }
 
 const isClientError = (error: unknown) =>
@@ -127,15 +150,18 @@ const webAnalyticsRoute = createRoute({
   // An unknown or missing period falls back to the default instead of failing.
   // The router merges the result over the raw query, so an invalid period
   // has to be overwritten, not just left out.
+  // Filters (country=DE, page=/pricing …) live in the address too, so a
+  // filtered view can be linked, reloaded, and left with the Back button.
   validateSearch: (
-    search: { period?: unknown } & SearchSchemaInput,
-  ): { period: Period | undefined } => ({
+    search: { period?: unknown } & Partial<Record<keyof Filters, unknown>> & SearchSchemaInput,
+  ): { period: Period | undefined } & Filters => ({
     period: isPeriod(search.period) ? search.period : undefined,
+    ...filtersFrom(search),
   }),
   component: function WebAnalyticsRouteComponent() {
     const { projectId } = webAnalyticsRoute.useParams();
-    const { period = DEFAULT_PERIOD } = webAnalyticsRoute.useSearch();
-    return <AnalyticsPage projectId={projectId} period={period} />;
+    const { period = DEFAULT_PERIOD, ...filters } = webAnalyticsRoute.useSearch();
+    return <AnalyticsPage projectId={projectId} period={period} filters={filters} />;
   },
 });
 
@@ -203,6 +229,8 @@ export function createAppRouter({
     routeTree,
     ...(history === undefined ? {} : { history }),
     context: { queryClient },
+    parseSearch: parseSearchWith(parseExactJson),
+    stringifySearch: stringifySearchWith(JSON.stringify, parseExactJson),
     Wrap: ({ children }: { children: React.ReactNode }) => (
       <QueryClientProvider client={queryClient}>
         <TooltipProvider>{children}</TooltipProvider>
