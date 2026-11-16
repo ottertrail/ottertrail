@@ -48,6 +48,8 @@ export interface CollectionOptions {
   saltCleanupIntervalMs?: number;
   /** Clock, replaceable in tests. */
   now?: () => number;
+  /** Shared with the project routes, which must make it forget replaced and deleted keys. */
+  projectKeys?: ProjectKeyCache;
 }
 
 type PropertyValue = string | number | boolean | null;
@@ -145,6 +147,11 @@ function tooManyRequests(reply: FastifyReply, retryAfterSeconds: number) {
     .send(problem("rate_limited", `Too many requests. Retry after ${retryAfterSeconds} seconds.`));
 }
 
+/** PostgreSQL's foreign_key_violation: here, events for a project that no longer exists. */
+function isForeignKeyViolation(error: unknown): boolean {
+  return typeof error === "object" && error !== null && "code" in error && error.code === "23503";
+}
+
 function storageUnavailable(reply: FastifyReply) {
   return reply
     .code(503)
@@ -184,7 +191,7 @@ export const collectionRoutes: FastifyPluginCallback<CollectionOptions> = (app, 
   });
   const ipLimiter = new TokenBucketLimiter(options.ipLimit ?? DEFAULT_IP_LIMIT, { now });
   const projectLimiter = new TokenBucketLimiter(projectLimit, { now });
-  const projects = new ProjectKeyCache(db, { now });
+  const projects = options.projectKeys ?? new ProjectKeyCache(db, { now });
 
   // Browsers send the batch as text/plain: that is a "simple" cross-site
   // request, so the browser sends it directly instead of first asking
@@ -411,6 +418,12 @@ export const collectionRoutes: FastifyPluginCallback<CollectionOptions> = (app, 
         }
         result = await storeEvents(db, project.id, accepted);
       } catch (error) {
+        // The project was deleted after its key was looked up (another API
+        // process, or a moment's race): the key is gone, not the storage.
+        if (isForeignKeyViolation(error)) {
+          projects.forget(key);
+          return reply.code(403).send(problem("unknown_key", "No project has this key."));
+        }
         request.log.error({ err: error }, "could not store events");
         return storageUnavailable(reply);
       }

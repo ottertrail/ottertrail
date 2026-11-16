@@ -7,11 +7,13 @@ import { requireSession } from "../auth/routes.ts";
 import type { Database } from "../db/schema.ts";
 import {
   createProject,
+  deleteProject,
   findProject,
   listProjects,
   MAX_ALLOWED_HOSTNAMES,
   MAX_PROJECT_NAME_LENGTH,
   parseHostnames,
+  replacePublicKey,
   updateProject,
 } from "./projects.ts";
 
@@ -46,12 +48,16 @@ function problem(code: string, message: string) {
  *
  * Changes to allowed hostnames reach the collection endpoint within a
  * minute, the lifetime of its project cache (collection/project-keys.ts).
+ * A replaced key or a deleted project's key stops working at once: the
+ * routes tell the cache to forget it.
  */
 export const projectRoutes: FastifyPluginCallback<{
   db: Kysely<Database>;
   auth: Auth;
   trustedOrigins: readonly string[];
-}> = (app, { db, auth, trustedOrigins }, done) => {
+  /** The collection endpoint's key cache, which must forget replaced and deleted keys. */
+  projectKeys?: { forget(publicKey: string): void };
+}> = (app, { db, auth, trustedOrigins, projectKeys }, done) => {
   const signedIn = requireSession(auth);
   const fromDashboard = requireTrustedOrigin(trustedOrigins);
 
@@ -127,6 +133,56 @@ export const projectRoutes: FastifyPluginCallback<{
       return project === null
         ? reply.code(404).send(problem("not_found", "No project has this ID."))
         : { project };
+    },
+  );
+
+  /**
+   * Deletes a project and all its events, for good. The request repeats the
+   * project's name, so a mistaken ID or a stray request cannot delete one.
+   */
+  app.delete<{ Params: { id: string }; Body: { confirmName: string } }>(
+    "/projects/:id",
+    {
+      preHandler: [fromDashboard, signedIn],
+      schema: {
+        params: idParamsSchema,
+        body: {
+          type: "object",
+          required: ["confirmName"],
+          additionalProperties: false,
+          properties: { confirmName: { type: "string", maxLength: 200 } },
+        },
+      },
+    },
+    async (request, reply) => {
+      const project = await findProject(db, request.params.id);
+      if (project === null) {
+        return reply.code(404).send(problem("not_found", "No project has this ID."));
+      }
+      if (request.body.confirmName.trim() !== project.name) {
+        return reply
+          .code(400)
+          .send(problem("name_mismatch", "Type the project's name exactly to delete it."));
+      }
+      const deleted = await deleteProject(db, project.id);
+      if (deleted !== null) {
+        projectKeys?.forget(deleted.publicKey);
+      }
+      return reply.code(204).send();
+    },
+  );
+
+  /** Replaces a project's public key: pages with the old snippet stop sending events. */
+  app.post<{ Params: { id: string } }>(
+    "/projects/:id/public-key",
+    { preHandler: [fromDashboard, signedIn], schema: { params: idParamsSchema } },
+    async (request, reply) => {
+      const replaced = await replacePublicKey(db, request.params.id);
+      if (replaced === null) {
+        return reply.code(404).send(problem("not_found", "No project has this ID."));
+      }
+      projectKeys?.forget(replaced.oldKey);
+      return { project: replaced.project };
     },
   );
   done();

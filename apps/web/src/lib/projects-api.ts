@@ -69,3 +69,19 @@ export async function updateProject(
   });
   return expectShape(body, isOneProject).project;
 }
+
+/** Deletes a project and all its events, for good; the API wants its name repeated. */
+export async function deleteProject(id: string, confirmName: string) {
+  await apiRequest(`/api/projects/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+    body: { confirmName },
+  });
+}
+
+/** Gives a project a new public key; pages with the old snippet stop sending events. */
+export async function replacePublicKey(id: string) {
+  const body = await apiRequest(`/api/projects/${encodeURIComponent(id)}/public-key`, {
+    method: "POST",
+  });
+  return expectShape(body, isOneProject).project;
+}

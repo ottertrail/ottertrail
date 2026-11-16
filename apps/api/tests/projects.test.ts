@@ -177,6 +177,177 @@ describe("project routes", () => {
   });
 });
 
+describe("deleting a project and replacing its key", () => {
+  let dashboard: Awaited<ReturnType<typeof signedInDashboard>>;
+
+  beforeAll(async () => {
+    dashboard = await signedInDashboard();
+  });
+
+  afterAll(async () => {
+    await dashboard?.close();
+  });
+
+  const headers = () => ({ origin: PUBLIC_URL, cookie: dashboard.cookie });
+
+  async function create(name: string) {
+    const response = await dashboard.app.inject({
+      method: "POST",
+      url: "/api/projects",
+      headers: headers(),
+      payload: { name, allowedHostnames: ["shop.example"] },
+    });
+    return response.json().project as { id: string; name: string; publicKey: string };
+  }
+
+  /** One pageview from the project's site, as the tracker sends it. */
+  function send(key: string) {
+    const now = Date.now();
+    return dashboard.app.inject({
+      method: "POST",
+      url: "/api/events",
+      headers: {
+        "content-type": "text/plain",
+        origin: "https://shop.example",
+        // A browser's: without one, the API counts the event as a bot's and stores nothing.
+        "user-agent":
+          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36",
+      },
+      payload: JSON.stringify({
+        v: 1,
+        key,
+        sentAt: now,
+        events: [
+          { id: randomUUID(), name: "pageview", occurredAt: now, url: "https://shop.example/" },
+        ],
+      }),
+    });
+  }
+
+  const remove = (
+    id: string,
+    confirmName: string,
+    requestHeaders: Record<string, string> = headers(),
+  ) =>
+    dashboard.app.inject({
+      method: "DELETE",
+      url: `/api/projects/${id}`,
+      headers: requestHeaders,
+      payload: { confirmName },
+    });
+
+  const eventCount = async (projectId: string) =>
+    Number(
+      (
+        await dashboard.db
+          .selectFrom("events")
+          .select((eb) => eb.fn.countAll().as("count"))
+          .where("project_id", "=", projectId)
+          .executeTakeFirstOrThrow()
+      ).count,
+    );
+
+  test("deleting takes the project's events with it, and only its own", async () => {
+    const doomed = await create("Old shop");
+    const kept = await create("New shop");
+    expect((await send(doomed.publicKey)).statusCode).toBe(202);
+    expect((await send(kept.publicKey)).statusCode).toBe(202);
+
+    const response = await remove(doomed.id, " Old shop ");
+
+    expect(response.statusCode).toBe(204);
+    expect(await eventCount(doomed.id)).toBe(0);
+    expect(await eventCount(kept.id)).toBe(1);
+    const gone = await dashboard.app.inject({
+      url: `/api/projects/${doomed.id}`,
+      headers: headers(),
+    });
+    expect(gone.statusCode).toBe(404);
+  });
+
+  test("deleting needs the project's name, a signed-in user, and the dashboard", async () => {
+    const project = await create("Careful");
+
+    const misspelled = await remove(project.id, "careful");
+    expect(misspelled.statusCode).toBe(400);
+    expect(misspelled.json()).toMatchObject({ error: "name_mismatch" });
+    expect((await remove(project.id, "Careful", { origin: PUBLIC_URL })).statusCode).toBe(401);
+    expect(
+      (
+        await remove(project.id, "Careful", {
+          origin: "https://attacker.example",
+          cookie: dashboard.cookie,
+        })
+      ).statusCode,
+    ).toBe(403);
+    expect((await remove(randomUUID(), "Careful")).statusCode).toBe(404);
+    const still = await dashboard.app.inject({
+      url: `/api/projects/${project.id}`,
+      headers: headers(),
+    });
+    expect(still.statusCode).toBe(200);
+  });
+
+  test("a deleted project's key stops working at once, not after the cache's minute", async () => {
+    const project = await create("Short-lived");
+    // The key is now in the collection endpoint's cache.
+    expect((await send(project.publicKey)).statusCode).toBe(202);
+
+    expect((await remove(project.id, "Short-lived")).statusCode).toBe(204);
+
+    const after = await send(project.publicKey);
+    expect(after.statusCode).toBe(403);
+    expect(after.json()).toMatchObject({ error: "unknown_key" });
+  });
+
+  test("events for a project deleted elsewhere are refused as an unknown key, not as an outage", async () => {
+    const project = await create("Deleted elsewhere");
+    expect((await send(project.publicKey)).statusCode).toBe(202);
+    // As another API process would: the cache here still holds the key.
+    await dashboard.db.deleteFrom("projects").where("id", "=", project.id).execute();
+
+    const after = await send(project.publicKey);
+    expect(after.statusCode).toBe(403);
+    expect(after.json()).toMatchObject({ error: "unknown_key" });
+  });
+
+  test("a replaced key stops working at once, and the new one works", async () => {
+    const project = await create("Rotating");
+    expect((await send(project.publicKey)).statusCode).toBe(202);
+
+    const response = await dashboard.app.inject({
+      method: "POST",
+      url: `/api/projects/${project.id}/public-key`,
+      headers: headers(),
+    });
+
+    expect(response.statusCode).toBe(200);
+    const replaced = response.json().project;
+    expect(replaced.publicKey).toMatch(/^pk_[0-9a-f]{32}$/);
+    expect(replaced.publicKey).not.toBe(project.publicKey);
+    expect((await send(project.publicKey)).statusCode).toBe(403);
+    expect((await send(replaced.publicKey)).statusCode).toBe(202);
+    // The project's data stays.
+    expect(await eventCount(project.id)).toBe(2);
+  });
+
+  test("replacing a key needs the dashboard and a known project", async () => {
+    const project = await create("Guarded");
+    const forged = await dashboard.app.inject({
+      method: "POST",
+      url: `/api/projects/${project.id}/public-key`,
+      headers: { origin: "https://attacker.example", cookie: dashboard.cookie },
+    });
+    expect(forged.statusCode).toBe(403);
+    const missing = await dashboard.app.inject({
+      method: "POST",
+      url: `/api/projects/${randomUUID()}/public-key`,
+      headers: headers(),
+    });
+    expect(missing.statusCode).toBe(404);
+  });
+});
+
 describe("tracker script", () => {
   let directory: string;
   let app: ReturnType<typeof buildApp>;

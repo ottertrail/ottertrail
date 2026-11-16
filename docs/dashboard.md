@@ -127,9 +127,19 @@ Events are accepted only from pages whose hostname is listed, compared exactly (
 
 The session cookie is `SameSite=Lax`, which keeps it off other sites' form posts and background requests. Sites on a sibling subdomain of the same domain still count as the same site, though, so the API also checks the `Origin` header on every request that changes something: it must be the instance's own address (`PUBLIC_URL`; in development, any `localhost` port). Better Auth makes the same check for its own sign-in endpoints.
 
+### Replacing the key, deleting the project
+
+The Settings page ends with a "Danger zone" of two changes that cannot be undone, each behind a confirmation:
+
+- **Replace the public key** (`POST /api/projects/:id/public-key`), for a key that ended up where it should not. The project gets a new key and keeps its data; pages with the old snippet can no longer send events, so the new snippet has to go on the site right after. The Install card shows it at once.
+- **Delete the project** (`DELETE /api/projects/:id`), with every event it has received: the database deletes the events with the project. The request repeats the project's name (`{ "confirmName": "Main site" }`), and the dashboard asks for it to be typed, so a mistaken ID or a stray request cannot delete a project. Afterwards the dashboard opens the project list, and the home page stops opening the deleted project.
+
+The collection endpoint keeps keys in a cache for a minute (a key is checked on every event). The project routes tell it to forget a replaced or deleted key, so the key stops working at once in that API process. A batch already on its way when its project is deleted, or a key cached in another API process, fails to store because the project is gone; the endpoint answers that as an unknown key (403), which the tracker does not retry, instead of as an outage (503), which it would.
+
 ### Not done yet
 
-- Deleting a project, and replacing its public key. Deleting removes all of a project's events, so it needs a confirmation step.
+- Deleting a project with many events runs as one database statement while the request waits. A large project should be deleted by a background job, once the worker exists.
+- Deleted events can stay in backups until those expire; there is no backup policy yet.
 - Permissions: any signed-in user can manage projects, which is only the owner until invitations exist.
 
 ## 8.3 Report endpoints
@@ -233,6 +243,8 @@ The browser tests in `apps/web/tests/browser/` render the whole dashboard in hea
 `navigation.test.tsx` covers the two levels: the workspace menu; a project's menu, with planned modules disabled and labeled; the header's project name; Settings; a new project opening on its snippet; the switcher keeping the page and the period; the way back to all projects; an unknown project; and the home page (first project, last project, no projects, signed out).
 
 `filters.test.tsx` covers adding a filter from a row, a page, and an Unknown row; combining, removing, and clearing filters; a new period keeping them; values the address bar turns into numbers or cannot use; and a filtered view with no matching visits. The filter definitions themselves are tested against PostgreSQL in `apps/api/tests/analytics.test.ts`.
+
+`project-settings.test.tsx` covers the snippet and public key as copyable code, and the danger zone: replacing the key (and Cancel), deleting only after the name is typed, the project list and home page afterwards, and a refused delete. The API's side, including keys that stop working at once and a batch for a project deleted meanwhile, is tested in `apps/api/tests/projects.test.ts`.
 
 `custom-range.test.tsx` covers reading chosen days from the address, choosing them in the dialog (which starts from the page's days and keeps the filters), refusing days the API would refuse, Cancel, a preset period replacing them, unusable days in the address, and "Show all" and the project switcher keeping them.
 

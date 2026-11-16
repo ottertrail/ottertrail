@@ -3,6 +3,7 @@ import type { Kysely } from "kysely";
 
 import type { Auth } from "./auth/auth.ts";
 import { betterAuthRoutes, setupRoutes } from "./auth/routes.ts";
+import { ProjectKeyCache } from "./collection/project-keys.ts";
 import type { RateLimit } from "./collection/rate-limiter.ts";
 import { type CollectionOptions, collectionRoutes } from "./collection/routes.ts";
 import type { Database } from "./db/schema.ts";
@@ -66,7 +67,13 @@ export function buildApp({
           },
   });
   app.register(healthRoutes, { prefix: "/api" });
-  app.register(collectionRoutes, { prefix: "/api", db, ...collection });
+  // One key cache for collection and the project routes, which make it
+  // forget a replaced or deleted project's key at once.
+  const projectKeys = new ProjectKeyCache(
+    db,
+    collection.now === undefined ? {} : { now: collection.now },
+  );
+  app.register(collectionRoutes, { prefix: "/api", db, projectKeys, ...collection });
   if (trackerScriptPath !== undefined) {
     app.register(trackerScriptRoutes, { scriptPath: trackerScriptPath });
   }
@@ -88,6 +95,7 @@ export function buildApp({
       db,
       auth: dashboard.auth,
       trustedOrigins: dashboard.trustedOrigins,
+      projectKeys,
     });
     app.register(reportRoutes, {
       prefix: "/api",

@@ -21,9 +21,9 @@ interface CacheEntry {
  * cost a database query. Unknown keys are cached too ("negative caching"),
  * so repeating a made-up key costs one query per cache lifetime. A stream of
  * different made-up keys still costs a query each; the per-IP rate limit,
- * checked first, bounds it. Changes to
- * a project (new allowed hostname, removed project) take effect within the
- * cache lifetime.
+ * checked first, bounds it. Changes to a project's allowed hostnames take
+ * effect within the cache lifetime; a replaced key or a deleted project at
+ * once in this process, because the project routes call forget().
  */
 export class ProjectKeyCache {
   readonly #db: Kysely<Database>;
@@ -65,5 +65,10 @@ export class ProjectKeyCache {
       this.#entries.delete(oldest);
     }
     return project;
+  }
+
+  /** Drops a key, so its next request reads the database: after a key is replaced or its project deleted. */
+  forget(publicKey: string) {
+    this.#entries.delete(publicKey);
   }
 }

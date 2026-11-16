@@ -1,7 +1,7 @@
 import { describe, expect, test, vi } from "vite-plus/test";
 import { page } from "vite-plus/test/browser/context";
 
-import { installFakeApi, PROJECT } from "./fake-api.ts";
+import { installFakeApi, json, OTHER_PROJECT, PROJECT } from "./fake-api.ts";
 import { renderApp } from "./render.tsx";
 
 const SETTINGS = `/projects/${PROJECT.id}/settings`;
@@ -70,5 +70,80 @@ describe("a project's settings", () => {
     await expect
       .element(page.getByRole("button", { name: "Copy the snippet" }))
       .toHaveTextContent("Copy failed");
+  });
+});
+
+describe("the danger zone", () => {
+  test("replacing the key asks first, then shows the new snippet", async () => {
+    const api = installFakeApi();
+    renderApp(SETTINGS);
+    await expect.element(page.getByText("pk_test", { exact: true })).toBeVisible();
+
+    await page.getByRole("button", { name: "Replace public key" }).click();
+    await expect
+      .element(page.getByRole("dialog", { name: "Replace the public key?" }))
+      .toBeVisible();
+    await page.getByRole("button", { name: "Replace key" }).click();
+
+    await expect.element(page.getByRole("dialog")).not.toBeInTheDocument();
+    await expect.element(page.getByText("pk_replaced", { exact: true })).toBeVisible();
+    expect(api.requests).toContain(`/api/projects/${PROJECT.id}/public-key`);
+  });
+
+  test("Cancel replaces nothing", async () => {
+    const api = installFakeApi();
+    renderApp(SETTINGS);
+
+    await page.getByRole("button", { name: "Replace public key" }).click();
+    await page.getByRole("button", { name: "Cancel" }).click();
+
+    await expect.element(page.getByRole("dialog")).not.toBeInTheDocument();
+    expect(api.requests).not.toContain(`/api/projects/${PROJECT.id}/public-key`);
+    await expect.element(page.getByText("pk_test", { exact: true })).toBeVisible();
+  });
+
+  test("deleting asks for the project's name, then opens the project list without it", async () => {
+    const api = installFakeApi({ projects: [PROJECT, OTHER_PROJECT] });
+    window.localStorage.setItem("ottertrail.project", PROJECT.id);
+    const router = renderApp(SETTINGS);
+
+    await page.getByRole("button", { name: "Delete project" }).click();
+    const confirm = page.getByRole("button", { name: "Delete for good" });
+    await expect.element(confirm).toBeDisabled();
+    await page.getByLabelText("Type the project's name to confirm").fill("main site");
+    await expect.element(confirm).toBeDisabled();
+    await page.getByLabelText("Type the project's name to confirm").fill("Main site");
+    await confirm.click();
+
+    await expect.poll(() => router.state.location.pathname).toBe("/projects");
+    expect(api.bodies).toContainEqual({
+      method: "DELETE",
+      path: `/api/projects/${PROJECT.id}`,
+      body: { confirmName: "Main site" },
+    });
+    await expect.element(page.getByRole("link", { name: "Docs" })).toBeVisible();
+    await expect.element(page.getByRole("link", { name: "Main site" })).not.toBeInTheDocument();
+    // The home page no longer tries to open it.
+    expect(window.localStorage.getItem("ottertrail.project")).toBeNull();
+  });
+
+  test("a delete the API refuses says why and stays on the page", async () => {
+    installFakeApi({
+      deleteProject: () =>
+        json(
+          { error: "name_mismatch", message: "Type the project's name exactly to delete it." },
+          400,
+        ),
+    });
+    const router = renderApp(SETTINGS);
+
+    await page.getByRole("button", { name: "Delete project" }).click();
+    await page.getByLabelText("Type the project's name to confirm").fill("Main site");
+    await page.getByRole("button", { name: "Delete for good" }).click();
+
+    await expect
+      .element(page.getByRole("alert"))
+      .toHaveTextContent("Type the project's name exactly to delete it.");
+    expect(router.state.location.pathname).toBe(SETTINGS);
   });
 });

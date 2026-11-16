@@ -143,3 +143,47 @@ export async function updateProject(
   }
   return findProject(db, id);
 }
+
+/**
+ * Deletes a project and, with it, all its events (the database cascades
+ * the delete). Returns the project's public key, or null when no project
+ * has this ID.
+ */
+export async function deleteProject(
+  db: Kysely<Database>,
+  id: string,
+): Promise<{ publicKey: string } | null> {
+  const row = await db
+    .deleteFrom("projects")
+    .where("id", "=", id)
+    .returning("public_key")
+    .executeTakeFirst();
+  return row === undefined ? null : { publicKey: row.public_key };
+}
+
+/**
+ * Gives a project a new public key; pages with the old one can no longer
+ * send events. Returns the project and its old key, or null when no
+ * project has this ID.
+ */
+export async function replacePublicKey(
+  db: Kysely<Database>,
+  id: string,
+): Promise<{ project: Project; oldKey: string } | null> {
+  const old = await db
+    .selectFrom("projects")
+    .select("public_key")
+    .where("id", "=", id)
+    .executeTakeFirst();
+  if (old === undefined) {
+    return null;
+  }
+  const result = await db
+    .updateTable("projects")
+    // The same form as the column's default (migration 0002).
+    .set({ public_key: sql<string>`'pk_' || replace(gen_random_uuid()::text, '-', '')` })
+    .where("id", "=", id)
+    .executeTakeFirst();
+  const project = result.numUpdatedRows === 0n ? null : await findProject(db, id);
+  return project === null ? null : { project, oldKey: old.public_key };
+}

@@ -17,8 +17,17 @@ export interface FakeApi {
   ) => Analytics | Response | Promise<Analytics | Response>;
   /** Answers GET /api/projects/:id/analytics/list; by default, fakeList. */
   list: (query: URLSearchParams) => unknown;
+  /** Answers DELETE /api/projects/:id; by default, removes the project (204). */
+  deleteProject: (api: FakeApi, id: string) => Response;
   /** Every path the page asked for, with its query, in order. */
   requests: string[];
+  /** The bodies of requests that change something, such as a delete's confirmation. */
+  bodies: { method: string; path: string; body: unknown }[];
+}
+
+function removeProject(api: FakeApi, id: string): Response {
+  api.projects = api.projects.filter((project) => project.id !== id);
+  return new Response(null, { status: 204 });
 }
 
 /**
@@ -235,8 +244,18 @@ async function answer(api: FakeApi, url: URL, init: RequestInit | undefined): Pr
     );
     return result instanceof Response ? result : json(result);
   }
+  const keyFor = /^\/api\/projects\/([^/]+)\/public-key$/.exec(path);
+  const keyed = api.projects.find((item) => item.id === keyFor?.[1]);
+  if (keyed !== undefined && init?.method === "POST") {
+    const replaced = { ...keyed, publicKey: "pk_replaced" };
+    api.projects = api.projects.map((item) => (item.id === keyed.id ? replaced : item));
+    return json({ project: replaced });
+  }
   const project = /^\/api\/projects\/([^/]+)$/.exec(path);
   const found = api.projects.find((item) => item.id === project?.[1]);
+  if (found !== undefined && init?.method === "DELETE") {
+    return api.deleteProject(api, found.id);
+  }
   if (found !== undefined) {
     return json({ project: found });
   }
@@ -254,6 +273,9 @@ export async function fakeFetch(input: RequestInfo | URL, init?: RequestInit): P
     return json({ message: "No fake API in this test." }, 503);
   }
   active.requests.push(url.pathname + url.search);
+  if (init?.method !== undefined && init.method !== "GET" && typeof init.body === "string") {
+    active.bodies.push({ method: init.method, path: url.pathname, body: JSON.parse(init.body) });
+  }
   return answer(active, url, init);
 }
 
@@ -264,7 +286,9 @@ export function installFakeApi(overrides: Partial<FakeApi> = {}): FakeApi {
     projects: [PROJECT],
     analytics: () => analyticsFixture(),
     list: fakeList,
+    deleteProject: removeProject,
     requests: [],
+    bodies: [],
     ...overrides,
   };
   return active;
