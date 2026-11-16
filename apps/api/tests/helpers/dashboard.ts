@@ -14,7 +14,10 @@ export const OWNER = {
  * An app with the dashboard API on a fresh test database, its owner created
  * and signed in. Send `cookie` (and `origin` for changes) with requests.
  */
-export async function signedInDashboard({ timeZone = "UTC" } = {}) {
+export async function signedInDashboard({
+  timeZone = "UTC",
+  now,
+}: { timeZone?: string; now?: () => Date } = {}) {
   const testDb = await createTestDatabase();
   const auth = createAuth({
     db: testDb.db,
@@ -25,7 +28,13 @@ export async function signedInDashboard({ timeZone = "UTC" } = {}) {
   });
   const app = buildApp({
     db: testDb.db,
-    dashboard: { auth, publicUrl: PUBLIC_URL, trustedOrigins: [PUBLIC_URL], timeZone },
+    dashboard: {
+      auth,
+      publicUrl: PUBLIC_URL,
+      trustedOrigins: [PUBLIC_URL],
+      timeZone,
+      ...(now === undefined ? {} : { now }),
+    },
   });
   const link = await createSetupToken(testDb.db);
   await app.inject({

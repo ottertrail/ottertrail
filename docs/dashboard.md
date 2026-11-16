@@ -127,7 +127,10 @@ Code: `apps/api/src/reports/analytics.ts` and `apps/api/src/reports/routes.ts`.
 
 ```text
 GET /api/projects/:id/analytics?from=2026-11-01&to=2026-11-16[&limit=10]
+GET /api/projects/:id/analytics?period=7d[&limit=10]
 ```
+
+A `period` (`today`, `7d`, `30d`, `90d`, or `12m`) ends today, and the API works out "today" in the instance's timezone: the browser showing the dashboard may be in another one. `7d` is today and the six days before it; `12m` starts the day after the same date last year.
 
 One request returns every report of the analytics page, for whole days in the instance's `TIMEZONE`, `from` and `to` included: the summary, visitors per day, top pages, ten breakdowns (sources, campaigns, entry and exit pages, countries, regions, cities, devices, browsers, operating systems), and custom events. It needs a signed-in user. A range covers at most 366 days, and lists hold at most `limit` rows (default 10, at most 100).
 

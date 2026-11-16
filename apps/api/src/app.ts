@@ -29,6 +29,8 @@ export interface AppOptions extends Omit<FastifyServerOptions, "logger"> {
     trustedOrigins: readonly string[];
     /** The instance's timezone: reports count days in it. */
     timeZone: string;
+    /** The clock that decides "today" for report periods; tests fix it. */
+    now?: () => Date;
     setupLimit?: RateLimit;
   };
   /** The built tracker, served at /t.js. Not served when omitted. */
@@ -92,6 +94,7 @@ export function buildApp({
       db,
       auth: dashboard.auth,
       timeZone: dashboard.timeZone,
+      ...(dashboard.now === undefined ? {} : { now: dashboard.now }),
     });
   }
   return app;

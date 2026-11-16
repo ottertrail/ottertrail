@@ -72,7 +72,11 @@ describe("GET /api/projects/:id/analytics", () => {
   let projectId = "";
 
   beforeAll(async () => {
-    dashboard = await signedInDashboard({ timeZone: TIME_ZONE });
+    // 01:00 on 18 November in Singapore: still the 17th in UTC.
+    dashboard = await signedInDashboard({
+      timeZone: TIME_ZONE,
+      now: () => new Date("2026-11-17T17:00:00Z"),
+    });
     const project = await dashboard.db
       .insertInto("projects")
       .values({ name: "Analytics test", allowed_hostnames: ["example.com"] })
@@ -129,6 +133,17 @@ describe("GET /api/projects/:id/analytics", () => {
     expect(body.days.map((day: { visits: number }) => day.visits)).toEqual([3, 3]);
   });
 
+  test("works out a period's days from today in the instance's timezone", async () => {
+    const body = (await analytics("period=7d")).json();
+    expect(body).toMatchObject({ firstDay: "2026-11-12", lastDay: "2026-11-18" });
+    expect((await analytics("period=today")).json()).toMatchObject({
+      firstDay: "2026-11-18",
+      lastDay: "2026-11-18",
+    });
+    // The same date a year ago is left out: 365 days.
+    expect((await analytics("period=12m")).json()).toMatchObject({ firstDay: "2025-11-19" });
+  });
+
   test("respects the row limit", async () => {
     const body = (await analytics("from=2026-11-16&to=2026-11-17&limit=1")).json();
     expect(body.pages).toHaveLength(1);
@@ -141,6 +156,9 @@ describe("GET /api/projects/:id/analytics", () => {
     ["from=2025-01-01&to=2026-01-02", "over 366 days"],
     ["from=2026-11-16", "no to"],
     ["from=16-11-2026&to=17-11-2026", "wrong format"],
+    ["period=7d&from=2026-11-16&to=2026-11-17", "both a period and days"],
+    ["period=week", "an unknown period"],
+    ["", "nothing"],
   ])("refuses %s (%s)", async (query) => {
     expect((await analytics(query)).statusCode).toBe(400);
   });
