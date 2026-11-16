@@ -1,8 +1,9 @@
 import { useQuery } from "@tanstack/react-query";
-import { Link, useNavigate } from "@tanstack/react-router";
+import { useNavigate } from "@tanstack/react-router";
 import { ChartLineIcon, FolderXIcon, OctagonAlertIcon, SettingsIcon } from "lucide-react";
 import * as React from "react";
 
+import { ButtonLink } from "@/components/button-link";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardAction, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -436,26 +437,21 @@ function NoData({
       </EmptyHeader>
       {neverReceived && (
         <EmptyContent>
-          <Button
-            nativeButton={false}
-            variant="outline"
-            render={<Link to="/projects/$projectId" params={{ projectId }} />}
-          >
+          <ButtonLink variant="outline" to="/projects/$projectId" params={{ projectId }}>
             Install the snippet
-          </Button>
+          </ButtonLink>
         </EmptyContent>
       )}
       {!neverReceived && period !== "12m" && (
         <EmptyContent>
-          <Button
-            nativeButton={false}
+          <ButtonLink
             variant="outline"
-            render={
-              <Link to="/analytics/$projectId" params={{ projectId }} search={{ period: "12m" }} />
-            }
+            to="/analytics/$projectId"
+            params={{ projectId }}
+            search={{ period: "12m" }}
           >
             Show the last 12 months
-          </Button>
+          </ButtonLink>
         </EmptyContent>
       )}
     </Empty>
@@ -473,9 +469,9 @@ function NoSuchProject() {
         <EmptyDescription>It may have been removed, or the link is wrong.</EmptyDescription>
       </EmptyHeader>
       <EmptyContent>
-        <Button nativeButton={false} variant="outline" render={<Link to="/projects" />}>
+        <ButtonLink variant="outline" to="/projects">
           All projects
-        </Button>
+        </ButtonLink>
       </EmptyContent>
     </Empty>
   );
@@ -569,16 +565,16 @@ export function AnalyticsPage({ projectId, period }: { projectId: string; period
             {formatDayRange(data.firstDay, data.lastDay)} · {data.timeZone}
           </p>
         )}
-        <Button
-          nativeButton={false}
+        <ButtonLink
           variant="ghost"
           size="sm"
           className="ml-auto"
-          render={<Link to="/projects/$projectId" params={{ projectId }} />}
+          to="/projects/$projectId"
+          params={{ projectId }}
         >
           <SettingsIcon aria-hidden="true" />
           Install and settings
-        </Button>
+        </ButtonLink>
       </div>
 
       {analytics.isError && (

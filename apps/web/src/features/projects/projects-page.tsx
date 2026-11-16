@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { ChartLineIcon, FolderIcon, OctagonAlertIcon } from "lucide-react";
 
+import { ButtonLink } from "@/components/button-link";
 import { StatusBadge } from "@/components/status-badge";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -122,16 +123,16 @@ export function ProjectsPage() {
                   <LastEvent project={project} />
                 </TableCell>
                 <TableCell className="text-right">
-                  <Button
-                    nativeButton={false}
+                  <ButtonLink
                     variant="ghost"
                     size="sm"
-                    render={<Link to="/analytics/$projectId" params={{ projectId: project.id }} />}
                     aria-label={`Web analytics for ${project.name}`}
+                    to="/analytics/$projectId"
+                    params={{ projectId: project.id }}
                   >
                     <ChartLineIcon aria-hidden="true" />
                     Analytics
-                  </Button>
+                  </ButtonLink>
                 </TableCell>
               </TableRow>
             ))}

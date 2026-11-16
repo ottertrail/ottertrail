@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import * as React from "react";
 
+import { ButtonLink } from "@/components/button-link";
 import { StatusBadge } from "@/components/status-badge";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -227,9 +228,9 @@ export function ProjectPage({ projectId }: { projectId: string }) {
             <EmptyDescription>It may have been removed, or the link is wrong.</EmptyDescription>
           </EmptyHeader>
           <EmptyContent>
-            <Button nativeButton={false} variant="outline" render={<Link to="/projects" />}>
+            <ButtonLink variant="outline" to="/projects">
               All projects
-            </Button>
+            </ButtonLink>
           </EmptyContent>
         </Empty>
       );
@@ -259,15 +260,10 @@ export function ProjectPage({ projectId }: { projectId: string }) {
           </Link>
           <h2 className="mt-1 text-lg font-semibold text-ink">{project.data.name}</h2>
         </div>
-        <Button
-          nativeButton={false}
-          variant="outline"
-          size="sm"
-          render={<Link to="/analytics/$projectId" params={{ projectId }} />}
-        >
+        <ButtonLink variant="outline" size="sm" to="/analytics/$projectId" params={{ projectId }}>
           <ChartLineIcon aria-hidden="true" />
           Web analytics
-        </Button>
+        </ButtonLink>
       </div>
       <InstallCard project={project.data} />
       <SettingsCard project={project.data} />
