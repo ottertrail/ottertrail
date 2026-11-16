@@ -7,9 +7,9 @@ Analytics, error tracking, and email engagement for developers and small teams. 
 This repository is a foundation, not a working product yet. It contains:
 
 - `apps/web`: React dashboard (Vite, Tailwind CSS v4, shadcn/ui on Base UI) with the Ottertrail design system and its reference page. Analytics, users, errors, and email are listed in the sidebar as **Planned**; none of them exist yet.
-- `apps/api`: Fastify API with one route, `GET /api/health`, a liveness check. There is no database, authentication, ingestion, or job queue yet.
+- `apps/api`: Fastify API with one route, `GET /api/health`, a liveness check. It has a PostgreSQL schema for projects and events, and code that stores events without duplicates, but no ingestion endpoint yet. There is no authentication or job queue yet.
 
-The design system is documented in [docs/design-system.md](docs/design-system.md).
+The design system is documented in [docs/design-system.md](docs/design-system.md). How web analytics works, and the decisions behind it, are in [docs/web-analytics.md](docs/web-analytics.md).
 
 ## Toolchain
 
@@ -22,6 +22,8 @@ The design system is documented in [docs/design-system.md](docs/design-system.md
 | React                                       | 19.3    |                                                                                                                                                     |
 | Fastify                                     | 5.12    |                                                                                                                                                     |
 | Tailwind CSS                                | 4.3     |                                                                                                                                                     |
+| PostgreSQL                                  | 18.7    | Local development database in `compose.yaml`                                                                                                        |
+| Kysely                                      | 0.29    | Typed SQL query builder and migrations                                                                                                              |
 
 Lint and format configuration lives only in the root `vite.config.ts` (`lint` and `fmt` blocks), with per-package `overrides`. Do not add `.oxlintrc.json`, `.oxfmtrc.json`, ESLint, or Prettier configs. Oxfmt also sorts imports and Tailwind classes (including inside `cn()` and `cva()`).
 
@@ -35,6 +37,15 @@ vp install
 
 `vp install` also installs the git hooks (through the `prepare` script, which runs `vp config --no-agent`). Install [gitleaks](https://github.com/gitleaks/gitleaks) too (`brew install gitleaks`), so commits are scanned for secrets. See [Commits](#commits).
 
+Start the local database and create its tables:
+
+```sh
+podman compose up -d   # or: docker compose up -d
+vp run migrate
+```
+
+The database listens on `127.0.0.1:5433` (not the usual 5432, to avoid clashing with other local PostgreSQL servers) and has no password. It is for local development only. Its data lives in the `ottertrail_postgres-data` volume; `podman compose down -v` deletes it.
+
 ## Commands
 
 Run from the repository root.
@@ -42,9 +53,10 @@ Run from the repository root.
 | Command           | What it does                                                                                                                                             |
 | ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `vp run dev`      | Starts the API (port 3000, restarts on change) and the dashboard dev server (port 5173, or the next free port). The dashboard proxies `/api` to the API. |
+| `vp run migrate`  | Applies database migrations that have not run yet. Safe to repeat.                                                                                       |
 | `vp check`        | Formats, lints, and type-checks the whole workspace. `vp check --fix` applies fixes.                                                                     |
-| `vp run -r test`  | Runs the tests in every package.                                                                                                                         |
-| `vp run -r build` | Builds the dashboard (`apps/web/dist`) and bundles the API (`apps/api/dist/server.mjs`).                                                                 |
+| `vp run -r test`  | Runs the tests in every package. The API tests need the local database running; each test file uses its own temporary schema.                            |
+| `vp run -r build` | Builds the dashboard (`apps/web/dist`) and bundles the API (`apps/api/dist/server.mjs` and `apps/api/dist/migrate.mjs`).                                 |
 | `vp run ready`    | `vp check`, then all tests, then all builds. Run before committing.                                                                                      |
 
 Inside one package: `vp -C apps/api run dev`, `vp -C apps/web test`, and so on.
@@ -94,13 +106,16 @@ Two git hooks in `.vite-hooks/` run on every commit:
 
 API (`apps/api`), read from the environment:
 
-| Variable    | Default     | Meaning                                                          |
-| ----------- | ----------- | ---------------------------------------------------------------- |
-| `HOST`      | `127.0.0.1` | Interface to listen on. Use `0.0.0.0` inside a container.        |
-| `PORT`      | `3000`      | Port, 1 to 65535.                                                |
-| `LOG_LEVEL` | `info`      | `fatal`, `error`, `warn`, `info`, `debug`, `trace`, or `silent`. |
+| Variable       | Default                                | Meaning                                                                                                                        |
+| -------------- | -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `HOST`         | `127.0.0.1`                            | Interface to listen on. Use `0.0.0.0` inside a container.                                                                      |
+| `PORT`         | `3000`                                 | Port, 1 to 65535.                                                                                                              |
+| `LOG_LEVEL`    | `info`                                 | `fatal`, `error`, `warn`, `info`, `debug`, `trace`, or `silent`.                                                               |
+| `DATABASE_URL` | The local database from `compose.yaml` | PostgreSQL connection URL. Required when `NODE_ENV=production`, so a deployed instance never falls back to the local database. |
 
-Invalid values stop the server at startup with a message naming the variable.
+Invalid values stop the server at startup with a message naming the variable. Error messages never repeat `DATABASE_URL`, because it can contain a password.
+
+In production, run `node dist/migrate.mjs` (`vp run start:migrate` in `apps/api`) once as a deployment step before starting the API. The API does not migrate on startup, so several API processes never race to change the schema.
 
 Dashboard dev server (`apps/web`):
 
@@ -108,7 +123,7 @@ Dashboard dev server (`apps/web`):
 | ----------------------- | ----------------------- | ------------------------------------ |
 | `OTTERTRAIL_API_ORIGIN` | `http://127.0.0.1:3000` | Where the dev server proxies `/api`. |
 
-Production serving of the dashboard (from the API or a separate static server), Docker images, and Compose files are not set up yet.
+Production serving of the dashboard (from the API or a separate static server), Docker images, and production Compose files are not set up yet. `compose.yaml` is for local development only.
 
 ## Adding UI components
 

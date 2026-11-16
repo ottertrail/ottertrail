@@ -1,0 +1,27 @@
+# Local development services only. This is not a deployment template:
+# production instances will get their own Compose stack.
+name: ottertrail
+
+services:
+  postgres:
+    image: docker.io/library/postgres:18.7-alpine3.24
+    environment:
+      POSTGRES_USER: ottertrail
+      POSTGRES_DB: ottertrail
+      # Local development only: no password. The port below listens on
+      # 127.0.0.1, so nothing outside this computer can connect.
+      POSTGRES_HOST_AUTH_METHOD: trust
+    ports:
+      # 5433 on this computer, so it does not clash with other local Postgres servers.
+      - "127.0.0.1:5433:5432"
+    volumes:
+      # PostgreSQL 18+ images keep their data under /var/lib/postgresql/<major>.
+      - postgres-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ottertrail -d ottertrail"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+
+volumes:
+  postgres-data:

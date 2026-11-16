@@ -2,10 +2,14 @@ const LOG_LEVELS = ["fatal", "error", "warn", "info", "debug", "trace", "silent"
 
 export type LogLevel = (typeof LOG_LEVELS)[number];
 
+/** The local development database from compose.yaml (no password, 127.0.0.1 only). */
+export const LOCAL_DATABASE_URL = "postgres://ottertrail@127.0.0.1:5433/ottertrail";
+
 export interface Config {
   host: string;
   port: number;
   logLevel: LogLevel;
+  databaseUrl: string;
 }
 
 export class ConfigError extends Error {
@@ -28,6 +32,27 @@ function parseLogLevel(raw: string): LogLevel {
   return level;
 }
 
+function parseDatabaseUrl(env: NodeJS.ProcessEnv): string {
+  const raw = env.DATABASE_URL;
+  if (raw === undefined || raw === "") {
+    if (env.NODE_ENV === "production") {
+      throw new ConfigError("DATABASE_URL is required in production");
+    }
+    return LOCAL_DATABASE_URL;
+  }
+  // Error messages never repeat the value: it may contain a password.
+  let protocol: string;
+  try {
+    protocol = new URL(raw).protocol;
+  } catch {
+    throw new ConfigError("DATABASE_URL is not a valid URL");
+  }
+  if (protocol !== "postgres:" && protocol !== "postgresql:") {
+    throw new ConfigError("DATABASE_URL must start with postgres:// or postgresql://");
+  }
+  return raw;
+}
+
 /**
  * Reads instance configuration from environment variables.
  * Every instance is configured independently; there are no shared defaults
@@ -38,5 +63,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     host: env.HOST ?? "127.0.0.1",
     port: parsePort(env.PORT ?? "3000"),
     logLevel: parseLogLevel(env.LOG_LEVEL ?? "info"),
+    databaseUrl: parseDatabaseUrl(env),
   };
 }

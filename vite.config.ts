@@ -71,7 +71,10 @@ export default defineConfig({
     ],
   },
   run: {
-    cache: true,
+    // Never replay package.json scripts from cache: `migrate` changes the
+    // database, and tests depend on it, so a cached result could report work
+    // that never ran.
+    cache: { scripts: false, tasks: true },
   },
   // Runs from .vite-hooks/pre-commit on the files being committed.
   staged: {

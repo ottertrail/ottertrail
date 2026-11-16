@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vp run -r --parallel dev",
+    "migrate": "vp run -r migrate",
     "ready": "vp check && vp run -r test && vp run -r build",
     "prepare": "vp config --no-agent"
   },
