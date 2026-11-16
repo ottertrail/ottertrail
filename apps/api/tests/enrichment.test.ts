@@ -58,6 +58,32 @@ describe("parseUserAgent", () => {
     ).not.toContain("osVersion");
   });
 
+  test("a Mac with a touchscreen is an iPad, which says it is a Mac", () => {
+    const safariOnIpad =
+      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.6 Safari/605.1.15";
+    expect(parseUserAgent(safariOnIpad, { touch: true })).toEqual({
+      browser: "Safari",
+      browserVersion: "18",
+      os: "iOS",
+      deviceType: "tablet",
+    });
+    // Without touch, the same User-Agent is a Mac.
+    expect(parseUserAgent(safariOnIpad)).toMatchObject({ os: "macOS", deviceType: "desktop" });
+    // Touch on anything else changes nothing: Windows laptops have touchscreens.
+    const edgeOnWindows =
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36 Edg/142.0.0.0";
+    expect(parseUserAgent(edgeOnWindows, { touch: true })).toMatchObject({
+      os: "Windows",
+      deviceType: "desktop",
+    });
+    const iphone =
+      "Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.5 Mobile/15E148 Safari/604.1";
+    expect(parseUserAgent(iphone, { touch: true })).toMatchObject({
+      os: "iOS",
+      deviceType: "mobile",
+    });
+  });
+
   test("returns nothing it cannot recognize", () => {
     expect(parseUserAgent("")).toEqual({});
     expect(parseUserAgent("something/1.0")).toEqual({});

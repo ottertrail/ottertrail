@@ -36,6 +36,12 @@ export interface TrackerOptions {
   key: string;
   transport: Transport;
   randomId: () => string;
+  /**
+   * The device has a touchscreen. Sent with each batch only when true: an
+   * iPad presents itself as a Mac, and Macs have no touchscreen, so this
+   * tells the API which "Macs" are iPads.
+   */
+  touch?: boolean;
 }
 
 export interface Tracker {
@@ -55,7 +61,12 @@ export function backoffMs(failures: number): number {
   return Math.round(base * (0.8 + Math.random() * 0.4));
 }
 
-export function createTracker({ key, transport, randomId }: TrackerOptions): Tracker {
+export function createTracker({
+  key,
+  transport,
+  randomId,
+  touch = false,
+}: TrackerOptions): Tracker {
   let queue: QueuedEvent[] = [];
   let timer: ReturnType<typeof setTimeout> | undefined;
   let sending = false;
@@ -106,7 +117,7 @@ export function createTracker({ key, transport, randomId }: TrackerOptions): Tra
 
   /** sentAt is read at each attempt, so the API's clock correction stays right on retries. */
   function requestBody(events: QueuedEvent[]): string {
-    return JSON.stringify({ v: 1, key, sentAt: Date.now(), events });
+    return JSON.stringify({ v: 1, key, sentAt: Date.now(), ...(touch ? { touch } : {}), events });
   }
 
   function remove(events: QueuedEvent[]) {

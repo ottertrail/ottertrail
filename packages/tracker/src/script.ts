@@ -54,6 +54,8 @@ function landing(): Page {
       key,
       transport: browserTransport(new URL("/api/events", host).href),
       randomId,
+      // Only "more than one": some laptops report a single touch point.
+      touch: typeof navigator.maxTouchPoints === "number" && navigator.maxTouchPoints > 1,
     });
 
     let current: Page | undefined;

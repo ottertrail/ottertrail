@@ -71,6 +71,8 @@ interface EventBatch {
   key: string;
   /** When the batch was sent, in milliseconds since 1970, by the sender's clock. */
   sentAt: number;
+  /** The device has a touchscreen; only ever true when sent. */
+  touch?: boolean;
   events: IncomingEvent[];
 }
 
@@ -89,6 +91,8 @@ const eventBatchSchema = {
     v: { const: 1 },
     key: { type: "string", pattern: PUBLIC_KEY_PATTERN },
     sentAt: { type: "integer", minimum: 0, maximum: MAX_TIMESTAMP },
+    // The device has a touchscreen: tells an iPad (which says it is a Mac) from a Mac.
+    touch: { type: "boolean" },
     events: {
       type: "array",
       minItems: 1,
@@ -304,7 +308,7 @@ export const collectionRoutes: FastifyPluginCallback<CollectionOptions> = (app, 
       // Every event in a request comes from the same browser and address. The
       // IP address is used for the location lookup here and then dropped:
       // it is never stored or logged.
-      const client = parseUserAgent(userAgent ?? "");
+      const client = parseUserAgent(userAgent ?? "", { touch: request.body.touch === true });
       const location = locate(request);
 
       const accepted: NewEvent[] = [];

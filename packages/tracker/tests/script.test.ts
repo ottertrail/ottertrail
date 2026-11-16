@@ -10,7 +10,7 @@ interface SentBatch {
 type Listener = (event: { persisted?: boolean }) => void;
 
 /** Just enough of a browser page to run src/script.ts as a <script> tag would. */
-function fakePage(href: string, referrer = "") {
+function fakePage(href: string, referrer = "", { maxTouchPoints = 0 } = {}) {
   const listeners: Record<string, Listener[]> = {};
   const on = (type: string, listener: Listener) => {
     (listeners[type] ??= []).push(listener);
@@ -36,12 +36,19 @@ function fakePage(href: string, referrer = "") {
   };
   /** Everything the tracker handed over, by beacon or fetch. */
   const events: QueuedEvent[] = [];
-  const record = (body: string) => events.push(...(JSON.parse(body) as SentBatch).events);
+  /** Every batch as sent, envelope included. */
+  const batches: (SentBatch & { touch?: boolean })[] = [];
+  const record = (body: string) => {
+    const batch = JSON.parse(body) as SentBatch & { touch?: boolean };
+    batches.push(batch);
+    events.push(...batch.events);
+  };
 
   vi.stubGlobal("document", document);
   vi.stubGlobal("location", location);
   vi.stubGlobal("window", window);
   vi.stubGlobal("navigator", {
+    maxTouchPoints,
     sendBeacon: (_url: string, blob: Blob) => {
       void blob.text().then(record);
       return true;
@@ -59,6 +66,7 @@ function fakePage(href: string, referrer = "") {
     window,
     document,
     events,
+    batches,
     /** The visitor hides the tab or locks the phone. */
     hide: () => {
       document.visibilityState = "hidden";
@@ -189,5 +197,23 @@ describe("limits the API enforces", () => {
 
     expect(page.events).toHaveLength(1);
     expect(page.events[0]).not.toHaveProperty("referrer");
+  });
+});
+
+describe("the touch hint", () => {
+  test.each([
+    [5, true],
+    [1, undefined],
+    [0, undefined],
+  ])("a device with %i touch points sends touch: %s", async (maxTouchPoints, touch) => {
+    const page = fakePage("https://example.com/", "", { maxTouchPoints });
+    await runScript();
+    page.hide();
+    await page.settle();
+
+    expect(page.batches.length).toBeGreaterThan(0);
+    for (const batch of page.batches) {
+      expect(batch.touch).toBe(touch);
+    }
   });
 });

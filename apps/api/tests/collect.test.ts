@@ -429,6 +429,23 @@ describe("POST /api/events", () => {
       });
     });
 
+    test("records an iPad, which says it is a Mac, from the tracker's touch hint", async () => {
+      const project = await createProject();
+      const safariOnIpad =
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.6 Safari/605.1.15";
+      await send(batch(project.public_key, [pageview()], { touch: true }), {
+        headers: { "user-agent": safariOnIpad },
+      });
+      await send(batch(project.public_key), { headers: { "user-agent": safariOnIpad } });
+      const events = await storedEvents(project.id);
+      expect(events.map((event) => [event.os, event.device_type])).toEqual(
+        expect.arrayContaining([
+          ["iOS", "tablet"],
+          ["macOS", "desktop"],
+        ]),
+      );
+    });
+
     test.each([
       [
         "a search engine crawler",

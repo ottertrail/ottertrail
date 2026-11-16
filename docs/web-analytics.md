@@ -108,6 +108,7 @@ Almost every report asks "this project, between these two times", so the table h
 - `v` is the version of this format, so it can change later without breaking old trackers.
 - `key` is the project's public key (the zeros above are a placeholder; find a project's key in the `projects` table).
 - Times are milliseconds since 1970 by the sender's clock.
+- `touch` (optional, only ever `true`) says the device has a touchscreen; the tracker sends it when `navigator.maxTouchPoints` is over 1. It tells an iPad from a Mac (see [Enrichment](#4-enrichment)).
 - Send it as `text/plain` from browsers (see [Cross-site requests](#cross-site-requests)); `application/json` also works.
 - Unknown fields are removed, not rejected, so a server accepts batches from a newer tracker.
 
@@ -319,7 +320,7 @@ Under GDPR an IP address is personal data. Not keeping it also means locations c
 
 [bowser](https://github.com/bowser-js/bowser) (MIT) parses the User-Agent. (`ua-parser-js` was not used: from version 2 it is licensed AGPL, which would bind Ottertrail's own license choice.)
 
-Browsers now freeze parts of the User-Agent so people are harder to fingerprint ("User-Agent reduction"). Every Mac reports macOS 10.15.7 and Windows 11 reports Windows NT 10.0, so OS versions would be wrong: only the OS name and the browser's major version are kept. iPads present themselves as Macs, so they count as desktop.
+Browsers now freeze parts of the User-Agent so people are harder to fingerprint ("User-Agent reduction"). Every Mac reports macOS 10.15.7 and Windows 11 reports Windows NT 10.0, so OS versions would be wrong: only the OS name and the browser's major version are kept. iPads present themselves as Macs by default, so the User-Agent alone counts them as desktop Macs. Macs have no touchscreen, though, so when the tracker reports one (`touch` in the batch: `navigator.maxTouchPoints` over 1), a "Mac" is recorded as iOS on a tablet. The hint is one yes-or-no value, sent only when true, so it adds almost nothing to tell visitors apart. Touch on anything else changes nothing: many Windows laptops have touchscreens.
 
 ### Location
 

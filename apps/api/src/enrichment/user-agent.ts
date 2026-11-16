@@ -44,9 +44,14 @@ export function isBot(userAgent: string | undefined): boolean {
  * fingerprint ("User-Agent reduction"): every Mac reports macOS 10.15.7
  * and Windows 11 reports Windows NT 10.0. OS versions would be wrong, so
  * only the OS name is kept, and only the browser's major version.
- * iPads present themselves as Macs, so they count as desktop.
+ *
+ * iPads present themselves as Macs by default. Macs have no touchscreen,
+ * so a "Mac" whose tracker reports touch (`touch`) is an iPad: iOS, tablet.
  */
-export function parseUserAgent(userAgent: string): Client {
+export function parseUserAgent(
+  userAgent: string,
+  { touch = false }: { touch?: boolean } = {},
+): Client {
   let parsed: ReturnType<typeof parse>;
   try {
     parsed = parse(userAgent); // Throws on an empty string.
@@ -65,6 +70,11 @@ export function parseUserAgent(userAgent: string): Client {
   if (os) client.os = os.slice(0, 50);
 
   if (isDeviceType(parsed.platform.type)) client.deviceType = parsed.platform.type;
+
+  if (touch && client.os === "macOS") {
+    client.os = "iOS";
+    client.deviceType = "tablet";
+  }
 
   return client;
 }
