@@ -39,6 +39,13 @@ describe("parsePageUrl", () => {
     expect(page?.utm).toEqual({ source: "news", campaign: "x".repeat(200) });
   });
 
+  test("shortens a campaign tag without cutting an emoji in half", () => {
+    const page = parsePageUrl(
+      `https://example.com/?utm_campaign=${"x".repeat(199)}${encodeURIComponent("🚀")}`,
+    );
+    expect(page?.utm.campaign).toBe("x".repeat(199));
+  });
+
   test("keeps percent-encoding in the path as sent", () => {
     expect(parsePageUrl("https://example.com/caf%C3%A9")?.path).toBe("/caf%C3%A9");
   });

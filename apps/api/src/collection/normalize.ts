@@ -29,6 +29,21 @@ const UTM_PARAMS = [
 ] as const;
 
 /**
+ * Whether PostgreSQL can store a string: text and jsonb cannot hold the NUL
+ * character, and jsonb rejects an unpaired UTF-16 surrogate (half of an
+ * emoji, for example), which only broken or hostile senders produce.
+ */
+export function isStorableText(text: string): boolean {
+  return !text.includes("\u0000") && text.isWellFormed();
+}
+
+/** The first `max` characters, without cutting an emoji or other character in half. */
+function truncate(text: string, max: number): string {
+  const cut = text.slice(0, max);
+  return cut.isWellFormed() ? cut : cut.slice(0, -1);
+}
+
+/**
  * Parses the page URL an event happened on.
  *
  * Keeps the hostname, the path, and the five UTM campaign tags. Drops the
@@ -48,8 +63,10 @@ export function parsePageUrl(raw: string): PageUrl | null {
   const utm: Utm = {};
   for (const [field, param] of UTM_PARAMS) {
     const value = url.searchParams.get(param)?.trim();
-    if (value) {
-      utm[field] = value.slice(0, MAX_UTM_LENGTH);
+    // A tag that decodes to text PostgreSQL cannot store (`%00`) is dropped,
+    // like a broken referrer: it is not a reason to lose the event.
+    if (value && isStorableText(value)) {
+      utm[field] = truncate(value, MAX_UTM_LENGTH);
     }
   }
   return { hostname: url.hostname, path: url.pathname, utm };

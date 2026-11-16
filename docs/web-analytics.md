@@ -71,7 +71,7 @@ Fields every event has get their own typed columns, because reports filter and g
 
 ### Limits in the database
 
-Check constraints cap text lengths (event name 200 characters, path and referrer 2,048, each UTM value 200) and the properties size. Step 2 validates requests before they reach the database; these constraints are the last line of defense.
+Check constraints cap text lengths (event name 200 characters, path and referrer 2,048, each UTM value 200) and the properties size. Step 2 validates requests before they reach the database; these constraints are the last line of defense. The properties check is looser than the API's 8 KB (32 KB): PostgreSQL measures its own text form of the JSON, which adds spaces and writes a number such as `5e-324` out in full, so the largest properties the API accepts take 14,651 bytes there. Migration 0007 loosened it after properties just under 8 KB failed the insert.
 
 ### Indexes follow the questions
 
@@ -159,18 +159,18 @@ The tracker runs on the customer's site (`example.com`) but sends to the Ottertr
 
 ### Rules for a batch
 
-| Rule             | Limit                                                                                                                                              |
-| ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Body             | 64 KB, uncompressed (`Content-Encoding` is not supported)                                                                                          |
-| Events per batch | 1 to 50                                                                                                                                            |
-| Event ID         | A UUID                                                                                                                                             |
-| Event name       | 1 to 200 characters, no control characters                                                                                                         |
-| Page URL         | Valid `http` or `https` URL, at most 8,192 characters, path at most 2,048                                                                          |
-| Properties       | Flat object: at most 30 keys of up to 100 characters; values are strings (up to 500 characters), numbers, booleans, or null; at most 8 KB in total |
+| Rule             | Limit                                                                                                                                                                                                                                                            |
+| ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Body             | 64 KB, uncompressed (`Content-Encoding` is not supported)                                                                                                                                                                                                        |
+| Events per batch | 1 to 50                                                                                                                                                                                                                                                          |
+| Event ID         | A UUID                                                                                                                                                                                                                                                           |
+| Event name       | 1 to 200 characters, no control characters or unpaired surrogates                                                                                                                                                                                                |
+| Page URL         | Valid `http` or `https` URL, at most 8,192 characters, path at most 2,048                                                                                                                                                                                        |
+| Properties       | Flat object: at most 30 keys of up to 100 characters; values are strings (up to 500 characters), numbers, booleans, or null; at most 8 KB in total. Keys and string values must not contain NUL characters or unpaired surrogates, which PostgreSQL cannot store |
 
 ### URL cleanup
 
-Query strings can hold secrets (`/reset?token=…`, session IDs). The endpoint keeps only the path and the five UTM tags (`utm_source`, `utm_medium`, `utm_campaign`, `utm_term`, `utm_content`) and drops the rest of the query string and the fragment. UTM values are trimmed and cut to 200 characters.
+Query strings can hold secrets (`/reset?token=…`, session IDs). The endpoint keeps only the path and the five UTM tags (`utm_source`, `utm_medium`, `utm_campaign`, `utm_term`, `utm_content`) and drops the rest of the query string and the fragment. UTM values are trimmed and cut to 200 characters, without splitting a character such as an emoji in half. A tag that decodes to a NUL character (`%00`) is dropped, like a bad referrer.
 
 Referrers lose their query string and fragment too: `https://news.ycombinator.com/item?id=1` is stored as `https://news.ycombinator.com/item`. App referrers keep their scheme and host (`android-app://com.google.android.gm`). A referrer that cannot be parsed is dropped, not rejected: a bad referrer is not a reason to lose the event.
 

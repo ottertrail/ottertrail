@@ -13,6 +13,7 @@ import {
   cleanReferrer,
   correctClock,
   isAllowedHostname,
+  isStorableText,
   originHostname,
   parsePageUrl,
 } from "./normalize.ts";
@@ -21,6 +22,11 @@ import { type RateLimit, TokenBucketLimiter } from "./rate-limiter.ts";
 
 export const MAX_EVENTS_PER_BATCH = 50;
 export const MAX_BODY_BYTES = 64 * 1024;
+/**
+ * Size of an event's properties, measured as the JSON the sender sent. The
+ * database keeps a looser limit as a safety net: PostgreSQL's own text form
+ * of the same JSON is larger (it adds spaces and writes 1e21 out in full).
+ */
 export const MAX_PROPERTIES_BYTES = 8 * 1024;
 /** Longest time on one page an engagement event may report. */
 export const MAX_ENGAGED_MS = 24 * 60 * 60 * 1000;
@@ -305,6 +311,32 @@ export const collectionRoutes: FastifyPluginCallback<CollectionOptions> = (app, 
               problem(
                 "hostname_not_allowed",
                 `events[${index}].url is not on an allowed hostname.`,
+              ),
+            );
+        }
+        if (!isStorableText(event.name)) {
+          return reply
+            .code(400)
+            .send(
+              problem(
+                "invalid_request",
+                `events[${index}].name contains an unpaired surrogate, which cannot be stored.`,
+              ),
+            );
+        }
+        if (
+          event.properties !== undefined &&
+          Object.entries(event.properties).some(
+            ([name, value]) =>
+              !isStorableText(name) || (typeof value === "string" && !isStorableText(value)),
+          )
+        ) {
+          return reply
+            .code(400)
+            .send(
+              problem(
+                "invalid_request",
+                `events[${index}].properties contains a NUL character or an unpaired surrogate, which cannot be stored.`,
               ),
             );
         }

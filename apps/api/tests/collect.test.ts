@@ -282,6 +282,43 @@ describe("POST /api/events", () => {
       expect(await storedEvents(project.id)).toHaveLength(0);
     });
 
+    test("stores properties just under 8 KB, though PostgreSQL's text form of them is larger", async () => {
+      const project = await createProject();
+      // 8,181 bytes as sent; PostgreSQL adds a space after each colon and comma.
+      const properties = Object.fromEntries(
+        Array.from({ length: 30 }, (_, i) => [`key${i}`, "x".repeat(262)]),
+      );
+      expect(Buffer.byteLength(JSON.stringify(properties))).toBe(8181);
+      const response = await send(batch(project.public_key, [pageview({ properties })]));
+      expect(response.statusCode).toBe(202);
+      expect(await storedEvents(project.id)).toHaveLength(1);
+    });
+
+    test.each([
+      ["a NUL character in a property value", pageview({ properties: { x: "a\u0000b" } })],
+      ["a NUL character in a property name", pageview({ properties: { "a\u0000b": 1 } })],
+      ["an unpaired surrogate in a property value", pageview({ properties: { x: "\ud800" } })],
+      ["an unpaired surrogate in the name", pageview({ name: "sign\ud800up" })],
+    ])("rejects text PostgreSQL cannot store: %s", async (_label, event) => {
+      const project = await createProject();
+      const response = await send(batch(project.public_key, [pageview(), event]));
+      expect(response.statusCode).toBe(400);
+      expect(response.json()).toMatchObject({ error: "invalid_request" });
+      expect(await storedEvents(project.id)).toHaveLength(0);
+    });
+
+    test("drops a campaign tag that decodes to a NUL character, and keeps the event", async () => {
+      const project = await createProject();
+      const response = await send(
+        batch(project.public_key, [
+          pageview({ url: `https://${SITE}/?utm_source=%00&utm_campaign=launch` }),
+        ]),
+      );
+      expect(response.statusCode).toBe(202);
+      const [stored] = await storedEvents(project.id);
+      expect(stored).toMatchObject({ utm_source: null, utm_campaign: "launch" });
+    });
+
     test("rejects a body larger than 64 KB", async () => {
       const response = await send(
         batch(key, [pageview({ url: `https://${SITE}/${"a".repeat(70_000)}` })]),
