@@ -7,6 +7,15 @@ import { createDatabase } from "../../src/db/database.ts";
 import { migrateToLatest } from "../../src/db/migrate.ts";
 import type { Database } from "../../src/db/schema.ts";
 
+/**
+ * Test files run in parallel, each in its own schema. Kysely's migrator
+ * checks for its bookkeeping table by listing every table in every schema,
+ * and that listing fails ("schema … does not exist") if another file drops
+ * its schema in the middle of it. Migrating holds this PostgreSQL advisory
+ * lock shared and dropping holds it exclusively, so drops wait for listings.
+ */
+const SCHEMA_LOCK = 4_281_708_001;
+
 export interface TestDatabase {
   db: Kysely<Database>;
   destroy(): Promise<void>;
@@ -30,13 +39,13 @@ export async function createTestDatabase(): Promise<TestDatabase> {
   const db = createDatabase({ connectionString, maxConnections: 4, schema });
   async function destroy() {
     await db.destroy();
-    await withAdmin(connectionString, async (admin) => {
-      await sql`drop schema ${sql.id(schema)} cascade`.execute(admin);
-    });
+    await withSchemaLock(connectionString, "exclusive", (connection) =>
+      sql`drop schema ${sql.id(schema)} cascade`.execute(connection),
+    );
   }
 
   try {
-    await migrateToLatest(db, { schema });
+    await withSchemaLock(connectionString, "shared", () => migrateToLatest(db, { schema }));
   } catch (error) {
     await destroy();
     throw error;
@@ -58,5 +67,34 @@ async function withAdmin(
     );
   } finally {
     await admin.destroy();
+  }
+}
+
+/** Runs work while holding SCHEMA_LOCK, on a connection of its own. */
+async function withSchemaLock(
+  connectionString: string,
+  mode: "shared" | "exclusive",
+  work: (connection: Kysely<Database>) => Promise<unknown>,
+): Promise<void> {
+  const locker = createDatabase({ connectionString, maxConnections: 1 });
+  try {
+    await locker.connection().execute(async (connection) => {
+      await (
+        mode === "shared"
+          ? sql`select pg_advisory_lock_shared(${SCHEMA_LOCK})`
+          : sql`select pg_advisory_lock(${SCHEMA_LOCK})`
+      ).execute(connection);
+      try {
+        await work(connection);
+      } finally {
+        await (
+          mode === "shared"
+            ? sql`select pg_advisory_unlock_shared(${SCHEMA_LOCK})`
+            : sql`select pg_advisory_unlock(${SCHEMA_LOCK})`
+        ).execute(connection);
+      }
+    });
+  } finally {
+    await locker.destroy();
   }
 }
