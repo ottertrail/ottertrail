@@ -22,6 +22,9 @@ export type GeoSource = (typeof GEO_SOURCES)[number];
 /** Relative to the API's working directory. `vp run geo:update` downloads it. */
 export const DEFAULT_GEO_DATABASE_PATH = "data/geo/dbip-city-lite.mmdb";
 
+/** The built browser script, relative to the API's working directory. `vp run -r build` makes it. */
+export const DEFAULT_TRACKER_SCRIPT_PATH = "../../packages/tracker/dist/tracker.js";
+
 /** Where the dashboard runs during local development (`vp run dev`). */
 export const DEVELOPMENT_PUBLIC_URL = "http://localhost:5173";
 
@@ -61,6 +64,8 @@ export interface Config {
   trustedOrigins: string[];
   /** Signs dashboard session cookies. */
   authSecret: string;
+  /** The built tracker that sites load from this instance (served at /t.js). */
+  trackerScriptPath: string;
 }
 
 export class ConfigError extends Error {
@@ -210,6 +215,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     timeZone: parseTimeZone(env.TIMEZONE?.trim() || "UTC"),
     ...publicUrlAndOrigins(env),
     authSecret: parseAuthSecret(env),
+    trackerScriptPath: env.TRACKER_SCRIPT_PATH?.trim() || DEFAULT_TRACKER_SCRIPT_PATH,
   };
 }
 

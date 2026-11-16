@@ -14,8 +14,10 @@ export default defineConfig({
     },
   },
   server: {
+    // The API serves these on the instance's own origin; the dev server forwards them.
     proxy: {
       "/api": apiOrigin,
+      "/t.js": apiOrigin,
     },
   },
   test: {

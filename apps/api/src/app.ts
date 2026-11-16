@@ -6,7 +6,9 @@ import { betterAuthRoutes, setupRoutes } from "./auth/routes.ts";
 import type { RateLimit } from "./collection/rate-limiter.ts";
 import { type CollectionOptions, collectionRoutes } from "./collection/routes.ts";
 import type { Database } from "./db/schema.ts";
+import { projectRoutes } from "./projects/routes.ts";
 import { healthRoutes } from "./routes/health.ts";
+import { trackerScriptRoutes } from "./tracker-script/routes.ts";
 
 export interface AppOptions extends Omit<FastifyServerOptions, "logger"> {
   db: Kysely<Database>;
@@ -19,7 +21,15 @@ export interface AppOptions extends Omit<FastifyServerOptions, "logger"> {
    * Without it the API serves only health and event collection, which is
    * all some tests need.
    */
-  dashboard?: { auth: Auth; publicUrl: string; setupLimit?: RateLimit };
+  dashboard?: {
+    auth: Auth;
+    publicUrl: string;
+    /** Origins dashboard requests may come from (Config.trustedOrigins). */
+    trustedOrigins: readonly string[];
+    setupLimit?: RateLimit;
+  };
+  /** The built tracker, served at /t.js. Not served when omitted. */
+  trackerScriptPath?: string;
 }
 
 /**
@@ -31,7 +41,14 @@ export function requestLogFields(request: { method: string; url: string }) {
   return { method: request.method, url: request.url };
 }
 
-export function buildApp({ db, collection = {}, log, dashboard, ...fastifyOptions }: AppOptions) {
+export function buildApp({
+  db,
+  collection = {},
+  log,
+  dashboard,
+  trackerScriptPath,
+  ...fastifyOptions
+}: AppOptions) {
   const app = Fastify({
     ...fastifyOptions,
     logger:
@@ -45,6 +62,9 @@ export function buildApp({ db, collection = {}, log, dashboard, ...fastifyOption
   });
   app.register(healthRoutes, { prefix: "/api" });
   app.register(collectionRoutes, { prefix: "/api", db, ...collection });
+  if (trackerScriptPath !== undefined) {
+    app.register(trackerScriptRoutes, { scriptPath: trackerScriptPath });
+  }
   if (dashboard !== undefined) {
     app.decorateRequest("dashboardUser", null);
     app.register(betterAuthRoutes, {
@@ -57,6 +77,12 @@ export function buildApp({ db, collection = {}, log, dashboard, ...fastifyOption
       db,
       auth: dashboard.auth,
       ...(dashboard.setupLimit === undefined ? {} : { setupLimit: dashboard.setupLimit }),
+    });
+    app.register(projectRoutes, {
+      prefix: "/api",
+      db,
+      auth: dashboard.auth,
+      trustedOrigins: dashboard.trustedOrigins,
     });
   }
   return app;

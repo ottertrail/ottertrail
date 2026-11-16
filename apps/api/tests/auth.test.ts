@@ -31,7 +31,12 @@ async function instance({
   });
   const app = buildApp({
     db: testDb.db,
-    dashboard: { auth, publicUrl: PUBLIC_URL, ...(setupLimit === undefined ? {} : { setupLimit }) },
+    dashboard: {
+      auth,
+      publicUrl: PUBLIC_URL,
+      trustedOrigins: [PUBLIC_URL],
+      ...(setupLimit === undefined ? {} : { setupLimit }),
+    },
   });
   // A route only signed-in users may use, to test the session check.
   app.get("/api/test/me", { preHandler: requireSession(auth) }, (request, reply) =>

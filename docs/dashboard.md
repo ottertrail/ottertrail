@@ -5,7 +5,7 @@ How the dashboard works, and the decisions behind it. It is built in parts, as s
 | Part                 | Status      |
 | -------------------- | ----------- |
 | 8.1 Signing in       | Done        |
-| 8.2 Projects         | Not started |
+| 8.2 Projects         | Done        |
 | 8.3 Report endpoints | Not started |
 | 8.4 Analytics page   | Not started |
 
@@ -84,3 +84,39 @@ Settings that differ from Better Auth's defaults, and why:
 - Password reset. It needs email, which is not set up yet. Until then, an owner who forgets their password cannot get back in without help from the database.
 - Two-factor sign-in and passkeys.
 - Serving the dashboard from the API in production. In development, the dashboard's dev server forwards `/api` to the API.
+
+## 8.2 Projects
+
+Code: `apps/api/src/projects/`, `apps/api/src/tracker-script/`, and `apps/web/src/features/projects/`.
+
+A project is one website or app. The Projects page lists them with their allowed sites and when their last event happened; a project's page shows its install snippet, whether events are arriving, and its settings.
+
+### The install snippet
+
+```html
+<script
+  defer
+  src="https://analytics.example.com/t.js"
+  data-key="pk_…"
+  data-host="https://analytics.example.com"
+></script>
+```
+
+- `src`: the instance serves the built tracker at `/t.js`. A short, neutral name, because ad-block lists often match file names such as `tracker.js` or `analytics.js`. Browsers may cache it for an hour, then check it again with its ETag, so a new tracker reaches sites within an hour. The API reads the file on each request, so a new build needs no restart; until the tracker is built (`vp run -r build`), `/t.js` answers 503.
+- `data-key`: the project's public key. It only lets pages on the allowed sites send events; it cannot read anything.
+- `data-host`: where events go (`/api/events` on the same instance).
+
+The page shows "Waiting for the first event" and checks every 10 seconds, so after installing, opening the site in a browser turns it into "Receiving events".
+
+### Allowed sites
+
+Events are accepted only from pages whose hostname is listed, compared exactly (step 2 of [web analytics](web-analytics.md)). So the list holds bare hostnames: `example.com` and `www.example.com` are separate entries, and there are no wildcards. The API stores each one the way browsers send it in the `Origin` header: lowercase, with internationalized names in their ASCII form (`bücher.example` becomes `xn--bcher-kva.example`). The form accepts a pasted address and keeps only its hostname; the API refuses anything else and names the entry. A change reaches the collection endpoint within a minute, the lifetime of its project cache.
+
+### Requests from the dashboard only
+
+The session cookie is `SameSite=Lax`, which keeps it off other sites' form posts and background requests. Sites on a sibling subdomain of the same domain still count as the same site, though, so the API also checks the `Origin` header on every request that changes something: it must be the instance's own address (`PUBLIC_URL`; in development, any `localhost` port). Better Auth makes the same check for its own sign-in endpoints.
+
+### Not done yet
+
+- Deleting a project, and replacing its public key. Deleting removes all of a project's events, so it needs a confirmation step.
+- Permissions: any signed-in user can manage projects, which is only the owner until invitations exist.

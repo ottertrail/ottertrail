@@ -1,7 +1,9 @@
+import { Link, useMatchRoute } from "@tanstack/react-router";
 import {
   BugIcon,
   ChartColumnIcon,
   ChartLineIcon,
+  FolderIcon,
   MailIcon,
   PaletteIcon,
   UsersIcon,
@@ -33,6 +35,9 @@ const plannedModules = [
 ];
 
 export function AppSidebar() {
+  const matchRoute = useMatchRoute();
+  const onProjects = matchRoute({ to: "/projects", fuzzy: true }) !== false;
+  const onDesignSystem = matchRoute({ to: "/design-system" }) !== false;
   return (
     <Sidebar variant="inset" collapsible="icon">
       <SidebarHeader>
@@ -49,7 +54,21 @@ export function AppSidebar() {
           <SidebarGroupLabel>Workspace</SidebarGroupLabel>
           <SidebarMenu>
             <SidebarMenuItem>
-              <SidebarMenuButton isActive aria-current="page" tooltip="Design system">
+              <SidebarMenuButton
+                render={<Link to="/projects" />}
+                isActive={onProjects}
+                tooltip="Projects"
+              >
+                <FolderIcon />
+                <span>Projects</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                render={<Link to="/design-system" />}
+                isActive={onDesignSystem}
+                tooltip="Design system"
+              >
                 <PaletteIcon />
                 <span>Design system</span>
               </SidebarMenuButton>
