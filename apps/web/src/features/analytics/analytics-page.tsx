@@ -1,0 +1,623 @@
+import { useQuery } from "@tanstack/react-query";
+import { Link, useNavigate } from "@tanstack/react-router";
+import { ChartLineIcon, FolderXIcon, OctagonAlertIcon, SettingsIcon } from "lucide-react";
+import * as React from "react";
+
+import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import { Card, CardAction, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Empty,
+  EmptyContent,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from "@/components/ui/empty";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  type Analytics,
+  analyticsQuery,
+  type BreakdownRow,
+  type DayPoint,
+  isPeriod,
+  PERIODS,
+  type Period,
+} from "@/lib/analytics-api";
+import { ApiError } from "@/lib/api";
+import { type Project, projectsQuery } from "@/lib/projects-api";
+
+import { DayChart } from "./day-chart";
+import {
+  countryName,
+  formatCount,
+  formatDay,
+  formatDayRange,
+  formatDuration,
+  formatPercent,
+  formatRatio,
+  formatWhole,
+} from "./format";
+import { rememberAnalyticsProject } from "./preferences";
+import { RankedList, type RankedRow } from "./ranked-list";
+
+const METRICS = [
+  { key: "visitors", label: "Visitors" },
+  { key: "visits", label: "Visits" },
+  { key: "pageviews", label: "Pageviews" },
+] as const satisfies readonly { key: keyof DayPoint; label: string }[];
+
+type Metric = (typeof METRICS)[number]["key"];
+
+const isMetric = (value: unknown): value is Metric =>
+  METRICS.some((metric) => metric.key === value);
+
+function Unknown({ children = "Unknown" }: { children?: React.ReactNode }) {
+  return <span className="text-ink-subtle">{children}</span>;
+}
+
+function capitalize(text: string): string {
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+/** Breakdown rows for the ranked list: visitors set the bar, visits follow. */
+function breakdownRows(
+  rows: BreakdownRow[],
+  label: (value: string) => string = (value) => value,
+  unknown = "Unknown",
+): RankedRow[] {
+  return rows.map((row) =>
+    row.value === null
+      ? {
+          key: "\u0000unknown",
+          label: <Unknown>{unknown}</Unknown>,
+          primary: row.visitors,
+          secondary: row.visits,
+        }
+      : {
+          key: row.value,
+          label: label(row.value),
+          title: label(row.value),
+          primary: row.visitors,
+          secondary: row.visits,
+        },
+  );
+}
+
+interface ListTab {
+  value: string;
+  label: string;
+  nameHeading: string;
+  secondaryHeading: string;
+  empty: string;
+  rows: RankedRow[];
+}
+
+/** A list of visits grouped by one property. */
+function visitsTab(
+  value: string,
+  label: string,
+  nameHeading: string,
+  rows: RankedRow[],
+  empty = "No visits in this period.",
+): ListTab {
+  return { value, label, nameHeading, secondaryHeading: "Visits", empty, rows };
+}
+
+/** A card of ranked lists; with more than one list, tabs switch between them. */
+function ListCard({ title, tabs }: { title: string; tabs: ListTab[] }) {
+  const lists = tabs.map((tab) => (
+    <RankedList
+      key={tab.value}
+      rows={tab.rows}
+      caption={`${tab.label}, most visitors first`}
+      nameHeading={tab.nameHeading}
+      primaryHeading="Visitors"
+      secondaryHeading={tab.secondaryHeading}
+      empty={tab.empty}
+    />
+  ));
+  const [first] = tabs;
+  if (tabs.length === 1 || first === undefined) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle>
+            <h3>{title}</h3>
+          </CardTitle>
+        </CardHeader>
+        <CardContent>{lists}</CardContent>
+      </Card>
+    );
+  }
+  return (
+    <Card>
+      <Tabs defaultValue={first.value} className="gap-3">
+        <CardHeader>
+          <CardTitle>
+            <h3>{title}</h3>
+          </CardTitle>
+          <CardAction>
+            <TabsList aria-label={title}>
+              {tabs.map((tab) => (
+                <TabsTrigger key={tab.value} value={tab.value}>
+                  {tab.label}
+                </TabsTrigger>
+              ))}
+            </TabsList>
+          </CardAction>
+        </CardHeader>
+        <CardContent>
+          {tabs.map((tab, index) => (
+            <TabsContent key={tab.value} value={tab.value}>
+              {lists[index]}
+            </TabsContent>
+          ))}
+        </CardContent>
+      </Tabs>
+    </Card>
+  );
+}
+
+function SummaryTiles({ analytics }: { analytics: Analytics }) {
+  const { summary } = analytics;
+  const tiles = [
+    { label: "Visitors", value: formatCount(summary.visitors) },
+    { label: "Visits", value: formatCount(summary.visits) },
+    { label: "Pageviews", value: formatCount(summary.pageviews) },
+    { label: "Views per visit", value: formatRatio(summary.viewsPerVisit) },
+    { label: "Bounce rate", value: formatPercent(summary.bounceRate) },
+    { label: "Visit duration", value: formatDuration(summary.avgDurationMs) },
+    { label: "Time engaged", value: formatDuration(summary.avgEngagedMs) },
+  ];
+  return (
+    <Card>
+      <CardContent className="flex flex-col gap-4">
+        <dl className="grid grid-cols-2 gap-x-6 gap-y-5 sm:grid-cols-4 xl:grid-cols-7">
+          {tiles.map((tile) => (
+            <div key={tile.label} className="flex flex-col gap-1">
+              <dt className="text-xs text-ink-subtle">{tile.label}</dt>
+              <dd className="text-2xl font-semibold tracking-tight text-ink">{tile.value}</dd>
+            </div>
+          ))}
+        </dl>
+        <p className="text-xs text-ink-subtle">
+          Without cookies, a visitor is recognized for one day only, so a person who comes back on
+          another day counts again. Durations are averages per visit.
+        </p>
+      </CardContent>
+    </Card>
+  );
+}
+
+function TrendCard({ days }: { days: DayPoint[] }) {
+  const [metric, setMetric] = React.useState<Metric>("visitors");
+  const [showTable, setShowTable] = React.useState(false);
+  const tableId = React.useId();
+
+  const tooltipRows = (plotted: Metric) => (index: number) => {
+    const day = days[index];
+    return METRICS.map((item) => ({
+      label: item.label,
+      value: day === undefined ? "–" : formatWhole(day[item.key]),
+      plotted: item.key === plotted,
+    }));
+  };
+
+  return (
+    <Card>
+      <Tabs
+        value={metric}
+        onValueChange={(value) => {
+          if (isMetric(value)) {
+            setMetric(value);
+          }
+        }}
+        className="gap-3"
+      >
+        <CardHeader>
+          <CardTitle>
+            <h3>{METRICS.find((item) => item.key === metric)?.label} per day</h3>
+          </CardTitle>
+          {days.length >= 2 && (
+            <CardAction>
+              <TabsList aria-label="Metric to chart">
+                {METRICS.map((item) => (
+                  <TabsTrigger key={item.key} value={item.key}>
+                    {item.label}
+                  </TabsTrigger>
+                ))}
+              </TabsList>
+            </CardAction>
+          )}
+        </CardHeader>
+        <CardContent className="flex flex-col gap-3">
+          {METRICS.map((item) => (
+            <TabsContent key={item.key} value={item.key}>
+              {days.length < 2 ? (
+                <p className="py-10 text-center text-sm text-ink-subtle">
+                  A trend needs at least two days. Choose a longer period to see one.
+                </p>
+              ) : (
+                <DayChart
+                  points={days.map((day) => ({ day: day.day, value: day[item.key] }))}
+                  label={`${item.label} per day`}
+                  tooltipRows={tooltipRows(item.key)}
+                />
+              )}
+            </TabsContent>
+          ))}
+          <div>
+            <Button
+              variant="ghost"
+              size="sm"
+              aria-expanded={showTable}
+              aria-controls={tableId}
+              onClick={() => setShowTable((shown) => !shown)}
+            >
+              {showTable ? "Hide the numbers" : "Show the numbers"}
+            </Button>
+          </div>
+          <div id={tableId} hidden={!showTable} className="max-h-80 overflow-y-auto">
+            {showTable && (
+              <table className="w-full text-sm">
+                <caption className="sr-only">Visitors, visits, and pageviews per day</caption>
+                <thead className="sticky top-0 bg-card">
+                  <tr className="text-xs text-ink-subtle">
+                    <th scope="col" className="pb-2 text-left font-normal">
+                      Day
+                    </th>
+                    {METRICS.map((item) => (
+                      <th key={item.key} scope="col" className="pb-2 text-right font-normal">
+                        {item.label}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {days.map((day) => (
+                    <tr key={day.day} className="border-t border-hairline">
+                      <th scope="row" className="py-1.5 text-left font-normal text-ink">
+                        {formatDay(day.day, { weekday: true })}
+                      </th>
+                      {METRICS.map((item) => (
+                        <td key={item.key} className="py-1.5 text-right text-ink tabular-nums">
+                          {formatWhole(day[item.key])}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </CardContent>
+      </Tabs>
+    </Card>
+  );
+}
+
+function Reports({ analytics }: { analytics: Analytics }) {
+  const { breakdowns } = analytics;
+  const pages: RankedRow[] = analytics.pages.map((row) => ({
+    key: row.path,
+    label: row.path,
+    title: row.path,
+    primary: row.visitors,
+    secondary: row.pageviews,
+  }));
+  const events: RankedRow[] = analytics.customEvents.map((row) => ({
+    key: row.name,
+    label: row.name,
+    title: row.name,
+    primary: row.visitors,
+    secondary: row.events,
+  }));
+  return (
+    <>
+      <SummaryTiles analytics={analytics} />
+      <TrendCard days={analytics.days} />
+      <div className="grid gap-6 lg:grid-cols-2">
+        <ListCard
+          title="Pages"
+          tabs={[
+            {
+              value: "top",
+              label: "Top pages",
+              nameHeading: "Path",
+              secondaryHeading: "Views",
+              empty: "No pageviews in this period.",
+              rows: pages,
+            },
+            visitsTab("entry", "Entry", "Path", breakdownRows(breakdowns.entryPage)),
+            visitsTab("exit", "Exit", "Path", breakdownRows(breakdowns.exitPage)),
+          ]}
+        />
+        <ListCard
+          title="Sources"
+          tabs={[
+            visitsTab("source", "Sources", "Source", breakdownRows(breakdowns.source)),
+            visitsTab(
+              "campaign",
+              "Campaigns",
+              "Campaign",
+              breakdownRows(breakdowns.utmCampaign, undefined, "No campaign"),
+            ),
+          ]}
+        />
+        <ListCard
+          title="Locations"
+          tabs={[
+            visitsTab(
+              "country",
+              "Countries",
+              "Country",
+              breakdownRows(breakdowns.country, countryName),
+            ),
+            visitsTab("region", "Regions", "Region", breakdownRows(breakdowns.region)),
+            visitsTab("city", "Cities", "City", breakdownRows(breakdowns.city)),
+          ]}
+        />
+        <ListCard
+          title="Devices"
+          tabs={[
+            visitsTab(
+              "device",
+              "Devices",
+              "Device",
+              breakdownRows(breakdowns.deviceType, capitalize),
+            ),
+            visitsTab("browser", "Browsers", "Browser", breakdownRows(breakdowns.browser)),
+            visitsTab("os", "Systems", "Operating system", breakdownRows(breakdowns.os)),
+          ]}
+        />
+        <ListCard
+          title="Custom events"
+          tabs={[
+            {
+              value: "events",
+              label: "Custom events",
+              nameHeading: "Event",
+              secondaryHeading: "Events",
+              empty: "No custom events in this period.",
+              rows: events,
+            },
+          ]}
+        />
+      </div>
+    </>
+  );
+}
+
+function LoadingReports() {
+  return (
+    <>
+      <Skeleton className="h-28 w-full rounded-xl" />
+      <Skeleton className="h-80 w-full rounded-xl" />
+      <div className="grid gap-6 lg:grid-cols-2">
+        <Skeleton className="h-72 w-full rounded-xl" />
+        <Skeleton className="h-72 w-full rounded-xl" />
+      </div>
+    </>
+  );
+}
+
+/** No data in the range: either nothing ever arrived, or just nothing lately. */
+function NoData({
+  projectId,
+  project,
+  period,
+}: {
+  projectId: string;
+  project: Project | undefined;
+  period: Period;
+}) {
+  const neverReceived = project?.lastEventAt === null;
+  return (
+    <Empty className="border border-dashed p-10">
+      <EmptyHeader>
+        <EmptyMedia variant="icon">
+          <ChartLineIcon />
+        </EmptyMedia>
+        <EmptyTitle>{neverReceived ? "No events yet" : "Nothing in this period"}</EmptyTitle>
+        <EmptyDescription>
+          {neverReceived
+            ? "Install the tracking snippet on your site. Reports appear here as soon as the first pageview arrives."
+            : "No pageviews or events arrived in this period. Choose a longer one to see earlier data."}
+        </EmptyDescription>
+      </EmptyHeader>
+      {neverReceived && (
+        <EmptyContent>
+          <Button
+            nativeButton={false}
+            variant="outline"
+            render={<Link to="/projects/$projectId" params={{ projectId }} />}
+          >
+            Install the snippet
+          </Button>
+        </EmptyContent>
+      )}
+      {!neverReceived && period !== "12m" && (
+        <EmptyContent>
+          <Button
+            nativeButton={false}
+            variant="outline"
+            render={
+              <Link to="/analytics/$projectId" params={{ projectId }} search={{ period: "12m" }} />
+            }
+          >
+            Show the last 12 months
+          </Button>
+        </EmptyContent>
+      )}
+    </Empty>
+  );
+}
+
+function NoSuchProject() {
+  return (
+    <Empty className="m-6 border border-dashed p-10">
+      <EmptyHeader>
+        <EmptyMedia variant="icon">
+          <FolderXIcon />
+        </EmptyMedia>
+        <EmptyTitle>No such project</EmptyTitle>
+        <EmptyDescription>It may have been removed, or the link is wrong.</EmptyDescription>
+      </EmptyHeader>
+      <EmptyContent>
+        <Button nativeButton={false} variant="outline" render={<Link to="/projects" />}>
+          All projects
+        </Button>
+      </EmptyContent>
+    </Empty>
+  );
+}
+
+const hasData = (analytics: Analytics) =>
+  analytics.summary.pageviews > 0 ||
+  analytics.summary.visits > 0 ||
+  analytics.customEvents.length > 0;
+
+/**
+ * Web analytics for one project: the numbers, a trend, and ranked lists,
+ * all for one period that ends today in the instance's timezone.
+ */
+export function AnalyticsPage({ projectId, period }: { projectId: string; period: Period }) {
+  const navigate = useNavigate();
+  const projects = useQuery(projectsQuery());
+  const analytics = useQuery(analyticsQuery(projectId, period));
+  const project = projects.data?.find((item) => item.id === projectId);
+
+  React.useEffect(() => {
+    if (analytics.isSuccess) {
+      rememberAnalyticsProject(projectId);
+    }
+  }, [analytics.isSuccess, projectId]);
+
+  if (analytics.error instanceof ApiError && analytics.error.status === 404) {
+    return <NoSuchProject />;
+  }
+
+  const data = analytics.data;
+  const refreshing = analytics.isPlaceholderData;
+
+  return (
+    <div className="mx-auto flex max-w-6xl flex-col gap-6 p-6">
+      <div className="flex flex-wrap items-center gap-2">
+        {projects.data === undefined ? (
+          <Skeleton className="h-8 w-48" />
+        ) : (
+          <Select
+            items={projects.data.map((item) => ({ value: item.id, label: item.name }))}
+            value={projectId}
+            onValueChange={(value) => {
+              if (typeof value === "string") {
+                void navigate({
+                  to: "/analytics/$projectId",
+                  params: { projectId: value },
+                  search: { period },
+                });
+              }
+            }}
+          >
+            <SelectTrigger aria-label="Project" className="w-48">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {projects.data.map((item) => (
+                <SelectItem key={item.id} value={item.id}>
+                  {item.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
+        <Select
+          items={[...PERIODS]}
+          value={period}
+          onValueChange={(value) => {
+            if (isPeriod(value)) {
+              void navigate({
+                to: "/analytics/$projectId",
+                params: { projectId },
+                search: { period: value },
+              });
+            }
+          }}
+        >
+          <SelectTrigger aria-label="Period" className="w-40">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {PERIODS.map((item) => (
+              <SelectItem key={item.value} value={item.value}>
+                {item.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        {data !== undefined && (
+          <p className="text-sm text-ink-subtle">
+            {formatDayRange(data.firstDay, data.lastDay)} · {data.timeZone}
+          </p>
+        )}
+        <Button
+          nativeButton={false}
+          variant="ghost"
+          size="sm"
+          className="ml-auto"
+          render={<Link to="/projects/$projectId" params={{ projectId }} />}
+        >
+          <SettingsIcon aria-hidden="true" />
+          Install and settings
+        </Button>
+      </div>
+
+      {analytics.isError && (
+        <Alert variant="destructive">
+          <OctagonAlertIcon />
+          <AlertTitle>
+            {data === undefined ? "The reports could not load" : "The reports could not refresh"}
+          </AlertTitle>
+          <AlertDescription>
+            {analytics.error.message}
+            {data !== undefined && " The numbers below are from the last successful load."}
+          </AlertDescription>
+          <AlertAction>
+            <Button variant="outline" size="sm" onClick={() => void analytics.refetch()}>
+              Retry
+            </Button>
+          </AlertAction>
+        </Alert>
+      )}
+
+      {data === undefined ? (
+        !analytics.isError && (
+          <div className="flex flex-col gap-6" aria-busy="true">
+            <LoadingReports />
+          </div>
+        )
+      ) : (
+        <div
+          className="flex flex-col gap-6 transition-opacity data-[refreshing=true]:opacity-60"
+          data-refreshing={refreshing}
+          aria-busy={refreshing}
+        >
+          {hasData(data) ? (
+            <Reports analytics={data} />
+          ) : (
+            <NoData projectId={projectId} project={project} period={period} />
+          )}
+        </div>
+      )}
+    </div>
+  );
+}

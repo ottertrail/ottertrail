@@ -2,12 +2,12 @@
 
 How the dashboard works, and the decisions behind it. It is built in parts, as step 8 of [web analytics](web-analytics.md):
 
-| Part                 | Status      |
-| -------------------- | ----------- |
-| 8.1 Signing in       | Done        |
-| 8.2 Projects         | Done        |
-| 8.3 Report endpoints | Done        |
-| 8.4 Analytics page   | Not started |
+| Part                 | Status |
+| -------------------- | ------ |
+| 8.1 Signing in       | Done   |
+| 8.2 Projects         | Done   |
+| 8.3 Report endpoints | Done   |
+| 8.4 Analytics page   | Done   |
 
 ## 8.1 Signing in
 
@@ -153,3 +153,40 @@ The individual report functions (`summary`, `breakdown`, …) still work on thei
 
 - Comparison with the previous period, and filters (only visits from Google, only one page).
 - Caching. Each request works the reports out again; at the volumes measured above, that takes about a second for a month at 1,000 visits a day.
+
+## 8.4 Analytics page
+
+Code: `apps/web/src/features/analytics/`.
+
+`/analytics/<project id>?period=30d` shows one project for one period: `today`, `7d` (the default), `30d`, `90d`, or `12m`, as in 8.3. An unknown period in the address falls back to the default. `/analytics`, which is also the home page, opens the project this browser showed last (kept in `localStorage`), or else the first project; with no projects it opens the project list.
+
+From top to bottom, the page shows:
+
+1. Pickers for the project and the period, then the days the period covers and the instance's timezone. The days come from the API, so they are the instance's days, not the browser's.
+2. Seven numbers: visitors, visits, pageviews, views per visit, bounce rate, visit duration, and time engaged (defined in section 7 of [web analytics](web-analytics.md#the-numbers)). A note under them says that a visitor is recognized for one day only, so the same person on two days counts twice.
+3. Visitors, visits, or pageviews per day, as a line. Hovering over the chart shows all three numbers for the nearest day. "Show the numbers" opens the same data as a table. A one-day period draws no line, since one point shows no trend.
+4. Ranked lists, most visitors first, each with a bar for its visitors: pages (top, entry, and exit), sources and campaigns, countries, regions, and cities, devices, browsers, and operating systems, and custom events. Each list shows its first 10 rows. A missing value (no location, an unknown browser) shows as "Unknown", and a visit without a campaign as "No campaign".
+
+A project without events shows how to install the snippet instead; a period without events offers the last 12 months.
+
+### Charts without a chart library
+
+The page needs one single-series line and one kind of bar, so both are drawn directly in SVG and HTML (`day-chart.tsx` and `ranked-list.tsx`) instead of adding a chart library. A library becomes worth adding when reports need more kinds of chart, such as funnels or retention tables.
+
+They follow the chart rules in [the design system](design-system.md#charts): one hue (`chart-1`), no legend for a single series (the card title names it), thin gridlines, and numbers in text colors, never in the series color.
+
+### Keyboard and screen readers
+
+- The chart holds a visually hidden range input with one step per day. Tab moves focus to it; the arrow keys, Home, and End move between days; screen readers read each day with all three numbers, as the hover box shows them.
+- The ranked lists are tables with column headers. The bars are hidden from screen readers, because the numbers beside them are text.
+
+### Refreshing
+
+The page loads its data again every minute while it is open. When the period changes, the previous numbers stay on screen, dimmed, until the new ones arrive. If a load fails, the last numbers stay, with the error and a Retry button.
+
+### Not done yet
+
+- Hourly detail for one day, and a custom range of days (the API accepts `from` and `to`; the page offers only the fixed periods).
+- More than 10 rows per list.
+- Comparison with the previous period, and filters (8.3).
+- Browser tests for the page. The formatting and the check of the API's response have unit tests; the page itself was checked by hand against a throwaway database of fake visits.

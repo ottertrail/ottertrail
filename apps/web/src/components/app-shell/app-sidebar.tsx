@@ -27,7 +27,6 @@ import {
 
 /** First-release modules that are not built yet. Shown disabled and labeled. */
 const plannedModules = [
-  { title: "Web analytics", icon: ChartLineIcon },
   { title: "Product analytics", icon: ChartColumnIcon },
   { title: "Users", icon: UsersIcon },
   { title: "Errors", icon: BugIcon },
@@ -36,6 +35,7 @@ const plannedModules = [
 
 export function AppSidebar() {
   const matchRoute = useMatchRoute();
+  const onAnalytics = matchRoute({ to: "/analytics", fuzzy: true }) !== false;
   const onProjects = matchRoute({ to: "/projects", fuzzy: true }) !== false;
   const onDesignSystem = matchRoute({ to: "/design-system" }) !== false;
   return (
@@ -53,6 +53,16 @@ export function AppSidebar() {
         <SidebarGroup>
           <SidebarGroupLabel>Workspace</SidebarGroupLabel>
           <SidebarMenu>
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                render={<Link to="/analytics" />}
+                isActive={onAnalytics}
+                tooltip="Web analytics"
+              >
+                <ChartLineIcon />
+                <span>Web analytics</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
             <SidebarMenuItem>
               <SidebarMenuButton
                 render={<Link to="/projects" />}

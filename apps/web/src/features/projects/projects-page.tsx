@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { FolderIcon, OctagonAlertIcon } from "lucide-react";
+import { ChartLineIcon, FolderIcon, OctagonAlertIcon } from "lucide-react";
 
 import { StatusBadge } from "@/components/status-badge";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -94,6 +94,9 @@ export function ProjectsPage() {
               <TableHead>Name</TableHead>
               <TableHead>Allowed sites</TableHead>
               <TableHead>Last event</TableHead>
+              <TableHead>
+                <span className="sr-only">Reports</span>
+              </TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -117,6 +120,18 @@ export function ProjectsPage() {
                 </TableCell>
                 <TableCell>
                   <LastEvent project={project} />
+                </TableCell>
+                <TableCell className="text-right">
+                  <Button
+                    nativeButton={false}
+                    variant="ghost"
+                    size="sm"
+                    render={<Link to="/analytics/$projectId" params={{ projectId: project.id }} />}
+                    aria-label={`Web analytics for ${project.name}`}
+                  >
+                    <ChartLineIcon aria-hidden="true" />
+                    Analytics
+                  </Button>
                 </TableCell>
               </TableRow>
             ))}

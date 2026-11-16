@@ -551,7 +551,7 @@ A referrer on one of the project's own allowed hostnames is not a source. It mea
 
 ### Who can read reports
 
-Nobody over HTTP yet. Reports are functions in the API and a command-line script. HTTP endpoints arrive with the dashboard and its sign-in in step 8, because a public project key must never read data (section 2). When they do, a breakdown name from a request is checked against the list above (`isVisitDimension`), and each name maps to a fixed SQL expression, so request text never becomes SQL. Row limits are clamped to 1-100.
+Signed-in dashboard users, through one endpoint per page ([dashboard.md](dashboard.md#83-report-endpoints)), and anyone with database access through `vp run report`. A public project key never reads data (section 2). Each breakdown name maps to a fixed SQL expression, so request text never becomes SQL, and row limits are clamped to 1-100.
 
 ### Try it
 
@@ -604,5 +604,4 @@ Reports that only count events (top pages, custom events) read the range's event
 
 ### Not done yet
 
-- HTTP endpoints for reports, with sign-in, and the dashboard (step 8).
 - Filters (only visits from Google), comparison with the previous period, goals, and funnels.

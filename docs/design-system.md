@@ -73,7 +73,7 @@ Orchid, a muted magenta (OKLCH hue 325).
 
 ## Charts
 
-No charts exist yet; these tokens are ready for the first report.
+The analytics page uses `chart-1` for its line and its bars ([dashboard.md](dashboard.md#84-analytics-page)). The line is 2px with a 10% wash under it, gridlines use `hairline`, and the hover crosshair uses `hairline-tertiary`; the bars are 6px high with a rounded end.
 
 `--chart-1` through `--chart-8` are the dark steps of the dataviz reference palette (blue, orange, aqua, yellow, magenta, green, violet, red). Validated with the dataviz palette validator against `#110f11` and `#161416`: every slot sits inside the lightness band and above the chroma floor, worst adjacent colorblind separation is ΔE 8.4, worst adjacent normal-vision separation is ΔE 19.3, and every slot is at least 3:1 against the card surface.
 

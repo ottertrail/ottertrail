@@ -5,17 +5,22 @@ import {
   createRouter,
   Outlet,
   redirect,
+  type SearchSchemaInput,
 } from "@tanstack/react-router";
 
 import { AppLayout } from "@/app";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { AnalyticsPage } from "@/features/analytics/analytics-page";
+import { DEFAULT_PERIOD, lastAnalyticsProject } from "@/features/analytics/preferences";
 import { SetupPage } from "@/features/auth/setup-page";
 import { SignInPage } from "@/features/auth/sign-in-page";
 import { DesignSystemPage } from "@/features/design-system/design-system-page";
 import { ProjectPage } from "@/features/projects/project-page";
 import { ProjectsPage } from "@/features/projects/projects-page";
+import { isPeriod, type Period } from "@/lib/analytics-api";
 import { ApiError } from "@/lib/api";
 import { authClient } from "@/lib/auth-client";
+import { projectsQuery } from "@/lib/projects-api";
 
 async function signedIn(): Promise<boolean> {
   const { data } = await authClient.getSession();
@@ -83,12 +88,45 @@ const appRoute = createRoute({
   component: AppLayout,
 });
 
-/** Projects are the home page until the analytics page exists. */
 const homeRoute = createRoute({
   getParentRoute: () => appRoute,
   path: "/",
   beforeLoad: () => {
-    throw redirect({ to: "/projects" });
+    throw redirect({ to: "/analytics" });
+  },
+});
+
+/** Opens the project shown last in this browser, or the first one; with none, the project list. */
+const analyticsIndexRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: "/analytics",
+  beforeLoad: async () => {
+    const projects = await queryClient.ensureQueryData(projectsQuery());
+    const last = lastAnalyticsProject();
+    const project = projects.find((item) => item.id === last) ?? projects[0];
+    if (project === undefined) {
+      throw redirect({ to: "/projects" });
+    }
+    throw redirect({ to: "/analytics/$projectId", params: { projectId: project.id } });
+  },
+});
+
+const analyticsRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: "/analytics/$projectId",
+  staticData: { title: "Web analytics" },
+  // An unknown or missing period falls back to the default instead of failing.
+  // The router merges the result over the raw query, so an invalid period
+  // has to be overwritten, not just left out.
+  validateSearch: (
+    search: { period?: unknown } & SearchSchemaInput,
+  ): { period: Period | undefined } => ({
+    period: isPeriod(search.period) ? search.period : undefined,
+  }),
+  component: function AnalyticsRouteComponent() {
+    const { projectId } = analyticsRoute.useParams();
+    const { period = DEFAULT_PERIOD } = analyticsRoute.useSearch();
+    return <AnalyticsPage projectId={projectId} period={period} />;
   },
 });
 
@@ -120,7 +158,14 @@ export const router = createRouter({
   routeTree: rootRoute.addChildren([
     signInRoute,
     setupRoute,
-    appRoute.addChildren([homeRoute, projectsRoute, projectRoute, designSystemRoute]),
+    appRoute.addChildren([
+      homeRoute,
+      analyticsIndexRoute,
+      analyticsRoute,
+      projectsRoute,
+      projectRoute,
+      designSystemRoute,
+    ]),
   ]),
 });
 

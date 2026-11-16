@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import {
+  ChartLineIcon,
   CheckIcon,
   CopyIcon,
   FolderXIcon,
@@ -226,7 +227,7 @@ export function ProjectPage({ projectId }: { projectId: string }) {
             <EmptyDescription>It may have been removed, or the link is wrong.</EmptyDescription>
           </EmptyHeader>
           <EmptyContent>
-            <Button variant="outline" render={<Link to="/projects" />}>
+            <Button nativeButton={false} variant="outline" render={<Link to="/projects" />}>
               All projects
             </Button>
           </EmptyContent>
@@ -251,11 +252,22 @@ export function ProjectPage({ projectId }: { projectId: string }) {
 
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-6 p-6">
-      <div>
-        <Link to="/projects" className="text-sm text-link hover:underline">
-          All projects
-        </Link>
-        <h2 className="mt-1 text-lg font-semibold text-ink">{project.data.name}</h2>
+      <div className="flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <Link to="/projects" className="text-sm text-link hover:underline">
+            All projects
+          </Link>
+          <h2 className="mt-1 text-lg font-semibold text-ink">{project.data.name}</h2>
+        </div>
+        <Button
+          nativeButton={false}
+          variant="outline"
+          size="sm"
+          render={<Link to="/analytics/$projectId" params={{ projectId }} />}
+        >
+          <ChartLineIcon aria-hidden="true" />
+          Web analytics
+        </Button>
       </div>
       <InstallCard project={project.data} />
       <SettingsCard project={project.data} />
