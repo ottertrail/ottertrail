@@ -127,6 +127,10 @@ Events are accepted only from pages whose hostname is listed, compared exactly (
 
 The session cookie is `SameSite=Lax`, which keeps it off other sites' form posts and background requests. Sites on a sibling subdomain of the same domain still count as the same site, though, so the API also checks the `Origin` header on every request that changes something: it must be the instance's own address (`PUBLIC_URL`; in development, any `localhost` port). Better Auth makes the same check for its own sign-in endpoints.
 
+### Keeping events
+
+The Settings form's "Keep events" sets how long the project keeps its events: forever (the default), 6 months, 1 year, 2 years, or 5 years ([web analytics](web-analytics.md#how-long-events-are-kept), section 1). Choosing a stricter limit than the current one says, before saving, that older events will be deleted for good within a few hours. The worker deletes them.
+
 ### Replacing the key, deleting the project
 
 The Settings page ends with a "Danger zone" of two changes that cannot be undone, each behind a confirmation:
@@ -244,7 +248,7 @@ The browser tests in `apps/web/tests/browser/` render the whole dashboard in hea
 
 `filters.test.tsx` covers adding a filter from a row, a page, and an Unknown row; combining, removing, and clearing filters; a new period keeping them; values the address bar turns into numbers or cannot use; and a filtered view with no matching visits. The filter definitions themselves are tested against PostgreSQL in `apps/api/tests/analytics.test.ts`.
 
-`project-settings.test.tsx` covers the snippet and public key as copyable code, and the danger zone: replacing the key (and Cancel), deleting only after the name is typed, the project list and home page afterwards, and a refused delete. The API's side, including keys that stop working at once and a batch for a project deleted meanwhile, is tested in `apps/api/tests/projects.test.ts`.
+`project-settings.test.tsx` covers the snippet and public key as copyable code, "Keep events" (forever by default, the warning before a stricter limit, a limit set through the API), and the danger zone: replacing the key (and Cancel), deleting only after the name is typed, the project list and home page afterwards, and a refused delete. The API's side, including keys that stop working at once and a batch for a project deleted meanwhile, is tested in `apps/api/tests/projects.test.ts`.
 
 `custom-range.test.tsx` covers reading chosen days from the address, choosing them in the dialog (which starts from the page's days and keeps the filters), refusing days the API would refuse, Cancel, a preset period replacing them, unusable days in the address, and "Show all" and the project switcher keeping them.
 

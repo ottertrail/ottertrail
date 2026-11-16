@@ -17,7 +17,13 @@ export interface Project {
   createdAt: Date;
   /** When the most recent event happened, or null before the first one. */
   lastEventAt: Date | null;
+  /** Days of events kept; null keeps them forever. The worker deletes older ones. */
+  retentionDays: number | null;
 }
+
+/** The fewest and most days a project may keep its events; the database checks the same. */
+export const MIN_RETENTION_DAYS = 30;
+export const MAX_RETENTION_DAYS = 3650;
 
 /**
  * The hostname to store for one entry of the allowed list, or null when it
@@ -71,6 +77,7 @@ function baseQuery(db: Kysely<Database>) {
     "projects.public_key",
     "projects.allowed_hostnames",
     "projects.created_at",
+    "projects.retention_days",
     // Uses the (project_id, occurred_at) index: one lookup, not a scan.
     eb
       .selectFrom("events")
@@ -90,6 +97,7 @@ function toProject(row: ProjectRow): Project {
     allowedHostnames: row.allowed_hostnames,
     createdAt: row.created_at,
     lastEventAt: row.last_event_at ?? null,
+    retentionDays: row.retention_days,
   };
 }
 
@@ -119,17 +127,18 @@ export async function createProject(
   return project;
 }
 
-/** Changes a project's name or allowed hostnames; null when no project has this ID. */
+/** Changes a project's name, allowed hostnames, or retention; null when no project has this ID. */
 export async function updateProject(
   db: Kysely<Database>,
   id: string,
-  changes: { name?: string; allowedHostnames?: string[] },
+  changes: { name?: string; allowedHostnames?: string[]; retentionDays?: number | null },
 ): Promise<Project | null> {
   const values = {
     ...(changes.name === undefined ? {} : { name: changes.name }),
     ...(changes.allowedHostnames === undefined
       ? {}
       : { allowed_hostnames: changes.allowedHostnames }),
+    ...(changes.retentionDays === undefined ? {} : { retention_days: changes.retentionDays }),
   };
   if (Object.keys(values).length > 0) {
     const result = await db

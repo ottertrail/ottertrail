@@ -9,6 +9,13 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { ApiError } from "@/lib/api";
@@ -83,11 +90,35 @@ function InstallCard({ project }: { project: Project }) {
   );
 }
 
+/** How long a project keeps its events; "forever" is null, the default. */
+const RETENTION_CHOICES = [
+  { value: "forever", label: "Forever" },
+  { value: "180", label: "6 months" },
+  { value: "365", label: "1 year" },
+  { value: "730", label: "2 years" },
+  { value: "1825", label: "5 years" },
+];
+
+const retentionValue = (days: number | null) => (days === null ? "forever" : String(days));
+const retentionDays = (value: string) => (value === "forever" ? null : Number(value));
+
 function SettingsCard({ project }: { project: Project }) {
   const queryClient = useQueryClient();
+  const saved = retentionValue(project.retentionDays);
+  const choices = RETENTION_CHOICES.some((choice) => choice.value === saved)
+    ? RETENTION_CHOICES
+    : [...RETENTION_CHOICES, { value: saved, label: `${saved} days` }];
+  const [retention, setRetention] = React.useState(saved);
+  const chosenDays = retentionDays(retention);
+  // A stricter limit than now deletes events: say so before saving.
+  const deletes =
+    chosenDays !== null && (project.retentionDays === null || chosenDays < project.retentionDays);
   const save = useMutation({
-    mutationFn: (changes: { name: string; allowedHostnames: string[] }) =>
-      updateProject(project.id, changes),
+    mutationFn: (changes: {
+      name: string;
+      allowedHostnames: string[];
+      retentionDays: number | null;
+    }) => updateProject(project.id, changes),
     onSuccess: (updated) => {
       queryClient.setQueryData(projectQuery(project.id).queryKey, updated);
       void queryClient.invalidateQueries({ queryKey: ["projects"], exact: true });
@@ -100,6 +131,7 @@ function SettingsCard({ project }: { project: Project }) {
     save.mutate({
       name: formText(form, "name"),
       allowedHostnames: hostnamesFromText(formText(form, "hostnames")),
+      retentionDays: retentionDays(retention),
     });
   }
 
@@ -112,7 +144,10 @@ function SettingsCard({ project }: { project: Project }) {
       </CardHeader>
       <CardContent>
         {/* Remounts with the saved values, so the form shows what the API stored. */}
-        <form key={JSON.stringify([project.name, project.allowedHostnames])} onSubmit={submit}>
+        <form
+          key={JSON.stringify([project.name, project.allowedHostnames, project.retentionDays])}
+          onSubmit={submit}
+        >
           <FieldGroup>
             <Field>
               <FieldLabel htmlFor="settings-name">Name</FieldLabel>
@@ -138,6 +173,36 @@ function SettingsCard({ project }: { project: Project }) {
               <FieldDescription id="settings-hostnames-hint">
                 One hostname per line. Each subdomain is separate: list www.example.com as well as
                 example.com if both serve pages. Changes apply within a minute.
+              </FieldDescription>
+            </Field>
+            <Field>
+              <FieldLabel htmlFor="settings-retention">Keep events</FieldLabel>
+              <Select
+                items={choices}
+                value={retention}
+                onValueChange={(value) => {
+                  if (typeof value === "string") setRetention(value);
+                }}
+              >
+                <SelectTrigger
+                  id="settings-retention"
+                  className="w-48"
+                  aria-describedby="settings-retention-hint"
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {choices.map((choice) => (
+                    <SelectItem key={choice.value} value={choice.value}>
+                      {choice.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <FieldDescription id="settings-retention-hint">
+                {deletes
+                  ? `Events older than ${choices.find((choice) => choice.value === retention)?.label.toLowerCase()} will be deleted for good within a few hours of saving, a whole day at a time.`
+                  : "Older events are deleted for good, a whole day at a time. Forever keeps everything."}
               </FieldDescription>
             </Field>
             {save.error !== null && (

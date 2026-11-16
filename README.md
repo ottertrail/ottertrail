@@ -62,7 +62,7 @@ Run from the repository root.
 
 | Command                | What it does                                                                                                                                                                                                 |
 | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `vp run dev`           | Starts the API (port 3000, restarts on change) and the dashboard dev server (port 5173, or the next free port). The dashboard proxies `/api` to the API.                                                     |
+| `vp run dev`           | Starts the API (port 3000), the worker, both restarting on change, and the dashboard dev server (port 5173, or the next free port). The dashboard proxies `/api` to the API.                                 |
 | `vp run migrate`       | Applies database migrations that have not run yet. Safe to repeat.                                                                                                                                           |
 | `vp run geo:update`    | Downloads the latest DB-IP City Lite geolocation database to `apps/api/data/geo/`, checks it, and replaces the old file. Restart the API afterwards. Without it, events are stored without a location.       |
 | `vp run visits`        | Prints a project's recent visits, worked out from its events: `vp run visits -- <project name> <hours>` (default: the first project, 24 hours).                                                              |
@@ -71,7 +71,7 @@ Run from the repository root.
 | `vp run bench:reports` | Times the report queries on fake data in a temporary schema, then drops it: `vp run bench:reports -- <visits> <days>` (default: 200,000 visits, 30 days).                                                    |
 | `vp check`             | Formats, lints, and type-checks the whole workspace. `vp check --fix` applies fixes.                                                                                                                         |
 | `vp run -r test`       | Runs the tests in every package. The API tests need the local database running; each test file uses its own temporary schema. The dashboard's browser tests need Chromium (see Setup).                       |
-| `vp run -r build`      | Builds the dashboard (`apps/web/dist`) and bundles the API (`apps/api/dist/server.mjs` and `apps/api/dist/migrate.mjs`).                                                                                     |
+| `vp run -r build`      | Builds the dashboard (`apps/web/dist`) and bundles the API (`apps/api/dist/server.mjs`, `worker.mjs`, and `migrate.mjs`).                                                                                    |
 | `vp run ready`         | `vp check`, then all tests, then all builds. Run before committing.                                                                                                                                          |
 
 Inside one package: `vp -C apps/api run dev`, `vp -C apps/web test`, and so on.
@@ -139,7 +139,7 @@ API (`apps/api`), read from the environment:
 
 Invalid values stop the server at startup with a message naming the variable. Error messages never repeat `DATABASE_URL`, because it can contain a password.
 
-In production, run `node dist/migrate.mjs` (`vp run start:migrate` in `apps/api`) once as a deployment step before starting the API. The API does not migrate on startup, so several API processes never race to change the schema.
+In production, run `node dist/migrate.mjs` (`vp run start:migrate` in `apps/api`) once as a deployment step before starting the API. The API does not migrate on startup, so several API processes never race to change the schema. Run the worker (`node dist/worker.mjs`, `vp run start:worker`) beside the API, with the same settings: it deletes events past each project's retention.
 
 Dashboard dev server (`apps/web`):
 

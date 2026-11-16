@@ -11,6 +11,8 @@ export interface Project {
   createdAt: string;
   /** When the most recent event happened, or null before the first one. */
   lastEventAt: string | null;
+  /** Days of events kept; null keeps them forever. */
+  retentionDays: number | null;
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -25,7 +27,8 @@ function isProject(value: unknown): value is Project {
     Array.isArray(value.allowedHostnames) &&
     value.allowedHostnames.every((hostname) => typeof hostname === "string") &&
     typeof value.createdAt === "string" &&
-    (value.lastEventAt === null || typeof value.lastEventAt === "string")
+    (value.lastEventAt === null || typeof value.lastEventAt === "string") &&
+    (value.retentionDays === null || typeof value.retentionDays === "number")
   );
 }
 
@@ -61,7 +64,7 @@ export async function createProject(input: { name: string; allowedHostnames: str
 
 export async function updateProject(
   id: string,
-  changes: { name?: string; allowedHostnames?: string[] },
+  changes: { name?: string; allowedHostnames?: string[]; retentionDays?: number | null },
 ) {
   const body = await apiRequest(`/api/projects/${encodeURIComponent(id)}`, {
     method: "PATCH",

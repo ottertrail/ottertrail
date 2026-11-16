@@ -59,6 +59,7 @@ export const PROJECT: Project = {
   allowedHostnames: ["example.com"],
   createdAt: "2026-10-01T00:00:00.000Z",
   lastEventAt: "2026-11-16T09:00:00.000Z",
+  retentionDays: null,
 };
 
 export const OTHER_PROJECT: Project = {
@@ -255,6 +256,12 @@ async function answer(api: FakeApi, url: URL, init: RequestInit | undefined): Pr
   const found = api.projects.find((item) => item.id === project?.[1]);
   if (found !== undefined && init?.method === "DELETE") {
     return api.deleteProject(api, found.id);
+  }
+  if (found !== undefined && init?.method === "PATCH") {
+    const changes: unknown = JSON.parse(typeof init.body === "string" ? init.body : "{}");
+    const updated = { ...found, ...(typeof changes === "object" ? changes : {}) };
+    api.projects = api.projects.map((item) => (item.id === found.id ? updated : item));
+    return json({ project: updated });
   }
   if (found !== undefined) {
     return json({ project: found });

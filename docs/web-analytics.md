@@ -77,9 +77,15 @@ Check constraints cap text lengths (event name 200 characters, path and referrer
 
 Almost every report asks "this project, between these two times", so the table has an index on `(project_id, occurred_at)`. Add other indexes only when a real query needs one.
 
+### How long events are kept
+
+Each project keeps its events forever unless its owner chooses a limit (`retention_days`: 6 months, 1 year, 2 years, or 5 years in the dashboard; any number from 30 to 3,650 days through the API). Nothing is deleted until then: how long to keep data is the customer's decision.
+
+The worker (`apps/api/src/worker.ts`, a process of its own beside the API) deletes events older than the limit at start and every 6 hours (`retention/retention.ts`). The cut-off is a midnight in the instance's timezone, the limit's number of days before today, so a report never shows a day with only some of its events. Deletes run 5,000 events at a time, so none holds its locks for long, and running the job twice, or in two workers at once, is harmless.
+
 ### Not done yet
 
-- There is no retention or deletion policy for events yet.
+- Deleted events stay in backups until those expire; there is no backup policy yet.
 
 ## 2. Collecting
 

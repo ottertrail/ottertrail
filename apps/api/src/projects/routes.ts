@@ -12,6 +12,8 @@ import {
   listProjects,
   MAX_ALLOWED_HOSTNAMES,
   MAX_PROJECT_NAME_LENGTH,
+  MAX_RETENTION_DAYS,
+  MIN_RETENTION_DAYS,
   parseHostnames,
   replacePublicKey,
   updateProject,
@@ -102,7 +104,10 @@ export const projectRoutes: FastifyPluginCallback<{
     },
   );
 
-  app.patch<{ Params: { id: string }; Body: { name?: string; allowedHostnames?: string[] } }>(
+  app.patch<{
+    Params: { id: string };
+    Body: { name?: string; allowedHostnames?: string[]; retentionDays?: number | null };
+  }>(
     "/projects/:id",
     {
       preHandler: [fromDashboard, signedIn],
@@ -112,12 +117,21 @@ export const projectRoutes: FastifyPluginCallback<{
           type: "object",
           additionalProperties: false,
           minProperties: 1,
-          properties: { name: nameSchema, allowedHostnames: hostnamesSchema },
+          properties: {
+            name: nameSchema,
+            allowedHostnames: hostnamesSchema,
+            // null keeps events forever.
+            retentionDays: {
+              type: ["integer", "null"],
+              minimum: MIN_RETENTION_DAYS,
+              maximum: MAX_RETENTION_DAYS,
+            },
+          },
         },
       },
     },
     async (request, reply) => {
-      const { name, allowedHostnames } = request.body;
+      const { name, allowedHostnames, retentionDays } = request.body;
       let hostnames: string[] | undefined;
       if (allowedHostnames !== undefined) {
         const parsed = parseHostnames(allowedHostnames);
@@ -129,6 +143,7 @@ export const projectRoutes: FastifyPluginCallback<{
       const project = await updateProject(db, request.params.id, {
         ...(name === undefined ? {} : { name: name.trim() }),
         ...(hostnames === undefined ? {} : { allowedHostnames: hostnames }),
+        ...(retentionDays === undefined ? {} : { retentionDays }),
       });
       return project === null
         ? reply.code(404).send(problem("not_found", "No project has this ID."))

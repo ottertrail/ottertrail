@@ -24,6 +24,8 @@ export interface ProjectsTable {
   public_key: ColumnType<string, string | undefined, string>;
   /** Sites whose pages may send events, such as "example.com". Empty accepts nothing. */
   allowed_hostnames: ColumnType<string[], string[] | undefined, string[]>;
+  /** Days of events to keep, 30 to 3650; null keeps them forever. */
+  retention_days: ColumnType<number | null, number | null | undefined, number | null>;
 }
 
 /**

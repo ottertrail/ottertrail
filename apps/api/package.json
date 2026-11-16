@@ -5,7 +5,7 @@
   "license": "AGPL-3.0-only",
   "type": "module",
   "scripts": {
-    "dev": "vpx --watch src/server.ts",
+    "dev": "vpx scripts/dev.ts",
     "migrate": "vpx src/migrate.ts",
     "build": "vp pack",
     "start": "node dist/server.mjs",
@@ -15,7 +15,9 @@
     "visits": "vpx scripts/visits.ts",
     "setup": "vpx scripts/setup.ts",
     "report": "vpx scripts/report.ts",
-    "bench:reports": "vpx scripts/bench-reports.ts"
+    "bench:reports": "vpx scripts/bench-reports.ts",
+    "worker": "vpx src/worker.ts",
+    "start:worker": "node dist/worker.mjs"
   },
   "dependencies": {
     "better-auth": "catalog:",

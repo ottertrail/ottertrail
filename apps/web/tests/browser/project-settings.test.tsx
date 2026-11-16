@@ -147,3 +147,60 @@ describe("the danger zone", () => {
     expect(router.state.location.pathname).toBe(SETTINGS);
   });
 });
+
+describe("keeping events", () => {
+  test("keeps them forever by default; a limit warns before saving, then is saved", async () => {
+    const api = installFakeApi();
+    renderApp(SETTINGS);
+    const keep = page.getByRole("combobox", { name: "Keep events" });
+    await expect.element(keep).toMatchTextContent(/^Forever/);
+    await expect
+      .element(
+        page.getByText(
+          "Older events are deleted for good, a whole day at a time. Forever keeps everything.",
+        ),
+      )
+      .toBeVisible();
+
+    await keep.click();
+    await page.getByRole("option", { name: "1 year" }).click();
+    await expect
+      .element(
+        page.getByText(
+          "Events older than 1 year will be deleted for good within a few hours of saving, a whole day at a time.",
+        ),
+      )
+      .toBeVisible();
+    await page.getByRole("button", { name: "Save changes" }).click();
+
+    await expect
+      .poll(() => api.bodies.at(-1))
+      .toMatchObject({
+        method: "PATCH",
+        path: `/api/projects/${PROJECT.id}`,
+        body: { retentionDays: 365 },
+      });
+    await expect.element(page.getByText("Saved.")).toBeVisible();
+  });
+
+  test("a longer limit than now does not warn", async () => {
+    installFakeApi({ projects: [{ ...PROJECT, retentionDays: 365 }] });
+    renderApp(SETTINGS);
+
+    await page.getByRole("combobox", { name: "Keep events" }).click();
+    await page.getByRole("option", { name: "2 years" }).click();
+
+    await expect
+      .element(page.getByText(/will be deleted for good within a few hours/))
+      .not.toBeInTheDocument();
+  });
+
+  test("a limit set some other way shows in days", async () => {
+    installFakeApi({ projects: [{ ...PROJECT, retentionDays: 90 }] });
+    renderApp(SETTINGS);
+
+    await expect
+      .element(page.getByRole("combobox", { name: "Keep events" }))
+      .toMatchTextContent(/^90 days/);
+  });
+});

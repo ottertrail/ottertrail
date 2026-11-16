@@ -145,6 +145,21 @@ describe("project routes", () => {
     expect(empty.statusCode).toBe(400);
   });
 
+  test("keep events forever by default, and for a chosen number of days once set", async () => {
+    const created = (await request("POST", "/api/projects", { name: "Kept" })).json().project;
+    expect(created.retentionDays).toBeNull();
+
+    const year = await request("PATCH", `/api/projects/${created.id}`, { retentionDays: 365 });
+    expect(year.json().project.retentionDays).toBe(365);
+    const forever = await request("PATCH", `/api/projects/${created.id}`, { retentionDays: null });
+    expect(forever.json().project.retentionDays).toBeNull();
+
+    for (const retentionDays of [29, 3651, 365.5, "a year"]) {
+      const refused = await request("PATCH", `/api/projects/${created.id}`, { retentionDays });
+      expect({ retentionDays, status: refused.statusCode }).toEqual({ retentionDays, status: 400 });
+    }
+  });
+
   test("report when the latest event happened", async () => {
     const created = (await request("POST", "/api/projects", { name: "Blog" })).json().project;
     const occurredAt = new Date("2026-11-16T09:30:00Z");
