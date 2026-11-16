@@ -6,11 +6,11 @@ Analytics, error tracking, and email engagement for developers and small teams. 
 
 This repository is a foundation, not a working product yet. It contains:
 
-- `apps/web`: React dashboard (Vite, Tailwind CSS v4, shadcn/ui on Base UI) with the Ottertrail design system and its reference page. Analytics, users, errors, and email are listed in the sidebar as **Planned**; none of them exist yet.
-- `apps/api`: Fastify API with `GET /api/health` (a liveness check) and `POST /api/events`, which collects events into PostgreSQL. Report queries exist (`vp run report` prints them), but there are no report endpoints, authentication, or job queue yet.
+- `apps/web`: React dashboard (Vite, Tailwind CSS v4, shadcn/ui on Base UI) with sign-in, the Ottertrail design system, and its reference page. Analytics, users, errors, and email are listed in the sidebar as **Planned**; none of them exist yet.
+- `apps/api`: Fastify API with `GET /api/health` (a liveness check) and `POST /api/events`, which collects events into PostgreSQL. Dashboard sign-in works (the owner account comes from `vp run setup`). Report queries exist (`vp run report` prints them), but there are no report endpoints, invitations, or job queue yet.
 - `packages/tracker`: the browser script (`dist/tracker.js`, about 2.4 KB gzipped) that sends pageviews and custom events, with a playground page in `demo/`. Serving it from an instance is not set up yet.
 
-The design system is documented in [docs/design-system.md](docs/design-system.md). How web analytics works, and the decisions behind it, are in [docs/web-analytics.md](docs/web-analytics.md).
+The design system is documented in [docs/design-system.md](docs/design-system.md). How web analytics works, and the decisions behind it, are in [docs/web-analytics.md](docs/web-analytics.md); the dashboard, including sign-in, in [docs/dashboard.md](docs/dashboard.md).
 
 ## Toolchain
 
@@ -46,6 +46,8 @@ vp run migrate
 vp run geo:update      # optional: the geolocation database, about 130 MB
 ```
 
+Then start everything with `vp run dev`, and create the dashboard's owner account: `vp run setup` prints a one-time link (see [Signing in](docs/dashboard.md#81-signing-in)).
+
 The database listens on `127.0.0.1:5433` (not the usual 5432, to avoid clashing with other local PostgreSQL servers) and has no password. It is for local development only. Its data lives in the `ottertrail_postgres-data` volume; `podman compose down -v` deletes it.
 
 ## Commands
@@ -58,6 +60,7 @@ Run from the repository root.
 | `vp run migrate`       | Applies database migrations that have not run yet. Safe to repeat.                                                                                                                                           |
 | `vp run geo:update`    | Downloads the latest DB-IP City Lite geolocation database to `apps/api/data/geo/`, checks it, and replaces the old file. Restart the API afterwards. Without it, events are stored without a location.       |
 | `vp run visits`        | Prints a project's recent visits, worked out from its events: `vp run visits -- <project name> <hours>` (default: the first project, 24 hours).                                                              |
+| `vp run setup`         | Prints a one-time link (valid for an hour) that creates the dashboard's owner account. Refuses once an owner exists.                                                                                         |
 | `vp run report`        | Prints a project's reports (summary, visitors per day, top pages, breakdowns, custom events) for the last days in `TIMEZONE`: `vp run report -- <project name> <days>` (default: the first project, 7 days). |
 | `vp run bench:reports` | Times the report queries on fake data in a temporary schema, then drops it: `vp run bench:reports -- <visits> <days>` (default: 200,000 visits, 30 days).                                                    |
 | `vp check`             | Formats, lints, and type-checks the whole workspace. `vp check --fix` applies fixes.                                                                                                                         |
@@ -123,6 +126,8 @@ API (`apps/api`), read from the environment:
 | `TRUST_PROXY`       | unset (trust no proxy)                 | Set when the API runs behind a proxy, so rate limits see client addresses: a number of proxy hops (`1` behind one proxy) or a comma-separated list of proxy IPs or CIDRs. Without a proxy, leave it unset: otherwise clients could fake their address.                                                                                                          |
 | `GEO_SOURCE`        | `database`                             | Where visitor locations come from: `database` (the file below), `cloudflare` (Cloudflare's location headers; only when every request passes through Cloudflare), or `none`.                                                                                                                                                                                     |
 | `GEO_DATABASE_PATH` | `data/geo/dbip-city-lite.mmdb`         | The geolocation file, relative to the API's working directory.                                                                                                                                                                                                                                                                                                  |
+| `PUBLIC_URL`        | `http://localhost:5173`                | The instance's address, an origin without a path. Required in production, and must use HTTPS there (session cookies are `Secure`). Sign-in accepts requests only from this origin (in development, from any `localhost` port).                                                                                                                                  |
+| `AUTH_SECRET`       | a fixed development value              | Signs dashboard session cookies. Required in production: at least 32 random characters, such as `openssl rand -base64 32` prints.                                                                                                                                                                                                                               |
 | `TIMEZONE`          | `UTC`                                  | IANA timezone of the instance, such as `Asia/Singapore`. A new visitor salt starts at midnight here, and reports count days here. Aliases are stored by their official name (`singapore` becomes `Asia/Singapore`). Fixed offsets such as `+08:00` are refused: Node.js and PostgreSQL read their sign in opposite directions. `Etc/GMT-8` names UTC+8 in both. |
 
 Invalid values stop the server at startup with a message naming the variable. Error messages never repeat `DATABASE_URL`, because it can contain a password.

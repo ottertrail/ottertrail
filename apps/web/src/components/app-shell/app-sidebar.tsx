@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 
 import { ApiStatus } from "@/components/api-status";
+import { UserMenu } from "@/components/app-shell/user-menu";
 import { BrandMark } from "@/components/brand-mark";
 import {
   Sidebar,
@@ -72,7 +73,8 @@ export function AppSidebar() {
         </SidebarGroup>
       </SidebarContent>
 
-      <SidebarFooter className="group-data-[collapsible=icon]:hidden">
+      <SidebarFooter className="gap-3 group-data-[collapsible=icon]:hidden">
+        <UserMenu />
         <div className="px-1.5 pb-1">
           <ApiStatus />
         </div>

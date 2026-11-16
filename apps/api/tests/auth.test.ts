@@ -1,0 +1,242 @@
+import type { LightMyRequestResponse } from "fastify";
+import { afterAll, beforeAll, describe, expect, test } from "vite-plus/test";
+
+import { buildApp } from "../src/app.ts";
+import { createAuth } from "../src/auth/auth.ts";
+import { requireSession } from "../src/auth/routes.ts";
+import { createSetupToken, ownerExists, SETUP_LINK_TTL_MS } from "../src/auth/setup.ts";
+import { createTestDatabase } from "./helpers/test-database.ts";
+
+const PUBLIC_URL = "http://localhost:5173";
+const OWNER = { name: "Ada Owner", email: "Ada@Example.com", password: "correct horse battery" };
+
+/** A fresh instance: its own database schema, no owner yet. */
+async function instance({ rateLimit = false } = {}) {
+  const testDb = await createTestDatabase();
+  const auth = createAuth({
+    db: testDb.db,
+    publicUrl: PUBLIC_URL,
+    trustedOrigins: [PUBLIC_URL],
+    secret: "a-secret-only-these-tests-use-0123456789",
+    rateLimit,
+  });
+  const app = buildApp({ db: testDb.db, dashboard: { auth, publicUrl: PUBLIC_URL } });
+  // A route only signed-in users may use, to test the session check.
+  app.get("/api/test/me", { preHandler: requireSession(auth) }, (request, reply) =>
+    reply.send({ user: request.dashboardUser }),
+  );
+  return {
+    db: testDb.db,
+    app,
+    close: async () => {
+      await app.close();
+      await testDb.destroy();
+    },
+  };
+}
+
+type Instance = Awaited<ReturnType<typeof instance>>;
+
+function setUp(app: Instance["app"], body: object) {
+  return app.inject({ method: "POST", url: "/api/setup", payload: body });
+}
+
+function signIn(
+  app: Instance["app"],
+  credentials: { email: string; password: string },
+  headers: Record<string, string> = {},
+  remoteAddress = "203.0.113.10",
+) {
+  return app.inject({
+    method: "POST",
+    url: "/api/auth/sign-in/email",
+    headers: { origin: PUBLIC_URL, "content-type": "application/json", ...headers },
+    payload: JSON.stringify(credentials),
+    remoteAddress,
+  });
+}
+
+/** The cookies a response set, as a Cookie request header. */
+function cookieHeader(response: LightMyRequestResponse): string {
+  return response.cookies.map((cookie) => `${cookie.name}=${cookie.value}`).join("; ");
+}
+
+describe("owner setup", () => {
+  let current: Instance;
+  beforeAll(async () => {
+    current = await instance();
+  });
+  afterAll(async () => {
+    await current?.close();
+  });
+
+  test("refuses an expired link", async () => {
+    const twoHoursAgo = new Date(Date.now() - 2 * SETUP_LINK_TTL_MS);
+    const old = await createSetupToken(current.db, twoHoursAgo);
+    const response = await setUp(current.app, { token: old?.token, ...OWNER });
+    expect(response.statusCode).toBe(403);
+    expect(response.json()).toMatchObject({ error: "invalid_link" });
+  });
+
+  test("refuses a short password or a bad email before using the link", async () => {
+    const link = await createSetupToken(current.db);
+    for (const body of [
+      { ...OWNER, password: "too short" },
+      { ...OWNER, email: "not an email" },
+      { ...OWNER, name: "   " },
+    ]) {
+      expect((await setUp(current.app, { token: link?.token, ...body })).statusCode).toBe(400);
+    }
+    expect(await ownerExists(current.db)).toBe(false);
+  });
+
+  test("replaces an earlier link with a new one", async () => {
+    const first = await createSetupToken(current.db);
+    await createSetupToken(current.db);
+    expect((await setUp(current.app, { token: first?.token, ...OWNER })).statusCode).toBe(403);
+  });
+
+  test("creates the owner from a link, once, even when two requests race", async () => {
+    expect((await current.app.inject({ url: "/api/setup" })).json()).toEqual({
+      ownerExists: false,
+    });
+    const link = await createSetupToken(current.db);
+    const responses = await Promise.all([
+      setUp(current.app, { token: link?.token, ...OWNER }),
+      setUp(current.app, { token: link?.token, ...OWNER, email: "eve@example.com" }),
+    ]);
+    expect(responses.map((response) => response.statusCode).toSorted((a, b) => a - b)).toEqual([
+      201, 403,
+    ]);
+
+    const users = await current.db.selectFrom("dashboard_users").selectAll().execute();
+    expect(users).toHaveLength(1);
+    expect(users[0]).toMatchObject({ role: "owner", name: "Ada Owner" });
+    // The password is stored as a hash, never as itself.
+    const account = await current.db
+      .selectFrom("dashboard_accounts")
+      .selectAll()
+      .executeTakeFirst();
+    expect(account?.provider_id).toBe("credential");
+    expect(account?.password).not.toContain(OWNER.password);
+    expect((await current.app.inject({ url: "/api/setup" })).json()).toEqual({ ownerExists: true });
+  });
+
+  test("gives no new link once the owner exists", async () => {
+    expect(await createSetupToken(current.db)).toBeNull();
+  });
+});
+
+describe("signing in", () => {
+  let current: Instance;
+  beforeAll(async () => {
+    current = await instance();
+    const link = await createSetupToken(current.db);
+    await setUp(current.app, { token: link?.token, ...OWNER });
+  });
+  afterAll(async () => {
+    await current?.close();
+  });
+
+  test("signs the owner in with a session cookie that signed-in routes accept", async () => {
+    // Email addresses are matched without regard to case.
+    const response = await signIn(current.app, { ...OWNER, email: "ada@example.com" });
+    expect(response.statusCode).toBe(200);
+    const session = response.cookies.find((cookie) => cookie.name.endsWith("session_token"));
+    expect(session).toMatchObject({ httpOnly: true, sameSite: "Lax" });
+
+    const me = await current.app.inject({
+      url: "/api/test/me",
+      headers: { cookie: cookieHeader(response) },
+    });
+    expect(me.statusCode).toBe(200);
+    expect(me.json()).toMatchObject({ user: { email: "ada@example.com", role: "owner" } });
+  });
+
+  test("answers 401 to a signed-in route without a session", async () => {
+    const me = await current.app.inject({ url: "/api/test/me" });
+    expect(me.statusCode).toBe(401);
+    expect(me.json()).toMatchObject({ error: "unauthorized" });
+  });
+
+  test("refuses a wrong password", async () => {
+    const response = await signIn(current.app, { ...OWNER, password: "wrong password!!" });
+    expect(response.statusCode).toBe(401);
+    expect(response.cookies).toHaveLength(0);
+  });
+
+  test("lets nobody sign up", async () => {
+    const response = await current.app.inject({
+      method: "POST",
+      url: "/api/auth/sign-up/email",
+      headers: { origin: PUBLIC_URL, "content-type": "application/json" },
+      payload: JSON.stringify({
+        name: "Eve",
+        email: "eve@example.com",
+        password: "a long password!",
+      }),
+    });
+    expect(response.statusCode).toBe(400);
+    expect(await current.db.selectFrom("dashboard_users").select("email").execute()).toEqual([
+      { email: "ada@example.com" },
+    ]);
+  });
+
+  test("refuses a sign-in sent from another site", async () => {
+    const response = await signIn(current.app, OWNER, { origin: "https://attacker.example" });
+    expect(response.statusCode).toBe(403);
+    expect(response.cookies).toHaveLength(0);
+  });
+
+  test("stores no IP address with a session", async () => {
+    await signIn(current.app, OWNER, { "x-forwarded-for": "198.51.100.7" });
+    const sessions = await current.db
+      .selectFrom("dashboard_sessions")
+      .select("ip_address")
+      .execute();
+    expect(sessions.length).toBeGreaterThan(0);
+    expect(sessions.every((session) => session.ip_address === null)).toBe(true);
+  });
+
+  test("ends the session on sign-out", async () => {
+    const cookie = cookieHeader(await signIn(current.app, OWNER));
+    const signOut = await current.app.inject({
+      method: "POST",
+      url: "/api/auth/sign-out",
+      headers: { origin: PUBLIC_URL, cookie },
+    });
+    expect(signOut.statusCode).toBe(200);
+    expect(
+      (await current.app.inject({ url: "/api/test/me", headers: { cookie } })).statusCode,
+    ).toBe(401);
+  });
+});
+
+describe("sign-in rate limit", () => {
+  let current: Instance;
+  beforeAll(async () => {
+    current = await instance({ rateLimit: true });
+    const link = await createSetupToken(current.db);
+    await setUp(current.app, { token: link?.token, ...OWNER });
+  });
+  afterAll(async () => {
+    await current?.close();
+  });
+
+  test("limits attempts per client, whatever address headers the client sends", async () => {
+    const statuses: number[] = [];
+    for (let attempt = 0; attempt < 6; attempt += 1) {
+      const forged = `198.51.100.${attempt}`;
+      const response = await signIn(
+        current.app,
+        { ...OWNER, password: "wrong password!!" },
+        { "x-forwarded-for": forged, "x-ottertrail-client-ip": forged },
+      );
+      statuses.push(response.statusCode);
+    }
+    expect(statuses).toContain(429);
+    // Another client is not affected.
+    const other = await signIn(current.app, OWNER, {}, "192.0.2.44");
+    expect(other.statusCode).toBe(200);
+  });
+});

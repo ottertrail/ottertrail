@@ -22,6 +22,19 @@ export type GeoSource = (typeof GEO_SOURCES)[number];
 /** Relative to the API's working directory. `vp run geo:update` downloads it. */
 export const DEFAULT_GEO_DATABASE_PATH = "data/geo/dbip-city-lite.mmdb";
 
+/** Where the dashboard runs during local development (`vp run dev`). */
+export const DEVELOPMENT_PUBLIC_URL = "http://localhost:5173";
+
+/**
+ * Signs dashboard session cookies during local development only. Production
+ * refuses to start without AUTH_SECRET, so this value can never protect a
+ * real instance.
+ */
+export const DEVELOPMENT_AUTH_SECRET = "ottertrail-local-development-only-not-a-secret";
+
+/** Shortest AUTH_SECRET accepted: 32 characters, such as `openssl rand -base64 32` prints. */
+const MIN_AUTH_SECRET_LENGTH = 32;
+
 export interface Config {
   host: string;
   port: number;
@@ -39,6 +52,15 @@ export interface Config {
    * change at midnight here, and reports will count days here.
    */
   timeZone: string;
+  /** The instance's address, such as "https://analytics.example.com": an origin, no path. */
+  publicUrl: string;
+  /**
+   * Origins the dashboard's sign-in accepts requests from: the public URL, and
+   * in development any localhost port, since the dev server picks a free one.
+   */
+  trustedOrigins: string[];
+  /** Signs dashboard session cookies. */
+  authSecret: string;
 }
 
 export class ConfigError extends Error {
@@ -128,6 +150,49 @@ function parseTimeZone(raw: string): string {
   return timeZone;
 }
 
+function parsePublicUrl(env: NodeJS.ProcessEnv): string {
+  const raw = env.PUBLIC_URL?.trim();
+  if (raw === undefined || raw === "") {
+    if (env.NODE_ENV === "production") {
+      throw new ConfigError(
+        "PUBLIC_URL is required in production, such as https://analytics.example.com",
+      );
+    }
+    return DEVELOPMENT_PUBLIC_URL;
+  }
+  const url = URL.parse(raw);
+  if (url === null || (url.protocol !== "https:" && url.protocol !== "http:")) {
+    throw new ConfigError(`PUBLIC_URL must be an http(s) URL, received "${raw}"`);
+  }
+  if (url.pathname !== "/" || url.search !== "" || url.hash !== "" || url.username !== "") {
+    throw new ConfigError(
+      `PUBLIC_URL must be an origin without a path, such as https://analytics.example.com, received "${raw}"`,
+    );
+  }
+  // Session cookies are marked Secure, which browsers only keep over HTTPS.
+  if (env.NODE_ENV === "production" && url.protocol !== "https:") {
+    throw new ConfigError(`PUBLIC_URL must use https in production, received "${raw}"`);
+  }
+  return url.origin;
+}
+
+function parseAuthSecret(env: NodeJS.ProcessEnv): string {
+  const raw = env.AUTH_SECRET;
+  if (raw === undefined || raw === "") {
+    if (env.NODE_ENV === "production") {
+      throw new ConfigError(
+        "AUTH_SECRET is required in production; generate one with `openssl rand -base64 32`",
+      );
+    }
+    return DEVELOPMENT_AUTH_SECRET;
+  }
+  // Error messages never repeat the value.
+  if (raw.length < MIN_AUTH_SECRET_LENGTH) {
+    throw new ConfigError(`AUTH_SECRET must be at least ${MIN_AUTH_SECRET_LENGTH} characters long`);
+  }
+  return raw;
+}
+
 /**
  * Reads instance configuration from environment variables.
  * Every instance is configured independently; there are no shared defaults
@@ -143,5 +208,18 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     geoSource: parseGeoSource(env.GEO_SOURCE ?? "database"),
     geoDatabasePath: env.GEO_DATABASE_PATH?.trim() || DEFAULT_GEO_DATABASE_PATH,
     timeZone: parseTimeZone(env.TIMEZONE?.trim() || "UTC"),
+    ...publicUrlAndOrigins(env),
+    authSecret: parseAuthSecret(env),
+  };
+}
+
+function publicUrlAndOrigins(env: NodeJS.ProcessEnv): Pick<Config, "publicUrl" | "trustedOrigins"> {
+  const publicUrl = parsePublicUrl(env);
+  const development = env.NODE_ENV !== "production";
+  return {
+    publicUrl,
+    trustedOrigins: development
+      ? [...new Set([publicUrl, "http://localhost:*", "http://127.0.0.1:*"])]
+      : [publicUrl],
   };
 }

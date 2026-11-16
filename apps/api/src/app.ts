@@ -1,6 +1,8 @@
 import Fastify, { type FastifyServerOptions } from "fastify";
 import type { Kysely } from "kysely";
 
+import type { Auth } from "./auth/auth.ts";
+import { betterAuthRoutes, setupRoutes } from "./auth/routes.ts";
 import { type CollectionOptions, collectionRoutes } from "./collection/routes.ts";
 import type { Database } from "./db/schema.ts";
 import { healthRoutes } from "./routes/health.ts";
@@ -11,6 +13,12 @@ export interface AppOptions extends Omit<FastifyServerOptions, "logger"> {
   collection?: Omit<CollectionOptions, "db">;
   /** Logging; off when omitted. Tests pass a stream to read the log. */
   log?: { level: string; stream?: { write(line: string): void } };
+  /**
+   * Dashboard sign-in (src/auth/auth.ts) and the instance's public URL.
+   * Without it the API serves only health and event collection, which is
+   * all some tests need.
+   */
+  dashboard?: { auth: Auth; publicUrl: string };
 }
 
 /**
@@ -22,7 +30,7 @@ export function requestLogFields(request: { method: string; url: string }) {
   return { method: request.method, url: request.url };
 }
 
-export function buildApp({ db, collection = {}, log, ...fastifyOptions }: AppOptions) {
+export function buildApp({ db, collection = {}, log, dashboard, ...fastifyOptions }: AppOptions) {
   const app = Fastify({
     ...fastifyOptions,
     logger:
@@ -36,5 +44,10 @@ export function buildApp({ db, collection = {}, log, ...fastifyOptions }: AppOpt
   });
   app.register(healthRoutes, { prefix: "/api" });
   app.register(collectionRoutes, { prefix: "/api", db, ...collection });
+  if (dashboard !== undefined) {
+    app.decorateRequest("dashboardUser", null);
+    app.register(betterAuthRoutes, { prefix: "/api", ...dashboard });
+    app.register(setupRoutes, { prefix: "/api", db, auth: dashboard.auth });
+  }
   return app;
 }

@@ -13,10 +13,12 @@
     "test": "vp test",
     "geo:update": "vpx scripts/update-geo.ts",
     "visits": "vpx scripts/visits.ts",
+    "setup": "vpx scripts/setup.ts",
     "report": "vpx scripts/report.ts",
     "bench:reports": "vpx scripts/bench-reports.ts"
   },
   "dependencies": {
+    "better-auth": "catalog:",
     "bowser": "catalog:",
     "fastify": "^5.12.8",
     "isbot": "catalog:",

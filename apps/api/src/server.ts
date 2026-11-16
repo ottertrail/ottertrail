@@ -1,15 +1,23 @@
 import { buildApp } from "./app.ts";
-import { loadConfig } from "./config.ts";
+import { createAuth } from "./auth/auth.ts";
+import { DEVELOPMENT_AUTH_SECRET, loadConfig } from "./config.ts";
 import { createDatabase } from "./db/database.ts";
 import { setUpLocation } from "./enrichment/setup.ts";
 
 const config = loadConfig();
 const db = createDatabase({ connectionString: config.databaseUrl });
+const auth = createAuth({
+  db,
+  publicUrl: config.publicUrl,
+  trustedOrigins: config.trustedOrigins,
+  secret: config.authSecret,
+});
 const location = await setUpLocation(config.geoSource, config.geoDatabasePath);
 const app = buildApp({
   db,
   log: { level: config.logLevel },
   collection: { locate: location.locate, timeZone: config.timeZone },
+  dashboard: { auth, publicUrl: config.publicUrl },
   // A number means "trust this many proxy hops in front of the API".
   trustProxy:
     typeof config.trustProxy === "number"
@@ -19,6 +27,9 @@ const app = buildApp({
         )(config.trustProxy)
       : config.trustProxy,
 });
+if (config.authSecret === DEVELOPMENT_AUTH_SECRET) {
+  app.log.warn("AUTH_SECRET is not set: using the development secret, which is not secret");
+}
 if (location.ok) {
   app.log.info(location.message);
 } else {

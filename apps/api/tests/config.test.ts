@@ -3,9 +3,19 @@ import { describe, expect, test } from "vite-plus/test";
 import {
   ConfigError,
   DEFAULT_GEO_DATABASE_PATH,
+  DEVELOPMENT_AUTH_SECRET,
+  DEVELOPMENT_PUBLIC_URL,
   LOCAL_DATABASE_URL,
   loadConfig,
 } from "../src/config.ts";
+
+/** What production needs besides defaults. */
+const PRODUCTION = {
+  NODE_ENV: "production",
+  DATABASE_URL: "postgresql://app@db.internal:5432/ottertrail",
+  PUBLIC_URL: "https://analytics.example.com",
+  AUTH_SECRET: "x".repeat(32),
+};
 
 describe("loadConfig", () => {
   test("uses local development defaults when variables are unset", () => {
@@ -18,6 +28,9 @@ describe("loadConfig", () => {
       geoSource: "database",
       geoDatabasePath: DEFAULT_GEO_DATABASE_PATH,
       timeZone: "UTC",
+      publicUrl: DEVELOPMENT_PUBLIC_URL,
+      trustedOrigins: [DEVELOPMENT_PUBLIC_URL, "http://localhost:*", "http://127.0.0.1:*"],
+      authSecret: DEVELOPMENT_AUTH_SECRET,
     });
   });
 
@@ -32,6 +45,8 @@ describe("loadConfig", () => {
         GEO_SOURCE: "cloudflare",
         GEO_DATABASE_PATH: "/var/lib/ottertrail/geo.mmdb",
         TIMEZONE: "Asia/Singapore",
+        PUBLIC_URL: "https://analytics.example.com/",
+        AUTH_SECRET: "s".repeat(44),
       }),
     ).toEqual({
       host: "0.0.0.0",
@@ -42,7 +57,42 @@ describe("loadConfig", () => {
       geoSource: "cloudflare",
       geoDatabasePath: "/var/lib/ottertrail/geo.mmdb",
       timeZone: "Asia/Singapore",
+      publicUrl: "https://analytics.example.com",
+      trustedOrigins: ["https://analytics.example.com", "http://localhost:*", "http://127.0.0.1:*"],
+      authSecret: "s".repeat(44),
     });
+  });
+
+  test("trusts only the public URL in production", () => {
+    const config = loadConfig(PRODUCTION);
+    expect(config.trustedOrigins).toEqual(["https://analytics.example.com"]);
+    expect(config.authSecret).toBe("x".repeat(32));
+  });
+
+  test.each(["PUBLIC_URL", "AUTH_SECRET"])("requires %s in production", (name) => {
+    expect(() => loadConfig({ ...PRODUCTION, [name]: undefined })).toThrow(
+      new RegExp(`${name} is required in production`),
+    );
+  });
+
+  test("requires https for PUBLIC_URL in production", () => {
+    expect(() => loadConfig({ ...PRODUCTION, PUBLIC_URL: "http://analytics.example.com" })).toThrow(
+      /must use https/,
+    );
+  });
+
+  test.each([
+    "analytics.example.com",
+    "ftp://example.com",
+    "https://example.com/dashboard",
+    "https://example.com/?a=1",
+  ])("rejects PUBLIC_URL %j", (value) => {
+    expect(() => loadConfig({ PUBLIC_URL: value })).toThrow(ConfigError);
+  });
+
+  test("rejects an AUTH_SECRET shorter than 32 characters, without repeating it", () => {
+    expect(() => loadConfig({ AUTH_SECRET: "short-secret" })).toThrow(/at least 32 characters/);
+    expect(() => loadConfig({ AUTH_SECRET: "short-secret" })).not.toThrow(/short-secret/);
   });
 
   test.each(["0", "65536", "3000.5", "abc", ""])("rejects invalid PORT %j", (port) => {
@@ -54,7 +104,9 @@ describe("loadConfig", () => {
   });
 
   test("requires DATABASE_URL in production instead of using the local database", () => {
-    expect(() => loadConfig({ NODE_ENV: "production" })).toThrow(/DATABASE_URL is required/);
+    expect(() => loadConfig({ ...PRODUCTION, DATABASE_URL: undefined })).toThrow(
+      /DATABASE_URL is required/,
+    );
   });
 
   test.each(["not a url", "mysql://app@db/ottertrail"])("rejects DATABASE_URL %j", (url) => {

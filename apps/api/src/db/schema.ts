@@ -79,8 +79,59 @@ export interface VisitorSaltsTable {
   created_at: DatabaseDefault<Date>;
 }
 
+/**
+ * Dashboard sign-in. Better Auth reads and writes these tables itself
+ * (src/auth/auth.ts); the application only reads them and sets `role`.
+ */
+export interface DashboardUsersTable {
+  id: ColumnType<string, string | undefined, never>;
+  name: string;
+  email: string;
+  email_verified: ColumnType<boolean, boolean | undefined, boolean>;
+  image: Nullable<string>;
+  /** "owner" for the one account the setup flow creates; "member" otherwise. */
+  role: ColumnType<"owner" | "member", "owner" | "member" | undefined, "owner" | "member">;
+  created_at: DatabaseDefault<Date>;
+  updated_at: ColumnType<Date, Date | undefined, Date>;
+}
+
+export interface DashboardSessionsTable {
+  id: ColumnType<string, string | undefined, never>;
+  user_id: string;
+  token: string;
+  expires_at: Date;
+  user_agent: Nullable<string>;
+  /** Always NULL: a check constraint refuses an IP address. */
+  ip_address: ColumnType<null, null | undefined, null>;
+  created_at: DatabaseDefault<Date>;
+  updated_at: ColumnType<Date, Date | undefined, Date>;
+}
+
+/** How a user signs in. For a password, provider_id is "credential" and account_id the user's ID. */
+export interface DashboardAccountsTable {
+  id: ColumnType<string, string | undefined, never>;
+  user_id: string;
+  account_id: string;
+  provider_id: string;
+  /** A scrypt hash, never the password itself. */
+  password: Nullable<string>;
+  created_at: DatabaseDefault<Date>;
+  updated_at: ColumnType<Date, Date | undefined, Date>;
+}
+
+/** One-time links that create the owner. Only a SHA-256 hash of each token is kept. */
+export interface OwnerSetupTokensTable {
+  token_hash: ColumnType<Buffer, Buffer, never>;
+  expires_at: ColumnType<Date, Date, never>;
+  created_at: DatabaseDefault<Date>;
+}
+
 export interface Database {
   projects: ProjectsTable;
   events: EventsTable;
   visitor_salts: VisitorSaltsTable;
+  dashboard_users: DashboardUsersTable;
+  dashboard_sessions: DashboardSessionsTable;
+  dashboard_accounts: DashboardAccountsTable;
+  owner_setup_tokens: OwnerSetupTokensTable;
 }

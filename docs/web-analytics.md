@@ -11,7 +11,7 @@ How Ottertrail's web analytics works, the concepts behind it, and the decisions 
 | 5. Visitors        | Done        |
 | 6. Visits          | Done        |
 | 7. Reports         | Done        |
-| 8. Dashboard check | Not started |
+| 8. Dashboard check | In progress |
 
 ## 1. The event
 
