@@ -89,7 +89,7 @@ Settings that differ from Better Auth's defaults, and why:
 
 Code: `apps/api/src/projects/`, `apps/api/src/tracker-script/`, and `apps/web/src/features/projects/`.
 
-A project is one website or app. The Projects page lists them with their allowed sites and when their last event happened. A project's Settings page (`/projects/<id>/settings`) shows its install snippet, whether events are arriving, and its settings; a new project opens there.
+A project is one website or app. The Projects page lists them with their allowed sites and when their last event happened. A project's Settings page (`/projects/<id>/settings`) shows its install snippet and public key to copy, whether events are arriving, and a form for its name and allowed sites; a new project opens there.
 
 ### The workspace and a project
 

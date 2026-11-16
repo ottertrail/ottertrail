@@ -132,6 +132,7 @@ No drop shadows for hierarchy; use the surface ladder and `ring-1 ring-border`.
 - Local changes to generated files: the `text-link` substitutions above, and `hooks/use-mobile.ts` rewritten with `useSyncExternalStore` (the generated version set state inside an effect). Keep these when updating components.
 - The root lint config relaxes five rules for `components/ui/*.tsx` only, so upstream updates stay reviewable.
 - A link that looks like a button is `ButtonLink` (`components/button-link.ts`), which takes the router's link props. Do not render a `Button` as a link (`render={<Link />}`): Base UI gives the rendered element the button role, so screen readers announce the link as a button.
+- Text to copy, such as an install snippet or a key, is `CopyableCode` (`components/copyable-code.tsx`): code that wraps, with its copy button inside the box. Never a read-only input, which looks editable, and never inside a form whose Save button would not store it.
 
 ### Data states
 

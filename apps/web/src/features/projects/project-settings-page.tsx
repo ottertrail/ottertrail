@@ -1,13 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  CheckIcon,
-  CopyIcon,
-  LoaderCircleIcon,
-  OctagonAlertIcon,
-  TriangleAlertIcon,
-} from "lucide-react";
+import { LoaderCircleIcon, OctagonAlertIcon, TriangleAlertIcon } from "lucide-react";
 import * as React from "react";
 
+import { CopyableCode } from "@/components/copyable-code";
 import { StatusBadge } from "@/components/status-badge";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -25,21 +20,6 @@ import { NoSuchProject } from "./no-such-project";
 
 /** While waiting for the first event, check every few seconds. */
 const STATUS_REFRESH_MS = 10_000;
-
-function CopyButton({ text, label }: { text: string; label: string }) {
-  const [copied, setCopied] = React.useState(false);
-  async function copy() {
-    await navigator.clipboard.writeText(text);
-    setCopied(true);
-    window.setTimeout(() => setCopied(false), 2000);
-  }
-  return (
-    <Button variant="outline" size="sm" onClick={() => void copy()} aria-label={label}>
-      {copied ? <CheckIcon aria-hidden="true" /> : <CopyIcon aria-hidden="true" />}
-      {copied ? "Copied" : "Copy"}
-    </Button>
-  );
-}
 
 function InstallCard({ project }: { project: Project }) {
   const snippet = installSnippet(window.location.origin, project.publicKey);
@@ -66,12 +46,7 @@ function InstallCard({ project }: { project: Project }) {
             </AlertDescription>
           </Alert>
         )}
-        <div className="flex items-start gap-2">
-          <pre className="min-w-0 flex-1 overflow-x-auto rounded-lg bg-muted p-3 font-mono text-xs leading-relaxed text-ink">
-            <code>{snippet}</code>
-          </pre>
-          <CopyButton text={snippet} label="Copy the snippet" />
-        </div>
+        <CopyableCode text={snippet} copyLabel="Copy the snippet" />
         <output aria-live="polite" className="flex flex-wrap items-center gap-2 text-sm">
           {project.lastEventAt === null ? (
             <>
@@ -94,6 +69,14 @@ function InstallCard({ project }: { project: Project }) {
             </>
           )}
         </output>
+        <div className="flex flex-col gap-2 border-t pt-4">
+          <h4 className="text-sm font-medium text-ink">Public key</h4>
+          <CopyableCode text={project.publicKey} copyLabel="Copy the public key" />
+          <p className="text-sm text-muted-foreground">
+            Already part of the snippet. It only lets pages on the allowed sites send events; it
+            cannot read anything.
+          </p>
+        </div>
       </CardContent>
     </Card>
   );
@@ -154,14 +137,6 @@ function SettingsCard({ project }: { project: Project }) {
               <FieldDescription id="settings-hostnames-hint">
                 One hostname per line. Each subdomain is separate: list www.example.com as well as
                 example.com if both serve pages. Changes apply within a minute.
-              </FieldDescription>
-            </Field>
-            <Field>
-              <FieldLabel htmlFor="settings-key">Public key</FieldLabel>
-              <Input id="settings-key" value={project.publicKey} readOnly className="font-mono" />
-              <FieldDescription>
-                Part of the snippet. It only lets pages on the allowed sites send events; it cannot
-                read anything.
               </FieldDescription>
             </Field>
             {save.error !== null && (
