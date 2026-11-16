@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Tracker playground</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        font-family: system-ui, sans-serif;
+        line-height: 1.5;
+      }
+      body {
+        margin: 0 auto;
+        max-width: 60rem;
+        padding: 1.5rem;
+      }
+      nav,
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+        margin: 1rem 0;
+      }
+      button {
+        font: inherit;
+        padding: 0.35rem 0.8rem;
+        border-radius: 0.4rem;
+        border: 1px solid #8884;
+        background: #8881;
+        cursor: pointer;
+      }
+      button[aria-current="page"] {
+        border-color: currentColor;
+        font-weight: 600;
+      }
+      .page {
+        border: 1px dashed #8886;
+        border-radius: 0.5rem;
+        padding: 1rem;
+      }
+      .muted {
+        opacity: 0.7;
+        font-size: 0.9rem;
+      }
+      ol {
+        padding-left: 1.25rem;
+      }
+      li {
+        margin-bottom: 0.75rem;
+      }
+      pre {
+        overflow-x: auto;
+        font-size: 0.8rem;
+        background: #8881;
+        padding: 0.5rem;
+        border-radius: 0.4rem;
+      }
+      .ok {
+        color: #2a9d55;
+      }
+      .bad {
+        color: #d9534f;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Tracker playground</h1>
+    <p class="muted">
+      A pretend single-page app with the Ottertrail tracker installed. Every request the tracker
+      sends appears under <em>Requests</em>. Local development only.
+    </p>
+
+    <form id="setup" hidden>
+      <p>
+        Paste a project's public key (<code>select name, public_key from projects;</code>). The
+        project must allow the hostname <code>localhost</code>.
+      </p>
+      <input
+        name="key"
+        placeholder="pk_…"
+        size="40"
+        required
+        pattern="pk_[0-9a-f]{32}"
+        title="pk_ followed by 32 characters 0-9 and a-f"
+      />
+      <button>Start</button>
+    </form>
+
+    <main id="app" hidden>
+      <p class="muted">
+        Project key: <code id="current-key"></code>
+        <button type="button" id="change-key">Change key</button>
+      </p>
+      <nav aria-label="Pretend app">
+        <button data-path="/">Home</button>
+        <button data-path="/pricing">Pricing</button>
+        <button data-path="/docs">Docs</button>
+      </nav>
+      <section class="page" id="page"></section>
+
+      <div class="actions">
+        <button id="signup">Track a custom "signup" event</button>
+        <button id="query">Change only the query string</button>
+        <button id="secret">Go to a page with a secret in its URL</button>
+      </div>
+      <p class="muted">
+        Try the browser's back button too. Switch to another tab and back to see the beacon sent
+        when the page is hidden.
+      </p>
+
+      <h2>Requests</h2>
+      <ol id="log"></ol>
+    </main>
+
+    <script type="module">
+      const STORAGE_KEY = "ottertrail-demo-key";
+      const params = new URLSearchParams(location.search);
+      // A key in the address bar (?key=…) wins over the saved one.
+      const key = params.get("key") ?? localStorage.getItem(STORAGE_KEY);
+      const host = params.get("host") ?? "http://127.0.0.1:3000";
+
+      // Forget the key (saved and in the address bar) and show the form again.
+      function changeKey() {
+        localStorage.removeItem(STORAGE_KEY);
+        const url = new URL(location.href);
+        url.searchParams.delete("key");
+        location.replace(url);
+      }
+
+      if (!key) {
+        const form = document.getElementById("setup");
+        form.hidden = false;
+        form.addEventListener("submit", (event) => {
+          event.preventDefault();
+          localStorage.setItem(STORAGE_KEY, new FormData(form).get("key").trim());
+          location.reload();
+        });
+      } else {
+        start();
+      }
+
+      function start() {
+        document.getElementById("app").hidden = false;
+        document.getElementById("current-key").textContent = key;
+        document.getElementById("change-key").addEventListener("click", changeKey);
+        const log = document.getElementById("log");
+
+        function show(via, body, result) {
+          const item = document.createElement("li");
+          const batch = JSON.parse(body);
+          const summary = batch.events
+            .map((e) => `${e.name} ${new URL(e.url).pathname}`)
+            .join(", ");
+          item.innerHTML = `<strong></strong> <span></span><pre></pre>`;
+          item.querySelector("strong").textContent = `${via}: ${summary}`;
+          item.querySelector("span").textContent = result.text;
+          item.querySelector("span").className = result.ok ? "ok" : "bad";
+          item.querySelector("pre").textContent = JSON.stringify(batch, null, 2);
+          log.prepend(item);
+        }
+
+        // Watch the tracker's requests: wrap fetch and sendBeacon before it loads.
+        const realFetch = window.fetch.bind(window);
+        window.fetch = async (input, init) => {
+          if (!String(input).endsWith("/api/events")) return realFetch(input, init);
+          try {
+            const response = await realFetch(input, init);
+            const text = await response.clone().text();
+            const wrongKey = text.includes("body/key") || text.includes("unknown_key");
+            show("fetch", init.body, {
+              ok: response.ok,
+              text: `${response.status} ${text}${wrongKey ? "  (Wrong key? Use Change key above.)" : ""}`,
+            });
+            return response;
+          } catch (error) {
+            show("fetch", init.body, { ok: false, text: `network error (${error.message})` });
+            throw error;
+          }
+        };
+        const realBeacon = navigator.sendBeacon.bind(navigator);
+        navigator.sendBeacon = (url, data) => {
+          const queued = realBeacon(url, data);
+          data.text().then((body) =>
+            show("sendBeacon", body, {
+              ok: queued,
+              text: queued ? "handed to the browser (no response is visible)" : "refused",
+            }),
+          );
+          return queued;
+        };
+
+        // The pretend app: three "pages", switched with history.pushState.
+        const pages = {
+          "/": "Home. The first pageview was sent when this page loaded.",
+          "/pricing": "Pricing. A pushState navigation: no page load, but still a pageview.",
+          "/docs": "Docs. Its referrer is the previous page in this app.",
+          "/reset": "Reset password. The token in the address bar was never sent.",
+        };
+        function render() {
+          const path = location.pathname;
+          document.getElementById("page").textContent = pages[path] ?? `Page ${path}`;
+          for (const button of document.querySelectorAll("nav button")) {
+            button.setAttribute("aria-current", button.dataset.path === path ? "page" : "false");
+          }
+        }
+        window.addEventListener("popstate", render);
+        for (const button of document.querySelectorAll("nav button")) {
+          button.addEventListener("click", () => {
+            history.pushState({}, "", button.dataset.path + location.search);
+            render();
+          });
+        }
+        document.getElementById("signup").addEventListener("click", () => {
+          window.ottertrail?.track("signup", { plan: "free", fromDemo: true });
+        });
+        document.getElementById("query").addEventListener("click", () => {
+          const url = new URL(location.href);
+          url.searchParams.set("tab", String(Number(url.searchParams.get("tab") ?? 0) + 1));
+          history.pushState({}, "", url);
+          render();
+        });
+        document.getElementById("secret").addEventListener("click", () => {
+          history.pushState({}, "", "/reset?token=s3cret-reset-token&utm_source=email");
+          render();
+        });
+        render();
+
+        // Install the tracker exactly as a customer would, with a script tag.
+        const script = document.createElement("script");
+        script.src = "/tracker.js";
+        script.defer = true;
+        script.dataset.key = key;
+        script.dataset.host = host;
+        document.head.append(script);
+      }
+    </script>
+  </body>
+</html>

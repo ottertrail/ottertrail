@@ -60,6 +60,11 @@ export default defineConfig({
         },
       },
       {
+        // The tracker runs in visitors' browsers, on other people's sites.
+        files: ["packages/tracker/**/*.ts"],
+        env: { browser: true },
+      },
+      {
         files: ["apps/api/**/*.ts"],
         plugins: ["node"],
         env: { node: true },
@@ -67,6 +72,10 @@ export default defineConfig({
       {
         files: ["**/*.test.ts", "**/*.test.tsx"],
         plugins: ["vitest"],
+        rules: {
+          // Tests cast parsed JSON and fakes to the shape under test.
+          "typescript/no-unsafe-type-assertion": "off",
+        },
       },
     ],
   },

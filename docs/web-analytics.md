@@ -6,7 +6,7 @@ How Ottertrail's web analytics works, the concepts behind it, and the decisions 
 | ------------------ | ----------- |
 | 1. The event       | Done        |
 | 2. Collecting      | Done        |
-| 3. The tracker     | Not started |
+| 3. The tracker     | Done        |
 | 4. Enrichment      | Not started |
 | 5. Visitors        | Not started |
 | 6. Sessions        | Not started |
@@ -202,3 +202,84 @@ Behind a proxy (Cloudflare, Caddy), every request seems to come from the proxy's
 - Bot filtering (step 4).
 - Project management in the dashboard, key rotation, and wildcard hostnames such as `*.example.com`.
 - Compressed request bodies.
+
+## 3. The tracker
+
+`packages/tracker` builds `dist/tracker.js`, the script a site adds to its pages: about 4 KB, 2 KB gzipped.
+
+```html
+<script
+  defer
+  src="https://analytics.example.com/tracker.js"
+  data-key="pk_00000000000000000000000000000000"
+  data-host="https://analytics.example.com"
+></script>
+```
+
+It sends a pageview when the page loads and whenever the path changes, and gives the page `window.ottertrail.track(name, properties)` for custom events:
+
+```js
+window.ottertrail?.track("signup", { plan: "free" });
+```
+
+### It runs on someone else's site
+
+The script runs on customers' pages, next to their own code, so:
+
+- It never throws into the page. Every entry point catches its own errors.
+- It never blocks the page: `defer` loads it after the HTML, and sending happens in the background.
+- It stays small, with no dependencies.
+- Secrets never leave the visitor's device. Page URLs are reduced to origin, path, and UTM tags, and referrers to origin and path, before anything is sent. The API removes them again, because it trusts no sender.
+- Bad input does not cost other events. The API rejects a whole batch for one invalid event, so `track()` cleans names (control characters removed, 200 characters at most) and properties (flat values only, at most 30 keys, strings cut to 500 characters, 8 KB in total) before queuing them.
+
+### What counts as a pageview
+
+A pageview is a new path. The tracker records one on page load, then watches for path changes without a page load: single-page apps (React Router, Next.js, Vue Router) change the URL with `history.pushState` and `replaceState`, and the back and forward buttons fire `popstate`. The tracker wraps those two methods and listens for `popstate`.
+
+A change to only the query string (`?tab=2`) or the fragment (`#faq`) is not a new pageview. Chrome can prerender a page before the visitor opens it; the tracker waits until the page is actually shown.
+
+The first pageview's referrer is `document.referrer`, the site the visitor came from. After that, the referrer is the previous page in the app, as the browser would report for a normal page load. Reports (step 7) tell the two apart by hostname.
+
+### Batching
+
+New events wait up to a second and leave together in one request. Fifty waiting events, or a backlog after an outage, are sent at once. A request holds at most 50 events and 60 KB, under the API's limits. In the playground run, four events from quick clicks shared one request.
+
+Each event keeps the time it happened (`occurredAt`), and each request carries the time it was sent (`sentAt`), read again on every attempt, so the API's clock correction stays right even for a retry minutes later. Batching shows up as delay: `received_at - occurred_at` is about one second for batched events.
+
+### Retries
+
+| Outcome                         | Tracker does                                       |
+| ------------------------------- | -------------------------------------------------- |
+| 202                             | Removes the events from the queue                  |
+| 400, 403, 413, 415              | Drops the batch: sending it again would fail again |
+| 429, 5xx, or no response at all | Keeps the batch and retries                        |
+
+Retries wait for `Retry-After` when the server sends it, otherwise about 1, 2, 4, 8 … seconds (capped at 60), with ±20% random jitter so many visitors' browsers do not retry in step after an outage. New events do not cut a wait short. After 8 failed attempts the batch is dropped.
+
+A retry sends the same events with the same IDs, so the API stores each one once (step 1).
+
+The queue holds at most 200 events. If the API is unreachable for long, the oldest events are dropped: memory on the visitor's device matters more than a complete count.
+
+### Leaving the page
+
+When the tab is hidden (switched away, phone locked) or the page unloads, the tracker hands every queued event to `navigator.sendBeacon`. The browser delivers a beacon even after the page is gone, but the page never sees the response, so a beacon cannot be retried. If the browser refuses a beacon, the tracker falls back to `fetch` with `keepalive`, which may also outlive the page. Mobile browsers often skip unload events, so `visibilitychange` is the signal relied on.
+
+A batch that is in flight when the page hides may be sent twice: once by `fetch` and once by the beacon. The API stores it once.
+
+### The playground
+
+`packages/tracker/demo` is a pretend single-page app with the tracker installed, for watching it work. Every request the tracker sends is listed on the page with its body and the response. Start the API (`vp -C apps/api run dev`), then:
+
+```sh
+vp -C packages/tracker run demo
+```
+
+It asks for a project's public key; the project must allow the hostname `localhost`.
+
+### Not done yet
+
+- Serving `tracker.js` from each instance. Until then the script is only used through the playground.
+- Calls to `window.ottertrail.track` before the script has loaded are lost; a small queue stub will fix that.
+- Bot filtering (step 4) and visitor and session identity (steps 5 and 6).
+- Hash-based routers (`/#/pricing`): every page is recorded as `/`.
+- Consent controls and opting out of tracking.
