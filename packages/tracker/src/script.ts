@@ -105,6 +105,23 @@ function landing(): Page {
       }
       pageview();
       watchNavigation(window, pageview);
+
+      // Back or forward to a page kept in the back/forward cache: the
+      // browser shows it again without running this script again. A load
+      // without the cache would record a pageview, so this does too.
+      window.addEventListener("pageshow", (event) => {
+        if (event.persisted) {
+          // Time in the cache is not engaged time, whether or not
+          // visibilitychange fired around it: start again from zero.
+          engaged.pause();
+          engaged.take();
+          if (document.visibilityState === "visible") {
+            engaged.resume();
+          }
+          current = undefined; // As on a fresh load: a landing page.
+          pageview();
+        }
+      });
     };
     // A prerendered page may never be seen; count it only once it is.
     if (document.prerendering) {

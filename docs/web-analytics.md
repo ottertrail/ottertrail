@@ -205,7 +205,7 @@ Behind a proxy (Cloudflare, Caddy), every request seems to come from the proxy's
 
 ## 3. The tracker
 
-`packages/tracker` builds `dist/tracker.js`, the script a site adds to its pages: about 4.6 KB, 2.2 KB gzipped.
+`packages/tracker` builds `dist/tracker.js`, the script a site adds to its pages: about 5.2 KB, 2.4 KB gzipped.
 
 ```html
 <script
@@ -237,6 +237,8 @@ The script runs on customers' pages, next to their own code, so:
 A pageview is a new path. The tracker records one on page load, then watches for path changes without a page load: single-page apps (React Router, Next.js, Vue Router) change the URL with `history.pushState` and `replaceState`, and the back and forward buttons fire `popstate`. The tracker wraps those two methods and listens for `popstate`.
 
 A change to only the query string (`?tab=2`) or the fragment (`#faq`) is not a new pageview. Chrome can prerender a page before the visitor opens it; the tracker waits until the page is actually shown.
+
+Going back or forward to a page can show it from the browser's back/forward cache, without loading it or running the tracker again. A load without the cache would record a pageview, so the tracker records one on the restore (`pageshow` with `persisted`), with the page's original referrer, and times the page from zero: time spent in the cache is not engaged time.
 
 The first pageview's referrer is `document.referrer`, the site the visitor came from. After that, the referrer is the previous page in the app, as the browser would report for a normal page load. Reports (step 7) tell the two apart by hostname.
 

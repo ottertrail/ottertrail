@@ -92,6 +92,64 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+const summary = (events: QueuedEvent[]) =>
+  events.map((event) => [event.name, event.url, event.properties?.engagedMs]);
+
+describe("back/forward cache", () => {
+  test("a restored page records a pageview and times the new visit from zero", async () => {
+    const page = fakePage("https://example.com/pricing");
+    await runScript();
+
+    vi.setSystemTime(start + 5000);
+    page.fire("pagehide", { persisted: true }); // Into the cache.
+    page.hide();
+    vi.setSystemTime(start + 65_000); // A minute in the cache.
+    page.document.visibilityState = "visible";
+    page.fire("pageshow", { persisted: true }); // Back button: restored.
+    page.show();
+    vi.setSystemTime(start + 68_000);
+    page.hide();
+    await page.settle();
+
+    expect(summary(page.events)).toEqual([
+      ["pageview", "https://example.com/pricing", undefined],
+      ["engagement", "https://example.com/pricing", 5000],
+      ["pageview", "https://example.com/pricing", undefined],
+      ["engagement", "https://example.com/pricing", 3000],
+    ]);
+  });
+
+  test("time in the cache never counts, even without visibilitychange events", async () => {
+    const page = fakePage("https://example.com/pricing");
+    await runScript();
+
+    vi.setSystemTime(start + 5000);
+    page.fire("pagehide", { persisted: true });
+    vi.setSystemTime(start + 65_000);
+    page.fire("pageshow", { persisted: true });
+    vi.setSystemTime(start + 68_000);
+    page.fire("pagehide", { persisted: false });
+    await page.settle();
+
+    expect(summary(page.events)).toEqual([
+      ["pageview", "https://example.com/pricing", undefined],
+      ["engagement", "https://example.com/pricing", 5000],
+      ["pageview", "https://example.com/pricing", undefined],
+      ["engagement", "https://example.com/pricing", 3000],
+    ]);
+  });
+
+  test("the first load's pageshow is not a second pageview", async () => {
+    const page = fakePage("https://example.com/pricing");
+    await runScript();
+    page.fire("pageshow", { persisted: false });
+    page.hide();
+    await page.settle();
+
+    expect(page.events.map((event) => event.name)).toEqual(["pageview"]);
+  });
+});
+
 describe("limits the API enforces", () => {
   test("engaged time is capped at 24 hours", async () => {
     const page = fakePage("https://example.com/pricing");
