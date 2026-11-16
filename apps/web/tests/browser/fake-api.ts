@@ -152,13 +152,30 @@ function requestUrl(input: RequestInfo | URL): URL {
 
 let active: FakeApi | undefined;
 
-async function answer(api: FakeApi, url: URL): Promise<Response> {
+function createProject(api: FakeApi, body: unknown): Response {
+  const input = typeof body === "object" && body !== null ? body : {};
+  const name = "name" in input && typeof input.name === "string" ? input.name : "";
+  const project: Project = {
+    ...PROJECT,
+    id: crypto.randomUUID(),
+    name,
+    publicKey: "pk_new",
+    lastEventAt: null,
+  };
+  api.projects = [...api.projects, project];
+  return json({ project }, 201);
+}
+
+async function answer(api: FakeApi, url: URL, init: RequestInit | undefined): Promise<Response> {
   const path = url.pathname;
   if (path === "/api/auth/get-session") {
     return json(api.signedIn ? SESSION : null);
   }
   if (path === "/api/health") {
     return json({ status: "ok" });
+  }
+  if (path === "/api/projects" && init?.method === "POST") {
+    return createProject(api, JSON.parse(typeof init.body === "string" ? init.body : "null"));
   }
   if (path === "/api/projects") {
     return json({ projects: api.projects });
@@ -181,13 +198,13 @@ async function answer(api: FakeApi, url: URL): Promise<Response> {
  * app loads: the sign-in client keeps the fetch it finds at start-up). It
  * answers from the current test's fake API; between tests, the API is down.
  */
-export async function fakeFetch(input: RequestInfo | URL): Promise<Response> {
+export async function fakeFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
   const url = requestUrl(input);
   if (active === undefined) {
     return json({ message: "No fake API in this test." }, 503);
   }
   active.requests.push(url.pathname + url.search);
-  return answer(active, url);
+  return answer(active, url, init);
 }
 
 /** Sets up the fake API for the current test; removeFakeApi() takes it down. */

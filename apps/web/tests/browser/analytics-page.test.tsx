@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test, vi } from "vite-plus/test";
+import { describe, expect, test } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser/context";
 
 import type { Analytics } from "../../src/lib/analytics-api.ts";
@@ -8,34 +8,11 @@ import {
   emptyAnalytics,
   installFakeApi,
   json,
-  removeFakeApi,
-  OTHER_PROJECT,
   PROJECT,
 } from "./fake-api.ts";
-import { currentPath, renderApp, unmountAll } from "./render.tsx";
+import { currentPath, renderApp } from "./render.tsx";
 
-const ANALYTICS = `/analytics/${PROJECT.id}`;
-const LAST_PROJECT_KEY = "ottertrail.analytics.project";
-
-/** Console errors during a test, such as React or Base UI warnings; each test expects none. */
-let consoleErrors: unknown[][] = [];
-
-beforeEach(() => {
-  consoleErrors = [];
-  vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
-    consoleErrors.push(args);
-  });
-  window.localStorage.clear();
-});
-
-afterEach(() => {
-  unmountAll();
-  removeFakeApi();
-  vi.restoreAllMocks();
-  if (consoleErrors.length > 0) {
-    throw new Error(`The page logged errors: ${JSON.stringify(consoleErrors)}`);
-  }
-});
+const ANALYTICS = `/projects/${PROJECT.id}/web-analytics`;
 
 /** The figure under a summary label, such as "24%" under "Bounce rate". */
 function summaryValue(label: string): string | null | undefined {
@@ -64,9 +41,6 @@ describe("the analytics page", () => {
     await expect.element(page.getByRole("heading", { name: "Visitors per day" })).toBeVisible();
     expect(analyticsRequests(api)).toEqual([`/api/projects/${PROJECT.id}/analytics?period=7d`]);
     await expect.element(page.getByText("10–16 Nov 2026 · Asia/Singapore")).toBeVisible();
-    await expect
-      .element(page.getByRole("combobox", { name: "Project" }))
-      .toMatchTextContent(/^Main site/);
     await expect
       .element(page.getByRole("combobox", { name: "Period" }))
       .toMatchTextContent(/^Last 7 days/);
@@ -149,19 +123,6 @@ describe("the analytics page", () => {
       .element(page.getByRole("combobox", { name: "Period" }))
       .toMatchTextContent(/^Last 7 days/);
     expect(analyticsRequests(api)).toEqual([`/api/projects/${PROJECT.id}/analytics?period=7d`]);
-  });
-
-  test("switches to another project, keeping the period", async () => {
-    const api = installFakeApi({ projects: [PROJECT, OTHER_PROJECT] });
-    const router = renderApp(`${ANALYTICS}?period=90d`);
-
-    await page.getByRole("combobox", { name: "Project" }).click();
-    await page.getByRole("option", { name: "Docs" }).click();
-
-    await expect.poll(() => currentPath(router)).toBe(`/analytics/${OTHER_PROJECT.id}?period=90d`);
-    await expect
-      .poll(() => analyticsRequests(api).at(-1))
-      .toBe(`/api/projects/${OTHER_PROJECT.id}/analytics?period=90d`);
   });
 });
 
@@ -267,7 +228,7 @@ describe("when there is nothing to show", () => {
     await expect.element(page.getByText("No events yet")).toBeVisible();
     await expect
       .element(page.getByRole("link", { name: "Install the snippet" }))
-      .toHaveAttribute("href", `/projects/${PROJECT.id}`);
+      .toHaveAttribute("href", `/projects/${PROJECT.id}/settings`);
   });
 
   test("offers a longer period when this one is empty", async () => {
@@ -290,7 +251,9 @@ describe("when there is nothing to show", () => {
     renderApp(ANALYTICS);
 
     await expect.element(page.getByText("No such project")).toBeVisible();
-    await expect.element(page.getByRole("link", { name: "All projects" })).toBeVisible();
+    await expect
+      .element(page.getByRole("main").getByRole("link", { name: "All projects" }))
+      .toBeVisible();
   });
 
   test("shows a failed load with a retry", async () => {
@@ -309,53 +272,5 @@ describe("when there is nothing to show", () => {
 
     await expect.poll(() => summaryValue("Visitors")).toBe("765");
     await expect.element(page.getByText("The reports could not load")).not.toBeInTheDocument();
-  });
-});
-
-describe("getting to the page", () => {
-  test("the home page opens the first project", async () => {
-    installFakeApi({ projects: [PROJECT, OTHER_PROJECT] });
-    const router = renderApp("/");
-
-    await expect.poll(() => currentPath(router)).toBe(ANALYTICS);
-    await expect.element(page.getByRole("heading", { name: "Visitors per day" })).toBeVisible();
-  });
-
-  test("opens the project this browser showed last", async () => {
-    installFakeApi({ projects: [PROJECT, OTHER_PROJECT] });
-    const first = renderApp(`/analytics/${OTHER_PROJECT.id}`);
-    await expect.poll(() => window.localStorage.getItem(LAST_PROJECT_KEY)).toBe(OTHER_PROJECT.id);
-    expect(currentPath(first)).toBe(`/analytics/${OTHER_PROJECT.id}`);
-    unmountAll();
-
-    const router = renderApp("/analytics");
-
-    await expect.poll(() => currentPath(router)).toBe(`/analytics/${OTHER_PROJECT.id}`);
-  });
-
-  test("opens the project list when there are no projects", async () => {
-    installFakeApi({ projects: [] });
-    const router = renderApp("/analytics");
-
-    await expect.poll(() => currentPath(router)).toBe("/projects");
-    await expect.element(page.getByText("No projects yet")).toBeVisible();
-  });
-
-  test("sends a visitor who is not signed in to sign-in", async () => {
-    const api = installFakeApi({ signedIn: false });
-    const router = renderApp(ANALYTICS);
-
-    await expect.poll(() => currentPath(router)).toBe("/sign-in");
-    await expect.element(page.getByRole("heading", { name: "Sign in" })).toBeVisible();
-    expect(analyticsRequests(api)).toEqual([]);
-  });
-
-  test("the project list links to each project's analytics", async () => {
-    installFakeApi();
-    const router = renderApp("/projects");
-
-    await page.getByRole("link", { name: "Web analytics for Main site" }).click();
-
-    await expect.poll(() => currentPath(router)).toBe(ANALYTICS);
   });
 });

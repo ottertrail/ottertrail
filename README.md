@@ -6,7 +6,7 @@ Analytics, error tracking, and email engagement for developers and small teams. 
 
 This repository is a foundation, not a working product yet. It contains:
 
-- `apps/web`: React dashboard (Vite, Tailwind CSS v4, shadcn/ui on Base UI) with sign-in, projects (install snippet and allowed sites), the web analytics page, the Ottertrail design system, and its reference page. Product analytics, users, errors, and email are listed in the sidebar as **Planned**; none of them exist yet.
+- `apps/web`: React dashboard (Vite, Tailwind CSS v4, shadcn/ui on Base UI) with sign-in, a project list, and inside each project its web analytics and settings (install snippet and allowed sites), plus the Ottertrail design system and its reference page. Product analytics, users, errors, and email are listed in each project's sidebar as **Planned**; none of them exist yet.
 - `apps/api`: Fastify API with `GET /api/health` (a liveness check) and `POST /api/events`, which collects events into PostgreSQL. Dashboard sign-in works (the owner account comes from `vp run setup`). Signed-in users manage projects and read reports (`GET /api/projects/:id/analytics`; `vp run report` prints the same reports in a terminal). There are no invitations or job queue yet.
 - `packages/tracker`: the browser script (`dist/tracker.js`, about 2.4 KB gzipped) that sends pageviews and custom events, with a playground page in `demo/`. The API serves the built script at `/t.js`, so sites load it from their instance.
 

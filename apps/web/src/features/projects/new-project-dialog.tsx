@@ -33,7 +33,8 @@ export function NewProjectDialog({ variant = "default" }: { variant?: "default" 
     onSuccess: async (project) => {
       await queryClient.invalidateQueries({ queryKey: ["projects"] });
       setOpen(false);
-      await navigate({ to: "/projects/$projectId", params: { projectId: project.id } });
+      // A new project needs its snippet installed first.
+      await navigate({ to: "/projects/$projectId/settings", params: { projectId: project.id } });
     },
   });
 

@@ -13,15 +13,16 @@ import type * as React from "react";
 import { AppLayout } from "@/app";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AnalyticsPage } from "@/features/analytics/analytics-page";
-import { DEFAULT_PERIOD, lastAnalyticsProject } from "@/features/analytics/preferences";
 import { SetupPage } from "@/features/auth/setup-page";
 import { SignInPage } from "@/features/auth/sign-in-page";
 import { DesignSystemPage } from "@/features/design-system/design-system-page";
-import { ProjectPage } from "@/features/projects/project-page";
+import { ProjectLayout } from "@/features/projects/project-layout";
+import { ProjectSettingsPage } from "@/features/projects/project-settings-page";
 import { ProjectsPage } from "@/features/projects/projects-page";
-import { isPeriod, type Period } from "@/lib/analytics-api";
+import { DEFAULT_PERIOD, isPeriod, type Period } from "@/lib/analytics-api";
 import { ApiError } from "@/lib/api";
 import { authClient } from "@/lib/auth-client";
+import { lastProject } from "@/lib/last-project";
 import { projectsQuery } from "@/lib/projects-api";
 
 async function signedIn(): Promise<boolean> {
@@ -70,32 +71,58 @@ const appRoute = createRoute({
   component: AppLayout,
 });
 
+/** Opens the project shown last in this browser, or the first one; with none, the project list. */
 const homeRoute = createRoute({
   getParentRoute: () => appRoute,
   path: "/",
-  beforeLoad: () => {
-    throw redirect({ to: "/analytics" });
-  },
-});
-
-/** Opens the project shown last in this browser, or the first one; with none, the project list. */
-const analyticsIndexRoute = createRoute({
-  getParentRoute: () => appRoute,
-  path: "/analytics",
   beforeLoad: async ({ context }) => {
     const projects = await context.queryClient.ensureQueryData(projectsQuery());
-    const last = lastAnalyticsProject();
+    const last = lastProject();
     const project = projects.find((item) => item.id === last) ?? projects[0];
     if (project === undefined) {
       throw redirect({ to: "/projects" });
     }
-    throw redirect({ to: "/analytics/$projectId", params: { projectId: project.id } });
+    throw redirect({
+      to: "/projects/$projectId/web-analytics",
+      params: { projectId: project.id },
+    });
   },
 });
 
-const analyticsRoute = createRoute({
+/** The list of projects: the instance level, above any one project. */
+const projectsRoute = createRoute({
   getParentRoute: () => appRoute,
-  path: "/analytics/$projectId",
+  path: "/projects",
+  staticData: { title: "Projects" },
+  component: ProjectsPage,
+});
+
+/**
+ * Inside one project. Every module (web analytics, and later product
+ * analytics, users, errors, email) is a page under it, and the sidebar
+ * switches to the project's own menu.
+ */
+const projectRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: "/projects/$projectId",
+  component: function ProjectRouteComponent() {
+    const { projectId } = projectRoute.useParams();
+    return <ProjectLayout projectId={projectId} />;
+  },
+});
+
+/** A project opens on its web analytics until it has an overview page. */
+const projectIndexRoute = createRoute({
+  getParentRoute: () => projectRoute,
+  path: "/",
+  beforeLoad: ({ params }) => {
+    throw redirect({ to: "/projects/$projectId/web-analytics", params });
+  },
+});
+
+const webAnalyticsRoute = createRoute({
+  getParentRoute: () => projectRoute,
+  path: "/web-analytics",
   staticData: { title: "Web analytics" },
   // An unknown or missing period falls back to the default instead of failing.
   // The router merges the result over the raw query, so an invalid period
@@ -105,27 +132,20 @@ const analyticsRoute = createRoute({
   ): { period: Period | undefined } => ({
     period: isPeriod(search.period) ? search.period : undefined,
   }),
-  component: function AnalyticsRouteComponent() {
-    const { projectId } = analyticsRoute.useParams();
-    const { period = DEFAULT_PERIOD } = analyticsRoute.useSearch();
+  component: function WebAnalyticsRouteComponent() {
+    const { projectId } = webAnalyticsRoute.useParams();
+    const { period = DEFAULT_PERIOD } = webAnalyticsRoute.useSearch();
     return <AnalyticsPage projectId={projectId} period={period} />;
   },
 });
 
-const projectsRoute = createRoute({
-  getParentRoute: () => appRoute,
-  path: "/projects",
-  staticData: { title: "Projects" },
-  component: ProjectsPage,
-});
-
-const projectRoute = createRoute({
-  getParentRoute: () => appRoute,
-  path: "/projects/$projectId",
-  staticData: { title: "Project" },
-  component: function ProjectRouteComponent() {
-    const { projectId } = projectRoute.useParams();
-    return <ProjectPage projectId={projectId} />;
+const projectSettingsRoute = createRoute({
+  getParentRoute: () => projectRoute,
+  path: "/settings",
+  staticData: { title: "Settings" },
+  component: function ProjectSettingsRouteComponent() {
+    const { projectId } = projectSettingsRoute.useParams();
+    return <ProjectSettingsPage projectId={projectId} />;
   },
 });
 
@@ -141,10 +161,8 @@ const routeTree = rootRoute.addChildren([
   setupRoute,
   appRoute.addChildren([
     homeRoute,
-    analyticsIndexRoute,
-    analyticsRoute,
     projectsRoute,
-    projectRoute,
+    projectRoute.addChildren([projectIndexRoute, webAnalyticsRoute, projectSettingsRoute]),
     designSystemRoute,
   ]),
 ]);

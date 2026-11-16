@@ -89,7 +89,18 @@ Settings that differ from Better Auth's defaults, and why:
 
 Code: `apps/api/src/projects/`, `apps/api/src/tracker-script/`, and `apps/web/src/features/projects/`.
 
-A project is one website or app. The Projects page lists them with their allowed sites and when their last event happened; a project's page shows its install snippet, whether events are arriving, and its settings.
+A project is one website or app. The Projects page lists them with their allowed sites and when their last event happened. A project's Settings page (`/projects/<id>/settings`) shows its install snippet, whether events are arriving, and its settings; a new project opens there.
+
+### The workspace and a project
+
+The dashboard has two levels, the way hosting dashboards treat each site:
+
+- **The workspace:** the project list (`/projects`) and the design-system reference. Settings for the whole instance, such as members and email sending, will go here.
+- **Inside a project** (`/projects/<id>/…`): the sidebar becomes the project's own menu, with a switcher to the other projects and a link back to all of them. It lists the project's modules (web analytics; product analytics, users, errors, and email marked as planned), with the project's settings at the bottom. The header shows the project's name before the page title.
+
+Every module belongs to one project (its records carry `project_id`), so a module's pages sit under the project instead of at the top with a project picker. The switcher keeps the current page: from one project's web analytics for the last 90 days, it opens the other project's web analytics for the last 90 days.
+
+`/projects/<id>` opens the project's web analytics until projects have an overview page. The home page (`/`) opens the project this browser showed last (kept in `localStorage`), or else the first project; with no projects, it opens the project list.
 
 ### The install snippet
 
@@ -158,11 +169,11 @@ The individual report functions (`summary`, `breakdown`, …) still work on thei
 
 Code: `apps/web/src/features/analytics/`.
 
-`/analytics/<project id>?period=30d` shows one project for one period: `today`, `7d` (the default), `30d`, `90d`, or `12m`, as in 8.3. An unknown period in the address falls back to the default. `/analytics`, which is also the home page, opens the project this browser showed last (kept in `localStorage`), or else the first project; with no projects it opens the project list.
+`/projects/<id>/web-analytics?period=30d` shows one project for one period: `today`, `7d` (the default), `30d`, `90d`, or `12m`, as in 8.3. An unknown period in the address falls back to the default.
 
 From top to bottom, the page shows:
 
-1. Pickers for the project and the period, then the days the period covers and the instance's timezone. The days come from the API, so they are the instance's days, not the browser's.
+1. A picker for the period, then the days it covers and the instance's timezone. The days come from the API, so they are the instance's days, not the browser's.
 2. Seven numbers: visitors, visits, pageviews, views per visit, bounce rate, visit duration, and time engaged (defined in section 7 of [web analytics](web-analytics.md#the-numbers)). A note under them says that a visitor is recognized for one day only, so the same person on two days counts twice.
 3. Visitors, visits, or pageviews per day, as a line. Hovering over the chart shows all three numbers for the nearest day. "Show the numbers" opens the same data as a table. A one-day period draws no line, since one point shows no trend.
 4. Ranked lists, most visitors first, each with a bar for its visitors: pages (top, entry, and exit), sources and campaigns, countries, regions, and cities, devices, browsers, and operating systems, and custom events. Each list shows its first 10 rows. A missing value (no location, an unknown browser) shows as "Unknown", and a visit without a campaign as "No campaign".
@@ -186,11 +197,15 @@ The page loads its data again every minute while it is open. When the period cha
 
 ### Tests
 
-`apps/web/tests/browser/analytics-page.test.tsx` renders the whole dashboard in headless Chromium (Vitest browser mode with Playwright), at an address such as `/analytics/<id>?period=7d`, so each test goes through the same routes, redirects, and layout as a person would. A fake API answers its requests (`tests/browser/fake-api.ts`); the API's own tests run against PostgreSQL, and the page checks the fake answers with the same shape checks as real ones.
+The browser tests in `apps/web/tests/browser/` render the whole dashboard in headless Chromium (Vitest browser mode with Playwright), at an address such as `/projects/<id>/web-analytics?period=7d`, so each test goes through the same routes, redirects, and layout as a person would. A fake API answers its requests (`tests/browser/fake-api.ts`); the API's own tests run against PostgreSQL, and the page checks the fake answers with the same shape checks as real ones.
 
-They cover the numbers, days, and lists from a response; changing the period and the project; the dimmed previous numbers while a period loads; an unknown period in the address; the chart's metric tabs, keyboard readout, hover readout, and table; a single day; a project without events, an empty period, a missing project, and a failed load with Retry; and the ways to reach the page (home page, last project, no projects, signed out, the project list). A test also fails when the page logs an error to the console.
+`analytics-page.test.tsx` covers the numbers, days, and lists from a response; changing the period; the dimmed previous numbers while a period loads; an unknown period in the address; the chart's metric tabs, keyboard readout, hover readout, and table; a single day; and a project without events, an empty period, a missing project, and a failed load with Retry.
 
-Putting back three bugs (an unknown period reaching the API, a chart that ignores the arrow keys, no dimming while a period loads) made exactly the three tests that guard them fail. Writing the tests found a fourth: buttons that act as links were announced as buttons by screen readers. They are now real links styled as buttons (`ButtonLink`, see [the design system](design-system.md#components)).
+`navigation.test.tsx` covers the two levels: the workspace menu; a project's menu, with planned modules disabled and labeled; the header's project name; Settings; a new project opening on its snippet; the switcher keeping the page and the period; the way back to all projects; an unknown project; and the home page (first project, last project, no projects, signed out).
+
+Any test fails when the page logs an error to the console.
+
+Putting back six bugs, in two batches of three, made exactly the tests that guard them fail: an unknown period reaching the API, a chart that ignores the arrow keys, no dimming while a period loads, a switcher that drops the period, a switcher that always opens web analytics, and a home page that forgets the last project. Writing the tests found a fourth: buttons that act as links were announced as buttons by screen readers. They are now real links styled as buttons (`ButtonLink`, see [the design system](design-system.md#components)).
 
 Unit tests in `apps/web/tests/analytics.test.ts` cover the number and date formats and the check of the API's response.
 

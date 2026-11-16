@@ -1,29 +1,17 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link } from "@tanstack/react-router";
 import {
-  ChartLineIcon,
   CheckIcon,
   CopyIcon,
-  FolderXIcon,
   LoaderCircleIcon,
   OctagonAlertIcon,
   TriangleAlertIcon,
 } from "lucide-react";
 import * as React from "react";
 
-import { ButtonLink } from "@/components/button-link";
 import { StatusBadge } from "@/components/status-badge";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import {
-  Empty,
-  EmptyContent,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyMedia,
-  EmptyTitle,
-} from "@/components/ui/empty";
 import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -33,6 +21,7 @@ import { formText } from "@/lib/form";
 import { type Project, projectQuery, updateProject } from "@/lib/projects-api";
 
 import { hostnamesFromText, installSnippet, timeAgo } from "./format";
+import { NoSuchProject } from "./no-such-project";
 
 /** While waiting for the first event, check every few seconds. */
 const STATUS_REFRESH_MS = 10_000;
@@ -199,7 +188,8 @@ function SettingsCard({ project }: { project: Project }) {
   );
 }
 
-export function ProjectPage({ projectId }: { projectId: string }) {
+/** A project's install snippet and settings: /projects/<id>/settings. */
+export function ProjectSettingsPage({ projectId }: { projectId: string }) {
   const project = useQuery({
     ...projectQuery(projectId),
     refetchInterval: (query) =>
@@ -218,22 +208,7 @@ export function ProjectPage({ projectId }: { projectId: string }) {
 
   if (project.isError) {
     if (project.error instanceof ApiError && project.error.status === 404) {
-      return (
-        <Empty className="m-6 border border-dashed p-10">
-          <EmptyHeader>
-            <EmptyMedia variant="icon">
-              <FolderXIcon />
-            </EmptyMedia>
-            <EmptyTitle>No such project</EmptyTitle>
-            <EmptyDescription>It may have been removed, or the link is wrong.</EmptyDescription>
-          </EmptyHeader>
-          <EmptyContent>
-            <ButtonLink variant="outline" to="/projects">
-              All projects
-            </ButtonLink>
-          </EmptyContent>
-        </Empty>
-      );
+      return <NoSuchProject />;
     }
     return (
       <div className="mx-auto max-w-3xl p-6">
@@ -253,18 +228,6 @@ export function ProjectPage({ projectId }: { projectId: string }) {
 
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-6 p-6">
-      <div className="flex flex-wrap items-end justify-between gap-4">
-        <div>
-          <Link to="/projects" className="text-sm text-link hover:underline">
-            All projects
-          </Link>
-          <h2 className="mt-1 text-lg font-semibold text-ink">{project.data.name}</h2>
-        </div>
-        <ButtonLink variant="outline" size="sm" to="/analytics/$projectId" params={{ projectId }}>
-          <ChartLineIcon aria-hidden="true" />
-          Web analytics
-        </ButtonLink>
-      </div>
       <InstallCard project={project.data} />
       <SettingsCard project={project.data} />
     </div>

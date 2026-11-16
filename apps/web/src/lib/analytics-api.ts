@@ -13,6 +13,9 @@ export const PERIODS = [
 
 export type Period = (typeof PERIODS)[number]["value"];
 
+/** The period a page opens with when its address names none. */
+export const DEFAULT_PERIOD: Period = "7d";
+
 export const isPeriod = (value: unknown): value is Period =>
   PERIODS.some((period) => period.value === value);
 

@@ -3,8 +3,7 @@ import { createRoot } from "react-dom/client";
 
 import "../../src/styles/globals.css";
 import { createAppRouter } from "../../src/router.tsx";
-
-const unmounts: (() => void)[] = [];
+import { trackMounted } from "./mounted.ts";
 
 /**
  * Renders the whole dashboard at `path`, with an in-memory address bar, so
@@ -18,20 +17,14 @@ export function renderApp(path: string) {
   document.body.append(container);
   const root = createRoot(container);
   root.render(<RouterProvider router={router} />);
-  unmounts.push(() => {
+  trackMounted(() => {
     root.unmount();
     container.remove();
   });
   return router;
 }
 
-export function unmountAll() {
-  for (const unmount of unmounts.splice(0)) {
-    unmount();
-  }
-}
-
-/** The address the router shows, such as "/analytics/abc?period=30d". */
+/** The address the router shows, such as "/projects/abc/web-analytics?period=30d". */
 export function currentPath(router: ReturnType<typeof renderApp>): string {
   return router.state.location.href;
 }

@@ -1,17 +1,31 @@
-import { Link, useMatchRoute } from "@tanstack/react-router";
+import { useQuery } from "@tanstack/react-query";
+import { Link, useMatchRoute, useNavigate, useParams } from "@tanstack/react-router";
 import {
+  ArrowLeftIcon,
   BugIcon,
   ChartColumnIcon,
   ChartLineIcon,
+  CheckIcon,
+  ChevronsUpDownIcon,
   FolderIcon,
   MailIcon,
   PaletteIcon,
+  SettingsIcon,
   UsersIcon,
 } from "lucide-react";
 
 import { ApiStatus } from "@/components/api-status";
 import { UserMenu } from "@/components/app-shell/user-menu";
 import { BrandMark } from "@/components/brand-mark";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
   Sidebar,
   SidebarContent,
@@ -24,8 +38,10 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
+import { Skeleton } from "@/components/ui/skeleton";
+import { projectsQuery } from "@/lib/projects-api";
 
-/** First-release modules that are not built yet. Shown disabled and labeled. */
+/** Project modules that are not built yet. Shown disabled and labeled. */
 const plannedModules = [
   { title: "Product analytics", icon: ChartColumnIcon },
   { title: "Users", icon: UsersIcon },
@@ -33,11 +49,170 @@ const plannedModules = [
   { title: "Email", icon: MailIcon },
 ];
 
-export function AppSidebar() {
+/** The instance level: things above any one project. */
+function WorkspaceMenu() {
   const matchRoute = useMatchRoute();
-  const onAnalytics = matchRoute({ to: "/analytics", fuzzy: true }) !== false;
-  const onProjects = matchRoute({ to: "/projects", fuzzy: true }) !== false;
-  const onDesignSystem = matchRoute({ to: "/design-system" }) !== false;
+  return (
+    <SidebarGroup>
+      <SidebarGroupLabel>Workspace</SidebarGroupLabel>
+      <SidebarMenu>
+        <SidebarMenuItem>
+          <SidebarMenuButton
+            render={<Link to="/projects" />}
+            isActive={matchRoute({ to: "/projects" }) !== false}
+            tooltip="Projects"
+          >
+            <FolderIcon />
+            <span>Projects</span>
+          </SidebarMenuButton>
+        </SidebarMenuItem>
+        <SidebarMenuItem>
+          <SidebarMenuButton
+            render={<Link to="/design-system" />}
+            isActive={matchRoute({ to: "/design-system" }) !== false}
+            tooltip="Design system"
+          >
+            <PaletteIcon />
+            <span>Design system</span>
+          </SidebarMenuButton>
+        </SidebarMenuItem>
+      </SidebarMenu>
+    </SidebarGroup>
+  );
+}
+
+/**
+ * Names the current project and switches to another one, staying on the
+ * same page (web analytics stays web analytics, with its period).
+ */
+function ProjectSwitcher({ projectId }: { projectId: string }) {
+  const navigate = useNavigate();
+  const projects = useQuery(projectsQuery());
+  const current = projects.data?.find((project) => project.id === projectId);
+
+  if (projects.data === undefined) {
+    return <Skeleton className="h-12 w-full" />;
+  }
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        render={
+          <SidebarMenuButton
+            size="lg"
+            className="data-popup-open:bg-sidebar-accent"
+            aria-label={`Project: ${current?.name ?? "unknown"}. Switch project`}
+          />
+        }
+      >
+        <div className="flex size-8 shrink-0 items-center justify-center rounded-md bg-sidebar-accent text-xs font-semibold text-ink">
+          {(current?.name ?? "?").slice(0, 1).toUpperCase()}
+        </div>
+        <div className="grid min-w-0 flex-1 text-left leading-tight">
+          <span className="truncate text-sm font-medium text-ink">
+            {current?.name ?? "Unknown project"}
+          </span>
+          <span className="truncate text-xs text-ink-subtle">Project</span>
+        </div>
+        <ChevronsUpDownIcon className="ml-auto text-ink-subtle" />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent className="min-w-56">
+        <DropdownMenuGroup>
+          <DropdownMenuLabel>Projects</DropdownMenuLabel>
+          {projects.data.map((project) => (
+            <DropdownMenuItem
+              key={project.id}
+              onClick={() =>
+                void navigate({
+                  to: ".",
+                  params: (previous) => ({ ...previous, projectId: project.id }),
+                  search: (previous) => previous,
+                })
+              }
+            >
+              <span className="flex-1 truncate">{project.name}</span>
+              {project.id === projectId && <CheckIcon aria-label="Current project" />}
+            </DropdownMenuItem>
+          ))}
+        </DropdownMenuGroup>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem onClick={() => void navigate({ to: "/projects" })}>
+          All projects
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+/** Inside one project: its modules, then its settings. */
+function ProjectMenu({ projectId }: { projectId: string }) {
+  const matchRoute = useMatchRoute();
+  return (
+    <>
+      <SidebarGroup>
+        <SidebarMenu>
+          <SidebarMenuItem>
+            <SidebarMenuButton render={<Link to="/projects" />} tooltip="All projects">
+              <ArrowLeftIcon />
+              <span>All projects</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        </SidebarMenu>
+      </SidebarGroup>
+
+      <SidebarGroup>
+        <SidebarGroupLabel>Project</SidebarGroupLabel>
+        <SidebarMenu>
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              render={<Link to="/projects/$projectId/web-analytics" params={{ projectId }} />}
+              isActive={
+                matchRoute({ to: "/projects/$projectId/web-analytics", params: { projectId } }) !==
+                false
+              }
+              tooltip="Web analytics"
+            >
+              <ChartLineIcon />
+              <span>Web analytics</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+          {plannedModules.map((module) => (
+            <SidebarMenuItem key={module.title}>
+              <SidebarMenuButton disabled>
+                <module.icon />
+                <span>{module.title}</span>
+              </SidebarMenuButton>
+              <SidebarMenuBadge className="text-ink-subtle">Planned</SidebarMenuBadge>
+            </SidebarMenuItem>
+          ))}
+        </SidebarMenu>
+      </SidebarGroup>
+
+      <SidebarGroup className="mt-auto">
+        <SidebarMenu>
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              render={<Link to="/projects/$projectId/settings" params={{ projectId }} />}
+              isActive={
+                matchRoute({ to: "/projects/$projectId/settings", params: { projectId } }) !== false
+              }
+              tooltip="Settings"
+            >
+              <SettingsIcon />
+              <span>Settings</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        </SidebarMenu>
+      </SidebarGroup>
+    </>
+  );
+}
+
+/**
+ * Two levels, like a hosting dashboard: the workspace (all projects), and
+ * inside a project, that project's own menu with a switcher and a way back.
+ */
+export function AppSidebar() {
+  const { projectId } = useParams({ strict: false });
   return (
     <Sidebar variant="inset" collapsible="icon">
       <SidebarHeader>
@@ -47,59 +222,22 @@ export function AppSidebar() {
             Ottertrail
           </span>
         </div>
+        {projectId !== undefined && (
+          <SidebarMenu>
+            <SidebarMenuItem>
+              <ProjectSwitcher projectId={projectId} />
+            </SidebarMenuItem>
+          </SidebarMenu>
+        )}
       </SidebarHeader>
 
       <SidebarContent>
-        <SidebarGroup>
-          <SidebarGroupLabel>Workspace</SidebarGroupLabel>
-          <SidebarMenu>
-            <SidebarMenuItem>
-              <SidebarMenuButton
-                render={<Link to="/analytics" />}
-                isActive={onAnalytics}
-                tooltip="Web analytics"
-              >
-                <ChartLineIcon />
-                <span>Web analytics</span>
-              </SidebarMenuButton>
-            </SidebarMenuItem>
-            <SidebarMenuItem>
-              <SidebarMenuButton
-                render={<Link to="/projects" />}
-                isActive={onProjects}
-                tooltip="Projects"
-              >
-                <FolderIcon />
-                <span>Projects</span>
-              </SidebarMenuButton>
-            </SidebarMenuItem>
-            <SidebarMenuItem>
-              <SidebarMenuButton
-                render={<Link to="/design-system" />}
-                isActive={onDesignSystem}
-                tooltip="Design system"
-              >
-                <PaletteIcon />
-                <span>Design system</span>
-              </SidebarMenuButton>
-            </SidebarMenuItem>
-          </SidebarMenu>
-        </SidebarGroup>
-
-        <SidebarGroup>
-          <SidebarGroupLabel>Planned</SidebarGroupLabel>
-          <SidebarMenu>
-            {plannedModules.map((module) => (
-              <SidebarMenuItem key={module.title}>
-                <SidebarMenuButton disabled>
-                  <module.icon />
-                  <span>{module.title}</span>
-                </SidebarMenuButton>
-                <SidebarMenuBadge className="text-ink-subtle">Planned</SidebarMenuBadge>
-              </SidebarMenuItem>
-            ))}
-          </SidebarMenu>
-        </SidebarGroup>
+        <nav
+          aria-label={projectId === undefined ? "Workspace" : "Project"}
+          className="flex flex-1 flex-col gap-2"
+        >
+          {projectId === undefined ? <WorkspaceMenu /> : <ProjectMenu projectId={projectId} />}
+        </nav>
       </SidebarContent>
 
       <SidebarFooter className="gap-3 group-data-[collapsible=icon]:hidden">

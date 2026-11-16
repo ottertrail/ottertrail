@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
-import { ChartLineIcon, FolderXIcon, OctagonAlertIcon, SettingsIcon } from "lucide-react";
+import { ChartLineIcon, OctagonAlertIcon } from "lucide-react";
 import * as React from "react";
 
 import { ButtonLink } from "@/components/button-link";
@@ -34,8 +34,9 @@ import {
   type Period,
 } from "@/lib/analytics-api";
 import { ApiError } from "@/lib/api";
-import { type Project, projectsQuery } from "@/lib/projects-api";
+import { type Project, projectQuery } from "@/lib/projects-api";
 
+import { NoSuchProject } from "../projects/no-such-project";
 import { DayChart } from "./day-chart";
 import {
   countryName,
@@ -47,7 +48,6 @@ import {
   formatRatio,
   formatWhole,
 } from "./format";
-import { rememberAnalyticsProject } from "./preferences";
 import { RankedList, type RankedRow } from "./ranked-list";
 
 const METRICS = [
@@ -437,7 +437,7 @@ function NoData({
       </EmptyHeader>
       {neverReceived && (
         <EmptyContent>
-          <ButtonLink variant="outline" to="/projects/$projectId" params={{ projectId }}>
+          <ButtonLink variant="outline" to="/projects/$projectId/settings" params={{ projectId }}>
             Install the snippet
           </ButtonLink>
         </EmptyContent>
@@ -446,7 +446,7 @@ function NoData({
         <EmptyContent>
           <ButtonLink
             variant="outline"
-            to="/analytics/$projectId"
+            to="/projects/$projectId/web-analytics"
             params={{ projectId }}
             search={{ period: "12m" }}
           >
@@ -454,25 +454,6 @@ function NoData({
           </ButtonLink>
         </EmptyContent>
       )}
-    </Empty>
-  );
-}
-
-function NoSuchProject() {
-  return (
-    <Empty className="m-6 border border-dashed p-10">
-      <EmptyHeader>
-        <EmptyMedia variant="icon">
-          <FolderXIcon />
-        </EmptyMedia>
-        <EmptyTitle>No such project</EmptyTitle>
-        <EmptyDescription>It may have been removed, or the link is wrong.</EmptyDescription>
-      </EmptyHeader>
-      <EmptyContent>
-        <ButtonLink variant="outline" to="/projects">
-          All projects
-        </ButtonLink>
-      </EmptyContent>
     </Empty>
   );
 }
@@ -488,15 +469,8 @@ const hasData = (analytics: Analytics) =>
  */
 export function AnalyticsPage({ projectId, period }: { projectId: string; period: Period }) {
   const navigate = useNavigate();
-  const projects = useQuery(projectsQuery());
+  const project = useQuery(projectQuery(projectId));
   const analytics = useQuery(analyticsQuery(projectId, period));
-  const project = projects.data?.find((item) => item.id === projectId);
-
-  React.useEffect(() => {
-    if (analytics.isSuccess) {
-      rememberAnalyticsProject(projectId);
-    }
-  }, [analytics.isSuccess, projectId]);
 
   if (analytics.error instanceof ApiError && analytics.error.status === 404) {
     return <NoSuchProject />;
@@ -508,41 +482,13 @@ export function AnalyticsPage({ projectId, period }: { projectId: string; period
   return (
     <div className="mx-auto flex max-w-6xl flex-col gap-6 p-6">
       <div className="flex flex-wrap items-center gap-2">
-        {projects.data === undefined ? (
-          <Skeleton className="h-8 w-48" />
-        ) : (
-          <Select
-            items={projects.data.map((item) => ({ value: item.id, label: item.name }))}
-            value={projectId}
-            onValueChange={(value) => {
-              if (typeof value === "string") {
-                void navigate({
-                  to: "/analytics/$projectId",
-                  params: { projectId: value },
-                  search: { period },
-                });
-              }
-            }}
-          >
-            <SelectTrigger aria-label="Project" className="w-48">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {projects.data.map((item) => (
-                <SelectItem key={item.id} value={item.id}>
-                  {item.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        )}
         <Select
           items={[...PERIODS]}
           value={period}
           onValueChange={(value) => {
             if (isPeriod(value)) {
               void navigate({
-                to: "/analytics/$projectId",
+                to: "/projects/$projectId/web-analytics",
                 params: { projectId },
                 search: { period: value },
               });
@@ -565,16 +511,6 @@ export function AnalyticsPage({ projectId, period }: { projectId: string; period
             {formatDayRange(data.firstDay, data.lastDay)} · {data.timeZone}
           </p>
         )}
-        <ButtonLink
-          variant="ghost"
-          size="sm"
-          className="ml-auto"
-          to="/projects/$projectId"
-          params={{ projectId }}
-        >
-          <SettingsIcon aria-hidden="true" />
-          Install and settings
-        </ButtonLink>
       </div>
 
       {analytics.isError && (
@@ -610,7 +546,7 @@ export function AnalyticsPage({ projectId, period }: { projectId: string; period
           {hasData(data) ? (
             <Reports analytics={data} />
           ) : (
-            <NoData projectId={projectId} project={project} period={period} />
+            <NoData projectId={projectId} project={project.data} period={period} />
           )}
         </div>
       )}
