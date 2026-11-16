@@ -1,6 +1,11 @@
 import { describe, expect, test } from "vite-plus/test";
 
-import { ConfigError, LOCAL_DATABASE_URL, loadConfig } from "../src/config.ts";
+import {
+  ConfigError,
+  DEFAULT_GEO_DATABASE_PATH,
+  LOCAL_DATABASE_URL,
+  loadConfig,
+} from "../src/config.ts";
 
 describe("loadConfig", () => {
   test("uses local development defaults when variables are unset", () => {
@@ -10,6 +15,8 @@ describe("loadConfig", () => {
       logLevel: "info",
       databaseUrl: LOCAL_DATABASE_URL,
       trustProxy: false,
+      geoSource: "database",
+      geoDatabasePath: DEFAULT_GEO_DATABASE_PATH,
     });
   });
 
@@ -21,6 +28,8 @@ describe("loadConfig", () => {
         LOG_LEVEL: "debug",
         DATABASE_URL: "postgresql://app@db.internal:5432/ottertrail",
         TRUST_PROXY: "1",
+        GEO_SOURCE: "cloudflare",
+        GEO_DATABASE_PATH: "/var/lib/ottertrail/geo.mmdb",
       }),
     ).toEqual({
       host: "0.0.0.0",
@@ -28,6 +37,8 @@ describe("loadConfig", () => {
       logLevel: "debug",
       databaseUrl: "postgresql://app@db.internal:5432/ottertrail",
       trustProxy: 1,
+      geoSource: "cloudflare",
+      geoDatabasePath: "/var/lib/ottertrail/geo.mmdb",
     });
   });
 
@@ -61,6 +72,10 @@ describe("loadConfig", () => {
       expect(() => loadConfig({ TRUST_PROXY: value })).toThrow(ConfigError);
     },
   );
+
+  test("rejects an unknown GEO_SOURCE", () => {
+    expect(() => loadConfig({ GEO_SOURCE: "maxmind" })).toThrow(ConfigError);
+  });
 
   test("never repeats DATABASE_URL in errors, because it may contain a password", () => {
     const url = "mysql://app:s3cret-value@db/ottertrail";

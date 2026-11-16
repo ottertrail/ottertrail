@@ -4,6 +4,8 @@ import type { FastifyError, FastifyPluginCallback, FastifyReply } from "fastify"
 import type { Kysely } from "kysely";
 
 import type { Database } from "../db/schema.ts";
+import { type Locate, noLocation } from "../enrichment/geo.ts";
+import { isBot, parseUserAgent } from "../enrichment/user-agent.ts";
 import { type NewEvent, storeEvents } from "./event-store.ts";
 import {
   cleanReferrer,
@@ -28,6 +30,8 @@ export interface CollectionOptions {
   db: Kysely<Database>;
   ipLimit?: RateLimit;
   projectLimit?: RateLimit;
+  /** Finds the visitor's location from the request. Default: no location. */
+  locate?: Locate;
   /** Clock, replaceable in tests. */
   now?: () => number;
 }
@@ -106,12 +110,13 @@ const eventBatchSchema = {
 
 const storedResponseSchema = {
   type: "object",
-  required: ["stored", "duplicates", "tooOld"],
+  required: ["stored", "duplicates", "tooOld", "bots"],
   additionalProperties: false,
   properties: {
     stored: { type: "integer" },
     duplicates: { type: "integer" },
     tooOld: { type: "integer" },
+    bots: { type: "integer" },
   },
 } as const;
 
@@ -148,7 +153,7 @@ function storageUnavailable(reply: FastifyReply) {
  * 7. One INSERT. 202 is sent only after PostgreSQL commits it.
  */
 export const collectionRoutes: FastifyPluginCallback<CollectionOptions> = (app, options, done) => {
-  const { db, now = Date.now } = options;
+  const { db, locate = noLocation, now = Date.now } = options;
   const projectLimit = options.projectLimit ?? DEFAULT_PROJECT_LIMIT;
   if (projectLimit.capacity < MAX_EVENTS_PER_BATCH) {
     // Plugins report setup errors through done(); app.ready() then rejects.
@@ -250,10 +255,23 @@ export const collectionRoutes: FastifyPluginCallback<CollectionOptions> = (app, 
         }
       }
 
+      // Bots are accepted and ignored: an error would only invite retries.
+      // They are checked before the budget, so they cannot use it up.
+      const userAgent = request.headers["user-agent"];
+      if (isBot(userAgent)) {
+        return reply.code(202).send({ stored: 0, duplicates: 0, tooOld: 0, bots: events.length });
+      }
+
       const budget = projectLimiter.take(project.id, events.length);
       if (!budget.allowed) {
         return tooManyRequests(reply, budget.retryAfterSeconds);
       }
+
+      // Every event in a request comes from the same browser and address. The
+      // IP address is used for the location lookup here and then dropped:
+      // it is never stored or logged.
+      const client = parseUserAgent(userAgent ?? "");
+      const location = locate(request);
 
       const accepted: NewEvent[] = [];
       let tooOld = 0;
@@ -301,6 +319,8 @@ export const collectionRoutes: FastifyPluginCallback<CollectionOptions> = (app, 
           referrer: cleanReferrer(event.referrer),
           utm: page.utm,
           ...(event.properties === undefined ? {} : { properties: event.properties }),
+          client,
+          location,
         });
       }
 
@@ -313,7 +333,7 @@ export const collectionRoutes: FastifyPluginCallback<CollectionOptions> = (app, 
       }
       return reply
         .code(202)
-        .send({ stored: result.inserted, duplicates: result.duplicates, tooOld });
+        .send({ stored: result.inserted, duplicates: result.duplicates, tooOld, bots: 0 });
     },
   );
 

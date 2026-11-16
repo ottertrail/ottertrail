@@ -7,7 +7,7 @@ How Ottertrail's web analytics works, the concepts behind it, and the decisions 
 | 1. The event       | Done        |
 | 2. Collecting      | Done        |
 | 3. The tracker     | Done        |
-| 4. Enrichment      | Not started |
+| 4. Enrichment      | Done        |
 | 5. Visitors        | Not started |
 | 6. Sessions        | Not started |
 | 7. Reports         | Not started |
@@ -37,7 +37,7 @@ Created by `apps/api/src/db/migrations/0001_create_projects_and_events.ts`.
 | `utm_*` (5 columns) | Campaign tags from the page URL: source, medium, campaign, term, content    | Sender   |
 | `properties`        | Custom details as a JSON object, such as `{ "plan": "free" }`, at most 8 KB | Sender   |
 
-Later steps add columns in new migrations: browser, OS, device, and country (step 4), visitor (step 5), and session (step 6).
+Later steps add columns in new migrations: browser, OS, device, country, region, and city (step 4), visitor (step 5), and session (step 6).
 
 ### Two timestamps
 
@@ -115,7 +115,7 @@ Almost every report asks "this project, between these two times", so the table h
 
 | Status | Body `error`                                                | Meaning                                                  | Should the sender retry? |
 | ------ | ----------------------------------------------------------- | -------------------------------------------------------- | ------------------------ |
-| 202    | none: `{ "stored", "duplicates", "tooOld" }`                | Saved in PostgreSQL                                      | No                       |
+| 202    | none: `{ "stored", "duplicates", "tooOld", "bots" }`        | Saved in PostgreSQL                                      | No                       |
 | 400    | `invalid_request`                                           | The batch breaks a rule below                            | No: it will fail again   |
 | 403    | `unknown_key`, `origin_not_allowed`, `hostname_not_allowed` | Wrong key, or a site the project does not allow          | No                       |
 | 413    | `payload_too_large`                                         | Body over 64 KB                                          | No: send smaller batches |
@@ -199,7 +199,6 @@ Behind a proxy (Cloudflare, Caddy), every request seems to come from the proxy's
 
 ### Not done yet
 
-- Bot filtering (step 4).
 - Project management in the dashboard, key rotation, and wildcard hostnames such as `*.example.com`.
 - Compressed request bodies.
 
@@ -280,6 +279,76 @@ It asks for a project's public key; the project must allow the hostname `localho
 
 - Serving `tracker.js` from each instance. Until then the script is only used through the playground.
 - Calls to `window.ottertrail.track` before the script has loaded are lost; a small queue stub will fix that.
-- Bot filtering (step 4) and visitor and session identity (steps 5 and 6).
+- Visitor and session identity (steps 5 and 6).
 - Hash-based routers (`/#/pricing`): every page is recorded as `/`.
 - Consent controls and opting out of tracking.
+
+## 4. Enrichment
+
+Each request carries two clues the visitor never typed: the `User-Agent` header names the browser and operating system, and the IP address shows roughly where the visitor is. When events arrive, the API turns those into columns. Code: `apps/api/src/enrichment/`; columns added by migration `0003_add_event_enrichment`.
+
+| Column            | From       | Example                             |
+| ----------------- | ---------- | ----------------------------------- |
+| `browser`         | User-Agent | `Chrome`, `Microsoft Edge`          |
+| `browser_version` | User-Agent | `142` (major version only)          |
+| `os`              | User-Agent | `macOS`, `iOS` (name only)          |
+| `device_type`     | User-Agent | `desktop`, `mobile`, `tablet`, `tv` |
+| `country`         | IP address | `DE` (ISO 3166-1 code)              |
+| `region`          | IP address | `Bavaria` (English name)            |
+| `city`            | IP address | `Munich` (English name)             |
+
+Every event in a request shares these values: one request comes from one browser and one address. Events stored before step 4 have `NULL` in all of them.
+
+### The IP address is never stored or logged
+
+The address is used in memory for the location lookup and then dropped. No column holds it, and request logs record only the method and URL: Fastify's default request log includes the client's address and port, so the API replaces it (`requestLogFields` in `apps/api/src/app.ts`). A test sends requests and checks that no log line contains the address.
+
+Under GDPR an IP address is personal data. Not keeping it also means locations can never be recomputed later: whatever was known when an event arrived is all there will ever be.
+
+### Browser, OS, and device
+
+[bowser](https://github.com/bowser-js/bowser) (MIT) parses the User-Agent. (`ua-parser-js` was not used: from version 2 it is licensed AGPL, which would bind Ottertrail's own license choice.)
+
+Browsers now freeze parts of the User-Agent so people are harder to fingerprint ("User-Agent reduction"). Every Mac reports macOS 10.15.7 and Windows 11 reports Windows NT 10.0, so OS versions would be wrong: only the OS name and the browser's major version are kept. iPads present themselves as Macs, so they count as desktop.
+
+### Location
+
+A geolocation database maps IP address ranges to places. Ottertrail uses DB-IP's free [IP to City Lite](https://db-ip.com/db/download/ip-to-city-lite) database: licensed CC BY 4.0, updated monthly (usually on the 1st), in MMDB format, a binary search tree of address ranges. The API loads the whole file into memory at startup (about 130 MB) and reads it with [mmdb-lib](https://github.com/runk/mmdb-lib) (MIT); a lookup takes microseconds and never leaves the server.
+
+- Country is close to a fact. Region and city are estimates: MaxMind, another provider, reports for US addresses about 80% accuracy for the region and about 66% for the city within 50 km ([source](https://support.maxmind.com/hc/en-us/articles/4407630607131)). Mobile networks, VPNs, and iCloud Private Relay show where traffic leaves the network, not where the person is.
+- DB-IP Lite regions have English names only, not ISO codes, so `region` holds names such as `Bavaria`.
+- Private and local addresses (`127.0.0.1`, `192.168.x.x`) have no location. In local development every event has an empty location.
+
+`GEO_SOURCE` picks where locations come from (see the README):
+
+| Value                | Locations from                                                                                                                                                                                                                                                       |
+| -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `database` (default) | The file at `GEO_DATABASE_PATH`. If it is missing, the API starts anyway, stores events without a location, and logs a warning.                                                                                                                                      |
+| `cloudflare`         | Headers Cloudflare adds: `CF-IPCountry`, plus `CF-Region` and `CF-IPCity` with its "Add visitor location headers" managed transform. Cloudflare keeps them current. Use only when every request passes through Cloudflare, since anyone else can send these headers. |
+| `none`               | No location lookup.                                                                                                                                                                                                                                                  |
+
+### Keeping the database current
+
+IP ranges change hands: ISPs reassign them, IPv4 addresses are bought and sold, cloud providers move them. An old file does not fail; it gives slowly more wrong answers, city first. Lookups happen when events arrive, so a newer file only affects new events.
+
+- `vp run geo:update` downloads this month's file (or last month's, early on the 1st), checks that it opens and places `8.8.8.8` in the US, and only then replaces the old file. Restart the API to load it.
+- At startup the API logs the file's build date and warns when it is older than 60 days.
+- Later: production images will include the latest file, and the background worker (not built yet) will refresh it monthly.
+
+The license requires credit: show "IP geolocation by DB-IP" with a link to db-ip.com wherever locations are displayed.
+
+### Bots
+
+[isbot](https://github.com/omrilotan/isbot) (public domain) recognizes User-Agents that announce themselves as automated: search engine crawlers, link previews, monitoring tools, headless browsers, and HTTP libraries such as `curl`. A request without a User-Agent counts as a bot too, since every browser sends one.
+
+Bot requests get `202` with `bots` counted and nothing stored: an error would only invite retries. They are checked before the per-project event budget, so they cannot use it up.
+
+To send test events with `curl`, pass a browser User-Agent (`-A "Mozilla/5.0 …"`), or they are counted as bots. Automated browser tests need a normal User-Agent for the same reason (headless Chrome says `HeadlessChrome`).
+
+Bots that pretend to be browsers are not caught. Spotting those needs behavior and network signals, such as data-center address ranges; that is not built.
+
+### Not done yet
+
+- Updating the database automatically (needs the background worker), and including it in production images.
+- The "IP geolocation by DB-IP" credit in the dashboard, which does not show locations yet.
+- Detecting bots that pretend to be browsers.

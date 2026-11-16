@@ -188,18 +188,27 @@ catalogs:
     '@types/pg':
       specifier: 8.23.1
       version: 8.23.1
+    bowser:
+      specifier: 2.15.0
+      version: 2.15.0
     class-variance-authority:
       specifier: ^0.7.1
       version: 0.7.1
     cn:
       specifier: ^0.5.2
       version: 0.5.2
+    isbot:
+      specifier: 5.2.3
+      version: 5.2.3
     kysely:
       specifier: 0.29.9
       version: 0.29.9
     lucide-react:
       specifier: ^1.73.0
       version: 1.73.0
+    mmdb-lib:
+      specifier: 3.0.5
+      version: 3.0.5
     pg:
       specifier: 8.23.1
       version: 8.23.1
@@ -232,12 +241,21 @@ importers:
 
   apps/api:
     dependencies:
+      bowser:
+        specifier: 'catalog:'
+        version: 2.15.0
       fastify:
         specifier: ^5.12.8
         version: 5.12.8
+      isbot:
+        specifier: 'catalog:'
+        version: 5.2.3
       kysely:
         specifier: 'catalog:'
         version: 0.29.9
+      mmdb-lib:
+        specifier: 'catalog:'
+        version: 3.0.5
       pg:
         specifier: 'catalog:'
         version: 8.23.1
@@ -1448,6 +1466,9 @@ packages:
     engines: {node: '>=6.0.0'}
     hasBin: true
 
+  bowser@2.15.0:
+    resolution: {integrity: sha512-xic6KSZglg/I4ymp45fdM4GWfYpBK79Fxd/TOvJktlaPgQqqDxvmGwOPZl2V0dyeS3Lj5c180bLhXF43iyAjZQ==}
+
   brace-expansion@5.0.13:
     resolution: {integrity: sha512-Vh3dmFbc4wZeox7M9I/0L9GfFd83Su4+yCck/OF9Gi/P/dAHn0RT7X4K9R7gMNMhDck3DvhR6QXsnQdjjgwNvQ==}
     engines: {node: 20 || >=22}
@@ -1832,6 +1853,10 @@ packages:
     resolution: {integrity: sha512-e6rvdUCiQCAuumZslxRJWR/Doq4VpPR82kqclvcS0efgt430SlGIk05vdCN58+VrzgtIcfNODjozVielycD4Sw==}
     engines: {node: '>=16'}
 
+  isbot@5.2.3:
+    resolution: {integrity: sha512-e8gGz3VzAuImtTMnB5PqNRRWGAswObTc+X+X5a8PttKT78VSSFec98w9ZwUoy6jJdlvJkVdLiN+WMgA8TewoZg==}
+    engines: {node: '>=18'}
+
   isexe@2.0.0:
     resolution: {integrity: sha512-RHxMLp9lnKHGHRng9QFhRCMbYAcVpn69smSGcq3f36xjgVVWThj4qqLbTLlq7Ssj8B+fIQ1EuCEGI2lKsyQeIw==}
 
@@ -2013,6 +2038,10 @@ packages:
 
   minimist@1.2.8:
     resolution: {integrity: sha512-2yyAR8qBkN3YuheJanUpWC5U3bb5osDywNB8RzDVlDwDHbocAJveqqj1u8+SVD7jkWT4yvsHCpWqqWqAxb0zCA==}
+
+  mmdb-lib@3.0.5:
+    resolution: {integrity: sha512-fBhq5SQHKXwL4dPwF4/Xesw6Ai5nsPlft7RWQwBOm5fhfrQs0r1dR7FbLCaaKH9pkub2s4BKrHAeZUjq+KrX7g==}
+    engines: {node: '>=10', npm: '>=6'}
 
   mrmime@2.0.1:
     resolution: {integrity: sha512-Y3wQdFg2Va6etvQ5I82yUhGdsKrcYox6p7FfL1LbK2J4V01F9TGlepTIhnK24t7koZibmg82KGglhA1XK5IsLQ==}
@@ -3512,6 +3541,8 @@ snapshots:
 
   baseline-browser-mapping@2.11.37: {}
 
+  bowser@2.15.0: {}
+
   brace-expansion@5.0.13:
     dependencies:
       balanced-match: 4.0.4
@@ -3838,6 +3869,8 @@ snapshots:
     dependencies:
       is-inside-container: 1.0.0
 
+  isbot@5.2.3: {}
+
   isexe@2.0.0: {}
 
   isexe@3.1.5: {}
@@ -3972,6 +4005,8 @@ snapshots:
       brace-expansion: 5.0.13
 
   minimist@1.2.8: {}
+
+  mmdb-lib@3.0.5: {}
 
   mrmime@2.0.1: {}
 

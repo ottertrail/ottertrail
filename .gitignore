@@ -41,3 +41,6 @@ coverage
 
 # Private product and business notes; never committed
 docs/private/
+
+# Geolocation database downloaded by `vp run geo:update` (about 130 MB)
+apps/api/data/

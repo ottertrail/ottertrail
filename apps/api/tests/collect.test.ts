@@ -6,11 +6,20 @@ import { afterAll, beforeAll, describe, expect, test } from "vite-plus/test";
 
 import { type AppOptions, buildApp } from "../src/app.ts";
 import { createDatabase } from "../src/db/database.ts";
+import type { Locate, Location } from "../src/enrichment/geo.ts";
 import { createTestDatabase, type TestDatabase } from "./helpers/test-database.ts";
 
 /** The server's clock in these tests. */
 const NOW = Date.parse("2026-11-16T10:00:00.000Z");
 const SITE = "example.com";
+/** A real browser. Requests without a browser User-Agent are treated as bots. */
+const CHROME_MAC =
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36";
+/** Stands in for a geolocation database: known test addresses only. */
+const locations: Record<string, Location> = {
+  "203.0.113.10": { country: "DE", region: "Bavaria", city: "Munich" },
+};
+const fakeLocate: Locate = (request) => locations[request.ip] ?? {};
 
 let testDb: TestDatabase | undefined;
 let app: FastifyInstance | undefined;
@@ -18,7 +27,7 @@ const extraApps: FastifyInstance[] = [];
 
 beforeAll(async () => {
   testDb = await createTestDatabase();
-  app = buildApp({ db: testDb.db, collection: { now: () => NOW } });
+  app = buildApp({ db: testDb.db, collection: { now: () => NOW, locate: fakeLocate } });
 });
 
 afterAll(async () => {
@@ -73,7 +82,7 @@ function send(
   return instance.inject({
     method: "POST",
     url: "/api/events",
-    headers: { "content-type": "text/plain", ...headers },
+    headers: { "content-type": "text/plain", "user-agent": CHROME_MAC, ...headers },
     payload: typeof body === "string" ? body : JSON.stringify(body),
     remoteAddress,
   });
@@ -110,7 +119,7 @@ describe("POST /api/events", () => {
     const response = await send(body);
 
     expect(response.statusCode).toBe(202);
-    expect(response.json()).toEqual({ stored: 2, duplicates: 0, tooOld: 0 });
+    expect(response.json()).toEqual({ stored: 2, duplicates: 0, tooOld: 0, bots: 0 });
     const [first, second] = await storedEvents(project.id);
     expect(first).toMatchObject({
       name: "pageview",
@@ -142,7 +151,7 @@ describe("POST /api/events", () => {
     const retry = await send(body);
 
     expect(retry.statusCode).toBe(202);
-    expect(retry.json()).toEqual({ stored: 0, duplicates: 2, tooOld: 0 });
+    expect(retry.json()).toEqual({ stored: 0, duplicates: 2, tooOld: 0, bots: 0 });
     expect(await storedEvents(project.id)).toHaveLength(2);
   });
 
@@ -152,7 +161,7 @@ describe("POST /api/events", () => {
     const response = await send(
       batch(project.public_key, [pageview({ occurredAt: NOW - day - 1 }), pageview()]),
     );
-    expect(response.json()).toEqual({ stored: 1, duplicates: 0, tooOld: 1 });
+    expect(response.json()).toEqual({ stored: 1, duplicates: 0, tooOld: 1, bots: 0 });
   });
 
   test("ignores unknown fields, so newer trackers still work", async () => {
@@ -332,6 +341,105 @@ describe("POST /api/events", () => {
         collection: { projectLimit: { capacity: 10, refillPerSecond: 1 } },
       });
       return expect(tooSmall.ready()).rejects.toThrow(/full batch/);
+    });
+  });
+
+  describe("enrichment", () => {
+    test("adds browser, OS, device, and location, and never stores the IP address", async () => {
+      const project = await createProject();
+      const response = await send(batch(project.public_key));
+      expect(response.statusCode).toBe(202);
+
+      const [event] = await storedEvents(project.id);
+      expect(event).toMatchObject({
+        browser: "Chrome",
+        browser_version: "142",
+        os: "macOS",
+        device_type: "desktop",
+        country: "DE",
+        region: "Bavaria",
+        city: "Munich",
+      });
+      // No column holds the client's address.
+      expect(JSON.stringify(event)).not.toContain("203.0.113.10");
+    });
+
+    test("stores no location when the address has none, such as a private network", async () => {
+      const project = await createProject();
+      await send(batch(project.public_key), { remoteAddress: "192.168.0.101" });
+      const [event] = await storedEvents(project.id);
+      expect(event).toMatchObject({ browser: "Chrome", country: null, region: null, city: null });
+    });
+
+    test("recognizes phones and tablets", async () => {
+      const project = await createProject();
+      const iphone =
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.5 Mobile/15E148 Safari/604.1";
+      await send(batch(project.public_key), { headers: { "user-agent": iphone } });
+      const [event] = await storedEvents(project.id);
+      expect(event).toMatchObject({
+        browser: "Safari",
+        browser_version: "18",
+        os: "iOS",
+        device_type: "mobile",
+      });
+    });
+
+    test.each([
+      [
+        "a search engine crawler",
+        "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)",
+      ],
+      [
+        "a headless browser",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/142.0.0.0 Safari/537.36",
+      ],
+      ["curl", "curl/8.7.1"],
+      ["no User-Agent at all", ""],
+    ])("accepts and ignores events from %s", async (_label, userAgent) => {
+      const project = await createProject();
+      const response = await send(batch(project.public_key, [pageview(), pageview()]), {
+        headers: { "user-agent": userAgent },
+      });
+      expect(response.statusCode).toBe(202);
+      expect(response.json()).toEqual({ stored: 0, duplicates: 0, tooOld: 0, bots: 2 });
+      expect(await storedEvents(project.id)).toHaveLength(0);
+    });
+
+    test("does not let bots use up the project's event budget", async () => {
+      const limited = appWith({
+        collection: { now: () => NOW, projectLimit: { capacity: 50, refillPerSecond: 0.001 } },
+      });
+      const project = await createProject();
+      const full = Array.from({ length: 50 }, () => pageview());
+      await send(batch(project.public_key, full), {
+        instance: limited,
+        headers: { "user-agent": "curl/8.7.1" },
+      });
+
+      const human = await send(batch(project.public_key, full), { instance: limited });
+      expect(human.statusCode).toBe(202);
+    });
+  });
+
+  describe("logging", () => {
+    test("request logs never contain the client's IP address", async () => {
+      const lines: string[] = [];
+      const logged = appWith({
+        collection: { now: () => NOW, locate: fakeLocate },
+        log: { level: "trace", stream: { write: (line) => lines.push(line) } },
+      });
+      const project = await createProject();
+
+      await send(batch(project.public_key), { instance: logged, remoteAddress: "198.51.100.23" });
+      await send("{not json", { instance: logged, remoteAddress: "198.51.100.23" });
+
+      expect(lines.length).toBeGreaterThan(0);
+      expect(lines.some((line) => line.includes('"url":"/api/events"'))).toBe(true);
+      for (const line of lines) {
+        expect(line).not.toContain("198.51.100.23");
+        expect(line).not.toContain("remoteAddress");
+      }
     });
   });
 

@@ -50,6 +50,19 @@ export interface EventsTable {
   utm_content: Nullable<string>;
   /** Custom details, such as { plan: "free" }. Always a JSON object, at most 8 KB. */
   properties: ColumnType<JsonObject, JsonObject | undefined, JsonObject>;
+  /** From the User-Agent header, such as "Chrome". */
+  browser: Nullable<string>;
+  /** Major version only, such as "142". */
+  browser_version: Nullable<string>;
+  /** OS name only, such as "macOS". */
+  os: Nullable<string>;
+  device_type: Nullable<"desktop" | "mobile" | "tablet" | "tv">;
+  /** From the client's IP address (never stored): ISO country code, such as "DE". */
+  country: Nullable<string>;
+  /** English region name, such as "Bavaria". */
+  region: Nullable<string>;
+  /** English city name, such as "Munich". */
+  city: Nullable<string>;
 }
 
 export interface Database {

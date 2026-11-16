@@ -43,6 +43,7 @@ Start the local database and create its tables:
 ```sh
 podman compose up -d   # or: docker compose up -d
 vp run migrate
+vp run geo:update      # optional: the geolocation database, about 130 MB
 ```
 
 The database listens on `127.0.0.1:5433` (not the usual 5432, to avoid clashing with other local PostgreSQL servers) and has no password. It is for local development only. Its data lives in the `ottertrail_postgres-data` volume; `podman compose down -v` deletes it.
@@ -51,14 +52,15 @@ The database listens on `127.0.0.1:5433` (not the usual 5432, to avoid clashing 
 
 Run from the repository root.
 
-| Command           | What it does                                                                                                                                             |
-| ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `vp run dev`      | Starts the API (port 3000, restarts on change) and the dashboard dev server (port 5173, or the next free port). The dashboard proxies `/api` to the API. |
-| `vp run migrate`  | Applies database migrations that have not run yet. Safe to repeat.                                                                                       |
-| `vp check`        | Formats, lints, and type-checks the whole workspace. `vp check --fix` applies fixes.                                                                     |
-| `vp run -r test`  | Runs the tests in every package. The API tests need the local database running; each test file uses its own temporary schema.                            |
-| `vp run -r build` | Builds the dashboard (`apps/web/dist`) and bundles the API (`apps/api/dist/server.mjs` and `apps/api/dist/migrate.mjs`).                                 |
-| `vp run ready`    | `vp check`, then all tests, then all builds. Run before committing.                                                                                      |
+| Command             | What it does                                                                                                                                                                                           |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `vp run dev`        | Starts the API (port 3000, restarts on change) and the dashboard dev server (port 5173, or the next free port). The dashboard proxies `/api` to the API.                                               |
+| `vp run migrate`    | Applies database migrations that have not run yet. Safe to repeat.                                                                                                                                     |
+| `vp run geo:update` | Downloads the latest DB-IP City Lite geolocation database to `apps/api/data/geo/`, checks it, and replaces the old file. Restart the API afterwards. Without it, events are stored without a location. |
+| `vp check`          | Formats, lints, and type-checks the whole workspace. `vp check --fix` applies fixes.                                                                                                                   |
+| `vp run -r test`    | Runs the tests in every package. The API tests need the local database running; each test file uses its own temporary schema.                                                                          |
+| `vp run -r build`   | Builds the dashboard (`apps/web/dist`) and bundles the API (`apps/api/dist/server.mjs` and `apps/api/dist/migrate.mjs`).                                                                               |
+| `vp run ready`      | `vp check`, then all tests, then all builds. Run before committing.                                                                                                                                    |
 
 Inside one package: `vp -C apps/api run dev`, `vp -C apps/web test`, and so on.
 
@@ -109,13 +111,15 @@ Two git hooks in `.vite-hooks/` run on every commit:
 
 API (`apps/api`), read from the environment:
 
-| Variable       | Default                                | Meaning                                                                                                                                                                                                                                                |
-| -------------- | -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `HOST`         | `127.0.0.1`                            | Interface to listen on. Use `0.0.0.0` inside a container.                                                                                                                                                                                              |
-| `PORT`         | `3000`                                 | Port, 1 to 65535.                                                                                                                                                                                                                                      |
-| `LOG_LEVEL`    | `info`                                 | `fatal`, `error`, `warn`, `info`, `debug`, `trace`, or `silent`.                                                                                                                                                                                       |
-| `DATABASE_URL` | The local database from `compose.yaml` | PostgreSQL connection URL. Required when `NODE_ENV=production`, so a deployed instance never falls back to the local database.                                                                                                                         |
-| `TRUST_PROXY`  | unset (trust no proxy)                 | Set when the API runs behind a proxy, so rate limits see client addresses: a number of proxy hops (`1` behind one proxy) or a comma-separated list of proxy IPs or CIDRs. Without a proxy, leave it unset: otherwise clients could fake their address. |
+| Variable            | Default                                | Meaning                                                                                                                                                                                                                                                |
+| ------------------- | -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `HOST`              | `127.0.0.1`                            | Interface to listen on. Use `0.0.0.0` inside a container.                                                                                                                                                                                              |
+| `PORT`              | `3000`                                 | Port, 1 to 65535.                                                                                                                                                                                                                                      |
+| `LOG_LEVEL`         | `info`                                 | `fatal`, `error`, `warn`, `info`, `debug`, `trace`, or `silent`.                                                                                                                                                                                       |
+| `DATABASE_URL`      | The local database from `compose.yaml` | PostgreSQL connection URL. Required when `NODE_ENV=production`, so a deployed instance never falls back to the local database.                                                                                                                         |
+| `TRUST_PROXY`       | unset (trust no proxy)                 | Set when the API runs behind a proxy, so rate limits see client addresses: a number of proxy hops (`1` behind one proxy) or a comma-separated list of proxy IPs or CIDRs. Without a proxy, leave it unset: otherwise clients could fake their address. |
+| `GEO_SOURCE`        | `database`                             | Where visitor locations come from: `database` (the file below), `cloudflare` (Cloudflare's location headers; only when every request passes through Cloudflare), or `none`.                                                                            |
+| `GEO_DATABASE_PATH` | `data/geo/dbip-city-lite.mmdb`         | The geolocation file, relative to the API's working directory.                                                                                                                                                                                         |
 
 Invalid values stop the server at startup with a message naming the variable. Error messages never repeat `DATABASE_URL`, because it can contain a password.
 
@@ -138,3 +142,7 @@ pnpm dlx shadcn@latest add <component>
 ```
 
 Then run `vp check --fix` from the root. See [docs/design-system.md](docs/design-system.md#components) for the local changes to keep when updating generated components.
+
+## Third-party data
+
+IP geolocation by [DB-IP](https://db-ip.com), licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). The database is downloaded by `vp run geo:update` and is not part of this repository.

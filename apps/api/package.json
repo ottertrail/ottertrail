@@ -9,11 +9,15 @@
     "build": "vp pack",
     "start": "node dist/server.mjs",
     "start:migrate": "node dist/migrate.mjs",
-    "test": "vp test"
+    "test": "vp test",
+    "geo:update": "vpx scripts/update-geo.ts"
   },
   "dependencies": {
+    "bowser": "catalog:",
     "fastify": "^5.12.8",
+    "isbot": "catalog:",
     "kysely": "catalog:",
+    "mmdb-lib": "catalog:",
     "pg": "catalog:"
   },
   "devDependencies": {

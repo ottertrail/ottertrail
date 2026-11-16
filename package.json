@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vp run -r --parallel dev",
     "migrate": "vp run -r migrate",
+    "geo:update": "vp run -r geo:update",
     "ready": "vp check && vp run -r test && vp run -r build",
     "prepare": "vp config --no-agent"
   },

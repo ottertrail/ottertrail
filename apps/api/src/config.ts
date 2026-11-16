@@ -7,6 +7,19 @@ export type LogLevel = (typeof LOG_LEVELS)[number];
 /** The local development database from compose.yaml (no password, 127.0.0.1 only). */
 export const LOCAL_DATABASE_URL = "postgres://ottertrail@127.0.0.1:5433/ottertrail";
 
+const GEO_SOURCES = ["database", "cloudflare", "none"] as const;
+
+/**
+ * Where visitor locations come from:
+ * - database: a local geolocation file (see GEO_DATABASE_PATH).
+ * - cloudflare: headers Cloudflare adds. Only when every request passes through Cloudflare.
+ * - none: no location lookup.
+ */
+export type GeoSource = (typeof GEO_SOURCES)[number];
+
+/** Relative to the API's working directory. `vp run geo:update` downloads it. */
+export const DEFAULT_GEO_DATABASE_PATH = "data/geo/dbip-city-lite.mmdb";
+
 export interface Config {
   host: string;
   port: number;
@@ -17,6 +30,8 @@ export interface Config {
    * false (none), a number of proxy hops, or a list of proxy IPs or CIDRs.
    */
   trustProxy: false | number | string[];
+  geoSource: GeoSource;
+  geoDatabasePath: string;
 }
 
 export class ConfigError extends Error {
@@ -88,6 +103,14 @@ function parseTrustProxy(raw: string | undefined): false | number | string[] {
   return entries;
 }
 
+function parseGeoSource(raw: string): GeoSource {
+  const source = GEO_SOURCES.find((candidate) => candidate === raw.trim());
+  if (source === undefined) {
+    throw new ConfigError(`GEO_SOURCE must be one of ${GEO_SOURCES.join(", ")}, received "${raw}"`);
+  }
+  return source;
+}
+
 /**
  * Reads instance configuration from environment variables.
  * Every instance is configured independently; there are no shared defaults
@@ -100,5 +123,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     logLevel: parseLogLevel(env.LOG_LEVEL ?? "info"),
     databaseUrl: parseDatabaseUrl(env),
     trustProxy: parseTrustProxy(env.TRUST_PROXY),
+    geoSource: parseGeoSource(env.GEO_SOURCE ?? "database"),
+    geoDatabasePath: env.GEO_DATABASE_PATH?.trim() || DEFAULT_GEO_DATABASE_PATH,
   };
 }

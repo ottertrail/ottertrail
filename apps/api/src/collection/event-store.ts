@@ -1,6 +1,8 @@
 import type { Kysely } from "kysely";
 
 import type { Database, JsonObject } from "../db/schema.ts";
+import type { Location } from "../enrichment/geo.ts";
+import type { Client } from "../enrichment/user-agent.ts";
 
 export interface Utm {
   source?: string;
@@ -21,6 +23,10 @@ export interface NewEvent {
   referrer?: string;
   utm?: Utm;
   properties?: JsonObject;
+  /** Browser, OS, and device, from the request's User-Agent. */
+  client?: Client;
+  /** Country, region, and city, from the request's IP address. */
+  location?: Location;
 }
 
 export interface StoreResult {
@@ -63,6 +69,13 @@ export async function storeEvents(
         utm_term: event.utm?.term,
         utm_content: event.utm?.content,
         properties: event.properties,
+        browser: event.client?.browser,
+        browser_version: event.client?.browserVersion,
+        os: event.client?.os,
+        device_type: event.client?.deviceType,
+        country: event.location?.country,
+        region: event.location?.region,
+        city: event.location?.city,
       })),
     )
     .onConflict((conflict) => conflict.columns(["project_id", "event_id"]).doNothing())
