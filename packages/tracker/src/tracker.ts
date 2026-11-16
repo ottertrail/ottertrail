@@ -18,7 +18,7 @@ export const MAX_ATTEMPTS = 8;
 export const MAX_BACKOFF_MS = 60_000;
 
 export interface Page {
-  /** Cleaned page URL (see cleanPageUrl). */
+  /** Cleaned page URL (see cleanPageUrl). "" when the URL is too long: events on it are dropped. */
   url: string;
   referrer?: string;
 }
@@ -154,7 +154,7 @@ export function createTracker({ key, transport, randomId }: TrackerOptions): Tra
     track(name, page, properties) {
       try {
         const cleanName = sanitizeName(name);
-        if (cleanName === "") {
+        if (cleanName === "" || page.url === "") {
           return;
         }
         const cleanProperties = sanitizeProperties(properties);

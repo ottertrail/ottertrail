@@ -19,22 +19,39 @@ export function byteLength(text: string): number {
   return encoder.encode(text).length;
 }
 
-/** Removes control characters and caps the length. May return "". */
+/**
+ * Matches text PostgreSQL cannot store, which the API rejects: a NUL
+ * character, or half of a UTF-16 surrogate pair without the other half. A
+ * regular expression rather than String.prototype.isWellFormed, which older
+ * browsers lack; no lookbehind, which older Safari cannot parse.
+ */
+export const UNSTORABLE =
+  /\0|[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?:^|[^\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+
+/** The first `max` UTF-16 units, without splitting a surrogate pair at the end. */
+function cut(text: string, max: number): string {
+  const head = text.slice(0, max);
+  return /[\uD800-\uDBFF]$/.test(head) ? head.slice(0, -1) : head;
+}
+
+/** Removes control characters and unpaired surrogates, and caps the length. May return "". */
 export function sanitizeName(name: unknown): string {
   let clean = "";
+  // for…of visits whole code points: a lone surrogate arrives on its own.
   for (const character of String(name)) {
     const code = character.charCodeAt(0);
-    if (code > 31 && code !== 127) {
+    if (code > 31 && code !== 127 && !UNSTORABLE.test(character)) {
       clean += character;
     }
   }
-  return clean.slice(0, MAX_NAME_LENGTH);
+  return cut(clean, MAX_NAME_LENGTH);
 }
 
 /**
  * Keeps up to 30 flat values: strings (cut to 500 characters), finite
- * numbers, booleans, and null. Nested objects, arrays, functions, and
- * overlong keys are dropped. Returns undefined when nothing is left.
+ * numbers, booleans, and null. Nested objects, arrays, functions, overlong
+ * keys, and keys or strings PostgreSQL cannot store (see UNSTORABLE) are
+ * dropped. Returns undefined when nothing is left.
  */
 export function sanitizeProperties(input: unknown): Properties | undefined {
   if (input === null || typeof input !== "object" || Array.isArray(input)) {
@@ -44,9 +61,10 @@ export function sanitizeProperties(input: unknown): Properties | undefined {
   let count = 0;
   for (const [key, value] of Object.entries(input)) {
     if (count === MAX_KEYS) break;
-    if (key.length === 0 || key.length > MAX_KEY_LENGTH) continue;
+    if (key.length === 0 || key.length > MAX_KEY_LENGTH || UNSTORABLE.test(key)) continue;
     if (typeof value === "string") {
-      properties[key] = value.slice(0, MAX_STRING_LENGTH);
+      if (UNSTORABLE.test(value)) continue;
+      properties[key] = cut(value, MAX_STRING_LENGTH);
     } else if (
       (typeof value === "number" && Number.isFinite(value)) ||
       typeof value === "boolean" ||

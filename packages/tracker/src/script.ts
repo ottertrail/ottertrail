@@ -8,7 +8,12 @@
  * each page was visible (an "engagement" event), and exposes
  * window.ottertrail.track(name, properties) for custom events.
  */
-import { createEngagementTimer, ENGAGEMENT, MIN_REPORTED_MS } from "./engagement.ts";
+import {
+  createEngagementTimer,
+  ENGAGEMENT,
+  MAX_ENGAGED_MS,
+  MIN_REPORTED_MS,
+} from "./engagement.ts";
 import { watchNavigation } from "./navigation.ts";
 import { randomId } from "./random-id.ts";
 import { createTracker, type Page } from "./tracker.ts";
@@ -56,7 +61,8 @@ function landing(): Page {
 
     // Time on the current page, sent when the visitor leaves it or hides the tab.
     const reportEngagement = () => {
-      const engagedMs = engaged.take();
+      // A tab left open for days still reports at most what the API accepts.
+      const engagedMs = Math.min(engaged.take(), MAX_ENGAGED_MS);
       if (current !== undefined && engagedMs >= MIN_REPORTED_MS) {
         tracker.track(ENGAGEMENT, current, { engagedMs });
       }
@@ -68,13 +74,15 @@ function landing(): Page {
       }
       // After the first page, the "referrer" is the previous page in the app,
       // as it would be for a normal page load.
-      current =
-        current === undefined
-          ? landing()
-          : {
-              url: cleanPageUrl(location.href),
-              referrer: cleanReferrer(current.url) ?? current.url,
-            };
+      if (current === undefined) {
+        current = landing();
+      } else {
+        const referrer = cleanReferrer(current.url);
+        current = {
+          url: cleanPageUrl(location.href),
+          ...(referrer === undefined ? {} : { referrer }),
+        };
+      }
       tracker.track("pageview", current);
     };
 

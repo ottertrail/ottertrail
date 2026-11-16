@@ -175,6 +175,18 @@ describe("batching", () => {
     const ids = beacons.flatMap((batch) => batch.events.map((event) => event.id));
     expect(ids).toEqual(Array.from({ length: MAX_QUEUE }, (_, i) => `id-${i + 26}`));
   });
+
+  test('drops an event whose page URL was too long (""), and keeps the rest', async () => {
+    const { transport, sent } = fakeTransport();
+    const tracker = createTracker({ key: "pk_test", transport, randomId });
+
+    tracker.track("pageview", { url: "" });
+    tracker.track("pageview", page);
+    await vi.advanceTimersByTimeAsync(FLUSH_DELAY_MS);
+
+    expect(sent).toHaveLength(1);
+    expect(sent[0]?.events.map((event) => event.url)).toEqual([page.url]);
+  });
 });
 
 describe("retries", () => {

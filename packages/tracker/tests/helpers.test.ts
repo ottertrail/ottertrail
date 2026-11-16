@@ -24,6 +24,26 @@ describe("cleanPageUrl", () => {
       "http://localhost:5173/caf%C3%A9",
     );
   });
+
+  test("leaves out a UTM tag PostgreSQL cannot store", () => {
+    expect(cleanPageUrl("https://example.com/?utm_source=a%00b&utm_medium=email")).toBe(
+      "https://example.com/?utm_medium=email",
+    );
+  });
+
+  test('returns "" for a path over 2,048 characters, as the API would reject it', () => {
+    const path = `/${"a".repeat(2047)}`;
+    expect(cleanPageUrl(`https://example.com${path}`)).toBe(`https://example.com${path}`);
+    expect(cleanPageUrl(`https://example.com${path}a`)).toBe("");
+    // Percent-encoding counts, as the API sees the encoded path.
+    expect(cleanPageUrl(`https://example.com/${"é".repeat(683)}`)).toBe("");
+  });
+
+  test('returns "" for a cleaned URL over 8,192 characters', () => {
+    const base = "https://example.com/?utm_source=";
+    expect(cleanPageUrl(`${base}${"s".repeat(8192 - base.length)}&x=1`)).toHaveLength(8192);
+    expect(cleanPageUrl(`${base}${"s".repeat(8193 - base.length)}`)).toBe("");
+  });
 });
 
 describe("cleanReferrer", () => {
@@ -39,6 +59,12 @@ describe("cleanReferrer", () => {
     );
   });
 
+  test("returns undefined for one over 8,192 characters", () => {
+    const base = "https://other.example/";
+    expect(cleanReferrer(`${base}${"r".repeat(8192 - base.length)}`)).toHaveLength(8192);
+    expect(cleanReferrer(`${base}${"r".repeat(8193 - base.length)}`)).toBeUndefined();
+  });
+
   test.each(["", "not a url"])("returns undefined for %j", (referrer) => {
     expect(cleanReferrer(referrer)).toBeUndefined();
   });
@@ -49,6 +75,14 @@ describe("sanitizeName", () => {
     expect(sanitizeName("sign\nup\u0007")).toBe("signup");
     expect(sanitizeName("x".repeat(300))).toHaveLength(200);
     expect(sanitizeName(42)).toBe("42");
+  });
+
+  test("removes NUL and unpaired surrogates, keeps whole emoji", () => {
+    expect(sanitizeName("a\u0000b\uD800c\uDC00d\uD83D\uDE00")).toBe("abcd\uD83D\uDE00");
+  });
+
+  test("never cuts an emoji in half at the length cap", () => {
+    expect(sanitizeName(`${"x".repeat(199)}\uD83D\uDE00`)).toBe("x".repeat(199));
   });
 });
 
@@ -68,6 +102,26 @@ describe("sanitizeProperties", () => {
         ["k".repeat(101)]: "long key",
       }),
     ).toEqual({ plan: "free", lesson: 3, beta: true, coupon: null });
+  });
+
+  test("drops keys and strings PostgreSQL cannot store", () => {
+    expect(
+      sanitizeProperties({
+        ok: "fine \uD83D\uDE00",
+        nul: "a\u0000b",
+        high: "a\uD800",
+        low: "\uDC00a",
+        reversed: "\uDE00\uD83D",
+        ["k\u0000"]: "nul in key",
+        ["k\uD800"]: "surrogate in key",
+      }),
+    ).toEqual({ ok: "fine \uD83D\uDE00" });
+  });
+
+  test("never cuts an emoji in half at the 500-character cap", () => {
+    expect(sanitizeProperties({ text: `${"x".repeat(499)}\uD83D\uDE00` })?.text).toBe(
+      "x".repeat(499),
+    );
   });
 
   test("caps strings at 500 characters and keys at 30", () => {

@@ -6,6 +6,9 @@
 /** Shorter visits to a page are not reported: they add noise, not insight. */
 export const MIN_REPORTED_MS = 1000;
 
+/** The API rejects an engagement event above 24 hours. */
+export const MAX_ENGAGED_MS = 24 * 60 * 60 * 1000;
+
 /** The event the tracker sends with engaged time. Reserved: pages cannot send it themselves. */
 export const ENGAGEMENT = "engagement";
 

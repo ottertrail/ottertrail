@@ -244,6 +244,8 @@ The first pageview's referrer is `document.referrer`, the site the visitor came 
 
 New events wait up to a second and leave together in one request. Fifty waiting events, or a backlog after an outage, are sent at once. A request body holds at most 50 events and 60,000 bytes, JSON envelope included, under the API's 64 KB. In the playground run, four events from quick clicks shared one request.
 
+The API rejects a whole batch when one event breaks its rules (step 2), so the tracker never sends such an event: a page whose cleaned URL is over 8,192 characters or whose path is over 2,048 sends none, a longer referrer is left out, and text PostgreSQL cannot store is cleaned out of names and properties.
+
 Each event keeps the time it happened (`occurredAt`), and each request carries the time it was sent (`sentAt`), read again on every attempt, so the API's clock correction stays right even for a retry minutes later. Batching shows up as delay: `received_at - occurred_at` is about one second for batched events.
 
 ### Retries
@@ -270,7 +272,7 @@ A batch that is in flight when the page hides may be sent twice: once by `fetch`
 
 The tracker measures how long each page is visible: time in a background tab or with the phone locked does not count. When the visitor leaves a page (an in-app navigation) or hides the tab, it sends an `engagement` event for that page with `properties.engagedMs`. Under one second is not reported. The time is collected again if the tab becomes visible.
 
-`pageview` and `engagement` are reserved: `window.ottertrail.track("pageview")` is refused with a console warning, so a page cannot inflate its own numbers. The API checks that an engagement event carries a whole number of milliseconds, at most 24 hours. Visits (step 6) use these events for duration and engaged time; they never count as pageviews or interactions.
+`pageview` and `engagement` are reserved: `window.ottertrail.track("pageview")` is refused with a console warning, so a page cannot inflate its own numbers. The API checks that an engagement event carries a whole number of milliseconds, at most 24 hours; the tracker caps a longer time at 24 hours, so a tab left open for days still reports. Visits (step 6) use these events for duration and engaged time; they never count as pageviews or interactions.
 
 ### The playground
 
