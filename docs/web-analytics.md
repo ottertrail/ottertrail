@@ -402,8 +402,8 @@ Each event uses the salt of the local day it happened on. A pageview from 23:55 
 - A day's salt is created the first time that day is needed, in the `visitor_salts` table, so every API process and every restart uses the same salt. Each process caches salts in memory.
 - Events arrive up to 24 hours late, so a salt is needed until 24 hours after its day ends. It is kept one hour longer (`SALT_GRACE_MS`), then deleted. The endpoint and the cleanup read the clock at slightly different moments; without the extra hour, an event accepted at the very edge of the window could find its salt deleted a moment later, get a new salt, and with it a different visitor ID. A test reproduces that case.
 - Deletion runs when the API starts, every hour after that, and whenever a new day's salt is created, so salts go on time even when no events arrive. Every API process runs the hourly cleanup; deleting twice is harmless. The background worker will take it over once it exists.
-- Once a salt is gone, nobody can tell which IP address one of that day's visitor IDs came from, not even the instance's operator.
-- There is no setting for the rotation period. Daily keeps the privacy promise simple: an anonymous visitor is never linked across days. Changing the period later would split the data into two eras, because IDs cannot be recomputed without the IP addresses. The period lives in one place (`dayIn` and `MAX_EVENT_AGE_MS`) if a real need appears.
+- Once a salt is gone, nobody can tell which IP address one of that day's visitor IDs came from, not even the instance's operator. (A deleted row's bytes can stay in PostgreSQL's data files until the space is reused, and in backups, so the promise is complete once those copies are gone too.)
+- There is no setting for the rotation period. Daily keeps the privacy promise simple: an anonymous visitor is never linked across days, which is also why a visit that crosses midnight counts as two (section 6). Changing the period later would split the data into two eras, because IDs cannot be recomputed without the IP addresses. The period lives in one place (`dayIn` and `MAX_EVENT_AGE_MS`) if a real need appears.
 
 ### What "visitors" means
 
@@ -461,7 +461,7 @@ The cost is work at report time: every event in the range is sorted by visitor a
 
 ### A time range
 
-A visit counts in the range in which it **started**. The query reads events from 30 minutes before the range, to tell whether an early event continues a visit that began earlier, and up to 24 hours after it, so a visit starting near the end is complete (its exit page and whether it bounced can depend on later events).
+A visit counts in the range in which it **started**. Visitor IDs change at midnight, so every visit lies within one local day, and no local day is longer than 25 hours (when clocks go back). The query reads 25 hours before and after the range: enough to see where each visit started, and to see it to the end, since its exit page and whether it bounced can depend on later events.
 
 ### What each visit has
 
@@ -486,9 +486,9 @@ A visit counts in the range in which it **started**. The query reads events from
 
 ### Midnight
 
-Visitor IDs change at midnight in the instance's timezone (step 5), which would split a visit that crosses it. For events in the first 30 minutes after local midnight, ingestion also stores `previous_visitor_id`: the visitor's ID under the previous day's salt, which still exists then (salts last 25 hours past their day). The visit query links the new ID to the old one when the old ID has an event in the 30 minutes before.
+Visitor IDs change at midnight in the instance's timezone (step 5), so a visit that crosses midnight counts as two: one that ends before midnight and one that starts after it. Joining them would need a stored link between the visitor's IDs on the two days, and the link would outlive the salts. Anyone who could compute today's ID from a guessed address could follow it back to yesterday's events, which is what daily salts exist to prevent.
 
-Links can chain. Someone who is around at midnight on Monday and again on Tuesday has three IDs: Wednesday's links to Tuesday's, and Tuesday's to Monday's. The query follows each chain back to its first ID (a recursive CTE, `people`) and groups all of the chain's events under that ID. Each crossing is then joined, and a visit that runs through two midnights stays one visit. The first version followed only one link, which split the Tuesday-night visit in two; a test covers it now. The chain only groups events into visits: visitor counts still use the daily IDs.
+The first version stored such a link (`previous_visitor_id`) on every event in the first 30 minutes after midnight. A review found the privacy problem; migration 0006 clears and removes the column. The cost is small: a visit is split only if it is in progress at midnight, so a 10-minute visit has about a 10 in 1,440 (0.7%) chance.
 
 ### Try it
 
@@ -589,7 +589,7 @@ Reports that only count events (top pages, custom events) read the range's event
 - Finding each visitor ID's runs first, then joining runs across midnight: no faster over 30 days, and 10 to 20 times slower over 1 day (0.1 seconds became 1-2). PostgreSQL estimated far fewer rows than there were and chose nested loops, which compare every row with every other.
 - A larger `work_mem` (64 MB instead of 4 MB) changed nothing. Turning off JIT compilation saved 5-10%.
 
-`EXPLAIN ANALYZE` misled the first attempt: timing each step slows the steps that handle many rows, which hides where a query spends its time. Timing the whole query is the reliable measure. The query kept is the step 6 query with two changes: it follows chains of midnight links (section 6), and reports that only count visits skip the first-event columns, so the large sort carries less data.
+`EXPLAIN ANALYZE` misled the first attempt: timing each step slows the steps that handle many rows, which hides where a query spends its time. Timing the whole query is the reliable measure. The query kept is the step 6 query, except that reports that only count visits skip the first-event columns, so the large sort carries less data.
 
 **If reports get too slow**, in order of effort:
 

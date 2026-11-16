@@ -6,18 +6,21 @@ import type { Database } from "../db/schema.ts";
 export const VISIT_TIMEOUT_MS = 30 * 60 * 1000;
 
 /**
- * How far past the end of a range the query reads, so a visit that starts
- * inside the range is complete: its exit page, duration, and whether it
- * bounced can depend on events after the range ends.
+ * How far before and after a range the query reads. Visitor IDs change at
+ * midnight in the instance's timezone, so every visit lies within one local
+ * day, and no local day is longer than 25 hours (when clocks go back). With
+ * this much on each side, the query sees every visit that touches the range
+ * from its first event to its last: whether it started inside the range, and
+ * its exit page, duration, and bounce, which can depend on later events.
  */
-export const VISIT_LOOKAHEAD_MS = 24 * 60 * 60 * 1000;
+export const VISIT_CONTEXT_MS = 25 * 60 * 60 * 1000;
 
 /** Reserved event names: everything else is a custom event (an interaction). */
 export const PAGEVIEW = "pageview";
 export const ENGAGEMENT = "engagement";
 
 export interface Visit {
-  /** The visitor ID on the day the visit started. */
+  /** The visitor ID on the day of the visit. */
   visitorId: string;
   startedAt: Date;
   /** The last event of the visit, including the final engagement report. */
@@ -77,15 +80,12 @@ interface VisitRow {
  * rules below can change without migrating data.
  *
  * Rules:
- * - A visit is one visitor's run of events with no gap over 30 minutes.
+ * - A visit is one visitor ID's run of events with no gap over 30 minutes.
  * - Engagement events (time on page) extend a visit but never start one:
  *   a run of only engagement events is not a visit.
- * - A visit crossing midnight continues. Visitor IDs change at midnight, so
- *   events in the first 30 minutes of a day also carry the ID under the
- *   previous day's salt (previous_visitor_id). The two IDs are linked when
- *   the earlier one had an event in the 30 minutes before. Links chain, so
- *   a visit can cross several midnights, and the visits of someone who is
- *   around at midnight on several nights are each joined correctly.
+ * - Visitor IDs change at midnight in the instance's timezone, so a visit
+ *   that crosses midnight counts as two. Joining them would link a visitor's
+ *   IDs on two days, which daily salts exist to prevent.
  * - Entry and exit pages are the first and last pageviews. Referrer,
  *   campaign, browser, and location come from the first event that is not
  *   an engagement event.
@@ -126,10 +126,8 @@ export function visitsQuery(
   { firstEventColumns = true }: VisitsQueryOptions = {},
 ): RawBuilder<unknown> {
   const timeout = sql`make_interval(secs => ${VISIT_TIMEOUT_MS / 1000})`;
-  // Read 30 minutes before the range, to know whether an early event
-  // continues a visit that started earlier, and a day after it.
-  const readFrom = new Date(from.getTime() - VISIT_TIMEOUT_MS);
-  const readTo = new Date(to.getTime() + VISIT_LOOKAHEAD_MS);
+  const readFrom = new Date(from.getTime() - VISIT_CONTEXT_MS);
+  const readTo = new Date(to.getTime() + VISIT_CONTEXT_MS);
 
   // FIRST_EVENT_COLUMNS as read from events and as aggregated per visit, or
   // nothing. The names are the constants above, never input.
@@ -146,8 +144,8 @@ export function visitsQuery(
     : sql``;
 
   return sql`
-    with recursive range_events as (
-      select event_id, visitor_id, previous_visitor_id, name, occurred_at, path,
+    with range_events as (
+      select event_id, visitor_id, name, occurred_at, path,
              -- Time on page as a number. A malformed value counts as 0
              -- instead of failing the whole report.
              case when name = ${ENGAGEMENT} and properties ->> 'engagedMs' ~ '^[0-9]{1,9}$'
@@ -159,56 +157,27 @@ export function visitsQuery(
         and occurred_at >= ${readFrom}
         and occurred_at < ${readTo}
     ),
-    -- After midnight, a visitor has a new ID. Link it to yesterday's ID when
-    -- yesterday's visitor had an event in the 30 minutes before.
-    links as (
-      select distinct on (today.visitor_id)
-             today.visitor_id as today_id, today.previous_visitor_id as yesterday_id
-      from range_events today
-      join range_events yesterday
-        on yesterday.visitor_id = today.previous_visitor_id
-       and yesterday.occurred_at <= today.occurred_at
-       and yesterday.occurred_at >= today.occurred_at - ${timeout}
-      where today.previous_visitor_id is not null
-      order by today.visitor_id, today.occurred_at
-    ),
-    -- Someone who is around at midnight on several nights has a chain of
-    -- links: Wednesday's ID to Tuesday's, Tuesday's to Monday's. Every ID in
-    -- a chain gets the chain's first ID as its person key. (Recursive: start
-    -- at the links whose earlier ID is not linked itself, then follow them.)
-    people (visitor_id, person) as (
-      select today_id, yesterday_id from links
-      where yesterday_id not in (select today_id from links)
-      union
-      select links.today_id, people.person
-      from links join people on links.yesterday_id = people.visitor_id
-    ),
-    keyed as (
-      select range_events.*, coalesce(people.person, range_events.visitor_id) as person
-      from range_events
-      left join people on people.visitor_id = range_events.visitor_id
-    ),
-    -- A new visit starts at a person's first event, or after a gap over 30 minutes.
+    -- A new visit starts at a visitor's first event, or after a gap over 30 minutes.
     marked as (
-      select keyed.*,
+      select range_events.*,
              case
-               when lag(occurred_at) over by_person is null then 1
-               when occurred_at - lag(occurred_at) over by_person > ${timeout} then 1
+               when lag(occurred_at) over by_visitor is null then 1
+               when occurred_at - lag(occurred_at) over by_visitor > ${timeout} then 1
                else 0
              end as starts_visit
-      from keyed
-      window by_person as (partition by person order by occurred_at, event_id)
+      from range_events
+      window by_visitor as (partition by visitor_id order by occurred_at, event_id)
     ),
-    -- A running count of visit starts numbers each person's visits: 1, 2, 3 …
+    -- A running count of visit starts numbers each visitor's visits: 1, 2, 3 …
     numbered as (
       select marked.*,
-             sum(starts_visit) over (partition by person order by occurred_at, event_id
+             sum(starts_visit) over (partition by visitor_id order by occurred_at, event_id
                                      rows unbounded preceding) as visit_number
       from marked
     ),
     visits as (
       select
-        (array_agg(visitor_id order by occurred_at, event_id) filter (where name <> ${ENGAGEMENT}))[1] as visitor_id,
+        visitor_id,
         min(occurred_at) filter (where name <> ${ENGAGEMENT}) as started_at,
         max(occurred_at) as ended_at,
         sum(engaged_ms) as engaged_ms,
@@ -218,7 +187,7 @@ export function visitsQuery(
         (array_agg(path order by occurred_at desc, event_id desc) filter (where name = ${PAGEVIEW}))[1] as exit_path
         ${visitColumns}
       from numbered
-      group by person, visit_number
+      group by visitor_id, visit_number
       having count(*) filter (where name <> ${ENGAGEMENT}) > 0
     )
     select visits.*,

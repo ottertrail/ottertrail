@@ -502,7 +502,7 @@ describe("POST /api/events", () => {
   });
 
   describe("visits across midnight", () => {
-    test("keeps one visit when a visitor reads past midnight in the instance's timezone", async () => {
+    test("splits a visit at midnight in the instance's timezone, with no link between the days", async () => {
       let clock = Date.parse("2026-11-16T15:50:00.000Z"); // 23:50 in Singapore
       const singapore = appWith({ collection: { now: () => clock, timeZone: "Asia/Singapore" } });
       const project = await createProject();
@@ -523,16 +523,14 @@ describe("POST /api/events", () => {
 
       const [before, after] = await storedEvents(project.id);
       expect(after?.visitor_id).not.toBe(before?.visitor_id); // A new day, a new ID …
-      expect(after?.previous_visitor_id).toBe(before?.visitor_id); // … linked to yesterday's.
-      expect(before?.previous_visitor_id).toBeNull(); // 23:50 is not near the start of a day.
+      expect(Object.keys(after ?? {})).not.toContain("previous_visitor_id"); // … and no link.
 
       const visits = await findVisits(db(), {
         projectId: project.id,
         from: new Date("2026-11-16T00:00:00Z"),
         to: new Date("2026-11-17T00:00:00Z"),
       });
-      expect(visits).toHaveLength(1);
-      expect(visits[0]).toMatchObject({ pageviews: 2, entryPath: "/", exitPath: "/docs" });
+      expect(visits.map((visit) => visit.entryPath)).toEqual(["/", "/docs"]);
     });
   });
 

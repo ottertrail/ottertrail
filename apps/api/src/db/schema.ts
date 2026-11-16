@@ -69,11 +69,6 @@ export interface EventsTable {
    * as a string.
    */
   visitor_id: Nullable<string>;
-  /**
-   * For events in the first 30 minutes of a day: the visitor's ID under the
-   * previous day's salt, so a visit that crosses midnight stays one visit.
-   */
-  previous_visitor_id: Nullable<string>;
 }
 
 /** One random secret per day. Deleted once no event can still need it. */

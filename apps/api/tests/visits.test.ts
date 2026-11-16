@@ -206,90 +206,24 @@ describe("findVisits", () => {
   });
 
   describe("midnight", () => {
-    // Visitor IDs change at midnight. Events in the first 30 minutes of a day
-    // also carry the ID the visitor had under the previous day's salt.
-    test("continues a visit that crosses midnight", async () => {
+    // Visitor IDs change at midnight in the instance's timezone. Joining the
+    // two IDs would link a visitor across days, so the visit splits.
+    test("counts a visit that crosses midnight as two", async () => {
       const projectId = await createProject();
       await storeEvents(db(), projectId, [
         event(YESTERDAY_ID, "2026-11-16T23:50:00Z", "/"),
-        event(TODAY_ID, "2026-11-17T00:05:00Z", "/pricing", { previousVisitorId: YESTERDAY_ID }),
-        event(TODAY_ID, "2026-11-17T00:25:00Z", "/docs", { previousVisitorId: YESTERDAY_ID }),
-        event(TODAY_ID, "2026-11-17T00:50:00Z", "/signup"), // After 00:30: no previous ID, same visit.
+        event(TODAY_ID, "2026-11-17T00:05:00Z", "/pricing"),
+        event(TODAY_ID, "2026-11-17T00:25:00Z", "/docs"),
       ]);
       const visits = await findVisits(db(), {
         projectId,
         from: new Date("2026-11-16T00:00:00Z"),
         to: new Date("2026-11-18T00:00:00Z"),
       });
-      expect(visits).toHaveLength(1);
-      expect(visits[0]).toMatchObject({
-        visitorId: YESTERDAY_ID,
-        startedAt: new Date("2026-11-16T23:50:00Z"),
-        pageviews: 4,
-        entryPath: "/",
-        exitPath: "/signup",
-      });
-    });
-
-    test("starts a new visit when the visitor was gone over 30 minutes before midnight", async () => {
-      const projectId = await createProject();
-      await storeEvents(db(), projectId, [
-        event(YESTERDAY_ID, "2026-11-16T23:20:00Z", "/"),
-        event(TODAY_ID, "2026-11-17T00:05:00Z", "/pricing", { previousVisitorId: YESTERDAY_ID }),
+      expect(visits.map((v) => [v.visitorId, v.pageviews, v.entryPath, v.exitPath])).toEqual([
+        [YESTERDAY_ID, 1, "/", "/"],
+        [TODAY_ID, 2, "/pricing", "/docs"],
       ]);
-      const visits = await findVisits(db(), {
-        projectId,
-        from: new Date("2026-11-16T00:00:00Z"),
-        to: new Date("2026-11-18T00:00:00Z"),
-      });
-      expect(visits.map((v) => v.visitorId)).toEqual([YESTERDAY_ID, TODAY_ID]);
-    });
-
-    test("joins each midnight on its own for a visitor who comes back the next night", async () => {
-      const projectId = await createProject();
-      const [MONDAY, TUESDAY, WEDNESDAY] = ["111", "112", "113"];
-      await storeEvents(db(), projectId, [
-        event(MONDAY, "2026-11-16T23:50:00Z", "/"),
-        event(TUESDAY, "2026-11-17T00:05:00Z", "/docs", { previousVisitorId: MONDAY }),
-        // The same person late on Tuesday night, reading into Wednesday.
-        event(TUESDAY, "2026-11-17T23:50:00Z", "/"),
-        event(WEDNESDAY, "2026-11-18T00:05:00Z", "/pricing", { previousVisitorId: TUESDAY }),
-      ]);
-      const visits = await findVisits(db(), {
-        projectId,
-        from: new Date("2026-11-16T00:00:00Z"),
-        to: new Date("2026-11-19T00:00:00Z"),
-      });
-      expect(visits.map((v) => [v.visitorId, v.pageviews, v.exitPath])).toEqual([
-        [MONDAY, 2, "/docs"],
-        [TUESDAY, 2, "/pricing"],
-      ]);
-    });
-
-    test("continues a visit through two midnights", async () => {
-      const projectId = await createProject();
-      const TOMORROW_ID = "103";
-      // A page every 20 minutes from 23:50 on 16 November to 00:10 on 18 November.
-      const allDay = Array.from({ length: 72 }, (_, i) => {
-        const at = new Date(Date.parse("2026-11-17T00:10:00Z") + minutes(20 * i));
-        return event(
-          TODAY_ID,
-          at.toISOString(),
-          "/",
-          i === 0 ? { previousVisitorId: YESTERDAY_ID } : {},
-        );
-      });
-      await storeEvents(db(), projectId, [
-        event(YESTERDAY_ID, "2026-11-16T23:50:00Z", "/"),
-        ...allDay,
-        event(TOMORROW_ID, "2026-11-18T00:10:00Z", "/", { previousVisitorId: TODAY_ID }),
-      ]);
-      const visits = await findVisits(db(), {
-        projectId,
-        from: new Date("2026-11-16T00:00:00Z"),
-        to: new Date("2026-11-19T00:00:00Z"),
-      });
-      expect(visits.map((v) => [v.visitorId, v.pageviews])).toEqual([[YESTERDAY_ID, 74]]);
     });
   });
 
@@ -316,6 +250,25 @@ describe("findVisits", () => {
         durationMs: minutes(20),
         bounce: false,
       });
+    });
+
+    test("reads far enough back to see where a visit started", async () => {
+      const projectId = await createProject();
+      await storeEvents(db(), projectId, [
+        event(EARLY, "09:10", "/"),
+        // Engagement reports keep the visit going, though no page is viewed
+        // in the 30 minutes before the range starts.
+        engagement(EARLY, "09:35", "/", 60_000),
+        engagement(EARLY, "09:55", "/", 60_000),
+        event(EARLY, "10:10", "/docs"),
+      ]);
+      const range = { projectId, to: new Date("2026-11-16T12:00:00Z") };
+      // The visit started at 09:10, before the range: not counted.
+      expect(await findVisits(db(), { ...range, from: new Date("2026-11-16T10:00:00Z") })).toEqual(
+        [],
+      );
+      const [visit] = await findVisits(db(), { ...range, from: new Date("2026-11-16T09:00:00Z") });
+      expect(visit).toMatchObject({ startedAt: new Date("2026-11-16T09:10:00Z"), pageviews: 2 });
     });
   });
 

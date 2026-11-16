@@ -365,18 +365,12 @@ export const collectionRoutes: FastifyPluginCallback<CollectionOptions> = (app, 
         // Each event gets the visitor ID of the day it happened, so a late
         // event from just before midnight joins the rest of that day's visit.
         for (const event of accepted) {
-          const visitor = {
+          event.visitorId = await visitors.idFor({
             projectId: project.id,
             ip: request.ip,
             userAgent: userAgent ?? "",
             occurredAt: event.occurredAt,
-          };
-          event.visitorId = await visitors.idFor(visitor);
-          // Near midnight, also yesterday's ID, so a visit crossing midnight stays one.
-          const previousVisitorId = await visitors.previousDayIdFor(visitor);
-          if (previousVisitorId !== undefined) {
-            event.previousVisitorId = previousVisitorId;
-          }
+          });
         }
         result = await storeEvents(db, project.id, accepted);
       } catch (error) {

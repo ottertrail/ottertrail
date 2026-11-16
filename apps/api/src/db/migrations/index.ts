@@ -5,6 +5,7 @@ import * as addProjectKeysAndHostnames from "./0002_add_project_keys_and_hostnam
 import * as addEventEnrichment from "./0003_add_event_enrichment.ts";
 import * as addVisitorIds from "./0004_add_visitor_ids.ts";
 import * as addPreviousVisitorId from "./0005_add_previous_visitor_id.ts";
+import * as dropPreviousVisitorId from "./0006_drop_previous_visitor_id.ts";
 
 /**
  * Every migration, in order. Kysely runs them by name, alphabetically, and
@@ -19,4 +20,5 @@ export const migrations: Record<string, Migration> = {
   "0003_add_event_enrichment": addEventEnrichment,
   "0004_add_visitor_ids": addVisitorIds,
   "0005_add_previous_visitor_id": addPreviousVisitorId,
+  "0006_drop_previous_visitor_id": dropPreviousVisitorId,
 };

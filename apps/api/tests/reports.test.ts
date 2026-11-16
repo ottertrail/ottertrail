@@ -64,13 +64,13 @@ const EVENTS: NewEvent[] = [
     location: { country: "US", region: "California", city: "Mountain View" },
     client: SAFARI_IPHONE,
   }), // 13:00
-  // Visitor 3 reads across midnight: one visit, two visitor IDs.
+  // Visitor 3 reads across midnight. The visitor ID changes, and the visit splits in two.
   pv("3", "2026-11-16T15:50:00Z", "/docs", {
     referrer: "https://news.ycombinator.com/item",
     location: { country: "GB", region: "England", city: "London" },
     client: FIREFOX_ANDROID,
   }), // 23:50
-  pv("33", "2026-11-16T16:05:00Z", "/", { previousVisitorId: "3" }), // 00:05 on day 2
+  pv("33", "2026-11-16T16:05:00Z", "/"), // 00:05 on day 2
   // Visitor 4, day 2: from the Gmail app, then a second visit 40 minutes later. Two bounces.
   pv("4", "2026-11-17T03:00:00Z", "/", {
     referrer: "android-app://com.google.android.gm",
@@ -124,14 +124,14 @@ describe("summary", () => {
       // IDs 1, 2, 3, 33, 4, 5, 11: visitor 1 and visitor 3 count once per day.
       visitors: 7,
       pageviews: 9,
-      // 1, 2, 3+33 (across midnight), 4 twice, 5, 11.
-      visits: 7,
-      viewsPerVisit: 9 / 7,
-      // Visits of 2, 4 (twice), 5, and 11.
-      bounceRate: 5 / 7,
-      // 7 minutes (visitor 1, to the engagement report) + 15 minutes (across midnight), over 7 visits.
-      avgDurationMs: (22 * 60_000) / 7,
-      avgEngagedMs: 60_000 / 7,
+      // 1, 2, 3, 33, 4 twice, 5, 11: the read across midnight counts as two visits.
+      visits: 8,
+      viewsPerVisit: 9 / 8,
+      // Every visit but visitor 1's on day 1.
+      bounceRate: 7 / 8,
+      // 7 minutes (visitor 1, to the engagement report), over 8 visits.
+      avgDurationMs: (7 * 60_000) / 8,
+      avgEngagedMs: 60_000 / 8,
     });
   });
 
@@ -153,10 +153,10 @@ describe("summary", () => {
 });
 
 describe("timeseries", () => {
-  test("counts by local day, including the visit that crossed midnight on the day it started", async () => {
+  test("counts by local day, with the read across midnight on both days", async () => {
     expect(await timeseries(db(), range)).toEqual([
       { day: "2026-11-16", visitors: 3, pageviews: 4, visits: 3 },
-      { day: "2026-11-17", visitors: 4, pageviews: 5, visits: 4 },
+      { day: "2026-11-17", visitors: 4, pageviews: 5, visits: 5 },
     ]);
   });
 
@@ -205,10 +205,11 @@ describe("breakdown", () => {
       // Visitor 1 on both days: two IDs, two visits, one of them a bounce.
       "google.com": { visitors: 2, visits: 2, bounceRate: 0.5 },
       newsletter: { visits: 1, bounceRate: 1 },
-      "news.ycombinator.com": { visits: 1, bounceRate: 0 },
+      "news.ycombinator.com": { visits: 1, bounceRate: 1 },
       "com.google.android.gm": { visits: 1 },
-      // Visitor 4's second visit, and visitor 5 coming from www.example.com (the site itself).
-      "Direct / none": { visitors: 2, visits: 2 },
+      // Visitor 3 after midnight, visitor 4's second visit, and visitor 5 coming from
+      // www.example.com (the site itself).
+      "Direct / none": { visitors: 3, visits: 3 },
     });
     expect(sources.map((row) => row.value)).not.toContain("example.com");
   });
@@ -216,30 +217,31 @@ describe("breakdown", () => {
   test("campaigns", async () => {
     expect(byValue(await breakdown(db(), range, "utmCampaign"))).toMatchObject({
       launch: { visits: 1 },
-      "(unknown)": { visits: 6 },
+      "(unknown)": { visits: 7 },
     });
   });
 
   test("entry and exit pages come from each visit's first and last pageview", async () => {
     expect(byValue(await breakdown(db(), range, "entryPage"))).toMatchObject({
-      "/": { visits: 2 },
+      "/": { visits: 3 },
       "/pricing": { visits: 2 },
       "/docs": { visits: 3 },
     });
     expect(byValue(await breakdown(db(), range, "exitPage"))).toMatchObject({
       "/pricing": { visits: 3 },
       "/": { visits: 2 },
-      "/docs": { visits: 2 },
+      "/docs": { visits: 3 },
     });
   });
 
   test("locations come from each visit's first event; cities keep their country", async () => {
     const countries = await breakdown(db(), range, "country");
-    expect(countries[0]).toMatchObject({ value: "DE", visitors: 2, visits: 3 });
     expect(byValue(countries)).toMatchObject({
+      DE: { visitors: 2, visits: 3 },
       US: { visits: 1 },
-      GB: { visits: 1 }, // The visit across midnight counts once.
-      "(unknown)": { visits: 2 },
+      // Visitor 3 before midnight; the visit after midnight starts with an event without a location.
+      GB: { visits: 1 },
+      "(unknown)": { visits: 3 },
     });
     expect(byValue(await breakdown(db(), range, "city"))).toMatchObject({
       "Munich, DE": { visits: 1 },
@@ -252,7 +254,7 @@ describe("breakdown", () => {
     expect(byValue(await breakdown(db(), range, "deviceType"))).toMatchObject({
       mobile: { visits: 2 },
       desktop: { visits: 1 },
-      "(unknown)": { visits: 4 },
+      "(unknown)": { visits: 5 },
     });
   });
 
