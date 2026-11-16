@@ -14,6 +14,7 @@ import {
   topPages,
   type VisitDimension,
 } from "../src/reports/reports.ts";
+import { dayIn } from "../src/visitors/visitor-ids.ts";
 import { createTestDatabase, type TestDatabase } from "./helpers/test-database.ts";
 
 let testDb: TestDatabase | undefined;
@@ -108,6 +109,19 @@ describe("localDays", () => {
     expect(range.from).toEqual(new Date("2026-11-15T16:00:00Z")); // Midnight in Singapore
     expect(range.to).toEqual(new Date("2026-11-17T16:00:00Z"));
   });
+
+  test.each(["Asia/Singapore", "America/New_York", "Etc/GMT-8", "UTC"])(
+    "starts days at the same moment as visitor IDs do in %s",
+    async (timeZone) => {
+      // 8 March 2026 is the 23-hour day in New York.
+      const { from, to } = await localDays(db(), "2026-03-08", "2026-03-08", timeZone);
+      const day = dayIn(timeZone);
+      expect(day(from)).toBe("2026-03-08");
+      expect(day(new Date(from.getTime() - 1))).toBe("2026-03-07");
+      expect(day(new Date(to.getTime() - 1))).toBe("2026-03-08");
+      expect(day(to)).toBe("2026-03-09");
+    },
+  );
 
   test("handles a 23-hour day when clocks go forward", async () => {
     const day = await localDays(db(), "2026-03-08", "2026-03-08", "America/New_York");

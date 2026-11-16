@@ -31,14 +31,21 @@ export function dayIn(timeZone: string): (moment: Date) => string {
  * Old aliases and other spellings become one name: "singapore" becomes
  * "Asia/Singapore", "GMT" becomes "UTC", "US/Pacific" becomes
  * "America/Los_Angeles". The instance then stores and reports one name.
+ *
+ * Fixed offsets such as "+08:00" are refused. Node reads "+08:00" as eight
+ * hours ahead of UTC, but PostgreSQL reads the same text as a POSIX offset,
+ * eight hours behind, so visitor days and report days would disagree by 16
+ * hours. Named zones come from the same timezone database in both.
  */
 export function canonicalTimeZone(name: string): string | undefined {
+  let resolved: string;
   try {
     // Throws a RangeError for names it does not know.
-    return new Intl.DateTimeFormat("en-US", { timeZone: name }).resolvedOptions().timeZone;
+    resolved = new Intl.DateTimeFormat("en-US", { timeZone: name }).resolvedOptions().timeZone;
   } catch {
     return undefined;
   }
+  return resolved.startsWith("+") || resolved.startsWith("-") ? undefined : resolved;
 }
 
 /**

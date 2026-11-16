@@ -122,7 +122,7 @@ function parseTimeZone(raw: string): string {
   const timeZone = canonicalTimeZone(raw);
   if (timeZone === undefined) {
     throw new ConfigError(
-      `TIMEZONE must be an IANA timezone such as "Europe/Berlin", received "${raw}"`,
+      `TIMEZONE must be an IANA timezone name such as "Europe/Berlin", not a fixed offset such as "+08:00", received "${raw}"`,
     );
   }
   return timeZone;

@@ -46,6 +46,15 @@ describe("canonicalTimeZone", () => {
       expect(canonicalTimeZone(name)).toBeUndefined();
     },
   );
+
+  // Node and PostgreSQL read these with opposite signs.
+  test.each(["+08:00", "-05:00", "+0800"])("rejects the fixed offset %j", (name) => {
+    expect(canonicalTimeZone(name)).toBeUndefined();
+  });
+
+  test("keeps a named fixed-offset zone, which both read the same way", () => {
+    expect(canonicalTimeZone("Etc/GMT-8")).toBe("Etc/GMT-8"); // UTC+8 in both
+  });
 });
 
 describe("visitorId", () => {

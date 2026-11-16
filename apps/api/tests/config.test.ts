@@ -80,7 +80,7 @@ describe("loadConfig", () => {
     expect(loadConfig({ TIMEZONE: "singapore" }).timeZone).toBe("Asia/Singapore");
   });
 
-  test.each(["Mars/Olympus_Mons", "GMT+25", "singapore time"])(
+  test.each(["Mars/Olympus_Mons", "GMT+25", "singapore time", "+08:00"])(
     "rejects TIMEZONE %j",
     (timeZone) => {
       expect(() => loadConfig({ TIMEZONE: timeZone })).toThrow(ConfigError);
