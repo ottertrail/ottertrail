@@ -184,16 +184,20 @@ The individual report functions (`summary`, `breakdown`, …) still work on thei
 
 Code: `apps/web/src/features/analytics/`.
 
-`/projects/<id>/web-analytics?period=30d` shows one project for one period: `today`, `7d` (the default), `30d`, `90d`, or `12m`, as in 8.3. An unknown period in the address falls back to the default.
+`/projects/<id>/web-analytics?period=30d` shows one project for one period: `today`, `7d` (the default), `30d`, `90d`, or `12m`, as in 8.3. `?from=2026-10-01&to=2026-10-31` shows chosen days instead (a custom range). An unknown period, or days the API would refuse, fall back to the default.
 
 From top to bottom, the page shows:
 
-1. A picker for the period, then the days it covers and the instance's timezone. The days come from the API, so they are the instance's days, not the browser's.
+1. A picker for the period, with "Custom range…" for chosen days, then the days covered and the instance's timezone. The days come from the API, so they are the instance's days, not the browser's.
 2. Seven numbers: visitors, visits, pageviews, views per visit, bounce rate, visit duration, and time engaged (defined in section 7 of [web analytics](web-analytics.md#the-numbers)). Under each, its change from the period before: an arrow and a size ("12%", or "6 pts" for the bounce rate), read out as a sentence ("Up 12% from 683"). The arrows stay in text colors: status colors are reserved for state, and up is not always better (a bounce rate). A note names the days compared and, for a running period, the time of day the comparison stops; it also says that a visitor is recognized for one day only, so the same person on two days counts twice.
 3. Visitors, visits, or pageviews per day, as a line. Hovering over the chart shows all three numbers for the nearest day. "Show the numbers" opens the same data as a table. A one-day period draws no line, since one point shows no trend.
 4. Ranked lists, most visitors first, each with a bar for its visitors: pages (top, entry, and exit), sources and campaigns, countries, regions, and cities, devices, browsers, and operating systems, and custom events. Each list shows its first 10 rows; when it shows all 10, "Show all" opens it in full. A missing value (no location, an unknown browser) shows as "Unknown", and a visit without a campaign as "No campaign".
 
 A project without events shows how to install the snippet instead; a period without events offers the last 12 months.
+
+### Custom range
+
+"Custom range…" opens a dialog with the first and last day, starting from the days the page shows. They are the browser's own date fields, which work from the keyboard and on phones, so no date-picker library is needed. The days are checked as the API checks them (real days, the last not before the first, at most 366) before they can be shown. Chosen days keep the filters, a preset period replaces them, and the project switcher and "Show all" keep them. The comparison with the previous period works for them too: as many days right before.
 
 ### Show all
 
@@ -230,6 +234,8 @@ The browser tests in `apps/web/tests/browser/` render the whole dashboard in hea
 
 `filters.test.tsx` covers adding a filter from a row, a page, and an Unknown row; combining, removing, and clearing filters; a new period keeping them; values the address bar turns into numbers or cannot use; and a filtered view with no matching visits. The filter definitions themselves are tested against PostgreSQL in `apps/api/tests/analytics.test.ts`.
 
+`custom-range.test.tsx` covers reading chosen days from the address, choosing them in the dialog (which starts from the page's days and keeps the filters), refusing days the API would refuse, Cancel, a preset period replacing them, unusable days in the address, and "Show all" and the project switcher keeping them.
+
 `show-all.test.tsx` covers when "Show all" is offered, loading a list 50 rows at a time to its end, the search, a row filtering the page and closing the dialog, the page's period and filters, and Escape. The list endpoint's paging, search (including `%`, `_`, and countries by name), filters, and limits are tested against PostgreSQL.
 
 Any test fails when the page logs an error to the console.
@@ -240,5 +246,5 @@ Unit tests in `apps/web/tests/analytics.test.ts` cover the number and date forma
 
 ### Not done yet
 
-- Hourly detail for one day, and a custom range of days (the API accepts `from` and `to`; the page offers only the fixed periods).
+- Hourly detail for one day.
 - Comparison in the chart and the lists; only the summary is compared.

@@ -16,6 +16,50 @@ export type Period = (typeof PERIODS)[number]["value"];
 /** The period a page opens with when its address names none. */
 export const DEFAULT_PERIOD: Period = "7d";
 
+/** The longest range the API answers, in days. */
+export const MAX_RANGE_DAYS = 366;
+
+/** The days the page shows: a period that ends today, or chosen days (both included). */
+export type PageRange = { period: Period } | { from: string; to: string };
+
+/** "YYYY-MM-DD" that names a real calendar day. */
+export function isDay(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    /^\d{4}-\d{2}-\d{2}$/.test(value) &&
+    !Number.isNaN(Date.parse(`${value}T00:00:00Z`)) &&
+    new Date(`${value}T00:00:00Z`).toISOString().slice(0, 10) === value
+  );
+}
+
+/** Why chosen days cannot be shown, as the API would refuse them; null when they can. */
+export function rangeProblem(from: string, to: string): string | null {
+  if (!isDay(from) || !isDay(to)) {
+    return "Choose a first and a last day.";
+  }
+  if (to < from) {
+    return "The last day is before the first.";
+  }
+  const days = (Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000 + 1;
+  return days > MAX_RANGE_DAYS ? `A range covers at most ${MAX_RANGE_DAYS} days.` : null;
+}
+
+/**
+ * The days an address asks for: chosen days when both are usable, else its
+ * period, else the default. Unusable days fall back instead of failing.
+ */
+export function rangeFrom(search: { period?: unknown; from?: unknown; to?: unknown }): PageRange {
+  const { from, to } = search;
+  if (isDay(from) && isDay(to) && rangeProblem(from, to) === null) {
+    return { from, to };
+  }
+  return { period: isPeriod(search.period) ? search.period : DEFAULT_PERIOD };
+}
+
+/** The range as the API's query parameters. */
+export const rangeParams = (range: PageRange): Record<string, string> =>
+  "period" in range ? { period: range.period } : { from: range.from, to: range.to };
+
 export const isPeriod = (value: unknown): value is Period =>
   PERIODS.some((period) => period.value === value);
 
@@ -253,11 +297,14 @@ export function activeFilters(filters: Filters): [FilterName, string][] {
 /** How often a page that shows today refreshes on its own. */
 const REFRESH_MS = 60_000;
 
-export const analyticsQuery = (projectId: string, period: Period, filters: Filters = {}) =>
+export const analyticsQuery = (projectId: string, range: PageRange, filters: Filters = {}) =>
   queryOptions({
-    queryKey: ["analytics", projectId, period, filters],
+    queryKey: ["analytics", projectId, range, filters],
     queryFn: async ({ signal }) => {
-      const query = new URLSearchParams({ period, ...Object.fromEntries(activeFilters(filters)) });
+      const query = new URLSearchParams({
+        ...rangeParams(range),
+        ...Object.fromEntries(activeFilters(filters)),
+      });
       return expectShape(
         await apiRequest(
           `/api/projects/${encodeURIComponent(projectId)}/analytics?${query.toString()}`,
@@ -339,16 +386,16 @@ function listPage(report: ListReport, value: unknown): ListPage | null {
 /** One list in full, LIST_PAGE_SIZE rows at a time, with the page's period and filters. */
 export const listQuery = (
   projectId: string,
-  period: Period,
+  range: PageRange,
   filters: Filters,
   report: ListReport,
   search: string,
 ) =>
   infiniteQueryOptions({
-    queryKey: ["analytics-list", projectId, period, filters, report, search],
+    queryKey: ["analytics-list", projectId, range, filters, report, search],
     queryFn: async ({ pageParam, signal }) => {
       const query = new URLSearchParams({
-        period,
+        ...rangeParams(range),
         ...Object.fromEntries(activeFilters(filters)),
         report,
         offset: String(pageParam),

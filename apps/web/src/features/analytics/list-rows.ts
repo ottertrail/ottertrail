@@ -9,8 +9,8 @@ import {
   type Filters,
   type ListReport,
   type ListRow,
+  type PageRange,
   type PageRow,
-  type Period,
 } from "@/lib/analytics-api";
 
 import { countryName } from "./format";
@@ -35,14 +35,19 @@ export function valueText(name: FilterName, value: string): string {
 export const filterText = (name: FilterName, value: string) =>
   `${FILTER_LABELS[name]}: ${valueText(name, value)}`;
 
-/** The page's address query: the period (left out when it is the default) and the filters. */
+/** What the page's address holds: its days and its filters. */
 export interface PageSearch {
-  period?: Period;
+  range: PageRange;
   filters: Filters;
 }
 
-export const searchOf = ({ period, filters }: PageSearch) => ({
-  ...(period === undefined || period === DEFAULT_PERIOD ? {} : { period }),
+/** The address query for a page search; the default period is left out. */
+export const searchOf = ({ range, filters }: PageSearch) => ({
+  ...("period" in range
+    ? range.period === DEFAULT_PERIOD
+      ? {}
+      : { period: range.period }
+    : { from: range.from, to: range.to }),
   ...filters,
 });
 

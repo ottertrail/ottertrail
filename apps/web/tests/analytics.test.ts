@@ -12,7 +12,7 @@ import {
   relativeChange,
   niceTicks,
 } from "../src/features/analytics/format.ts";
-import { isAnalytics } from "../src/lib/analytics-api.ts";
+import { isAnalytics, isDay, rangeFrom, rangeProblem } from "../src/lib/analytics-api.ts";
 
 describe("formatting", () => {
   test.each([
@@ -176,5 +176,38 @@ describe("isAnalytics", () => {
     );
     expect(isAnalytics({ ...valid, previous: undefined })).toBe(false);
     expect(isAnalytics({ ...valid, previous: { ...valid.previous, until: 5 } })).toBe(false);
+  });
+});
+
+describe("chosen days", () => {
+  test("a day is a real calendar day", () => {
+    expect(isDay("2026-11-16")).toBe(true);
+    expect(isDay("2028-02-29")).toBe(true);
+    expect(isDay("2026-02-29")).toBe(false);
+    expect(isDay("2026-13-01")).toBe(false);
+    expect(isDay("16-11-2026")).toBe(false);
+    expect(isDay(20_261_116)).toBe(false);
+  });
+
+  test("a range is refused as the API would refuse it", () => {
+    expect(rangeProblem("2026-11-01", "2026-11-30")).toBeNull();
+    expect(rangeProblem("2026-11-16", "2026-11-16")).toBeNull();
+    expect(rangeProblem("2026-11-30", "2026-11-01")).toBe("The last day is before the first.");
+    // 366 days is the most; 367 is one too many.
+    expect(rangeProblem("2025-11-17", "2026-11-17")).toBeNull();
+    expect(rangeProblem("2025-11-16", "2026-11-17")).toBe("A range covers at most 366 days.");
+    expect(rangeProblem("", "2026-11-17")).toBe("Choose a first and a last day.");
+  });
+
+  test("an address's chosen days win over its period, and unusable days fall back", () => {
+    expect(rangeFrom({ from: "2026-10-01", to: "2026-10-31", period: "90d" })).toEqual({
+      from: "2026-10-01",
+      to: "2026-10-31",
+    });
+    expect(rangeFrom({ from: "2026-02-30", to: "2026-03-01", period: "30d" })).toEqual({
+      period: "30d",
+    });
+    expect(rangeFrom({ from: "2026-10-31", to: "2026-10-01" })).toEqual({ period: "7d" });
+    expect(rangeFrom({ from: "2026-10-01" })).toEqual({ period: "7d" });
   });
 });

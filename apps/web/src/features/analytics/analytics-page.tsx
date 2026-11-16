@@ -38,18 +38,18 @@ import {
   type Breakdown,
   analyticsQuery,
   type DayPoint,
-  DEFAULT_PERIOD,
   type Filters,
   isPeriod,
   LIST_PREVIEW_ROWS,
   type ListReport,
   PERIODS,
-  type Period,
+  type PageRange,
 } from "@/lib/analytics-api";
 import { ApiError } from "@/lib/api";
 import { type Project, projectQuery } from "@/lib/projects-api";
 
 import { NoSuchProject } from "../projects/no-such-project";
+import { CustomRangeDialog } from "./custom-range-dialog";
 import { DayChart } from "./day-chart";
 import { FilterLink } from "./filter-link";
 import {
@@ -579,7 +579,7 @@ function NoData({
   search: PageSearch;
 }) {
   const neverReceived = project?.lastEventAt === null;
-  const period = search.period ?? DEFAULT_PERIOD;
+  const isYear = "period" in search.range && search.range.period === "12m";
   if (!neverReceived && activeFilters(search.filters).length > 0) {
     return (
       <Empty className="border border-dashed p-10">
@@ -625,13 +625,13 @@ function NoData({
           </ButtonLink>
         </EmptyContent>
       )}
-      {!neverReceived && period !== "12m" && (
+      {!neverReceived && !isYear && (
         <EmptyContent>
           <ButtonLink
             variant="outline"
             to="/projects/$projectId/web-analytics"
             params={{ projectId }}
-            search={searchOf({ period: "12m", filters: {} })}
+            search={searchOf({ range: { period: "12m" }, filters: {} })}
           >
             Show the last 12 months
           </ButtonLink>
@@ -646,23 +646,36 @@ const hasData = (analytics: Analytics) =>
   analytics.summary.visits > 0 ||
   analytics.customEvents.length > 0;
 
+/** The period picker's choice for chosen days. */
+const CUSTOM = "custom";
+const PERIOD_ITEMS = [...PERIODS, { value: CUSTOM, label: "Custom range" }];
+
 /**
  * Web analytics for one project: the numbers, a trend, and ranked lists,
- * all for one period that ends today in the instance's timezone.
+ * all for a period that ends today or for chosen days, in the instance's
+ * timezone.
  */
 export function AnalyticsPage({
   projectId,
-  period,
+  range,
   filters,
 }: {
   projectId: string;
-  period: Period;
+  range: PageRange;
   filters: Filters;
 }) {
   const navigate = useNavigate();
   const project = useQuery(projectQuery(projectId));
-  const analytics = useQuery(analyticsQuery(projectId, period, filters));
-  const search: PageSearch = { period, filters };
+  const analytics = useQuery(analyticsQuery(projectId, range, filters));
+  const search: PageSearch = { range, filters };
+  const [choosingDays, setChoosingDays] = React.useState(false);
+  const show = (next: PageRange) =>
+    void navigate({
+      to: "/projects/$projectId/web-analytics",
+      params: { projectId },
+      // New days keep the filters.
+      search: searchOf({ range: next, filters }),
+    });
 
   if (analytics.error instanceof ApiError && analytics.error.status === 404) {
     return <NoSuchProject />;
@@ -675,16 +688,13 @@ export function AnalyticsPage({
     <div className="mx-auto flex max-w-6xl flex-col gap-6 p-6">
       <div className="flex flex-wrap items-center gap-2">
         <Select
-          items={[...PERIODS]}
-          value={period}
+          items={PERIOD_ITEMS}
+          value={"period" in range ? range.period : CUSTOM}
           onValueChange={(value) => {
             if (isPeriod(value)) {
-              void navigate({
-                to: "/projects/$projectId/web-analytics",
-                params: { projectId },
-                // A new period keeps the filters.
-                search: searchOf({ period: value, filters }),
-              });
+              show({ period: value });
+            } else if (value === CUSTOM) {
+              setChoosingDays(true);
             }
           }}
         >
@@ -692,9 +702,9 @@ export function AnalyticsPage({
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            {PERIODS.map((item) => (
+            {PERIOD_ITEMS.map((item) => (
               <SelectItem key={item.value} value={item.value}>
-                {item.label}
+                {item.value === CUSTOM ? "Custom range…" : item.label}
               </SelectItem>
             ))}
           </SelectContent>
@@ -706,6 +716,19 @@ export function AnalyticsPage({
         )}
       </div>
       <FilterBar projectId={projectId} search={search} />
+      {choosingDays && (
+        <CustomRangeDialog
+          open
+          onOpenChange={setChoosingDays}
+          from={"from" in range ? range.from : (data?.firstDay ?? "")}
+          to={"to" in range ? range.to : (data?.lastDay ?? "")}
+          timeZone={data?.timeZone}
+          onApply={(from, to) => {
+            setChoosingDays(false);
+            show({ from, to });
+          }}
+        />
+      )}
 
       {analytics.isError && (
         <Alert variant="destructive">

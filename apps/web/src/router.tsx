@@ -21,13 +21,7 @@ import { DesignSystemPage } from "@/features/design-system/design-system-page";
 import { ProjectLayout } from "@/features/projects/project-layout";
 import { ProjectSettingsPage } from "@/features/projects/project-settings-page";
 import { ProjectsPage } from "@/features/projects/projects-page";
-import {
-  DEFAULT_PERIOD,
-  type Filters,
-  filtersFrom,
-  isPeriod,
-  type Period,
-} from "@/lib/analytics-api";
+import { type Filters, filtersFrom, isPeriod, type Period, rangeFrom } from "@/lib/analytics-api";
 import { ApiError } from "@/lib/api";
 import { authClient } from "@/lib/auth-client";
 import { lastProject } from "@/lib/last-project";
@@ -152,16 +146,32 @@ const webAnalyticsRoute = createRoute({
   // has to be overwritten, not just left out.
   // Filters (country=DE, page=/pricing …) live in the address too, so a
   // filtered view can be linked, reloaded, and left with the Back button.
+  // Chosen days (from, to) win over a period; days the API would refuse are
+  // dropped, so the page shows the default period instead of an error.
   validateSearch: (
-    search: { period?: unknown } & Partial<Record<keyof Filters, unknown>> & SearchSchemaInput,
-  ): { period: Period | undefined } & Filters => ({
-    period: isPeriod(search.period) ? search.period : undefined,
-    ...filtersFrom(search),
-  }),
+    search: { period?: unknown; from?: unknown; to?: unknown } & Partial<
+      Record<keyof Filters, unknown>
+    > &
+      SearchSchemaInput,
+  ): { period: Period | undefined; from: string | undefined; to: string | undefined } & Filters => {
+    const range = rangeFrom(search);
+    return {
+      period: "period" in range && isPeriod(search.period) ? range.period : undefined,
+      from: "from" in range ? range.from : undefined,
+      to: "to" in range ? range.to : undefined,
+      ...filtersFrom(search),
+    };
+  },
   component: function WebAnalyticsRouteComponent() {
     const { projectId } = webAnalyticsRoute.useParams();
-    const { period = DEFAULT_PERIOD, ...filters } = webAnalyticsRoute.useSearch();
-    return <AnalyticsPage projectId={projectId} period={period} filters={filters} />;
+    const { period, from, to, ...filters } = webAnalyticsRoute.useSearch();
+    return (
+      <AnalyticsPage
+        projectId={projectId}
+        range={rangeFrom({ period, from, to })}
+        filters={filters}
+      />
+    );
   },
 });
 

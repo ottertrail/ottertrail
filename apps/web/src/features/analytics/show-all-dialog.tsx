@@ -13,7 +13,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
-import { activeFilters, DEFAULT_PERIOD, type ListReport, listQuery } from "@/lib/analytics-api";
+import { activeFilters, type ListReport, listQuery } from "@/lib/analytics-api";
 
 import { FilterLink } from "./filter-link";
 import { type PageSearch, rankedRows } from "./list-rows";
@@ -56,7 +56,7 @@ export function ShowAllDialog({
   const [text, setText] = React.useState("");
   const query = useSettled(text.trim(), 250);
   const list = useInfiniteQuery({
-    ...listQuery(projectId, search.period ?? DEFAULT_PERIOD, search.filters, report, query),
+    ...listQuery(projectId, search.range, search.filters, report, query),
     enabled: open,
   });
   const close = () => onOpenChange(false);
