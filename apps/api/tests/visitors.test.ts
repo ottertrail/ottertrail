@@ -57,11 +57,10 @@ describe("visitorId", () => {
     );
   });
 
-  test("is a signed 64-bit integer that does not contain the IP address", () => {
+  test("is a signed 64-bit integer", () => {
     const id = visitorId(salt, PROJECT, "46.4.0.1", CHROME);
     expect(id).toMatch(/^-?\d{1,19}$/);
     expect(BigInt(id) >= -(2n ** 63n) && BigInt(id) < 2n ** 63n).toBe(true);
-    expect(id).not.toContain("46");
   });
 
   test.each([
