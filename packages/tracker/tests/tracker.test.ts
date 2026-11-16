@@ -4,6 +4,7 @@ import {
   createTracker,
   FLUSH_DELAY_MS,
   MAX_ATTEMPTS,
+  MAX_BATCH_BYTES,
   MAX_QUEUE,
   type QueuedEvent,
 } from "../src/tracker.ts";
@@ -41,9 +42,39 @@ function fakeTransport(outcomes: SendOutcome[] = []) {
   };
 }
 
+const bodyBytes = (batch: SentBatch) => new TextEncoder().encode(JSON.stringify(batch)).length;
+
+/** 15 properties of 500 characters, but the last one `pad` characters long. */
+const properties = (pad: number) =>
+  Object.fromEntries(
+    Array.from({ length: 15 }, (_, i) => [`p${i}`, "x".repeat(i === 14 ? pad : 500)]),
+  );
+
 let nextId = 0;
 const randomId = () => `id-${(nextId += 1)}`;
 const page = { url: "https://example.com/pricing", referrer: "https://news.ycombinator.com/" };
+
+/**
+ * Eight large events whose request, envelope and commas included, is
+ * exactly MAX_BATCH_BYTES + extra bytes long when sent together.
+ */
+function eightEvents(extra: number) {
+  const envelope = { v: 1, key: "pk_test", sentAt: Date.now() + FLUSH_DELAY_MS };
+  const event = (n: number, pad: number) => ({
+    id: `id-${n}`,
+    name: "big",
+    occurredAt: Date.now(),
+    url: page.url,
+    referrer: page.referrer,
+    properties: properties(pad),
+  });
+  const events = Array.from({ length: 8 }, (_, i) => event(i + 1, 200));
+  const size = bodyBytes({ ...envelope, events });
+  const lastPad = 200 + MAX_BATCH_BYTES + extra - size;
+  expect(lastPad).toBeGreaterThan(0);
+  expect(lastPad).toBeLessThanOrEqual(500);
+  return [...events.slice(0, 7).map((e) => e.properties), properties(lastPad)];
+}
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -107,31 +138,42 @@ describe("batching", () => {
     expect(tracker.queued()).toBe(0);
   });
 
-  test("splits large events so each request stays under 60 KB", async () => {
-    const { transport, sent } = fakeTransport();
-    const tracker = createTracker({ key: "pk_test", transport, randomId });
-    const big = Object.fromEntries(
-      Array.from({ length: 14 }, (_, i) => [`p${i}`, "x".repeat(500)]),
-    );
+  describe(`keeps each request body, JSON envelope included, within ${MAX_BATCH_BYTES} bytes`, () => {
+    test("a body of exactly the budget goes in one request", async () => {
+      const { transport, sent } = fakeTransport();
+      const tracker = createTracker({ key: "pk_test", transport, randomId });
+      for (const props of eightEvents(0)) tracker.track("big", page, props);
+      await vi.advanceTimersByTimeAsync(FLUSH_DELAY_MS);
 
-    for (let i = 0; i < 20; i += 1) tracker.track("big", page, big);
-    await vi.advanceTimersByTimeAsync(FLUSH_DELAY_MS * 2);
+      expect(sent).toHaveLength(1);
+      expect(bodyBytes(sent[0]!)).toBe(MAX_BATCH_BYTES);
+    });
 
-    expect(sent.length).toBeGreaterThan(1);
-    for (const batch of sent) {
-      expect(new TextEncoder().encode(JSON.stringify(batch)).length).toBeLessThan(64 * 1024);
-    }
-    expect(sent.flatMap((batch) => batch.events)).toHaveLength(20);
+    test("one byte more is split in two", async () => {
+      const { transport, sent } = fakeTransport();
+      const tracker = createTracker({ key: "pk_test", transport, randomId });
+      for (const props of eightEvents(1)) tracker.track("big", page, props);
+      await vi.advanceTimersByTimeAsync(FLUSH_DELAY_MS * 2);
+
+      expect(sent.map((batch) => batch.events.length)).toEqual([7, 1]);
+      for (const batch of sent) expect(bodyBytes(batch)).toBeLessThanOrEqual(MAX_BATCH_BYTES);
+    });
   });
 
-  test("keeps at most 200 events, dropping the oldest", () => {
-    const { transport } = fakeTransport();
+  test("keeps at most 200 events, dropping the oldest", async () => {
+    const { transport, sent, beacons } = fakeTransport();
     const tracker = createTracker({ key: "pk_test", transport, randomId });
     // Make every send fail so nothing leaves the queue.
     transport.send = () => Promise.resolve({ type: "retry" });
 
     for (let i = 0; i < MAX_QUEUE + 25; i += 1) tracker.track("click", page);
     expect(tracker.queued()).toBe(MAX_QUEUE);
+
+    await vi.advanceTimersByTimeAsync(0);
+    sent.length = 0;
+    tracker.flushOnExit();
+    const ids = beacons.flatMap((batch) => batch.events.map((event) => event.id));
+    expect(ids).toEqual(Array.from({ length: MAX_QUEUE }, (_, i) => `id-${i + 26}`));
   });
 });
 
@@ -171,15 +213,71 @@ describe("retries", () => {
     expect(sent).toHaveLength(2);
   });
 
-  test("does not let new events cut the wait short", async () => {
+  test("does not let events tracked after the failure cut the wait short", async () => {
     const { transport, sent } = fakeTransport([{ type: "retry", retryAfterMs: 10_000 }]);
     const tracker = createTracker({ key: "pk_test", transport, randomId });
 
     tracker.track("pageview", page);
     await vi.advanceTimersByTimeAsync(FLUSH_DELAY_MS);
     for (let i = 0; i < 60; i += 1) tracker.track("click", page);
-    await vi.advanceTimersByTimeAsync(5000);
+    await vi.advanceTimersByTimeAsync(9999);
     expect(sent).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(sent).toHaveLength(2);
+  });
+
+  test("keeps the wait after the tab was hidden and shown again during it", async () => {
+    const { transport, sent, beacons } = fakeTransport([{ type: "retry", retryAfterMs: 30_000 }]);
+    const tracker = createTracker({ key: "pk_test", transport, randomId });
+
+    tracker.track("pageview", page);
+    await vi.advanceTimersByTimeAsync(FLUSH_DELAY_MS); // Attempt 1 fails at 1 s.
+    await vi.advanceTimersByTimeAsync(5000);
+    tracker.flushOnExit(); // Hidden: the queue goes out by beacon, the timer is cancelled.
+    expect(beacons).toHaveLength(1);
+    tracker.track("click", page); // Shown again.
+    await vi.advanceTimersByTimeAsync(24_999);
+    expect(sent).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(sent.map((batch) => batch.events.map((event) => event.id))).toEqual([
+      ["id-1"],
+      ["id-2"],
+    ]);
+  });
+
+  test("does not let events tracked while the send is in flight cut the wait short", async () => {
+    const { transport, sent } = fakeTransport();
+    const realSend = transport.send;
+    let answer: ((outcome: SendOutcome) => void) | undefined;
+    transport.send = (body) => {
+      void realSend(body);
+      // The first response arrives only when the test says so.
+      return sent.length === 1
+        ? new Promise((resolve) => (answer = resolve))
+        : Promise.resolve({ type: "sent" });
+    };
+    const tracker = createTracker({ key: "pk_test", transport, randomId });
+
+    tracker.track("pageview", page);
+    await vi.advanceTimersByTimeAsync(FLUSH_DELAY_MS); // Attempt 1 is in flight.
+    tracker.track("click", page); // Sets the usual one-second timer.
+    await vi.advanceTimersByTimeAsync(500);
+    answer?.({ type: "retry", retryAfterMs: 30_000 });
+    await vi.advanceTimersByTimeAsync(29_999);
+    expect(sent).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(sent.map((batch) => batch.events.map((event) => event.id))).toEqual([
+      ["id-1"],
+      ["id-1", "id-2"],
+    ]);
+
+    // Once the wait is over, events are batched as usual again.
+    tracker.track("signup", page);
+    await vi.advanceTimersByTimeAsync(FLUSH_DELAY_MS - 1);
+    expect(sent).toHaveLength(2);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(sent).toHaveLength(3);
+    expect(tracker.queued()).toBe(0);
   });
 
   test(`gives a batch up after ${MAX_ATTEMPTS} failed attempts`, async () => {

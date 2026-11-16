@@ -3,7 +3,11 @@ import type { SendOutcome, Transport } from "./transport.ts";
 
 /** Matches the API: at most 50 events per batch. */
 export const MAX_EVENTS_PER_BATCH = 50;
-/** The API accepts 64 KB; this leaves room for the rest of the request. */
+/**
+ * Largest request body, in bytes, including the JSON envelope ({"v":1,
+ * "key":…,"sentAt":…,"events":[…]}). The API accepts 64 KiB; the rest is
+ * a safety margin. A single event larger than this is still sent on its own.
+ */
 export const MAX_BATCH_BYTES = 60_000;
 /** Events kept while the API cannot be reached; the oldest go first. */
 export const MAX_QUEUE = 200;
@@ -57,12 +61,21 @@ export function createTracker({ key, transport, randomId }: TrackerOptions): Tra
   let sending = false;
   /** Consecutive failed sends of the batch at the front of the queue. */
   let failures = 0;
+  /**
+   * After a failed send, nothing is sent before this time (Date.now()), so
+   * events tracked meanwhile cannot cut the server's backoff short.
+   */
+  let retryAt = 0;
 
+  /** Sends after delayMs, or once the retry wait is over if that is later. */
   function schedule(delayMs: number) {
-    timer ??= setTimeout(() => {
-      timer = undefined;
-      void flush();
-    }, delayMs);
+    timer ??= setTimeout(
+      () => {
+        timer = undefined;
+        void flush();
+      },
+      Math.max(delayMs, retryAt - Date.now()),
+    );
   }
 
   function cancelTimer() {
@@ -72,12 +85,13 @@ export function createTracker({ key, transport, randomId }: TrackerOptions): Tra
     }
   }
 
-  /** The oldest events that fit in one request: 50 events and 60 KB at most. */
+  /** The oldest events that fit in one request: 50 events and MAX_BATCH_BYTES at most. */
   function nextBatch(): QueuedEvent[] {
     const batch: QueuedEvent[] = [];
-    let bytes = 0;
+    let bytes = byteLength(requestBody([]));
     for (const event of queue) {
-      const size = byteLength(JSON.stringify(event));
+      // Every event after the first also needs a comma.
+      const size = byteLength(JSON.stringify(event)) + (batch.length > 0 ? 1 : 0);
       if (
         batch.length === MAX_EVENTS_PER_BATCH ||
         (batch.length > 0 && bytes + size > MAX_BATCH_BYTES)
@@ -120,7 +134,11 @@ export function createTracker({ key, transport, randomId }: TrackerOptions): Tra
       if (failures < MAX_ATTEMPTS) {
         // The same events, with the same IDs, go again later: the API stores
         // each ID once, so a retry can never count an event twice.
-        schedule(outcome.retryAfterMs ?? backoffMs(failures));
+        const waitMs = outcome.retryAfterMs ?? backoffMs(failures);
+        retryAt = Date.now() + waitMs;
+        // A batching timer set while the send was in flight must not win.
+        cancelTimer();
+        schedule(waitMs);
         return;
       }
     }
@@ -151,7 +169,7 @@ export function createTracker({ key, transport, randomId }: TrackerOptions): Tra
           ...(page.referrer === undefined ? {} : { referrer: page.referrer }),
           ...(cleanProperties === undefined ? {} : { properties: cleanProperties }),
         });
-        if (queue.length >= MAX_EVENTS_PER_BATCH && failures === 0) {
+        if (queue.length >= MAX_EVENTS_PER_BATCH && Date.now() >= retryAt) {
           void flush();
         } else {
           schedule(FLUSH_DELAY_MS);

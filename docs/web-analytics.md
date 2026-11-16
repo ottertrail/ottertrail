@@ -242,7 +242,7 @@ The first pageview's referrer is `document.referrer`, the site the visitor came 
 
 ### Batching
 
-New events wait up to a second and leave together in one request. Fifty waiting events, or a backlog after an outage, are sent at once. A request holds at most 50 events and 60 KB, under the API's limits. In the playground run, four events from quick clicks shared one request.
+New events wait up to a second and leave together in one request. Fifty waiting events, or a backlog after an outage, are sent at once. A request body holds at most 50 events and 60,000 bytes, JSON envelope included, under the API's 64 KB. In the playground run, four events from quick clicks shared one request.
 
 Each event keeps the time it happened (`occurredAt`), and each request carries the time it was sent (`sentAt`), read again on every attempt, so the API's clock correction stays right even for a retry minutes later. Batching shows up as delay: `received_at - occurred_at` is about one second for batched events.
 
@@ -254,7 +254,7 @@ Each event keeps the time it happened (`occurredAt`), and each request carries t
 | 400, 403, 413, 415              | Drops the batch: sending it again would fail again |
 | 429, 5xx, or no response at all | Keeps the batch and retries                        |
 
-Retries wait for `Retry-After` when the server sends it, otherwise about 1, 2, 4, 8 … seconds (capped at 60), with ±20% random jitter so many visitors' browsers do not retry in step after an outage. New events do not cut a wait short. After 8 failed attempts the batch is dropped.
+Retries wait for `Retry-After` when the server sends it, otherwise about 1, 2, 4, 8 … seconds (capped at 60), with ±20% random jitter so many visitors' browsers do not retry in step after an outage. New events do not cut a wait short, not even ones tracked while the failed request was still waiting for its answer. After 8 failed attempts the batch is dropped.
 
 A retry sends the same events with the same IDs, so the API stores each one once (step 1).
 
