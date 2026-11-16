@@ -21,10 +21,14 @@ describe("dayIn", () => {
   });
 
   test("handles daylight saving time changes", () => {
-    // New York moves its clocks forward on 8 March 2026.
+    // New York moves its clocks forward on 8 March 2026 and back on 1 November.
+    // Midnight is 05:00 UTC in winter and 04:00 UTC in summer, so a fixed
+    // offset gets one of each pair below wrong.
     const newYork = dayIn("America/New_York");
-    expect(newYork(new Date("2026-03-08T04:30:00Z"))).toBe("2026-03-07"); // 23:30 EST
-    expect(newYork(new Date("2026-03-08T05:30:00Z"))).toBe("2026-03-08"); // 00:30 EST
+    expect(newYork(new Date("2026-03-09T03:30:00Z"))).toBe("2026-03-08"); // 23:30 EDT
+    expect(newYork(new Date("2026-03-09T04:30:00Z"))).toBe("2026-03-09"); // 00:30 EDT
+    expect(newYork(new Date("2026-11-02T04:30:00Z"))).toBe("2026-11-01"); // 23:30 EST
+    expect(newYork(new Date("2026-11-02T05:30:00Z"))).toBe("2026-11-02"); // 00:30 EST
   });
 });
 
