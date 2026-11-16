@@ -1,6 +1,6 @@
 # Roadmap
 
-Status: plan. Only the foundation exists today (the design system and the API health route). Nothing below is built.
+Status: stage 1 (web analytics) is built and being checked; see the step table in [web-analytics.md](web-analytics.md). Of stage 0, projects, public keys, the browser tracker, and durable ingestion into PostgreSQL exist; environments, releases, identities, and a production deployment do not yet. Later stages are not started.
 
 ## How stages are chosen
 
