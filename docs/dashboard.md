@@ -35,6 +35,10 @@ The database stores only a SHA-256 hash of the token, so reading the database do
 
 A setup page that let the first visitor become the owner would hand a freshly deployed instance to whoever found it first.
 
+The setup endpoint is public, so it does the cheap work first. It refuses a request when an owner already exists or the link is invalid, which costs one database query, before it hashes the password, which costs about 40 ms and 32 MB on purpose. Attempts are also limited per client address: 10, then one a minute. Without that order, anyone could send made-up links and keep the API busy hashing.
+
+The owner's email must pass the check sign-in uses (Better Auth checks addresses with zod's `z.email()`), which is stricter than the usual email format: `ops!alerts@example.com` is refused. Otherwise setup could create an owner who can never sign in, and setup cannot run again once an owner exists. A code review found both of these problems.
+
 ### Sessions
 
 Signing in creates a **session**: a random token stored in the `dashboard_sessions` table and sent to the browser in a cookie. Each request carries the cookie; the API looks the token up to know who is asking.

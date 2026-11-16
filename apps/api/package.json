@@ -24,7 +24,8 @@
     "isbot": "catalog:",
     "kysely": "catalog:",
     "mmdb-lib": "catalog:",
-    "pg": "catalog:"
+    "pg": "catalog:",
+    "zod": "catalog:"
   },
   "devDependencies": {
     "@types/node": "catalog:",

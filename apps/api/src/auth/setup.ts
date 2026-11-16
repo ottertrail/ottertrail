@@ -77,8 +77,24 @@ export async function completeSetup(
   { token, name, email, password }: OwnerDetails,
   now = new Date(),
 ): Promise<SetupResult> {
-  // Hashing is deliberately slow (scrypt), so it happens before the
-  // transaction. Better Auth's own hash, so its sign-in can verify it.
+  // Hashing a password is slow on purpose (scrypt: about 40 ms and 32 MB),
+  // so the cheap checks come first: a made-up token, or a request after the
+  // owner exists, costs one query, not a hash.
+  if (await ownerExists(db)) {
+    return "already_set_up";
+  }
+  const pending = await db
+    .selectFrom("owner_setup_tokens")
+    .select("token_hash")
+    .where("token_hash", "=", hashToken(token))
+    .where("expires_at", ">", now)
+    .executeTakeFirst();
+  if (pending === undefined) {
+    return "invalid_link";
+  }
+
+  // Better Auth's own hash, so its sign-in can verify it. Outside the
+  // transaction, which then checks the link again before using it.
   const passwordHash = await (await auth.$context).password.hash(password);
 
   return db.transaction().execute(async (trx) => {

@@ -3,6 +3,7 @@ import type { Kysely } from "kysely";
 
 import type { Auth } from "./auth/auth.ts";
 import { betterAuthRoutes, setupRoutes } from "./auth/routes.ts";
+import type { RateLimit } from "./collection/rate-limiter.ts";
 import { type CollectionOptions, collectionRoutes } from "./collection/routes.ts";
 import type { Database } from "./db/schema.ts";
 import { healthRoutes } from "./routes/health.ts";
@@ -18,7 +19,7 @@ export interface AppOptions extends Omit<FastifyServerOptions, "logger"> {
    * Without it the API serves only health and event collection, which is
    * all some tests need.
    */
-  dashboard?: { auth: Auth; publicUrl: string };
+  dashboard?: { auth: Auth; publicUrl: string; setupLimit?: RateLimit };
 }
 
 /**
@@ -46,8 +47,17 @@ export function buildApp({ db, collection = {}, log, dashboard, ...fastifyOption
   app.register(collectionRoutes, { prefix: "/api", db, ...collection });
   if (dashboard !== undefined) {
     app.decorateRequest("dashboardUser", null);
-    app.register(betterAuthRoutes, { prefix: "/api", ...dashboard });
-    app.register(setupRoutes, { prefix: "/api", db, auth: dashboard.auth });
+    app.register(betterAuthRoutes, {
+      prefix: "/api",
+      auth: dashboard.auth,
+      publicUrl: dashboard.publicUrl,
+    });
+    app.register(setupRoutes, {
+      prefix: "/api",
+      db,
+      auth: dashboard.auth,
+      ...(dashboard.setupLimit === undefined ? {} : { setupLimit: dashboard.setupLimit }),
+    });
   }
   return app;
 }

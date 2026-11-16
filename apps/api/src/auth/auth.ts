@@ -1,5 +1,6 @@
 import { betterAuth } from "better-auth";
 import type { Kysely } from "kysely";
+import * as z from "zod";
 
 import type { Database } from "../db/schema.ts";
 
@@ -17,6 +18,18 @@ export const CLIENT_IP_HEADER = "x-ottertrail-client-ip";
 /** NIST SP 800-63B asks for at least 8; dashboard accounts guard customer data. */
 export const MIN_PASSWORD_LENGTH = 12;
 export const MAX_PASSWORD_LENGTH = 128;
+
+/**
+ * Whether sign-in will accept an email address. Better Auth's email sign-in
+ * refuses any address zod's z.email() rejects, which is stricter than the
+ * usual email format: "ops!alerts@example.com" fails it. An account created
+ * with such an address could never sign in, so the setup flow applies the
+ * same check. zod is pinned to the version Better Auth uses.
+ */
+const signInEmail = z.email();
+export function canSignInWith(email: string): boolean {
+  return signInEmail.safeParse(email).success;
+}
 
 export interface AuthOptions {
   db: Kysely<Database>;

@@ -1,8 +1,15 @@
 import type { FastifyPluginCallback, FastifyReply, FastifyRequest } from "fastify";
 import type { Kysely } from "kysely";
 
+import { type RateLimit, TokenBucketLimiter } from "../collection/rate-limiter.ts";
 import type { Database } from "../db/schema.ts";
-import { type Auth, CLIENT_IP_HEADER, MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGTH } from "./auth.ts";
+import {
+  type Auth,
+  canSignInWith,
+  CLIENT_IP_HEADER,
+  MAX_PASSWORD_LENGTH,
+  MIN_PASSWORD_LENGTH,
+} from "./auth.ts";
 import { completeSetup, ownerExists } from "./setup.ts";
 
 /** Who is signed in, as the session check finds it. */
@@ -93,28 +100,63 @@ const setupBodySchema = {
   properties: {
     token: { type: "string", minLength: 1, maxLength: 200 },
     name: { type: "string", minLength: 1, maxLength: 200, pattern: "\\S" },
-    email: { type: "string", format: "email", maxLength: 320 },
+    // Checked against sign-in's own rule in the handler (canSignInWith).
+    email: { type: "string", minLength: 3, maxLength: 320 },
     password: { type: "string", minLength: MIN_PASSWORD_LENGTH, maxLength: MAX_PASSWORD_LENGTH },
   },
 } as const;
 
+/** Setup attempts per client address: 10 at once, then one a minute. */
+export const DEFAULT_SETUP_LIMIT: RateLimit = { capacity: 10, refillPerSecond: 1 / 60 };
+
 /**
  * GET /api/setup says whether the instance still needs an owner, so the
  * dashboard can explain how to create one. POST /api/setup creates the owner
- * from a setup link (see setup.ts).
+ * from a setup link (see setup.ts). Anyone can call it, so attempts are
+ * limited per client address.
  */
-export const setupRoutes: FastifyPluginCallback<{ db: Kysely<Database>; auth: Auth }> = (
-  app,
-  { db, auth },
-  done,
-) => {
+export const setupRoutes: FastifyPluginCallback<{
+  db: Kysely<Database>;
+  auth: Auth;
+  setupLimit?: RateLimit;
+}> = (app, { db, auth, setupLimit = DEFAULT_SETUP_LIMIT }, done) => {
+  const limiter = new TokenBucketLimiter(setupLimit);
+
   app.get("/setup", async () => ({ ownerExists: await ownerExists(db) }));
 
   app.post<{ Body: { token: string; name: string; email: string; password: string } }>(
     "/setup",
-    { schema: { body: setupBodySchema } },
+    {
+      schema: { body: setupBodySchema },
+      // Before the body is read or checked.
+      onRequest: async (request, reply) => {
+        const result = limiter.take(request.ip);
+        if (!result.allowed) {
+          return reply
+            .code(429)
+            .header("retry-after", String(result.retryAfterSeconds))
+            .send(
+              problem(
+                "rate_limited",
+                `Too many setup attempts. Retry after ${result.retryAfterSeconds} seconds.`,
+              ),
+            );
+        }
+        return undefined;
+      },
+    },
     async (request, reply) => {
       const { token, name, email, password } = request.body;
+      if (!canSignInWith(email)) {
+        return reply
+          .code(400)
+          .send(
+            problem(
+              "invalid_email",
+              "Sign-in does not accept this email address. Use letters, digits, and . _ ' + - before the @, and a domain such as example.com.",
+            ),
+          );
+      }
       const result = await completeSetup(db, auth, { token, name: name.trim(), email, password });
       if (result === "invalid_link") {
         return reply

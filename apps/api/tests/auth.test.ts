@@ -2,16 +2,25 @@ import type { LightMyRequestResponse } from "fastify";
 import { afterAll, beforeAll, describe, expect, test } from "vite-plus/test";
 
 import { buildApp } from "../src/app.ts";
-import { createAuth } from "../src/auth/auth.ts";
+import { type Auth, createAuth } from "../src/auth/auth.ts";
 import { requireSession } from "../src/auth/routes.ts";
-import { createSetupToken, ownerExists, SETUP_LINK_TTL_MS } from "../src/auth/setup.ts";
+import {
+  completeSetup,
+  createSetupToken,
+  ownerExists,
+  SETUP_LINK_TTL_MS,
+} from "../src/auth/setup.ts";
+import type { RateLimit } from "../src/collection/rate-limiter.ts";
 import { createTestDatabase } from "./helpers/test-database.ts";
 
 const PUBLIC_URL = "http://localhost:5173";
 const OWNER = { name: "Ada Owner", email: "Ada@Example.com", password: "correct horse battery" };
 
 /** A fresh instance: its own database schema, no owner yet. */
-async function instance({ rateLimit = false } = {}) {
+async function instance({
+  rateLimit = false,
+  setupLimit,
+}: { rateLimit?: boolean; setupLimit?: RateLimit } = {}) {
   const testDb = await createTestDatabase();
   const auth = createAuth({
     db: testDb.db,
@@ -20,7 +29,10 @@ async function instance({ rateLimit = false } = {}) {
     secret: "a-secret-only-these-tests-use-0123456789",
     rateLimit,
   });
-  const app = buildApp({ db: testDb.db, dashboard: { auth, publicUrl: PUBLIC_URL } });
+  const app = buildApp({
+    db: testDb.db,
+    dashboard: { auth, publicUrl: PUBLIC_URL, ...(setupLimit === undefined ? {} : { setupLimit }) },
+  });
   // A route only signed-in users may use, to test the session check.
   app.get("/api/test/me", { preHandler: requireSession(auth) }, (request, reply) =>
     reply.send({ user: request.dashboardUser }),
@@ -56,6 +68,22 @@ function signIn(
   });
 }
 
+/** An Auth whose password hashing only counts calls. */
+function countingAuth() {
+  const hashed: string[] = [];
+  const auth = {
+    $context: Promise.resolve({
+      password: {
+        hash: (password: string) => {
+          hashed.push(password);
+          return Promise.resolve(`hash-of-${password.length}`);
+        },
+      },
+    }),
+  } as unknown as Auth;
+  return { auth, hashed };
+}
+
 /** The cookies a response set, as a Cookie request header. */
 function cookieHeader(response: LightMyRequestResponse): string {
   return response.cookies.map((cookie) => `${cookie.name}=${cookie.value}`).join("; ");
@@ -83,11 +111,17 @@ describe("owner setup", () => {
     for (const body of [
       { ...OWNER, password: "too short" },
       { ...OWNER, email: "not an email" },
+      // A valid email format that sign-in refuses: the owner could never sign in.
+      { ...OWNER, email: "ops!alerts@example.com" },
       { ...OWNER, name: "   " },
     ]) {
       expect((await setUp(current.app, { token: link?.token, ...body })).statusCode).toBe(400);
     }
     expect(await ownerExists(current.db)).toBe(false);
+    // The link still works.
+    expect(
+      await current.db.selectFrom("owner_setup_tokens").select("token_hash").execute(),
+    ).toHaveLength(1);
   });
 
   test("replaces an earlier link with a new one", async () => {
@@ -124,6 +158,65 @@ describe("owner setup", () => {
 
   test("gives no new link once the owner exists", async () => {
     expect(await createSetupToken(current.db)).toBeNull();
+  });
+});
+
+describe("owner setup: the slow work comes last", () => {
+  let current: Instance;
+  beforeAll(async () => {
+    current = await instance();
+  });
+  afterAll(async () => {
+    await current?.close();
+  });
+
+  test("hashes no password for a made-up link, or once the owner exists", async () => {
+    const { auth, hashed } = countingAuth();
+    const details = {
+      token: "made-up",
+      name: "Eve",
+      email: "eve@example.com",
+      password: "x".repeat(20),
+    };
+    expect(await completeSetup(current.db, auth, details)).toBe("invalid_link");
+    expect(hashed).toHaveLength(0);
+
+    const link = await createSetupToken(current.db);
+    expect(await completeSetup(current.db, auth, { ...details, token: link?.token ?? "" })).toBe(
+      "created",
+    );
+    expect(hashed).toHaveLength(1);
+
+    expect(await completeSetup(current.db, auth, details)).toBe("already_set_up");
+    expect(hashed).toHaveLength(1);
+  });
+});
+
+describe("owner setup rate limit", () => {
+  let current: Instance;
+  beforeAll(async () => {
+    current = await instance({ setupLimit: { capacity: 2, refillPerSecond: 0.001 } });
+  });
+  afterAll(async () => {
+    await current?.close();
+  });
+
+  const attempt = (remoteAddress: string) =>
+    current.app.inject({
+      method: "POST",
+      url: "/api/setup",
+      payload: { token: "made-up", ...OWNER },
+      remoteAddress,
+    });
+
+  test("limits setup attempts per client address", async () => {
+    expect((await attempt("203.0.113.10")).statusCode).toBe(403);
+    expect((await attempt("203.0.113.10")).statusCode).toBe(403);
+    const limited = await attempt("203.0.113.10");
+    expect(limited.statusCode).toBe(429);
+    expect(limited.headers["retry-after"]).toBeDefined();
+    // Another address has its own limit.
+    expect((await attempt("198.51.100.7")).statusCode).toBe(403);
   });
 });
 
