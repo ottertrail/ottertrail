@@ -19,7 +19,9 @@ interface CacheEntry {
  *
  * Every event request carries a key, so without a cache each request would
  * cost a database query. Unknown keys are cached too ("negative caching"),
- * so a flood of made-up keys cannot turn into a flood of queries. Changes to
+ * so repeating a made-up key costs one query per cache lifetime. A stream of
+ * different made-up keys still costs a query each; the per-IP rate limit,
+ * checked first, bounds it. Changes to
  * a project (new allowed hostname, removed project) take effect within the
  * cache lifetime.
  */

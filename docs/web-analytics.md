@@ -131,7 +131,7 @@ The endpoint is public, so anyone can send it anything. Each check costs more th
 
 1. Rate limit per client IP address, before the body is even read.
 2. Body size, content type, and the JSON schema (Fastify validates before the handler runs).
-3. Project key, from a 60-second in-memory cache. Unknown keys are cached too, so a flood of made-up keys cannot become a flood of queries.
+3. Project key, from a 60-second in-memory cache. Unknown keys are cached too, so repeating a made-up key costs one query a minute, not one per request. A stream of different made-up keys still costs a query each; the IP rate limit in step 1 bounds it.
 4. The `Origin` header and every event's page hostname against the project's allowed hostnames.
 5. Event budget per project.
 6. URL cleanup and clock correction.
