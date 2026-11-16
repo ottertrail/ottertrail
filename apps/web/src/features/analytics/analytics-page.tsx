@@ -35,14 +35,14 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   activeFilters,
   type Analytics,
+  type Breakdown,
   analyticsQuery,
-  type BreakdownRow,
   type DayPoint,
   DEFAULT_PERIOD,
-  FILTER_LABELS,
-  type FilterName,
   type Filters,
   isPeriod,
+  LIST_PREVIEW_ROWS,
+  type ListReport,
   PERIODS,
   type Period,
 } from "@/lib/analytics-api";
@@ -51,9 +51,9 @@ import { type Project, projectQuery } from "@/lib/projects-api";
 
 import { NoSuchProject } from "../projects/no-such-project";
 import { DayChart } from "./day-chart";
+import { FilterLink } from "./filter-link";
 import {
   type Change,
-  countryName,
   formatCount,
   formatDay,
   formatDayRange,
@@ -65,7 +65,18 @@ import {
   pointsChange,
   relativeChange,
 } from "./format";
+import {
+  type FilterLinkFor,
+  filterText,
+  fromBreakdown,
+  fromEvents,
+  fromPages,
+  type PageSearch,
+  rankedRows,
+  searchOf,
+} from "./list-rows";
 import { RankedList, type RankedRow } from "./ranked-list";
+import { ShowAllDialog } from "./show-all-dialog";
 
 const METRICS = [
   { key: "visitors", label: "Visitors" },
@@ -78,90 +89,14 @@ type Metric = (typeof METRICS)[number]["key"];
 const isMetric = (value: unknown): value is Metric =>
   METRICS.some((metric) => metric.key === value);
 
-function capitalize(text: string): string {
-  return text.charAt(0).toUpperCase() + text.slice(1);
-}
-
-/** How a list row or filter names a value: a country's name, "Desktop", "Unknown" … */
-function valueText(name: FilterName, value: string): string {
-  if (value === "") {
-    return name === "utmCampaign" ? "No campaign" : "Unknown";
-  }
-  if (name === "country") {
-    return countryName(value);
-  }
-  return name === "deviceType" ? capitalize(value) : value;
-}
-
-/** "Country: Germany" */
-const filterText = (name: FilterName, value: string) =>
-  `${FILTER_LABELS[name]}: ${valueText(name, value)}`;
-
-/** The page's address query: the period (left out when it is the default) and the filters. */
-interface PageSearch {
-  period?: Period;
-  filters: Filters;
-}
-
-const searchOf = ({ period, filters }: PageSearch) => ({
-  ...(period === undefined || period === DEFAULT_PERIOD ? {} : { period }),
-  ...filters,
-});
-
-/** A list row's name, linking to the page filtered by it. */
-function FilterLink({
-  projectId,
-  search,
-  name,
-  value,
-}: {
-  projectId: string;
-  search: PageSearch;
-  name: FilterName;
-  /** "" for an unknown value. */
-  value: string;
-}) {
-  return (
-    <Link
-      to="/projects/$projectId/web-analytics"
-      params={{ projectId }}
-      search={searchOf({ ...search, filters: { ...search.filters, [name]: value } })}
-      aria-label={`Filter by ${filterText(name, value)}`}
-      className={
-        value === ""
-          ? "text-ink-subtle hover:text-ink hover:underline"
-          : "hover:text-link hover:underline"
-      }
-    >
-      {valueText(name, value)}
-    </Link>
-  );
-}
-
-/** Breakdown rows for the ranked list: visitors set the bar, visits follow. */
-function breakdownRows(
-  rows: BreakdownRow[],
-  name: FilterName,
-  link: (name: FilterName, value: string) => React.ReactNode,
-): RankedRow[] {
-  return rows.map((row) => {
-    const value = row.value ?? "";
-    return {
-      key: row.value ?? "\u0000unknown",
-      label: link(name, value),
-      title: valueText(name, value),
-      primary: row.visitors,
-      secondary: row.visits,
-    };
-  });
-}
-
 interface ListTab {
   value: string;
   label: string;
   nameHeading: string;
   secondaryHeading: string;
   empty: string;
+  /** The full list, for "Show all". */
+  report: ListReport;
   rows: RankedRow[];
 }
 
@@ -170,25 +105,74 @@ function visitsTab(
   value: string,
   label: string,
   nameHeading: string,
+  report: ListReport,
   rows: RankedRow[],
-  empty = "No visits in this period.",
 ): ListTab {
-  return { value, label, nameHeading, secondaryHeading: "Visits", empty, rows };
+  return {
+    value,
+    label,
+    nameHeading,
+    secondaryHeading: "Visits",
+    empty: "No visits in this period.",
+    report,
+    rows,
+  };
 }
 
-/** A card of ranked lists; with more than one list, tabs switch between them. */
-function ListCard({ title, tabs }: { title: string; tabs: ListTab[] }) {
-  const lists = tabs.map((tab) => (
-    <RankedList
-      key={tab.value}
-      rows={tab.rows}
-      caption={`${tab.label}, most visitors first`}
-      nameHeading={tab.nameHeading}
-      primaryHeading="Visitors"
-      secondaryHeading={tab.secondaryHeading}
-      empty={tab.empty}
+/**
+ * A card of ranked lists; with more than one list, tabs switch between
+ * them. A list that shows its full LIST_PREVIEW_ROWS may have more: "Show
+ * all" opens it in full.
+ */
+function ListCard({
+  title,
+  tabs,
+  projectId,
+  search,
+}: {
+  title: string;
+  tabs: ListTab[];
+  projectId: string;
+  search: PageSearch;
+}) {
+  const [showing, setShowing] = React.useState<ListTab | undefined>();
+  const list = (tab: ListTab) => (
+    <div className="flex flex-col gap-2">
+      <RankedList
+        rows={tab.rows}
+        caption={`${tab.label}, most visitors first`}
+        nameHeading={tab.nameHeading}
+        primaryHeading="Visitors"
+        secondaryHeading={tab.secondaryHeading}
+        empty={tab.empty}
+      />
+      {tab.rows.length >= LIST_PREVIEW_ROWS && (
+        <Button
+          variant="ghost"
+          size="sm"
+          className="self-start"
+          onClick={() => setShowing(tab)}
+          aria-label={`Show all ${tab.label.toLowerCase()}`}
+        >
+          Show all
+        </Button>
+      )}
+    </div>
+  );
+  const dialog = showing !== undefined && (
+    <ShowAllDialog
+      open
+      onOpenChange={(open) => {
+        if (!open) setShowing(undefined);
+      }}
+      title={tabs.length === 1 ? title : `${title}: ${showing.label}`}
+      report={showing.report}
+      nameHeading={showing.nameHeading}
+      secondaryHeading={showing.secondaryHeading}
+      projectId={projectId}
+      search={search}
     />
-  ));
+  );
   const [first] = tabs;
   if (tabs.length === 1 || first === undefined) {
     return (
@@ -198,7 +182,8 @@ function ListCard({ title, tabs }: { title: string; tabs: ListTab[] }) {
             <h3>{title}</h3>
           </CardTitle>
         </CardHeader>
-        <CardContent>{lists}</CardContent>
+        <CardContent>{first !== undefined && list(first)}</CardContent>
+        {dialog}
       </Card>
     );
   }
@@ -220,13 +205,14 @@ function ListCard({ title, tabs }: { title: string; tabs: ListTab[] }) {
           </CardAction>
         </CardHeader>
         <CardContent>
-          {tabs.map((tab, index) => (
+          {tabs.map((tab) => (
             <TabsContent key={tab.value} value={tab.value}>
-              {lists[index]}
+              {list(tab)}
             </TabsContent>
           ))}
         </CardContent>
       </Tabs>
+      {dialog}
     </Card>
   );
 }
@@ -451,29 +437,18 @@ function Reports({
   search: PageSearch;
 }) {
   const { breakdowns } = analytics;
-  const link = (name: FilterName, value: string) => (
+  const link: FilterLinkFor = (name, value) => (
     <FilterLink projectId={projectId} search={search} name={name} value={value} />
   );
-  const pages: RankedRow[] = analytics.pages.map((row) => ({
-    key: row.path,
-    label: link("page", row.path),
-    title: row.path,
-    primary: row.visitors,
-    secondary: row.pageviews,
-  }));
-  const events: RankedRow[] = analytics.customEvents.map((row) => ({
-    key: row.name,
-    label: row.name,
-    title: row.name,
-    primary: row.visitors,
-    secondary: row.events,
-  }));
+  const rows = (report: Breakdown) => rankedRows(report, fromBreakdown(breakdowns[report]), link);
+  const card = { projectId, search };
   return (
     <>
       <SummaryTiles analytics={analytics} />
       <TrendCard days={analytics.days} />
       <div className="grid gap-6 lg:grid-cols-2">
         <ListCard
+          {...card}
           title="Pages"
           tabs={[
             {
@@ -482,76 +457,41 @@ function Reports({
               nameHeading: "Path",
               secondaryHeading: "Views",
               empty: "No pageviews in this period.",
-              rows: pages,
+              report: "pages",
+              rows: rankedRows("pages", fromPages(analytics.pages), link),
             },
-            visitsTab(
-              "entry",
-              "Entry",
-              "Path",
-              breakdownRows(breakdowns.entryPage, "entryPage", link),
-            ),
-            visitsTab("exit", "Exit", "Path", breakdownRows(breakdowns.exitPage, "exitPage", link)),
+            visitsTab("entry", "Entry", "Path", "entryPage", rows("entryPage")),
+            visitsTab("exit", "Exit", "Path", "exitPage", rows("exitPage")),
           ]}
         />
         <ListCard
+          {...card}
           title="Sources"
           tabs={[
-            visitsTab(
-              "source",
-              "Sources",
-              "Source",
-              breakdownRows(breakdowns.source, "source", link),
-            ),
-            visitsTab(
-              "campaign",
-              "Campaigns",
-              "Campaign",
-              breakdownRows(breakdowns.utmCampaign, "utmCampaign", link),
-            ),
+            visitsTab("source", "Sources", "Source", "source", rows("source")),
+            visitsTab("campaign", "Campaigns", "Campaign", "utmCampaign", rows("utmCampaign")),
           ]}
         />
         <ListCard
+          {...card}
           title="Locations"
           tabs={[
-            visitsTab(
-              "country",
-              "Countries",
-              "Country",
-              breakdownRows(breakdowns.country, "country", link),
-            ),
-            visitsTab(
-              "region",
-              "Regions",
-              "Region",
-              breakdownRows(breakdowns.region, "region", link),
-            ),
-            visitsTab("city", "Cities", "City", breakdownRows(breakdowns.city, "city", link)),
+            visitsTab("country", "Countries", "Country", "country", rows("country")),
+            visitsTab("region", "Regions", "Region", "region", rows("region")),
+            visitsTab("city", "Cities", "City", "city", rows("city")),
           ]}
         />
         <ListCard
+          {...card}
           title="Devices"
           tabs={[
-            visitsTab(
-              "device",
-              "Devices",
-              "Device",
-              breakdownRows(breakdowns.deviceType, "deviceType", link),
-            ),
-            visitsTab(
-              "browser",
-              "Browsers",
-              "Browser",
-              breakdownRows(breakdowns.browser, "browser", link),
-            ),
-            visitsTab(
-              "os",
-              "Systems",
-              "Operating system",
-              breakdownRows(breakdowns.os, "os", link),
-            ),
+            visitsTab("device", "Devices", "Device", "deviceType", rows("deviceType")),
+            visitsTab("browser", "Browsers", "Browser", "browser", rows("browser")),
+            visitsTab("os", "Systems", "Operating system", "os", rows("os")),
           ]}
         />
         <ListCard
+          {...card}
           title="Custom events"
           tabs={[
             {
@@ -560,7 +500,8 @@ function Reports({
               nameHeading: "Event",
               secondaryHeading: "Events",
               empty: "No custom events in this period.",
-              rows: events,
+              report: "customEvents",
+              rows: rankedRows("customEvents", fromEvents(analytics.customEvents), link),
             },
           ]}
         />

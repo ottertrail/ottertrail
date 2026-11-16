@@ -38,6 +38,52 @@ const hasFilters = (range: ReportRange) => (range.filters?.length ?? 0) > 0;
 
 export const DEFAULT_LIMIT = 10;
 export const MAX_LIMIT = 100;
+/** Rows a list may skip, for paging: far more than any list shows. */
+const MAX_OFFSET = 100_000;
+
+/** A page of a list: rows to skip, and text the row's name must contain. */
+export interface ListOptions {
+  offset?: number | undefined;
+  /** Case-insensitive, anywhere in the name; % and _ match themselves. */
+  search?: string | undefined;
+}
+
+/** A LIKE pattern that finds `search` anywhere, with LIKE's own characters escaped. */
+function containsPattern(search: string): string {
+  return `%${search.replaceAll(/[\\%_]/g, (character) => `\\${character}`)}%`;
+}
+
+/** With a search, a condition that `expression` contains it; nothing without. */
+function nameContains(
+  expression: RawBuilder<unknown>,
+  search: string | undefined,
+): RawBuilder<unknown> {
+  if (search === undefined || search === "") return sql`true`;
+  return sql`(${expression}) ilike ${containsPattern(search)} escape '\\'`;
+}
+
+function clampOffset(offset: number | undefined): number {
+  return offset === undefined || !Number.isInteger(offset) || offset < 0
+    ? 0
+    : Math.min(offset, MAX_OFFSET);
+}
+
+/**
+ * Country codes whose English name contains `search`, such as DE for
+ * "germ": countries are stored as codes and shown as names.
+ */
+const countryNames = new Intl.DisplayNames(["en"], { type: "region" });
+const COUNTRY_CODES = Array.from({ length: 26 * 26 }, (_, index) =>
+  String.fromCodePoint(65 + Math.floor(index / 26), 65 + (index % 26)),
+).filter((code) => countryNames.of(code) !== code);
+
+function countryCodesMatching(search: string): string[] {
+  const needle = search.toLowerCase();
+  return COUNTRY_CODES.filter(
+    (code) =>
+      code.toLowerCase() === needle || (countryNames.of(code) ?? "").toLowerCase().includes(needle),
+  );
+}
 
 const DIRECT = "Direct / none";
 
@@ -328,6 +374,7 @@ export async function topPages(
   range: ReportRange,
   limit = DEFAULT_LIMIT,
   visitsSource?: VisitsSource,
+  { offset, search }: ListOptions = {},
 ): Promise<PageRow[]> {
   const { projectId, from } = range;
   // PostgreSQL skips the visits CTE when nothing reads it: without filters.
@@ -336,7 +383,7 @@ export async function topPages(
          views as (
            select path, count(*) as pageviews, count(distinct visitor_id) as visitors
            from (${activity(range, sql`visits`)}) as activity
-           where name = ${PAGEVIEW}
+           where name = ${PAGEVIEW} and ${nameContains(sql`path`, search)}
            group by path
          ),
          engagement as (
@@ -353,7 +400,7 @@ export async function topPages(
     select views.path, views.pageviews, views.visitors, engagement.avg_engaged_ms
     from views left join engagement using (path)
     order by views.visitors desc, views.pageviews desc, views.path
-    limit ${clampLimit(limit)}
+    limit ${clampLimit(limit)} offset ${clampOffset(offset)}
   `.execute(db);
   return rows.map((row) => ({
     path: String(row.path),
@@ -505,18 +552,25 @@ export async function breakdown(
   dimension: VisitDimension,
   limit = DEFAULT_LIMIT,
   visitsSource?: VisitsSource,
+  { offset, search }: ListOptions = {},
 ): Promise<BreakdownRow[]> {
   // TypeScript checks callers; this guards JavaScript callers and bad input.
   if (!isVisitDimension(dimension)) throw new Error("Unknown breakdown dimension");
+  const value = dimensionSql(dimension, range.projectId);
+  const matches =
+    dimension === "country" && search !== undefined && search !== ""
+      ? sql`${value} = any(${countryCodesMatching(search)}::text[])`
+      : nameContains(value, search);
   const { rows } = await sql<Record<string, string | null>>`
-    select ${dimensionSql(dimension, range.projectId)} as value,
+    select ${value} as value,
            count(distinct visitor_id) as visitors,
            count(*) as visits,
            count(*) filter (where bounce) as bounces
     from ${withReferrerHost(countedVisits(range, visitsSource))}
+    where ${matches}
     group by 1
     order by visitors desc, visits desc, value nulls last
-    limit ${clampLimit(limit)}
+    limit ${clampLimit(limit)} offset ${clampOffset(offset)}
   `.execute(db);
   return rows.map((row) => {
     const visits = count(row.visits);
@@ -542,15 +596,16 @@ export async function customEvents(
   range: ReportRange,
   limit = DEFAULT_LIMIT,
   visitsSource?: VisitsSource,
+  { offset, search }: ListOptions = {},
 ): Promise<CustomEventRow[]> {
   const { rows } = await sql<Record<string, string>>`
     with visits as (${countedVisits(range, visitsSource, { firstEventColumns: false })})
     select name, count(*) as events, count(distinct visitor_id) as visitors
     from (${activity(range, sql`visits`)}) as activity
-    where name <> ${PAGEVIEW}
+    where name <> ${PAGEVIEW} and ${nameContains(sql`name`, search)}
     group by name
     order by visitors desc, events desc, name
-    limit ${clampLimit(limit)}
+    limit ${clampLimit(limit)} offset ${clampOffset(offset)}
   `.execute(db);
   return rows.map((row) => ({
     name: String(row.name),

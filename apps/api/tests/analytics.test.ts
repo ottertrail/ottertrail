@@ -519,3 +519,120 @@ describe("comparison with the previous period", () => {
     }
   });
 });
+
+/** The names in a list response: paths, or breakdown values. */
+const names = (body: { rows: { path?: string; value?: string | null }[] }) =>
+  body.rows.map((row) => row.path ?? row.value);
+
+describe("GET /api/projects/:id/analytics/list", () => {
+  let dashboard: Awaited<ReturnType<typeof signedInDashboard>>;
+  let projectId = "";
+
+  beforeAll(async () => {
+    dashboard = await signedInDashboard({
+      timeZone: TIME_ZONE,
+      now: () => new Date("2026-11-17T17:00:00Z"),
+    });
+    const project = await dashboard.db
+      .insertInto("projects")
+      .values({ name: "List test", allowed_hostnames: ["example.com"] })
+      .returning("id")
+      .executeTakeFirstOrThrow();
+    projectId = project.id;
+    // A path with LIKE's own characters, which a search must match literally.
+    await storeEvents(dashboard.db, projectId, [
+      ...EVENTS,
+      pv("5", "2026-11-17T05:00:00Z", "/100%_off"),
+    ]);
+  });
+
+  afterAll(async () => {
+    await dashboard?.close();
+  });
+
+  async function list(query: Record<string, string>) {
+    const params = new URLSearchParams({ from: "2026-11-16", to: "2026-11-17", ...query });
+    return dashboard.app.inject({
+      url: `/api/projects/${projectId}/analytics/list?${params.toString()}`,
+      headers: { cookie: dashboard.cookie },
+    });
+  }
+  const rows = async (query: Record<string, string>) => (await list(query)).json();
+
+  test("reads a list a page at a time, and says when more follow", async () => {
+    const first = await rows({ report: "pages", limit: "2" });
+    expect(names(first)).toEqual(["/", "/docs"]);
+    expect(first.hasMore).toBe(true);
+    const second = await rows({ report: "pages", limit: "2", offset: "2" });
+    expect(names(second)).toEqual(["/pricing", "/100%_off"]);
+    expect(second.hasMore).toBe(false);
+  });
+
+  test("gives the same rows as the page's lists", async () => {
+    const page = (
+      await dashboard.app.inject({
+        url: `/api/projects/${projectId}/analytics?from=2026-11-16&to=2026-11-17`,
+        headers: { cookie: dashboard.cookie },
+      })
+    ).json();
+    expect((await rows({ report: "pages" })).rows).toEqual(page.pages);
+    expect((await rows({ report: "source" })).rows).toEqual(page.breakdowns.source);
+    expect((await rows({ report: "customEvents" })).rows).toEqual(page.customEvents);
+  });
+
+  test("searches names without regard to case", async () => {
+    expect(names(await rows({ report: "pages", search: "PRIC" }))).toEqual(["/pricing"]);
+    expect(names(await rows({ report: "source", search: "hacker" }))).toEqual([]);
+    expect(names(await rows({ report: "source", search: "YCOMB" }))).toEqual([
+      "news.ycombinator.com",
+    ]);
+    expect(names(await rows({ report: "customEvents", search: "sign" }))).toEqual([undefined]);
+    expect((await rows({ report: "customEvents", search: "sign" })).rows[0].name).toBe("signup");
+  });
+
+  test("matches % and _ as themselves", async () => {
+    expect(names(await rows({ report: "pages", search: "%" }))).toEqual(["/100%_off"]);
+    expect(names(await rows({ report: "pages", search: "_" }))).toEqual(["/100%_off"]);
+    expect(names(await rows({ report: "pages", search: "0%_o" }))).toEqual(["/100%_off"]);
+  });
+
+  test("finds a country by its name or its code", async () => {
+    expect(names(await rows({ report: "country", search: "germ" }))).toEqual(["DE"]);
+    expect(names(await rows({ report: "country", search: "united states" }))).toEqual(["US"]);
+    expect(names(await rows({ report: "country", search: "us" }))).toEqual(["US"]);
+    expect(names(await rows({ report: "country", search: "atlantis" }))).toEqual([]);
+  });
+
+  test("applies the page's filters", async () => {
+    expect(names(await rows({ report: "pages", country: "DE" }))).toEqual([
+      "/",
+      "/docs",
+      "/pricing",
+    ]);
+    expect(names(await rows({ report: "pages", country: "DE", search: "doc" }))).toEqual(["/docs"]);
+  });
+
+  test("needs a signed-in user and a known project", async () => {
+    const signedOut = await dashboard.app.inject({
+      url: `/api/projects/${projectId}/analytics/list?report=pages&period=7d`,
+    });
+    expect(signedOut.statusCode).toBe(401);
+    const unknown = await dashboard.app.inject({
+      url: `/api/projects/${randomUUID()}/analytics/list?report=pages&period=7d`,
+      headers: { cookie: dashboard.cookie },
+    });
+    expect(unknown.statusCode).toBe(404);
+  });
+
+  test.each<[Record<string, string>, string]>([
+    [{}, "no report"],
+    [{ report: "colour" }, "an unknown report"],
+    [{ report: "pages", limit: "51" }, "more than 50 rows"],
+    [{ report: "pages", offset: "-1" }, "a negative offset"],
+    [{ report: "pages", search: "a".repeat(201) }, "a search over 200 characters"],
+    [{ report: "pages", search: "a\u0000b" }, "a NUL in the search"],
+    [{ report: "pages", sort: "name" }, "an unknown parameter"],
+  ])("refuses %j (%s)", async (query) => {
+    expect((await list(query)).statusCode).toBe(400);
+  });
+});

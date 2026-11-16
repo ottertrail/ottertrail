@@ -1,6 +1,6 @@
-import { keepPreviousData, queryOptions } from "@tanstack/react-query";
+import { infiniteQueryOptions, keepPreviousData, queryOptions } from "@tanstack/react-query";
 
-import { apiRequest, expectShape } from "./api";
+import { ApiError, apiRequest, expectShape } from "./api";
 
 /** Ranges the analytics page offers; each ends today in the instance's timezone. */
 export const PERIODS = [
@@ -269,4 +269,105 @@ export const analyticsQuery = (projectId: string, period: Period, filters: Filte
     // While another period loads, keep showing this one (dimmed), not skeletons.
     placeholderData: keepPreviousData,
     refetchInterval: REFRESH_MS,
+  });
+
+/** Every list of the analytics page; each can be read in full with listQuery. */
+export type ListReport = "pages" | "customEvents" | Breakdown;
+
+/** Rows a list shows on the page; a list this long may have more ("Show all"). */
+export const LIST_PREVIEW_ROWS = 10;
+/** Rows one page of a full list holds. */
+export const LIST_PAGE_SIZE = 50;
+
+/** A row of any list, in one shape: its name, visitors, and the second number (views, visits, or events). */
+export interface ListRow {
+  /** null: unknown. */
+  name: string | null;
+  visitors: number;
+  second: number;
+}
+
+export interface ListPage {
+  rows: ListRow[];
+  hasMore: boolean;
+}
+
+const hasMore = (value: Record<string, unknown>) => typeof value.hasMore === "boolean";
+
+/** The API's rows for `report`, in the shape every list uses, or null when they do not match. */
+function listPage(report: ListReport, value: unknown): ListPage | null {
+  if (!isRecord(value) || !hasMore(value) || !Array.isArray(value.rows)) {
+    return null;
+  }
+  const more = value.hasMore === true;
+  if (report === "pages") {
+    return isListOf(value.rows, isPageRow)
+      ? {
+          hasMore: more,
+          rows: value.rows.map((row) => ({
+            name: row.path,
+            visitors: row.visitors,
+            second: row.pageviews,
+          })),
+        }
+      : null;
+  }
+  if (report === "customEvents") {
+    return isListOf(value.rows, isCustomEventRow)
+      ? {
+          hasMore: more,
+          rows: value.rows.map((row) => ({
+            name: row.name,
+            visitors: row.visitors,
+            second: row.events,
+          })),
+        }
+      : null;
+  }
+  return isListOf(value.rows, isBreakdownRow)
+    ? {
+        hasMore: more,
+        rows: value.rows.map((row) => ({
+          name: row.value,
+          visitors: row.visitors,
+          second: row.visits,
+        })),
+      }
+    : null;
+}
+
+/** One list in full, LIST_PAGE_SIZE rows at a time, with the page's period and filters. */
+export const listQuery = (
+  projectId: string,
+  period: Period,
+  filters: Filters,
+  report: ListReport,
+  search: string,
+) =>
+  infiniteQueryOptions({
+    queryKey: ["analytics-list", projectId, period, filters, report, search],
+    queryFn: async ({ pageParam, signal }) => {
+      const query = new URLSearchParams({
+        period,
+        ...Object.fromEntries(activeFilters(filters)),
+        report,
+        offset: String(pageParam),
+        limit: String(LIST_PAGE_SIZE),
+        ...(search === "" ? {} : { search }),
+      });
+      const body = await apiRequest(
+        `/api/projects/${encodeURIComponent(projectId)}/analytics/list?${query.toString()}`,
+        { signal },
+      );
+      const page = listPage(report, body);
+      if (page === null) {
+        throw new ApiError(0, "The API sent an unexpected response.");
+      }
+      return page;
+    },
+    initialPageParam: 0,
+    getNextPageParam: (last, pages) =>
+      last.hasMore ? pages.reduce((rows, page) => rows + page.rows.length, 0) : undefined,
+    // While a new search loads, keep showing the last results.
+    placeholderData: keepPreviousData,
   });

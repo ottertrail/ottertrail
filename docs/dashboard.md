@@ -149,6 +149,16 @@ The response also holds `previous`: the summary of the period before (`firstDay`
 
 Filters narrow every report to the matching visits (defined in section 7 of [web analytics](web-analytics.md#filters)): one parameter per filter, named after the breakdown (`source`, `country`, `deviceType` …) or `page`, at most 2,048 characters. An empty value means unknown. Several filters must all match. An unknown parameter is refused with 400: Fastify's validator would otherwise drop it silently, so a mistyped filter (`contry=DE`) would return unfiltered numbers.
 
+### One list in full
+
+```text
+GET /api/projects/:id/analytics/list?report=country&period=7d[&search=germ&offset=0&limit=50][&filters …]
+```
+
+Behind "Show all": one list of the page (`pages`, `customEvents`, or one of the ten breakdowns), with the same days and filters, 50 rows at a time at most. The answer holds the rows and `hasMore`, which comes from reading one row more than asked for, so no separate count query is needed. The rows are the same as the page's, from the same report functions.
+
+`search` keeps rows whose name contains the text, ignoring case, in the database, so a site with thousands of pages stays quick. `%` and `_` match themselves. Countries are stored as codes and shown as names, so for them the search finds codes whose English name contains the text (`germ` finds `DE`), from the same country names the dashboard shows.
+
 ### Visits worked out once
 
 Most reports count visits, and working out visits is the expensive part: it sorts every event in the range (section 7 of [web analytics](web-analytics.md)). Run separately, each report did that again. The endpoint works the visits out once, into a temporary table that disappears when the request's transaction ends, and every report reads that table. On fake data (`vp run bench:reports`, Apple M4 Max), the whole page:
@@ -181,9 +191,13 @@ From top to bottom, the page shows:
 1. A picker for the period, then the days it covers and the instance's timezone. The days come from the API, so they are the instance's days, not the browser's.
 2. Seven numbers: visitors, visits, pageviews, views per visit, bounce rate, visit duration, and time engaged (defined in section 7 of [web analytics](web-analytics.md#the-numbers)). Under each, its change from the period before: an arrow and a size ("12%", or "6 pts" for the bounce rate), read out as a sentence ("Up 12% from 683"). The arrows stay in text colors: status colors are reserved for state, and up is not always better (a bounce rate). A note names the days compared and, for a running period, the time of day the comparison stops; it also says that a visitor is recognized for one day only, so the same person on two days counts twice.
 3. Visitors, visits, or pageviews per day, as a line. Hovering over the chart shows all three numbers for the nearest day. "Show the numbers" opens the same data as a table. A one-day period draws no line, since one point shows no trend.
-4. Ranked lists, most visitors first, each with a bar for its visitors: pages (top, entry, and exit), sources and campaigns, countries, regions, and cities, devices, browsers, and operating systems, and custom events. Each list shows its first 10 rows. A missing value (no location, an unknown browser) shows as "Unknown", and a visit without a campaign as "No campaign".
+4. Ranked lists, most visitors first, each with a bar for its visitors: pages (top, entry, and exit), sources and campaigns, countries, regions, and cities, devices, browsers, and operating systems, and custom events. Each list shows its first 10 rows; when it shows all 10, "Show all" opens it in full. A missing value (no location, an unknown browser) shows as "Unknown", and a visit without a campaign as "No campaign".
 
 A project without events shows how to install the snippet instead; a period without events offers the last 12 months.
+
+### Show all
+
+"Show all" opens a list in a dialog, with the page's period and filters: 50 rows at first, then "Load more", and a search by name, sent once typing pauses (a quarter of a second). While a new search loads, the last results stay, dimmed. A row's link filters the page by it and closes the dialog. The search box has the focus when the dialog opens, and Escape closes it.
 
 ### Filters
 
@@ -216,6 +230,8 @@ The browser tests in `apps/web/tests/browser/` render the whole dashboard in hea
 
 `filters.test.tsx` covers adding a filter from a row, a page, and an Unknown row; combining, removing, and clearing filters; a new period keeping them; values the address bar turns into numbers or cannot use; and a filtered view with no matching visits. The filter definitions themselves are tested against PostgreSQL in `apps/api/tests/analytics.test.ts`.
 
+`show-all.test.tsx` covers when "Show all" is offered, loading a list 50 rows at a time to its end, the search, a row filtering the page and closing the dialog, the page's period and filters, and Escape. The list endpoint's paging, search (including `%`, `_`, and countries by name), filters, and limits are tested against PostgreSQL.
+
 Any test fails when the page logs an error to the console.
 
 Putting back six bugs, in two batches of three, made exactly the tests that guard them fail: an unknown period reaching the API, a chart that ignores the arrow keys, no dimming while a period loads, a switcher that drops the period, a switcher that always opens web analytics, and a home page that forgets the last project. Writing the tests found a fourth: buttons that act as links were announced as buttons by screen readers. They are now real links styled as buttons (`ButtonLink`, see [the design system](design-system.md#components)).
@@ -225,5 +241,4 @@ Unit tests in `apps/web/tests/analytics.test.ts` cover the number and date forma
 ### Not done yet
 
 - Hourly detail for one day, and a custom range of days (the API accepts `from` and `to`; the page offers only the fixed periods).
-- More than 10 rows per list.
 - Comparison in the chart and the lists; only the summary is compared.

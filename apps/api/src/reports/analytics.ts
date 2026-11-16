@@ -23,19 +23,25 @@ import {
 } from "./reports.ts";
 
 /** The breakdowns the analytics page shows. */
-export type AnalyticsBreakdown = Extract<
-  VisitDimension,
-  | "source"
-  | "utmCampaign"
-  | "entryPage"
-  | "exitPage"
-  | "country"
-  | "region"
-  | "city"
-  | "deviceType"
-  | "browser"
-  | "os"
->;
+export const ANALYTICS_BREAKDOWNS = [
+  "source",
+  "utmCampaign",
+  "entryPage",
+  "exitPage",
+  "country",
+  "region",
+  "city",
+  "deviceType",
+  "browser",
+  "os",
+] as const satisfies readonly VisitDimension[];
+
+export type AnalyticsBreakdown = (typeof ANALYTICS_BREAKDOWNS)[number];
+
+/** Every list of the analytics page, each of which can be read in full, a page at a time. */
+export const LIST_REPORTS = ["pages", "customEvents", ...ANALYTICS_BREAKDOWNS] as const;
+
+export type ListReport = (typeof LIST_REPORTS)[number];
 
 /** The period before, for comparison: the same length, up to the same time of day. */
 export interface PreviousPeriod extends Pick<PreviousDays, "firstDay" | "lastDay" | "until"> {
@@ -170,4 +176,40 @@ export async function projectAnalytics(
         customEvents: await customEvents(trx, range, limit, visits),
       };
     });
+}
+
+/**
+ * One list of the analytics page, a page at a time, for "show all": the
+ * rows after `offset`, optionally only those whose name contains `search`,
+ * and whether more follow. One row more than asked for is read to tell.
+ */
+export async function projectList(
+  db: Kysely<Database>,
+  options: {
+    projectId: string;
+    firstDay: string;
+    lastDay: string;
+    timeZone: string;
+    filters?: readonly ReportFilter[];
+    report: ListReport;
+    limit: number;
+    offset?: number;
+    search?: string;
+  },
+): Promise<{ rows: PageRow[] | BreakdownRow[] | CustomEventRow[]; hasMore: boolean }> {
+  const { projectId, firstDay, lastDay, timeZone, filters = [], report, limit } = options;
+  const range = {
+    projectId,
+    timeZone,
+    filters,
+    ...(await localDays(db, firstDay, lastDay, timeZone)),
+  };
+  const page = { offset: options.offset, search: options.search };
+  const rows =
+    report === "pages"
+      ? await topPages(db, range, limit + 1, undefined, page)
+      : report === "customEvents"
+        ? await customEvents(db, range, limit + 1, undefined, page)
+        : await breakdown(db, range, report, limit + 1, undefined, page);
+  return { rows: rows.slice(0, limit), hasMore: rows.length > limit };
 }

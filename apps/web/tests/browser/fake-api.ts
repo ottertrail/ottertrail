@@ -15,8 +15,32 @@ export interface FakeApi {
     period: string | null,
     query: URLSearchParams,
   ) => Analytics | Response | Promise<Analytics | Response>;
+  /** Answers GET /api/projects/:id/analytics/list; by default, fakeList. */
+  list: (query: URLSearchParams) => unknown;
   /** Every path the page asked for, with its query, in order. */
   requests: string[];
+}
+
+/**
+ * A list of 120 rows, most visitors first, searched and paged as the API
+ * does: pages are /page-1 … /page-120, other lists name-1 … name-120.
+ */
+export function fakeList(query: URLSearchParams) {
+  const report = query.get("report") ?? "pages";
+  const search = (query.get("search") ?? "").toLowerCase();
+  const offset = Number(query.get("offset") ?? 0);
+  const limit = Number(query.get("limit") ?? 50);
+  const names = Array.from({ length: 120 }, (_, i) =>
+    report === "pages" ? `/page-${i + 1}` : `${report}-${i + 1}`,
+  ).filter((name) => name.toLowerCase().includes(search));
+  const rows = names.slice(offset, offset + limit).map((name, i) => {
+    const visitors = 500 - offset - i;
+    if (report === "pages")
+      return { path: name, pageviews: visitors * 2, visitors, avgEngagedMs: null };
+    if (report === "customEvents") return { name, events: visitors * 2, visitors };
+    return { value: name, visitors, visits: visitors + 1, bounceRate: 0.5 };
+  });
+  return { rows, hasMore: offset + limit < names.length };
 }
 
 export const PROJECT: Project = {
@@ -198,6 +222,10 @@ async function answer(api: FakeApi, url: URL, init: RequestInit | undefined): Pr
   if (path === "/api/projects") {
     return json({ projects: api.projects });
   }
+  if (/^\/api\/projects\/[^/]+\/analytics\/list$/.test(path)) {
+    const result = api.list(url.searchParams);
+    return result instanceof Response ? result : json(result);
+  }
   const analytics = /^\/api\/projects\/([^/]+)\/analytics$/.exec(path);
   if (analytics?.[1] !== undefined) {
     const result = await api.analytics(
@@ -235,6 +263,7 @@ export function installFakeApi(overrides: Partial<FakeApi> = {}): FakeApi {
     signedIn: true,
     projects: [PROJECT],
     analytics: () => analyticsFixture(),
+    list: fakeList,
     requests: [],
     ...overrides,
   };

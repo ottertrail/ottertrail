@@ -1,4 +1,4 @@
-import type { FastifyPluginCallback } from "fastify";
+import type { FastifyPluginCallback, FastifyReply, FastifyRequest } from "fastify";
 import type { Kysely } from "kysely";
 
 import type { Auth } from "../auth/auth.ts";
@@ -6,7 +6,7 @@ import { requireSession } from "../auth/routes.ts";
 import type { Database } from "../db/schema.ts";
 import { findProject } from "../projects/projects.ts";
 import { dayIn } from "../visitors/visitor-ids.ts";
-import { projectAnalytics } from "./analytics.ts";
+import { LIST_REPORTS, type ListReport, projectAnalytics, projectList } from "./analytics.ts";
 import { FILTER_NAMES, type FilterName, MAX_LIMIT, type ReportFilter } from "./reports.ts";
 
 /** The longest range one request may cover, to bound the work it causes. */
@@ -57,6 +57,9 @@ function problem(code: string, message: string) {
   return { error: code, message };
 }
 
+/** As text a query parameter may hold: no NUL, which PostgreSQL text cannot hold. */
+const NO_NUL = "^[^\\u0000]*$";
+
 /** As long as the longest stored path; values are compared, never parsed. */
 const MAX_FILTER_LENGTH = 2048;
 
@@ -65,16 +68,82 @@ const FILTER_PROPERTIES = Object.fromEntries(
   FILTER_NAMES.map((name) => [
     name,
     // No NUL: PostgreSQL text cannot hold it, so it could never match.
-    { type: "string", maxLength: MAX_FILTER_LENGTH, pattern: "^[^\\u0000]*$" },
+    { type: "string", maxLength: MAX_FILTER_LENGTH, pattern: NO_NUL },
   ]),
 );
 
+/** Rows one page of a "show all" list holds. */
+export const LIST_PAGE_SIZE = 50;
+/** Search text a list accepts: far longer than any name worth typing. */
+const MAX_SEARCH_LENGTH = 200;
+
 /**
- * Query parameters the endpoint knows. Fastify's validator drops others
- * silently, so a mistyped filter ("contry") would return unfiltered
- * numbers; the route refuses them instead.
+ * Refuses query parameters the route does not know. Fastify's validator
+ * drops them silently, so a mistyped filter ("contry") would return
+ * unfiltered numbers. Runs before validation, while the query still holds
+ * every parameter sent.
  */
-const QUERY_NAMES = new Set<string>(["from", "to", "period", "limit", ...FILTER_NAMES]);
+function refuseUnknownParameters(names: readonly string[]) {
+  const known = new Set(names);
+  return async (request: FastifyRequest, reply: FastifyReply) => {
+    const { query } = request;
+    const sent = typeof query === "object" && query !== null ? Object.keys(query) : [];
+    const unknown = sent.filter((name) => !known.has(name));
+    if (unknown.length > 0) {
+      return reply
+        .code(400)
+        .send(problem("invalid_query", `Unknown query parameter: ${unknown.join(", ")}.`));
+    }
+    // Nothing sent: Fastify goes on to validation.
+    return undefined;
+  };
+}
+
+interface RangeQuery {
+  from?: string;
+  to?: string;
+  period?: Period;
+}
+
+const RANGE_PROPERTIES = {
+  from: { type: "string", pattern: DAY_PATTERN },
+  to: { type: "string", pattern: DAY_PATTERN },
+  period: { type: "string", enum: PERIODS },
+};
+
+const PARAMS_SCHEMA = {
+  type: "object",
+  required: ["id"],
+  properties: { id: { type: "string", pattern: UUID_PATTERN } },
+};
+
+/** The days a request asks for, or the reason it cannot be answered. */
+function requestDays(
+  query: RangeQuery,
+  todayDay: string,
+): { from: string; to: string } | { problem: ReturnType<typeof problem> } {
+  const { period } = query;
+  if (period !== undefined && (query.from !== undefined || query.to !== undefined)) {
+    return { problem: problem("invalid_range", "Send either period, or from and to, not both.") };
+  }
+  const days =
+    period === undefined ? { from: query.from, to: query.to } : periodDays(period, todayDay);
+  if (days.from === undefined || days.to === undefined) {
+    return { problem: problem("invalid_range", "Send period, or both from and to.") };
+  }
+  const first = dayNumber(days.from);
+  const last = dayNumber(days.to);
+  if (first === null || last === null) {
+    return { problem: problem("invalid_range", "from and to must be real calendar days.") };
+  }
+  if (last < first) {
+    return { problem: problem("invalid_range", "to must not be before from.") };
+  }
+  if ((last - first) / 86_400_000 + 1 > MAX_RANGE_DAYS) {
+    return { problem: problem("invalid_range", `A range covers at most ${MAX_RANGE_DAYS} days.`) };
+  }
+  return { from: days.from, to: days.to };
+}
 
 function requestFilters(query: Partial<Record<FilterName, string>>): ReportFilter[] {
   return FILTER_NAMES.flatMap((name) => {
@@ -101,37 +170,23 @@ export const reportRoutes: FastifyPluginCallback<{
   const today = dayIn(timeZone);
   app.get<{
     Params: { id: string };
-    Querystring: { from?: string; to?: string; period?: Period; limit?: number } & Partial<
-      Record<FilterName, string>
-    >;
+    Querystring: RangeQuery & { limit?: number } & Partial<Record<FilterName, string>>;
   }>(
     "/projects/:id/analytics",
     {
       preHandler: requireSession(auth),
-      // Runs before validation, while the query still holds every parameter sent.
-      preValidation: async (request, reply) => {
-        const unknown = Object.keys(request.query).filter((name) => !QUERY_NAMES.has(name));
-        if (unknown.length > 0) {
-          return reply
-            .code(400)
-            .send(problem("invalid_query", `Unknown query parameter: ${unknown.join(", ")}.`));
-        }
-        // Nothing sent: Fastify goes on to validation.
-        return undefined;
-      },
+      preValidation: refuseUnknownParameters([
+        ...Object.keys(RANGE_PROPERTIES),
+        "limit",
+        ...FILTER_NAMES,
+      ]),
       schema: {
-        params: {
-          type: "object",
-          required: ["id"],
-          properties: { id: { type: "string", pattern: UUID_PATTERN } },
-        },
+        params: PARAMS_SCHEMA,
         querystring: {
           type: "object",
           additionalProperties: false,
           properties: {
-            from: { type: "string", pattern: DAY_PATTERN },
-            to: { type: "string", pattern: DAY_PATTERN },
-            period: { type: "string", enum: PERIODS },
+            ...RANGE_PROPERTIES,
             limit: { type: "integer", minimum: 1, maximum: MAX_LIMIT },
             ...FILTER_PROPERTIES,
           },
@@ -139,51 +194,91 @@ export const reportRoutes: FastifyPluginCallback<{
       },
     },
     async (request, reply) => {
-      const { period, limit } = request.query;
       // One reading of the clock: the period's days and the comparison's cut-off agree.
       const current = now();
-      if (
-        period !== undefined &&
-        (request.query.from !== undefined || request.query.to !== undefined)
-      ) {
-        return reply
-          .code(400)
-          .send(problem("invalid_range", "Send either period, or from and to, not both."));
-      }
-      const days =
-        period === undefined
-          ? { from: request.query.from, to: request.query.to }
-          : periodDays(period, today(current));
-      if (days.from === undefined || days.to === undefined) {
-        return reply.code(400).send(problem("invalid_range", "Send period, or both from and to."));
-      }
-      const { from, to } = days;
-      const first = dayNumber(from);
-      const last = dayNumber(to);
-      if (first === null || last === null) {
-        return reply
-          .code(400)
-          .send(problem("invalid_range", "from and to must be real calendar days."));
-      }
-      if (last < first) {
-        return reply.code(400).send(problem("invalid_range", "to must not be before from."));
-      }
-      if ((last - first) / 86_400_000 + 1 > MAX_RANGE_DAYS) {
-        return reply
-          .code(400)
-          .send(problem("invalid_range", `A range covers at most ${MAX_RANGE_DAYS} days.`));
+      const days = requestDays(request.query, today(current));
+      if ("problem" in days) {
+        return reply.code(400).send(days.problem);
       }
       if ((await findProject(db, request.params.id)) === null) {
         return reply.code(404).send(problem("not_found", "No project has this ID."));
       }
+      const { limit } = request.query;
       return projectAnalytics(db, {
         projectId: request.params.id,
-        firstDay: from,
-        lastDay: to,
+        firstDay: days.from,
+        lastDay: days.to,
         timeZone,
         filters: requestFilters(request.query),
         now: current,
         ...(limit === undefined ? {} : { limit }),
+      });
+    },
+  );
+
+  /**
+   * GET /api/projects/:id/analytics/list?report=country&period=7d[&search=…&offset=0&limit=50][&filters …]
+   *
+   * One list of the analytics page, a page at a time, for "show all": the
+   * same days and filters as the page, rows whose name contains `search`
+   * (case-insensitive; for countries, the English name), and `hasMore`.
+   */
+  app.get<{
+    Params: { id: string };
+    Querystring: RangeQuery & {
+      report: ListReport;
+      search?: string;
+      offset?: number;
+      limit?: number;
+    } & Partial<Record<FilterName, string>>;
+  }>(
+    "/projects/:id/analytics/list",
+    {
+      preHandler: requireSession(auth),
+      preValidation: refuseUnknownParameters([
+        ...Object.keys(RANGE_PROPERTIES),
+        "report",
+        "search",
+        "offset",
+        "limit",
+        ...FILTER_NAMES,
+      ]),
+      schema: {
+        params: PARAMS_SCHEMA,
+        querystring: {
+          type: "object",
+          additionalProperties: false,
+          required: ["report"],
+          properties: {
+            ...RANGE_PROPERTIES,
+            report: { type: "string", enum: LIST_REPORTS },
+            search: { type: "string", maxLength: MAX_SEARCH_LENGTH, pattern: NO_NUL },
+            offset: { type: "integer", minimum: 0, maximum: 100_000 },
+            limit: { type: "integer", minimum: 1, maximum: LIST_PAGE_SIZE },
+            ...FILTER_PROPERTIES,
+          },
+        },
+      },
+    },
+    async (request, reply) => {
+      const days = requestDays(request.query, today(now()));
+      if ("problem" in days) {
+        return reply.code(400).send(days.problem);
+      }
+      if ((await findProject(db, request.params.id)) === null) {
+        return reply.code(404).send(problem("not_found", "No project has this ID."));
+      }
+      const { report, search, offset = 0, limit = LIST_PAGE_SIZE } = request.query;
+      return projectList(db, {
+        projectId: request.params.id,
+        firstDay: days.from,
+        lastDay: days.to,
+        timeZone,
+        filters: requestFilters(request.query),
+        report,
+        limit,
+        offset,
+        ...(search === undefined ? {} : { search }),
       });
     },
   );
