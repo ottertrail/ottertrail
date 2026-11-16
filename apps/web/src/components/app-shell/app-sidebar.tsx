@@ -143,7 +143,7 @@ function ProjectSwitcher({ projectId }: { projectId: string }) {
   );
 }
 
-/** Inside one project: its modules, then its settings. */
+/** Inside one project: its modules, then its settings, in one list. */
 function ProjectMenu({ projectId }: { projectId: string }) {
   const matchRoute = useMatchRoute();
   return (
@@ -184,11 +184,6 @@ function ProjectMenu({ projectId }: { projectId: string }) {
               <SidebarMenuBadge className="text-ink-subtle">Planned</SidebarMenuBadge>
             </SidebarMenuItem>
           ))}
-        </SidebarMenu>
-      </SidebarGroup>
-
-      <SidebarGroup className="mt-auto">
-        <SidebarMenu>
           <SidebarMenuItem>
             <SidebarMenuButton
               render={<Link to="/projects/$projectId/settings" params={{ projectId }} />}

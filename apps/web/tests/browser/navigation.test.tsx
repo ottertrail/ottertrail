@@ -79,6 +79,21 @@ describe("inside a project", () => {
       await expect.element(projectMenu().getByRole("button", { name: module })).toBeDisabled();
     }
     await expect.element(projectMenu().getByText("Planned").first()).toBeVisible();
+    // The project's menu in order, settings last, right after the modules.
+    const items = document.querySelectorAll("nav[aria-label=Project] [data-sidebar=menu-button]");
+    expect([...items].map((item) => item.textContent)).toEqual([
+      "All projects",
+      "Web analytics",
+      "Product analytics",
+      "Users",
+      "Errors",
+      "Email",
+      "Settings",
+    ]);
+    // Right under Email, not pinned to the bottom of the sidebar.
+    const email = items[5]?.getBoundingClientRect();
+    const settings = items[6]?.getBoundingClientRect();
+    expect((settings?.top ?? 0) - (email?.bottom ?? 0)).toBeLessThan(8);
     await expect.poll(breadcrumb).toBe("Main site / Web analytics");
   });
 
