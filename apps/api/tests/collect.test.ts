@@ -7,6 +7,7 @@ import { afterAll, beforeAll, describe, expect, test } from "vite-plus/test";
 import { type AppOptions, buildApp } from "../src/app.ts";
 import { createDatabase } from "../src/db/database.ts";
 import type { Locate, Location } from "../src/enrichment/geo.ts";
+import { findVisits } from "../src/visits/visits.ts";
 import { createTestDatabase, type TestDatabase } from "./helpers/test-database.ts";
 
 /** The server's clock in these tests. */
@@ -468,6 +469,70 @@ describe("POST /api/events", () => {
       const inUtc = await createProject();
       await send(twoEvents(inUtc.public_key), { instance: utc });
       expect(new Set(await visitorIds(inUtc.id)).size).toBe(2);
+    });
+  });
+
+  describe("engagement events", () => {
+    test("stores time on page reported by the tracker", async () => {
+      const project = await createProject();
+      const response = await send(
+        batch(project.public_key, [
+          pageview({ name: "engagement", properties: { engagedMs: 42_000 } }),
+        ]),
+      );
+      expect(response.statusCode).toBe(202);
+      const [event] = await storedEvents(project.id);
+      expect(event).toMatchObject({ name: "engagement", properties: { engagedMs: 42_000 } });
+    });
+
+    test.each([
+      ["no engaged time", {}],
+      ["a negative time", { engagedMs: -1 }],
+      ["a fraction of a millisecond", { engagedMs: 1.5 }],
+      ["more than 24 hours", { engagedMs: 24 * 60 * 60 * 1000 + 1 }],
+      ["text instead of a number", { engagedMs: "42" }],
+    ])("rejects an engagement event with %s", async (_label, properties) => {
+      const project = await createProject();
+      const response = await send(
+        batch(project.public_key, [pageview(), pageview({ name: "engagement", properties })]),
+      );
+      expect(response.statusCode).toBe(400);
+      expect(await storedEvents(project.id)).toHaveLength(0);
+    });
+  });
+
+  describe("visits across midnight", () => {
+    test("keeps one visit when a visitor reads past midnight in the instance's timezone", async () => {
+      let clock = Date.parse("2026-11-16T15:50:00.000Z"); // 23:50 in Singapore
+      const singapore = appWith({ collection: { now: () => clock, timeZone: "Asia/Singapore" } });
+      const project = await createProject();
+
+      await send(
+        batch(project.public_key, [pageview({ occurredAt: clock, url: `https://${SITE}/` })], {
+          sentAt: clock,
+        }),
+        { instance: singapore },
+      );
+      clock = Date.parse("2026-11-16T16:05:00.000Z"); // 00:05 the next day
+      await send(
+        batch(project.public_key, [pageview({ occurredAt: clock, url: `https://${SITE}/docs` })], {
+          sentAt: clock,
+        }),
+        { instance: singapore },
+      );
+
+      const [before, after] = await storedEvents(project.id);
+      expect(after?.visitor_id).not.toBe(before?.visitor_id); // A new day, a new ID …
+      expect(after?.previous_visitor_id).toBe(before?.visitor_id); // … linked to yesterday's.
+      expect(before?.previous_visitor_id).toBeNull(); // 23:50 is not near the start of a day.
+
+      const visits = await findVisits(db(), {
+        projectId: project.id,
+        from: new Date("2026-11-16T00:00:00Z"),
+        to: new Date("2026-11-17T00:00:00Z"),
+      });
+      expect(visits).toHaveLength(1);
+      expect(visits[0]).toMatchObject({ pageviews: 2, entryPath: "/", exitPath: "/docs" });
     });
   });
 

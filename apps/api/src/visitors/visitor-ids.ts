@@ -4,6 +4,7 @@ import type { Kysely } from "kysely";
 
 import { MAX_EVENT_AGE_MS } from "../collection/normalize.ts";
 import type { Database } from "../db/schema.ts";
+import { VISIT_TIMEOUT_MS } from "../visits/visits.ts";
 
 /**
  * Returns the calendar day of a moment in a timezone, as "YYYY-MM-DD".
@@ -100,6 +101,27 @@ export class VisitorIds {
     occurredAt: Date;
   }): Promise<string> {
     const salt = await this.#salt(this.#day(input.occurredAt));
+    return visitorId(salt, input.projectId, input.ip, input.userAgent);
+  }
+
+  /**
+   * For an event in the first 30 minutes of a day (in the instance's
+   * timezone): the visitor's ID under the previous day's salt, so the visit
+   * query can join a visit that crossed midnight. Undefined for every other
+   * event. The previous day's salt is always still kept: events are at most
+   * 24 hours old, and salts last 25 hours past their day.
+   */
+  async previousDayIdFor(input: {
+    projectId: string;
+    ip: string;
+    userAgent: string;
+    occurredAt: Date;
+  }): Promise<string | undefined> {
+    const previousDay = this.#day(new Date(input.occurredAt.getTime() - VISIT_TIMEOUT_MS));
+    if (previousDay === this.#day(input.occurredAt)) {
+      return undefined;
+    }
+    const salt = await this.#salt(previousDay);
     return visitorId(salt, input.projectId, input.ip, input.userAgent);
   }
 

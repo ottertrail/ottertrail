@@ -7,6 +7,7 @@ import type { Database } from "../db/schema.ts";
 import { type Locate, noLocation } from "../enrichment/geo.ts";
 import { isBot, parseUserAgent } from "../enrichment/user-agent.ts";
 import { VisitorIds } from "../visitors/visitor-ids.ts";
+import { ENGAGEMENT } from "../visits/visits.ts";
 import { type NewEvent, storeEvents } from "./event-store.ts";
 import {
   cleanReferrer,
@@ -21,6 +22,8 @@ import { type RateLimit, TokenBucketLimiter } from "./rate-limiter.ts";
 export const MAX_EVENTS_PER_BATCH = 50;
 export const MAX_BODY_BYTES = 64 * 1024;
 export const MAX_PROPERTIES_BYTES = 8 * 1024;
+/** Longest time on one page an engagement event may report. */
+export const MAX_ENGAGED_MS = 24 * 60 * 60 * 1000;
 
 /** Requests per client IP address: bursts of 120, then 2 per second. */
 export const DEFAULT_IP_LIMIT: RateLimit = { capacity: 120, refillPerSecond: 2 };
@@ -319,6 +322,26 @@ export const collectionRoutes: FastifyPluginCallback<CollectionOptions> = (app, 
             );
         }
 
+        // "engagement" is reserved: time a page was visible, reported by the tracker.
+        if (event.name === ENGAGEMENT) {
+          const engagedMs = event.properties?.engagedMs;
+          if (
+            typeof engagedMs !== "number" ||
+            !Number.isInteger(engagedMs) ||
+            engagedMs < 0 ||
+            engagedMs > MAX_ENGAGED_MS
+          ) {
+            return reply
+              .code(400)
+              .send(
+                problem(
+                  "invalid_request",
+                  `events[${index}] is an engagement event: properties.engagedMs must be a whole number of milliseconds, at most 24 hours.`,
+                ),
+              );
+          }
+        }
+
         const occurredAt = correctClock(event.occurredAt, sentAt, receivedAt);
         if (occurredAt === null) {
           tooOld += 1;
@@ -342,12 +365,18 @@ export const collectionRoutes: FastifyPluginCallback<CollectionOptions> = (app, 
         // Each event gets the visitor ID of the day it happened, so a late
         // event from just before midnight joins the rest of that day's visit.
         for (const event of accepted) {
-          event.visitorId = await visitors.idFor({
+          const visitor = {
             projectId: project.id,
             ip: request.ip,
             userAgent: userAgent ?? "",
             occurredAt: event.occurredAt,
-          });
+          };
+          event.visitorId = await visitors.idFor(visitor);
+          // Near midnight, also yesterday's ID, so a visit crossing midnight stays one.
+          const previousVisitorId = await visitors.previousDayIdFor(visitor);
+          if (previousVisitorId !== undefined) {
+            event.previousVisitorId = previousVisitorId;
+          }
         }
         result = await storeEvents(db, project.id, accepted);
       } catch (error) {

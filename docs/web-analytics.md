@@ -9,7 +9,7 @@ How Ottertrail's web analytics works, the concepts behind it, and the decisions 
 | 3. The tracker     | Done        |
 | 4. Enrichment      | Done        |
 | 5. Visitors        | Done        |
-| 6. Sessions        | Not started |
+| 6. Visits          | Done        |
 | 7. Reports         | Not started |
 | 8. Dashboard check | Not started |
 
@@ -204,7 +204,7 @@ Behind a proxy (Cloudflare, Caddy), every request seems to come from the proxy's
 
 ## 3. The tracker
 
-`packages/tracker` builds `dist/tracker.js`, the script a site adds to its pages: about 4 KB, 2 KB gzipped.
+`packages/tracker` builds `dist/tracker.js`, the script a site adds to its pages: about 4.6 KB, 2.2 KB gzipped.
 
 ```html
 <script
@@ -265,6 +265,12 @@ When the tab is hidden (switched away, phone locked) or the page unloads, the tr
 
 A batch that is in flight when the page hides may be sent twice: once by `fetch` and once by the beacon. The API stores it once.
 
+### Time on page
+
+The tracker measures how long each page is visible: time in a background tab or with the phone locked does not count. When the visitor leaves a page (an in-app navigation) or hides the tab, it sends an `engagement` event for that page with `properties.engagedMs`. Under one second is not reported. The time is collected again if the tab becomes visible.
+
+`pageview` and `engagement` are reserved: `window.ottertrail.track("pageview")` is refused with a console warning, so a page cannot inflate its own numbers. The API checks that an engagement event carries a whole number of milliseconds, at most 24 hours. Visits (step 6) use these events for duration and engaged time; they never count as pageviews or interactions.
+
 ### The playground
 
 `packages/tracker/demo` is a pretend single-page app with the tracker installed, for watching it work. Every request the tracker sends is listed on the page with its body and the response. Start the API (`vp -C apps/api run dev`), then:
@@ -279,7 +285,6 @@ It asks for a project's public key; the project must allow the hostname `localho
 
 - Serving `tracker.js` from each instance. Until then the script is only used through the playground.
 - Calls to `window.ottertrail.track` before the script has loaded are lost; a small queue stub will fix that.
-- Sessions (step 6).
 - Hash-based routers (`/#/pricing`): every page is recorded as `/`.
 - Consent controls and opting out of tracking.
 
@@ -428,3 +433,74 @@ PostgreSQL `date` columns, such as `visitor_salts.day`, are read as `"YYYY-MM-DD
 - Moving the hourly salt cleanup into the background worker.
 - Sessions: grouping a visitor's events into visits (step 6).
 - Exact IDs for logged-in users.
+
+## 6. Visits
+
+A visit (often called a session) is one visitor's run of activity. Code: `apps/api/src/visits/visits.ts`.
+
+### The rule
+
+**A visit ends after 30 minutes without an event.** The next event starts a new visit. A gap of exactly 30 minutes keeps the visit going.
+
+### Worked out when a report asks
+
+Nothing about visits is stored. `findVisits` works them out from the events with SQL window functions:
+
+1. For each event, find the same visitor's previous event (`lag(occurred_at) over (partition by visitor order by occurred_at)`).
+2. Mark a visit start where there is no previous event or the gap is over 30 minutes.
+3. A running count of those marks numbers each visitor's visits: 1, 2, 3 …
+4. Group by visitor and visit number to get each visit's pages, times, and first event.
+
+Because visits are computed from the stored facts every time:
+
+- late and out-of-order events land in the right visit; a late event that fills a gap joins two visits into one;
+- a retried event cannot count twice, since the events table stores each event ID once;
+- changing a rule (30 minutes to 20) applies to all past data at once.
+
+The cost is work at report time: each visitor's events in the range are sorted. Step 7 measures this with realistic volumes. If it is too slow, a precomputed daily visits table can be added and rebuilt for any day that receives late events (`received_at` shows which).
+
+### A time range
+
+A visit counts in the range in which it **started**. The query reads events from 30 minutes before the range, to tell whether an early event continues a visit that began earlier, and up to 24 hours after it, so a visit starting near the end is complete (its exit page and whether it bounced can depend on later events).
+
+### What each visit has
+
+| Field              | Meaning                                                                          |
+| ------------------ | -------------------------------------------------------------------------------- |
+| `startedAt`        | First pageview or custom event                                                   |
+| `endedAt`          | Last event, including the last engagement report                                 |
+| `durationMs`       | `endedAt - startedAt`                                                            |
+| `engagedMs`        | Sum of the visit's engagement events: time pages were visible                    |
+| `pageviews`        | Pageviews in the visit                                                           |
+| `interactions`     | Custom events, such as `signup`                                                  |
+| `entryPath`        | Path of the first pageview                                                       |
+| `exitPath`         | Path of the last pageview                                                        |
+| `bounce`           | One pageview and no interaction                                                  |
+| Source and visitor | Referrer, UTM tags, browser, OS, device, and location of the visit's first event |
+
+**Exit page.** Nobody is told when a person leaves: closing the tab, switching apps, losing signal, and walking away all look the same. The exit page is simply the last page viewed, known for certain only once 30 minutes pass without another event.
+
+**Bounce.** One pageview and no custom event. Engagement events do not count, so a long read of one page is still a bounce; `engagedMs` tells a quick exit from a long read. Other tools define a bounce differently, so bounce rates from different tools are not comparable.
+
+**Engagement.** Engagement events extend a visit but never start one. A page left visible for over 30 minutes with no other event reports its time too late to belong to the visit, and that time is not counted.
+
+### Midnight
+
+Visitor IDs change at midnight in the instance's timezone (step 5), which would split a visit that crosses it. For events in the first 30 minutes after local midnight, ingestion also stores `previous_visitor_id`: the visitor's ID under the previous day's salt, which still exists then (salts last 25 hours past their day). The visit query joins the new ID to the old one when the old ID has an event in the 30 minutes before.
+
+Only one midnight is joined: a single visit spanning two midnights is split at the second.
+
+### Try it
+
+```sh
+vp run visits                      # the first project, last 24 hours
+vp run visits -- Playground 6      # a project by name, last 6 hours
+```
+
+Times are shown in the instance's `TIMEZONE`.
+
+### Not done yet
+
+- Reports built on visits: counts, bounce rate, average duration, entry and exit pages (step 7).
+- A precomputed visits table, if step 7 shows report queries are too slow.
+- Scroll depth, and visits that span two midnights.

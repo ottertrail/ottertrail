@@ -29,6 +29,8 @@ export interface NewEvent {
   location?: Location;
   /** Daily cookieless visitor ID (see visitors/visitor-ids.ts). */
   visitorId?: string;
+  /** Near midnight only: the visitor's ID under the previous day's salt. */
+  previousVisitorId?: string;
 }
 
 export interface StoreResult {
@@ -79,6 +81,7 @@ export async function storeEvents(
         region: event.location?.region,
         city: event.location?.city,
         visitor_id: event.visitorId,
+        previous_visitor_id: event.previousVisitorId,
       })),
     )
     .onConflict((conflict) => conflict.columns(["project_id", "event_id"]).doNothing())

@@ -10,7 +10,8 @@
     "start": "node dist/server.mjs",
     "start:migrate": "node dist/migrate.mjs",
     "test": "vp test",
-    "geo:update": "vpx scripts/update-geo.ts"
+    "geo:update": "vpx scripts/update-geo.ts",
+    "visits": "vpx scripts/visits.ts"
   },
   "dependencies": {
     "bowser": "catalog:",

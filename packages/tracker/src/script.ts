@@ -4,9 +4,11 @@
  *   <script defer src="…/tracker.js"
  *     data-key="pk_…" data-host="https://analytics.example.com"></script>
  *
- * It records a pageview on load and on every path change, and exposes
+ * It records a pageview on load and on every path change, reports how long
+ * each page was visible (an "engagement" event), and exposes
  * window.ottertrail.track(name, properties) for custom events.
  */
+import { createEngagementTimer, ENGAGEMENT, MIN_REPORTED_MS } from "./engagement.ts";
 import { watchNavigation } from "./navigation.ts";
 import { randomId } from "./random-id.ts";
 import { createTracker, type Page } from "./tracker.ts";
@@ -50,7 +52,20 @@ function landing(): Page {
     });
 
     let current: Page | undefined;
+    const engaged = createEngagementTimer();
+
+    // Time on the current page, sent when the visitor leaves it or hides the tab.
+    const reportEngagement = () => {
+      const engagedMs = engaged.take();
+      if (current !== undefined && engagedMs >= MIN_REPORTED_MS) {
+        tracker.track(ENGAGEMENT, current, { engagedMs });
+      }
+    };
+
     const pageview = () => {
+      if (current !== undefined) {
+        reportEngagement(); // The page being left, before the new one.
+      }
       // After the first page, the "referrer" is the previous page in the app,
       // as it would be for a normal page load.
       current =
@@ -64,10 +79,22 @@ function landing(): Page {
     };
 
     window.ottertrail = {
-      track: (name, properties) => tracker.track(name, current ?? landing(), properties),
+      track: (name, properties) => {
+        // The tracker sends these itself; a page sending them would distort reports.
+        if (name === "pageview" || name === ENGAGEMENT) {
+          console.warn(
+            `Ottertrail: "${name}" is sent automatically and cannot be tracked by hand.`,
+          );
+          return;
+        }
+        tracker.track(name, current ?? landing(), properties);
+      },
     };
 
     const start = () => {
+      if (document.visibilityState === "visible") {
+        engaged.resume();
+      }
       pageview();
       watchNavigation(window, pageview);
     };
@@ -83,10 +110,17 @@ function landing(): Page {
     // unload events, so visibilitychange is the reliable signal.
     document.addEventListener("visibilitychange", () => {
       if (document.visibilityState === "hidden") {
+        engaged.pause();
+        reportEngagement();
         tracker.flushOnExit();
+      } else {
+        engaged.resume();
       }
     });
-    window.addEventListener("pagehide", () => tracker.flushOnExit());
+    window.addEventListener("pagehide", () => {
+      reportEngagement();
+      tracker.flushOnExit();
+    });
   } catch {
     // Never break the page the tracker runs on.
   }

@@ -184,6 +184,22 @@ describe("VisitorIds", () => {
     expect(await salts()).toEqual(["2026-11-15", "2026-11-16"]);
   });
 
+  test("gives events in the first 30 minutes after local midnight yesterday's ID too", async () => {
+    // Singapore is UTC+8: 15:55 UTC is 23:55 there, 16:10 UTC is 00:10 the next day.
+    const singapore = visitorsAt("2026-11-16T16:10:00Z", "Asia/Singapore");
+    const beforeMidnight = await singapore.idFor(visit("2026-11-16T15:55:00Z"));
+    const afterMidnight = visit("2026-11-16T16:10:00Z");
+
+    expect(await singapore.idFor(afterMidnight)).not.toBe(beforeMidnight);
+    expect(await singapore.previousDayIdFor(afterMidnight)).toBe(beforeMidnight);
+  });
+
+  test("gives no previous ID outside the first 30 minutes of the day", async () => {
+    const singapore = visitorsAt("2026-11-16T16:45:00Z", "Asia/Singapore");
+    expect(await singapore.previousDayIdFor(visit("2026-11-16T16:31:00Z"))).toBeUndefined(); // 00:31
+    expect(await singapore.previousDayIdFor(visit("2026-11-16T04:00:00Z"))).toBeUndefined(); // 12:00
+  });
+
   test("never deletes a salt an accepted event could still need", async () => {
     // A visitor seen on the 16th, a millisecond before midnight UTC.
     const lastMoment = "2026-11-16T23:59:59.999Z";
