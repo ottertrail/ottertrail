@@ -395,7 +395,8 @@ Each event uses the salt of the local day it happened on. A pageview from 23:55 
 ### How salts live and die
 
 - A day's salt is created the first time that day is needed, in the `visitor_salts` table, so every API process and every restart uses the same salt. Each process caches salts in memory.
-- Events arrive up to 24 hours late, so a salt is kept until 24 hours after its day ends, then deleted. Deletion happens whenever a new day's salt is created. Without traffic an expired salt can linger until the next event; the background worker (not built yet) will delete on a schedule.
+- Events arrive up to 24 hours late, so a salt is needed until 24 hours after its day ends. It is kept one hour longer (`SALT_GRACE_MS`), then deleted. The endpoint and the cleanup read the clock at slightly different moments; without the extra hour, an event accepted at the very edge of the window could find its salt deleted a moment later, get a new salt, and with it a different visitor ID. A test reproduces that case.
+- Deletion runs when the API starts, every hour after that, and whenever a new day's salt is created, so salts go on time even when no events arrive. Every API process runs the hourly cleanup; deleting twice is harmless. The background worker will take it over once it exists.
 - Once a salt is gone, nobody can tell which IP address one of that day's visitor IDs came from, not even the instance's operator.
 - There is no setting for the rotation period. Daily keeps the privacy promise simple: an anonymous visitor is never linked across days. Changing the period later would split the data into two eras, because IDs cannot be recomputed without the IP addresses. The period lives in one place (`dayIn` and `MAX_EVENT_AGE_MS`) if a real need appears.
 
@@ -424,6 +425,6 @@ PostgreSQL `date` columns, such as `visitor_salts.day`, are read as `"YYYY-MM-DD
 
 ### Not done yet
 
-- Deleting expired salts on a schedule, without waiting for traffic (needs the background worker).
+- Moving the hourly salt cleanup into the background worker.
 - Sessions: grouping a visitor's events into visits (step 6).
 - Exact IDs for logged-in users.

@@ -35,6 +35,8 @@ export interface CollectionOptions {
   locate?: Locate;
   /** IANA timezone whose midnight starts a new visitor salt. Default: UTC. */
   timeZone?: string;
+  /** How often expired visitor salts are deleted. Default: hourly. */
+  saltCleanupIntervalMs?: number;
   /** Clock, replaceable in tests. */
   now?: () => number;
 }
@@ -164,6 +166,13 @@ export const collectionRoutes: FastifyPluginCallback<CollectionOptions> = (app, 
     return;
   }
   const visitors = new VisitorIds(db, { timeZone: options.timeZone ?? "UTC", now });
+  // Expired salts are deleted on a timer, so they go on time even without traffic.
+  const stopSaltCleanup = visitors.startCleanup((error) => {
+    app.log.warn({ err: error }, "could not delete expired visitor salts");
+  }, options.saltCleanupIntervalMs);
+  app.addHook("onClose", async () => {
+    stopSaltCleanup();
+  });
   const ipLimiter = new TokenBucketLimiter(options.ipLimit ?? DEFAULT_IP_LIMIT, { now });
   const projectLimiter = new TokenBucketLimiter(projectLimit, { now });
   const projects = new ProjectKeyCache(db, { now });

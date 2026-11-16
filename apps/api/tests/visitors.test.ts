@@ -1,7 +1,8 @@
 import { randomBytes } from "node:crypto";
 
-import { afterAll, beforeAll, beforeEach, describe, expect, test } from "vite-plus/test";
+import { afterAll, beforeAll, beforeEach, describe, expect, test, vi } from "vite-plus/test";
 
+import { createDatabase } from "../src/db/database.ts";
 import { canonicalTimeZone, dayIn, visitorId, VisitorIds } from "../src/visitors/visitor-ids.ts";
 import { createTestDatabase, type TestDatabase } from "./helpers/test-database.ts";
 
@@ -182,6 +183,82 @@ describe("VisitorIds", () => {
     expect(visitors.oldestKeptDay()).toBe("2026-11-15");
     expect(await visitors.deleteExpiredSalts()).toBe(2);
     expect(await salts()).toEqual(["2026-11-15", "2026-11-16"]);
+  });
+
+  test("never deletes a salt an accepted event could still need", async () => {
+    // A visitor seen on the 16th, a millisecond before midnight UTC.
+    const lastMoment = "2026-11-16T23:59:59.999Z";
+    const seen = await visitorsAt("2026-11-17T08:00:00Z").idFor(visit(lastMoment));
+
+    // 24 hours later the event is exactly at the limit and still accepted.
+    // Cleanup reads the clock two milliseconds later, after midnight, then a
+    // process with an empty cache looks the salt up. Without the grace
+    // period, cleanup would already delete the 16th's salt, and the lookup
+    // would create a new one: a different visitor ID for the same visitor.
+    await visitorsAt("2026-11-18T00:00:00.001Z").deleteExpiredSalts();
+    expect(await visitorsAt("2026-11-17T23:59:59.999Z").idFor(visit(lastMoment))).toBe(seen);
+    expect(await salts()).toContain("2026-11-16");
+  });
+
+  test("deletes a day's salt 25 hours after the day ends (24 hours plus 1 hour of grace)", async () => {
+    await db()
+      .insertInto("visitor_salts")
+      .values({ day: "2026-11-15", salt: randomBytes(32) })
+      .execute();
+
+    await visitorsAt("2026-11-17T00:59:00Z").deleteExpiredSalts();
+    expect(await salts()).toEqual(["2026-11-15"]);
+
+    await visitorsAt("2026-11-17T01:01:00Z").deleteExpiredSalts();
+    expect(await salts()).toEqual([]);
+  });
+
+  test("deletes expired salts on a timer, with or without traffic", async () => {
+    await db()
+      .insertInto("visitor_salts")
+      .values({ day: "2026-11-01", salt: randomBytes(32) })
+      .execute();
+    const errors: unknown[] = [];
+    const stop = visitorsAt("2026-11-16T12:00:00Z").startCleanup((error) => errors.push(error), 50);
+    try {
+      // The first run happens at once, without waiting for an interval.
+      await vi.waitFor(async () => expect(await salts()).toEqual([]));
+
+      // A salt that expires later is caught by a later run.
+      await db()
+        .insertInto("visitor_salts")
+        .values({ day: "2026-11-02", salt: randomBytes(32) })
+        .execute();
+      await vi.waitFor(async () => expect(await salts()).toEqual([]));
+    } finally {
+      stop();
+    }
+    expect(errors).toEqual([]);
+
+    // Once stopped, nothing is deleted any more.
+    await db()
+      .insertInto("visitor_salts")
+      .values({ day: "2026-11-03", salt: randomBytes(32) })
+      .execute();
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    expect(await salts()).toEqual(["2026-11-03"]);
+  });
+
+  test("reports cleanup errors instead of crashing", async () => {
+    const unreachable = createDatabase({
+      connectionString: "postgres://unused@127.0.0.1:1/unused",
+    });
+    const errors: unknown[] = [];
+    const stop = new VisitorIds(unreachable, { timeZone: "UTC" }).startCleanup(
+      (error) => errors.push(error),
+      60_000,
+    );
+    try {
+      await vi.waitFor(() => expect(errors).toHaveLength(1));
+    } finally {
+      stop();
+      await unreachable.destroy();
+    }
   });
 
   test("deletes expired salts when a new day starts", async () => {

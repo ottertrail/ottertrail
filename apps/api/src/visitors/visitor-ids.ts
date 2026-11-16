@@ -55,6 +55,18 @@ export function visitorId(salt: Buffer, projectId: string, ip: string, userAgent
   return digest.readBigInt64BE(0).toString();
 }
 
+/**
+ * How long a salt outlives the window in which events are accepted. The
+ * endpoint and the cleanup each read the clock at a slightly different
+ * moment; without this margin, an event accepted at the very edge of the
+ * 24-hour window could find its salt deleted a moment later and be given a
+ * new one, and with it the wrong visitor ID.
+ */
+export const SALT_GRACE_MS = 60 * 60 * 1000;
+
+/** How often expired salts are deleted, with or without traffic. */
+export const SALT_CLEANUP_INTERVAL_MS = 60 * 60 * 1000;
+
 export interface VisitorIdsOptions {
   /** IANA timezone whose midnight starts a new salt. */
   timeZone: string;
@@ -93,19 +105,48 @@ export class VisitorIds {
 
   /**
    * The oldest day whose salt is still kept. Events arrive up to 24 hours
-   * late, so a day's salt is needed until 24 hours after the day ends.
+   * late, so a day's salt is needed until 24 hours after the day ends; it is
+   * kept one hour longer (SALT_GRACE_MS) so no accepted event can lose it.
    */
   oldestKeptDay(): string {
-    return this.#day(new Date(this.#now() - MAX_EVENT_AGE_MS));
+    return this.#day(new Date(this.#now() - MAX_EVENT_AGE_MS - SALT_GRACE_MS));
   }
 
-  /** Deletes salts no future event can need. Returns how many were deleted. */
+  /**
+   * Deletes salts no future event can need, from PostgreSQL and from this
+   * process's memory. Returns how many were deleted from PostgreSQL.
+   */
   async deleteExpiredSalts(): Promise<number> {
+    const oldest = this.oldestKeptDay();
+    for (const cached of this.#salts.keys()) {
+      if (cached < oldest) this.#salts.delete(cached);
+    }
     const result = await this.#db
       .deleteFrom("visitor_salts")
-      .where("day", "<", this.oldestKeptDay())
+      .where("day", "<", oldest)
       .executeTakeFirst();
     return Number(result.numDeletedRows);
+  }
+
+  /**
+   * Deletes expired salts now and then every `intervalMs`, so they are
+   * removed on time even when no events arrive. Returns a function that
+   * stops the timer. The timer does not keep the process alive.
+   *
+   * Runs inside each API process for now (deleting twice is harmless); the
+   * background worker will take this over.
+   */
+  startCleanup(
+    onError: (error: unknown) => void,
+    intervalMs: number = SALT_CLEANUP_INTERVAL_MS,
+  ): () => void {
+    const run = () => {
+      this.deleteExpiredSalts().catch(onError);
+    };
+    run();
+    const timer = setInterval(run, intervalMs);
+    timer.unref();
+    return () => clearInterval(timer);
   }
 
   #salt(day: string): Promise<Buffer> {
@@ -115,11 +156,6 @@ export class VisitorIds {
       // A failed load is not remembered, so the next request tries again.
       salt.catch(() => this.#salts.delete(day));
       this.#salts.set(day, salt);
-      // Forget days no event can belong to any more.
-      const oldest = this.oldestKeptDay();
-      for (const cached of this.#salts.keys()) {
-        if (cached < oldest) this.#salts.delete(cached);
-      }
     }
     return salt;
   }
