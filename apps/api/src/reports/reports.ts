@@ -22,7 +22,17 @@ export interface ReportRange {
    * every event of a range belongs to exactly one of the range's visits.
    */
   filters?: readonly ReportFilter[] | undefined;
+  /**
+   * Ignore events from this moment on, as if they had not happened yet:
+   * for a comparison up to a time of day. Every report reads events up to
+   * rangeEnd(), and visits only see events before it (VisitRange.until).
+   */
+  until?: Date | undefined;
 }
+
+/** Where a report stops reading events: `to`, or `until` when that is earlier. */
+const rangeEnd = ({ to, until }: ReportRange): Date =>
+  until !== undefined && until < to ? until : to;
 
 const hasFilters = (range: ReportRange) => (range.filters?.length ?? 0) > 0;
 
@@ -51,6 +61,78 @@ export async function localDays(
   return row;
 }
 
+export interface PreviousDays {
+  /** "YYYY-MM-DD", both included. */
+  firstDay: string;
+  lastDay: string;
+  from: Date;
+  /** The end of lastDay, or the cut-off when the period is still running. */
+  to: Date;
+  /**
+   * For a period still running, the cut-off: now, moved back by the
+   * period's length. lastDay is then the cut-off's day. null for whole days.
+   */
+  until: Date | null;
+}
+
+/**
+ * The days a period is compared with: as many days right before it, in
+ * the same timezone. A period that is still running (it ends today, or
+ * later) only has data up to now, so it is compared up to the same moment
+ * of its earlier counterpart: now, moved back by the period's length. A
+ * day in progress is never compared with a whole day. Calendar days are
+ * counted by PostgreSQL, so daylight saving changes come out right.
+ */
+export async function previousDays(
+  db: Kysely<Database>,
+  firstDay: string,
+  lastDay: string,
+  timeZone: string,
+  now: Date,
+): Promise<PreviousDays> {
+  const { rows } = await sql<{
+    first_day: string;
+    last_day: string;
+    from: Date;
+    to: Date;
+    running: boolean;
+  }>`
+    with span as (
+      select ${firstDay}::date - (${lastDay}::date - ${firstDay}::date + 1) as first,
+             ${lastDay}::date - (${lastDay}::date - ${firstDay}::date + 1) as last,
+             ${lastDay}::date - ${firstDay}::date + 1 as length,
+             ${now}::timestamptz < ((${lastDay}::date + 1)::timestamp at time zone ${timeZone}) as running
+    ),
+    -- The cut-off in local time: now moved back by the length, on the calendar.
+    cut as (
+      select span.*,
+             greatest(
+               first::timestamp,
+               (${now}::timestamptz at time zone ${timeZone}) - make_interval(days => length)
+             ) as local_cut
+      from span
+    )
+    select first::text as first_day,
+           (case when running then local_cut::date else last end)::text as last_day,
+           first::timestamp at time zone ${timeZone} as "from",
+           case
+             when running then local_cut at time zone ${timeZone}
+             else (last + 1)::timestamp at time zone ${timeZone}
+           end as "to",
+           running
+    from cut
+  `.execute(db);
+  const [row] = rows;
+  if (row === undefined) throw new Error("previousDays returned no row");
+  return {
+    firstDay: row.first_day,
+    lastDay: row.last_day,
+    from: row.from,
+    to: row.to,
+    until: row.running ? row.to : null,
+  };
+}
+
 const count = (value: unknown) => Number(value ?? 0);
 const ratio = (part: number, whole: number) => (whole === 0 ? null : part / whole);
 const average = (value: unknown) => (value === null || value === undefined ? null : Number(value));
@@ -61,11 +143,11 @@ const average = (value: unknown) => (value === null || value === undefined ? nul
  * (a FROM item, such as a CTE's name).
  */
 function activity(range: ReportRange, visits: RawBuilder<unknown>): RawBuilder<unknown> {
-  const { projectId, from, to } = range;
+  const { projectId, from } = range;
   return sql`
     select * from events
     where project_id = ${projectId}
-      and occurred_at >= ${from} and occurred_at < ${to}
+      and occurred_at >= ${from} and occurred_at < ${rangeEnd(range)}
       and visitor_id is not null
       and name <> ${ENGAGEMENT}
       ${inVisits(range, visits)}
@@ -247,7 +329,7 @@ export async function topPages(
   limit = DEFAULT_LIMIT,
   visitsSource?: VisitsSource,
 ): Promise<PageRow[]> {
-  const { projectId, from, to } = range;
+  const { projectId, from } = range;
   // PostgreSQL skips the visits CTE when nothing reads it: without filters.
   const { rows } = await sql<Record<string, string | null>>`
     with visits as (${countedVisits(range, visitsSource, { firstEventColumns: false })}),
@@ -262,7 +344,8 @@ export async function topPages(
                   avg(case when properties ->> 'engagedMs' ~ '^[0-9]{1,9}$'
                            then (properties ->> 'engagedMs')::bigint end) as avg_engaged_ms
            from events
-           where project_id = ${projectId} and occurred_at >= ${from} and occurred_at < ${to}
+           where project_id = ${projectId}
+             and occurred_at >= ${from} and occurred_at < ${rangeEnd(range)}
              and name = ${ENGAGEMENT}
              ${inVisits(range, sql`visits`, { engagement: true })}
            group by path
@@ -379,7 +462,7 @@ function filterCondition(filter: ReportFilter, range: ReportRange): RawBuilder<u
     return sql`exists (
       select 1 from events as viewed
       where viewed.project_id = ${range.projectId}
-        and viewed.occurred_at >= ${range.from} and viewed.occurred_at < ${range.to}
+        and viewed.occurred_at >= ${range.from} and viewed.occurred_at < ${rangeEnd(range)}
         and viewed.visitor_id = v.visitor_id
         and viewed.occurred_at between v.started_at and v.ended_at
         and viewed.name = ${PAGEVIEW}

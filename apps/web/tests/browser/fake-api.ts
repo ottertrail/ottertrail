@@ -85,6 +85,21 @@ export function analyticsFixture(overrides: Partial<Analytics> = {}): Analytics 
       os: [row("macOS", 200, 210)],
     },
     customEvents: [{ name: "signup", events: 140, visitors: 127 }],
+    // The same week before, up to 15:00 on its last day (07:00 UTC).
+    previous: {
+      firstDay: "2026-11-03",
+      lastDay: "2026-11-09",
+      until: "2026-11-09T07:00:00.000Z",
+      summary: {
+        visitors: 683,
+        visits: 824,
+        pageviews: 2000,
+        viewsPerVisit: 2.43,
+        bounceRate: 0.3,
+        avgDurationMs: 240_000,
+        avgEngagedMs: null,
+      },
+    },
     ...overrides,
   };
 }
@@ -92,17 +107,18 @@ export function analyticsFixture(overrides: Partial<Analytics> = {}): Analytics 
 /** The same days and lists with nothing in them, as for a period without events. */
 export function emptyAnalytics(): Analytics {
   const fixture = analyticsFixture();
+  const empty = {
+    visitors: 0,
+    visits: 0,
+    pageviews: 0,
+    viewsPerVisit: null,
+    bounceRate: null,
+    avgDurationMs: null,
+    avgEngagedMs: null,
+  };
   return {
     ...fixture,
-    summary: {
-      visitors: 0,
-      visits: 0,
-      pageviews: 0,
-      viewsPerVisit: null,
-      bounceRate: null,
-      avgDurationMs: null,
-      avgEngagedMs: null,
-    },
+    summary: empty,
     days: fixture.days.map((day) => ({ ...day, visitors: 0, visits: 0, pageviews: 0 })),
     pages: [],
     breakdowns: {
@@ -118,6 +134,7 @@ export function emptyAnalytics(): Analytics {
       os: [],
     },
     customEvents: [],
+    previous: { ...fixture.previous, summary: empty },
   };
 }
 

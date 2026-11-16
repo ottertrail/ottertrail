@@ -11,6 +11,8 @@ import {
   DEFAULT_LIMIT,
   filterVisits,
   localDays,
+  type PreviousDays,
+  previousDays,
   type PageRow,
   type ReportFilter,
   type Summary,
@@ -35,6 +37,11 @@ export type AnalyticsBreakdown = Extract<
   | "os"
 >;
 
+/** The period before, for comparison: the same length, up to the same time of day. */
+export interface PreviousPeriod extends Pick<PreviousDays, "firstDay" | "lastDay" | "until"> {
+  summary: Summary;
+}
+
 export interface Analytics {
   /** The instance's timezone, which the days are counted in. */
   timeZone: string;
@@ -46,6 +53,7 @@ export interface Analytics {
   pages: PageRow[];
   breakdowns: Record<AnalyticsBreakdown, BreakdownRow[]>;
   customEvents: CustomEventRow[];
+  previous: PreviousPeriod;
 }
 
 /** Columns of visitsQuery with first-event columns, in its order. */
@@ -78,9 +86,19 @@ export async function projectAnalytics(
     timeZone: string;
     limit?: number;
     filters?: readonly ReportFilter[];
+    /** The clock, for comparing a running period up to the same time of day. */
+    now?: Date;
   },
 ): Promise<Analytics> {
-  const { projectId, firstDay, lastDay, timeZone, limit = DEFAULT_LIMIT, filters = [] } = options;
+  const {
+    projectId,
+    firstDay,
+    lastDay,
+    timeZone,
+    limit = DEFAULT_LIMIT,
+    filters = [],
+    now = new Date(),
+  } = options;
   return db
     .transaction()
     .setIsolationLevel("repeatable read")
@@ -125,10 +143,26 @@ export async function projectAnalytics(
         browser: await by("browser"),
         os: await by("os"),
       };
+      // The period before: its own visits, so only the summary is compared.
+      const previous = await previousDays(trx, firstDay, lastDay, timeZone, now);
+      const previousSummary = await summary(trx, {
+        projectId,
+        timeZone,
+        filters,
+        from: previous.from,
+        to: previous.to,
+        until: previous.until ?? undefined,
+      });
       return {
         timeZone,
         firstDay,
         lastDay,
+        previous: {
+          firstDay: previous.firstDay,
+          lastDay: previous.lastDay,
+          until: previous.until,
+          summary: previousSummary,
+        },
         summary: await summary(trx, range, visits),
         days: await timeseries(trx, range, visits),
         pages: await topPages(trx, range, limit, visits),

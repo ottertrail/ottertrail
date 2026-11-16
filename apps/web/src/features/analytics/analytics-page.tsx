@@ -1,6 +1,14 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { ChartLineIcon, FilterXIcon, OctagonAlertIcon, XIcon } from "lucide-react";
+import {
+  ArrowDownIcon,
+  ArrowUpIcon,
+  ChartLineIcon,
+  FilterXIcon,
+  MinusIcon,
+  OctagonAlertIcon,
+  XIcon,
+} from "lucide-react";
 import * as React from "react";
 
 import { ButtonLink } from "@/components/button-link";
@@ -44,6 +52,7 @@ import { type Project, projectQuery } from "@/lib/projects-api";
 import { NoSuchProject } from "../projects/no-such-project";
 import { DayChart } from "./day-chart";
 import {
+  type Change,
   countryName,
   formatCount,
   formatDay,
@@ -51,7 +60,10 @@ import {
   formatDuration,
   formatPercent,
   formatRatio,
+  formatTimeOfDay,
   formatWhole,
+  pointsChange,
+  relativeChange,
 } from "./format";
 import { RankedList, type RankedRow } from "./ranked-list";
 
@@ -219,16 +231,87 @@ function ListCard({ title, tabs }: { title: string; tabs: ListTab[] }) {
   );
 }
 
+const CHANGE_ICONS = { up: ArrowUpIcon, down: ArrowDownIcon, same: MinusIcon } as const;
+
+/** A tile's change from the period before: an arrow and a size, read out as a sentence. */
+function ChangeLine({ change, before }: { change: Change; before: string }) {
+  const Icon = CHANGE_ICONS[change.direction];
+  const sentence =
+    change.direction === "same"
+      ? `No change from ${before}`
+      : `${change.direction === "up" ? "Up" : "Down"} ${change.spoken} from ${before}`;
+  return (
+    <dd className="flex items-center gap-1 text-xs text-ink-subtle" title={`Before: ${before}`}>
+      <Icon aria-hidden="true" className="size-3" />
+      <span aria-hidden="true">{change.text}</span>
+      <span className="sr-only">{sentence}</span>
+    </dd>
+  );
+}
+
+/** "Changes compare with 3–9 Nov 2026, up to 15:00 on 9 Nov." */
+function comparisonNote({ previous, timeZone }: Analytics): string {
+  const days = formatDayRange(previous.firstDay, previous.lastDay);
+  const before = previous.summary;
+  if (before.visits === 0 && before.pageviews === 0) {
+    return `No visits in ${days} to compare with.`;
+  }
+  if (previous.until === null) {
+    return `Changes compare with ${days}.`;
+  }
+  const time = formatTimeOfDay(previous.until, timeZone);
+  return previous.firstDay === previous.lastDay
+    ? `Changes compare with ${days}, up to ${time}.`
+    : `Changes compare with ${days}, up to ${time} on ${formatDay(previous.lastDay)}.`;
+}
+
 function SummaryTiles({ analytics }: { analytics: Analytics }) {
   const { summary } = analytics;
+  const before = analytics.previous.summary;
   const tiles = [
-    { label: "Visitors", value: formatCount(summary.visitors) },
-    { label: "Visits", value: formatCount(summary.visits) },
-    { label: "Pageviews", value: formatCount(summary.pageviews) },
-    { label: "Views per visit", value: formatRatio(summary.viewsPerVisit) },
-    { label: "Bounce rate", value: formatPercent(summary.bounceRate) },
-    { label: "Visit duration", value: formatDuration(summary.avgDurationMs) },
-    { label: "Time engaged", value: formatDuration(summary.avgEngagedMs) },
+    {
+      label: "Visitors",
+      value: formatCount(summary.visitors),
+      change: relativeChange(summary.visitors, before.visitors),
+      before: formatWhole(before.visitors),
+    },
+    {
+      label: "Visits",
+      value: formatCount(summary.visits),
+      change: relativeChange(summary.visits, before.visits),
+      before: formatWhole(before.visits),
+    },
+    {
+      label: "Pageviews",
+      value: formatCount(summary.pageviews),
+      change: relativeChange(summary.pageviews, before.pageviews),
+      before: formatWhole(before.pageviews),
+    },
+    {
+      label: "Views per visit",
+      value: formatRatio(summary.viewsPerVisit),
+      change: relativeChange(summary.viewsPerVisit, before.viewsPerVisit),
+      before: formatRatio(before.viewsPerVisit),
+    },
+    {
+      label: "Bounce rate",
+      value: formatPercent(summary.bounceRate),
+      // A share changes in percentage points.
+      change: pointsChange(summary.bounceRate, before.bounceRate),
+      before: formatPercent(before.bounceRate),
+    },
+    {
+      label: "Visit duration",
+      value: formatDuration(summary.avgDurationMs),
+      change: relativeChange(summary.avgDurationMs, before.avgDurationMs),
+      before: formatDuration(before.avgDurationMs),
+    },
+    {
+      label: "Time engaged",
+      value: formatDuration(summary.avgEngagedMs),
+      change: relativeChange(summary.avgEngagedMs, before.avgEngagedMs),
+      before: formatDuration(before.avgEngagedMs),
+    },
   ];
   return (
     <Card>
@@ -238,12 +321,13 @@ function SummaryTiles({ analytics }: { analytics: Analytics }) {
             <div key={tile.label} className="flex flex-col gap-1">
               <dt className="text-xs text-ink-subtle">{tile.label}</dt>
               <dd className="text-2xl font-semibold tracking-tight text-ink">{tile.value}</dd>
+              {tile.change !== null && <ChangeLine change={tile.change} before={tile.before} />}
             </div>
           ))}
         </dl>
         <p className="text-xs text-ink-subtle">
-          Without cookies, a visitor is recognized for one day only, so a person who comes back on
-          another day counts again. Durations are averages per visit.
+          {comparisonNote(analytics)} Without cookies, a visitor is recognized for one day only, so
+          a person who comes back on another day counts again. Durations are averages per visit.
         </p>
       </CardContent>
     </Card>

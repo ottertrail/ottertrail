@@ -560,6 +560,14 @@ A filter narrows every report to the visits that match it, and to those visits' 
 
 Filter values are compared, never parsed or run: each name maps to a fixed expression and the value is a query parameter.
 
+### Comparison with the previous period
+
+Each number of the summary is compared with the period right before: as many days, in the same timezone, with the same filters. A period that is still running (it ends today, or later) only has data up to now, so it is compared up to the same moment of its earlier counterpart: now, moved back by the period's length. At 15:00, the last 7 days are compared with the 7 days before them up to 15:00 on their last day. Compared with whole days instead, a day in progress would always look down. A range that ends after today stops earlier still: on 16 November, all of November is compared with 2 to 17 October, and the comparison's last day says so. Past ranges that are over compare whole days.
+
+The earlier period is seen as it stood at that time: every report ignores events after the cut-off (`until`), so a visit in progress then counts what had happened by then, as today's visits do now, and its pageviews stop at the same moment as its visits. The days are shifted on the calendar by PostgreSQL (`previousDays`), so a daylight saving change keeps the same time of day.
+
+Counts and averages change in percent, rounded; a change too small to round to 1% shows as "<1%", never as no change. The bounce rate, a share, changes in percentage points: from 24% to 30% is 6 points, where "25% more" would mislead. Points are worked out from the whole percentages shown, so the change always matches them. A number with nothing to compare with (nothing before, or 0) shows no change.
+
 ### Who can read reports
 
 Signed-in dashboard users, through one endpoint per page ([dashboard.md](dashboard.md#83-report-endpoints)), and anyone with database access through `vp run report`. A public project key never reads data (section 2). Each breakdown name maps to a fixed SQL expression, so request text never becomes SQL, and row limits are clamped to 1-100.
@@ -615,4 +623,4 @@ Reports that only count events (top pages, custom events) read the range's event
 
 ### Not done yet
 
-- Comparison with the previous period, goals, and funnels; a filter for custom events (visits that signed up).
+- Goals and funnels; a filter for custom events (visits that signed up); comparison for the chart and the lists (only the summary is compared).

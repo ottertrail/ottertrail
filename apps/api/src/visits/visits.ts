@@ -98,6 +98,11 @@ export interface VisitRange {
   projectId: string;
   from: Date;
   to: Date;
+  /**
+   * Ignore events from this moment on, as if they had not happened yet: to
+   * see an earlier day as it stood at the same time of day as now.
+   */
+  until?: Date | undefined;
 }
 
 /** Columns a visit takes from its first event that is not an engagement event. */
@@ -126,12 +131,13 @@ export interface VisitsQueryOptions {
 }
 
 export function visitsQuery(
-  { projectId, from, to }: VisitRange,
+  { projectId, from, to, until }: VisitRange,
   { firstEventColumns = true }: VisitsQueryOptions = {},
 ): RawBuilder<unknown> {
   const timeout = sql`make_interval(secs => ${VISIT_TIMEOUT_MS / 1000})`;
   const readFrom = new Date(from.getTime() - VISIT_CONTEXT_MS);
-  const readTo = new Date(to.getTime() + VISIT_CONTEXT_MS);
+  const contextEnd = to.getTime() + VISIT_CONTEXT_MS;
+  const readTo = new Date(until === undefined ? contextEnd : Math.min(contextEnd, until.getTime()));
 
   // FIRST_EVENT_COLUMNS as read from events and as aggregated per visit, or
   // nothing. The names are the constants above, never input.

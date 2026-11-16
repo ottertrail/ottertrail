@@ -72,6 +72,15 @@ export const BREAKDOWNS = [
 
 export type Breakdown = (typeof BREAKDOWNS)[number];
 
+/** The period before, for comparison: as many days, up to the same time of day when still running. */
+export interface PreviousPeriod {
+  firstDay: string;
+  lastDay: string;
+  /** Where the comparison stops on lastDay (ISO time), or null for the whole day. */
+  until: string | null;
+  summary: Summary;
+}
+
 /** GET /api/projects/:id/analytics */
 export interface Analytics {
   timeZone: string;
@@ -82,6 +91,7 @@ export interface Analytics {
   pages: PageRow[];
   breakdowns: Record<Breakdown, BreakdownRow[]>;
   customEvents: CustomEventRow[];
+  previous: PreviousPeriod;
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -128,6 +138,13 @@ const isCustomEventRow = (value: unknown): value is CustomEventRow =>
   isNumber(value.events) &&
   isNumber(value.visitors);
 
+const isPreviousPeriod = (value: unknown): value is PreviousPeriod =>
+  isRecord(value) &&
+  typeof value.firstDay === "string" &&
+  typeof value.lastDay === "string" &&
+  (value.until === null || typeof value.until === "string") &&
+  isSummary(value.summary);
+
 export const isAnalytics = (value: unknown): value is Analytics =>
   isRecord(value) &&
   typeof value.timeZone === "string" &&
@@ -137,6 +154,7 @@ export const isAnalytics = (value: unknown): value is Analytics =>
   isListOf(value.days, isDayPoint) &&
   isListOf(value.pages, isPageRow) &&
   isListOf(value.customEvents, isCustomEventRow) &&
+  isPreviousPeriod(value.previous) &&
   isRecord(value.breakdowns) &&
   BREAKDOWNS.every((name) =>
     isListOf(isRecord(value.breakdowns) ? value.breakdowns[name] : undefined, isBreakdownRow),

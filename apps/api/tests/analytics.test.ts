@@ -8,6 +8,7 @@ import {
   breakdown,
   customEvents,
   localDays,
+  previousDays,
   summary,
   timeseries,
   topPages,
@@ -358,5 +359,163 @@ describe("GET /api/projects/:id/analytics with filters", () => {
     [{ country: "D\u0000E" }, "a NUL character"],
   ])("refuses %j (%s)", async (query) => {
     expect((await filtered(query)).statusCode).toBe(400);
+  });
+});
+
+/** A dashboard whose clock reads `now`, with the fixture's events stored. */
+async function dashboardAt(now: string) {
+  const dashboard = await signedInDashboard({ timeZone: TIME_ZONE, now: () => new Date(now) });
+  const project = await dashboard.db
+    .insertInto("projects")
+    .values({ name: "Comparison test", allowed_hostnames: ["example.com"] })
+    .returning("id")
+    .executeTakeFirstOrThrow();
+  await storeEvents(dashboard.db, project.id, EVENTS);
+  const analytics = async (query: string) =>
+    (
+      await dashboard.app.inject({
+        url: `/api/projects/${project.id}/analytics?${query}`,
+        headers: { cookie: dashboard.cookie },
+      })
+    ).json();
+  return { dashboard, analytics };
+}
+
+describe("comparison with the previous period", () => {
+  test("compares whole past days with as many whole days before them", async () => {
+    // 01:00 on 18 November in Singapore: the 17th is over.
+    const { dashboard, analytics } = await dashboardAt("2026-11-17T17:00:00Z");
+    try {
+      const day = await analytics("from=2026-11-17&to=2026-11-17");
+      expect(day.summary).toMatchObject({ visits: 3, visitors: 2, pageviews: 3 });
+      expect(day.previous).toMatchObject({
+        firstDay: "2026-11-16",
+        lastDay: "2026-11-16",
+        until: null,
+        summary: { visits: 3, visitors: 3, pageviews: 4 },
+      });
+
+      const week = await analytics("from=2026-11-11&to=2026-11-17");
+      expect(week.previous).toMatchObject({
+        firstDay: "2026-11-04",
+        lastDay: "2026-11-10",
+        summary: { visits: 0, pageviews: 0, bounceRate: null },
+      });
+
+      // Filters apply to both periods.
+      const filtered = await analytics("from=2026-11-17&to=2026-11-17&country=DE");
+      expect(filtered.previous.summary).toMatchObject({ visits: 1, pageviews: 2 });
+    } finally {
+      await dashboard.close();
+    }
+  });
+
+  test("compares a running day up to the same time of day", async () => {
+    const { dashboard, analytics } = await dashboardAt("2026-11-17T17:00:00Z");
+    try {
+      // Today is the 18th, one hour in: compared with the 17th up to 01:00,
+      // which holds visitor 33's visit at 00:05 and nothing after.
+      const today = await analytics("period=today");
+      expect(today.previous).toMatchObject({
+        firstDay: "2026-11-17",
+        lastDay: "2026-11-17",
+        until: "2026-11-16T17:00:00.000Z",
+        summary: { visits: 1, pageviews: 1 },
+      });
+    } finally {
+      await dashboard.close();
+    }
+  });
+
+  test("sees a visit in progress at that time as it stood then", async () => {
+    // 10:03 on the 17th in Singapore. On the 16th at 10:03, visitor 1 had
+    // seen one page; the pricing page, the signup, and the time on page
+    // came later. Up to then, the visit was a bounce of 0 seconds.
+    const { dashboard, analytics } = await dashboardAt("2026-11-17T02:03:00Z");
+    try {
+      const today = await analytics("period=today");
+      expect(today.previous).toMatchObject({
+        until: "2026-11-16T02:03:00.000Z",
+        summary: {
+          visits: 1,
+          visitors: 1,
+          pageviews: 1,
+          viewsPerVisit: 1,
+          bounceRate: 1,
+          avgDurationMs: 0,
+          avgEngagedMs: 0,
+        },
+      });
+    } finally {
+      await dashboard.close();
+    }
+  });
+
+  test("a range running past today compares up to the same moment, and says which day", async () => {
+    const { dashboard, analytics } = await dashboardAt("2026-11-17T17:00:00Z");
+    try {
+      // November, at 01:00 on the 18th: 30 days, with data up to now. The 30
+      // days before start on 2 October; the same moment there is 01:00 on
+      // 19 October, so that is where the comparison ends.
+      const month = await analytics("from=2026-11-01&to=2026-11-30");
+      expect(month.previous).toMatchObject({
+        firstDay: "2026-10-02",
+        lastDay: "2026-10-19",
+        until: "2026-10-18T17:00:00.000Z",
+      });
+    } finally {
+      await dashboard.close();
+    }
+  });
+
+  test("a cut-off applies to events as well as visits", async () => {
+    const { dashboard } = await dashboardAt("2026-11-17T17:00:00Z");
+    try {
+      const [project] = await dashboard.db.selectFrom("projects").select("id").execute();
+      // The whole 16th, but only what had happened by 10:03: visitor 1's first page.
+      const range = {
+        projectId: project?.id ?? "",
+        timeZone: TIME_ZONE,
+        ...(await localDays(dashboard.db, "2026-11-16", "2026-11-16", TIME_ZONE)),
+        until: new Date("2026-11-16T02:03:00Z"),
+      };
+      expect(await summary(dashboard.db, range)).toMatchObject({
+        visits: 1,
+        visitors: 1,
+        pageviews: 1,
+        bounceRate: 1,
+      });
+      expect(await topPages(dashboard.db, range)).toEqual([
+        { path: "/", pageviews: 1, visitors: 1, avgEngagedMs: null },
+      ]);
+      expect(await customEvents(dashboard.db, range)).toEqual([]);
+    } finally {
+      await dashboard.close();
+    }
+  });
+
+  test("keeps the time of day across a daylight saving change", async () => {
+    const { dashboard } = await dashboardAt("2026-11-17T17:00:00Z");
+    try {
+      // Berlin leaves summer time on 25 October 2026. At 15:00 on the 31st
+      // (14:00 UTC), the last 7 days compare with 18-24 October up to 15:00
+      // on the 24th, in summer time: 13:00 UTC.
+      const previous = await previousDays(
+        dashboard.db,
+        "2026-10-25",
+        "2026-10-31",
+        "Europe/Berlin",
+        new Date("2026-10-31T14:00:00Z"),
+      );
+      expect(previous).toEqual({
+        firstDay: "2026-10-18",
+        lastDay: "2026-10-24",
+        from: new Date("2026-10-17T22:00:00Z"),
+        to: new Date("2026-10-24T13:00:00Z"),
+        until: new Date("2026-10-24T13:00:00Z"),
+      });
+    } finally {
+      await dashboard.close();
+    }
   });
 });

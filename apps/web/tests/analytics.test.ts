@@ -7,6 +7,9 @@ import {
   formatDuration,
   formatPercent,
   formatRatio,
+  formatTimeOfDay,
+  pointsChange,
+  relativeChange,
   niceTicks,
 } from "../src/features/analytics/format.ts";
 import { isAnalytics } from "../src/lib/analytics-api.ts";
@@ -65,6 +68,58 @@ describe("niceTicks", () => {
   });
 });
 
+describe("changes from the previous period", () => {
+  test("counts and averages change in percent, rounded", () => {
+    expect(relativeChange(765, 683)).toEqual({ direction: "up", text: "12%", spoken: "12%" });
+    expect(relativeChange(1820, 2000)).toEqual({ direction: "down", text: "9%", spoken: "9%" });
+    expect(relativeChange(30_000, 1000)).toEqual({
+      direction: "up",
+      text: "2,900%",
+      spoken: "2,900%",
+    });
+    expect(relativeChange(824, 824)).toEqual({ direction: "same", text: "0%", spoken: "0%" });
+  });
+
+  test("a change too small to round to 1% is never shown as no change", () => {
+    expect(relativeChange(825, 824)).toEqual({
+      direction: "up",
+      text: "<1%",
+      spoken: "less than 1%",
+    });
+    expect(relativeChange(999, 1000)).toEqual({
+      direction: "down",
+      text: "<1%",
+      spoken: "less than 1%",
+    });
+  });
+
+  test("there is no change without something to compare with", () => {
+    expect(relativeChange(5, 0)).toBeNull();
+    expect(relativeChange(5, null)).toBeNull();
+    expect(relativeChange(null, 5)).toBeNull();
+  });
+
+  test("shares change in percentage points, matching the percentages shown", () => {
+    expect(pointsChange(0.3, 0.24)).toEqual({ direction: "up", text: "6 pts", spoken: "6 points" });
+    expect(pointsChange(0.23, 0.24)).toEqual({
+      direction: "down",
+      text: "1 pt",
+      spoken: "1 point",
+    });
+    // 24.49% and 23.51% both show as 24%, so they have not changed.
+    expect(pointsChange(0.2449, 0.2351)).toEqual({
+      direction: "same",
+      text: "0 pts",
+      spoken: "0 points",
+    });
+    expect(pointsChange(0.3, null)).toBeNull();
+  });
+
+  test("a time of day reads in the instance's timezone", () => {
+    expect(formatTimeOfDay("2026-11-16T07:00:00Z", "Asia/Singapore")).toBe("15:00");
+  });
+});
+
 describe("isAnalytics", () => {
   const empty = Object.fromEntries(
     [
@@ -97,6 +152,20 @@ describe("isAnalytics", () => {
     pages: [{ path: "/", pageviews: 1, visitors: 1, avgEngagedMs: null }],
     breakdowns: { ...empty, source: [{ value: null, visitors: 1, visits: 1, bounceRate: 1 }] },
     customEvents: [],
+    previous: {
+      firstDay: "2026-11-05",
+      lastDay: "2026-11-11",
+      until: null,
+      summary: {
+        visitors: 0,
+        pageviews: 0,
+        visits: 0,
+        viewsPerVisit: null,
+        bounceRate: null,
+        avgDurationMs: null,
+        avgEngagedMs: null,
+      },
+    },
   };
 
   test("accepts the endpoint's response and refuses anything else", () => {
@@ -105,5 +174,7 @@ describe("isAnalytics", () => {
     expect(isAnalytics({ ...valid, breakdowns: { ...valid.breakdowns, os: undefined } })).toBe(
       false,
     );
+    expect(isAnalytics({ ...valid, previous: undefined })).toBe(false);
+    expect(isAnalytics({ ...valid, previous: { ...valid.previous, until: 5 } })).toBe(false);
   });
 });

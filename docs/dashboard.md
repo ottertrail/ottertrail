@@ -145,6 +145,8 @@ A `period` (`today`, `7d`, `30d`, `90d`, or `12m`) ends today, and the API works
 
 One request returns every report of the analytics page, for whole days in the instance's `TIMEZONE`, `from` and `to` included: the summary, visitors per day, top pages, ten breakdowns (sources, campaigns, entry and exit pages, countries, regions, cities, devices, browsers, operating systems), and custom events. It needs a signed-in user. A range covers at most 366 days, and lists hold at most `limit` rows (default 10, at most 100).
 
+The response also holds `previous`: the summary of the period before (`firstDay`, `lastDay`, and `until`, the cut-off when the period is still running, on `lastDay`), with the same filters (section 7 of [web analytics](web-analytics.md#comparison-with-the-previous-period)). It costs one more summary over the earlier days: on the benchmark, the whole page went from 56 to 89 ms for 1 day and from 225 to 313 ms for 7 days at 1,000 visits a day.
+
 Filters narrow every report to the matching visits (defined in section 7 of [web analytics](web-analytics.md#filters)): one parameter per filter, named after the breakdown (`source`, `country`, `deviceType` …) or `page`, at most 2,048 characters. An empty value means unknown. Several filters must all match. An unknown parameter is refused with 400: Fastify's validator would otherwise drop it silently, so a mistyped filter (`contry=DE`) would return unfiltered numbers.
 
 ### Visits worked out once
@@ -166,7 +168,6 @@ The individual report functions (`summary`, `breakdown`, …) still work on thei
 
 ### Not done yet
 
-- Comparison with the previous period.
 - Caching. Each request works the reports out again; at the volumes measured above, that takes about a second for a month at 1,000 visits a day.
 
 ## 8.4 Analytics page
@@ -178,7 +179,7 @@ Code: `apps/web/src/features/analytics/`.
 From top to bottom, the page shows:
 
 1. A picker for the period, then the days it covers and the instance's timezone. The days come from the API, so they are the instance's days, not the browser's.
-2. Seven numbers: visitors, visits, pageviews, views per visit, bounce rate, visit duration, and time engaged (defined in section 7 of [web analytics](web-analytics.md#the-numbers)). A note under them says that a visitor is recognized for one day only, so the same person on two days counts twice.
+2. Seven numbers: visitors, visits, pageviews, views per visit, bounce rate, visit duration, and time engaged (defined in section 7 of [web analytics](web-analytics.md#the-numbers)). Under each, its change from the period before: an arrow and a size ("12%", or "6 pts" for the bounce rate), read out as a sentence ("Up 12% from 683"). The arrows stay in text colors: status colors are reserved for state, and up is not always better (a bounce rate). A note names the days compared and, for a running period, the time of day the comparison stops; it also says that a visitor is recognized for one day only, so the same person on two days counts twice.
 3. Visitors, visits, or pageviews per day, as a line. Hovering over the chart shows all three numbers for the nearest day. "Show the numbers" opens the same data as a table. A one-day period draws no line, since one point shows no trend.
 4. Ranked lists, most visitors first, each with a bar for its visitors: pages (top, entry, and exit), sources and campaigns, countries, regions, and cities, devices, browsers, and operating systems, and custom events. Each list shows its first 10 rows. A missing value (no location, an unknown browser) shows as "Unknown", and a visit without a campaign as "No campaign".
 
@@ -209,7 +210,7 @@ The page loads its data again every minute while it is open. When the period cha
 
 The browser tests in `apps/web/tests/browser/` render the whole dashboard in headless Chromium (Vitest browser mode with Playwright), at an address such as `/projects/<id>/web-analytics?period=7d`, so each test goes through the same routes, redirects, and layout as a person would. A fake API answers its requests (`tests/browser/fake-api.ts`); the API's own tests run against PostgreSQL, and the page checks the fake answers with the same shape checks as real ones.
 
-`analytics-page.test.tsx` covers the numbers, days, and lists from a response; changing the period; the dimmed previous numbers while a period loads; an unknown period in the address; the chart's metric tabs, keyboard readout, hover readout, and table; a single day; and a project without events, an empty period, a missing project, and a failed load with Retry.
+`analytics-page.test.tsx` covers the numbers, days, and lists from a response; each number's change from the period before, and the note naming it; changing the period; the dimmed previous numbers while a period loads; an unknown period in the address; the chart's metric tabs, keyboard readout, hover readout, and table; a single day; and a project without events, an empty period, a missing project, and a failed load with Retry.
 
 `navigation.test.tsx` covers the two levels: the workspace menu; a project's menu, with planned modules disabled and labeled; the header's project name; Settings; a new project opening on its snippet; the switcher keeping the page and the period; the way back to all projects; an unknown project; and the home page (first project, last project, no projects, signed out).
 
@@ -225,4 +226,4 @@ Unit tests in `apps/web/tests/analytics.test.ts` cover the number and date forma
 
 - Hourly detail for one day, and a custom range of days (the API accepts `from` and `to`; the page offers only the fixed periods).
 - More than 10 rows per list.
-- Comparison with the previous period (8.3).
+- Comparison in the chart and the lists; only the summary is compared.

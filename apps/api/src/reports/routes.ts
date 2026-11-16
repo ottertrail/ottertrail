@@ -140,6 +140,8 @@ export const reportRoutes: FastifyPluginCallback<{
     },
     async (request, reply) => {
       const { period, limit } = request.query;
+      // One reading of the clock: the period's days and the comparison's cut-off agree.
+      const current = now();
       if (
         period !== undefined &&
         (request.query.from !== undefined || request.query.to !== undefined)
@@ -151,7 +153,7 @@ export const reportRoutes: FastifyPluginCallback<{
       const days =
         period === undefined
           ? { from: request.query.from, to: request.query.to }
-          : periodDays(period, today(now()));
+          : periodDays(period, today(current));
       if (days.from === undefined || days.to === undefined) {
         return reply.code(400).send(problem("invalid_range", "Send period, or both from and to."));
       }
@@ -180,6 +182,7 @@ export const reportRoutes: FastifyPluginCallback<{
         lastDay: to,
         timeZone,
         filters: requestFilters(request.query),
+        now: current,
         ...(limit === undefined ? {} : { limit }),
       });
     },

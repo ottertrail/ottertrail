@@ -126,6 +126,66 @@ describe("the analytics page", () => {
   });
 });
 
+/** A tile's change line: what it shows, and what a screen reader hears. */
+function changeOf(label: string): { shown: string; heard: string } | null {
+  const term = [...document.querySelectorAll("dt")].find((dt) => dt.textContent === label);
+  const line = term?.nextElementSibling?.nextElementSibling;
+  if (!line) {
+    return null;
+  }
+  return {
+    shown: line.querySelector("span[aria-hidden=true]")?.textContent ?? "",
+    heard: line.querySelector(".sr-only")?.textContent ?? "",
+  };
+}
+
+const note = () =>
+  [...document.querySelectorAll("p")].find((paragraph) =>
+    paragraph.textContent.includes("compare with"),
+  )?.textContent ?? "";
+
+describe("comparison with the previous period", () => {
+  test("shows each number's change from the period before", async () => {
+    installFakeApi();
+    renderApp(ANALYTICS);
+    await expect.poll(() => summaryValue("Visitors")).toBe("765");
+
+    expect(changeOf("Visitors")).toEqual({ shown: "12%", heard: "Up 12% from 683" });
+    expect(changeOf("Visits")).toEqual({ shown: "0%", heard: "No change from 824" });
+    expect(changeOf("Pageviews")).toEqual({ shown: "9%", heard: "Down 9% from 2,000" });
+    expect(changeOf("Views per visit")).toEqual({ shown: "9%", heard: "Down 9% from 2.4" });
+    // A share changes in percentage points, not percent.
+    expect(changeOf("Bounce rate")).toEqual({ shown: "6 pts", heard: "Down 6 points from 30%" });
+    expect(changeOf("Visit duration")).toEqual({ shown: "10%", heard: "Up 10% from 4m 00s" });
+    // Nothing to compare with before.
+    expect(changeOf("Time engaged")).toBeNull();
+    // The days compared, up to the same time of day, in the instance's timezone.
+    expect(note()).toContain("Changes compare with 3–9 Nov 2026, up to 15:00 on 9 Nov.");
+  });
+
+  test("compares whole days without a time", async () => {
+    const week = analyticsFixture();
+    installFakeApi({ analytics: () => ({ ...week, previous: { ...week.previous, until: null } }) });
+    renderApp(ANALYTICS);
+
+    await expect.poll(note).toContain("Changes compare with 3–9 Nov 2026.");
+  });
+
+  test("shows no changes when nothing came before", async () => {
+    const week = analyticsFixture();
+    installFakeApi({
+      analytics: () => ({ ...week, previous: { ...emptyAnalytics().previous } }),
+    });
+    renderApp(ANALYTICS);
+    await expect.poll(() => summaryValue("Visitors")).toBe("765");
+
+    for (const label of ["Visitors", "Pageviews", "Bounce rate", "Visit duration"]) {
+      expect({ label, change: changeOf(label) }).toEqual({ label, change: null });
+    }
+    expect(note()).toContain("No visits in 3–9 Nov 2026 to compare with.");
+  });
+});
+
 describe("the daily chart", () => {
   test("charts visitors, visits, or pageviews", async () => {
     installFakeApi();
