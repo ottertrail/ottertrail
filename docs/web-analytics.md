@@ -327,6 +327,25 @@ A geolocation database maps IP address ranges to places. Ottertrail uses DB-IP's
 | `cloudflare`         | Headers Cloudflare adds: `CF-IPCountry`, plus `CF-Region` and `CF-IPCity` with its "Add visitor location headers" managed transform. Cloudflare keeps them current. Use only when every request passes through Cloudflare, since anyone else can send these headers. |
 | `none`               | No location lookup.                                                                                                                                                                                                                                                  |
 
+### Why the file is held in memory
+
+The geolocation "database" is a file, not a database server: a lookup tree that a library walks by reading the file's bytes, so the bytes must be in RAM to be fast. The API loads the file once at startup and every request reads that single copy. Memory does not grow with traffic.
+
+Measured on a development Mac with the November 2026 DB-IP City Lite data (PostgreSQL ran in Podman's virtual machine, which makes its round trips slower than on a Linux server):
+
+| Option                       | Lookup                                | Memory added to each API process | On disk      | Monthly update                                             | Extra server           |
+| ---------------------------- | ------------------------------------- | -------------------------------- | ------------ | ---------------------------------------------------------- | ---------------------- |
+| MMDB file in memory (chosen) | 6.2 µs                                | about 130 MB                     | 127 MB       | Download a ready-made file                                 | No                     |
+| SQLite file (`node:sqlite`)  | 6.2 µs                                | about 30 MB                      | 562 MB       | Download the CSV (86 MB), import 7.8 million ranges (18 s) | No                     |
+| PostgreSQL table             | at least 165 µs (an empty `select 1`) | none                             | not measured | Import into a new table, swap tables                       | No                     |
+| MySQL                        | similar to PostgreSQL                 | none                             | not measured | Import                                                     | Yes, on every instance |
+
+SQLite needs little process memory because it reads pages on demand into the operating system's file cache, which all processes share and the system can reclaim. It returned the same answers as the MMDB file for 10,000 random addresses.
+
+The MMDB file is the default because each instance runs one API process and it needs no import code. Switch to SQLite if memory becomes tight, for example with several API processes per instance or on 1 GB servers: only the lookup in `src/enrichment/geo.ts` and the `geo:update` script would change. A PostgreSQL table would add a query to every request on the busiest part of the system, and MySQL would add a second database server to every customer's instance.
+
+Load test: 10,000 requests, 100 at a time, each from a different public address, against one API process with the file loaded. All 10,000 were stored with a country and city, at about 9,800 requests per second (median 9 ms, 99th percentile 46 to 92 ms). Memory went from 177 MB idle to a peak of about 315 MB under load and settled near 270 MB; three rounds (30,000 requests) peaked at the same level. The growth is Node's heap working on 100 requests at once, not the file: it depends on how many requests are in flight, not on how many arrive. The load generator ran on the same machine, so these numbers show the shape, not a capacity promise for a server.
+
 ### Keeping the database current
 
 IP ranges change hands: ISPs reassign them, IPv4 addresses are bought and sold, cloud providers move them. An old file does not fail; it gives slowly more wrong answers, city first. Lookups happen when events arrive, so a newer file only affects new events.
