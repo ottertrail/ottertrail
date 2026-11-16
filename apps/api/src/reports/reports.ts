@@ -268,7 +268,9 @@ export async function breakdown(
                   ) as source
            from (
              select v.*,
-                    lower(regexp_replace(substring(v.referrer from '^[a-zA-Z][a-zA-Z0-9+.-]*://([^/:]+)'), '^www\\.', ''))
+                    -- The host after "scheme://": a bracketed IPv6 address
+                    -- ("[2001:db8::1]") whole, otherwise up to a port or path.
+                    lower(regexp_replace(substring(v.referrer from '^[a-zA-Z][a-zA-Z0-9+.-]*://(\\[[^]]*\\]|[^/:]+)'), '^www\\.', ''))
                       as referrer_host
              from (${visitsQuery(range)}) as v
            ) as visits

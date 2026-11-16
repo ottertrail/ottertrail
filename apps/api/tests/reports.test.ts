@@ -228,6 +228,19 @@ describe("breakdown", () => {
     expect(sources.map((row) => row.value)).not.toContain("example.com");
   });
 
+  test("sources: an IPv6 address in a referrer is the whole host", async () => {
+    const other = await db()
+      .insertInto("projects")
+      .values({ name: "IPv6 referrer", allowed_hostnames: ["example.com"] })
+      .returning("id")
+      .executeTakeFirstOrThrow();
+    await storeEvents(db(), other.id, [
+      pv("7", "2026-11-16T02:00:00Z", "/", { referrer: "https://[2001:db8::1]:8443/page" }),
+    ]);
+    const sources = await breakdown(db(), { ...range, projectId: other.id }, "source");
+    expect(sources.map((row) => row.value)).toEqual(["[2001:db8::1]"]);
+  });
+
   test("campaigns", async () => {
     expect(byValue(await breakdown(db(), range, "utmCampaign"))).toMatchObject({
       launch: { visits: 1 },
