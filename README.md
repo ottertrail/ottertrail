@@ -147,6 +147,12 @@ pnpm dlx shadcn@latest add <component>
 
 Then run `vp check --fix` from the root. See [docs/design-system.md](docs/design-system.md#components) for the local changes to keep when updating generated components.
 
+## Licence
+
+Ottertrail is licensed under the [GNU Affero General Public License, version 3 only](LICENSE). If you modify it and let people use it over a network, you must offer those users the modified source code. The browser tracker (`packages/tracker`) is licensed under the [MIT License](packages/tracker/LICENSE), so any site can include it.
+
+Third-party code, data, and fonts are listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
 ## Third-party data
 
 IP geolocation by [DB-IP](https://db-ip.com), licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). The database is downloaded by `vp run geo:update` and is not part of this repository.

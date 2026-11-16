@@ -61,6 +61,7 @@ try {
         where: [visit.city, visit.country].filter(Boolean).join(", ") || "-",
       })),
     );
+    console.log("IP geolocation by DB-IP (https://db-ip.com)");
   }
 } finally {
   await db.destroy();
