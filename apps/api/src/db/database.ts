@@ -1,5 +1,5 @@
 import { Kysely, PostgresDialect } from "kysely";
-import { Pool } from "pg";
+import { Pool, types } from "pg";
 
 import type { Database } from "./schema.ts";
 
@@ -15,6 +15,11 @@ export interface DatabaseOptions {
 }
 
 const SCHEMA_NAME = /^[a-z_][a-z0-9_]{0,62}$/;
+
+// PostgreSQL "date" columns (no time of day) stay "YYYY-MM-DD" strings. By
+// default pg turns them into JavaScript Dates at local midnight, which shifts
+// the day whenever the server's timezone differs from the data's.
+types.setTypeParser(types.builtins.DATE, (value) => value);
 
 export function createDatabase(options: DatabaseOptions): Kysely<Database> {
   const { connectionString, maxConnections = 10, schema } = options;

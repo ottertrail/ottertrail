@@ -27,6 +27,8 @@ export interface NewEvent {
   client?: Client;
   /** Country, region, and city, from the request's IP address. */
   location?: Location;
+  /** Daily cookieless visitor ID (see visitors/visitor-ids.ts). */
+  visitorId?: string;
 }
 
 export interface StoreResult {
@@ -76,6 +78,7 @@ export async function storeEvents(
         country: event.location?.country,
         region: event.location?.region,
         city: event.location?.city,
+        visitor_id: event.visitorId,
       })),
     )
     .onConflict((conflict) => conflict.columns(["project_id", "event_id"]).doNothing())

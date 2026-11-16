@@ -88,6 +88,10 @@ function send(
   });
 }
 
+async function visitorIds(projectId: string) {
+  return (await storedEvents(projectId)).map((event) => event.visitor_id);
+}
+
 async function storedEvents(projectId: string) {
   return db()
     .selectFrom("events")
@@ -419,6 +423,51 @@ describe("POST /api/events", () => {
 
       const human = await send(batch(project.public_key, full), { instance: limited });
       expect(human.statusCode).toBe(202);
+    });
+  });
+
+  describe("visitors", () => {
+    test("gives every event a visitor ID: the same browser and address share one", async () => {
+      const project = await createProject();
+      await send(batch(project.public_key, [pageview(), pageview()]));
+      await send(batch(project.public_key, [pageview()]));
+      await send(batch(project.public_key, [pageview()]), { remoteAddress: "81.2.69.160" });
+      await send(batch(project.public_key, [pageview()]), {
+        headers: {
+          "user-agent":
+            "Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.5 Mobile/15E148 Safari/604.1",
+        },
+      });
+
+      const ids = await visitorIds(project.id);
+      expect(ids).toHaveLength(5);
+      expect(ids.every((id) => id !== null)).toBe(true);
+      // Three requests from one browser and address, then two other visitors.
+      expect(new Set(ids).size).toBe(3);
+    });
+
+    test("starts the visitor's day at midnight in the instance's timezone", async () => {
+      // The server's clock: 00:31 UTC, which is 08:31 in Singapore.
+      const now = Date.parse("2026-11-17T00:31:00.000Z");
+      const twoEvents = (key: string) =>
+        batch(
+          key,
+          [
+            pageview({ occurredAt: now - 61 * 60 * 1000 }), // 23:30 UTC, 07:30 Singapore
+            pageview({ occurredAt: now - 60 * 1000 }), // 00:30 UTC, 08:30 Singapore
+          ],
+          { sentAt: now },
+        );
+
+      const singapore = appWith({ collection: { now: () => now, timeZone: "Asia/Singapore" } });
+      const inSingapore = await createProject();
+      await send(twoEvents(inSingapore.public_key), { instance: singapore });
+      expect(new Set(await visitorIds(inSingapore.id)).size).toBe(1);
+
+      const utc = appWith({ collection: { now: () => now, timeZone: "UTC" } });
+      const inUtc = await createProject();
+      await send(twoEvents(inUtc.public_key), { instance: utc });
+      expect(new Set(await visitorIds(inUtc.id)).size).toBe(2);
     });
   });
 

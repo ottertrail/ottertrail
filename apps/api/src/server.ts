@@ -9,7 +9,7 @@ const location = await setUpLocation(config.geoSource, config.geoDatabasePath);
 const app = buildApp({
   db,
   log: { level: config.logLevel },
-  collection: { locate: location.locate },
+  collection: { locate: location.locate, timeZone: config.timeZone },
   // A number means "trust this many proxy hops in front of the API".
   trustProxy:
     typeof config.trustProxy === "number"

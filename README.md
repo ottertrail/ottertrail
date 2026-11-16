@@ -120,6 +120,7 @@ API (`apps/api`), read from the environment:
 | `TRUST_PROXY`       | unset (trust no proxy)                 | Set when the API runs behind a proxy, so rate limits see client addresses: a number of proxy hops (`1` behind one proxy) or a comma-separated list of proxy IPs or CIDRs. Without a proxy, leave it unset: otherwise clients could fake their address. |
 | `GEO_SOURCE`        | `database`                             | Where visitor locations come from: `database` (the file below), `cloudflare` (Cloudflare's location headers; only when every request passes through Cloudflare), or `none`.                                                                            |
 | `GEO_DATABASE_PATH` | `data/geo/dbip-city-lite.mmdb`         | The geolocation file, relative to the API's working directory.                                                                                                                                                                                         |
+| `TIMEZONE`          | `UTC`                                  | IANA timezone of the instance, such as `Asia/Singapore`. A new visitor salt starts at midnight here, and reports count days here. Aliases are stored by their official name (`singapore` becomes `Asia/Singapore`).                                    |
 
 Invalid values stop the server at startup with a message naming the variable. Error messages never repeat `DATABASE_URL`, because it can contain a password.
 

@@ -63,9 +63,24 @@ export interface EventsTable {
   region: Nullable<string>;
   /** English city name, such as "Munich". */
   city: Nullable<string>;
+  /**
+   * Same browser, same network, same project, same day (in the instance's
+   * timezone): same ID. A signed 64-bit integer; PostgreSQL's bigint arrives
+   * as a string.
+   */
+  visitor_id: Nullable<string>;
+}
+
+/** One random secret per day. Deleted once no event can still need it. */
+export interface VisitorSaltsTable {
+  /** "YYYY-MM-DD" in the instance's timezone (date columns arrive as strings; see database.ts). */
+  day: ColumnType<string, string, never>;
+  salt: ColumnType<Buffer, Buffer, never>;
+  created_at: DatabaseDefault<Date>;
 }
 
 export interface Database {
   projects: ProjectsTable;
   events: EventsTable;
+  visitor_salts: VisitorSaltsTable;
 }

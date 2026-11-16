@@ -1,5 +1,7 @@
 import { isIP } from "node:net";
 
+import { canonicalTimeZone } from "./visitors/visitor-ids.ts";
+
 const LOG_LEVELS = ["fatal", "error", "warn", "info", "debug", "trace", "silent"] as const;
 
 export type LogLevel = (typeof LOG_LEVELS)[number];
@@ -32,6 +34,11 @@ export interface Config {
   trustProxy: false | number | string[];
   geoSource: GeoSource;
   geoDatabasePath: string;
+  /**
+   * IANA timezone of the instance, such as "Asia/Singapore". Visitor salts
+   * change at midnight here, and reports will count days here.
+   */
+  timeZone: string;
 }
 
 export class ConfigError extends Error {
@@ -111,6 +118,16 @@ function parseGeoSource(raw: string): GeoSource {
   return source;
 }
 
+function parseTimeZone(raw: string): string {
+  const timeZone = canonicalTimeZone(raw);
+  if (timeZone === undefined) {
+    throw new ConfigError(
+      `TIMEZONE must be an IANA timezone such as "Europe/Berlin", received "${raw}"`,
+    );
+  }
+  return timeZone;
+}
+
 /**
  * Reads instance configuration from environment variables.
  * Every instance is configured independently; there are no shared defaults
@@ -125,5 +142,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     trustProxy: parseTrustProxy(env.TRUST_PROXY),
     geoSource: parseGeoSource(env.GEO_SOURCE ?? "database"),
     geoDatabasePath: env.GEO_DATABASE_PATH?.trim() || DEFAULT_GEO_DATABASE_PATH,
+    timeZone: parseTimeZone(env.TIMEZONE?.trim() || "UTC"),
   };
 }

@@ -6,6 +6,7 @@ import type { Kysely } from "kysely";
 import type { Database } from "../db/schema.ts";
 import { type Locate, noLocation } from "../enrichment/geo.ts";
 import { isBot, parseUserAgent } from "../enrichment/user-agent.ts";
+import { VisitorIds } from "../visitors/visitor-ids.ts";
 import { type NewEvent, storeEvents } from "./event-store.ts";
 import {
   cleanReferrer,
@@ -32,6 +33,8 @@ export interface CollectionOptions {
   projectLimit?: RateLimit;
   /** Finds the visitor's location from the request. Default: no location. */
   locate?: Locate;
+  /** IANA timezone whose midnight starts a new visitor salt. Default: UTC. */
+  timeZone?: string;
   /** Clock, replaceable in tests. */
   now?: () => number;
 }
@@ -160,6 +163,7 @@ export const collectionRoutes: FastifyPluginCallback<CollectionOptions> = (app, 
     done(new Error(`The project limit must allow a full batch of ${MAX_EVENTS_PER_BATCH} events`));
     return;
   }
+  const visitors = new VisitorIds(db, { timeZone: options.timeZone ?? "UTC", now });
   const ipLimiter = new TokenBucketLimiter(options.ipLimit ?? DEFAULT_IP_LIMIT, { now });
   const projectLimiter = new TokenBucketLimiter(projectLimit, { now });
   const projects = new ProjectKeyCache(db, { now });
@@ -326,6 +330,16 @@ export const collectionRoutes: FastifyPluginCallback<CollectionOptions> = (app, 
 
       let result: Awaited<ReturnType<typeof storeEvents>>;
       try {
+        // Each event gets the visitor ID of the day it happened, so a late
+        // event from just before midnight joins the rest of that day's visit.
+        for (const event of accepted) {
+          event.visitorId = await visitors.idFor({
+            projectId: project.id,
+            ip: request.ip,
+            userAgent: userAgent ?? "",
+            occurredAt: event.occurredAt,
+          });
+        }
         result = await storeEvents(db, project.id, accepted);
       } catch (error) {
         request.log.error({ err: error }, "could not store events");

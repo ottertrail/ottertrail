@@ -8,7 +8,7 @@ How Ottertrail's web analytics works, the concepts behind it, and the decisions 
 | 2. Collecting      | Done        |
 | 3. The tracker     | Done        |
 | 4. Enrichment      | Done        |
-| 5. Visitors        | Not started |
+| 5. Visitors        | Done        |
 | 6. Sessions        | Not started |
 | 7. Reports         | Not started |
 | 8. Dashboard check | Not started |
@@ -279,7 +279,7 @@ It asks for a project's public key; the project must allow the hostname `localho
 
 - Serving `tracker.js` from each instance. Until then the script is only used through the playground.
 - Calls to `window.ottertrail.track` before the script has loaded are lost; a small queue stub will fix that.
-- Visitor and session identity (steps 5 and 6).
+- Sessions (step 6).
 - Hash-based routers (`/#/pricing`): every page is recorded as `/`.
 - Consent controls and opting out of tracking.
 
@@ -371,3 +371,59 @@ Bots that pretend to be browsers are not caught. Spotting those needs behavior a
 - Updating the database automatically (needs the background worker), and including it in production images.
 - The "IP geolocation by DB-IP" credit in the dashboard, which does not show locations yet.
 - Detecting bots that pretend to be browsers.
+
+## 5. Visitors
+
+Counting unique visitors without cookies, local storage, or anything else kept on the visitor's device. Code: `apps/api/src/visitors/visitor-ids.ts`; migration `0004_add_visitor_ids`.
+
+### The visitor ID
+
+```
+visitor_id = first 8 bytes of HMAC-SHA256(today's salt, project + IP address + User-Agent)
+```
+
+The same browser on the same network gets the same ID for the rest of the day, so pageviews can be counted per visitor. The salt is a random 32-byte secret for one day. Including the project means one person on two projects gets two unrelated IDs. The ID is stored in `events.visitor_id` as a 64-bit integer; the IP address and the salt are never stored with an event.
+
+### One salt per day, in the instance's timezone
+
+`TIMEZONE` (an IANA name such as `Asia/Singapore`; default `UTC`) sets the instance's midnight. A new salt starts there, and reports (step 7) count days in the same timezone, so a visit is never split across two salts inside one reported day. With a UTC midnight, a visitor in Singapore reading from 07:30 to 08:30 local time would cross 00:00 UTC and be counted twice that morning.
+
+Aliases become the official name: `singapore` is stored as `Asia/Singapore`, `GMT` as `UTC`.
+
+Each event uses the salt of the local day it happened on. A pageview from 23:55 that arrives at 00:05 joins the rest of that day's visit instead of starting a new visitor.
+
+### How salts live and die
+
+- A day's salt is created the first time that day is needed, in the `visitor_salts` table, so every API process and every restart uses the same salt. Each process caches salts in memory.
+- Events arrive up to 24 hours late, so a salt is kept until 24 hours after its day ends, then deleted. Deletion happens whenever a new day's salt is created. Without traffic an expired salt can linger until the next event; the background worker (not built yet) will delete on a schedule.
+- Once a salt is gone, nobody can tell which IP address one of that day's visitor IDs came from, not even the instance's operator.
+- There is no setting for the rotation period. Daily keeps the privacy promise simple: an anonymous visitor is never linked across days. Changing the period later would split the data into two eras, because IDs cannot be recomputed without the IP addresses. The period lives in one place (`dayIn` and `MAX_EVENT_AGE_MS`) if a real need appears.
+
+### What "visitors" means
+
+- For one day: distinct visitor IDs, the number of browser-and-network combinations seen.
+- For a longer range: visitors cannot be linked across days, so a 7-day "visitors" figure counts someone once for each day they visited. Reports must say so.
+
+The count is an estimate in both directions:
+
+- One person counts twice when their address changes during the day: phones moving between Wi-Fi and mobile data, VPNs, iCloud Private Relay, and rotating IPv6 privacy addresses.
+- Several people count once when they share an address and the same browser version, such as an office network or a carrier's shared address (CGNAT).
+- A browser update during the day starts a new ID.
+
+Logged-in users will get exact IDs from the tracker's `identify()`, a later step.
+
+### Privacy
+
+Nothing is stored on the visitor's device, and the IP address is used only in memory. While a day's salt exists (at most about two days), someone with access to the database could test a guessed IP address and browser against the IDs; the IPv4 address space is small enough to try every address. Deleting salts quickly is what closes that window. Database backups contain the salts that existed when they were taken, so the backup retention period extends the window; keep that in mind when backups are set up.
+
+Under GDPR, such IDs are generally treated as pseudonymous data while the salt exists. This describes the design; it is not legal advice.
+
+### Dates as strings
+
+PostgreSQL `date` columns, such as `visitor_salts.day`, are read as `"YYYY-MM-DD"` strings (`apps/api/src/db/database.ts`). By default the `pg` driver turns them into JavaScript dates at local midnight, which shifts the day whenever the server's timezone differs from the data's.
+
+### Not done yet
+
+- Deleting expired salts on a schedule, without waiting for traffic (needs the background worker).
+- Sessions: grouping a visitor's events into visits (step 6).
+- Exact IDs for logged-in users.
