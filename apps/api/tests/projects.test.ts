@@ -6,15 +6,11 @@ import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, test } from "vite-plus/test";
 
 import { buildApp } from "../src/app.ts";
-import { createAuth } from "../src/auth/auth.ts";
 import { isTrustedOrigin } from "../src/auth/origin.ts";
-import { createSetupToken } from "../src/auth/setup.ts";
 import { storeEvents } from "../src/collection/event-store.ts";
 import { parseHostname } from "../src/projects/projects.ts";
+import { PUBLIC_URL, signedInDashboard } from "./helpers/dashboard.ts";
 import { createTestDatabase, type TestDatabase } from "./helpers/test-database.ts";
-
-const PUBLIC_URL = "http://localhost:5173";
-const OWNER = { name: "Ada Owner", email: "ada@example.com", password: "correct horse battery" };
 
 describe("parseHostname", () => {
   test.each([
@@ -61,41 +57,19 @@ describe("isTrustedOrigin", () => {
 });
 
 describe("project routes", () => {
-  let testDb: TestDatabase;
-  let app: ReturnType<typeof buildApp>;
+  let dashboard: Awaited<ReturnType<typeof signedInDashboard>>;
+  let app: Awaited<ReturnType<typeof signedInDashboard>>["app"];
+  let testDb: { db: Awaited<ReturnType<typeof signedInDashboard>>["db"] };
   let cookie = "";
 
   beforeAll(async () => {
-    testDb = await createTestDatabase();
-    const auth = createAuth({
-      db: testDb.db,
-      publicUrl: PUBLIC_URL,
-      trustedOrigins: [PUBLIC_URL],
-      secret: "a-secret-only-these-tests-use-0123456789",
-      rateLimit: false,
-    });
-    app = buildApp({
-      db: testDb.db,
-      dashboard: { auth, publicUrl: PUBLIC_URL, trustedOrigins: [PUBLIC_URL] },
-    });
-    const link = await createSetupToken(testDb.db);
-    await app.inject({
-      method: "POST",
-      url: "/api/setup",
-      payload: { token: link?.token, ...OWNER },
-    });
-    const signedIn = await app.inject({
-      method: "POST",
-      url: "/api/auth/sign-in/email",
-      headers: { origin: PUBLIC_URL, "content-type": "application/json" },
-      payload: JSON.stringify({ email: OWNER.email, password: OWNER.password }),
-    });
-    cookie = signedIn.cookies.map((c) => `${c.name}=${c.value}`).join("; ");
+    dashboard = await signedInDashboard();
+    ({ app, cookie } = dashboard);
+    testDb = { db: dashboard.db };
   });
 
   afterAll(async () => {
-    await app?.close();
-    await testDb?.destroy();
+    await dashboard?.close();
   });
 
   function request(

@@ -17,7 +17,12 @@ const app = buildApp({
   db,
   log: { level: config.logLevel },
   collection: { locate: location.locate, timeZone: config.timeZone },
-  dashboard: { auth, publicUrl: config.publicUrl, trustedOrigins: config.trustedOrigins },
+  dashboard: {
+    auth,
+    publicUrl: config.publicUrl,
+    trustedOrigins: config.trustedOrigins,
+    timeZone: config.timeZone,
+  },
   trackerScriptPath: config.trackerScriptPath,
   // A number means "trust this many proxy hops in front of the API".
   trustProxy:

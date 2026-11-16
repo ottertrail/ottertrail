@@ -70,10 +70,22 @@ export interface Summary {
   avgEngagedMs: number | null;
 }
 
-export async function summary(db: Kysely<Database>, range: ReportRange): Promise<Summary> {
+/**
+ * Optional for the reports that use visits: SQL that yields the range's
+ * visits, with visitsQuery's columns. When it is left out, each report
+ * works the visits out itself; the analytics endpoint works them out once
+ * and passes the result to every report (analytics.ts).
+ */
+export type VisitsSource = RawBuilder<unknown> | undefined;
+
+export async function summary(
+  db: Kysely<Database>,
+  range: ReportRange,
+  visitsSource?: VisitsSource,
+): Promise<Summary> {
   const { rows } = await sql<Record<string, string | null>>`
     with activity as (${activity(range)}),
-         visits as (${visitsQuery(range, { firstEventColumns: false })})
+         visits as (${visitsSource ?? visitsQuery(range, { firstEventColumns: false })})
     select
       (select count(distinct visitor_id) from activity) as visitors,
       (select count(*) from activity where name = ${PAGEVIEW}) as pageviews,
@@ -104,11 +116,15 @@ export interface DayPoint {
   visits: number;
 }
 
-export async function timeseries(db: Kysely<Database>, range: ReportRange): Promise<DayPoint[]> {
+export async function timeseries(
+  db: Kysely<Database>,
+  range: ReportRange,
+  visitsSource?: VisitsSource,
+): Promise<DayPoint[]> {
   const { timeZone } = range;
   const { rows } = await sql<Record<string, string>>`
     with activity as (${activity(range)}),
-         visits as (${visitsQuery(range, { firstEventColumns: false })}),
+         visits as (${visitsSource ?? visitsQuery(range, { firstEventColumns: false })}),
          days as (
            select generate_series(
              (${range.from}::timestamptz at time zone ${timeZone})::date,
@@ -247,6 +263,7 @@ export async function breakdown(
   range: ReportRange,
   dimension: VisitDimension,
   limit = DEFAULT_LIMIT,
+  visitsSource?: VisitsSource,
 ): Promise<BreakdownRow[]> {
   // TypeScript checks callers; this guards JavaScript callers and bad input.
   if (!isVisitDimension(dimension)) throw new Error("Unknown breakdown dimension");
@@ -272,7 +289,7 @@ export async function breakdown(
                     -- ("[2001:db8::1]") whole, otherwise up to a port or path.
                     lower(regexp_replace(substring(v.referrer from '^[a-zA-Z][a-zA-Z0-9+.-]*://(\\[[^]]*\\]|[^/:]+)'), '^www\\.', ''))
                       as referrer_host
-             from (${visitsQuery(range)}) as v
+             from (${visitsSource ?? visitsQuery(range)}) as v
            ) as visits
          )
     select ${column} as value,

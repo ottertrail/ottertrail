@@ -16,6 +16,7 @@ import { loadConfig } from "../src/config.ts";
 import { createDatabase } from "../src/db/database.ts";
 import { migrateToLatest } from "../src/db/migrate.ts";
 import type { Database } from "../src/db/schema.ts";
+import { projectAnalytics } from "../src/reports/analytics.ts";
 import {
   breakdown,
   customEvents,
@@ -160,6 +161,56 @@ try {
   }
   console.log("Median time per report (after a warm-up run):");
   console.table(results);
+
+  // A whole analytics page: every report working out visits on its own,
+  // compared with the endpoint, which works them out once (analytics.ts).
+  const pageDimensions = [
+    "source",
+    "utmCampaign",
+    "entryPage",
+    "exitPage",
+    "country",
+    "region",
+    "city",
+    "deviceType",
+    "browser",
+    "os",
+  ] as const;
+  const page: Record<string, Record<string, string>> = {};
+  for (const [label, from] of ranges) {
+    const range: ReportRange = {
+      projectId: project.id,
+      timeZone: "UTC",
+      ...(await localDays(bench, from, LAST_DAY, "UTC")),
+    };
+    const separately = await measure(async () => {
+      await summary(bench, range);
+      await timeseries(bench, range);
+      await topPages(bench, range);
+      for (const dimension of pageDimensions) {
+        await breakdown(bench, range, dimension);
+      }
+      await customEvents(bench, range);
+    });
+    const once = await measure(() =>
+      projectAnalytics(bench, {
+        projectId: project.id,
+        firstDay: from,
+        lastDay: LAST_DAY,
+        timeZone: "UTC",
+      }),
+    );
+    page["each report works out visits"] = {
+      ...page["each report works out visits"],
+      [label]: `${Math.round(separately)} ms`,
+    };
+    page["visits worked out once"] = {
+      ...page["visits worked out once"],
+      [label]: `${Math.round(once)} ms`,
+    };
+  }
+  console.log("\nA whole analytics page (14 reports):");
+  console.table(page);
 } finally {
   await db?.destroy();
   await sql`drop schema if exists ${sql.id(schema)} cascade`.execute(admin);

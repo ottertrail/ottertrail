@@ -6,7 +6,7 @@ How the dashboard works, and the decisions behind it. It is built in parts, as s
 | -------------------- | ----------- |
 | 8.1 Signing in       | Done        |
 | 8.2 Projects         | Done        |
-| 8.3 Report endpoints | Not started |
+| 8.3 Report endpoints | Done        |
 | 8.4 Analytics page   | Not started |
 
 ## 8.1 Signing in
@@ -120,3 +120,33 @@ The session cookie is `SameSite=Lax`, which keeps it off other sites' form posts
 
 - Deleting a project, and replacing its public key. Deleting removes all of a project's events, so it needs a confirmation step.
 - Permissions: any signed-in user can manage projects, which is only the owner until invitations exist.
+
+## 8.3 Report endpoints
+
+Code: `apps/api/src/reports/analytics.ts` and `apps/api/src/reports/routes.ts`.
+
+```text
+GET /api/projects/:id/analytics?from=2026-11-01&to=2026-11-16[&limit=10]
+```
+
+One request returns every report of the analytics page, for whole days in the instance's `TIMEZONE`, `from` and `to` included: the summary, visitors per day, top pages, ten breakdowns (sources, campaigns, entry and exit pages, countries, regions, cities, devices, browsers, operating systems), and custom events. It needs a signed-in user. A range covers at most 366 days, and lists hold at most `limit` rows (default 10, at most 100).
+
+### Visits worked out once
+
+Most reports count visits, and working out visits is the expensive part: it sorts every event in the range (section 7 of [web analytics](web-analytics.md)). Run separately, each report did that again. The endpoint works the visits out once, into a temporary table that disappears when the request's transaction ends, and every report reads that table. On fake data (`vp run bench:reports`, Apple M4 Max), the whole page:
+
+| Visits per day | Range   | Each report separately | Visits once |
+| -------------- | ------- | ---------------------- | ----------- |
+| 1,000          | 1 day   | 168 ms                 | 54 ms       |
+| 1,000          | 30 days | 2,393 ms               | 1,039 ms    |
+| about 7,000    | 1 day   | 1,151 ms               | 295 ms      |
+| about 7,000    | 30 days | 16,710 ms              | 5,254 ms    |
+
+The transaction also uses PostgreSQL's REPEATABLE READ isolation: every report sees the same snapshot of the data, so the numbers on the page agree with each other even while new events arrive. Run as separate requests, a pageview stored between two of them could appear in one card and not the next.
+
+The individual report functions (`summary`, `breakdown`, …) still work on their own, as `vp run report` uses them; a test checks that both ways give the same numbers.
+
+### Not done yet
+
+- Comparison with the previous period, and filters (only visits from Google, only one page).
+- Caching. Each request works the reports out again; at the volumes measured above, that takes about a second for a month at 1,000 visits a day.

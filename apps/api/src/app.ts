@@ -7,6 +7,7 @@ import type { RateLimit } from "./collection/rate-limiter.ts";
 import { type CollectionOptions, collectionRoutes } from "./collection/routes.ts";
 import type { Database } from "./db/schema.ts";
 import { projectRoutes } from "./projects/routes.ts";
+import { reportRoutes } from "./reports/routes.ts";
 import { healthRoutes } from "./routes/health.ts";
 import { trackerScriptRoutes } from "./tracker-script/routes.ts";
 
@@ -26,6 +27,8 @@ export interface AppOptions extends Omit<FastifyServerOptions, "logger"> {
     publicUrl: string;
     /** Origins dashboard requests may come from (Config.trustedOrigins). */
     trustedOrigins: readonly string[];
+    /** The instance's timezone: reports count days in it. */
+    timeZone: string;
     setupLimit?: RateLimit;
   };
   /** The built tracker, served at /t.js. Not served when omitted. */
@@ -83,6 +86,12 @@ export function buildApp({
       db,
       auth: dashboard.auth,
       trustedOrigins: dashboard.trustedOrigins,
+    });
+    app.register(reportRoutes, {
+      prefix: "/api",
+      db,
+      auth: dashboard.auth,
+      timeZone: dashboard.timeZone,
     });
   }
   return app;

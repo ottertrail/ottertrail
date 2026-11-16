@@ -35,6 +35,7 @@ async function instance({
       auth,
       publicUrl: PUBLIC_URL,
       trustedOrigins: [PUBLIC_URL],
+      timeZone: "UTC",
       ...(setupLimit === undefined ? {} : { setupLimit }),
     },
   });

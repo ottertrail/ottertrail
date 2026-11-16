@@ -598,7 +598,7 @@ Reports that only count events (top pages, custom events) read the range's event
 
 **If reports get too slow**, in order of effort:
 
-1. Work out visits once per dashboard load and share them between the charts, instead of once per report (step 8).
+1. Work out visits once per dashboard load and share them between the charts, instead of once per report. Done in step 8.3: two to four times faster for a whole page ([dashboard.md](dashboard.md#83-report-endpoints)).
 2. Store visits in a table and rebuild only the days that receive new events (`received_at` shows which). A background job then does the sorting, ahead of time.
 3. Keep daily totals per page, source, and country for long ranges.
 
