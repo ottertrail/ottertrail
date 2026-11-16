@@ -70,6 +70,15 @@ export default defineConfig({
         env: { node: true },
       },
       {
+        // Local tools that drive other software and read its JSON replies.
+        files: ["tools/**/*.ts"],
+        plugins: ["node"],
+        env: { node: true },
+        rules: {
+          "typescript/no-unsafe-type-assertion": "off",
+        },
+      },
+      {
         files: ["**/*.test.ts", "**/*.test.tsx"],
         plugins: ["vitest"],
         rules: {
