@@ -7,7 +7,7 @@ Analytics, error tracking, and email engagement for developers and small teams. 
 This repository is a foundation, not a working product yet. It contains:
 
 - `apps/web`: React dashboard (Vite, Tailwind CSS v4, shadcn/ui on Base UI) with the Ottertrail design system and its reference page. Analytics, users, errors, and email are listed in the sidebar as **Planned**; none of them exist yet.
-- `apps/api`: Fastify API with `GET /api/health` (a liveness check) and `POST /api/events`, which collects events into PostgreSQL. There are no reports, authentication, or job queue yet.
+- `apps/api`: Fastify API with `GET /api/health` (a liveness check) and `POST /api/events`, which collects events into PostgreSQL. Report queries exist (`vp run report` prints them), but there are no report endpoints, authentication, or job queue yet.
 - `packages/tracker`: the browser script (`dist/tracker.js`, about 2 KB gzipped) that sends pageviews and custom events, with a playground page in `demo/`. Serving it from an instance is not set up yet.
 
 The design system is documented in [docs/design-system.md](docs/design-system.md). How web analytics works, and the decisions behind it, are in [docs/web-analytics.md](docs/web-analytics.md).
@@ -52,16 +52,18 @@ The database listens on `127.0.0.1:5433` (not the usual 5432, to avoid clashing 
 
 Run from the repository root.
 
-| Command             | What it does                                                                                                                                                                                           |
-| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `vp run dev`        | Starts the API (port 3000, restarts on change) and the dashboard dev server (port 5173, or the next free port). The dashboard proxies `/api` to the API.                                               |
-| `vp run migrate`    | Applies database migrations that have not run yet. Safe to repeat.                                                                                                                                     |
-| `vp run geo:update` | Downloads the latest DB-IP City Lite geolocation database to `apps/api/data/geo/`, checks it, and replaces the old file. Restart the API afterwards. Without it, events are stored without a location. |
-| `vp run visits`     | Prints a project's recent visits, worked out from its events: `vp run visits -- <project name> <hours>` (default: the first project, 24 hours).                                                        |
-| `vp check`          | Formats, lints, and type-checks the whole workspace. `vp check --fix` applies fixes.                                                                                                                   |
-| `vp run -r test`    | Runs the tests in every package. The API tests need the local database running; each test file uses its own temporary schema.                                                                          |
-| `vp run -r build`   | Builds the dashboard (`apps/web/dist`) and bundles the API (`apps/api/dist/server.mjs` and `apps/api/dist/migrate.mjs`).                                                                               |
-| `vp run ready`      | `vp check`, then all tests, then all builds. Run before committing.                                                                                                                                    |
+| Command                | What it does                                                                                                                                                                                                 |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `vp run dev`           | Starts the API (port 3000, restarts on change) and the dashboard dev server (port 5173, or the next free port). The dashboard proxies `/api` to the API.                                                     |
+| `vp run migrate`       | Applies database migrations that have not run yet. Safe to repeat.                                                                                                                                           |
+| `vp run geo:update`    | Downloads the latest DB-IP City Lite geolocation database to `apps/api/data/geo/`, checks it, and replaces the old file. Restart the API afterwards. Without it, events are stored without a location.       |
+| `vp run visits`        | Prints a project's recent visits, worked out from its events: `vp run visits -- <project name> <hours>` (default: the first project, 24 hours).                                                              |
+| `vp run report`        | Prints a project's reports (summary, visitors per day, top pages, breakdowns, custom events) for the last days in `TIMEZONE`: `vp run report -- <project name> <days>` (default: the first project, 7 days). |
+| `vp run bench:reports` | Times the report queries on fake data in a temporary schema, then drops it: `vp run bench:reports -- <visits> <days>` (default: 200,000 visits, 30 days).                                                    |
+| `vp check`             | Formats, lints, and type-checks the whole workspace. `vp check --fix` applies fixes.                                                                                                                         |
+| `vp run -r test`       | Runs the tests in every package. The API tests need the local database running; each test file uses its own temporary schema.                                                                                |
+| `vp run -r build`      | Builds the dashboard (`apps/web/dist`) and bundles the API (`apps/api/dist/server.mjs` and `apps/api/dist/migrate.mjs`).                                                                                     |
+| `vp run ready`         | `vp check`, then all tests, then all builds. Run before committing.                                                                                                                                          |
 
 Inside one package: `vp -C apps/api run dev`, `vp -C apps/web test`, and so on.
 

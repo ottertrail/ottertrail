@@ -11,7 +11,9 @@
     "start:migrate": "node dist/migrate.mjs",
     "test": "vp test",
     "geo:update": "vpx scripts/update-geo.ts",
-    "visits": "vpx scripts/visits.ts"
+    "visits": "vpx scripts/visits.ts",
+    "report": "vpx scripts/report.ts",
+    "bench:reports": "vpx scripts/bench-reports.ts"
   },
   "dependencies": {
     "bowser": "catalog:",

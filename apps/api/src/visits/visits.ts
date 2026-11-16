@@ -1,4 +1,4 @@
-import { type Kysely, sql } from "kysely";
+import { type Kysely, type RawBuilder, sql } from "kysely";
 
 import type { Database } from "../db/schema.ts";
 
@@ -71,7 +71,7 @@ interface VisitRow {
 }
 
 /**
- * The visits of one project that started in [from, to), worked out from
+ * SQL for the visits of one project that started in [from, to), worked out from
  * the stored events when asked. Nothing about visits is stored, so late,
  * out-of-order, and duplicate events are always accounted for, and the
  * rules below can change without migrating data.
@@ -80,37 +80,86 @@ interface VisitRow {
  * - A visit is one visitor's run of events with no gap over 30 minutes.
  * - Engagement events (time on page) extend a visit but never start one:
  *   a run of only engagement events is not a visit.
- * - A visit crossing midnight continues: an event in the first 30 minutes
- *   of a day carries the visitor's ID under the previous day's salt
- *   (previous_visitor_id), and the two IDs are linked when that visitor
- *   had an event in the 30 minutes before. Links chain, so a visit can
- *   cross several midnights, and the visits of someone who is around at
- *   midnight on several nights are each joined correctly.
+ * - A visit crossing midnight continues. Visitor IDs change at midnight, so
+ *   events in the first 30 minutes of a day also carry the ID under the
+ *   previous day's salt (previous_visitor_id). The two IDs are linked when
+ *   the earlier one had an event in the 30 minutes before. Links chain, so
+ *   a visit can cross several midnights, and the visits of someone who is
+ *   around at midnight on several nights are each joined correctly.
  * - Entry and exit pages are the first and last pageviews. Referrer,
- *   campaign, browser, and location come from the first event.
+ *   campaign, browser, and location come from the first event that is not
+ *   an engagement event.
  */
-export async function findVisits(
-  db: Kysely<Database>,
-  { projectId, from, to }: { projectId: string; from: Date; to: Date },
-): Promise<Visit[]> {
-  const timeoutSeconds = VISIT_TIMEOUT_MS / 1000;
+export interface VisitRange {
+  projectId: string;
+  from: Date;
+  to: Date;
+}
+
+/** Columns a visit takes from its first event that is not an engagement event. */
+const FIRST_EVENT_COLUMNS = [
+  "referrer",
+  "utm_source",
+  "utm_medium",
+  "utm_campaign",
+  "utm_term",
+  "utm_content",
+  "browser",
+  "os",
+  "device_type",
+  "country",
+  "region",
+  "city",
+] as const;
+
+export interface VisitsQueryOptions {
+  /**
+   * Include FIRST_EVENT_COLUMNS: where the visit came from and who it was.
+   * Reports that only count visits leave them out, so the query's large
+   * sort carries less data.
+   */
+  firstEventColumns?: boolean;
+}
+
+export function visitsQuery(
+  { projectId, from, to }: VisitRange,
+  { firstEventColumns = true }: VisitsQueryOptions = {},
+): RawBuilder<unknown> {
+  const timeout = sql`make_interval(secs => ${VISIT_TIMEOUT_MS / 1000})`;
   // Read 30 minutes before the range, to know whether an early event
   // continues a visit that started earlier, and a day after it.
   const readFrom = new Date(from.getTime() - VISIT_TIMEOUT_MS);
   const readTo = new Date(to.getTime() + VISIT_LOOKAHEAD_MS);
 
-  const { rows } = await sql<VisitRow>`
+  // FIRST_EVENT_COLUMNS as read from events and as aggregated per visit, or
+  // nothing. The names are the constants above, never input.
+  const eventColumns = firstEventColumns
+    ? sql`, ${sql.join(FIRST_EVENT_COLUMNS.map((name) => sql.ref(name)))}`
+    : sql``;
+  const visitColumns = firstEventColumns
+    ? sql`, ${sql.join(
+        FIRST_EVENT_COLUMNS.map(
+          (name) =>
+            sql`(array_agg(${sql.ref(name)} order by occurred_at, event_id) filter (where name <> ${ENGAGEMENT}))[1] as ${sql.ref(name)}`,
+        ),
+      )}`
+    : sql``;
+
+  return sql`
     with recursive range_events as (
-      select event_id, visitor_id, previous_visitor_id, name, occurred_at, path, referrer,
-             utm_source, utm_medium, utm_campaign, utm_term, utm_content,
-             browser, os, device_type, country, region, city, properties
+      select event_id, visitor_id, previous_visitor_id, name, occurred_at, path,
+             -- Time on page as a number. A malformed value counts as 0
+             -- instead of failing the whole report.
+             case when name = ${ENGAGEMENT} and properties ->> 'engagedMs' ~ '^[0-9]{1,9}$'
+                  then (properties ->> 'engagedMs')::bigint else 0 end as engaged_ms
+             ${eventColumns}
       from events
       where project_id = ${projectId}
         and visitor_id is not null
         and occurred_at >= ${readFrom}
         and occurred_at < ${readTo}
     ),
-    -- After midnight, a visitor has a new ID. Join it to yesterday's ID when
+    -- After midnight, a visitor has a new ID. Link it to yesterday's ID when
     -- yesterday's visitor had an event in the 30 minutes before.
     links as (
       select distinct on (today.visitor_id)
@@ -119,7 +168,7 @@ export async function findVisits(
       join range_events yesterday
         on yesterday.visitor_id = today.previous_visitor_id
        and yesterday.occurred_at <= today.occurred_at
-       and yesterday.occurred_at >= today.occurred_at - make_interval(secs => ${timeoutSeconds})
+       and yesterday.occurred_at >= today.occurred_at - ${timeout}
       where today.previous_visitor_id is not null
       order by today.visitor_id, today.occurred_at
     ),
@@ -144,8 +193,7 @@ export async function findVisits(
       select keyed.*,
              case
                when lag(occurred_at) over by_person is null then 1
-               when occurred_at - lag(occurred_at) over by_person
-                    > make_interval(secs => ${timeoutSeconds}) then 1
+               when occurred_at - lag(occurred_at) over by_person > ${timeout} then 1
                else 0
              end as starts_visit
       from keyed
@@ -163,32 +211,28 @@ export async function findVisits(
         (array_agg(visitor_id order by occurred_at, event_id) filter (where name <> ${ENGAGEMENT}))[1] as visitor_id,
         min(occurred_at) filter (where name <> ${ENGAGEMENT}) as started_at,
         max(occurred_at) as ended_at,
-        -- A malformed value counts as 0 instead of failing the whole report.
-        coalesce(sum(case when properties ->> 'engagedMs' ~ '^[0-9]{1,9}$'
-                          then (properties ->> 'engagedMs')::bigint else 0 end)
-                 filter (where name = ${ENGAGEMENT}), 0) as engaged_ms,
+        sum(engaged_ms) as engaged_ms,
         count(*) filter (where name = ${PAGEVIEW}) as pageviews,
         count(*) filter (where name not in (${PAGEVIEW}, ${ENGAGEMENT})) as interactions,
         (array_agg(path order by occurred_at, event_id) filter (where name = ${PAGEVIEW}))[1] as entry_path,
-        (array_agg(path order by occurred_at desc, event_id desc) filter (where name = ${PAGEVIEW}))[1] as exit_path,
-        (array_agg(referrer order by occurred_at, event_id) filter (where name <> ${ENGAGEMENT}))[1] as referrer,
-        (array_agg(utm_source order by occurred_at, event_id) filter (where name <> ${ENGAGEMENT}))[1] as utm_source,
-        (array_agg(utm_medium order by occurred_at, event_id) filter (where name <> ${ENGAGEMENT}))[1] as utm_medium,
-        (array_agg(utm_campaign order by occurred_at, event_id) filter (where name <> ${ENGAGEMENT}))[1] as utm_campaign,
-        (array_agg(utm_term order by occurred_at, event_id) filter (where name <> ${ENGAGEMENT}))[1] as utm_term,
-        (array_agg(utm_content order by occurred_at, event_id) filter (where name <> ${ENGAGEMENT}))[1] as utm_content,
-        (array_agg(browser order by occurred_at, event_id) filter (where name <> ${ENGAGEMENT}))[1] as browser,
-        (array_agg(os order by occurred_at, event_id) filter (where name <> ${ENGAGEMENT}))[1] as os,
-        (array_agg(device_type order by occurred_at, event_id) filter (where name <> ${ENGAGEMENT}))[1] as device_type,
-        (array_agg(country order by occurred_at, event_id) filter (where name <> ${ENGAGEMENT}))[1] as country,
-        (array_agg(region order by occurred_at, event_id) filter (where name <> ${ENGAGEMENT}))[1] as region,
-        (array_agg(city order by occurred_at, event_id) filter (where name <> ${ENGAGEMENT}))[1] as city
+        (array_agg(path order by occurred_at desc, event_id desc) filter (where name = ${PAGEVIEW}))[1] as exit_path
+        ${visitColumns}
       from numbered
       group by person, visit_number
       having count(*) filter (where name <> ${ENGAGEMENT}) > 0
     )
-    select * from visits
+    select visits.*,
+           extract(epoch from ended_at - started_at) * 1000 as duration_ms,
+           (pageviews <= 1 and interactions = 0) as bounce
+    from visits
     where started_at >= ${from} and started_at < ${to}
+  `;
+}
+
+/** The visits as objects, oldest first. Reports aggregate visitsQuery in SQL instead. */
+export async function findVisits(db: Kysely<Database>, range: VisitRange): Promise<Visit[]> {
+  const { rows } = await sql<VisitRow>`
+    select * from (${visitsQuery(range)}) as visits
     order by started_at, visitor_id
   `.execute(db);
 

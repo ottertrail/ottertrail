@@ -10,7 +10,7 @@ How Ottertrail's web analytics works, the concepts behind it, and the decisions 
 | 4. Enrichment      | Done        |
 | 5. Visitors        | Done        |
 | 6. Visits          | Done        |
-| 7. Reports         | Not started |
+| 7. Reports         | Done        |
 | 8. Dashboard check | Not started |
 
 ## 1. The event
@@ -444,7 +444,7 @@ A visit (often called a session) is one visitor's run of activity. Code: `apps/a
 
 ### Worked out when a report asks
 
-Nothing about visits is stored. `findVisits` works them out from the events with SQL window functions:
+Nothing about visits is stored. `visitsQuery` works them out from the events with SQL window functions. Reports use it inside their own SQL; `findVisits` returns the visits as objects.
 
 1. For each event, find the same visitor's previous event (`lag(occurred_at) over (partition by visitor order by occurred_at)`).
 2. Mark a visit start where there is no previous event or the gap is over 30 minutes.
@@ -457,7 +457,7 @@ Because visits are computed from the stored facts every time:
 - a retried event cannot count twice, since the events table stores each event ID once;
 - changing a rule (30 minutes to 20) applies to all past data at once.
 
-The cost is work at report time: each visitor's events in the range are sorted. Step 7 measures this with realistic volumes. If it is too slow, a precomputed daily visits table can be added and rebuilt for any day that receives late events (`received_at` shows which).
+The cost is work at report time: every event in the range is sorted by visitor and time. Section 7 measures it (Speed).
 
 ### A time range
 
@@ -501,6 +501,103 @@ Times are shown in the instance's `TIMEZONE`.
 
 ### Not done yet
 
-- Reports built on visits: counts, bounce rate, average duration, entry and exit pages (step 7).
-- A precomputed visits table, if step 7 shows report queries are too slow.
+- A precomputed visits table, if reports get too slow (section 7).
 - Scroll depth.
+
+## 7. Reports
+
+Reports turn events and visits into the numbers a dashboard shows. Code: `apps/api/src/reports/reports.ts`. Like visits, every number is computed from the stored events when asked.
+
+### Days in the instance's timezone
+
+A report covers whole calendar days in `TIMEZONE`, the timezone that also starts each visitor salt. `localDays` asks PostgreSQL where those days begin and end (`'2026-11-16'::date::timestamp at time zone 'Asia/Singapore'`), so a 23- or 25-hour day, when clocks change for daylight saving, comes out right. Charts count by local day too, and days without data appear with zeros.
+
+### The numbers
+
+| Report           | What it counts                                                                                    |
+| ---------------- | ------------------------------------------------------------------------------------------------- |
+| Visitors         | Distinct visitor IDs. IDs change daily, so a person who came on 3 days counts 3 times (section 5) |
+| Pageviews        | `pageview` events                                                                                 |
+| Visits           | Visits that started in the range                                                                  |
+| Views per visit  | Pageviews in those visits, divided by visits                                                      |
+| Bounce rate      | Visits with one pageview and no custom event, divided by visits                                   |
+| Visit duration   | Average of `endedAt - startedAt`. A bounce is 0 seconds unless the page sent an engagement report |
+| Time engaged     | Average time pages were visible per visit, from engagement events                                 |
+| Visitors per day | Visitors, pageviews, and visits for each local day. A visit counts on the day it started          |
+| Top pages        | Pageviews and visitors per path, and the average time on page from that path's engagement reports |
+| Breakdowns       | Visits and visitors grouped by one property of the visit (below)                                  |
+| Custom events    | Each custom event name, how often it happened, and how many visitors sent it                      |
+
+Visitors and pageviews count events in the range. Visits, bounce rate, and durations count visits that started in it. A visit from 23:50 to 00:20 counts on the first day, while its 00:05 pageview counts on the second.
+
+### Breakdowns
+
+A breakdown groups visits by one property: `source`, `entryPage`, `exitPage`, `utmSource`, `utmMedium`, `utmCampaign`, `country`, `region`, `city`, `deviceType`, `browser`, or `os`. All but the exit page come from the start of the visit, so each visit counts once, under where it began. Rows are sorted by visitors, then visits. A missing value (no location, an unknown browser) is a row of its own, which the report script prints as "(unknown)".
+
+**Source** is the first of these that exists:
+
+1. `utm_source` from the page URL (`?utm_source=newsletter`).
+2. The referrer's hostname without `www.`: `https://www.google.com/search` becomes `google.com`. Android apps send their package name: `android-app://com.google.android.gm` becomes `com.google.android.gm`, the Gmail app.
+3. `Direct / none`: no referrer, as with a typed address, a bookmark, or a link in an app that sends none.
+
+A referrer on one of the project's own allowed hostnames is not a source. It means the visit began on a page of the same site, such as a tab left open for over 30 minutes, so it counts as direct.
+
+**Region and city** keep their country (`Springfield, US`), because the same names exist in several countries.
+
+### Who can read reports
+
+Nobody over HTTP yet. Reports are functions in the API and a command-line script. HTTP endpoints arrive with the dashboard and its sign-in in step 8, because a public project key must never read data (section 2). When they do, a breakdown name from a request is checked against the list above (`isVisitDimension`), and each name maps to a fixed SQL expression, so request text never becomes SQL. Row limits are clamped to 1-100.
+
+### Try it
+
+```sh
+vp run report                      # the first project, last 7 days
+vp run report -- Playground 30     # a project by name, last 30 days
+```
+
+The last day is today, so it is partial.
+
+### Speed
+
+`vp run bench:reports -- <visits> <days>` fills a temporary schema with fake data, times each report (the median of three runs after a warm-up), and drops the schema. Each fake visit has 1-5 pages two minutes apart and an engagement report per page. Results on an Apple M4 Max, PostgreSQL 18 in Podman with default settings:
+
+| 200,000 visits in 30 days (1.2 million events) | 1 day | 7 days | 30 days  |
+| ---------------------------------------------- | ----- | ------ | -------- |
+| Summary                                        | 72 ms | 674 ms | 2,354 ms |
+| Visitors per day                               | 55 ms | 520 ms | 2,127 ms |
+| Top pages                                      | 26 ms | 122 ms | 382 ms   |
+| Sources                                        | 84 ms | 667 ms | 3,172 ms |
+| Countries                                      | 66 ms | 551 ms | 2,090 ms |
+| Custom events                                  | 6 ms  | 43 ms  | 51 ms    |
+
+| 30,000 visits in 30 days (183,000 events) | 1 day | 7 days | 30 days |
+| ----------------------------------------- | ----- | ------ | ------- |
+| Summary                                   | 11 ms | 73 ms  | 388 ms  |
+| Visitors per day                          | 9 ms  | 54 ms  | 244 ms  |
+| Top pages                                 | 4 ms  | 31 ms  | 76 ms   |
+| Sources                                   | 14 ms | 83 ms  | 339 ms  |
+| Countries                                 | 11 ms | 67 ms  | 272 ms  |
+| Custom events                             | 1 ms  | 5 ms   | 13 ms   |
+
+Repeated runs differ: the 30-day sources report took between 2.3 and 3.3 seconds over several runs.
+
+Reports that only count events (top pages, custom events) read the range's events once. Reports on visits cost more, and the cost grows with the number of events in the range: working out visits sorts every event by visitor and time, then groups them. At 1,000 visits a day, each 30-day report takes under half a second; at about 7,000 a day, 2-3 seconds.
+
+**What was tried.** Several versions of the visit query were measured against the step 6 query on the same data, and none was faster:
+
+- Sorting only the columns needed to find visits, then reading each visit's first event by its ID: slower, because 190,000 index lookups cost more than carrying the columns through the sort.
+- Finding each visitor ID's runs first, then joining runs across midnight: no faster over 30 days, and 10 to 20 times slower over 1 day (0.1 seconds became 1-2). PostgreSQL estimated far fewer rows than there were and chose nested loops, which compare every row with every other.
+- A larger `work_mem` (64 MB instead of 4 MB) changed nothing. Turning off JIT compilation saved 5-10%.
+
+`EXPLAIN ANALYZE` misled the first attempt: timing each step slows the steps that handle many rows, which hides where a query spends its time. Timing the whole query is the reliable measure. The query kept is the step 6 query with two changes: it follows chains of midnight links (section 6), and reports that only count visits skip the first-event columns, so the large sort carries less data.
+
+**If reports get too slow**, in order of effort:
+
+1. Work out visits once per dashboard load and share them between the charts, instead of once per report (step 8).
+2. Store visits in a table and rebuild only the days that receive new events (`received_at` shows which). A background job then does the sorting, ahead of time.
+3. Keep daily totals per page, source, and country for long ranges.
+
+### Not done yet
+
+- HTTP endpoints for reports, with sign-in, and the dashboard (step 8).
+- Filters (only visits from Google), comparison with the previous period, goals, and funnels.

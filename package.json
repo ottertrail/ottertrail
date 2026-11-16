@@ -8,6 +8,8 @@
     "migrate": "vp run -r migrate",
     "geo:update": "vp run -r geo:update",
     "visits": "vp -C apps/api run visits",
+    "report": "vp -C apps/api run report",
+    "bench:reports": "vp -C apps/api run bench:reports",
     "ready": "vp check && vp run -r test && vp run -r build",
     "prepare": "vp config --no-agent"
   },
