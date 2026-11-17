@@ -1,9 +1,10 @@
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { FilterIcon } from "lucide-react";
+import * as React from "react";
 
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardAction, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Empty,
   EmptyContent,
@@ -22,6 +23,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { DEFAULT_ENVIRONMENT, type PageRange } from "@/lib/analytics-api";
 import { ApiError } from "@/lib/api";
+import { savedFunnelsQuery } from "@/lib/funnels-api";
 import {
   FUNNEL_COUNTS,
   FUNNEL_WINDOWS,
@@ -44,6 +46,8 @@ import { FunnelEditor } from "./funnel-editor";
 import { FunnelResults } from "./funnel-results";
 import { stepText } from "./funnel-steps";
 import { LoadFailed, Refreshing } from "./report-state";
+import { SaveFunnelActions } from "./save-funnel-actions";
+import { SavedFunnelsCard } from "./saved-funnels-card";
 import { type FunnelSearch, funnelSearchOf } from "./search";
 
 /** Who to count, and for how long after step 1. Applies at once. */
@@ -190,12 +194,15 @@ function StartHere({ example, onUse }: { example: FunnelStep[]; onUse: () => voi
 /**
  * One ordered funnel: of the people who did step 1 in the period, how many
  * went on to each next step, in order, within the conversion window. The
- * steps, the count, and the window live in the address.
+ * steps, the count, and the window live in the address, with the saved
+ * funnel last opened or saved, if any; the project's saved funnels are
+ * listed above the steps.
  */
 export function FunnelPage({
   projectId,
   range,
   environment = DEFAULT_ENVIRONMENT,
+  funnel,
   steps,
   count,
   window,
@@ -203,6 +210,8 @@ export function FunnelPage({
   projectId: string;
   range: PageRange;
   environment?: string;
+  /** The saved funnel open in the address, by ID. */
+  funnel?: string | undefined;
   steps: FunnelStep[];
   count: FunnelCount;
   window: FunnelWindow;
@@ -215,7 +224,10 @@ export function FunnelPage({
   });
   // The project's event names, to suggest; the funnel works without them.
   const events = useQuery(productEventsQuery(projectId, range, environment));
-  const search: FunnelSearch = { range, environment, steps, count, window };
+  const saved = useQuery(savedFunnelsQuery(projectId));
+  // Where focus goes once the shown funnel is saved: the button that did it is gone.
+  const stepsHeadingRef = React.useRef<HTMLHeadingElement>(null);
+  const search: FunnelSearch = { range, environment, funnel, steps, count, window };
   const show = (next: Partial<FunnelSearch>) =>
     void navigate({
       to: "/projects/$projectId/product/funnel",
@@ -225,7 +237,8 @@ export function FunnelPage({
 
   if (
     (query.error instanceof ApiError && query.error.status === 404) ||
-    (events.error instanceof ApiError && events.error.status === 404)
+    (events.error instanceof ApiError && events.error.status === 404) ||
+    (saved.error instanceof ApiError && saved.error.status === 404)
   ) {
     return <NoSuchProject />;
   }
@@ -245,11 +258,38 @@ export function FunnelPage({
         onRange={(next) => show({ range: next })}
         onEnvironment={(next) => show({ environment: next })}
       />
+      <SavedFunnelsCard
+        projectId={projectId}
+        funnels={saved.data}
+        failure={saved.isError ? saved.error.message : null}
+        onRetry={() => void saved.refetch()}
+        search={search}
+        openId={funnel}
+        onDeleted={(deleted) => {
+          // The shown steps stay; they are just no longer saved.
+          if (deleted.id === funnel) show({ funnel: undefined });
+        }}
+      />
       <Card>
         <CardHeader>
           <CardTitle>
-            <h3>Steps</h3>
+            <h3 ref={stepsHeadingRef} tabIndex={-1} className="outline-none">
+              Steps
+            </h3>
           </CardTitle>
+          {ready && (
+            <CardAction>
+              <SaveFunnelActions
+                projectId={projectId}
+                shown={{ steps, count, window }}
+                funnels={saved.data}
+                loading={saved.isPending}
+                openId={funnel}
+                returnFocus={stepsHeadingRef}
+                onSaved={(created) => show({ funnel: created.id })}
+              />
+            </CardAction>
+          )}
         </CardHeader>
         <CardContent>
           <FunnelEditor

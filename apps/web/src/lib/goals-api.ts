@@ -1,5 +1,5 @@
 import { apiRequest, expectShape } from "./api";
-import { characters } from "./text";
+import { nameProblem } from "./text";
 
 /**
  * A project's saved goals (docs/product-analytics.md): named conversions,
@@ -62,20 +62,8 @@ export const isGoalResult = (value: unknown): value is GoalResult =>
   isNumber(value.events) &&
   isNumber(value.conversionRate);
 
-// Control characters are what the API refuses in a goal's name.
-// eslint-disable-next-line no-control-regex
-const CONTROL = /[\u0000-\u001F\u007F]/u;
-
 /** Why a goal's name would be refused, as the API checks it; null when it would not. */
-export function goalNameProblem(name: string): string | null {
-  const trimmed = name.trim();
-  if (trimmed === "") return "Name the goal.";
-  if (characters(trimmed) > MAX_GOAL_NAME) {
-    return `A goal's name has at most ${MAX_GOAL_NAME} characters.`;
-  }
-  if (CONTROL.test(trimmed)) return "A goal's name cannot hold control characters.";
-  return null;
-}
+export const goalNameProblem = (name: string) => nameProblem(name, "goal", MAX_GOAL_NAME);
 
 const goalsPath = (projectId: string) => `/api/projects/${encodeURIComponent(projectId)}/goals`;
 

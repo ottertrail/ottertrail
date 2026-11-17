@@ -25,6 +25,10 @@ function lastQuery(api: FakeApi, path: string): Record<string, string> {
   return at === -1 ? {} : Object.fromEntries(new URLSearchParams(request.slice(at + 1)));
 }
 
+/** Requests for a funnel's counts (not for the saved funnels). */
+const funnelRequests = (api: FakeApi) =>
+  api.requests.filter((request) => request.split("?")[0]?.endsWith("/funnel"));
+
 /** The rows of a table, as their cells' text (header cells included). */
 const tableRows = (name: string) =>
   [...page.getByRole("table", { name }).element().querySelectorAll("tbody tr")].map((row) =>
@@ -247,7 +251,7 @@ describe("the funnel", () => {
     const router = renderApp(FUNNEL);
 
     await expect.element(page.getByText("Build a funnel")).toBeVisible();
-    expect(api.requests.some((request) => request.includes("/funnel"))).toBe(false);
+    expect(funnelRequests(api)).toEqual([]);
 
     await page.getByRole("button", { name: "Use this example" }).click();
 
@@ -325,7 +329,7 @@ describe("the funnel", () => {
       .element(step(2).getByRole("combobox", { name: "Event name" }))
       .toHaveAttribute("aria-invalid", "true");
     await expect.element(step(2).getByText("Name the event.")).toBeVisible();
-    expect(api.requests.some((request) => request.includes("/funnel"))).toBe(false);
+    expect(funnelRequests(api)).toEqual([]);
   });
 
   test("catches two steps in a row that one event could both be, before asking", async () => {
@@ -339,7 +343,7 @@ describe("the funnel", () => {
     await expect
       .element(step(2).getByText(/One event could be this step and the one before/))
       .toBeVisible();
-    expect(api.requests.some((request) => request.includes("/funnel"))).toBe(false);
+    expect(funnelRequests(api)).toEqual([]);
   });
 
   test("windows over a day need users; switching to users unlocks them", async () => {

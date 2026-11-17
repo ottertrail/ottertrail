@@ -10,6 +10,7 @@ import { type CollectionOptions, collectionRoutes } from "./collection/routes.ts
 import { dashboardAppRoutes, sendsHsts } from "./dashboard-app/routes.ts";
 import type { Database } from "./db/schema.ts";
 import { errorRoutes } from "./errors/routes.ts";
+import { savedFunnelRoutes } from "./funnels/routes.ts";
 import { goalRoutes } from "./goals/routes.ts";
 import { userRoutes } from "./identities/routes.ts";
 import { organizationRoutes } from "./organizations/routes.ts";
@@ -142,6 +143,12 @@ export function buildApp({
       auth: dashboard.auth,
     });
     app.register(goalRoutes, {
+      prefix: "/api",
+      db,
+      auth: dashboard.auth,
+      trustedOrigins: dashboard.trustedOrigins,
+    });
+    app.register(savedFunnelRoutes, {
       prefix: "/api",
       db,
       auth: dashboard.auth,

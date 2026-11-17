@@ -10,6 +10,16 @@ import { createTestDatabase, migrateTestDatabase } from "./helpers/test-database
 const CHROME =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36";
 const NOT_FOUND = { error: "not_found", message: "No project has this ID." };
+const TAKEN_OVER_FUNNEL = {
+  name: "Taken over",
+  steps: [
+    { type: "page", path: "/" },
+    { type: "event", name: "signup" },
+  ],
+  count: "visitors",
+  window: 3600,
+  updatedAt: "2026-11-17T12:00:00.000Z",
+};
 
 /** Every route on one project: the access check must guard each of them. */
 function projectRoutes(id: string): [string, string, object?][] {
@@ -43,6 +53,10 @@ function projectRoutes(id: string): [string, string, object?][] {
       { name: "Taken over", step: { type: "page", path: "/" } },
     ],
     ["DELETE", `/api/projects/${id}/goals/00000000-0000-4000-8000-000000000000`],
+    ["GET", `/api/projects/${id}/funnels`],
+    ["POST", `/api/projects/${id}/funnels`, TAKEN_OVER_FUNNEL],
+    ["PUT", `/api/projects/${id}/funnels/00000000-0000-4000-8000-000000000000`, TAKEN_OVER_FUNNEL],
+    ["DELETE", `/api/projects/${id}/funnels/00000000-0000-4000-8000-000000000000`],
     ["GET", `/api/projects/${id}/errors?period=7d`],
     ["GET", `/api/projects/${id}/errors/1-0123456789abcdef0123?period=7d`],
     ["PATCH", `/api/projects/${id}/errors/1-0123456789abcdef0123`, { status: "resolved" }],

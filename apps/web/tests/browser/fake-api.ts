@@ -1,3 +1,4 @@
+import { stepsOverlap } from "../../src/features/product/funnel-steps.ts";
 import type { Analytics, BreakdownRow, DayPoint } from "../../src/lib/analytics-api.ts";
 import {
   type ErrorDetail,
@@ -5,11 +6,14 @@ import {
   type ErrorList,
   isStatusFilter,
 } from "../../src/lib/errors-api.ts";
+import type { SavedFunnel } from "../../src/lib/funnels-api.ts";
 import type { GoalResult } from "../../src/lib/goals-api.ts";
 import type { Organization } from "../../src/lib/organizations-api.ts";
 import {
   type Funnel,
+  isFunnelCount,
   isFunnelStep,
+  isFunnelWindow,
   type ProductEventDetail,
   type ProductEvents,
   type Retention,
@@ -43,6 +47,11 @@ export interface FakeApi {
    * goal routes list, add (with zero counts), and delete them.
    */
   goals: GoalResult[];
+  /**
+   * The project's saved funnels, in the order saved; the funnel routes list
+   * them by name, and save, change, and delete them. By default, fakeSavedFunnels.
+   */
+  savedFunnels: SavedFunnel[];
   /** Answers GET /api/projects/:id/analytics/list; by default, fakeList. */
   list: (query: URLSearchParams) => unknown;
   /** Answers GET /api/projects/:id/users; by default, fakeUsers. */
@@ -352,6 +361,169 @@ function removeGoal(api: FakeApi, goalId: string): Response {
   }
   api.goals = api.goals.filter((goal) => goal.id !== goalId);
   return new Response(null, { status: 204 });
+}
+
+/** The most saved funnels, as the API allows (apps/api/src/funnels). */
+const MAX_SAVED_FUNNELS = 50;
+
+type FunnelInput = Pick<SavedFunnel, "name" | "steps" | "count" | "window">;
+
+/** The fields of a JSON body, or none. */
+const fieldsOf = (body: unknown): Record<string, unknown> =>
+  typeof body === "object" && body !== null ? Object.fromEntries(Object.entries(body)) : {};
+
+/**
+ * A saved funnel's trimmed name and definition, or the API's refusal of
+ * them, in its words (apps/api/src/funnels/routes.ts, product/funnel.ts).
+ */
+function funnelInput(body: unknown): FunnelInput | Response {
+  const input = fieldsOf(body);
+  const name = typeof input.name === "string" ? input.name.trim() : "";
+  if (!GOAL_NAME.test(name)) {
+    return json(
+      {
+        error: "invalid_name",
+        message: "A funnel's name has 1 to 100 characters, and no control characters.",
+      },
+      400,
+    );
+  }
+  const { steps, count, window } = input;
+  if (!Array.isArray(steps) || steps.length < 2 || steps.length > 5 || !steps.every(isFunnelStep)) {
+    return json(
+      {
+        error: "invalid_steps",
+        message:
+          'steps must be a JSON array of 2 to 5 steps: {"type":"event","name":…} or {"type":"page","path":"/…"}.',
+      },
+      400,
+    );
+  }
+  const overlap = steps.findIndex(
+    (step, index) => index > 0 && stepsOverlap(steps[index - 1] ?? step, step),
+  );
+  if (overlap > 0) {
+    return json(
+      {
+        error: "steps_overlap",
+        message: `Step ${overlap + 1} could match the same event as step ${overlap}, which would count it twice. Put another step between them, or filter both by different values of one property.`,
+      },
+      400,
+    );
+  }
+  if (
+    !isFunnelCount(count) ||
+    !isFunnelWindow(window) ||
+    (count === "visitors" && window > 86_400)
+  ) {
+    return json(
+      {
+        error: "invalid_window",
+        message:
+          "Visitors can be followed for a day at most: their IDs change daily. Count users instead.",
+      },
+      400,
+    );
+  }
+  return { name, steps, count, window };
+}
+
+const funnelNameTaken = () =>
+  json(
+    { error: "funnel_name_taken", message: "The project already has a funnel with this name." },
+    409,
+  );
+
+const funnelNotFound = () =>
+  json(
+    { error: "funnel_not_found", message: "The project has no saved funnel with this ID." },
+    404,
+  );
+
+/** Saves a funnel as the API does, refusing what it refuses. */
+function saveFunnel(api: FakeApi, body: unknown): Response {
+  const input = funnelInput(body);
+  if (input instanceof Response) return input;
+  if (api.savedFunnels.length >= MAX_SAVED_FUNNELS) {
+    return json(
+      { error: "too_many_funnels", message: "A project has at most 50 saved funnels." },
+      409,
+    );
+  }
+  if (api.savedFunnels.some((funnel) => funnel.name === input.name)) return funnelNameTaken();
+  const now = new Date().toISOString();
+  const funnel: SavedFunnel = { id: crypto.randomUUID(), ...input, createdAt: now, updatedAt: now };
+  api.savedFunnels = [...api.savedFunnels, funnel];
+  return json({ funnel }, 201);
+}
+
+/**
+ * Replaces a saved funnel's name and definition, if it is still the
+ * version read (its updatedAt), as the API does.
+ */
+function changeFunnel(api: FakeApi, funnelId: string, body: unknown): Response {
+  const input = funnelInput(body);
+  if (input instanceof Response) return input;
+  const found = api.savedFunnels.find((funnel) => funnel.id === funnelId);
+  if (found === undefined) return funnelNotFound();
+  if (fieldsOf(body).updatedAt !== found.updatedAt) {
+    return json(
+      {
+        error: "funnel_changed",
+        message:
+          "The saved funnel was changed after it was read, such as in another tab. Read it again before changing it.",
+      },
+      409,
+    );
+  }
+  if (api.savedFunnels.some((funnel) => funnel.id !== funnelId && funnel.name === input.name)) {
+    return funnelNameTaken();
+  }
+  // Always a new version, even within the same millisecond.
+  const updatedAt = new Date(Math.max(Date.now(), Date.parse(found.updatedAt) + 1)).toISOString();
+  const funnel: SavedFunnel = { ...found, ...input, updatedAt };
+  api.savedFunnels = api.savedFunnels.map((item) => (item.id === funnelId ? funnel : item));
+  return json({ funnel });
+}
+
+function removeFunnel(api: FakeApi, funnelId: string): Response {
+  if (!api.savedFunnels.some((funnel) => funnel.id === funnelId)) return funnelNotFound();
+  api.savedFunnels = api.savedFunnels.filter((funnel) => funnel.id !== funnelId);
+  return new Response(null, { status: 204 });
+}
+
+/**
+ * Two saved funnels, saved in this order: one of users over a week, whose
+ * steps come back with their keys in another order than the address's, and
+ * one of visitors within a day.
+ */
+export function fakeSavedFunnels(): SavedFunnel[] {
+  return [
+    {
+      id: "cccccccc-cccc-4ccc-8ccc-ccccccccccc1",
+      name: "Team trial",
+      steps: [
+        { filter: { value: "team", key: "plan" }, name: "signup", type: "event" },
+        { name: "purchase", type: "event" },
+      ],
+      count: "users",
+      window: 604_800,
+      createdAt: "2026-11-02T00:00:00.000Z",
+      updatedAt: "2026-11-02T00:00:00.000Z",
+    },
+    {
+      id: "cccccccc-cccc-4ccc-8ccc-ccccccccccc2",
+      name: "pricing to signup",
+      steps: [
+        { type: "page", path: "/pricing" },
+        { type: "event", name: "signup" },
+      ],
+      count: "visitors",
+      window: 86_400,
+      createdAt: "2026-11-03T00:00:00.000Z",
+      updatedAt: "2026-11-03T00:00:00.000Z",
+    },
+  ];
 }
 
 function removeProject(api: FakeApi, id: string): Response {
@@ -880,6 +1052,28 @@ async function answer(api: FakeApi, url: URL, init: RequestInit | undefined): Pr
       goals: api.goals.map(({ id, name, step, createdAt }) => ({ id, name, step, createdAt })),
     });
   }
+  if (/^\/api\/projects\/[^/]+\/funnels$/.test(path)) {
+    if (init?.method === "POST") {
+      return saveFunnel(api, JSON.parse(typeof init.body === "string" ? init.body : "null"));
+    }
+    // By name, as the API orders them.
+    return json({
+      funnels: api.savedFunnels.toSorted((a, b) =>
+        a.name.toLowerCase().localeCompare(b.name.toLowerCase()),
+      ),
+    });
+  }
+  const savedFunnelPath = /^\/api\/projects\/[^/]+\/funnels\/([^/]+)$/.exec(path);
+  if (savedFunnelPath?.[1] !== undefined && init?.method === "PUT") {
+    return changeFunnel(
+      api,
+      decodeURIComponent(savedFunnelPath[1]),
+      JSON.parse(typeof init.body === "string" ? init.body : "null"),
+    );
+  }
+  if (savedFunnelPath?.[1] !== undefined && init?.method === "DELETE") {
+    return removeFunnel(api, decodeURIComponent(savedFunnelPath[1]));
+  }
   const goalPath = /^\/api\/projects\/[^/]+\/goals\/([^/]+)$/.exec(path);
   if (goalPath?.[1] !== undefined && init?.method === "DELETE") {
     return removeGoal(api, decodeURIComponent(goalPath[1]));
@@ -978,6 +1172,7 @@ export function installFakeApi(overrides: Partial<FakeApi> = {}): FakeApi {
     projects: [PROJECT],
     analytics: (_projectId, _period, _query, api) => analyticsFixture({ goals: api.goals }),
     goals: fakeGoals(),
+    savedFunnels: fakeSavedFunnels(),
     list: fakeList,
     users: fakeUsers,
     user: fakeUser,

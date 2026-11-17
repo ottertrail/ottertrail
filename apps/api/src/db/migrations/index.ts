@@ -20,6 +20,7 @@ import * as addIgnoreDataCenters from "./0017_add_ignore_data_centers.ts";
 import * as addEventErrors from "./0018_add_event_errors.ts";
 import * as createErrorResolutions from "./0019_create_error_resolutions.ts";
 import * as createGoals from "./0020_create_goals.ts";
+import * as createSavedFunnels from "./0021_create_saved_funnels.ts";
 
 /**
  * Every migration, in order. Kysely runs them by name, alphabetically, and
@@ -49,4 +50,5 @@ export const migrations: Record<string, Migration> = {
   "0018_add_event_errors": addEventErrors,
   "0019_create_error_resolutions": createErrorResolutions,
   "0020_create_goals": createGoals,
+  "0021_create_saved_funnels": createSavedFunnels,
 };

@@ -30,6 +30,7 @@ import {
   type FilterSearch,
   filterSearchOf,
   propertyFiltersFrom,
+  savedFunnelIdFrom,
   stepsFrom,
 } from "@/features/product/search";
 import { ProjectLayout } from "@/features/projects/project-layout";
@@ -426,14 +427,22 @@ const productEventRoute = createRoute({
 /**
  * The funnel: its steps as the JSON the API takes, who it counts (left out
  * for visitors), and its window in seconds (left out for a day). A window
- * visitors cannot have falls back to a day.
+ * visitors cannot have falls back to a day. `funnel` is the saved funnel
+ * last opened or saved, by ID; the steps stay in the address all the same,
+ * so a link shows what was viewed.
  */
 const productFunnelRoute = createRoute({
   getParentRoute: () => productRoute,
   path: "/funnel",
   validateSearch: (
-    search: ErrorSearchInput & { steps?: unknown; count?: unknown; window?: unknown },
+    search: ErrorSearchInput & {
+      funnel?: unknown;
+      steps?: unknown;
+      count?: unknown;
+      window?: unknown;
+    },
   ): ReturnType<typeof productRangeSearch> & {
+    funnel: string | undefined;
     steps: FunnelStep[] | undefined;
     count: "users" | undefined;
     window: FunnelWindow | undefined;
@@ -448,6 +457,7 @@ const productFunnelRoute = createRoute({
         : undefined;
     return {
       ...productRangeSearch(search),
+      funnel: savedFunnelIdFrom(search.funnel),
       steps: steps.length === 0 ? undefined : steps,
       count,
       window,
@@ -455,12 +465,13 @@ const productFunnelRoute = createRoute({
   },
   component: function ProductFunnelRouteComponent() {
     const { projectId } = productFunnelRoute.useParams();
-    const { period, from, to, env, steps, count, window } = productFunnelRoute.useSearch();
+    const { period, from, to, env, funnel, steps, count, window } = productFunnelRoute.useSearch();
     return (
       <FunnelPage
         projectId={projectId}
         range={rangeFrom({ period, from, to })}
         environment={env ?? DEFAULT_ENVIRONMENT}
+        funnel={funnel}
         steps={steps ?? []}
         count={count ?? "visitors"}
         window={window ?? DEFAULT_FUNNEL_WINDOW}

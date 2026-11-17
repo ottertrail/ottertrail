@@ -53,15 +53,28 @@ export function propertyFiltersFrom(search: Record<string, unknown>): PropertyFi
 
 /** What the funnel's address holds besides the period and environment. */
 export interface FunnelSearch extends ProductSearch {
+  /** The saved funnel last opened or saved, by ID; the steps below may have changed since. */
+  funnel?: string | undefined;
   /** Complete steps as the API takes them; none until the first funnel is shown. */
   steps: FunnelStep[];
   count: FunnelCount;
   window: FunnelWindow;
 }
 
-/** The funnel's address query: no steps, visitors, and the one-day window are left out. */
-export const funnelSearchOf = ({ range, environment, steps, count, window }: FunnelSearch) => ({
+/**
+ * The funnel's address query: no saved funnel, no steps, visitors, and the
+ * one-day window are left out.
+ */
+export const funnelSearchOf = ({
+  range,
+  environment,
+  funnel,
+  steps,
+  count,
+  window,
+}: FunnelSearch) => ({
   ...productSearchOf({ range, environment }),
+  ...(funnel === undefined ? {} : { funnel }),
   ...(steps.length === 0 ? {} : { steps }),
   ...(count === DEFAULT_FUNNEL_COUNT ? {} : { count }),
   ...(window === DEFAULT_FUNNEL_WINDOW ? {} : { window }),
@@ -98,3 +111,21 @@ export function stepsFrom(value: unknown): FunnelStep[] {
           },
   );
 }
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** A saved funnel's ID from the address, in lower case; anything but a UUID is none. */
+export const savedFunnelIdFrom = (value: unknown): string | undefined =>
+  typeof value === "string" && UUID.test(value) ? value.toLowerCase() : undefined;
+
+/**
+ * Whether a saved funnel is the funnel shown. Its steps are compared as the
+ * address holds them, so the order of the API's keys does not matter.
+ */
+export const isShownFunnel = (
+  saved: { steps: unknown; count: FunnelCount; window: number },
+  shown: { steps: readonly FunnelStep[]; count: FunnelCount; window: FunnelWindow },
+) =>
+  saved.count === shown.count &&
+  saved.window === shown.window &&
+  JSON.stringify(stepsFrom(saved.steps)) === JSON.stringify(shown.steps);

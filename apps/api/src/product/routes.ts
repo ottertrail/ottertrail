@@ -27,15 +27,15 @@ import {
   FUNNEL_COUNTS,
   FUNNEL_WINDOWS,
   type FunnelCount,
+  funnelRefusal,
   type FunnelStep,
+  funnelStepsOf,
   type FunnelWindow,
-  MAX_STEPS,
+  INVALID_STEPS,
   MAX_VISITOR_WINDOW,
-  MIN_STEPS,
-  overlappingStep,
 } from "./funnel.ts";
 import { retention } from "./retention.ts";
-import { KEY, stepOf, VALUE } from "./steps.ts";
+import { KEY, VALUE } from "./steps.ts";
 
 const UUID_PATTERN =
   "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$";
@@ -75,17 +75,11 @@ function filtersOf(url: string): PropertyFilter[] | null {
  * (filter optional) and {"type":"page","path":"/pricing"}. Null when not.
  */
 export function parseSteps(text: string): FunnelStep[] | null {
-  let parsed: unknown;
   try {
-    parsed = JSON.parse(text);
+    return funnelStepsOf(JSON.parse(text));
   } catch {
     return null;
   }
-  if (!Array.isArray(parsed) || parsed.length < MIN_STEPS || parsed.length > MAX_STEPS) {
-    return null;
-  }
-  const steps = parsed.map(stepOf);
-  return steps.every((step): step is FunnelStep => step !== null) ? steps : null;
 }
 
 /** What every answer says about its range. */
@@ -236,28 +230,11 @@ export const productRoutes: FastifyPluginCallback<{
     },
     async (request, reply) => {
       const steps = parseSteps(request.query.steps);
-      if (steps === null) {
-        return reply.code(400).send({
-          error: "invalid_steps",
-          message: `steps must be a JSON array of ${MIN_STEPS} to ${MAX_STEPS} steps: {"type":"event","name":…} or {"type":"page","path":"/…"}.`,
-        });
-      }
-      const overlap = overlappingStep(steps);
-      if (overlap !== null) {
-        return reply.code(400).send({
-          error: "steps_overlap",
-          message: `Step ${overlap + 1} could match the same event as step ${overlap}, which would count it twice. Put another step between them, or filter both by different values of one property.`,
-        });
-      }
+      if (steps === null) return reply.code(400).send(INVALID_STEPS);
       const count = request.query.count ?? "visitors";
       const window = request.query.window ?? MAX_VISITOR_WINDOW;
-      if (count === "visitors" && window > MAX_VISITOR_WINDOW) {
-        return reply.code(400).send({
-          error: "invalid_window",
-          message:
-            "Visitors can be followed for a day at most: their IDs change daily. Count users instead.",
-        });
-      }
+      const refusal = funnelRefusal(steps, count, window);
+      if (refusal !== null) return reply.code(400).send(refusal);
       const asked = await rangeOf(request);
       if ("problem" in asked) return reply.code(400).send(asked.problem);
       const { range } = asked;

@@ -154,6 +154,19 @@ export interface GoalsTable {
   created_at: ColumnType<Date, Date | undefined, never>;
 }
 
+/** A project's named funnel (migration 0021). */
+export interface SavedFunnelsTable {
+  id: ColumnType<string, string | undefined, never>;
+  project_id: string;
+  name: string;
+  /** The steps as the funnel report takes them (product/steps.ts); written as JSON text. */
+  steps: ColumnType<unknown, string, string>;
+  count_by: "visitors" | "users";
+  window_seconds: number;
+  created_at: ColumnType<Date, Date | undefined, never>;
+  updated_at: ColumnType<Date, Date | undefined, Date>;
+}
+
 /** An error group a project's team marked resolved (migration 0019). No row: unresolved. */
 export interface ErrorResolutionsTable {
   project_id: string;
@@ -233,6 +246,7 @@ export interface Database {
   events: EventsTable;
   error_resolutions: ErrorResolutionsTable;
   goals: GoalsTable;
+  saved_funnels: SavedFunnelsTable;
   visitor_salts: VisitorSaltsTable;
   dashboard_users: DashboardUsersTable;
   dashboard_sessions: DashboardSessionsTable;

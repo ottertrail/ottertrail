@@ -2,14 +2,14 @@
 
 What people do in an app, beyond which pages they open: the events a site sends, filtered by their properties, an ordered funnel, and a retention report. Part of stage 2 ([roadmap](roadmap.md)).
 
-| Part                                         | Status  |
-| -------------------------------------------- | ------- |
-| Definitions                                  | Done    |
-| Events, with property breakdowns and filters | Done    |
-| One ordered funnel                           | Done    |
-| One retention report                         | Done    |
-| Saved goals                                  | Done    |
-| Saved funnels                                | Planned |
+| Part                                         | Status |
+| -------------------------------------------- | ------ |
+| Definitions                                  | Done   |
+| Events, with property breakdowns and filters | Done   |
+| One ordered funnel                           | Done   |
+| One retention report                         | Done   |
+| Saved goals                                  | Done   |
+| Saved funnels                                | Done   |
 
 ## Definitions
 
@@ -60,6 +60,12 @@ Code: `apps/api/src/product/funnel.ts`. ClickHouse's `windowFunnel` follows each
 
 Choices: count by visitors (the default) or users, and a window of 5 or 30 minutes, 1 hour, 1 day (the default), or, for users, 7, 14, or 30 days. Visitors are refused longer windows: their IDs change at midnight, so a visitor's funnel ends with their day whatever the window says. A person counts once, at the furthest step they reached; times between steps are not shown yet. Two steps in the same millisecond count in either order.
 
+### Saved funnels
+
+Code: `apps/api/src/funnels/`. A project can name a funnel to open it again: its steps, who it counts, and its window, checked by the same rules as the funnel report's, so a saved funnel is always one the report can count. The period and the environment are the page's, not the funnel's. A project has at most 50, each with its own name, listed by name. They live in PostgreSQL (`saved_funnels`, migration 0021), the steps as the report's JSON; nothing is stored in ClickHouse, so a funnel saved today counts past events too, and deleting one loses only its definition. Changing one replaces its name and definition together, and names the version it was read at (`updatedAt`): if the funnel was changed since, such as by someone else or in another tab, the change is refused (409 `funnel_changed`) rather than undoing theirs without a word. `updated_at` is kept in whole milliseconds, as JSON carries it, and moves forward with every change.
+
+The funnel page's address still holds the steps, the count, and the window, so a link shows what was viewed even after the saved funnel changes; it also names the saved funnel it was opened from (`funnel=<id>`), so the page can tell when the shown funnel differs from it.
+
 ## Retention
 
 Code: `apps/api/src/product/retention.ts`. For each signed-in user: the Monday of the week of their first event in the environment (their cohort), and every week they did something themselves, any event but time on page and Web Vitals. The report shows the cohorts whose week holds a day of the range, the latest 13, each with up to 12 weeks after, until the current week, which is not over yet and so can only grow.
@@ -71,13 +77,17 @@ GET /api/projects/:id/events?period=7d&environment=production
 GET /api/projects/:id/events/:name?period=7d&p.plan=team&p.seats=5
 GET /api/projects/:id/funnel?period=7d&steps=[{"type":"page","path":"/pricing"},{"type":"event","name":"signup"}]&count=visitors&window=86400
 GET /api/projects/:id/retention?period=90d
+
+GET    /api/projects/:id/funnels
+POST   /api/projects/:id/funnels             { "name": "Pricing to signup", "steps": [{"type":"page","path":"/pricing"},{"type":"event","name":"signup"}], "count": "visitors", "window": 3600 }
+PUT    /api/projects/:id/funnels/:funnelId   (the same, and "updatedAt": the version it was read at)
+DELETE /api/projects/:id/funnels/:funnelId
 ```
 
-Like every project route, each runs the organization access check first.
+Like every project route, each runs the organization access check first. Saving, changing, or deleting a funnel also needs the dashboard's origin; a name already taken, a 51st funnel, or a change from an older version answers 409, and steps the report would refuse answer 400 with the report's own error.
 
 ## Not done yet
 
-- Saved funnels: a funnel lives in the page's address, which can be shared or bookmarked.
 - Goals by signed-in user instead of visitor, and a goal's trend over time.
 - Time between funnel steps, and who dropped off.
 - Retention by a chosen event instead of any event, and by day or month.

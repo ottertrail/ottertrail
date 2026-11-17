@@ -1,6 +1,6 @@
 import { QueryParams, queryRows, type Reader } from "../clickhouse/query.ts";
 import type { ProductRange } from "./events.ts";
-import { type Step, stepSql, stepsOverlap } from "./steps.ts";
+import { type Step, stepOf, stepSql, stepsOverlap } from "./steps.ts";
 
 /**
  * One ordered funnel (docs/product-analytics.md, "Funnel"): of the people
@@ -23,11 +23,62 @@ export const MAX_VISITOR_WINDOW = 86_400;
 export const MIN_STEPS = 2;
 export const MAX_STEPS = 5;
 
+/**
+ * A funnel's steps from parsed JSON: an array of MIN_STEPS to MAX_STEPS
+ * steps (steps.ts), each rebuilt with only the fields it has, in one
+ * order. Null when not.
+ */
+export function funnelStepsOf(value: unknown): FunnelStep[] | null {
+  if (!Array.isArray(value) || value.length < MIN_STEPS || value.length > MAX_STEPS) {
+    return null;
+  }
+  const steps = value.map(stepOf);
+  return steps.every((step): step is FunnelStep => step !== null) ? steps : null;
+}
+
 /** The first step that could match the same event as the step before it; null when none. */
 export function overlappingStep(steps: readonly FunnelStep[]): number | null {
   for (let index = 1; index < steps.length; index += 1) {
     const [before, step] = [steps[index - 1], steps[index]];
     if (before !== undefined && step !== undefined && stepsOverlap(before, step)) return index;
+  }
+  return null;
+}
+
+/** An answer's refusal: a code for programs, and a sentence for people. */
+export interface Refusal {
+  error: string;
+  message: string;
+}
+
+export const INVALID_STEPS: Refusal = {
+  error: "invalid_steps",
+  message: `steps must be a JSON array of ${MIN_STEPS} to ${MAX_STEPS} steps: {"type":"event","name":…} or {"type":"page","path":"/…"}.`,
+};
+
+/**
+ * Why these steps, counted this way, make no funnel the report can count:
+ * two steps in a row that one event could both be, or a window over a day
+ * for visitors. Null when they make one.
+ */
+export function funnelRefusal(
+  steps: readonly FunnelStep[],
+  count: FunnelCount,
+  windowSeconds: FunnelWindow,
+): Refusal | null {
+  const overlap = overlappingStep(steps);
+  if (overlap !== null) {
+    return {
+      error: "steps_overlap",
+      message: `Step ${overlap + 1} could match the same event as step ${overlap}, which would count it twice. Put another step between them, or filter both by different values of one property.`,
+    };
+  }
+  if (count === "visitors" && windowSeconds > MAX_VISITOR_WINDOW) {
+    return {
+      error: "invalid_window",
+      message:
+        "Visitors can be followed for a day at most: their IDs change daily. Count users instead.",
+    };
   }
   return null;
 }
