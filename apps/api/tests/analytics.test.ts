@@ -280,6 +280,8 @@ describe("GET /api/projects/:id/analytics with filters", () => {
     expect(body.pages).toEqual([{ path: "/docs", pageviews: 1, visitors: 1, avgEngagedMs: null }]);
   });
 
+  // A whole report for each row of each breakdown, one after another: over
+  // ten seconds on the dev VM, past the default five.
   test("each row's filter keeps exactly that row's visits and events, so the rows add up", async () => {
     const all = (await filtered({})).json();
     for (const dimension of DIMENSIONS) {
@@ -302,7 +304,7 @@ describe("GET /api/projects/:id/analytics with filters", () => {
         events: totalEvents(all),
       });
     }
-  });
+  }, 60_000);
 
   test("leaves out a stale engagement report at the moment a visit starts", async () => {
     // Unfiltered, the time on "/" averages every report for it, stale or not.
