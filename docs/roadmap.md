@@ -38,6 +38,6 @@ In this order, so that later work builds on the final model:
 - Traces and logs are the highest-volume data. They go to ClickHouse, ordered by project and time, with retention by dropping old partitions. Each organization's volume is limited so one customer cannot crowd out the others.
 - Something outside Ottertrail must monitor Ottertrail itself: keep at least one independent health check.
 - Retention and the activity timeline belong in stage 2 because they need identities. The anonymous visitor ID changes every day by design ([web-analytics.md](web-analytics.md#one-salt-per-timezone-and-day)), so "came back a week later" can only be counted for users the app identifies.
-- Session replay comes last: recordings are much larger than events and hold whatever is on screen, so they need masking, per-project opt-in, and storage limits. Its most useful view, the moments before an error, needs stage 2 first.
+- Session replay comes last: recordings are much larger than events and hold whatever is on screen, so they need masking, per-project opt-in, and storage limits. Its most useful view, the moments before an error, needs stage 2 first. The design, private by default: [session-replay.md](session-replay.md).
 - Later, not scheduled: AI usage tracking (tokens, cost, and latency per user and feature).
 - Not planned: click heatmaps (they need the page layout at each screen width, in practice the session replay recorder; reconsider with stage 5), scroll depth (could be added to the time-on-page report if asked for), and reports from ad and search platforms.

@@ -12,7 +12,7 @@ This repository is a foundation, not a working product yet. It contains:
 
 To run an instance on a server, see [docs/deployment.md](docs/deployment.md): one Docker image (`Dockerfile`) and a Compose stack with PostgreSQL and Caddy (`deploy/`).
 
-The design system is documented in [docs/design-system.md](docs/design-system.md). How web analytics works, and the decisions behind it, are in [docs/web-analytics.md](docs/web-analytics.md); error tracking in [docs/errors.md](docs/errors.md); product analytics in [docs/product-analytics.md](docs/product-analytics.md); the dashboard, including sign-in, in [docs/dashboard.md](docs/dashboard.md).
+The design system is documented in [docs/design-system.md](docs/design-system.md). How web analytics works, and the decisions behind it, are in [docs/web-analytics.md](docs/web-analytics.md); error tracking in [docs/errors.md](docs/errors.md); product analytics in [docs/product-analytics.md](docs/product-analytics.md); the planned session replay's design in [docs/session-replay.md](docs/session-replay.md); the dashboard, including sign-in, in [docs/dashboard.md](docs/dashboard.md).
 
 ## Toolchain
 
