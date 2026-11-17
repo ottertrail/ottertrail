@@ -130,6 +130,8 @@ The session cookie is `SameSite=Lax`, which keeps it off other sites' form posts
 
 ### Keeping events
 
+The Settings form's "Ignore visits from data centers", on by default, makes collection ignore browser events from cloud and hosting providers' addresses, as bots ([web analytics](web-analytics.md#data-centers)); a project whose visitors use remote desktops in a cloud turns it off. It applies from the next event: the route makes the key cache forget the project.
+
 The Settings form's "Keep events" sets how long the project keeps its events: forever (the default), 6 months, 1 year, 2 years, or 5 years ([web analytics](web-analytics.md#how-long-events-are-kept), section 1). Choosing a stricter limit than the current one says, before saving, that older events will be deleted for good within a few hours. The worker deletes them.
 
 ### Your server

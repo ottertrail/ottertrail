@@ -42,6 +42,10 @@ These are not stored in the repository: they are downloaded when installing depe
 
 IP geolocation by [DB-IP](https://db-ip.com), licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). `vp run geo:update` downloads the database. The licence requires the credit "IP geolocation by DB-IP" wherever locations derived from it are shown.
 
+### Data-center address ranges
+
+`vp run geo:update` also downloads the address ranges that cloud providers publish for their customers (Amazon Web Services, Google Cloud, Microsoft Azure, Oracle Cloud, DigitalOcean, Akamai Cloud, Vultr), and finds the ranges of other hosting providers in DB-IP's [IP to ASN Lite](https://db-ip.com/db/download/ip-to-asn-lite) database, licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) ("IP to ASN data by DB-IP"). The repository holds none of them; each instance downloads its own copy.
+
 ### Fonts
 
 The dashboard bundles two fonts, installed from npm, both licensed under the [SIL Open Font License 1.1](https://openfontlicense.org):

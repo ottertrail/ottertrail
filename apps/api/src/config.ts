@@ -30,6 +30,9 @@ export type GeoSource = (typeof GEO_SOURCES)[number];
 /** Relative to the API's working directory. `vp run geo:update` downloads it. */
 export const DEFAULT_GEO_DATABASE_PATH = "data/geo/dbip-city-lite.mmdb";
 
+/** Cloud and hosting providers' address ranges; `vp run geo:update` downloads them too. */
+export const DEFAULT_DATA_CENTERS_PATH = "data/geo/data-centers.json";
+
 /** The built browser script, relative to the API's working directory. `vp run -r build` makes it. */
 export const DEFAULT_TRACKER_SCRIPT_PATH = "../../packages/tracker/dist/tracker.js";
 
@@ -63,6 +66,8 @@ export interface Config {
   trustProxy: false | number | string[];
   geoSource: GeoSource;
   geoDatabasePath: string;
+  /** Address ranges of data centers, whose "browsers" are ignored (enrichment/data-centers.ts). */
+  dataCentersPath: string;
   /**
    * IANA timezone, such as "Asia/Singapore", of the organization the setup
    * link creates. Each organization has its own after that (reports count
@@ -274,6 +279,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     trustProxy: parseTrustProxy(env.TRUST_PROXY),
     geoSource: parseGeoSource(env.GEO_SOURCE ?? "database"),
     geoDatabasePath: env.GEO_DATABASE_PATH?.trim() || DEFAULT_GEO_DATABASE_PATH,
+    dataCentersPath: env.DATA_CENTERS_PATH?.trim() || DEFAULT_DATA_CENTERS_PATH,
     defaultTimeZone: parseTimeZone(env.TIMEZONE?.trim() || "UTC"),
     ...publicUrlAndOrigins(env),
     authSecret: parseAuthSecret(env),

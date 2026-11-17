@@ -149,6 +149,7 @@ export const projectRoutes: FastifyPluginCallback<{
       allowedHostnames?: string[];
       retentionDays?: number | null;
       requireSignedUserIds?: boolean;
+      ignoreDataCenters?: boolean;
     };
   }>(
     "/projects/:id",
@@ -170,12 +171,14 @@ export const projectRoutes: FastifyPluginCallback<{
               maximum: MAX_RETENTION_DAYS,
             },
             requireSignedUserIds: { type: "boolean" },
+            ignoreDataCenters: { type: "boolean" },
           },
         },
       },
     },
     async (request, reply) => {
-      const { name, allowedHostnames, retentionDays, requireSignedUserIds } = request.body;
+      const { name, allowedHostnames, retentionDays, requireSignedUserIds, ignoreDataCenters } =
+        request.body;
       let hostnames: string[] | undefined;
       if (allowedHostnames !== undefined) {
         const parsed = parseHostnames(allowedHostnames);
@@ -189,9 +192,12 @@ export const projectRoutes: FastifyPluginCallback<{
         ...(hostnames === undefined ? {} : { allowedHostnames: hostnames }),
         ...(retentionDays === undefined ? {} : { retentionDays }),
         ...(requireSignedUserIds === undefined ? {} : { requireSignedUserIds }),
+        ...(ignoreDataCenters === undefined ? {} : { ignoreDataCenters }),
       });
-      // Collection reads the signing rule from its cache: the change applies at once.
-      if (requireSignedUserIds !== undefined) projectKeys?.forgetProject(request.params.id);
+      // Collection reads these rules from its cache: a change applies at once.
+      if (requireSignedUserIds !== undefined || ignoreDataCenters !== undefined) {
+        projectKeys?.forgetProject(request.params.id);
+      }
       return project === null
         ? reply.code(404).send(problem("not_found", "No project has this ID."))
         : { project };

@@ -31,6 +31,8 @@ export interface Project {
   secretKey: string;
   /** Accept a browser's user ID only with a valid signature from the site's server. */
   requireSignedUserIds: boolean;
+  /** Ignore browser events from cloud and hosting providers' addresses: nearly all are programs. */
+  ignoreDataCenters: boolean;
 }
 
 /** The fewest and most days a project may keep its events; the database checks the same. */
@@ -96,6 +98,7 @@ function baseQuery(db: Kysely<Database>) {
       "projects.last_event_at",
       "projects.secret_key",
       "projects.require_signed_user_ids",
+      "projects.ignore_data_centers",
     ]);
 }
 
@@ -113,6 +116,7 @@ function toProject(row: ProjectRow): Project {
     retentionDays: row.retention_days,
     secretKey: row.secret_key,
     requireSignedUserIds: row.require_signed_user_ids,
+    ignoreDataCenters: row.ignore_data_centers,
   };
 }
 
@@ -160,7 +164,7 @@ export async function createProject(
   return project;
 }
 
-/** Changes a project's name, allowed hostnames, or retention; null when no project has this ID. */
+/** Changes a project's settings; null when no project has this ID. */
 export async function updateProject(
   db: Kysely<Database>,
   id: string,
@@ -169,6 +173,7 @@ export async function updateProject(
     allowedHostnames?: string[];
     retentionDays?: number | null;
     requireSignedUserIds?: boolean;
+    ignoreDataCenters?: boolean;
   },
 ): Promise<Project | null> {
   const values = {
@@ -180,6 +185,9 @@ export async function updateProject(
     ...(changes.requireSignedUserIds === undefined
       ? {}
       : { require_signed_user_ids: changes.requireSignedUserIds }),
+    ...(changes.ignoreDataCenters === undefined
+      ? {}
+      : { ignore_data_centers: changes.ignoreDataCenters }),
   };
   if (Object.keys(values).length > 0) {
     const result = await db

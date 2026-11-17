@@ -19,6 +19,8 @@ export interface Project {
   secretKey: string;
   /** A browser's user ID counts only with a valid signature from the site's server. */
   requireSignedUserIds: boolean;
+  /** Events from cloud and hosting providers' addresses are ignored, as bots. */
+  ignoreDataCenters: boolean;
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -37,7 +39,8 @@ function isProject(value: unknown): value is Project {
     (value.lastEventAt === null || typeof value.lastEventAt === "string") &&
     (value.retentionDays === null || typeof value.retentionDays === "number") &&
     typeof value.secretKey === "string" &&
-    typeof value.requireSignedUserIds === "boolean"
+    typeof value.requireSignedUserIds === "boolean" &&
+    typeof value.ignoreDataCenters === "boolean"
   );
 }
 
@@ -78,6 +81,7 @@ export async function updateProject(
     allowedHostnames?: string[];
     retentionDays?: number | null;
     requireSignedUserIds?: boolean;
+    ignoreDataCenters?: boolean;
   },
 ) {
   const body = await apiRequest(`/api/projects/${encodeURIComponent(id)}`, {

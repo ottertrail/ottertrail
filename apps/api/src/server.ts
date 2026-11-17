@@ -5,7 +5,7 @@ import { createAuth } from "./auth/auth.ts";
 import { createClickHouse } from "./clickhouse/clickhouse.ts";
 import { DEVELOPMENT_AUTH_SECRET, loadConfig } from "./config.ts";
 import { createDatabase } from "./db/database.ts";
-import { setUpLocation } from "./enrichment/setup.ts";
+import { setUpDataCenters, setUpLocation } from "./enrichment/setup.ts";
 import { postgresKnowsTimeZone } from "./organizations/organizations.ts";
 
 const config = loadConfig();
@@ -29,10 +29,11 @@ if (!(await postgresKnowsTimeZone(db, config.defaultTimeZone))) {
   process.exit(1);
 }
 const location = await setUpLocation(config.geoSource, config.geoDatabasePath);
+const dataCenters = await setUpDataCenters(config.dataCentersPath);
 const app = buildApp({
   db,
   log: { level: config.logLevel },
-  collection: { locate: location.locate },
+  collection: { locate: location.locate, isDataCenter: dataCenters.isDataCenter },
   dashboard: {
     auth,
     clickhouse,
@@ -54,10 +55,12 @@ const app = buildApp({
 if (config.authSecret === DEVELOPMENT_AUTH_SECRET) {
   app.log.warn("AUTH_SECRET is not set: using the development secret, which is not secret");
 }
-if (location.ok) {
-  app.log.info(location.message);
-} else {
-  app.log.warn(location.message);
+for (const setup of [location, dataCenters]) {
+  if (setup.ok) {
+    app.log.info(setup.message);
+  } else {
+    app.log.warn(setup.message);
+  }
 }
 
 // Close database connections after the server stops accepting requests.

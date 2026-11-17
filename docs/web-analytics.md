@@ -445,15 +445,38 @@ The license requires credit: show "IP geolocation by DB-IP" with a link to db-ip
 
 Bot requests get `202` with `bots` counted and nothing stored: an error would only invite retries. They are checked before the per-project event budget, so they cannot use it up.
 
-To send test events with `curl`, pass a browser User-Agent (`-A "Mozilla/5.0 …"`), or they are counted as bots. Automated browser tests need a normal User-Agent for the same reason (headless Chrome says `HeadlessChrome`).
+To send test events with `curl`, pass a browser User-Agent (`-A "Mozilla/5.0 …"`), or they are counted as bots. Automated browser tests need a normal User-Agent for the same reason (headless Chrome says `HeadlessChrome`), and must not run in a data center (below).
 
-Bots that pretend to be browsers are not caught. Spotting those needs behavior and network signals, such as data-center address ranges; that is not built.
+### Data centers
+
+Many bots say they are an ordinary Chrome or Safari. What gives most of them away is where they run: people browse from homes, offices, and phones, while scrapers, headless browsers, and test runs run on servers rented from a cloud or hosting provider. A browser event from such an address is accepted and ignored like any bot (`202`, counted in `bots`), before the project's event budget. The address is checked while the request is in hand, as for its location, and never stored.
+
+The ranges come from two kinds of source, downloaded by `vp run geo:update` (`src/enrichment/data-center-sources.ts`) into one file the API reads at startup (`DATA_CENTERS_PATH`):
+
+- **Lists the providers publish** for their customers' firewalls: Amazon Web Services (the EC2 ranges, where servers, Lambda, and containers run), Google Cloud, Microsoft Azure (the `AzureCloud` service tag), Oracle Cloud, DigitalOcean, Akamai Cloud (Linode), and Vultr. A provider's list, not its whole network: Amazon's, Google's, and Microsoft's networks also carry their offices, their DNS, and their own services, whose users are people.
+- **Hosting providers without a list**, by the networks (ASNs) their servers are announced from, in DB-IP's IP to ASN Lite database (CC BY 4.0): Hetzner, OVHcloud, Scaleway, Contabo, Alibaba Cloud, Tencent Cloud, and Huawei Cloud (`HOSTING_NETWORKS`). RIPEstat would answer the same question, but its terms do not allow commercial use without written permission.
+
+On 17 November 2026 the file held 20,426 ranges from 14 providers, about 4.7% of IPv4 addresses; a lookup took about 4 µs. A source that fails keeps its previous ranges and makes the command fail, so the next run tries again.
+
+What it costs:
+
+- **People in a cloud are ignored too:** remote desktops (Amazon WorkSpaces, Windows 365), some VPNs, and corporate proxies that run on these providers. A project whose visitors browse that way can turn the check off ("Ignore visits from data centers" in its settings, `ignore_data_centers`, on by default). Server-side events are never checked: they come from the site's own server by design.
+- **Not people behind privacy relays:** none of Apple's iCloud Private Relay exit ranges (`mask-api.icloud.com/egress-ip-ranges.csv`, 285,194 ranges) was in the file, and CDNs such as Cloudflare, Akamai's edge, and Fastly, which carry such relays, are not in it on purpose.
+- **Test runs in CI are ignored:** GitHub Actions runners, for example, run in Azure. Tests that should count need a project with the check off.
+- **Behind a proxy without `TRUST_PROXY`,** every request seems to come from the proxy's address, which may be a cloud's: then every event would be ignored. Set `TRUST_PROXY` (see "Rate limits" below).
+- **A site that forwards its events through its own server** (to get past ad blockers) sends them all from that server's address, which is usually in a cloud: all of them would be ignored. Such forwarding is not supported anyway, since every visitor would share the server's address, location, and visitor ID. The API logs, once per project and process, when it starts ignoring a project's events this way.
+- **Bots elsewhere still count:** on home connections (residential proxies, infected computers) or at providers not listed. Spotting those needs behavior signals; that is not built.
+
+Without the file, nothing counts as a data center, and the API warns at startup; it also warns when the oldest ranges are more than 45 days old.
+
+Every range is checked before use (`parseRange` in `data-centers.ts`), so one bad line in a provider's list cannot catch everyone: a range wider than a /8 (IPv4) or /16 (IPv6), one over private, loopback, shared, or multicast IPv4, and IPv6 outside global unicast or in 6to4 (whose addresses stand for IPv4 ones) are left out. A source whose download yields fewer than 5 valid ranges, such as a maintenance page in place of the list, counts as failed.
 
 ### Not done yet
 
 - Updating the database automatically (needs the background worker), and including it in production images.
 - The "IP geolocation by DB-IP" credit in the dashboard, which does not show locations yet.
-- Detecting bots that pretend to be browsers.
+- Detecting bots that pretend to be browsers from homes or unlisted providers.
+- Counting ignored bots per project, so a site can see how many there were.
 
 ## 5. Visitors
 

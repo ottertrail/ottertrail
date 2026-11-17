@@ -7,7 +7,14 @@ import { StatusBadge } from "@/components/status-badge";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field";
+import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Field,
+  FieldContent,
+  FieldDescription,
+  FieldGroup,
+  FieldLabel,
+} from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -125,6 +132,15 @@ function SettingsCard({ project }: { project: Project }) {
     ? RETENTION_CHOICES
     : [...RETENTION_CHOICES, { value: saved, label: `${saved} days` }];
   const [retention, setRetention] = React.useState(saved);
+  const [ignoreDataCenters, setIgnoreDataCenters] = React.useState(project.ignoreDataCenters);
+  // When the saved values change, as after a save or a change from another
+  // tab, the form shows them, not what it held before.
+  const [shown, setShown] = React.useState({ retention: saved, ignore: project.ignoreDataCenters });
+  if (shown.retention !== saved || shown.ignore !== project.ignoreDataCenters) {
+    setShown({ retention: saved, ignore: project.ignoreDataCenters });
+    setRetention(saved);
+    setIgnoreDataCenters(project.ignoreDataCenters);
+  }
   const chosenDays = retentionDays(retention);
   // A stricter limit than now deletes events: say so before saving.
   const deletes =
@@ -134,6 +150,7 @@ function SettingsCard({ project }: { project: Project }) {
       name: string;
       allowedHostnames: string[];
       retentionDays: number | null;
+      ignoreDataCenters: boolean;
     }) => updateProject(project.id, changes),
     onSuccess: (updated) => {
       queryClient.setQueryData(projectQuery(project.id).queryKey, updated);
@@ -148,6 +165,7 @@ function SettingsCard({ project }: { project: Project }) {
       name: formText(form, "name"),
       allowedHostnames: hostnamesFromText(formText(form, "hostnames")),
       retentionDays: retentionDays(retention),
+      ignoreDataCenters,
     });
   }
 
@@ -161,7 +179,12 @@ function SettingsCard({ project }: { project: Project }) {
       <CardContent>
         {/* Remounts with the saved values, so the form shows what the API stored. */}
         <form
-          key={JSON.stringify([project.name, project.allowedHostnames, project.retentionDays])}
+          key={JSON.stringify([
+            project.name,
+            project.allowedHostnames,
+            project.retentionDays,
+            project.ignoreDataCenters,
+          ])}
           onSubmit={submit}
         >
           <FieldGroup>
@@ -220,6 +243,25 @@ function SettingsCard({ project }: { project: Project }) {
                   ? `Events older than ${choices.find((choice) => choice.value === retention)?.label.toLowerCase()} will be deleted for good within a few hours of saving, a whole day at a time.`
                   : "Older events are deleted for good, a whole day at a time. Forever keeps everything."}
               </FieldDescription>
+            </Field>
+            <Field orientation="horizontal">
+              <Checkbox
+                id="settings-data-centers"
+                checked={ignoreDataCenters}
+                onCheckedChange={(checked) => setIgnoreDataCenters(checked)}
+                aria-describedby="settings-data-centers-hint"
+              />
+              <FieldContent>
+                <FieldLabel htmlFor="settings-data-centers">
+                  Ignore visits from data centers
+                </FieldLabel>
+                <FieldDescription id="settings-data-centers-hint">
+                  A browser at a cloud provider&apos;s address, such as Amazon&apos;s or
+                  Hetzner&apos;s, is nearly always a program: a scraper, a test run. People who
+                  browse through a remote desktop or some VPNs in a cloud are ignored too; turn this
+                  off if your visitors do.
+                </FieldDescription>
+              </FieldContent>
             </Field>
             {save.error !== null && (
               <Alert variant="destructive" role="alert">
@@ -287,7 +329,8 @@ export function ProjectSettingsPage({ projectId }: { projectId: string }) {
     <div className="mx-auto flex max-w-3xl flex-col gap-6 p-6">
       <InstallCard project={project.data} />
       <ServerCard project={project.data} />
-      <SettingsCard project={project.data} />
+      {/* One project's unsaved choices never carry over to another's. */}
+      <SettingsCard key={project.data.id} project={project.data} />
       <DangerZone project={project.data} />
     </div>
   );

@@ -137,6 +137,7 @@ export const PROJECT: Project = {
   retentionDays: null,
   secretKey: "sk_00000000000000000000000000000001",
   requireSignedUserIds: false,
+  ignoreDataCenters: true,
 };
 
 export const OTHER_PROJECT: Project = {

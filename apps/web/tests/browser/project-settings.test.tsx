@@ -243,6 +243,52 @@ describe("keeping events", () => {
       .not.toBeInTheDocument();
   });
 
+  test("visits from data centers are ignored until turned off, which is saved", async () => {
+    const api = installFakeApi();
+    renderApp(SETTINGS);
+    const ignore = page.getByRole("checkbox", { name: "Ignore visits from data centers" });
+    await expect.element(ignore).toBeChecked();
+
+    await ignore.click();
+    await page.getByRole("button", { name: "Save changes" }).click();
+    await expect
+      .poll(() => api.bodies.at(-1))
+      .toMatchObject({
+        method: "PATCH",
+        path: `/api/projects/${PROJECT.id}`,
+        body: { ignoreDataCenters: false },
+      });
+    await expect.element(page.getByText("Saved.")).toBeVisible();
+    await expect.element(ignore).not.toBeChecked();
+  });
+
+  test("a choice not saved on one project never carries over to another", async () => {
+    // Both projects keep events forever and ignore data centers, and the
+    // other one is cached: the page switches without loading.
+    installFakeApi({ projects: [PROJECT, OTHER_PROJECT] });
+    const router = renderApp(`/projects/${OTHER_PROJECT.id}/settings`);
+    await expect.element(page.getByRole("textbox", { name: "Name" })).toHaveValue("Docs");
+    await router.navigate({
+      to: "/projects/$projectId/settings",
+      params: { projectId: PROJECT.id },
+    });
+    await expect.element(page.getByRole("textbox", { name: "Name" })).toHaveValue("Main site");
+    const ignore = page.getByRole("checkbox", { name: "Ignore visits from data centers" });
+    const keep = page.getByRole("combobox", { name: "Keep events" });
+    await ignore.click();
+    await keep.click();
+    await page.getByRole("option", { name: "1 year" }).click();
+    await expect.element(ignore).not.toBeChecked();
+
+    await router.navigate({
+      to: "/projects/$projectId/settings",
+      params: { projectId: OTHER_PROJECT.id },
+    });
+    await expect.element(page.getByRole("textbox", { name: "Name" })).toHaveValue("Docs");
+    await expect.element(ignore).toBeChecked();
+    await expect.element(keep).toMatchTextContent(/^Forever/);
+  });
+
   test("a limit set some other way shows in days", async () => {
     installFakeApi({ projects: [{ ...PROJECT, retentionDays: 90 }] });
     renderApp(SETTINGS);

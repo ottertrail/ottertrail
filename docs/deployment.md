@@ -46,7 +46,7 @@ docker compose ps
 
 The first command builds the image that `migrate`, `api`, and `worker` share, once. `docker compose up -d --build` would work too, but podman-compose builds it once for each of the three, all at the same time, and on a 2 GB machine that ran out of memory. `migrate` should show "Exited (0)" and `api` "healthy". The build installs every development dependency inside the image and takes a few minutes; one of those three builds finished in Podman's 2 GB machine, but a small server may need swap or a build elsewhere (see [Images](#images)).
 
-Create the owner account, then download the geolocation database:
+Create the owner account, then download what the API knows about IP addresses:
 
 ```sh
 docker compose exec api node dist/setup.mjs
@@ -54,7 +54,7 @@ docker compose exec api node dist/update-geo.mjs
 docker compose up -d --force-recreate --no-deps api
 ```
 
-`setup.mjs` prints a link, valid for an hour, that creates the owner. `update-geo.mjs` saves DB-IP's database (about 130 MB) in the `geo-data` volume; the API reads it at startup, hence the restart. Without it, events are stored without a location. DB-IP publishes a new file each month: run the last two commands again monthly.
+`setup.mjs` prints a link, valid for an hour, that creates the owner. `update-geo.mjs` saves DB-IP's location database (about 130 MB) and the address ranges of cloud and hosting providers (about 400 KB) in the `geo-data` volume; the API reads both at startup, hence the restart. Without them, events are stored without a location, and events from cloud servers are not recognized ([web analytics](web-analytics.md#data-centers)). DB-IP publishes a new file each month, and providers add ranges every week: run the last two commands again monthly. The API warns at startup when either file is missing or old.
 
 The last command restarts only the API by recreating its container. `docker compose restart api` is the usual way, but Podman refuses it because `migrate` has exited.
 
@@ -163,7 +163,7 @@ Not tested yet: Docker Engine and Docker Compose on a Linux server, a real domai
 ## Known limitations
 
 - No automated or off-site backups.
-- The geolocation database is updated by hand, monthly.
+- The geolocation database and the data-center ranges are updated by hand, monthly.
 - One server: no failover, and a few seconds of downtime for each update.
 - No image registry or CI builds: each server builds its own image.
 - One deployment per server. Two stacks on one host would both need ports 80 and 443; sharing a host needs one proxy in front of both, not set up.

@@ -4,6 +4,7 @@ import type { FastifyError, FastifyPluginCallback, FastifyReply } from "fastify"
 import type { Kysely } from "kysely";
 
 import type { Database } from "../db/schema.ts";
+import { type IsDataCenter, noDataCenters } from "../enrichment/data-centers.ts";
 import { type Locate, noLocation } from "../enrichment/geo.ts";
 import { isBot, parseUserAgent } from "../enrichment/user-agent.ts";
 import { VisitorIds } from "../visitors/visitor-ids.ts";
@@ -45,6 +46,8 @@ export interface CollectionOptions {
   projectLimit?: RateLimit;
   /** Finds the visitor's location from the request. Default: no location. */
   locate?: Locate;
+  /** Whether an address is a data center's. Default: none is. */
+  isDataCenter?: IsDataCenter;
   /** How often expired visitor salts are deleted. Default: hourly. */
   saltCleanupIntervalMs?: number;
   /** Clock, replaceable in tests. */
@@ -201,7 +204,11 @@ function storageUnavailable(reply: FastifyReply) {
  * 7. One INSERT. 202 is sent only after PostgreSQL commits it.
  */
 export const collectionRoutes: FastifyPluginCallback<CollectionOptions> = (app, options, done) => {
-  const { db, locate = noLocation, now = Date.now } = options;
+  const { db, locate = noLocation, isDataCenter = noDataCenters, now = Date.now } = options;
+  // Projects whose events were ignored as coming from a data center, logged
+  // once each: a site that forwards its events through its own server in a
+  // cloud would otherwise lose them all without a trace.
+  const dataCenterProjects = new Set<string>();
   const projectLimit = options.projectLimit ?? DEFAULT_PROJECT_LIMIT;
   if (projectLimit.capacity < MAX_EVENTS_PER_BATCH) {
     // Plugins report setup errors through done(); app.ready() then rejects.
@@ -332,9 +339,20 @@ export const collectionRoutes: FastifyPluginCallback<CollectionOptions> = (app, 
       }
 
       // Bots are accepted and ignored: an error would only invite retries.
-      // They are checked before the budget, so they cannot use it up.
+      // They are checked before the budget, so they cannot use it up. A
+      // "browser" at a cloud provider's address is nearly always a program
+      // too; the address is checked here and, as ever, never stored.
       const userAgent = request.headers["user-agent"];
-      if (isBot(userAgent)) {
+      const bot = isBot(userAgent);
+      const dataCenter = !bot && project.ignoreDataCenters && isDataCenter(request.ip);
+      if (dataCenter && !dataCenterProjects.has(project.id) && dataCenterProjects.size < 10_000) {
+        dataCenterProjects.add(project.id);
+        request.log.info(
+          { projectId: project.id },
+          "ignoring this project's events from data-center addresses (logged once)",
+        );
+      }
+      if (bot || dataCenter) {
         return reply.code(202).send({ stored: 0, duplicates: 0, tooOld: 0, bots: events.length });
       }
 

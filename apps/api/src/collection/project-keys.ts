@@ -14,6 +14,8 @@ export interface CollectingProject {
   secretKey: string;
   /** Accept a browser's user ID only with a valid signature. */
   requireSignedUserIds: boolean;
+  /** Ignore browser events from data centers (enrichment/data-centers.ts). */
+  ignoreDataCenters: boolean;
 }
 
 interface CacheEntry {
@@ -85,6 +87,7 @@ export class ProjectKeyCache {
         "projects.allowed_hostnames",
         "projects.secret_key",
         "projects.require_signed_user_ids",
+        "projects.ignore_data_centers",
         "organizations.time_zone",
       ])
       .where(`projects.${column}`, "=", key)
@@ -98,6 +101,7 @@ export class ProjectKeyCache {
             timeZone: row.time_zone,
             secretKey: row.secret_key,
             requireSignedUserIds: row.require_signed_user_ids,
+            ignoreDataCenters: row.ignore_data_centers,
           };
 
     if (forgotten !== this.#forgotten) return project;
@@ -119,7 +123,7 @@ export class ProjectKeyCache {
 
   /**
    * Drops everything cached about one project, under either key: after its
-   * secret key is replaced, its signing rule changed, or it is deleted.
+   * secret key is replaced, a collection setting changed, or it is deleted.
    */
   forgetProject(projectId: string) {
     this.#forgotten += 1;

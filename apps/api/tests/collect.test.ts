@@ -512,6 +512,41 @@ describe("POST /api/events", () => {
       const human = await send(batch(project.public_key, full), { instance: limited });
       expect(human.statusCode).toBe(202);
     });
+
+    describe("from data centers", () => {
+      const CLOUD = "198.51.100.77";
+      const cloudAware = () =>
+        appWith({ collection: { now: () => NOW, isDataCenter: (ip) => ip === CLOUD } });
+
+      test("accepts and ignores a browser at a cloud provider's address, as a bot", async () => {
+        const instance = cloudAware();
+        const project = await createProject();
+        const response = await send(batch(project.public_key, [pageview(), pageview()]), {
+          instance,
+          remoteAddress: CLOUD,
+        });
+        expect(response.statusCode).toBe(202);
+        expect(response.json()).toEqual({ stored: 0, duplicates: 0, tooOld: 0, bots: 2 });
+        expect(await storedEvents(project.id)).toHaveLength(0);
+
+        // The same browser from anywhere else counts.
+        const home = await send(batch(project.public_key, [pageview()]), { instance });
+        expect(home.json()).toMatchObject({ stored: 1, bots: 0 });
+      });
+
+      test("counts them for a project that turned this off", async () => {
+        const project = await insertProject(db(), {
+          name: "Remote desktops",
+          allowed_hostnames: [SITE],
+          ignore_data_centers: false,
+        });
+        const response = await send(batch(project.public_key, [pageview()]), {
+          instance: cloudAware(),
+          remoteAddress: CLOUD,
+        });
+        expect(response.json()).toMatchObject({ stored: 1, bots: 0 });
+      });
+    });
   });
 
   describe("visitors", () => {

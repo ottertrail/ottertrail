@@ -56,6 +56,8 @@ export interface ProjectsTable {
   secret_key: ColumnType<string, string | undefined, string>;
   /** Accept a browser's user ID only with a valid signature from the site's server. */
   require_signed_user_ids: ColumnType<boolean, boolean | undefined, boolean>;
+  /** Ignore browser events from cloud and hosting providers' addresses (migration 0017). */
+  ignore_data_centers: ColumnType<boolean, boolean | undefined, boolean>;
   /**
    * When the latest event copied to ClickHouse happened; null before the
    * first. The worker sets it as it copies (clickhouse/copy-events.ts).

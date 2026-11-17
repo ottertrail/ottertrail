@@ -224,6 +224,23 @@ describe("project routes", () => {
     expect((await browserEvent()).json().unverifiedUsers).toBe(1);
   });
 
+  test("ignore browsers in data centers unless turned off", async () => {
+    const created = (await request("POST", "/api/projects", { name: "Cloud" })).json().project;
+    expect(created.ignoreDataCenters).toBe(true);
+
+    const changed = await request("PATCH", `/api/projects/${created.id}`, {
+      ignoreDataCenters: false,
+    });
+    expect(changed.json().project.ignoreDataCenters).toBe(false);
+    const reloaded = await request("GET", `/api/projects/${created.id}`);
+    expect(reloaded.json().project.ignoreDataCenters).toBe(false);
+
+    const refused = await request("PATCH", `/api/projects/${created.id}`, {
+      ignoreDataCenters: "no",
+    });
+    expect(refused.statusCode).toBe(400);
+  });
+
   test("report when the latest event happened", async () => {
     const created = (await request("POST", "/api/projects", { name: "Blog" })).json().project;
     const occurredAt = new Date("2026-11-16T09:30:00Z");
