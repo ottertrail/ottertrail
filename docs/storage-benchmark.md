@@ -1,24 +1,24 @@
 # Storage benchmark: PostgreSQL and ClickHouse
 
-**Decision (17 November 2026):** analytics events, and later logs, traces, and metrics, will be stored in ClickHouse. PostgreSQL keeps users, projects, and settings. TimescaleDB, PostgreSQL with time-series extensions, was considered and not pursued. This page records the measurements behind the decision and what they mean for the design. Nothing has moved to ClickHouse yet.
+**Decision (17 November 2026):** analytics events, and later logs, traces, and metrics, will be stored in ClickHouse. PostgreSQL keeps users, projects, and settings. TimescaleDB, PostgreSQL with time-series extensions, was considered and not pursued. This page records the measurements behind the decision and what they mean for the design. Since then, events have moved to ClickHouse ([clickhouse.md](clickhouse.md)).
 
 ## How it was measured
 
-`vp run bench:storage` ([apps/api/scripts/bench-storage.ts](../apps/api/scripts/bench-storage.ts)) generates fake visits in a temporary PostgreSQL schema ([bench-data.ts](../apps/api/scripts/bench-data.ts), the same generator as `vp run bench:reports`), then copies them into a temporary ClickHouse database, so both hold exactly the same events. Each report then runs in both:
+`vp run bench:storage` generated fake visits in a temporary PostgreSQL schema ([bench-data.ts](../apps/api/scripts/bench-data.ts), the same generator as `vp run bench:reports`), then copied them into a temporary ClickHouse database, so both held exactly the same events. Each report then ran in both. The script was retired once reports moved to ClickHouse, since PostgreSQL's report functions it compared against are gone; it is in the Git history (`git show 2a2ebab`), with its ClickHouse container (`bench-clickhouse.compose.yaml`).
 
-- PostgreSQL through the API's own report functions (`src/reports/reports.ts`).
+- PostgreSQL through the API's own report functions of the time (`src/reports/reports.ts`).
 - ClickHouse through the same rules written in its SQL: visits split after 30 idle minutes, engagement reports that extend a visit but never start one, stale engagement reports ignored (`src/visits/visits.ts`), then the summary, visitors per day, top pages, countries, and custom events.
 
 Every answer is compared before any time is shown. **In every run, every report gave the same answer in both databases.**
 
 Times are the median of three runs after a warm-up run. The setup:
 
-|                  |                                                                                                                                                                                                    |
-| ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| PostgreSQL       | 18.7, the development container, default settings (`shared_buffers` 128 MB, `work_mem` 4 MB)                                                                                                       |
-| ClickHouse       | 26.8.38.9 (long-term support), its own container limited to 2 CPUs, which also caps it at 2 threads per query ([bench-clickhouse.compose.yaml](../apps/api/scripts/bench-clickhouse.compose.yaml)) |
-| Machine          | Podman VM on an Apple silicon Mac: 7 CPUs and 2 GB of memory, shared with other containers (0.5 to 0.9 GB available)                                                                               |
-| ClickHouse table | `ReplacingMergeTree`, partitioned by month, ordered by `(project_id, occurred_at, event_id)`                                                                                                       |
+|                  |                                                                                                                                                 |
+| ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| PostgreSQL       | 18.7, the development container, default settings (`shared_buffers` 128 MB, `work_mem` 4 MB)                                                    |
+| ClickHouse       | 26.8.38.9 (long-term support), its own container limited to 2 CPUs, which also caps it at 2 threads per query (`bench-clickhouse.compose.yaml`) |
+| Machine          | Podman VM on an Apple silicon Mac: 7 CPUs and 2 GB of memory, shared with other containers (0.5 to 0.9 GB available)                            |
+| ClickHouse table | `ReplacingMergeTree`, partitioned by month, ordered by `(project_id, occurred_at, event_id)`                                                    |
 
 ## Events: 200,000 visits over 30 days (1.23 million events)
 

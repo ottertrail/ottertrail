@@ -1,11 +1,14 @@
-import { type Kysely, type RawBuilder, sql } from "kysely";
+import { type Kysely, sql } from "kysely";
 
+import { QueryParams, queryRows, type Reader } from "../clickhouse/query.ts";
 import type { Database } from "../db/schema.ts";
-import { ENGAGEMENT, PAGEVIEW, visitsQuery } from "../visits/visits.ts";
+import { dayIn } from "../visitors/visitor-ids.ts";
+import { ENGAGEMENT, PAGEVIEW, type VisitsQueryOptions, visitsSql } from "../visits/visits.ts";
 
 /**
- * Report queries for the dashboard. Every number is computed from the stored
- * events when asked (see docs/web-analytics.md, section 7).
+ * Report queries for the dashboard, run in ClickHouse. Every number is
+ * computed from the stored events when asked (see docs/web-analytics.md,
+ * section 7, and docs/clickhouse.md).
  *
  * A range is [from, to) in absolute time; localDays() turns calendar days in
  * the organization's timezone into one. Days in charts are local days too.
@@ -16,6 +19,11 @@ export interface ReportRange {
   to: Date;
   /** IANA timezone that days are counted in, the timezone of the project's organization. */
   timeZone: string;
+  /**
+   * The project's allowed hostnames. A referrer on one of them is in-app
+   * navigation, not a source, so it counts as direct.
+   */
+  ownHostnames: readonly string[];
   /**
    * Only visits that match every filter count, and only their events. A
    * visit lies within one local day (visitor IDs change at midnight), so
@@ -36,30 +44,26 @@ const rangeEnd = ({ to, until }: ReportRange): Date =>
 
 const hasFilters = (range: ReportRange) => (range.filters?.length ?? 0) > 0;
 
+/** Rows a report returns unless told otherwise, and the most it ever returns. */
 export const DEFAULT_LIMIT = 10;
 export const MAX_LIMIT = 100;
-/** Rows a list may skip, for paging: far more than any list shows. */
+
+/** Rows a list can skip: far past any list worth paging through. */
 const MAX_OFFSET = 100_000;
 
-/** A page of a list: rows to skip, and text the row's name must contain. */
+/** For "show all": a page further down a list, and only rows whose name contains `search`. */
 export interface ListOptions {
   offset?: number | undefined;
-  /** Case-insensitive, anywhere in the name; % and _ match themselves. */
   search?: string | undefined;
 }
 
-/** A LIKE pattern that finds `search` anywhere, with LIKE's own characters escaped. */
-function containsPattern(search: string): string {
-  return `%${search.replaceAll(/[\\%_]/g, (character) => `\\${character}`)}%`;
-}
-
-/** With a search, a condition that `expression` contains it; nothing without. */
-function nameContains(
-  expression: RawBuilder<unknown>,
-  search: string | undefined,
-): RawBuilder<unknown> {
-  if (search === undefined || search === "") return sql`true`;
-  return sql`(${expression}) ilike ${containsPattern(search)} escape '\\'`;
+/**
+ * A condition that the text `expression` contains `search`, case ignored,
+ * taken literally (no wildcards); always true without a search.
+ */
+function nameContains(expression: string, search: string | undefined, params: QueryParams): string {
+  if (search === undefined || search === "") return "1";
+  return `positionCaseInsensitiveUTF8(${expression}, ${params.add(search, "String")}) > 0`;
 }
 
 function clampOffset(offset: number | undefined): number {
@@ -68,9 +72,15 @@ function clampOffset(offset: number | undefined): number {
     : Math.min(offset, MAX_OFFSET);
 }
 
+function clampLimit(limit: number): number {
+  if (!Number.isInteger(limit) || limit < 1) return DEFAULT_LIMIT;
+  return Math.min(limit, MAX_LIMIT);
+}
+
 /**
- * Country codes whose English name contains `search`, such as DE for
- * "germ": countries are stored as codes and shown as names.
+ * Country codes whose English name contains the search, or that equal it:
+ * a country list shows names, but stores codes. Every two-letter code the
+ * runtime can name.
  */
 const countryNames = new Intl.DisplayNames(["en"], { type: "region" });
 const COUNTRY_CODES = Array.from({ length: 26 * 26 }, (_, index) =>
@@ -182,50 +192,73 @@ export async function previousDays(
 const count = (value: unknown) => Number(value ?? 0);
 const ratio = (part: number, whole: number) => (whole === 0 ? null : part / whole);
 const average = (value: unknown) => (value === null || value === undefined ? null : Number(value));
+const text = (value: unknown) => (typeof value === "string" ? value : null);
 
-/**
- * Events in the range that a person caused: pageviews and custom events,
- * not engagement reports. With filters, only those of the counted `visits`
- * (a FROM item, such as a CTE's name).
- */
-function activity(range: ReportRange, visits: RawBuilder<unknown>): RawBuilder<unknown> {
-  const { projectId, from } = range;
-  return sql`
-    select * from events
-    where project_id = ${projectId}
-      and occurred_at >= ${from} and occurred_at < ${rangeEnd(range)}
-      and visitor_id is not null
-      and name <> ${ENGAGEMENT}
-      ${inVisits(range, visits)}
-  `;
+/** "YYYY-MM-DD" a calendar day later. */
+function nextDay(day: string): string {
+  const [year = 0, month = 1, date = 1] = day.split("-").map(Number);
+  return new Date(Date.UTC(year, month - 1, date + 1)).toISOString().slice(0, 10);
 }
 
 /**
- * With filters, a condition on an `events` row: it belongs to one of
- * `visits`, the visitor's events from the visit's start to its end.
- * Without filters, nothing.
- *
- * For engagement reports the start is excluded. A report at the same moment
- * as a visit's first pageview sorts before it, so it can only be stale: it
- * reports time for a visit that had already ended (visits.ts).
+ * Optional for every report: the visits the report counts, worked out
+ * ahead into a temporary table of the reader's session. When it is left
+ * out, each report works the visits out itself; the analytics endpoint
+ * works them out once and passes them to every report (analytics.ts).
  */
-function inVisits(
+export type VisitsSource =
+  | {
+      /** A temporary table with visitsSql's columns, in the reader's session. */
+      table: string;
+      /** The filters already applied to it (filterVisits). */
+      filters: readonly ReportFilter[];
+    }
+  | undefined;
+
+/** Filters as one comparable string, in any order. */
+const filtersKey = (filters: readonly ReportFilter[] = []) =>
+  filters
+    .map(({ name, value }) => JSON.stringify([name, value]))
+    .toSorted((a, b) => a.localeCompare(b))
+    .join(",");
+
+/** SQL for the visits a report counts: `visitsSource`, or the range's visits narrowed by its filters. */
+function countedVisits(
   range: ReportRange,
-  visits: RawBuilder<unknown>,
-  { engagement = false }: { engagement?: boolean } = {},
-): RawBuilder<unknown> {
-  if (!hasFilters(range)) return sql``;
-  const afterStart = engagement
-    ? sql`events.occurred_at > counted.started_at`
-    : sql`events.occurred_at >= counted.started_at`;
-  return sql`
-    and exists (
-      select 1 from ${visits} as counted
-      where counted.visitor_id = events.visitor_id
-        and ${afterStart}
-        and events.occurred_at <= counted.ended_at
-    )
-  `;
+  visitsSource: VisitsSource,
+  params: QueryParams,
+  options: VisitsQueryOptions = {},
+): string {
+  if (visitsSource !== undefined) {
+    // Reports also narrow events by range.filters; visits filtered any other
+    // way would mix filtered and unfiltered numbers on one page.
+    if (filtersKey(visitsSource.filters) !== filtersKey(range.filters)) {
+      throw new Error("The visits source was filtered differently from the report range");
+    }
+    return `SELECT * FROM ${visitsSource.table}`;
+  }
+  // Filters read the first-event columns (source, country …).
+  return filterVisits(range, visitsSql(range, params, hasFilters(range) ? {} : options), params);
+}
+
+/**
+ * Events in the range that a person caused: pageviews and custom events,
+ * not engagement reports, as rows of visitor_id, name, path, and
+ * occurred_at. With filters, only those within one of the counted `visits`
+ * (SQL with visitsSql's columns), from its start to its end.
+ */
+function activity(range: ReportRange, visits: string, params: QueryParams): string {
+  const filtered = hasFilters(range);
+  return `
+    SELECT e.visitor_id AS visitor_id, e.name AS name, e.path AS path, e.occurred_at AS occurred_at
+    FROM events AS e FINAL
+    ${filtered ? `INNER JOIN (${visits}) AS counted ON e.visitor_id = counted.visitor_id` : ""}
+    WHERE e.project_id = ${params.add(range.projectId, "UUID")}
+      AND e.occurred_at >= ${params.time(range.from)}
+      AND e.occurred_at < ${params.time(rangeEnd(range))}
+      AND e.visitor_id IS NOT NULL
+      AND e.name != '${ENGAGEMENT}'
+      ${filtered ? "AND e.occurred_at >= counted.started_at AND e.occurred_at <= counted.ended_at" : ""}`;
 }
 
 export interface Summary {
@@ -240,71 +273,32 @@ export interface Summary {
   avgEngagedMs: number | null;
 }
 
-/**
- * Optional for every report: the visits the report counts, worked out
- * ahead. When it is left out, each report works the visits out itself; the
- * analytics endpoint works them out once and passes them to every report
- * (analytics.ts).
- */
-export type VisitsSource =
-  | {
-      /** SQL that yields the visits, with visitsQuery's columns. */
-      sql: RawBuilder<unknown>;
-      /** The filters already applied to them (filterVisits). */
-      filters: readonly ReportFilter[];
-    }
-  | undefined;
-
-/** Filters as one comparable string, in any order. */
-const filtersKey = (filters: readonly ReportFilter[] = []) =>
-  filters
-    .map(({ name, value }) => JSON.stringify([name, value]))
-    .toSorted((a, b) => a.localeCompare(b))
-    .join(",");
-
-/** The visits a report counts: `visitsSource`, or the range's visits narrowed by its filters. */
-function countedVisits(
-  range: ReportRange,
-  visitsSource: VisitsSource,
-  options: { firstEventColumns?: boolean } = {},
-): RawBuilder<unknown> {
-  if (visitsSource !== undefined) {
-    // Reports also narrow events by range.filters; visits filtered any other
-    // way would mix filtered and unfiltered numbers on one page.
-    if (filtersKey(visitsSource.filters) !== filtersKey(range.filters)) {
-      throw new Error("The visits source was filtered differently from the report range");
-    }
-    return visitsSource.sql;
-  }
-  // Filters read the first-event columns (source, country …).
-  return filterVisits(range, visitsQuery(range, hasFilters(range) ? {} : options));
-}
-
 export async function summary(
-  db: Kysely<Database>,
+  reader: Reader,
   range: ReportRange,
   visitsSource?: VisitsSource,
 ): Promise<Summary> {
-  const { rows } = await sql<Record<string, string | null>>`
-    with visits as (${countedVisits(range, visitsSource, { firstEventColumns: false })}),
-         activity as (${activity(range, sql`visits`)})
-    select
-      (select count(distinct visitor_id) from activity) as visitors,
-      (select count(*) from activity where name = ${PAGEVIEW}) as pageviews,
-      (select count(*) from visits) as visits,
-      (select sum(pageviews) from visits) as visit_pageviews,
-      (select count(*) from visits where bounce) as bounces,
-      (select avg(duration_ms) from visits) as avg_duration_ms,
-      (select avg(engaged_ms) from visits) as avg_engaged_ms
-  `.execute(db);
-  const row = rows[0] ?? {};
-  const visits = count(row.visits);
+  const params = new QueryParams();
+  const visits = countedVisits(range, visitsSource, params, { firstEventColumns: false });
+  const [row = {}] = await queryRows<Record<string, unknown>>(
+    reader,
+    `SELECT v.visits AS visits, v.visit_pageviews AS visit_pageviews, v.bounces AS bounces,
+            v.avg_duration_ms AS avg_duration_ms, v.avg_engaged_ms AS avg_engaged_ms,
+            a.visitors AS visitors, a.pageviews AS pageviews
+     FROM (SELECT count() AS visits, sum(pageviews) AS visit_pageviews, countIf(bounce) AS bounces,
+                  avgOrNull(duration_ms) AS avg_duration_ms, avgOrNull(engaged_ms) AS avg_engaged_ms
+           FROM (${visits})) AS v
+     CROSS JOIN (SELECT uniqExact(visitor_id) AS visitors, countIf(name = '${PAGEVIEW}') AS pageviews
+                 FROM (${activity(range, visits, params)})) AS a`,
+    params,
+  );
+  const visitCount = count(row.visits);
   return {
     visitors: count(row.visitors),
     pageviews: count(row.pageviews),
-    visits,
-    viewsPerVisit: ratio(count(row.visit_pageviews), visits),
-    bounceRate: ratio(count(row.bounces), visits),
+    visits: visitCount,
+    viewsPerVisit: ratio(count(row.visit_pageviews), visitCount),
+    bounceRate: ratio(count(row.bounces), visitCount),
     avgDurationMs: average(row.avg_duration_ms),
     avgEngagedMs: average(row.avg_engaged_ms),
   };
@@ -319,46 +313,47 @@ export interface DayPoint {
 }
 
 export async function timeseries(
-  db: Kysely<Database>,
+  reader: Reader,
   range: ReportRange,
   visitsSource?: VisitsSource,
 ): Promise<DayPoint[]> {
-  const { timeZone } = range;
-  const { rows } = await sql<Record<string, string>>`
-    with visits as (${countedVisits(range, visitsSource, { firstEventColumns: false })}),
-         activity as (${activity(range, sql`visits`)}),
-         days as (
-           select generate_series(
-             (${range.from}::timestamptz at time zone ${timeZone})::date,
-             ((${range.to}::timestamptz - interval '1 microsecond') at time zone ${timeZone})::date,
-             interval '1 day'
-           )::date as day
-         ),
-         by_day as (
-           select (occurred_at at time zone ${timeZone})::date as day,
-                  count(distinct visitor_id) as visitors,
-                  count(*) filter (where name = ${PAGEVIEW}) as pageviews
-           from activity group by 1
-         ),
-         visits_by_day as (
-           select (started_at at time zone ${timeZone})::date as day, count(*) as visits
-           from visits group by 1
-         )
-    select days.day::text as day,
-           coalesce(by_day.visitors, 0) as visitors,
-           coalesce(by_day.pageviews, 0) as pageviews,
-           coalesce(visits_by_day.visits, 0) as visits
-    from days
-    left join by_day on by_day.day = days.day
-    left join visits_by_day on visits_by_day.day = days.day
-    order by days.day
-  `.execute(db);
-  return rows.map((row) => ({
-    day: String(row.day),
-    visitors: count(row.visitors),
-    pageviews: count(row.pageviews),
-    visits: count(row.visits),
-  }));
+  const params = new QueryParams();
+  const visits = countedVisits(range, visitsSource, params, { firstEventColumns: false });
+  const timeZone = params.add(range.timeZone, "String");
+  // One query, so the visits are worked out once when no source is given.
+  const rows = await queryRows<{
+    day: string;
+    visitors: string;
+    pageviews: string;
+    visits: string;
+  }>(
+    reader,
+    `SELECT day, sum(visitors) AS visitors, sum(pageviews) AS pageviews, sum(visits) AS visits
+     FROM (
+       SELECT toString(toDate(occurred_at, ${timeZone})) AS day, uniqExact(visitor_id) AS visitors,
+              countIf(name = '${PAGEVIEW}') AS pageviews, 0 AS visits
+       FROM (${activity(range, visits, params)}) GROUP BY day
+       UNION ALL
+       SELECT toString(toDate(started_at, ${timeZone})) AS day, 0, 0, count()
+       FROM (${visits}) GROUP BY day
+     )
+     GROUP BY day`,
+    params,
+  );
+  const byDay = new Map(rows.map((row) => [row.day, row]));
+  const day = dayIn(range.timeZone);
+  const last = day(new Date(range.to.getTime() - 1));
+  const points: DayPoint[] = [];
+  for (let current = day(range.from); current <= last; current = nextDay(current)) {
+    const row = byDay.get(current);
+    points.push({
+      day: current,
+      visitors: count(row?.visitors),
+      pageviews: count(row?.pageviews),
+      visits: count(row?.visits),
+    });
+  }
+  return points;
 }
 
 export interface PageRow {
@@ -370,38 +365,48 @@ export interface PageRow {
 }
 
 export async function topPages(
-  db: Kysely<Database>,
+  reader: Reader,
   range: ReportRange,
   limit = DEFAULT_LIMIT,
   visitsSource?: VisitsSource,
   { offset, search }: ListOptions = {},
 ): Promise<PageRow[]> {
-  const { projectId, from } = range;
-  // PostgreSQL skips the visits CTE when nothing reads it: without filters.
-  const { rows } = await sql<Record<string, string | null>>`
-    with visits as (${countedVisits(range, visitsSource, { firstEventColumns: false })}),
-         views as (
-           select path, count(*) as pageviews, count(distinct visitor_id) as visitors
-           from (${activity(range, sql`visits`)}) as activity
-           where name = ${PAGEVIEW} and ${nameContains(sql`path`, search)}
-           group by path
-         ),
-         engagement as (
-           select path,
-                  avg(case when properties ->> 'engagedMs' ~ '^[0-9]{1,9}$'
-                           then (properties ->> 'engagedMs')::bigint end) as avg_engaged_ms
-           from events
-           where project_id = ${projectId}
-             and occurred_at >= ${from} and occurred_at < ${rangeEnd(range)}
-             and name = ${ENGAGEMENT}
-             ${inVisits(range, sql`visits`, { engagement: true })}
-           group by path
-         )
-    select views.path, views.pageviews, views.visitors, engagement.avg_engaged_ms
-    from views left join engagement using (path)
-    order by views.visitors desc, views.pageviews desc, views.path
-    limit ${clampLimit(limit)} offset ${clampOffset(offset)}
-  `.execute(db);
+  const params = new QueryParams();
+  const visits = countedVisits(range, visitsSource, params, { firstEventColumns: false });
+  const filtered = hasFilters(range);
+  const engagedMs = "JSONExtractRaw(e.properties, 'engagedMs')";
+  const rows = await queryRows<Record<string, unknown>>(
+    reader,
+    `SELECT views.path AS path, views.pageviews AS pageviews, views.visitors AS visitors,
+            engagement.avg_engaged_ms AS avg_engaged_ms
+     FROM (
+       SELECT path, count() AS pageviews, uniqExact(visitor_id) AS visitors
+       FROM (${activity(range, visits, params)})
+       WHERE name = '${PAGEVIEW}' AND ${nameContains("path", search, params)}
+       GROUP BY path
+     ) AS views
+     LEFT JOIN (
+       SELECT e.path AS path,
+              avgIfOrNull(toInt64OrNull(${engagedMs}), match(${engagedMs}, '^[0-9]{1,9}$')) AS avg_engaged_ms
+       FROM events AS e FINAL
+       ${filtered ? `INNER JOIN (${visits}) AS counted ON e.visitor_id = counted.visitor_id` : ""}
+       WHERE e.project_id = ${params.add(range.projectId, "UUID")}
+         AND e.occurred_at >= ${params.time(range.from)}
+         AND e.occurred_at < ${params.time(rangeEnd(range))}
+         AND e.name = '${ENGAGEMENT}'
+         ${
+           // A report at the same moment as a visit's first pageview sorts
+           // before it, so it can only be stale (visits.ts): the start is excluded.
+           filtered
+             ? "AND e.occurred_at > counted.started_at AND e.occurred_at <= counted.ended_at"
+             : ""
+         }
+       GROUP BY path
+     ) AS engagement USING (path)
+     ORDER BY visitors DESC, pageviews DESC, path
+     LIMIT ${clampLimit(limit)} OFFSET ${clampOffset(offset)}`,
+    params,
+  );
   return rows.map((row) => ({
     path: String(row.path),
     pageviews: count(row.pageviews),
@@ -434,33 +439,31 @@ export function isVisitDimension(name: string): name is VisitDimension {
 }
 
 /**
- * Each dimension maps to a fixed SQL expression over a visit row with its
- * referrer's host beside it (withReferrerHost), so no caller input becomes
- * SQL. Breakdowns group by these expressions and filters compare with them,
- * so a filter matches exactly the visits its breakdown row counted.
+ * Each dimension maps to a fixed SQL expression over a visit row, so no
+ * caller input becomes SQL. Breakdowns group by these expressions and
+ * filters compare with them, so a filter matches exactly the visits its
+ * breakdown row counted.
  */
-const VISIT_DIMENSIONS: Record<Exclude<VisitDimension, "source">, RawBuilder<unknown>> = {
-  entryPage: sql`entry_path`,
-  exitPage: sql`exit_path`,
-  utmSource: sql`utm_source`,
-  utmMedium: sql`utm_medium`,
-  utmCampaign: sql`utm_campaign`,
-  country: sql`country`,
+const VISIT_DIMENSIONS: Record<Exclude<VisitDimension, "source">, string> = {
+  entryPage: "entry_path",
+  exitPage: "exit_path",
+  utmSource: "utm_source",
+  utmMedium: "utm_medium",
+  utmCampaign: "utm_campaign",
+  country: "country",
   // Region and city names repeat across countries ("Springfield"), so the country is kept.
-  region: sql`case when region is not null then region || ', ' || coalesce(country, '?') end`,
-  city: sql`case when city is not null then city || ', ' || coalesce(country, '?') end`,
-  deviceType: sql`device_type`,
-  browser: sql`browser`,
-  os: sql`os`,
+  region: "if(region IS NULL, NULL, concat(region, ', ', ifNull(country, '?')))",
+  city: "if(city IS NULL, NULL, concat(city, ', ', ifNull(country, '?')))",
+  deviceType: "device_type",
+  browser: "browser",
+  os: "os",
 };
 
-/** The host after "scheme://": a bracketed IPv6 address ("[2001:db8::1]") whole, otherwise up to a port or path; without "www.". */
-const REFERRER_HOST = sql`lower(regexp_replace(substring(referrer from '^[a-zA-Z][a-zA-Z0-9+.-]*://(\\[[^]]*\\]|[^/:]+)'), '^www\\.', ''))`;
-
-/** `visits` as a FROM item named v, with its referrer's host beside each row as h.referrer_host. */
-function withReferrerHost(visits: RawBuilder<unknown>): RawBuilder<unknown> {
-  return sql`(${visits}) as v cross join lateral (select ${REFERRER_HOST} as referrer_host) as h`;
-}
+/**
+ * The host after "scheme://": a bracketed IPv6 address ("[2001:db8::1]")
+ * whole, otherwise up to a port or path; lower case, without "www.".
+ */
+const REFERRER_HOST_PATTERN = String.raw`^[a-zA-Z][a-zA-Z0-9+.-]*://(\[[^\]]*\]|[^/:]+)`;
 
 /**
  * The SQL expression of a dimension. The source of a visit is its
@@ -469,19 +472,17 @@ function withReferrerHost(visits: RawBuilder<unknown>): RawBuilder<unknown> {
  * own allowed hostnames is in-app navigation, not a source, so it also
  * counts as direct.
  */
-function dimensionSql(dimension: VisitDimension, projectId: string): RawBuilder<unknown> {
+function dimensionSql(dimension: VisitDimension, range: ReportRange, params: QueryParams): string {
   if (dimension !== "source") return VISIT_DIMENSIONS[dimension];
-  return sql`coalesce(
-    utm_source,
-    case when referrer_host is not null
-          and referrer_host not in (
-            select lower(regexp_replace(hostname, '^www\\.', ''))
-            from projects, unnest(allowed_hostnames) as hostname
-            where id = ${projectId}
-          )
-         then referrer_host end,
-    ${DIRECT}
-  )`;
+  const host = `nullIf(lower(replaceRegexpOne(extract(ifNull(referrer, ''), ${params.add(
+    REFERRER_HOST_PATTERN,
+    "String",
+  )}), '^www\\\\.', '')), '')`;
+  const own = params.add(
+    range.ownHostnames.map((hostname) => hostname.toLowerCase().replace(/^www\./, "")),
+    "Array(String)",
+  );
+  return `coalesce(utm_source, if(${host} IS NOT NULL AND NOT has(${own}, ${host}), ${host}, NULL), ${params.add(DIRECT, "String")})`;
 }
 
 /** What a report can be narrowed by: a visit dimension, or "page" for visits that viewed a page. */
@@ -502,39 +503,60 @@ export function isFilterName(name: string): name is FilterName {
   return (FILTER_NAMES as readonly string[]).includes(name);
 }
 
-/** The condition one filter puts on a visit row from withReferrerHost. */
-function filterCondition(filter: ReportFilter, range: ReportRange): RawBuilder<unknown> {
+/**
+ * The condition one filter puts on a visit row (visitsSql's columns).
+ * `allVisits` is SQL for the range's unfiltered visits, which the page
+ * filter looks the page up in.
+ */
+function filterCondition(
+  filter: ReportFilter,
+  range: ReportRange,
+  params: QueryParams,
+  allVisits: string,
+): string {
   if (filter.name === "page") {
     // Visits with a pageview of the page, between their first and last event.
-    return sql`exists (
-      select 1 from events as viewed
-      where viewed.project_id = ${range.projectId}
-        and viewed.occurred_at >= ${range.from} and viewed.occurred_at < ${rangeEnd(range)}
-        and viewed.visitor_id = v.visitor_id
-        and viewed.occurred_at between v.started_at and v.ended_at
-        and viewed.name = ${PAGEVIEW}
-        and viewed.path is not distinct from ${filter.value}
+    if (filter.value === null) return "0";
+    // The page's views are few, so they are the joined (in-memory) side.
+    return `(visitor_id, started_at) IN (
+      SELECT v.visitor_id, v.started_at
+      FROM (${allVisits}) AS v
+      INNER JOIN (
+        SELECT visitor_id, occurred_at
+        FROM events FINAL
+        WHERE project_id = ${params.add(range.projectId, "UUID")}
+          AND occurred_at >= ${params.time(range.from)}
+          AND occurred_at < ${params.time(rangeEnd(range))}
+          AND name = '${PAGEVIEW}'
+          AND path = ${params.add(filter.value, "String")}
+      ) AS viewed ON viewed.visitor_id = v.visitor_id
+      WHERE viewed.occurred_at >= v.started_at AND viewed.occurred_at <= v.ended_at
     )`;
   }
   // TypeScript checks callers; this guards JavaScript callers and bad input.
   if (!isVisitDimension(filter.name)) throw new Error("Unknown filter");
-  return sql`(${dimensionSql(filter.name, range.projectId)}) is not distinct from ${filter.value}`;
+  const value = dimensionSql(filter.name, range, params);
+  return filter.value === null
+    ? `(${value}) IS NULL`
+    : `(${value}) = ${params.add(filter.value, "String")}`;
 }
 
 /**
- * Only the visits (SQL with visitsQuery's columns, including the first-event
- * columns) that match every filter of the range; all of them without filters.
+ * Only the visits (SQL with visitsSql's columns, including the first-event
+ * columns) that match every filter of the range; all of them without
+ * filters. The page filter reads `allVisits` (by default `visits` again).
  */
-export function filterVisits(range: ReportRange, visits: RawBuilder<unknown>): RawBuilder<unknown> {
+export function filterVisits(
+  range: ReportRange,
+  visits: string,
+  params: QueryParams,
+  allVisits: string = visits,
+): string {
   const filters = range.filters ?? [];
   if (filters.length === 0) return visits;
-  return sql`
-    select v.* from ${withReferrerHost(visits)}
-    where ${sql.join(
-      filters.map((filter) => filterCondition(filter, range)),
-      sql` and `,
-    )}
-  `;
+  return `
+    SELECT * FROM (${visits})
+    WHERE ${filters.map((filter) => filterCondition(filter, range, params, allVisits)).join(" AND ")}`;
 }
 
 export interface BreakdownRow {
@@ -547,7 +569,7 @@ export interface BreakdownRow {
 
 /** Visits grouped by one dimension (see dimensionSql), most visitors first. */
 export async function breakdown(
-  db: Kysely<Database>,
+  reader: Reader,
   range: ReportRange,
   dimension: VisitDimension,
   limit = DEFAULT_LIMIT,
@@ -556,29 +578,31 @@ export async function breakdown(
 ): Promise<BreakdownRow[]> {
   // TypeScript checks callers; this guards JavaScript callers and bad input.
   if (!isVisitDimension(dimension)) throw new Error("Unknown breakdown dimension");
-  const value = dimensionSql(dimension, range.projectId);
+  const params = new QueryParams();
+  const visits = countedVisits(range, visitsSource, params);
+  const value = dimensionSql(dimension, range, params);
   const matches =
     dimension === "country" && search !== undefined && search !== ""
-      ? sql`${value} = any(${countryCodesMatching(search)}::text[])`
-      : nameContains(value, search);
-  const { rows } = await sql<Record<string, string | null>>`
-    select ${value} as value,
-           count(distinct visitor_id) as visitors,
-           count(*) as visits,
-           count(*) filter (where bounce) as bounces
-    from ${withReferrerHost(countedVisits(range, visitsSource))}
-    where ${matches}
-    group by 1
-    order by visitors desc, visits desc, value nulls last
-    limit ${clampLimit(limit)} offset ${clampOffset(offset)}
-  `.execute(db);
+      ? `has(${params.add(countryCodesMatching(search), "Array(String)")}, ${value})`
+      : nameContains(value, search, params);
+  const rows = await queryRows<Record<string, unknown>>(
+    reader,
+    `SELECT ${value} AS value, uniqExact(visitor_id) AS visitors, count() AS visits,
+            countIf(bounce) AS bounces
+     FROM (${visits})
+     WHERE ${matches}
+     GROUP BY value
+     ORDER BY visitors DESC, visits DESC, value ASC NULLS LAST
+     LIMIT ${clampLimit(limit)} OFFSET ${clampOffset(offset)}`,
+    params,
+  );
   return rows.map((row) => {
-    const visits = count(row.visits);
+    const visitCount = count(row.visits);
     return {
-      value: row.value ?? null,
+      value: text(row.value),
       visitors: count(row.visitors),
-      visits,
-      bounceRate: ratio(count(row.bounces), visits),
+      visits: visitCount,
+      bounceRate: ratio(count(row.bounces), visitCount),
     };
   });
 }
@@ -592,29 +616,27 @@ export interface CustomEventRow {
 
 /** Custom events (everything but pageviews and engagement reports), most visitors first. */
 export async function customEvents(
-  db: Kysely<Database>,
+  reader: Reader,
   range: ReportRange,
   limit = DEFAULT_LIMIT,
   visitsSource?: VisitsSource,
   { offset, search }: ListOptions = {},
 ): Promise<CustomEventRow[]> {
-  const { rows } = await sql<Record<string, string>>`
-    with visits as (${countedVisits(range, visitsSource, { firstEventColumns: false })})
-    select name, count(*) as events, count(distinct visitor_id) as visitors
-    from (${activity(range, sql`visits`)}) as activity
-    where name <> ${PAGEVIEW} and ${nameContains(sql`name`, search)}
-    group by name
-    order by visitors desc, events desc, name
-    limit ${clampLimit(limit)} offset ${clampOffset(offset)}
-  `.execute(db);
+  const params = new QueryParams();
+  const visits = countedVisits(range, visitsSource, params, { firstEventColumns: false });
+  const rows = await queryRows<Record<string, unknown>>(
+    reader,
+    `SELECT name, count() AS events, uniqExact(visitor_id) AS visitors
+     FROM (${activity(range, visits, params)})
+     WHERE name != '${PAGEVIEW}' AND ${nameContains("name", search, params)}
+     GROUP BY name
+     ORDER BY visitors DESC, events DESC, name
+     LIMIT ${clampLimit(limit)} OFFSET ${clampOffset(offset)}`,
+    params,
+  );
   return rows.map((row) => ({
     name: String(row.name),
     events: count(row.events),
     visitors: count(row.visitors),
   }));
-}
-
-function clampLimit(limit: number): number {
-  if (!Number.isInteger(limit) || limit < 1) return DEFAULT_LIMIT;
-  return Math.min(limit, MAX_LIMIT);
 }

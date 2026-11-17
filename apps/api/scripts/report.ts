@@ -6,7 +6,10 @@
  *   vp run report -- Playground 30   (a project by name, last 30 days)
  *
  * The days are today and the days before it, so the last day is partial.
+ * Reports read the events the worker has copied to ClickHouse.
  */
+import { createClickHouse } from "../src/clickhouse/clickhouse.ts";
+import type { Reader } from "../src/clickhouse/query.ts";
 import { loadConfig } from "../src/config.ts";
 import { createDatabase } from "../src/db/database.ts";
 import {
@@ -32,6 +35,8 @@ if (!Number.isInteger(dayCount) || dayCount < 1 || dayCount > 366) {
 
 const config = loadConfig();
 const db = createDatabase({ connectionString: config.databaseUrl, maxConnections: 2 });
+// PostgreSQL holds the projects and counts the days; ClickHouse holds the events.
+const reader: Reader = { client: createClickHouse(config.clickhouse) };
 
 const percent = (value: number | null) => (value === null ? "-" : `${Math.round(value * 100)}%`);
 const duration = (ms: number | null) => {
@@ -52,7 +57,12 @@ try {
   const query = db
     .selectFrom("projects")
     .innerJoin("organizations", "organizations.id", "projects.organization_id")
-    .select(["projects.id", "projects.name", "organizations.time_zone"])
+    .select([
+      "projects.id",
+      "projects.name",
+      "projects.allowed_hostnames",
+      "organizations.time_zone",
+    ])
     .orderBy("projects.created_at")
     .limit(1);
   const project = await (
@@ -72,11 +82,12 @@ try {
     const range: ReportRange = {
       projectId: project.id,
       timeZone,
+      ownHostnames: project.allowed_hostnames,
       ...(await localDays(db, firstDay, today, timeZone)),
     };
 
     console.log(`\n${project.name}: ${firstDay} to ${today} (${timeZone}; today is partial)\n`);
-    const total = await summary(db, range);
+    const total = await summary(reader, range);
     console.table({
       Visitors: total.visitors,
       Pageviews: total.pageviews,
@@ -88,7 +99,7 @@ try {
     });
     console.log("Visitors count each day separately: someone who came on 3 days counts 3 times.\n");
 
-    const days = await timeseries(db, range);
+    const days = await timeseries(reader, range);
     const busiest = Math.max(...days.map((d) => d.visitors));
     console.log("Visitors per day");
     for (const day of days)
@@ -96,7 +107,7 @@ try {
 
     console.log("\nTop pages");
     console.table(
-      (await topPages(db, range)).map((p) => ({
+      (await topPages(reader, range)).map((p) => ({
         page: p.path,
         visitors: p.visitors,
         pageviews: p.pageviews,
@@ -117,7 +128,7 @@ try {
     ] as const) {
       console.log(title);
       console.table(
-        (await breakdown(db, range, dimension)).map((row) => ({
+        (await breakdown(reader, range, dimension)).map((row) => ({
           [title.toLowerCase()]: row.value ?? "(unknown)",
           visitors: row.visitors,
           visits: row.visits,
@@ -127,9 +138,10 @@ try {
     }
 
     console.log("Custom events");
-    console.table(await customEvents(db, range));
+    console.table(await customEvents(reader, range));
     console.log("IP geolocation by DB-IP (https://db-ip.com)");
   }
 } finally {
   await db.destroy();
+  await reader.client.close();
 }

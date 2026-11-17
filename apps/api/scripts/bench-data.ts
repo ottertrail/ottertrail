@@ -1,6 +1,6 @@
 /**
- * Fake visits for the benchmarks (bench-reports.ts, bench-storage.ts), written
- * into whatever schema `db` points at. Never run against a real project.
+ * Fake visits for the report benchmark (bench-reports.ts), written into
+ * whatever schema `db` points at. Never run against a real project.
  */
 import { type Kysely, sql } from "kysely";
 

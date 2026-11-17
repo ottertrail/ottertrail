@@ -10,7 +10,9 @@ import {
   ownerExists,
   SETUP_LINK_TTL_MS,
 } from "../src/auth/setup.ts";
+import { createClickHouse } from "../src/clickhouse/clickhouse.ts";
 import type { RateLimit } from "../src/collection/rate-limiter.ts";
+import { loadConfig } from "../src/config.ts";
 import { createTestDatabase } from "./helpers/test-database.ts";
 
 const PUBLIC_URL = "http://localhost:5173";
@@ -34,10 +36,13 @@ async function instance({
     secret: "a-secret-only-these-tests-use-0123456789",
     rateLimit,
   });
+  // Never queried here: these tests read no reports, so no ClickHouse is needed.
+  const clickhouse = createClickHouse(loadConfig().clickhouse);
   const app = buildApp({
     db: testDb.db,
     dashboard: {
       auth,
+      clickhouse,
       publicUrl: PUBLIC_URL,
       trustedOrigins: [PUBLIC_URL],
       defaultTimeZone: "UTC",
@@ -53,6 +58,7 @@ async function instance({
     app,
     close: async () => {
       await app.close();
+      await clickhouse.close();
       await testDb.destroy();
     },
   };

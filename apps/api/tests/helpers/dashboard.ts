@@ -1,8 +1,12 @@
 import { buildApp } from "../../src/app.ts";
 import { createAuth } from "../../src/auth/auth.ts";
 import { createSetupToken } from "../../src/auth/setup.ts";
+import { copyEventsToClickHouse } from "../../src/clickhouse/copy-events.ts";
+import type { Reader } from "../../src/clickhouse/query.ts";
+import { type NewEvent, storeEvents } from "../../src/collection/event-store.ts";
 import type { MembershipRole } from "../../src/db/schema.ts";
 import { createOrganization } from "../../src/organizations/organizations.ts";
+import { createTestClickHouse } from "./test-clickhouse.ts";
 import { createTestDatabase } from "./test-database.ts";
 
 export const PUBLIC_URL = "http://localhost:5173";
@@ -14,15 +18,20 @@ export const OWNER = {
 };
 
 /**
- * An app with the dashboard API on a fresh test database, its owner created
- * and signed in, with their organization in `timeZone`. Send `cookie` (and
- * `origin` for changes) with requests; put projects in `organizationId`.
+ * An app with the dashboard API on a fresh test database and ClickHouse,
+ * its owner created and signed in, with their organization in `timeZone`.
+ * Send `cookie` (and `origin` for changes) with requests; put projects in
+ * `organizationId`; add events with `store`, which reports then read.
  */
 export async function signedInDashboard({
   timeZone = "UTC",
   now,
 }: { timeZone?: string; now?: () => Date } = {}) {
   const testDb = await createTestDatabase();
+  const testClickHouse = await createTestClickHouse().catch(async (error: unknown) => {
+    await testDb.destroy();
+    throw error;
+  });
   const auth = createAuth({
     db: testDb.db,
     publicUrl: PUBLIC_URL,
@@ -34,6 +43,7 @@ export async function signedInDashboard({
     db: testDb.db,
     dashboard: {
       auth,
+      clickhouse: testClickHouse.client,
       publicUrl: PUBLIC_URL,
       trustedOrigins: [PUBLIC_URL],
       defaultTimeZone: timeZone,
@@ -57,15 +67,26 @@ export async function signedInDashboard({
     .selectFrom("memberships")
     .select("organization_id")
     .executeTakeFirstOrThrow();
+  const reader: Reader = { client: testClickHouse.client };
   return {
     db: testDb.db,
+    /** Where reports read events. */
+    reader,
+    /** The name of the test's own ClickHouse database. */
+    clickhouseDatabase: testClickHouse.database,
     app,
     auth,
     cookie,
     organizationId,
+    /** Stores events as collection does, then copies them to ClickHouse as the worker does. */
+    store: async (projectId: string, events: readonly NewEvent[]) => {
+      await storeEvents(testDb.db, projectId, events);
+      await copyEventsToClickHouse(testDb.db, testClickHouse.client);
+    },
     close: async () => {
       await app.close();
       await testDb.destroy();
+      await testClickHouse.destroy();
     },
   };
 }

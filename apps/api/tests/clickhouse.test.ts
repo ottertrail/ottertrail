@@ -45,6 +45,18 @@ describe("ClickHouse migrations", () => {
     ]);
   });
 
+  test("make every insert into events wait until it is on disk", async () => {
+    const result = await ch().client.query({
+      query: `SELECT create_table_query FROM system.tables
+              WHERE database = {database:String} AND name = 'events'`,
+      query_params: { database: ch().database },
+      format: "JSONEachRow",
+    });
+    const [table] = await result.json<{ create_table_query: string }>();
+    expect(table?.create_table_query).toMatch(/fsync_after_insert = 1/);
+    expect(table?.create_table_query).toMatch(/fsync_part_directory = 1/);
+  });
+
   test("running them again changes nothing", async () => {
     const admin = createClickHouse(loadConfig().clickhouse, { database: "default" });
     try {

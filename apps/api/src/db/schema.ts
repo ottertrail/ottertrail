@@ -49,6 +49,11 @@ export interface ProjectsTable {
   allowed_hostnames: ColumnType<string[], string[] | undefined, string[]>;
   /** Days of events to keep, 30 to 3650; null keeps them forever. */
   retention_days: ColumnType<number | null, number | null | undefined, number | null>;
+  /**
+   * When the latest event copied to ClickHouse happened; null before the
+   * first. The worker sets it as it copies (clickhouse/copy-events.ts).
+   */
+  last_event_at: ColumnType<Date | null, never, Date | null>;
 }
 
 /**

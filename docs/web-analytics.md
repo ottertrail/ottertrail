@@ -83,6 +83,8 @@ Each project keeps its events forever unless its owner chooses a limit (`retenti
 
 The worker (`apps/api/src/worker.ts`, a process of its own beside the API) deletes events older than the limit at start and every 6 hours (`retention/retention.ts`). The cut-off is a midnight in the timezone of the project's organization, the limit's number of days before today there, so a report never shows a day with only some of its events. Deletes run 5,000 events at a time, so none holds its locks for long, and running the job twice, or in two workers at once, is harmless.
 
+Since reports moved to ClickHouse, this deletes only PostgreSQL's copy; ClickHouse's follows in step 4 of [clickhouse.md](clickhouse.md). Until then, reports still show events past the limit.
+
 ### Not done yet
 
 - Deleted events stay in backups until those expire; there is no backup policy yet.
@@ -520,7 +522,7 @@ Times are shown in the timezone of the project's organization.
 
 ## 7. Reports
 
-Reports turn events and visits into the numbers a dashboard shows. Code: `apps/api/src/reports/reports.ts`. Like visits, every number is computed from the stored events when asked.
+Reports turn events and visits into the numbers a dashboard shows. Code: `apps/api/src/reports/reports.ts`. Like visits, every number is computed from the stored events when asked. Reports read the events in ClickHouse, which the worker copies there a few seconds after they arrive ([clickhouse.md](clickhouse.md)); PostgreSQL counts the days.
 
 ### Days in the organization's timezone
 
@@ -592,7 +594,22 @@ The last day is today, so it is partial.
 
 ### Speed
 
-`vp run bench:reports -- <visits> <days>` fills a temporary schema with fake data, times each report (the median of three runs after a warm-up), and drops the schema. Each fake visit has 1-5 pages two minutes apart and an engagement report per page. Results on an Apple M4 Max, PostgreSQL 18 in Podman with default settings:
+`vp run bench:reports -- <visits> <days>` fills a temporary PostgreSQL schema with fake data, copies it to a temporary ClickHouse database as the worker does, times each report (the median of three runs after a warm-up), and drops both. Each fake visit has 1-5 pages two minutes apart and an engagement report per page.
+
+In ClickHouse, on the development stack (Apple M4 Max; Podman's 2 GB machine, shared with other containers):
+
+| 200,000 visits in 30 days (1.2 million events) | 1 day | 7 days | 30 days |
+| ---------------------------------------------- | ----- | ------ | ------- |
+| Summary                                        | 57 ms | 121 ms | 418 ms  |
+| Visitors per day                               | 24 ms | 77 ms  | 272 ms  |
+| Top pages                                      | 15 ms | 43 ms  | 170 ms  |
+| Sources                                        | 37 ms | 146 ms | 740 ms  |
+| Countries                                      | 29 ms | 103 ms | 369 ms  |
+| Custom events                                  | 5 ms  | 12 ms  | 32 ms   |
+
+Another run gave the same within 10%, except sources over 30 days: 528 ms. On the same kind of data in PostgreSQL (below), the 30-day summary took 2.3 seconds. Memory, not time, sets the limit now ([clickhouse.md](clickhouse.md#memory)).
+
+**Before ClickHouse.** Until step 3 of [clickhouse.md](clickhouse.md), reports ran in PostgreSQL. The rest of this section is the record of that time, on an Apple M4 Max, PostgreSQL 18 in Podman with default settings:
 
 | 200,000 visits in 30 days (1.2 million events) | 1 day  | 7 days | 30 days  |
 | ---------------------------------------------- | ------ | ------ | -------- |

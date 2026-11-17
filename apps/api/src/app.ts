@@ -3,6 +3,7 @@ import type { Kysely } from "kysely";
 
 import type { Auth } from "./auth/auth.ts";
 import { betterAuthRoutes, setupRoutes } from "./auth/routes.ts";
+import type { ClickHouseClient } from "./clickhouse/clickhouse.ts";
 import { ProjectKeyCache } from "./collection/project-keys.ts";
 import type { RateLimit } from "./collection/rate-limiter.ts";
 import { type CollectionOptions, collectionRoutes } from "./collection/routes.ts";
@@ -27,6 +28,8 @@ export interface AppOptions extends Omit<FastifyServerOptions, "logger"> {
    */
   dashboard?: {
     auth: Auth;
+    /** The events reports read (docs/clickhouse.md). */
+    clickhouse: ClickHouseClient;
     publicUrl: string;
     /** Origins dashboard requests may come from (Config.trustedOrigins). */
     trustedOrigins: readonly string[];
@@ -123,6 +126,7 @@ export function buildApp({
     app.register(reportRoutes, {
       prefix: "/api",
       db,
+      clickhouse: dashboard.clickhouse,
       auth: dashboard.auth,
       ...(dashboard.now === undefined ? {} : { now: dashboard.now }),
     });

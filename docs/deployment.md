@@ -1,6 +1,6 @@
 # Deployment
 
-How to run Ottertrail on one server, and the decisions behind it. The hosted service is one such deployment serving every organization; a self-hosted install is the same stack, usually with one organization. Events are moving to ClickHouse ([roadmap](roadmap.md#next-in-stage-0)): it is in the stack and has its tables, but nothing writes to it yet.
+How to run Ottertrail on one server, and the decisions behind it. The hosted service is one such deployment serving every organization; a self-hosted install is the same stack, usually with one organization. Events arrive in PostgreSQL and are copied to ClickHouse, where reports read them ([clickhouse.md](clickhouse.md)); PostgreSQL keeps them for two days.
 
 Status: tested on one machine with Podman (see [What has been tested](#what-has-been-tested)), before ClickHouse joined the stack. Nothing runs in production yet, and backups are manual.
 
@@ -14,12 +14,12 @@ Status: tested on one machine with Podman (see [What has been tested](#what-has-
 | `clickhouse` | ClickHouse 26.8, for analytics events and later logs and traces, data in `clickhouse-data`. Capped at 40% of the server's memory (see below) | No                     |
 | `migrate`    | Brings both databases' schemas up to date, then exits. The API and the worker start only after it succeeds                                   | No                     |
 | `api`        | The API, the dashboard's files, and the tracker (`/t.js`), on port 3000 inside the stack. Geolocation file in `geo-data`                     | No, only through Caddy |
-| `worker`     | Background work: deletes events past each project's retention                                                                                | No                     |
+| `worker`     | Background work: copies events to ClickHouse, deletes them from PostgreSQL after two days, and deletes events past each project's retention  | No                     |
 | `caddy`      | HTTPS: gets and renews the certificate, redirects HTTP to HTTPS, compresses responses, passes every request to the API                       | Ports 80 and 443       |
 
 Idle, the stack without ClickHouse used about 160 MB of memory (API 100 MB, PostgreSQL 27 MB, worker 18 MB, Caddy 14 MB), measured with the test data below. The image is about 290 MB, almost all of it Node.js's own image. No sizing under real traffic has been measured.
 
-ClickHouse's defaults assume a machine of its own with 16 GB or more, and its own sizing guide puts 8 GB as the floor. `deploy/clickhouse/` sets it up to share a server of about 8 GB: at most 40% of the memory, a 512 MiB mark cache instead of 5 GiB, internal logs Ottertrail never reads switched off, at most 1 GB per query, and large sorts and groupings continued on disk past 400 MB instead of failing ([storage benchmark](storage-benchmark.md)). Plan on 8 GB: on 2 GB, ClickHouse was killed for lack of memory at 6 million events.
+ClickHouse's defaults assume a machine of its own with 16 GB or more, and its own sizing guide puts 8 GB as the floor. `deploy/clickhouse/` sets it up to share a server of about 8 GB: at most 40% of the memory it could have (its own plus what is free, worked out again as it runs, so it leaves more to other services as they grow), a 512 MiB mark cache instead of 5 GiB, internal logs Ottertrail never reads switched off, at most 1 GB per query, and large sorts and groupings continued on disk past 400 MB instead of failing ([storage benchmark](storage-benchmark.md)). Plan on 8 GB: on 2 GB, ClickHouse was killed for lack of memory at 6 million events.
 
 ## What you need
 
@@ -72,7 +72,7 @@ To go back to an earlier release, check it out and run the same command, as long
 
 ## Backups
 
-Not automated yet. ClickHouse holds no data yet; once events move there, it needs a backup of its own, which will be described here. Before each update, and regularly:
+Not automated yet. **ClickHouse has no backup yet**, and it holds every event older than two days: PostgreSQL's backup below has accounts, projects, settings, and only the last two days' events. A ClickHouse backup comes with step 4 of [clickhouse.md](clickhouse.md). Before each update, and regularly:
 
 ```sh
 docker compose exec -T postgres pg_dump -U ottertrail -Fc ottertrail > ottertrail-$(date +%F).dump
@@ -143,14 +143,14 @@ On macOS with Podman 6.2 and podman-compose 1.6, with `OTTERTRAIL_DOMAIN=localho
 - In headless Chromium: the setup link creates the owner, a project is created, a test site on another origin loads `/t.js` and sends pageviews and time on page, and the analytics page shows them. Signing out and in again works; the session cookie is `__Secure-`, `Secure`, `HttpOnly`, and `SameSite=Lax`. No page broke the Content Security Policy.
 - `update-geo.mjs` fills the volume, and the recreated API loads the file.
 - `docker compose down` then `up` (without `-v`) keeps the events, the owner, and the geolocation file.
-- A backup with `pg_dump`, then `down -v` (deleting every volume), then the restore steps above, gives back every event and the owner's sign-in.
+- A backup with `pg_dump`, then `down -v` (deleting every volume), then the restore steps above, gave back every event and the owner's sign-in. That was before events moved to ClickHouse; PostgreSQL's backup now holds only the last two days' events.
 - A spoofed `X-Forwarded-For` sent through Caddy is ignored (see "Client addresses").
 
 Not tested yet: Docker Engine and Docker Compose on a Linux server, a real domain with a Let's Encrypt certificate, an `amd64` image, an update that runs a migration on existing data, and a restore on a new server.
 
 ## Known limitations
 
-- No automated or off-site backups.
+- No automated or off-site backups, and no ClickHouse backup at all yet.
 - The geolocation database is updated by hand, monthly.
 - One server: no failover, and a few seconds of downtime for each update.
 - No image registry or CI builds: each server builds its own image.

@@ -17,7 +17,10 @@ export interface Project {
   /** Sites whose pages may send events. Empty accepts nothing. */
   allowedHostnames: string[];
   createdAt: Date;
-  /** When the most recent event happened, or null before the first one. */
+  /**
+   * When the most recent event happened, or null before the first one. Set
+   * as the worker copies events to ClickHouse: a few seconds behind.
+   */
   lastEventAt: Date | null;
   /** Days of events kept; null keeps them forever. The worker deletes older ones. */
   retentionDays: number | null;
@@ -73,21 +76,18 @@ export function parseHostnames(raw: readonly string[]): HostnamesResult {
 }
 
 function baseQuery(db: Kysely<Database>) {
-  return db.selectFrom("projects").select((eb) => [
-    "projects.id",
-    "projects.organization_id",
-    "projects.name",
-    "projects.public_key",
-    "projects.allowed_hostnames",
-    "projects.created_at",
-    "projects.retention_days",
-    // Uses the (project_id, occurred_at) index: one lookup, not a scan.
-    eb
-      .selectFrom("events")
-      .select(sql<Date | null>`max(occurred_at)`.as("max"))
-      .whereRef("events.project_id", "=", "projects.id")
-      .as("last_event_at"),
-  ]);
+  return db
+    .selectFrom("projects")
+    .select([
+      "projects.id",
+      "projects.organization_id",
+      "projects.name",
+      "projects.public_key",
+      "projects.allowed_hostnames",
+      "projects.created_at",
+      "projects.retention_days",
+      "projects.last_event_at",
+    ]);
 }
 
 type ProjectRow = Awaited<ReturnType<ReturnType<typeof baseQuery>["executeTakeFirstOrThrow"]>>;
@@ -100,7 +100,7 @@ function toProject(row: ProjectRow): Project {
     publicKey: row.public_key,
     allowedHostnames: row.allowed_hostnames,
     createdAt: row.created_at,
-    lastEventAt: row.last_event_at ?? null,
+    lastEventAt: row.last_event_at,
     retentionDays: row.retention_days,
   };
 }

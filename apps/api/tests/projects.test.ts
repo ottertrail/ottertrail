@@ -7,7 +7,6 @@ import { afterAll, beforeAll, describe, expect, test } from "vite-plus/test";
 
 import { buildApp } from "../src/app.ts";
 import { isTrustedOrigin } from "../src/auth/origin.ts";
-import { storeEvents } from "../src/collection/event-store.ts";
 import { parseHostname } from "../src/projects/projects.ts";
 import { PUBLIC_URL, signedInDashboard } from "./helpers/dashboard.ts";
 import { createTestDatabase, type TestDatabase } from "./helpers/test-database.ts";
@@ -59,13 +58,11 @@ describe("isTrustedOrigin", () => {
 describe("project routes", () => {
   let dashboard: Awaited<ReturnType<typeof signedInDashboard>>;
   let app: Awaited<ReturnType<typeof signedInDashboard>>["app"];
-  let testDb: { db: Awaited<ReturnType<typeof signedInDashboard>>["db"] };
   let cookie = "";
 
   beforeAll(async () => {
     dashboard = await signedInDashboard();
     ({ app, cookie } = dashboard);
-    testDb = { db: dashboard.db };
   });
 
   afterAll(async () => {
@@ -163,7 +160,7 @@ describe("project routes", () => {
   test("report when the latest event happened", async () => {
     const created = (await request("POST", "/api/projects", { name: "Blog" })).json().project;
     const occurredAt = new Date("2026-11-16T09:30:00Z");
-    await storeEvents(testDb.db, created.id, [
+    await dashboard.store(created.id, [
       { eventId: randomUUID(), name: "pageview", occurredAt, path: "/" },
     ]);
     const response = await request("GET", `/api/projects/${created.id}`);

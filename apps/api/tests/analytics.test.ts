@@ -1,9 +1,12 @@
 import { randomUUID } from "node:crypto";
 
-import { sql } from "kysely";
+import { createClient } from "@clickhouse/client";
 import { afterAll, beforeAll, describe, expect, test } from "vite-plus/test";
 
-import { type NewEvent, storeEvents } from "../src/collection/event-store.ts";
+import { buildApp } from "../src/app.ts";
+import { type ClickHouseClient, createClickHouse } from "../src/clickhouse/clickhouse.ts";
+import type { NewEvent } from "../src/collection/event-store.ts";
+import { loadConfig } from "../src/config.ts";
 import {
   breakdown,
   customEvents,
@@ -14,7 +17,7 @@ import {
   topPages,
   type VisitDimension,
 } from "../src/reports/reports.ts";
-import { signedInDashboard } from "./helpers/dashboard.ts";
+import { PUBLIC_URL, signedInDashboard } from "./helpers/dashboard.ts";
 import { insertProject } from "./helpers/projects.ts";
 
 const TIME_ZONE = "Asia/Singapore";
@@ -94,7 +97,7 @@ describe("GET /api/projects/:id/analytics", () => {
       allowed_hostnames: ["example.com"],
     });
     projectId = project.id;
-    await storeEvents(dashboard.db, projectId, EVENTS);
+    await dashboard.store(projectId, EVENTS);
   });
 
   afterAll(async () => {
@@ -122,6 +125,7 @@ describe("GET /api/projects/:id/analytics", () => {
     const range = {
       projectId,
       timeZone: TIME_ZONE,
+      ownHostnames: ["example.com"],
       ...(await localDays(db, "2026-11-16", "2026-11-17", TIME_ZONE)),
     };
     expect(body).toMatchObject({
@@ -129,13 +133,13 @@ describe("GET /api/projects/:id/analytics", () => {
       firstDay: "2026-11-16",
       lastDay: "2026-11-17",
     });
-    expect(body.summary).toEqual(json(await summary(db, range)));
-    expect(body.days).toEqual(json(await timeseries(db, range)));
-    expect(body.pages).toEqual(json(await topPages(db, range)));
-    expect(body.customEvents).toEqual(json(await customEvents(db, range)));
+    expect(body.summary).toEqual(json(await summary(dashboard.reader, range)));
+    expect(body.days).toEqual(json(await timeseries(dashboard.reader, range)));
+    expect(body.pages).toEqual(json(await topPages(dashboard.reader, range)));
+    expect(body.customEvents).toEqual(json(await customEvents(dashboard.reader, range)));
     for (const dimension of DIMENSIONS) {
       expect({ [dimension]: body.breakdowns[dimension] }).toEqual({
-        [dimension]: json(await breakdown(db, range, dimension)),
+        [dimension]: json(await breakdown(dashboard.reader, range, dimension)),
       });
     }
 
@@ -202,7 +206,7 @@ describe("GET /api/projects/:id/analytics with filters", () => {
       allowed_hostnames: ["example.com"],
     });
     projectId = project.id;
-    await storeEvents(dashboard.db, projectId, EVENTS);
+    await dashboard.store(projectId, EVENTS);
   });
 
   afterAll(async () => {
@@ -315,12 +319,15 @@ describe("GET /api/projects/:id/analytics with filters", () => {
     const range = {
       projectId,
       timeZone: TIME_ZONE,
+      ownHostnames: ["example.com"],
       filters: [{ name: "country" as const, value: "DE" }],
       ...(await localDays(db, "2026-11-16", "2026-11-17", TIME_ZONE)),
     };
-    const unfiltered = { sql: sql`select 1`, filters: [] };
+    const unfiltered = { table: "analytics_visits", filters: [] };
 
-    await expect(summary(db, range, unfiltered)).rejects.toThrow(/filtered differently/);
+    await expect(summary(dashboard.reader, range, unfiltered)).rejects.toThrow(
+      /filtered differently/,
+    );
   });
 
   test("gives the same numbers as each report function on its own", async () => {
@@ -329,19 +336,20 @@ describe("GET /api/projects/:id/analytics with filters", () => {
     const range = {
       projectId,
       timeZone: TIME_ZONE,
+      ownHostnames: ["example.com"],
       filters: [
         { name: "page" as const, value: "/" },
         { name: "country" as const, value: "DE" },
       ],
       ...(await localDays(db, "2026-11-16", "2026-11-17", TIME_ZONE)),
     };
-    expect(body.summary).toEqual(json(await summary(db, range)));
-    expect(body.days).toEqual(json(await timeseries(db, range)));
-    expect(body.pages).toEqual(json(await topPages(db, range)));
-    expect(body.customEvents).toEqual(json(await customEvents(db, range)));
+    expect(body.summary).toEqual(json(await summary(dashboard.reader, range)));
+    expect(body.days).toEqual(json(await timeseries(dashboard.reader, range)));
+    expect(body.pages).toEqual(json(await topPages(dashboard.reader, range)));
+    expect(body.customEvents).toEqual(json(await customEvents(dashboard.reader, range)));
     for (const dimension of DIMENSIONS) {
       expect({ [dimension]: body.breakdowns[dimension] }).toEqual({
-        [dimension]: json(await breakdown(db, range, dimension)),
+        [dimension]: json(await breakdown(dashboard.reader, range, dimension)),
       });
     }
     expect(body.summary.visits).toBe(2);
@@ -371,7 +379,7 @@ async function dashboardAt(now: string) {
     name: "Comparison test",
     allowed_hostnames: ["example.com"],
   });
-  await storeEvents(dashboard.db, project.id, EVENTS);
+  await dashboard.store(project.id, EVENTS);
   const analytics = async (query: string) =>
     (
       await dashboard.app.inject({
@@ -477,19 +485,20 @@ describe("comparison with the previous period", () => {
       const range = {
         projectId: project?.id ?? "",
         timeZone: TIME_ZONE,
+        ownHostnames: ["example.com"],
         ...(await localDays(dashboard.db, "2026-11-16", "2026-11-16", TIME_ZONE)),
         until: new Date("2026-11-16T02:03:00Z"),
       };
-      expect(await summary(dashboard.db, range)).toMatchObject({
+      expect(await summary(dashboard.reader, range)).toMatchObject({
         visits: 1,
         visitors: 1,
         pageviews: 1,
         bounceRate: 1,
       });
-      expect(await topPages(dashboard.db, range)).toEqual([
+      expect(await topPages(dashboard.reader, range)).toEqual([
         { path: "/", pageviews: 1, visitors: 1, avgEngagedMs: null },
       ]);
-      expect(await customEvents(dashboard.db, range)).toEqual([]);
+      expect(await customEvents(dashboard.reader, range)).toEqual([]);
     } finally {
       await dashboard.close();
     }
@@ -541,10 +550,7 @@ describe("GET /api/projects/:id/analytics/list", () => {
     });
     projectId = project.id;
     // A path with LIKE's own characters, which a search must match literally.
-    await storeEvents(dashboard.db, projectId, [
-      ...EVENTS,
-      pv("5", "2026-11-17T05:00:00Z", "/100%_off"),
-    ]);
+    await dashboard.store(projectId, [...EVENTS, pv("5", "2026-11-17T05:00:00Z", "/100%_off")]);
   });
 
   afterAll(async () => {
@@ -635,5 +641,83 @@ describe("GET /api/projects/:id/analytics/list", () => {
     [{ report: "pages", sort: "name" }, "an unknown parameter"],
   ])("refuses %j (%s)", async (query) => {
     expect((await list(query)).statusCode).toBe(400);
+  });
+});
+
+describe("when ClickHouse fails", () => {
+  let dashboard: Awaited<ReturnType<typeof signedInDashboard>>;
+  let projectId = "";
+
+  beforeAll(async () => {
+    dashboard = await signedInDashboard({ timeZone: TIME_ZONE });
+    const project = await insertProject(dashboard.db, {
+      organization_id: dashboard.organizationId,
+      name: "Failures",
+      allowed_hostnames: ["example.com"],
+    });
+    projectId = project.id;
+  });
+
+  afterAll(async () => {
+    await dashboard?.close();
+  });
+
+  /** The analytics endpoint on the same database and sign-in, reading `clickhouse`. */
+  async function analyticsWith(clickhouse: ClickHouseClient) {
+    const app = buildApp({
+      db: dashboard.db,
+      dashboard: {
+        auth: dashboard.auth,
+        clickhouse,
+        publicUrl: PUBLIC_URL,
+        trustedOrigins: [PUBLIC_URL],
+        defaultTimeZone: TIME_ZONE,
+      },
+    });
+    try {
+      return await app.inject({
+        url: `/api/projects/${projectId}/analytics?from=2026-11-16&to=2026-11-17`,
+        headers: { cookie: dashboard.cookie },
+      });
+    } finally {
+      await app.close();
+      await clickhouse.close();
+    }
+  }
+
+  test("a server error says nothing about the database", async () => {
+    const response = await analyticsWith(
+      createClickHouse({ ...loadConfig().clickhouse, url: "http://127.0.0.1:1" }),
+    );
+    expect(response.statusCode).toBe(500);
+    expect(response.json()).toEqual({
+      error: "internal_error",
+      message: "The reports could not be worked out. Try again.",
+    });
+  });
+
+  test("running out of memory asks to try a shorter range or again later", async () => {
+    const config = loadConfig().clickhouse;
+    // As if the server had no memory to spare: every query fails.
+    const starved = createClient({
+      url: config.url,
+      username: config.username,
+      password: config.password,
+      database: dashboard.clickhouseDatabase,
+      clickhouse_settings: { max_memory_usage: "1" },
+    });
+    const response = await analyticsWith(starved);
+    expect(response.statusCode).toBe(503);
+    expect(response.headers["retry-after"]).toBe("60");
+    expect(response.json()).toMatchObject({ error: "reports_busy" });
+  });
+
+  test("a bad request still names its problem", async () => {
+    const response = await dashboard.app.inject({
+      url: `/api/projects/${projectId}/analytics?from=2026-11-16&to=2026-11-17&limit=0`,
+      headers: { cookie: dashboard.cookie },
+    });
+    expect(response.statusCode).toBe(400);
+    expect(response.json().message).toMatch(/limit/);
   });
 });

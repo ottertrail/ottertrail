@@ -1,0 +1,15 @@
+<!--
+  The development stack only (../../compose.yaml); deployments never load it.
+  It loads after config.d/ottertrail.xml and replaces one setting.
+
+  ClickHouse takes its share of the memory that is free while it runs:
+  its own plus what the system has available, times this ratio, worked
+  out again as other processes grow and shrink. Podman's machine is small
+  (2 GB by default) and shared with other containers, so 40% leaves
+  ClickHouse about 350 MiB, nearly all of it its own idle use, and tests
+  running side by side fail for lack of memory. 75% leaves room for them,
+  and still a quarter of what is free for everything else.
+-->
+<clickhouse>
+    <max_server_memory_usage_to_ram_ratio>0.75</max_server_memory_usage_to_ram_ratio>
+</clickhouse>

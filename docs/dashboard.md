@@ -159,7 +159,7 @@ A `period` (`today`, `7d`, `30d`, `90d`, or `12m`) ends today, and the API works
 
 One request returns every report of the analytics page, for whole days in the timezone of the project's organization, `from` and `to` included: the summary, visitors per day, top pages, ten breakdowns (sources, campaigns, entry and exit pages, countries, regions, cities, devices, browsers, operating systems), and custom events. It needs a signed-in user. A range covers at most 366 days, and lists hold at most `limit` rows (default 10, at most 100).
 
-The response also holds `previous`: the summary of the period before (`firstDay`, `lastDay`, and `until`, the cut-off when the period is still running, on `lastDay`), with the same filters (section 7 of [web analytics](web-analytics.md#comparison-with-the-previous-period)). It costs one more summary over the earlier days: on the benchmark, the whole page went from 56 to 89 ms for 1 day and from 225 to 313 ms for 7 days at 1,000 visits a day.
+The response also holds `previous`: the summary of the period before (`firstDay`, `lastDay`, and `until`, the cut-off when the period is still running, on `lastDay`), with the same filters (section 7 of [web analytics](web-analytics.md#comparison-with-the-previous-period)). It costs one more summary over the earlier days: on PostgreSQL's benchmark, the whole page went from 56 to 89 ms for 1 day and from 225 to 313 ms for 7 days at 1,000 visits a day.
 
 Filters narrow every report to the matching visits (defined in section 7 of [web analytics](web-analytics.md#filters)): one parameter per filter, named after the breakdown (`source`, `country`, `deviceType` …) or `page`, at most 2,048 characters. An empty value means unknown. Several filters must all match. An unknown parameter is refused with 400: Fastify's validator would otherwise drop it silently, so a mistyped filter (`contry=DE`) would return unfiltered numbers.
 
@@ -175,7 +175,19 @@ Behind "Show all": one list of the page (`pages`, `customEvents`, or one of the 
 
 ### Visits worked out once
 
-Most reports count visits, and working out visits is the expensive part: it sorts every event in the range (section 7 of [web analytics](web-analytics.md)). Run separately, each report did that again. The endpoint works the visits out once, into a temporary table that disappears when the request's transaction ends, and every report reads that table. On fake data (`vp run bench:reports`, Apple M4 Max), the whole page:
+Most reports count visits, and working out visits is the expensive part: it sorts every event in the range (section 7 of [web analytics](web-analytics.md)). Run separately, each report did that again. The endpoint works the visits out once, into a temporary table of a ClickHouse session that belongs to the request, and every report reads that table. The session runs its queries one after another, and the endpoint drops the table when the reports are done (ClickHouse also drops it when the session expires).
+
+On fake data in ClickHouse (`vp run bench:reports`: 200,000 visits in 30 days, the development stack on an Apple M4 Max), before the change described after the table, the whole page:
+
+| Range   | Each report separately | Visits once | Filtered by a country | Filtered by a page |
+| ------- | ---------------------- | ----------- | --------------------- | ------------------ |
+| 1 day   | 372 ms                 | 263 ms      | 319 ms                | 394 ms             |
+| 7 days  | 1,471 ms               | 1,275 ms    | 1,390 ms              | 1,630 ms           |
+| 30 days | 4,952 ms               | 3,948 ms    | 3,880 ms              | 4,472 ms           |
+
+The table of visits took most of that: 3.5 of the 3.9 seconds over 30 days. Each of its 12 columns from the visit's first event (source, campaign, browser, location …) was an aggregate of its own. One aggregate for all of them (`firstEventColumns: "together"` in `visits.ts`) made the table 1.3 seconds on the same data. The whole page with that change has not been measured: in later runs, ClickHouse in Podman's 2 GB machine ran out of memory before the end ([clickhouse.md](clickhouse.md#memory)). Reports that work out visits on their own keep one aggregate per column, because ClickHouse then skips the columns they do not read: a sources breakdown took 485 ms that way, 846 ms with one aggregate.
+
+Before ClickHouse, in PostgreSQL, the same benchmark measured the whole page:
 
 | Visits per day | Range   | Each report separately | Visits once |
 | -------------- | ------- | ---------------------- | ----------- |
@@ -186,7 +198,7 @@ Most reports count visits, and working out visits is the expensive part: it sort
 
 With filters, the temporary table holds only the matching visits, so the reports after it have less to read. At 1,000 visits a day over 30 days, the whole page took 864 ms unfiltered, 539 ms filtered by a country, and 745 ms filtered by a page (which looks up the page's pageviews for each visit).
 
-The transaction also uses PostgreSQL's REPEATABLE READ isolation: every report sees the same snapshot of the data, so the numbers on the page agree with each other even while new events arrive. Run as separate requests, a pageview stored between two of them could appear in one card and not the next.
+In PostgreSQL, the page's reports also shared one snapshot (REPEATABLE READ), so their numbers agreed with each other even while new events arrived. ClickHouse has no snapshot across queries: events the worker copies while the page is worked out, a few seconds' worth, can reach some cards and not others.
 
 The individual report functions (`summary`, `breakdown`, …) still work on their own, as `vp run report` uses them; a test checks that both ways give the same numbers.
 
@@ -246,7 +258,7 @@ The browser tests in `apps/web/tests/browser/` render the whole dashboard in hea
 
 `navigation.test.tsx` covers the two levels: the workspace menu; a project's menu, with planned modules disabled and labeled; the header's project name; Settings; a new project opening on its snippet; the switcher keeping the page and the period; the way back to all projects; an unknown project; and the home page (first project, last project, no projects, signed out).
 
-`filters.test.tsx` covers adding a filter from a row, a page, and an Unknown row; combining, removing, and clearing filters; a new period keeping them; values the address bar turns into numbers or cannot use; and a filtered view with no matching visits. The filter definitions themselves are tested against PostgreSQL in `apps/api/tests/analytics.test.ts`.
+`filters.test.tsx` covers adding a filter from a row, a page, and an Unknown row; combining, removing, and clearing filters; a new period keeping them; values the address bar turns into numbers or cannot use; and a filtered view with no matching visits. The filter definitions themselves are tested against ClickHouse in `apps/api/tests/analytics.test.ts`.
 
 `project-settings.test.tsx` covers the snippet and public key as copyable code, "Keep events" (forever by default, the warning before a stricter limit, a limit set through the API), and the danger zone: replacing the key (and Cancel), deleting only after the name is typed, the project list and home page afterwards, and a refused delete. The API's side, including keys that stop working at once and a batch for a project deleted meanwhile, is tested in `apps/api/tests/projects.test.ts`.
 
@@ -279,7 +291,7 @@ One deployment serves many customers ([CLAUDE.md](../CLAUDE.md)). An organizatio
 
 ### Settings
 
-`/settings` shows the organization's name and timezone. Only its owner can change them; members see them read-only. The timezone field suggests IANA names as you type. The API stores the name Node.js resolves it to (`US/Pacific` becomes `America/Los_Angeles`, and a few newer names come back as older ones: `Europe/Kyiv` as `Europe/Kiev`). It refuses fixed offsets such as `+08:00`, and names PostgreSQL does not know: Node.js and PostgreSQL carry separate timezone databases, and reports and retention use PostgreSQL's. For the same reason the API refuses to start with a `TIMEZONE` PostgreSQL does not know, and retention skips an organization whose stored timezone PostgreSQL no longer knows instead of failing for every organization.
+`/settings` shows the organization's name and timezone. Only its owner can change them; members see them read-only. The timezone field suggests IANA names as you type. The API stores the name Node.js resolves it to (`US/Pacific` becomes `America/Los_Angeles`, and a few newer names come back as older ones: `Europe/Kyiv` as `Europe/Kiev`). It refuses fixed offsets such as `+08:00`, and names PostgreSQL does not know: Node.js and PostgreSQL carry separate timezone databases, and reports and retention use PostgreSQL's to work out where days start. (ClickHouse, which puts events on their days, knows every name Node.js does.) For the same reason the API refuses to start with a `TIMEZONE` PostgreSQL does not know, and retention skips an organization whose stored timezone PostgreSQL no longer knows instead of failing for every organization.
 
 Reports count days in the organization's timezone, and visitor IDs change at its midnight ([web analytics](web-analytics.md#one-salt-per-timezone-and-day)). Changing it therefore moves where days start in every report, past days included, and counts visitors afresh from the change until midnight; the page says so before saving. New events use it at once in the API process that saved it, which forgets the organization's cached project keys, and in any other API process within a minute, the lifetime of its cache.
 

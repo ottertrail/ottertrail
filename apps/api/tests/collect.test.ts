@@ -5,10 +5,12 @@ import { sql } from "kysely";
 import { afterAll, beforeAll, describe, expect, test } from "vite-plus/test";
 
 import { type AppOptions, buildApp } from "../src/app.ts";
+import { copyEventsToClickHouse } from "../src/clickhouse/copy-events.ts";
 import { createDatabase } from "../src/db/database.ts";
 import type { Locate, Location } from "../src/enrichment/geo.ts";
 import { findVisits } from "../src/visits/visits.ts";
 import { insertProject } from "./helpers/projects.ts";
+import { createTestClickHouse } from "./helpers/test-clickhouse.ts";
 import { createTestDatabase, type TestDatabase } from "./helpers/test-database.ts";
 
 /** The server's clock in these tests. */
@@ -582,12 +584,22 @@ describe("POST /api/events", () => {
       expect(after?.visitor_id).not.toBe(before?.visitor_id); // A new day, a new ID …
       expect(Object.keys(after ?? {})).not.toContain("previous_visitor_id"); // … and no link.
 
-      const visits = await findVisits(db(), {
-        projectId: project.id,
-        from: new Date("2026-11-16T00:00:00Z"),
-        to: new Date("2026-11-17T00:00:00Z"),
-      });
-      expect(visits.map((visit) => visit.entryPath)).toEqual(["/", "/docs"]);
+      // Reports work out visits in ClickHouse, once the worker has copied the events there.
+      const clickhouse = await createTestClickHouse();
+      try {
+        await copyEventsToClickHouse(db(), clickhouse.client);
+        const visits = await findVisits(
+          { client: clickhouse.client },
+          {
+            projectId: project.id,
+            from: new Date("2026-11-16T00:00:00Z"),
+            to: new Date("2026-11-17T00:00:00Z"),
+          },
+        );
+        expect(visits.map((visit) => visit.entryPath)).toEqual(["/", "/docs"]);
+      } finally {
+        await clickhouse.destroy();
+      }
     });
   });
 

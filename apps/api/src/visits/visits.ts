@@ -1,17 +1,16 @@
-import { type Kysely, type RawBuilder, sql } from "kysely";
-
-import type { Database } from "../db/schema.ts";
+import { fromClickHouseTime, QueryParams, queryRows, type Reader } from "../clickhouse/query.ts";
 
 /** A visit ends after this long without an event. */
 export const VISIT_TIMEOUT_MS = 30 * 60 * 1000;
 
 /**
  * How far before and after a range the query reads. Visitor IDs change at
- * midnight in the organization's timezone, so every visit lies within one local
- * day, and no local day is longer than 25 hours (when clocks go back). With
- * this much on each side, the query sees every visit that touches the range
- * from its first event to its last: whether it started inside the range, and
- * its exit page, duration, and bounce, which can depend on later events.
+ * midnight in the organization's timezone, so every visit lies within one
+ * local day, and no local day is longer than 25 hours (when clocks go back).
+ * With this much on each side, the query sees every visit that touches the
+ * range from its first event to its last: whether it started inside the
+ * range, and its exit page, duration, and bounce, which can depend on later
+ * events.
  */
 export const VISIT_CONTEXT_MS = 25 * 60 * 60 * 1000;
 
@@ -50,10 +49,172 @@ export interface Visit {
   city: string | null;
 }
 
+/**
+ * The visits of one project that started in [from, to), worked out from the
+ * stored events when asked. Nothing about visits is stored, so late,
+ * out-of-order, and duplicate events are always accounted for, and the
+ * rules below can change without migrating data.
+ *
+ * Rules:
+ * - A visit is one visitor ID's run of events with no gap over 30 minutes.
+ * - Engagement events (time on page) extend a visit but never start one.
+ *   An engagement event that arrives over 30 minutes after the visitor's
+ *   last event reports time for a visit that has already ended, so it is
+ *   not counted, even when a new visit starts right after it. At the same
+ *   moment, an engagement event comes before a pageview: it reports the
+ *   time up to that moment.
+ * - Visitor IDs change at midnight in the organization's timezone, so a
+ *   visit that crosses midnight counts as two. Joining them would link a
+ *   visitor's IDs on two days, which daily salts exist to prevent.
+ * - Entry and exit pages are the first and last pageviews. Referrer,
+ *   campaign, browser, and location come from the first event that is not
+ *   an engagement event.
+ */
+export interface VisitRange {
+  projectId: string;
+  from: Date;
+  to: Date;
+  /**
+   * Ignore events from this moment on, as if they had not happened yet: to
+   * see an earlier day as it stood at the same time of day as now.
+   */
+  until?: Date | undefined;
+}
+
+/** Columns a visit takes from its first event that is not an engagement event. */
+export const FIRST_EVENT_COLUMNS = [
+  "referrer",
+  "utm_source",
+  "utm_medium",
+  "utm_campaign",
+  "utm_term",
+  "utm_content",
+  "browser",
+  "os",
+  "device_type",
+  "country",
+  "region",
+  "city",
+] as const;
+
+export interface VisitsQueryOptions {
+  /**
+   * Include FIRST_EVENT_COLUMNS: where the visit came from and who it was.
+   * Reports that only count visits leave them out (false), so the query's
+   * large sort carries less data. Two ways to work them out, which give the
+   * same values:
+   * - "separately" (the default): one aggregate per column. ClickHouse
+   *   skips the columns a query does not read, so a breakdown pays for
+   *   one or two.
+   * - "together": one aggregate for all of them. For a query that reads
+   *   every column, such as the analytics page's table of visits: 200,000
+   *   visits took 1.3 s instead of 3.5 s.
+   */
+  firstEventColumns?: "separately" | "together" | false;
+}
+
+/**
+ * ClickHouse SQL for the visits of a range (see VisitRange), with its values
+ * added to `params`. Columns: visitor_id, started_at, ended_at, engaged_ms,
+ * pageviews, interactions, entry_path, exit_path, duration_ms, bounce, and
+ * the first-event columns (unless left out).
+ *
+ * Window functions follow each visitor's events in order: by time,
+ * engagement reports before other events at the same moment, then by ID so
+ * the order is always the same.
+ */
+export function visitsSql(
+  { projectId, from, to, until }: VisitRange,
+  params: QueryParams,
+  { firstEventColumns = "separately" }: VisitsQueryOptions = {},
+): string {
+  const readFrom = new Date(from.getTime() - VISIT_CONTEXT_MS);
+  const contextEnd = to.getTime() + VISIT_CONTEXT_MS;
+  const readTo = new Date(until === undefined ? contextEnd : Math.min(contextEnd, until.getTime()));
+  const order = "occurred_at, order_rank, event_id";
+  // The names are the constants above, never input.
+  const eventColumns = firstEventColumns === false ? "" : `, ${FIRST_EVENT_COLUMNS.join(", ")}`;
+  // The first event that is not an engagement report. A tuple keeps a
+  // first event's NULL: argMin skips NULL arguments.
+  const firstOf = (columns: readonly string[]) =>
+    `argMinIf(tuple(${columns.join(", ")}), (occurred_at, event_id), name != '${ENGAGEMENT}')`;
+  const visitColumns =
+    firstEventColumns === "separately"
+      ? FIRST_EVENT_COLUMNS.map((name) => `, ${firstOf([name])}.1 AS ${name}`).join("")
+      : firstEventColumns === "together"
+        ? `, ${firstOf(FIRST_EVENT_COLUMNS)} AS first_event`
+        : "";
+  const unpacked =
+    firstEventColumns === "together"
+      ? ` EXCEPT (first_event), ${FIRST_EVENT_COLUMNS.map((name, index) => `first_event.${index + 1} AS ${name}`).join(", ")}`
+      : "";
+
+  return `
+    WITH range_events AS (
+      SELECT event_id, visitor_id, name, occurred_at, path ${eventColumns},
+             if(name = '${ENGAGEMENT}', 0, 1) AS order_rank,
+             -- Time on page as a number. A malformed value counts as 0
+             -- instead of failing the whole report.
+             if(name = '${ENGAGEMENT}' AND match(JSONExtractRaw(properties, 'engagedMs'), '^[0-9]{1,9}$'),
+                toInt64(JSONExtractRaw(properties, 'engagedMs')), 0) AS engaged_ms
+      FROM events FINAL
+      WHERE project_id = ${params.add(projectId, "UUID")}
+        AND visitor_id IS NOT NULL
+        AND occurred_at >= ${params.time(readFrom)}
+        AND occurred_at < ${params.time(readTo)}
+    ),
+    -- A new visit starts at a visitor's first event, or after a gap over 30 minutes.
+    marked AS (
+      SELECT *,
+             if(dateDiff('millisecond',
+                         lagInFrame(occurred_at, 1, toDateTime64(0, 3, 'UTC')) OVER (
+                           PARTITION BY visitor_id ORDER BY ${order}
+                           ROWS BETWEEN 1 PRECEDING AND CURRENT ROW),
+                         occurred_at) > ${VISIT_TIMEOUT_MS}, 1, 0) AS starts_visit
+      FROM range_events
+    ),
+    -- A running count of visit starts numbers each visitor's visits: 1, 2, 3 …
+    -- An engagement event is stale when the visitor has had no other event
+    -- since the current run started: the visit it reports on has ended.
+    -- (maxIf over no rows gives 1970, earlier than any start: stale.)
+    numbered AS (
+      SELECT *,
+             sum(starts_visit) OVER so_far AS visit_number,
+             name = '${ENGAGEMENT}'
+               AND (maxIf(occurred_at, name != '${ENGAGEMENT}') OVER so_far
+                    < maxIf(occurred_at, starts_visit = 1) OVER so_far) AS stale
+      FROM marked
+      WINDOW so_far AS (PARTITION BY visitor_id ORDER BY ${order}
+                        ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)
+    ),
+    visits AS (
+      SELECT visitor_id,
+             minIf(occurred_at, name != '${ENGAGEMENT}') AS started_at,
+             max(occurred_at) AS ended_at,
+             sumIf(engaged_ms, NOT stale) AS engaged_ms,
+             countIf(name = '${PAGEVIEW}') AS pageviews,
+             countIf(name NOT IN ('${PAGEVIEW}', '${ENGAGEMENT}')) AS interactions,
+             if(pageviews = 0, NULL,
+                argMinIf(path, (occurred_at, event_id), name = '${PAGEVIEW}')) AS entry_path,
+             if(pageviews = 0, NULL,
+                argMaxIf(path, (occurred_at, event_id), name = '${PAGEVIEW}')) AS exit_path
+             ${visitColumns}
+      FROM numbered
+      GROUP BY visitor_id, visit_number
+      HAVING countIf(name != '${ENGAGEMENT}') > 0
+    )
+    SELECT *${unpacked},
+           dateDiff('millisecond', started_at, ended_at) AS duration_ms,
+           pageviews <= 1 AND interactions = 0 AS bounce
+    FROM visits
+    WHERE started_at >= ${params.time(from)} AND started_at < ${params.time(to)}`;
+}
+
+/** A visit row as ClickHouse returns it: 64-bit numbers and times as strings. */
 interface VisitRow {
   visitor_id: string;
-  started_at: Date;
-  ended_at: Date;
+  started_at: string;
+  ended_at: string;
   engaged_ms: string;
   pageviews: string;
   interactions: string;
@@ -73,166 +234,25 @@ interface VisitRow {
   city: string | null;
 }
 
-/**
- * SQL for the visits of one project that started in [from, to), worked out from
- * the stored events when asked. Nothing about visits is stored, so late,
- * out-of-order, and duplicate events are always accounted for, and the
- * rules below can change without migrating data.
- *
- * Rules:
- * - A visit is one visitor ID's run of events with no gap over 30 minutes.
- * - Engagement events (time on page) extend a visit but never start one.
- *   An engagement event that arrives over 30 minutes after the visitor's
- *   last event reports time for a visit that has already ended, so it is
- *   not counted, even when a new visit starts right after it. At the same
- *   moment, an engagement event comes before a pageview: it reports the
- *   time up to that moment.
- * - Visitor IDs change at midnight in the organization's timezone, so a visit
- *   that crosses midnight counts as two. Joining them would link a visitor's
- *   IDs on two days, which daily salts exist to prevent.
- * - Entry and exit pages are the first and last pageviews. Referrer,
- *   campaign, browser, and location come from the first event that is not
- *   an engagement event.
- */
-export interface VisitRange {
-  projectId: string;
-  from: Date;
-  to: Date;
-  /**
-   * Ignore events from this moment on, as if they had not happened yet: to
-   * see an earlier day as it stood at the same time of day as now.
-   */
-  until?: Date | undefined;
-}
-
-/** Columns a visit takes from its first event that is not an engagement event. */
-const FIRST_EVENT_COLUMNS = [
-  "referrer",
-  "utm_source",
-  "utm_medium",
-  "utm_campaign",
-  "utm_term",
-  "utm_content",
-  "browser",
-  "os",
-  "device_type",
-  "country",
-  "region",
-  "city",
-] as const;
-
-export interface VisitsQueryOptions {
-  /**
-   * Include FIRST_EVENT_COLUMNS: where the visit came from and who it was.
-   * Reports that only count visits leave them out, so the query's large
-   * sort carries less data.
-   */
-  firstEventColumns?: boolean;
-}
-
-export function visitsQuery(
-  { projectId, from, to, until }: VisitRange,
-  { firstEventColumns = true }: VisitsQueryOptions = {},
-): RawBuilder<unknown> {
-  const timeout = sql`make_interval(secs => ${VISIT_TIMEOUT_MS / 1000})`;
-  const readFrom = new Date(from.getTime() - VISIT_CONTEXT_MS);
-  const contextEnd = to.getTime() + VISIT_CONTEXT_MS;
-  const readTo = new Date(until === undefined ? contextEnd : Math.min(contextEnd, until.getTime()));
-
-  // FIRST_EVENT_COLUMNS as read from events and as aggregated per visit, or
-  // nothing. The names are the constants above, never input.
-  const eventColumns = firstEventColumns
-    ? sql`, ${sql.join(FIRST_EVENT_COLUMNS.map((name) => sql.ref(name)))}`
-    : sql``;
-  const visitColumns = firstEventColumns
-    ? sql`, ${sql.join(
-        FIRST_EVENT_COLUMNS.map(
-          (name) =>
-            sql`(array_agg(${sql.ref(name)} order by occurred_at, event_id) filter (where name <> ${ENGAGEMENT}))[1] as ${sql.ref(name)}`,
-        ),
-      )}`
-    : sql``;
-
-  // Event order within a visitor: by time, engagement reports before other
-  // events at the same moment, then by ID so the order is always the same.
-  const eventOrder = sql`occurred_at, case when name = ${ENGAGEMENT} then 0 else 1 end, event_id`;
-
-  return sql`
-    with range_events as (
-      select event_id, visitor_id, name, occurred_at, path,
-             -- Time on page as a number. A malformed value counts as 0
-             -- instead of failing the whole report.
-             case when name = ${ENGAGEMENT} and properties ->> 'engagedMs' ~ '^[0-9]{1,9}$'
-                  then (properties ->> 'engagedMs')::bigint else 0 end as engaged_ms
-             ${eventColumns}
-      from events
-      where project_id = ${projectId}
-        and visitor_id is not null
-        and occurred_at >= ${readFrom}
-        and occurred_at < ${readTo}
-    ),
-    -- A new visit starts at a visitor's first event, or after a gap over 30 minutes.
-    marked as (
-      select range_events.*,
-             case
-               when lag(occurred_at) over by_visitor is null then 1
-               when occurred_at - lag(occurred_at) over by_visitor > ${timeout} then 1
-               else 0
-             end as starts_visit
-      from range_events
-      window by_visitor as (partition by visitor_id order by ${eventOrder})
-    ),
-    -- A running count of visit starts numbers each visitor's visits: 1, 2, 3 …
-    -- An engagement event is stale when the visitor has had no other event
-    -- since the current run started: the visit it reports on has ended.
-    numbered as (
-      select marked.*,
-             sum(starts_visit) over so_far as visit_number,
-             name = ${ENGAGEMENT}
-               and coalesce(max(occurred_at) filter (where name <> ${ENGAGEMENT}) over so_far
-                              < max(occurred_at) filter (where starts_visit = 1) over so_far,
-                            true) as stale
-      from marked
-      window so_far as (partition by visitor_id order by ${eventOrder} rows unbounded preceding)
-    ),
-    visits as (
-      select
-        visitor_id,
-        min(occurred_at) filter (where name <> ${ENGAGEMENT}) as started_at,
-        max(occurred_at) as ended_at,
-        coalesce(sum(engaged_ms) filter (where not stale), 0) as engaged_ms,
-        count(*) filter (where name = ${PAGEVIEW}) as pageviews,
-        count(*) filter (where name not in (${PAGEVIEW}, ${ENGAGEMENT})) as interactions,
-        (array_agg(path order by occurred_at, event_id) filter (where name = ${PAGEVIEW}))[1] as entry_path,
-        (array_agg(path order by occurred_at desc, event_id desc) filter (where name = ${PAGEVIEW}))[1] as exit_path
-        ${visitColumns}
-      from numbered
-      group by visitor_id, visit_number
-      having count(*) filter (where name <> ${ENGAGEMENT}) > 0
-    )
-    select visits.*,
-           extract(epoch from ended_at - started_at) * 1000 as duration_ms,
-           (pageviews <= 1 and interactions = 0) as bounce
-    from visits
-    where started_at >= ${from} and started_at < ${to}
-  `;
-}
-
-/** The visits as objects, oldest first. Reports aggregate visitsQuery in SQL instead. */
-export async function findVisits(db: Kysely<Database>, range: VisitRange): Promise<Visit[]> {
-  const { rows } = await sql<VisitRow>`
-    select * from (${visitsQuery(range)}) as visits
-    order by started_at, visitor_id
-  `.execute(db);
-
+/** The visits as objects, oldest first. Reports aggregate visitsSql in ClickHouse instead. */
+export async function findVisits(reader: Reader, range: VisitRange): Promise<Visit[]> {
+  const params = new QueryParams();
+  const rows = await queryRows<VisitRow>(
+    reader,
+    `SELECT * FROM (${visitsSql(range, params, { firstEventColumns: "together" })})
+     ORDER BY started_at, visitor_id`,
+    params,
+  );
   return rows.map((row) => {
+    const startedAt = fromClickHouseTime(row.started_at);
+    const endedAt = fromClickHouseTime(row.ended_at);
     const pageviews = Number(row.pageviews);
     const interactions = Number(row.interactions);
     return {
       visitorId: row.visitor_id,
-      startedAt: row.started_at,
-      endedAt: row.ended_at,
-      durationMs: row.ended_at.getTime() - row.started_at.getTime(),
+      startedAt,
+      endedAt,
+      durationMs: endedAt.getTime() - startedAt.getTime(),
       engagedMs: Number(row.engaged_ms),
       pageviews,
       interactions,

@@ -2,6 +2,7 @@ import { resolve } from "node:path";
 
 import { buildApp } from "./app.ts";
 import { createAuth } from "./auth/auth.ts";
+import { createClickHouse } from "./clickhouse/clickhouse.ts";
 import { DEVELOPMENT_AUTH_SECRET, loadConfig } from "./config.ts";
 import { createDatabase } from "./db/database.ts";
 import { setUpLocation } from "./enrichment/setup.ts";
@@ -9,6 +10,8 @@ import { postgresKnowsTimeZone } from "./organizations/organizations.ts";
 
 const config = loadConfig();
 const db = createDatabase({ connectionString: config.databaseUrl });
+// Reports read events here; collection never needs it (docs/clickhouse.md).
+const clickhouse = createClickHouse(config.clickhouse);
 const auth = createAuth({
   db,
   publicUrl: config.publicUrl,
@@ -22,6 +25,7 @@ if (!(await postgresKnowsTimeZone(db, config.defaultTimeZone))) {
     `TIMEZONE "${config.defaultTimeZone}" is not a timezone PostgreSQL knows. Choose another, such as "Europe/Berlin".`,
   );
   await db.destroy();
+  await clickhouse.close();
   process.exit(1);
 }
 const location = await setUpLocation(config.geoSource, config.geoDatabasePath);
@@ -31,6 +35,7 @@ const app = buildApp({
   collection: { locate: location.locate },
   dashboard: {
     auth,
+    clickhouse,
     publicUrl: config.publicUrl,
     trustedOrigins: config.trustedOrigins,
     defaultTimeZone: config.defaultTimeZone,
@@ -58,6 +63,7 @@ if (location.ok) {
 // Close database connections after the server stops accepting requests.
 app.addHook("onClose", async () => {
   await db.destroy();
+  await clickhouse.close();
 });
 
 async function shutdown(signal: NodeJS.Signals) {

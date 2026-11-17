@@ -4,14 +4,20 @@
  *   vp run bench:reports                    (200,000 visits over 30 days)
  *   vp run bench:reports -- 50000 14        (50,000 visits over 14 days)
  *
- * Everything happens in a temporary schema that is dropped at the end: no
- * real project or event is read or written. Numbers depend on the machine,
- * so they show the shape of the cost, not a capacity promise.
+ * The fake events go into a temporary PostgreSQL schema, then to a
+ * temporary ClickHouse database the way the worker copies them, and reports
+ * read them there. Both are dropped at the end: no real project or event is
+ * read or written. Numbers depend on the machine, so they show the shape of
+ * the cost, not a capacity promise.
  */
 import { randomUUID } from "node:crypto";
 
 import { type Kysely, sql } from "kysely";
 
+import { createClickHouse, identifier } from "../src/clickhouse/clickhouse.ts";
+import { copyEventsToClickHouse } from "../src/clickhouse/copy-events.ts";
+import { migrateClickHouse } from "../src/clickhouse/migrate.ts";
+import type { Reader } from "../src/clickhouse/query.ts";
 import { loadConfig } from "../src/config.ts";
 import { createDatabase } from "../src/db/database.ts";
 import { migrateToLatest } from "../src/db/migrate.ts";
@@ -46,10 +52,13 @@ if (
 const LAST_DAY = "2026-10-31";
 const firstDay = new Date(Date.UTC(2026, 9, 31 - dayCount + 1)).toISOString().slice(0, 10);
 
-const { databaseUrl } = loadConfig();
+const config = loadConfig();
 const schema = `bench_${randomUUID().replaceAll("-", "")}`;
-const admin = createDatabase({ connectionString: databaseUrl, maxConnections: 1 });
+const admin = createDatabase({ connectionString: config.databaseUrl, maxConnections: 1 });
 let db: Kysely<Database> | undefined;
+const clickhouseAdmin = createClickHouse(config.clickhouse, { database: "default" });
+const clickhouse = createClickHouse(config.clickhouse, { database: schema });
+const reader: Reader = { client: clickhouse };
 
 async function timed<T>(work: () => Promise<T>): Promise<number> {
   const start = performance.now();
@@ -66,9 +75,14 @@ async function measure(work: () => Promise<unknown>): Promise<number> {
 
 try {
   await sql`create schema ${sql.id(schema)}`.execute(admin);
-  const bench = createDatabase({ connectionString: databaseUrl, maxConnections: 2, schema });
+  const bench = createDatabase({
+    connectionString: config.databaseUrl,
+    maxConnections: 2,
+    schema,
+  });
   db = bench;
   await migrateToLatest(bench, { schema });
+  await migrateClickHouse(clickhouseAdmin, schema);
 
   const organization = await bench
     .insertInto("organizations")
@@ -92,9 +106,17 @@ try {
   });
 
   const { rows } = await sql<{ count: string }>`select count(*) from events`.execute(bench);
+  const eventCount = Number(rows[0]?.count);
+  console.log(`${eventCount.toLocaleString("en")} events in ${(seedMs / 1000).toFixed(1)} s`);
+
+  // As the worker does, then merged as ClickHouse does in the background
+  // over time, so reports read a table as it usually is.
+  const copyMs = await timed(() => copyEventsToClickHouse(bench, clickhouse));
   console.log(
-    `${Number(rows[0]?.count).toLocaleString("en")} events in ${(seedMs / 1000).toFixed(1)} s\n`,
+    `Copied to ClickHouse in ${(copyMs / 1000).toFixed(1)} s (${Math.round(eventCount / (copyMs / 1000)).toLocaleString("en")} events a second)`,
   );
+  await clickhouse.command({ query: "OPTIMIZE TABLE events FINAL" });
+  console.log("");
 
   const ranges: [string, string][] = [
     ["1 day", LAST_DAY],
@@ -103,21 +125,22 @@ try {
   ];
   const results: Record<string, Record<string, string>> = {};
   const reports = {
-    summary: (r: ReportRange, d: Kysely<Database>) => summary(d, r),
-    timeseries: (r: ReportRange, d: Kysely<Database>) => timeseries(d, r),
-    "top pages": (r: ReportRange, d: Kysely<Database>) => topPages(d, r),
-    sources: (r: ReportRange, d: Kysely<Database>) => breakdown(d, r, "source"),
-    countries: (r: ReportRange, d: Kysely<Database>) => breakdown(d, r, "country"),
-    "custom events": (r: ReportRange, d: Kysely<Database>) => customEvents(d, r),
+    summary: (r: ReportRange) => summary(reader, r),
+    timeseries: (r: ReportRange) => timeseries(reader, r),
+    "top pages": (r: ReportRange) => topPages(reader, r),
+    sources: (r: ReportRange) => breakdown(reader, r, "source"),
+    countries: (r: ReportRange) => breakdown(reader, r, "country"),
+    "custom events": (r: ReportRange) => customEvents(reader, r),
   };
   for (const [label, from] of ranges) {
     const range: ReportRange = {
       projectId: project.id,
       timeZone: "UTC",
+      ownHostnames: ["example.com"],
       ...(await localDays(bench, from, LAST_DAY, "UTC")),
     };
     for (const [name, report] of Object.entries(reports)) {
-      const ms = await measure(() => report(range, bench));
+      const ms = await measure(() => report(range));
       results[name] = { ...results[name], [label]: `${Math.round(ms)} ms` };
     }
   }
@@ -143,19 +166,20 @@ try {
     const range: ReportRange = {
       projectId: project.id,
       timeZone: "UTC",
+      ownHostnames: ["example.com"],
       ...(await localDays(bench, from, LAST_DAY, "UTC")),
     };
     const separately = await measure(async () => {
-      await summary(bench, range);
-      await timeseries(bench, range);
-      await topPages(bench, range);
+      await summary(reader, range);
+      await timeseries(reader, range);
+      await topPages(reader, range);
       for (const dimension of pageDimensions) {
-        await breakdown(bench, range, dimension);
+        await breakdown(reader, range, dimension);
       }
-      await customEvents(bench, range);
+      await customEvents(reader, range);
     });
     const once = await measure(() =>
-      projectAnalytics(bench, {
+      projectAnalytics(bench, clickhouse, {
         projectId: project.id,
         firstDay: from,
         lastDay: LAST_DAY,
@@ -176,7 +200,7 @@ try {
       ["filtered by a page", { name: "page", value: "/pricing" }],
     ] as const) {
       const ms = await measure(() =>
-        projectAnalytics(bench, {
+        projectAnalytics(bench, clickhouse, {
           projectId: project.id,
           firstDay: from,
           lastDay: LAST_DAY,
@@ -193,5 +217,8 @@ try {
   await db?.destroy();
   await sql`drop schema if exists ${sql.id(schema)} cascade`.execute(admin);
   await admin.destroy();
-  console.log("The temporary schema was dropped.");
+  await clickhouse.close();
+  await clickhouseAdmin.command({ query: `DROP DATABASE IF EXISTS ${identifier(schema)}` });
+  await clickhouseAdmin.close();
+  console.log("The temporary schema and ClickHouse database were dropped.");
 }

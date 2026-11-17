@@ -55,4 +55,19 @@ export const CLICKHOUSE_MIGRATIONS: ClickHouseMigration[] = [
       SETTINGS non_replicated_deduplication_window = 1000`,
     ],
   },
+  {
+    /**
+     * An insert returns only once its data is on disk (fsync), as
+     * PostgreSQL's commit does. The worker marks a batch copied when the
+     * insert returns, and PostgreSQL later deletes its own copy
+     * (copy-events.ts), so a batch only in the operating system's cache
+     * when the power goes would otherwise be lost for good. The worker
+     * inserts one batch every few seconds, so the cost is small.
+     */
+    name: "0002_sync_events_inserts",
+    statements: (database) => [
+      `ALTER TABLE ${database}.events
+       MODIFY SETTING fsync_after_insert = 1, fsync_part_directory = 1`,
+    ],
+  },
 ];

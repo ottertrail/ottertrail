@@ -2,16 +2,25 @@ import { createHash } from "node:crypto";
 
 import { type Kysely, type Selectable, sql } from "kysely";
 
+import { MAX_EVENT_AGE_MS } from "../collection/normalize.ts";
 import type { Database, EventsTable } from "../db/schema.ts";
+import { DELETE_BATCH_SIZE } from "../retention/retention.ts";
 import type { ClickHouseClient } from "./clickhouse.ts";
+import { clickHouseTime } from "./query.ts";
 
 /** Events copied per ClickHouse insert: ClickHouse prefers few large inserts. */
 export const COPY_BATCH_SIZE = 10_000;
 
-/** "2026-11-16 12:00:00.000": how ClickHouse reads a DateTime64(3) in JSON. */
-function clickHouseTime(moment: Date): string {
-  return moment.toISOString().replace("T", " ").replace("Z", "");
-}
+/**
+ * How long PostgreSQL keeps an event after it happened: twice
+ * MAX_EVENT_AGE_MS, 48 hours. The collection endpoint refuses events more
+ * than MAX_EVENT_AGE_MS old, and until then PostgreSQL's unique key must
+ * still hold the event to ignore a retry of it. The age is measured on the
+ * sender's clock, so a retry sent after that clock was put back by some
+ * hours can arrive later than 24 hours after the event: the second day
+ * covers that, and the time requests spend on the way.
+ */
+export const KEEP_IN_POSTGRES_MS = 2 * MAX_EVENT_AGE_MS;
 
 /** One event as ClickHouse's events table takes it (clickhouse/migrations.ts). */
 function toClickHouse(event: Selectable<EventsTable>) {
@@ -60,6 +69,12 @@ function toClickHouse(event: Selectable<EventsTable>) {
  *
  * If ClickHouse cannot be reached, nothing is marked and the events wait
  * for the next run: collection never depends on ClickHouse.
+ *
+ * After each batch it records when each project's latest event happened
+ * (projects.last_event_at), which the dashboard shows. That happens after
+ * the batch's transaction ends: deleting a project locks the project, then
+ * its events, so a transaction that held events and then waited for the
+ * project could deadlock with it.
  */
 export async function copyEventsToClickHouse(
   db: Kysely<Database>,
@@ -68,7 +83,7 @@ export async function copyEventsToClickHouse(
 ): Promise<number> {
   let copied = 0;
   for (;;) {
-    const count = await db.transaction().execute(async (trx) => {
+    const batch = await db.transaction().execute(async (trx) => {
       const events = await trx
         .selectFrom("events")
         .selectAll()
@@ -80,7 +95,7 @@ export async function copyEventsToClickHouse(
         .forUpdate()
         .skipLocked()
         .execute();
-      if (events.length === 0) return 0;
+      if (events.length === 0) return [];
 
       // The same rows always make the same token.
       const token = createHash("sha256")
@@ -92,20 +107,72 @@ export async function copyEventsToClickHouse(
         format: "JSONEachRow",
         clickhouse_settings: { insert_deduplication_token: token },
       });
-      await trx
-        .updateTable("events")
-        .set({ copied_at: sql<Date>`now()` })
-        .where((eb) =>
-          eb(
-            eb.refTuple("project_id", "event_id"),
-            "in",
-            events.map((event) => eb.tuple(event.project_id, event.event_id)),
-          ),
-        )
-        .execute();
-      return events.length;
+      // Two arrays, not a list of 10,000 pairs, which PostgreSQL refuses
+      // as too deeply nested ("stack depth limit exceeded").
+      await sql`
+        update events set copied_at = now()
+        from unnest(
+          ${events.map((event) => event.project_id)}::uuid[],
+          ${events.map((event) => event.event_id)}::uuid[]
+        ) as copied(project_id, event_id)
+        where events.project_id = copied.project_id and events.event_id = copied.event_id
+      `.execute(trx);
+      return events;
     });
-    copied += count;
-    if (count < batchSize) return copied;
+
+    const latest = new Map<string, Date>();
+    for (const event of batch) {
+      const known = latest.get(event.project_id);
+      if (known === undefined || event.occurred_at > known) {
+        latest.set(event.project_id, event.occurred_at);
+      }
+    }
+    // One statement per project, each its own transaction: greatest() makes
+    // a repeat harmless, and a deleted project is simply not updated.
+    for (const [projectId, at] of latest) {
+      await db
+        .updateTable("projects")
+        .set({ last_event_at: sql<Date>`greatest(last_event_at, ${at})` })
+        .where("id", "=", projectId)
+        .execute();
+    }
+    copied += batch.length;
+    if (batch.length < batchSize) return copied;
   }
+}
+
+/**
+ * Deletes events from PostgreSQL that are in ClickHouse and too old for any
+ * retry to arrive (KEEP_IN_POSTGRES_MS), and returns how many. Reports read
+ * ClickHouse, so PostgreSQL only needs the events its unique key must still
+ * guard, and those not yet copied. The worker runs it every hour; running
+ * it twice, or in two processes at once, is harmless.
+ *
+ * One project at a time, in batches, along the (project_id, occurred_at)
+ * index, so no delete holds its locks for long.
+ */
+export async function deleteCopiedEvents(
+  db: Kysely<Database>,
+  { now = new Date(), batchSize = DELETE_BATCH_SIZE }: { now?: Date; batchSize?: number } = {},
+): Promise<number> {
+  const before = new Date(now.getTime() - KEEP_IN_POSTGRES_MS);
+  const projects = await db.selectFrom("projects").select("id").orderBy("id").execute();
+  let deleted = 0;
+  for (const { id } of projects) {
+    for (;;) {
+      const result = await sql`
+        delete from events
+        where project_id = ${id}
+          and event_id in (
+            select event_id from events
+            where project_id = ${id} and occurred_at < ${before} and copied_at is not null
+            limit ${batchSize}
+          )
+      `.execute(db);
+      const count = Number(result.numAffectedRows ?? 0);
+      deleted += count;
+      if (count < batchSize) break;
+    }
+  }
+  return deleted;
 }

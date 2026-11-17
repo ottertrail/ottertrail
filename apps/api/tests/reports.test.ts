@@ -2,6 +2,8 @@ import { randomUUID } from "node:crypto";
 
 import { afterAll, beforeAll, describe, expect, test } from "vite-plus/test";
 
+import { copyEventsToClickHouse } from "../src/clickhouse/copy-events.ts";
+import type { Reader } from "../src/clickhouse/query.ts";
 import { type NewEvent, storeEvents } from "../src/collection/event-store.ts";
 import {
   breakdown,
@@ -16,15 +18,29 @@ import {
 } from "../src/reports/reports.ts";
 import { dayIn } from "../src/visitors/visitor-ids.ts";
 import { insertProject } from "./helpers/projects.ts";
+import { createTestClickHouse, type TestClickHouse } from "./helpers/test-clickhouse.ts";
 import { createTestDatabase, type TestDatabase } from "./helpers/test-database.ts";
 
 let testDb: TestDatabase | undefined;
+let testClickHouse: TestClickHouse | undefined;
 let projectId = "";
 let range: ReportRange;
 
 function db() {
   if (testDb === undefined) throw new Error("The test database was not created");
   return testDb.db;
+}
+
+/** Where reports read events: ClickHouse. */
+function reader(): Reader {
+  if (testClickHouse === undefined) throw new Error("The test ClickHouse was not created");
+  return { client: testClickHouse.client };
+}
+
+/** Stores events as collection does, and copies them to ClickHouse as the worker does. */
+async function store(id: string, events: NewEvent[]) {
+  await storeEvents(db(), id, events);
+  await copyEventsToClickHouse(db(), reader().client);
 }
 
 function pv(visitorId: string, iso: string, path: string, extra: Partial<NewEvent> = {}): NewEvent {
@@ -86,19 +102,27 @@ const EVENTS: NewEvent[] = [
 ];
 
 beforeAll(async () => {
+  // One after the other: if the second fails, afterAll still drops the first.
   testDb = await createTestDatabase();
+  testClickHouse = await createTestClickHouse();
   const project = await insertProject(db(), {
     name: "Reports test",
     allowed_hostnames: ["example.com", "www.example.com"],
   });
   projectId = project.id;
-  await storeEvents(db(), projectId, EVENTS);
+  await store(projectId, EVENTS);
   const days = await localDays(db(), "2026-11-16", "2026-11-17", "Asia/Singapore");
-  range = { projectId, ...days, timeZone: "Asia/Singapore" };
+  range = {
+    projectId,
+    ...days,
+    timeZone: "Asia/Singapore",
+    ownHostnames: ["example.com", "www.example.com"],
+  };
 });
 
 afterAll(async () => {
   await testDb?.destroy();
+  await testClickHouse?.destroy();
 });
 
 const byValue = <T extends { value: string | null }>(rows: T[]) =>
@@ -134,7 +158,7 @@ describe("localDays", () => {
 
 describe("summary", () => {
   test("counts visitors, pageviews, and visits by the documented rules", async () => {
-    expect(await summary(db(), range)).toEqual({
+    expect(await summary(reader(), range)).toEqual({
       // IDs 1, 2, 3, 33, 4, 5, 11: visitor 1 and visitor 3 count once per day.
       visitors: 7,
       pageviews: 9,
@@ -154,7 +178,7 @@ describe("summary", () => {
       ...range,
       ...(await localDays(db(), "2026-11-20", "2026-11-20", "Asia/Singapore")),
     };
-    expect(await summary(db(), empty)).toEqual({
+    expect(await summary(reader(), empty)).toEqual({
       visitors: 0,
       pageviews: 0,
       visits: 0,
@@ -168,7 +192,7 @@ describe("summary", () => {
 
 describe("timeseries", () => {
   test("counts by local day, with the read across midnight on both days", async () => {
-    expect(await timeseries(db(), range)).toEqual([
+    expect(await timeseries(reader(), range)).toEqual([
       { day: "2026-11-16", visitors: 3, pageviews: 4, visits: 3 },
       { day: "2026-11-17", visitors: 4, pageviews: 5, visits: 5 },
     ]);
@@ -176,7 +200,7 @@ describe("timeseries", () => {
 
   test("splits days differently in another timezone", async () => {
     const utc = { ...range, timeZone: "UTC" };
-    const days = await timeseries(db(), utc);
+    const days = await timeseries(reader(), utc);
     // In UTC, the reads at 23:50 and 00:05 Singapore time both fall on 16 November.
     expect(days.find((d) => d.day === "2026-11-16")?.visitors).toBe(4);
   });
@@ -186,7 +210,7 @@ describe("timeseries", () => {
       ...range,
       ...(await localDays(db(), "2026-11-16", "2026-11-19", "Asia/Singapore")),
     };
-    const days = await timeseries(db(), week);
+    const days = await timeseries(reader(), week);
     expect(days.map((d) => d.day)).toEqual([
       "2026-11-16",
       "2026-11-17",
@@ -199,7 +223,9 @@ describe("timeseries", () => {
 
 describe("topPages", () => {
   test("counts pageviews and visitors per path, with average time on page", async () => {
-    const pages = Object.fromEntries((await topPages(db(), range)).map((row) => [row.path, row]));
+    const pages = Object.fromEntries(
+      (await topPages(reader(), range)).map((row) => [row.path, row]),
+    );
     expect(pages).toEqual({
       "/": { path: "/", pageviews: 3, visitors: 3, avgEngagedMs: null },
       "/pricing": { path: "/pricing", pageviews: 3, visitors: 3, avgEngagedMs: 60_000 },
@@ -208,13 +234,13 @@ describe("topPages", () => {
   });
 
   test("respects the limit", async () => {
-    expect(await topPages(db(), range, 1)).toHaveLength(1);
+    expect(await topPages(reader(), range, 1)).toHaveLength(1);
   });
 });
 
 describe("breakdown", () => {
   test("sources: utm_source first, then the referring site without www, otherwise direct", async () => {
-    const sources = await breakdown(db(), range, "source");
+    const sources = await breakdown(reader(), range, "source");
     expect(byValue(sources)).toMatchObject({
       // Visitor 1 on both days: two IDs, two visits, one of them a bounce.
       "google.com": { visitors: 2, visits: 2, bounceRate: 0.5 },
@@ -233,27 +259,31 @@ describe("breakdown", () => {
       name: "IPv6 referrer",
       allowed_hostnames: ["example.com"],
     });
-    await storeEvents(db(), other.id, [
+    await store(other.id, [
       pv("7", "2026-11-16T02:00:00Z", "/", { referrer: "https://[2001:db8::1]:8443/page" }),
     ]);
-    const sources = await breakdown(db(), { ...range, projectId: other.id }, "source");
+    const sources = await breakdown(
+      reader(),
+      { ...range, projectId: other.id, ownHostnames: ["example.com"] },
+      "source",
+    );
     expect(sources.map((row) => row.value)).toEqual(["[2001:db8::1]"]);
   });
 
   test("campaigns", async () => {
-    expect(byValue(await breakdown(db(), range, "utmCampaign"))).toMatchObject({
+    expect(byValue(await breakdown(reader(), range, "utmCampaign"))).toMatchObject({
       launch: { visits: 1 },
       "(unknown)": { visits: 7 },
     });
   });
 
   test("entry and exit pages come from each visit's first and last pageview", async () => {
-    expect(byValue(await breakdown(db(), range, "entryPage"))).toMatchObject({
+    expect(byValue(await breakdown(reader(), range, "entryPage"))).toMatchObject({
       "/": { visits: 3 },
       "/pricing": { visits: 2 },
       "/docs": { visits: 3 },
     });
-    expect(byValue(await breakdown(db(), range, "exitPage"))).toMatchObject({
+    expect(byValue(await breakdown(reader(), range, "exitPage"))).toMatchObject({
       "/pricing": { visits: 3 },
       "/": { visits: 2 },
       "/docs": { visits: 3 },
@@ -261,7 +291,7 @@ describe("breakdown", () => {
   });
 
   test("locations come from each visit's first event; cities keep their country", async () => {
-    const countries = await breakdown(db(), range, "country");
+    const countries = await breakdown(reader(), range, "country");
     expect(byValue(countries)).toMatchObject({
       DE: { visitors: 2, visits: 3 },
       US: { visits: 1 },
@@ -269,7 +299,7 @@ describe("breakdown", () => {
       GB: { visits: 1 },
       "(unknown)": { visits: 3 },
     });
-    expect(byValue(await breakdown(db(), range, "city"))).toMatchObject({
+    expect(byValue(await breakdown(reader(), range, "city"))).toMatchObject({
       "Munich, DE": { visits: 1 },
       "Mountain View, US": { visits: 1 },
       "London, GB": { visits: 1 },
@@ -277,7 +307,7 @@ describe("breakdown", () => {
   });
 
   test("devices", async () => {
-    expect(byValue(await breakdown(db(), range, "deviceType"))).toMatchObject({
+    expect(byValue(await breakdown(reader(), range, "deviceType"))).toMatchObject({
       mobile: { visits: 2 },
       desktop: { visits: 1 },
       "(unknown)": { visits: 5 },
@@ -285,17 +315,19 @@ describe("breakdown", () => {
   });
 
   test("respects the limit, and rejects dimensions outside the allow-list", async () => {
-    expect(await breakdown(db(), range, "browser", 1)).toHaveLength(1);
+    expect(await breakdown(reader(), range, "browser", 1)).toHaveLength(1);
     expect(isVisitDimension("country")).toBe(true);
     expect(isVisitDimension("path; drop table events")).toBe(false);
     await expect(
-      breakdown(db(), range, "path; drop table events" as VisitDimension),
+      breakdown(reader(), range, "path; drop table events" as VisitDimension),
     ).rejects.toThrow(/Unknown breakdown dimension/);
   });
 });
 
 describe("customEvents", () => {
   test("counts custom events, not pageviews or engagement reports", async () => {
-    expect(await customEvents(db(), range)).toEqual([{ name: "signup", events: 1, visitors: 1 }]);
+    expect(await customEvents(reader(), range)).toEqual([
+      { name: "signup", events: 1, visitors: 1 },
+    ]);
   });
 });

@@ -1,6 +1,6 @@
 # Roadmap
 
-Status: stage 1 (web analytics) is built and being checked; see the step table in [web-analytics.md](web-analytics.md). Of stage 0, organizations with one access check, projects, public keys, the browser tracker, durable ingestion into PostgreSQL, and a deployment template ([deployment.md](deployment.md), tested locally) exist. Open sign-up, invitations, events in ClickHouse, environments, releases, identities, and a deployment in production do not yet. Later stages are not started.
+Status: stage 1 (web analytics) is built and being checked; see the step table in [web-analytics.md](web-analytics.md). Of stage 0, organizations with one access check, projects, public keys, the browser tracker, durable ingestion into PostgreSQL, and a deployment template ([deployment.md](deployment.md), tested locally) exist. Reports read events from ClickHouse; their retention, deletion, and backups there are next ([clickhouse.md](clickhouse.md)). Open sign-up, invitations, environments, releases, identities, and a deployment in production do not yet. Later stages are not started.
 
 ## How stages are chosen
 
@@ -28,7 +28,7 @@ Stages 0 to 2 are the first release: analytics, then errors and product analytic
 In this order, so that later work builds on the final model:
 
 1. **Organizations.** Built, except open sign-up and invitations ([dashboard.md](dashboard.md#organizations)). Organizations own projects, and users reach them through memberships. One server-side check guards every project route, and tests prove one organization cannot reach another's data. The timezone moves from the deployment's configuration to the organization. The hosted service gets open sign-up; a self-hosted install keeps today's one-time owner setup link. Invitations and roles per module come later ([access model](#notes)).
-2. **Events in ClickHouse.** In progress, in four steps ([clickhouse.md](clickhouse.md)): ClickHouse is in the stack with settings for an 8 GB server, and the worker copies events there; reports read PostgreSQL until step 3. Events keep landing in PostgreSQL first, which confirms them and keeps retries out. Still to decide: whether visits are worked out when events arrive or when reports run (the [benchmark](storage-benchmark.md) found query-time visits need memory as data grows).
+2. **Events in ClickHouse.** In progress, in four steps ([clickhouse.md](clickhouse.md)): ClickHouse is in the stack with settings for an 8 GB server, the worker copies events there, and reports read them there. Events keep landing in PostgreSQL first, which confirms them, keeps retries out, and keeps them for two days. Next, step 4: retention, project deletion, and backups in ClickHouse. Still to decide: whether visits are worked out when events arrive or when reports run, as now (the [benchmark](storage-benchmark.md) found query-time visits need memory as data grows).
 
 ## Notes
 

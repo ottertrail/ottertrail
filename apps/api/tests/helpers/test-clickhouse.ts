@@ -29,6 +29,10 @@ export async function createTestClickHouse(): Promise<TestClickHouse> {
   try {
     await migrateClickHouse(admin, database);
   } catch (error) {
+    // The database may exist with only some tables: leave nothing behind.
+    await admin
+      .command({ query: `DROP DATABASE IF EXISTS ${identifier(database)}` })
+      .catch(() => undefined);
     await admin.close();
     throw new Error(
       "Could not prepare the test ClickHouse. Is it running? Start it with `podman compose up -d` from the repository root.",

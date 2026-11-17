@@ -1,7 +1,11 @@
-import { type Kysely, sql } from "kysely";
+import { randomUUID } from "node:crypto";
 
+import type { Kysely } from "kysely";
+
+import type { ClickHouseClient } from "../clickhouse/clickhouse.ts";
+import { QueryParams, type Reader, runCommand } from "../clickhouse/query.ts";
 import type { Database } from "../db/schema.ts";
-import { visitsQuery } from "../visits/visits.ts";
+import { visitsSql } from "../visits/visits.ts";
 import {
   type BreakdownRow,
   breakdown,
@@ -15,6 +19,7 @@ import {
   previousDays,
   type PageRow,
   type ReportFilter,
+  type ReportRange,
   type Summary,
   summary,
   timeseries,
@@ -62,12 +67,41 @@ export interface Analytics {
   previous: PreviousPeriod;
 }
 
-/** Columns of visitsQuery with first-event columns, in its order. */
-const VISIT_COLUMNS = sql`
-  visitor_id, started_at, ended_at, engaged_ms, pageviews, interactions, entry_path, exit_path,
-  referrer, utm_source, utm_medium, utm_campaign, utm_term, utm_content,
-  browser, os, device_type, country, region, city, duration_ms, bounce
-`;
+/**
+ * The report range of whole days in the organization's timezone: PostgreSQL
+ * counts the days, and holds the project's allowed hostnames, which tell a
+ * referrer from in-app navigation.
+ */
+async function dayRange(
+  db: Kysely<Database>,
+  options: {
+    projectId: string;
+    firstDay: string;
+    lastDay: string;
+    timeZone: string;
+    filters: readonly ReportFilter[];
+  },
+): Promise<ReportRange> {
+  const { projectId, firstDay, lastDay, timeZone, filters } = options;
+  const [days, project] = await Promise.all([
+    localDays(db, firstDay, lastDay, timeZone),
+    db
+      .selectFrom("projects")
+      .select("allowed_hostnames")
+      .where("id", "=", projectId)
+      .executeTakeFirst(),
+  ]);
+  return {
+    projectId,
+    timeZone,
+    filters,
+    ownHostnames: project?.allowed_hostnames ?? [],
+    ...days,
+  };
+}
+
+/** The temporary table the analytics page works out visits into, once per request. */
+const VISITS_TABLE = "analytics_visits";
 
 /**
  * Every report the analytics page shows, for one project and a range of
@@ -75,16 +109,20 @@ const VISIT_COLUMNS = sql`
  *
  * Working out visits sorts every event in the range, and most reports need
  * them (docs/web-analytics.md, section 7). Here they are worked out once,
- * into a temporary table that lasts until the transaction ends, and every
- * report reads that table. The transaction also gives every report the same
- * snapshot of the data (REPEATABLE READ), so the numbers agree with each
- * other even while new events arrive.
+ * into a temporary table of a ClickHouse session of this request's own, and
+ * every report reads that table. The session's queries run one after
+ * another, and the table goes when the request ends.
  *
  * With filters, the table holds only the matching visits, and every report
  * counts those visits and their events.
+ *
+ * ClickHouse has no snapshot that spans queries: events the worker copies
+ * while the page is worked out (a few seconds' worth) can reach some of
+ * its reports and not others.
  */
 export async function projectAnalytics(
   db: Kysely<Database>,
+  clickhouse: ClickHouseClient,
   options: {
     projectId: string;
     firstDay: string;
@@ -105,77 +143,66 @@ export async function projectAnalytics(
     filters = [],
     now = new Date(),
   } = options;
-  return db
-    .transaction()
-    .setIsolationLevel("repeatable read")
-    .execute(async (trx) => {
-      const range = {
-        projectId,
-        timeZone,
-        filters,
-        ...(await localDays(trx, firstDay, lastDay, timeZone)),
-      };
-
-      // PostgreSQL cannot take query parameters in CREATE TABLE … AS, so
-      // the table is declared first, then filled.
-      await sql`
-        create temporary table analytics_visits (
-          visitor_id bigint, started_at timestamptz, ended_at timestamptz, engaged_ms numeric,
-          pageviews bigint, interactions bigint, entry_path text, exit_path text,
-          referrer text, utm_source text, utm_medium text, utm_campaign text, utm_term text,
-          utm_content text, browser text, os text, device_type text, country text, region text,
-          city text, duration_ms numeric, bounce boolean
-        ) on commit drop
-      `.execute(trx);
-      await sql`
-        insert into analytics_visits (${VISIT_COLUMNS})
-        select ${VISIT_COLUMNS} from (${filterVisits(range, visitsQuery(range))}) as visits
-      `.execute(trx);
-      // A new table has no statistics; without them PostgreSQL can pick a bad plan.
-      await sql`analyze analytics_visits`.execute(trx);
-      const visits = { sql: sql`select * from analytics_visits`, filters };
-
-      const by = (dimension: AnalyticsBreakdown) => breakdown(trx, range, dimension, limit, visits);
-      // One connection runs the transaction, so the queries run one after another.
-      const breakdowns: Record<AnalyticsBreakdown, BreakdownRow[]> = {
-        source: await by("source"),
-        utmCampaign: await by("utmCampaign"),
-        entryPage: await by("entryPage"),
-        exitPage: await by("exitPage"),
-        country: await by("country"),
-        region: await by("region"),
-        city: await by("city"),
-        deviceType: await by("deviceType"),
-        browser: await by("browser"),
-        os: await by("os"),
-      };
-      // The period before: its own visits, so only the summary is compared.
-      const previous = await previousDays(trx, firstDay, lastDay, timeZone, now);
-      const previousSummary = await summary(trx, {
-        projectId,
-        timeZone,
-        filters,
-        from: previous.from,
-        to: previous.to,
-        until: previous.until ?? undefined,
-      });
-      return {
-        timeZone,
-        firstDay,
-        lastDay,
-        previous: {
-          firstDay: previous.firstDay,
-          lastDay: previous.lastDay,
-          until: previous.until,
-          summary: previousSummary,
-        },
-        summary: await summary(trx, range, visits),
-        days: await timeseries(trx, range, visits),
-        pages: await topPages(trx, range, limit, visits),
-        breakdowns,
-        customEvents: await customEvents(trx, range, limit, visits),
-      };
+  const [range, previous] = await Promise.all([
+    dayRange(db, { projectId, firstDay, lastDay, timeZone, filters }),
+    previousDays(db, firstDay, lastDay, timeZone, now),
+  ]);
+  const reader: Reader = { client: clickhouse, sessionId: randomUUID() };
+  const params = new QueryParams();
+  // On disk (MergeTree), not in memory: a long range can hold millions of visits.
+  await runCommand(
+    reader,
+    `CREATE TEMPORARY TABLE ${VISITS_TABLE} ENGINE = MergeTree ORDER BY tuple()
+     AS ${filterVisits(range, visitsSql(range, params, { firstEventColumns: "together" }), params)}`,
+    params,
+  );
+  try {
+    const visits = { table: VISITS_TABLE, filters };
+    const by = (dimension: AnalyticsBreakdown) =>
+      breakdown(reader, range, dimension, limit, visits);
+    // One session runs one query at a time, so the reports run one after another.
+    const breakdowns: Record<AnalyticsBreakdown, BreakdownRow[]> = {
+      source: await by("source"),
+      utmCampaign: await by("utmCampaign"),
+      entryPage: await by("entryPage"),
+      exitPage: await by("exitPage"),
+      country: await by("country"),
+      region: await by("region"),
+      city: await by("city"),
+      deviceType: await by("deviceType"),
+      browser: await by("browser"),
+      os: await by("os"),
+    };
+    // The period before: its own visits, so only the summary is compared.
+    const previousSummary = await summary(reader, {
+      ...range,
+      from: previous.from,
+      to: previous.to,
+      until: previous.until ?? undefined,
     });
+    return {
+      timeZone,
+      firstDay,
+      lastDay,
+      previous: {
+        firstDay: previous.firstDay,
+        lastDay: previous.lastDay,
+        until: previous.until,
+        summary: previousSummary,
+      },
+      summary: await summary(reader, range, visits),
+      days: await timeseries(reader, range, visits),
+      pages: await topPages(reader, range, limit, visits),
+      breakdowns,
+      customEvents: await customEvents(reader, range, limit, visits),
+    };
+  } finally {
+    // The session would drop it when it expires; this frees it now. A
+    // failure here must not hide the error that ended the reports.
+    await runCommand(reader, `DROP TEMPORARY TABLE IF EXISTS ${VISITS_TABLE}`).catch(
+      () => undefined,
+    );
+  }
 }
 
 /**
@@ -185,6 +212,7 @@ export async function projectAnalytics(
  */
 export async function projectList(
   db: Kysely<Database>,
+  clickhouse: ClickHouseClient,
   options: {
     projectId: string;
     firstDay: string;
@@ -198,18 +226,14 @@ export async function projectList(
   },
 ): Promise<{ rows: PageRow[] | BreakdownRow[] | CustomEventRow[]; hasMore: boolean }> {
   const { projectId, firstDay, lastDay, timeZone, filters = [], report, limit } = options;
-  const range = {
-    projectId,
-    timeZone,
-    filters,
-    ...(await localDays(db, firstDay, lastDay, timeZone)),
-  };
+  const range = await dayRange(db, { projectId, firstDay, lastDay, timeZone, filters });
+  const reader: Reader = { client: clickhouse };
   const page = { offset: options.offset, search: options.search };
   const rows =
     report === "pages"
-      ? await topPages(db, range, limit + 1, undefined, page)
+      ? await topPages(reader, range, limit + 1, undefined, page)
       : report === "customEvents"
-        ? await customEvents(db, range, limit + 1, undefined, page)
-        : await breakdown(db, range, report, limit + 1, undefined, page);
+        ? await customEvents(reader, range, limit + 1, undefined, page)
+        : await breakdown(reader, range, report, limit + 1, undefined, page);
   return { rows: rows.slice(0, limit), hasMore: rows.length > limit };
 }

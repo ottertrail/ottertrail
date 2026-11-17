@@ -5,8 +5,11 @@
  *   vp run visits                    (the first project, last 24 hours)
  *   vp run visits -- Playground 6    (a project by name, last 6 hours)
  *
- * Times are shown in the timezone of the project's organization.
+ * Times are shown in the timezone of the project's organization. Visits are
+ * worked out from the events the worker has copied to ClickHouse.
  */
+import { createClickHouse } from "../src/clickhouse/clickhouse.ts";
+import type { Reader } from "../src/clickhouse/query.ts";
 import { loadConfig } from "../src/config.ts";
 import { createDatabase } from "../src/db/database.ts";
 import { findVisits } from "../src/visits/visits.ts";
@@ -21,6 +24,8 @@ if (!Number.isFinite(hours) || hours <= 0) {
 
 const config = loadConfig();
 const db = createDatabase({ connectionString: config.databaseUrl, maxConnections: 1 });
+// PostgreSQL holds the projects; ClickHouse holds the events.
+const reader: Reader = { client: createClickHouse(config.clickhouse) };
 const seconds = (ms: number) => `${Math.round(ms / 1000)} s`;
 
 try {
@@ -48,7 +53,7 @@ try {
     });
     const to = new Date();
     const from = new Date(to.getTime() - hours * 60 * 60 * 1000);
-    const visits = await findVisits(db, { projectId: project.id, from, to });
+    const visits = await findVisits(reader, { projectId: project.id, from, to });
     console.log(
       `${project.name}: ${visits.length} visits started in the last ${hours} hours (${project.time_zone})`,
     );
@@ -70,4 +75,5 @@ try {
   }
 } finally {
   await db.destroy();
+  await reader.client.close();
 }

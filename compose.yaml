@@ -39,9 +39,11 @@ services:
         hard: 262144
     volumes:
       - clickhouse-data:/var/lib/clickhouse
-      # The same small-server settings as deployments use.
+      # The same small-server settings as deployments use …
       - ./deploy/clickhouse/config.d/ottertrail.xml:/etc/clickhouse-server/config.d/ottertrail.xml:ro
       - ./deploy/clickhouse/users.d/ottertrail.xml:/etc/clickhouse-server/users.d/ottertrail.xml:ro
+      # … except a larger share of the memory, for Podman's small machine.
+      - ./deploy/clickhouse/development.xml:/etc/clickhouse-server/config.d/zz-development.xml:ro
     healthcheck:
       test:
         [

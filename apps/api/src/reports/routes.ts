@@ -1,8 +1,10 @@
-import type { FastifyPluginCallback, FastifyReply, FastifyRequest } from "fastify";
+import { ClickHouseError } from "@clickhouse/client";
+import type { FastifyError, FastifyPluginCallback, FastifyReply, FastifyRequest } from "fastify";
 import type { Kysely } from "kysely";
 
 import type { Auth } from "../auth/auth.ts";
 import { requireSession } from "../auth/routes.ts";
+import type { ClickHouseClient } from "../clickhouse/clickhouse.ts";
 import type { Database } from "../db/schema.ts";
 import { type ProjectAccess, requireProjectAccess } from "../organizations/access.ts";
 import { dayIn } from "../visitors/visitor-ids.ts";
@@ -172,11 +174,38 @@ function accessOf(request: { projectAccess: ProjectAccess | null }): ProjectAcce
  */
 export const reportRoutes: FastifyPluginCallback<{
   db: Kysely<Database>;
+  /** Where the events are; PostgreSQL holds the projects and counts the days. */
+  clickhouse: ClickHouseClient;
   auth: Auth;
   now?: () => Date;
-}> = (app, { db, auth, now = () => new Date() }, done) => {
+}> = (app, { db, clickhouse, auth, now = () => new Date() }, done) => {
   const signedIn = requireSession(auth);
   const projectAccess = requireProjectAccess(db);
+
+  // For these routes only. A database's error text stays in the log: it
+  // can name servers, settings, and versions.
+  app.setErrorHandler((error: FastifyError, request, reply) => {
+    if ((error.statusCode ?? 500) < 500) {
+      // A bad request (validation): Fastify's own answer, which names the problem.
+      throw error;
+    }
+    if (error instanceof ClickHouseError && error.type === "MEMORY_LIMIT_EXCEEDED") {
+      request.log.warn({ err: error }, "a report ran out of memory");
+      return reply
+        .code(503)
+        .header("retry-after", "60")
+        .send(
+          problem(
+            "reports_busy",
+            "These reports need more memory than the server has free now. Try a shorter range, or try again in a minute.",
+          ),
+        );
+    }
+    request.log.error({ err: error }, "a report failed");
+    return reply
+      .code(500)
+      .send(problem("internal_error", "The reports could not be worked out. Try again."));
+  });
   app.get<{
     Params: { id: string };
     Querystring: RangeQuery & { limit?: number } & Partial<Record<FilterName, string>>;
@@ -211,7 +240,7 @@ export const reportRoutes: FastifyPluginCallback<{
         return reply.code(400).send(days.problem);
       }
       const { limit } = request.query;
-      return projectAnalytics(db, {
+      return projectAnalytics(db, clickhouse, {
         projectId: request.params.id,
         firstDay: days.from,
         lastDay: days.to,
@@ -274,7 +303,7 @@ export const reportRoutes: FastifyPluginCallback<{
         return reply.code(400).send(days.problem);
       }
       const { report, search, offset = 0, limit = LIST_PAGE_SIZE } = request.query;
-      return projectList(db, {
+      return projectList(db, clickhouse, {
         projectId: request.params.id,
         firstDay: days.from,
         lastDay: days.to,

@@ -1,7 +1,8 @@
 /**
  * The worker: background work, in its own process beside the API.
  *
- * - Copying events to ClickHouse every few seconds (clickhouse/copy-events.ts).
+ * - Copying events to ClickHouse every few seconds, and deleting them from
+ *   PostgreSQL once copied and two days old, every hour (clickhouse/copy-events.ts).
  * - Deleting events older than each project's retention, at start and every
  *   few hours (retention/retention.ts).
  *
@@ -9,7 +10,7 @@
  * timers are enough; a job queue comes with work that needs one.
  */
 import { createClickHouse } from "./clickhouse/clickhouse.ts";
-import { copyEventsToClickHouse } from "./clickhouse/copy-events.ts";
+import { copyEventsToClickHouse, deleteCopiedEvents } from "./clickhouse/copy-events.ts";
 import { loadConfig } from "./config.ts";
 import { createDatabase } from "./db/database.ts";
 import { deleteExpiredEvents } from "./retention/retention.ts";
@@ -19,6 +20,9 @@ export const RETENTION_INTERVAL_MS = 6 * 60 * 60 * 1000;
 
 /** How often events are copied to ClickHouse: how far reports there can trail. */
 export const COPY_INTERVAL_MS = 5_000;
+
+/** How often copied events leave PostgreSQL. They stay at most this long past their day. */
+export const PRUNE_INTERVAL_MS = 60 * 60 * 1000;
 
 const config = loadConfig();
 const db = createDatabase({ connectionString: config.databaseUrl, maxConnections: 3 });
@@ -66,6 +70,15 @@ const stopCopying = every(COPY_INTERVAL_MS, async () => {
   }
 });
 
+const stopPruning = every(PRUNE_INTERVAL_MS, async () => {
+  try {
+    const deleted = await deleteCopiedEvents(db);
+    log("info", "copied events deleted from PostgreSQL", { deleted });
+  } catch (error) {
+    log("error", "deleting copied events from PostgreSQL failed", { err: String(error) });
+  }
+});
+
 const stopRetention = every(RETENTION_INTERVAL_MS, async () => {
   try {
     const results = await deleteExpiredEvents(db);
@@ -80,7 +93,7 @@ async function shutdown(signal: NodeJS.Signals) {
   log("info", "shutting down", { signal });
   stopping = true;
   // Runs in progress finish their batch first.
-  await Promise.all([stopCopying(), stopRetention()]);
+  await Promise.all([stopCopying(), stopPruning(), stopRetention()]);
   await clickhouse.close();
   await db.destroy();
 }
@@ -91,5 +104,6 @@ for (const signal of ["SIGINT", "SIGTERM"] as const) {
 
 log("info", "worker started", {
   copyIntervalMs: COPY_INTERVAL_MS,
+  pruneIntervalMs: PRUNE_INTERVAL_MS,
   retentionIntervalMs: RETENTION_INTERVAL_MS,
 });
