@@ -48,6 +48,9 @@ x-app: &app
     OBJECT_STORE_SECRET_ACCESS_KEY: ${OBJECT_STORE_SECRET_ACCESS_KEY:-}
     SOURCE_MAP_BYTES_PER_ORGANIZATION: ${SOURCE_MAP_BYTES_PER_ORGANIZATION:-}
     REPLAY_BYTES_PER_ORGANIZATION: ${REPLAY_BYTES_PER_ORGANIZATION:-}
+    # Traces, logs, and metrics over OTLP (docs/telemetry.md): days kept,
+    # 30 by default. The migrate service applies it to ClickHouse's tables.
+    TELEMETRY_RETENTION_DAYS: ${TELEMETRY_RETENTION_DAYS:-}
 
 services:
   postgres:

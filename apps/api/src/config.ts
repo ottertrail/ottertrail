@@ -108,6 +108,11 @@ export interface Config {
   sourceMapBytesPerOrganization: number;
   /** Bytes of session replays, compressed, each organization may keep (docs/session-replay.md). */
   replayBytesPerOrganization: number;
+  /**
+   * Days ClickHouse keeps traces, logs, and metrics (docs/telemetry.md):
+   * older records are refused, and ClickHouse drops whole days past it.
+   */
+  telemetryRetentionDays: number;
 }
 
 export interface ObjectStoreConfig {
@@ -289,6 +294,20 @@ function parseBytes(name: string, raw: string | undefined, fallback: number): nu
   return bytes;
 }
 
+/** The default: 30 days of traces, logs, and metrics, as long as session replays. */
+export const DEFAULT_TELEMETRY_RETENTION_DAYS = 30;
+
+function parseTelemetryRetentionDays(raw: string | undefined): number {
+  if (raw === undefined || raw.trim() === "") return DEFAULT_TELEMETRY_RETENTION_DAYS;
+  const days = Number(raw);
+  if (!Number.isInteger(days) || days < 1 || days > 365) {
+    throw new ConfigError(
+      `TELEMETRY_RETENTION_DAYS must be a whole number of days from 1 to 365, received "${raw}"`,
+    );
+  }
+  return days;
+}
+
 function parseTrustProxy(raw: string | undefined): false | number | string[] {
   if (raw === undefined || raw.trim() === "" || raw.trim() === "false") {
     return false;
@@ -414,6 +433,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       env.REPLAY_BYTES_PER_ORGANIZATION,
       DEFAULT_REPLAY_BYTES_PER_ORGANIZATION,
     ),
+    telemetryRetentionDays: parseTelemetryRetentionDays(env.TELEMETRY_RETENTION_DAYS),
   };
 }
 

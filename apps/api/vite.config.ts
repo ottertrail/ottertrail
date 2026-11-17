@@ -17,7 +17,19 @@ export default defineConfig({
     // dist/. Installing them instead would bring optional peers of
     // better-auth (React, Vitest, Playwright) along: about 180 MB.
     deps: { alwaysBundle: [/./], onlyBundle: false },
-    plugins: [thirdPartyLicenses()],
+    plugins: [
+      thirdPartyLicenses({
+        // OTLP's message definitions, kept in src/telemetry/proto/.
+        vendored: [
+          {
+            name: "opentelemetry-proto",
+            version: "1.11.1",
+            license: "Apache-2.0",
+            licenseFile: `${import.meta.dirname}/src/telemetry/proto/LICENSE`,
+          },
+        ],
+      }),
+    ],
     format: "esm",
     sourcemap: true,
     dts: false,

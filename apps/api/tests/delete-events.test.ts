@@ -12,6 +12,7 @@ import type { NewEvent } from "../src/collection/event-store.ts";
 import { loadConfig } from "../src/config.ts";
 import { PUBLIC_URL, signedInDashboard } from "./helpers/dashboard.ts";
 import { insertOrganization, insertProject } from "./helpers/projects.ts";
+import { nowNs, secretKeyOf } from "./helpers/telemetry.ts";
 
 let dashboard: Awaited<ReturnType<typeof signedInDashboard>>;
 
@@ -53,6 +54,90 @@ async function inClickHouse(projectId: string, { onDisk = false } = {}): Promise
   });
   const [row] = await result.json<{ n: string }>();
   return Number(row?.n ?? 0);
+}
+
+const TELEMETRY = ["spans", "logs", "metric_points", "metric_histograms"] as const;
+
+/** Sends a span, a log record, a gauge point, and a histogram point over OTLP, as a server would. */
+async function sendTelemetry(projectId: string) {
+  const key = await secretKeyOf(dashboard.db, projectId);
+  const time = String(nowNs(-1000));
+  const resource = { attributes: [{ key: "service.name", value: { stringValue: "api" } }] };
+  const requests = {
+    "/v1/traces": {
+      resourceSpans: [
+        {
+          resource,
+          scopeSpans: [
+            {
+              spans: [
+                {
+                  traceId: randomUUID().replaceAll("-", ""),
+                  spanId: randomUUID().replaceAll("-", "").slice(0, 16),
+                  name: "GET /",
+                  startTimeUnixNano: time,
+                  endTimeUnixNano: time,
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    },
+    "/v1/logs": {
+      resourceLogs: [
+        {
+          resource,
+          scopeLogs: [{ logRecords: [{ timeUnixNano: time, body: { stringValue: "hi" } }] }],
+        },
+      ],
+    },
+    "/v1/metrics": {
+      resourceMetrics: [
+        {
+          resource,
+          scopeMetrics: [
+            {
+              metrics: [
+                { name: "up", gauge: { dataPoints: [{ timeUnixNano: time, asInt: "1" }] } },
+                {
+                  name: "latency",
+                  histogram: {
+                    dataPoints: [{ timeUnixNano: time, count: "1", bucketCounts: ["1"] }],
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    },
+  };
+  for (const [url, body] of Object.entries(requests)) {
+    const response = await dashboard.app.inject({
+      method: "POST",
+      url,
+      headers: { "content-type": "application/json", authorization: `Bearer ${key}` },
+      payload: JSON.stringify(body),
+    });
+    expect(response.statusCode).toBe(200);
+  }
+}
+
+/** The project's rows in each telemetry table, as reports see them, or every row still on disk. */
+async function telemetryOf(projectId: string, { onDisk = false } = {}): Promise<number[]> {
+  return Promise.all(
+    TELEMETRY.map(async (table) => {
+      const result = await dashboard.reader.client.query({
+        query: `SELECT count() AS n FROM ${table} WHERE project_id = {project:UUID}`,
+        query_params: { project: projectId },
+        format: "JSONEachRow",
+        clickhouse_settings: onDisk ? { apply_deleted_mask: 0 } : {},
+      });
+      const [row] = await result.json<{ n: string }>();
+      return Number(row?.n ?? 0);
+    }),
+  );
 }
 
 async function deleteThroughDashboard(projectId: string, name: string) {
@@ -98,6 +183,27 @@ describe("deleting a project's events from ClickHouse", { timeout: 60_000 }, () 
       rows: 0,
       files: 0,
     });
+  });
+
+  test("a deleted project's traces, logs, and metrics leave ClickHouse, and its disk, too", async () => {
+    const doomed = await projectWith("Doomed telemetry", 1);
+    const kept = await projectWith("Kept telemetry", 0);
+    await sendTelemetry(doomed);
+    await sendTelemetry(kept);
+    expect(await telemetryOf(doomed)).toEqual([1, 1, 1, 1]);
+
+    await deleteThroughDashboard(doomed, "Doomed telemetry");
+    expect(await purgeDeletedProjects(dashboard.db, dashboard.reader.client)).toEqual({
+      projects: 1,
+      rows: 5,
+      files: 0,
+    });
+    expect(await telemetryOf(doomed)).toEqual([0, 0, 0, 0]);
+    expect(await removeDeletedRows(dashboard.reader.client, { wait: true })).toMatchObject({
+      started: true,
+    });
+    expect(await telemetryOf(doomed, { onDisk: true })).toEqual([0, 0, 0, 0]);
+    expect(await telemetryOf(kept)).toEqual([1, 1, 1, 1]);
   });
 
   test("while ClickHouse is unreachable, the deletion waits for the next run", async () => {
@@ -169,6 +275,20 @@ describe("deleting a project's events from ClickHouse", { timeout: 60_000 }, () 
       orphans: 0,
       queued: false,
     });
+  });
+
+  test("finds a project PostgreSQL no longer knows that ClickHouse holds only telemetry of", async () => {
+    const restored = await projectWith("Telemetry only", 0);
+    await sendTelemetry(restored);
+    await dashboard.db.deleteFrom("projects").where("id", "=", restored).execute();
+    await dashboard.db.deleteFrom("project_deletions").execute();
+
+    expect(await queueOrphanedProjects(dashboard.db, dashboard.reader.client)).toEqual({
+      orphans: 1,
+      queued: true,
+    });
+    await purgeDeletedProjects(dashboard.db, dashboard.reader.client);
+    expect(await telemetryOf(restored)).toEqual([0, 0, 0, 0]);
   });
 
   test("deletes nothing when PostgreSQL seems to be the wrong database", async () => {

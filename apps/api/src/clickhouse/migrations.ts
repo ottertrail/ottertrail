@@ -9,6 +9,9 @@ export interface ClickHouseMigration {
   statements: (database: string) => string[];
 }
 
+/** The tables of traces, logs, and metrics (migration 0007; docs/telemetry.md). */
+export const TELEMETRY_TABLES = ["spans", "logs", "metric_points", "metric_histograms"] as const;
+
 export const CLICKHOUSE_MIGRATIONS: ClickHouseMigration[] = [
   {
     /**
@@ -123,6 +126,139 @@ export const CLICKHOUSE_MIGRATIONS: ClickHouseMigration[] = [
     name: "0006_add_events_replay_id",
     statements: (database) => [
       `ALTER TABLE ${database}.events ADD COLUMN IF NOT EXISTS replay_id Nullable(UUID)`,
+    ],
+  },
+  {
+    /**
+     * Traces, logs, and metrics received over OTLP (docs/telemetry.md),
+     * stored straight here, never in PostgreSQL.
+     *
+     * - Ordered by project, then time, then the record's ID, and
+     *   partitioned by day: ClickHouse drops a whole day once it is past
+     *   the retention (TTL with ttl_only_drop_parts), which costs nothing.
+     *   30 days here; `vp run migrate` sets TELEMETRY_RETENTION_DAYS
+     *   (applyTelemetryRetention in clickhouse/migrate.ts).
+     * - ReplacingMergeTree keeps one row per ID: a span's is its trace and
+     *   span IDs, a log record's or data point's a hash of its content, so
+     *   a request retried after a lost answer is stored once. Queries that
+     *   count read with FINAL.
+     * - Attributes as text in maps; events and links of a span as JSON.
+     * - A bloom filter finds a trace's spans and logs; a text index finds
+     *   logs by the words in their body.
+     */
+    name: "0007_create_telemetry",
+    statements: (database) => [
+      `CREATE TABLE IF NOT EXISTS ${database}.spans (
+        project_id UUID,
+        timestamp DateTime64(9, 'UTC'),
+        id String,
+        trace_id String,
+        span_id String,
+        parent_span_id String,
+        name LowCardinality(String),
+        kind Enum8('unspecified' = 0, 'internal' = 1, 'server' = 2, 'client' = 3, 'producer' = 4, 'consumer' = 5),
+        duration_ns UInt64,
+        status_code Enum8('unset' = 0, 'ok' = 1, 'error' = 2),
+        status_message String,
+        service LowCardinality(String),
+        release LowCardinality(String),
+        environment LowCardinality(String),
+        resource_attributes Map(LowCardinality(String), String),
+        attributes Map(LowCardinality(String), String),
+        dropped_attributes_count UInt32,
+        events String CODEC(ZSTD(3)),
+        dropped_events_count UInt32,
+        links String,
+        dropped_links_count UInt32,
+        scope_name LowCardinality(String),
+        scope_version LowCardinality(String),
+        INDEX trace_id_index trace_id TYPE bloom_filter GRANULARITY 4
+      )
+      ENGINE = ReplacingMergeTree
+      PARTITION BY toDate(timestamp)
+      ORDER BY (project_id, timestamp, id)
+      TTL toDateTime(timestamp) + INTERVAL 30 DAY
+      SETTINGS ttl_only_drop_parts = 1`,
+      `CREATE TABLE IF NOT EXISTS ${database}.logs (
+        project_id UUID,
+        timestamp DateTime64(9, 'UTC'),
+        id String,
+        observed_timestamp DateTime64(9, 'UTC'),
+        severity_number UInt8,
+        severity_text LowCardinality(String),
+        body String CODEC(ZSTD(3)),
+        trace_id String,
+        span_id String,
+        event_name LowCardinality(String),
+        service LowCardinality(String),
+        release LowCardinality(String),
+        environment LowCardinality(String),
+        resource_attributes Map(LowCardinality(String), String),
+        attributes Map(LowCardinality(String), String),
+        dropped_attributes_count UInt32,
+        scope_name LowCardinality(String),
+        scope_version LowCardinality(String),
+        INDEX trace_id_index trace_id TYPE bloom_filter GRANULARITY 4,
+        INDEX body_text body TYPE text(tokenizer = 'splitByNonAlpha')
+      )
+      ENGINE = ReplacingMergeTree
+      PARTITION BY toDate(timestamp)
+      ORDER BY (project_id, timestamp, id)
+      TTL toDateTime(timestamp) + INTERVAL 30 DAY
+      SETTINGS ttl_only_drop_parts = 1`,
+      `CREATE TABLE IF NOT EXISTS ${database}.metric_points (
+        project_id UUID,
+        timestamp DateTime64(9, 'UTC'),
+        id String,
+        start_timestamp DateTime64(9, 'UTC'),
+        name LowCardinality(String),
+        unit LowCardinality(String),
+        kind Enum8('gauge' = 1, 'sum' = 2),
+        temporality Enum8('unspecified' = 0, 'delta' = 1, 'cumulative' = 2),
+        monotonic Bool,
+        value Float64,
+        service LowCardinality(String),
+        release LowCardinality(String),
+        environment LowCardinality(String),
+        resource_attributes Map(LowCardinality(String), String),
+        attributes Map(LowCardinality(String), String),
+        dropped_attributes_count UInt32,
+        scope_name LowCardinality(String),
+        scope_version LowCardinality(String)
+      )
+      ENGINE = ReplacingMergeTree
+      PARTITION BY toDate(timestamp)
+      ORDER BY (project_id, timestamp, id)
+      TTL toDateTime(timestamp) + INTERVAL 30 DAY
+      SETTINGS ttl_only_drop_parts = 1`,
+      `CREATE TABLE IF NOT EXISTS ${database}.metric_histograms (
+        project_id UUID,
+        timestamp DateTime64(9, 'UTC'),
+        id String,
+        start_timestamp DateTime64(9, 'UTC'),
+        name LowCardinality(String),
+        unit LowCardinality(String),
+        temporality Enum8('unspecified' = 0, 'delta' = 1, 'cumulative' = 2),
+        count UInt64,
+        sum Nullable(Float64),
+        min Nullable(Float64),
+        max Nullable(Float64),
+        bounds Array(Float64),
+        bucket_counts Array(UInt64),
+        service LowCardinality(String),
+        release LowCardinality(String),
+        environment LowCardinality(String),
+        resource_attributes Map(LowCardinality(String), String),
+        attributes Map(LowCardinality(String), String),
+        dropped_attributes_count UInt32,
+        scope_name LowCardinality(String),
+        scope_version LowCardinality(String)
+      )
+      ENGINE = ReplacingMergeTree
+      PARTITION BY toDate(timestamp)
+      ORDER BY (project_id, timestamp, id)
+      TTL toDateTime(timestamp) + INTERVAL 30 DAY
+      SETTINGS ttl_only_drop_parts = 1`,
     ],
   },
 ];

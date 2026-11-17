@@ -1,6 +1,6 @@
 # Backend telemetry: traces, logs, and metrics
 
-**Status: planned, stage 3 of the [roadmap](roadmap.md). This is the design to build from; nothing in it is built.**
+**Status: stage 3 of the [roadmap](roadmap.md), in progress. Receiving and storing (step 1 of [How it is built](#how-it-is-built)) is built; exceptions in the error list and the dashboard's pages are planned.**
 
 A site's servers send what they did, in the OpenTelemetry protocol (OTLP): traces (each request through the services it touched, as spans), logs, and metrics. Ottertrail keeps them in ClickHouse, beside the browser's events, and the dashboard shows each with the others: a slow request's trace and its logs, an exception on a span in the same error list as the browser's errors. Any OpenTelemetry SDK or Collector can send to it; nothing of Ottertrail's own runs on the servers.
 
@@ -29,15 +29,18 @@ OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
 
 As the specification has them, so exporters retry what may succeed later and drop what never will:
 
-| Case                                             | Answer                                                                                   |
-| ------------------------------------------------ | ---------------------------------------------------------------------------------------- |
-| Stored                                           | 200, an empty `Export…ServiceResponse`                                                   |
-| Stored, but some records refused (below)         | 200, with `partial_success`: how many were refused and why. Exporters do not retry these |
-| Malformed: not OTLP, or not the encoding it says | 400                                                                                      |
-| No key, or one no project has                    | 401                                                                                      |
-| Over 16 MiB once unpacked                        | 413                                                                                      |
-| Over the project's or organization's budget      | 429, with `Retry-After`                                                                  |
-| ClickHouse cannot take it now                    | 503, with `Retry-After`                                                                  |
+| Case                                                                      | Answer                                                                                   |
+| ------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| Stored                                                                    | 200, an empty `Export…ServiceResponse`                                                   |
+| Stored, but some records refused (below)                                  | 200, with `partial_success`: how many were refused and why. Exporters do not retry these |
+| Malformed: not OTLP, or not the encoding it says                          | 400                                                                                      |
+| No key, or one no project has                                             | 401                                                                                      |
+| Over 16 MiB once unpacked, or over a million messages                     | 413: send smaller batches                                                                |
+| Costs more than a project's whole budget                                  | 413: send smaller batches                                                                |
+| Another content type, or a compression not gzip                           | 415                                                                                      |
+| Over the project's or organization's budget                               | 429, with `Retry-After`                                                                  |
+| The organization has 4 requests in progress on this process               | 429, with `Retry-After`                                                                  |
+| ClickHouse cannot take it now, or this process has 8 requests in progress | 503, with `Retry-After`                                                                  |
 
 Exporters retry 429, 502, 503, and 504, and nothing else.
 
@@ -45,7 +48,7 @@ Exporters retry 429, 502, 503, and 504, and nothing else.
 
 Decided on 18 November 2026. Analytics events land in PostgreSQL first, which confirms them, and are copied to ClickHouse ([ClickHouse](clickhouse.md)). Telemetry does not: it is the largest data Ottertrail takes, often many times a site's events, and writing it twice would double the cost of the busiest path. An OTLP request is confirmed once ClickHouse has written it (asynchronous inserts, waiting for the write), and while ClickHouse cannot take it the answer is 503, which every exporter retries, keeping the data in its queue meanwhile.
 
-A retry after an answer that was lost stores a record twice. Each record has an ID, a span its trace and span IDs, a log record or data point a hash of its content, and the tables keep one row per ID (`ReplacingMergeTree`); what counts records reads them deduplicated.
+A retry after an answer that was lost stores a record twice. Each record has an ID, a span its trace and span IDs, a log record or data point a hash of its content, and the tables keep one row per ID (`ReplacingMergeTree`); what counts records reads them deduplicated. One exception: a log record with neither a time nor an observed time takes the time it arrived, which differs on a retry, so a retry of it stays twice. OpenTelemetry's SDKs and the Collector always set the observed time.
 
 ## Storage
 
@@ -60,9 +63,12 @@ The service comes from the resource's `service.name`, the release from `service.
 
 ## Limits
 
-- **Requests:** 16 MiB once unpacked (the specification suggests 64 MiB as a ceiling; a Collector's batches are far smaller).
-- **Budgets:** spans, log records, and data points together, per project and per organization, apart from events', so telemetry cannot crowd out a site's events: a burst of 50,000 a project, then 5,000 a second; an organization's three times that. A first guess, to be measured.
-- **Records:** attribute values cut to 4 KB, at most 128 attributes a record (the rest dropped, and counted, as OTLP counts its own dropped attributes), log bodies cut to 64 KB, at most 128 events and links a span. Times outside the retention, or more than an hour ahead, are refused and counted in `partial_success`.
+What one customer sends must not slow the API for the others, so every limit bounds the work a request makes, not only its size.
+
+- **Requests:** 16 MiB once unpacked (the specification suggests 64 MiB as a ceiling). At most a million messages, the records, attributes, values, and what holds them, which the API counts from the body before decoding it: decoding allocates for each, and an empty one takes two bytes, so 16 MiB of them would take gigabytes of memory. A million take about as long and as much memory as a large real batch (20,000 spans of 20 attributes: 120 ms and 120 MB on the development machine). Each API process works on at most 8 requests at once, at most 4 of them one organization's: each holds its body in memory until ClickHouse has it.
+- **Budgets:** per project and per organization, apart from events', so telemetry cannot crowd out a site's events: a burst of 50,000 a project, then 5,000 a second; an organization's three times that. A request costs one per record, or, when it is more, one per 64 messages it decodes into or per 2 KiB its rows hold (its body, and the resource attributes each row repeats), so a few records with many attributes, or with a large resource, cost what the work they make costs. Decoding is paid for before it is done, and kept when the request is then refused. A first guess, to be measured.
+- **Batches:** a request that costs more than a project's whole budget is refused (413), as it could never fit. A Collector's batch processor sends 8,192 records at a time by default, but with no upper limit (`send_batch_max_size: 0`), so one large incoming batch can pass through whole: set `send_batch_max_size` to 50,000 or less.
+- **Records:** attribute values cut to 4 KB, at most 128 attributes a record (the rest dropped, and counted, as OTLP counts its own dropped attributes), log bodies cut to 64 KB, at most 128 events and links a span. A resource's attributes are kept in key order up to 8 KiB in all, since each of its records' rows carries a copy; its service, release, and environment are read from all of them. Times outside the retention, or more than an hour ahead, are refused and counted in `partial_success`.
 - **Retention:** telemetry is kept 30 days by default (`TELEMETRY_RETENTION_DAYS`, 1 to 365; decided on 18 November 2026, as long as session replays), dropped by whole days by ClickHouse itself (TTL), which costs nothing. Deleting a project deletes its telemetry, through `project_deletions` as for events.
 
 ## Exceptions join the error list
@@ -86,7 +92,13 @@ A server's exception is recorded on its span, as an event named `exception`, or,
 
 ## How it is built
 
-1. ClickHouse's tables, decoding, the three routes, their answers, limits, and budgets; tests with protobuf and JSON requests.
-2. Exceptions into the error list.
-3. The dashboard's Traces, Logs, Metrics, and Services pages.
-4. Deployment: the settings, and what has been tested.
+| Step                                                                                                                          | Status  |
+| ----------------------------------------------------------------------------------------------------------------------------- | ------- |
+| 1. ClickHouse's tables, decoding, the three routes, their answers, limits, and budgets; tests with protobuf and JSON requests | Done    |
+| 2. Exceptions into the error list                                                                                             | Planned |
+| 3. The dashboard's Traces, Logs, Metrics, and Services pages                                                                  | Planned |
+| 4. Deployment: the settings ([deployment](deployment.md#traces-logs-and-metrics)), and what has been tested                   | Started |
+
+Step 1 is in `apps/api/src/telemetry/` (routes, decoding, rows) and ClickHouse migration `0007_create_telemetry`. Besides requests built by hand in both encodings, its tests send through OpenTelemetry's own JavaScript exporters (protobuf and JSON, for traces, logs, and metrics) and check what ClickHouse stored. The message definitions are those of opentelemetry-proto 1.11.1, kept in `apps/api/src/telemetry/proto/` with their licence, which the built API carries in its `THIRD_PARTY_LICENSES.txt`.
+
+Until step 3, nothing in the dashboard reads these tables: what a server sends is stored, kept, and deleted with its project, but not yet shown.

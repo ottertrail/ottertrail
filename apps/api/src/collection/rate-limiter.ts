@@ -74,6 +74,11 @@ export class TokenBucketLimiter {
     return result;
   }
 
+  /** The most tokens a bucket holds: the largest cost take() accepts. */
+  get capacity(): number {
+    return this.#limit.capacity;
+  }
+
   /** Seconds until `key` could spend `cost` tokens, without spending them: 0 when it can now. */
   wait(key: string, cost: number): number {
     const { capacity, refillPerSecond } = this.#limit;
@@ -123,4 +128,30 @@ export class EventBudget {
     if (!own.allowed) this.#organizations.refund(project.organizationId, events);
     return own;
   }
+
+  /** Puts back what take() spent, for records that were not stored after all. */
+  refund(project: { id: string; organizationId: string }, events: number): void {
+    this.#projects.refund(project.id, events);
+    this.#organizations.refund(project.organizationId, events);
+  }
+
+  /** The most one take() may ask for: more could never be allowed. */
+  get capacity(): number {
+    return Math.min(this.#projects.capacity, this.#organizations.capacity);
+  }
 }
+
+/**
+ * Traces' spans, log records, and metrics' data points a project may store
+ * (docs/telemetry.md, "Limits"): a burst of 50,000, then 5,000 a second.
+ * A record costs one, or more when large (telemetry/routes.ts, BYTES_PER_UNIT).
+ * A budget apart from events', so telemetry cannot crowd out a site's
+ * events. A first guess, to be measured.
+ */
+export const TELEMETRY_PROJECT_LIMIT: RateLimit = { capacity: 50_000, refillPerSecond: 5_000 };
+
+/** An organization's telemetry budget, all its projects together: three projects' worth. */
+export const TELEMETRY_ORGANIZATION_LIMIT: RateLimit = {
+  capacity: 150_000,
+  refillPerSecond: 15_000,
+};

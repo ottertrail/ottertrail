@@ -10,6 +10,7 @@ import { type CollectionOptions, collectionRoutes } from "./collection/routes.ts
 import {
   DEFAULT_REPLAY_BYTES_PER_ORGANIZATION,
   DEFAULT_SOURCE_MAP_BYTES_PER_ORGANIZATION,
+  DEFAULT_TELEMETRY_RETENTION_DAYS,
 } from "./config.ts";
 import { dashboardAppRoutes, sendsHsts } from "./dashboard-app/routes.ts";
 import type { Database } from "./db/schema.ts";
@@ -28,6 +29,7 @@ import { SourceMapCache } from "./source-maps/resolve.ts";
 import { sourceMapRoutes, sourceMapUploadRoutes } from "./source-maps/routes.ts";
 import { speedRoutes } from "./speed/routes.ts";
 import type { ObjectStore } from "./storage/object-store.ts";
+import { type TelemetryOptions, telemetryRoutes } from "./telemetry/routes.ts";
 import { trackerScriptRoutes } from "./tracker-script/routes.ts";
 
 export interface AppOptions extends Omit<FastifyServerOptions, "logger"> {
@@ -79,6 +81,12 @@ export interface AppOptions extends Omit<FastifyServerOptions, "logger"> {
     projectLimit?: RateLimit;
     organizationLimit?: RateLimit;
   };
+  /**
+   * OTLP traces, logs, and metrics (docs/telemetry.md), stored in
+   * ClickHouse: the dashboard's client unless `clickhouse` names another.
+   * Not served without a ClickHouse client.
+   */
+  telemetry?: Partial<Omit<TelemetryOptions, "projects" | "now">>;
   /** The built tracker, served at /t.js. Not served when omitted. */
   trackerScriptPath?: string;
   /** The built dashboard's directory, served at /. Not served when omitted. */
@@ -109,6 +117,7 @@ export function buildApp({
   objectStore = null,
   sourceMaps = { limitBytes: DEFAULT_SOURCE_MAP_BYTES_PER_ORGANIZATION },
   replays = { limitBytes: DEFAULT_REPLAY_BYTES_PER_ORGANIZATION },
+  telemetry = {},
   trackerScriptPath,
   dashboardPath,
   replayPlayerPath,
@@ -153,6 +162,18 @@ export function buildApp({
     ...(sourceMaps.ipLimit === undefined ? {} : { ipLimit: sourceMaps.ipLimit }),
     ...(sourceMaps.maxInFlight === undefined ? {} : { maxInFlight: sourceMaps.maxInFlight }),
   });
+  const telemetryClickHouse = telemetry.clickhouse ?? dashboard?.clickhouse;
+  if (telemetryClickHouse !== undefined) {
+    // At the root, not under /api: an exporter appends /v1/traces to the
+    // address it is given (OTEL_EXPORTER_OTLP_ENDPOINT).
+    app.register(telemetryRoutes, {
+      ...telemetry,
+      clickhouse: telemetryClickHouse,
+      projects: projectKeys,
+      retentionDays: telemetry.retentionDays ?? DEFAULT_TELEMETRY_RETENTION_DAYS,
+      ...(collection.now === undefined ? {} : { now: collection.now }),
+    });
+  }
   if (trackerScriptPath !== undefined) {
     app.register(trackerScriptRoutes, { scriptPath: trackerScriptPath });
   }

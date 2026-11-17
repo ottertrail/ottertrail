@@ -4,7 +4,8 @@ import type { Database } from "../db/schema.ts";
 import { replayPrefix } from "../replays/replays.ts";
 import { projectPrefix } from "../source-maps/source-maps.ts";
 import type { ObjectStore } from "../storage/object-store.ts";
-import type { ClickHouseClient } from "./clickhouse.ts";
+import { type ClickHouseClient, identifier } from "./clickhouse.ts";
+import { TELEMETRY_TABLES } from "./migrations.ts";
 import { clickHouseTime, QueryParams, queryRows, type Reader, runCommand } from "./query.ts";
 
 /**
@@ -21,8 +22,11 @@ function chunks<T>(items: readonly T[]): T[][] {
   return result;
 }
 
+/** Every table that holds a project's rows: events, then traces, logs, and metrics. */
+const PROJECT_TABLES = ["events", ...TELEMETRY_TABLES] as const;
+
 /**
- * Deletes the events that match `where` (SQL over the events table, its
+ * Deletes the rows of `table` that match `where` (SQL over that table, its
  * values in `params`) and returns how many rows each project had.
  *
  * A lightweight DELETE: reports stop seeing the rows at once, and
@@ -33,18 +37,20 @@ function chunks<T>(items: readonly T[]): T[][] {
  */
 async function deleteWhere(
   clickhouse: ClickHouseClient,
+  table: (typeof PROJECT_TABLES)[number],
   where: string,
   params: QueryParams,
 ): Promise<Map<string, number>> {
   const reader: Reader = { client: clickhouse };
+  const name = identifier(table);
   const rows = await queryRows<{ project_id: string; n: string }>(
     reader,
-    `SELECT project_id, count() AS n FROM events WHERE ${where} GROUP BY project_id`,
+    `SELECT project_id, count() AS n FROM ${name} WHERE ${where} GROUP BY project_id`,
     params,
   );
   const counts = new Map(rows.map((row) => [row.project_id, Number(row.n)]));
   if (counts.size > 0) {
-    await runCommand(reader, `DELETE FROM events WHERE ${where}`, params);
+    await runCommand(reader, `DELETE FROM ${name} WHERE ${where}`, params);
   }
   return counts;
 }
@@ -72,6 +78,7 @@ export async function deleteEventsBefore(
     // 1970, so nothing; the project_id test comes first, for the index.
     const deleted = await deleteWhere(
       clickhouse,
+      "events",
       `project_id IN ${ids}
        AND occurred_at < transform(project_id, ${ids}, ${befores}, toDateTime64(0, 3, 'UTC'))`,
       params,
@@ -94,32 +101,49 @@ export interface DiskCleanup {
  * bytes leave the disk; without this, they would stay until ClickHouse
  * merged those parts again, which for an old month may be never.
  *
- * It looks at the table, not at what this run deleted, so rows a failed
- * run left behind are removed by the next. A part holds every project's
- * events of its month, so a rewrite costs as much as the months it
- * touches: the worker runs this with retention, every few hours, not after
- * each project deletion. It skips the rewrite while an earlier change is
- * still under way. ClickHouse does the work in the background; `wait`
- * waits for it (tests).
+ * It looks at the tables, not at what this run deleted, so rows a failed
+ * run left behind are removed by the next. A part of events holds every
+ * project's events of its month, so a rewrite costs as much as the months
+ * it touches: the worker runs this with retention, every few hours, not
+ * after each project deletion. Traces, logs, and metrics are kept by the
+ * day, so theirs are smaller. Each table is skipped while an earlier
+ * change to it is still under way. ClickHouse does the work in the
+ * background; `wait` waits for it (tests).
  */
 export async function removeDeletedRows(
   clickhouse: ClickHouseClient,
   { wait = false }: { wait?: boolean } = {},
 ): Promise<DiskCleanup> {
+  const cleanup: DiskCleanup = { started: false };
+  for (const table of PROJECT_TABLES) {
+    const result = await removeDeletedRowsOf(clickhouse, table, wait);
+    cleanup.started ||= result.started;
+    cleanup.waitingFor ??= result.waitingFor;
+  }
+  return cleanup;
+}
+
+async function removeDeletedRowsOf(
+  clickhouse: ClickHouseClient,
+  table: (typeof PROJECT_TABLES)[number],
+  wait: boolean,
+): Promise<DiskCleanup> {
   const reader: Reader = { client: clickhouse };
+  const params = new QueryParams();
+  const name = params.add(table, "String");
   const [parts] = await queryRows<{ n: string }>(
     reader,
     `SELECT count() AS n FROM system.parts
-     WHERE database = currentDatabase() AND table = 'events' AND active AND has_lightweight_delete`,
-    new QueryParams(),
+     WHERE database = currentDatabase() AND table = ${name} AND active AND has_lightweight_delete`,
+    params,
   );
   if (Number(parts?.n ?? 0) === 0) return { started: false };
   const [unfinished] = await queryRows<{ mutation_id: string; latest_fail_reason: string }>(
     reader,
     `SELECT mutation_id, latest_fail_reason FROM system.mutations
-     WHERE database = currentDatabase() AND table = 'events' AND NOT is_done
+     WHERE database = currentDatabase() AND table = ${name} AND NOT is_done
      ORDER BY create_time LIMIT 1`,
-    new QueryParams(),
+    params,
   );
   if (unfinished !== undefined) {
     return {
@@ -128,15 +152,15 @@ export async function removeDeletedRows(
     };
   }
   await clickhouse.command({
-    query: "ALTER TABLE events APPLY DELETED MASK",
+    query: `ALTER TABLE ${identifier(table)} APPLY DELETED MASK`,
     clickhouse_settings: { mutations_sync: wait ? "1" : "0" },
   });
   return { started: true };
 }
 
 /**
- * Deletes the events of every deleted project (project_deletions) from
- * ClickHouse, and its files from the object store (its source maps and
+ * Deletes the events, traces, logs, and metrics of every deleted project
+ * (project_deletions) from ClickHouse, and its files from the object store (its source maps and
  * session replays), then
  * forgets the deletions. A deletion stays until both have confirmed, so an
  * outage only delays it. The worker runs it every minute; running it
@@ -152,13 +176,16 @@ export async function purgeDeletedProjects(
   let rows = 0;
   let files = 0;
   for (const chunk of chunks(deletions.map((deletion) => deletion.project_id))) {
-    const params = new QueryParams();
-    const counts = await deleteWhere(
-      clickhouse,
-      `project_id IN ${params.add(chunk, "Array(UUID)")}`,
-      params,
-    );
-    rows += [...counts.values()].reduce((sum, count) => sum + count, 0);
+    for (const table of PROJECT_TABLES) {
+      const params = new QueryParams();
+      const counts = await deleteWhere(
+        clickhouse,
+        table,
+        `project_id IN ${params.add(chunk, "Array(UUID)")}`,
+        params,
+      );
+      rows += [...counts.values()].reduce((sum, count) => sum + count, 0);
+    }
     if (store !== null) {
       for (const projectId of chunk) {
         for (const prefix of [projectPrefix(projectId), replayPrefix(projectId)]) {
@@ -188,7 +215,8 @@ export interface OrphanSweep {
 }
 
 /**
- * Finds projects that ClickHouse holds events of but PostgreSQL no longer
+ * Finds projects that ClickHouse holds rows of (events, traces, logs,
+ * metrics) but PostgreSQL no longer
  * knows, and asks purgeDeletedProjects() to delete them (project_deletions).
  * A deletion can miss ClickHouse's copy: a restore puts back a ClickHouse
  * backup made before the project was deleted, or an insert that timed out
@@ -203,11 +231,13 @@ export async function queueOrphanedProjects(
   db: Kysely<Database>,
   clickhouse: ClickHouseClient,
 ): Promise<OrphanSweep> {
-  // The one query on events not narrowed to a project: maintenance across
-  // all of them. Ordered by project first, so it reads only that column.
+  // The one query on these tables not narrowed to a project: maintenance
+  // across all of them. Ordered by project first, so it reads only that column.
   const inClickHouse = await queryRows<{ project_id: string }>(
     { client: clickhouse },
-    "SELECT DISTINCT project_id FROM events",
+    PROJECT_TABLES.map((table) => `SELECT DISTINCT project_id FROM ${identifier(table)}`).join(
+      " UNION DISTINCT ",
+    ),
     new QueryParams(),
   );
   const ids = inClickHouse.map((row) => row.project_id);

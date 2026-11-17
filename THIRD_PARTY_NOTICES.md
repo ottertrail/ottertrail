@@ -34,6 +34,10 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
+### OpenTelemetry protocol definitions
+
+The files in `apps/api/src/telemetry/proto/` other than `definitions.ts` and `status.ts` hold, unchanged, the message definitions of [opentelemetry-proto](https://github.com/open-telemetry/opentelemetry-proto) at release v1.11.1 (commit `b3f75588eb23c5fca62264edd05d382de49beb1a`): `common`, `resource`, `trace`, `logs`, `metrics`, and the collector's trace, logs, and metrics services. Each is kept as the text of the `.proto` file, with its own copyright header, so the API can decode OTLP requests. Copyright The OpenTelemetry Authors, licensed under the [Apache License 2.0](https://www.apache.org/licenses/LICENSE-2.0); the project ships no NOTICE file. `status.ts` is Ottertrail's own: the fields of `google.rpc.Status` that an OTLP error answer uses.
+
 ## Used by what this repository builds
 
 These are not stored in the repository: they are downloaded when installing dependencies or by a command.

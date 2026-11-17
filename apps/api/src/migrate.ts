@@ -4,7 +4,7 @@
  * not from the API itself, so several API processes never race to migrate.
  */
 import { createClickHouse } from "./clickhouse/clickhouse.ts";
-import { migrateClickHouse } from "./clickhouse/migrate.ts";
+import { applyTelemetryRetention, migrateClickHouse } from "./clickhouse/migrate.ts";
 import { loadConfig } from "./config.ts";
 import { createDatabase } from "./db/database.ts";
 import { migrateToLatest } from "./db/migrate.ts";
@@ -28,6 +28,16 @@ function report(store: string, results: { status: string; migrationName: string 
 try {
   report("PostgreSQL", await migrateToLatest(db));
   report("ClickHouse", await migrateClickHouse(clickhouse, config.clickhouse.database));
+  const retained = await applyTelemetryRetention(
+    clickhouse,
+    config.clickhouse.database,
+    config.telemetryRetentionDays,
+  );
+  if (retained.length > 0) {
+    console.log(
+      `ClickHouse keeps telemetry ${config.telemetryRetentionDays} days now: ${retained.join(", ")}`,
+    );
+  }
 } catch (error) {
   console.error(error);
   process.exitCode = 1;

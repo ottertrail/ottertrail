@@ -54,6 +54,7 @@ const app = buildApp({
   objectStore,
   sourceMaps: { limitBytes: config.sourceMapBytesPerOrganization },
   replays: { limitBytes: config.replayBytesPerOrganization },
+  telemetry: { retentionDays: config.telemetryRetentionDays },
   trackerScriptPath: config.trackerScriptPath,
   dashboardPath: resolve(config.dashboardPath),
   replayPlayerPath: resolve(config.replayPlayerPath),

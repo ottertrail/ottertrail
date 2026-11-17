@@ -30,6 +30,7 @@ export async function signedInDashboard({
   sourceMaps,
   replays,
   replayPlayerPath,
+  telemetry,
 }: {
   timeZone?: string;
   now?: () => Date;
@@ -39,6 +40,8 @@ export async function signedInDashboard({
   replays?: AppOptions["replays"];
   /** The built replay player, served at /replay-player.js; not served when omitted. */
   replayPlayerPath?: string;
+  /** OTLP's limits (tests/telemetry.test.ts); the test's ClickHouse unless it names another. */
+  telemetry?: AppOptions["telemetry"];
 } = {}) {
   const testDb = await createTestDatabase();
   const testClickHouse = await createTestClickHouse().catch(async (error: unknown) => {
@@ -66,6 +69,7 @@ export async function signedInDashboard({
     ...(sourceMaps === undefined ? {} : { sourceMaps }),
     ...(replays === undefined ? {} : { replays }),
     ...(replayPlayerPath === undefined ? {} : { replayPlayerPath }),
+    ...(telemetry === undefined ? {} : { telemetry }),
   });
   const link = await createSetupToken(testDb.db);
   await app.inject({

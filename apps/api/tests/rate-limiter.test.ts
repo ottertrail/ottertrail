@@ -116,6 +116,22 @@ describe("EventBudget", () => {
   });
 });
 
+describe("EventBudget.refund", () => {
+  test("gives back to the project and its organization what was not stored", () => {
+    const clock = fakeClock();
+    const budget = new EventBudget(
+      new TokenBucketLimiter({ capacity: 50, refillPerSecond: 5 }, clock),
+      new TokenBucketLimiter({ capacity: 60, refillPerSecond: 6 }, clock),
+    );
+    const project = { id: "ada-site", organizationId: "ada" };
+    expect(budget.capacity).toBe(50);
+    expect(budget.take(project, 50)).toEqual({ allowed: true });
+    expect(budget.take(project, 1).allowed).toBe(false);
+    budget.refund(project, 50);
+    expect(budget.take(project, 50)).toEqual({ allowed: true });
+  });
+});
+
 describe("refund", () => {
   test("puts tokens back, never above the capacity", () => {
     const limiter = new TokenBucketLimiter({ capacity: 10, refillPerSecond: 1 }, fakeClock());

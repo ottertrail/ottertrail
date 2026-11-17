@@ -8,6 +8,7 @@ import {
   DEFAULT_ORGANIZATION_EVENTS_PER_SECOND,
   DEFAULT_REPLAY_PLAYER_PATH,
   DEFAULT_REPLAY_BYTES_PER_ORGANIZATION,
+  DEFAULT_TELEMETRY_RETENTION_DAYS,
   DEFAULT_SOURCE_MAP_BYTES_PER_ORGANIZATION,
   DEVELOPMENT_AUTH_SECRET,
   DEFAULT_TRACKER_SCRIPT_PATH,
@@ -51,6 +52,7 @@ describe("loadConfig", () => {
       objectStore: LOCAL_OBJECT_STORE,
       sourceMapBytesPerOrganization: DEFAULT_SOURCE_MAP_BYTES_PER_ORGANIZATION,
       replayBytesPerOrganization: DEFAULT_REPLAY_BYTES_PER_ORGANIZATION,
+      telemetryRetentionDays: DEFAULT_TELEMETRY_RETENTION_DAYS,
     });
   });
 
@@ -83,6 +85,7 @@ describe("loadConfig", () => {
         OBJECT_STORE_SECRET_ACCESS_KEY: "o".repeat(40),
         SOURCE_MAP_BYTES_PER_ORGANIZATION: String(5 * 1024 ** 3),
         REPLAY_BYTES_PER_ORGANIZATION: String(10 * 1024 ** 3),
+        TELEMETRY_RETENTION_DAYS: "90",
       }),
     ).toEqual({
       host: "0.0.0.0",
@@ -116,7 +119,19 @@ describe("loadConfig", () => {
       },
       sourceMapBytesPerOrganization: 5 * 1024 ** 3,
       replayBytesPerOrganization: 10 * 1024 ** 3,
+      telemetryRetentionDays: 90,
     });
+  });
+
+  test("refuses a telemetry retention outside 1 to 365 days, or not a whole number", () => {
+    expect(DEFAULT_TELEMETRY_RETENTION_DAYS).toBe(30);
+    expect(loadConfig({ TELEMETRY_RETENTION_DAYS: "1" }).telemetryRetentionDays).toBe(1);
+    expect(loadConfig({ TELEMETRY_RETENTION_DAYS: "365" }).telemetryRetentionDays).toBe(365);
+    for (const value of ["0", "366", "7.5", "-3", "a month"]) {
+      expect(() => loadConfig({ TELEMETRY_RETENTION_DAYS: value })).toThrow(
+        "TELEMETRY_RETENTION_DAYS must be a whole number of days from 1 to 365",
+      );
+    }
   });
 
   test("refuses an organization event rate below one batch in ten seconds, or not a whole number", () => {

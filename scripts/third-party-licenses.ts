@@ -199,9 +199,15 @@ interface BundleContext {
 
 export function thirdPartyLicenses({
   stylesheets = [],
+  vendored = [],
 }: {
   /** Absolute paths of stylesheets whose @import packages the build copies. */
   stylesheets?: readonly string[];
+  /**
+   * Code kept in the repository rather than installed from npm, which the
+   * build bundles too: its name, version, licence, and licence file.
+   */
+  vendored?: readonly { name: string; version: string; license: string; licenseFile: string }[];
 } = {}) {
   return {
     name: "ottertrail:third-party-licenses",
@@ -215,7 +221,13 @@ export function thirdPartyLicenses({
           return `${directory}/package.json`;
         }),
       );
-      const packages = bundledPackages([...this.getModuleIds(), ...fromStylesheets]);
+      const packages = [
+        ...bundledPackages([...this.getModuleIds(), ...fromStylesheets]),
+        ...vendored.map(({ licenseFile, ...entry }) => ({
+          ...entry,
+          text: readFileSync(licenseFile, "utf8"),
+        })),
+      ];
       // Both builds bundle npm packages; none found means module IDs this
       // plugin does not understand, and a release without their licences.
       if (packages.length === 0) {

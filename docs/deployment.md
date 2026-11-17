@@ -133,6 +133,10 @@ Source maps turn minified stack traces back into a site's own code ([errors](err
 
 `SOURCE_MAP_BYTES_PER_ORGANIZATION` limits each organization's compressed maps, 1 GiB by default, and `REPLAY_BYTES_PER_ORGANIZATION` its compressed replays, 2 GiB by default (a first guess, until measured on real sites). Replays are kept 30 days. The API logs `OBJECT_STORE_URL is not set: source maps are off` at start when there is no store; a project's replay setting then says replays are off on the install.
 
+### Traces, logs, and metrics
+
+A server sends them to the instance's address over OTLP/HTTP, with its project's secret key ([telemetry](telemetry.md#receiving)); Caddy passes `/v1/traces`, `/v1/logs`, and `/v1/metrics` to the API like every other path, and nothing needs to be set. ClickHouse keeps them `TELEMETRY_RETENTION_DAYS`, 30 by default (1 to 365), and drops whole days past it on its own. After changing it, run `docker compose up -d`, as for an [update](#updating): `migrate` applies it to ClickHouse's tables, and the API, which refuses records older than it, restarts with it.
+
 Containers keep at most 50 MB of logs each (`docker compose logs api` shows them). The API and the worker log one JSON object per line.
 
 ### One organization
