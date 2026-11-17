@@ -1,0 +1,29 @@
+<!--
+  ClickHouse on a small server it shares with PostgreSQL, the API, and the
+  worker, such as 8 GB in all. ClickHouse's defaults assume a machine of its
+  own with 16 GB or more; its own guide suggests these changes for less
+  (https://clickhouse.com/docs/operations/tips). Used by the development
+  stack (../../compose.yaml) and by deploy/compose.yaml.
+-->
+<clickhouse>
+    <!-- At most 40% of the machine's memory. A query that would go over fails
+         on its own instead of the kernel killing the whole server. -->
+    <max_server_memory_usage_to_ram_ratio>0.4</max_server_memory_usage_to_ram_ratio>
+
+    <!-- 512 MiB instead of 5 GiB: the guide's lowest suggestion. -->
+    <mark_cache_size>536870912</mark_cache_size>
+
+    <!-- Internal logs Ottertrail never reads. Each costs memory and disk. -->
+    <trace_log remove="1"/>
+    <text_log remove="1"/>
+    <metric_log remove="1"/>
+    <asynchronous_metric_log remove="1"/>
+    <query_thread_log remove="1"/>
+    <query_views_log remove="1"/>
+    <part_log remove="1"/>
+    <processors_profile_log remove="1"/>
+
+    <logger>
+        <level>warning</level>
+    </logger>
+</clickhouse>

@@ -1,0 +1,14 @@
+<!--
+  Limits for every query on a small server (see ../config.d/ottertrail.xml).
+  Reports work out visits by sorting a range's events; past these sizes the
+  sort and grouping continue on disk instead of failing (docs/storage-benchmark.md).
+-->
+<clickhouse>
+    <profiles>
+        <default>
+            <max_memory_usage>1000000000</max_memory_usage>
+            <max_bytes_before_external_sort>400000000</max_bytes_before_external_sort>
+            <max_bytes_before_external_group_by>400000000</max_bytes_before_external_group_by>
+        </default>
+    </profiles>
+</clickhouse>

@@ -1,22 +1,25 @@
 # Deployment
 
-How to run Ottertrail on one server, and the decisions behind it. The hosted service is one such deployment serving every organization; a self-hosted install is the same stack, usually with one organization. ClickHouse joins the stack when events move there ([roadmap](roadmap.md#next-in-stage-0)).
+How to run Ottertrail on one server, and the decisions behind it. The hosted service is one such deployment serving every organization; a self-hosted install is the same stack, usually with one organization. Events are moving to ClickHouse ([roadmap](roadmap.md#next-in-stage-0)): it is in the stack and has its tables, but nothing writes to it yet.
 
-Status: tested on one machine with Podman (see [What has been tested](#what-has-been-tested)). Nothing runs in production yet, and backups are manual.
+Status: tested on one machine with Podman (see [What has been tested](#what-has-been-tested)), before ClickHouse joined the stack. Nothing runs in production yet, and backups are manual.
 
 ## What runs
 
-`deploy/compose.yaml` starts five services from two files: the [Dockerfile](../Dockerfile) at the repository root, which builds one image for all of Ottertrail, and [deploy/Caddyfile](../deploy/Caddyfile).
+`deploy/compose.yaml` starts six services from the [Dockerfile](../Dockerfile) at the repository root, which builds one image for all of Ottertrail, [deploy/Caddyfile](../deploy/Caddyfile), and ClickHouse's settings in [deploy/clickhouse/](../deploy/clickhouse/).
 
-| Service    | What it does                                                                                                             | Reachable from outside |
-| ---------- | ------------------------------------------------------------------------------------------------------------------------ | ---------------------- |
-| `postgres` | PostgreSQL 18, data in the `postgres-data` volume                                                                        | No                     |
-| `migrate`  | Brings the schema up to date, then exits. The API and the worker start only after it succeeds                            | No                     |
-| `api`      | The API, the dashboard's files, and the tracker (`/t.js`), on port 3000 inside the stack. Geolocation file in `geo-data` | No, only through Caddy |
-| `worker`   | Background work: deletes events past each project's retention                                                            | No                     |
-| `caddy`    | HTTPS: gets and renews the certificate, redirects HTTP to HTTPS, compresses responses, passes every request to the API   | Ports 80 and 443       |
+| Service      | What it does                                                                                                                                 | Reachable from outside |
+| ------------ | -------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------- |
+| `postgres`   | PostgreSQL 18, data in the `postgres-data` volume                                                                                            | No                     |
+| `clickhouse` | ClickHouse 26.8, for analytics events and later logs and traces, data in `clickhouse-data`. Capped at 40% of the server's memory (see below) | No                     |
+| `migrate`    | Brings both databases' schemas up to date, then exits. The API and the worker start only after it succeeds                                   | No                     |
+| `api`        | The API, the dashboard's files, and the tracker (`/t.js`), on port 3000 inside the stack. Geolocation file in `geo-data`                     | No, only through Caddy |
+| `worker`     | Background work: deletes events past each project's retention                                                                                | No                     |
+| `caddy`      | HTTPS: gets and renews the certificate, redirects HTTP to HTTPS, compresses responses, passes every request to the API                       | Ports 80 and 443       |
 
-Idle, the stack used about 160 MB of memory (API 100 MB, PostgreSQL 27 MB, worker 18 MB, Caddy 14 MB), measured with the test data below. The image is about 290 MB, almost all of it Node.js's own image. No sizing under real traffic has been measured.
+Idle, the stack without ClickHouse used about 160 MB of memory (API 100 MB, PostgreSQL 27 MB, worker 18 MB, Caddy 14 MB), measured with the test data below. The image is about 290 MB, almost all of it Node.js's own image. No sizing under real traffic has been measured.
+
+ClickHouse's defaults assume a machine of its own with 16 GB or more, and its own sizing guide puts 8 GB as the floor. `deploy/clickhouse/` sets it up to share a server of about 8 GB: at most 40% of the memory, a 512 MiB mark cache instead of 5 GiB, internal logs Ottertrail never reads switched off, at most 1 GB per query, and large sorts and groupings continued on disk past 400 MB instead of failing ([storage benchmark](storage-benchmark.md)). Plan on 8 GB: on 2 GB, ClickHouse was killed for lack of memory at 6 million events.
 
 ## What you need
 
@@ -33,7 +36,7 @@ cp env.example .env
 chmod 600 .env
 ```
 
-Edit `.env`: set `OTTERTRAIL_DOMAIN`, then fill `POSTGRES_PASSWORD` and `AUTH_SECRET` with the output of `openssl rand -hex 32` (a different value each). Hex keeps the password safe inside the database URL. `TIMEZONE` is the timezone of the first organization, the one the setup link creates; its owner can change it later in the organization's settings.
+Edit `.env`: set `OTTERTRAIL_DOMAIN`, then fill `POSTGRES_PASSWORD`, `CLICKHOUSE_PASSWORD`, and `AUTH_SECRET` with the output of `openssl rand -hex 32` (a different value each). Hex keeps the password safe inside the database URL. `TIMEZONE` is the timezone of the first organization, the one the setup link creates; its owner can change it later in the organization's settings.
 
 ```sh
 docker compose up -d --build
@@ -69,7 +72,7 @@ To go back to an earlier release, check it out and run the same command, as long
 
 ## Backups
 
-Not automated yet. Before each update, and regularly:
+Not automated yet. ClickHouse holds no data yet; once events move there, it needs a backup of its own, which will be described here. Before each update, and regularly:
 
 ```sh
 docker compose exec -T postgres pg_dump -U ottertrail -Fc ottertrail > ottertrail-$(date +%F).dump
@@ -93,14 +96,15 @@ Tested with Podman: after deleting the whole stack with `down -v`, these steps g
 
 `.env` holds only what differs between instances. Compose sets the rest (see the [API's configuration](../README.md#configuration)).
 
-| Variable            | Meaning                                                                                                                                                                                                                                   |
-| ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `OTTERTRAIL_DOMAIN` | The instance's domain, without `https://`. The public URL is `https://` and this domain                                                                                                                                                   |
-| `POSTGRES_PASSWORD` | The database password. Only the containers use it; PostgreSQL has no port open. PostgreSQL keeps the password it was first created with: to change it, run `ALTER USER ottertrail PASSWORD '…'` in the database first, then change `.env` |
-| `AUTH_SECRET`       | Signs sign-in cookies. Changing it signs everyone out                                                                                                                                                                                     |
-| `TIMEZONE`          | The IANA timezone, such as `Europe/Berlin`, of the organization the setup link creates. Default `UTC`                                                                                                                                     |
-| `LOG_LEVEL`         | Optional, default `info`                                                                                                                                                                                                                  |
-| `OTTERTRAIL_IMAGE`  | Optional: an image to run instead of building this checkout, such as one from a registry                                                                                                                                                  |
+| Variable              | Meaning                                                                                                                                                                                                                                   |
+| --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `OTTERTRAIL_DOMAIN`   | The instance's domain, without `https://`. The public URL is `https://` and this domain                                                                                                                                                   |
+| `POSTGRES_PASSWORD`   | The database password. Only the containers use it; PostgreSQL has no port open. PostgreSQL keeps the password it was first created with: to change it, run `ALTER USER ottertrail PASSWORD '…'` in the database first, then change `.env` |
+| `CLICKHOUSE_PASSWORD` | ClickHouse's password. Only the containers use it; ClickHouse has no port open. Like PostgreSQL's, it is set when ClickHouse first creates its data                                                                                       |
+| `AUTH_SECRET`         | Signs sign-in cookies. Changing it signs everyone out                                                                                                                                                                                     |
+| `TIMEZONE`            | The IANA timezone, such as `Europe/Berlin`, of the organization the setup link creates. Default `UTC`                                                                                                                                     |
+| `LOG_LEVEL`           | Optional, default `info`                                                                                                                                                                                                                  |
+| `OTTERTRAIL_IMAGE`    | Optional: an image to run instead of building this checkout, such as one from a registry                                                                                                                                                  |
 
 Compose stops with "set … in .env" when a required one is missing.
 

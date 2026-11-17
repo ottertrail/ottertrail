@@ -9,6 +9,14 @@ export type LogLevel = (typeof LOG_LEVELS)[number];
 /** The local development database from compose.yaml (no password, 127.0.0.1 only). */
 export const LOCAL_DATABASE_URL = "postgres://ottertrail@127.0.0.1:5433/ottertrail";
 
+/** The local development ClickHouse from compose.yaml (127.0.0.1 only). */
+export const LOCAL_CLICKHOUSE = {
+  url: "http://127.0.0.1:8123",
+  username: "ottertrail",
+  password: "development",
+  database: "ottertrail",
+} as const;
+
 const GEO_SOURCES = ["database", "cloudflare", "none"] as const;
 
 /**
@@ -46,6 +54,8 @@ export interface Config {
   port: number;
   logLevel: LogLevel;
   databaseUrl: string;
+  /** ClickHouse, which holds analytics events (docs/storage-benchmark.md). */
+  clickhouse: ClickHouseConfig;
   /**
    * Which proxies may report the client's IP address in X-Forwarded-For:
    * false (none), a number of proxy hops, or a list of proxy IPs or CIDRs.
@@ -72,6 +82,14 @@ export interface Config {
   trackerScriptPath: string;
   /** The built dashboard's directory, served at the instance's root. */
   dashboardPath: string;
+}
+
+export interface ClickHouseConfig {
+  /** Its HTTP interface, such as "http://clickhouse:8123". */
+  url: string;
+  username: string;
+  password: string;
+  database: string;
 }
 
 export class ConfigError extends Error {
@@ -113,6 +131,43 @@ function parseDatabaseUrl(env: NodeJS.ProcessEnv): string {
     throw new ConfigError("DATABASE_URL must start with postgres:// or postgresql://");
   }
   return raw;
+}
+
+function parseClickHouse(env: NodeJS.ProcessEnv): ClickHouseConfig {
+  const production = env.NODE_ENV === "production";
+  const raw = env.CLICKHOUSE_URL?.trim();
+  if ((raw === undefined || raw === "") && production) {
+    throw new ConfigError(
+      "CLICKHOUSE_URL is required in production, such as http://clickhouse:8123",
+    );
+  }
+  const url = raw === undefined || raw === "" ? LOCAL_CLICKHOUSE.url : raw;
+  const parsed = URL.parse(url);
+  if (parsed === null || (parsed.protocol !== "http:" && parsed.protocol !== "https:")) {
+    throw new ConfigError("CLICKHOUSE_URL must be an http(s) URL");
+  }
+  if (parsed.username !== "" || parsed.password !== "") {
+    // Error messages never repeat the URL: it would show the password.
+    throw new ConfigError(
+      "CLICKHOUSE_URL must not hold a user or password; use CLICKHOUSE_USER and CLICKHOUSE_PASSWORD",
+    );
+  }
+  const password = env.CLICKHOUSE_PASSWORD;
+  if ((password === undefined || password === "") && production) {
+    throw new ConfigError("CLICKHOUSE_PASSWORD is required in production");
+  }
+  const database = env.CLICKHOUSE_DATABASE?.trim() || LOCAL_CLICKHOUSE.database;
+  if (!/^[A-Za-z_][A-Za-z0-9_]{0,62}$/.test(database)) {
+    throw new ConfigError(
+      `CLICKHOUSE_DATABASE must be letters, digits, and underscores, received "${database}"`,
+    );
+  }
+  return {
+    url: parsed.origin,
+    username: env.CLICKHOUSE_USER?.trim() || LOCAL_CLICKHOUSE.username,
+    password: password === undefined || password === "" ? LOCAL_CLICKHOUSE.password : password,
+    database,
+  };
 }
 
 function parseTrustProxy(raw: string | undefined): false | number | string[] {
@@ -215,6 +270,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     port: parsePort(env.PORT ?? "3000"),
     logLevel: parseLogLevel(env.LOG_LEVEL ?? "info"),
     databaseUrl: parseDatabaseUrl(env),
+    clickhouse: parseClickHouse(env),
     trustProxy: parseTrustProxy(env.TRUST_PROXY),
     geoSource: parseGeoSource(env.GEO_SOURCE ?? "database"),
     geoDatabasePath: env.GEO_DATABASE_PATH?.trim() || DEFAULT_GEO_DATABASE_PATH,

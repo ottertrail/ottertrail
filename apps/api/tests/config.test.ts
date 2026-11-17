@@ -7,6 +7,7 @@ import {
   DEVELOPMENT_AUTH_SECRET,
   DEFAULT_TRACKER_SCRIPT_PATH,
   DEVELOPMENT_PUBLIC_URL,
+  LOCAL_CLICKHOUSE,
   LOCAL_DATABASE_URL,
   loadConfig,
 } from "../src/config.ts";
@@ -15,6 +16,8 @@ import {
 const PRODUCTION = {
   NODE_ENV: "production",
   DATABASE_URL: "postgresql://app@db.internal:5432/ottertrail",
+  CLICKHOUSE_URL: "http://clickhouse:8123",
+  CLICKHOUSE_PASSWORD: "c".repeat(40),
   PUBLIC_URL: "https://analytics.example.com",
   AUTH_SECRET: "x".repeat(32),
 };
@@ -26,6 +29,7 @@ describe("loadConfig", () => {
       port: 3000,
       logLevel: "info",
       databaseUrl: LOCAL_DATABASE_URL,
+      clickhouse: LOCAL_CLICKHOUSE,
       trustProxy: false,
       geoSource: "database",
       geoDatabasePath: DEFAULT_GEO_DATABASE_PATH,
@@ -45,6 +49,10 @@ describe("loadConfig", () => {
         PORT: "8080",
         LOG_LEVEL: "debug",
         DATABASE_URL: "postgresql://app@db.internal:5432/ottertrail",
+        CLICKHOUSE_URL: "http://clickhouse:8123/",
+        CLICKHOUSE_USER: "app",
+        CLICKHOUSE_PASSWORD: "p".repeat(40),
+        CLICKHOUSE_DATABASE: "analytics",
         TRUST_PROXY: "1",
         GEO_SOURCE: "cloudflare",
         GEO_DATABASE_PATH: "/var/lib/ottertrail/geo.mmdb",
@@ -59,6 +67,12 @@ describe("loadConfig", () => {
       port: 8080,
       logLevel: "debug",
       databaseUrl: "postgresql://app@db.internal:5432/ottertrail",
+      clickhouse: {
+        url: "http://clickhouse:8123",
+        username: "app",
+        password: "p".repeat(40),
+        database: "analytics",
+      },
       trustProxy: 1,
       geoSource: "cloudflare",
       geoDatabasePath: "/var/lib/ottertrail/geo.mmdb",
@@ -77,11 +91,14 @@ describe("loadConfig", () => {
     expect(config.authSecret).toBe("x".repeat(32));
   });
 
-  test.each(["PUBLIC_URL", "AUTH_SECRET"])("requires %s in production", (name) => {
-    expect(() => loadConfig({ ...PRODUCTION, [name]: undefined })).toThrow(
-      new RegExp(`${name} is required in production`),
-    );
-  });
+  test.each(["PUBLIC_URL", "AUTH_SECRET", "CLICKHOUSE_URL", "CLICKHOUSE_PASSWORD"])(
+    "requires %s in production",
+    (name) => {
+      expect(() => loadConfig({ ...PRODUCTION, [name]: undefined })).toThrow(
+        new RegExp(`${name} is required in production`),
+      );
+    },
+  );
 
   test("requires https for PUBLIC_URL in production", () => {
     expect(() => loadConfig({ ...PRODUCTION, PUBLIC_URL: "http://analytics.example.com" })).toThrow(
@@ -156,5 +173,26 @@ describe("loadConfig", () => {
     expect(() => loadConfig({ DATABASE_URL: url })).toThrow(
       expect.objectContaining({ message: expect.not.stringContaining("s3cret-value") }),
     );
+  });
+
+  describe("ClickHouse", () => {
+    test.each([
+      ["ftp://clickhouse:8123", /must be an http\(s\) URL/],
+      ["http://user:secret@clickhouse:8123", /must not hold a user or password/],
+    ])("refuses CLICKHOUSE_URL %s", (url, message) => {
+      expect(() => loadConfig({ CLICKHOUSE_URL: url })).toThrow(message);
+    });
+
+    test("never repeats the password in an error", () => {
+      expect(() => loadConfig({ CLICKHOUSE_URL: "http://user:hunter2@clickhouse:8123" })).toThrow(
+        expect.objectContaining({ message: expect.not.stringContaining("hunter2") }),
+      );
+    });
+
+    test("refuses a database name that is not a plain identifier", () => {
+      expect(() => loadConfig({ CLICKHOUSE_DATABASE: "events; DROP" })).toThrow(
+        /letters, digits, and underscores/,
+      );
+    });
   });
 });

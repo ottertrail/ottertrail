@@ -61,7 +61,7 @@ if (
 }
 
 /** The ClickHouse from bench-clickhouse.compose.yaml. */
-const CLICKHOUSE_URL = process.env.BENCH_CLICKHOUSE_URL ?? "http://127.0.0.1:8123";
+const CLICKHOUSE_URL = process.env.BENCH_CLICKHOUSE_URL ?? "http://127.0.0.1:8124";
 const CLICKHOUSE_HEADERS = { "X-ClickHouse-User": "bench", "X-ClickHouse-Key": "bench" };
 /** PostgreSQL as ClickHouse's container reaches it: the development stack's service. */
 const POSTGRES_FROM_CLICKHOUSE = process.env.BENCH_POSTGRES_HOST ?? "postgres:5432";

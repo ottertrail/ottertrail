@@ -176,6 +176,9 @@ catalogs:
     '@base-ui/react':
       specifier: ^1.9.0
       version: 1.9.0
+    '@clickhouse/client':
+      specifier: 1.24.1
+      version: 1.24.1
     '@fastify/static':
       specifier: 10.1.10
       version: 10.1.10
@@ -265,6 +268,9 @@ importers:
 
   apps/api:
     dependencies:
+      '@clickhouse/client':
+        specifier: 'catalog:'
+        version: 1.24.1
       '@fastify/static':
         specifier: 'catalog:'
         version: 10.1.10
@@ -631,6 +637,10 @@ packages:
 
   '@blazediff/core@1.10.0':
     resolution: {integrity: sha512-AOQff0zgR7cGsZL+4E7hVkmujoPUpm0J9xzWGWZj5wCjd3gmxESXAPfKyuzs93VdpQNFhHlBhfOjrcZ+XTERtQ==}
+
+  '@clickhouse/client@1.24.1':
+    resolution: {integrity: sha512-1kjKJ4uuD4J9JlRU4CpwEGfecstvtoGreBorhh7CxgB7r7PL54DCLD6gajKZhLCri84XlyD3CUxEm6rYkKC+dA==}
+    engines: {node: '>=20'}
 
   '@dotenvx/dotenvx@1.75.1':
     resolution: {integrity: sha512-/BITOC9dmS/edY2zQwZNicQ059O6RKabtQfyEafV0nGtfYRNHYy1DIPiYVcov40+tob9hfmBnbR963dS+EQ1DQ==}
@@ -3276,6 +3286,8 @@ snapshots:
   '@better-fetch/fetch@1.3.3': {}
 
   '@blazediff/core@1.10.0': {}
+
+  '@clickhouse/client@1.24.1': {}
 
   '@dotenvx/dotenvx@1.75.1':
     dependencies:

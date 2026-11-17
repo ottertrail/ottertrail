@@ -21,6 +21,7 @@
     "start:worker": "node dist/worker.mjs"
   },
   "dependencies": {
+    "@clickhouse/client": "catalog:",
     "@fastify/static": "catalog:",
     "better-auth": "catalog:",
     "bowser": "catalog:",

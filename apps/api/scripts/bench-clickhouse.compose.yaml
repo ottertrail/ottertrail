@@ -18,7 +18,8 @@ services:
     # every core, while PostgreSQL uses at most 3 (two parallel workers).
     cpus: 2
     ports:
-      - "127.0.0.1:8123:8123"
+      # 8124: the development stack's own ClickHouse has 8123.
+      - "127.0.0.1:8124:8123"
     ulimits:
       nofile:
         soft: 262144

@@ -1,28 +1,37 @@
 /**
- * Command-line entry point: brings the database schema up to date.
- * Run it as a deployment step before starting the API, not from the API
- * itself, so several API processes never race to migrate.
+ * Command-line entry point: brings PostgreSQL's and then ClickHouse's
+ * schema up to date. Run it as a deployment step before starting the API,
+ * not from the API itself, so several API processes never race to migrate.
  */
+import { createClickHouse } from "./clickhouse/clickhouse.ts";
+import { migrateClickHouse } from "./clickhouse/migrate.ts";
 import { loadConfig } from "./config.ts";
 import { createDatabase } from "./db/database.ts";
 import { migrateToLatest } from "./db/migrate.ts";
 
 const config = loadConfig();
 const db = createDatabase({ connectionString: config.databaseUrl, maxConnections: 1 });
+// Bound to "default", which always exists: migrating creates Ottertrail's database.
+const clickhouse = createClickHouse(config.clickhouse, { database: "default" });
 
-try {
-  const results = await migrateToLatest(db);
+function report(store: string, results: { status: string; migrationName: string }[]) {
   if (results.length === 0) {
-    console.log("Database is up to date; no migrations to run.");
+    console.log(`${store} is up to date; no migrations to run.`);
   }
   for (const result of results) {
     console.log(
-      `${result.status === "Success" ? "applied" : result.status}: ${result.migrationName}`,
+      `${store} ${result.status === "Success" ? "applied" : result.status}: ${result.migrationName}`,
     );
   }
+}
+
+try {
+  report("PostgreSQL", await migrateToLatest(db));
+  report("ClickHouse", await migrateClickHouse(clickhouse, config.clickhouse.database));
 } catch (error) {
   console.error(error);
   process.exitCode = 1;
 } finally {
   await db.destroy();
+  await clickhouse.close();
 }
