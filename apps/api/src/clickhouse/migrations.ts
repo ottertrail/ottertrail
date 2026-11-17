@@ -20,8 +20,8 @@ export const CLICKHOUSE_MIGRATIONS: ClickHouseMigration[] = [
      * - Partitioned by month: retention drops whole months where it can.
      * - ReplacingMergeTree keeps one row per (project_id, occurred_at,
      *   event_id) when parts merge. The worker sends each event once, so this
-     *   only matters if a batch is sent twice after a crash; the insert
-     *   deduplication window catches that sooner (insert_deduplication_token).
+     *   only matters if a batch is sent twice after a crash, and the insert
+     *   deduplication window already drops a repeated batch (tested).
      * - LowCardinality for columns with few distinct values: smaller and faster.
      */
     name: "0001_create_events",

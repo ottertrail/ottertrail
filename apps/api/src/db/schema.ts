@@ -94,6 +94,8 @@ export interface EventsTable {
    * as a string.
    */
   visitor_id: Nullable<string>;
+  /** When the worker copied it to ClickHouse; null until then (clickhouse/copy-events.ts). */
+  copied_at: ColumnType<Date | null, never, Date | null>;
 }
 
 /** One random secret per day. Deleted once no event can still need it. */

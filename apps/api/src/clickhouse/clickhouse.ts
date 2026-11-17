@@ -25,6 +25,9 @@ export function createClickHouse(
     clickhouse_settings: {
       send_progress_in_http_headers: 1,
       http_headers_progress_interval_ms: "10000",
+      // 64-bit integers (visitor IDs, counts) as strings in JSON: a JavaScript
+      // number would round them. ClickHouse 26 sends them bare by default.
+      output_format_json_quote_64bit_integers: 1,
     },
   });
 }
