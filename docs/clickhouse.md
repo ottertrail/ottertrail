@@ -69,7 +69,13 @@ Both cost more than they seem:
 
 ## Backups
 
-`deploy/backup.sh` makes a backup of both databases: ClickHouse's with its own `BACKUP DATABASE`, then PostgreSQL's with `pg_dump`. `deploy/restore.sh` puts one back into an empty instance, then has the worker send PostgreSQL's last two days of events again, in case some were copied after ClickHouse's backup was made: the table keeps one row per event, so the repeats count once. How to use them: [deployment](deployment.md#backups).
+`deploy/backup.sh` makes a backup of both databases: PostgreSQL's with `pg_dump`, then ClickHouse's with its own `BACKUP DATABASE`. In that order no event is lost between the two: apart from retention, which deletes events past a project's limit (at least 30 days) from both, the worker deletes an event from PostgreSQL only once ClickHouse has it. So every event PostgreSQL had confirmed when the dump began is in the dump or already in ClickHouse, whose backup comes after. (The other order lost events copied after ClickHouse's backup and deleted before the dump, as when the worker catches up after a long ClickHouse outage.)
+
+ClickHouse's backup may hold events from after the dump, which is mostly harmless:
+
+- Those of a project created after the dump belong to no restored project. The orphan sweep deletes them, unless more projects are missing than its guard allows; then it only logs an error ([Retention](#retention-and-deleting-a-project)).
+- A project deleted between the two comes back with the last two days of events PostgreSQL still held, which the worker sends to ClickHouse again; older ones ClickHouse had already purged are gone.
+- If the two backups straddle a midnight in an organization's timezone, ClickHouse's may hold events whose visitor IDs came from the new day's salt, which the dump does not have. A restore within that day makes a new salt, so a visitor who returns that day counts twice. The window is the time ClickHouse's backup takes. `deploy/restore.sh` puts one back into an empty instance, then has the worker send PostgreSQL's last two days of events again: the table keeps one row per event, so the repeats count once. How to use them: [deployment](deployment.md#backups).
 
 ## 64-bit integers
 

@@ -22,7 +22,7 @@ import {
   parsePageUrl,
 } from "./normalize.ts";
 import { type CollectingProject, ProjectKeyCache, PUBLIC_KEY_PATTERN } from "./project-keys.ts";
-import { type RateLimit, TokenBucketLimiter } from "./rate-limiter.ts";
+import { EventBudget, type RateLimit, TokenBucketLimiter } from "./rate-limiter.ts";
 import { DEFAULT_SERVER_IP_LIMIT, serverEventsRoute } from "./server-events.ts";
 
 export const MAX_EVENTS_PER_BATCH = 50;
@@ -40,11 +40,19 @@ export const MAX_ENGAGED_MS = 24 * 60 * 60 * 1000;
 export const DEFAULT_IP_LIMIT: RateLimit = { capacity: 120, refillPerSecond: 2 };
 /** Events per project: bursts of 2,000, then 200 per second. */
 export const DEFAULT_PROJECT_LIMIT: RateLimit = { capacity: 2_000, refillPerSecond: 200 };
+/**
+ * Events per organization, all its projects together: three projects at
+ * full rate, unless ORGANIZATION_EVENTS_PER_SECOND says otherwise
+ * (config.ts). One customer cannot take more of the instance by adding
+ * projects (rate-limiter.ts, EventBudget).
+ */
+export const DEFAULT_ORGANIZATION_LIMIT: RateLimit = { capacity: 6_000, refillPerSecond: 600 };
 
 export interface CollectionOptions {
   db: Kysely<Database>;
   ipLimit?: RateLimit;
   projectLimit?: RateLimit;
+  organizationLimit?: RateLimit;
   /** Finds the visitor's location from the request. Default: no location. */
   locate?: Locate;
   /** Whether an address is a data center's. Default: none is. */
@@ -246,9 +254,14 @@ export const collectionRoutes: FastifyPluginCallback<CollectionOptions> = (app, 
   // cloud would otherwise lose them all without a trace.
   const dataCenterProjects = new Set<string>();
   const projectLimit = options.projectLimit ?? DEFAULT_PROJECT_LIMIT;
-  if (projectLimit.capacity < MAX_EVENTS_PER_BATCH) {
+  const organizationLimit = options.organizationLimit ?? DEFAULT_ORGANIZATION_LIMIT;
+  if (Math.min(projectLimit.capacity, organizationLimit.capacity) < MAX_EVENTS_PER_BATCH) {
     // Plugins report setup errors through done(); app.ready() then rejects.
-    done(new Error(`The project limit must allow a full batch of ${MAX_EVENTS_PER_BATCH} events`));
+    done(
+      new Error(
+        `The project and organization limits must allow a full batch of ${MAX_EVENTS_PER_BATCH} events`,
+      ),
+    );
     return;
   }
   const visitors = new VisitorIds(db, { now });
@@ -260,7 +273,10 @@ export const collectionRoutes: FastifyPluginCallback<CollectionOptions> = (app, 
     stopSaltCleanup();
   });
   const ipLimiter = new TokenBucketLimiter(options.ipLimit ?? DEFAULT_IP_LIMIT, { now });
-  const projectLimiter = new TokenBucketLimiter(projectLimit, { now });
+  const budget = new EventBudget(
+    new TokenBucketLimiter(projectLimit, { now }),
+    new TokenBucketLimiter(organizationLimit, { now }),
+  );
   const projects = options.projectKeys ?? new ProjectKeyCache(db, { now });
 
   // Browsers send the batch as text/plain: that is a "simple" cross-site
@@ -392,9 +408,9 @@ export const collectionRoutes: FastifyPluginCallback<CollectionOptions> = (app, 
         return reply.code(202).send({ stored: 0, duplicates: 0, tooOld: 0, bots: events.length });
       }
 
-      const budget = projectLimiter.take(project.id, events.length);
-      if (!budget.allowed) {
-        return tooManyRequests(reply, budget.retryAfterSeconds);
+      const spent = budget.take(project, events.length);
+      if (!spent.allowed) {
+        return tooManyRequests(reply, spent.retryAfterSeconds);
       }
 
       // Every event in a request comes from the same browser and address. The
@@ -604,7 +620,7 @@ export const collectionRoutes: FastifyPluginCallback<CollectionOptions> = (app, 
   serverEventsRoute(app, {
     db,
     projects,
-    projectLimiter,
+    budget,
     ipLimiter: new TokenBucketLimiter(options.serverIpLimit ?? DEFAULT_SERVER_IP_LIMIT, { now }),
     maxEvents: MAX_EVENTS_PER_BATCH,
     maxBodyBytes: MAX_BODY_BYTES,

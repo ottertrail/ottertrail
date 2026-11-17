@@ -28,17 +28,22 @@ trap cleanup EXIT
 # Ctrl-C ends the script: exit instead, which runs it.
 trap 'exit 1' INT TERM HUP
 
-# ClickHouse first. PostgreSQL's copy marks then cover at least what the
-# ClickHouse backup holds, and restore.sh sends PostgreSQL's events again
-# for anything copied in between. clickhouse-client takes the password from
-# the container's CLICKHOUSE_PASSWORD, so it is not on any command line.
+# PostgreSQL first. The worker deletes an event from PostgreSQL only once it
+# is in ClickHouse, so every event PostgreSQL had confirmed when its dump
+# began is in the dump, or already in ClickHouse and so in ClickHouse's
+# backup, taken after. The other order lost events: one copied after
+# ClickHouse's backup and deleted before the dump, as when the worker
+# catches up after a long ClickHouse outage, was in neither. restore.sh
+# sends PostgreSQL's events again; ClickHouse keeps one row per event.
+$compose exec -T postgres pg_dump -U ottertrail -Fc ottertrail > "backups/$name.dump.partial"
+
+# clickhouse-client takes the password from the container's
+# CLICKHOUSE_PASSWORD, so it is not on any command line.
 $compose exec -T clickhouse clickhouse-client --user ottertrail --receive_timeout 86400 \
   --query "BACKUP DATABASE ottertrail TO File('$name.zip')" > /dev/null
 # ClickHouse writes it into its own volume (deploy/clickhouse/config.d):
 # move it out to this folder.
 $compose exec -T clickhouse cat "/var/lib/clickhouse/backups/$name.zip" > "backups/$name.zip.partial"
-
-$compose exec -T postgres pg_dump -U ottertrail -Fc ottertrail > "backups/$name.dump.partial"
 
 mv "backups/$name.zip.partial" "backups/$name.zip"
 mv "backups/$name.dump.partial" "backups/$name.dump"

@@ -54,9 +54,9 @@ $compose exec -T clickhouse clickhouse-client --user ottertrail --receive_timeou
   --query "RESTORE DATABASE ottertrail FROM File('$name.zip')" > /dev/null
 $compose exec -T -u clickhouse clickhouse rm "/var/lib/clickhouse/backups/$name.zip"
 
-# Events copied after ClickHouse's backup was made are marked copied in
-# PostgreSQL's: send all of PostgreSQL's events again. ClickHouse keeps one
-# row per event (docs/clickhouse.md), so the repeats count once.
+# Send all of PostgreSQL's events again, whatever their copy marks say: the
+# backups were taken one after the other, not at one moment. ClickHouse
+# keeps one row per event (docs/clickhouse.md), so the repeats count once.
 $compose exec -T postgres psql -q -U ottertrail -d ottertrail \
   -c "update events set copied_at = null" > /dev/null
 

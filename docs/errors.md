@@ -55,7 +55,7 @@ Each error is an event named `error` in the tracker's normal batches, with the p
 | `stack`   | Optional, up to 16,000 characters, the same characters as the message             |
 | `handled` | Optional, `true` for `captureError()`                                             |
 
-The tracker cuts and cleans to these limits; the API refuses a batch that breaks them (400), and the database checks them again (migration 0018). The tracker reserves the name: `track("error")` warns and sends nothing. The API counts an event as an error only with the `error` object, and refuses the object on an event with another name. An `error` event without the object stays a custom event, as sites could send before errors existed: an older tracker still in a browser's cache may send one, and refusing it would lose its whole batch. The tracker grew from 2.9 KB to 3.5 KB gzipped.
+The tracker cuts and cleans to these limits; the API refuses a batch that breaks them (400), and the database checks them again (migration 0018). The tracker reserves the name: `track("error")` warns and sends nothing. The API counts an event as an error only with the `error` object, and refuses the object on an event with another name. An `error` event without the object stays a custom event, as sites could send before errors existed: an older tracker still in a browser's cache may send one, and refusing it would lose its whole batch. These limits count characters, and a character can take up to four bytes: the tracker also cuts an error's stack, then its message, until the event fits in one request (`fitError` in `tracker.ts`), so a long stack in another script cannot pass the API's 64 KB and lose the error. The tracker grew from 2.9 KB to 3.6 KB gzipped.
 
 ## 2. Storage
 

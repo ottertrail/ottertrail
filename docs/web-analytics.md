@@ -258,12 +258,13 @@ A phone whose clock is two hours slow still gets correct times. An `occurredAt` 
 
 Both limits use a token bucket: each key has a bucket of tokens that refills at a steady rate. A request (or each event in it) spends tokens; a full bucket allows a short burst, and the refill rate is the sustained limit. An empty bucket answers 429 with `Retry-After`, the seconds until enough tokens return.
 
-| Limit         | Burst        | Sustained         | Checked                 |
-| ------------- | ------------ | ----------------- | ----------------------- |
-| Per client IP | 120 requests | 2 requests/second | Before the body is read |
-| Per project   | 2,000 events | 200 events/second | After the key is known  |
+| Limit                              | Burst        | Sustained                                            | Checked                 |
+| ---------------------------------- | ------------ | ---------------------------------------------------- | ----------------------- |
+| Per client IP                      | 120 requests | 2 requests/second                                    | Before the body is read |
+| Per project                        | 2,000 events | 200 events/second                                    | After the key is known  |
+| Per organization, all its projects | 6,000 events | 600 events/second (`ORGANIZATION_EVENTS_PER_SECOND`) | With the project's      |
 
-The buckets live in the API process's memory: each process enforces its own limits, and a restart resets them. Ottertrail runs one API process per instance for now.
+A batch spends from its project's bucket and its organization's, or from neither: without the second, a customer could add projects to take more of an instance every customer shares (`EventBudget` in `rate-limiter.ts`). Server-side events spend from the same buckets, so a flood of browser events with an organization's public keys, which anyone can copy, can hold its servers' events back too (429, to retry). An install with one organization may raise its limit. A refusal's `Retry-After` waits for both buckets. The buckets live in the API process's memory: each process enforces its own limits, and a restart resets them. Ottertrail runs one API process per instance for now.
 
 Behind a proxy (Cloudflare, Caddy), every request seems to come from the proxy's address. Set `TRUST_PROXY` (see the README) so the API reads the client's address from `X-Forwarded-For`. Leave it unset without a proxy: otherwise any client could claim any address.
 
@@ -274,7 +275,7 @@ Behind a proxy (Cloudflare, Caddy), every request seems to come from the proxy's
 
 ## 3. The tracker
 
-`packages/tracker` builds `dist/tracker.js`, the script a site adds to its pages: about 8.1 KB, 3.5 KB gzipped.
+`packages/tracker` builds `dist/tracker.js`, the script a site adds to its pages: about 8.4 KB, 3.6 KB gzipped.
 
 ```html
 <script

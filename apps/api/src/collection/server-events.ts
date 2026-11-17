@@ -10,7 +10,7 @@ import { type NewEvent, storeEvents } from "./event-store.ts";
 import { USER_ID_PATTERN } from "./identity.ts";
 import { isStorableText, MAX_EVENT_AGE_MS } from "./normalize.ts";
 import type { ProjectKeyCache } from "./project-keys.ts";
-import type { RateLimit, TokenBucketLimiter } from "./rate-limiter.ts";
+import type { EventBudget, RateLimit, TokenBucketLimiter } from "./rate-limiter.ts";
 
 /**
  * Requests per IP address to the server endpoint: a site's server sends
@@ -75,7 +75,8 @@ export function serverEventsRoute(
   options: {
     db: Kysely<Database>;
     projects: ProjectKeyCache;
-    projectLimiter: TokenBucketLimiter;
+    /** Shared with browser events: one budget per project, inside its organization's. */
+    budget: EventBudget;
     ipLimiter: TokenBucketLimiter;
     maxEvents: number;
     maxBodyBytes: number;
@@ -84,16 +85,8 @@ export function serverEventsRoute(
     now: () => number;
   },
 ) {
-  const {
-    db,
-    projects,
-    projectLimiter,
-    ipLimiter,
-    maxEvents,
-    maxBodyBytes,
-    maxPropertiesBytes,
-    now,
-  } = options;
+  const { db, projects, budget, ipLimiter, maxEvents, maxBodyBytes, maxPropertiesBytes, now } =
+    options;
 
   app.post<{ Body: ServerBatch }>(
     "/server-events",
@@ -241,15 +234,15 @@ export function serverEventsRoute(
         });
       }
 
-      const budget = projectLimiter.take(project.id, accepted.length);
-      if (!budget.allowed) {
+      const spent = budget.take(project, accepted.length);
+      if (!spent.allowed) {
         return reply
           .code(429)
-          .header("retry-after", String(budget.retryAfterSeconds))
+          .header("retry-after", String(spent.retryAfterSeconds))
           .send(
             problem(
               "rate_limited",
-              `Too many events. Retry after ${budget.retryAfterSeconds} seconds.`,
+              `Too many events. Retry after ${spent.retryAfterSeconds} seconds.`,
             ),
           );
       }

@@ -33,7 +33,14 @@ const dataCenters = await setUpDataCenters(config.dataCentersPath);
 const app = buildApp({
   db,
   log: { level: config.logLevel },
-  collection: { locate: location.locate, isDataCenter: dataCenters.isDataCenter },
+  collection: {
+    locate: location.locate,
+    isDataCenter: dataCenters.isDataCenter,
+    organizationLimit: {
+      capacity: config.organizationEventsPerSecond * 10,
+      refillPerSecond: config.organizationEventsPerSecond,
+    },
+  },
   dashboard: {
     auth,
     clickhouse,

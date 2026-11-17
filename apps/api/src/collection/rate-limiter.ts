@@ -73,4 +73,54 @@ export class TokenBucketLimiter {
     }
     return result;
   }
+
+  /** Seconds until `key` could spend `cost` tokens, without spending them: 0 when it can now. */
+  wait(key: string, cost: number): number {
+    const { capacity, refillPerSecond } = this.#limit;
+    const bucket = this.#buckets.get(key);
+    if (bucket === undefined) return 0;
+    const elapsedSeconds = Math.max(0, this.#now() - bucket.updatedAt) / 1000;
+    const tokens = Math.min(capacity, bucket.tokens + elapsedSeconds * refillPerSecond);
+    return tokens >= cost ? 0 : Math.ceil((cost - tokens) / refillPerSecond);
+  }
+
+  /** Puts back tokens spent by take(), up to the capacity: for a request refused later on. */
+  refund(key: string, cost: number): void {
+    const bucket = this.#buckets.get(key);
+    if (bucket !== undefined) bucket.tokens = Math.min(this.#limit.capacity, bucket.tokens + cost);
+  }
+}
+
+/**
+ * Events a project may store: its own budget, inside its organization's.
+ * Without the second, a customer could add projects to multiply its share
+ * of the instance, which every customer shares.
+ */
+export class EventBudget {
+  readonly #projects: TokenBucketLimiter;
+  readonly #organizations: TokenBucketLimiter;
+
+  constructor(projects: TokenBucketLimiter, organizations: TokenBucketLimiter) {
+    this.#projects = projects;
+    this.#organizations = organizations;
+  }
+
+  /**
+   * Spends `events` from both budgets, or from neither. A refusal waits for
+   * both: retrying when only the organization's has refilled would only be
+   * refused again.
+   */
+  take(project: { id: string; organizationId: string }, events: number): TakeResult {
+    const organization = this.#organizations.take(project.organizationId, events);
+    if (!organization.allowed) {
+      const retryAfterSeconds = Math.max(
+        organization.retryAfterSeconds,
+        this.#projects.wait(project.id, events),
+      );
+      return { allowed: false, retryAfterSeconds };
+    }
+    const own = this.#projects.take(project.id, events);
+    if (!own.allowed) this.#organizations.refund(project.organizationId, events);
+    return own;
+  }
 }

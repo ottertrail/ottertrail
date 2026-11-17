@@ -69,6 +69,13 @@ export interface Config {
   /** Address ranges of data centers, whose "browsers" are ignored (enrichment/data-centers.ts). */
   dataCentersPath: string;
   /**
+   * Events each organization may store per second, all its projects
+   * together, with bursts of ten seconds' worth (collection/rate-limiter.ts,
+   * EventBudget). It keeps customers from crowding each other out; an
+   * install with one organization may raise it.
+   */
+  organizationEventsPerSecond: number;
+  /**
    * IANA timezone, such as "Asia/Singapore", of the organization the setup
    * link creates. Each organization has its own after that (reports count
    * days in it, and visitor salts change at its midnight).
@@ -107,6 +114,21 @@ function parsePort(raw: string): number {
     throw new ConfigError(`PORT must be an integer between 1 and 65535, received "${raw}"`);
   }
   return port;
+}
+
+/** The default: three projects at their full 200 events a second. */
+export const DEFAULT_ORGANIZATION_EVENTS_PER_SECOND = 600;
+
+function parseOrganizationEventsPerSecond(raw: string | undefined): number {
+  if (raw === undefined || raw.trim() === "") return DEFAULT_ORGANIZATION_EVENTS_PER_SECOND;
+  const rate = Number(raw);
+  // At least one full batch of 50 events, as bursts are ten seconds' worth.
+  if (!Number.isInteger(rate) || rate < 5 || rate > 1_000_000) {
+    throw new ConfigError(
+      `ORGANIZATION_EVENTS_PER_SECOND must be an integer between 5 and 1000000, received "${raw}"`,
+    );
+  }
+  return rate;
 }
 
 function parseLogLevel(raw: string): LogLevel {
@@ -280,6 +302,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     geoSource: parseGeoSource(env.GEO_SOURCE ?? "database"),
     geoDatabasePath: env.GEO_DATABASE_PATH?.trim() || DEFAULT_GEO_DATABASE_PATH,
     dataCentersPath: env.DATA_CENTERS_PATH?.trim() || DEFAULT_DATA_CENTERS_PATH,
+    organizationEventsPerSecond: parseOrganizationEventsPerSecond(
+      env.ORGANIZATION_EVENTS_PER_SECOND,
+    ),
     defaultTimeZone: parseTimeZone(env.TIMEZONE?.trim() || "UTC"),
     ...publicUrlAndOrigins(env),
     authSecret: parseAuthSecret(env),

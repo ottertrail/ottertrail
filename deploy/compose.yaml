@@ -35,6 +35,7 @@ x-app: &app
     # Requests reach the API only through Caddy, one proxy hop.
     TRUST_PROXY: "1"
     LOG_LEVEL: ${LOG_LEVEL:-info}
+    ORGANIZATION_EVENTS_PER_SECOND: ${ORGANIZATION_EVENTS_PER_SECOND:-600}
 
 services:
   postgres:

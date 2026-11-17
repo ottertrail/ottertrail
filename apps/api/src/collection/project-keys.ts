@@ -7,6 +7,8 @@ export const SECRET_KEY_PATTERN = "^sk_[0-9a-f]{32}$";
 
 export interface CollectingProject {
   id: string;
+  /** Its organization, whose event budget its own sits inside. */
+  organizationId: string;
   allowedHostnames: string[];
   /** Its organization's timezone, whose midnight starts a new visitor salt. */
   timeZone: string;
@@ -84,6 +86,7 @@ export class ProjectKeyCache {
       .innerJoin("organizations", "organizations.id", "projects.organization_id")
       .select([
         "projects.id",
+        "projects.organization_id",
         "projects.allowed_hostnames",
         "projects.secret_key",
         "projects.require_signed_user_ids",
@@ -97,6 +100,7 @@ export class ProjectKeyCache {
         ? null
         : {
             id: row.id,
+            organizationId: row.organization_id,
             allowedHostnames: row.allowed_hostnames,
             timeZone: row.time_zone,
             secretKey: row.secret_key,

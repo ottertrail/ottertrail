@@ -5,6 +5,7 @@ import {
   DEFAULT_DASHBOARD_PATH,
   DEFAULT_DATA_CENTERS_PATH,
   DEFAULT_GEO_DATABASE_PATH,
+  DEFAULT_ORGANIZATION_EVENTS_PER_SECOND,
   DEVELOPMENT_AUTH_SECRET,
   DEFAULT_TRACKER_SCRIPT_PATH,
   DEVELOPMENT_PUBLIC_URL,
@@ -35,6 +36,7 @@ describe("loadConfig", () => {
       geoSource: "database",
       geoDatabasePath: DEFAULT_GEO_DATABASE_PATH,
       dataCentersPath: DEFAULT_DATA_CENTERS_PATH,
+      organizationEventsPerSecond: DEFAULT_ORGANIZATION_EVENTS_PER_SECOND,
       defaultTimeZone: "UTC",
       publicUrl: DEVELOPMENT_PUBLIC_URL,
       trustedOrigins: [DEVELOPMENT_PUBLIC_URL, "http://localhost:*", "http://127.0.0.1:*"],
@@ -59,6 +61,7 @@ describe("loadConfig", () => {
         GEO_SOURCE: "cloudflare",
         GEO_DATABASE_PATH: "/var/lib/ottertrail/geo.mmdb",
         DATA_CENTERS_PATH: "/var/lib/ottertrail/data-centers.json",
+        ORGANIZATION_EVENTS_PER_SECOND: "2000",
         TIMEZONE: "Asia/Singapore",
         PUBLIC_URL: "https://analytics.example.com/",
         AUTH_SECRET: "s".repeat(44),
@@ -80,6 +83,7 @@ describe("loadConfig", () => {
       geoSource: "cloudflare",
       geoDatabasePath: "/var/lib/ottertrail/geo.mmdb",
       dataCentersPath: "/var/lib/ottertrail/data-centers.json",
+      organizationEventsPerSecond: 2000,
       defaultTimeZone: "Asia/Singapore",
       publicUrl: "https://analytics.example.com",
       trustedOrigins: ["https://analytics.example.com", "http://localhost:*", "http://127.0.0.1:*"],
@@ -87,6 +91,14 @@ describe("loadConfig", () => {
       trackerScriptPath: "/srv/ottertrail/tracker.js",
       dashboardPath: "/srv/ottertrail/dashboard",
     });
+  });
+
+  test("refuses an organization event rate below one batch in ten seconds, or not a whole number", () => {
+    for (const value of ["4", "2.5", "-1", "lots", "1000001"]) {
+      expect(() => loadConfig({ ORGANIZATION_EVENTS_PER_SECOND: value })).toThrow(
+        "ORGANIZATION_EVENTS_PER_SECOND must be an integer",
+      );
+    }
   });
 
   test("trusts only the public URL in production", () => {

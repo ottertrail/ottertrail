@@ -160,6 +160,40 @@ describe("batching", () => {
     });
   });
 
+  test("cuts an error's stack, then its message, until the error fits in one request", async () => {
+    const { transport, sent } = fakeTransport();
+    const tracker = createTracker({ key: "pk_test", transport, randomId });
+    // 16,000 characters of three bytes each, and 8 KB of properties: over 64 KB.
+    const stack = "€".repeat(16_000);
+    const message = "€".repeat(2_000);
+    tracker.track("error", page, properties(500), {
+      error: { type: "Error", message, stack, handled: true },
+    });
+    tracker.track("error", page, undefined, {
+      error: {
+        type: "Error",
+        message: "short",
+        stack: "at f (https://a.example/a.js:1:1)",
+        handled: false,
+      },
+    });
+    await vi.advanceTimersByTimeAsync(FLUSH_DELAY_MS * 2);
+
+    const events = sent.flatMap((batch) => batch.events);
+    for (const batch of sent) expect(bodyBytes(batch)).toBeLessThanOrEqual(MAX_BATCH_BYTES);
+    const [big, small] = events;
+    expect(big?.error?.message).toBe(message);
+    expect(big?.error?.stack?.length).toBeGreaterThan(10_000);
+    expect(big?.error?.stack?.length).toBeLessThan(16_000);
+    // A small error is sent as it is.
+    expect(small?.error).toEqual({
+      type: "Error",
+      message: "short",
+      stack: "at f (https://a.example/a.js:1:1)",
+      handled: false,
+    });
+  });
+
   test("keeps at most 200 events, dropping the oldest", async () => {
     const { transport, sent, beacons } = fakeTransport();
     const tracker = createTracker({ key: "pk_test", transport, randomId });

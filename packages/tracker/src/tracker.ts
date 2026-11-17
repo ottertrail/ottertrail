@@ -1,5 +1,11 @@
 import type { ErrorDetails } from "./errors.ts";
-import { byteLength, type Properties, sanitizeName, sanitizeProperties } from "./sanitize.ts";
+import {
+  byteLength,
+  cleanText,
+  type Properties,
+  sanitizeName,
+  sanitizeProperties,
+} from "./sanitize.ts";
 import type { SendOutcome, Transport } from "./transport.ts";
 
 /** Matches the API: at most 50 events per batch. */
@@ -37,6 +43,30 @@ export interface QueuedEvent {
   userSignature?: string;
   /** For an "error" event: what went wrong. */
   error?: ErrorDetails;
+}
+
+/** Room for one event in a request: the budget less the batch's own fields, release included. */
+const MAX_EVENT_BYTES = MAX_BATCH_BYTES - 2_000;
+
+/**
+ * Cuts an error's stack, then its message, until its event fits in one
+ * request. Their limits count characters, and a character can take up to
+ * four bytes: a long stack in another script would otherwise pass the API's
+ * 64 KB and lose the error. Cutting `over` characters removes at least
+ * `over` bytes, so this takes a pass or two.
+ */
+function fitError(event: QueuedEvent): void {
+  const { error } = event;
+  if (error === undefined) return;
+  for (const field of ["stack", "message"] as const) {
+    let over = byteLength(JSON.stringify(event)) - MAX_EVENT_BYTES;
+    while (over > 0 && (error[field] ?? "") !== "") {
+      const text = error[field] ?? "";
+      error[field] = cleanText(text, Math.max(0, text.length - over), true);
+      over = byteLength(JSON.stringify(event)) - MAX_EVENT_BYTES;
+    }
+  }
+  if (error.stack === "") delete error.stack;
 }
 
 export interface TrackerOptions {
@@ -216,7 +246,7 @@ export function createTracker({
         if (queue.length >= MAX_QUEUE) {
           queue.shift(); // Bounded memory: drop the oldest event.
         }
-        queue.push({
+        const event: QueuedEvent = {
           id: randomId(),
           name: cleanName,
           occurredAt: Date.now(),
@@ -225,8 +255,10 @@ export function createTracker({
           ...(cleanProperties === undefined ? {} : { properties: cleanProperties }),
           ...(owner === undefined ? {} : { userId: owner.userId }),
           ...(owner?.signature === undefined ? {} : { userSignature: owner.signature }),
-          ...(extra?.error === undefined ? {} : { error: extra.error }),
-        });
+          ...(extra?.error === undefined ? {} : { error: { ...extra.error } }),
+        };
+        fitError(event);
+        queue.push(event);
         if (queue.length >= MAX_EVENTS_PER_BATCH && Date.now() >= retryAt) {
           void flush();
         } else {

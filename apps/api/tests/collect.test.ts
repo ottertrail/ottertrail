@@ -9,7 +9,7 @@ import { copyEventsToClickHouse } from "../src/clickhouse/copy-events.ts";
 import { createDatabase } from "../src/db/database.ts";
 import type { Locate, Location } from "../src/enrichment/geo.ts";
 import { findVisits } from "../src/visits/visits.ts";
-import { insertProject } from "./helpers/projects.ts";
+import { insertOrganization, insertProject } from "./helpers/projects.ts";
 import { createTestClickHouse } from "./helpers/test-clickhouse.ts";
 import { createTestDatabase, type TestDatabase } from "./helpers/test-database.ts";
 
@@ -84,6 +84,9 @@ function pageview(overrides: Record<string, unknown> = {}) {
     ...overrides,
   };
 }
+
+/** `count` pageviews, each with its own ID. */
+const pageviews = (count: number) => Array.from({ length: count }, () => pageview());
 
 function batch(key: string, events: unknown[] = [pageview()], overrides: object = {}) {
   return { v: 1, key, sentAt: NOW, events, ...overrides };
@@ -416,6 +419,34 @@ describe("POST /api/events", () => {
         collection: { projectLimit: { capacity: 10, refillPerSecond: 1 } },
       });
       return expect(tooSmall.ready()).rejects.toThrow(/full batch/);
+    });
+    test("keeps an organization's projects inside one budget", async () => {
+      const limited = appWith({
+        collection: {
+          now: () => NOW,
+          projectLimit: { capacity: 50, refillPerSecond: 0.001 },
+          organizationLimit: { capacity: 80, refillPerSecond: 0.001 },
+        },
+      });
+      const organizationId = await insertOrganization(db());
+      const site = (name: string) =>
+        insertProject(db(), { name, allowed_hostnames: [SITE], organization_id: organizationId });
+      const [first, second] = [await site("Site"), await site("Docs")];
+
+      expect(
+        (await send(batch(first.public_key, pageviews(50)), { instance: limited })).statusCode,
+      ).toBe(202);
+      // The second project has its own 50, but the organization only 30 left.
+      const over = await send(batch(second.public_key, pageviews(31)), { instance: limited });
+      expect(over.statusCode).toBe(429);
+      expect(
+        (await send(batch(second.public_key, pageviews(30)), { instance: limited })).statusCode,
+      ).toBe(202);
+      // Another customer is not held back.
+      const other = await createProject();
+      expect(
+        (await send(batch(other.public_key, pageviews(50)), { instance: limited })).statusCode,
+      ).toBe(202);
     });
   });
 
