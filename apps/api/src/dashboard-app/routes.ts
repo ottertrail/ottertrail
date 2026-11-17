@@ -123,9 +123,12 @@ function cacheControlFor(path: string, hashedPrefix: string): string {
 /**
  * A path the dashboard's router may own: not the API, and not a missing
  * file such as /assets/old-build.js, which must stay a 404 instead of
- * turning into a page.
+ * turning into a page. Every path under /projects/ is a page, extension or
+ * not: a user's page ends in the site's own ID, which may hold a dot
+ * (/projects/…/users/john.doe).
  */
 function isPagePath(url: string): boolean {
   const path = url.split("?", 1)[0] ?? "";
-  return path !== "/api" && !path.startsWith("/api/") && extname(path) === "";
+  if (path === "/api" || path.startsWith("/api/")) return false;
+  return path.startsWith("/projects/") || extname(path) === "";
 }

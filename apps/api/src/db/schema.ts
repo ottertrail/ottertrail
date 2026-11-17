@@ -114,6 +114,8 @@ export interface EventsTable {
   environment: ColumnType<string, string | undefined, string>;
   /** The app's version, as the site named it, such as "1.4.2". */
   release: Nullable<string>;
+  /** The site's own ID for the signed-in user who caused it; null for an anonymous visitor. */
+  user_id: Nullable<string>;
 }
 
 /** One random secret per day. Deleted once no event can still need it. */

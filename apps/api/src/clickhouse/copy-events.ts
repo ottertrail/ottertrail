@@ -49,6 +49,7 @@ function toClickHouse(event: Selectable<EventsTable>) {
     visitor_id: event.visitor_id,
     environment: event.environment,
     release: event.release,
+    user_id: event.user_id,
   };
 }
 

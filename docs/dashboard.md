@@ -280,6 +280,28 @@ Unit tests in `apps/web/tests/analytics.test.ts` cover the number and date forma
 - Hourly detail for one day.
 - Comparison in the chart and the lists; only the summary is compared.
 
+## 8.5 Users
+
+Code: `apps/web/src/features/users/`, `apps/api/src/identities/`. The users a site names ([web analytics, Known users](web-analytics.md#known-users)), in one environment, production unless `env=` names another; the picker appears once another environment has known users.
+
+- `/projects/<id>/users`: the known users, most recently seen first, 50 at a time with "Load more": user ID, last seen (relative, the exact time on hover), first seen, and events. A search by ID, case ignored. While the site names no user, the page shows how: `data-user-id` and `identify()`, with an example to copy.
+- `/projects/<id>/users/<user ID>`: when the user was first and last seen, their event count, and their pageviews and custom events, newest first, under a heading for each day in the organization's timezone, 100 at a time. Each event shows its time, its page or name and properties, and browser, OS, place, and release.
+
+```text
+GET /api/projects/:id/users[?environment=staging&search=…&offset=0&limit=50]
+GET /api/projects/:id/users/:userId[?environment=staging&before=…&beforeId=…&limit=100]
+```
+
+Both run `requireProjectAccess`, as every project route ([Organizations](#organizations)); a test checks another organization's members get 404. The list's answer names the organization's timezone and the environments with known users. A user's answer pages back with `before` and `beforeId`, the time and ID of the last event of the page before, so events arriving meanwhile cannot shift the pages. An ID without events in the environment answers 404. Both are worked out from the events in ClickHouse when asked. A bloom filter index on `user_id` lets a user's page skip blocks of a project's events that do not hold the ID; parts written before ClickHouse migration 0004 get the index when they are next merged. The list reads the project's whole history in the environment on every request, and its environments only for the first page.
+
+### Not done yet
+
+- Deleting one user's events, for a person who asks to be forgotten. Today their events go with the project or past its retention.
+- Details about a user beyond the ID, such as a name or a plan, sent with `identify()`.
+- A user's errors (stage 2) and visits.
+- A table of users kept up to date by the worker, for large projects: the list reads every identified event of the environment on each request.
+- Paging the list by a cursor: it pages by offset over "most recently seen", so a user seen again between two pages moves up; the page shows them once.
+
 ## Organizations
 
 Code: `apps/api/src/organizations/` and `apps/web/src/features/organizations/`.

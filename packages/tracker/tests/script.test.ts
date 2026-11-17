@@ -44,7 +44,13 @@ function fakePage(
     location,
     history: { pushState: () => {}, replaceState: () => {} },
     addEventListener: on,
-    ottertrail: undefined as { track(name: string, properties?: object): void } | undefined,
+    ottertrail: undefined as
+      | {
+          track(name: string, properties?: object): void;
+          identify(userId: string): void;
+          reset(): void;
+        }
+      | undefined,
   };
   /** Everything the tracker handed over, by beacon or fetch. */
   const events: QueuedEvent[] = [];
@@ -282,5 +288,83 @@ describe("environment and release", () => {
     expect(page.events.length).toBeGreaterThan(0);
     expect(page.batches[0]).not.toHaveProperty("release");
     expect(warn).toHaveBeenCalledWith(expect.stringContaining("data-release"));
+  });
+});
+
+describe("the signed-in user", () => {
+  test("data-user-id names the user from the first pageview on", async () => {
+    const page = fakePage("https://example.com/", "", { attributes: { userId: "user-42" } });
+    await runScript();
+    page.hide();
+    await page.settle();
+
+    expect(page.events.length).toBeGreaterThan(0);
+    for (const event of page.events) {
+      expect(event.userId).toBe("user-42");
+    }
+  });
+
+  test("identify() and reset() change the user of the events that follow", async () => {
+    const page = fakePage("https://example.com/");
+    await runScript();
+    page.window.ottertrail?.identify("user-42");
+    page.window.ottertrail?.track("signup");
+    page.window.ottertrail?.reset();
+    page.window.ottertrail?.track("signout");
+    page.hide();
+    await page.settle();
+
+    const byName = Object.fromEntries(page.events.map((event) => [event.name, event.userId]));
+    expect(byName).toMatchObject({ pageview: undefined, signup: "user-42", signout: undefined });
+  });
+
+  test("an invalid identify() makes the events anonymous, never the user before", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const page = fakePage("https://example.com/");
+    await runScript();
+    page.window.ottertrail?.identify("user-a");
+    page.window.ottertrail?.track("seen-as-a");
+    page.window.ottertrail?.identify("");
+    page.window.ottertrail?.track("after-invalid");
+    page.hide();
+    await page.settle();
+
+    const byName = Object.fromEntries(page.events.map((event) => [event.name, event.userId]));
+    expect(byName).toMatchObject({ "seen-as-a": "user-a", "after-invalid": undefined });
+  });
+
+  test("a page's engagement report is its viewer's, not the user who signed in after", async () => {
+    const page = fakePage("https://example.com/login");
+    await runScript();
+    await vi.advanceTimersByTimeAsync(5000); // Time on the sign-in page.
+    page.window.ottertrail?.identify("user-42");
+    page.window.location.href = "https://example.com/dashboard";
+    page.window.history.pushState(); // The app moves on, signed in.
+    page.hide();
+    await page.settle();
+
+    const engagement = page.events.filter((event) => event.name === "engagement");
+    const loginTime = engagement.find((event) => event.url === "https://example.com/login");
+    expect(loginTime).toBeDefined();
+    expect(loginTime?.userId).toBeUndefined();
+    const dashboard = page.events.find(
+      (event) => event.name === "pageview" && event.url === "https://example.com/dashboard",
+    );
+    expect(dashboard?.userId).toBe("user-42");
+  });
+
+  test("an invalid ID is ignored, with a warning, and the events still go", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const page = fakePage("https://example.com/", "", { attributes: { userId: "" } });
+    await runScript();
+    page.window.ottertrail?.identify("x".repeat(201));
+    page.window.ottertrail?.track("signup");
+    page.hide();
+    await page.settle();
+
+    expect(page.events.length).toBeGreaterThan(0);
+    expect(page.events.every((event) => event.userId === undefined)).toBe(true);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("data-user-id"));
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("identify()"));
   });
 });

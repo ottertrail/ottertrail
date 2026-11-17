@@ -9,6 +9,7 @@ import type { RateLimit } from "./collection/rate-limiter.ts";
 import { type CollectionOptions, collectionRoutes } from "./collection/routes.ts";
 import { dashboardAppRoutes, sendsHsts } from "./dashboard-app/routes.ts";
 import type { Database } from "./db/schema.ts";
+import { userRoutes } from "./identities/routes.ts";
 import { organizationRoutes } from "./organizations/routes.ts";
 import { projectRoutes } from "./projects/routes.ts";
 import { reportRoutes } from "./reports/routes.ts";
@@ -51,10 +52,15 @@ export interface AppOptions extends Omit<FastifyServerOptions, "logger"> {
 /**
  * What a request log line records about a request: method and URL only.
  * Fastify's default also records the client's IP address and port, and an
- * IP address is personal data that Ottertrail never keeps.
+ * IP address is personal data that Ottertrail never keeps. A site's user ID
+ * is personal data too, so a user's path and a user search are masked:
+ * logs are kept apart from the project's retention and deletion.
  */
 export function requestLogFields(request: { method: string; url: string }) {
-  return { method: request.method, url: request.url };
+  const url = request.url
+    .replace(/(\/users\/)[^/?#]+/, "$1…")
+    .replace(/([?&]search=)[^&#]*/, "$1…");
+  return { method: request.method, url };
 }
 
 export function buildApp({
@@ -67,6 +73,8 @@ export function buildApp({
   ...fastifyOptions
 }: AppOptions) {
   const app = Fastify({
+    // A user ID in a path may be 200 characters, 400 UTF-16 units; Fastify allows 100.
+    maxParamLength: 512,
     ...fastifyOptions,
     logger:
       log === undefined
@@ -122,6 +130,12 @@ export function buildApp({
       auth: dashboard.auth,
       trustedOrigins: dashboard.trustedOrigins,
       projectKeys,
+    });
+    app.register(userRoutes, {
+      prefix: "/api",
+      db,
+      clickhouse: dashboard.clickhouse,
+      auth: dashboard.auth,
     });
     app.register(reportRoutes, {
       prefix: "/api",

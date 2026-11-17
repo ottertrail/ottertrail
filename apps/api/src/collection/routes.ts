@@ -10,6 +10,7 @@ import { VisitorIds } from "../visitors/visitor-ids.ts";
 import { ENGAGEMENT } from "../visits/visits.ts";
 import { ENVIRONMENT_PATTERN, environmentOf, RELEASE_PATTERN } from "./environment.ts";
 import { type NewEvent, storeEvents } from "./event-store.ts";
+import { USER_ID_PATTERN } from "./identity.ts";
 import {
   cleanReferrer,
   correctClock,
@@ -62,6 +63,8 @@ interface IncomingEvent {
   url: string;
   referrer?: string;
   properties?: Record<string, PropertyValue>;
+  /** The site's own ID for the signed-in user, when one is. */
+  userId?: string;
 }
 
 interface EventBatch {
@@ -119,6 +122,7 @@ const eventBatchSchema = {
           occurredAt: { type: "integer", minimum: 0, maximum: MAX_TIMESTAMP },
           url: { type: "string", minLength: 1, maxLength: 8192 },
           referrer: { type: "string", maxLength: 8192 },
+          userId: { type: "string", maxLength: 200, pattern: USER_ID_PATTERN },
           properties: {
             type: "object",
             maxProperties: 30,
@@ -350,6 +354,16 @@ export const collectionRoutes: FastifyPluginCallback<CollectionOptions> = (app, 
               ),
             );
         }
+        if (event.userId !== undefined && !isStorableText(event.userId)) {
+          return reply
+            .code(400)
+            .send(
+              problem(
+                "invalid_request",
+                `events[${index}].userId contains an unpaired surrogate, which cannot be stored.`,
+              ),
+            );
+        }
         if (!isStorableText(event.name)) {
           return reply
             .code(400)
@@ -427,6 +441,7 @@ export const collectionRoutes: FastifyPluginCallback<CollectionOptions> = (app, 
           location,
           environment,
           ...(release === undefined ? {} : { release }),
+          ...(event.userId === undefined ? {} : { userId: event.userId }),
         });
       }
 

@@ -82,4 +82,17 @@ export const CLICKHOUSE_MIGRATIONS: ClickHouseMigration[] = [
        ADD COLUMN IF NOT EXISTS release Nullable(String)`,
     ],
   },
+  {
+    /**
+     * The signed-in user who caused the event, as in PostgreSQL (migration
+     * 0015). A user's page reads one project's events for one user ID: the
+     * bloom filter lets ClickHouse skip the parts of the project without it.
+     */
+    name: "0004_add_events_user_id",
+    statements: (database) => [
+      `ALTER TABLE ${database}.events ADD COLUMN IF NOT EXISTS user_id Nullable(String)`,
+      `ALTER TABLE ${database}.events
+       ADD INDEX IF NOT EXISTS user_id_index user_id TYPE bloom_filter GRANULARITY 4`,
+    ],
+  },
 ];

@@ -28,6 +28,20 @@ export function byteLength(text: string): number {
 export const UNSTORABLE =
   /\0|[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?:^|[^\uD800-\uDBFF])[\uDC00-\uDFFF]/;
 
+/**
+ * As the API checks a user ID: 1 to 200 characters (the u flag counts them
+ * as the API does, not UTF-16 units), no control characters.
+ */
+// eslint-disable-next-line no-control-regex -- control characters are what it refuses
+const USER_ID = /^[^\u0000-\u001F\u007F-\u009F]{1,200}$/u;
+
+/** A site's user ID, trimmed, or undefined when the API would refuse it. */
+export function cleanUserId(value: unknown): string | undefined {
+  if (typeof value !== "string" && typeof value !== "number") return undefined;
+  const id = String(value).trim();
+  return USER_ID.test(id) && !UNSTORABLE.test(id) ? id : undefined;
+}
+
 /** The first `max` UTF-16 units, without splitting a surrogate pair at the end. */
 function cut(text: string, max: number): string {
   const head = text.slice(0, max);

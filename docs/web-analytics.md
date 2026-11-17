@@ -37,7 +37,7 @@ Created by `apps/api/src/db/migrations/0001_create_projects_and_events.ts`.
 | `utm_*` (5 columns) | Campaign tags from the page URL: source, medium, campaign, term, content    | Sender   |
 | `properties`        | Custom details as a JSON object, such as `{ "plan": "free" }`, at most 8 KB | Sender   |
 
-Later steps add columns in new migrations: browser, OS, device, country, region, and city (step 4), visitor (step 5), and session (step 6). Migration 0014 adds `environment` and `release` ([Environments and releases](#environments-and-releases)).
+Later steps add columns in new migrations: browser, OS, device, country, region, and city (step 4), visitor (step 5), and session (step 6). Migration 0014 adds `environment` and `release` ([Environments and releases](#environments-and-releases)), and 0015 `user_id` ([Known users](#known-users)).
 
 ### Two timestamps
 
@@ -116,6 +116,7 @@ The worker (`apps/api/src/worker.ts`, a process of its own beside the API) delet
 - Times are milliseconds since 1970 by the sender's clock.
 - `touch` (optional, only ever `true`) says the device has a touchscreen; the tracker sends it when `navigator.maxTouchPoints` is over 1. It tells an iPad from a Mac (see [Enrichment](#4-enrichment)).
 - `environment` and `release` (optional) say where the site runs and which version of it, for every event of the batch ([below](#environments-and-releases)).
+- `userId` (optional, per event) is the site's own ID for the signed-in user who caused the event ([below](#known-users)).
 - Send it as `text/plain` from browsers (see [Cross-site requests](#cross-site-requests)); `application/json` also works.
 - Unknown fields are removed, not rejected, so a server accepts batches from a newer tracker.
 
@@ -128,6 +129,18 @@ A team runs the same app in several places: the live site, a staging site, a dev
 - Both belong to the batch, not to each event: one page runs in one environment and one release.
 
 Reports show one environment at a time, production unless another is chosen ([section 7](#one-environment-at-a-time)), so a test site never mixes into the live numbers. A release is a property of a visit, like its browser, with a breakdown and a filter. Errors (stage 2) will use releases to tell which version introduced a problem.
+
+### Known users
+
+Visitors are anonymous: a daily visitor ID, nothing more ([section 5](#5-visitors)). A site can say which of its users is signed in, and every event from then on carries that user's ID (`userId`). The ID is the site's own, such as the user's ID in its database. The docs and the dashboard ask for that rather than an email address: an ID means nothing outside the site. Code: `apps/api/src/collection/identity.ts`, `apps/api/src/identities/`.
+
+- **The rule:** 1 to 200 characters, no control characters or unpaired surrogates. Stored as sent; the tracker trims it first.
+- **Nothing on the device:** the tracker keeps the ID in memory, so the site names the user on every page load (`data-user-id` on the script tag, [section 3](#3-the-tracker)), and in a single-page app also when someone signs in or out without a page load (`identify()`, `reset()`). Ottertrail stays cookieless.
+- **A user's activity is the events with the user's ID, and only those.** Anonymous events before a sign-in, even in the same visit, are not counted as the user's: on a shared computer they may be someone else's. Different user IDs are never merged.
+- **One environment at a time,** as reports: a user on the staging site is another list.
+- **Why the ID crosses days and visitor IDs don't:** a daily visitor ID exists so that nobody, Ottertrail included, can follow an anonymous visitor from day to day. A signed-in user has told the site who they are, and the site chose to tell Ottertrail; its privacy notice should say so. A user ID is personal data, if pseudonymous, and is deleted with the project or past its retention.
+
+User IDs are also masked in the API's request logs (`/users/…`, `search=…`): logs are not covered by a project's retention or deletion.
 
 ### The responses
 
@@ -225,7 +238,7 @@ Behind a proxy (Cloudflare, Caddy), every request seems to come from the proxy's
 
 ## 3. The tracker
 
-`packages/tracker` builds `dist/tracker.js`, the script a site adds to its pages: about 5.8 KB, 2.6 KB gzipped.
+`packages/tracker` builds `dist/tracker.js`, the script a site adds to its pages: about 6.3 KB, 2.8 KB gzipped.
 
 ```html
 <script
@@ -235,6 +248,8 @@ Behind a proxy (Cloudflare, Caddy), every request seems to come from the proxy's
   data-host="https://analytics.example.com"
 ></script>
 ```
+
+`data-user-id="42"` names the signed-in user ([section 2](#known-users)); a single-page app calls `window.ottertrail.identify("42")` when someone signs in without a page load, and `window.ottertrail.reset()` when they sign out. Events tracked from then on carry the ID, or none. A page's time-on-page report goes with whoever viewed the page, so the sign-in page stays anonymous even when its report is sent after `identify()`. An invalid ID (empty, over 200 characters, a control character) makes the events anonymous, with a warning in the console: never the user before, who may have signed out, and never no events, as the API would refuse a whole batch for one invalid ID.
 
 Two optional attributes name the environment and release ([section 2](#environments-and-releases)): `data-environment="staging"` on a site other than the live one, and `data-release="1.4.2"`. The tracker checks both as the API does. With an invalid environment it sends nothing and warns in the console: its events would otherwise count as production's. With an invalid release it leaves the release out, warns, and sends the events.
 

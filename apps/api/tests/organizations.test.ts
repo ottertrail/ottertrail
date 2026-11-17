@@ -20,6 +20,8 @@ function projectRoutes(id: string): [string, string, object?][] {
     ["POST", `/api/projects/${id}/public-key`],
     ["GET", `/api/projects/${id}/analytics?period=7d`],
     ["GET", `/api/projects/${id}/analytics/list?report=pages&period=7d`],
+    ["GET", `/api/projects/${id}/users`],
+    ["GET", `/api/projects/${id}/users/user-42`],
   ];
 }
 

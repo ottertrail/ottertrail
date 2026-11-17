@@ -22,6 +22,8 @@ import { OrganizationSettingsPage } from "@/features/organizations/organization-
 import { ProjectLayout } from "@/features/projects/project-layout";
 import { ProjectSettingsPage } from "@/features/projects/project-settings-page";
 import { ProjectsPage } from "@/features/projects/projects-page";
+import { UserPage } from "@/features/users/user-page";
+import { UsersPage } from "@/features/users/users-page";
 import {
   DEFAULT_ENVIRONMENT,
   environmentFrom,
@@ -193,6 +195,38 @@ const webAnalyticsRoute = createRoute({
   },
 });
 
+/** The environment from a page's address: left out for production, the default. */
+const environmentSearch = (search: { env?: unknown }): { env: string | undefined } => {
+  const environment = environmentFrom(search.env);
+  return { env: environment === DEFAULT_ENVIRONMENT ? undefined : environment };
+};
+
+const usersRoute = createRoute({
+  getParentRoute: () => projectRoute,
+  path: "/users",
+  staticData: { title: "Users" },
+  validateSearch: (search: { env?: unknown } & SearchSchemaInput) => environmentSearch(search),
+  component: function UsersRouteComponent() {
+    const { projectId } = usersRoute.useParams();
+    const { env } = usersRoute.useSearch();
+    return <UsersPage projectId={projectId} environment={env ?? DEFAULT_ENVIRONMENT} key={env} />;
+  },
+});
+
+const userRoute = createRoute({
+  getParentRoute: () => projectRoute,
+  path: "/users/$userId",
+  staticData: { title: "User" },
+  validateSearch: (search: { env?: unknown } & SearchSchemaInput) => environmentSearch(search),
+  component: function UserRouteComponent() {
+    const { projectId, userId } = userRoute.useParams();
+    const { env } = userRoute.useSearch();
+    return (
+      <UserPage projectId={projectId} userId={userId} environment={env ?? DEFAULT_ENVIRONMENT} />
+    );
+  },
+});
+
 const projectSettingsRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: "/settings",
@@ -224,7 +258,13 @@ const routeTree = rootRoute.addChildren([
   appRoute.addChildren([
     homeRoute,
     projectsRoute,
-    projectRoute.addChildren([projectIndexRoute, webAnalyticsRoute, projectSettingsRoute]),
+    projectRoute.addChildren([
+      projectIndexRoute,
+      webAnalyticsRoute,
+      usersRoute,
+      userRoute,
+      projectSettingsRoute,
+    ]),
     organizationSettingsRoute,
     designSystemRoute,
   ]),

@@ -5,8 +5,12 @@
  *     data-key="pk_…" data-host="https://analytics.example.com"></script>
  *
  * Optional: data-environment="staging" on a site other than the live one,
- * whose events then never mix with production's, and data-release="1.4.2",
- * the site's version.
+ * whose events then never mix with production's, data-release="1.4.2", the
+ * site's version, and data-user-id="42", the site's ID for the signed-in
+ * user. A single-page app that signs someone in or out without a page load
+ * calls window.ottertrail.identify("42") and window.ottertrail.reset().
+ * The user's ID is kept in memory only: the tracker stores nothing on the
+ * device, so the site gives it on every page load.
  *
  * It records a pageview on load and on every path change, reports how long
  * each page was visible (an "engagement" event), and exposes
@@ -20,12 +24,17 @@ import {
 } from "./engagement.ts";
 import { watchNavigation } from "./navigation.ts";
 import { randomId } from "./random-id.ts";
+import { cleanUserId } from "./sanitize.ts";
 import { createTracker, type Page } from "./tracker.ts";
 import { browserTransport } from "./transport.ts";
 import { cleanPageUrl, cleanReferrer } from "./url.ts";
 
 export interface OttertrailApi {
   track(name: string, properties?: Record<string, unknown>): void;
+  /** Events from now on carry this user ID: the site's own ID for the signed-in user. */
+  identify(userId: string): void;
+  /** Events from now on are anonymous again, as after signing out. */
+  reset(): void;
 }
 
 declare global {
@@ -86,6 +95,14 @@ function landing(): Page {
     });
 
     let current: Page | undefined;
+    // The signed-in user now, and when the current page was viewed: its
+    // engagement report is theirs, not that of whoever signed in since.
+    let user: string | undefined;
+    let viewedBy: string | undefined;
+    const setUser = (id: string | undefined) => {
+      user = id;
+      tracker.setUser(id);
+    };
     const engaged = createEngagementTimer();
 
     // Time on the current page, sent when the visitor leaves it or hides the tab.
@@ -93,7 +110,7 @@ function landing(): Page {
       // A tab left open for days still reports at most what the API accepts.
       const engagedMs = Math.min(engaged.take(), MAX_ENGAGED_MS);
       if (current !== undefined && engagedMs >= MIN_REPORTED_MS) {
-        tracker.track(ENGAGEMENT, current, { engagedMs });
+        tracker.track(ENGAGEMENT, current, { engagedMs }, { userId: viewedBy });
       }
     };
 
@@ -112,10 +129,29 @@ function landing(): Page {
           ...(referrer === undefined ? {} : { referrer }),
         };
       }
+      viewedBy = user;
       tracker.track("pageview", current);
     };
 
+    const userId = script?.dataset.userId;
+    if (userId !== undefined) {
+      const clean = cleanUserId(userId);
+      if (clean === undefined) {
+        console.warn("Ottertrail: invalid data-user-id, so events are sent without one.");
+      }
+      setUser(clean);
+    }
+
     window.ottertrail = {
+      identify: (id) => {
+        const clean = cleanUserId(id);
+        if (clean === undefined) {
+          // Anonymous, never the user before: they may have signed out.
+          console.warn("Ottertrail: invalid user ID for identify(), so events go without one.");
+        }
+        setUser(clean);
+      },
+      reset: () => setUser(undefined),
       track: (name, properties) => {
         // The tracker sends these itself; a page sending them would distort reports.
         if (name === "pageview" || name === ENGAGEMENT) {

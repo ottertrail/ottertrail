@@ -95,6 +95,7 @@ describe("copying events to ClickHouse", () => {
       location: { country: "DE", region: "Bavaria", city: "Munich" },
       environment: "staging",
       release: "1.4.2",
+      userId: "user-42",
     });
     await storeEvents(db(), projectId, [event]);
 
@@ -125,6 +126,7 @@ describe("copying events to ClickHouse", () => {
         visitor_id: "-4611686018427387904",
         environment: "staging",
         release: "1.4.2",
+        user_id: "user-42",
       },
     ]);
     expect(await notCopied()).toBe(0);

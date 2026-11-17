@@ -1,6 +1,7 @@
 import type { Analytics, BreakdownRow, DayPoint } from "../../src/lib/analytics-api.ts";
 import type { Organization } from "../../src/lib/organizations-api.ts";
 import type { Project } from "../../src/lib/projects-api.ts";
+import type { Activity, User, UserActivity, UserList } from "../../src/lib/users-api.ts";
 
 /**
  * Stands in for the Ottertrail API: browser tests check the pages, and the
@@ -20,12 +21,74 @@ export interface FakeApi {
   ) => Analytics | Response | Promise<Analytics | Response>;
   /** Answers GET /api/projects/:id/analytics/list; by default, fakeList. */
   list: (query: URLSearchParams) => unknown;
+  /** Answers GET /api/projects/:id/users; by default, fakeUsers. */
+  users: (query: URLSearchParams) => UserList | Response;
+  /** Answers GET /api/projects/:id/users/:userId; by default, fakeUser. */
+  user: (userId: string, query: URLSearchParams) => UserActivity | Response;
   /** Answers DELETE /api/projects/:id; by default, removes the project (204). */
   deleteProject: (api: FakeApi, id: string) => Response;
   /** Every path the page asked for, with its query, in order. */
   requests: string[];
   /** The bodies of requests that change something, such as a delete's confirmation. */
   bodies: { method: string; path: string; body: unknown }[];
+}
+
+/** 120 known users, user-1 seen most recently, searched and paged as the API does. */
+export function fakeUsers(query: URLSearchParams): UserList {
+  const search = (query.get("search") ?? "").toLowerCase();
+  const offset = Number(query.get("offset") ?? 0);
+  const all: User[] = Array.from({ length: 120 }, (_, i) => ({
+    userId: `user-${i + 1}`,
+    firstSeenAt: "2026-11-01T02:00:00.000Z",
+    lastSeenAt: new Date(Date.UTC(2026, 10, 16, 8, 0) - i * 3_600_000).toISOString(),
+    events: 120 - i,
+  })).filter((user) => user.userId.includes(search));
+  return {
+    timeZone: "Asia/Singapore",
+    environment: query.get("environment") ?? "production",
+    environments: ["production"],
+    users: all.slice(offset, offset + 50),
+    hasMore: offset + 50 < all.length,
+  };
+}
+
+/** Ada's activity: 150 pageviews and signups, newest first, paged back by cursor as the API does. */
+export function fakeUser(userId: string, query: URLSearchParams): UserActivity | Response {
+  if (userId !== "ada") {
+    return json(
+      { error: "not_found", message: "No event in this environment has this user ID." },
+      404,
+    );
+  }
+  const all: Activity[] = Array.from({ length: 150 }, (_, i) => ({
+    eventId: `00000000-0000-4000-8000-${String(i).padStart(12, "0")}`,
+    name: i % 10 === 1 ? "signup" : "pageview",
+    occurredAt: new Date(Date.UTC(2026, 10, 16, 8, 0) - i * 1_800_000).toISOString(),
+    path: i % 10 === 1 ? "/signup" : `/page-${i}`,
+    referrer: null,
+    properties: i % 10 === 1 ? { plan: "free" } : {},
+    browser: "Firefox",
+    os: "Linux",
+    deviceType: "desktop",
+    country: "DE",
+    region: "Bavaria",
+    city: "Munich",
+    release: "1.4.2",
+  }));
+  const beforeId = query.get("beforeId");
+  const start = beforeId === null ? 0 : all.findIndex((item) => item.eventId === beforeId) + 1;
+  return {
+    timeZone: "Asia/Singapore",
+    environment: query.get("environment") ?? "production",
+    user: {
+      userId,
+      firstSeenAt: all.at(-1)?.occurredAt ?? "",
+      lastSeenAt: all[0]?.occurredAt ?? "",
+      events: all.length,
+    },
+    activity: all.slice(start, start + 100),
+    hasMore: start + 100 < all.length,
+  };
 }
 
 function removeProject(api: FakeApi, id: string): Response {
@@ -279,6 +342,15 @@ async function answer(api: FakeApi, url: URL, init: RequestInit | undefined): Pr
   if (path === "/api/projects") {
     return json({ projects: api.projects });
   }
+  if (/^\/api\/projects\/[^/]+\/users$/.test(path)) {
+    const result = api.users(url.searchParams);
+    return result instanceof Response ? result : json(result);
+  }
+  const userPath = /^\/api\/projects\/[^/]+\/users\/([^/]+)$/.exec(path);
+  if (userPath?.[1] !== undefined) {
+    const result = api.user(decodeURIComponent(userPath[1]), url.searchParams);
+    return result instanceof Response ? result : json(result);
+  }
   if (/^\/api\/projects\/[^/]+\/analytics\/list$/.test(path)) {
     const result = api.list(url.searchParams);
     return result instanceof Response ? result : json(result);
@@ -341,6 +413,8 @@ export function installFakeApi(overrides: Partial<FakeApi> = {}): FakeApi {
     projects: [PROJECT],
     analytics: () => analyticsFixture(),
     list: fakeList,
+    users: fakeUsers,
+    user: fakeUser,
     deleteProject: removeProject,
     requests: [],
     bodies: [],

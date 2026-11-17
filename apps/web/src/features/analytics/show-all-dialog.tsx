@@ -13,21 +13,12 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useSettled } from "@/hooks/use-settled";
 import { activeFilters, type ListReport, listQuery } from "@/lib/analytics-api";
 
 import { FilterLink } from "./filter-link";
 import { type PageSearch, rankedRows } from "./list-rows";
 import { RankedList } from "./ranked-list";
-
-/** Waits until `value` has stopped changing for `ms`, so typing does not send a request per key. */
-function useSettled<T>(value: T, ms: number): T {
-  const [settled, setSettled] = React.useState(value);
-  React.useEffect(() => {
-    const timer = window.setTimeout(() => setSettled(value), ms);
-    return () => window.clearTimeout(timer);
-  }, [value, ms]);
-  return settled;
-}
 
 /**
  * A list in full, for "Show all": the page's period and filters, a search

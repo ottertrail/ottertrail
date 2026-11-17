@@ -390,3 +390,19 @@ describe("input from the page", () => {
     expect(sent[0]?.events[0]).toMatchObject({ name: "signup", properties: { plan: "free" } });
   });
 });
+
+describe("the signed-in user", () => {
+  test("events carry the user's ID from setUser on, and none after it is cleared", async () => {
+    const { transport, sent } = fakeTransport();
+    const tracker = createTracker({ key: "pk_test", transport, randomId });
+
+    tracker.track("pageview", page);
+    tracker.setUser("user-42");
+    tracker.track("signup", page);
+    tracker.setUser(undefined);
+    tracker.track("pageview", page);
+    await vi.advanceTimersByTimeAsync(FLUSH_DELAY_MS);
+
+    expect(sent[0]?.events.map((event) => event.userId)).toEqual([undefined, "user-42", undefined]);
+  });
+});

@@ -1,10 +1,10 @@
-import { ClickHouseError } from "@clickhouse/client";
-import type { FastifyError, FastifyPluginCallback, FastifyReply, FastifyRequest } from "fastify";
+import type { FastifyPluginCallback, FastifyReply, FastifyRequest } from "fastify";
 import type { Kysely } from "kysely";
 
 import type { Auth } from "../auth/auth.ts";
 import { requireSession } from "../auth/routes.ts";
 import type { ClickHouseClient } from "../clickhouse/clickhouse.ts";
+import { clickHouseErrorHandler } from "../clickhouse/route-errors.ts";
 import { ENVIRONMENT_PATTERN, environmentOf } from "../collection/environment.ts";
 import type { Database } from "../db/schema.ts";
 import { type ProjectAccess, requireProjectAccess } from "../organizations/access.ts";
@@ -187,30 +187,8 @@ export const reportRoutes: FastifyPluginCallback<{
   const signedIn = requireSession(auth);
   const projectAccess = requireProjectAccess(db);
 
-  // For these routes only. A database's error text stays in the log: it
-  // can name servers, settings, and versions.
-  app.setErrorHandler((error: FastifyError, request, reply) => {
-    if ((error.statusCode ?? 500) < 500) {
-      // A bad request (validation): Fastify's own answer, which names the problem.
-      throw error;
-    }
-    if (error instanceof ClickHouseError && error.type === "MEMORY_LIMIT_EXCEEDED") {
-      request.log.warn({ err: error }, "a report ran out of memory");
-      return reply
-        .code(503)
-        .header("retry-after", "60")
-        .send(
-          problem(
-            "reports_busy",
-            "These reports need more memory than the server has free now. Try a shorter range, or try again in a minute.",
-          ),
-        );
-    }
-    request.log.error({ err: error }, "a report failed");
-    return reply
-      .code(500)
-      .send(problem("internal_error", "The reports could not be worked out. Try again."));
-  });
+  // For these routes only (clickhouse/route-errors.ts).
+  app.setErrorHandler(clickHouseErrorHandler);
   app.get<{
     Params: { id: string };
     Querystring: RangeQuery & { limit?: number } & Partial<Record<FilterName, string>>;

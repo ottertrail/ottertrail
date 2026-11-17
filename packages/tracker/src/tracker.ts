@@ -30,6 +30,8 @@ export interface QueuedEvent {
   url: string;
   referrer?: string;
   properties?: Properties;
+  /** The site's ID for the signed-in user, when the site named one. */
+  userId?: string;
 }
 
 export interface TrackerOptions {
@@ -49,14 +51,24 @@ export interface TrackerOptions {
 }
 
 export interface Tracker {
-  /** Queues an event. Never throws. */
-  track(name: unknown, page: Page, properties?: unknown): void;
+  /**
+   * Queues an event, with the signed-in user's ID (setUser), or `as.userId`
+   * when given: the user when the page was viewed, for its engagement
+   * report. Never throws.
+   */
+  track(name: unknown, page: Page, properties?: unknown, as?: { userId: string | undefined }): void;
   /** Sends one batch now unless a send is in flight. Never rejects. */
   flush(): Promise<void>;
   /** The page is being hidden or closed: hand every queued event to the browser. */
   flushOnExit(): void;
   /** Number of queued events, for tests and debugging. */
   queued(): number;
+  /**
+   * The signed-in user's ID, already checked (cleanUserId), which events
+   * tracked from now on carry; undefined for an anonymous visitor. Kept in
+   * memory only: nothing is stored on the device.
+   */
+  setUser(userId: string | undefined): void;
 }
 
 /** Exponential backoff with ±20% jitter: about 1, 2, 4, 8 … seconds, capped at 60. */
@@ -74,6 +86,7 @@ export function createTracker({
   release,
 }: TrackerOptions): Tracker {
   let queue: QueuedEvent[] = [];
+  let user: string | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let sending = false;
   /** Consecutive failed sends of the batch at the front of the queue. */
@@ -176,13 +189,14 @@ export function createTracker({
   }
 
   return {
-    track(name, page, properties) {
+    track(name, page, properties, as) {
       try {
         const cleanName = sanitizeName(name);
         if (cleanName === "" || page.url === "") {
           return;
         }
         const cleanProperties = sanitizeProperties(properties);
+        const owner = as === undefined ? user : as.userId;
         if (queue.length >= MAX_QUEUE) {
           queue.shift(); // Bounded memory: drop the oldest event.
         }
@@ -193,6 +207,7 @@ export function createTracker({
           url: page.url,
           ...(page.referrer === undefined ? {} : { referrer: page.referrer }),
           ...(cleanProperties === undefined ? {} : { properties: cleanProperties }),
+          ...(owner === undefined ? {} : { userId: owner }),
         });
         if (queue.length >= MAX_EVENTS_PER_BATCH && Date.now() >= retryAt) {
           void flush();
@@ -225,5 +240,9 @@ export function createTracker({
     },
 
     queued: () => queue.length,
+
+    setUser(userId) {
+      user = userId;
+    },
   };
 }

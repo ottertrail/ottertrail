@@ -64,6 +64,9 @@ describe("the built dashboard", () => {
     "/projects",
     "/projects/0b9f3c1e-58a4-4c39-9a0e-3f2b7d6a1c55/web-analytics?period=7d",
     "/setup",
+    // A user's page ends in the site's own ID, which may look like a file name.
+    "/projects/0b9f3c1e-58a4-4c39-9a0e-3f2b7d6a1c55/users/john.doe",
+    "/projects/0b9f3c1e-58a4-4c39-9a0e-3f2b7d6a1c55/users/ada%40example.com",
   ])("answers the dashboard's own paths with index.html: %s", async (url) => {
     const response = await app.inject({ url });
     expect(response.statusCode).toBe(200);

@@ -2,7 +2,7 @@ import { describe, expect, test, vi } from "vite-plus/test";
 
 import { watchNavigation } from "../src/navigation.ts";
 import { randomId } from "../src/random-id.ts";
-import { byteLength, sanitizeName, sanitizeProperties } from "../src/sanitize.ts";
+import { byteLength, cleanUserId, sanitizeName, sanitizeProperties } from "../src/sanitize.ts";
 import { outcomeForStatus, parseRetryAfter } from "../src/transport.ts";
 import { cleanPageUrl, cleanReferrer } from "../src/url.ts";
 
@@ -251,5 +251,28 @@ describe("watchNavigation", () => {
 
     expect(() => win.history.pushState({}, "", "/pricing")).not.toThrow();
     expect(original.pushState).toHaveBeenCalled();
+  });
+});
+
+describe("cleanUserId", () => {
+  test("keeps an ID as the API takes it, trimmed; a number becomes text", () => {
+    expect(cleanUserId("user-42")).toBe("user-42");
+    expect(cleanUserId("  team b/bob ")).toBe("team b/bob");
+    expect(cleanUserId(42)).toBe("42");
+    // 200 characters, counted as the API counts them: an emoji is one.
+    expect(cleanUserId("😀".repeat(200))).toBe("😀".repeat(200));
+  });
+
+  test.each([
+    ["", "empty"],
+    ["   ", "only spaces"],
+    ["u".repeat(201), "over 200 characters"],
+    ["user\u000042", "a control character"],
+    ["user\u008542", "a C1 control character"],
+    ["user\uD80042", "an unpaired surrogate"],
+    [null, "not text"],
+    [{ id: 42 }, "an object"],
+  ] as [unknown, string][])("refuses %j (%s)", (value) => {
+    expect(cleanUserId(value)).toBeUndefined();
   });
 });

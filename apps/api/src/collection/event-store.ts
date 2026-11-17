@@ -33,6 +33,8 @@ export interface NewEvent {
   environment?: string;
   /** The app's version, such as "1.4.2". */
   release?: string;
+  /** The site's own ID for the signed-in user (collection/identity.ts). */
+  userId?: string;
 }
 
 export interface StoreResult {
@@ -85,6 +87,7 @@ export async function storeEvents(
         visitor_id: event.visitorId,
         environment: event.environment,
         release: event.release,
+        user_id: event.userId,
       })),
     )
     .onConflict((conflict) => conflict.columns(["project_id", "event_id"]).doNothing())

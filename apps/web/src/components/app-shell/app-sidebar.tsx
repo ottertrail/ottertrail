@@ -44,7 +44,6 @@ import { projectsQuery } from "@/lib/projects-api";
 /** Project modules that are not built yet. Shown disabled and labeled. */
 const plannedModules = [
   { title: "Product analytics", icon: ChartColumnIcon },
-  { title: "Users", icon: UsersIcon },
   { title: "Errors", icon: BugIcon },
 ];
 
@@ -195,6 +194,22 @@ function ProjectMenu({ projectId }: { projectId: string }) {
             >
               <ChartLineIcon />
               <span>Web analytics</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              render={<Link to="/projects/$projectId/users" params={{ projectId }} />}
+              isActive={
+                matchRoute({
+                  to: "/projects/$projectId/users",
+                  params: { projectId },
+                  fuzzy: true,
+                }) !== false
+              }
+              tooltip="Users"
+            >
+              <UsersIcon />
+              <span>Users</span>
             </SidebarMenuButton>
           </SidebarMenuItem>
           {plannedModules.map((module) => (

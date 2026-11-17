@@ -74,8 +74,9 @@ describe("inside a project", () => {
       .element(projectMenu().getByRole("link", { name: "Web analytics" }))
       .toHaveAttribute("aria-current", "page");
     await expect.element(projectMenu().getByRole("link", { name: "Settings" })).toBeVisible();
+    await expect.element(projectMenu().getByRole("link", { name: "Users" })).toBeVisible();
     // Modules that are not built yet are shown, disabled and labeled.
-    for (const module of ["Product analytics", "Users", "Errors"]) {
+    for (const module of ["Product analytics", "Errors"]) {
       await expect.element(projectMenu().getByRole("button", { name: module })).toBeDisabled();
     }
     await expect.element(projectMenu().getByText("Planned").first()).toBeVisible();
@@ -84,8 +85,8 @@ describe("inside a project", () => {
     expect([...items].map((item) => item.textContent)).toEqual([
       "All projects",
       "Web analytics",
-      "Product analytics",
       "Users",
+      "Product analytics",
       "Errors",
       "Settings",
     ]);

@@ -605,6 +605,35 @@ describe("POST /api/events", () => {
     });
   });
 
+  describe("known users", () => {
+    test("stores each event's user ID as sent, and none for an anonymous one", async () => {
+      const project = await createProject();
+      const response = await send(
+        batch(project.public_key, [
+          pageview({ occurredAt: NOW - 3000 }),
+          pageview({ occurredAt: NOW - 2000, userId: "user 42/ä" }),
+          pageview({ occurredAt: NOW - 1000, name: "signup", userId: "user 42/ä" }),
+        ]),
+      );
+      expect(response.statusCode).toBe(202);
+      const stored = await storedEvents(project.id);
+      expect(stored.map((event) => event.user_id)).toEqual([null, "user 42/ä", "user 42/ä"]);
+    });
+
+    test.each([
+      ["", "an empty user ID"],
+      ["u".repeat(201), "a user ID over 200 characters"],
+      ["user\u000042", "a control character"],
+      ["user\u008542", "a C1 control character"],
+      ["user\uD80042", "an unpaired surrogate"],
+    ])("refuses %j (%s)", async (userId) => {
+      const project = await createProject();
+      const response = await send(batch(project.public_key, [pageview({ userId })]));
+      expect(response.statusCode).toBe(400);
+      expect(await storedEvents(project.id)).toHaveLength(0);
+    });
+  });
+
   describe("visits across midnight", () => {
     test("splits a visit at midnight in the organization's timezone, with no link between the days", async () => {
       let clock = Date.parse("2026-11-16T15:50:00.000Z"); // 23:50 in Singapore
