@@ -50,7 +50,6 @@ import { ApiError } from "@/lib/api";
 import { type Project, projectQuery } from "@/lib/projects-api";
 
 import { NoSuchProject } from "../projects/no-such-project";
-import { CustomRangeDialog } from "./custom-range-dialog";
 import { DayChart } from "./day-chart";
 import { FilterLink } from "./filter-link";
 import {
@@ -77,6 +76,14 @@ import {
   searchOf,
 } from "./list-rows";
 import { RankedList, type RankedRow } from "./ranked-list";
+
+/**
+ * Loaded when "Custom range…" is first chosen: its calendar would add about
+ * a tenth to the code every visit to the dashboard downloads.
+ */
+const CustomRangeDialog = React.lazy(async () => ({
+  default: (await import("./custom-range-dialog")).CustomRangeDialog,
+}));
 import { ShowAllDialog } from "./show-all-dialog";
 
 const METRICS = [
@@ -770,17 +777,20 @@ export function AnalyticsPage({
       </div>
       <FilterBar projectId={projectId} search={search} />
       {choosingDays && (
-        <CustomRangeDialog
-          open
-          onOpenChange={setChoosingDays}
-          from={"from" in range ? range.from : (data?.firstDay ?? "")}
-          to={"to" in range ? range.to : (data?.lastDay ?? "")}
-          timeZone={data?.timeZone}
-          onApply={(from, to) => {
-            setChoosingDays(false);
-            show({ range: { from, to } });
-          }}
-        />
+        // Nothing while its code loads: a moment, from the same server.
+        <React.Suspense fallback={null}>
+          <CustomRangeDialog
+            open
+            onOpenChange={setChoosingDays}
+            from={"from" in range ? range.from : (data?.firstDay ?? "")}
+            to={"to" in range ? range.to : (data?.lastDay ?? "")}
+            timeZone={data?.timeZone}
+            onApply={(from, to) => {
+              setChoosingDays(false);
+              show({ range: { from, to } });
+            }}
+          />
+        </React.Suspense>
       )}
 
       {analytics.isError && (
