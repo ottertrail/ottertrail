@@ -1,35 +1,27 @@
 # Ottertrail
 
-Analytics, error tracking, and email engagement for small software teams, in one connected tool. Each customer runs a dedicated instance. Features ship in stages: see `docs/roadmap.md`.
+Web analytics, product analytics, error tracking, and monitoring (logs, metrics, traces) for small software teams, in one connected tool. One deployment serves many customers; a self-hosted install is the same software with one organization. Features ship in stages: see `docs/roadmap.md`.
 
-If `docs/private/product-spec.md` exists, read it before work on product scope, deployment, or email. It holds the full spec and is not in git. Hosting, pricing, and final branding are undecided; do not invent business commitments.
+If `docs/private/product-spec.md` exists, read it before work on product scope or deployment. It holds the full spec and is not in git. Hosting, pricing, and final branding are undecided; do not invent business commitments.
 
 ## Architecture
 
-- One customer per instance: its own deployment, PostgreSQL database, job queue, secrets, and files. No `tenant_id` columns and no storage shared between customers.
-- Inside an instance there are dashboard users, projects, and permissions. Records that belong to a project keep `project_id`. Enforce permissions on the server.
-- Stack: Fastify API, React dashboard (Vite), a separate Node.js worker, PostgreSQL, pg-boss for jobs, Amazon SES configured per instance, Docker Compose. PostgreSQL only: no ClickHouse, Redis, Kafka, or Kubernetes without a measured need.
-- All modules share one model: project, environment, release, identity (anonymous and known end users), and session. Each module links into the per-user and per-release timelines.
+- Multi-tenant: an organization is one customer. It owns projects, and dashboard users reach it through memberships. Everything a customer stores belongs to a project (`project_id`), and through the project to one organization.
+- Check access on the server, in one place: every route that reads or changes a project first checks that the signed-in user is a member of the project's organization. An organization or project ID sent by the browser is never enough on its own. Tests prove that one organization's members cannot reach another's data.
+- Settings that differ between customers, such as the timezone, belong to the organization, not to the deployment's configuration.
+- Stack: Fastify API, React dashboard (Vite), a separate Node.js worker, PostgreSQL, ClickHouse, Docker Compose. PostgreSQL holds accounts, organizations, projects, settings, and jobs. ClickHouse holds the high-volume data: analytics events, and later logs, traces, and metrics (`docs/storage-benchmark.md`). Events are still in PostgreSQL until the move planned in `docs/roadmap.md`. No Redis, Kafka, or Kubernetes without a measured need.
+- ClickHouse tables are ordered by project, then time, and every query filters by `project_id` first.
+- All modules share one model: organization, project, environment, release, identity (anonymous and known end users), and session. Each module links into the per-user and per-release timelines.
 - A module is complete when it can replace the tool it targets for a real production app.
+- Out of scope: email campaigns, mailing lists, and email analytics. Ottertrail's own account email (sign-up verification, password reset) and alert notifications are separate and stay minimal.
 
 ## Ingestion
 
-- Public project keys allow bounded event collection only. They never allow reads, exports, configuration, or sending email.
+- Public project keys allow bounded event collection only. They never allow reads, exports, or configuration.
 - Browser payloads are untrusted. Validate them with Fastify schemas, limit body size, batch size, and field lengths, and check timestamps.
-- Store when an event happened and when it arrived. A unique `(project_id, event_id)` makes retries harmless; assume at-least-once delivery.
-- Acknowledge events only after PostgreSQL commits them.
-- Rate-limit per IP and per project. Reject bad requests before any database work.
-
-## Email
-
-- Three kinds, with different rules:
-  - Marketing: opt-in only, by topic, with one-click unsubscribe.
-  - Service announcements: sent to every user with an account; no promotional content.
-  - Transactional (login codes, password resets): stays in the customer's app.
-- Hard bounces and spam complaints suppress all email Ottertrail sends.
-- Browser events never create recipients or set email addresses. Addresses come from server-side calls with a privileged server key or from a confirmed opt-in. Browser events may trigger email only to recipients who are already known and verified.
-- Recheck consent, suppression, and eligibility immediately before sending. Make each send idempotent per recipient and step. When a provider's response is lost, record the outcome as unknown instead of retrying blindly.
-- Development uses a fake email adapter. Live sending must be configured explicitly.
+- Store when an event happened and when it arrived. A unique `(project_id, event_id)` makes retries harmless; assume at-least-once delivery. A retried event counts once in whichever store the reports read.
+- Acknowledge events only after they are durably stored (today: committed to PostgreSQL).
+- Rate-limit per IP and per project, and limit each organization's volume so one customer cannot crowd out the others. Reject bad requests before any database work.
 
 ## Working in this repository
 

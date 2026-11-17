@@ -1,8 +1,8 @@
 # Deployment
 
-How to run one Ottertrail instance on one server, and the decisions behind it. Each customer gets their own instance: their own server (or VM), database, secrets, and domain.
+How to run Ottertrail on one server, and the decisions behind it. The hosted service is one such deployment serving every organization; a self-hosted install is the same stack, usually with one organization. ClickHouse joins the stack when events move there ([roadmap](roadmap.md#next-in-stage-0)).
 
-Status: tested on one machine with Podman (see [What has been tested](#what-has-been-tested)). No instance runs in production yet, and backups are manual.
+Status: tested on one machine with Podman (see [What has been tested](#what-has-been-tested)). Nothing runs in production yet, and backups are manual.
 
 ## What runs
 
@@ -150,6 +150,6 @@ Not tested yet: Docker Engine and Docker Compose on a Linux server, a real domai
 - The geolocation database is updated by hand, monthly.
 - One server: no failover, and a few seconds of downtime for each update.
 - No image registry or CI builds: each server builds its own image.
-- One instance per server. Two stacks on one host would both need ports 80 and 443; sharing a host needs one proxy in front of both, not set up.
+- One deployment per server. Two stacks on one host would both need ports 80 and 443; sharing a host needs one proxy in front of both, not set up.
 - No CDN or proxy in front of Caddy (see "Client addresses").
 - The API prints one line that is not JSON at startup: a warning from its JSON schema validator about union types.

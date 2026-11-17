@@ -95,8 +95,8 @@ A project is one website or app. The Projects page lists them with their allowed
 
 The dashboard has two levels, the way hosting dashboards treat each site:
 
-- **The workspace:** the project list (`/projects`) and the design-system reference. Settings for the whole instance, such as members and email sending, will go here.
-- **Inside a project** (`/projects/<id>/…`): the sidebar becomes the project's own menu, with a switcher to the other projects and a link back to all of them. It lists the project's modules (web analytics; product analytics, users, errors, and email marked as planned), then the project's settings. The header shows the project's name before the page title.
+- **The workspace:** the project list (`/projects`) and the design-system reference. Settings for the whole organization, such as members, will go here.
+- **Inside a project** (`/projects/<id>/…`): the sidebar becomes the project's own menu, with a switcher to the other projects and a link back to all of them. It lists the project's modules (web analytics; product analytics, users, and errors marked as planned), then the project's settings. The header shows the project's name before the page title.
 
 Every module belongs to one project (its records carry `project_id`), so a module's pages sit under the project instead of at the top with a project picker. The switcher keeps the current page: from one project's web analytics for the last 90 days, it opens the other project's web analytics for the last 90 days.
 
