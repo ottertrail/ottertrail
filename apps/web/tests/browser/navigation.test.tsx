@@ -75,19 +75,20 @@ describe("inside a project", () => {
       .toHaveAttribute("aria-current", "page");
     await expect.element(projectMenu().getByRole("link", { name: "Settings" })).toBeVisible();
     await expect.element(projectMenu().getByRole("link", { name: "Users" })).toBeVisible();
+    await expect.element(projectMenu().getByRole("link", { name: "Errors" })).toBeVisible();
     // Modules that are not built yet are shown, disabled and labeled.
-    for (const module of ["Product analytics", "Errors"]) {
-      await expect.element(projectMenu().getByRole("button", { name: module })).toBeDisabled();
-    }
-    await expect.element(projectMenu().getByText("Planned").first()).toBeVisible();
+    await expect
+      .element(projectMenu().getByRole("button", { name: "Product analytics" }))
+      .toBeDisabled();
+    await expect.element(projectMenu().getByText("Planned")).toBeVisible();
     // The project's menu in order, settings last, right after the modules.
     const items = document.querySelectorAll("nav[aria-label=Project] [data-sidebar=menu-button]");
     expect([...items].map((item) => item.textContent)).toEqual([
       "All projects",
       "Web analytics",
       "Users",
-      "Product analytics",
       "Errors",
+      "Product analytics",
       "Settings",
     ]);
     // Right under the last module, not pinned to the bottom of the sidebar.

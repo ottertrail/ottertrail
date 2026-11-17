@@ -9,7 +9,8 @@ export interface RankedRow {
   title?: string;
   /** Sets the bar's length. */
   primary: number;
-  secondary: number;
+  /** The second figure; left out when the list has one. */
+  secondary?: number;
 }
 
 /**
@@ -29,7 +30,8 @@ export function RankedList({
   caption: string;
   nameHeading: string;
   primaryHeading: string;
-  secondaryHeading: string;
+  /** Left out for a list with one figure. */
+  secondaryHeading?: string;
   empty: string;
 }) {
   if (rows.length === 0) {
@@ -47,9 +49,11 @@ export function RankedList({
           <th scope="col" className="w-20 pb-2 text-right font-normal">
             {primaryHeading}
           </th>
-          <th scope="col" className="w-20 pb-2 text-right font-normal">
-            {secondaryHeading}
-          </th>
+          {secondaryHeading !== undefined && (
+            <th scope="col" className="w-20 pb-2 text-right font-normal">
+              {secondaryHeading}
+            </th>
+          )}
         </tr>
       </thead>
       <tbody>
@@ -68,9 +72,11 @@ export function RankedList({
             <td className="py-1.5 text-right align-top text-ink tabular-nums">
               {formatWhole(row.primary)}
             </td>
-            <td className="py-1.5 text-right align-top text-ink-subtle tabular-nums">
-              {formatWhole(row.secondary)}
-            </td>
+            {secondaryHeading !== undefined && (
+              <td className="py-1.5 text-right align-top text-ink-subtle tabular-nums">
+                {row.secondary === undefined ? "–" : formatWhole(row.secondary)}
+              </td>
+            )}
           </tr>
         ))}
       </tbody>

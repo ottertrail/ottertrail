@@ -51,6 +51,12 @@ function toClickHouse(event: Selectable<EventsTable>) {
     environment: event.environment,
     release: event.release,
     user_id: event.user_id,
+    // Empty for every event but an error: ClickHouse's columns are not nullable.
+    error_type: event.error_type ?? "",
+    error_message: event.error_message ?? "",
+    error_stack: event.error_stack ?? "",
+    error_handled: event.error_handled ?? false,
+    error_fingerprint: event.error_fingerprint ?? "",
   };
 }
 

@@ -9,6 +9,7 @@ import type { RateLimit } from "./collection/rate-limiter.ts";
 import { type CollectionOptions, collectionRoutes } from "./collection/routes.ts";
 import { dashboardAppRoutes, sendsHsts } from "./dashboard-app/routes.ts";
 import type { Database } from "./db/schema.ts";
+import { errorRoutes } from "./errors/routes.ts";
 import { userRoutes } from "./identities/routes.ts";
 import { organizationRoutes } from "./organizations/routes.ts";
 import { projectRoutes } from "./projects/routes.ts";
@@ -136,6 +137,14 @@ export function buildApp({
       db,
       clickhouse: dashboard.clickhouse,
       auth: dashboard.auth,
+    });
+    app.register(errorRoutes, {
+      prefix: "/api",
+      db,
+      clickhouse: dashboard.clickhouse,
+      auth: dashboard.auth,
+      trustedOrigins: dashboard.trustedOrigins,
+      ...(dashboard.now === undefined ? {} : { now: dashboard.now }),
     });
     app.register(reportRoutes, {
       prefix: "/api",

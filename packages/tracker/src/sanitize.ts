@@ -55,17 +55,35 @@ function cut(text: string, max: number): string {
   return /[\uD800-\uDBFF]$/.test(head) ? head.slice(0, -1) : head;
 }
 
-/** Removes control characters and unpaired surrogates, and caps the length. May return "". */
-export function sanitizeName(name: unknown): string {
+/**
+ * Turns a value into text without control characters (C0, DEL, C1; all but tabs and newlines when
+ * `lines`) and unpaired surrogates, then cuts to `max` UTF-16 units. May
+ * return "".
+ */
+export function cleanText(text: unknown, max: number, lines = false): string {
   let clean = "";
   // for…of visits whole code points: a lone surrogate arrives on its own.
-  for (const character of String(name)) {
+  for (const character of String(text)) {
     const code = character.charCodeAt(0);
-    if (code > 31 && code !== 127 && !UNSTORABLE.test(character)) {
+    if (
+      character.length === 2 ||
+      (lines && (code === 9 || code === 10)) ||
+      (code > 31 && (code < 127 || code > 159) && (code < 0xd800 || code > 0xdfff))
+    ) {
       clean += character;
+      // Enough: the rest would be cut anyway.
+      if (clean.length > max) break;
     }
   }
-  return cut(clean, MAX_NAME_LENGTH);
+  return cut(clean, max);
+}
+
+/**
+ * A custom event's name: no control characters or unpaired surrogates, 200
+ * characters at most. May return "".
+ */
+export function sanitizeName(name: unknown): string {
+  return cleanText(name, MAX_NAME_LENGTH);
 }
 
 /**

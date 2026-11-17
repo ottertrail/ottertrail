@@ -1,6 +1,12 @@
 import { useInfiniteQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { ArrowLeftIcon, LoaderCircleIcon, OctagonAlertIcon, UserXIcon } from "lucide-react";
+import {
+  ArrowLeftIcon,
+  BugIcon,
+  LoaderCircleIcon,
+  OctagonAlertIcon,
+  UserXIcon,
+} from "lucide-react";
 
 import { ButtonLink } from "@/components/button-link";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -17,10 +23,51 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { DEFAULT_ENVIRONMENT } from "@/lib/analytics-api";
 import { ApiError } from "@/lib/api";
-import { type Activity, userQuery } from "@/lib/users-api";
+import { type Activity, type ActivityError, userQuery } from "@/lib/users-api";
 
 import { countryName } from "../analytics/format";
-import { dayKey, formatLongDay, formatMoment, formatTime } from "./format";
+import { dayKey, formatLongDay, formatMoment, formatTime, rangeCovering } from "./format";
+
+/** An error: its type and message, linked to its group on the Errors page. */
+function ErrorTitle({
+  error,
+  path,
+  projectId,
+  environment,
+  range,
+}: {
+  error: ActivityError;
+  path: string;
+  projectId: string;
+  environment: string;
+  /** Days that include this occurrence. */
+  range: ReturnType<typeof rangeCovering>;
+}) {
+  const text = `${error.type}${error.message === "" ? "" : `: ${error.message}`}`;
+  return (
+    <span className="flex min-w-0 items-center gap-1.5">
+      <BugIcon aria-hidden="true" className="size-4 shrink-0 text-ink-subtle" />
+      <Link
+        to="/projects/$projectId/errors/$fingerprint"
+        params={{ projectId, fingerprint: error.fingerprint }}
+        search={{
+          ...range,
+          ...(environment === DEFAULT_ENVIRONMENT ? {} : { env: environment }),
+        }}
+        className="min-w-0 truncate text-link hover:underline"
+        title={text}
+      >
+        <span className="font-medium">{error.type}</span>
+        {error.message !== "" && `: ${error.message}`}
+      </Link>
+      {path !== "" && (
+        <span className="shrink-0 text-ink-subtle">
+          on <span className="font-mono">{path}</span>
+        </span>
+      )}
+    </span>
+  );
+}
 
 /** What happened: "Viewed /pricing", or a custom event's name, and its page if it has one. */
 function ActivityTitle({ activity }: { activity: Activity }) {
@@ -214,9 +261,24 @@ export function UserPage({
                           {formatTime(item.occurredAt, timeZone)}
                         </time>
                         <div className="flex min-w-0 flex-col gap-1">
-                          <p className="text-sm break-all text-ink">
-                            <ActivityTitle activity={item} />
-                          </p>
+                          {item.error === null ? (
+                            <p className="text-sm break-all text-ink">
+                              <ActivityTitle activity={item} />
+                            </p>
+                          ) : (
+                            <p className="text-sm text-ink">
+                              <ErrorTitle
+                                error={item.error}
+                                path={item.path}
+                                projectId={projectId}
+                                environment={environment}
+                                range={rangeCovering(
+                                  dayKey(item.occurredAt, timeZone),
+                                  dayKey(new Date().toISOString(), timeZone),
+                                )}
+                              />
+                            </p>
+                          )}
                           <Properties properties={item.properties} />
                           {activityDetails(item) !== "" && (
                             <p className="text-xs text-ink-subtle">{activityDetails(item)}</p>

@@ -8,11 +8,11 @@ This repository is a foundation, not a working product yet. It contains:
 
 - `apps/web`: React dashboard (Vite, Tailwind CSS v4, shadcn/ui on Base UI) with sign-in, a project list, and inside each project its web analytics, its known users with their activity, and settings (install snippet and allowed sites), plus the Ottertrail design system and its reference page. Product analytics and errors are listed in each project's sidebar as **Planned**; neither exists yet.
 - `apps/api`: Fastify API with `GET /api/health` (a liveness check) and `POST /api/events`, which collects events into PostgreSQL; the worker copies them to ClickHouse, where reports read them ([docs/clickhouse.md](docs/clickhouse.md)). Dashboard sign-in works (the owner account and its organization come from `vp run setup`). Organizations own projects; signed-in users manage their organizations' projects and read their reports (`GET /api/projects/:id/analytics`; `vp run report` prints the same reports in a terminal), and one check keeps each organization's data from the others ([docs/dashboard.md](docs/dashboard.md#organizations)). There is no open sign-up, invitations, or job queue yet.
-- `packages/tracker`: the browser script (`dist/tracker.js`, about 2.9 KB gzipped) that sends pageviews and custom events, with a playground page in `demo/`. The API serves the built script at `/t.js`, so sites load it from their instance.
+- `packages/tracker`: the browser script (`dist/tracker.js`, about 3.5 KB gzipped) that sends pageviews, custom events, and errors, with a playground page in `demo/`. The API serves the built script at `/t.js`, so sites load it from their instance.
 
 To run an instance on a server, see [docs/deployment.md](docs/deployment.md): one Docker image (`Dockerfile`) and a Compose stack with PostgreSQL and Caddy (`deploy/`).
 
-The design system is documented in [docs/design-system.md](docs/design-system.md). How web analytics works, and the decisions behind it, are in [docs/web-analytics.md](docs/web-analytics.md); the dashboard, including sign-in, in [docs/dashboard.md](docs/dashboard.md).
+The design system is documented in [docs/design-system.md](docs/design-system.md). How web analytics works, and the decisions behind it, are in [docs/web-analytics.md](docs/web-analytics.md); error tracking in [docs/errors.md](docs/errors.md); the dashboard, including sign-in, in [docs/dashboard.md](docs/dashboard.md).
 
 ## Toolchain
 

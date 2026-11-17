@@ -18,6 +18,8 @@ import { AnalyticsPage } from "@/features/analytics/analytics-page";
 import { SetupPage } from "@/features/auth/setup-page";
 import { SignInPage } from "@/features/auth/sign-in-page";
 import { DesignSystemPage } from "@/features/design-system/design-system-page";
+import { ErrorPage } from "@/features/errors/error-page";
+import { ErrorsPage } from "@/features/errors/errors-page";
 import { OrganizationSettingsPage } from "@/features/organizations/organization-settings-page";
 import { ProjectLayout } from "@/features/projects/project-layout";
 import { ProjectSettingsPage } from "@/features/projects/project-settings-page";
@@ -35,6 +37,7 @@ import {
 } from "@/lib/analytics-api";
 import { ApiError } from "@/lib/api";
 import { authClient } from "@/lib/auth-client";
+import { DEFAULT_STATUS_FILTER, isStatusFilter, type StatusFilter } from "@/lib/errors-api";
 import { lastProject } from "@/lib/last-project";
 import { projectsQuery } from "@/lib/projects-api";
 
@@ -126,8 +129,8 @@ const projectsRoute = createRoute({
 });
 
 /**
- * Inside one project. Every module (web analytics, and later product
- * analytics, users, errors, email) is a page under it, and the sidebar
+ * Inside one project. Every module (web analytics, users, errors, and
+ * later product analytics) is a page under it, and the sidebar
  * switches to the project's own menu.
  */
 const projectRoute = createRoute({
@@ -227,6 +230,80 @@ const userRoute = createRoute({
   },
 });
 
+/** The days from a page's address: chosen days, or a period, left out for the default. */
+const rangeSearch = (search: {
+  period?: unknown;
+  from?: unknown;
+  to?: unknown;
+}): { period: Period | undefined; from: string | undefined; to: string | undefined } => {
+  const range = rangeFrom(search);
+  return {
+    period: "period" in range && isPeriod(search.period) ? range.period : undefined,
+    from: "from" in range ? range.from : undefined,
+    to: "to" in range ? range.to : undefined,
+  };
+};
+
+type ErrorSearchInput = {
+  period?: unknown;
+  from?: unknown;
+  to?: unknown;
+  env?: unknown;
+} & SearchSchemaInput;
+
+/** The error groups: days and environment as on web analytics, and a status (left out for unresolved). */
+const errorsRoute = createRoute({
+  getParentRoute: () => projectRoute,
+  path: "/errors",
+  staticData: { title: "Errors" },
+  validateSearch: (
+    search: ErrorSearchInput & { status?: unknown },
+  ): ReturnType<typeof rangeSearch> & { env: string | undefined } & {
+    status: StatusFilter | undefined;
+  } => ({
+    ...rangeSearch(search),
+    ...environmentSearch(search),
+    status:
+      isStatusFilter(search.status) && search.status !== DEFAULT_STATUS_FILTER
+        ? search.status
+        : undefined,
+  }),
+  component: function ErrorsRouteComponent() {
+    const { projectId } = errorsRoute.useParams();
+    const { period, from, to, env, status } = errorsRoute.useSearch();
+    return (
+      <ErrorsPage
+        projectId={projectId}
+        range={rangeFrom({ period, from, to })}
+        environment={env ?? DEFAULT_ENVIRONMENT}
+        status={status ?? DEFAULT_STATUS_FILTER}
+      />
+    );
+  },
+});
+
+const errorRoute = createRoute({
+  getParentRoute: () => projectRoute,
+  path: "/errors/$fingerprint",
+  staticData: { title: "Error" },
+  validateSearch: (search: ErrorSearchInput) => ({
+    ...rangeSearch(search),
+    ...environmentSearch(search),
+  }),
+  component: function ErrorRouteComponent() {
+    const { projectId, fingerprint } = errorRoute.useParams();
+    const { period, from, to, env } = errorRoute.useSearch();
+    return (
+      <ErrorPage
+        projectId={projectId}
+        fingerprint={fingerprint}
+        range={rangeFrom({ period, from, to })}
+        environment={env ?? DEFAULT_ENVIRONMENT}
+      />
+    );
+  },
+});
+
 const projectSettingsRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: "/settings",
@@ -263,6 +340,8 @@ const routeTree = rootRoute.addChildren([
       webAnalyticsRoute,
       usersRoute,
       userRoute,
+      errorsRoute,
+      errorRoute,
       projectSettingsRoute,
     ]),
     organizationSettingsRoute,

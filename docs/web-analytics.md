@@ -37,7 +37,7 @@ Created by `apps/api/src/db/migrations/0001_create_projects_and_events.ts`.
 | `utm_*` (5 columns) | Campaign tags from the page URL: source, medium, campaign, term, content    | Sender   |
 | `properties`        | Custom details as a JSON object, such as `{ "plan": "free" }`, at most 8 KB | Sender   |
 
-Later steps add columns in new migrations: browser, OS, device, country, region, and city (step 4), visitor (step 5), and session (step 6). Migration 0014 adds `environment` and `release` ([Environments and releases](#environments-and-releases)), and 0015 `user_id` ([Known users](#known-users)).
+Later steps add columns in new migrations: browser, OS, device, country, region, and city (step 4), visitor (step 5), and session (step 6). Migration 0014 adds `environment` and `release` ([Environments and releases](#environments-and-releases)), 0015 `user_id` ([Known users](#known-users)), and 0018 five `error_*` columns that only an `error` event has ([errors](errors.md#2-storage)).
 
 ### Two timestamps
 
@@ -274,7 +274,7 @@ Behind a proxy (Cloudflare, Caddy), every request seems to come from the proxy's
 
 ## 3. The tracker
 
-`packages/tracker` builds `dist/tracker.js`, the script a site adds to its pages: about 6.7 KB, 2.9 KB gzipped.
+`packages/tracker` builds `dist/tracker.js`, the script a site adds to its pages: about 8.1 KB, 3.5 KB gzipped.
 
 ```html
 <script
@@ -294,6 +294,8 @@ It sends a pageview when the page loads and whenever the path changes, and gives
 ```js
 window.ottertrail?.track("signup", { plan: "free" });
 ```
+
+`pageview`, `engagement`, and `error` are the tracker's own events: `track()` refuses those names, with a warning. The tracker also reports uncaught errors and unhandled promise rejections, and errors the site reports with `window.ottertrail.captureError(error)`; `data-errors="off"` turns automatic capture off ([errors](errors.md#1-capture)).
 
 ### It runs on someone else's site
 

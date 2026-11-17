@@ -38,3 +38,27 @@ export const dayKey = (iso: string, timeZone: string | undefined) =>
     month: "2-digit",
     day: "2-digit",
   }).format(new Date(iso));
+
+/** Days back each period reaches, besides today, shortest first. */
+const PERIOD_REACH = [
+  ["today", 0],
+  ["7d", 6],
+  ["30d", 29],
+  ["90d", 89],
+  ["12m", 364],
+] as const;
+
+/**
+ * The shortest period, ending today, that covers an occurrence on `day`, so
+ * the error's page shows it; past a year, the year from that day.
+ */
+export function rangeCovering(
+  day: string,
+  today: string,
+): { period: (typeof PERIOD_REACH)[number][0] } | { from: string; to: string } {
+  const daysAgo = Math.round((Date.parse(today) - Date.parse(day)) / 86_400_000);
+  const fits = PERIOD_REACH.find(([, reach]) => daysAgo <= reach);
+  if (fits !== undefined) return { period: fits[0] };
+  const to = new Date(Date.parse(day) + 364 * 86_400_000).toISOString().slice(0, 10);
+  return { from: day, to };
+}

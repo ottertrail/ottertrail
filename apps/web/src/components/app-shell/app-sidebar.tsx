@@ -42,10 +42,7 @@ import { organizationsQuery } from "@/lib/organizations-api";
 import { projectsQuery } from "@/lib/projects-api";
 
 /** Project modules that are not built yet. Shown disabled and labeled. */
-const plannedModules = [
-  { title: "Product analytics", icon: ChartColumnIcon },
-  { title: "Errors", icon: BugIcon },
-];
+const plannedModules = [{ title: "Product analytics", icon: ChartColumnIcon }];
 
 /** The organization level: things above any one project, under the organization's name. */
 function WorkspaceMenu() {
@@ -210,6 +207,22 @@ function ProjectMenu({ projectId }: { projectId: string }) {
             >
               <UsersIcon />
               <span>Users</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              render={<Link to="/projects/$projectId/errors" params={{ projectId }} />}
+              isActive={
+                matchRoute({
+                  to: "/projects/$projectId/errors",
+                  params: { projectId },
+                  fuzzy: true,
+                }) !== false
+              }
+              tooltip="Errors"
+            >
+              <BugIcon />
+              <span>Errors</span>
             </SidebarMenuButton>
           </SidebarMenuItem>
           {plannedModules.map((module) => (

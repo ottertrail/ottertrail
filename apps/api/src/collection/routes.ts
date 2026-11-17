@@ -7,8 +7,9 @@ import type { Database } from "../db/schema.ts";
 import { type IsDataCenter, noDataCenters } from "../enrichment/data-centers.ts";
 import { type Locate, noLocation } from "../enrichment/geo.ts";
 import { isBot, parseUserAgent } from "../enrichment/user-agent.ts";
+import { fingerprint } from "../errors/fingerprint.ts";
 import { VisitorIds } from "../visitors/visitor-ids.ts";
-import { ENGAGEMENT } from "../visits/visits.ts";
+import { ENGAGEMENT, ERROR } from "../visits/visits.ts";
 import { ENVIRONMENT_PATTERN, environmentOf, RELEASE_PATTERN } from "./environment.ts";
 import { type NewEvent, storeEvents } from "./event-store.ts";
 import { isSignedUserId, USER_ID_PATTERN, USER_SIGNATURE_PATTERN } from "./identity.ts";
@@ -73,7 +74,41 @@ interface IncomingEvent {
   userId?: string;
   /** The site server's signature for userId (identity.ts); needed when the project requires it. */
   userSignature?: string;
+  /** What went wrong, for an event named "error" only (docs/errors.md). */
+  error?: IncomingError;
 }
+
+interface IncomingError {
+  type: string;
+  message: string;
+  stack?: string;
+  /** The site caught it and reported it itself. */
+  handled?: boolean;
+}
+
+/**
+ * An error as the tracker reports it. Message and stack keep tabs and line
+ * breaks, as browsers write them; no other control characters. The tracker
+ * cuts them to these lengths (packages/tracker/src/errors.ts), and the
+ * database checks the same (migration 0018).
+ */
+const MULTILINE_TEXT = "^[^\\u0000-\\u0008\\u000B-\\u001F\\u007F-\\u009F]*$";
+const ERROR_SCHEMA = {
+  type: "object",
+  required: ["type", "message"],
+  additionalProperties: false,
+  properties: {
+    type: {
+      type: "string",
+      minLength: 1,
+      maxLength: 200,
+      pattern: "^[^\\u0000-\\u001F\\u007F-\\u009F]+$",
+    },
+    message: { type: "string", maxLength: 2000, pattern: MULTILINE_TEXT },
+    stack: { type: "string", maxLength: 16_000, pattern: MULTILINE_TEXT },
+    handled: { type: "boolean" },
+  },
+} as const;
 
 interface EventBatch {
   /** Version of this request format. */
@@ -146,6 +181,7 @@ const eventBatchSchema = {
           userId: { type: "string", maxLength: 200, pattern: USER_ID_PATTERN },
           userSignature: { type: "string", pattern: USER_SIGNATURE_PATTERN },
           properties: PROPERTIES_SCHEMA,
+          error: ERROR_SCHEMA,
         },
       },
     },
@@ -457,6 +493,34 @@ export const collectionRoutes: FastifyPluginCallback<CollectionOptions> = (app, 
           }
         }
 
+        // An error is an event named "error" with its details. One without
+        // them is a custom event, as before errors existed: an older tracker
+        // in a browser's cache may still send one, and refusing it would
+        // lose its whole batch.
+        if (event.error !== undefined && event.name !== ERROR) {
+          return reply
+            .code(400)
+            .send(
+              problem(
+                "invalid_request",
+                `events[${index}].error is only for events named "error".`,
+              ),
+            );
+        }
+        if (
+          event.error !== undefined &&
+          ![event.error.type, event.error.message, event.error.stack ?? ""].every(isStorableText)
+        ) {
+          return reply
+            .code(400)
+            .send(
+              problem(
+                "invalid_request",
+                `events[${index}].error contains an unpaired surrogate, which cannot be stored.`,
+              ),
+            );
+        }
+
         const occurredAt = correctClock(event.occurredAt, sentAt, receivedAt);
         if (occurredAt === null) {
           tooOld += 1;
@@ -487,6 +551,19 @@ export const collectionRoutes: FastifyPluginCallback<CollectionOptions> = (app, 
           environment,
           ...(release === undefined ? {} : { release }),
           ...(userId === undefined ? {} : { userId }),
+          ...(event.error === undefined
+            ? {}
+            : {
+                error: {
+                  type: event.error.type,
+                  message: event.error.message,
+                  ...(event.error.stack === undefined || event.error.stack === ""
+                    ? {}
+                    : { stack: event.error.stack }),
+                  handled: event.error.handled === true,
+                  fingerprint: fingerprint(event.error),
+                },
+              }),
         });
       }
 

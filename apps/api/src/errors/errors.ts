@@ -1,0 +1,462 @@
+import type { Kysely } from "kysely";
+
+import { fromClickHouseTime, QueryParams, queryRows, type Reader } from "../clickhouse/query.ts";
+import { DEFAULT_ENVIRONMENT } from "../collection/environment.ts";
+import type { Database } from "../db/schema.ts";
+import { ERROR } from "../visits/visits.ts";
+
+/**
+ * Error groups: occurrences of an error with one fingerprint
+ * (fingerprint.ts), counted in ClickHouse, with their status from
+ * PostgreSQL (error_resolutions). See docs/errors.md.
+ */
+
+/** A range of whole days in the organization's timezone, in one environment. */
+export interface ErrorRange {
+  projectId: string;
+  environment: string;
+  timeZone: string;
+  /** "YYYY-MM-DD", both included. */
+  firstDay: string;
+  lastDay: string;
+  /** Start of firstDay and end of lastDay, in the timezone. */
+  from: Date;
+  to: Date;
+}
+
+/**
+ * - unresolved: nobody marked it resolved.
+ * - resolved: marked resolved, and not seen since.
+ * - regressed: seen again after it was marked resolved; counts as unresolved.
+ */
+export type ErrorStatus = "unresolved" | "resolved" | "regressed";
+export const STATUS_FILTERS = ["unresolved", "resolved", "all"] as const;
+export type StatusFilter = (typeof STATUS_FILTERS)[number];
+
+export interface ErrorGroup {
+  fingerprint: string;
+  /** The type and message of its latest occurrence in the range. */
+  type: string;
+  message: string;
+  /** In the range. */
+  occurrences: number;
+  /** Known users (user IDs) who had it, in the range. */
+  users: number;
+  /** Visitors who had it, in the range: daily visitor IDs, as in web analytics. */
+  visitors: number;
+  /** Its first and latest occurrence in the environment, at any time the project keeps. */
+  firstSeen: Date;
+  lastSeen: Date;
+  status: ErrorStatus;
+  resolvedAt: Date | null;
+  /** The dashboard user who resolved it; null when unknown or not resolved. */
+  resolvedBy: string | null;
+}
+
+/** The most groups a list reads; the page shows the most recent first. */
+export const MAX_GROUPS = 1000;
+/** Fingerprints per query, so a query's parameters stay small. */
+const CHUNK = 200;
+
+const errorScope = (params: QueryParams, projectId: string, environment: string) =>
+  `project_id = ${params.add(projectId, "UUID")}
+   AND environment = ${params.add(environment, "String")}
+   AND name = '${ERROR}'
+   AND error_fingerprint != ''`;
+
+const inRange = (params: QueryParams, range: ErrorRange) =>
+  `occurred_at >= ${params.time(range.from)} AND occurred_at < ${params.time(range.to)}`;
+
+const count = (value: unknown) => Number(value);
+
+interface RangeRow {
+  fingerprint: string;
+  type: string;
+  message: string;
+  occurrences: string;
+  users: string;
+  visitors: string;
+}
+
+/** The groups seen in the range, with counts for it. */
+async function groupsInRange(
+  reader: Reader,
+  range: ErrorRange,
+  fingerprint?: string,
+): Promise<RangeRow[]> {
+  const params = new QueryParams();
+  return queryRows<RangeRow>(
+    reader,
+    `SELECT error_fingerprint AS fingerprint,
+            argMax(error_type, (occurred_at, event_id)) AS type,
+            argMax(error_message, (occurred_at, event_id)) AS message,
+            count() AS occurrences,
+            uniqExactIf(user_id, user_id IS NOT NULL) AS users,
+            uniqExact(visitor_id) AS visitors
+     FROM events FINAL
+     WHERE ${errorScope(params, range.projectId, range.environment)}
+       AND ${inRange(params, range)}
+       ${fingerprint === undefined ? "" : `AND error_fingerprint = ${params.add(fingerprint, "String")}`}
+     GROUP BY error_fingerprint
+     ORDER BY max(occurred_at) DESC, fingerprint
+     LIMIT ${MAX_GROUPS + 1}`,
+    params,
+  );
+}
+
+interface Seen {
+  /** First and latest occurrence in the environment shown. */
+  firstSeen: Date;
+  lastSeen: Date;
+  /** Latest occurrence in any environment: a status belongs to the project. */
+  lastAnywhere: Date;
+}
+
+/**
+ * When each group was seen, at any time the project keeps: the bloom filter
+ * on the fingerprint skips the parts without it.
+ */
+async function seen(
+  reader: Reader,
+  projectId: string,
+  environment: string,
+  fingerprints: string[],
+): Promise<Map<string, Seen>> {
+  const found = new Map<string, Seen>();
+  for (let start = 0; start < fingerprints.length; start += CHUNK) {
+    const params = new QueryParams();
+    const shown = params.add(environment, "String");
+    const rows = await queryRows<{
+      fingerprint: string;
+      first_seen: string;
+      last_seen: string;
+      last_anywhere: string;
+    }>(
+      reader,
+      `SELECT error_fingerprint AS fingerprint,
+              minIf(occurred_at, environment = ${shown}) AS first_seen,
+              maxIf(occurred_at, environment = ${shown}) AS last_seen,
+              max(occurred_at) AS last_anywhere
+       FROM events FINAL
+       WHERE project_id = ${params.add(projectId, "UUID")}
+         AND name = '${ERROR}'
+         AND error_fingerprint IN ${params.add(fingerprints.slice(start, start + CHUNK), "Array(String)")}
+       GROUP BY error_fingerprint`,
+      params,
+    );
+    for (const row of rows) {
+      found.set(row.fingerprint, {
+        firstSeen: fromClickHouseTime(row.first_seen),
+        lastSeen: fromClickHouseTime(row.last_seen),
+        lastAnywhere: fromClickHouseTime(row.last_anywhere),
+      });
+    }
+  }
+  return found;
+}
+
+/** The project's resolutions of these groups, with who resolved each. */
+async function resolutions(
+  db: Kysely<Database>,
+  projectId: string,
+  fingerprints: string[],
+): Promise<Map<string, { resolvedAt: Date; resolvedBy: string | null }>> {
+  if (fingerprints.length === 0) return new Map();
+  const rows = await db
+    .selectFrom("error_resolutions")
+    .leftJoin("dashboard_users", "dashboard_users.id", "error_resolutions.resolved_by")
+    .select([
+      "error_resolutions.fingerprint",
+      "error_resolutions.resolved_at",
+      "dashboard_users.name",
+    ])
+    .where("error_resolutions.project_id", "=", projectId)
+    .where("error_resolutions.fingerprint", "in", fingerprints)
+    .execute();
+  return new Map(
+    rows.map((row) => [row.fingerprint, { resolvedAt: row.resolved_at, resolvedBy: row.name }]),
+  );
+}
+
+function statusOf(lastSeen: Date, resolution: { resolvedAt: Date } | undefined): ErrorStatus {
+  if (resolution === undefined) return "unresolved";
+  return lastSeen > resolution.resolvedAt ? "regressed" : "resolved";
+}
+
+async function toGroups(
+  reader: Reader,
+  db: Kysely<Database>,
+  range: ErrorRange,
+  rows: RangeRow[],
+): Promise<ErrorGroup[]> {
+  const fingerprints = rows.map((row) => row.fingerprint);
+  const [times, resolved] = await Promise.all([
+    seen(reader, range.projectId, range.environment, fingerprints),
+    resolutions(db, range.projectId, fingerprints),
+  ]);
+  return rows.map((row) => {
+    const time = times.get(row.fingerprint);
+    // Seen in the range, so it has times; the fallback only satisfies the types.
+    const lastSeen = time?.lastSeen ?? range.to;
+    const resolution = resolved.get(row.fingerprint);
+    // Seen again anywhere after it was resolved: regressed, in every environment.
+    const status = statusOf(time?.lastAnywhere ?? lastSeen, resolution);
+    return {
+      fingerprint: row.fingerprint,
+      type: row.type,
+      message: row.message,
+      occurrences: count(row.occurrences),
+      users: count(row.users),
+      visitors: count(row.visitors),
+      firstSeen: time?.firstSeen ?? range.from,
+      lastSeen,
+      status,
+      resolvedAt: resolution?.resolvedAt ?? null,
+      resolvedBy: resolution?.resolvedBy ?? null,
+    };
+  });
+}
+
+/**
+ * The environments with errors in the range, most first, then the one shown
+ * and production even without: the page can always switch back.
+ */
+export async function errorEnvironments(reader: Reader, range: ErrorRange): Promise<string[]> {
+  const params = new QueryParams();
+  const rows = await queryRows<{ environment: string }>(
+    reader,
+    `SELECT environment FROM events
+     WHERE project_id = ${params.add(range.projectId, "UUID")}
+       AND name = '${ERROR}'
+       AND error_fingerprint != ''
+       AND ${inRange(params, range)}
+     GROUP BY environment
+     ORDER BY count() DESC, environment`,
+    params,
+  );
+  const names = rows.map((row) => row.environment);
+  for (const name of [range.environment, DEFAULT_ENVIRONMENT]) {
+    if (!names.includes(name)) names.push(name);
+  }
+  return names;
+}
+
+/**
+ * The groups seen in the range, latest first, with a status filter:
+ * "unresolved" (the default) includes regressions. The filter applies to
+ * the MAX_GROUPS most recently seen groups; `truncated` says when there
+ * were more, which a shorter range shows.
+ */
+export async function listErrors(
+  reader: Reader,
+  db: Kysely<Database>,
+  range: ErrorRange,
+  status: StatusFilter = "unresolved",
+): Promise<{ groups: ErrorGroup[]; truncated: boolean }> {
+  const read = await groupsInRange(reader, range);
+  const rows = read.slice(0, MAX_GROUPS);
+  const groups = await toGroups(reader, db, range, rows);
+  const wanted =
+    status === "all"
+      ? groups
+      : groups.filter((group) => (group.status === "resolved") === (status === "resolved"));
+  return { groups: wanted, truncated: read.length > MAX_GROUPS };
+}
+
+export interface ErrorDay {
+  /** "YYYY-MM-DD" in the organization's timezone. */
+  day: string;
+  occurrences: number;
+}
+
+export interface Occurrence {
+  eventId: string;
+  occurredAt: Date;
+  /** Its own message: the group's messages differ in the parts the fingerprint ignores. */
+  message: string;
+  handled: boolean;
+  path: string;
+  userId: string | null;
+  browser: string | null;
+  browserVersion: string | null;
+  os: string | null;
+  deviceType: string | null;
+  country: string | null;
+  release: string | null;
+}
+
+export interface BreakdownRow {
+  /** null: not known. */
+  value: string | null;
+  occurrences: number;
+}
+
+export interface ErrorDetail {
+  group: ErrorGroup;
+  days: ErrorDay[];
+  breakdowns: {
+    path: BreakdownRow[];
+    browser: BreakdownRow[];
+    os: BreakdownRow[];
+    release: BreakdownRow[];
+  };
+  /** The latest occurrences in the range, newest first. */
+  occurrences: Occurrence[];
+  /** The latest occurrence's stack, as the browser wrote it; null without one. */
+  stack: string | null;
+}
+
+/** Occurrences the detail lists, and rows per breakdown. */
+export const RECENT_OCCURRENCES = 20;
+export const BREAKDOWN_ROWS = 5;
+
+/** Every day from firstDay to lastDay, both included. */
+function eachDay(firstDay: string, lastDay: string): string[] {
+  const days: string[] = [];
+  const end = Date.parse(`${lastDay}T00:00:00Z`);
+  for (let time = Date.parse(`${firstDay}T00:00:00Z`); time <= end; time += 86_400_000) {
+    days.push(new Date(time).toISOString().slice(0, 10));
+  }
+  return days;
+}
+
+const BREAKDOWN_COLUMNS = {
+  path: "nullIf(path, '')",
+  browser: "browser",
+  os: "os",
+  release: "release",
+} as const;
+
+const breakdown = (rows: { value: string | null; occurrences: string }[] | undefined) =>
+  (rows ?? []).map((item) => ({ value: item.value, occurrences: count(item.occurrences) }));
+
+/** One group in the range: null when it has no occurrence there. */
+export async function errorDetail(
+  reader: Reader,
+  db: Kysely<Database>,
+  range: ErrorRange,
+  fingerprint: string,
+): Promise<ErrorDetail | null> {
+  const [row] = await groupsInRange(reader, range, fingerprint);
+  if (row === undefined) return null;
+  const scoped = (params: QueryParams) =>
+    `${errorScope(params, range.projectId, range.environment)}
+     AND error_fingerprint = ${params.add(fingerprint, "String")}
+     AND ${inRange(params, range)}`;
+
+  const dayParams = new QueryParams();
+  const occurrenceParams = new QueryParams();
+  const [groups, dayRows, occurrenceRows, ...breakdownRows] = await Promise.all([
+    toGroups(reader, db, range, [row]),
+    queryRows<{ day: string; occurrences: string }>(
+      reader,
+      `SELECT toString(toDate(occurred_at, ${dayParams.add(range.timeZone, "String")})) AS day,
+              count() AS occurrences
+       FROM events FINAL
+       WHERE ${scoped(dayParams)}
+       GROUP BY day`,
+      dayParams,
+    ),
+    queryRows<{
+      event_id: string;
+      occurred_at: string;
+      error_message: string;
+      error_handled: boolean;
+      error_stack: string;
+      path: string;
+      user_id: string | null;
+      browser: string | null;
+      browser_version: string | null;
+      os: string | null;
+      device_type: string | null;
+      country: string | null;
+      release: string | null;
+    }>(
+      reader,
+      `SELECT event_id, occurred_at, error_message, error_handled, error_stack, path, user_id,
+              browser, browser_version, os, device_type, country, release
+       FROM events FINAL
+       WHERE ${scoped(occurrenceParams)}
+       ORDER BY occurred_at DESC, event_id DESC
+       LIMIT ${RECENT_OCCURRENCES}`,
+      occurrenceParams,
+    ),
+    ...Object.values(BREAKDOWN_COLUMNS).map((column) => {
+      const params = new QueryParams();
+      // The column expressions are the constants above, never input.
+      return queryRows<{ value: string | null; occurrences: string }>(
+        reader,
+        `SELECT ${column} AS value, count() AS occurrences
+         FROM events FINAL
+         WHERE ${scoped(params)}
+         GROUP BY value
+         ORDER BY occurrences DESC, value
+         LIMIT ${BREAKDOWN_ROWS}`,
+        params,
+      );
+    }),
+  ]);
+
+  const perDay = new Map(dayRows.map((day) => [day.day, count(day.occurrences)]));
+  const [group] = groups;
+  if (group === undefined) return null;
+  return {
+    group,
+    days: eachDay(range.firstDay, range.lastDay).map((day) => ({
+      day,
+      occurrences: perDay.get(day) ?? 0,
+    })),
+    breakdowns: {
+      path: breakdown(breakdownRows[0]),
+      browser: breakdown(breakdownRows[1]),
+      os: breakdown(breakdownRows[2]),
+      release: breakdown(breakdownRows[3]),
+    },
+    occurrences: occurrenceRows.map((occurrence) => ({
+      eventId: occurrence.event_id,
+      occurredAt: fromClickHouseTime(occurrence.occurred_at),
+      message: occurrence.error_message,
+      handled: occurrence.error_handled,
+      path: occurrence.path,
+      userId: occurrence.user_id,
+      browser: occurrence.browser,
+      browserVersion: occurrence.browser_version,
+      os: occurrence.os,
+      deviceType: occurrence.device_type,
+      country: occurrence.country,
+      release: occurrence.release,
+    })),
+    stack: occurrenceRows[0]?.error_stack || null,
+  };
+}
+
+/**
+ * Marks a group resolved, by this dashboard user, from now; or unresolved
+ * again. Returns the new resolution, or null once unresolved.
+ */
+export async function setResolution(
+  db: Kysely<Database>,
+  options: { projectId: string; fingerprint: string; resolved: boolean; userId: string },
+): Promise<{ resolvedAt: Date } | null> {
+  const { projectId, fingerprint, resolved, userId } = options;
+  if (!resolved) {
+    await db
+      .deleteFrom("error_resolutions")
+      .where("project_id", "=", projectId)
+      .where("fingerprint", "=", fingerprint)
+      .execute();
+    return null;
+  }
+  const row = await db
+    .insertInto("error_resolutions")
+    .values({ project_id: projectId, fingerprint, resolved_by: userId })
+    .onConflict((conflict) =>
+      conflict.columns(["project_id", "fingerprint"]).doUpdateSet((update) => ({
+        resolved_at: update.fn<Date>("now"),
+        resolved_by: update.ref("excluded.resolved_by"),
+      })),
+    )
+    .returning("resolved_at")
+    .executeTakeFirstOrThrow();
+  return { resolvedAt: row.resolved_at };
+}

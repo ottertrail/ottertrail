@@ -36,6 +36,16 @@ export interface NewEvent {
   release?: string;
   /** The site's own ID for the signed-in user (collection/identity.ts). */
   userId?: string;
+  /** For an "error" event: what went wrong, and its group (errors/fingerprint.ts). */
+  error?: StoredError;
+}
+
+export interface StoredError {
+  type: string;
+  message: string;
+  stack?: string;
+  handled: boolean;
+  fingerprint: string;
 }
 
 export interface StoreResult {
@@ -89,6 +99,11 @@ export async function storeEvents(
         environment: event.environment,
         release: event.release,
         user_id: event.userId,
+        error_type: event.error?.type,
+        error_message: event.error?.message,
+        error_stack: event.error?.stack,
+        error_handled: event.error?.handled,
+        error_fingerprint: event.error?.fingerprint,
       })),
     )
     .onConflict((conflict) => conflict.columns(["project_id", "event_id"]).doNothing())

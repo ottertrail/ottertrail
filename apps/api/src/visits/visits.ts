@@ -17,6 +17,15 @@ export const VISIT_CONTEXT_MS = 25 * 60 * 60 * 1000;
 /** Reserved event names: everything else is a custom event (an interaction). */
 export const PAGEVIEW = "pageview";
 export const ENGAGEMENT = "engagement";
+/**
+ * An error in the page (docs/errors.md): an event with this name and a
+ * fingerprint. Not web analytics, so visits and reports leave it out. An
+ * "error" event without a fingerprint is a custom event a site sent before
+ * errors existed, and counts as one.
+ */
+export const ERROR = "error";
+/** SQL true for every event but an error: only errors have a fingerprint. */
+export const NOT_AN_ERROR = "error_fingerprint = ''";
 
 export interface Visit {
   /** The visitor ID on the day of the visit. */
@@ -169,6 +178,7 @@ export function visitsSql(
       WHERE project_id = ${params.add(projectId, "UUID")}
         AND environment = ${params.add(environment, "String")}
         AND visitor_id IS NOT NULL
+        AND ${NOT_AN_ERROR}
         AND occurred_at >= ${params.time(readFrom)}
         AND occurred_at < ${params.time(readTo)}
     ),

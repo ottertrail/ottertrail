@@ -6,7 +6,7 @@ import type { ClickHouseClient } from "../clickhouse/clickhouse.ts";
 import { QueryParams, queryRows, type Reader, runCommand } from "../clickhouse/query.ts";
 import { DEFAULT_ENVIRONMENT } from "../collection/environment.ts";
 import type { Database } from "../db/schema.ts";
-import { visitsSql } from "../visits/visits.ts";
+import { NOT_AN_ERROR, visitsSql } from "../visits/visits.ts";
 import {
   type BreakdownRow,
   breakdown,
@@ -112,7 +112,7 @@ async function dayRange(
 }
 
 /**
- * The environments with browser events in the range, most events first,
+ * The environments with browser events in the range (not errors), most events first,
  * then the range's own environment and production, even without events:
  * the page can always switch back to the one it shows by default. Events
  * from a site's server have no visitor and are not web analytics.
@@ -126,6 +126,7 @@ async function environmentsIn(reader: Reader, range: ReportRange): Promise<strin
        AND occurred_at >= ${params.time(range.from)}
        AND occurred_at < ${params.time(range.to)}
        AND visitor_id IS NOT NULL
+       AND ${NOT_AN_ERROR}
      GROUP BY environment
      ORDER BY count() DESC, environment`,
     params,

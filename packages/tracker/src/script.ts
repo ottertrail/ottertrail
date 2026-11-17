@@ -17,6 +17,13 @@
  * It records a pageview on load and on every path change, reports how long
  * each page was visible (an "engagement" event), and exposes
  * window.ottertrail.track(name, properties) for custom events.
+ *
+ * It also sends uncaught errors and unhandled promise rejections as "error"
+ * events; data-errors="off" turns that off. Either way the site can report
+ * an error it caught with window.ottertrail.captureError(error, properties).
+ * Noise is skipped: "Script error." from a cross-origin script that hides
+ * its details, and errors from browser extensions. Each distinct error is
+ * sent once per page load, and 25 at most.
  */
 import {
   createEngagementTimer,
@@ -24,6 +31,7 @@ import {
   MAX_ENGAGED_MS,
   MIN_REPORTED_MS,
 } from "./engagement.ts";
+import { createErrorCapture, ERROR } from "./errors.ts";
 import { watchNavigation } from "./navigation.ts";
 import { randomId } from "./random-id.ts";
 import { cleanSignature, cleanUserId } from "./sanitize.ts";
@@ -40,6 +48,8 @@ export interface OttertrailApi {
   identify(userId: string, signature?: string): void;
   /** Events from now on are anonymous again, as after signing out. */
   reset(): void;
+  /** Reports an error the site caught itself, with custom event properties if given. */
+  captureError(error: unknown, properties?: Record<string, unknown>): void;
 }
 
 declare global {
@@ -152,14 +162,25 @@ function landing(): Page {
       setUser(script.dataset.userId, script.dataset.userSignature, "data-user-id");
     }
 
+    // An error belongs to the page and user of that moment, as a custom event does.
+    const errors = createErrorCapture((error, properties) => {
+      tracker.track(ERROR, current ?? landing(), properties, { error });
+    });
+    if (script?.dataset.errors !== "off") {
+      // Without capture: a failed image's or script's "error" never reaches window.
+      window.addEventListener("error", errors.uncaught);
+      window.addEventListener("unhandledrejection", (event) => errors.rejected(event.reason));
+    }
+
     window.ottertrail = {
       identify: (id, signature) => setUser(id, signature, "identify()"),
       reset: () => setUser(undefined, undefined, "reset()"),
+      captureError: errors.handled,
       track: (name, properties) => {
         // The tracker sends these itself; a page sending them would distort reports.
-        if (name === "pageview" || name === ENGAGEMENT) {
+        if (name === "pageview" || name === ENGAGEMENT || name === ERROR) {
           console.warn(
-            `Ottertrail: "${name}" is sent automatically and cannot be tracked by hand.`,
+            `Ottertrail: "${name}" is reserved for the tracker's own events, so it is not sent.`,
           );
           return;
         }

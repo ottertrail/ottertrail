@@ -95,4 +95,24 @@ export const CLICKHOUSE_MIGRATIONS: ClickHouseMigration[] = [
        ADD INDEX IF NOT EXISTS user_id_index user_id TYPE bloom_filter GRANULARITY 4`,
     ],
   },
+  {
+    /**
+     * Errors, as in PostgreSQL (migration 0018): empty for every other
+     * event. An error's page reads one project's occurrences of one
+     * fingerprint: the bloom filter lets ClickHouse skip the parts without
+     * it. Stacks are long and repetitive text: ZSTD packs them well.
+     */
+    name: "0005_add_events_errors",
+    statements: (database) => [
+      `ALTER TABLE ${database}.events
+       ADD COLUMN IF NOT EXISTS error_type LowCardinality(String) DEFAULT '',
+       ADD COLUMN IF NOT EXISTS error_message String DEFAULT '',
+       ADD COLUMN IF NOT EXISTS error_stack String DEFAULT '' CODEC(ZSTD(3)),
+       ADD COLUMN IF NOT EXISTS error_handled Bool DEFAULT false,
+       ADD COLUMN IF NOT EXISTS error_fingerprint String DEFAULT ''`,
+      `ALTER TABLE ${database}.events
+       ADD INDEX IF NOT EXISTS error_fingerprint_index error_fingerprint
+         TYPE bloom_filter GRANULARITY 4`,
+    ],
+  },
 ];

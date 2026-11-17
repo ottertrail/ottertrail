@@ -21,10 +21,17 @@ export interface UserList {
   hasMore: boolean;
 }
 
+/** What went wrong, for an error event, and its group on the Errors page. */
+export interface ActivityError {
+  type: string;
+  message: string;
+  fingerprint: string;
+}
+
 /** One event of a user's activity. */
 export interface Activity {
   eventId: string;
-  /** "pageview", or a custom event's name. */
+  /** "pageview", "error", or a custom event's name. */
   name: string;
   occurredAt: string;
   path: string;
@@ -37,6 +44,8 @@ export interface Activity {
   region: string | null;
   city: string | null;
   release: string | null;
+  /** For an error event; null for the others. */
+  error: ActivityError | null;
 }
 
 /** One page of GET /api/projects/:id/users/:userId. */
@@ -70,6 +79,9 @@ const isUserList = (value: unknown): value is UserList =>
   value.users.every(isUser) &&
   typeof value.hasMore === "boolean";
 
+const isActivityError = (value: unknown): value is ActivityError =>
+  isRecord(value) && isText(value.type) && isText(value.message) && isText(value.fingerprint);
+
 const isActivity = (value: unknown): value is Activity =>
   isRecord(value) &&
   isText(value.eventId) &&
@@ -84,7 +96,8 @@ const isActivity = (value: unknown): value is Activity =>
   isTextOrNull(value.country) &&
   isTextOrNull(value.region) &&
   isTextOrNull(value.city) &&
-  isTextOrNull(value.release);
+  isTextOrNull(value.release) &&
+  (value.error === null || isActivityError(value.error));
 
 const isUserActivity = (value: unknown): value is UserActivity =>
   isRecord(value) &&

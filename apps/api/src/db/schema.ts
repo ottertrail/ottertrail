@@ -128,6 +128,25 @@ export interface EventsTable {
   release: Nullable<string>;
   /** The site's own ID for the signed-in user who caused it; null for an anonymous visitor. */
   user_id: Nullable<string>;
+  /** For an "error" event only (migration 0018): the error's name, such as "TypeError". */
+  error_type: Nullable<string>;
+  error_message: Nullable<string>;
+  /** The stack trace as the browser wrote it, if it had one. */
+  error_stack: Nullable<string>;
+  /** True when the site caught it and reported it itself (captureError). */
+  error_handled: Nullable<boolean>;
+  /** The group it belongs to (errors/fingerprint.ts). */
+  error_fingerprint: Nullable<string>;
+}
+
+/** An error group a project's team marked resolved (migration 0019). No row: unresolved. */
+export interface ErrorResolutionsTable {
+  project_id: string;
+  /** The group (errors/fingerprint.ts). */
+  fingerprint: string;
+  resolved_at: ColumnType<Date, Date | undefined, Date>;
+  /** The dashboard user who resolved it; null once that user is deleted. */
+  resolved_by: Nullable<string>;
 }
 
 /** One random secret per day. Deleted once no event can still need it. */
@@ -197,6 +216,7 @@ export interface Database {
   projects: ProjectsTable;
   project_deletions: ProjectDeletionsTable;
   events: EventsTable;
+  error_resolutions: ErrorResolutionsTable;
   visitor_salts: VisitorSaltsTable;
   dashboard_users: DashboardUsersTable;
   dashboard_sessions: DashboardSessionsTable;

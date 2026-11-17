@@ -3,7 +3,13 @@ import { type Kysely, sql } from "kysely";
 import { QueryParams, queryRows, type Reader } from "../clickhouse/query.ts";
 import type { Database } from "../db/schema.ts";
 import { dayIn } from "../visitors/visitor-ids.ts";
-import { ENGAGEMENT, PAGEVIEW, type VisitsQueryOptions, visitsSql } from "../visits/visits.ts";
+import {
+  ENGAGEMENT,
+  NOT_AN_ERROR,
+  PAGEVIEW,
+  type VisitsQueryOptions,
+  visitsSql,
+} from "../visits/visits.ts";
 
 /**
  * Report queries for the dashboard, run in ClickHouse. Every number is
@@ -264,6 +270,7 @@ function activity(range: ReportRange, visits: string, params: QueryParams): stri
       AND e.occurred_at < ${params.time(rangeEnd(range))}
       AND e.visitor_id IS NOT NULL
       AND e.name != '${ENGAGEMENT}'
+      AND e.${NOT_AN_ERROR}
       ${filtered ? "AND e.occurred_at >= counted.started_at AND e.occurred_at <= counted.ended_at" : ""}`;
 }
 

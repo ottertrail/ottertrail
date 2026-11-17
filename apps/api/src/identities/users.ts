@@ -1,6 +1,6 @@
 import { fromClickHouseTime, QueryParams, queryRows, type Reader } from "../clickhouse/query.ts";
 import { DEFAULT_ENVIRONMENT } from "../collection/environment.ts";
-import { ENGAGEMENT } from "../visits/visits.ts";
+import { ENGAGEMENT, ERROR } from "../visits/visits.ts";
 
 /**
  * Known users: the user IDs a site sends with its events (collection/
@@ -118,7 +118,7 @@ export async function userEnvironments(
 /** One event of a user's activity. */
 export interface Activity {
   eventId: string;
-  /** "pageview", or a custom event's name. */
+  /** "pageview", "error", or a custom event's name. */
   name: string;
   occurredAt: Date;
   path: string;
@@ -131,6 +131,8 @@ export interface Activity {
   region: string | null;
   city: string | null;
   release: string | null;
+  /** For an error: what went wrong, and its group on the Errors page (docs/errors.md). */
+  error: { type: string; message: string; fingerprint: string } | null;
 }
 
 interface ActivityRowData {
@@ -147,6 +149,9 @@ interface ActivityRowData {
   region: string | null;
   city: string | null;
   release: string | null;
+  error_type: string;
+  error_message: string;
+  error_fingerprint: string;
 }
 
 const isObject = (value: unknown): value is Record<string, unknown> =>
@@ -212,7 +217,7 @@ export async function userActivity(
   const rows = await queryRows<ActivityRowData>(
     reader,
     `SELECT event_id, name, occurred_at, path, referrer, properties, browser, os, device_type,
-            country, region, city, release
+            country, region, city, release, error_type, error_message, error_fingerprint
      FROM events FINAL
      WHERE ${where} AND name != '${ENGAGEMENT}' ${after}
      ORDER BY occurred_at DESC, event_id DESC
@@ -235,6 +240,10 @@ export async function userActivity(
       region: row.region,
       city: row.city,
       release: row.release,
+      error:
+        row.name === ERROR && row.error_fingerprint !== ""
+          ? { type: row.error_type, message: row.error_message, fingerprint: row.error_fingerprint }
+          : null,
     })),
     hasMore: rows.length > limit,
   };

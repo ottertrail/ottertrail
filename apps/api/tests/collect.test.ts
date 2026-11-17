@@ -549,6 +549,85 @@ describe("POST /api/events", () => {
     });
   });
 
+  describe("errors", () => {
+    const STACK = `TypeError: Cannot read properties of undefined (reading 'total')
+    at renderCart (https://${SITE}/assets/index-BfK3x9A2.js:1:2345)`;
+    const errorEvent = (error: Record<string, unknown>, overrides: Record<string, unknown> = {}) =>
+      pageview({ name: "error", error, ...overrides });
+
+    test("stores an error with its details and its group", async () => {
+      const project = await createProject();
+      const event = errorEvent(
+        {
+          type: "TypeError",
+          message: "Cannot read properties of undefined (reading 'total')\n\tin the cart",
+          stack: STACK,
+        },
+        { userId: "42" },
+      );
+      const caught = errorEvent({ type: "Error", message: "Payment declined", handled: true });
+      const response = await send(batch(project.public_key, [event, caught]));
+      expect(response.json()).toMatchObject({ stored: 2 });
+
+      const stored = await storedEvents(project.id);
+      const row = stored.find((item) => item.event_id === event.id);
+      expect(row).toMatchObject({
+        name: "error",
+        user_id: "42",
+        error_type: "TypeError",
+        error_message: "Cannot read properties of undefined (reading 'total')\n\tin the cart",
+        error_stack: STACK,
+        error_handled: false,
+      });
+      expect(row?.error_fingerprint).toMatch(/^1-[0-9a-f]{20}$/);
+      expect(row?.visitor_id).not.toBeNull();
+      expect(stored.find((item) => item.event_id === caught.id)).toMatchObject({
+        error_handled: true,
+        error_stack: null,
+      });
+    });
+
+    test("an event named error without details is a custom event, as before errors", async () => {
+      const project = await createProject();
+      const response = await send(batch(project.public_key, [pageview({ name: "error" })]));
+      expect(response.json()).toMatchObject({ stored: 1 });
+      const [row] = await storedEvents(project.id);
+      expect(row).toMatchObject({ name: "error", error_fingerprint: null, error_type: null });
+    });
+
+    test("groups the same error from two deploys together", async () => {
+      const project = await createProject();
+      const before = errorEvent({ type: "TypeError", message: "x is undefined", stack: STACK });
+      const after = errorEvent({
+        type: "TypeError",
+        message: "x is undefined",
+        stack: STACK.replace("index-BfK3x9A2.js:1:2345", "index-Zq81LmP0.js:1:9001"),
+      });
+      await send(batch(project.public_key, [before, after]));
+      const [first, second] = await storedEvents(project.id);
+      expect(first?.error_fingerprint).toBe(second?.error_fingerprint);
+    });
+
+    test.each([
+      [pageview({ error: { type: "Error", message: "x" } }), "details on a pageview"],
+      [errorEvent({ message: "no type" }), "no type"],
+      [errorEvent({ type: "", message: "x" }), "an empty type"],
+      [errorEvent({ type: "Type\nError", message: "x" }), "a line break in the type"],
+      [errorEvent({ type: "Error", message: "bell \u0007" }), "a control character in the message"],
+      [errorEvent({ type: "Error", message: "x".repeat(2001) }), "a message over 2,000 characters"],
+      [
+        errorEvent({ type: "Error", message: "x", stack: "s".repeat(16_001) }),
+        "a stack over 16,000",
+      ],
+      [errorEvent({ type: "Error", message: "\ud800" }), "an unpaired surrogate"],
+    ])("refuses %j (%s)", async (event) => {
+      const project = await createProject();
+      const response = await send(batch(project.public_key, [event]));
+      expect(response.statusCode).toBe(400);
+      expect(await storedEvents(project.id)).toHaveLength(0);
+    });
+  });
+
   describe("visitors", () => {
     test("gives every event a visitor ID: the same browser and address share one", async () => {
       const project = await createProject();

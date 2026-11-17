@@ -1,3 +1,4 @@
+import type { ErrorDetails } from "./errors.ts";
 import { byteLength, type Properties, sanitizeName, sanitizeProperties } from "./sanitize.ts";
 import type { SendOutcome, Transport } from "./transport.ts";
 
@@ -34,6 +35,8 @@ export interface QueuedEvent {
   userId?: string;
   /** The site server's signature for userId, when the site gave one. */
   userSignature?: string;
+  /** For an "error" event: what went wrong. */
+  error?: ErrorDetails;
 }
 
 export interface TrackerOptions {
@@ -60,15 +63,15 @@ export interface SignedUser {
 
 export interface Tracker {
   /**
-   * Queues an event, with the signed-in user (setUser), or `as.user`
+   * Queues an event, with the signed-in user (setUser), or `extra.user`
    * when given: the user when the page was viewed, for its engagement
-   * report. Never throws.
+   * report. `extra.error` goes with an "error" event. Never throws.
    */
   track(
     name: unknown,
     page: Page,
     properties?: unknown,
-    as?: { user: SignedUser | undefined },
+    extra?: { user?: SignedUser | undefined; error?: ErrorDetails },
   ): void;
   /** Sends one batch now unless a send is in flight. Never rejects. */
   flush(): Promise<void>;
@@ -202,14 +205,14 @@ export function createTracker({
   }
 
   return {
-    track(name, page, properties, as) {
+    track(name, page, properties, extra) {
       try {
         const cleanName = sanitizeName(name);
         if (cleanName === "" || page.url === "") {
           return;
         }
         const cleanProperties = sanitizeProperties(properties);
-        const owner = as === undefined ? user : as.user;
+        const owner = extra !== undefined && "user" in extra ? extra.user : user;
         if (queue.length >= MAX_QUEUE) {
           queue.shift(); // Bounded memory: drop the oldest event.
         }
@@ -222,6 +225,7 @@ export function createTracker({
           ...(cleanProperties === undefined ? {} : { properties: cleanProperties }),
           ...(owner === undefined ? {} : { userId: owner.userId }),
           ...(owner?.signature === undefined ? {} : { userSignature: owner.signature }),
+          ...(extra?.error === undefined ? {} : { error: extra.error }),
         });
         if (queue.length >= MAX_EVENTS_PER_BATCH && Date.now() >= retryAt) {
           void flush();

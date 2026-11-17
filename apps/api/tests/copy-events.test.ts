@@ -127,11 +127,55 @@ describe("copying events to ClickHouse", () => {
         environment: "staging",
         release: "1.4.2",
         user_id: "user-42",
+        // Only an error has these.
+        error_type: "",
+        error_message: "",
+        error_stack: "",
+        error_handled: false,
+        error_fingerprint: "",
       },
     ]);
     expect(await notCopied()).toBe(0);
     // Nothing left to copy.
     expect(await copyEventsToClickHouse(db(), clickhouse())).toBe(0);
+  });
+
+  test("copies an error's details, and an error without a stack", async () => {
+    const { id: projectId } = await insertProject(db(), { name: "Errors" });
+    const withStack = pageview("2026-11-16T12:00:00.000Z", {
+      name: "error",
+      error: {
+        type: "TypeError",
+        message: "x is undefined",
+        stack: "TypeError: x is undefined\n    at f (https://a.example/app.js:1:2)",
+        handled: false,
+        fingerprint: "1-0123456789abcdef0123",
+      },
+    });
+    const withoutStack = pageview("2026-11-16T12:00:01.000Z", {
+      name: "error",
+      error: {
+        type: "Error",
+        message: "Declined",
+        handled: true,
+        fingerprint: "1-abcdefabcdefabcdefab",
+      },
+    });
+    await storeEvents(db(), projectId, [withStack, withoutStack]);
+    await copyEventsToClickHouse(db(), clickhouse());
+
+    const rows = (await inClickHouse()).filter((row) => row.project_id === projectId);
+    expect(rows).toMatchObject([
+      {
+        name: "error",
+        error_type: "TypeError",
+        error_message: "x is undefined",
+        error_stack: "TypeError: x is undefined\n    at f (https://a.example/app.js:1:2)",
+        error_handled: false,
+        error_fingerprint: "1-0123456789abcdef0123",
+      },
+      { error_type: "Error", error_stack: "", error_handled: true },
+    ]);
   });
 
   test("copies in batches until everything is there, then only what arrives later", async () => {

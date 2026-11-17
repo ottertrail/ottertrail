@@ -96,7 +96,7 @@ A project is one website or app. The Projects page lists them with their allowed
 The dashboard has two levels, the way hosting dashboards treat each site:
 
 - **The organization** (the sidebar's first group, under its name): the project list (`/projects`), the design-system reference, and the organization's settings (`/settings`). Members will go there too.
-- **Inside a project** (`/projects/<id>/…`): the sidebar becomes the project's own menu, with a switcher to the other projects and a link back to all of them. It lists the project's modules (web analytics; product analytics, users, and errors marked as planned), then the project's settings. The header shows the project's name before the page title.
+- **Inside a project** (`/projects/<id>/…`): the sidebar becomes the project's own menu, with a switcher to the other projects and a link back to all of them. It lists the project's modules (web analytics, users, errors; product analytics marked as planned), then the project's settings. The header shows the project's name before the page title.
 
 Every module belongs to one project (its records carry `project_id`), so a module's pages sit under the project instead of at the top with a project picker. The switcher keeps the current page: from one project's web analytics for the last 90 days, it opens the other project's web analytics for the last 90 days.
 
@@ -292,7 +292,7 @@ Unit tests in `apps/web/tests/analytics.test.ts` cover the number and date forma
 Code: `apps/web/src/features/users/`, `apps/api/src/identities/`. The users a site names ([web analytics, Known users](web-analytics.md#known-users)), in one environment, production unless `env=` names another; the picker appears once another environment has known users.
 
 - `/projects/<id>/users`: the known users, most recently seen first, 50 at a time with "Load more": user ID, last seen (relative, the exact time on hover), first seen, and events. A search by ID, case ignored. While the site names no user, the page shows how: `data-user-id` and `identify()`, with an example to copy.
-- `/projects/<id>/users/<user ID>`: when the user was first and last seen, their event count, and their pageviews and custom events, newest first, under a heading for each day in the organization's timezone, 100 at a time. Each event shows its time, its page or name and properties, and browser, OS, place, and release.
+- `/projects/<id>/users/<user ID>`: when the user was first and last seen, their event count, and their pageviews, custom events, and errors, newest first, under a heading for each day in the organization's timezone, 100 at a time. Each event shows its time, its page or name and properties, and browser, OS, place, and release.
 
 ```text
 GET /api/projects/:id/users[?environment=staging&search=…&offset=0&limit=50]
@@ -305,9 +305,25 @@ Both run `requireProjectAccess`, as every project route ([Organizations](#organi
 
 - Deleting one user's events, for a person who asks to be forgotten. Today their events go with the project or past its retention.
 - Details about a user beyond the ID, such as a name or a plan, sent with `identify()`.
-- A user's errors (stage 2) and visits.
+- A user's visits.
 - A table of users kept up to date by the worker, for large projects: the list reads every identified event of the environment on each request.
 - Paging the list by a cursor: it pages by offset over "most recently seen", so a user seen again between two pages moves up; the page shows them once.
+
+## 8.6 Errors
+
+Code: `apps/web/src/features/errors/`, `apps/api/src/errors/`. The error groups the tracker reports ([errors](errors.md)), in one environment and a range of days, with the same period choices and addresses as the analytics page (`period`, `from` and `to`, `env`).
+
+- `/projects/<id>/errors`: the groups seen in the range, latest first, under three tabs: Unresolved (the default, regressions included), Resolved, and All (`status=` in the address). Each row: the type and message (the full message on hover), occurrences, users, and visitors in the range, last seen (relative, the exact time on hover), first seen, and a Regressed or Resolved badge, with an icon and a label. A row opens its group. Without errors, the page explains automatic capture, `captureError()`, and `data-errors="off"`, with an example to copy. A note says when the list stops at 1,000 groups.
+- `/projects/<id>/errors/<fingerprint>`: one group. Its type and full message, its status with Resolve or Reopen (who resolved it and when, or that it regressed after), occurrences, users, and visitors in the range, first and last seen, occurrences per day (the analytics page's line chart, with "Show the numbers"), where it happens (pages, browsers, operating systems, releases), the latest occurrence's stack trace as the browser reported it (source maps are planned), and the latest 20 occurrences: time, user (a link to their page) or Anonymous, page, browser, OS, release, and "Caught" for `captureError()`. A group without occurrences in the range says so, with links to all errors and to the last 12 months.
+- On a user's page, an error shows its type and message, linking to its group with the shortest period that includes it.
+
+The API is in [errors](errors.md#4-status-and-counts). Resolve and Reopen refresh the list and the group. A group the range does not include answers 404 with `no_occurrences`, distinct from the `not_found` of a project the user cannot reach. `errors.test.tsx` covers the list, tabs, environments, empty states, the group's page, Resolve, and both 404s, against the fake API.
+
+### Not done yet
+
+- Counts per tab: the Unresolved tab cannot tell "no errors" from "all resolved".
+- The status filter applies to the 1,000 most recently seen groups of the range: a shorter range shows older ones.
+- The group's page lists environments only through the one in its address.
 
 ## Organizations
 

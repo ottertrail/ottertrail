@@ -73,6 +73,7 @@ describe("cleanReferrer", () => {
 describe("sanitizeName", () => {
   test("removes control characters and caps at 200 characters", () => {
     expect(sanitizeName("sign\nup\u0007")).toBe("signup");
+    expect(sanitizeName("sign\u007Fup\u0085")).toBe("signup"); // DEL and C1 too.
     expect(sanitizeName("x".repeat(300))).toHaveLength(200);
     expect(sanitizeName(42)).toBe("42");
   });

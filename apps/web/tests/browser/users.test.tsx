@@ -1,6 +1,8 @@
 import { describe, expect, test } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser/context";
 
+import { rangeCovering } from "@/features/users/format";
+
 import { type FakeApi, fakeUser, fakeUsers, installFakeApi, PROJECT } from "./fake-api.ts";
 import { renderApp } from "./render.tsx";
 
@@ -149,6 +151,61 @@ describe("a user's page", () => {
     const item = page.getByRole("listitem").filter({ hasText: "invoice_paid" });
     await expect.element(item).toBeVisible();
     expect(item.element().textContent).not.toContain(" on ");
+  });
+
+  test("links an error to its page, with its type and message", async () => {
+    installFakeApi({
+      user: (userId, query) => {
+        const found = fakeUser(userId, query);
+        if (found instanceof Response) return found;
+        const [first] = found.activity;
+        if (first === undefined) return found;
+        return {
+          ...found,
+          activity: [
+            {
+              ...first,
+              // Today: the error's page opens on today.
+              occurredAt: new Date().toISOString(),
+              name: "error",
+              path: "/checkout",
+              error: {
+                type: "TypeError",
+                message: "Cannot read properties of undefined (reading 'id')",
+                fingerprint: "1-0123456789abcdef0123",
+              },
+            },
+          ],
+          hasMore: false,
+        };
+      },
+    });
+    const router = renderApp(`${USERS}/ada?env=staging`);
+
+    const link = page.getByRole("link", {
+      name: "TypeError: Cannot read properties of undefined (reading 'id')",
+    });
+    await expect.element(link).toBeVisible();
+    await expect
+      .element(page.getByRole("listitem").filter({ hasText: "TypeError" }))
+      .toMatchTextContent(/on \/checkout/);
+
+    await link.click();
+
+    await expect
+      .poll(() => router.state.location.pathname)
+      .toBe(`/projects/${PROJECT.id}/errors/1-0123456789abcdef0123`);
+    expect(router.state.location.search).toEqual({ period: "today", env: "staging" });
+  });
+
+  test("links an error to the shortest period that still shows it", () => {
+    const today = "2026-11-17";
+    expect(rangeCovering("2026-11-17", today)).toEqual({ period: "today" });
+    expect(rangeCovering("2026-11-11", today)).toEqual({ period: "7d" });
+    expect(rangeCovering("2026-11-10", today)).toEqual({ period: "30d" });
+    expect(rangeCovering("2026-08-20", today)).toEqual({ period: "90d" });
+    expect(rangeCovering("2025-11-18", today)).toEqual({ period: "12m" });
+    expect(rangeCovering("2025-06-01", today)).toEqual({ from: "2025-06-01", to: "2026-05-31" });
   });
 
   test("says when no event has the user ID", async () => {

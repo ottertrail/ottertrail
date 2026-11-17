@@ -102,7 +102,7 @@ function refuseUnknownParameters(names: readonly string[]) {
   };
 }
 
-interface RangeQuery {
+export interface RangeQuery {
   from?: string;
   to?: string;
   period?: Period;
@@ -110,7 +110,7 @@ interface RangeQuery {
   environment?: string;
 }
 
-const RANGE_PROPERTIES = {
+export const RANGE_PROPERTIES = {
   from: { type: "string", pattern: DAY_PATTERN },
   to: { type: "string", pattern: DAY_PATTERN },
   period: { type: "string", enum: PERIODS },
@@ -124,7 +124,7 @@ const PARAMS_SCHEMA = {
 };
 
 /** The days a request asks for, or the reason it cannot be answered. */
-function requestDays(
+export function requestDays(
   query: RangeQuery,
   todayDay: string,
 ): { from: string; to: string } | { problem: ReturnType<typeof problem> } {

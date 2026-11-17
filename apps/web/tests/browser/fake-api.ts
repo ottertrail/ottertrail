@@ -1,4 +1,10 @@
 import type { Analytics, BreakdownRow, DayPoint } from "../../src/lib/analytics-api.ts";
+import {
+  type ErrorDetail,
+  type ErrorGroup,
+  type ErrorList,
+  isStatusFilter,
+} from "../../src/lib/errors-api.ts";
 import type { Organization } from "../../src/lib/organizations-api.ts";
 import type { Project } from "../../src/lib/projects-api.ts";
 import type { Activity, User, UserActivity, UserList } from "../../src/lib/users-api.ts";
@@ -25,6 +31,14 @@ export interface FakeApi {
   users: (query: URLSearchParams) => UserList | Response;
   /** Answers GET /api/projects/:id/users/:userId; by default, fakeUser. */
   user: (userId: string, query: URLSearchParams) => UserActivity | Response;
+  /** Answers GET /api/projects/:id/errors; by default, fakeErrors. */
+  errors: (query: URLSearchParams, api: FakeApi) => ErrorList | Response;
+  /** Answers GET /api/projects/:id/errors/:fingerprint; by default, fakeError. */
+  error: (fingerprint: string, query: URLSearchParams, api: FakeApi) => ErrorDetail | Response;
+  /** Answers PATCH /api/projects/:id/errors/:fingerprint; by default, changes `resolutions`. */
+  setErrorStatus: (api: FakeApi, fingerprint: string, status: string) => Response;
+  /** Resolved error groups by fingerprint, as error_resolutions holds them. */
+  resolutions: Record<string, { resolvedAt: string; resolvedBy: string | null }>;
   /** Answers DELETE /api/projects/:id; by default, removes the project (204). */
   deleteProject: (api: FakeApi, id: string) => Response;
   /** Every path the page asked for, with its query, in order. */
@@ -74,6 +88,7 @@ export function fakeUser(userId: string, query: URLSearchParams): UserActivity |
     region: "Bavaria",
     city: "Munich",
     release: "1.4.2",
+    error: null,
   }));
   const beforeId = query.get("beforeId");
   const start = beforeId === null ? 0 : all.findIndex((item) => item.eventId === beforeId) + 1;
@@ -89,6 +104,188 @@ export function fakeUser(userId: string, query: URLSearchParams): UserActivity |
     activity: all.slice(start, start + 100),
     hasMore: start + 100 < all.length,
   };
+}
+
+/** Three error groups: a TypeError, a regressed ReferenceError, and a resolved network error. */
+export const ERROR_FINGERPRINTS = {
+  typeError: "1-0123456789abcdef0123",
+  referenceError: "2-0123456789abcdef0123",
+  networkError: "3-0123456789abcdef0123",
+} as const;
+
+/** Resolutions the fake API starts with. */
+export const fakeResolutions = (): FakeApi["resolutions"] => ({
+  [ERROR_FINGERPRINTS.referenceError]: {
+    resolvedAt: "2026-11-12T00:00:00.000Z",
+    resolvedBy: "Test Owner",
+  },
+  [ERROR_FINGERPRINTS.networkError]: {
+    resolvedAt: "2026-11-16T00:00:00.000Z",
+    resolvedBy: "Test Owner",
+  },
+});
+
+const ERROR_GROUPS: Omit<ErrorGroup, "status" | "resolvedAt" | "resolvedBy">[] = [
+  {
+    fingerprint: ERROR_FINGERPRINTS.typeError,
+    type: "TypeError",
+    message: "Cannot read properties of undefined (reading 'id')",
+    occurrences: 1234,
+    users: 3,
+    visitors: 17,
+    firstSeen: "2026-10-20T02:00:00.000Z",
+    lastSeen: "2026-11-16T08:00:00.000Z",
+  },
+  {
+    fingerprint: ERROR_FINGERPRINTS.referenceError,
+    type: "ReferenceError",
+    message: "process is not defined",
+    occurrences: 8,
+    users: 0,
+    visitors: 5,
+    firstSeen: "2026-11-01T02:00:00.000Z",
+    lastSeen: "2026-11-15T08:00:00.000Z",
+  },
+  {
+    fingerprint: ERROR_FINGERPRINTS.networkError,
+    type: "Error",
+    message: "Network request failed",
+    occurrences: 2,
+    users: 1,
+    visitors: 2,
+    firstSeen: "2026-11-11T02:00:00.000Z",
+    lastSeen: "2026-11-14T08:00:00.000Z",
+  },
+];
+
+/** The groups with their status from the fake API's resolutions, as the API works it out. */
+function errorGroups(api: FakeApi): ErrorGroup[] {
+  return ERROR_GROUPS.map((group) => {
+    const resolution = api.resolutions[group.fingerprint];
+    return {
+      ...group,
+      status:
+        resolution === undefined
+          ? "unresolved"
+          : group.lastSeen > resolution.resolvedAt
+            ? "regressed"
+            : "resolved",
+      resolvedAt: resolution?.resolvedAt ?? null,
+      resolvedBy: resolution?.resolvedBy ?? null,
+    };
+  });
+}
+
+/** The error groups of the last 7 days, filtered by status as the API does. */
+export function fakeErrors(query: URLSearchParams, api: FakeApi): ErrorList {
+  const asked = query.get("status") ?? "unresolved";
+  const status = isStatusFilter(asked) ? asked : "unresolved";
+  const groups = errorGroups(api).filter(
+    (group) => status === "all" || (group.status === "resolved") === (status === "resolved"),
+  );
+  return {
+    timeZone: "Asia/Singapore",
+    environment: query.get("environment") ?? "production",
+    environments: ["production"],
+    firstDay: "2026-11-10",
+    lastDay: "2026-11-16",
+    status,
+    truncated: false,
+    groups,
+  };
+}
+
+/** One group's detail; the TypeError has a stack, the others none. */
+export function fakeError(
+  fingerprint: string,
+  query: URLSearchParams,
+  api: FakeApi,
+): ErrorDetail | Response {
+  const group = errorGroups(api).find((item) => item.fingerprint === fingerprint);
+  if (group === undefined) {
+    return json(
+      {
+        error: "no_occurrences",
+        message: "This error has no occurrence in the range and environment.",
+      },
+      404,
+    );
+  }
+  const occurrence = {
+    message: group.message,
+    handled: false,
+    path: "/checkout",
+    userId: null,
+    browser: "Chrome",
+    browserVersion: "131.0",
+    os: "Windows",
+    deviceType: "desktop",
+    country: "DE",
+    release: "1.4.2",
+  };
+  return {
+    timeZone: "Asia/Singapore",
+    environment: query.get("environment") ?? "production",
+    firstDay: "2026-11-10",
+    lastDay: "2026-11-16",
+    group,
+    days: DAYS.map((day, i) => ({
+      day: day.day,
+      occurrences: [0, 120, 300, 90, 0, 400, 324][i] ?? 0,
+    })),
+    breakdowns: {
+      path: [
+        { value: "/checkout", occurrences: 900 },
+        { value: null, occurrences: 334 },
+      ],
+      browser: [
+        { value: "Chrome", occurrences: 1000 },
+        { value: "Firefox", occurrences: 234 },
+      ],
+      os: [{ value: "Windows", occurrences: 1234 }],
+      release: [
+        { value: "1.4.2", occurrences: 1200 },
+        { value: null, occurrences: 34 },
+      ],
+    },
+    occurrences: [
+      {
+        ...occurrence,
+        eventId: "00000000-0000-4000-8000-000000000001",
+        occurredAt: group.lastSeen,
+        userId: "ada",
+      },
+      {
+        ...occurrence,
+        eventId: "00000000-0000-4000-8000-000000000002",
+        occurredAt: "2026-11-16T07:00:00.000Z",
+        handled: true,
+        browser: "Firefox",
+        browserVersion: "132.0",
+        os: "Linux",
+        release: null,
+      },
+    ],
+    stack:
+      fingerprint === ERROR_FINGERPRINTS.typeError
+        ? "TypeError: Cannot read properties of undefined (reading 'id')\n    at submit (https://example.com/assets/app.js:1:2345)\n    at onClick (https://example.com/assets/app.js:1:6789)"
+        : null,
+  };
+}
+
+/** Resolves or reopens a group, by the signed-in user, now. */
+function changeErrorStatus(api: FakeApi, fingerprint: string, status: string): Response {
+  if (status === "resolved") {
+    const resolvedAt = new Date().toISOString();
+    api.resolutions = {
+      ...api.resolutions,
+      [fingerprint]: { resolvedAt, resolvedBy: "Test Owner" },
+    };
+    return json({ fingerprint, resolvedAt });
+  }
+  const { [fingerprint]: _removed, ...others } = api.resolutions;
+  api.resolutions = others;
+  return json({ fingerprint, resolvedAt: null });
 }
 
 function removeProject(api: FakeApi, id: string): Response {
@@ -350,6 +547,21 @@ async function answer(api: FakeApi, url: URL, init: RequestInit | undefined): Pr
     const result = api.users(url.searchParams);
     return result instanceof Response ? result : json(result);
   }
+  if (/^\/api\/projects\/[^/]+\/errors$/.test(path)) {
+    const result = api.errors(url.searchParams, api);
+    return result instanceof Response ? result : json(result);
+  }
+  const errorPath = /^\/api\/projects\/[^/]+\/errors\/([^/]+)$/.exec(path);
+  if (errorPath?.[1] !== undefined && init?.method === "PATCH") {
+    const body: unknown = JSON.parse(typeof init.body === "string" ? init.body : "{}");
+    const status =
+      typeof body === "object" && body !== null && "status" in body ? String(body.status) : "";
+    return api.setErrorStatus(api, decodeURIComponent(errorPath[1]), status);
+  }
+  if (errorPath?.[1] !== undefined) {
+    const result = api.error(decodeURIComponent(errorPath[1]), url.searchParams, api);
+    return result instanceof Response ? result : json(result);
+  }
   const userPath = /^\/api\/projects\/[^/]+\/users\/([^/]+)$/.exec(path);
   if (userPath?.[1] !== undefined) {
     const result = api.user(decodeURIComponent(userPath[1]), url.searchParams);
@@ -426,6 +638,10 @@ export function installFakeApi(overrides: Partial<FakeApi> = {}): FakeApi {
     list: fakeList,
     users: fakeUsers,
     user: fakeUser,
+    errors: fakeErrors,
+    error: fakeError,
+    setErrorStatus: changeErrorStatus,
+    resolutions: fakeResolutions(),
     deleteProject: removeProject,
     requests: [],
     bodies: [],
