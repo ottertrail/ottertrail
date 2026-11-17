@@ -2,7 +2,7 @@
 
 How to run Ottertrail on one server, and the decisions behind it. The hosted service is one such deployment serving every organization; a self-hosted install is the same stack, usually with one organization. Events arrive in PostgreSQL and are copied to ClickHouse, where reports read them ([clickhouse.md](clickhouse.md)); PostgreSQL keeps them for two days.
 
-Status: tested on one machine with Podman (see [What has been tested](#what-has-been-tested)), before ClickHouse joined the stack. Nothing runs in production yet, and backups are manual.
+Status: tested on one machine with Podman (see [What has been tested](#what-has-been-tested)). Nothing runs in production yet, and backups are manual.
 
 ## What runs
 
@@ -39,11 +39,12 @@ chmod 600 .env
 Edit `.env`: set `OTTERTRAIL_DOMAIN`, then fill `POSTGRES_PASSWORD`, `CLICKHOUSE_PASSWORD`, and `AUTH_SECRET` with the output of `openssl rand -hex 32` (a different value each). Hex keeps the password safe inside the database URL. `TIMEZONE` is the timezone of the first organization, the one the setup link creates; its owner can change it later in the organization's settings.
 
 ```sh
-docker compose up -d --build
+docker compose build migrate
+docker compose up -d
 docker compose ps
 ```
 
-`migrate` should show "Exited (0)" and `api` "healthy". The first build installs every development dependency inside the image and takes a few minutes; its memory needs have not been measured, so a small server may need swap or a build elsewhere (see [Images](#images)).
+The first command builds the image that `migrate`, `api`, and `worker` share, once. `docker compose up -d --build` would work too, but podman-compose builds it once for each of the three, all at the same time, and on a 2 GB machine that ran out of memory. `migrate` should show "Exited (0)" and `api` "healthy". The build installs every development dependency inside the image and takes a few minutes; one of those three builds finished in Podman's 2 GB machine, but a small server may need swap or a build elsewhere (see [Images](#images)).
 
 Create the owner account, then download the geolocation database:
 
@@ -61,7 +62,8 @@ The last command restarts only the API by recreating its container. `docker comp
 
 ```sh
 git fetch && git checkout <release>
-docker compose up -d --build
+docker compose build migrate
+docker compose up -d
 ```
 
 Compose rebuilds the image, runs `migrate`, and replaces the API and the worker. The API is unavailable for a few seconds while its container is replaced; the tracker retries events it could not send.
@@ -72,25 +74,27 @@ To go back to an earlier release, check it out and run the same command, as long
 
 ## Backups
 
-Not automated yet. **ClickHouse has no backup yet**, and it holds every event older than two days: PostgreSQL's backup below has accounts, projects, settings, and only the last two days' events. A ClickHouse backup comes with step 4 of [clickhouse.md](clickhouse.md). Before each update, and regularly:
+Not automated yet. Before each update, and regularly, in `deploy/`:
 
 ```sh
-docker compose exec -T postgres pg_dump -U ottertrail -Fc ottertrail > ottertrail-$(date +%F).dump
+./backup.sh
 ```
 
-Copy the file off the server: a backup on the same disk is lost with it.
+It writes two files into `deploy/backups/`, named by the time: `ottertrail-<time>.zip`, ClickHouse's backup of the events (its own `BACKUP DATABASE`), and `ottertrail-<time>.dump`, PostgreSQL's (`pg_dump`: accounts, organizations, projects, settings, and the last two days' events). The instance keeps running. ClickHouse first writes its backup into its own volume, and the script then moves it out, so the disk needs free space of about twice ClickHouse's data while it runs. The files are readable only by the user who ran the script, and a run that fails leaves no file that looks like a backup. Copy both files off the server: a backup on the same disk is lost with it. Delete old ones yourself; they hold your customers' data, and events deleted since stay in them.
 
-To restore into an empty database (a new server, or after `docker compose down -v`), start only PostgreSQL and wait until it is ready, then restore:
+To restore into empty databases (a new server, or after `docker compose down -v`), with both files in `deploy/backups/`:
 
 ```sh
-docker compose up -d --wait postgres
-docker compose exec -T postgres pg_restore -h 127.0.0.1 -U ottertrail -d ottertrail \
-  --no-owner --single-transaction --exit-on-error < ottertrail-2026-11-17.dump
+./restore.sh backups/ottertrail-2026-11-17T062707Z
 ```
 
-Start the rest with `docker compose up -d` only if `pg_restore` finished without an error. The restore runs as one transaction, so a failure leaves the database empty rather than half restored. Starting the stack on an empty database would let `migrate` create a fresh schema there, which a second restore attempt would then collide with; in that case run `docker compose down -v` and start again.
+It starts only PostgreSQL and ClickHouse, restores both, then starts the rest. PostgreSQL's restore runs as one transaction, so a failure leaves it empty rather than half restored. The databases must be empty and not yet migrated: ClickHouse refuses to restore into a table that holds data, and the migrations record themselves in one. If a restore fails, run `docker compose down -v` and start again.
 
-Tested with Podman: after deleting the whole stack with `down -v`, these steps gave back every event and the owner's sign-in. Not yet tested on a new server.
+ClickHouse's backup is made first. Events the worker copies in the seconds before PostgreSQL's backup are then marked copied in it but missing from ClickHouse's, so the restore marks every event PostgreSQL holds as not copied, and the worker sends them again. ClickHouse keeps one row per event ([clickhouse.md](clickhouse.md#each-event-once)), so those it already had count once.
+
+With Podman, run both as `COMPOSE="podman compose" ./backup.sh`.
+
+Restoring PostgreSQL alone, or moving it to a new major version (dump, new volume, restore), needs the worker stopped until PostgreSQL holds its data again (`docker compose stop worker`). A worker that finds PostgreSQL empty, or holding the wrong instance's data, deletes no events from ClickHouse, but logs an error ([clickhouse.md](clickhouse.md#retention-and-deleting-a-project)).
 
 ## Settings
 
@@ -143,14 +147,22 @@ On macOS with Podman 6.2 and podman-compose 1.6, with `OTTERTRAIL_DOMAIN=localho
 - In headless Chromium: the setup link creates the owner, a project is created, a test site on another origin loads `/t.js` and sends pageviews and time on page, and the analytics page shows them. Signing out and in again works; the session cookie is `__Secure-`, `Secure`, `HttpOnly`, and `SameSite=Lax`. No page broke the Content Security Policy.
 - `update-geo.mjs` fills the volume, and the recreated API loads the file.
 - `docker compose down` then `up` (without `-v`) keeps the events, the owner, and the geolocation file.
-- A backup with `pg_dump`, then `down -v` (deleting every volume), then the restore steps above, gave back every event and the owner's sign-in. That was before events moved to ClickHouse; PostgreSQL's backup now holds only the last two days' events.
+- A backup with `pg_dump`, then `down -v` (deleting every volume), then restoring, gave back every event and the owner's sign-in, before events moved to ClickHouse.
 - A spoofed `X-Forwarded-For` sent through Caddy is ignored (see "Client addresses").
+
+With ClickHouse in the stack (17 November 2026), driving the API from inside the stack, without Caddy (rootless Podman cannot open ports 80 and 443 without changing a setting of its machine):
+
+- `build migrate` builds the image once, and `up -d` starts the stack from it: both databases healthy (ClickHouse's health check no longer puts its password on a command line), both migrated, then the API and the worker. The worker copies events to ClickHouse within seconds, and the analytics report reads them there (3 visitors, 6 pageviews, 3 visits, the right pages).
+- Deleting a project: the trigger records it, its events leave reports within half a minute, and they leave ClickHouse's disk with the next retention run (the worker runs one at start). The other project keeps its own.
+- `backup.sh`, then `down -v`, then `restore.sh`: the same report, and sign-in still works. After the worker sent PostgreSQL's events again, ClickHouse held 12 rows for 6 events and reported 6. The deleted project stayed deleted. The backup files are readable by their owner only. A backup that failed (PostgreSQL stopped) left no file behind, here or in ClickHouse's volume, and `restore.sh` refuses a name that is not a backup's.
+- On the first try, the restore failed: ClickHouse's image answers queries from a temporary server while it sets itself up on an empty volume, and the restore reached it in between. `restore.sh` now waits for the real server.
+- `up -d --build` failed on Podman's 2 GB machine: podman-compose built the shared image once for each of the three services that use it, at the same time, and two of the builds ran out of memory. The third finished, hence `build migrate` first in [First start](#first-start). The later `build migrate` reused that build's cached layers, so a build from scratch alone was not timed.
 
 Not tested yet: Docker Engine and Docker Compose on a Linux server, a real domain with a Let's Encrypt certificate, an `amd64` image, an update that runs a migration on existing data, and a restore on a new server.
 
 ## Known limitations
 
-- No automated or off-site backups, and no ClickHouse backup at all yet.
+- No automated or off-site backups.
 - The geolocation database is updated by hand, monthly.
 - One server: no failover, and a few seconds of downtime for each update.
 - No image registry or CI builds: each server builds its own image.

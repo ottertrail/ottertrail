@@ -26,4 +26,11 @@
     <logger>
         <level>warning</level>
     </logger>
+
+    <!-- Where BACKUP ... TO File('name.zip') writes, and RESTORE reads
+         (docs/deployment.md, "Backups"). Inside ClickHouse's data volume,
+         which its user owns; copy each backup off the server. -->
+    <backups>
+        <allowed_path>/var/lib/clickhouse/backups/</allowed_path>
+    </backups>
 </clickhouse>

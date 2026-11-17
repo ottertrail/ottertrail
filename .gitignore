@@ -19,6 +19,9 @@ dist-ssr
 .env.*
 !.env.example
 
+# Backups made by deploy/backup.sh: they hold customer data.
+deploy/backups/
+
 # Editor directories and files
 .vscode/*
 !.vscode/settings.json

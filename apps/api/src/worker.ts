@@ -3,19 +3,31 @@
  *
  * - Copying events to ClickHouse every few seconds, and deleting them from
  *   PostgreSQL once copied and two days old, every hour (clickhouse/copy-events.ts).
- * - Deleting events older than each project's retention, at start and every
- *   few hours (retention/retention.ts).
+ * - Deleting a deleted project's events from ClickHouse, every minute
+ *   (clickhouse/delete-events.ts).
+ * - At start and every few hours: finding projects ClickHouse still holds
+ *   events of but PostgreSQL no longer knows, deleting events older than
+ *   each project's retention in both databases (retention/retention.ts),
+ *   and taking deleted rows off ClickHouse's disk.
  *
  * Both are safe to repeat and to run in two workers at once, so plain
  * timers are enough; a job queue comes with work that needs one.
  */
 import { createClickHouse } from "./clickhouse/clickhouse.ts";
 import { copyEventsToClickHouse, deleteCopiedEvents } from "./clickhouse/copy-events.ts";
+import {
+  purgeDeletedProjects,
+  queueOrphanedProjects,
+  removeDeletedRows,
+} from "./clickhouse/delete-events.ts";
 import { loadConfig } from "./config.ts";
 import { createDatabase } from "./db/database.ts";
 import { deleteExpiredEvents } from "./retention/retention.ts";
 
-/** How often retention runs. Expired events wait at most this long. */
+/**
+ * How often retention runs, with the search for forgotten projects and the
+ * removal of deleted rows from disk. Expired events wait at most this long.
+ */
 export const RETENTION_INTERVAL_MS = 6 * 60 * 60 * 1000;
 
 /** How often events are copied to ClickHouse: how far reports there can trail. */
@@ -23,6 +35,9 @@ export const COPY_INTERVAL_MS = 5_000;
 
 /** How often copied events leave PostgreSQL. They stay at most this long past their day. */
 export const PRUNE_INTERVAL_MS = 60 * 60 * 1000;
+
+/** How often a deleted project's events are deleted from ClickHouse: at most this late. */
+export const PURGE_INTERVAL_MS = 60 * 1000;
 
 const config = loadConfig();
 const db = createDatabase({ connectionString: config.databaseUrl, maxConnections: 3 });
@@ -79,11 +94,48 @@ const stopPruning = every(PRUNE_INTERVAL_MS, async () => {
   }
 });
 
+const stopPurging = every(PURGE_INTERVAL_MS, async () => {
+  try {
+    const purged = await purgeDeletedProjects(db, clickhouse);
+    if (purged.projects > 0)
+      log("info", "deleted projects' events deleted from ClickHouse", purged);
+  } catch (error) {
+    log("error", "deleting deleted projects' events from ClickHouse failed", {
+      err: String(error),
+    });
+  }
+});
+
 const stopRetention = every(RETENTION_INTERVAL_MS, async () => {
   try {
-    const results = await deleteExpiredEvents(db);
+    const sweep = await queueOrphanedProjects(db, clickhouse);
+    if (sweep.queued) {
+      log("info", "deleted projects found in ClickHouse, to be deleted", {
+        projects: sweep.orphans,
+      });
+    } else if (sweep.orphans > 0) {
+      // Too many to be deletions the purge missed: PostgreSQL may be the
+      // wrong database, or empty. A person decides (docs/clickhouse.md).
+      log("error", "ClickHouse holds events of projects PostgreSQL does not know; not deleting", {
+        projects: sweep.orphans,
+      });
+    }
+    const results = await deleteExpiredEvents(db, clickhouse);
     const deleted = results.reduce((sum, result) => sum + result.deleted, 0);
-    log("info", "retention ran", { projects: results.length, deleted });
+    const clickhouseDeleted = results.reduce((sum, result) => sum + result.clickhouseDeleted, 0);
+    const cleanup = await removeDeletedRows(clickhouse);
+    log("info", "retention ran", {
+      projects: results.length,
+      deleted,
+      clickhouseDeleted,
+      rewriting: cleanup.started,
+    });
+    if (cleanup.waitingFor?.failReason) {
+      log("error", "a change to ClickHouse's events keeps failing; deleted rows stay on disk", {
+        mutation: cleanup.waitingFor.mutationId,
+        reason: cleanup.waitingFor.failReason,
+      });
+    }
   } catch (error) {
     log("error", "retention failed", { err: String(error) });
   }
@@ -93,7 +145,7 @@ async function shutdown(signal: NodeJS.Signals) {
   log("info", "shutting down", { signal });
   stopping = true;
   // Runs in progress finish their batch first.
-  await Promise.all([stopCopying(), stopPruning(), stopRetention()]);
+  await Promise.all([stopCopying(), stopPruning(), stopPurging(), stopRetention()]);
   await clickhouse.close();
   await db.destroy();
 }
@@ -105,5 +157,6 @@ for (const signal of ["SIGINT", "SIGTERM"] as const) {
 log("info", "worker started", {
   copyIntervalMs: COPY_INTERVAL_MS,
   pruneIntervalMs: PRUNE_INTERVAL_MS,
+  purgeIntervalMs: PURGE_INTERVAL_MS,
   retentionIntervalMs: RETENTION_INTERVAL_MS,
 });

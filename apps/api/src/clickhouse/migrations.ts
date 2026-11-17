@@ -17,7 +17,7 @@ export const CLICKHOUSE_MIGRATIONS: ClickHouseMigration[] = [
      *
      * - Ordered by project, then time: one project's range is one
      *   contiguous read, and every query filters by project first.
-     * - Partitioned by month: retention drops whole months where it can.
+     * - Partitioned by month: a range's query reads only its months' parts.
      * - ReplacingMergeTree keeps one row per (project_id, occurred_at,
      *   event_id) when parts merge. The worker sends each event once, so this
      *   only matters if a batch is sent twice after a crash, and the insert

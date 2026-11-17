@@ -136,14 +136,14 @@ The Settings form's "Keep events" sets how long the project keeps its events: fo
 The Settings page ends with a "Danger zone" of two changes that cannot be undone, each behind a confirmation:
 
 - **Replace the public key** (`POST /api/projects/:id/public-key`), for a key that ended up where it should not. The project gets a new key and keeps its data; pages with the old snippet can no longer send events, so the new snippet has to go on the site right after. The Install card shows it at once.
-- **Delete the project** (`DELETE /api/projects/:id`), with every event it has received: the database deletes the events with the project. The request repeats the project's name (`{ "confirmName": "Main site" }`), and the dashboard asks for it to be typed, so a mistaken ID or a stray request cannot delete a project. Afterwards the dashboard opens the project list, and the home page stops opening the deleted project.
+- **Delete the project** (`DELETE /api/projects/:id`), with every event it has received: PostgreSQL deletes its events with the project, and the worker deletes them from ClickHouse within a minute, and usually from ClickHouse's disk within 6 hours ([clickhouse.md](clickhouse.md#retention-and-deleting-a-project)). The reports cannot be opened from the moment the project is gone. The request repeats the project's name (`{ "confirmName": "Main site" }`), and the dashboard asks for it to be typed, so a mistaken ID or a stray request cannot delete a project. Afterwards the dashboard opens the project list, and the home page stops opening the deleted project.
 
 The collection endpoint keeps keys in a cache for a minute (a key is checked on every event). The project routes tell it to forget a replaced or deleted key, so the key stops working at once in that API process. A batch already on its way when its project is deleted, or a key cached in another API process, fails to store because the project is gone; the endpoint answers that as an unknown key (403), which the tracker does not retry, instead of as an outage (503), which it would.
 
 ### Not done yet
 
-- Deleting a project with many events runs as one database statement while the request waits. A large project should be deleted by a background job, once the worker exists.
-- Deleted events can stay in backups until those expire; there is no backup policy yet.
+- Deleting a project deletes its events in PostgreSQL, at most two days' worth, while the request waits.
+- Deleted events can stay in backups until those are deleted; there is no backup policy yet.
 - Permissions: any signed-in user can manage projects, which is only the owner until invitations exist.
 
 ## 8.3 Report endpoints

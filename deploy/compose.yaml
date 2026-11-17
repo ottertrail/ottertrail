@@ -75,12 +75,9 @@ services:
       - ./clickhouse/config.d/ottertrail.xml:/etc/clickhouse-server/config.d/ottertrail.xml:ro
       - ./clickhouse/users.d/ottertrail.xml:/etc/clickhouse-server/users.d/ottertrail.xml:ro
     healthcheck:
-      # $$ reaches the container as $: its own CLICKHOUSE_PASSWORD.
-      test:
-        [
-          "CMD-SHELL",
-          'clickhouse-client --user ottertrail --password "$$CLICKHOUSE_PASSWORD" --query ''SELECT 1''',
-        ]
+      # clickhouse-client takes the password from the container's own
+      # CLICKHOUSE_PASSWORD, so it never appears on a command line.
+      test: ["CMD", "clickhouse-client", "--user", "ottertrail", "--query", "SELECT 1"]
       interval: 5s
       timeout: 5s
       retries: 30

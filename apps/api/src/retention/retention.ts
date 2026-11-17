@@ -1,5 +1,7 @@
 import { type Kysely, sql } from "kysely";
 
+import type { ClickHouseClient } from "../clickhouse/clickhouse.ts";
+import { deleteEventsBefore } from "../clickhouse/delete-events.ts";
 import type { Database } from "../db/schema.ts";
 
 /** Events deleted per statement, so no delete holds its locks for long. */
@@ -9,18 +11,25 @@ export interface RetentionResult {
   projectId: string;
   /** Events older than this were deleted: a midnight in the organization's timezone. */
   before: Date;
+  /** Events deleted from PostgreSQL, which holds the last two days and those not yet copied. */
   deleted: number;
+  /** Rows deleted from ClickHouse, which reports read (a row sent twice counts twice). */
+  clickhouseDeleted: number;
 }
 
 /**
  * Deletes each project's events older than its retention (projects with
- * none keep everything). The cut-off is a midnight in the timezone of the
- * project's organization, retention_days days before today there, so a
- * report never shows a day with only some of its events. Deletes run in batches; running this
- * twice, or in two processes at once, is harmless.
+ * none keep everything), in PostgreSQL and in ClickHouse. The cut-off is a
+ * midnight in the timezone of the project's organization, retention_days
+ * days before today there, so a report never shows a day with only some
+ * of its events. PostgreSQL's deletes run in batches; ClickHouse's leave
+ * reports at once and the disk with removeDeletedRows(), which the worker
+ * runs after this. Running this twice, or in two processes at once, is
+ * harmless.
  */
 export async function deleteExpiredEvents(
   db: Kysely<Database>,
+  clickhouse: ClickHouseClient,
   { now = new Date(), batchSize = DELETE_BATCH_SIZE }: { now?: Date; batchSize?: number } = {},
 ): Promise<RetentionResult[]> {
   const { rows: projects } = await sql<{ id: string; before: Date }>`
@@ -37,7 +46,7 @@ export async function deleteExpiredEvents(
     order by projects.id
   `.execute(db);
 
-  const results: RetentionResult[] = [];
+  const deletedInPostgres = new Map<string, number>();
   for (const project of projects) {
     let deleted = 0;
     for (;;) {
@@ -54,7 +63,17 @@ export async function deleteExpiredEvents(
       deleted += count;
       if (count < batchSize) break;
     }
-    results.push({ projectId: project.id, before: project.before, deleted });
+    deletedInPostgres.set(project.id, deleted);
   }
-  return results;
+  // ClickHouse: every project in one statement, which takes seconds however many there are.
+  const deletedInClickHouse = await deleteEventsBefore(
+    clickhouse,
+    projects.map((project) => ({ projectId: project.id, before: project.before })),
+  );
+  return projects.map((project) => ({
+    projectId: project.id,
+    before: project.before,
+    deleted: deletedInPostgres.get(project.id) ?? 0,
+    clickhouseDeleted: deletedInClickHouse.get(project.id) ?? 0,
+  }));
 }

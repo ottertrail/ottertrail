@@ -146,7 +146,7 @@ API (`apps/api`), read from the environment:
 
 Invalid values stop the server at startup with a message naming the variable. Error messages never repeat `DATABASE_URL`, because it can contain a password.
 
-In production, run `node dist/migrate.mjs` (`vp run start:migrate` in `apps/api`) once as a deployment step before starting the API. The API does not migrate on startup, so several API processes never race to change the schema. Run the worker (`node dist/worker.mjs`, `vp run start:worker`) beside the API, with the same settings: it deletes events past each project's retention. `node dist/setup.mjs` and `node dist/update-geo.mjs` are the built `vp run setup` and `vp run geo:update`. `deploy/compose.yaml` does all of this; see [docs/deployment.md](docs/deployment.md).
+In production, run `node dist/migrate.mjs` (`vp run start:migrate` in `apps/api`) once as a deployment step before starting the API. The API does not migrate on startup, so several API processes never race to change the schema. Run the worker (`node dist/worker.mjs`, `vp run start:worker`) beside the API, with the same settings: it copies events to ClickHouse, deletes them from PostgreSQL after two days, and deletes events past each project's retention and those of deleted projects. `node dist/setup.mjs` and `node dist/update-geo.mjs` are the built `vp run setup` and `vp run geo:update`. `deploy/compose.yaml` does all of this; see [docs/deployment.md](docs/deployment.md).
 
 Dashboard dev server (`apps/web`):
 

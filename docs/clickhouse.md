@@ -7,9 +7,7 @@ How analytics events move from PostgreSQL to ClickHouse, and why. The decision t
 | 1. ClickHouse in the stack, its settings for a small server, its migrations   | Done   |
 | 2. The worker copies events to ClickHouse                                     | Done   |
 | 3. Reports read ClickHouse; PostgreSQL keeps only the last two days of events | Done   |
-| 4. Retention and project deletion in ClickHouse; backups                      | Next   |
-
-Until step 4, a project's retention and its deletion only reach PostgreSQL. ClickHouse keeps the events, so reports still show events past a project's retention; a deleted project's reports cannot be opened, but its events stay on disk. No backup covers ClickHouse yet.
+| 4. Retention and project deletion in ClickHouse; backups                      | Done   |
 
 ## How events get there
 
@@ -54,14 +52,32 @@ How much memory ClickHouse may use is worked out again as it runs: its own memor
 
 The development stack runs in Podman's machine, 2 GB by default and shared with other containers. There 0.4 left ClickHouse about 350 MiB, nearly all of it its own idle use, and tests running side by side failed with `MEMORY_LIMIT_EXCEEDED`. The development stack alone raises the ratio to 0.75 (`deploy/clickhouse/development.xml`): about 680 MiB. Even so, ClickHouse's own memory there grows during heavy runs and takes minutes to shrink back, so the benchmark's whole-page part failed there in repeated runs at 50,000 and 200,000 visits. For more data locally, give the machine more memory (`podman machine set --memory 8192`, with the machine stopped).
 
+## Retention and deleting a project
+
+ClickHouse has no foreign keys, so nothing deletes its events with a project or a retention limit on its own. The worker does (`apps/api/src/clickhouse/delete-events.ts`):
+
+- **Retention.** At start and every 6 hours, the worker deletes each project's events past its limit in PostgreSQL, then in ClickHouse, with the same cut-off: a midnight in the organization's timezone (`retention/retention.ts`, [web analytics, section 1](web-analytics.md#how-long-events-are-kept)).
+- **A deleted project.** A trigger records every deleted project in `project_deletions` (PostgreSQL migration 0013), in the deleting transaction, however the delete came about: the API, or an organization's delete cascading to its projects. Every minute the worker deletes those projects' events from ClickHouse, then the records. While ClickHouse is down, the records wait, so a deletion is never lost; a test checks it.
+- **Projects ClickHouse should not have.** With retention, the worker also looks for projects ClickHouse holds events of but PostgreSQL no longer knows, and records them for deletion. That can happen after a restore, when ClickHouse's backup was made just before a project was deleted and PostgreSQL's just after, or when an insert that timed out lands after the purge. Those cases leave a project or two. When PostgreSQL knows no projects, or more are missing than 5 and a tenth of ClickHouse's, PostgreSQL is more likely the wrong one (emptied for an upgrade, or a wrong `DATABASE_URL`), so the worker deletes nothing and logs an error instead; a test checks it. If those projects really are gone, record them by hand (`insert into project_deletions (project_id) values ('…')`) and the worker deletes their events within a minute.
+
+Both use ClickHouse's lightweight `DELETE`: the rows leave every report at once. They leave the disk when ClickHouse rewrites the parts that held them without them (`APPLY DELETED MASK`), which the worker starts with retention, whenever a part holds deleted rows and no other change to the table is still under way (a change that keeps failing is logged as an error); a test reads the table with deleted rows included to check. Without it, deleted rows would stay on disk until ClickHouse merged those parts again, which for an old month may be never. Because the worker looks at the table rather than at what it just deleted, rows a failed run left behind go with the next.
+
+Both cost more than they seem:
+
+- ClickHouse carries out a `DELETE` in the background, part by part. On the development stack, one took 1 to 9 seconds, however few rows it deleted. So the worker deletes for a thousand projects per statement (query values travel in the URL, which ClickHouse limits to 1 MiB), and sends none when nothing is due, as on most runs.
+- A part holds every project's events of its month, so taking one project's rows off the disk rewrites whole months: those the deleted project had events in, and, for retention, the oldest month kept, about once a day. That is why it runs every 6 hours, not after each deletion. On a large instance this rewriting is real disk work; partitions per project, or dropping whole months, would avoid it, and are not done.
+
+## Backups
+
+`deploy/backup.sh` makes a backup of both databases: ClickHouse's with its own `BACKUP DATABASE`, then PostgreSQL's with `pg_dump`. `deploy/restore.sh` puts one back into an empty instance, then has the worker send PostgreSQL's last two days of events again, in case some were copied after ClickHouse's backup was made: the table keeps one row per event, so the repeats count once. How to use them: [deployment](deployment.md#backups).
+
 ## 64-bit integers
 
 Visitor IDs are 64-bit integers. ClickHouse 26 sends 64-bit integers in JSON as bare numbers, which JavaScript rounds (`-4611686018427387904` came back as `-4611686018427388000`), so the client asks for them as strings (`output_format_json_quote_64bit_integers`). Counts arrive as strings too.
 
 ## Not done yet
 
-- Retention and project deletion in ClickHouse (step 4). Until then, a deleted project's events, or events past their retention, stay in ClickHouse.
-- ClickHouse backups (step 4). Until then, events older than two days are only in ClickHouse, and no backup holds them.
+- Automated and off-site backups (see [deployment](deployment.md#backups)).
 - A snapshot across a page's reports.
 - A limit on how many reports one organization runs at once, so one customer's long ranges cannot use all of ClickHouse's memory.
 - Watching how far the copy trails, beyond the worker's log.

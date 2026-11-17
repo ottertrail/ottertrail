@@ -57,6 +57,15 @@ export interface ProjectsTable {
 }
 
 /**
+ * A deleted project whose events ClickHouse may still hold, until the
+ * worker has deleted them there (clickhouse/delete-events.ts).
+ */
+export interface ProjectDeletionsTable {
+  project_id: string;
+  deleted_at: DatabaseDefault<Date>;
+}
+
+/**
  * One row per thing that happened. Reports are always computed from these
  * rows; nothing stores running totals.
  */
@@ -168,6 +177,7 @@ export interface Database {
   organizations: OrganizationsTable;
   memberships: MembershipsTable;
   projects: ProjectsTable;
+  project_deletions: ProjectDeletionsTable;
   events: EventsTable;
   visitor_salts: VisitorSaltsTable;
   dashboard_users: DashboardUsersTable;

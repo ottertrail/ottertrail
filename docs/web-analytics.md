@@ -81,13 +81,11 @@ Almost every report asks "this project, between these two times", so the table h
 
 Each project keeps its events forever unless its owner chooses a limit (`retention_days`: 6 months, 1 year, 2 years, or 5 years in the dashboard; any number from 30 to 3,650 days through the API). Nothing is deleted until then: how long to keep data is the customer's decision.
 
-The worker (`apps/api/src/worker.ts`, a process of its own beside the API) deletes events older than the limit at start and every 6 hours (`retention/retention.ts`). The cut-off is a midnight in the timezone of the project's organization, the limit's number of days before today there, so a report never shows a day with only some of its events. Deletes run 5,000 events at a time, so none holds its locks for long, and running the job twice, or in two workers at once, is harmless.
-
-Since reports moved to ClickHouse, this deletes only PostgreSQL's copy; ClickHouse's follows in step 4 of [clickhouse.md](clickhouse.md). Until then, reports still show events past the limit.
+The worker (`apps/api/src/worker.ts`, a process of its own beside the API) deletes events older than the limit at start and every 6 hours, in PostgreSQL and in ClickHouse, which reports read (`retention/retention.ts`; [clickhouse.md](clickhouse.md#retention-and-deleting-a-project)). The cut-off is a midnight in the timezone of the project's organization, the limit's number of days before today there, so a report never shows a day with only some of its events. PostgreSQL's deletes run 5,000 events at a time, so none holds its locks for long. ClickHouse's deletes the expired events of a thousand projects per statement, and the rows usually leave the disk in the same run ([clickhouse.md](clickhouse.md#retention-and-deleting-a-project)). Running the job twice, or in two workers at once, is harmless.
 
 ### Not done yet
 
-- Deleted events stay in backups until those expire; there is no backup policy yet.
+- Deleted events stay in backups until those are deleted; there is no backup policy yet ([deployment](deployment.md#backups)).
 
 ## 2. Collecting
 

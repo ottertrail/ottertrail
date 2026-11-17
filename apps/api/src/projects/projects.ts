@@ -176,9 +176,10 @@ export async function updateProject(
 }
 
 /**
- * Deletes a project and, with it, all its events (the database cascades
- * the delete). Returns the project's public key, or null when no project
- * has this ID.
+ * Deletes a project and, with it, all its events: PostgreSQL's at once
+ * (the database cascades the delete), ClickHouse's within a minute, by the
+ * worker, which a trigger asks to (project_deletions, migration 0013).
+ * Returns the project's public key, or null when no project has this ID.
  */
 export async function deleteProject(
   db: Kysely<Database>,
