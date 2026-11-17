@@ -24,5 +24,10 @@ export default defineConfig({
   },
   test: {
     environment: "node",
+    // Every test talks to real PostgreSQL and ClickHouse, and some build and
+    // migrate a database of their own: run together, under load, a few take
+    // longer than the default five seconds. Fifteen still catches a hang.
+    testTimeout: 15_000,
+    hookTimeout: 30_000,
   },
 });
