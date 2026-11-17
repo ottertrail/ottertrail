@@ -167,6 +167,19 @@ export interface SavedFunnelsTable {
   updated_at: ColumnType<Date, Date | undefined, Date>;
 }
 
+/** A source map a project uploaded, for one release and minified file (migration 0022). */
+export interface SourceMapsTable {
+  project_id: string;
+  release: string;
+  /** The minified file's path, as the browser loads it: "/assets/index-4f3a.js". */
+  path: string;
+  /** Where the map is, gzip-compressed, in the object store. */
+  object_key: string;
+  /** Its stored, compressed size. */
+  bytes: number;
+  uploaded_at: ColumnType<Date, Date | undefined, Date>;
+}
+
 /** An error group a project's team marked resolved (migration 0019). No row: unresolved. */
 export interface ErrorResolutionsTable {
   project_id: string;
@@ -247,6 +260,7 @@ export interface Database {
   error_resolutions: ErrorResolutionsTable;
   goals: GoalsTable;
   saved_funnels: SavedFunnelsTable;
+  source_maps: SourceMapsTable;
   visitor_salts: VisitorSaltsTable;
   dashboard_users: DashboardUsersTable;
   dashboard_sessions: DashboardSessionsTable;

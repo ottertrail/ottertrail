@@ -13,6 +13,8 @@ import { type ProjectAccess, requireProjectAccess } from "../organizations/acces
 import { signedInUser } from "../organizations/routes.ts";
 import { localDays } from "../reports/reports.ts";
 import { RANGE_PROPERTIES, type RangeQuery, requestDays } from "../reports/routes.ts";
+import { resolveStack, type SourceMapCache } from "../source-maps/resolve.ts";
+import type { ObjectStore } from "../storage/object-store.ts";
 import { dayIn } from "../visitors/visitor-ids.ts";
 import {
   type ErrorRange,
@@ -54,6 +56,8 @@ function accessOf(request: { projectAccess: ProjectAccess | null }): ProjectAcce
 /**
  * GET   /api/projects/:id/errors[?period=7d|from=…&to=…&environment=…&status=unresolved]
  * GET   /api/projects/:id/errors/:fingerprint[?period=…&environment=…]
+ *       (the latest stack's frames mapped to the original source by the
+ *       project's source maps for its release: ../source-maps/resolve.ts)
  * PATCH /api/projects/:id/errors/:fingerprint  { "status": "resolved" | "unresolved" }
  *
  * The project's error groups, one group's detail, and its status
@@ -65,8 +69,10 @@ export const errorRoutes: FastifyPluginCallback<{
   clickhouse: ClickHouseClient;
   auth: Auth;
   trustedOrigins: readonly string[];
+  /** Where the project's source maps are; no store, no mapping. */
+  sourceMaps: { store: ObjectStore | null; cache: SourceMapCache };
   now?: () => Date;
-}> = (app, { db, clickhouse, auth, trustedOrigins, now = () => new Date() }, done) => {
+}> = (app, { db, clickhouse, auth, trustedOrigins, sourceMaps, now = () => new Date() }, done) => {
   const signedIn = requireSession(auth);
   const projectAccess = requireProjectAccess(db);
   const fromDashboard = requireTrustedOrigin(trustedOrigins);
@@ -154,12 +160,31 @@ export const errorRoutes: FastifyPluginCallback<{
           message: "This error has no occurrence in the range and environment.",
         });
       }
+      // The stack is the latest occurrence's, so its release is the one to map with.
+      const resolved =
+        detail.stack === null
+          ? null
+          : await resolveStack(
+              {
+                db,
+                ...sourceMaps,
+                onError: (error) => request.log.warn({ err: error }, "could not read a source map"),
+              },
+              range.projectId,
+              detail.occurrences[0]?.release ?? null,
+              detail.stack,
+            );
       return {
         timeZone: range.timeZone,
         environment: range.environment,
         firstDay: range.firstDay,
         lastDay: range.lastDay,
         ...detail,
+        frames: resolved?.frames ?? null,
+        sourceMaps:
+          resolved === null
+            ? null
+            : { status: resolved.status, release: resolved.release, paths: resolved.paths },
       };
     },
   );

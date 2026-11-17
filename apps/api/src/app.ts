@@ -7,6 +7,7 @@ import type { ClickHouseClient } from "./clickhouse/clickhouse.ts";
 import { ProjectKeyCache } from "./collection/project-keys.ts";
 import type { RateLimit } from "./collection/rate-limiter.ts";
 import { type CollectionOptions, collectionRoutes } from "./collection/routes.ts";
+import { DEFAULT_SOURCE_MAP_BYTES_PER_ORGANIZATION } from "./config.ts";
 import { dashboardAppRoutes, sendsHsts } from "./dashboard-app/routes.ts";
 import type { Database } from "./db/schema.ts";
 import { errorRoutes } from "./errors/routes.ts";
@@ -18,7 +19,10 @@ import { productRoutes } from "./product/routes.ts";
 import { projectRoutes } from "./projects/routes.ts";
 import { reportRoutes } from "./reports/routes.ts";
 import { healthRoutes } from "./routes/health.ts";
+import { SourceMapCache } from "./source-maps/resolve.ts";
+import { sourceMapRoutes, sourceMapUploadRoutes } from "./source-maps/routes.ts";
 import { speedRoutes } from "./speed/routes.ts";
+import type { ObjectStore } from "./storage/object-store.ts";
 import { trackerScriptRoutes } from "./tracker-script/routes.ts";
 
 export interface AppOptions extends Omit<FastifyServerOptions, "logger"> {
@@ -48,6 +52,18 @@ export interface AppOptions extends Omit<FastifyServerOptions, "logger"> {
     now?: () => Date;
     setupLimit?: RateLimit;
   };
+  /**
+   * Source maps (docs/errors.md, "Source maps"): the object store that holds
+   * them, null when the install has none, and each organization's limit.
+   * Off when omitted.
+   */
+  sourceMaps?: {
+    store: ObjectStore | null;
+    limitBytes: number;
+    ipLimit?: RateLimit;
+    /** Uploads one process stores at once (source-maps/routes.ts). */
+    maxInFlight?: number;
+  };
   /** The built tracker, served at /t.js. Not served when omitted. */
   trackerScriptPath?: string;
   /** The built dashboard's directory, served at /. Not served when omitted. */
@@ -73,6 +89,7 @@ export function buildApp({
   collection = {},
   log,
   dashboard,
+  sourceMaps = { store: null, limitBytes: DEFAULT_SOURCE_MAP_BYTES_PER_ORGANIZATION },
   trackerScriptPath,
   dashboardPath,
   ...fastifyOptions
@@ -98,6 +115,15 @@ export function buildApp({
     collection.now === undefined ? {} : { now: collection.now },
   );
   app.register(collectionRoutes, { prefix: "/api", db, projectKeys, ...collection });
+  app.register(sourceMapUploadRoutes, {
+    prefix: "/api",
+    db,
+    store: sourceMaps.store,
+    projects: projectKeys,
+    limitBytes: sourceMaps.limitBytes,
+    ...(sourceMaps.ipLimit === undefined ? {} : { ipLimit: sourceMaps.ipLimit }),
+    ...(sourceMaps.maxInFlight === undefined ? {} : { maxInFlight: sourceMaps.maxInFlight }),
+  });
   if (trackerScriptPath !== undefined) {
     app.register(trackerScriptRoutes, { scriptPath: trackerScriptPath });
   }
@@ -174,7 +200,16 @@ export function buildApp({
       clickhouse: dashboard.clickhouse,
       auth: dashboard.auth,
       trustedOrigins: dashboard.trustedOrigins,
+      sourceMaps: { store: sourceMaps.store, cache: new SourceMapCache() },
       ...(dashboard.now === undefined ? {} : { now: dashboard.now }),
+    });
+    app.register(sourceMapRoutes, {
+      prefix: "/api",
+      db,
+      store: sourceMaps.store,
+      auth: dashboard.auth,
+      trustedOrigins: dashboard.trustedOrigins,
+      limitBytes: sourceMaps.limitBytes,
     });
     app.register(reportRoutes, {
       prefix: "/api",

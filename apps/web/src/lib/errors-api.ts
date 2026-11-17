@@ -86,6 +86,62 @@ export interface Occurrence {
   release: string | null;
 }
 
+/** The original source around a mapped frame's line. */
+export interface SourceContext {
+  /** The first line's number: the frame's line is among them. */
+  firstLine: number;
+  lines: string[];
+}
+
+/** Where a minified position came from, as the release's source map says. */
+export interface OriginalPosition {
+  /** The original file, as the map names it, such as "src/cart.ts". */
+  source: string;
+  line: number;
+  /** From 1, as browsers count. */
+  column: number;
+  /** The original name at that position, if the map has one. */
+  name: string | null;
+  context: SourceContext | null;
+}
+
+/** One frame of the latest stack, top first. */
+export interface ResolvedFrame {
+  function: string;
+  /** The minified file's URL. */
+  file: string;
+  line: number | null;
+  column: number | null;
+  /** null when no source map covers the frame. */
+  original: OriginalPosition | null;
+}
+
+/**
+ * - applied: at least one frame was mapped, with `release`'s maps.
+ * - no_release: the occurrence named no release, so no map can be chosen.
+ * - no_files: no frame is in a file a map could be for (a web address).
+ * - no_maps: no map of `release` covers the stack's files (`paths`).
+ * - not_mapped: `release` has maps for the files (`paths`), but none covers
+ *   the frames' positions: they may be another build's.
+ * - not_configured: the install has no object store, so no maps.
+ * - unavailable: the maps could not be read just now.
+ */
+export type SourceMapStatus =
+  | "applied"
+  | "no_release"
+  | "no_files"
+  | "no_maps"
+  | "not_mapped"
+  | "not_configured"
+  | "unavailable";
+
+export interface StackSourceMaps {
+  status: SourceMapStatus;
+  release: string | null;
+  /** The minified files' paths looked up, for "no_maps" and "not_mapped": what to upload. */
+  paths: string[];
+}
+
 export const ERROR_BREAKDOWNS = ["path", "browser", "os", "release"] as const;
 export type ErrorBreakdown = (typeof ERROR_BREAKDOWNS)[number];
 
@@ -104,6 +160,10 @@ export interface ErrorDetail {
   occurrences: Occurrence[];
   /** The latest occurrence's stack, as the browser wrote it. */
   stack: string | null;
+  /** That stack's frames, mapped where its release's source maps allow; null without a stack. */
+  frames: ResolvedFrame[] | null;
+  /** How the frames were mapped; null without a stack. */
+  sourceMaps: StackSourceMaps | null;
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -163,6 +223,42 @@ const isOccurrence = (value: unknown): value is Occurrence =>
   isTextOrNull(value.country) &&
   isTextOrNull(value.release);
 
+const isNumberOrNull = (value: unknown) => value === null || isNumber(value);
+
+const isSourceContext = (value: unknown): value is SourceContext =>
+  isRecord(value) && isNumber(value.firstLine) && isListOf(value.lines, isText);
+
+const isOriginalPosition = (value: unknown): value is OriginalPosition =>
+  isRecord(value) &&
+  isText(value.source) &&
+  isNumber(value.line) &&
+  isNumber(value.column) &&
+  isTextOrNull(value.name) &&
+  (value.context === null || isSourceContext(value.context));
+
+const isResolvedFrame = (value: unknown): value is ResolvedFrame =>
+  isRecord(value) &&
+  isText(value.function) &&
+  isText(value.file) &&
+  isNumberOrNull(value.line) &&
+  isNumberOrNull(value.column) &&
+  (value.original === null || isOriginalPosition(value.original));
+
+const isSourceMapStatus = (value: unknown): value is SourceMapStatus =>
+  value === "applied" ||
+  value === "no_release" ||
+  value === "no_files" ||
+  value === "no_maps" ||
+  value === "not_mapped" ||
+  value === "not_configured" ||
+  value === "unavailable";
+
+const isStackSourceMaps = (value: unknown): value is StackSourceMaps =>
+  isRecord(value) &&
+  isSourceMapStatus(value.status) &&
+  isTextOrNull(value.release) &&
+  isListOf(value.paths, isText);
+
 const isErrorDetail = (value: unknown): value is ErrorDetail =>
   isRecord(value) &&
   isText(value.timeZone) &&
@@ -176,7 +272,9 @@ const isErrorDetail = (value: unknown): value is ErrorDetail =>
     isListOf(isRecord(value.breakdowns) ? value.breakdowns[name] : undefined, isBreakdownRow),
   ) &&
   isListOf(value.occurrences, isOccurrence) &&
-  isTextOrNull(value.stack);
+  isTextOrNull(value.stack) &&
+  (value.frames === null || isListOf(value.frames, isResolvedFrame)) &&
+  (value.sourceMaps === null || isStackSourceMaps(value.sourceMaps));
 
 const isResolution = (
   value: unknown,

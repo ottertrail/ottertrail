@@ -7,11 +7,14 @@ import { DEVELOPMENT_AUTH_SECRET, loadConfig } from "./config.ts";
 import { createDatabase } from "./db/database.ts";
 import { setUpDataCenters, setUpLocation } from "./enrichment/setup.ts";
 import { postgresKnowsTimeZone } from "./organizations/organizations.ts";
+import { s3ObjectStore } from "./storage/object-store.ts";
 
 const config = loadConfig();
 const db = createDatabase({ connectionString: config.databaseUrl });
 // Reports read events here; collection never needs it (docs/clickhouse.md).
 const clickhouse = createClickHouse(config.clickhouse);
+// Source maps; none when the install has no object store (docs/errors.md).
+const objectStore = config.objectStore === null ? null : s3ObjectStore(config.objectStore);
 const auth = createAuth({
   db,
   publicUrl: config.publicUrl,
@@ -48,6 +51,7 @@ const app = buildApp({
     trustedOrigins: config.trustedOrigins,
     defaultTimeZone: config.defaultTimeZone,
   },
+  sourceMaps: { store: objectStore, limitBytes: config.sourceMapBytesPerOrganization },
   trackerScriptPath: config.trackerScriptPath,
   dashboardPath: resolve(config.dashboardPath),
   // A number means "trust this many proxy hops in front of the API".
@@ -62,6 +66,9 @@ const app = buildApp({
 if (config.authSecret === DEVELOPMENT_AUTH_SECRET) {
   app.log.warn("AUTH_SECRET is not set: using the development secret, which is not secret");
 }
+if (objectStore === null) {
+  app.log.info("OBJECT_STORE_URL is not set: source maps are off");
+}
 for (const setup of [location, dataCenters]) {
   if (setup.ok) {
     app.log.info(setup.message);
@@ -74,6 +81,7 @@ for (const setup of [location, dataCenters]) {
 app.addHook("onClose", async () => {
   await db.destroy();
   await clickhouse.close();
+  objectStore?.close();
 });
 
 async function shutdown(signal: NodeJS.Signals) {

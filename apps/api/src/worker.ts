@@ -3,8 +3,8 @@
  *
  * - Copying events to ClickHouse every few seconds, and deleting them from
  *   PostgreSQL once copied and two days old, every hour (clickhouse/copy-events.ts).
- * - Deleting a deleted project's events from ClickHouse, every minute
- *   (clickhouse/delete-events.ts).
+ * - Deleting a deleted project's events from ClickHouse, and its source
+ *   maps from the object store, every minute (clickhouse/delete-events.ts).
  * - At start and every few hours: finding projects ClickHouse still holds
  *   events of but PostgreSQL no longer knows, deleting events older than
  *   each project's retention in both databases (retention/retention.ts),
@@ -23,6 +23,7 @@ import {
 import { loadConfig } from "./config.ts";
 import { createDatabase } from "./db/database.ts";
 import { deleteExpiredEvents } from "./retention/retention.ts";
+import { s3ObjectStore } from "./storage/object-store.ts";
 
 /**
  * How often retention runs, with the search for forgotten projects and the
@@ -42,6 +43,7 @@ export const PURGE_INTERVAL_MS = 60 * 1000;
 const config = loadConfig();
 const db = createDatabase({ connectionString: config.databaseUrl, maxConnections: 3 });
 const clickhouse = createClickHouse(config.clickhouse);
+const objectStore = config.objectStore === null ? null : s3ObjectStore(config.objectStore);
 
 /** One JSON line per message, like the API's log. */
 function log(level: "info" | "error", msg: string, fields: Record<string, unknown> = {}) {
@@ -96,11 +98,10 @@ const stopPruning = every(PRUNE_INTERVAL_MS, async () => {
 
 const stopPurging = every(PURGE_INTERVAL_MS, async () => {
   try {
-    const purged = await purgeDeletedProjects(db, clickhouse);
-    if (purged.projects > 0)
-      log("info", "deleted projects' events deleted from ClickHouse", purged);
+    const purged = await purgeDeletedProjects(db, clickhouse, objectStore);
+    if (purged.projects > 0) log("info", "deleted projects' events and files deleted", purged);
   } catch (error) {
-    log("error", "deleting deleted projects' events from ClickHouse failed", {
+    log("error", "deleting deleted projects' events and files failed", {
       err: String(error),
     });
   }
@@ -147,6 +148,7 @@ async function shutdown(signal: NodeJS.Signals) {
   // Runs in progress finish their batch first.
   await Promise.all([stopCopying(), stopPruning(), stopPurging(), stopRetention()]);
   await clickhouse.close();
+  objectStore?.close();
   await db.destroy();
 }
 

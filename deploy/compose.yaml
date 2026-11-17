@@ -1,6 +1,7 @@
 # Ottertrail on one server: PostgreSQL, ClickHouse, the API (which also
 # serves the dashboard and the tracker), the worker, and Caddy, which gets
-# HTTPS certificates and is the only service reachable from outside.
+# HTTPS certificates and is the only service reachable from outside. With
+# the "object-store" profile, Garage too, which holds source maps.
 #
 # Settings come from a file named .env next to this one (copy env.example).
 # See docs/deployment.md for the steps.
@@ -36,6 +37,15 @@ x-app: &app
     TRUST_PROXY: "1"
     LOG_LEVEL: ${LOG_LEVEL:-info}
     ORGANIZATION_EVENTS_PER_SECOND: ${ORGANIZATION_EVENTS_PER_SECOND:-600}
+    # Source maps: off unless OBJECT_STORE_URL is set, to the stack's own
+    # Garage (http://garage:3900, with --profile object-store) or another
+    # S3-compatible store such as Cloudflare R2 (docs/deployment.md).
+    OBJECT_STORE_URL: ${OBJECT_STORE_URL:-}
+    OBJECT_STORE_REGION: ${OBJECT_STORE_REGION:-garage}
+    OBJECT_STORE_BUCKET: ${OBJECT_STORE_BUCKET:-ottertrail}
+    OBJECT_STORE_ACCESS_KEY_ID: ${OBJECT_STORE_ACCESS_KEY_ID:-}
+    OBJECT_STORE_SECRET_ACCESS_KEY: ${OBJECT_STORE_SECRET_ACCESS_KEY:-}
+    SOURCE_MAP_BYTES_PER_ORGANIZATION: ${SOURCE_MAP_BYTES_PER_ORGANIZATION:-}
 
 services:
   postgres:
@@ -82,6 +92,29 @@ services:
       interval: 5s
       timeout: 5s
       retries: 30
+
+  # An S3-compatible object store for source maps, on this server: only
+  # with --profile object-store. It creates its bucket and access key from
+  # the same settings the API reads, and nothing outside reaches it.
+  garage:
+    image: docker.io/dxflrs/garage:v2.5.0
+    profiles: ["object-store"]
+    restart: unless-stopped
+    logging: *logging
+    command: ["/garage", "server", "--single-node", "--default-bucket"]
+    environment:
+      GARAGE_RPC_SECRET: ${GARAGE_RPC_SECRET:-}
+      GARAGE_DEFAULT_ACCESS_KEY: ${OBJECT_STORE_ACCESS_KEY_ID:-}
+      GARAGE_DEFAULT_SECRET_KEY: ${OBJECT_STORE_SECRET_ACCESS_KEY:-}
+      GARAGE_DEFAULT_BUCKET: ${OBJECT_STORE_BUCKET:-ottertrail}
+    volumes:
+      - garage-data:/var/lib/garage
+      - ./garage/garage.toml:/etc/garage.toml:ro
+    healthcheck:
+      test: ["CMD", "/garage", "status"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
 
   # Brings both schemas up to date, then exits. The API and worker start after it.
   migrate:
@@ -146,3 +179,4 @@ volumes:
   geo-data:
   caddy-data:
   caddy-config:
+  garage-data:

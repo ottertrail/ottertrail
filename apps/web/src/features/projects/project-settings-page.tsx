@@ -33,6 +33,7 @@ import { DangerZone } from "./danger-zone";
 import { hostnamesFromText, installSnippet, timeAgo } from "./format";
 import { NoSuchProject } from "./no-such-project";
 import { ServerCard } from "./server-card";
+import { SourceMapsCard } from "./source-maps-card";
 
 /** While waiting for the first event, check every few seconds. */
 const STATUS_REFRESH_MS = 10_000;
@@ -331,6 +332,7 @@ export function ProjectSettingsPage({ projectId }: { projectId: string }) {
       <ServerCard project={project.data} />
       {/* One project's unsaved choices never carry over to another's. */}
       <SettingsCard key={project.data.id} project={project.data} />
+      <SourceMapsCard key={`source-maps-${project.data.id}`} projectId={project.data.id} />
       <DangerZone project={project.data} />
     </div>
   );

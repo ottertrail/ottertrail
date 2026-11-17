@@ -20,8 +20,10 @@
     "start:worker": "node dist/worker.mjs"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "catalog:",
     "@clickhouse/client": "catalog:",
     "@fastify/static": "catalog:",
+    "@jridgewell/trace-mapping": "catalog:",
     "better-auth": "catalog:",
     "bowser": "catalog:",
     "fastify": "^5.12.8",

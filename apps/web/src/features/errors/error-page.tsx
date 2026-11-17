@@ -44,6 +44,7 @@ import { formatMoment } from "../users/format";
 import { ErrorStatusBadge } from "./error-status";
 import { RangeControls } from "./range-controls";
 import { type ErrorsSearch, errorsSearchOf } from "./search";
+import { StackCard } from "./stack-card";
 
 /** The group's status, and the button that changes it. */
 function Resolution({ projectId, detail }: { projectId: string; detail: ErrorDetail }) {
@@ -179,31 +180,6 @@ function BreakdownCard({
   );
 }
 
-function StackCard({ stack }: { stack: string | null }) {
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle>
-          <h3>Stack trace</h3>
-        </CardTitle>
-        <CardDescription>
-          The latest occurrence&apos;s stack, as the browser reported it. Source maps, to show your
-          original files and lines, are planned.
-        </CardDescription>
-      </CardHeader>
-      <CardContent>
-        {stack === null ? (
-          <p className="text-sm text-ink-subtle">The browser gave no stack trace for this error.</p>
-        ) : (
-          <pre className="max-h-96 overflow-auto rounded-lg bg-canvas p-4 font-mono text-code text-ink-muted ring-1 ring-border">
-            {stack}
-          </pre>
-        )}
-      </CardContent>
-    </Card>
-  );
-}
-
 /** "Firefox 132.0", or whichever part is known. */
 const browserText = (occurrence: Occurrence) =>
   [occurrence.browser, occurrence.browserVersion].filter((part) => part !== null).join(" ");
@@ -329,7 +305,12 @@ function Detail({
           />
         ))}
       </div>
-      <StackCard stack={detail.stack} />
+      <StackCard
+        projectId={projectId}
+        stack={detail.stack}
+        frames={detail.frames}
+        sourceMaps={detail.sourceMaps}
+      />
       <OccurrencesCard projectId={projectId} detail={detail} environment={environment} />
     </>
   );
@@ -385,7 +366,8 @@ function NoOccurrence({
 
 /**
  * One error group: its status (with Resolve or Reopen), its numbers and a
- * trend for a period, where it happens, the latest stack trace, and its
+ * trend for a period, where it happens, the latest stack trace (mapped with
+ * the release's source maps where it can be), and its
  * latest occurrences.
  */
 export function ErrorPage({

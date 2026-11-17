@@ -6,16 +6,17 @@ Status: tested on one machine with Podman (see [What has been tested](#what-has-
 
 ## What runs
 
-`deploy/compose.yaml` starts six services from the [Dockerfile](../Dockerfile) at the repository root, which builds one image for all of Ottertrail, [deploy/Caddyfile](../deploy/Caddyfile), and ClickHouse's settings in [deploy/clickhouse/](../deploy/clickhouse/).
+`deploy/compose.yaml` starts six services, and a seventh with the `object-store` profile ([source maps](#source-maps)), from the [Dockerfile](../Dockerfile) at the repository root, which builds one image for all of Ottertrail, [deploy/Caddyfile](../deploy/Caddyfile), and ClickHouse's settings in [deploy/clickhouse/](../deploy/clickhouse/).
 
-| Service      | What it does                                                                                                                                 | Reachable from outside |
-| ------------ | -------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------- |
-| `postgres`   | PostgreSQL 18, data in the `postgres-data` volume                                                                                            | No                     |
-| `clickhouse` | ClickHouse 26.8, for analytics events and later logs and traces, data in `clickhouse-data`. Capped at 40% of the server's memory (see below) | No                     |
-| `migrate`    | Brings both databases' schemas up to date, then exits. The API and the worker start only after it succeeds                                   | No                     |
-| `api`        | The API, the dashboard's files, and the tracker (`/t.js`), on port 3000 inside the stack. Geolocation file in `geo-data`                     | No, only through Caddy |
-| `worker`     | Background work: copies events to ClickHouse, deletes them from PostgreSQL after two days, and deletes events past each project's retention  | No                     |
-| `caddy`      | HTTPS: gets and renews the certificate, redirects HTTP to HTTPS, compresses responses, passes every request to the API                       | Ports 80 and 443       |
+| Service      | What it does                                                                                                                                                                   | Reachable from outside |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------- |
+| `postgres`   | PostgreSQL 18, data in the `postgres-data` volume                                                                                                                              | No                     |
+| `clickhouse` | ClickHouse 26.8, for analytics events and later logs and traces, data in `clickhouse-data`. Capped at 40% of the server's memory (see below)                                   | No                     |
+| `migrate`    | Brings both databases' schemas up to date, then exits. The API and the worker start only after it succeeds                                                                     | No                     |
+| `api`        | The API, the dashboard's files, and the tracker (`/t.js`), on port 3000 inside the stack. Geolocation file in `geo-data`                                                       | No, only through Caddy |
+| `worker`     | Background work: copies events to ClickHouse, deletes them from PostgreSQL after two days, and deletes events past each project's retention                                    | No                     |
+| `caddy`      | HTTPS: gets and renews the certificate, redirects HTTP to HTTPS, compresses responses, passes every request to the API                                                         | Ports 80 and 443       |
+| `garage`     | Only with `--profile object-store`: [Garage](https://garagehq.deuxfleurs.fr/) (AGPL-3.0), an S3-compatible store for source maps, in `garage-data`. About 10 MB of memory idle | No                     |
 
 Idle, the stack without ClickHouse used about 160 MB of memory (API 100 MB, PostgreSQL 27 MB, worker 18 MB, Caddy 14 MB), measured with the test data below. The image is about 290 MB, almost all of it Node.js's own image. No sizing under real traffic has been measured.
 
@@ -112,6 +113,26 @@ Restoring PostgreSQL alone, or moving it to a new major version (dump, new volum
 
 Compose stops with "set … in .env" when a required one is missing.
 
+### Source maps
+
+Source maps turn minified stack traces back into a site's own code ([errors](errors.md#5-source-maps)). They need an S3-compatible object store; without one, they are off and everything else works. Either:
+
+- **Garage on the same server.** Generate the store's access key and Garage's own secret, put them in `.env` with `OBJECT_STORE_URL`, and start the stack with the `object-store` profile:
+
+  ```sh
+  printf 'OBJECT_STORE_URL=http://garage:3900\n' >> .env
+  printf 'OBJECT_STORE_ACCESS_KEY_ID=GK%s\n' "$(openssl rand -hex 12)" >> .env
+  printf 'OBJECT_STORE_SECRET_ACCESS_KEY=%s\n' "$(openssl rand -hex 32)" >> .env
+  printf 'GARAGE_RPC_SECRET=%s\n' "$(openssl rand -hex 32)" >> .env
+  docker compose --profile object-store up -d
+  ```
+
+  Garage creates its bucket (`OBJECT_STORE_BUCKET`, default `ottertrail`) and that key on its first start, from the same settings the API reads. Give `--profile object-store` to every later `docker compose` command too (`pull`, `up`, `down`), or set `COMPOSE_PROFILES=object-store` in `.env`, which Docker Compose reads.
+
+- **Cloudflare R2, Amazon S3, or another S3-compatible store.** Create a bucket and an access key for it there, set `OBJECT_STORE_URL` to its endpoint (for R2, `https://<account ID>.r2.cloudflarestorage.com`), `OBJECT_STORE_REGION` (`auto` for R2), `OBJECT_STORE_BUCKET`, `OBJECT_STORE_ACCESS_KEY_ID`, and `OBJECT_STORE_SECRET_ACCESS_KEY`, and leave the profile off.
+
+`SOURCE_MAP_BYTES_PER_ORGANIZATION` limits each organization's compressed maps, 1 GiB by default. The API logs `OBJECT_STORE_URL is not set: source maps are off` at start when there is no store.
+
 Containers keep at most 50 MB of logs each (`docker compose logs api` shows them). The API and the worker log one JSON object per line.
 
 ## Decisions
@@ -157,12 +178,14 @@ With ClickHouse in the stack (17 November 2026), driving the API from inside the
 - `backup.sh`, then `down -v`, then `restore.sh`: the same report, and sign-in still works. After the worker sent PostgreSQL's events again, ClickHouse held 12 rows for 6 events and reported 6. The deleted project stayed deleted. The backup files are readable by their owner only. A backup that failed (PostgreSQL stopped) left no file behind, here or in ClickHouse's volume, and `restore.sh` refuses a name that is not a backup's.
 - On the first try, the restore failed: ClickHouse's image answers queries from a temporary server while it sets itself up on an empty volume, and the restore reached it in between. `restore.sh` now waits for the real server.
 - `up -d --build` failed on Podman's 2 GB machine: podman-compose built the shared image once for each of the three services that use it, at the same time, and two of the builds ran out of memory. The third finished, hence `build migrate` first in [First start](#first-start). The later `build migrate` reused that build's cached layers, so a build from scratch alone was not timed.
+- The `object-store` profile (18 November 2026, Podman): without it, the stack has no Garage; with it, Garage started from this file healthy, and created its bucket and access key from the settings. Uploading, reading, and deleting source maps were tested against the development stack's Garage (the same image and `deploy/garage/garage.toml`), not yet inside this stack.
 
-Not tested yet: Docker Engine and Docker Compose on a Linux server, a real domain with a Let's Encrypt certificate, an `amd64` image, an update that runs a migration on existing data, and a restore on a new server.
+Not tested yet: the whole stack with the `object-store` profile, Docker Engine and Docker Compose on a Linux server, a real domain with a Let's Encrypt certificate, an `amd64` image, an update that runs a migration on existing data, and a restore on a new server.
 
 ## Known limitations
 
 - No automated or off-site backups.
+- The backups leave out the object store (Garage's `garage-data`, or the bucket elsewhere): after a restore, upload the source maps of the releases still in use again. Garage runs as one node, without copies of its data on other servers.
 - The geolocation database and the data-center ranges are updated by hand, monthly.
 - One server: no failover, and a few seconds of downtime for each update.
 - No image registry or CI builds: each server builds its own image.

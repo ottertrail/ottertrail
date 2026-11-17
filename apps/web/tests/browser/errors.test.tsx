@@ -195,11 +195,11 @@ describe("an error's page", () => {
       .element(page.getByRole("table", { name: "Operating systems, most occurrences first" }))
       .toBeVisible();
 
-    // The stack as sent, line by line.
-    expect(document.querySelector("pre")?.textContent).toContain(
-      "\n    at submit (https://example.com/assets/app.js:1:2345)\n",
-    );
-    await expect.element(page.getByText(/Source maps, .* are planned/)).toBeVisible();
+    // The stack, mapped with its release's source maps: source-maps.test.tsx covers it.
+    await expect
+      .element(page.getByText(/^Mapped to your original files with the source maps of release/))
+      .toBeVisible();
+    await expect.element(page.getByRole("list", { name: "Frames, top first" })).toBeVisible();
 
     const occurrences = page.getByRole("table", { name: "Latest occurrences, newest first" });
     const rows = [...occurrences.element().querySelectorAll("tbody tr")].map((row) =>

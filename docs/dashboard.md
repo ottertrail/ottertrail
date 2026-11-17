@@ -89,7 +89,7 @@ Settings that differ from Better Auth's defaults, and why:
 
 Code: `apps/api/src/projects/`, `apps/api/src/tracker-script/`, and `apps/web/src/features/projects/`.
 
-A project is one website or app. The Projects page lists them with their allowed sites and when their last event happened. A project's Settings page (`/projects/<id>/settings`) shows its install snippet and public key to copy, whether events are arriving, and a form for its name and allowed sites; a new project opens there.
+A project is one website or app. The Projects page lists them with their allowed sites and when their last event happened. A project's Settings page (`/projects/<id>/settings`) shows its install snippet and public key to copy, whether events are arriving, a form for its name and allowed sites, and its uploaded source maps; a new project opens there.
 
 ### The workspace and a project
 
@@ -137,6 +137,16 @@ The Settings form's "Keep events" sets how long the project keeps its events: fo
 ### Your server
 
 The "Your server" card holds the project's secret key, hidden until "Show" and then copyable, with an example of a server-side event, and the switch "Only accept user IDs signed by your server", with an example of signing in Node.js ([web analytics](web-analytics.md#signed-user-ids)). The switch saves at once (`PATCH /api/projects/:id` with `requireSignedUserIds`), and collection uses the new rule from the next event: the route makes the key cache forget the project.
+
+### Source maps
+
+The "Source maps" card (`apps/web/src/features/projects/source-maps-card.tsx`, the routes in [errors](errors.md)) shows what the project has uploaded:
+
+- On an install without an object store, it only says source maps are off there, and that the operator turns them on with `OBJECT_STORE_URL`.
+- Otherwise: the organization's use against its limit ("14 MB of 1 GB used", all its projects together), then the releases with maps, by their latest upload, newest first or, with "Oldest first", oldest first (the ones to delete for room); at most 100, with a note saying how many there are in all when there are more: release, files, size, and when the last map was uploaded. Each row has a button that lists the release's files with their sizes in a dialog, and a Delete button. Deleting asks first, and says the maps go for good, the errors stay, and that release's stacks show minified code again; afterwards the row goes at once and focus moves to the card's heading (Cancel returns it to the button). Error pages are fetched again.
+- Without maps, and behind "Show how to upload" once there are some: the upload command of the CLI (from this repository's `packages/sourcemaps`, which is not on npm yet), a `curl` example for one file, and the rules: one upload per release and minified file, `path` is the file's path as the browser loads it, the release must match `data-release`, and maps built without publishing them (Vite's `build.sourcemap: "hidden"`). The secret key appears only as a placeholder (`sk_…`, `$OTTERTRAIL_SECRET_KEY`) pointing at the "Your server" card; the card never prints the real key.
+
+Sizes use powers of 1,024 with the short units KB, MB, and GB. `source-maps.test.tsx` covers the list, oldest first on request, the files dialog, deleting (the request, the list, focus), the install without an object store, and the empty state.
 
 ### Replacing the key, deleting the project
 
@@ -322,10 +332,19 @@ Both run `requireProjectAccess`, as every project route ([Organizations](#organi
 Code: `apps/web/src/features/errors/`, `apps/api/src/errors/`. The error groups the tracker reports ([errors](errors.md)), in one environment and a range of days, with the same period choices and addresses as the analytics page (`period`, `from` and `to`, `env`).
 
 - `/projects/<id>/errors`: the groups seen in the range, latest first, under three tabs: Unresolved (the default, regressions included), Resolved, and All (`status=` in the address). Each row: the type and message (the full message on hover), occurrences, users, and visitors in the range, last seen (relative, the exact time on hover), first seen, and a Regressed or Resolved badge, with an icon and a label. A row opens its group. Without errors, the page explains automatic capture, `captureError()`, and `data-errors="off"`, with an example to copy. A note says when the list stops at 1,000 groups.
-- `/projects/<id>/errors/<fingerprint>`: one group. Its type and full message, its status with Resolve or Reopen (who resolved it and when, or that it regressed after), occurrences, users, and visitors in the range, first and last seen, occurrences per day (the analytics page's line chart, with "Show the numbers"), where it happens (pages, browsers, operating systems, releases), the latest occurrence's stack trace as the browser reported it (source maps are planned), and the latest 20 occurrences: time, user (a link to their page) or Anonymous, page, browser, OS, release, and "Caught" for `captureError()`. A group without occurrences in the range says so, with links to all errors and to the last 12 months.
+- `/projects/<id>/errors/<fingerprint>`: one group. Its type and full message, its status with Resolve or Reopen (who resolved it and when, or that it regressed after), occurrences, users, and visitors in the range, first and last seen, occurrences per day (the analytics page's line chart, with "Show the numbers"), where it happens (pages, browsers, operating systems, releases), the latest occurrence's stack trace (below), and the latest 20 occurrences: time, user (a link to their page) or Anonymous, page, browser, OS, release, and "Caught" for `captureError()`. A group without occurrences in the range says so, with links to all errors and to the last 12 months.
 - On a user's page, an error shows its type and message, linking to its group with the shortest period that includes it.
 
-The API is in [errors](errors.md#4-status-and-counts). Resolve and Reopen refresh the list and the group. A group the range does not include answers 404 with `no_occurrences`, distinct from the `not_found` of a project the user cannot reach. `errors.test.tsx` covers the list, tabs, environments, empty states, the group's page, Resolve, and both 404s, against the fake API.
+### The stack trace
+
+The group's page shows the latest occurrence's stack, mapped with its release's source maps where the API could (`frames` and `sourceMaps` in the answer; [errors](errors.md)). Code: `apps/web/src/features/errors/stack-card.tsx`.
+
+- When at least one frame is mapped, the frames are listed top first. A mapped frame shows its original file, line, and column (not the map's name at that position, which is often not the enclosing function's), the original source around the line when the map holds it (numbered, scrolling sideways instead of wrapping; the frame's line has a ▶ marker, a background, and words for screen readers), and the minified location in small text. Unmapped frames show their minified location; three or more in a row, usually a library's, fold behind "Show N more frames, without a source map". "Show the stack as the browser reported it" opens the raw text.
+- When no frame is mapped, the raw stack shows as before.
+- One note above says how the stack was mapped, or why not: mapped with release X's maps; the occurrence has no release (set with `data-release` on the tracker's tag); no frame is in a file a map could be for (a script written into the page, the browser's own code); no maps of release X cover the stack's files, or the release's maps for them cover none of the frames and may be another build's (both listing the files, with a link to the project's Source maps settings); source maps are off on this install (no object store, `OBJECT_STORE_URL`); or the maps could not be read just now.
+- Without a stack, the card says the browser gave none, and nothing about source maps.
+
+The API is in [errors](errors.md#4-status-and-counts). Resolve and Reopen refresh the list and the group. A group the range does not include answers 404 with `no_occurrences`, distinct from the `not_found` of a project the user cannot reach. `errors.test.tsx` covers the list, tabs, environments, empty states, the group's page, Resolve, and both 404s, against the fake API. `source-maps.test.tsx` covers the stack card: mapped frames with their source and marked line, the folded frames, the raw stack, each note, and no stack.
 
 ### Not done yet
 

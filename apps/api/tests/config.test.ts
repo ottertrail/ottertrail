@@ -6,11 +6,13 @@ import {
   DEFAULT_DATA_CENTERS_PATH,
   DEFAULT_GEO_DATABASE_PATH,
   DEFAULT_ORGANIZATION_EVENTS_PER_SECOND,
+  DEFAULT_SOURCE_MAP_BYTES_PER_ORGANIZATION,
   DEVELOPMENT_AUTH_SECRET,
   DEFAULT_TRACKER_SCRIPT_PATH,
   DEVELOPMENT_PUBLIC_URL,
   LOCAL_CLICKHOUSE,
   LOCAL_DATABASE_URL,
+  LOCAL_OBJECT_STORE,
   loadConfig,
 } from "../src/config.ts";
 
@@ -43,6 +45,8 @@ describe("loadConfig", () => {
       authSecret: DEVELOPMENT_AUTH_SECRET,
       trackerScriptPath: DEFAULT_TRACKER_SCRIPT_PATH,
       dashboardPath: DEFAULT_DASHBOARD_PATH,
+      objectStore: LOCAL_OBJECT_STORE,
+      sourceMapBytesPerOrganization: DEFAULT_SOURCE_MAP_BYTES_PER_ORGANIZATION,
     });
   });
 
@@ -67,6 +71,12 @@ describe("loadConfig", () => {
         AUTH_SECRET: "s".repeat(44),
         TRACKER_SCRIPT_PATH: "/srv/ottertrail/tracker.js",
         DASHBOARD_PATH: "/srv/ottertrail/dashboard",
+        OBJECT_STORE_URL: "https://account.r2.cloudflarestorage.com/",
+        OBJECT_STORE_REGION: "auto",
+        OBJECT_STORE_BUCKET: "ottertrail-files",
+        OBJECT_STORE_ACCESS_KEY_ID: "id-123",
+        OBJECT_STORE_SECRET_ACCESS_KEY: "o".repeat(40),
+        SOURCE_MAP_BYTES_PER_ORGANIZATION: String(5 * 1024 ** 3),
       }),
     ).toEqual({
       host: "0.0.0.0",
@@ -90,6 +100,14 @@ describe("loadConfig", () => {
       authSecret: "s".repeat(44),
       trackerScriptPath: "/srv/ottertrail/tracker.js",
       dashboardPath: "/srv/ottertrail/dashboard",
+      objectStore: {
+        url: "https://account.r2.cloudflarestorage.com",
+        region: "auto",
+        bucket: "ottertrail-files",
+        accessKeyId: "id-123",
+        secretAccessKey: "o".repeat(40),
+      },
+      sourceMapBytesPerOrganization: 5 * 1024 ** 3,
     });
   });
 
@@ -209,6 +227,48 @@ describe("loadConfig", () => {
       expect(() => loadConfig({ CLICKHOUSE_DATABASE: "events; DROP" })).toThrow(
         /letters, digits, and underscores/,
       );
+    });
+  });
+
+  describe("object store", () => {
+    test("is off in production unless OBJECT_STORE_URL is set, and in development with off", () => {
+      expect(loadConfig(PRODUCTION).objectStore).toBeNull();
+      expect(loadConfig({ OBJECT_STORE_URL: "off" }).objectStore).toBeNull();
+    });
+
+    test("needs both keys with OBJECT_STORE_URL, and never repeats a secret in an error", () => {
+      expect(() => loadConfig({ OBJECT_STORE_URL: "http://garage:3900" })).toThrow(
+        /OBJECT_STORE_ACCESS_KEY_ID and OBJECT_STORE_SECRET_ACCESS_KEY are required/,
+      );
+      expect(() => loadConfig({ OBJECT_STORE_URL: "http://id:hunter2@garage:3900" })).toThrow(
+        expect.objectContaining({ message: expect.not.stringContaining("hunter2") }),
+      );
+    });
+
+    test.each([
+      ["ftp://garage:3900", /must be an http\(s\) URL/],
+      ["garage:3900", /must be an http\(s\) URL/],
+    ])("refuses OBJECT_STORE_URL %s", (url, message) => {
+      expect(() => loadConfig({ OBJECT_STORE_URL: url })).toThrow(message);
+    });
+
+    test("refuses a bucket name S3 would not take", () => {
+      expect(() =>
+        loadConfig({
+          OBJECT_STORE_URL: "http://garage:3900",
+          OBJECT_STORE_ACCESS_KEY_ID: "id",
+          OBJECT_STORE_SECRET_ACCESS_KEY: "secret",
+          OBJECT_STORE_BUCKET: "Has_Capitals",
+        }),
+      ).toThrow(/OBJECT_STORE_BUCKET is not a valid bucket name/);
+    });
+
+    test("refuses a source map limit below 1 MiB, above 1 TiB, or not a whole number", () => {
+      for (const value of ["1000", String(1024 ** 4 + 1), "2097152.5", "lots"]) {
+        expect(() => loadConfig({ SOURCE_MAP_BYTES_PER_ORGANIZATION: value })).toThrow(
+          "SOURCE_MAP_BYTES_PER_ORGANIZATION must be a number of bytes",
+        );
+      }
     });
   });
 });

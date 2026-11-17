@@ -94,7 +94,33 @@ export interface Config {
   trackerScriptPath: string;
   /** The built dashboard's directory, served at the instance's root. */
   dashboardPath: string;
+  /**
+   * The S3-compatible object store that holds source maps (docs/errors.md,
+   * "Source maps"); null when the install has none, and source maps are off.
+   */
+  objectStore: ObjectStoreConfig | null;
+  /** Bytes of source maps, compressed, each organization may store, all its projects together. */
+  sourceMapBytesPerOrganization: number;
 }
+
+export interface ObjectStoreConfig {
+  /** Its S3 endpoint, such as "http://garage:3900" or "https://<account>.r2.cloudflarestorage.com". */
+  url: string;
+  /** The region requests are signed for: "garage" for Garage, "auto" for R2. */
+  region: string;
+  bucket: string;
+  accessKeyId: string;
+  secretAccessKey: string;
+}
+
+/** The local development Garage from compose.yaml (127.0.0.1 only). */
+export const LOCAL_OBJECT_STORE: ObjectStoreConfig = {
+  url: "http://127.0.0.1:3900",
+  region: "garage",
+  bucket: "ottertrail",
+  accessKeyId: "GK0000000000000000000000de",
+  secretAccessKey: "0000000000000000000000000000000000000000000000000000000000000de0",
+};
 
 export interface ClickHouseConfig {
   /** Its HTTP interface, such as "http://clickhouse:8123". */
@@ -195,6 +221,61 @@ function parseClickHouse(env: NodeJS.ProcessEnv): ClickHouseConfig {
     password: password === undefined || password === "" ? LOCAL_CLICKHOUSE.password : password,
     database,
   };
+}
+
+/**
+ * The object store: in development, the local Garage unless OBJECT_STORE_URL
+ * says otherwise ("off" for none); in production, none unless
+ * OBJECT_STORE_URL is set, and then its keys are required.
+ */
+function parseObjectStore(env: NodeJS.ProcessEnv): ObjectStoreConfig | null {
+  const production = env.NODE_ENV === "production";
+  const raw = env.OBJECT_STORE_URL?.trim() ?? "";
+  if (raw === "off" || (raw === "" && production)) return null;
+  if (raw === "") return LOCAL_OBJECT_STORE;
+  const parsed = URL.parse(raw);
+  if (parsed === null || (parsed.protocol !== "http:" && parsed.protocol !== "https:")) {
+    throw new ConfigError("OBJECT_STORE_URL must be an http(s) URL, or off");
+  }
+  if (parsed.username !== "" || parsed.password !== "") {
+    // Error messages never repeat the URL: it would show the secret.
+    throw new ConfigError(
+      "OBJECT_STORE_URL must not hold keys; use OBJECT_STORE_ACCESS_KEY_ID and OBJECT_STORE_SECRET_ACCESS_KEY",
+    );
+  }
+  const accessKeyId = env.OBJECT_STORE_ACCESS_KEY_ID?.trim() ?? "";
+  const secretAccessKey = env.OBJECT_STORE_SECRET_ACCESS_KEY ?? "";
+  if (accessKeyId === "" || secretAccessKey === "") {
+    throw new ConfigError(
+      "OBJECT_STORE_ACCESS_KEY_ID and OBJECT_STORE_SECRET_ACCESS_KEY are required with OBJECT_STORE_URL",
+    );
+  }
+  const bucket = env.OBJECT_STORE_BUCKET?.trim() || LOCAL_OBJECT_STORE.bucket;
+  // S3's bucket names: 3 to 63 lowercase letters, digits, dots, and hyphens.
+  if (!/^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/.test(bucket)) {
+    throw new ConfigError(`OBJECT_STORE_BUCKET is not a valid bucket name, received "${bucket}"`);
+  }
+  return {
+    url: parsed.origin,
+    region: env.OBJECT_STORE_REGION?.trim() || LOCAL_OBJECT_STORE.region,
+    bucket,
+    accessKeyId,
+    secretAccessKey,
+  };
+}
+
+/** The default: 1 GiB of compressed source maps per organization. */
+export const DEFAULT_SOURCE_MAP_BYTES_PER_ORGANIZATION = 1024 ** 3;
+
+function parseSourceMapBytes(raw: string | undefined): number {
+  if (raw === undefined || raw.trim() === "") return DEFAULT_SOURCE_MAP_BYTES_PER_ORGANIZATION;
+  const bytes = Number(raw);
+  if (!Number.isSafeInteger(bytes) || bytes < 1024 ** 2 || bytes > 1024 ** 4) {
+    throw new ConfigError(
+      `SOURCE_MAP_BYTES_PER_ORGANIZATION must be a number of bytes from 1 MiB to 1 TiB, received "${raw}"`,
+    );
+  }
+  return bytes;
 }
 
 function parseTrustProxy(raw: string | undefined): false | number | string[] {
@@ -310,6 +391,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     authSecret: parseAuthSecret(env),
     trackerScriptPath: env.TRACKER_SCRIPT_PATH?.trim() || DEFAULT_TRACKER_SCRIPT_PATH,
     dashboardPath: env.DASHBOARD_PATH?.trim() || DEFAULT_DASHBOARD_PATH,
+    objectStore: parseObjectStore(env),
+    sourceMapBytesPerOrganization: parseSourceMapBytes(env.SOURCE_MAP_BYTES_PER_ORGANIZATION),
   };
 }
 

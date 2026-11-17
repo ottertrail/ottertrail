@@ -1,4 +1,4 @@
-import { buildApp } from "../../src/app.ts";
+import { type AppOptions, buildApp } from "../../src/app.ts";
 import { createAuth } from "../../src/auth/auth.ts";
 import { createSetupToken } from "../../src/auth/setup.ts";
 import { copyEventsToClickHouse } from "../../src/clickhouse/copy-events.ts";
@@ -26,7 +26,13 @@ export const OWNER = {
 export async function signedInDashboard({
   timeZone = "UTC",
   now,
-}: { timeZone?: string; now?: () => Date } = {}) {
+  sourceMaps,
+}: {
+  timeZone?: string;
+  now?: () => Date;
+  /** Source maps' store and limit; off when omitted (tests/source-maps.test.ts). */
+  sourceMaps?: AppOptions["sourceMaps"];
+} = {}) {
   const testDb = await createTestDatabase();
   const testClickHouse = await createTestClickHouse().catch(async (error: unknown) => {
     await testDb.destroy();
@@ -49,6 +55,7 @@ export async function signedInDashboard({
       defaultTimeZone: timeZone,
       ...(now === undefined ? {} : { now }),
     },
+    ...(sourceMaps === undefined ? {} : { sourceMaps }),
   });
   const link = await createSetupToken(testDb.db);
   await app.inject({

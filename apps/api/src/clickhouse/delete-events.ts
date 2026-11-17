@@ -1,6 +1,8 @@
 import type { Kysely } from "kysely";
 
 import type { Database } from "../db/schema.ts";
+import { projectPrefix } from "../source-maps/source-maps.ts";
+import type { ObjectStore } from "../storage/object-store.ts";
 import type { ClickHouseClient } from "./clickhouse.ts";
 import { clickHouseTime, QueryParams, queryRows, type Reader, runCommand } from "./query.ts";
 
@@ -133,17 +135,20 @@ export async function removeDeletedRows(
 
 /**
  * Deletes the events of every deleted project (project_deletions) from
- * ClickHouse, then forgets the deletions. A deletion stays until ClickHouse
- * has confirmed, so an outage only delays it. The worker runs it every
- * minute; running it twice, or in two workers at once, is harmless. The
- * rows leave reports at once and the disk with removeDeletedRows().
+ * ClickHouse, and its files from the object store (its source maps), then
+ * forgets the deletions. A deletion stays until both have confirmed, so an
+ * outage only delays it. The worker runs it every minute; running it
+ * twice, or in two workers at once, is harmless. The rows leave reports at
+ * once and the disk with removeDeletedRows().
  */
 export async function purgeDeletedProjects(
   db: Kysely<Database>,
   clickhouse: ClickHouseClient,
-): Promise<{ projects: number; rows: number }> {
+  store: ObjectStore | null = null,
+): Promise<{ projects: number; rows: number; files: number }> {
   const deletions = await db.selectFrom("project_deletions").select("project_id").execute();
   let rows = 0;
+  let files = 0;
   for (const chunk of chunks(deletions.map((deletion) => deletion.project_id))) {
     const params = new QueryParams();
     const counts = await deleteWhere(
@@ -152,9 +157,12 @@ export async function purgeDeletedProjects(
       params,
     );
     rows += [...counts.values()].reduce((sum, count) => sum + count, 0);
+    if (store !== null) {
+      for (const projectId of chunk) files += await store.deletePrefix(projectPrefix(projectId));
+    }
     await db.deleteFrom("project_deletions").where("project_id", "in", chunk).execute();
   }
-  return { projects: deletions.length, rows };
+  return { projects: deletions.length, rows, files };
 }
 
 /**

@@ -1,0 +1,489 @@
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { FileCode2Icon, LoaderCircleIcon, OctagonAlertIcon, Trash2Icon } from "lucide-react";
+import * as React from "react";
+
+import { CopyableCode } from "@/components/copyable-code";
+import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Skeleton } from "@/components/ui/skeleton";
+import { ApiError } from "@/lib/api";
+import {
+  deleteSourceMaps,
+  formatBytes,
+  type ReleaseOrder,
+  type SourceMapOverview,
+  type SourceMapRelease,
+  sourceMapFilesQuery,
+  sourceMapsKey,
+  sourceMapsQuery,
+} from "@/lib/source-maps-api";
+
+import { timeAgo } from "./format";
+
+/** The upload command of the CLI in this repository (packages/sourcemaps). */
+function cliExample(origin: string): string {
+  return `OTTERTRAIL_SECRET_KEY=sk_… npx @ottertrail/sourcemaps upload dist \\
+  --release 1.4.2 --url-prefix / --host ${origin}`;
+}
+
+/** One file's map, as the build tool wrote it. */
+function curlExample(origin: string): string {
+  return `curl -X PUT "${origin}/api/source-maps?release=1.4.2&path=/assets/index-4f3a.js" \\
+  -H "Authorization: Bearer $OTTERTRAIL_SECRET_KEY" \\
+  -H "Content-Type: application/json" \\
+  --data-binary @dist/assets/index-4f3a.js.map`;
+}
+
+const code = (text: string) => <code className="font-mono">{text}</code>;
+
+/** How a build uploads its maps. The secret key stays a placeholder: never the real one. */
+function UploadHelp() {
+  const origin = window.location.origin;
+  return (
+    <div className="flex flex-col gap-3 text-sm text-ink-muted">
+      <p>
+        After each build, upload the source map of every minified file: one upload per release and
+        file. Uploads need the project&apos;s secret key, shown under &ldquo;Your server&rdquo;
+        above; keep it in your build&apos;s secrets, never in a page.
+      </p>
+      <CopyableCode text={cliExample(origin)} copyLabel="Copy the upload command" />
+      <p className="text-xs text-ink-subtle">
+        The command is not on npm yet: until it is published, run it from this repository&apos;s{" "}
+        {code("packages/sourcemaps")}.
+      </p>
+      <p>Or upload one file at a time, with any HTTP client:</p>
+      <CopyableCode text={curlExample(origin)} copyLabel="Copy the curl example" />
+      <ul className="flex list-disc flex-col gap-1 pl-5">
+        <li>
+          {code("path")} is the minified file&apos;s path as the browser loads it, such as{" "}
+          {code("/assets/index-4f3a.js")}, without the site&apos;s address.
+        </li>
+        <li>
+          {code("release")} must match the {code("data-release")} on the tracker&apos;s script tag,
+          so each error is mapped with the code it ran.
+        </li>
+        <li>
+          Build the maps without publishing them, so visitors cannot read your source: in Vite,{" "}
+          {code('build.sourcemap: "hidden"')} writes them without the comment that points browsers
+          to them. Upload them, then leave them out of what you deploy.
+        </li>
+      </ul>
+    </div>
+  );
+}
+
+/** One release's files and their sizes, in a dialog. Focus goes back to its button, which stays. */
+function FilesDialog({ projectId, release }: { projectId: string; release: SourceMapRelease }) {
+  const [open, setOpen] = React.useState(false);
+  const files = useQuery({ ...sourceMapFilesQuery(projectId, release.release), enabled: open });
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <Button
+        variant="ghost"
+        size="icon-sm"
+        aria-label={`Show the files of release ${release.release}`}
+        onClick={() => setOpen(true)}
+      >
+        <FileCode2Icon aria-hidden="true" />
+      </Button>
+      <DialogContent className="sm:max-w-xl">
+        <DialogHeader>
+          <DialogTitle>Release {release.release}</DialogTitle>
+          <DialogDescription>
+            The minified files it has source maps for, by path, with each map&apos;s stored size.
+          </DialogDescription>
+        </DialogHeader>
+        {files.isPending ? (
+          <div className="flex flex-col gap-2" aria-busy="true" aria-label="Loading">
+            <Skeleton className="h-5 w-full" />
+            <Skeleton className="h-5 w-2/3" />
+          </div>
+        ) : files.isError ? (
+          <Alert variant="destructive" role="alert">
+            <OctagonAlertIcon />
+            <AlertDescription>{files.error.message}</AlertDescription>
+          </Alert>
+        ) : files.data.length === 0 ? (
+          <p className="text-sm text-ink-subtle">This release has no source maps any more.</p>
+        ) : (
+          <div className="max-h-96 overflow-y-auto">
+            <table className="w-full table-fixed text-sm">
+              <caption className="sr-only">Files of release {release.release}, by path</caption>
+              <thead className="sticky top-0 bg-popover">
+                <tr className="text-xs text-ink-subtle">
+                  <th scope="col" className="pb-2 text-left font-normal">
+                    Path
+                  </th>
+                  <th scope="col" className="w-24 pb-2 text-right font-normal">
+                    Size
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {files.data.map((file) => (
+                  <tr key={file.path} className="border-t border-hairline">
+                    <th
+                      scope="row"
+                      className="py-1.5 pr-3 text-left font-mono font-normal break-all text-ink"
+                    >
+                      {file.path}
+                    </th>
+                    <td className="py-1.5 text-right align-top text-ink-muted tabular-nums">
+                      {formatBytes(file.bytes)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+        <DialogFooter>
+          <DialogClose render={<Button variant="outline" type="button" />}>Close</DialogClose>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/** Asks before deleting a release's maps; its errors stay. */
+function DeleteReleaseDialog({
+  projectId,
+  release,
+  returnFocus,
+}: {
+  projectId: string;
+  release: SourceMapRelease;
+  /** Where focus goes once deleted: this button leaves with its row. */
+  returnFocus: React.RefObject<HTMLElement | null>;
+}) {
+  const [open, setOpen] = React.useState(false);
+  // Once deleted, the row and its buttons go: focus goes to the heading. On Cancel, back to the button.
+  const deleted = React.useRef(false);
+  const queryClient = useQueryClient();
+  const remove = useMutation({
+    mutationFn: async () => {
+      try {
+        await deleteSourceMaps(projectId, release.release);
+      } catch (error) {
+        // Already deleted, such as in another tab: what was asked for.
+        if (!(error instanceof ApiError && error.code === "no_source_maps")) throw error;
+      }
+    },
+    onSuccess: () => {
+      deleted.current = true;
+      setOpen(false);
+      // Gone from the list at once, even should fetching it again fail.
+      queryClient.setQueriesData<SourceMapOverview>(
+        { queryKey: [...sourceMapsKey(projectId), "list"] },
+        (overview) =>
+          overview === undefined
+            ? undefined
+            : {
+                ...overview,
+                organization: {
+                  ...overview.organization,
+                  storedBytes: Math.max(0, overview.organization.storedBytes - release.bytes),
+                },
+                releases: overview.releases.filter((item) => item.release !== release.release),
+                totalReleases: Math.max(0, overview.totalReleases - 1),
+              },
+      );
+      void queryClient.invalidateQueries({ queryKey: sourceMapsKey(projectId) });
+      // Error pages of the release show its stacks minified again.
+      void queryClient.invalidateQueries({ queryKey: ["error", projectId] });
+    },
+  });
+  const files = release.files === 1 ? "its 1 file" : `its ${release.files} files`;
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        setOpen(next);
+        if (!next) remove.reset();
+      }}
+    >
+      <Button
+        variant="ghost"
+        size="icon-sm"
+        aria-label={`Delete the source maps of release ${release.release}`}
+        onClick={() => setOpen(true)}
+      >
+        <Trash2Icon aria-hidden="true" />
+      </Button>
+      <DialogContent
+        className="sm:max-w-md"
+        finalFocus={() => (deleted.current && returnFocus.current) || true}
+      >
+        <DialogHeader>
+          <DialogTitle>Delete the source maps of release {release.release}?</DialogTitle>
+          <DialogDescription>
+            The maps of {files} are deleted for good. Your errors are kept, but the stacks of
+            release {release.release} show minified code again, until its maps are uploaded again.
+          </DialogDescription>
+        </DialogHeader>
+        {remove.error !== null && (
+          <Alert variant="destructive" role="alert">
+            <OctagonAlertIcon />
+            <AlertDescription>{remove.error.message}</AlertDescription>
+          </Alert>
+        )}
+        <DialogFooter>
+          <DialogClose render={<Button variant="outline" type="button" />}>Cancel</DialogClose>
+          <Button variant="destructive" onClick={() => remove.mutate()} disabled={remove.isPending}>
+            {remove.isPending && <LoaderCircleIcon aria-hidden="true" className="animate-spin" />}
+            Delete source maps
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/** The releases with maps, by their latest upload, in `order`. */
+function ReleaseTable({
+  projectId,
+  releases,
+  order,
+  returnFocus,
+}: {
+  projectId: string;
+  releases: SourceMapRelease[];
+  order: ReleaseOrder;
+  returnFocus: React.RefObject<HTMLHeadingElement | null>;
+}) {
+  return (
+    <table className="w-full table-fixed text-sm">
+      <caption className="sr-only">
+        Releases with source maps, {order === "newest" ? "newest" : "oldest"} upload first
+      </caption>
+      <thead>
+        <tr className="text-xs text-ink-subtle">
+          <th scope="col" className="pb-2 text-left font-normal">
+            Release
+          </th>
+          <th scope="col" className="w-14 pb-2 text-right font-normal">
+            Files
+          </th>
+          <th scope="col" className="w-20 pb-2 text-right font-normal">
+            Size
+          </th>
+          <th scope="col" className="w-32 pb-2 pl-3 text-left font-normal">
+            Last uploaded
+          </th>
+          <th scope="col" className="w-18 pb-2">
+            <span className="sr-only">Actions</span>
+          </th>
+        </tr>
+      </thead>
+      <tbody>
+        {releases.map((release) => (
+          <tr key={release.release} className="border-t border-hairline">
+            <th
+              scope="row"
+              className="truncate py-1.5 pr-3 text-left font-mono font-normal text-ink"
+              title={release.release}
+            >
+              {release.release}
+            </th>
+            <td className="py-1.5 text-right text-ink tabular-nums">
+              {release.files.toLocaleString("en")}
+            </td>
+            <td className="py-1.5 text-right text-ink tabular-nums">
+              {formatBytes(release.bytes)}
+            </td>
+            <td className="py-1.5 pl-3 text-ink-muted">
+              <time
+                dateTime={release.lastUploadedAt}
+                title={new Date(release.lastUploadedAt).toLocaleString()}
+              >
+                {timeAgo(new Date(release.lastUploadedAt))}
+              </time>
+            </td>
+            <td className="py-0.5 text-right whitespace-nowrap">
+              <FilesDialog projectId={projectId} release={release} />
+              <DeleteReleaseDialog
+                projectId={projectId}
+                release={release}
+                returnFocus={returnFocus}
+              />
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+/** The upload instructions behind a button, once there are releases. */
+function UploadHelpToggle() {
+  const [open, setOpen] = React.useState(false);
+  const id = React.useId();
+  return (
+    <div className="flex flex-col gap-3 border-t pt-4">
+      <div>
+        <Button
+          variant="ghost"
+          size="sm"
+          aria-expanded={open}
+          aria-controls={id}
+          onClick={() => setOpen((shown) => !shown)}
+        >
+          {open ? "Hide how to upload" : "Show how to upload"}
+        </Button>
+      </div>
+      <div id={id} hidden={!open}>
+        {open && <UploadHelp />}
+      </div>
+    </div>
+  );
+}
+
+/** Newest or oldest releases first: the oldest are the ones to delete for room. */
+function OrderChoice({
+  order,
+  onOrder,
+}: {
+  order: ReleaseOrder;
+  onOrder: (order: ReleaseOrder) => void;
+}) {
+  return (
+    <fieldset className="flex gap-1">
+      <legend className="sr-only">Order of releases</legend>
+      {(["newest", "oldest"] as const).map((choice) => (
+        <Button
+          key={choice}
+          variant={order === choice ? "secondary" : "ghost"}
+          size="sm"
+          aria-pressed={order === choice}
+          onClick={() => onOrder(choice)}
+        >
+          {choice === "newest" ? "Newest first" : "Oldest first"}
+        </Button>
+      ))}
+    </fieldset>
+  );
+}
+
+function Overview({
+  projectId,
+  overview,
+  onOrder,
+  returnFocus,
+}: {
+  projectId: string;
+  overview: SourceMapOverview;
+  onOrder: (order: ReleaseOrder) => void;
+  returnFocus: React.RefObject<HTMLHeadingElement | null>;
+}) {
+  if (!overview.configured) {
+    return (
+      <p className="text-sm text-ink-muted">
+        Source maps are off on this install: it has no object store to keep them in. Its operator
+        turns them on by setting {code("OBJECT_STORE_URL")}.
+      </p>
+    );
+  }
+  const { storedBytes, limitBytes } = overview.organization;
+  return (
+    <>
+      <p className="text-sm text-ink-muted">
+        <span className="text-ink tabular-nums">
+          {formatBytes(storedBytes)} of {formatBytes(limitBytes)}
+        </span>{" "}
+        used, by all the organization&apos;s projects together.
+      </p>
+      {overview.releases.length === 0 ? (
+        <>
+          <p className="text-sm text-ink">No source maps are uploaded yet.</p>
+          <UploadHelp />
+        </>
+      ) : (
+        <>
+          {overview.totalReleases > 1 && <OrderChoice order={overview.order} onOrder={onOrder} />}
+          <ReleaseTable
+            projectId={projectId}
+            releases={overview.releases}
+            order={overview.order}
+            returnFocus={returnFocus}
+          />
+          {overview.totalReleases > overview.releases.length && (
+            <p className="text-xs text-ink-subtle">
+              {overview.releases.length.toLocaleString("en")} of{" "}
+              {overview.totalReleases.toLocaleString("en")} releases are shown,{" "}
+              {overview.order === "newest"
+                ? "the newest. Choose Oldest first to see the oldest, to delete for room."
+                : "the oldest."}
+            </p>
+          )}
+          <UploadHelpToggle />
+        </>
+      )}
+    </>
+  );
+}
+
+/**
+ * The project's source maps (docs/errors.md, "Source maps"): what each
+ * release has, how much the organization stores, and how a build uploads
+ * them. Deleting a release's maps keeps its errors.
+ */
+export function SourceMapsCard({ projectId }: { projectId: string }) {
+  const [order, setOrder] = React.useState<ReleaseOrder>("newest");
+  const query = useQuery({
+    ...sourceMapsQuery(projectId, order),
+    placeholderData: keepPreviousData,
+  });
+  // Where focus goes when a delete dialog closes: the deleted row's buttons are gone.
+  const headingRef = React.useRef<HTMLHeadingElement>(null);
+  return (
+    <Card id="source-maps" className="scroll-mt-6">
+      <CardHeader>
+        <CardTitle>
+          <h3 ref={headingRef} tabIndex={-1} className="outline-none">
+            Source maps
+          </h3>
+        </CardTitle>
+        <CardDescription>
+          With your build&apos;s source maps, error stacks show your original files and lines
+          instead of minified code.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-4">
+        {query.isPending ? (
+          <div className="flex flex-col gap-2" aria-busy="true" aria-label="Loading">
+            <Skeleton className="h-5 w-1/2" />
+            <Skeleton className="h-16 w-full" />
+          </div>
+        ) : query.isError ? (
+          <Alert variant="destructive">
+            <OctagonAlertIcon />
+            <AlertTitle>The source maps could not load</AlertTitle>
+            <AlertDescription>{query.error.message}</AlertDescription>
+            <AlertAction>
+              <Button variant="outline" size="sm" onClick={() => void query.refetch()}>
+                Retry
+              </Button>
+            </AlertAction>
+          </Alert>
+        ) : (
+          <Overview
+            projectId={projectId}
+            overview={query.data}
+            onOrder={setOrder}
+            returnFocus={headingRef}
+          />
+        )}
+      </CardContent>
+    </Card>
+  );
+}

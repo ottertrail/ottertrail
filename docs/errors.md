@@ -9,7 +9,7 @@ Browser errors: the tracker reports them, Ottertrail groups them, and the Errors
 | Grouping (fingerprint version 1)                      | Done    |
 | Counts, affected users, first and last seen, status   | Done    |
 | Errors in a user's activity                           | Done    |
-| Source maps (original file names and lines)           | Planned |
+| Source maps (original file names and lines)           | Done    |
 | Back-end errors (exceptions on traces, stage 3)       | Planned |
 | Alerts on new errors and spikes (stage 4)             | Planned |
 
@@ -73,7 +73,7 @@ Occurrences with the same fingerprint form one group (`apps/api/src/errors/finge
 
 The fingerprint is `1-` and the first 20 hex digits (80 bits) of the SHA-256 of these three, one per line.
 
-Function names and line numbers are left out on purpose: in minified code both change with every build, so each release would start new groups for old bugs. The cost: two bugs with the same message in the same bundle share a group, and browser engines word the same failure differently (Chrome: `Cannot read properties of undefined (reading 'total')`; Safari: `undefined is not an object (evaluating 'cart.total')`), so one bug forms one group per engine. Source maps (planned) would give real function names and files, and a version 2 could use them.
+Function names and line numbers are left out on purpose: in minified code both change with every build, so each release would start new groups for old bugs. The cost: two bugs with the same message in the same bundle share a group, and browser engines word the same failure differently (Chrome: `Cannot read properties of undefined (reading 'total')`; Safari: `undefined is not an object (evaluating 'cart.total')`), so one bug forms one group per engine. [Source maps](#5-source-maps) give the original files and lines on the error page; a version 2 of the rule could group by them.
 
 The number in front is the rule's version. A new rule gets a new number, so old and new groups never mix; old occurrences keep the groups they were given.
 
@@ -97,9 +97,46 @@ PATCH /api/projects/:id/errors/:fingerprint   { "status": "resolved" | "unresolv
 
 The list reads at most 1,000 groups, the most recently seen, and says when there were more (`truncated`). Like every project route, these run the organization access check first; the PATCH also needs the dashboard's origin.
 
-## 5. Not done yet
+## 5. Source maps
 
-- Source maps: original file names, function names, and lines in stacks, and grouping by them.
+Code: `apps/api/src/source-maps/`. A site's build can write a source map beside each minified file: where each position in the minified code came from in the original files, often with the original code itself. Uploaded to Ottertrail, they turn the error page's stack back into the site's own code: `src/cart.ts:3:10` and the lines around it, not `index-4f3a.js:1:28431`.
+
+**Uploading.** One request per minified file and release, with the project's secret key:
+
+```text
+PUT /api/source-maps?release=1.4.2&path=/assets/index-4f3a.js
+Authorization: Bearer sk_…
+Content-Type: application/json
+Content-Encoding: gzip   (optional)
+
+{"version":3,"sources":[…],"mappings":"…", …}
+```
+
+- `path` is the minified file's path as browsers report it in a stack, without the origin, so a CDN's host does not matter: percent-encoded, without `.` or `..` segments, at most 1,024 characters. A frame matches a map when its URL's path is the map's `path`; a path in any other form is refused, as it could never match.
+- `release` is the tracker's `data-release` ([web analytics](web-analytics.md#environments-and-releases)): an error picks the maps of its own release, so a deploy never reads another build's maps. An error without a release cannot be mapped.
+- The map is checked before it is kept: JSON, version 3, `sources`, and `mappings` of base64 VLQ; at most 25 MiB once unpacked (a gzip body is unpacked with that cap, so a small body cannot unpack into a large one), 100,000 lines, and 1,000,000 segments. Reading a map builds an array for each line and segment, so those counts, not its size, decide its memory: a few hundred bytes of empty lines would otherwise take gigabytes. They are counted, not decoded, so checking costs little. Index maps (`sections`) are refused for the same reason: their offsets alone could make reading one take any amount of memory. 201 for a new map; 200 when it replaces the release's earlier map of the same file.
+- What a request costs before its body is read: the key's form, the address's rate (a burst of 200, then 5 a second), and the key itself are checked from its headers, and an API process stores at most 4 maps at once, answering others 503 with `Retry-After`. A build's uploads wait and try again; the command does so without counting it as a failure.
+- The secret key, never the public one: a map often holds the site's source code (`sourcesContent`), and a public key is on every page, so it can only send events.
+- `packages/sourcemaps` is a command that uploads a build's maps (not yet published to npm). Build the maps without publishing them, so visitors cannot read the code: Vite's `build.sourcemap: "hidden"` writes them without the comment that points browsers at them, and the command can delete them after uploading.
+
+**Keeping.** The maps are in the install's object store, gzip-compressed, one object per project, release, and path under `source-maps/<project>/`: uploading again replaces. PostgreSQL records each with its size (`source_maps`, migration 0022). An upload writes its row, then its object, then commits, and deleting a release holds its rows until its objects are gone, so the two never leave a row without its map, or a map nothing counts. An install without an object store has source maps off ([deployment](deployment.md#source-maps)): uploads answer 503 and the error page says so.
+
+- Each organization may keep `SOURCE_MAP_BYTES_PER_ORGANIZATION` (1 GiB by default) of compressed maps, all its projects together; an upload past it answers 409. A soft limit: uploads at the same moment can each pass the check.
+- Maps stay until someone deletes them: a release can still run in browsers long after its maps were uploaded, so neither their age nor the project's event retention removes them. The project's settings list each release's maps, with their size, newest or oldest first (the oldest are the ones to delete for room), and delete a release's maps.
+- Deleting a project deletes its maps, with its events: the worker, from the same record (`project_deletions`), which stays until the object store has confirmed.
+
+**Reading.** When the error page asks for a group, the API maps the latest occurrence's stack with the maps of that occurrence's release. Each frame's file is looked up by its URL's path; [`@jridgewell/trace-mapping`](https://github.com/jridgewell/sourcemaps) (MIT) gives the original file, line, column, and the name at that position; with the original code in the map, the three lines before and after are shown too. Frames no map covers, such as another site's script, stay as the browser reported them. Maps the API read are kept in its memory, about 128 MB per process counted as they take once decoded, so the next look is quick; one page's maps are read at a time, one after another, and a stack's maps are read for its first 10 files at most. Calls to the object store give up after 30 seconds, and the page then shows the stack as reported. The answer says what happened: mapped; no release; no frame in a file a map could be for (a script written into the page, the browser's own code); no maps for these files; maps for them that cover none of the frames, which may be another build's (both with the paths it looked for, which is what to upload); source maps off; or the store could not be read. The stack as reported stays, and the page shows it on request; grouping still uses it.
+
+**Limits.**
+
+- Only the latest occurrence's stack is mapped.
+- The name shown is the one the map has at that position, which is not always the enclosing function's.
+- Maps are matched by release and path, not by an ID the build puts in each file: two builds given the same release and the same file names would share maps.
+- The object store is not in the backups ([deployment](deployment.md#backups)): after a restore, upload the maps of the releases still in use again.
+
+## 6. Not done yet
+
+- Grouping by the original files and functions that source maps give (fingerprint version 2), and mapping the stacks of occurrences other than the latest.
 - Back-end errors: exceptions recorded on traces join this list in stage 3. Until then, a server can report its own errors as [server-side events](web-analytics.md#server-side-events), without grouping.
 - Alerts on a new or regressed group, or a spike (stage 4).
 - Ignoring a group, merging two, searching messages, and "resolved in the next release".

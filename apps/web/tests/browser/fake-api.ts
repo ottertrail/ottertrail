@@ -5,6 +5,7 @@ import {
   type ErrorGroup,
   type ErrorList,
   isStatusFilter,
+  type ResolvedFrame,
 } from "../../src/lib/errors-api.ts";
 import type { SavedFunnel } from "../../src/lib/funnels-api.ts";
 import type { GoalResult } from "../../src/lib/goals-api.ts";
@@ -19,6 +20,7 @@ import {
   type Retention,
 } from "../../src/lib/product-api.ts";
 import type { Project } from "../../src/lib/projects-api.ts";
+import type { SourceMapFile, SourceMapRelease } from "../../src/lib/source-maps-api.ts";
 import type { Speed } from "../../src/lib/speed-api.ts";
 import type { Activity, User, UserActivity, UserList } from "../../src/lib/users-api.ts";
 
@@ -76,6 +78,11 @@ export interface FakeApi {
   funnel: (query: URLSearchParams) => Funnel | Response;
   /** Answers GET /api/projects/:id/retention; by default, fakeRetention. */
   retention: (query: URLSearchParams) => Retention | Response;
+  /**
+   * The project's source maps: the routes list them by release, list a
+   * release's files, and delete a release's. By default, fakeSourceMaps.
+   */
+  sourceMaps: FakeSourceMaps;
   /** Answers DELETE /api/projects/:id; by default, removes the project (204). */
   deleteProject: (api: FakeApi, id: string) => Response;
   /** Every path the page asked for, with its query, in order. */
@@ -232,7 +239,75 @@ export function fakeErrors(query: URLSearchParams, api: FakeApi): ErrorList {
   };
 }
 
-/** One group's detail; the TypeError has a stack, the others none. */
+/** The TypeError's stack, as the browser reported it: two frames of the site's code, three of a library's. */
+export const FAKE_STACK = [
+  "TypeError: Cannot read properties of undefined (reading 'id')",
+  "    at submit (https://example.com/assets/app.js:1:2345)",
+  "    at onClick (https://example.com/assets/app.js:1:6789)",
+  "    at dispatch (https://example.com/assets/vendor.js:2:100)",
+  "    at run (https://example.com/assets/vendor.js:2:200)",
+  "    at flush (https://example.com/assets/vendor.js:2:300)",
+].join("\n");
+
+/** A library's frame, which no map covers. */
+const vendor = (name: string, column: number): ResolvedFrame => ({
+  function: name,
+  file: "https://example.com/assets/vendor.js",
+  line: 2,
+  column,
+  original: null,
+});
+
+/**
+ * FAKE_STACK's frames as release 1.4.2's maps resolve them: app.js's two
+ * mapped (the first with the source around its line), vendor.js's not.
+ */
+export function fakeFrames(): ResolvedFrame[] {
+  return [
+    {
+      function: "submit",
+      file: "https://example.com/assets/app.js",
+      line: 1,
+      column: 2345,
+      original: {
+        source: "src/checkout/submit.ts",
+        line: 42,
+        column: 18,
+        name: "submitOrder",
+        context: {
+          firstLine: 39,
+          lines: [
+            "export function submitOrder(cart: Cart) {",
+            "  const items = cart.items;",
+            "  // The customer chose a saved address.",
+            "  const id = cart.address.id;",
+            "  return post(`/orders`, { items, id });",
+            "}",
+            "",
+          ],
+        },
+      },
+    },
+    {
+      function: "onClick",
+      file: "https://example.com/assets/app.js",
+      line: 1,
+      column: 6789,
+      original: {
+        source: "src/checkout/form.tsx",
+        line: 17,
+        column: 5,
+        name: null,
+        context: null,
+      },
+    },
+    vendor("dispatch", 100),
+    vendor("run", 200),
+    vendor("flush", 300),
+  ];
+}
+
+/** One group's detail; the TypeError has a stack, mapped with release 1.4.2's maps; the others none. */
 export function fakeError(
   fingerprint: string,
   query: URLSearchParams,
@@ -303,11 +378,114 @@ export function fakeError(
         release: null,
       },
     ],
-    stack:
-      fingerprint === ERROR_FINGERPRINTS.typeError
-        ? "TypeError: Cannot read properties of undefined (reading 'id')\n    at submit (https://example.com/assets/app.js:1:2345)\n    at onClick (https://example.com/assets/app.js:1:6789)"
-        : null,
+    ...(fingerprint === ERROR_FINGERPRINTS.typeError
+      ? {
+          stack: FAKE_STACK,
+          frames: fakeFrames(),
+          sourceMaps: { status: "applied", release: "1.4.2", paths: [] },
+        }
+      : { stack: null, frames: null, sourceMaps: null }),
   };
+}
+
+/** What the fake API keeps of a project's source maps. */
+export interface FakeSourceMaps {
+  /** false: the install has no object store. */
+  configured: boolean;
+  limitBytes: number;
+  /** What the organization's other projects store. */
+  otherProjectsBytes: number;
+  files: SourceMapFile[];
+}
+
+/** Two releases' maps: 1.4.2's two files, uploaded last, and 1.4.1's one. */
+export function fakeSourceMaps(): FakeSourceMaps {
+  return {
+    configured: true,
+    limitBytes: 1024 ** 3,
+    otherProjectsBytes: 10 * 1024 ** 2,
+    files: [
+      {
+        release: "1.4.2",
+        path: "/assets/app-4f3a.js",
+        bytes: 2 * 1024 ** 2,
+        uploadedAt: "2026-11-16T08:00:00.000Z",
+      },
+      {
+        release: "1.4.2",
+        path: "/assets/vendor-9c1d.js",
+        bytes: 512 * 1024,
+        uploadedAt: "2026-11-16T08:00:01.000Z",
+      },
+      {
+        release: "1.4.1",
+        path: "/assets/app-77b0.js",
+        bytes: 1900 * 1024,
+        uploadedAt: "2026-11-10T08:00:00.000Z",
+      },
+    ],
+  };
+}
+
+/**
+ * GET /api/projects/:id/source-maps, from the fake's files: by latest
+ * upload, newest or oldest first, at most `limit` (100, as the API).
+ */
+function sourceMapOverview(maps: FakeSourceMaps, order: "newest" | "oldest", limit = 100) {
+  const releases = new Map<string, SourceMapRelease>();
+  for (const file of maps.files) {
+    const release = releases.get(file.release);
+    releases.set(file.release, {
+      release: file.release,
+      files: (release?.files ?? 0) + 1,
+      bytes: (release?.bytes ?? 0) + file.bytes,
+      lastUploadedAt:
+        release === undefined || file.uploadedAt > release.lastUploadedAt
+          ? file.uploadedAt
+          : release.lastUploadedAt,
+    });
+  }
+  return {
+    configured: maps.configured,
+    organization: {
+      storedBytes: maps.otherProjectsBytes + maps.files.reduce((sum, file) => sum + file.bytes, 0),
+      limitBytes: maps.limitBytes,
+    },
+    order,
+    releases: [...releases.values()]
+      .toSorted((a, b) =>
+        order === "newest"
+          ? b.lastUploadedAt.localeCompare(a.lastUploadedAt)
+          : a.lastUploadedAt.localeCompare(b.lastUploadedAt),
+      )
+      .slice(0, limit),
+    totalReleases: releases.size,
+  };
+}
+
+/** DELETE /api/projects/:id/source-maps?release=…, as the API answers it. */
+function deleteRelease(api: FakeApi, release: string): Response {
+  if (!api.sourceMaps.configured) {
+    return json(
+      {
+        error: "not_configured",
+        message:
+          "This install has no object store, so source maps are off. Its operator sets OBJECT_STORE_URL.",
+      },
+      503,
+    );
+  }
+  if (!api.sourceMaps.files.some((file) => file.release === release)) {
+    return json(
+      { error: "no_source_maps", message: "The project has no source maps for this release." },
+      404,
+    );
+  }
+  api.sourceMaps = {
+    ...api.sourceMaps,
+    files: api.sourceMaps.files.filter((file) => file.release !== release),
+  };
+  return new Response(null, { status: 204 });
 }
 
 /** Resolves or reopens a group, by the signed-in user, now. */
@@ -1078,6 +1256,26 @@ async function answer(api: FakeApi, url: URL, init: RequestInit | undefined): Pr
   if (goalPath?.[1] !== undefined && init?.method === "DELETE") {
     return removeGoal(api, decodeURIComponent(goalPath[1]));
   }
+  if (/^\/api\/projects\/[^/]+\/source-maps\/files$/.test(path)) {
+    const release = url.searchParams.get("release") ?? "";
+    return json({
+      release,
+      files: api.sourceMaps.files
+        .filter((file) => file.release === release)
+        .toSorted((a, b) => a.path.localeCompare(b.path)),
+    });
+  }
+  if (/^\/api\/projects\/[^/]+\/source-maps$/.test(path)) {
+    if (init?.method === "DELETE") {
+      return deleteRelease(api, url.searchParams.get("release") ?? "");
+    }
+    return json(
+      sourceMapOverview(
+        api.sourceMaps,
+        url.searchParams.get("order") === "oldest" ? "oldest" : "newest",
+      ),
+    );
+  }
   if (/^\/api\/projects\/[^/]+\/speed$/.test(path)) {
     const result = api.speed(url.searchParams);
     return result instanceof Response ? result : json(result);
@@ -1185,6 +1383,7 @@ export function installFakeApi(overrides: Partial<FakeApi> = {}): FakeApi {
     funnel: fakeFunnel,
     retention: fakeRetention,
     resolutions: fakeResolutions(),
+    sourceMaps: fakeSourceMaps(),
     deleteProject: removeProject,
     requests: [],
     bodies: [],

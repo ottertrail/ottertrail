@@ -84,6 +84,7 @@ describe("deleting a project's events from ClickHouse", { timeout: 60_000 }, () 
     expect(await purgeDeletedProjects(dashboard.db, dashboard.reader.client)).toEqual({
       projects: 1,
       rows: 3,
+      files: 0,
     });
     // Out of reports at once; off the disk with the next retention run.
     expect(await inClickHouse(doomed)).toBe(0);
@@ -95,6 +96,7 @@ describe("deleting a project's events from ClickHouse", { timeout: 60_000 }, () 
     expect(await purgeDeletedProjects(dashboard.db, dashboard.reader.client)).toEqual({
       projects: 0,
       rows: 0,
+      files: 0,
     });
   });
 
@@ -125,6 +127,7 @@ describe("deleting a project's events from ClickHouse", { timeout: 60_000 }, () 
     expect(await purgeDeletedProjects(dashboard.db, dashboard.reader.client)).toEqual({
       projects: 1,
       rows: 0,
+      files: 0,
     });
     expect(await pendingDeletions()).toEqual([]);
   });

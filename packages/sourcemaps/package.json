@@ -1,0 +1,26 @@
+{
+  "name": "@ottertrail/sourcemaps",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Uploads a website build's source maps to Ottertrail.",
+  "license": "MIT",
+  "bin": {
+    "ottertrail-sourcemaps": "./dist/cli.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "type": "module",
+  "scripts": {
+    "build": "vp pack",
+    "test": "vp test"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "typescript": "catalog:",
+    "vite-plus": "catalog:"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  }
+}
