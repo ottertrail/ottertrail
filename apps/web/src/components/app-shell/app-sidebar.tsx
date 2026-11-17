@@ -34,16 +34,12 @@ import {
   SidebarGroupLabel,
   SidebarHeader,
   SidebarMenu,
-  SidebarMenuBadge,
   SidebarMenuButton,
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
 import { Skeleton } from "@/components/ui/skeleton";
 import { organizationsQuery } from "@/lib/organizations-api";
 import { projectsQuery } from "@/lib/projects-api";
-
-/** Project modules that are not built yet. Shown disabled and labeled. */
-const plannedModules = [{ title: "Product analytics", icon: ChartColumnIcon }];
 
 /** The organization level: things above any one project, under the organization's name. */
 function WorkspaceMenu() {
@@ -238,15 +234,22 @@ function ProjectMenu({ projectId }: { projectId: string }) {
               <span>Errors</span>
             </SidebarMenuButton>
           </SidebarMenuItem>
-          {plannedModules.map((module) => (
-            <SidebarMenuItem key={module.title}>
-              <SidebarMenuButton disabled>
-                <module.icon />
-                <span>{module.title}</span>
-              </SidebarMenuButton>
-              <SidebarMenuBadge className="text-ink-subtle">Planned</SidebarMenuBadge>
-            </SidebarMenuItem>
-          ))}
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              render={<Link to="/projects/$projectId/product/events" params={{ projectId }} />}
+              isActive={
+                matchRoute({
+                  to: "/projects/$projectId/product",
+                  params: { projectId },
+                  fuzzy: true,
+                }) !== false
+              }
+              tooltip="Product analytics"
+            >
+              <ChartColumnIcon />
+              <span>Product analytics</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
           <SidebarMenuItem>
             <SidebarMenuButton
               render={<Link to="/projects/$projectId/settings" params={{ projectId }} />}

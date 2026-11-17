@@ -21,6 +21,17 @@ import { DesignSystemPage } from "@/features/design-system/design-system-page";
 import { ErrorPage } from "@/features/errors/error-page";
 import { ErrorsPage } from "@/features/errors/errors-page";
 import { OrganizationSettingsPage } from "@/features/organizations/organization-settings-page";
+import { EventPage } from "@/features/product/event-page";
+import { EventsPage } from "@/features/product/events-page";
+import { FunnelPage } from "@/features/product/funnel-page";
+import { ProductLayout } from "@/features/product/product-layout";
+import { RetentionPage } from "@/features/product/retention-page";
+import {
+  type FilterSearch,
+  filterSearchOf,
+  propertyFiltersFrom,
+  stepsFrom,
+} from "@/features/product/search";
 import { ProjectLayout } from "@/features/projects/project-layout";
 import { ProjectSettingsPage } from "@/features/projects/project-settings-page";
 import { ProjectsPage } from "@/features/projects/projects-page";
@@ -40,6 +51,13 @@ import { ApiError } from "@/lib/api";
 import { authClient } from "@/lib/auth-client";
 import { DEFAULT_STATUS_FILTER, isStatusFilter, type StatusFilter } from "@/lib/errors-api";
 import { lastProject } from "@/lib/last-project";
+import {
+  DEFAULT_FUNNEL_WINDOW,
+  type FunnelStep,
+  type FunnelWindow,
+  isFunnelWindow,
+  windowAllowed,
+} from "@/lib/product-api";
 import { projectsQuery } from "@/lib/projects-api";
 import { type Device, isDevice } from "@/lib/speed-api";
 
@@ -131,8 +149,8 @@ const projectsRoute = createRoute({
 });
 
 /**
- * Inside one project. Every module (web analytics, speed, users, errors, and
- * later product analytics) is a page under it, and the sidebar
+ * Inside one project. Every module (web analytics, speed, users, errors,
+ * product analytics) is a page under it, and the sidebar
  * switches to the project's own menu.
  */
 const projectRoute = createRoute({
@@ -334,6 +352,140 @@ const speedRoute = createRoute({
   },
 });
 
+/** Product analytics: its reports (events, funnel, retention) as tabs, each its own page. */
+const productRoute = createRoute({
+  getParentRoute: () => projectRoute,
+  path: "/product",
+  staticData: { title: "Product analytics" },
+  component: function ProductRouteComponent() {
+    const { projectId } = productRoute.useParams();
+    return <ProductLayout projectId={projectId} />;
+  },
+});
+
+const productRangeSearch = (search: ErrorSearchInput) => ({
+  ...rangeSearch(search),
+  ...environmentSearch(search),
+});
+
+/** Product analytics opens on its events, keeping the days and environment. */
+const productIndexRoute = createRoute({
+  getParentRoute: () => productRoute,
+  path: "/",
+  validateSearch: productRangeSearch,
+  beforeLoad: ({ params, search }) => {
+    throw redirect({ to: "/projects/$projectId/product/events", params, search });
+  },
+});
+
+const productEventsRoute = createRoute({
+  getParentRoute: () => productRoute,
+  path: "/events",
+  validateSearch: productRangeSearch,
+  component: function ProductEventsRouteComponent() {
+    const { projectId } = productEventsRoute.useParams();
+    const { period, from, to, env } = productEventsRoute.useSearch();
+    return (
+      <EventsPage
+        projectId={projectId}
+        range={rangeFrom({ period, from, to })}
+        environment={env ?? DEFAULT_ENVIRONMENT}
+      />
+    );
+  },
+});
+
+/**
+ * One product event. Its property filters live in the address as the API
+ * takes them ("p.plan=team"), so a filtered view can be linked and reloaded.
+ */
+const productEventRoute = createRoute({
+  getParentRoute: () => productRoute,
+  path: "/events/$name",
+  validateSearch: (
+    search: ErrorSearchInput & Record<string, unknown>,
+  ): ReturnType<typeof productRangeSearch> & FilterSearch => ({
+    ...productRangeSearch(search),
+    ...filterSearchOf(propertyFiltersFrom(search)),
+  }),
+  component: function ProductEventRouteComponent() {
+    const { projectId, name } = productEventRoute.useParams();
+    const { period, from, to, env, ...rest } = productEventRoute.useSearch();
+    return (
+      <EventPage
+        projectId={projectId}
+        name={name}
+        range={rangeFrom({ period, from, to })}
+        environment={env ?? DEFAULT_ENVIRONMENT}
+        filters={propertyFiltersFrom(rest)}
+      />
+    );
+  },
+});
+
+/**
+ * The funnel: its steps as the JSON the API takes, who it counts (left out
+ * for visitors), and its window in seconds (left out for a day). A window
+ * visitors cannot have falls back to a day.
+ */
+const productFunnelRoute = createRoute({
+  getParentRoute: () => productRoute,
+  path: "/funnel",
+  validateSearch: (
+    search: ErrorSearchInput & { steps?: unknown; count?: unknown; window?: unknown },
+  ): ReturnType<typeof productRangeSearch> & {
+    steps: FunnelStep[] | undefined;
+    count: "users" | undefined;
+    window: FunnelWindow | undefined;
+  } => {
+    const steps = stepsFrom(search.steps);
+    const count = search.count === "users" ? "users" : undefined;
+    const window =
+      isFunnelWindow(search.window) &&
+      search.window !== DEFAULT_FUNNEL_WINDOW &&
+      windowAllowed(count ?? "visitors", search.window)
+        ? search.window
+        : undefined;
+    return {
+      ...productRangeSearch(search),
+      steps: steps.length === 0 ? undefined : steps,
+      count,
+      window,
+    };
+  },
+  component: function ProductFunnelRouteComponent() {
+    const { projectId } = productFunnelRoute.useParams();
+    const { period, from, to, env, steps, count, window } = productFunnelRoute.useSearch();
+    return (
+      <FunnelPage
+        projectId={projectId}
+        range={rangeFrom({ period, from, to })}
+        environment={env ?? DEFAULT_ENVIRONMENT}
+        steps={steps ?? []}
+        count={count ?? "visitors"}
+        window={window ?? DEFAULT_FUNNEL_WINDOW}
+      />
+    );
+  },
+});
+
+const productRetentionRoute = createRoute({
+  getParentRoute: () => productRoute,
+  path: "/retention",
+  validateSearch: productRangeSearch,
+  component: function ProductRetentionRouteComponent() {
+    const { projectId } = productRetentionRoute.useParams();
+    const { period, from, to, env } = productRetentionRoute.useSearch();
+    return (
+      <RetentionPage
+        projectId={projectId}
+        range={rangeFrom({ period, from, to })}
+        environment={env ?? DEFAULT_ENVIRONMENT}
+      />
+    );
+  },
+});
+
 const projectSettingsRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: "/settings",
@@ -373,6 +525,13 @@ const routeTree = rootRoute.addChildren([
       userRoute,
       errorsRoute,
       errorRoute,
+      productRoute.addChildren([
+        productIndexRoute,
+        productEventsRoute,
+        productEventRoute,
+        productFunnelRoute,
+        productRetentionRoute,
+      ]),
       projectSettingsRoute,
     ]),
     organizationSettingsRoute,

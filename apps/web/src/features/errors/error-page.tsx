@@ -1,7 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { ArrowLeftIcon, LoaderCircleIcon, OctagonAlertIcon, SearchXIcon } from "lucide-react";
-import * as React from "react";
 
 import { ButtonLink } from "@/components/button-link";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -30,7 +29,6 @@ import { ApiError } from "@/lib/api";
 import {
   type ErrorBreakdown,
   type ErrorBreakdownRow,
-  type ErrorDay,
   type ErrorDetail,
   errorQuery,
   isUnknownProject,
@@ -38,8 +36,8 @@ import {
   setErrorStatus,
 } from "@/lib/errors-api";
 
-import { DayChart } from "../analytics/day-chart";
-import { formatDay as formatCalendarDay, formatWhole } from "../analytics/format";
+import { DayCountCard } from "../analytics/day-count-card";
+import { formatWhole } from "../analytics/format";
 import { RankedList } from "../analytics/ranked-list";
 import { NoSuchProject } from "../projects/no-such-project";
 import { formatMoment } from "../users/format";
@@ -128,80 +126,6 @@ function Stats({ detail }: { detail: ErrorDetail }) {
           Occurrences, users (your site&apos;s user IDs), and visitors count this period. First and
           last seen cover all the time the project keeps.
         </p>
-      </CardContent>
-    </Card>
-  );
-}
-
-function DayCard({ days }: { days: ErrorDay[] }) {
-  const [showTable, setShowTable] = React.useState(false);
-  const tableId = React.useId();
-  const tooltipRows = (index: number) => [
-    {
-      label: "Occurrences",
-      value: formatWhole(days[index]?.occurrences ?? 0),
-      plotted: true,
-    },
-  ];
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle>
-          <h3>Occurrences per day</h3>
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="flex flex-col gap-3">
-        {days.length < 2 ? (
-          <p className="py-10 text-center text-sm text-ink-subtle">
-            A trend needs at least two days. Choose a longer period to see one.
-          </p>
-        ) : (
-          <DayChart
-            points={days.map((day) => ({ day: day.day, value: day.occurrences }))}
-            label="Occurrences per day"
-            tooltipRows={tooltipRows}
-          />
-        )}
-        <div>
-          <Button
-            variant="ghost"
-            size="sm"
-            aria-expanded={showTable}
-            aria-controls={tableId}
-            onClick={() => setShowTable((shown) => !shown)}
-          >
-            {showTable ? "Hide the numbers" : "Show the numbers"}
-          </Button>
-        </div>
-        <div id={tableId} hidden={!showTable} className="max-h-80 overflow-y-auto">
-          {showTable && (
-            <table className="w-full text-sm">
-              <caption className="sr-only">Occurrences per day</caption>
-              <thead className="sticky top-0 bg-card">
-                <tr className="text-xs text-ink-subtle">
-                  <th scope="col" className="pb-2 text-left font-normal">
-                    Day
-                  </th>
-                  <th scope="col" className="pb-2 text-right font-normal">
-                    Occurrences
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {days.map((day) => (
-                  <tr key={day.day} className="border-t border-hairline">
-                    <th scope="row" className="py-1.5 text-left font-normal text-ink">
-                      {formatCalendarDay(day.day, { weekday: true })}
-                    </th>
-                    <td className="py-1.5 text-right text-ink tabular-nums">
-                      {formatWhole(day.occurrences)}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </div>
       </CardContent>
     </Card>
   );
@@ -390,7 +314,10 @@ function Detail({
         <Resolution projectId={projectId} detail={detail} />
       </div>
       <Stats detail={detail} />
-      <DayCard days={detail.days} />
+      <DayCountCard
+        days={detail.days.map((day) => ({ day: day.day, count: day.occurrences }))}
+        noun="Occurrences"
+      />
       <div className="grid gap-6 lg:grid-cols-2">
         {BREAKDOWN_CARDS.map((card) => (
           <BreakdownCard

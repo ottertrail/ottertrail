@@ -24,6 +24,18 @@ function projectRoutes(id: string): [string, string, object?][] {
     ["GET", `/api/projects/${id}/users`],
     ["GET", `/api/projects/${id}/users/user-42`],
     ["GET", `/api/projects/${id}/speed?period=7d`],
+    ["GET", `/api/projects/${id}/events?period=7d`],
+    ["GET", `/api/projects/${id}/events/signup?period=7d`],
+    [
+      "GET",
+      `/api/projects/${id}/funnel?period=7d&steps=${encodeURIComponent(
+        JSON.stringify([
+          { type: "page", path: "/" },
+          { type: "event", name: "signup" },
+        ]),
+      )}`,
+    ],
+    ["GET", `/api/projects/${id}/retention?period=30d`],
     ["GET", `/api/projects/${id}/errors?period=7d`],
     ["GET", `/api/projects/${id}/errors/1-0123456789abcdef0123?period=7d`],
     ["PATCH", `/api/projects/${id}/errors/1-0123456789abcdef0123`, { status: "resolved" }],

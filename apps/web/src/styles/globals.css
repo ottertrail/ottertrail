@@ -97,6 +97,18 @@
   --chart-7: #9085e9;
   --chart-8: #e66767;
 
+  /*
+   * Sequential scale (magnitude, low to high) for heatmaps such as the
+   * retention table: the chart-1 blue from near the card surface to a
+   * full step. Values are always written in the cell as well; ink text
+   * stays above 4.5:1 on every step (tests/tokens.test.ts).
+   */
+  --seq-1: #172437;
+  --seq-2: #1a3354;
+  --seq-3: #1d4371;
+  --seq-4: #20538f;
+  --seq-5: #2563ad;
+
   /* Status colors are reserved for state and always ship with an icon and a label. */
   --status-good: var(--success);
   --status-warning: var(--warning);
@@ -163,6 +175,11 @@
   --color-chart-6: var(--chart-6);
   --color-chart-7: var(--chart-7);
   --color-chart-8: var(--chart-8);
+  --color-seq-1: var(--seq-1);
+  --color-seq-2: var(--seq-2);
+  --color-seq-3: var(--seq-3);
+  --color-seq-4: var(--seq-4);
+  --color-seq-5: var(--seq-5);
   --color-status-good: var(--status-good);
   --color-status-warning: var(--status-warning);
   --color-status-serious: var(--status-serious);

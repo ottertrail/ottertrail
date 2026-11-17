@@ -77,11 +77,11 @@ describe("inside a project", () => {
     await expect.element(projectMenu().getByRole("link", { name: "Settings" })).toBeVisible();
     await expect.element(projectMenu().getByRole("link", { name: "Users" })).toBeVisible();
     await expect.element(projectMenu().getByRole("link", { name: "Errors" })).toBeVisible();
-    // Modules that are not built yet are shown, disabled and labeled.
     await expect
-      .element(projectMenu().getByRole("button", { name: "Product analytics" }))
-      .toBeDisabled();
-    await expect.element(projectMenu().getByText("Planned")).toBeVisible();
+      .element(projectMenu().getByRole("link", { name: "Product analytics" }))
+      .toHaveAttribute("href", `/projects/${PROJECT.id}/product/events`);
+    // Every module is built: none is shown as planned.
+    await expect.element(projectMenu().getByText("Planned")).not.toBeInTheDocument();
     // The project's menu in order, settings last, right after the modules.
     const items = document.querySelectorAll("nav[aria-label=Project] [data-sidebar=menu-button]");
     expect([...items].map((item) => item.textContent)).toEqual([
@@ -98,6 +98,26 @@ describe("inside a project", () => {
     const settings = items[6]?.getBoundingClientRect();
     expect((settings?.top ?? 0) - (lastModule?.bottom ?? 0)).toBeLessThan(8);
     await expect.poll(breadcrumb).toBe("Main site / Web analytics");
+  });
+
+  test("Product analytics stays active on each of its pages", async () => {
+    installFakeApi();
+    const router = renderApp(ANALYTICS);
+
+    await projectMenu().getByRole("link", { name: "Product analytics" }).click();
+    await expect.poll(() => currentPath(router)).toBe(`/projects/${PROJECT.id}/product/events`);
+    await expect.poll(breadcrumb).toBe("Main site / Product analytics");
+
+    for (const path of ["events/signup", "funnel", "retention"]) {
+      router.history.push(`/projects/${PROJECT.id}/product/${path}`);
+      await expect.poll(() => router.state.location.pathname).toMatch(new RegExp(`${path}$`));
+      await expect
+        .element(projectMenu().getByRole("link", { name: "Product analytics" }))
+        .toHaveAttribute("data-active");
+      await expect
+        .element(projectMenu().getByRole("link", { name: "Web analytics" }))
+        .not.toHaveAttribute("data-active");
+    }
   });
 
   test("the project's address alone opens its web analytics", async () => {

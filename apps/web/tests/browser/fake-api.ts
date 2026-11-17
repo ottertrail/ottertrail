@@ -6,6 +6,13 @@ import {
   isStatusFilter,
 } from "../../src/lib/errors-api.ts";
 import type { Organization } from "../../src/lib/organizations-api.ts";
+import {
+  type Funnel,
+  isFunnelStep,
+  type ProductEventDetail,
+  type ProductEvents,
+  type Retention,
+} from "../../src/lib/product-api.ts";
 import type { Project } from "../../src/lib/projects-api.ts";
 import type { Speed } from "../../src/lib/speed-api.ts";
 import type { Activity, User, UserActivity, UserList } from "../../src/lib/users-api.ts";
@@ -42,6 +49,14 @@ export interface FakeApi {
   resolutions: Record<string, { resolvedAt: string; resolvedBy: string | null }>;
   /** Answers GET /api/projects/:id/speed; by default, fakeSpeed. */
   speed: (query: URLSearchParams) => Speed | Response;
+  /** Answers GET /api/projects/:id/events; by default, fakeProductEvents. */
+  productEvents: (query: URLSearchParams) => ProductEvents | Response;
+  /** Answers GET /api/projects/:id/events/:name; by default, fakeProductEvent. */
+  productEvent: (name: string, query: URLSearchParams) => ProductEventDetail | Response;
+  /** Answers GET /api/projects/:id/funnel; by default, fakeFunnel. */
+  funnel: (query: URLSearchParams) => Funnel | Response;
+  /** Answers GET /api/projects/:id/retention; by default, fakeRetention. */
+  retention: (query: URLSearchParams) => Retention | Response;
   /** Answers DELETE /api/projects/:id; by default, removes the project (204). */
   deleteProject: (api: FakeApi, id: string) => Response;
   /** Every path the page asked for, with its query, in order. */
@@ -523,6 +538,154 @@ export function fakeSpeed(query: URLSearchParams): Speed {
   });
 }
 
+const WEEK = {
+  timeZone: "Asia/Singapore",
+  firstDay: "2026-11-10",
+  lastDay: "2026-11-16",
+} as const;
+
+/** Three product events of a week; change parts with `overrides`. */
+export function productEventsFixture(overrides: Partial<ProductEvents> = {}): ProductEvents {
+  return {
+    ...WEEK,
+    environment: "production",
+    environments: ["production"],
+    events: [
+      { name: "signup", events: 140, visitors: 127, users: 40 },
+      { name: "purchase", events: 60, visitors: 50, users: 30 },
+      { name: "invite_sent", events: 12, visitors: 0, users: 9 },
+    ],
+    ...overrides,
+  };
+}
+
+export function fakeProductEvents(query: URLSearchParams): ProductEvents {
+  return productEventsFixture({ environment: query.get("environment") ?? "production" });
+}
+
+type PropertyValue = string | number | boolean;
+
+/**
+ * 140 signups over the week, each with a plan (80 team, 60 free), a number
+ * of seats (3 or 5), and whether it came from an invite.
+ */
+const SIGNUPS: { day: string; properties: Record<string, PropertyValue> }[] = Array.from(
+  { length: 140 },
+  (_, i) => ({
+    day: `2026-11-${String(10 + (i % 7))}`,
+    properties: {
+      plan: i < 80 ? "team" : "free",
+      seats: i % 2 === 0 ? 3 : 5,
+      invited: i % 4 === 0,
+    },
+  }),
+);
+
+/** As the API compares a property: a string as it is, anything else as JSON writes it. */
+const asText = (value: PropertyValue) =>
+  typeof value === "string" ? value : JSON.stringify(value);
+
+/** One event's detail, filtered as the API filters (signup has events; any other name, zeros). */
+export function fakeProductEvent(name: string, query: URLSearchParams): ProductEventDetail {
+  const filters = [...query.entries()]
+    .filter(([param]) => param.startsWith("p."))
+    .map(([param, value]) => ({ key: param.slice(2), value }));
+  const events = (name === "signup" ? SIGNUPS : []).filter((event) =>
+    filters.every((filter) => {
+      const value = event.properties[filter.key];
+      return value !== undefined && asText(value) === filter.value;
+    }),
+  );
+  const names = events.length === 0 ? [] : ["plan", "seats", "invited"];
+  return {
+    ...WEEK,
+    environment: query.get("environment") ?? "production",
+    name,
+    filters,
+    events: events.length,
+    visitors: Math.round(events.length * 0.9),
+    users: Math.round(events.length * 0.3),
+    days: DAYS.map(({ day }) => ({
+      day,
+      events: events.filter((event) => event.day === day).length,
+    })),
+    properties: names.map((property) => {
+      const counts = new Map<string, number>();
+      for (const event of events) {
+        const value = event.properties[property];
+        if (value !== undefined) counts.set(asText(value), (counts.get(asText(value)) ?? 0) + 1);
+      }
+      return {
+        key: property,
+        events: events.length,
+        values: [...counts]
+          .map(([value, count]) => ({ value, events: count }))
+          .toSorted((a, b) => b.events - a.events || a.value.localeCompare(b.value)),
+      };
+    }),
+  };
+}
+
+/** People reaching each step: 1,000 start, fewer at each next one. */
+export const FUNNEL_REACHED = [1000, 420, 126, 50, 0];
+
+/** A funnel of the steps asked for, refusing what the API refuses. */
+export function fakeFunnel(query: URLSearchParams): Funnel | Response {
+  let steps: unknown;
+  try {
+    steps = JSON.parse(query.get("steps") ?? "");
+  } catch {
+    return json({ error: "invalid_steps", message: "steps must be a JSON array." }, 400);
+  }
+  if (!Array.isArray(steps) || steps.length < 2 || steps.length > 5 || !steps.every(isFunnelStep)) {
+    return json({ error: "invalid_steps", message: "steps must be 2 to 5 steps." }, 400);
+  }
+  const count = query.get("count") === "users" ? "users" : "visitors";
+  const window = Number(query.get("window") ?? 86_400);
+  if (count === "visitors" && window > 86_400) {
+    return json(
+      { error: "invalid_window", message: "Visitors can be followed for a day at most." },
+      400,
+    );
+  }
+  const environment = query.get("environment") ?? "production";
+  return {
+    ...WEEK,
+    environment,
+    environments:
+      environment === "production" ? ["production", "staging"] : ["production", environment],
+    count,
+    window,
+    steps: steps.map((step, i) => ({ step, reached: FUNNEL_REACHED[i] ?? 0 })),
+  };
+}
+
+/** Four weekly cohorts up to the current week (16 Nov 2026), which is not over. */
+export function retentionFixture(overrides: Partial<Retention> = {}): Retention {
+  return {
+    ...WEEK,
+    environment: "production",
+    environments: ["production", "staging"],
+    currentWeek: "2026-11-16",
+    cohorts: [
+      { week: "2026-10-26", users: 40, retained: [40, 20, 12, 10] },
+      { week: "2026-11-02", users: 25, retained: [25, 10, 0] },
+      { week: "2026-11-09", users: 10, retained: [10, 4] },
+      { week: "2026-11-16", users: 8, retained: [8] },
+    ],
+    ...overrides,
+  };
+}
+
+export function fakeRetention(query: URLSearchParams): Retention {
+  const environment = query.get("environment") ?? "production";
+  return retentionFixture({
+    environment,
+    environments:
+      environment === "production" ? ["production", "staging"] : ["production", environment],
+  });
+}
+
 export const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 
@@ -616,6 +779,23 @@ async function answer(api: FakeApi, url: URL, init: RequestInit | undefined): Pr
   }
   if (/^\/api\/projects\/[^/]+\/users$/.test(path)) {
     const result = api.users(url.searchParams);
+    return result instanceof Response ? result : json(result);
+  }
+  if (/^\/api\/projects\/[^/]+\/events$/.test(path)) {
+    const result = api.productEvents(url.searchParams);
+    return result instanceof Response ? result : json(result);
+  }
+  const productEventPath = /^\/api\/projects\/[^/]+\/events\/([^/]+)$/.exec(path);
+  if (productEventPath?.[1] !== undefined) {
+    const result = api.productEvent(decodeURIComponent(productEventPath[1]), url.searchParams);
+    return result instanceof Response ? result : json(result);
+  }
+  if (/^\/api\/projects\/[^/]+\/funnel$/.test(path)) {
+    const result = api.funnel(url.searchParams);
+    return result instanceof Response ? result : json(result);
+  }
+  if (/^\/api\/projects\/[^/]+\/retention$/.test(path)) {
+    const result = api.retention(url.searchParams);
     return result instanceof Response ? result : json(result);
   }
   if (/^\/api\/projects\/[^/]+\/speed$/.test(path)) {
@@ -717,6 +897,10 @@ export function installFakeApi(overrides: Partial<FakeApi> = {}): FakeApi {
     error: fakeError,
     setErrorStatus: changeErrorStatus,
     speed: fakeSpeed,
+    productEvents: fakeProductEvents,
+    productEvent: fakeProductEvent,
+    funnel: fakeFunnel,
+    retention: fakeRetention,
     resolutions: fakeResolutions(),
     deleteProject: removeProject,
     requests: [],

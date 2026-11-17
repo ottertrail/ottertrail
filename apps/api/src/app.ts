@@ -12,6 +12,7 @@ import type { Database } from "./db/schema.ts";
 import { errorRoutes } from "./errors/routes.ts";
 import { userRoutes } from "./identities/routes.ts";
 import { organizationRoutes } from "./organizations/routes.ts";
+import { productRoutes } from "./product/routes.ts";
 import { projectRoutes } from "./projects/routes.ts";
 import { reportRoutes } from "./reports/routes.ts";
 import { healthRoutes } from "./routes/health.ts";
@@ -138,6 +139,13 @@ export function buildApp({
       db,
       clickhouse: dashboard.clickhouse,
       auth: dashboard.auth,
+    });
+    app.register(productRoutes, {
+      prefix: "/api",
+      db,
+      clickhouse: dashboard.clickhouse,
+      auth: dashboard.auth,
+      ...(dashboard.now === undefined ? {} : { now: dashboard.now }),
     });
     app.register(speedRoutes, {
       prefix: "/api",

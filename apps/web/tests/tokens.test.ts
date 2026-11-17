@@ -129,6 +129,16 @@ describe("design tokens", () => {
     }
   });
 
+  test("text on every step of the sequential scale meets 4.5:1, and the steps rise", () => {
+    const steps = Array.from({ length: 5 }, (_, index) => resolveHex(`seq-${index + 1}`));
+    for (const step of steps) {
+      expect(contrast(resolveHex("foreground"), step)).toBeGreaterThanOrEqual(4.5);
+    }
+    const lightness = steps.map(luminance);
+    expect(lightness).toEqual(lightness.toSorted((a, b) => a - b));
+    expect(new Set(lightness).size).toBe(steps.length);
+  });
+
   test("link color is not used as a fill behind white text", () => {
     // The link step is too light for white text, so it must stay a text color.
     expect(contrast("#ffffff", resolveHex("link"))).toBeLessThan(4.5);

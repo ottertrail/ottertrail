@@ -83,7 +83,7 @@ Rules:
 - Color follows the entity, not its rank. Filtering must not repaint the remaining series.
 - Charts that compare every pair (scatter, bubble, choropleth) use at most the first 3 slots.
 - One y-axis per chart. Two measures of different scale get two charts.
-- Sequential (magnitude) data uses one hue from light to dark; diverging data uses two hues with a gray midpoint. These ramps are not defined yet; add them with the first heatmap (the retention report).
+- Sequential (magnitude) data uses one hue in steps: `--seq-1` to `--seq-5` (`bg-seq-1` …), blue from `#172437` to `#2563ad`, each lighter than the one before, so on the dark canvas a larger value stands out more. Body text keeps at least 4.5:1 on every step (`tests/tokens.test.ts`), so a cell's number is always readable on it; the color is never the only way to read the value. First used by the retention table. Diverging data (two hues with a gray midpoint) has no ramp yet; add one with its first chart.
 - Values, labels, and legends use text tokens, not the series color.
 
 ## Typography

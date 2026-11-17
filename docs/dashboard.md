@@ -96,7 +96,7 @@ A project is one website or app. The Projects page lists them with their allowed
 The dashboard has two levels, the way hosting dashboards treat each site:
 
 - **The organization** (the sidebar's first group, under its name): the project list (`/projects`), the design-system reference, and the organization's settings (`/settings`). Members will go there too.
-- **Inside a project** (`/projects/<id>/…`): the sidebar becomes the project's own menu, with a switcher to the other projects and a link back to all of them. It lists the project's modules (web analytics, speed, users, errors; product analytics marked as planned), then the project's settings. The header shows the project's name before the page title.
+- **Inside a project** (`/projects/<id>/…`): the sidebar becomes the project's own menu, with a switcher to the other projects and a link back to all of them. It lists the project's modules (web analytics, speed, product analytics, users, errors), then the project's settings. The header shows the project's name before the page title.
 
 Every module belongs to one project (its records carry `project_id`), so a module's pages sit under the project instead of at the top with a project picker. The switcher keeps the current page: from one project's web analytics for the last 90 days, it opens the other project's web analytics for the last 90 days.
 
@@ -348,6 +348,22 @@ It answers the thresholds with the report, so the page rates values as the API d
 - A comparison with the period before, as the analytics page has.
 - FCP and TTFB per device and page, and whether the 20 pages were all of them.
 - Values of their own for in-app navigations of single-page apps (see [Web Vitals](web-analytics.md#web-vitals)).
+
+## 8.8 Product analytics
+
+Code: `apps/web/src/features/product/`, `apps/api/src/product/`. Three tabs, Events, Funnel, and Retention, each a page of its own that keeps the period and environment in the address; the sidebar opens Events. What each counts is defined in [product analytics](product-analytics.md#definitions), and each page says it in plain words under its report.
+
+- **Events** (`/projects/<id>/product/events`): the product events, most frequent first, with events, visitors, and users. Without any, the page shows how to send them, `track()` in the browser or from the site's server, with an example to copy.
+- **One event** (`/product/events/<name>`): its counts, events per day (the analytics page's chart, with "Show the numbers"), and each property's most frequent values as ranked lists. Choosing a value filters by it: in the address as `p.<property>=<value>`, so the view can be linked and survives a reload; active filters show as chips to remove, five at most. When nothing matches, it says so.
+- **Funnel** (`/product/funnel`): a step editor, two to five steps, each an event (a name, typed or picked from the project's events, with an optional property filter) or a page (a path), added, removed, and moved up or down; fields are checked before any request. "Show funnel" puts the steps in the address, as the API's JSON. Count by visitors or users, and the window, apply at once; windows over a day are disabled for visitors, with the reason. The result: each step's count, its share of step 1 and of the step before, as bars with the numbers written out, and the overall conversion. Until two steps are set, the page offers an example from the project's own events.
+- **Retention** (`/product/retention`): a row per cohort, its week and users, then weeks 0, 1, 2 … as percentages of the cohort, shaded on the sequential scale ([design system](design-system.md)) with the number always written, and "x of y users" on hover. The current week, not over yet, is in italics with a footnote. Without signed-in users, the page explains `data-user-id` and `identify()`.
+
+Loading, failure with Retry, an unknown project, and the dimmed previous report while a new one loads work as on the other pages. `product.test.tsx` covers the lists, filters in the address and the request, the funnel editor and the steps it sends, the results and their percentages, the retention table, the empty states, and a failed load, against the fake API; `apps/api/tests/product-events.test.ts` and `product-reports.test.ts` the numbers.
+
+### Not done yet
+
+- Suggesting property names in the funnel editor: the API lists the 100 most frequent event names, not property names.
+- Retention's period only picks which cohorts show; each cohort's weeks run to today. The page's notes say so.
 
 ## Organizations
 
