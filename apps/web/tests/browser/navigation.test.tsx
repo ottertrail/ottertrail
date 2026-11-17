@@ -73,6 +73,7 @@ describe("inside a project", () => {
     await expect
       .element(projectMenu().getByRole("link", { name: "Web analytics" }))
       .toHaveAttribute("aria-current", "page");
+    await expect.element(projectMenu().getByRole("link", { name: "Speed" })).toBeVisible();
     await expect.element(projectMenu().getByRole("link", { name: "Settings" })).toBeVisible();
     await expect.element(projectMenu().getByRole("link", { name: "Users" })).toBeVisible();
     await expect.element(projectMenu().getByRole("link", { name: "Errors" })).toBeVisible();
@@ -86,14 +87,15 @@ describe("inside a project", () => {
     expect([...items].map((item) => item.textContent)).toEqual([
       "All projects",
       "Web analytics",
+      "Speed",
       "Users",
       "Errors",
       "Product analytics",
       "Settings",
     ]);
     // Right under the last module, not pinned to the bottom of the sidebar.
-    const lastModule = items[4]?.getBoundingClientRect();
-    const settings = items[5]?.getBoundingClientRect();
+    const lastModule = items[5]?.getBoundingClientRect();
+    const settings = items[6]?.getBoundingClientRect();
     expect((settings?.top ?? 0) - (lastModule?.bottom ?? 0)).toBeLessThan(8);
     await expect.poll(breadcrumb).toBe("Main site / Web analytics");
   });

@@ -4,7 +4,7 @@ import type { FastifyInstance, FastifyReply } from "fastify";
 import type { Kysely } from "kysely";
 
 import type { Database } from "../db/schema.ts";
-import { ENGAGEMENT, PAGEVIEW } from "../visits/visits.ts";
+import { ENGAGEMENT, PAGEVIEW, VITALS } from "../visits/visits.ts";
 import { ENVIRONMENT_PATTERN, environmentOf, RELEASE_PATTERN } from "./environment.ts";
 import { type NewEvent, storeEvents } from "./event-store.ts";
 import { USER_ID_PATTERN } from "./identity.ts";
@@ -167,7 +167,7 @@ export function serverEventsRoute(
       const accepted: NewEvent[] = [];
       let tooOld = 0;
       for (const [index, event] of request.body.events.entries()) {
-        if (event.name === PAGEVIEW || event.name === ENGAGEMENT) {
+        if (event.name === PAGEVIEW || event.name === ENGAGEMENT || event.name === VITALS) {
           return reply
             .code(400)
             .send(

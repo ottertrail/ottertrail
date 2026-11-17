@@ -32,7 +32,8 @@ WORKDIR /app
 # output carries THIRD_PARTY_LICENSES.txt for the code it bundles.
 COPY --from=build /src/apps/api/dist ./dist
 COPY --from=build /src/apps/web/dist ./dashboard
-COPY --from=build /src/packages/tracker/dist/tracker.js ./tracker/tracker.js
+# The tracker, and v.js beside it, which it loads to measure Web Vitals.
+COPY --from=build /src/packages/tracker/dist/tracker.js /src/packages/tracker/dist/v.js ./tracker/
 COPY LICENSE THIRD_PARTY_NOTICES.md ./
 # The geolocation database lives in a volume mounted here, written by `node dist/update-geo.mjs`.
 RUN mkdir -p data/geo && chown node:node data/geo

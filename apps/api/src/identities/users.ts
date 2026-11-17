@@ -1,6 +1,9 @@
 import { fromClickHouseTime, QueryParams, queryRows, type Reader } from "../clickhouse/query.ts";
 import { DEFAULT_ENVIRONMENT } from "../collection/environment.ts";
-import { ENGAGEMENT, ERROR } from "../visits/visits.ts";
+import { ENGAGEMENT, ERROR, VITALS } from "../visits/visits.ts";
+
+/** Events a user did not do themselves: time-on-page reports and Web Vitals. */
+const NOT_THEIRS = `name NOT IN ('${ENGAGEMENT}', '${VITALS}')`;
 
 /**
  * Known users: the user IDs a site sends with its events (collection/
@@ -43,9 +46,9 @@ const toUser = (row: UserRowData): User => ({
  * engagement report says how long a page was visible, not that the user did
  * something, and a user with nothing else is not listed.
  */
-const USER_COLUMNS = `minIf(occurred_at, name != '${ENGAGEMENT}') AS first_seen,
-  maxIf(occurred_at, name != '${ENGAGEMENT}') AS last_seen,
-  countIf(name != '${ENGAGEMENT}') AS events`;
+const USER_COLUMNS = `minIf(occurred_at, ${NOT_THEIRS}) AS first_seen,
+  maxIf(occurred_at, ${NOT_THEIRS}) AS last_seen,
+  countIf(${NOT_THEIRS}) AS events`;
 
 /** The project's events of one environment; the project first, for the table's order. */
 function scope(params: QueryParams, projectId: string, environment: string): string {
@@ -219,7 +222,7 @@ export async function userActivity(
     `SELECT event_id, name, occurred_at, path, referrer, properties, browser, os, device_type,
             country, region, city, release, error_type, error_message, error_fingerprint
      FROM events FINAL
-     WHERE ${where} AND name != '${ENGAGEMENT}' ${after}
+     WHERE ${where} AND ${NOT_THEIRS} ${after}
      ORDER BY occurred_at DESC, event_id DESC
      LIMIT ${limit + 1}`,
     params,

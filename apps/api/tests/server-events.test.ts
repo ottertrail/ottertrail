@@ -137,6 +137,7 @@ describe("POST /api/server-events", () => {
   test.each([
     [{ name: "pageview" }, "a pageview, which only the tracker sends"],
     [{ name: "engagement" }, "an engagement report"],
+    [{ name: "vitals" }, "a page load's Web Vitals"],
     [{ userId: undefined }, "no user ID"],
     [{ userId: "" }, "an empty user ID"],
     [{ path: "/checkout?step=2" }, "a path with a query"],

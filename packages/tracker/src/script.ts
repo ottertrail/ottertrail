@@ -24,6 +24,10 @@
  * Noise is skipped: "Script error." from a cross-origin script that hides
  * its details, and errors from browser extensions. Each distinct error is
  * sent once per page load, and 25 at most.
+ *
+ * It loads v.js from beside itself to measure Web Vitals, sent as one
+ * "vitals" event per page load when the page is first hidden or left;
+ * data-vitals="off" skips it, and so does an integrity attribute.
  */
 import {
   createEngagementTimer,
@@ -38,6 +42,7 @@ import { cleanSignature, cleanUserId } from "./sanitize.ts";
 import { createTracker, type Page, type SignedUser } from "./tracker.ts";
 import { browserTransport } from "./transport.ts";
 import { cleanPageUrl, cleanReferrer } from "./url.ts";
+import { RECORD_PROPERTY, type VitalName, VITALS } from "./vital-names.ts";
 
 export interface OttertrailApi {
   track(name: string, properties?: Record<string, unknown>): void;
@@ -57,8 +62,11 @@ declare global {
     ottertrail?: OttertrailApi;
   }
   interface Document {
-    /** True while Chrome prerenders the page before the visitor opens it. */
-    readonly prerendering?: boolean;
+    /**
+     * True while Chrome prerenders the page before the visitor opens it.
+     * Not readonly: web-vitals declares it the same way, and both must match.
+     */
+    prerendering?: boolean;
   }
 }
 
@@ -130,6 +138,32 @@ function landing(): Page {
     };
     const engaged = createEngagementTimer();
 
+    // The page load's Web Vitals, as v.js last reported them (vitals.ts):
+    // one "vitals" event, for the page the visitor landed on and whoever was
+    // signed in then, sent when the page is first hidden or left. Not on an
+    // in-app navigation: the library measures page loads, and it has not
+    // yet counted the click that navigates.
+    let vitals: Partial<Record<VitalName, number>> = {};
+    let vitalsSent = false;
+    let landedOn: { page: Page; user: SignedUser | undefined } | undefined;
+    const recordVital = (name: VitalName, value: number) => {
+      if (!vitalsSent && Number.isFinite(value) && value >= 0) {
+        // Milliseconds, and layout shift to four decimals, as the API takes them.
+        vitals[name] = name === "CLS" ? Math.round(value * 10_000) / 10_000 : Math.round(value);
+      }
+    };
+    const sendVitals = () => {
+      const measured = Object.entries(vitals);
+      if (vitalsSent || landedOn === undefined || measured.length === 0) return;
+      vitalsSent = true;
+      tracker.track(
+        VITALS,
+        landedOn.page,
+        Object.fromEntries(measured.map(([name, value]) => [name.toLowerCase(), value])),
+        { user: landedOn.user },
+      );
+    };
+
     // Time on the current page, sent when the visitor leaves it or hides the tab.
     const reportEngagement = () => {
       // A tab left open for days still reports at most what the API accepts.
@@ -155,6 +189,7 @@ function landing(): Page {
         };
       }
       viewedBy = user;
+      landedOn ??= { page: current, user };
       tracker.track("pageview", current);
     };
 
@@ -172,13 +207,50 @@ function landing(): Page {
       window.addEventListener("unhandledrejection", (event) => errors.rejected(event.reason));
     }
 
+    // Web Vitals come from v.js, beside this script, unless the page says
+    // data-vitals="off", or pins this script with integrity: v.js could not
+    // be pinned with it. It carries a nonce if this one did, for sites with
+    // a strict Content Security Policy.
+    const src = script !== null && "src" in script ? script.src : "";
+    if (
+      typeof src === "string" &&
+      src !== "" &&
+      script?.dataset.vitals !== "off" &&
+      !script?.hasAttribute?.("integrity")
+    ) {
+      // A page restored from the back/forward cache is a new page load. In
+      // the capture phase, and added before v.js runs, this goes first: the
+      // library reports the restored page's first values in its own.
+      window.addEventListener(
+        "pageshow",
+        (event) => {
+          if (event.persisted) {
+            vitals = {};
+            vitalsSent = false;
+            landedOn = undefined;
+          }
+        },
+        true,
+      );
+      try {
+        const measure = document.createElement("script");
+        measure.src = new URL("v.js", src).href;
+        measure.async = true;
+        if (script?.nonce) measure.nonce = script.nonce;
+        Object.assign(measure, { [RECORD_PROPERTY]: recordVital });
+        document.head.append(measure);
+      } catch {
+        // Without Web Vitals, the rest still works.
+      }
+    }
+
     window.ottertrail = {
       identify: (id, signature) => setUser(id, signature, "identify()"),
       reset: () => setUser(undefined, undefined, "reset()"),
       captureError: errors.handled,
       track: (name, properties) => {
         // The tracker sends these itself; a page sending them would distort reports.
-        if (name === "pageview" || name === ENGAGEMENT || name === ERROR) {
+        if (name === "pageview" || name === ENGAGEMENT || name === ERROR || name === VITALS) {
           console.warn(
             `Ottertrail: "${name}" is reserved for the tracker's own events, so it is not sent.`,
           );
@@ -226,6 +298,7 @@ function landing(): Page {
       if (document.visibilityState === "hidden") {
         engaged.pause();
         reportEngagement();
+        sendVitals();
         tracker.flushOnExit();
       } else {
         engaged.resume();
@@ -233,6 +306,10 @@ function landing(): Page {
     });
     window.addEventListener("pagehide", () => {
       reportEngagement();
+      // Leaving a page fires pagehide, then visibilitychange, when the
+      // library takes its last values: let that one send them. A browser
+      // that fires no visibilitychange here has hidden the page already.
+      if (document.visibilityState === "hidden") sendVitals();
       tracker.flushOnExit();
     });
   } catch {

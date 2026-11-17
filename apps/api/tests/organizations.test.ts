@@ -23,6 +23,7 @@ function projectRoutes(id: string): [string, string, object?][] {
     ["GET", `/api/projects/${id}/analytics/list?report=pages&period=7d`],
     ["GET", `/api/projects/${id}/users`],
     ["GET", `/api/projects/${id}/users/user-42`],
+    ["GET", `/api/projects/${id}/speed?period=7d`],
     ["GET", `/api/projects/${id}/errors?period=7d`],
     ["GET", `/api/projects/${id}/errors/1-0123456789abcdef0123?period=7d`],
     ["PATCH", `/api/projects/${id}/errors/1-0123456789abcdef0123`, { status: "resolved" }],

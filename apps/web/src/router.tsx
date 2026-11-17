@@ -24,6 +24,7 @@ import { OrganizationSettingsPage } from "@/features/organizations/organization-
 import { ProjectLayout } from "@/features/projects/project-layout";
 import { ProjectSettingsPage } from "@/features/projects/project-settings-page";
 import { ProjectsPage } from "@/features/projects/projects-page";
+import { SpeedPage } from "@/features/speed/speed-page";
 import { UserPage } from "@/features/users/user-page";
 import { UsersPage } from "@/features/users/users-page";
 import {
@@ -40,6 +41,7 @@ import { authClient } from "@/lib/auth-client";
 import { DEFAULT_STATUS_FILTER, isStatusFilter, type StatusFilter } from "@/lib/errors-api";
 import { lastProject } from "@/lib/last-project";
 import { projectsQuery } from "@/lib/projects-api";
+import { type Device, isDevice } from "@/lib/speed-api";
 
 async function signedIn(): Promise<boolean> {
   const { data } = await authClient.getSession();
@@ -129,7 +131,7 @@ const projectsRoute = createRoute({
 });
 
 /**
- * Inside one project. Every module (web analytics, users, errors, and
+ * Inside one project. Every module (web analytics, speed, users, errors, and
  * later product analytics) is a page under it, and the sidebar
  * switches to the project's own menu.
  */
@@ -304,6 +306,34 @@ const errorRoute = createRoute({
   },
 });
 
+/** Web Vitals: days and environment as on errors, and a kind of device (left out for all). */
+const speedRoute = createRoute({
+  getParentRoute: () => projectRoute,
+  path: "/speed",
+  staticData: { title: "Speed" },
+  validateSearch: (
+    search: ErrorSearchInput & { device?: unknown },
+  ): ReturnType<typeof rangeSearch> & { env: string | undefined } & {
+    device: Device | undefined;
+  } => ({
+    ...rangeSearch(search),
+    ...environmentSearch(search),
+    device: isDevice(search.device) ? search.device : undefined,
+  }),
+  component: function SpeedRouteComponent() {
+    const { projectId } = speedRoute.useParams();
+    const { period, from, to, env, device } = speedRoute.useSearch();
+    return (
+      <SpeedPage
+        projectId={projectId}
+        range={rangeFrom({ period, from, to })}
+        environment={env ?? DEFAULT_ENVIRONMENT}
+        device={device}
+      />
+    );
+  },
+});
+
 const projectSettingsRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: "/settings",
@@ -338,6 +368,7 @@ const routeTree = rootRoute.addChildren([
     projectRoute.addChildren([
       projectIndexRoute,
       webAnalyticsRoute,
+      speedRoute,
       usersRoute,
       userRoute,
       errorsRoute,

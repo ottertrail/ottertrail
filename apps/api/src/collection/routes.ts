@@ -9,7 +9,7 @@ import { type Locate, noLocation } from "../enrichment/geo.ts";
 import { isBot, parseUserAgent } from "../enrichment/user-agent.ts";
 import { fingerprint } from "../errors/fingerprint.ts";
 import { VisitorIds } from "../visitors/visitor-ids.ts";
-import { ENGAGEMENT, ERROR } from "../visits/visits.ts";
+import { ENGAGEMENT, ERROR, VITALS } from "../visits/visits.ts";
 import { ENVIRONMENT_PATTERN, environmentOf, RELEASE_PATTERN } from "./environment.ts";
 import { type NewEvent, storeEvents } from "./event-store.ts";
 import { isSignedUserId, USER_ID_PATTERN, USER_SIGNATURE_PATTERN } from "./identity.ts";
@@ -24,6 +24,7 @@ import {
 import { type CollectingProject, ProjectKeyCache, PUBLIC_KEY_PATTERN } from "./project-keys.ts";
 import { EventBudget, type RateLimit, TokenBucketLimiter } from "./rate-limiter.ts";
 import { DEFAULT_SERVER_IP_LIMIT, serverEventsRoute } from "./server-events.ts";
+import { keepValidVitals } from "./vitals.ts";
 
 export const MAX_EVENTS_PER_BATCH = 50;
 export const MAX_BODY_BYTES = 64 * 1024;
@@ -507,6 +508,10 @@ export const collectionRoutes: FastifyPluginCallback<CollectionOptions> = (app, 
                 ),
               );
           }
+        }
+        // A page load's Web Vitals: only the values a page load can have.
+        if (event.name === VITALS && event.properties !== undefined) {
+          keepValidVitals(event.properties);
         }
 
         // An error is an event named "error" with its details. One without

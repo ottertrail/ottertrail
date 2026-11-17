@@ -454,8 +454,12 @@ describe("tracker script", () => {
     testDb = await createTestDatabase();
     directory = await mkdtemp(join(tmpdir(), "ottertrail-tracker-"));
     await writeFile(join(directory, "tracker.js"), "console.log('tracker');\n");
+    await writeFile(join(directory, "v.js"), "console.log('vitals');\n");
     app = buildApp({ db: testDb.db, trackerScriptPath: join(directory, "tracker.js") });
-    missing = buildApp({ db: testDb.db, trackerScriptPath: join(directory, "not-built.js") });
+    missing = buildApp({
+      db: testDb.db,
+      trackerScriptPath: join(directory, "not-built", "tracker.js"),
+    });
   });
 
   afterAll(async () => {
@@ -477,9 +481,19 @@ describe("tracker script", () => {
     expect(again.statusCode).toBe(304);
   });
 
+  test("serves the Web Vitals script it loads, v.js, from beside it", async () => {
+    const response = await app.inject({ url: "/v.js" });
+    expect(response.statusCode).toBe(200);
+    expect(response.headers["content-type"]).toBe("text/javascript; charset=utf-8");
+    expect(response.headers["cache-control"]).toBe("public, max-age=3600");
+    expect(response.body).toBe("console.log('vitals');\n");
+  });
+
   test("says so when the tracker has not been built", async () => {
-    const response = await missing.inject({ url: "/t.js" });
-    expect(response.statusCode).toBe(503);
-    expect(response.headers["cache-control"]).toBe("no-store");
+    for (const url of ["/t.js", "/v.js"]) {
+      const response = await missing.inject({ url });
+      expect({ url, status: response.statusCode }).toEqual({ url, status: 503 });
+      expect(response.headers["cache-control"]).toBe("no-store");
+    }
   });
 });

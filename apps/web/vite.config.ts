@@ -27,6 +27,7 @@ export default defineConfig({
     proxy: {
       "/api": apiOrigin,
       "/t.js": apiOrigin,
+      "/v.js": apiOrigin,
     },
   },
   test: {

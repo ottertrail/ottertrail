@@ -8,6 +8,7 @@ import {
   CheckIcon,
   ChevronsUpDownIcon,
   FolderIcon,
+  GaugeIcon,
   PaletteIcon,
   SettingsIcon,
   UsersIcon,
@@ -191,6 +192,18 @@ function ProjectMenu({ projectId }: { projectId: string }) {
             >
               <ChartLineIcon />
               <span>Web analytics</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              render={<Link to="/projects/$projectId/speed" params={{ projectId }} />}
+              isActive={
+                matchRoute({ to: "/projects/$projectId/speed", params: { projectId } }) !== false
+              }
+              tooltip="Speed"
+            >
+              <GaugeIcon />
+              <span>Speed</span>
             </SidebarMenuButton>
           </SidebarMenuItem>
           <SidebarMenuItem>

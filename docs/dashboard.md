@@ -96,7 +96,7 @@ A project is one website or app. The Projects page lists them with their allowed
 The dashboard has two levels, the way hosting dashboards treat each site:
 
 - **The organization** (the sidebar's first group, under its name): the project list (`/projects`), the design-system reference, and the organization's settings (`/settings`). Members will go there too.
-- **Inside a project** (`/projects/<id>/…`): the sidebar becomes the project's own menu, with a switcher to the other projects and a link back to all of them. It lists the project's modules (web analytics, users, errors; product analytics marked as planned), then the project's settings. The header shows the project's name before the page title.
+- **Inside a project** (`/projects/<id>/…`): the sidebar becomes the project's own menu, with a switcher to the other projects and a link back to all of them. It lists the project's modules (web analytics, speed, users, errors; product analytics marked as planned), then the project's settings. The header shows the project's name before the page title.
 
 Every module belongs to one project (its records carry `project_id`), so a module's pages sit under the project instead of at the top with a project picker. The switcher keeps the current page: from one project's web analytics for the last 90 days, it opens the other project's web analytics for the last 90 days.
 
@@ -113,7 +113,7 @@ Every module belongs to one project (its records carry `project_id`), so a modul
 ></script>
 ```
 
-- `src`: the instance serves the built tracker at `/t.js`. A short, neutral name, because ad-block lists often match file names such as `tracker.js` or `analytics.js`. Browsers may cache it for an hour, then check it again with its ETag, so a new tracker reaches sites within an hour. The API reads the file on each request, so a new build needs no restart; until the tracker is built (`vp run -r build`), `/t.js` answers 503.
+- `src`: the instance serves the built tracker at `/t.js`, and the Web Vitals script it loads at `/v.js`. A short, neutral name, because ad-block lists often match file names such as `tracker.js` or `analytics.js`. Browsers may cache it for an hour, then check it again with its ETag, so a new tracker reaches sites within an hour. The API reads the file on each request, so a new build needs no restart; until the tracker is built (`vp run -r build`), `/t.js` and `/v.js` answer 503, and a missing one is logged once.
 - `data-key`: the project's public key. It only lets pages on the allowed sites send events; it cannot read anything.
 - `data-host`: where events go (`/api/events` on the same instance).
 - `data-environment` and `data-release` (optional): where the site runs, such as `staging`, and which version of it ([web analytics](web-analytics.md#environments-and-releases)). The Install card explains both under the snippet; without them, events count as `production`.
@@ -324,6 +324,30 @@ The API is in [errors](errors.md#4-status-and-counts). Resolve and Reopen refres
 - Counts per tab: the Unresolved tab cannot tell "no errors" from "all resolved".
 - The status filter applies to the 1,000 most recently seen groups of the range: a shorter range shows older ones.
 - The group's page lists environments only through the one in its address.
+
+## 8.7 Speed
+
+Code: `apps/web/src/features/speed/`, `apps/api/src/speed/`. How fast page loads felt: the [Web Vitals](web-analytics.md#web-vitals) the tracker measures, in one environment and a range of days, with the analytics page's period choices, and a device choice (All devices, Desktop, Mobile, Tablet; `device=` in the address).
+
+- Three cards for the Core Web Vitals, LCP, INP, and CLS: the 75th percentile (p75) with its rating, Good, Needs improvement, or Poor (a badge with an icon and a label, never color alone), a one-line explanation, a bar of the shares of good, so-so, and poor page loads with each share written out, and how many page loads were measured (INP only counts loads with an interaction). A note says what p75 means, for which days and timezone, and that the thresholds are Google's.
+- FCP and TTFB, which lead up to LCP, the same way but smaller.
+- LCP's p75 per day (the analytics page's line chart, with gaps for days without loads, and "Show the numbers" for a table of every day).
+- By device, and the 20 pages with the most measured loads: loads and the p75 of LCP, INP, and CLS, each with a rating icon.
+- Without page loads, the page explains `v.js`, when values are sent, what single-page apps and `integrity` pins miss, and `data-vitals="off"`.
+
+Values show as "180 ms" below a second, "1.2 s" from one, and CLS with two decimals; ratings are of the value as shown, so "2.5 s" is never rated as over 2.5 seconds. Shares are rounded one by one, so a card's three can add up to 99% or 101%.
+
+```text
+GET /api/projects/:id/speed?period=7d&environment=production&device=mobile
+```
+
+It answers the thresholds with the report, so the page rates values as the API does. p75 is interpolated between the two nearest page loads (NumPy's default, Excel's `PERCENTILE.INC`): four loads of 1, 2, 3, and 4 seconds give 3.25 seconds; ClickHouse's `quantileExact` would give 4. `speed.test.tsx` covers the cards, ratings, shares, formatting, the device choice, the environment picker, both tables, the empty state, and a failed load, against the fake API; `apps/api/tests/speed.test.ts` the numbers.
+
+### Not done yet
+
+- A comparison with the period before, as the analytics page has.
+- FCP and TTFB per device and page, and whether the 20 pages were all of them.
+- Values of their own for in-app navigations of single-page apps (see [Web Vitals](web-analytics.md#web-vitals)).
 
 ## Organizations
 

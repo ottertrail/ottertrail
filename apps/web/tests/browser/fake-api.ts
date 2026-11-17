@@ -7,6 +7,7 @@ import {
 } from "../../src/lib/errors-api.ts";
 import type { Organization } from "../../src/lib/organizations-api.ts";
 import type { Project } from "../../src/lib/projects-api.ts";
+import type { Speed } from "../../src/lib/speed-api.ts";
 import type { Activity, User, UserActivity, UserList } from "../../src/lib/users-api.ts";
 
 /**
@@ -39,6 +40,8 @@ export interface FakeApi {
   setErrorStatus: (api: FakeApi, fingerprint: string, status: string) => Response;
   /** Resolved error groups by fingerprint, as error_resolutions holds them. */
   resolutions: Record<string, { resolvedAt: string; resolvedBy: string | null }>;
+  /** Answers GET /api/projects/:id/speed; by default, fakeSpeed. */
+  speed: (query: URLSearchParams) => Speed | Response;
   /** Answers DELETE /api/projects/:id; by default, removes the project (204). */
   deleteProject: (api: FakeApi, id: string) => Response;
   /** Every path the page asked for, with its query, in order. */
@@ -452,6 +455,74 @@ export function emptyAnalytics(): Analytics {
   };
 }
 
+/** A week of Web Vitals: LCP good, INP needing improvement, CLS poor; change parts with `overrides`. */
+export function speedFixture(overrides: Partial<Speed> = {}): Speed {
+  return {
+    timeZone: "Asia/Singapore",
+    environment: "production",
+    environments: ["production"],
+    firstDay: "2026-11-10",
+    lastDay: "2026-11-16",
+    device: null,
+    thresholds: {
+      lcp: [2500, 4000],
+      inp: [200, 500],
+      cls: [0.1, 0.25],
+      fcp: [1800, 3000],
+      ttfb: [800, 1800],
+    },
+    loads: 400,
+    metrics: {
+      lcp: { p75: 2300, count: 380, good: 304, needsImprovement: 57, poor: 19 },
+      inp: { p75: 240, count: 150, good: 90, needsImprovement: 45, poor: 15 },
+      cls: { p75: 0.31, count: 400, good: 200, needsImprovement: 100, poor: 100 },
+      fcp: { p75: 1200, count: 400, good: 360, needsImprovement: 30, poor: 10 },
+      ttfb: { p75: 950, count: 400, good: 200, needsImprovement: 150, poor: 50 },
+    },
+    devices: [
+      { deviceType: "desktop", loads: 250, lcp: 1800, inp: 120, cls: 0.05 },
+      { deviceType: "mobile", loads: 140, lcp: 4600, inp: 520, cls: 0.3 },
+      { deviceType: null, loads: 10, lcp: null, inp: null, cls: 0 },
+    ],
+    pages: [
+      { path: "/", loads: 200, lcp: 2100, inp: 180, cls: 0.08 },
+      { path: "/pricing", loads: 120, lcp: 3800, inp: null, cls: 0.12 },
+    ],
+    days: [
+      { day: "2026-11-10", loads: 50, lcp: 2200, inp: 230, cls: 0.3 },
+      { day: "2026-11-11", loads: 60, lcp: 2400, inp: 250, cls: 0.31 },
+      { day: "2026-11-12", loads: 0, lcp: null, inp: null, cls: null },
+      { day: "2026-11-13", loads: 70, lcp: 2100, inp: 220, cls: 0.29 },
+      { day: "2026-11-14", loads: 80, lcp: 2500, inp: 260, cls: 0.33 },
+      { day: "2026-11-15", loads: 75, lcp: 2300, inp: 240, cls: 0.3 },
+      { day: "2026-11-16", loads: 65, lcp: 2350, inp: 235, cls: 0.32 },
+    ],
+    ...overrides,
+  };
+}
+
+/** The same week with no page load measured. */
+export function emptySpeed(): Speed {
+  const fixture = speedFixture();
+  const none = { p75: null, count: 0, good: 0, needsImprovement: 0, poor: 0 };
+  return {
+    ...fixture,
+    loads: 0,
+    metrics: { lcp: none, inp: none, cls: none, fcp: none, ttfb: none },
+    devices: [],
+    pages: [],
+    days: fixture.days.map((day) => ({ day: day.day, loads: 0, lcp: null, inp: null, cls: null })),
+  };
+}
+
+/** speedFixture, answering for the environment and device asked for. */
+export function fakeSpeed(query: URLSearchParams): Speed {
+  return speedFixture({
+    environment: query.get("environment") ?? "production",
+    device: query.get("device"),
+  });
+}
+
 export const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 
@@ -545,6 +616,10 @@ async function answer(api: FakeApi, url: URL, init: RequestInit | undefined): Pr
   }
   if (/^\/api\/projects\/[^/]+\/users$/.test(path)) {
     const result = api.users(url.searchParams);
+    return result instanceof Response ? result : json(result);
+  }
+  if (/^\/api\/projects\/[^/]+\/speed$/.test(path)) {
+    const result = api.speed(url.searchParams);
     return result instanceof Response ? result : json(result);
   }
   if (/^\/api\/projects\/[^/]+\/errors$/.test(path)) {
@@ -641,6 +716,7 @@ export function installFakeApi(overrides: Partial<FakeApi> = {}): FakeApi {
     errors: fakeErrors,
     error: fakeError,
     setErrorStatus: changeErrorStatus,
+    speed: fakeSpeed,
     resolutions: fakeResolutions(),
     deleteProject: removeProject,
     requests: [],

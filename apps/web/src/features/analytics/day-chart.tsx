@@ -5,7 +5,8 @@ import { formatCount, formatDay, niceTicks } from "./format";
 export interface DayValue {
   /** "YYYY-MM-DD" */
   day: string;
-  value: number;
+  /** null: nothing measured that day; the line has a gap there. */
+  value: number | null;
 }
 
 export interface TooltipRow {
@@ -23,6 +24,22 @@ const MARGIN = { top: 12, right: 16, left: 48 };
 /** Space each x-axis label needs, so labels never collide. */
 const LABEL_SPACING = 72;
 
+/** The line's runs of days with a value, as indexes into the points: a gap breaks the line. */
+function runsOf(points: DayValue[]): number[][] {
+  const runs: number[][] = [];
+  let run: number[] = [];
+  points.forEach((point, index) => {
+    if (point.value === null) {
+      if (run.length > 0) runs.push(run);
+      run = [];
+    } else {
+      run.push(index);
+    }
+  });
+  if (run.length > 0) runs.push(run);
+  return runs;
+}
+
 /**
  * One metric per day as a line with a light area wash: a single series, so
  * no legend (the card's title names the metric). A crosshair snaps to the
@@ -38,11 +55,14 @@ export function DayChart({
   points,
   label,
   tooltipRows,
+  formatValue = formatCount,
 }: {
   points: DayValue[];
   /** What the line is, such as "Visitors per day"; the chart's accessible name. */
   label: string;
   tooltipRows: (index: number) => TooltipRow[];
+  /** The y-axis labels; counts by default. */
+  formatValue?: (value: number) => string;
 }) {
   const containerRef = React.useRef<HTMLDivElement>(null);
   const [width, setWidth] = React.useState(0);
@@ -65,17 +85,27 @@ export function DayChart({
 
   const count = points.length;
   const last = count - 1;
-  const ticks = niceTicks(Math.max(0, ...points.map((point) => point.value)));
+  const ticks = niceTicks(Math.max(0, ...points.map((point) => point.value ?? 0)));
   const top = ticks.at(-1) ?? 1;
   const plotWidth = Math.max(0, width - MARGIN.left - MARGIN.right);
   const x = (index: number) =>
     MARGIN.left + (count <= 1 ? plotWidth / 2 : (index / last) * plotWidth);
   const y = (value: number) => MARGIN.top + PLOT_HEIGHT - (value / top) * PLOT_HEIGHT;
 
-  const line = points
-    .map((point, index) => `${index === 0 ? "M" : "L"}${x(index)},${y(point.value)}`)
-    .join("");
-  const area = count > 1 ? `${line}L${x(last)},${y(0)}L${x(0)},${y(0)}Z` : "";
+  const valueAt = (index: number) => points[index]?.value ?? 0;
+  // Days without a value break the line; a day alone between gaps is a dot.
+  const runs = runsOf(points);
+  const lines = runs
+    .filter((run) => run.length > 1)
+    .map((run) => {
+      const first = run[0] ?? 0;
+      const end = run.at(-1) ?? 0;
+      const line = run
+        .map((index, at) => `${at === 0 ? "M" : "L"}${x(index)},${y(valueAt(index))}`)
+        .join("");
+      return { first, line, area: `${line}L${x(end)},${y(0)}L${x(first)},${y(0)}Z` };
+    });
+  const dots = runs.filter((run) => run.length === 1).map((run) => run[0] ?? 0);
   // Label every nth day, counted back from the last, so the latest day always has one.
   const labelEvery = Math.max(
     1,
@@ -148,7 +178,7 @@ export function DayChart({
                 dominantBaseline="middle"
                 className="fill-ink-subtle text-[11px] tabular-nums"
               >
-                {formatCount(tick)}
+                {formatValue(tick)}
               </text>
             </g>
           ))}
@@ -171,20 +201,22 @@ export function DayChart({
               </text>
             ) : null,
           )}
-          {area !== "" && <path d={area} fill="var(--chart-1)" fillOpacity={0.1} />}
-          {count > 1 && (
-            <path
-              d={line}
-              fill="none"
-              stroke="var(--chart-1)"
-              strokeWidth={2}
-              strokeLinejoin="round"
-              strokeLinecap="round"
-            />
-          )}
-          {count === 1 && points[0] !== undefined && (
-            <circle cx={x(0)} cy={y(points[0].value)} r={4} fill="var(--chart-1)" />
-          )}
+          {lines.map((item) => (
+            <g key={item.first}>
+              <path d={item.area} fill="var(--chart-1)" fillOpacity={0.1} />
+              <path
+                d={item.line}
+                fill="none"
+                stroke="var(--chart-1)"
+                strokeWidth={2}
+                strokeLinejoin="round"
+                strokeLinecap="round"
+              />
+            </g>
+          ))}
+          {dots.map((index) => (
+            <circle key={index} cx={x(index)} cy={y(valueAt(index))} r={4} fill="var(--chart-1)" />
+          ))}
           {activePoint !== undefined && active !== null && (
             <g pointerEvents="none">
               <line
@@ -196,14 +228,16 @@ export function DayChart({
                 strokeWidth={1}
                 shapeRendering="crispEdges"
               />
-              <circle
-                cx={x(active)}
-                cy={y(activePoint.value)}
-                r={4}
-                fill="var(--chart-1)"
-                stroke="var(--card)"
-                strokeWidth={2}
-              />
+              {activePoint.value !== null && (
+                <circle
+                  cx={x(active)}
+                  cy={y(activePoint.value)}
+                  r={4}
+                  fill="var(--chart-1)"
+                  stroke="var(--card)"
+                  strokeWidth={2}
+                />
+              )}
             </g>
           )}
         </svg>

@@ -15,6 +15,7 @@ import { organizationRoutes } from "./organizations/routes.ts";
 import { projectRoutes } from "./projects/routes.ts";
 import { reportRoutes } from "./reports/routes.ts";
 import { healthRoutes } from "./routes/health.ts";
+import { speedRoutes } from "./speed/routes.ts";
 import { trackerScriptRoutes } from "./tracker-script/routes.ts";
 
 export interface AppOptions extends Omit<FastifyServerOptions, "logger"> {
@@ -137,6 +138,13 @@ export function buildApp({
       db,
       clickhouse: dashboard.clickhouse,
       auth: dashboard.auth,
+    });
+    app.register(speedRoutes, {
+      prefix: "/api",
+      db,
+      clickhouse: dashboard.clickhouse,
+      auth: dashboard.auth,
+      ...(dashboard.now === undefined ? {} : { now: dashboard.now }),
     });
     app.register(errorRoutes, {
       prefix: "/api",

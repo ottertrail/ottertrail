@@ -9,6 +9,9 @@
     "demo": "vp pack && vp dev",
     "test": "vp test"
   },
+  "dependencies": {
+    "web-vitals": "catalog:"
+  },
   "devDependencies": {
     "typescript": "catalog:",
     "vite-plus": "catalog:"

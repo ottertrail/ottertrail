@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vite-plus/tes
 
 import { MAX_ENGAGED_MS } from "../src/engagement.ts";
 import type { QueuedEvent } from "../src/tracker.ts";
+import { RECORD_PROPERTY } from "../src/vital-names.ts";
 
 interface SentBatch {
   events: QueuedEvent[];
@@ -36,7 +37,14 @@ function fakePage(
   {
     maxTouchPoints = 0,
     attributes = {},
-  }: { maxTouchPoints?: number; attributes?: Record<string, string> } = {},
+    src = "https://analytics.example.com/t.js",
+    nonce = "",
+  }: {
+    maxTouchPoints?: number;
+    attributes?: Record<string, string>;
+    src?: string;
+    nonce?: string;
+  } = {},
 ) {
   const listeners: Record<string, Listener[]> = {};
   const on = (type: string, listener: Listener) => {
@@ -48,13 +56,19 @@ function fakePage(
       return new URL(this.href).pathname;
     },
   };
+  /** Scripts the tracker added to the page: v.js. */
+  const added: Record<string, unknown>[] = [];
   const document = {
     currentScript: {
+      src,
+      nonce,
       dataset: { key: "pk_test", host: "https://analytics.example.com", ...attributes } as Record<
         string,
         string | undefined
       >,
     },
+    createElement: (tagName: string) => ({ tagName }) as Record<string, unknown>,
+    head: { append: (element: Record<string, unknown>) => added.push(element) },
     referrer,
     visibilityState: "visible" as "visible" | "hidden",
     prerendering: false,
@@ -111,6 +125,7 @@ function fakePage(
     document,
     events,
     batches,
+    added,
     /** The visitor hides the tab or locks the phone. */
     hide: () => {
       document.visibilityState = "hidden";
@@ -631,5 +646,177 @@ describe("errors", () => {
     expect(() => page.window.ottertrail?.captureError(hostile)).not.toThrow();
     expect(() => page.fire("unhandledrejection", { reason: hostile })).not.toThrow();
     expect(await errorsSent(page)).toEqual([]);
+  });
+});
+
+/** The function v.js calls, from the script the tracker added. */
+const recorder = (page: ReturnType<typeof fakePage>) => {
+  const script = page.added.find((element) => element.tagName === "script");
+  return script?.[RECORD_PROPERTY] as (name: string, value: number) => void;
+};
+
+describe("Web Vitals", () => {
+  test("loads v.js from beside the tracker, with its nonce, unless turned off or pinned", async () => {
+    const page = fakePage("https://example.com/", "", {
+      src: "https://analytics.example.com/t.js?v=2",
+      nonce: "abc123",
+    });
+    await runScript();
+    expect(page.added).toMatchObject([
+      {
+        tagName: "script",
+        src: "https://analytics.example.com/v.js",
+        async: true,
+        nonce: "abc123",
+      },
+    ]);
+    expect(typeof recorder(page)).toBe("function");
+
+    const off = fakePage("https://example.com/", "", { attributes: { vitals: "off" } });
+    await runScript();
+    expect(off.added).toEqual([]);
+
+    // A site that pins the tracker with integrity could not pin v.js.
+    const pinned = fakePage("https://example.com/");
+    Object.assign(pinned.document.currentScript, {
+      hasAttribute: (name: string) => name === "integrity",
+    });
+    await runScript();
+    expect(pinned.added).toEqual([]);
+  });
+
+  test("sends the landing page's latest values once, when the page is first hidden", async () => {
+    const page = fakePage("https://example.com/pricing");
+    await runScript();
+    const record = recorder(page);
+    record("LCP", 2_000.4);
+    record("LCP", 2_345.6); // A later, larger paint replaces the first.
+    record("CLS", 0.123_456);
+    record("INP", 88);
+    record("TTFB", -1); // Nonsense is left out.
+    await vi.advanceTimersByTimeAsync(3000);
+    page.hide();
+    await page.settle();
+
+    page.show();
+    record("INP", 400); // After they were sent: not sent again.
+    await vi.advanceTimersByTimeAsync(3000);
+    page.hide();
+    await page.settle();
+
+    const sent = page.events.filter((event) => event.name === "vitals");
+    expect(sent).toMatchObject([
+      {
+        url: "https://example.com/pricing",
+        properties: { lcp: 2346, cls: 0.1235, inp: 88 },
+      },
+    ]);
+    // Time on page goes on as before, without them.
+    const reports = page.events.filter((event) => event.name === "engagement");
+    expect(reports.map((event) => event.properties)).toEqual([
+      { engagedMs: 3000 },
+      { engagedMs: 3000 },
+    ]);
+  });
+
+  test("an in-app navigation or an early redirect keeps them for the landing page", async () => {
+    const page = fakePage("https://example.com/");
+    await runScript();
+    const record = recorder(page);
+    // The app redirects at once, then the visitor clicks on.
+    page.window.location.href = "https://example.com/en/";
+    page.window.history.pushState();
+    record("LCP", 1200);
+    page.window.location.href = "https://example.com/en/pricing";
+    page.window.history.pushState();
+    record("INP", 140); // The click that navigated, counted after it.
+    await vi.advanceTimersByTimeAsync(2000);
+    page.hide();
+    await page.settle();
+
+    expect(page.events.filter((event) => event.name === "vitals")).toMatchObject([
+      { url: "https://example.com/", properties: { lcp: 1200, inp: 140 } },
+    ]);
+  });
+
+  test("goes with whoever was signed in when the page loaded", async () => {
+    const page = fakePage("https://example.com/", "", { attributes: { userId: "ada" } });
+    await runScript();
+    recorder(page)("LCP", 900);
+    page.window.ottertrail?.reset();
+    page.hide();
+    await page.settle();
+    expect(page.events.find((event) => event.name === "vitals")?.userId).toBe("ada");
+  });
+
+  test("waits for values: none yet when hidden, sent the next time", async () => {
+    const page = fakePage("https://example.com/");
+    await runScript();
+    page.hide(); // v.js has not reported anything yet.
+    page.show();
+    recorder(page)("LCP", 700);
+    page.hide();
+    await page.settle();
+    expect(page.events.filter((event) => event.name === "vitals")).toMatchObject([
+      { properties: { lcp: 700 } },
+    ]);
+  });
+
+  test("leaving the page sends them on the visibilitychange after pagehide, with its last values", async () => {
+    const page = fakePage("https://example.com/");
+    await runScript();
+    const record = recorder(page);
+    record("INP", 120);
+    // Leaving: pagehide first, while still visible; the library then takes
+    // its last values when the page turns hidden.
+    page.fire("pagehide");
+    record("INP", 350);
+    page.hide();
+    await page.settle();
+    expect(page.events.filter((event) => event.name === "vitals")).toMatchObject([
+      { properties: { inp: 350 } },
+    ]);
+  });
+
+  test("a pagehide after the page was hidden sends them, for browsers without that visibilitychange", async () => {
+    const page = fakePage("https://example.com/");
+    await runScript();
+    page.document.visibilityState = "hidden"; // Hidden, but no event fired.
+    recorder(page)("LCP", 500);
+    page.fire("pagehide");
+    await page.settle();
+    expect(page.events.filter((event) => event.name === "vitals")).toMatchObject([
+      { properties: { lcp: 500 } },
+    ]);
+  });
+
+  test("a page restored from the back/forward cache sends its own, first ones included", async () => {
+    const page = fakePage("https://example.com/");
+    await runScript();
+    const record = recorder(page);
+    record("LCP", 1500);
+    page.hide();
+    // The library reports a restored page's first values in its own pageshow
+    // listener, before the tracker's: they must count for the new load.
+    page.fire("pageshow", { persisted: true });
+    record("TTFB", 0);
+    page.show();
+    record("LCP", 40);
+    page.hide();
+    await page.settle();
+    expect(page.events.filter((event) => event.name === "vitals").map((e) => e.properties)).toEqual(
+      [{ lcp: 1500 }, { ttfb: 0, lcp: 40 }],
+    );
+  });
+
+  test("a page cannot send vitals itself", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const page = fakePage("https://example.com/");
+    await runScript();
+    page.window.ottertrail?.track("vitals", { lcp: 1 });
+    page.hide();
+    await page.settle();
+    expect(page.events.filter((event) => event.name === "vitals")).toEqual([]);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('"vitals" is reserved'));
   });
 });

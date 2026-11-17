@@ -24,8 +24,18 @@ export const ENGAGEMENT = "engagement";
  * errors existed, and counts as one.
  */
 export const ERROR = "error";
-/** SQL true for every event but an error: only errors have a fingerprint. */
-export const NOT_AN_ERROR = "error_fingerprint = ''";
+/** A page load's Web Vitals, sent once when it is first hidden (speed/speed.ts). Not web analytics. */
+export const VITALS = "vitals";
+
+/**
+ * SQL true for an event web analytics counts: not an error (only errors
+ * have a fingerprint) and not a page load's Web Vitals. `table` qualifies
+ * the columns, such as "e".
+ */
+export function analyticsEvent(table?: string): string {
+  const column = (name: string) => (table === undefined ? name : `${table}.${name}`);
+  return `${column("error_fingerprint")} = '' AND ${column("name")} != '${VITALS}'`;
+}
 
 export interface Visit {
   /** The visitor ID on the day of the visit. */
@@ -178,7 +188,7 @@ export function visitsSql(
       WHERE project_id = ${params.add(projectId, "UUID")}
         AND environment = ${params.add(environment, "String")}
         AND visitor_id IS NOT NULL
-        AND ${NOT_AN_ERROR}
+        AND ${analyticsEvent()}
         AND occurred_at >= ${params.time(readFrom)}
         AND occurred_at < ${params.time(readTo)}
     ),

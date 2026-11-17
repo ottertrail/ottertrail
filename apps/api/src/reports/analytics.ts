@@ -6,7 +6,7 @@ import type { ClickHouseClient } from "../clickhouse/clickhouse.ts";
 import { QueryParams, queryRows, type Reader, runCommand } from "../clickhouse/query.ts";
 import { DEFAULT_ENVIRONMENT } from "../collection/environment.ts";
 import type { Database } from "../db/schema.ts";
-import { NOT_AN_ERROR, visitsSql } from "../visits/visits.ts";
+import { analyticsEvent, visitsSql } from "../visits/visits.ts";
 import {
   type BreakdownRow,
   breakdown,
@@ -126,7 +126,7 @@ async function environmentsIn(reader: Reader, range: ReportRange): Promise<strin
        AND occurred_at >= ${params.time(range.from)}
        AND occurred_at < ${params.time(range.to)}
        AND visitor_id IS NOT NULL
-       AND ${NOT_AN_ERROR}
+       AND ${analyticsEvent()}
      GROUP BY environment
      ORDER BY count() DESC, environment`,
     params,

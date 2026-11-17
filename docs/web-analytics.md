@@ -275,7 +275,7 @@ Behind a proxy (Cloudflare, Caddy), every request seems to come from the proxy's
 
 ## 3. The tracker
 
-`packages/tracker` builds `dist/tracker.js`, the script a site adds to its pages: about 8.4 KB, 3.6 KB gzipped.
+`packages/tracker` builds `dist/tracker.js`, the script a site adds to its pages: about 9.1 KB, 3.9 KB gzipped. It loads `dist/v.js` (3.7 KB gzipped) from beside itself to measure [Web Vitals](#web-vitals).
 
 ```html
 <script
@@ -296,7 +296,7 @@ It sends a pageview when the page loads and whenever the path changes, and gives
 window.ottertrail?.track("signup", { plan: "free" });
 ```
 
-`pageview`, `engagement`, and `error` are the tracker's own events: `track()` refuses those names, with a warning. The tracker also reports uncaught errors and unhandled promise rejections, and errors the site reports with `window.ottertrail.captureError(error)`; `data-errors="off"` turns automatic capture off ([errors](errors.md#1-capture)).
+`pageview`, `engagement`, `error`, and `vitals` are the tracker's own events: `track()` refuses those names, with a warning. The tracker also reports uncaught errors and unhandled promise rejections, and errors the site reports with `window.ottertrail.captureError(error)`; `data-errors="off"` turns automatic capture off ([errors](errors.md#1-capture)).
 
 ### It runs on someone else's site
 
@@ -351,6 +351,28 @@ A batch that is in flight when the page hides may be sent twice: once by `fetch`
 The tracker measures how long each page is visible: time in a background tab or with the phone locked does not count. When the visitor leaves a page (an in-app navigation) or hides the tab, it sends an `engagement` event for that page with `properties.engagedMs`. Under one second is not reported. The time is collected again if the tab becomes visible.
 
 `pageview` and `engagement` are reserved: `window.ottertrail.track("pageview")` is refused with a console warning, so a page cannot inflate its own numbers. The API checks that an engagement event carries a whole number of milliseconds, at most 24 hours; the tracker caps a longer time at 24 hours, so a tab left open for days still reports. Visits (step 6) use these events for duration and engaged time; they never count as pageviews or interactions.
+
+### Web Vitals
+
+How fast each page load felt, measured in the visitor's browser: Largest Contentful Paint (LCP, when the main content showed), Interaction to Next Paint (INP, how quickly the page answered clicks, taps, and keys), Cumulative Layout Shift (CLS, how much the content jumped), and, to explain them, First Contentful Paint (FCP) and Time to First Byte (TTFB).
+
+- **Measured by Google's [web-vitals](https://github.com/GoogleChrome/web-vitals) library** (Apache-2.0, version 6.2.3), which handles the cases a hand-written version would get wrong: back/forward cache restores, prerendered pages, background tabs, and how INP picks among many interactions.
+- **In a second script, `v.js`,** served beside the tracker (`/v.js`), which the tracker adds to the page when it starts: 3.7 KB gzipped, about as large as the tracker itself (3.9 KB), so a page that does not want it never downloads it (`data-vitals="off"`). The browser keeps the entries the library reads, so loading it after the page loses only interactions before it ran, which the tracker's `defer` makes rare.
+- **One `vitals` event per page load,** sent when the page is first hidden or left, with `lcp`, `inp`, `fcp`, and `ttfb` in whole milliseconds and `cls` to four decimals, as measured until then. It belongs to the page the visitor landed on and whoever was signed in at that moment, whatever in-app navigations came after: an early redirect, such as `/` to `/en/`, does not lose it, and the click that navigates still counts for INP. A value not measured by then is left out: INP without an interaction, LCP if the page was hidden before its main content showed. Later changes, such as a slow click after the visitor comes back to the tab, are not sent. A page restored from the back/forward cache is a new page load, with its own event. When the visitor leaves the page, the browser fires `pagehide`, then `visibilitychange`, when the library takes its last measurements: the tracker sends on the second, so a slow click just before leaving still counts.
+- **Not web analytics:** like time on page, `vitals` events make no visit, pageview, or custom event (`analyticsEvent()` in `visits.ts`), and are not a user's own activity (`NOT_THEIRS` in `identities/users.ts`). The name is reserved: the tracker refuses `track("vitals")`, and server-side events cannot use it. An event a site named `vitals` itself before this now counts as a page load's Web Vitals and leaves web analytics; reports ignore values outside the limits below, and a `vitals` event without one is not a page load.
+- **In-app navigations get no values of their own.** The library measures page loads, as Chrome's own field data does: in a single-page app, the page load's values belong to the page the visitor landed on, and its INP and CLS include clicks and shifts on later in-app pages, until the page is first hidden.
+- **The API keeps only possible values:** each a number from 0 up to 10 minutes (whole milliseconds), CLS up to 100. Any other value, and any other property, is dropped, keeping the event and its batch (`collection/vitals.ts`).
+
+Where `v.js` does not load:
+
+- A site that pins the tracker with `integrity` gets no Web Vitals: `v.js` could not be pinned with it, and loading it unpinned would undo the pin.
+- With a strict Content Security Policy, `v.js` carries the tracker's `nonce`. A page that requires Trusted Types refuses it (the tracker goes on without it, and the browser files a report for each page load): turn it off there.
+- The tracker resolves `v.js` beside its own address. A site that serves the tracker from its own folder (not supported) would load that folder's `v.js`.
+- In development, the dashboard's dev server passes `/v.js` to the API, as it does `/t.js`.
+
+Reports: the Speed page shows each metric's 75th percentile and the share of good, so-so, and poor page loads, by Google's thresholds (good up to 2.5 s for LCP, 200 ms for INP, 0.1 for CLS, 1.8 s for FCP, and 0.8 s for TTFB; poor above 4 s, 500 ms, 0.25, 3 s, and 1.8 s), by device, page, and day ([dashboard](dashboard.md#87-speed)).
+
+Checked in headless Chromium with the built scripts (17 November 2026): the page loaded `t.js`, then `v.js`, redirected in-app from `/` to `/en/`, and after a click and leaving, one `vitals` event for `/` carried all five, INP included.
 
 ### The playground
 

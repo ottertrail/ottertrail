@@ -733,6 +733,34 @@ describe("POST /api/events", () => {
     });
   });
 
+  describe("Web Vitals", () => {
+    test("keeps a page load's vitals, and drops impossible ones", async () => {
+      const project = await createProject();
+      const report = pageview({
+        name: "vitals",
+        properties: { lcp: 2346, inp: 88, cls: 0.1235, fcp: 900, ttfb: 120 },
+      });
+      const odd = pageview({
+        name: "vitals",
+        properties: { lcp: -5, inp: 12.5, cls: 101, fcp: 700_000, ttfb: "fast", ok: 1 },
+      });
+      const response = await send(batch(project.public_key, [report, odd]));
+      // The event and its batch are kept either way.
+      expect(response.json()).toMatchObject({ stored: 2 });
+
+      const stored = await storedEvents(project.id);
+      expect(stored.find((event) => event.event_id === report.id)?.properties).toEqual({
+        lcp: 2346,
+        inp: 88,
+        cls: 0.1235,
+        fcp: 900,
+        ttfb: 120,
+      });
+      // Nothing but valid values stays: not even another property.
+      expect(stored.find((event) => event.event_id === odd.id)?.properties).toEqual({});
+    });
+  });
+
   describe("environment and release", () => {
     test("stores the batch's environment, in lower case, and release on every event", async () => {
       const project = await createProject();

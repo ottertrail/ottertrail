@@ -33,6 +33,7 @@ catalog:
   typescript: ^7.0.2
   vite: npm:@voidzero-dev/vite-plus-core@1.6.0
   vite-plus: 1.6.0
+  web-vitals: 6.2.3
   zod: 4.6.7
 overrides:
   vite@*: "catalog:"
