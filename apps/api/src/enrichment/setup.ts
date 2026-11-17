@@ -34,7 +34,7 @@ export async function setUpLocation(
     return {
       locate: noLocation,
       ok: false,
-      message: `No geolocation database at ${databasePath}: events are stored without a location. Run "vp run geo:update".`,
+      message: `No geolocation database at ${databasePath}: events are stored without a location. Run "vp run geo:update" (in the Docker image: "node dist/update-geo.mjs"), then restart.`,
     };
   }
   const built = geo.builtAt.toISOString().slice(0, 10);
@@ -44,7 +44,7 @@ export async function setUpLocation(
     locate: (request) => geo.lookup(request.ip),
     ok: !stale,
     message: stale
-      ? `The geolocation database (${geo.type}) was built on ${built}, over ${STALE_AFTER_DAYS} days ago: locations get less accurate. Run "vp run geo:update".`
+      ? `The geolocation database (${geo.type}) was built on ${built}, over ${STALE_AFTER_DAYS} days ago: locations get less accurate. Run "vp run geo:update" (in the Docker image: "node dist/update-geo.mjs"), then restart.`
       : `Locations come from ${geo.type}, built on ${built}`,
   };
 }

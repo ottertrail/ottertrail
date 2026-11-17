@@ -2,6 +2,7 @@ import { describe, expect, test } from "vite-plus/test";
 
 import {
   ConfigError,
+  DEFAULT_DASHBOARD_PATH,
   DEFAULT_GEO_DATABASE_PATH,
   DEVELOPMENT_AUTH_SECRET,
   DEFAULT_TRACKER_SCRIPT_PATH,
@@ -33,6 +34,7 @@ describe("loadConfig", () => {
       trustedOrigins: [DEVELOPMENT_PUBLIC_URL, "http://localhost:*", "http://127.0.0.1:*"],
       authSecret: DEVELOPMENT_AUTH_SECRET,
       trackerScriptPath: DEFAULT_TRACKER_SCRIPT_PATH,
+      dashboardPath: DEFAULT_DASHBOARD_PATH,
     });
   });
 
@@ -50,6 +52,7 @@ describe("loadConfig", () => {
         PUBLIC_URL: "https://analytics.example.com/",
         AUTH_SECRET: "s".repeat(44),
         TRACKER_SCRIPT_PATH: "/srv/ottertrail/tracker.js",
+        DASHBOARD_PATH: "/srv/ottertrail/dashboard",
       }),
     ).toEqual({
       host: "0.0.0.0",
@@ -64,6 +67,7 @@ describe("loadConfig", () => {
       trustedOrigins: ["https://analytics.example.com", "http://localhost:*", "http://127.0.0.1:*"],
       authSecret: "s".repeat(44),
       trackerScriptPath: "/srv/ottertrail/tracker.js",
+      dashboardPath: "/srv/ottertrail/dashboard",
     });
   });
 

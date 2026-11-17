@@ -65,7 +65,7 @@ export default defineConfig({
         env: { browser: true },
       },
       {
-        files: ["apps/api/**/*.ts"],
+        files: ["apps/api/**/*.ts", "scripts/**/*.ts"],
         plugins: ["node"],
         env: { node: true },
       },

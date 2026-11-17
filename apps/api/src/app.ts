@@ -6,6 +6,7 @@ import { betterAuthRoutes, setupRoutes } from "./auth/routes.ts";
 import { ProjectKeyCache } from "./collection/project-keys.ts";
 import type { RateLimit } from "./collection/rate-limiter.ts";
 import { type CollectionOptions, collectionRoutes } from "./collection/routes.ts";
+import { dashboardAppRoutes, sendsHsts } from "./dashboard-app/routes.ts";
 import type { Database } from "./db/schema.ts";
 import { projectRoutes } from "./projects/routes.ts";
 import { reportRoutes } from "./reports/routes.ts";
@@ -36,6 +37,8 @@ export interface AppOptions extends Omit<FastifyServerOptions, "logger"> {
   };
   /** The built tracker, served at /t.js. Not served when omitted. */
   trackerScriptPath?: string;
+  /** The built dashboard's directory, served at /. Not served when omitted. */
+  dashboardPath?: string;
 }
 
 /**
@@ -53,6 +56,7 @@ export function buildApp({
   log,
   dashboard,
   trackerScriptPath,
+  dashboardPath,
   ...fastifyOptions
 }: AppOptions) {
   const app = Fastify({
@@ -76,6 +80,12 @@ export function buildApp({
   app.register(collectionRoutes, { prefix: "/api", db, projectKeys, ...collection });
   if (trackerScriptPath !== undefined) {
     app.register(trackerScriptRoutes, { scriptPath: trackerScriptPath });
+  }
+  if (dashboardPath !== undefined) {
+    app.register(dashboardAppRoutes, {
+      root: dashboardPath,
+      hsts: dashboard === undefined ? false : sendsHsts(dashboard.publicUrl),
+    });
   }
   if (dashboard !== undefined) {
     app.decorateRequest("dashboardUser", null);

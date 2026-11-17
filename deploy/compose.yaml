@@ -1,0 +1,114 @@
+# One Ottertrail instance on one server: PostgreSQL, the API (which also
+# serves the dashboard and the tracker), the worker, and Caddy, which gets
+# HTTPS certificates and is the only service reachable from outside.
+#
+# Settings come from a file named .env next to this one (copy env.example).
+# See docs/deployment.md for the steps.
+#
+# Not "ottertrail": that is the local development stack (../compose.yaml),
+# and the same name would share its database volume.
+name: ottertrail-instance
+
+# Docker keeps container logs forever by default; keep the last 50 MB per service.
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: 10m
+    max-file: "5"
+
+x-app: &app
+  image: ${OTTERTRAIL_IMAGE:-ottertrail:local}
+  build:
+    context: ..
+  restart: unless-stopped
+  logging: *logging
+  environment:
+    NODE_ENV: production
+    DATABASE_URL: postgres://ottertrail:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/ottertrail
+    PUBLIC_URL: https://${OTTERTRAIL_DOMAIN:?set OTTERTRAIL_DOMAIN in .env}
+    AUTH_SECRET: ${AUTH_SECRET:?set AUTH_SECRET in .env}
+    TIMEZONE: ${TIMEZONE:-UTC}
+    # Requests reach the API only through Caddy, one proxy hop.
+    TRUST_PROXY: "1"
+    LOG_LEVEL: ${LOG_LEVEL:-info}
+
+services:
+  postgres:
+    image: docker.io/library/postgres:18.7-alpine3.24
+    restart: unless-stopped
+    logging: *logging
+    environment:
+      POSTGRES_USER: ottertrail
+      POSTGRES_DB: ottertrail
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      # PostgreSQL 18+ images keep their data under /var/lib/postgresql/<major>.
+      - postgres-data:/var/lib/postgresql
+    healthcheck:
+      # Over TCP: on first start the image runs a temporary server on the
+      # Unix socket only, which would pass the check before PostgreSQL is ready.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U ottertrail -d ottertrail"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  # Brings the schema up to date, then exits. The API and worker start after it.
+  migrate:
+    <<: *app
+    restart: "no"
+    command: ["node", "--enable-source-maps", "dist/migrate.mjs"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  api:
+    <<: *app
+    volumes:
+      - geo-data:/app/data/geo
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      # Quoted: unquoted, YAML would read "0 : 1" as a key and a value.
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3000/api/health').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  worker:
+    <<: *app
+    command: ["node", "--enable-source-maps", "dist/worker.mjs"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  caddy:
+    image: docker.io/library/caddy:2.11.9-alpine
+    restart: unless-stopped
+    logging: *logging
+    environment:
+      OTTERTRAIL_DOMAIN: ${OTTERTRAIL_DOMAIN:?set OTTERTRAIL_DOMAIN in .env}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # Certificates and keys: keep this volume, or Caddy asks for new ones on every start.
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - api
+
+volumes:
+  postgres-data:
+  geo-data:
+  caddy-data:
+  caddy-config:

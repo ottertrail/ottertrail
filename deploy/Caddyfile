@@ -1,0 +1,8 @@
+# Caddy gets and renews the HTTPS certificate for the instance's domain,
+# redirects HTTP to HTTPS, and passes every request to the API. It replaces
+# any X-Forwarded-For a client sends with the client's real address, which
+# the API reads (TRUST_PROXY=1).
+{$OTTERTRAIL_DOMAIN} {
+	encode zstd gzip
+	reverse_proxy api:3000
+}

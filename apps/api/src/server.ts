@@ -1,3 +1,5 @@
+import { resolve } from "node:path";
+
 import { buildApp } from "./app.ts";
 import { createAuth } from "./auth/auth.ts";
 import { DEVELOPMENT_AUTH_SECRET, loadConfig } from "./config.ts";
@@ -24,6 +26,7 @@ const app = buildApp({
     timeZone: config.timeZone,
   },
   trackerScriptPath: config.trackerScriptPath,
+  dashboardPath: resolve(config.dashboardPath),
   // A number means "trust this many proxy hops in front of the API".
   trustProxy:
     typeof config.trustProxy === "number"

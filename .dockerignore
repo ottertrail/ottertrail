@@ -1,0 +1,21 @@
+# Only what the image build needs. Installed packages and builds are made
+# inside the image (the host's may be for another system), and nothing
+# private or secret may reach it.
+**/node_modules
+**/dist
+**/.vitest
+**/coverage
+**/*.log
+**/*.tsbuildinfo
+.git
+.claude
+.vscode
+.idea
+**/.DS_Store
+.env
+.env.*
+**/.env
+**/.env.*
+deploy/
+docs/private/
+apps/api/data/

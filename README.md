@@ -10,6 +10,8 @@ This repository is a foundation, not a working product yet. It contains:
 - `apps/api`: Fastify API with `GET /api/health` (a liveness check) and `POST /api/events`, which collects events into PostgreSQL. Dashboard sign-in works (the owner account comes from `vp run setup`). Signed-in users manage projects and read reports (`GET /api/projects/:id/analytics`; `vp run report` prints the same reports in a terminal). There are no invitations or job queue yet.
 - `packages/tracker`: the browser script (`dist/tracker.js`, about 2.4 KB gzipped) that sends pageviews and custom events, with a playground page in `demo/`. The API serves the built script at `/t.js`, so sites load it from their instance.
 
+To run an instance on a server, see [docs/deployment.md](docs/deployment.md): one Docker image (`Dockerfile`) and a Compose stack with PostgreSQL and Caddy (`deploy/`).
+
 The design system is documented in [docs/design-system.md](docs/design-system.md). How web analytics works, and the decisions behind it, are in [docs/web-analytics.md](docs/web-analytics.md); the dashboard, including sign-in, in [docs/dashboard.md](docs/dashboard.md).
 
 ## Toolchain
@@ -60,19 +62,19 @@ The database listens on `127.0.0.1:5433` (not the usual 5432, to avoid clashing 
 
 Run from the repository root.
 
-| Command                | What it does                                                                                                                                                                                                 |
-| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `vp run dev`           | Starts the API (port 3000), the worker, both restarting on change, and the dashboard dev server (port 5173, or the next free port). The dashboard proxies `/api` to the API.                                 |
-| `vp run migrate`       | Applies database migrations that have not run yet. Safe to repeat.                                                                                                                                           |
-| `vp run geo:update`    | Downloads the latest DB-IP City Lite geolocation database to `apps/api/data/geo/`, checks it, and replaces the old file. Restart the API afterwards. Without it, events are stored without a location.       |
-| `vp run visits`        | Prints a project's recent visits, worked out from its events: `vp run visits -- <project name> <hours>` (default: the first project, 24 hours).                                                              |
-| `vp run setup`         | Prints a one-time link (valid for an hour) that creates the dashboard's owner account. Refuses once an owner exists.                                                                                         |
-| `vp run report`        | Prints a project's reports (summary, visitors per day, top pages, breakdowns, custom events) for the last days in `TIMEZONE`: `vp run report -- <project name> <days>` (default: the first project, 7 days). |
-| `vp run bench:reports` | Times the report queries on fake data in a temporary schema, then drops it: `vp run bench:reports -- <visits> <days>` (default: 200,000 visits, 30 days).                                                    |
-| `vp check`             | Formats, lints, and type-checks the whole workspace. `vp check --fix` applies fixes.                                                                                                                         |
-| `vp run -r test`       | Runs the tests in every package. The API tests need the local database running; each test file uses its own temporary schema. The dashboard's browser tests need Chromium (see Setup).                       |
-| `vp run -r build`      | Builds the dashboard (`apps/web/dist`) and bundles the API (`apps/api/dist/server.mjs`, `worker.mjs`, and `migrate.mjs`).                                                                                    |
-| `vp run ready`         | `vp check`, then all tests, then all builds. Run before committing.                                                                                                                                          |
+| Command                | What it does                                                                                                                                                                                                                                     |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `vp run dev`           | Starts the API (port 3000), the worker, both restarting on change, and the dashboard dev server (port 5173, or the next free port). The dashboard proxies `/api` to the API.                                                                     |
+| `vp run migrate`       | Applies database migrations that have not run yet. Safe to repeat.                                                                                                                                                                               |
+| `vp run geo:update`    | Downloads the latest DB-IP City Lite geolocation database to `apps/api/data/geo/`, checks it, and replaces the old file. Restart the API afterwards. Without it, events are stored without a location.                                           |
+| `vp run visits`        | Prints a project's recent visits, worked out from its events: `vp run visits -- <project name> <hours>` (default: the first project, 24 hours).                                                                                                  |
+| `vp run setup`         | Prints a one-time link (valid for an hour) that creates the dashboard's owner account. Refuses once an owner exists.                                                                                                                             |
+| `vp run report`        | Prints a project's reports (summary, visitors per day, top pages, breakdowns, custom events) for the last days in `TIMEZONE`: `vp run report -- <project name> <days>` (default: the first project, 7 days).                                     |
+| `vp run bench:reports` | Times the report queries on fake data in a temporary schema, then drops it: `vp run bench:reports -- <visits> <days>` (default: 200,000 visits, 30 days).                                                                                        |
+| `vp check`             | Formats, lints, and type-checks the whole workspace. `vp check --fix` applies fixes.                                                                                                                                                             |
+| `vp run -r test`       | Runs the tests in every package. The API tests need the local database running; each test file uses its own temporary schema. The dashboard's browser tests need Chromium (see Setup).                                                           |
+| `vp run -r build`      | Builds the dashboard (`apps/web/dist`), the tracker, and the API (`apps/api/dist/`: `server.mjs`, `worker.mjs`, `migrate.mjs`, `setup.mjs`, `update-geo.mjs`, with their dependencies bundled in). Each build writes `THIRD_PARTY_LICENSES.txt`. |
+| `vp run ready`         | `vp check`, then all tests, then all builds. Run before committing.                                                                                                                                                                              |
 
 Inside one package: `vp -C apps/api run dev`, `vp -C apps/web test`, and so on.
 
@@ -135,11 +137,12 @@ API (`apps/api`), read from the environment:
 | `PUBLIC_URL`          | `http://localhost:5173`                  | The instance's address, an origin without a path. Required in production, and must use HTTPS there (session cookies are `Secure`). Sign-in accepts requests only from this origin (in development, from any `localhost` port).                                                                                                                                  |
 | `AUTH_SECRET`         | a fixed development value                | Signs dashboard session cookies. Required in production: at least 32 random characters, such as `openssl rand -base64 32` prints.                                                                                                                                                                                                                               |
 | `TRACKER_SCRIPT_PATH` | `../../packages/tracker/dist/tracker.js` | The built tracker the API serves at `/t.js`, relative to the API's working directory. `vp run -r build` creates it; until then `/t.js` answers 503.                                                                                                                                                                                                             |
+| `DASHBOARD_PATH`      | `../web/dist`                            | The built dashboard the API serves at `/`, relative to the API's working directory. Paths outside `/api/` without a file extension answer with its `index.html`. Until it is built, they answer 503. In development the dashboard's dev server serves it instead.                                                                                               |
 | `TIMEZONE`            | `UTC`                                    | IANA timezone of the instance, such as `Asia/Singapore`. A new visitor salt starts at midnight here, and reports count days here. Aliases are stored by their official name (`singapore` becomes `Asia/Singapore`). Fixed offsets such as `+08:00` are refused: Node.js and PostgreSQL read their sign in opposite directions. `Etc/GMT-8` names UTC+8 in both. |
 
 Invalid values stop the server at startup with a message naming the variable. Error messages never repeat `DATABASE_URL`, because it can contain a password.
 
-In production, run `node dist/migrate.mjs` (`vp run start:migrate` in `apps/api`) once as a deployment step before starting the API. The API does not migrate on startup, so several API processes never race to change the schema. Run the worker (`node dist/worker.mjs`, `vp run start:worker`) beside the API, with the same settings: it deletes events past each project's retention.
+In production, run `node dist/migrate.mjs` (`vp run start:migrate` in `apps/api`) once as a deployment step before starting the API. The API does not migrate on startup, so several API processes never race to change the schema. Run the worker (`node dist/worker.mjs`, `vp run start:worker`) beside the API, with the same settings: it deletes events past each project's retention. `node dist/setup.mjs` and `node dist/update-geo.mjs` are the built `vp run setup` and `vp run geo:update`. `deploy/compose.yaml` does all of this; see [docs/deployment.md](docs/deployment.md).
 
 Dashboard dev server (`apps/web`):
 
@@ -147,7 +150,7 @@ Dashboard dev server (`apps/web`):
 | ----------------------- | ----------------------- | ------------------------------------ |
 | `OTTERTRAIL_API_ORIGIN` | `http://127.0.0.1:3000` | Where the dev server proxies `/api`. |
 
-Production serving of the dashboard (from the API or a separate static server), Docker images, and production Compose files are not set up yet. `compose.yaml` is for local development only.
+`compose.yaml` at the root is for local development only. Instances use `deploy/compose.yaml`.
 
 ## Adding UI components
 

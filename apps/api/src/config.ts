@@ -25,6 +25,9 @@ export const DEFAULT_GEO_DATABASE_PATH = "data/geo/dbip-city-lite.mmdb";
 /** The built browser script, relative to the API's working directory. `vp run -r build` makes it. */
 export const DEFAULT_TRACKER_SCRIPT_PATH = "../../packages/tracker/dist/tracker.js";
 
+/** The built dashboard, relative to the API's working directory. `vp run -r build` makes it. */
+export const DEFAULT_DASHBOARD_PATH = "../web/dist";
+
 /** Where the dashboard runs during local development (`vp run dev`). */
 export const DEVELOPMENT_PUBLIC_URL = "http://localhost:5173";
 
@@ -66,6 +69,8 @@ export interface Config {
   authSecret: string;
   /** The built tracker that sites load from this instance (served at /t.js). */
   trackerScriptPath: string;
+  /** The built dashboard's directory, served at the instance's root. */
+  dashboardPath: string;
 }
 
 export class ConfigError extends Error {
@@ -216,6 +221,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     ...publicUrlAndOrigins(env),
     authSecret: parseAuthSecret(env),
     trackerScriptPath: env.TRACKER_SCRIPT_PATH?.trim() || DEFAULT_TRACKER_SCRIPT_PATH,
+    dashboardPath: env.DASHBOARD_PATH?.trim() || DEFAULT_DASHBOARD_PATH,
   };
 }
 

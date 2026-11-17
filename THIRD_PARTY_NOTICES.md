@@ -51,8 +51,6 @@ The dashboard bundles two fonts, installed from npm, both licensed under the [SI
 
 ### npm dependencies
 
-Other dependencies are installed from npm under their own licences, found in each package's `LICENSE` file. The dashboard and API builds bundle parts of them.
+Other dependencies are installed from npm under their own licences, found in each package's `LICENSE` file. The dashboard and API builds bundle parts of them, the API all of its dependencies.
 
-## Known limitation
-
-Builds are not distributed yet. When they are, each release must include the licences of the dependencies and fonts it bundles; the packaging step will generate that file.
+Each build writes `THIRD_PARTY_LICENSES.txt` beside its output (`apps/api/dist/`, `apps/web/dist/`), listing every npm package it bundles with the licence text the package ships (`scripts/third-party-licenses.ts`). For the dashboard, that includes the packages its stylesheet imports, such as the fonts above. The Docker image keeps both files, with `LICENSE` and this file, and an instance serves the dashboard's copy at `/THIRD_PARTY_LICENSES.txt`.

@@ -5,10 +5,18 @@ import react from "@vitejs/plugin-react";
 import { defineConfig, lazyPlugins } from "vite-plus";
 import { playwright } from "vite-plus/test/browser-playwright";
 
+import { thirdPartyLicenses } from "../../scripts/third-party-licenses.ts";
+
 const apiOrigin = process.env.OTTERTRAIL_API_ORIGIN ?? "http://127.0.0.1:3000";
 
 export default defineConfig({
-  plugins: lazyPlugins(() => [react(), tailwindcss()]),
+  plugins: lazyPlugins(() => [
+    react(),
+    tailwindcss(),
+    thirdPartyLicenses({
+      stylesheets: [fileURLToPath(new URL("./src/styles/globals.css", import.meta.url))],
+    }),
+  ]),
   resolve: {
     alias: {
       "@": fileURLToPath(new URL("./src", import.meta.url)),
