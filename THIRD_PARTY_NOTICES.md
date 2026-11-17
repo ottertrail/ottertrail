@@ -50,6 +50,10 @@ IP geolocation by [DB-IP](https://db-ip.com), licensed under [CC BY 4.0](https:/
 
 The tracker's second script, `v.js` (`packages/tracker/src/vitals.ts`), bundles [web-vitals](https://github.com/GoogleChrome/web-vitals), Copyright 2020 Google LLC, licensed under the [Apache License 2.0](https://www.apache.org/licenses/LICENSE-2.0). The built file starts with that notice.
 
+### Session replay
+
+The tracker's replay script, `r.js` (`packages/tracker/src/replay.ts`), bundles rrweb's recorder, [`@rrweb/record`](https://github.com/rrweb-io/rrweb) (Copyright (c) 2018 rrweb contributors, MIT License), which carries [base64-arraybuffer](https://github.com/niklasvh/base64-arraybuffer) (Copyright (c) 2012 Niklas von Hertzen, MIT License). The dashboard's replay player, `/replay-player.js` (`packages/replay-player`), bundles rrweb's replayer, [`@rrweb/replay`](https://github.com/rrweb-io/rrweb) (MIT License), whose build carries [postcss](https://github.com/postcss/postcss) (Copyright 2013 Andrey Sitnik, MIT License), [nanoid](https://github.com/ai/nanoid) (Copyright 2017 Andrey Sitnik, MIT License), [picocolors](https://github.com/alexeyraspopov/picocolors) (Copyright (c) 2021-2024 Oleksii Raspopov, Kostiantyn Denysov, Anton Verinov, ISC License), [mitt](https://github.com/developit/mitt) (Copyright (c) 2021 Jason Miller, MIT License), and base64-arraybuffer. Each built file starts with these notices.
+
 ### Fonts
 
 The dashboard bundles two fonts, installed from npm, both licensed under the [SIL Open Font License 1.1](https://openfontlicense.org):

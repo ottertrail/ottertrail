@@ -83,6 +83,8 @@ export interface FakeApi {
    * release's files, and delete a release's. By default, fakeSourceMaps.
    */
   sourceMaps: FakeSourceMaps;
+  /** The project's session replays; GET and DELETE /api/projects/:id/replays read and empty them. */
+  replays: FakeReplays;
   /** Answers DELETE /api/projects/:id; by default, removes the project (204). */
   deleteProject: (api: FakeApi, id: string) => Response;
   /** Every path the page asked for, with its query, in order. */
@@ -334,6 +336,7 @@ export function fakeError(
     deviceType: "desktop",
     country: "DE",
     release: "1.4.2",
+    replay: null,
   };
   return {
     timeZone: "Asia/Singapore",
@@ -385,6 +388,40 @@ export function fakeError(
           sourceMaps: { status: "applied", release: "1.4.2", paths: [] },
         }
       : { stack: null, frames: null, sourceMaps: null }),
+  };
+}
+
+/** What the fake API keeps of a project's session replays. */
+export interface FakeReplays {
+  /** false: the install has no object store. */
+  configured: boolean;
+  count: number;
+  bytes: number;
+  /** What the organization's other projects store. */
+  otherProjectsBytes: number;
+  limitBytes: number;
+}
+
+/** Three replays, 1.5 MB, of 5 GB the organization may keep. */
+export const fakeReplays = (): FakeReplays => ({
+  configured: true,
+  count: 3,
+  bytes: 1536 * 1024,
+  otherProjectsBytes: 512 * 1024,
+  limitBytes: 5 * 1024 ** 3,
+});
+
+/** GET /api/projects/:id/replays, as the API answers it. */
+function replayOverview(api: FakeApi, projectId: string) {
+  const project = api.projects.find((item) => item.id === projectId);
+  return {
+    configured: api.replays.configured,
+    mode: project?.replayMode ?? "off",
+    replays: { count: api.replays.count, bytes: api.replays.bytes },
+    organization: {
+      storedBytes: api.replays.otherProjectsBytes + api.replays.bytes,
+      limitBytes: api.replays.limitBytes,
+    },
   };
 }
 
@@ -751,6 +788,7 @@ export const PROJECT: Project = {
   secretKey: "sk_00000000000000000000000000000001",
   requireSignedUserIds: false,
   ignoreDataCenters: true,
+  replayMode: "off",
 };
 
 export const OTHER_PROJECT: Project = {
@@ -1276,6 +1314,14 @@ async function answer(api: FakeApi, url: URL, init: RequestInit | undefined): Pr
       ),
     );
   }
+  const replaysFor = /^\/api\/projects\/([^/]+)\/replays$/.exec(path);
+  if (replaysFor?.[1] !== undefined) {
+    if (init?.method === "DELETE") {
+      api.replays = { ...api.replays, count: 0, bytes: 0 };
+      return new Response(null, { status: 204 });
+    }
+    return json(replayOverview(api, replaysFor[1]));
+  }
   if (/^\/api\/projects\/[^/]+\/speed$/.test(path)) {
     const result = api.speed(url.searchParams);
     return result instanceof Response ? result : json(result);
@@ -1384,6 +1430,7 @@ export function installFakeApi(overrides: Partial<FakeApi> = {}): FakeApi {
     retention: fakeRetention,
     resolutions: fakeResolutions(),
     sourceMaps: fakeSourceMaps(),
+    replays: fakeReplays(),
     deleteProject: removeProject,
     requests: [],
     bodies: [],

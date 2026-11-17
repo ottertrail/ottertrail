@@ -283,6 +283,8 @@ export interface Occurrence {
   deviceType: string | null;
   country: string | null;
   release: string | null;
+  /** The session replay its page sent with it, if any (docs/session-replay.md). */
+  replayId: string | null;
 }
 
 export interface BreakdownRow {
@@ -371,10 +373,11 @@ export async function errorDetail(
       device_type: string | null;
       country: string | null;
       release: string | null;
+      replay_id: string | null;
     }>(
       reader,
       `SELECT event_id, occurred_at, error_message, error_handled, error_stack, path, user_id,
-              browser, browser_version, os, device_type, country, release
+              browser, browser_version, os, device_type, country, release, replay_id
        FROM events FINAL
        WHERE ${scoped(occurrenceParams)}
        ORDER BY occurred_at DESC, event_id DESC
@@ -425,6 +428,7 @@ export async function errorDetail(
       deviceType: occurrence.device_type,
       country: occurrence.country,
       release: occurrence.release,
+      replayId: occurrence.replay_id,
     })),
     stack: occurrenceRows[0]?.error_stack || null,
   };

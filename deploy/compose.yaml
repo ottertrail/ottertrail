@@ -1,7 +1,8 @@
 # Ottertrail on one server: PostgreSQL, ClickHouse, the API (which also
 # serves the dashboard and the tracker), the worker, and Caddy, which gets
 # HTTPS certificates and is the only service reachable from outside. With
-# the "object-store" profile, Garage too, which holds source maps.
+# the "object-store" profile, Garage too, which holds source maps and
+# session replays.
 #
 # Settings come from a file named .env next to this one (copy env.example).
 # See docs/deployment.md for the steps.
@@ -46,6 +47,7 @@ x-app: &app
     OBJECT_STORE_ACCESS_KEY_ID: ${OBJECT_STORE_ACCESS_KEY_ID:-}
     OBJECT_STORE_SECRET_ACCESS_KEY: ${OBJECT_STORE_SECRET_ACCESS_KEY:-}
     SOURCE_MAP_BYTES_PER_ORGANIZATION: ${SOURCE_MAP_BYTES_PER_ORGANIZATION:-}
+    REPLAY_BYTES_PER_ORGANIZATION: ${REPLAY_BYTES_PER_ORGANIZATION:-}
 
 services:
   postgres:

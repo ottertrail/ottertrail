@@ -39,6 +39,9 @@ export const DEFAULT_TRACKER_SCRIPT_PATH = "../../packages/tracker/dist/tracker.
 /** The built dashboard, relative to the API's working directory. `vp run -r build` makes it. */
 export const DEFAULT_DASHBOARD_PATH = "../web/dist";
 
+/** The built session replay player, relative to the API's working directory. `vp run -r build` makes it. */
+export const DEFAULT_REPLAY_PLAYER_PATH = "../../packages/replay-player/dist/player.js";
+
 /** Where the dashboard runs during local development (`vp run dev`). */
 export const DEVELOPMENT_PUBLIC_URL = "http://localhost:5173";
 
@@ -94,6 +97,8 @@ export interface Config {
   trackerScriptPath: string;
   /** The built dashboard's directory, served at the instance's root. */
   dashboardPath: string;
+  /** The built session replay player (served at /replay-player.js). */
+  replayPlayerPath: string;
   /**
    * The S3-compatible object store that holds source maps (docs/errors.md,
    * "Source maps"); null when the install has none, and source maps are off.
@@ -101,6 +106,8 @@ export interface Config {
   objectStore: ObjectStoreConfig | null;
   /** Bytes of source maps, compressed, each organization may store, all its projects together. */
   sourceMapBytesPerOrganization: number;
+  /** Bytes of session replays, compressed, each organization may keep (docs/session-replay.md). */
+  replayBytesPerOrganization: number;
 }
 
 export interface ObjectStoreConfig {
@@ -267,12 +274,16 @@ function parseObjectStore(env: NodeJS.ProcessEnv): ObjectStoreConfig | null {
 /** The default: 1 GiB of compressed source maps per organization. */
 export const DEFAULT_SOURCE_MAP_BYTES_PER_ORGANIZATION = 1024 ** 3;
 
-function parseSourceMapBytes(raw: string | undefined): number {
-  if (raw === undefined || raw.trim() === "") return DEFAULT_SOURCE_MAP_BYTES_PER_ORGANIZATION;
+/** The default: 2 GiB of compressed replays per organization, until measured on real sites. */
+export const DEFAULT_REPLAY_BYTES_PER_ORGANIZATION = 2 * 1024 ** 3;
+
+/** A number of bytes from 1 MiB to 1 TiB, named `name`; `fallback` when unset. */
+function parseBytes(name: string, raw: string | undefined, fallback: number): number {
+  if (raw === undefined || raw.trim() === "") return fallback;
   const bytes = Number(raw);
   if (!Number.isSafeInteger(bytes) || bytes < 1024 ** 2 || bytes > 1024 ** 4) {
     throw new ConfigError(
-      `SOURCE_MAP_BYTES_PER_ORGANIZATION must be a number of bytes from 1 MiB to 1 TiB, received "${raw}"`,
+      `${name} must be a number of bytes from 1 MiB to 1 TiB, received "${raw}"`,
     );
   }
   return bytes;
@@ -391,8 +402,18 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     authSecret: parseAuthSecret(env),
     trackerScriptPath: env.TRACKER_SCRIPT_PATH?.trim() || DEFAULT_TRACKER_SCRIPT_PATH,
     dashboardPath: env.DASHBOARD_PATH?.trim() || DEFAULT_DASHBOARD_PATH,
+    replayPlayerPath: env.REPLAY_PLAYER_PATH?.trim() || DEFAULT_REPLAY_PLAYER_PATH,
     objectStore: parseObjectStore(env),
-    sourceMapBytesPerOrganization: parseSourceMapBytes(env.SOURCE_MAP_BYTES_PER_ORGANIZATION),
+    sourceMapBytesPerOrganization: parseBytes(
+      "SOURCE_MAP_BYTES_PER_ORGANIZATION",
+      env.SOURCE_MAP_BYTES_PER_ORGANIZATION,
+      DEFAULT_SOURCE_MAP_BYTES_PER_ORGANIZATION,
+    ),
+    replayBytesPerOrganization: parseBytes(
+      "REPLAY_BYTES_PER_ORGANIZATION",
+      env.REPLAY_BYTES_PER_ORGANIZATION,
+      DEFAULT_REPLAY_BYTES_PER_ORGANIZATION,
+    ),
   };
 }
 

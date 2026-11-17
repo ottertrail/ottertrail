@@ -1,6 +1,7 @@
 import type { Kysely } from "kysely";
 
 import type { Database } from "../db/schema.ts";
+import { replayPrefix } from "../replays/replays.ts";
 import { projectPrefix } from "../source-maps/source-maps.ts";
 import type { ObjectStore } from "../storage/object-store.ts";
 import type { ClickHouseClient } from "./clickhouse.ts";
@@ -135,7 +136,8 @@ export async function removeDeletedRows(
 
 /**
  * Deletes the events of every deleted project (project_deletions) from
- * ClickHouse, and its files from the object store (its source maps), then
+ * ClickHouse, and its files from the object store (its source maps and
+ * session replays), then
  * forgets the deletions. A deletion stays until both have confirmed, so an
  * outage only delays it. The worker runs it every minute; running it
  * twice, or in two workers at once, is harmless. The rows leave reports at
@@ -158,7 +160,11 @@ export async function purgeDeletedProjects(
     );
     rows += [...counts.values()].reduce((sum, count) => sum + count, 0);
     if (store !== null) {
-      for (const projectId of chunk) files += await store.deletePrefix(projectPrefix(projectId));
+      for (const projectId of chunk) {
+        for (const prefix of [projectPrefix(projectId), replayPrefix(projectId)]) {
+          files += await store.deletePrefix(prefix);
+        }
+      }
     }
     await db.deleteFrom("project_deletions").where("project_id", "in", chunk).execute();
   }

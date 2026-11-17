@@ -51,9 +51,12 @@ const app = buildApp({
     trustedOrigins: config.trustedOrigins,
     defaultTimeZone: config.defaultTimeZone,
   },
-  sourceMaps: { store: objectStore, limitBytes: config.sourceMapBytesPerOrganization },
+  objectStore,
+  sourceMaps: { limitBytes: config.sourceMapBytesPerOrganization },
+  replays: { limitBytes: config.replayBytesPerOrganization },
   trackerScriptPath: config.trackerScriptPath,
   dashboardPath: resolve(config.dashboardPath),
+  replayPlayerPath: resolve(config.replayPlayerPath),
   // A number means "trust this many proxy hops in front of the API".
   trustProxy:
     typeof config.trustProxy === "number"

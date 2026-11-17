@@ -275,7 +275,7 @@ Behind a proxy (Cloudflare, Caddy), every request seems to come from the proxy's
 
 ## 3. The tracker
 
-`packages/tracker` builds `dist/tracker.js`, the script a site adds to its pages: about 9.1 KB, 3.9 KB gzipped. It loads `dist/v.js` (3.7 KB gzipped) from beside itself to measure [Web Vitals](#web-vitals).
+`packages/tracker` builds `dist/tracker.js`, the script a site adds to its pages: about 9.4 KB, 4.1 KB gzipped. It loads `dist/v.js` (3.7 KB gzipped) from beside itself to measure [Web Vitals](#web-vitals), and `dist/r.js` (29 KB gzipped) to record [session replays](session-replay.md) when the page asks for them.
 
 ```html
 <script
@@ -296,7 +296,7 @@ It sends a pageview when the page loads and whenever the path changes, and gives
 window.ottertrail?.track("signup", { plan: "free" });
 ```
 
-`pageview`, `engagement`, `error`, and `vitals` are the tracker's own events: `track()` refuses those names, with a warning. The tracker also reports uncaught errors and unhandled promise rejections, and errors the site reports with `window.ottertrail.captureError(error)`; `data-errors="off"` turns automatic capture off ([errors](errors.md#1-capture)).
+`pageview`, `engagement`, `error`, and `vitals` are the tracker's own events: `track()` refuses those names, with a warning. The tracker also reports uncaught errors and unhandled promise rejections, and errors the site reports with `window.ottertrail.captureError(error)`; `data-errors="off"` turns automatic capture off ([errors](errors.md#1-capture)). `data-replay="errors"` records what happened before an error, masked in the browser, when the project's settings take replays too ([session replay](session-replay.md)).
 
 ### It runs on someone else's site
 

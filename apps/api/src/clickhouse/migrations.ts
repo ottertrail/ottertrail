@@ -115,4 +115,14 @@ export const CLICKHOUSE_MIGRATIONS: ClickHouseMigration[] = [
          TYPE bloom_filter GRANULARITY 4`,
     ],
   },
+  {
+    /**
+     * On an error event, the session replay that shows it, as in PostgreSQL
+     * (migration 0023; docs/session-replay.md). Null for every other event.
+     */
+    name: "0006_add_events_replay_id",
+    statements: (database) => [
+      `ALTER TABLE ${database}.events ADD COLUMN IF NOT EXISTS replay_id Nullable(UUID)`,
+    ],
+  },
 ];

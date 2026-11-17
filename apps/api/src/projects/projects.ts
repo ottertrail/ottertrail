@@ -33,6 +33,8 @@ export interface Project {
   requireSignedUserIds: boolean;
   /** Ignore browser events from cloud and hosting providers' addresses: nearly all are programs. */
   ignoreDataCenters: boolean;
+  /** Session replays: "off", or "errors", recorded around errors (docs/session-replay.md). */
+  replayMode: "off" | "errors";
 }
 
 /** The fewest and most days a project may keep its events; the database checks the same. */
@@ -99,6 +101,7 @@ function baseQuery(db: Kysely<Database>) {
       "projects.secret_key",
       "projects.require_signed_user_ids",
       "projects.ignore_data_centers",
+      "projects.replay_mode",
     ]);
 }
 
@@ -117,6 +120,7 @@ function toProject(row: ProjectRow): Project {
     secretKey: row.secret_key,
     requireSignedUserIds: row.require_signed_user_ids,
     ignoreDataCenters: row.ignore_data_centers,
+    replayMode: row.replay_mode,
   };
 }
 
@@ -174,6 +178,7 @@ export async function updateProject(
     retentionDays?: number | null;
     requireSignedUserIds?: boolean;
     ignoreDataCenters?: boolean;
+    replayMode?: "off" | "errors";
   },
 ): Promise<Project | null> {
   const values = {
@@ -188,6 +193,7 @@ export async function updateProject(
     ...(changes.ignoreDataCenters === undefined
       ? {}
       : { ignore_data_centers: changes.ignoreDataCenters }),
+    ...(changes.replayMode === undefined ? {} : { replay_mode: changes.replayMode }),
   };
   if (Object.keys(values).length > 0) {
     const result = await db

@@ -18,6 +18,8 @@ export interface CollectingProject {
   requireSignedUserIds: boolean;
   /** Ignore browser events from data centers (enrichment/data-centers.ts). */
   ignoreDataCenters: boolean;
+  /** Session replays: "off", or "errors", recorded around errors (docs/session-replay.md). */
+  replayMode: "off" | "errors";
 }
 
 interface CacheEntry {
@@ -91,6 +93,7 @@ export class ProjectKeyCache {
         "projects.secret_key",
         "projects.require_signed_user_ids",
         "projects.ignore_data_centers",
+        "projects.replay_mode",
         "organizations.time_zone",
       ])
       .where(`projects.${column}`, "=", key)
@@ -106,6 +109,7 @@ export class ProjectKeyCache {
             secretKey: row.secret_key,
             requireSignedUserIds: row.require_signed_user_ids,
             ignoreDataCenters: row.ignore_data_centers,
+            replayMode: row.replay_mode,
           };
 
     if (forgotten !== this.#forgotten) return project;

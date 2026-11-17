@@ -58,6 +58,8 @@ export interface ProjectsTable {
   require_signed_user_ids: ColumnType<boolean, boolean | undefined, boolean>;
   /** Ignore browser events from cloud and hosting providers' addresses (migration 0017). */
   ignore_data_centers: ColumnType<boolean, boolean | undefined, boolean>;
+  /** Session replays: "off", or "errors", around errors (migration 0023). */
+  replay_mode: ColumnType<"off" | "errors", "off" | "errors" | undefined, "off" | "errors">;
   /**
    * When the latest event copied to ClickHouse happened; null before the
    * first. The worker sets it as it copies (clickhouse/copy-events.ts).
@@ -137,6 +139,8 @@ export interface EventsTable {
   error_handled: Nullable<boolean>;
   /** The group it belongs to (errors/fingerprint.ts). */
   error_fingerprint: Nullable<string>;
+  /** On an error: the session replay that shows it (migration 0023). */
+  replay_id: Nullable<string>;
 }
 
 /** A project's saved conversion: a page or a product event (migration 0020). */
@@ -165,6 +169,32 @@ export interface SavedFunnelsTable {
   window_seconds: number;
   created_at: ColumnType<Date, Date | undefined, never>;
   updated_at: ColumnType<Date, Date | undefined, Date>;
+}
+
+/** A piece of a session replay as a browser sent it: one gzip member (migration 0023). */
+export interface ReplayChunksTable {
+  project_id: string;
+  replay_id: string;
+  /** From 0: the pieces join in this order. */
+  seq: number;
+  /** The replay's last piece. */
+  last: boolean;
+  /** The browser stopped at the size limit: the replay is shorter than it was. */
+  cut: boolean;
+  data: Buffer;
+  received_at: ColumnType<Date, Date | undefined, never>;
+}
+
+/** A session replay, joined from its chunks into one object (migration 0023). */
+export interface ReplaysTable {
+  project_id: string;
+  replay_id: string;
+  /** Where it is, gzip-compressed JSON, in the object store. */
+  object_key: string;
+  /** Its stored, compressed size. */
+  bytes: number;
+  cut: boolean;
+  created_at: ColumnType<Date, Date | undefined, never>;
 }
 
 /** A source map a project uploaded, for one release and minified file (migration 0022). */
@@ -261,6 +291,8 @@ export interface Database {
   goals: GoalsTable;
   saved_funnels: SavedFunnelsTable;
   source_maps: SourceMapsTable;
+  replay_chunks: ReplayChunksTable;
+  replays: ReplaysTable;
   visitor_salts: VisitorSaltsTable;
   dashboard_users: DashboardUsersTable;
   dashboard_sessions: DashboardSessionsTable;

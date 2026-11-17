@@ -42,6 +42,7 @@ import { RankedList } from "../analytics/ranked-list";
 import { NoSuchProject } from "../projects/no-such-project";
 import { formatMoment } from "../users/format";
 import { ErrorStatusBadge } from "./error-status";
+import { OccurrenceReplayCell } from "./occurrence-replay";
 import { RangeControls } from "./range-controls";
 import { type ErrorsSearch, errorsSearchOf } from "./search";
 import { StackCard } from "./stack-card";
@@ -216,6 +217,7 @@ function OccurrencesCard({
               <TableHead>Browser</TableHead>
               <TableHead>Operating system</TableHead>
               <TableHead>Release</TableHead>
+              <TableHead>Replay</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -257,6 +259,13 @@ function OccurrencesCard({
                 <TableCell>{browserText(occurrence) || "(unknown)"}</TableCell>
                 <TableCell>{occurrence.os ?? "(unknown)"}</TableCell>
                 <TableCell>{occurrence.release ?? "(unknown)"}</TableCell>
+                <TableCell className="py-1">
+                  <OccurrenceReplayCell
+                    projectId={projectId}
+                    occurrence={occurrence}
+                    timeZone={detail.timeZone}
+                  />
+                </TableCell>
               </TableRow>
             ))}
           </TableBody>

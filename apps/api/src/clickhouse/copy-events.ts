@@ -57,6 +57,7 @@ function toClickHouse(event: Selectable<EventsTable>) {
     error_stack: event.error_stack ?? "",
     error_handled: event.error_handled ?? false,
     error_fingerprint: event.error_fingerprint ?? "",
+    replay_id: event.replay_id,
   };
 }
 

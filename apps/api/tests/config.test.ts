@@ -6,6 +6,8 @@ import {
   DEFAULT_DATA_CENTERS_PATH,
   DEFAULT_GEO_DATABASE_PATH,
   DEFAULT_ORGANIZATION_EVENTS_PER_SECOND,
+  DEFAULT_REPLAY_PLAYER_PATH,
+  DEFAULT_REPLAY_BYTES_PER_ORGANIZATION,
   DEFAULT_SOURCE_MAP_BYTES_PER_ORGANIZATION,
   DEVELOPMENT_AUTH_SECRET,
   DEFAULT_TRACKER_SCRIPT_PATH,
@@ -45,8 +47,10 @@ describe("loadConfig", () => {
       authSecret: DEVELOPMENT_AUTH_SECRET,
       trackerScriptPath: DEFAULT_TRACKER_SCRIPT_PATH,
       dashboardPath: DEFAULT_DASHBOARD_PATH,
+      replayPlayerPath: DEFAULT_REPLAY_PLAYER_PATH,
       objectStore: LOCAL_OBJECT_STORE,
       sourceMapBytesPerOrganization: DEFAULT_SOURCE_MAP_BYTES_PER_ORGANIZATION,
+      replayBytesPerOrganization: DEFAULT_REPLAY_BYTES_PER_ORGANIZATION,
     });
   });
 
@@ -71,12 +75,14 @@ describe("loadConfig", () => {
         AUTH_SECRET: "s".repeat(44),
         TRACKER_SCRIPT_PATH: "/srv/ottertrail/tracker.js",
         DASHBOARD_PATH: "/srv/ottertrail/dashboard",
+        REPLAY_PLAYER_PATH: "/srv/ottertrail/replay-player.js",
         OBJECT_STORE_URL: "https://account.r2.cloudflarestorage.com/",
         OBJECT_STORE_REGION: "auto",
         OBJECT_STORE_BUCKET: "ottertrail-files",
         OBJECT_STORE_ACCESS_KEY_ID: "id-123",
         OBJECT_STORE_SECRET_ACCESS_KEY: "o".repeat(40),
         SOURCE_MAP_BYTES_PER_ORGANIZATION: String(5 * 1024 ** 3),
+        REPLAY_BYTES_PER_ORGANIZATION: String(10 * 1024 ** 3),
       }),
     ).toEqual({
       host: "0.0.0.0",
@@ -100,6 +106,7 @@ describe("loadConfig", () => {
       authSecret: "s".repeat(44),
       trackerScriptPath: "/srv/ottertrail/tracker.js",
       dashboardPath: "/srv/ottertrail/dashboard",
+      replayPlayerPath: "/srv/ottertrail/replay-player.js",
       objectStore: {
         url: "https://account.r2.cloudflarestorage.com",
         region: "auto",
@@ -108,6 +115,7 @@ describe("loadConfig", () => {
         secretAccessKey: "o".repeat(40),
       },
       sourceMapBytesPerOrganization: 5 * 1024 ** 3,
+      replayBytesPerOrganization: 10 * 1024 ** 3,
     });
   });
 

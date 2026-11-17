@@ -4,7 +4,11 @@
  * - Copying events to ClickHouse every few seconds, and deleting them from
  *   PostgreSQL once copied and two days old, every hour (clickhouse/copy-events.ts).
  * - Deleting a deleted project's events from ClickHouse, and its source
- *   maps from the object store, every minute (clickhouse/delete-events.ts).
+ *   maps and replays from the object store, every minute
+ *   (clickhouse/delete-events.ts).
+ * - Joining each session replay's chunks into one object every few
+ *   seconds, and deleting replays past their 30 days with retention
+ *   (replays/replays.ts).
  * - At start and every few hours: finding projects ClickHouse still holds
  *   events of but PostgreSQL no longer knows, deleting events older than
  *   each project's retention in both databases (retention/retention.ts),
@@ -22,6 +26,7 @@ import {
 } from "./clickhouse/delete-events.ts";
 import { loadConfig } from "./config.ts";
 import { createDatabase } from "./db/database.ts";
+import { deleteExpiredReplays, deleteJoinedChunks, joinReplays } from "./replays/replays.ts";
 import { deleteExpiredEvents } from "./retention/retention.ts";
 import { s3ObjectStore } from "./storage/object-store.ts";
 
@@ -39,6 +44,9 @@ export const PRUNE_INTERVAL_MS = 60 * 60 * 1000;
 
 /** How often a deleted project's events are deleted from ClickHouse: at most this late. */
 export const PURGE_INTERVAL_MS = 60 * 1000;
+
+/** How often finished replays are joined: how long one waits to be seen. */
+export const REPLAY_INTERVAL_MS = 10_000;
 
 const config = loadConfig();
 const db = createDatabase({ connectionString: config.databaseUrl, maxConnections: 3 });
@@ -107,7 +115,34 @@ const stopPurging = every(PURGE_INTERVAL_MS, async () => {
   }
 });
 
+/** Whether the last join failed: an outage is logged once. */
+let replaysFailing = false;
+
+const stopReplays = every(REPLAY_INTERVAL_MS, async () => {
+  if (objectStore === null) return;
+  try {
+    const result = await joinReplays(db, objectStore);
+    const chunksDeleted = await deleteJoinedChunks(db);
+    if (result.joined + result.dropped + chunksDeleted > 0) {
+      log("info", "session replays joined", { ...result, chunksDeleted });
+    }
+    if (replaysFailing) log("info", "joining session replays works again");
+    replaysFailing = false;
+  } catch (error) {
+    if (!replaysFailing) log("error", "joining session replays failed", { err: String(error) });
+    replaysFailing = true;
+  }
+});
+
 const stopRetention = every(RETENTION_INTERVAL_MS, async () => {
+  if (objectStore !== null) {
+    try {
+      const expired = await deleteExpiredReplays(db, objectStore);
+      if (expired > 0) log("info", "expired session replays deleted", { expired });
+    } catch (error) {
+      log("error", "deleting expired session replays failed", { err: String(error) });
+    }
+  }
   try {
     const sweep = await queueOrphanedProjects(db, clickhouse);
     if (sweep.queued) {
@@ -146,7 +181,7 @@ async function shutdown(signal: NodeJS.Signals) {
   log("info", "shutting down", { signal });
   stopping = true;
   // Runs in progress finish their batch first.
-  await Promise.all([stopCopying(), stopPruning(), stopPurging(), stopRetention()]);
+  await Promise.all([stopCopying(), stopPruning(), stopPurging(), stopReplays(), stopRetention()]);
   await clickhouse.close();
   objectStore?.close();
   await db.destroy();

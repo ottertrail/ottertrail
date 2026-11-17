@@ -28,6 +28,8 @@ export default defineConfig({
       "/api": apiOrigin,
       "/t.js": apiOrigin,
       "/v.js": apiOrigin,
+      "/r.js": apiOrigin,
+      "/replay-player.js": apiOrigin,
     },
   },
   test: {

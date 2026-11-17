@@ -133,6 +133,7 @@ describe("copying events to ClickHouse", () => {
         error_stack: "",
         error_handled: false,
         error_fingerprint: "",
+        replay_id: null,
       },
     ]);
     expect(await notCopied()).toBe(0);

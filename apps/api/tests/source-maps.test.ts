@@ -118,7 +118,8 @@ async function detailOf(projectId: string, event: NewEvent) {
 beforeAll(async () => {
   dashboard = await signedInDashboard({
     now: () => NOW,
-    sourceMaps: { store, limitBytes: 1024 ** 2 },
+    objectStore: store,
+    sourceMaps: { limitBytes: 1024 ** 2 },
   });
 });
 
@@ -280,7 +281,8 @@ describe("uploading a source map", () => {
   test("works on a few uploads at once, and asks the rest to try again", async () => {
     const busy = await signedInDashboard({
       now: () => NOW,
-      sourceMaps: { store, limitBytes: 1024 ** 3, maxInFlight: 1 },
+      objectStore: store,
+      sourceMaps: { limitBytes: 1024 ** 3, maxInFlight: 1 },
     });
     try {
       const { id } = await insertProject(busy.db, {

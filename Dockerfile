@@ -15,10 +15,11 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY apps/api/package.json apps/api/
 COPY apps/web/package.json apps/web/
 COPY packages/tracker/package.json packages/tracker/
+COPY packages/replay-player/package.json packages/replay-player/
 # No install scripts: the only one in the workspace installs git hooks.
 RUN pnpm install --frozen-lockfile --ignore-scripts
 COPY . .
-RUN pnpm --filter @ottertrail/tracker --filter @ottertrail/web --filter @ottertrail/api run build
+RUN pnpm --filter @ottertrail/tracker --filter @ottertrail/replay-player --filter @ottertrail/web --filter @ottertrail/api run build
 
 FROM ${NODE_IMAGE}
 ENV NODE_ENV=production \
@@ -26,14 +27,18 @@ ENV NODE_ENV=production \
     PORT=3000 \
     DASHBOARD_PATH=/app/dashboard \
     TRACKER_SCRIPT_PATH=/app/tracker/tracker.js \
+    REPLAY_PLAYER_PATH=/app/replay-player/player.js \
     GEO_DATABASE_PATH=/app/data/geo/dbip-city-lite.mmdb
 WORKDIR /app
 # The API bundles its dependencies, so dist/ needs only Node.js. Each build
 # output carries THIRD_PARTY_LICENSES.txt for the code it bundles.
 COPY --from=build /src/apps/api/dist ./dist
 COPY --from=build /src/apps/web/dist ./dashboard
-# The tracker, and v.js beside it, which it loads to measure Web Vitals.
-COPY --from=build /src/packages/tracker/dist/tracker.js /src/packages/tracker/dist/v.js ./tracker/
+# The tracker, and beside it what it loads: v.js to measure Web Vitals, and
+# r.js to record session replays around errors.
+COPY --from=build /src/packages/tracker/dist/tracker.js /src/packages/tracker/dist/v.js /src/packages/tracker/dist/r.js ./tracker/
+# The session replay player, which the dashboard's player page loads.
+COPY --from=build /src/packages/replay-player/dist/player.js /src/packages/replay-player/dist/THIRD_PARTY_LICENSES.txt ./replay-player/
 COPY LICENSE THIRD_PARTY_NOTICES.md ./
 # The geolocation database lives in a volume mounted here, written by `node dist/update-geo.mjs`.
 RUN mkdir -p data/geo && chown node:node data/geo

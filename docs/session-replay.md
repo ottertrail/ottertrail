@@ -1,6 +1,6 @@
 # Session replay
 
-**Status: planned, stage 5 of the [roadmap](roadmap.md). This is the design to build from; nothing in it is built.**
+**Status: the first version is built, replays around errors, as described here; what it leaves out is under [Not in the first version](#not-in-the-first-version). Stage 5 of the [roadmap](roadmap.md).**
 
 A replay shows what a visitor saw and did on a site: the page, their clicks, scrolling, and typing, played back in the dashboard. Its most useful view is the minute before an error: what the visitor did that broke the page. The first version records only that: replays around errors, attached to the error's group ([errors](errors.md)).
 
@@ -10,7 +10,7 @@ Recordings hold whatever is on the screen, so this design starts from privacy: *
 
 Not a video. The recorder takes a snapshot of the page's HTML once, then records each change with its time: elements added and removed, text changed, a field's value, a click, a scroll, the window's size. The player builds the page again from the snapshot in a frame and applies the changes in time. A recording is much smaller than a video and its text stays sharp, and masking can work element by element.
 
-The recorder is [rrweb](https://github.com/rrweb-io/rrweb) (MIT; `@rrweb/record` to record, `@rrweb/replay` to play back; 2.2.2 when this was written). Recordings miss what is not in the HTML: what a `<canvas>` draws (rrweb's `recordCanvas` is off by default, and stays off), the frames of a `<video>`, and frames from other domains. Images, fonts, and stylesheets are loaded from the site when the replay plays, so a replay can look off once the site has changed.
+The recorder is [rrweb](https://github.com/rrweb-io/rrweb) (MIT; `@rrweb/record` to record, `@rrweb/replay` to play back; 2.2.2). Recordings miss what is not in the HTML: what a `<canvas>` draws (rrweb's `recordCanvas` is off by default, and stays off), the frames of a `<video>`, and frames from other domains. Images, fonts, and stylesheets are loaded from the site when the replay plays, so a replay can look off once the site has changed.
 
 ## Private by default
 
@@ -54,9 +54,15 @@ Whatever the settings or markers:
 
 ### Proving it: the privacy test
 
-rrweb's options alone do not cover these rules: it has no option for attribute text, and its documentation does not say whether one selector can mask all text. So `r.js` passes every recorded change through its own filter before keeping it: it masks text nodes (but not a stylesheet's text, which the page needs to look right), the attributes above, and addresses, and it follows the markers. rrweb's own options (`maskAllInputs`, `blockSelector`) mask first; the filter is the second line.
+rrweb's options alone do not cover these rules: it has no option for attribute text, and its documentation does not say whether one selector can mask all text. So `r.js` passes every recorded change through its own filter before keeping it (`packages/tracker/src/replay-filter.ts`). rrweb's own options (`maskAllInputs` with every input type, `blockSelector`, no canvas, fonts, or frames from other sites) mask first; the filter is the second line, and does not rely on the first:
 
-A browser test proves the result rather than trusting either: it records a fixture page full of planted values (names, emails, a card number, a token in a link's query string, text in `title` and `placeholder`, typed passwords and other input) with the default settings, then decompresses what the recorder sent and checks that none of the planted values appears in it. Each loosening (`data-replay-text`, the markers) has its own case, including that `data-ottertrail-unmask` never shows a typed value. The test runs in `vp run ready`; a new rrweb version is only taken when it passes.
+- **Only known events pass,** each rebuilt from a list of the fields it may carry: the page's address and size, full snapshots, and changes of these kinds: the page's elements, mouse and touch, scrolling, the window's size, typed values (always masked), media playing, stylesheet rules, selection. Canvas drawing, fonts, console output, plugins, and anything unknown are dropped. If the filter fails, recording stops and what it held is dropped.
+- **Every node's markers are known:** a map from each node to its parent, rebuilt with each full snapshot and kept with each change, holds its own markers; a node's rules are its own and its ancestors'. A node whose parent is unknown is dropped, as is any change to one the map does not know.
+- **Stricter than the table, on purpose:** the text of `<option>` elements and of editable regions is treated as typed, so it stays masked even when the snippet shows text; `data-*` and other attributes it does not know are masked as text unless text is shown, which can leave a private replay's styling a little off where a stylesheet selects on them; `<meta>` content is masked.
+- **Stylesheets** are kept, as the page needs them, with addresses in `url()`, `@import`, and `image-set()` cleaned to origin and path.
+- **A block marker added after the page loaded** cannot take back what was already recorded inside the element: new content there is dropped at once, and what was there before leaves the replay with the next full snapshot, at most 30 seconds later.
+
+A browser test proves the result rather than trusting either (`packages/tracker/tests/browser/replay.test.ts`): it records a fixture page full of planted values (a name, an email, a card number, tokens in a link's, an image's, a `srcset`'s, and a style's addresses, text in `title`, `placeholder`, `alt`, `aria-label`, `data-*`, and `<meta>`, a typed password, text input, text area, chosen option, an edited region, text inserted and an attribute changed after load, and text in masked and blocked regions), with the default settings, then decompresses what the recorder sent and checks that none of the planted values appears in it. It runs the same with rrweb's own masking turned off, where raw rrweb does send a dozen of them, so the filter alone is proven. Each loosening (`data-replay-text`, `data-replay-media`, `data-ottertrail-unmask`) has its own case, including that unmasking never shows a typed value. The test runs in `vp run ready`; a new rrweb version is only taken when it passes.
 
 ## Recording
 
@@ -71,7 +77,7 @@ The site decides about consent: it leaves `data-replay` off until a visitor agre
 
 ### The recorder script
 
-`r.js`, served beside the tracker as `v.js` is ([Web Vitals](web-analytics.md#web-vitals)), loaded by the tracker only when the snippet asks for it, so pages that do not record never download it. rrweb is most of its size, to be measured when built. It inherits `v.js`'s limits: no recorder for a tracker pinned with `integrity`, the tracker's `nonce` under a strict Content Security Policy.
+`r.js`, served beside the tracker as `v.js` is ([Web Vitals](web-analytics.md#web-vitals)), loaded by the tracker only when the snippet asks for it, so pages that do not record never download it: 93 KB, 29 KB gzipped, nearly all of it rrweb. The loader made `tracker.js` 135 bytes larger, gzipped. It inherits `v.js`'s limits: no recorder for a tracker pinned with `integrity`, the tracker's `nonce` under a strict Content Security Policy.
 
 ### Only around errors
 
@@ -81,15 +87,16 @@ When the tracker reports an error ([errors](errors.md#1-capture)), the recorder 
 
 ### Sending
 
-- The recording is cut into chunks, each compressed with gzip in the browser (`CompressionStream`, in every current browser since May 2023) to at most 60,000 bytes, so a chunk fits a beacon when the visitor leaves mid-upload (browsers allow beacons and `keepalive` requests about 64 KB).
-- Each chunk names its replay, its number (0, 1, 2 …), the time it was sent, and whether it is the last. Chunks retry as event batches do ([retries](web-analytics.md#retries)), with the same numbers, so the API keeps each once.
-- At most 2 MB compressed per replay; a page so large or so busy that its recording would be bigger sends the first 2 MB, marked cut.
+- The recording is `{"v":1,"events":[…]}`, cut into pieces of its text, each compressed with gzip in the browser (`CompressionStream`, in every current browser since May 2023) to at most 60,000 bytes, so a chunk fits a beacon when the visitor leaves mid-upload. The part recorded before the error is compressed at once, so it is ready if the page closes.
+- `POST /api/replays?key=pk_…&replay=<uuid>&seq=<n>&last=0|1&cut=0|1`, the chunk as `text/plain`, which a page sends without a preflight and as a beacon. Each chunk is one gzip member, and the members joined in order unpack to the recording. Chunks retry as event batches do ([retries](web-analytics.md#retries)), with the same numbers, so the API keeps each once. A 403 stops the replay, and `replay_off` stops recording for the rest of the page load.
+- At most 2 MB compressed per replay; a page so large or so busy that its recording would be bigger sends the first 2 MB, cut at an event, marked cut.
+- Leaving the page: browsers let about 64 KB of beacons and `keepalive` requests be on their way at once, shared with the tracker's events, so a visitor who leaves just after an error often sends only the first chunk. The API keeps what came (below).
 
 ## The API
 
-`POST /api/replays`, with the project's public key, as `/api/events` takes it: the same allowed hostnames, CORS, and per-IP limit, and the cheapest checks first ([collecting](web-analytics.md#2-collecting)). A body is one gzip chunk, at most 64 KB; the API decompresses it with a cap of 1 MB (more is refused, 413, so a small body cannot unpack into a large one), checks the envelope (IDs, numbers, times) and that the events are JSON, and keeps the compressed bytes as sent. It does not read further into what was recorded; the player treats it as untrusted (below).
+`POST /api/replays` (`apps/api/src/replays/routes.ts`), with the project's public key, checked as `/api/events` is and cheapest first ([collecting](web-analytics.md#2-collecting)): the address's rate (a burst of 100 chunks, then 2 a second), the body (at most 64 KB, unpacked with a cap of 1 MiB, so a small body cannot unpack into a large one, 413 past it), the key, the page's origin against the project's allowed hostnames, the project's setting and the install's object store (403 `replay_off` without either), bots and data centers (accepted and ignored, as their events are), and the budgets. A chunk is kept as sent; the API does not read into what was recorded, which the player treats as untrusted (below).
 
-Recordings spend their own budgets, in bytes, per project and per organization (as events do with `EventBudget`), so recordings cannot crowd out events: a site whose replays hit the limit still has its events counted. Each organization also has a limit on the bytes it stores, counted in PostgreSQL from each replay's size, so one customer cannot fill a store every customer shares. A deployment sets the defaults; an organization's own limit can be raised.
+Recordings spend their own budgets, in KiB, per project (a burst of 8 MiB, then 256 KiB a second) and per organization (24 MiB, then 768 KiB a second), apart from events' (`EventBudget`), so recordings cannot crowd out events: a site whose replays hit the limit still has its events counted. Each organization may also keep `REPLAY_BYTES_PER_ORGANIZATION` (2 GiB by default) of replays and chunks waiting, counted in PostgreSQL: a new replay past it is refused (403 `replay_storage_full`), so one customer cannot fill a store every customer shares. These numbers are a first guess, to be measured on real sites.
 
 ## Storage
 
@@ -97,7 +104,8 @@ Decided on 17 November 2026: recordings are files in an object store, reached th
 
 - **The object store:** any server that speaks the S3 API, set by its endpoint, bucket, and keys. A hosted deployment uses Cloudflare R2 (or Amazon S3); development and self-hosted installs run [Garage](https://garagehq.deuxfleurs.fr/) (AGPL-3.0) in Docker Compose. Not MinIO: its community edition is no longer maintained upstream, nor published as Docker images. Ottertrail uses only the basic calls (put, get, list, and delete objects), so any of them works the same.
 - **Landing in PostgreSQL first:** chunks land in PostgreSQL (`replay_chunks`: project, replay ID, number, the compressed bytes, received time), which confirms them once committed, the one rule for everything a browser sends; its unique `(project_id, replay_id, seq)` makes a retry harmless.
-- **One object per replay:** when a replay is complete (its last chunk came, or none for 5 minutes), the worker joins its chunks into one object and records it in PostgreSQL (`replays`: project, replay ID, the errors it shows, size, start and end, the object's key). A replay costs one write and one read in the store, which charges per request, rather than one per 60 KB chunk. The worker deletes the chunks an hour later, past the tracker's retries (eight attempts, at most a minute apart).
+- **One object per replay:** every 10 seconds the worker (`apps/api/src/replays/replays.ts`) joins each complete replay, its chunks from 0 to the last with none missing, unpacks it, checks that it is a recording, and stores it as one gzip-compressed object, recorded in PostgreSQL (`replays`: project, replay ID, the object's key, size, whether it was cut). A replay costs one write and one read in the store, which charges per request, rather than one per 60 KB chunk. The worker deletes the chunks an hour later, past the tracker's retries (eight attempts, at most a minute apart); a retry after that finds the replay joined and is ignored.
+- **A replay whose end never came:** a missing chunk may still come as a retry, so the worker waits until none has come for 5 minutes. Then it keeps what came in order from the first chunk, cut after its last complete event and closed, marked cut; one with no complete event, or that is not a recording, is dropped.
 - **One bucket per deployment,** keys by project: `replays/<project_id>/<replay_id>.gz`. A bucket per customer would add nothing, and stores limit how many there can be. Which organization may read what is decided where it always is: the API's access check. The browser never gets the store's keys; playback reads a replay through the API, after that check.
 - **The same store for source maps** ([errors](errors.md)), under `source-maps/<project_id>/`.
 
@@ -105,12 +113,12 @@ Recordings are much larger than events, so what to measure on a real site first 
 
 ## Playback
 
-On an error group's page, an occurrence with a replay offers to play it; the player starts 60 seconds before the error at most, with the error marked on its timeline, and shows clicks and the visitor's path through pages beside it.
+On an error group's page, each occurrence says whether its replay is ready, still arriving (its error is under 15 minutes old), or missing; a ready one opens the player in a dialog. The player (`packages/replay-player`, served at `/replay-player.js`) starts 60 seconds before the error at most, with the error marked on its timeline and a button to jump to it, and plays at 1×, 2×, or 4×, skipping time with nothing happening. The project's settings turn replays on or off, show the snippet attribute and the privacy options, count the replays and their size, and delete them all.
 
 A recording is whatever a browser sent with a public key, which anyone can copy from a site, so the player treats it as untrusted HTML:
 
-- `@rrweb/replay` builds the page in an `iframe` sandboxed without `allow-scripts` (rrweb's sandbox: scripts become `noscript`, forms and popups are blocked). Never `UNSAFE_replayCanvas`, which allows scripts.
-- The player runs in a page of its own, served with a Content Security Policy that lets images, stylesheets, and fonts load only from the project's allowed hostnames ([keys and allowed hostnames](web-analytics.md#keys-and-allowed-hostnames)), so a forged recording cannot make the viewer's browser call other servers, and scripts only from Ottertrail.
+- `@rrweb/replay` builds the page in an `iframe` sandboxed with exactly `allow-same-origin`, never `allow-scripts`: rrweb 2.2.2 sets that itself and refuses to build into a frame sandboxed otherwise (scripts become `noscript`, forms and popups are blocked). Never `UNSAFE_replayCanvas`, which allows scripts. A test plays a recording with a script and event handlers and checks none ran.
+- The player runs in a page of its own, `GET /api/projects/:id/replays/:replayId/player` (`apps/api/src/replays/dashboard-routes.ts`), served with a Content Security Policy that lets images, stylesheets, and fonts load only from the project's allowed hostnames ([keys and allowed hostnames](web-analytics.md#keys-and-allowed-hostnames)), so a forged recording cannot make the viewer's browser call other servers; scripts only from Ottertrail, none inline; no forms or `<base>`; and only the dashboard may frame it. The recording itself comes from `GET /api/projects/:id/replays/:replayId`, after the access check every project route runs.
 - Nothing from a recording is put into the dashboard's own page.
 
 ## Retention and deletion
@@ -118,7 +126,11 @@ A recording is whatever a browser sent with a public key, which anyone can copy 
 - Replays are kept 30 days, the shortest retention a project can choose for events, so a replay outlives its error by a day at most. The worker deletes expired replays, object and row, itself rather than through the store's lifecycle rules, which differ from one store to another.
 - Deleting a project deletes its replays, everything under its key prefix, through the same `project_deletions` path as events ([ClickHouse](clickhouse.md#retention-and-deleting-a-project)).
 - Turning replay off keeps the recordings already made until they expire; the setting offers to delete them now.
-- Deleting one user's data (when that exists) includes their replays: chunks carry the user ID, if any, and the visitor ID of the page load.
+- Replays carry no user or visitor ID: a person's replays are found through their errors, which do. Deleting one user's data (not built) will have to delete those.
+
+## What has been tested end to end
+
+On 18 November 2026, in headless Chromium against a running API and the development Garage: a page with the built tracker and `data-replay="errors"` threw an error from a click after a card number was typed; the recorder sent its chunks, the API kept them, the worker joined them into one replay, and the error's occurrence named it, ready. None of the page's planted values (a name, an email, the card digits, a token in a link) nor its text appeared in the stored recording. The player page, under its Content Security Policy, rebuilt the page in a frame sandboxed `allow-same-origin`, every character masked, with the error marked on its timeline. Not yet on a real site, nor in the deployment stack.
 
 ## Not in the first version
 
@@ -127,11 +139,11 @@ A recording is whatever a browser sent with a public key, which anyone can copy 
 - Network requests and console output beside the replay.
 - `<canvas>`, video frames, and frames from other domains.
 - Search across replays (by page, click, or user), and replays on a user's activity timeline.
+- A list of the visitor's clicks and pages beside the player.
 - Mobile apps.
 - Click heatmaps ([roadmap](roadmap.md#notes)).
 
 ## Decisions still open
 
-1. **Budgets:** bytes per second, per day, and stored, for a project and an organization, from measuring a real site's recordings.
-2. **Garage in development:** its memory beside PostgreSQL and ClickHouse in the 2 GB development VM, to try before it joins the Compose files.
-3. **Whole sessions:** whether to record any without an error. They would need consent wording and much more storage.
+1. **Budgets:** the bytes per second and stored set above are a first guess: measure a real site's recordings, and set them from that.
+2. **Whole sessions:** whether to record any without an error. They would need consent wording and much more storage.

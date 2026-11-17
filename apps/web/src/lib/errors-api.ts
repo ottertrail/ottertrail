@@ -70,6 +70,19 @@ export interface ErrorBreakdownRow {
   occurrences: number;
 }
 
+/**
+ * An occurrence's session replay (docs/session-replay.md):
+ * - ready: stored, and can be played.
+ * - pending: the error is recent; the page sends its replay about 10 seconds after it.
+ * - missing: it never came, or it expired.
+ */
+export type ReplayStatus = "ready" | "pending" | "missing";
+
+export interface OccurrenceReplay {
+  id: string;
+  status: ReplayStatus;
+}
+
 export interface Occurrence {
   eventId: string;
   occurredAt: string;
@@ -84,6 +97,8 @@ export interface Occurrence {
   deviceType: string | null;
   country: string | null;
   release: string | null;
+  /** null: the page recorded no replay for it. */
+  replay: OccurrenceReplay | null;
 }
 
 /** The original source around a mapped frame's line. */
@@ -208,6 +223,12 @@ const isErrorDay = (value: unknown): value is ErrorDay =>
 const isBreakdownRow = (value: unknown): value is ErrorBreakdownRow =>
   isRecord(value) && isTextOrNull(value.value) && isNumber(value.occurrences);
 
+const isReplayStatus = (value: unknown): value is ReplayStatus =>
+  value === "ready" || value === "pending" || value === "missing";
+
+const isOccurrenceReplay = (value: unknown): value is OccurrenceReplay =>
+  isRecord(value) && isText(value.id) && isReplayStatus(value.status);
+
 const isOccurrence = (value: unknown): value is Occurrence =>
   isRecord(value) &&
   isText(value.eventId) &&
@@ -221,7 +242,8 @@ const isOccurrence = (value: unknown): value is Occurrence =>
   isTextOrNull(value.os) &&
   isTextOrNull(value.deviceType) &&
   isTextOrNull(value.country) &&
-  isTextOrNull(value.release);
+  isTextOrNull(value.release) &&
+  (value.replay === null || isOccurrenceReplay(value.replay));
 
 const isNumberOrNull = (value: unknown) => value === null || isNumber(value);
 

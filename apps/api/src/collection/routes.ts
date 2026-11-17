@@ -93,7 +93,12 @@ interface IncomingError {
   stack?: string;
   /** The site caught it and reported it itself. */
   handled?: boolean;
+  /** The session replay the page is sending for it (docs/session-replay.md). */
+  replayId?: string;
 }
+
+const UUID_PATTERN =
+  "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$";
 
 /**
  * An error as the tracker reports it. Message and stack keep tabs and line
@@ -116,6 +121,7 @@ const ERROR_SCHEMA = {
     message: { type: "string", maxLength: 2000, pattern: MULTILINE_TEXT },
     stack: { type: "string", maxLength: 16_000, pattern: MULTILINE_TEXT },
     handled: { type: "boolean" },
+    replayId: { type: "string", pattern: UUID_PATTERN },
   },
 } as const;
 
@@ -134,8 +140,6 @@ interface EventBatch {
   events: IncomingEvent[];
 }
 
-const UUID_PATTERN =
-  "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$";
 const MAX_TIMESTAMP = 8_640_000_000_000_000; // The largest date JavaScript can represent.
 
 /** An event name: 1 to 200 characters, no control characters. */
@@ -583,6 +587,9 @@ export const collectionRoutes: FastifyPluginCallback<CollectionOptions> = (app, 
                     : { stack: event.error.stack }),
                   handled: event.error.handled === true,
                   fingerprint: fingerprint(event.error),
+                  ...(event.error.replayId === undefined
+                    ? {}
+                    : { replayId: event.error.replayId.toLowerCase() }),
                 },
               }),
         });

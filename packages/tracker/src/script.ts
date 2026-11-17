@@ -28,6 +28,22 @@
  * It loads v.js from beside itself to measure Web Vitals, sent as one
  * "vitals" event per page load when the page is first hidden or left;
  * data-vitals="off" skips it, and so does an integrity attribute.
+ *
+ * Session replay around errors: data-replay="errors" loads r.js from beside
+ * it (not with an integrity attribute), which records the page into memory
+ * and sends a replay of the 30 to 60 seconds before the page load's first
+ * error and the 10 after; that error event, and others of the same page
+ * load while it still records, carry its replayId. The project's settings
+ * must allow replays too. Recordings are masked in the browser: page text
+ * becomes "*" unless data-replay-text="show"; images, picture, video,
+ * audio, and SVG are blocked unless data-replay-media="show"; canvas,
+ * frames, object, and embed always are; typed values never leave the page.
+ * In the site's HTML, data-ottertrail-mask masks an element's text,
+ * data-ottertrail-block leaves an element out (only a box of its size),
+ * and data-ottertrail-unmask shows an element's text in a private
+ * recording. window.ottertrail.replay(false) stops recording for the rest
+ * of the page load and drops what was recorded, as when a visitor
+ * withdraws consent.
  */
 import {
   createEngagementTimer,
@@ -38,6 +54,7 @@ import {
 import { createErrorCapture, ERROR } from "./errors.ts";
 import { watchNavigation } from "./navigation.ts";
 import { randomId } from "./random-id.ts";
+import { type Recorder, REPLAY_PROPERTY, type ReplayConfig } from "./replay-names.ts";
 import { cleanSignature, cleanUserId } from "./sanitize.ts";
 import { createTracker, type Page, type SignedUser } from "./tracker.ts";
 import { browserTransport } from "./transport.ts";
@@ -55,6 +72,12 @@ export interface OttertrailApi {
   reset(): void;
   /** Reports an error the site caught itself, with custom event properties if given. */
   captureError(error: unknown, properties?: Record<string, unknown>): void;
+  /**
+   * replay(false) stops session replay for the rest of the page load and
+   * drops what was recorded. Recording cannot start again in the same page
+   * load: a site that waits for consent leaves data-replay out until then.
+   */
+  replay(on: boolean): void;
 }
 
 declare global {
@@ -197,9 +220,17 @@ function landing(): Page {
       setUser(script.dataset.userId, script.dataset.userSignature, "data-user-id");
     }
 
+    // Session replay (r.js), once it runs; off for good after replay(false).
+    let recorder: Recorder | undefined;
+    let replayOff = false;
+
     // An error belongs to the page and user of that moment, as a custom event does.
+    // With a replay recording, it carries the replay's ID.
     const errors = createErrorCapture((error, properties) => {
-      tracker.track(ERROR, current ?? landing(), properties, { error });
+      const replayId = recorder?.error();
+      tracker.track(ERROR, current ?? landing(), properties, {
+        error: replayId === undefined ? error : { ...error, replayId },
+      });
     });
     if (script?.dataset.errors !== "off") {
       // Without capture: a failed image's or script's "error" never reaches window.
@@ -207,17 +238,27 @@ function landing(): Page {
       window.addEventListener("unhandledrejection", (event) => errors.rejected(event.reason));
     }
 
-    // Web Vitals come from v.js, beside this script, unless the page says
-    // data-vitals="off", or pins this script with integrity: v.js could not
-    // be pinned with it. It carries a nonce if this one did, for sites with
-    // a strict Content Security Policy.
-    const src = script !== null && "src" in script ? script.src : "";
-    if (
-      typeof src === "string" &&
-      src !== "" &&
-      script?.dataset.vitals !== "off" &&
-      !script?.hasAttribute?.("integrity")
-    ) {
+    // Web Vitals (v.js) and session replay (r.js) come from beside this
+    // script, unless the page pins this script with integrity: they could
+    // not be pinned with it. Each carries a nonce if this one did, for sites
+    // with a strict Content Security Policy, and gets what it needs through
+    // a property of its script element.
+    const src =
+      script !== null && "src" in script && typeof script.src === "string" ? script.src : "";
+    const beside = src !== "" && !script?.hasAttribute?.("integrity");
+    const load = (file: string, property: string, value: unknown) => {
+      try {
+        const added = document.createElement("script");
+        added.src = new URL(file, src).href;
+        added.async = true;
+        if (script?.nonce) added.nonce = script.nonce;
+        Object.assign(added, { [property]: value });
+        document.head.append(added);
+      } catch {
+        // Without it, the rest still works.
+      }
+    };
+    if (beside && script?.dataset.vitals !== "off") {
       // A page restored from the back/forward cache is a new page load. In
       // the capture phase, and added before v.js runs, this goes first: the
       // library reports the restored page's first values in its own.
@@ -232,22 +273,32 @@ function landing(): Page {
         },
         true,
       );
-      try {
-        const measure = document.createElement("script");
-        measure.src = new URL("v.js", src).href;
-        measure.async = true;
-        if (script?.nonce) measure.nonce = script.nonce;
-        Object.assign(measure, { [RECORD_PROPERTY]: recordVital });
-        document.head.append(measure);
-      } catch {
-        // Without Web Vitals, the rest still works.
-      }
+      load("v.js", RECORD_PROPERTY, recordVital);
+    }
+    if (beside && script?.dataset.replay === "errors") {
+      const config: ReplayConfig = {
+        endpoint: new URL("/api/replays", host).href,
+        key,
+        text: script.dataset.replayText === "show",
+        media: script.dataset.replayMedia === "show",
+        register: (started) => {
+          recorder = started;
+          if (replayOff) started.stop();
+        },
+      };
+      load("r.js", REPLAY_PROPERTY, config);
     }
 
     window.ottertrail = {
       identify: (id, signature) => setUser(id, signature, "identify()"),
       reset: () => setUser(undefined, undefined, "reset()"),
       captureError: errors.handled,
+      replay: (on) => {
+        if (!on) {
+          replayOff = true;
+          recorder?.stop();
+        }
+      },
       track: (name, properties) => {
         // The tracker sends these itself; a page sending them would distort reports.
         if (name === "pageview" || name === ENGAGEMENT || name === ERROR || name === VITALS) {

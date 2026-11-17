@@ -32,6 +32,7 @@ import { type Project, projectQuery, updateProject } from "@/lib/projects-api";
 import { DangerZone } from "./danger-zone";
 import { hostnamesFromText, installSnippet, timeAgo } from "./format";
 import { NoSuchProject } from "./no-such-project";
+import { ReplaysCard } from "./replays-card";
 import { ServerCard } from "./server-card";
 import { SourceMapsCard } from "./source-maps-card";
 
@@ -333,6 +334,7 @@ export function ProjectSettingsPage({ projectId }: { projectId: string }) {
       {/* One project's unsaved choices never carry over to another's. */}
       <SettingsCard key={project.data.id} project={project.data} />
       <SourceMapsCard key={`source-maps-${project.data.id}`} projectId={project.data.id} />
+      <ReplaysCard key={`replays-${project.data.id}`} projectId={project.data.id} />
       <DangerZone project={project.data} />
     </div>
   );

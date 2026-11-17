@@ -21,6 +21,8 @@ export interface Project {
   requireSignedUserIds: boolean;
   /** Events from cloud and hosting providers' addresses are ignored, as bots. */
   ignoreDataCenters: boolean;
+  /** Session replays: off, or recorded around errors (docs/session-replay.md). */
+  replayMode: "off" | "errors";
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -40,7 +42,8 @@ function isProject(value: unknown): value is Project {
     (value.retentionDays === null || typeof value.retentionDays === "number") &&
     typeof value.secretKey === "string" &&
     typeof value.requireSignedUserIds === "boolean" &&
-    typeof value.ignoreDataCenters === "boolean"
+    typeof value.ignoreDataCenters === "boolean" &&
+    (value.replayMode === "off" || value.replayMode === "errors")
   );
 }
 
@@ -82,6 +85,7 @@ export async function updateProject(
     retentionDays?: number | null;
     requireSignedUserIds?: boolean;
     ignoreDataCenters?: boolean;
+    replayMode?: "off" | "errors";
   },
 ) {
   const body = await apiRequest(`/api/projects/${encodeURIComponent(id)}`, {

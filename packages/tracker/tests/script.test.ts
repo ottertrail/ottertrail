@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vite-plus/test";
 
 import { MAX_ENGAGED_MS } from "../src/engagement.ts";
+import { type Recorder, REPLAY_PROPERTY, type ReplayConfig } from "../src/replay-names.ts";
 import type { QueuedEvent } from "../src/tracker.ts";
 import { RECORD_PROPERTY } from "../src/vital-names.ts";
 
@@ -84,6 +85,7 @@ function fakePage(
           identify(userId: string, signature?: string): void;
           reset(): void;
           captureError(error: unknown, properties?: object): void;
+          replay(on: boolean): void;
         }
       | undefined,
   };
@@ -818,5 +820,142 @@ describe("Web Vitals", () => {
     await page.settle();
     expect(page.events.filter((event) => event.name === "vitals")).toEqual([]);
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('"vitals" is reserved'));
+  });
+});
+
+/** The configuration r.js reads, from the script the tracker added for it. */
+const replayConfig = (page: ReturnType<typeof fakePage>) => {
+  const script = page.added.find((element) => String(element.src).endsWith("/r.js"));
+  return script?.[REPLAY_PROPERTY] as ReplayConfig | undefined;
+};
+
+/** A stand-in for r.js's recorder, giving each error this replay ID. */
+const fakeRecorder = (replayId: string | undefined) => ({
+  error: vi.fn<Recorder["error"]>(() => replayId),
+  stop: vi.fn<Recorder["stop"]>(),
+});
+
+describe("session replay", () => {
+  test('loads r.js beside the tracker, with its nonce, only with data-replay="errors"', async () => {
+    const page = fakePage("https://example.com/", "", {
+      src: "https://analytics.example.com/t.js?v=2",
+      nonce: "abc123",
+      attributes: { replay: "errors", replayText: "show" },
+    });
+    await runScript();
+    expect(page.added).toMatchObject([
+      { tagName: "script", src: "https://analytics.example.com/v.js" },
+      {
+        tagName: "script",
+        src: "https://analytics.example.com/r.js",
+        async: true,
+        nonce: "abc123",
+      },
+    ]);
+    expect(replayConfig(page)).toMatchObject({
+      endpoint: "https://analytics.example.com/api/replays",
+      key: "pk_test",
+      text: true,
+      media: false,
+    });
+
+    const media = fakePage("https://example.com/", "", {
+      attributes: { replay: "errors", replayMedia: "show", vitals: "off" },
+    });
+    await runScript();
+    expect(media.added.map((element) => element.src)).toEqual([
+      "https://analytics.example.com/r.js",
+    ]);
+    expect(replayConfig(media)).toMatchObject({ text: false, media: true });
+
+    const without: Record<string, string>[] = [{}, { replay: "all" }, { replay: "" }];
+    for (const attributes of without) {
+      const other = fakePage("https://example.com/", "", { attributes });
+      await runScript();
+      expect(replayConfig(other)).toBeUndefined();
+    }
+  });
+
+  test("never with an integrity attribute: r.js could not be pinned with it", async () => {
+    const pinned = fakePage("https://example.com/", "", { attributes: { replay: "errors" } });
+    Object.assign(pinned.document.currentScript, {
+      hasAttribute: (name: string) => name === "integrity",
+    });
+    await runScript();
+    expect(pinned.added).toEqual([]);
+  });
+
+  test("an error event carries the replay ID the recorder gives it", async () => {
+    const page = fakePage("https://example.com/checkout", "", { attributes: { replay: "errors" } });
+    await runScript();
+    const replay = fakeRecorder("8a1c4d2e-0f3b-4c5d-9e6f-7a8b9c0d1e2f");
+    replayConfig(page)?.register(replay);
+    uncaught(page, failure("boom"));
+    page.window.ottertrail?.captureError(failure("caught", STACK, "PaymentError"));
+    page.fire("unhandledrejection", { reason: failure("rejected") });
+
+    const errors = await errorsSent(page);
+    expect(replay.error).toHaveBeenCalledTimes(3);
+    expect(errors.map((event) => event.error)).toEqual([
+      expect.objectContaining({
+        message: "boom",
+        handled: false,
+        replayId: "8a1c4d2e-0f3b-4c5d-9e6f-7a8b9c0d1e2f",
+      }),
+      expect.objectContaining({
+        message: "caught",
+        handled: true,
+        replayId: "8a1c4d2e-0f3b-4c5d-9e6f-7a8b9c0d1e2f",
+      }),
+      expect.objectContaining({
+        message: "rejected",
+        replayId: "8a1c4d2e-0f3b-4c5d-9e6f-7a8b9c0d1e2f",
+      }),
+    ]);
+  });
+
+  test("captureError still starts a replay when automatic capture is off", async () => {
+    const page = fakePage("https://example.com/", "", {
+      attributes: { replay: "errors", errors: "off" },
+    });
+    await runScript();
+    const replay = fakeRecorder("8a1c4d2e-0f3b-4c5d-9e6f-7a8b9c0d1e2f");
+    replayConfig(page)?.register(replay);
+    uncaught(page, failure("ignored")); // Not captured: data-errors="off".
+    page.window.ottertrail?.captureError(failure("caught"));
+    const errors = await errorsSent(page);
+    expect(replay.error).toHaveBeenCalledTimes(1);
+    expect(errors.map((event) => event.error?.replayId)).toEqual([
+      "8a1c4d2e-0f3b-4c5d-9e6f-7a8b9c0d1e2f",
+    ]);
+  });
+
+  test("without a replay, the error has no replay ID", async () => {
+    const page = fakePage("https://example.com/", "", { attributes: { replay: "errors" } });
+    await runScript();
+    uncaught(page, failure("before r.js ran"));
+    replayConfig(page)?.register(fakeRecorder(undefined));
+    uncaught(page, failure("after the replay was sent"));
+    const errors = await errorsSent(page);
+    expect(errors).toHaveLength(2);
+    for (const event of errors) expect(event.error).not.toHaveProperty("replayId");
+  });
+
+  test("replay(false) stops the recorder, also one that starts later", async () => {
+    const page = fakePage("https://example.com/", "", { attributes: { replay: "errors" } });
+    await runScript();
+    const running = fakeRecorder("x");
+    replayConfig(page)?.register(running);
+    page.window.ottertrail?.replay(true); // Does nothing.
+    expect(running.stop).not.toHaveBeenCalled();
+    page.window.ottertrail?.replay(false);
+    expect(running.stop).toHaveBeenCalledTimes(1);
+
+    const early = fakePage("https://example.com/", "", { attributes: { replay: "errors" } });
+    await runScript();
+    early.window.ottertrail?.replay(false); // Before r.js has run.
+    const late = fakeRecorder("x");
+    replayConfig(early)?.register(late);
+    expect(late.stop).toHaveBeenCalledTimes(1);
   });
 });

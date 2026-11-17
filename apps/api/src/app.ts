@@ -7,7 +7,10 @@ import type { ClickHouseClient } from "./clickhouse/clickhouse.ts";
 import { ProjectKeyCache } from "./collection/project-keys.ts";
 import type { RateLimit } from "./collection/rate-limiter.ts";
 import { type CollectionOptions, collectionRoutes } from "./collection/routes.ts";
-import { DEFAULT_SOURCE_MAP_BYTES_PER_ORGANIZATION } from "./config.ts";
+import {
+  DEFAULT_REPLAY_BYTES_PER_ORGANIZATION,
+  DEFAULT_SOURCE_MAP_BYTES_PER_ORGANIZATION,
+} from "./config.ts";
 import { dashboardAppRoutes, sendsHsts } from "./dashboard-app/routes.ts";
 import type { Database } from "./db/schema.ts";
 import { errorRoutes } from "./errors/routes.ts";
@@ -17,6 +20,8 @@ import { userRoutes } from "./identities/routes.ts";
 import { organizationRoutes } from "./organizations/routes.ts";
 import { productRoutes } from "./product/routes.ts";
 import { projectRoutes } from "./projects/routes.ts";
+import { replayPlayerScriptRoute, replayRoutes } from "./replays/dashboard-routes.ts";
+import { replayCollectionRoutes } from "./replays/routes.ts";
 import { reportRoutes } from "./reports/routes.ts";
 import { healthRoutes } from "./routes/health.ts";
 import { SourceMapCache } from "./source-maps/resolve.ts";
@@ -53,21 +58,33 @@ export interface AppOptions extends Omit<FastifyServerOptions, "logger"> {
     setupLimit?: RateLimit;
   };
   /**
-   * Source maps (docs/errors.md, "Source maps"): the object store that holds
-   * them, null when the install has none, and each organization's limit.
-   * Off when omitted.
+   * The S3-compatible object store that holds source maps and session
+   * replays; null, or omitted, when the install has none, and both are off.
    */
+  objectStore?: ObjectStore | null;
+  /** Source maps (docs/errors.md, "Source maps"): each organization's limit, and upload limits. */
   sourceMaps?: {
-    store: ObjectStore | null;
     limitBytes: number;
     ipLimit?: RateLimit;
     /** Uploads one process stores at once (source-maps/routes.ts). */
     maxInFlight?: number;
   };
+  /**
+   * Session replays (docs/session-replay.md): each organization's limit on
+   * what its replays keep, and the collection limits, which tests lower.
+   */
+  replays?: {
+    limitBytes: number;
+    ipLimit?: RateLimit;
+    projectLimit?: RateLimit;
+    organizationLimit?: RateLimit;
+  };
   /** The built tracker, served at /t.js. Not served when omitted. */
   trackerScriptPath?: string;
   /** The built dashboard's directory, served at /. Not served when omitted. */
   dashboardPath?: string;
+  /** The built session replay player, served at /replay-player.js. Not served when omitted. */
+  replayPlayerPath?: string;
 }
 
 /**
@@ -89,9 +106,12 @@ export function buildApp({
   collection = {},
   log,
   dashboard,
-  sourceMaps = { store: null, limitBytes: DEFAULT_SOURCE_MAP_BYTES_PER_ORGANIZATION },
+  objectStore = null,
+  sourceMaps = { limitBytes: DEFAULT_SOURCE_MAP_BYTES_PER_ORGANIZATION },
+  replays = { limitBytes: DEFAULT_REPLAY_BYTES_PER_ORGANIZATION },
   trackerScriptPath,
   dashboardPath,
+  replayPlayerPath,
   ...fastifyOptions
 }: AppOptions) {
   const app = Fastify({
@@ -115,10 +135,19 @@ export function buildApp({
     collection.now === undefined ? {} : { now: collection.now },
   );
   app.register(collectionRoutes, { prefix: "/api", db, projectKeys, ...collection });
+  app.register(replayCollectionRoutes, {
+    prefix: "/api",
+    db,
+    projects: projectKeys,
+    storeConfigured: objectStore !== null,
+    ...replays,
+    ...(collection.isDataCenter === undefined ? {} : { isDataCenter: collection.isDataCenter }),
+    ...(collection.now === undefined ? {} : { now: collection.now }),
+  });
   app.register(sourceMapUploadRoutes, {
     prefix: "/api",
     db,
-    store: sourceMaps.store,
+    store: objectStore,
     projects: projectKeys,
     limitBytes: sourceMaps.limitBytes,
     ...(sourceMaps.ipLimit === undefined ? {} : { ipLimit: sourceMaps.ipLimit }),
@@ -200,13 +229,25 @@ export function buildApp({
       clickhouse: dashboard.clickhouse,
       auth: dashboard.auth,
       trustedOrigins: dashboard.trustedOrigins,
-      sourceMaps: { store: sourceMaps.store, cache: new SourceMapCache() },
+      sourceMaps: { store: objectStore, cache: new SourceMapCache() },
       ...(dashboard.now === undefined ? {} : { now: dashboard.now }),
     });
+    app.register(replayRoutes, {
+      prefix: "/api",
+      db,
+      store: objectStore,
+      auth: dashboard.auth,
+      trustedOrigins: dashboard.trustedOrigins,
+      limitBytes: replays.limitBytes,
+    });
+    if (replayPlayerPath !== undefined) {
+      // At the site's root, beside the dashboard: not under /api.
+      app.register(replayPlayerScriptRoute, { scriptPath: replayPlayerPath });
+    }
     app.register(sourceMapRoutes, {
       prefix: "/api",
       db,
-      store: sourceMaps.store,
+      store: objectStore,
       auth: dashboard.auth,
       trustedOrigins: dashboard.trustedOrigins,
       limitBytes: sourceMaps.limitBytes,

@@ -150,6 +150,7 @@ export const projectRoutes: FastifyPluginCallback<{
       retentionDays?: number | null;
       requireSignedUserIds?: boolean;
       ignoreDataCenters?: boolean;
+      replayMode?: "off" | "errors";
     };
   }>(
     "/projects/:id",
@@ -172,13 +173,21 @@ export const projectRoutes: FastifyPluginCallback<{
             },
             requireSignedUserIds: { type: "boolean" },
             ignoreDataCenters: { type: "boolean" },
+            // Session replays around errors (docs/session-replay.md); off by default.
+            replayMode: { type: "string", enum: ["off", "errors"] },
           },
         },
       },
     },
     async (request, reply) => {
-      const { name, allowedHostnames, retentionDays, requireSignedUserIds, ignoreDataCenters } =
-        request.body;
+      const {
+        name,
+        allowedHostnames,
+        retentionDays,
+        requireSignedUserIds,
+        ignoreDataCenters,
+        replayMode,
+      } = request.body;
       let hostnames: string[] | undefined;
       if (allowedHostnames !== undefined) {
         const parsed = parseHostnames(allowedHostnames);
@@ -193,9 +202,14 @@ export const projectRoutes: FastifyPluginCallback<{
         ...(retentionDays === undefined ? {} : { retentionDays }),
         ...(requireSignedUserIds === undefined ? {} : { requireSignedUserIds }),
         ...(ignoreDataCenters === undefined ? {} : { ignoreDataCenters }),
+        ...(replayMode === undefined ? {} : { replayMode }),
       });
       // Collection reads these rules from its cache: a change applies at once.
-      if (requireSignedUserIds !== undefined || ignoreDataCenters !== undefined) {
+      if (
+        requireSignedUserIds !== undefined ||
+        ignoreDataCenters !== undefined ||
+        replayMode !== undefined
+      ) {
         projectKeys?.forgetProject(request.params.id);
       }
       return project === null

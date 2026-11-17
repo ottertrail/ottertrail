@@ -11,6 +11,7 @@ import { environmentOf } from "../collection/environment.ts";
 import type { Database } from "../db/schema.ts";
 import { type ProjectAccess, requireProjectAccess } from "../organizations/access.ts";
 import { signedInUser } from "../organizations/routes.ts";
+import { replayStatuses } from "../replays/replays.ts";
 import { localDays } from "../reports/reports.ts";
 import { RANGE_PROPERTIES, type RangeQuery, requestDays } from "../reports/routes.ts";
 import { resolveStack, type SourceMapCache } from "../source-maps/resolve.ts";
@@ -174,12 +175,19 @@ export const errorRoutes: FastifyPluginCallback<{
               detail.occurrences[0]?.release ?? null,
               detail.stack,
             );
+      // Each occurrence's replay, if its page sent one: ready, still coming, or missing.
+      const replays = await replayStatuses(db, range.projectId, detail.occurrences, now());
       return {
         timeZone: range.timeZone,
         environment: range.environment,
         firstDay: range.firstDay,
         lastDay: range.lastDay,
         ...detail,
+        occurrences: detail.occurrences.map(({ replayId, ...occurrence }) => ({
+          ...occurrence,
+          replay:
+            replayId === null ? null : { id: replayId, status: replays.get(replayId) ?? "missing" },
+        })),
         frames: resolved?.frames ?? null,
         sourceMaps:
           resolved === null

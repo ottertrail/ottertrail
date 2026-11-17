@@ -46,6 +46,8 @@ export interface StoredError {
   stack?: string;
   handled: boolean;
   fingerprint: string;
+  /** The session replay that shows it, when the page recorded one (docs/session-replay.md). */
+  replayId?: string;
 }
 
 export interface StoreResult {
@@ -104,6 +106,7 @@ export async function storeEvents(
         error_stack: event.error?.stack,
         error_handled: event.error?.handled,
         error_fingerprint: event.error?.fingerprint,
+        replay_id: event.error?.replayId,
       })),
     )
     .onConflict((conflict) => conflict.columns(["project_id", "event_id"]).doNothing())

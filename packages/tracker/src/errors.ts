@@ -20,6 +20,8 @@ export interface ErrorDetails {
   stack?: string;
   /** True only when the site reported it with captureError(). */
   handled: boolean;
+  /** The session replay recorded around this error, when one will be sent (replay-recorder.ts). */
+  replayId?: string;
 }
 
 export interface ErrorCapture {

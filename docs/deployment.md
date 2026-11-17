@@ -113,9 +113,9 @@ Restoring PostgreSQL alone, or moving it to a new major version (dump, new volum
 
 Compose stops with "set … in .env" when a required one is missing.
 
-### Source maps
+### Source maps and session replays
 
-Source maps turn minified stack traces back into a site's own code ([errors](errors.md#5-source-maps)). They need an S3-compatible object store; without one, they are off and everything else works. Either:
+Source maps turn minified stack traces back into a site's own code ([errors](errors.md#5-source-maps)), and session replays show what a visitor did before an error ([session replay](session-replay.md)). Both need an S3-compatible object store; without one, they are off and everything else works. Either:
 
 - **Garage on the same server.** Generate the store's access key and Garage's own secret, put them in `.env` with `OBJECT_STORE_URL`, and start the stack with the `object-store` profile:
 
@@ -131,9 +131,13 @@ Source maps turn minified stack traces back into a site's own code ([errors](err
 
 - **Cloudflare R2, Amazon S3, or another S3-compatible store.** Create a bucket and an access key for it there, set `OBJECT_STORE_URL` to its endpoint (for R2, `https://<account ID>.r2.cloudflarestorage.com`), `OBJECT_STORE_REGION` (`auto` for R2), `OBJECT_STORE_BUCKET`, `OBJECT_STORE_ACCESS_KEY_ID`, and `OBJECT_STORE_SECRET_ACCESS_KEY`, and leave the profile off.
 
-`SOURCE_MAP_BYTES_PER_ORGANIZATION` limits each organization's compressed maps, 1 GiB by default. The API logs `OBJECT_STORE_URL is not set: source maps are off` at start when there is no store.
+`SOURCE_MAP_BYTES_PER_ORGANIZATION` limits each organization's compressed maps, 1 GiB by default, and `REPLAY_BYTES_PER_ORGANIZATION` its compressed replays, 2 GiB by default (a first guess, until measured on real sites). Replays are kept 30 days. The API logs `OBJECT_STORE_URL is not set: source maps are off` at start when there is no store; a project's replay setting then says replays are off on the install.
 
 Containers keep at most 50 MB of logs each (`docker compose logs api` shows them). The API and the worker log one JSON object per line.
+
+### One organization
+
+An install is the same software as a hosted service with many customers: organizations, memberships, and the access check on every project route are all there. A self-hosted install runs one organization, the one its setup link creates: nobody can sign up (open sign-up, for a hosted service, is not built), invitations are not built yet, and the dashboard offers no second organization. Nothing needs to be set for that; a later setting to allow sign-up (off unless a deployment turns it on) will keep it so.
 
 ## Decisions
 

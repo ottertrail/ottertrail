@@ -206,8 +206,16 @@ describe("an error's page", () => {
       [...row.querySelectorAll("td")].map((cell) => cell.textContent),
     );
     expect(rows).toEqual([
-      ["16 Nov 2026, 16:00", "ada", "/checkout", "Chrome 131.0", "Windows", "1.4.2"],
-      ["16 Nov 2026, 15:00Caught", "Anonymous", "/checkout", "Firefox 132.0", "Linux", "(unknown)"],
+      ["16 Nov 2026, 16:00", "ada", "/checkout", "Chrome 131.0", "Windows", "1.4.2", "—No replay"],
+      [
+        "16 Nov 2026, 15:00Caught",
+        "Anonymous",
+        "/checkout",
+        "Firefox 132.0",
+        "Linux",
+        "(unknown)",
+        "—No replay",
+      ],
     ]);
   });
 

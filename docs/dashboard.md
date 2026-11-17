@@ -89,7 +89,7 @@ Settings that differ from Better Auth's defaults, and why:
 
 Code: `apps/api/src/projects/`, `apps/api/src/tracker-script/`, and `apps/web/src/features/projects/`.
 
-A project is one website or app. The Projects page lists them with their allowed sites and when their last event happened. A project's Settings page (`/projects/<id>/settings`) shows its install snippet and public key to copy, whether events are arriving, a form for its name and allowed sites, and its uploaded source maps; a new project opens there.
+A project is one website or app. The Projects page lists them with their allowed sites and when their last event happened. A project's Settings page (`/projects/<id>/settings`) shows its install snippet and public key to copy, whether events are arriving, a form for its name and allowed sites, its uploaded source maps, and its session replay setting; a new project opens there.
 
 ### The workspace and a project
 
@@ -147,6 +147,17 @@ The "Source maps" card (`apps/web/src/features/projects/source-maps-card.tsx`, t
 - Without maps, and behind "Show how to upload" once there are some: the upload command of the CLI (from this repository's `packages/sourcemaps`, which is not on npm yet), a `curl` example for one file, and the rules: one upload per release and minified file, `path` is the file's path as the browser loads it, the release must match `data-release`, and maps built without publishing them (Vite's `build.sourcemap: "hidden"`). The secret key appears only as a placeholder (`sk_…`, `$OTTERTRAIL_SECRET_KEY`) pointing at the "Your server" card; the card never prints the real key.
 
 Sizes use powers of 1,024 with the short units KB, MB, and GB. `source-maps.test.tsx` covers the list, oldest first on request, the files dialog, deleting (the request, the list, focus), the install without an object store, and the empty state.
+
+### Session replay
+
+The "Session replay" card (`apps/web/src/features/projects/replays-card.tsx`; the design in [session replay](session-replay.md), the routes in `apps/api/src/replays/dashboard-routes.ts`) reads `GET /api/projects/:id/replays`:
+
+- On an install without an object store, it only says replays are off there, and that the operator turns them on with `OBJECT_STORE_URL`.
+- Otherwise, a choice of two radio buttons, "Off" (the default) and "Around errors", each with a line saying what it does. Choosing saves at once (`PATCH /api/projects/:id` with `replayMode`): while saving the choices are disabled and "Saving…" shows, then "Saved."; a failure shows the API's message and the saved choice again.
+- "On your site": both switches are needed, this setting and `data-replay="errors"` on the tracker's script tag (shown to copy), which a site leaves off until a visitor agrees if it asks. Then the privacy defaults in plain words (the page's text, typed values, and images and media are masked in the visitor's browser, and what is masked never reaches Ottertrail) and the site's opt-ins, one line each: `data-replay-text="show"`, `data-replay-media="show"`, `data-ottertrail-mask`, `data-ottertrail-block`, and `data-ottertrail-unmask`.
+- "Stored": the project's replays (how many, and their size) and the organization's use against its limit, all its projects together; replays are kept 30 days. With at least one replay, "Delete all replays" (`DELETE /api/projects/:id/replays`) asks first and says it cannot be undone and the errors stay; afterwards the count shows none at once, the button goes, and focus moves to the card's heading (Cancel returns it to the button). Error pages are fetched again.
+
+`replays.test.tsx` covers each state of the card, the request a choice sends, a failed save, deleting (the confirmation, the request, focus), no delete without replays, and the install without an object store.
 
 ### Replacing the key, deleting the project
 
@@ -332,7 +343,7 @@ Both run `requireProjectAccess`, as every project route ([Organizations](#organi
 Code: `apps/web/src/features/errors/`, `apps/api/src/errors/`. The error groups the tracker reports ([errors](errors.md)), in one environment and a range of days, with the same period choices and addresses as the analytics page (`period`, `from` and `to`, `env`).
 
 - `/projects/<id>/errors`: the groups seen in the range, latest first, under three tabs: Unresolved (the default, regressions included), Resolved, and All (`status=` in the address). Each row: the type and message (the full message on hover), occurrences, users, and visitors in the range, last seen (relative, the exact time on hover), first seen, and a Regressed or Resolved badge, with an icon and a label. A row opens its group. Without errors, the page explains automatic capture, `captureError()`, and `data-errors="off"`, with an example to copy. A note says when the list stops at 1,000 groups.
-- `/projects/<id>/errors/<fingerprint>`: one group. Its type and full message, its status with Resolve or Reopen (who resolved it and when, or that it regressed after), occurrences, users, and visitors in the range, first and last seen, occurrences per day (the analytics page's line chart, with "Show the numbers"), where it happens (pages, browsers, operating systems, releases), the latest occurrence's stack trace (below), and the latest 20 occurrences: time, user (a link to their page) or Anonymous, page, browser, OS, release, and "Caught" for `captureError()`. A group without occurrences in the range says so, with links to all errors and to the last 12 months.
+- `/projects/<id>/errors/<fingerprint>`: one group. Its type and full message, its status with Resolve or Reopen (who resolved it and when, or that it regressed after), occurrences, users, and visitors in the range, first and last seen, occurrences per day (the analytics page's line chart, with "Show the numbers"), where it happens (pages, browsers, operating systems, releases), the latest occurrence's stack trace (below), and the latest 20 occurrences: time, user (a link to their page) or Anonymous, page, browser, OS, release, "Caught" for `captureError()`, and its replay (below). A group without occurrences in the range says so, with links to all errors and to the last 12 months.
 - On a user's page, an error shows its type and message, linking to its group with the shortest period that includes it.
 
 ### The stack trace
@@ -344,6 +355,18 @@ The group's page shows the latest occurrence's stack, mapped with its release's 
 - One note above says how the stack was mapped, or why not: mapped with release X's maps; the occurrence has no release (set with `data-release` on the tracker's tag); no frame is in a file a map could be for (a script written into the page, the browser's own code); no maps of release X cover the stack's files, or the release's maps for them cover none of the frames and may be another build's (both listing the files, with a link to the project's Source maps settings); source maps are off on this install (no object store, `OBJECT_STORE_URL`); or the maps could not be read just now.
 - Without a stack, the card says the browser gave none, and nothing about source maps.
 
+### An occurrence's replay
+
+The latest occurrences have a Replay column (`apps/web/src/features/errors/occurrence-replay.tsx`), from each occurrence's `replay` in the API's answer:
+
+- **Ready:** a "Play replay" button, named with the occurrence's time for screen readers ("Play replay of the error at 16 Nov 2026, 16:00"). It opens a dialog that takes most of the screen, with the error's time, timezone, and page, around a frame of the player page (`/api/projects/:id/replays/:replayId/player?errorAt=<ms>`, titled "Session replay around the error at …", `referrerpolicy="no-referrer"`). The frame has no `sandbox` or `allow` attribute: the player has to run its own script and read the replay as the signed-in user, and the API serves its page with a Content Security Policy of its own ([session replay](session-replay.md#playback)). Closing the dialog returns focus to the button.
+- **Pending:** "Arriving…" in muted text; on hover, and for screen readers, "The page sends its replay about 10 seconds after the error."
+- **Missing, or none:** a dash, read as "No replay".
+
+The player itself is `packages/replay-player`, plain DOM and TypeScript around rrweb's `Replayer` (`@rrweb/replay`), built into one script (`dist/player.js`) that the API serves at `/replay-player.js`. It fetches the recording, checks its shape (version 1, rrweb events, a viewport size, a full snapshot), and fits the recorded viewport into the frame, keeping its shape. Its controls: Play or Pause (also Space, unless focus is on a control that uses it), a timeline (the arrow keys move 5 seconds; its spoken value reads "0:12 of 1:05") with the error marked on it, the elapsed and total time, "Jump to the error", speeds of 1×, 2×, and 4×, and "Skip inactivity" (on by default). It starts a minute before the error at most. A line says what was masked never reached Ottertrail. A replay that is gone says "This replay is not available: it may have expired."; other failures say to try again. rrweb builds the recorded page in a frame sandboxed with `allow-same-origin` only, never `allow-scripts` (rrweb 2.2.2's `createSandboxedIframe`; `UNSAFE_replayCanvas` is never set). The package's browser test plays a recording with a `<script>` and `onerror`, `onclick`, and `onload` handlers and checks that none of them runs.
+
+`replays.test.tsx` covers the column's three states and the dialog with its frame.
+
 The API is in [errors](errors.md#4-status-and-counts). Resolve and Reopen refresh the list and the group. A group the range does not include answers 404 with `no_occurrences`, distinct from the `not_found` of a project the user cannot reach. `errors.test.tsx` covers the list, tabs, environments, empty states, the group's page, Resolve, and both 404s, against the fake API. `source-maps.test.tsx` covers the stack card: mapped frames with their source and marked line, the folded frames, the raw stack, each note, and no stack.
 
 ### Not done yet
@@ -351,6 +374,7 @@ The API is in [errors](errors.md#4-status-and-counts). Resolve and Reopen refres
 - Counts per tab: the Unresolved tab cannot tell "no errors" from "all resolved".
 - The status filter applies to the 1,000 most recently seen groups of the range: a shorter range shows older ones.
 - The group's page lists environments only through the one in its address.
+- The replay player shows no list of the visitor's clicks and pages beside the recording yet, which the design plans ([session replay](session-replay.md#playback)).
 
 ## 8.7 Speed
 

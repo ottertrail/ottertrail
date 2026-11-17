@@ -26,12 +26,19 @@ export const OWNER = {
 export async function signedInDashboard({
   timeZone = "UTC",
   now,
+  objectStore,
   sourceMaps,
+  replays,
+  replayPlayerPath,
 }: {
   timeZone?: string;
   now?: () => Date;
-  /** Source maps' store and limit; off when omitted (tests/source-maps.test.ts). */
+  /** The object store for source maps and replays; none when omitted (tests/source-maps.test.ts). */
+  objectStore?: AppOptions["objectStore"];
   sourceMaps?: AppOptions["sourceMaps"];
+  replays?: AppOptions["replays"];
+  /** The built replay player, served at /replay-player.js; not served when omitted. */
+  replayPlayerPath?: string;
 } = {}) {
   const testDb = await createTestDatabase();
   const testClickHouse = await createTestClickHouse().catch(async (error: unknown) => {
@@ -55,7 +62,10 @@ export async function signedInDashboard({
       defaultTimeZone: timeZone,
       ...(now === undefined ? {} : { now }),
     },
+    ...(objectStore === undefined ? {} : { objectStore }),
     ...(sourceMaps === undefined ? {} : { sourceMaps }),
+    ...(replays === undefined ? {} : { replays }),
+    ...(replayPlayerPath === undefined ? {} : { replayPlayerPath }),
   });
   const link = await createSetupToken(testDb.db);
   await app.inject({
