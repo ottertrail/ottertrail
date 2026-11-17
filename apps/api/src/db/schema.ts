@@ -139,6 +139,21 @@ export interface EventsTable {
   error_fingerprint: Nullable<string>;
 }
 
+/** A project's saved conversion: a page or a product event (migration 0020). */
+export interface GoalsTable {
+  id: ColumnType<string, string | undefined, never>;
+  project_id: string;
+  name: string;
+  kind: "page" | "event";
+  /** For a page goal: the path viewed. */
+  path: Nullable<string>;
+  /** For an event goal: the product event's name, and its property filter if any. */
+  event_name: Nullable<string>;
+  filter_key: Nullable<string>;
+  filter_value: Nullable<string>;
+  created_at: ColumnType<Date, Date | undefined, never>;
+}
+
 /** An error group a project's team marked resolved (migration 0019). No row: unresolved. */
 export interface ErrorResolutionsTable {
   project_id: string;
@@ -217,6 +232,7 @@ export interface Database {
   project_deletions: ProjectDeletionsTable;
   events: EventsTable;
   error_resolutions: ErrorResolutionsTable;
+  goals: GoalsTable;
   visitor_salts: VisitorSaltsTable;
   dashboard_users: DashboardUsersTable;
   dashboard_sessions: DashboardSessionsTable;

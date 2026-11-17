@@ -36,6 +36,13 @@ function projectRoutes(id: string): [string, string, object?][] {
       )}`,
     ],
     ["GET", `/api/projects/${id}/retention?period=30d`],
+    ["GET", `/api/projects/${id}/goals`],
+    [
+      "POST",
+      `/api/projects/${id}/goals`,
+      { name: "Taken over", step: { type: "page", path: "/" } },
+    ],
+    ["DELETE", `/api/projects/${id}/goals/00000000-0000-4000-8000-000000000000`],
     ["GET", `/api/projects/${id}/errors?period=7d`],
     ["GET", `/api/projects/${id}/errors/1-0123456789abcdef0123?period=7d`],
     ["PATCH", `/api/projects/${id}/errors/1-0123456789abcdef0123`, { status: "resolved" }],

@@ -1,6 +1,7 @@
 import { infiniteQueryOptions, keepPreviousData, queryOptions } from "@tanstack/react-query";
 
 import { ApiError, apiRequest, expectShape } from "./api";
+import { type GoalResult, isGoalResult } from "./goals-api";
 
 /** Ranges the analytics page offers; each ends today in the organization's timezone. */
 export const PERIODS = [
@@ -153,6 +154,8 @@ export interface Analytics {
   pages: PageRow[];
   breakdowns: Record<Breakdown, BreakdownRow[]>;
   customEvents: CustomEventRow[];
+  /** The project's saved goals, in the order added, counted in the same visits. */
+  goals: GoalResult[];
   previous: PreviousPeriod;
 }
 
@@ -218,6 +221,7 @@ export const isAnalytics = (value: unknown): value is Analytics =>
   isListOf(value.days, isDayPoint) &&
   isListOf(value.pages, isPageRow) &&
   isListOf(value.customEvents, isCustomEventRow) &&
+  isListOf(value.goals, isGoalResult) &&
   isPreviousPeriod(value.previous) &&
   isRecord(value.breakdowns) &&
   BREAKDOWNS.every((name) =>

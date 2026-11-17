@@ -6,6 +6,7 @@ import type { ClickHouseClient } from "../clickhouse/clickhouse.ts";
 import { QueryParams, queryRows, type Reader, runCommand } from "../clickhouse/query.ts";
 import { DEFAULT_ENVIRONMENT } from "../collection/environment.ts";
 import type { Database } from "../db/schema.ts";
+import { type Goal, listGoals } from "../goals/goals.ts";
 import { analyticsEvent, visitsSql } from "../visits/visits.ts";
 import {
   type BreakdownRow,
@@ -15,6 +16,8 @@ import {
   type DayPoint,
   DEFAULT_LIMIT,
   filterVisits,
+  type GoalCount,
+  goalCounts,
   localDays,
   type PreviousDays,
   previousDays,
@@ -26,6 +29,7 @@ import {
   timeseries,
   topPages,
   type VisitDimension,
+  type VisitsSource,
 } from "./reports.ts";
 
 /** The breakdowns the analytics page shows. */
@@ -73,7 +77,38 @@ export interface Analytics {
   pages: PageRow[];
   breakdowns: Record<AnalyticsBreakdown, BreakdownRow[]>;
   customEvents: CustomEventRow[];
+  /** The project's saved goals, counted in the same visits (goals/goals.ts). */
+  goals: GoalResult[];
   previous: PreviousPeriod;
+}
+
+export interface GoalResult extends Goal, GoalCount {
+  /** Visitors who reached it, of all the visitors: 0 to 1; 0 without visitors. */
+  conversionRate: number;
+}
+
+/** The goals with their counts, and their share of the visitors. */
+async function goalResults(
+  reader: Reader,
+  range: ReportRange,
+  goals: readonly Goal[],
+  visits: VisitsSource,
+  visitors: number,
+): Promise<GoalResult[]> {
+  const counts = await goalCounts(
+    reader,
+    range,
+    goals.map((goal) => goal.step),
+    visits,
+  );
+  return goals.map((goal, index) => {
+    const counted = counts[index] ?? { visitors: 0, events: 0 };
+    return {
+      ...goal,
+      ...counted,
+      conversionRate: visitors === 0 ? 0 : counted.visitors / visitors,
+    };
+  });
 }
 
 /**
@@ -184,9 +219,10 @@ export async function projectAnalytics(
     filters = [],
     now = new Date(),
   } = options;
-  const [range, previous] = await Promise.all([
+  const [range, previous, saved] = await Promise.all([
     dayRange(db, { projectId, environment, firstDay, lastDay, timeZone, filters }),
     previousDays(db, firstDay, lastDay, timeZone, now),
+    listGoals(db, projectId),
   ]);
   const reader: Reader = { client: clickhouse, sessionId: randomUUID() };
   const params = new QueryParams();
@@ -199,6 +235,7 @@ export async function projectAnalytics(
   );
   try {
     const visits = { table: VISITS_TABLE, filters };
+    const currentSummary = await summary(reader, range, visits);
     const by = (dimension: AnalyticsBreakdown) =>
       breakdown(reader, range, dimension, limit, visits);
     // One session runs one query at a time, so the reports run one after another.
@@ -234,11 +271,12 @@ export async function projectAnalytics(
         until: previous.until,
         summary: previousSummary,
       },
-      summary: await summary(reader, range, visits),
+      summary: currentSummary,
       days: await timeseries(reader, range, visits),
       pages: await topPages(reader, range, limit, visits),
       breakdowns,
       customEvents: await customEvents(reader, range, limit, visits),
+      goals: await goalResults(reader, range, saved, visits, currentSummary.visitors),
     };
   } finally {
     // The session would drop it when it expires; this frees it now. A

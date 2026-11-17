@@ -1,16 +1,7 @@
-import { ArrowDownIcon, ArrowUpIcon, PlusIcon, Trash2Icon, XIcon } from "lucide-react";
+import { ArrowDownIcon, ArrowUpIcon, PlusIcon, Trash2Icon } from "lucide-react";
 import * as React from "react";
 
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { type FunnelStep, MAX_STEPS, MIN_STEPS } from "@/lib/product-api";
 
 import {
@@ -22,49 +13,7 @@ import {
   stepOf,
   allStepProblems,
 } from "./funnel-steps";
-
-const STEP_TYPES = [
-  { value: "event", label: "Event" },
-  { value: "page", label: "Page" },
-] as const;
-
-const isStepType = (value: unknown): value is FunnelStep["type"] =>
-  value === "event" || value === "page";
-
-/** One input with its label, and its problem once the form was checked. */
-function Field({
-  label,
-  problem,
-  children,
-}: {
-  label: string;
-  problem: string | undefined;
-  children: (props: {
-    id: string;
-    "aria-invalid": boolean | undefined;
-    "aria-describedby": string | undefined;
-  }) => React.ReactNode;
-}) {
-  const id = React.useId();
-  const problemId = `${id}-problem`;
-  return (
-    <div className="flex min-w-0 flex-1 flex-col gap-1.5">
-      <Label htmlFor={id} className="text-xs text-ink-subtle">
-        {label}
-      </Label>
-      {children({
-        id,
-        "aria-invalid": problem === undefined ? undefined : true,
-        "aria-describedby": problem === undefined ? undefined : problemId,
-      })}
-      {problem !== undefined && (
-        <p id={problemId} className="text-xs text-destructive">
-          {problem}
-        </p>
-      )}
-    </div>
-  );
-}
+import { StepFields } from "./step-fields";
 
 function StepEditor({
   step,
@@ -127,121 +76,13 @@ function StepEditor({
             </Button>
           </div>
         </div>
-        <div className="flex flex-wrap items-start gap-3">
-          <div className="flex flex-col gap-1.5">
-            <span className="text-xs text-ink-subtle" aria-hidden="true">
-              Type
-            </span>
-            <Select
-              items={STEP_TYPES}
-              value={step.type}
-              onValueChange={(value) => {
-                if (isStepType(value)) onChange({ ...step, type: value });
-              }}
-            >
-              <SelectTrigger aria-label={`Step ${number} type`} className="w-28">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {STEP_TYPES.map((item) => (
-                  <SelectItem key={item.value} value={item.value}>
-                    {item.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          {step.type === "event" ? (
-            <Field label="Event name" problem={problems.name}>
-              {(props) => (
-                <Input
-                  {...props}
-                  list={eventListId}
-                  value={step.name}
-                  placeholder="signup"
-                  autoComplete="off"
-                  className="font-mono"
-                  onChange={(event) => onChange({ ...step, name: event.target.value })}
-                />
-              )}
-            </Field>
-          ) : (
-            <Field label="Path" problem={problems.path}>
-              {(props) => (
-                <Input
-                  {...props}
-                  value={step.path}
-                  placeholder="/pricing"
-                  autoComplete="off"
-                  className="font-mono"
-                  onChange={(event) => onChange({ ...step, path: event.target.value })}
-                />
-              )}
-            </Field>
-          )}
-        </div>
-        {step.type === "event" &&
-          (step.filter === null ? (
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="self-start"
-              onClick={() => onChange({ ...step, filter: { key: "", value: "" } })}
-            >
-              <PlusIcon aria-hidden="true" />
-              Add a property filter
-            </Button>
-          ) : (
-            <div className="flex flex-wrap items-end gap-3">
-              <Field label="Property" problem={problems.filterKey}>
-                {(props) => (
-                  <Input
-                    {...props}
-                    value={step.filter?.key ?? ""}
-                    placeholder="plan"
-                    autoComplete="off"
-                    className="font-mono"
-                    onChange={(event) =>
-                      onChange({
-                        ...step,
-                        filter: { key: event.target.value, value: step.filter?.value ?? "" },
-                      })
-                    }
-                  />
-                )}
-              </Field>
-              <span className="pb-1.5 text-sm text-ink-subtle" aria-hidden="true">
-                =
-              </span>
-              <Field label="Value" problem={problems.filterValue}>
-                {(props) => (
-                  <Input
-                    {...props}
-                    value={step.filter?.value ?? ""}
-                    placeholder="team"
-                    autoComplete="off"
-                    className="font-mono"
-                    onChange={(event) =>
-                      onChange({
-                        ...step,
-                        filter: { key: step.filter?.key ?? "", value: event.target.value },
-                      })
-                    }
-                  />
-                )}
-              </Field>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                onClick={() => onChange({ ...step, filter: null })}
-              >
-                <XIcon aria-hidden="true" />
-                Remove the filter
-              </Button>
-            </div>
-          ))}
+        <StepFields
+          step={step}
+          problems={problems}
+          eventListId={eventListId}
+          typeLabel={`Step ${number} type`}
+          onChange={onChange}
+        />
       </fieldset>
     </li>
   );

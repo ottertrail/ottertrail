@@ -1,4 +1,5 @@
 import type { FunnelStep } from "@/lib/product-api";
+import { characters } from "@/lib/text";
 
 /**
  * A step while it is edited: both a name and a path, so switching the
@@ -46,6 +47,9 @@ const CONTROL = /[\u0000-\u001F\u007F]/u;
 /** A page step's longest path: five of them still fit in an address. */
 const MAX_PATH = 500;
 
+/** The tracker's own events, which a step can never be (apps/api/src/product/steps.ts). */
+const TRACKER_EVENTS: readonly string[] = ["pageview", "engagement", "error", "vitals"];
+
 export function stepProblems(step: DraftStep): StepProblems {
   const problems: StepProblems = {};
   if (step.type === "page") {
@@ -53,23 +57,25 @@ export function stepProblems(step: DraftStep): StepProblems {
     if (!path.startsWith("/")) problems.path = "A path starts with /, such as /pricing.";
     else if (/[?#]/.test(path)) problems.path = "A path has no query (?) or fragment (#).";
     else if (CONTROL.test(path)) problems.path = "This path is not valid.";
-    else if (path.length > MAX_PATH)
+    else if (characters(path) > MAX_PATH)
       problems.path = `A path here has at most ${MAX_PATH} characters.`;
     return problems;
   }
   // Names as the site sent them: "signup " is another event than "signup".
   const name = step.name;
   if (name === "") problems.name = "Name the event.";
-  else if (CONTROL.test(name) || name.length > 200) {
+  else if (TRACKER_EVENTS.includes(name)) {
+    problems.name = `"${name}" is the tracker's own event: use a page step for a page, and the Errors page for errors.`;
+  } else if (CONTROL.test(name) || characters(name) > 200) {
     problems.name = "An event name has at most 200 characters, and no control characters.";
   }
   if (step.filter !== null) {
     const { key } = step.filter;
     if (key === "") problems.filterKey = "Name the property, or remove the filter.";
-    else if (key.includes("\u0000") || key.length > 100) {
+    else if (key.includes("\u0000") || characters(key) > 100) {
       problems.filterKey = "A property name has at most 100 characters.";
     }
-    if (step.filter.value.length > 500 || step.filter.value.includes("\u0000")) {
+    if (characters(step.filter.value) > 500 || step.filter.value.includes("\u0000")) {
       problems.filterValue = "A value has at most 500 characters.";
     }
   }
@@ -80,7 +86,7 @@ export const hasProblems = (problems: StepProblems) => Object.keys(problems).len
 
 /**
  * Whether one event could be both steps, as the API checks
- * (apps/api/src/product/funnel.ts): it would count for both and always
+ * (apps/api/src/product/steps.ts): it would count for both and always
  * convert. Steps of one event name are apart only when both filter one
  * property by different values.
  */

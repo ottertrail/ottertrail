@@ -287,6 +287,14 @@ Unit tests in `apps/web/tests/analytics.test.ts` cover the number and date forma
 - Hourly detail for one day.
 - Comparison in the chart and the lists; only the summary is compared.
 
+### Goals
+
+Code: `apps/web/src/features/analytics/goals-card.tsx`. A card after Custom events lists the project's saved goals ([product analytics](product-analytics.md#goals)) in the order added: each one's name, what reaches it in plain words ("Viewed /pricing", "signup where plan = team"), the visitors who reached it, its conversion rate (those visitors as a share of the page's visitors, one decimal below 10%, whole from there, with a bar from 0 to 100%), and how many times it happened. The numbers follow the page's period, environment, and filters.
+
+"Add goal" opens a dialog: a name, and one step, an event (the page's custom events suggested) with an optional property filter, or a page path, with the funnel editor's own fields and checks (`features/product/step-fields.tsx`). A refusal of the API, a name taken or the 20 goals reached, shows in the dialog; the dialog says event goals count browser events only. Deleting asks first, and says only the definition goes. Without goals, the card says what they are for; at 20, "Add goal" is disabled, with the reason. `goals.test.tsx` covers the card, adding both kinds, the checks, a refusal, deleting, the empty state, and the limit, against the fake API.
+
+The card shows only when the period has data, as the page's other cards do: on an empty period the page shows its own empty state, so goals are managed from a period with events. A goal cannot be renamed or changed: delete it and add it again, which loses nothing.
+
 ## 8.5 Users
 
 Code: `apps/web/src/features/users/`, `apps/api/src/identities/`. The users a site names ([web analytics, Known users](web-analytics.md#known-users)), in one environment, production unless `env=` names another; the picker appears once another environment has known users.

@@ -168,6 +168,11 @@ describe("GET /api/projects/:id/funnel", () => {
         { type: "event", name: "" },
         { type: "page", path: "/" },
       ]),
+      // The tracker's own event: never a product event, so never a step.
+      JSON.stringify([
+        { type: "event", name: "pageview" },
+        { type: "page", path: "/" },
+      ]),
       JSON.stringify([
         { type: "event", name: "a", filter: { key: "" } },
         { type: "page", path: "/" },

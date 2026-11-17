@@ -81,6 +81,18 @@ export function formatPercent(value: number | null): string {
   return value === null ? "–" : `${Math.round(value * 100)}%`;
 }
 
+/**
+ * A conversion rate from 0 to 1 as a percentage: one decimal below 10%
+ * (5.2%), whole from there (17%); "<0.1%" for a share too small to show.
+ */
+export function formatConversion(value: number): string {
+  const percent = value * 100;
+  if (percent === 0) return "0%";
+  if (percent < 0.05) return "<0.1%";
+  const tenth = Math.round(percent * 10) / 10;
+  return tenth < 10 ? `${tenth.toFixed(1)}%` : `${whole.format(Math.round(percent))}%`;
+}
+
 /** 45s, 3m 12s, 1h 05m; "–" when there is no data. */
 export function formatDuration(ms: number | null): string {
   if (ms === null) {

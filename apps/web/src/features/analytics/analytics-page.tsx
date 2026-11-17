@@ -65,6 +65,7 @@ import {
   pointsChange,
   relativeChange,
 } from "./format";
+import { GoalsCard } from "./goals-card";
 import {
   type FilterLinkFor,
   filterText,
@@ -530,6 +531,11 @@ function Reports({
               rows: rankedRows("customEvents", fromEvents(analytics.customEvents), link),
             },
           ]}
+        />
+        <GoalsCard
+          goals={analytics.goals}
+          projectId={projectId}
+          eventNames={analytics.customEvents.map((event) => event.name)}
         />
       </div>
     </>

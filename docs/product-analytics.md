@@ -8,7 +8,8 @@ What people do in an app, beyond which pages they open: the events a site sends,
 | Events, with property breakdowns and filters | Done    |
 | One ordered funnel                           | Done    |
 | One retention report                         | Done    |
-| Saved goals and funnels                      | Planned |
+| Saved goals                                  | Done    |
+| Saved funnels                                | Planned |
 
 ## Definitions
 
@@ -32,6 +33,20 @@ The spec asks for these before any report: each report below counts by them.
 **Funnel:** two to five ordered steps, each an event name or a page path (up to 500 characters), with at most one property filter each. Two steps in a row must not be able to match the same event: the same page, or the same event name unless both filter one property by different values. One event would count for both, so such a funnel always converts; put another step between, such as a page. Someone reaches step _k_ if they did steps 1 to _k_ in that order, other events in between allowed, all within the conversion window that starts at their step 1; a step 1 in the report's range starts a funnel. Counted by visitors, the window can reach at most to the end of that visitor's day; counted by users, up to 30 days.
 
 **Retention:** signed-in users only, since visitor IDs change daily. A user's cohort is the week of their first event in the environment, over all the time the project keeps. They are retained in week _n_ if they did anything themselves (any event but time on page and Web Vitals) in the _n_-th week after it. Week 0 is everyone, 100%; the current week is marked as not over.
+
+## Goals
+
+Code: `apps/api/src/goals/`. A goal is a named conversion a project saves: a page viewed, or a product event with an optional property filter, the same shape as a funnel step (`product/steps.ts`), checked by the same rules. A project has at most 20, each with its own name. They live in PostgreSQL (`goals`, migration 0020); nothing about them is stored in ClickHouse, so a goal added today counts past events too, and deleting one loses only its definition.
+
+The web analytics page counts them, in the same visits and filters as the rest of the page: for each goal, the **visitors** who reached it (daily visitor IDs, as the summary counts them), how many **times** it happened, and its **conversion rate**, those visitors as a share of the page's visitors. A filtered page counts the goals among its own visits only. Counting by visitors means an event goal counts browser events only: an event from the site's server has no visitor.
+
+```text
+GET    /api/projects/:id/goals
+POST   /api/projects/:id/goals           { "name": "Signed up", "step": { "type": "event", "name": "signup" } }
+DELETE /api/projects/:id/goals/:goalId
+```
+
+The analytics answer carries them as `goals`, with their counts. Adding or deleting needs the dashboard's origin, as every change does; a name already taken or a 21st goal answers 409.
 
 ## Events
 
@@ -62,7 +77,8 @@ Like every project route, each runs the organization access check first.
 
 ## Not done yet
 
-- Saved goals and funnels: a funnel lives in the page's address, which can be shared or bookmarked.
+- Saved funnels: a funnel lives in the page's address, which can be shared or bookmarked.
+- Goals by signed-in user instead of visitor, and a goal's trend over time.
 - Time between funnel steps, and who dropped off.
 - Retention by a chosen event instead of any event, and by day or month.
 - Property filters on the web analytics page, and other comparisons than "equals".

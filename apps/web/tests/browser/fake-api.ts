@@ -5,6 +5,7 @@ import {
   type ErrorList,
   isStatusFilter,
 } from "../../src/lib/errors-api.ts";
+import type { GoalResult } from "../../src/lib/goals-api.ts";
 import type { Organization } from "../../src/lib/organizations-api.ts";
 import {
   type Funnel,
@@ -27,12 +28,21 @@ export interface FakeApi {
   /** The signed-in user's organizations; PATCH changes them (the owner's only). */
   organizations: Organization[];
   projects: Project[];
-  /** Answers GET /api/projects/:id/analytics. A Response stands for an error. */
+  /**
+   * Answers GET /api/projects/:id/analytics. A Response stands for an error.
+   * By default, analyticsFixture with the fake API's `goals`.
+   */
   analytics: (
     projectId: string,
     period: string | null,
     query: URLSearchParams,
+    api: FakeApi,
   ) => Analytics | Response | Promise<Analytics | Response>;
+  /**
+   * The project's saved goals with their counts, in the order added; the
+   * goal routes list, add (with zero counts), and delete them.
+   */
+  goals: GoalResult[];
   /** Answers GET /api/projects/:id/analytics/list; by default, fakeList. */
   list: (query: URLSearchParams) => unknown;
   /** Answers GET /api/projects/:id/users; by default, fakeUsers. */
@@ -306,6 +316,44 @@ function changeErrorStatus(api: FakeApi, fingerprint: string, status: string): R
   return json({ fingerprint, resolvedAt: null });
 }
 
+/** The longest goal name, and the most goals, as the API allows (apps/api/src/goals). */
+// eslint-disable-next-line no-control-regex -- control characters are what it refuses
+const GOAL_NAME = /^[^\u0000-\u001F\u007F]{1,100}$/u;
+const MAX_GOALS = 20;
+
+/** Adds a goal as the API does, refusing what it refuses; its counts start at zero. */
+function addGoal(api: FakeApi, body: unknown): Response {
+  const input = typeof body === "object" && body !== null ? body : {};
+  const name = "name" in input && typeof input.name === "string" ? input.name.trim() : "";
+  const step = "step" in input ? input.step : undefined;
+  if (!GOAL_NAME.test(name)) {
+    return json({ error: "invalid_name", message: "A goal's name has 1 to 100 characters." }, 400);
+  }
+  if (!isFunnelStep(step)) {
+    return json({ error: "invalid_step", message: "A goal is a page or an event." }, 400);
+  }
+  if (api.goals.length >= MAX_GOALS) {
+    return json({ error: "too_many_goals", message: "A project has at most 20 goals." }, 409);
+  }
+  if (api.goals.some((goal) => goal.name === name)) {
+    return json(
+      { error: "goal_name_taken", message: "The project already has a goal with this name." },
+      409,
+    );
+  }
+  const goal = { id: crypto.randomUUID(), name, step, createdAt: new Date().toISOString() };
+  api.goals = [...api.goals, { ...goal, visitors: 0, events: 0, conversionRate: 0 }];
+  return json({ goal }, 201);
+}
+
+function removeGoal(api: FakeApi, goalId: string): Response {
+  if (!api.goals.some((goal) => goal.id === goalId)) {
+    return json({ error: "goal_not_found", message: "The project has no goal with this ID." }, 404);
+  }
+  api.goals = api.goals.filter((goal) => goal.id !== goalId);
+  return new Response(null, { status: 204 });
+}
+
 function removeProject(api: FakeApi, id: string): Response {
   api.projects = api.projects.filter((project) => project.id !== id);
   return new Response(null, { status: 204 });
@@ -380,6 +428,30 @@ const row = (value: string | null, visitors: number, visits: number): BreakdownR
   bounceRate: 0.4,
 });
 
+/** Two saved goals with a week's counts: a page, and an event with a property filter. */
+export function fakeGoals(): GoalResult[] {
+  return [
+    {
+      id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1",
+      name: "Saw pricing",
+      step: { type: "page", path: "/pricing" },
+      createdAt: "2026-11-01T00:00:00.000Z",
+      visitors: 201,
+      events: 260,
+      conversionRate: 201 / 765,
+    },
+    {
+      id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2",
+      name: "Team signup",
+      step: { type: "event", name: "signup", filter: { key: "plan", value: "team" } },
+      createdAt: "2026-11-02T00:00:00.000Z",
+      visitors: 40,
+      events: 44,
+      conversionRate: 40 / 765,
+    },
+  ];
+}
+
 /** A week of numbers for one project; change parts with `overrides`. */
 export function analyticsFixture(overrides: Partial<Analytics> = {}): Analytics {
   return {
@@ -416,6 +488,7 @@ export function analyticsFixture(overrides: Partial<Analytics> = {}): Analytics 
       release: [row("1.4.2", 500, 540), row(null, 265, 284)],
     },
     customEvents: [{ name: "signup", events: 140, visitors: 127 }],
+    goals: fakeGoals(),
     // The same week before, up to 15:00 on its last day (07:00 UTC).
     previous: {
       firstDay: "2026-11-03",
@@ -466,6 +539,7 @@ export function emptyAnalytics(): Analytics {
       release: [],
     },
     customEvents: [],
+    goals: [],
     previous: { ...fixture.previous, summary: empty },
   };
 }
@@ -798,6 +872,18 @@ async function answer(api: FakeApi, url: URL, init: RequestInit | undefined): Pr
     const result = api.retention(url.searchParams);
     return result instanceof Response ? result : json(result);
   }
+  if (/^\/api\/projects\/[^/]+\/goals$/.test(path)) {
+    if (init?.method === "POST") {
+      return addGoal(api, JSON.parse(typeof init.body === "string" ? init.body : "null"));
+    }
+    return json({
+      goals: api.goals.map(({ id, name, step, createdAt }) => ({ id, name, step, createdAt })),
+    });
+  }
+  const goalPath = /^\/api\/projects\/[^/]+\/goals\/([^/]+)$/.exec(path);
+  if (goalPath?.[1] !== undefined && init?.method === "DELETE") {
+    return removeGoal(api, decodeURIComponent(goalPath[1]));
+  }
   if (/^\/api\/projects\/[^/]+\/speed$/.test(path)) {
     const result = api.speed(url.searchParams);
     return result instanceof Response ? result : json(result);
@@ -832,6 +918,7 @@ async function answer(api: FakeApi, url: URL, init: RequestInit | undefined): Pr
       analytics[1],
       url.searchParams.get("period"),
       url.searchParams,
+      api,
     );
     return result instanceof Response ? result : json(result);
   }
@@ -889,7 +976,8 @@ export function installFakeApi(overrides: Partial<FakeApi> = {}): FakeApi {
     signedIn: true,
     organizations: [ORGANIZATION],
     projects: [PROJECT],
-    analytics: () => analyticsFixture(),
+    analytics: (_projectId, _period, _query, api) => analyticsFixture({ goals: api.goals }),
+    goals: fakeGoals(),
     list: fakeList,
     users: fakeUsers,
     user: fakeUser,

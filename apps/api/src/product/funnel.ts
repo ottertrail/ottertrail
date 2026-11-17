@@ -1,6 +1,6 @@
 import { QueryParams, queryRows, type Reader } from "../clickhouse/query.ts";
-import { PAGEVIEW } from "../visits/visits.ts";
-import { PRODUCT_EVENT, type ProductRange, type PropertyFilter, propertyEquals } from "./events.ts";
+import type { ProductRange } from "./events.ts";
+import { type Step, stepSql, stepsOverlap } from "./steps.ts";
 
 /**
  * One ordered funnel (docs/product-analytics.md, "Funnel"): of the people
@@ -8,9 +8,8 @@ import { PRODUCT_EVENT, type ProductRange, type PropertyFilter, propertyEquals }
  * within the conversion window from their step 1.
  */
 
-export type FunnelStep =
-  | { type: "event"; name: string; filter?: PropertyFilter | undefined }
-  | { type: "page"; path: string };
+/** A funnel's step: a page or a product event (steps.ts). */
+export type FunnelStep = Step;
 
 /** Who a funnel follows: a daily visitor ID, or a signed-in user's ID. */
 export const FUNNEL_COUNTS = ["visitors", "users"] as const;
@@ -23,21 +22,6 @@ export const MAX_VISITOR_WINDOW = 86_400;
 
 export const MIN_STEPS = 2;
 export const MAX_STEPS = 5;
-
-/**
- * Whether one event could be both steps. ClickHouse's windowFunnel lets one
- * event count for two steps in a row when it matches both, so "/pricing,
- * then /pricing" would always convert: such steps are refused. Two event
- * steps of one name are apart only when both filter one property by
- * different values.
- */
-export function stepsOverlap(first: FunnelStep, second: FunnelStep): boolean {
-  if (first.type === "page" && second.type === "page") return first.path === second.path;
-  if (first.type === "page" || second.type === "page") return false;
-  if (first.name !== second.name) return false;
-  const [a, b] = [first.filter, second.filter];
-  return !(a !== undefined && b !== undefined && a.key === b.key && a.value !== b.value);
-}
 
 /** The first step that could match the same event as the step before it; null when none. */
 export function overlappingStep(steps: readonly FunnelStep[]): number | null {
@@ -52,15 +36,6 @@ export interface FunnelStepResult {
   step: FunnelStep;
   /** People who reached this step, in order, within the window. */
   reached: number;
-}
-
-/** SQL true for an event that is this step. Values only through `params`. */
-function stepSql(params: QueryParams, step: FunnelStep): string {
-  if (step.type === "page") {
-    return `(name = '${PAGEVIEW}' AND path = ${params.add(step.path, "String")})`;
-  }
-  const filter = step.filter === undefined ? "" : ` AND ${propertyEquals(params, step.filter)}`;
-  return `(${PRODUCT_EVENT} AND name = ${params.add(step.name, "String")}${filter})`;
 }
 
 /**

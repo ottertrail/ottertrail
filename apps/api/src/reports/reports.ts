@@ -2,6 +2,7 @@ import { type Kysely, sql } from "kysely";
 
 import { QueryParams, queryRows, type Reader } from "../clickhouse/query.ts";
 import type { Database } from "../db/schema.ts";
+import { type Step, stepSql } from "../product/steps.ts";
 import { dayIn } from "../visitors/visitor-ids.ts";
 import {
   ENGAGEMENT,
@@ -254,14 +255,17 @@ function countedVisits(
 
 /**
  * Events in the range that a person caused: pageviews and custom events,
- * not engagement reports, as rows of visitor_id, name, path, and
- * occurred_at. With filters, only those within one of the counted `visits`
- * (SQL with visitsSql's columns), from its start to its end.
+ * not engagement reports, errors, or Web Vitals, as rows of visitor_id,
+ * name, path, occurred_at, properties, and error_fingerprint; goalCounts
+ * matches goals on the last two (product/steps.ts, stepSql). With filters,
+ * only those within one of the counted `visits` (SQL with visitsSql's
+ * columns), from its start to its end.
  */
 function activity(range: ReportRange, visits: string, params: QueryParams): string {
   const filtered = hasFilters(range);
   return `
-    SELECT e.visitor_id AS visitor_id, e.name AS name, e.path AS path, e.occurred_at AS occurred_at
+    SELECT e.visitor_id AS visitor_id, e.name AS name, e.path AS path, e.occurred_at AS occurred_at,
+           e.properties AS properties, e.error_fingerprint AS error_fingerprint
     FROM events AS e FINAL
     ${filtered ? `INNER JOIN (${visits}) AS counted ON e.visitor_id = counted.visitor_id` : ""}
     WHERE e.project_id = ${params.add(range.projectId, "UUID")}
@@ -655,5 +659,45 @@ export async function customEvents(
     name: String(row.name),
     events: count(row.events),
     visitors: count(row.visitors),
+  }));
+}
+
+/** How many visitors reached a goal, and how often (goals/goals.ts). */
+export interface GoalCount {
+  /** Visitors with at least one: daily IDs, as the summary counts them. */
+  visitors: number;
+  /** Every time it happened. */
+  events: number;
+}
+
+/**
+ * Each step's visitors and events in the range's activity: the same visits
+ * and filters as the rest of the page, so a filtered page counts its
+ * goals among its own visits. One query, whatever the number of goals.
+ */
+export async function goalCounts(
+  reader: Reader,
+  range: ReportRange,
+  steps: readonly Step[],
+  visitsSource?: VisitsSource,
+): Promise<GoalCount[]> {
+  if (steps.length === 0) return [];
+  const params = new QueryParams();
+  const visits = countedVisits(range, visitsSource, params, { firstEventColumns: false });
+  const source = activity(range, visits, params);
+  const columns = steps
+    .map((step, index) => {
+      const matches = stepSql(params, step);
+      return `uniqExactIf(visitor_id, ${matches}) AS visitors_${index}, countIf(${matches}) AS events_${index}`;
+    })
+    .join(",\n           ");
+  const [row] = await queryRows<Record<string, unknown>>(
+    reader,
+    `SELECT ${columns} FROM (${source})`,
+    params,
+  );
+  return steps.map((_, index) => ({
+    visitors: count(row?.[`visitors_${index}`] ?? 0),
+    events: count(row?.[`events_${index}`] ?? 0),
   }));
 }

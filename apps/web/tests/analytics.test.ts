@@ -2,6 +2,7 @@ import { describe, expect, test } from "vite-plus/test";
 
 import {
   countryName,
+  formatConversion,
   formatCount,
   formatDayRange,
   formatDuration,
@@ -32,6 +33,18 @@ describe("formatting", () => {
     [3_900_000, "1h 05m"],
   ])("formatDuration(%s) is %j", (value, expected) => {
     expect(formatDuration(value)).toBe(expected);
+  });
+
+  test.each([
+    [0, "0%"],
+    [0.0004, "<0.1%"],
+    [0.0523, "5.2%"],
+    [0.05, "5.0%"],
+    [0.0996, "10%"],
+    [0.166, "17%"],
+    [1, "100%"],
+  ])("formatConversion(%s) is %j: one decimal below 10%%", (value, expected) => {
+    expect(formatConversion(value)).toBe(expected);
   });
 
   test("formats shares as whole percentages", () => {
@@ -155,6 +168,17 @@ describe("isAnalytics", () => {
     pages: [{ path: "/", pageviews: 1, visitors: 1, avgEngagedMs: null }],
     breakdowns: { ...empty, source: [{ value: null, visitors: 1, visits: 1, bounceRate: 1 }] },
     customEvents: [],
+    goals: [
+      {
+        id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1",
+        name: "Team signup",
+        step: { type: "event", name: "signup", filter: { key: "plan", value: "team" } },
+        createdAt: "2026-11-01T00:00:00.000Z",
+        visitors: 1,
+        events: 2,
+        conversionRate: 1,
+      },
+    ],
     previous: {
       firstDay: "2026-11-05",
       lastDay: "2026-11-11",
@@ -178,6 +202,13 @@ describe("isAnalytics", () => {
       false,
     );
     expect(isAnalytics({ ...valid, previous: undefined })).toBe(false);
+    expect(isAnalytics({ ...valid, goals: undefined })).toBe(false);
+    expect(isAnalytics({ ...valid, goals: [{ ...valid.goals[0], step: { type: "page" } }] })).toBe(
+      false,
+    );
+    expect(isAnalytics({ ...valid, goals: [{ ...valid.goals[0], conversionRate: "1" }] })).toBe(
+      false,
+    );
     expect(isAnalytics({ ...valid, previous: { ...valid.previous, until: 5 } })).toBe(false);
   });
 });

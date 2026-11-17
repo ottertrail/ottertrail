@@ -35,6 +35,7 @@ import {
   overlappingStep,
 } from "./funnel.ts";
 import { retention } from "./retention.ts";
+import { KEY, stepOf, VALUE } from "./steps.ts";
 
 const UUID_PATTERN =
   "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$";
@@ -66,46 +67,6 @@ function filtersOf(url: string): PropertyFilter[] | null {
     filters.push(filter);
   }
   return filters;
-}
-
-// As collection allows them (collection/routes.ts). Control characters are
-// what they refuse.
-/* eslint-disable no-control-regex */
-const NAME = /^[^\u0000-\u001F\u007F]{1,200}$/u;
-// Property names: collection refuses only NUL in them.
-const KEY = /^[^\u0000]{1,100}$/u;
-const VALUE = /^[^\u0000]{0,500}$/u;
-// A funnel's page: 500 characters keep five steps within an address.
-const PATH = /^\/[^\u0000-\u001F\u007F?#]{0,499}$/u;
-/* eslint-enable no-control-regex */
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
-
-/** A step's property filter, or null when it is not one. */
-function filterOf(value: unknown): PropertyFilter | null {
-  if (!isRecord(value)) return null;
-  const { key, value: wanted } = value;
-  return typeof key === "string" &&
-    KEY.test(key) &&
-    typeof wanted === "string" &&
-    VALUE.test(wanted)
-    ? { key, value: wanted }
-    : null;
-}
-
-/** One funnel step, or null when it is not one. */
-function stepOf(item: unknown): FunnelStep | null {
-  if (!isRecord(item)) return null;
-  if (item.type === "page") {
-    return typeof item.path === "string" && PATH.test(item.path)
-      ? { type: "page", path: item.path }
-      : null;
-  }
-  if (item.type !== "event" || typeof item.name !== "string" || !NAME.test(item.name)) return null;
-  if (item.filter === undefined) return { type: "event", name: item.name };
-  const filter = filterOf(item.filter);
-  return filter === null ? null : { type: "event", name: item.name, filter };
 }
 
 /**
