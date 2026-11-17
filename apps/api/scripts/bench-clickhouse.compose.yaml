@@ -1,0 +1,32 @@
+# ClickHouse for `vp run bench:storage` only: local and throwaway, not part
+# of Ottertrail. It joins the development stack's network (../../../compose.yaml)
+# to read the benchmark's data straight from PostgreSQL, so start that first.
+#
+#   podman compose -f apps/api/scripts/bench-clickhouse.compose.yaml up -d
+#   podman compose -f apps/api/scripts/bench-clickhouse.compose.yaml down
+name: ottertrail-bench
+
+services:
+  clickhouse:
+    # 26.8 is ClickHouse's current long-term-support release.
+    image: docker.io/clickhouse/clickhouse-server:26.8.38.9
+    environment:
+      # Local benchmark only: the port below listens on 127.0.0.1.
+      CLICKHOUSE_USER: bench
+      CLICKHOUSE_PASSWORD: bench
+    # As on a 2-vCPU server. ClickHouse otherwise spreads each query over
+    # every core, while PostgreSQL uses at most 3 (two parallel workers).
+    cpus: 2
+    ports:
+      - "127.0.0.1:8123:8123"
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    networks:
+      - development
+
+networks:
+  development:
+    external: true
+    name: ottertrail_default

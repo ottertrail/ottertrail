@@ -12,6 +12,7 @@
     "setup": "vp -C apps/api run setup",
     "report": "vp -C apps/api run report",
     "bench:reports": "vp -C apps/api run bench:reports",
+    "bench:storage": "vp -C apps/api run bench:storage",
     "ready": "vp check && vp run -r test && vp run -r build",
     "prepare": "vp config --no-agent"
   },

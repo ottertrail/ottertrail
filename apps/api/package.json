@@ -16,6 +16,7 @@
     "setup": "vpx scripts/setup.ts",
     "report": "vpx scripts/report.ts",
     "bench:reports": "vpx scripts/bench-reports.ts",
+    "bench:storage": "vpx scripts/bench-storage.ts",
     "worker": "vpx src/worker.ts",
     "start:worker": "node dist/worker.mjs"
   },
