@@ -89,15 +89,19 @@ When the tracker reports an error ([errors](errors.md#1-capture)), the recorder 
 
 `POST /api/replays`, with the project's public key, as `/api/events` takes it: the same allowed hostnames, CORS, and per-IP limit, and the cheapest checks first ([collecting](web-analytics.md#2-collecting)). A body is one gzip chunk, at most 64 KB; the API decompresses it with a cap of 1 MB (more is refused, 413, so a small body cannot unpack into a large one), checks the envelope (IDs, numbers, times) and that the events are JSON, and keeps the compressed bytes as sent. It does not read further into what was recorded; the player treats it as untrusted (below).
 
-Recordings spend their own budgets, in bytes, per project and per organization (as events do with `EventBudget`), so recordings cannot crowd out events: a site whose replays hit the limit still has its events counted.
+Recordings spend their own budgets, in bytes, per project and per organization (as events do with `EventBudget`), so recordings cannot crowd out events: a site whose replays hit the limit still has its events counted. Each organization also has a limit on the bytes it stores, counted in PostgreSQL from each replay's size, so one customer cannot fill a store every customer shares. A deployment sets the defaults; an organization's own limit can be raised.
 
 ## Storage
 
-**The proposal:** the same path as events. Chunks land in PostgreSQL (`replay_chunks`: project, replay ID, number, the compressed bytes, received time), which confirms them once committed; its unique `(project_id, replay_id, seq)` makes a retry harmless. The worker copies them to ClickHouse's `replay_chunks`, ordered by project, replay, then number, so one replay is one contiguous read, and deletes them from PostgreSQL an hour after the copy, past the tracker's retries (eight attempts, at most a minute apart), not the 48 hours events stay, as chunks are large. A late duplicate in ClickHouse is removed by its merges (`ReplacingMergeTree`, as for events).
+Decided on 17 November 2026: recordings are files in an object store, reached through the S3 API, and PostgreSQL holds what is known about them.
 
-This keeps one rule for everything a browser sends (confirmed only once PostgreSQL has it) and the worker that already copies. Recordings are much larger than events, so this is the part to measure on a real site first: bytes per replay, and PostgreSQL's churn under it.
+- **The object store:** any server that speaks the S3 API, set by its endpoint, bucket, and keys. A hosted deployment uses Cloudflare R2 (or Amazon S3); development and self-hosted installs run [Garage](https://garagehq.deuxfleurs.fr/) (AGPL-3.0) in Docker Compose. Not MinIO: its community edition is no longer maintained upstream, nor published as Docker images. Ottertrail uses only the basic calls (put, get, list, and delete objects), so any of them works the same.
+- **Landing in PostgreSQL first:** chunks land in PostgreSQL (`replay_chunks`: project, replay ID, number, the compressed bytes, received time), which confirms them once committed, the one rule for everything a browser sends; its unique `(project_id, replay_id, seq)` makes a retry harmless.
+- **One object per replay:** when a replay is complete (its last chunk came, or none for 5 minutes), the worker joins its chunks into one object and records it in PostgreSQL (`replays`: project, replay ID, the errors it shows, size, start and end, the object's key). A replay costs one write and one read in the store, which charges per request, rather than one per 60 KB chunk. The worker deletes the chunks an hour later, past the tracker's retries (eight attempts, at most a minute apart).
+- **One bucket per deployment,** keys by project: `replays/<project_id>/<replay_id>.gz`. A bucket per customer would add nothing, and stores limit how many there can be. Which organization may read what is decided where it always is: the API's access check. The browser never gets the store's keys; playback reads a replay through the API, after that check.
+- **The same store for source maps** ([errors](errors.md)), under `source-maps/<project_id>/`.
 
-**Alternatives,** if measuring says so: ClickHouse directly (confirmed once ClickHouse has the insert, refused while it is down), or object storage (S3-compatible, or a directory on the server for one-organization installs). Source maps ([errors](errors.md)) need a place for large files too: one decision for both.
+Recordings are much larger than events, so what to measure on a real site first is bytes per replay, and PostgreSQL's churn while chunks wait there.
 
 ## Playback
 
@@ -111,8 +115,8 @@ A recording is whatever a browser sent with a public key, which anyone can copy 
 
 ## Retention and deletion
 
-- Replays are kept 30 days, the shortest retention a project can choose for events, so a replay outlives its error by a day at most. ClickHouse drops them by day, which is cheap.
-- Deleting a project deletes its replays, through the same `project_deletions` path as events ([ClickHouse](clickhouse.md#retention-and-deleting-a-project)).
+- Replays are kept 30 days, the shortest retention a project can choose for events, so a replay outlives its error by a day at most. The worker deletes expired replays, object and row, itself rather than through the store's lifecycle rules, which differ from one store to another.
+- Deleting a project deletes its replays, everything under its key prefix, through the same `project_deletions` path as events ([ClickHouse](clickhouse.md#retention-and-deleting-a-project)).
 - Turning replay off keeps the recordings already made until they expire; the setting offers to delete them now.
 - Deleting one user's data (when that exists) includes their replays: chunks carry the user ID, if any, and the visitor ID of the page load.
 
@@ -128,6 +132,6 @@ A recording is whatever a browser sent with a public key, which anyone can copy 
 
 ## Decisions still open
 
-1. **Storage:** PostgreSQL first, as proposed, or one of the alternatives, after measuring a real site's recordings.
-2. **Budgets:** bytes per second and per day for a project and an organization, from the same measurements.
+1. **Budgets:** bytes per second, per day, and stored, for a project and an organization, from measuring a real site's recordings.
+2. **Garage in development:** its memory beside PostgreSQL and ClickHouse in the 2 GB development VM, to try before it joins the Compose files.
 3. **Whole sessions:** whether to record any without an error. They would need consent wording and much more storage.
