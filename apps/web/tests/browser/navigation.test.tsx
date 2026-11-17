@@ -75,7 +75,7 @@ describe("inside a project", () => {
       .toHaveAttribute("aria-current", "page");
     await expect.element(projectMenu().getByRole("link", { name: "Settings" })).toBeVisible();
     // Modules that are not built yet are shown, disabled and labeled.
-    for (const module of ["Product analytics", "Users", "Errors", "Email"]) {
+    for (const module of ["Product analytics", "Users", "Errors"]) {
       await expect.element(projectMenu().getByRole("button", { name: module })).toBeDisabled();
     }
     await expect.element(projectMenu().getByText("Planned").first()).toBeVisible();
@@ -87,13 +87,12 @@ describe("inside a project", () => {
       "Product analytics",
       "Users",
       "Errors",
-      "Email",
       "Settings",
     ]);
-    // Right under Email, not pinned to the bottom of the sidebar.
-    const email = items[5]?.getBoundingClientRect();
-    const settings = items[6]?.getBoundingClientRect();
-    expect((settings?.top ?? 0) - (email?.bottom ?? 0)).toBeLessThan(8);
+    // Right under the last module, not pinned to the bottom of the sidebar.
+    const lastModule = items[4]?.getBoundingClientRect();
+    const settings = items[5]?.getBoundingClientRect();
+    expect((settings?.top ?? 0) - (lastModule?.bottom ?? 0)).toBeLessThan(8);
     await expect.poll(breadcrumb).toBe("Main site / Web analytics");
   });
 

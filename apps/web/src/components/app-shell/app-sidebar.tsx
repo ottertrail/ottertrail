@@ -8,7 +8,6 @@ import {
   CheckIcon,
   ChevronsUpDownIcon,
   FolderIcon,
-  MailIcon,
   PaletteIcon,
   SettingsIcon,
   UsersIcon,
@@ -46,7 +45,6 @@ const plannedModules = [
   { title: "Product analytics", icon: ChartColumnIcon },
   { title: "Users", icon: UsersIcon },
   { title: "Errors", icon: BugIcon },
-  { title: "Email", icon: MailIcon },
 ];
 
 /** The instance level: things above any one project. */

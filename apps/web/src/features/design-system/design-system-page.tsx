@@ -15,8 +15,8 @@ export function DesignSystemPage() {
         <p className="text-eyebrow text-ink-subtle">Ottertrail UI</p>
         <p className="text-display-md text-ink">Design system</p>
         <p className="text-body-lg text-ink-subtle">
-          A dense, dark interface for analytics, debugging, and email work: restrained surfaces,
-          hairline borders, and one accent color used with intent.
+          A dense, dark interface for analytics, debugging, and monitoring work: restrained
+          surfaces, hairline borders, and one accent color used with intent.
         </p>
         <nav aria-label="On this page">
           <ul className="flex flex-wrap gap-x-4 gap-y-1 text-sm">
