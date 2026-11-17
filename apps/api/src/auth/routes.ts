@@ -3,6 +3,7 @@ import type { Kysely } from "kysely";
 
 import { type RateLimit, TokenBucketLimiter } from "../collection/rate-limiter.ts";
 import type { Database } from "../db/schema.ts";
+import { MAX_ORGANIZATION_NAME_LENGTH } from "../organizations/organizations.ts";
 import {
   type Auth,
   canSignInWith,
@@ -95,7 +96,7 @@ export const betterAuthRoutes: FastifyPluginCallback<{ auth: Auth; publicUrl: st
 
 const setupBodySchema = {
   type: "object",
-  required: ["token", "name", "email", "password"],
+  required: ["token", "name", "email", "password", "organizationName"],
   additionalProperties: false,
   properties: {
     token: { type: "string", minLength: 1, maxLength: 200 },
@@ -103,6 +104,12 @@ const setupBodySchema = {
     // Checked against sign-in's own rule in the handler (canSignInWith).
     email: { type: "string", minLength: 3, maxLength: 320 },
     password: { type: "string", minLength: MIN_PASSWORD_LENGTH, maxLength: MAX_PASSWORD_LENGTH },
+    organizationName: {
+      type: "string",
+      minLength: 1,
+      maxLength: MAX_ORGANIZATION_NAME_LENGTH,
+      pattern: "\\S",
+    },
   },
 } as const;
 
@@ -118,13 +125,23 @@ export const DEFAULT_SETUP_LIMIT: RateLimit = { capacity: 10, refillPerSecond: 1
 export const setupRoutes: FastifyPluginCallback<{
   db: Kysely<Database>;
   auth: Auth;
+  /** The timezone of the organization the setup link creates. */
+  defaultTimeZone: string;
   setupLimit?: RateLimit;
-}> = (app, { db, auth, setupLimit = DEFAULT_SETUP_LIMIT }, done) => {
+}> = (app, { db, auth, defaultTimeZone, setupLimit = DEFAULT_SETUP_LIMIT }, done) => {
   const limiter = new TokenBucketLimiter(setupLimit);
 
   app.get("/setup", async () => ({ ownerExists: await ownerExists(db) }));
 
-  app.post<{ Body: { token: string; name: string; email: string; password: string } }>(
+  app.post<{
+    Body: {
+      token: string;
+      name: string;
+      email: string;
+      password: string;
+      organizationName: string;
+    };
+  }>(
     "/setup",
     {
       schema: { body: setupBodySchema },
@@ -146,7 +163,7 @@ export const setupRoutes: FastifyPluginCallback<{
       },
     },
     async (request, reply) => {
-      const { token, name, email, password } = request.body;
+      const { token, name, email, password, organizationName } = request.body;
       if (!canSignInWith(email)) {
         return reply
           .code(400)
@@ -157,7 +174,12 @@ export const setupRoutes: FastifyPluginCallback<{
             ),
           );
       }
-      const result = await completeSetup(db, auth, { token, name: name.trim(), email, password });
+      const result = await completeSetup(
+        db,
+        auth,
+        { token, name: name.trim(), email, password, organizationName: organizationName.trim() },
+        { timeZone: defaultTimeZone },
+      );
       if (result === "invalid_link") {
         return reply
           .code(403)

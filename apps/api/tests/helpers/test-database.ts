@@ -1,10 +1,12 @@
 import { randomUUID } from "node:crypto";
 
 import { type Kysely, sql } from "kysely";
+import { Migrator } from "kysely/migration";
 
 import { loadConfig } from "../../src/config.ts";
 import { createDatabase } from "../../src/db/database.ts";
 import { migrateToLatest } from "../../src/db/migrate.ts";
+import { migrations } from "../../src/db/migrations/index.ts";
 import type { Database } from "../../src/db/schema.ts";
 
 /**
@@ -18,6 +20,8 @@ const SCHEMA_LOCK = 4_281_708_001;
 
 export interface TestDatabase {
   db: Kysely<Database>;
+  /** The schema the test's tables are in. */
+  schema: string;
   destroy(): Promise<void>;
 }
 
@@ -50,7 +54,28 @@ export async function createTestDatabase(): Promise<TestDatabase> {
     await destroy();
     throw error;
   }
-  return { db, destroy };
+  return { db, schema, destroy };
+}
+
+/**
+ * Moves a test database to a migration, back or forward ("latest" for the
+ * newest), for tests of migrations themselves. Going back drops tables, as
+ * destroy() drops a schema, so it holds SCHEMA_LOCK exclusively too: other
+ * files' migrators list every table while they run.
+ */
+export async function migrateTestDatabase(testDb: TestDatabase, target: string): Promise<void> {
+  const migrator = new Migrator({
+    db: testDb.db,
+    provider: { getMigrations: () => Promise.resolve(migrations) },
+    migrationTableSchema: testDb.schema,
+  });
+  await withSchemaLock(loadConfig().databaseUrl, "exclusive", async () => {
+    const { error } =
+      target === "latest" ? await migrator.migrateToLatest() : await migrator.migrateTo(target);
+    if (error !== undefined) {
+      throw new Error(`Migrating the test database to ${target} failed`, { cause: error });
+    }
+  });
 }
 
 async function withAdmin(

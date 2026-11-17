@@ -9,6 +9,7 @@ import * as dropPreviousVisitorId from "./0006_drop_previous_visitor_id.ts";
 import * as loosenPropertiesSizeCheck from "./0007_loosen_properties_size_check.ts";
 import * as addDashboardAuth from "./0008_add_dashboard_auth.ts";
 import * as addProjectRetention from "./0009_add_project_retention.ts";
+import * as addOrganizations from "./0010_add_organizations.ts";
 
 /**
  * Every migration, in order. Kysely runs them by name, alphabetically, and
@@ -27,4 +28,5 @@ export const migrations: Record<string, Migration> = {
   "0007_loosen_properties_size_check": loosenPropertiesSizeCheck,
   "0008_add_dashboard_auth": addDashboardAuth,
   "0009_add_project_retention": addProjectRetention,
+  "0010_add_organizations": addOrganizations,
 };

@@ -1,6 +1,6 @@
 # Roadmap
 
-Status: stage 1 (web analytics) is built and being checked; see the step table in [web-analytics.md](web-analytics.md). Of stage 0, projects, public keys, the browser tracker, durable ingestion into PostgreSQL, and a deployment template ([deployment.md](deployment.md), tested locally) exist. Organizations, sign-up, events in ClickHouse, environments, releases, identities, and a deployment in production do not yet. Later stages are not started.
+Status: stage 1 (web analytics) is built and being checked; see the step table in [web-analytics.md](web-analytics.md). Of stage 0, organizations with one access check, projects, public keys, the browser tracker, durable ingestion into PostgreSQL, and a deployment template ([deployment.md](deployment.md), tested locally) exist. Open sign-up, invitations, events in ClickHouse, environments, releases, identities, and a deployment in production do not yet. Later stages are not started.
 
 ## How stages are chosen
 
@@ -27,7 +27,7 @@ Stages 0 to 2 are the first release: analytics, then errors and product analytic
 
 In this order, so that later work builds on the final model:
 
-1. **Organizations.** Organizations own projects, and users reach them through memberships. One server-side check guards every project route, and tests prove one organization cannot reach another's data. The timezone moves from the deployment's configuration to the organization. The hosted service gets open sign-up; a self-hosted install keeps today's one-time owner setup link. Invitations and roles per module come later ([access model](#notes)).
+1. **Organizations.** Built, except open sign-up and invitations ([dashboard.md](dashboard.md#organizations)). Organizations own projects, and users reach them through memberships. One server-side check guards every project route, and tests prove one organization cannot reach another's data. The timezone moves from the deployment's configuration to the organization. The hosted service gets open sign-up; a self-hosted install keeps today's one-time owner setup link. Invitations and roles per module come later ([access model](#notes)).
 2. **Events in ClickHouse.** The reports already give identical answers there ([storage-benchmark.md](storage-benchmark.md)). Still to decide: whether events land in PostgreSQL first and the worker moves them over in batches, or go straight to ClickHouse; whether visits are worked out when events arrive or when reports run; and memory settings for an 8 GB server.
 
 ## Notes
@@ -37,7 +37,7 @@ In this order, so that later work builds on the final model:
 - When replacing a tool, run the old and new side by side and compare their numbers. The OpenTelemetry Collector can export to both at once.
 - Traces and logs are the highest-volume data. They go to ClickHouse, ordered by project and time, with retention by dropping old partitions. Each organization's volume is limited so one customer cannot crowd out the others.
 - Something outside Ottertrail must monitor Ottertrail itself: keep at least one independent health check.
-- Retention and the activity timeline belong in stage 2 because they need identities. The anonymous visitor ID changes every day by design ([web-analytics.md](web-analytics.md#one-salt-per-day-in-the-instances-timezone)), so "came back a week later" can only be counted for users the app identifies.
+- Retention and the activity timeline belong in stage 2 because they need identities. The anonymous visitor ID changes every day by design ([web-analytics.md](web-analytics.md#one-salt-per-timezone-and-day)), so "came back a week later" can only be counted for users the app identifies.
 - Session replay comes last: recordings are much larger than events and hold whatever is on screen, so they need masking, per-project opt-in, and storage limits. Its most useful view, the moments before an error, needs stage 2 first.
 - Later, not scheduled: AI usage tracking (tokens, cost, and latency per user and feature).
 - Not planned: click heatmaps (they need the page layout at each screen width, in practice the session replay recorder; reconsider with stage 5), scroll depth (could be added to the time-on-page report if asked for), and reports from ad and search platforms.

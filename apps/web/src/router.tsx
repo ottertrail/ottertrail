@@ -18,6 +18,7 @@ import { AnalyticsPage } from "@/features/analytics/analytics-page";
 import { SetupPage } from "@/features/auth/setup-page";
 import { SignInPage } from "@/features/auth/sign-in-page";
 import { DesignSystemPage } from "@/features/design-system/design-system-page";
+import { OrganizationSettingsPage } from "@/features/organizations/organization-settings-page";
 import { ProjectLayout } from "@/features/projects/project-layout";
 import { ProjectSettingsPage } from "@/features/projects/project-settings-page";
 import { ProjectsPage } from "@/features/projects/projects-page";
@@ -185,6 +186,14 @@ const projectSettingsRoute = createRoute({
   },
 });
 
+/** The organization's settings: the workspace level, above any one project. */
+const organizationSettingsRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: "/settings",
+  staticData: { title: "Settings" },
+  component: OrganizationSettingsPage,
+});
+
 const designSystemRoute = createRoute({
   getParentRoute: () => appRoute,
   path: "/design-system",
@@ -199,6 +208,7 @@ const routeTree = rootRoute.addChildren([
     homeRoute,
     projectsRoute,
     projectRoute.addChildren([projectIndexRoute, webAnalyticsRoute, projectSettingsRoute]),
+    organizationSettingsRoute,
     designSystemRoute,
   ]),
 ]);
@@ -222,6 +232,8 @@ export function createAppRouter({
       // visitor to sign-in instead of showing errors.
       onError: (error) => {
         if (error instanceof ApiError && error.status === 401) {
+          // As on signing out: whoever signs in next starts with nothing cached.
+          queryClient.clear();
           void router.navigate({ to: "/sign-in" });
         }
       },

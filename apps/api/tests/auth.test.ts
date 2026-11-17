@@ -14,7 +14,12 @@ import type { RateLimit } from "../src/collection/rate-limiter.ts";
 import { createTestDatabase } from "./helpers/test-database.ts";
 
 const PUBLIC_URL = "http://localhost:5173";
-const OWNER = { name: "Ada Owner", email: "Ada@Example.com", password: "correct horse battery" };
+const OWNER = {
+  name: "Ada Owner",
+  email: "Ada@Example.com",
+  password: "correct horse battery",
+  organizationName: "Ada's company",
+};
 
 /** A fresh instance: its own database schema, no owner yet. */
 async function instance({
@@ -35,7 +40,7 @@ async function instance({
       auth,
       publicUrl: PUBLIC_URL,
       trustedOrigins: [PUBLIC_URL],
-      timeZone: "UTC",
+      defaultTimeZone: "UTC",
       ...(setupLimit === undefined ? {} : { setupLimit }),
     },
   });
@@ -120,6 +125,8 @@ describe("owner setup", () => {
       // A valid email format that sign-in refuses: the owner could never sign in.
       { ...OWNER, email: "ops!alerts@example.com" },
       { ...OWNER, name: "   " },
+      { ...OWNER, organizationName: "   " },
+      { token: link?.token, name: OWNER.name, email: OWNER.email, password: OWNER.password },
     ]) {
       expect((await setUp(current.app, { token: link?.token, ...body })).statusCode).toBe(400);
     }
@@ -160,6 +167,42 @@ describe("owner setup", () => {
     expect(account?.provider_id).toBe("credential");
     expect(account?.password).not.toContain(OWNER.password);
     expect((await current.app.inject({ url: "/api/setup" })).json()).toEqual({ ownerExists: true });
+
+    // The owner's organization comes with them, in the deployment's default timezone.
+    const organizations = await current.db.selectFrom("organizations").selectAll().execute();
+    expect(organizations).toMatchObject([{ name: "Ada's company", time_zone: "UTC" }]);
+    const memberships = await current.db.selectFrom("memberships").selectAll().execute();
+    expect(memberships).toMatchObject([
+      { organization_id: organizations[0]?.id, user_id: users[0]?.id, role: "owner" },
+    ]);
+  });
+
+  test("takes over an organization with no members, holding projects from before setup", async () => {
+    // A fresh install of its own: this file's other setup tests share one.
+    const fresh = await instance();
+    try {
+      const orphan = await fresh.db
+        .insertInto("organizations")
+        .values({ name: "My organization", time_zone: "Asia/Singapore" })
+        .returning("id")
+        .executeTakeFirstOrThrow();
+      await fresh.db
+        .insertInto("projects")
+        .values({ organization_id: orphan.id, name: "Old site" })
+        .execute();
+      const link = await createSetupToken(fresh.db);
+      expect((await setUp(fresh.app, { token: link?.token, ...OWNER })).statusCode).toBe(201);
+
+      const organizations = await fresh.db.selectFrom("organizations").selectAll().execute();
+      // Renamed as the form asked; its timezone stays, so its days do not move.
+      expect(organizations).toMatchObject([
+        { id: orphan.id, name: "Ada's company", time_zone: "Asia/Singapore" },
+      ]);
+      const memberships = await fresh.db.selectFrom("memberships").selectAll().execute();
+      expect(memberships).toMatchObject([{ organization_id: orphan.id, role: "owner" }]);
+    } finally {
+      await fresh.close();
+    }
   });
 
   test("gives no new link once the owner exists", async () => {
@@ -183,17 +226,19 @@ describe("owner setup: the slow work comes last", () => {
       name: "Eve",
       email: "eve@example.com",
       password: "x".repeat(20),
+      organizationName: "Eve's company",
     };
-    expect(await completeSetup(current.db, auth, details)).toBe("invalid_link");
+    const options = { timeZone: "UTC" };
+    expect(await completeSetup(current.db, auth, details, options)).toBe("invalid_link");
     expect(hashed).toHaveLength(0);
 
     const link = await createSetupToken(current.db);
-    expect(await completeSetup(current.db, auth, { ...details, token: link?.token ?? "" })).toBe(
-      "created",
-    );
+    expect(
+      await completeSetup(current.db, auth, { ...details, token: link?.token ?? "" }, options),
+    ).toBe("created");
     expect(hashed).toHaveLength(1);
 
-    expect(await completeSetup(current.db, auth, details)).toBe("already_set_up");
+    expect(await completeSetup(current.db, auth, details, options)).toBe("already_set_up");
     expect(hashed).toHaveLength(1);
   });
 });

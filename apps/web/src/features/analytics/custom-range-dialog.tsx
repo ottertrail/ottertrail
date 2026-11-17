@@ -16,7 +16,7 @@ import { MAX_RANGE_DAYS, rangeProblem } from "@/lib/analytics-api";
 
 /**
  * Chosen days for the page: a first and a last day, both included, in the
- * instance's timezone. The browser's own date fields, which work from the
+ * organization's timezone. The browser's own date fields, which work from the
  * keyboard and on phones. The days are checked as the API checks them.
  */
 export function CustomRangeDialog({

@@ -68,6 +68,11 @@ export default defineConfig({
         files: ["apps/api/**/*.ts", "scripts/**/*.ts"],
         plugins: ["node"],
         env: { node: true },
+        rules: {
+          // Written for Express, which drops a rejected promise from an async
+          // handler. Fastify awaits async handlers and sends their errors.
+          "oxc/no-async-endpoint-handlers": "off",
+        },
       },
       {
         // Local tools that drive other software and read its JSON replies.

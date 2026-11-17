@@ -49,7 +49,13 @@ export function SetupPage() {
     const password = formText(form, "password");
     setPending(true);
     setError(null);
-    const created = await createOwner({ token, name: formText(form, "name"), email, password });
+    const created = await createOwner({
+      token,
+      name: formText(form, "name"),
+      email,
+      password,
+      organizationName: formText(form, "organization"),
+    });
     if (!created.ok) {
       setPending(false);
       setError(created.message);
@@ -84,7 +90,7 @@ export function SetupPage() {
   return (
     <AuthLayout
       title="Create the owner account"
-      description="The owner manages this instance. You can invite teammates later."
+      description="The owner manages this install and its first organization. You can invite teammates later."
     >
       <form onSubmit={(event) => void createAccount(event)}>
         <FieldGroup>
@@ -95,6 +101,20 @@ export function SetupPage() {
           <Field>
             <FieldLabel htmlFor="email">Email</FieldLabel>
             <Input id="email" name="email" type="email" autoComplete="email" required />
+          </Field>
+          <Field>
+            <FieldLabel htmlFor="organization">Organization</FieldLabel>
+            <Input
+              id="organization"
+              name="organization"
+              autoComplete="organization"
+              required
+              maxLength={100}
+              aria-describedby="organization-hint"
+            />
+            <FieldDescription id="organization-hint">
+              Your company or team. Its projects, settings, and later its members belong to it.
+            </FieldDescription>
           </Field>
           <Field>
             <FieldLabel htmlFor="password">Password</FieldLabel>

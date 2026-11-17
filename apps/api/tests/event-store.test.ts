@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, test } from "vite-plus/test";
 
 import { type NewEvent, storeEvents } from "../src/collection/event-store.ts";
+import { insertProject } from "./helpers/projects.ts";
 import { createTestDatabase, type TestDatabase } from "./helpers/test-database.ts";
 
 let testDb: TestDatabase | undefined;
@@ -23,11 +24,7 @@ function db() {
 }
 
 async function createProject(name = "Test site"): Promise<string> {
-  const project = await db()
-    .insertInto("projects")
-    .values({ name })
-    .returning("id")
-    .executeTakeFirstOrThrow();
+  const project = await insertProject(db(), { name });
   return project.id;
 }
 

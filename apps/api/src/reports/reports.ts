@@ -8,13 +8,13 @@ import { ENGAGEMENT, PAGEVIEW, visitsQuery } from "../visits/visits.ts";
  * events when asked (see docs/web-analytics.md, section 7).
  *
  * A range is [from, to) in absolute time; localDays() turns calendar days in
- * the instance's timezone into one. Days in charts are local days too.
+ * the organization's timezone into one. Days in charts are local days too.
  */
 export interface ReportRange {
   projectId: string;
   from: Date;
   to: Date;
-  /** IANA timezone that days are counted in, the instance's TIMEZONE. */
+  /** IANA timezone that days are counted in, the timezone of the project's organization. */
   timeZone: string;
   /**
    * Only visits that match every filter count, and only their events. A

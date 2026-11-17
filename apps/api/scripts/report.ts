@@ -1,6 +1,6 @@
 /**
- * Prints a project's reports for the last few days, counted in the
- * instance's TIMEZONE:
+ * Prints a project's reports for the last few days, counted in its
+ * organization's timezone:
  *
  *   vp run report                    (the first project, last 7 days)
  *   vp run report -- Playground 30   (a project by name, last 30 days)
@@ -49,9 +49,14 @@ function daysBefore(day: string, count: number): string {
 }
 
 try {
-  const query = db.selectFrom("projects").select(["id", "name"]).orderBy("created_at").limit(1);
+  const query = db
+    .selectFrom("projects")
+    .innerJoin("organizations", "organizations.id", "projects.organization_id")
+    .select(["projects.id", "projects.name", "organizations.time_zone"])
+    .orderBy("projects.created_at")
+    .limit(1);
   const project = await (
-    projectName === undefined ? query : query.where("name", "=", projectName)
+    projectName === undefined ? query : query.where("projects.name", "=", projectName)
   ).executeTakeFirst();
   if (project === undefined) {
     console.error(
@@ -61,17 +66,16 @@ try {
     );
     process.exitCode = 1;
   } else {
-    const today = dayIn(config.timeZone)(new Date());
+    const timeZone = project.time_zone;
+    const today = dayIn(timeZone)(new Date());
     const firstDay = daysBefore(today, dayCount - 1);
     const range: ReportRange = {
       projectId: project.id,
-      timeZone: config.timeZone,
-      ...(await localDays(db, firstDay, today, config.timeZone)),
+      timeZone,
+      ...(await localDays(db, firstDay, today, timeZone)),
     };
 
-    console.log(
-      `\n${project.name}: ${firstDay} to ${today} (${config.timeZone}; today is partial)\n`,
-    );
+    console.log(`\n${project.name}: ${firstDay} to ${today} (${timeZone}; today is partial)\n`);
     const total = await summary(db, range);
     console.table({
       Visitors: total.visitors,

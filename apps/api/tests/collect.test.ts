@@ -8,6 +8,7 @@ import { type AppOptions, buildApp } from "../src/app.ts";
 import { createDatabase } from "../src/db/database.ts";
 import type { Locate, Location } from "../src/enrichment/geo.ts";
 import { findVisits } from "../src/visits/visits.ts";
+import { insertProject } from "./helpers/projects.ts";
 import { createTestDatabase, type TestDatabase } from "./helpers/test-database.ts";
 
 /** The server's clock in these tests. */
@@ -54,12 +55,12 @@ function appWith(options: Partial<AppOptions>) {
   return instance;
 }
 
-async function createProject(allowedHostnames = [SITE, "localhost"]) {
-  return db()
-    .insertInto("projects")
-    .values({ name: "Test site", allowed_hostnames: allowedHostnames })
-    .returning(["id", "public_key"])
-    .executeTakeFirstOrThrow();
+async function createProject(allowedHostnames = [SITE, "localhost"], timeZone = "UTC") {
+  return insertProject(
+    db(),
+    { name: "Test site", allowed_hostnames: allowedHostnames },
+    { timeZone },
+  );
 }
 
 function pageview(overrides: Record<string, unknown> = {}) {
@@ -503,7 +504,7 @@ describe("POST /api/events", () => {
       expect(new Set(ids).size).toBe(3);
     });
 
-    test("starts the visitor's day at midnight in the instance's timezone", async () => {
+    test("starts the visitor's day at midnight in the organization's timezone", async () => {
       // The server's clock: 00:31 UTC, which is 08:31 in Singapore.
       const now = Date.parse("2026-11-17T00:31:00.000Z");
       const twoEvents = (key: string) =>
@@ -516,14 +517,14 @@ describe("POST /api/events", () => {
           { sentAt: now },
         );
 
-      const singapore = appWith({ collection: { now: () => now, timeZone: "Asia/Singapore" } });
-      const inSingapore = await createProject();
-      await send(twoEvents(inSingapore.public_key), { instance: singapore });
+      // One API serves both organizations: each project's own timezone decides.
+      const instance = appWith({ collection: { now: () => now } });
+      const inSingapore = await createProject([SITE, "localhost"], "Asia/Singapore");
+      await send(twoEvents(inSingapore.public_key), { instance });
       expect(new Set(await visitorIds(inSingapore.id)).size).toBe(1);
 
-      const utc = appWith({ collection: { now: () => now, timeZone: "UTC" } });
-      const inUtc = await createProject();
-      await send(twoEvents(inUtc.public_key), { instance: utc });
+      const inUtc = await createProject([SITE, "localhost"], "UTC");
+      await send(twoEvents(inUtc.public_key), { instance });
       expect(new Set(await visitorIds(inUtc.id)).size).toBe(2);
     });
   });
@@ -558,10 +559,10 @@ describe("POST /api/events", () => {
   });
 
   describe("visits across midnight", () => {
-    test("splits a visit at midnight in the instance's timezone, with no link between the days", async () => {
+    test("splits a visit at midnight in the organization's timezone, with no link between the days", async () => {
       let clock = Date.parse("2026-11-16T15:50:00.000Z"); // 23:50 in Singapore
-      const singapore = appWith({ collection: { now: () => clock, timeZone: "Asia/Singapore" } });
-      const project = await createProject();
+      const singapore = appWith({ collection: { now: () => clock } });
+      const project = await createProject([SITE, "localhost"], "Asia/Singapore");
 
       await send(
         batch(project.public_key, [pageview({ occurredAt: clock, url: `https://${SITE}/` })], {
@@ -628,11 +629,10 @@ describe("POST /api/events", () => {
     test("answers 503, never 202, if the events cannot be saved", async () => {
       const separate = await createTestDatabase();
       try {
-        const project = await separate.db
-          .insertInto("projects")
-          .values({ name: "Broken", allowed_hostnames: [SITE] })
-          .returning("public_key")
-          .executeTakeFirstOrThrow();
+        const project = await insertProject(separate.db, {
+          name: "Broken",
+          allowed_hostnames: [SITE],
+        });
         await sql`drop table events`.execute(separate.db);
         const broken = appWith({ db: separate.db, collection: { now: () => NOW } });
 

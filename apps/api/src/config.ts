@@ -54,10 +54,11 @@ export interface Config {
   geoSource: GeoSource;
   geoDatabasePath: string;
   /**
-   * IANA timezone of the instance, such as "Asia/Singapore". Visitor salts
-   * change at midnight here, and reports will count days here.
+   * IANA timezone, such as "Asia/Singapore", of the organization the setup
+   * link creates. Each organization has its own after that (reports count
+   * days in it, and visitor salts change at its midnight).
    */
-  timeZone: string;
+  defaultTimeZone: string;
   /** The instance's address, such as "https://analytics.example.com": an origin, no path. */
   publicUrl: string;
   /**
@@ -217,7 +218,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     trustProxy: parseTrustProxy(env.TRUST_PROXY),
     geoSource: parseGeoSource(env.GEO_SOURCE ?? "database"),
     geoDatabasePath: env.GEO_DATABASE_PATH?.trim() || DEFAULT_GEO_DATABASE_PATH,
-    timeZone: parseTimeZone(env.TIMEZONE?.trim() || "UTC"),
+    defaultTimeZone: parseTimeZone(env.TIMEZONE?.trim() || "UTC"),
     ...publicUrlAndOrigins(env),
     authSecret: parseAuthSecret(env),
     trackerScriptPath: env.TRACKER_SCRIPT_PATH?.trim() || DEFAULT_TRACKER_SCRIPT_PATH,

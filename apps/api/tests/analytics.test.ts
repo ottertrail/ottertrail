@@ -15,6 +15,7 @@ import {
   type VisitDimension,
 } from "../src/reports/reports.ts";
 import { signedInDashboard } from "./helpers/dashboard.ts";
+import { insertProject } from "./helpers/projects.ts";
 
 const TIME_ZONE = "Asia/Singapore";
 
@@ -87,11 +88,11 @@ describe("GET /api/projects/:id/analytics", () => {
       timeZone: TIME_ZONE,
       now: () => new Date("2026-11-17T17:00:00Z"),
     });
-    const project = await dashboard.db
-      .insertInto("projects")
-      .values({ name: "Analytics test", allowed_hostnames: ["example.com"] })
-      .returning("id")
-      .executeTakeFirstOrThrow();
+    const project = await insertProject(dashboard.db, {
+      organization_id: dashboard.organizationId,
+      name: "Analytics test",
+      allowed_hostnames: ["example.com"],
+    });
     projectId = project.id;
     await storeEvents(dashboard.db, projectId, EVENTS);
   });
@@ -195,11 +196,11 @@ describe("GET /api/projects/:id/analytics with filters", () => {
       timeZone: TIME_ZONE,
       now: () => new Date("2026-11-17T17:00:00Z"),
     });
-    const project = await dashboard.db
-      .insertInto("projects")
-      .values({ name: "Filter test", allowed_hostnames: ["example.com"] })
-      .returning("id")
-      .executeTakeFirstOrThrow();
+    const project = await insertProject(dashboard.db, {
+      organization_id: dashboard.organizationId,
+      name: "Filter test",
+      allowed_hostnames: ["example.com"],
+    });
     projectId = project.id;
     await storeEvents(dashboard.db, projectId, EVENTS);
   });
@@ -365,11 +366,11 @@ describe("GET /api/projects/:id/analytics with filters", () => {
 /** A dashboard whose clock reads `now`, with the fixture's events stored. */
 async function dashboardAt(now: string) {
   const dashboard = await signedInDashboard({ timeZone: TIME_ZONE, now: () => new Date(now) });
-  const project = await dashboard.db
-    .insertInto("projects")
-    .values({ name: "Comparison test", allowed_hostnames: ["example.com"] })
-    .returning("id")
-    .executeTakeFirstOrThrow();
+  const project = await insertProject(dashboard.db, {
+    organization_id: dashboard.organizationId,
+    name: "Comparison test",
+    allowed_hostnames: ["example.com"],
+  });
   await storeEvents(dashboard.db, project.id, EVENTS);
   const analytics = async (query: string) =>
     (
@@ -533,11 +534,11 @@ describe("GET /api/projects/:id/analytics/list", () => {
       timeZone: TIME_ZONE,
       now: () => new Date("2026-11-17T17:00:00Z"),
     });
-    const project = await dashboard.db
-      .insertInto("projects")
-      .values({ name: "List test", allowed_hostnames: ["example.com"] })
-      .returning("id")
-      .executeTakeFirstOrThrow();
+    const project = await insertProject(dashboard.db, {
+      organization_id: dashboard.organizationId,
+      name: "List test",
+      allowed_hostnames: ["example.com"],
+    });
     projectId = project.id;
     // A path with LIKE's own characters, which a search must match literally.
     await storeEvents(dashboard.db, projectId, [

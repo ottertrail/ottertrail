@@ -116,15 +116,32 @@ describe("VisitorIds", () => {
     await db().deleteFrom("visitor_salts").execute();
   });
 
-  /** A VisitorIds whose clock reads `iso`, as one API process would see it. */
+  /**
+   * A VisitorIds whose clock reads `iso`, as one API process would see it,
+   * for projects of an organization in `timeZone`.
+   */
   function visitorsAt(iso: string, timeZone = "UTC") {
-    return new VisitorIds(db(), { timeZone, now: () => Date.parse(iso) });
+    const visitors = new VisitorIds(db(), { now: () => Date.parse(iso) });
+    return {
+      idFor: (input: Omit<Parameters<VisitorIds["idFor"]>[0], "timeZone">) =>
+        visitors.idFor({ ...input, timeZone }),
+      oldestKeptDay: () => visitors.oldestKeptDay(timeZone),
+      deleteExpiredSalts: () => visitors.deleteExpiredSalts(),
+      startCleanup: (onError: (error: unknown) => void, intervalMs?: number) =>
+        visitors.startCleanup(onError, intervalMs),
+    };
   }
 
+  /** The days of the UTC salts, oldest first. */
   async function salts() {
-    return (await db().selectFrom("visitor_salts").select("day").orderBy("day").execute()).map(
-      (row) => row.day,
-    );
+    return (
+      await db()
+        .selectFrom("visitor_salts")
+        .select("day")
+        .where("time_zone", "=", "UTC")
+        .orderBy("day")
+        .execute()
+    ).map((row) => row.day);
   }
 
   test("gives one visitor the same ID all day, across restarts and processes", async () => {
@@ -150,7 +167,7 @@ describe("VisitorIds", () => {
     expect(new Set(ids).size).toBe(3);
   });
 
-  test("starts a new day at midnight in the instance's timezone", async () => {
+  test("starts a new day at midnight in the organization's timezone", async () => {
     // 07:30 and 08:30 in Singapore are the same local day but different UTC days.
     const beforeUtcMidnight = "2026-11-16T23:30:00Z";
     const afterUtcMidnight = "2026-11-17T00:30:00Z";
@@ -164,6 +181,40 @@ describe("VisitorIds", () => {
     expect(await utc.idFor(visit(beforeUtcMidnight))).not.toBe(
       await utc.idFor(visit(afterUtcMidnight)),
     );
+  });
+
+  test("keeps separate salts per timezone: organizations elsewhere get their own", async () => {
+    const moment = "2026-11-16T12:00:00Z";
+    const utc = await visitorsAt(moment, "UTC").idFor(visit(moment));
+    const singapore = await visitorsAt(moment, "Asia/Singapore").idFor(visit(moment));
+    expect(singapore).not.toBe(utc);
+    const rows = await db()
+      .selectFrom("visitor_salts")
+      .select(["time_zone", "day"])
+      .orderBy("time_zone")
+      .execute();
+    expect(rows).toEqual([
+      { time_zone: "Asia/Singapore", day: "2026-11-16" },
+      { time_zone: "UTC", day: "2026-11-16" },
+    ]);
+  });
+
+  test("deletes expired salts in each timezone by its own calendar", async () => {
+    // At 09:00 UTC on the 16th it is 23:00 on the 15th in Pago Pago (UTC-11),
+    // so Pago Pago still needs its salt of the 14th; UTC no longer does.
+    for (const [time_zone, day] of [
+      ["UTC", "2026-11-14"],
+      ["Pacific/Pago_Pago", "2026-11-13"],
+      ["Pacific/Pago_Pago", "2026-11-14"],
+    ] as const) {
+      await db()
+        .insertInto("visitor_salts")
+        .values({ time_zone, day, salt: randomBytes(32) })
+        .execute();
+    }
+    expect(await visitorsAt("2026-11-16T09:00:00Z").deleteExpiredSalts()).toBe(2);
+    const left = await db().selectFrom("visitor_salts").select(["time_zone", "day"]).execute();
+    expect(left).toEqual([{ time_zone: "Pacific/Pago_Pago", day: "2026-11-14" }]);
   });
 
   test("gives a late event the ID of the day it happened", async () => {
@@ -187,7 +238,7 @@ describe("VisitorIds", () => {
     for (const day of ["2026-11-10", "2026-11-14", "2026-11-15", "2026-11-16"]) {
       await db()
         .insertInto("visitor_salts")
-        .values({ day, salt: randomBytes(32) })
+        .values({ time_zone: "UTC", day, salt: randomBytes(32) })
         .execute();
     }
     // At 09:00 on the 16th, events may still arrive from 09:00 on the 15th.
@@ -215,7 +266,7 @@ describe("VisitorIds", () => {
   test("deletes a day's salt 25 hours after the day ends (24 hours plus 1 hour of grace)", async () => {
     await db()
       .insertInto("visitor_salts")
-      .values({ day: "2026-11-15", salt: randomBytes(32) })
+      .values({ time_zone: "UTC", day: "2026-11-15", salt: randomBytes(32) })
       .execute();
 
     await visitorsAt("2026-11-17T00:59:00Z").deleteExpiredSalts();
@@ -228,7 +279,7 @@ describe("VisitorIds", () => {
   test("deletes expired salts on a timer, with or without traffic", async () => {
     await db()
       .insertInto("visitor_salts")
-      .values({ day: "2026-11-01", salt: randomBytes(32) })
+      .values({ time_zone: "UTC", day: "2026-11-01", salt: randomBytes(32) })
       .execute();
     const errors: unknown[] = [];
     const stop = visitorsAt("2026-11-16T12:00:00Z").startCleanup((error) => errors.push(error), 50);
@@ -239,7 +290,7 @@ describe("VisitorIds", () => {
       // A salt that expires later is caught by a later run.
       await db()
         .insertInto("visitor_salts")
-        .values({ day: "2026-11-02", salt: randomBytes(32) })
+        .values({ time_zone: "UTC", day: "2026-11-02", salt: randomBytes(32) })
         .execute();
       await vi.waitFor(async () => expect(await salts()).toEqual([]));
     } finally {
@@ -250,7 +301,7 @@ describe("VisitorIds", () => {
     // Once stopped, nothing is deleted any more.
     await db()
       .insertInto("visitor_salts")
-      .values({ day: "2026-11-03", salt: randomBytes(32) })
+      .values({ time_zone: "UTC", day: "2026-11-03", salt: randomBytes(32) })
       .execute();
     await new Promise((resolve) => setTimeout(resolve, 150));
     expect(await salts()).toEqual(["2026-11-03"]);
@@ -261,10 +312,7 @@ describe("VisitorIds", () => {
       connectionString: "postgres://unused@127.0.0.1:1/unused",
     });
     const errors: unknown[] = [];
-    const stop = new VisitorIds(unreachable, { timeZone: "UTC" }).startCleanup(
-      (error) => errors.push(error),
-      60_000,
-    );
+    const stop = new VisitorIds(unreachable).startCleanup((error) => errors.push(error), 60_000);
     try {
       await vi.waitFor(() => expect(errors).toHaveLength(1));
     } finally {
@@ -276,7 +324,7 @@ describe("VisitorIds", () => {
   test("deletes expired salts when a new day starts", async () => {
     await db()
       .insertInto("visitor_salts")
-      .values({ day: "2026-11-01", salt: randomBytes(32) })
+      .values({ time_zone: "UTC", day: "2026-11-01", salt: randomBytes(32) })
       .execute();
     await visitorsAt("2026-11-16T00:00:05Z").idFor(visit("2026-11-16T00:00:05Z"));
     expect(await salts()).toEqual(["2026-11-16"]);

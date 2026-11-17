@@ -38,6 +38,7 @@ import {
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
 import { Skeleton } from "@/components/ui/skeleton";
+import { organizationsQuery } from "@/lib/organizations-api";
 import { projectsQuery } from "@/lib/projects-api";
 
 /** Project modules that are not built yet. Shown disabled and labeled. */
@@ -47,12 +48,16 @@ const plannedModules = [
   { title: "Errors", icon: BugIcon },
 ];
 
-/** The instance level: things above any one project. */
+/** The organization level: things above any one project, under the organization's name. */
 function WorkspaceMenu() {
   const matchRoute = useMatchRoute();
+  const organizations = useQuery(organizationsQuery());
+  // One organization per user until invitations exist; with none or several, a neutral label.
+  const label =
+    organizations.data?.length === 1 ? (organizations.data[0]?.name ?? "Workspace") : "Workspace";
   return (
     <SidebarGroup>
-      <SidebarGroupLabel>Workspace</SidebarGroupLabel>
+      <SidebarGroupLabel className="truncate">{label}</SidebarGroupLabel>
       <SidebarMenu>
         <SidebarMenuItem>
           <SidebarMenuButton
@@ -72,6 +77,16 @@ function WorkspaceMenu() {
           >
             <PaletteIcon />
             <span>Design system</span>
+          </SidebarMenuButton>
+        </SidebarMenuItem>
+        <SidebarMenuItem>
+          <SidebarMenuButton
+            render={<Link to="/settings" />}
+            isActive={matchRoute({ to: "/settings" }) !== false}
+            tooltip="Settings"
+          >
+            <SettingsIcon />
+            <span>Settings</span>
           </SidebarMenuButton>
         </SidebarMenuItem>
       </SidebarMenu>

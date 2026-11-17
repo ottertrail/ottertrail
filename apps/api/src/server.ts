@@ -5,6 +5,7 @@ import { createAuth } from "./auth/auth.ts";
 import { DEVELOPMENT_AUTH_SECRET, loadConfig } from "./config.ts";
 import { createDatabase } from "./db/database.ts";
 import { setUpLocation } from "./enrichment/setup.ts";
+import { postgresKnowsTimeZone } from "./organizations/organizations.ts";
 
 const config = loadConfig();
 const db = createDatabase({ connectionString: config.databaseUrl });
@@ -14,16 +15,25 @@ const auth = createAuth({
   trustedOrigins: config.trustedOrigins,
   secret: config.authSecret,
 });
+// The setup link creates an organization in TIMEZONE, and PostgreSQL
+// counts its days: refuse to start with a name only Node.js knows.
+if (!(await postgresKnowsTimeZone(db, config.defaultTimeZone))) {
+  console.error(
+    `TIMEZONE "${config.defaultTimeZone}" is not a timezone PostgreSQL knows. Choose another, such as "Europe/Berlin".`,
+  );
+  await db.destroy();
+  process.exit(1);
+}
 const location = await setUpLocation(config.geoSource, config.geoDatabasePath);
 const app = buildApp({
   db,
   log: { level: config.logLevel },
-  collection: { locate: location.locate, timeZone: config.timeZone },
+  collection: { locate: location.locate },
   dashboard: {
     auth,
     publicUrl: config.publicUrl,
     trustedOrigins: config.trustedOrigins,
-    timeZone: config.timeZone,
+    defaultTimeZone: config.defaultTimeZone,
   },
   trackerScriptPath: config.trackerScriptPath,
   dashboardPath: resolve(config.dashboardPath),

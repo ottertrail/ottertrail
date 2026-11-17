@@ -26,7 +26,7 @@ let stopping = false;
 
 async function retention() {
   try {
-    const results = await deleteExpiredEvents(db, { timeZone: config.timeZone });
+    const results = await deleteExpiredEvents(db);
     const deleted = results.reduce((sum, result) => sum + result.deleted, 0);
     log("info", "retention ran", { projects: results.length, deleted });
   } catch (error) {

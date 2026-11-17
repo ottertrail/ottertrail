@@ -1,6 +1,6 @@
 # Dashboard
 
-How the dashboard works, and the decisions behind it. It is built in parts, as step 8 of [web analytics](web-analytics.md):
+How the dashboard works, and the decisions behind it. It is built in parts, as step 8 of [web analytics](web-analytics.md), and then [organizations](#organizations):
 
 | Part                 | Status |
 | -------------------- | ------ |
@@ -15,17 +15,17 @@ Code: `apps/api/src/auth/` and `apps/web/src/features/auth/`.
 
 ### Who can sign in
 
-An instance belongs to one customer. Its first account is the **owner**; teammates will join by invitation, with roles (not built yet). Nobody can sign up: an instance with open sign-up would let anyone create an account and read its data.
+The install's first account is its **owner**, created with the first organization ([Organizations](#organizations)). Teammates will join an organization by invitation, with roles (not built yet). Nobody can sign up yet: open sign-up, for the hosted service, needs Ottertrail's own account email for verification and password resets.
 
 ### Creating the owner
 
-There is no default password. Whoever runs the instance creates the owner:
+There is no default password. Whoever runs the install creates the owner:
 
 ```sh
 vp run setup
 ```
 
-The command prints a link such as `https://analytics.example.com/setup#token=…`. Opening it shows a form for the owner's name, email, and password. The link:
+The command prints a link such as `https://analytics.example.com/setup#token=…`. Opening it shows a form for the owner's name, email, password, and organization, which is created with the account. The link:
 
 - works once, and for one hour; running the command again replaces it;
 - stops working for good once an owner exists, and the command then refuses;
@@ -95,7 +95,7 @@ A project is one website or app. The Projects page lists them with their allowed
 
 The dashboard has two levels, the way hosting dashboards treat each site:
 
-- **The workspace:** the project list (`/projects`) and the design-system reference. Settings for the whole organization, such as members, will go here.
+- **The organization** (the sidebar's first group, under its name): the project list (`/projects`), the design-system reference, and the organization's settings (`/settings`). Members will go there too.
 - **Inside a project** (`/projects/<id>/…`): the sidebar becomes the project's own menu, with a switcher to the other projects and a link back to all of them. It lists the project's modules (web analytics; product analytics, users, and errors marked as planned), then the project's settings. The header shows the project's name before the page title.
 
 Every module belongs to one project (its records carry `project_id`), so a module's pages sit under the project instead of at the top with a project picker. The switcher keeps the current page: from one project's web analytics for the last 90 days, it opens the other project's web analytics for the last 90 days.
@@ -155,9 +155,9 @@ GET /api/projects/:id/analytics?from=2026-11-01&to=2026-11-16[&limit=10]
 GET /api/projects/:id/analytics?period=7d[&limit=10][&country=DE&page=/pricing …]
 ```
 
-A `period` (`today`, `7d`, `30d`, `90d`, or `12m`) ends today, and the API works out "today" in the instance's timezone: the browser showing the dashboard may be in another one. `7d` is today and the six days before it; `12m` starts the day after the same date last year.
+A `period` (`today`, `7d`, `30d`, `90d`, or `12m`) ends today, and the API works out "today" in the timezone of the project's organization: the browser showing the dashboard may be in another one. `7d` is today and the six days before it; `12m` starts the day after the same date last year.
 
-One request returns every report of the analytics page, for whole days in the instance's `TIMEZONE`, `from` and `to` included: the summary, visitors per day, top pages, ten breakdowns (sources, campaigns, entry and exit pages, countries, regions, cities, devices, browsers, operating systems), and custom events. It needs a signed-in user. A range covers at most 366 days, and lists hold at most `limit` rows (default 10, at most 100).
+One request returns every report of the analytics page, for whole days in the timezone of the project's organization, `from` and `to` included: the summary, visitors per day, top pages, ten breakdowns (sources, campaigns, entry and exit pages, countries, regions, cities, devices, browsers, operating systems), and custom events. It needs a signed-in user. A range covers at most 366 days, and lists hold at most `limit` rows (default 10, at most 100).
 
 The response also holds `previous`: the summary of the period before (`firstDay`, `lastDay`, and `until`, the cut-off when the period is still running, on `lastDay`), with the same filters (section 7 of [web analytics](web-analytics.md#comparison-with-the-previous-period)). It costs one more summary over the earlier days: on the benchmark, the whole page went from 56 to 89 ms for 1 day and from 225 to 313 ms for 7 days at 1,000 visits a day.
 
@@ -202,7 +202,7 @@ Code: `apps/web/src/features/analytics/`.
 
 From top to bottom, the page shows:
 
-1. A picker for the period, with "Custom range…" for chosen days, then the days covered and the instance's timezone. The days come from the API, so they are the instance's days, not the browser's.
+1. A picker for the period, with "Custom range…" for chosen days, then the days covered and the organization's timezone. The days come from the API, so they are the organization's days, not the browser's.
 2. Seven numbers: visitors, visits, pageviews, views per visit, bounce rate, visit duration, and time engaged (defined in section 7 of [web analytics](web-analytics.md#the-numbers)). Under each, its change from the period before: an arrow and a size ("12%", or "6 pts" for the bounce rate), read out as a sentence ("Up 12% from 683"). The arrows stay in text colors: status colors are reserved for state, and up is not always better (a bounce rate). A note names the days compared and, for a running period, the time of day the comparison stops; it also says that a visitor is recognized for one day only, so the same person on two days counts twice.
 3. Visitors, visits, or pageviews per day, as a line. Hovering over the chart shows all three numbers for the nearest day. "Show the numbers" opens the same data as a table. A one-day period draws no line, since one point shows no trend.
 4. Ranked lists, most visitors first, each with a bar for its visitors: pages (top, entry, and exit), sources and campaigns, countries, regions, and cities, devices, browsers, and operating systems, and custom events. Each list shows its first 10 rows; when it shows all 10, "Show all" opens it in full. A missing value (no location, an unknown browser) shows as "Unknown", and a visit without a campaign as "No campaign".
@@ -264,3 +264,33 @@ Unit tests in `apps/web/tests/analytics.test.ts` cover the number and date forma
 
 - Hourly detail for one day.
 - Comparison in the chart and the lists; only the summary is compared.
+
+## Organizations
+
+Code: `apps/api/src/organizations/` and `apps/web/src/features/organizations/`.
+
+One deployment serves many customers ([CLAUDE.md](../CLAUDE.md)). An organization is one customer: it owns projects, and users belong to it through memberships, as its **owner** or a **member**. The owner of the whole install (`dashboard_users.role`, the account the setup link created) is a separate thing from an organization's owner (`memberships.role`).
+
+### The one check
+
+`requireProjectAccess` (`organizations/access.ts`) runs on every route under `/api/projects/:id`: settings, the key, deleting, the analytics page, and its lists. The signed-in user must be a member of the project's organization. Otherwise the answer is 404, word for word the answer for a project that does not exist, so the ID of another organization's project reveals nothing. The project list shows only the projects of the user's organizations, and a new project goes into the user's organization: a user in several must name one (`organizationId`), and a user in none cannot create one.
+
+`apps/api/tests/organizations.test.ts` calls every one of those routes on another organization's project and checks each answer is the not-found one and the project is untouched. Removing the check from any route, or the membership from the project list, makes the tests fail; that was tried for each.
+
+### Settings
+
+`/settings` shows the organization's name and timezone. Only its owner can change them; members see them read-only. The timezone field suggests IANA names as you type. The API stores the name Node.js resolves it to (`US/Pacific` becomes `America/Los_Angeles`, and a few newer names come back as older ones: `Europe/Kyiv` as `Europe/Kiev`). It refuses fixed offsets such as `+08:00`, and names PostgreSQL does not know: Node.js and PostgreSQL carry separate timezone databases, and reports and retention use PostgreSQL's. For the same reason the API refuses to start with a `TIMEZONE` PostgreSQL does not know, and retention skips an organization whose stored timezone PostgreSQL no longer knows instead of failing for every organization.
+
+Reports count days in the organization's timezone, and visitor IDs change at its midnight ([web analytics](web-analytics.md#one-salt-per-timezone-and-day)). Changing it therefore moves where days start in every report, past days included, and counts visitors afresh from the change until midnight; the page says so before saving. New events use it at once in the API process that saved it, which forgets the organization's cached project keys, and in any other API process within a minute, the lifetime of its cache.
+
+### Where organizations come from
+
+- The setup link creates the install's owner and their organization together, in one transaction, in the deployment's `TIMEZONE`.
+- Migration 0010 moved data from before organizations into one organization, named after the owner ("Ada's organization"), in the `TIMEZONE` the deployment had, so no day boundary or visitor ID moved. On an install that had projects but never ran setup, that organization has no members; the setup link's owner then takes it over, renamed as the form says.
+
+### Not done yet
+
+- Open sign-up for the hosted service. It needs account email (verification, password resets).
+- Invitations and roles per module.
+- Switching between several organizations in the dashboard. A user belongs to one until invitations exist; the API already handles several.
+- Deleting an organization and all of its data.

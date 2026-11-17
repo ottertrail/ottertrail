@@ -5,7 +5,7 @@
  *   vp run visits                    (the first project, last 24 hours)
  *   vp run visits -- Playground 6    (a project by name, last 6 hours)
  *
- * Times are shown in the instance's TIMEZONE.
+ * Times are shown in the timezone of the project's organization.
  */
 import { loadConfig } from "../src/config.ts";
 import { createDatabase } from "../src/db/database.ts";
@@ -21,17 +21,17 @@ if (!Number.isFinite(hours) || hours <= 0) {
 
 const config = loadConfig();
 const db = createDatabase({ connectionString: config.databaseUrl, maxConnections: 1 });
-const time = new Intl.DateTimeFormat("en-GB", {
-  timeZone: config.timeZone,
-  dateStyle: "short",
-  timeStyle: "medium",
-});
 const seconds = (ms: number) => `${Math.round(ms / 1000)} s`;
 
 try {
-  const query = db.selectFrom("projects").select(["id", "name"]).orderBy("created_at").limit(1);
+  const query = db
+    .selectFrom("projects")
+    .innerJoin("organizations", "organizations.id", "projects.organization_id")
+    .select(["projects.id", "projects.name", "organizations.time_zone"])
+    .orderBy("projects.created_at")
+    .limit(1);
   const project = await (
-    projectName === undefined ? query : query.where("name", "=", projectName)
+    projectName === undefined ? query : query.where("projects.name", "=", projectName)
   ).executeTakeFirst();
   if (project === undefined) {
     console.error(
@@ -41,11 +41,16 @@ try {
     );
     process.exitCode = 1;
   } else {
+    const time = new Intl.DateTimeFormat("en-GB", {
+      timeZone: project.time_zone,
+      dateStyle: "short",
+      timeStyle: "medium",
+    });
     const to = new Date();
     const from = new Date(to.getTime() - hours * 60 * 60 * 1000);
     const visits = await findVisits(db, { projectId: project.id, from, to });
     console.log(
-      `${project.name}: ${visits.length} visits started in the last ${hours} hours (${config.timeZone})`,
+      `${project.name}: ${visits.length} visits started in the last ${hours} hours (${project.time_zone})`,
     );
     console.table(
       visits.map((visit) => ({

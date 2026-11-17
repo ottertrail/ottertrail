@@ -42,8 +42,6 @@ export interface CollectionOptions {
   projectLimit?: RateLimit;
   /** Finds the visitor's location from the request. Default: no location. */
   locate?: Locate;
-  /** IANA timezone whose midnight starts a new visitor salt. Default: UTC. */
-  timeZone?: string;
   /** How often expired visitor salts are deleted. Default: hourly. */
   saltCleanupIntervalMs?: number;
   /** Clock, replaceable in tests. */
@@ -185,7 +183,7 @@ export const collectionRoutes: FastifyPluginCallback<CollectionOptions> = (app, 
     done(new Error(`The project limit must allow a full batch of ${MAX_EVENTS_PER_BATCH} events`));
     return;
   }
-  const visitors = new VisitorIds(db, { timeZone: options.timeZone ?? "UTC", now });
+  const visitors = new VisitorIds(db, { now });
   // Expired salts are deleted on a timer, so they go on time even without traffic.
   const stopSaltCleanup = visitors.startCleanup((error) => {
     app.log.warn({ err: error }, "could not delete expired visitor salts");
@@ -415,6 +413,7 @@ export const collectionRoutes: FastifyPluginCallback<CollectionOptions> = (app, 
         for (const event of accepted) {
           event.visitorId = await visitors.idFor({
             projectId: project.id,
+            timeZone: project.timeZone,
             ip: request.ip,
             userAgent: userAgent ?? "",
             occurredAt: event.occurredAt,

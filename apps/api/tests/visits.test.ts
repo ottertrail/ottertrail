@@ -4,6 +4,7 @@ import { afterAll, beforeAll, describe, expect, test } from "vite-plus/test";
 
 import { type NewEvent, storeEvents } from "../src/collection/event-store.ts";
 import { findVisits } from "../src/visits/visits.ts";
+import { insertProject } from "./helpers/projects.ts";
 import { createTestDatabase, type TestDatabase } from "./helpers/test-database.ts";
 
 let testDb: TestDatabase | undefined;
@@ -22,11 +23,10 @@ function db() {
 }
 
 async function createProject(): Promise<string> {
-  const row = await db()
-    .insertInto("projects")
-    .values({ name: "Visits test", allowed_hostnames: ["example.com"] })
-    .returning("id")
-    .executeTakeFirstOrThrow();
+  const row = await insertProject(db(), {
+    name: "Visits test",
+    allowed_hostnames: ["example.com"],
+  });
   return row.id;
 }
 

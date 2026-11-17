@@ -4,7 +4,7 @@ import type { Kysely } from "kysely";
 import type { Auth } from "../auth/auth.ts";
 import { requireSession } from "../auth/routes.ts";
 import type { Database } from "../db/schema.ts";
-import { findProject } from "../projects/projects.ts";
+import { type ProjectAccess, requireProjectAccess } from "../organizations/access.ts";
 import { dayIn } from "../visitors/visitor-ids.ts";
 import { LIST_REPORTS, type ListReport, projectAnalytics, projectList } from "./analytics.ts";
 import { FILTER_NAMES, type FilterName, MAX_LIMIT, type ReportFilter } from "./reports.ts";
@@ -12,7 +12,7 @@ import { FILTER_NAMES, type FilterName, MAX_LIMIT, type ReportFilter } from "./r
 /** The longest range one request may cover, to bound the work it causes. */
 export const MAX_RANGE_DAYS = 366;
 
-/** Ranges that end today in the instance's timezone, which the browser does not know. */
+/** Ranges that end today in the organization's timezone, which the browser does not know. */
 export const PERIODS = ["today", "7d", "30d", "90d", "12m"] as const;
 export type Period = (typeof PERIODS)[number];
 
@@ -152,29 +152,38 @@ function requestFilters(query: Partial<Record<FilterName, string>>): ReportFilte
   });
 }
 
+/** The access requireProjectAccess set: the report routes always run it. */
+function accessOf(request: { projectAccess: ProjectAccess | null }): ProjectAccess {
+  if (request.projectAccess === null) {
+    throw new Error("requireProjectAccess must run before this route");
+  }
+  return request.projectAccess;
+}
+
 /**
  * GET /api/projects/:id/analytics?from=YYYY-MM-DD&to=YYYY-MM-DD[&limit=10]
  * GET /api/projects/:id/analytics?period=7d[&limit=10][&country=DE&page=/pricing …]
  *
- * Every report of the analytics page for whole days in the instance's
- * timezone, from and to included (see analytics.ts). A period (today, 7d,
- * 30d, 90d, 12m) ends today in that timezone. Filters (FILTER_NAMES) narrow
- * every report to the visits that match all of them.
+ * Every report of the analytics page for whole days in the timezone of the
+ * project's organization, from and to included (see analytics.ts). A period
+ * (today, 7d, 30d, 90d, 12m) ends today in that timezone. Filters
+ * (FILTER_NAMES) narrow every report to the visits that match all of them.
+ * Like every project route, both run requireProjectAccess first.
  */
 export const reportRoutes: FastifyPluginCallback<{
   db: Kysely<Database>;
   auth: Auth;
-  timeZone: string;
   now?: () => Date;
-}> = (app, { db, auth, timeZone, now = () => new Date() }, done) => {
-  const today = dayIn(timeZone);
+}> = (app, { db, auth, now = () => new Date() }, done) => {
+  const signedIn = requireSession(auth);
+  const projectAccess = requireProjectAccess(db);
   app.get<{
     Params: { id: string };
     Querystring: RangeQuery & { limit?: number } & Partial<Record<FilterName, string>>;
   }>(
     "/projects/:id/analytics",
     {
-      preHandler: requireSession(auth),
+      preHandler: [signedIn, projectAccess],
       preValidation: refuseUnknownParameters([
         ...Object.keys(RANGE_PROPERTIES),
         "limit",
@@ -194,14 +203,12 @@ export const reportRoutes: FastifyPluginCallback<{
       },
     },
     async (request, reply) => {
+      const { timeZone } = accessOf(request);
       // One reading of the clock: the period's days and the comparison's cut-off agree.
       const current = now();
-      const days = requestDays(request.query, today(current));
+      const days = requestDays(request.query, dayIn(timeZone)(current));
       if ("problem" in days) {
         return reply.code(400).send(days.problem);
-      }
-      if ((await findProject(db, request.params.id)) === null) {
-        return reply.code(404).send(problem("not_found", "No project has this ID."));
       }
       const { limit } = request.query;
       return projectAnalytics(db, {
@@ -234,7 +241,7 @@ export const reportRoutes: FastifyPluginCallback<{
   }>(
     "/projects/:id/analytics/list",
     {
-      preHandler: requireSession(auth),
+      preHandler: [signedIn, projectAccess],
       preValidation: refuseUnknownParameters([
         ...Object.keys(RANGE_PROPERTIES),
         "report",
@@ -261,12 +268,10 @@ export const reportRoutes: FastifyPluginCallback<{
       },
     },
     async (request, reply) => {
-      const days = requestDays(request.query, today(now()));
+      const { timeZone } = accessOf(request);
+      const days = requestDays(request.query, dayIn(timeZone)(now()));
       if ("problem" in days) {
         return reply.code(400).send(days.problem);
-      }
-      if ((await findProject(db, request.params.id)) === null) {
-        return reply.code(404).send(problem("not_found", "No project has this ID."));
       }
       const { report, search, offset = 0, limit = LIST_PAGE_SIZE } = request.query;
       return projectList(db, {

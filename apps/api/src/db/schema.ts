@@ -16,8 +16,31 @@ type Nullable<T> = ColumnType<T | null, T | null | undefined, T | null>;
 
 export type JsonObject = { [key: string]: unknown };
 
+/** One customer. Owns projects; dashboard users reach it through memberships. */
+export interface OrganizationsTable {
+  id: ColumnType<string, string | undefined, never>;
+  name: string;
+  /**
+   * IANA timezone, such as "Asia/Singapore". Reports count days in it, and
+   * visitor salts change at its midnight.
+   */
+  time_zone: string;
+  created_at: DatabaseDefault<Date>;
+}
+
+export type MembershipRole = "owner" | "member";
+
+export interface MembershipsTable {
+  organization_id: ColumnType<string, string, never>;
+  user_id: ColumnType<string, string, never>;
+  role: MembershipRole;
+  created_at: DatabaseDefault<Date>;
+}
+
 export interface ProjectsTable {
   id: ColumnType<string, string | undefined, never>;
+  /** The organization that owns the project. Never changes. */
+  organization_id: ColumnType<string, string, never>;
   name: string;
   created_at: DatabaseDefault<Date>;
   /** "pk_" + 32 hex characters. Public: identifies the project to the collection endpoint. */
@@ -66,8 +89,8 @@ export interface EventsTable {
   /** English city name, such as "Munich". */
   city: Nullable<string>;
   /**
-   * Same browser, same network, same project, same day (in the instance's
-   * timezone): same ID. A signed 64-bit integer; PostgreSQL's bigint arrives
+   * Same browser, same network, same project, same day (in the
+   * organization's timezone): same ID. A signed 64-bit integer; PostgreSQL's bigint arrives
    * as a string.
    */
   visitor_id: Nullable<string>;
@@ -75,7 +98,9 @@ export interface EventsTable {
 
 /** One random secret per day. Deleted once no event can still need it. */
 export interface VisitorSaltsTable {
-  /** "YYYY-MM-DD" in the instance's timezone (date columns arrive as strings; see database.ts). */
+  /** The IANA timezone whose calendar `day` is in: one salt per timezone and day. */
+  time_zone: ColumnType<string, string, never>;
+  /** "YYYY-MM-DD" in `time_zone` (date columns arrive as strings; see database.ts). */
   day: ColumnType<string, string, never>;
   salt: ColumnType<Buffer, Buffer, never>;
   created_at: DatabaseDefault<Date>;
@@ -91,7 +116,11 @@ export interface DashboardUsersTable {
   email: string;
   email_verified: ColumnType<boolean, boolean | undefined, boolean>;
   image: Nullable<string>;
-  /** "owner" for the one account the setup flow creates; "member" otherwise. */
+  /**
+   * "owner" for the one account the setup flow creates, the owner of the
+   * whole install; "member" otherwise. Roles inside an organization are in
+   * memberships.
+   */
   role: ColumnType<"owner" | "member", "owner" | "member" | undefined, "owner" | "member">;
   created_at: DatabaseDefault<Date>;
   updated_at: ColumnType<Date, Date | undefined, Date>;
@@ -129,6 +158,8 @@ export interface OwnerSetupTokensTable {
 }
 
 export interface Database {
+  organizations: OrganizationsTable;
+  memberships: MembershipsTable;
   projects: ProjectsTable;
   events: EventsTable;
   visitor_salts: VisitorSaltsTable;

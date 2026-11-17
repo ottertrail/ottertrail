@@ -9,6 +9,8 @@ export const MAX_PROJECT_NAME_LENGTH = 100;
 /** A project as the dashboard sees it. */
 export interface Project {
   id: string;
+  /** The organization that owns it. */
+  organizationId: string;
   name: string;
   /** Goes in the site's script tag. Public: it only lets a page send events. */
   publicKey: string;
@@ -73,6 +75,7 @@ export function parseHostnames(raw: readonly string[]): HostnamesResult {
 function baseQuery(db: Kysely<Database>) {
   return db.selectFrom("projects").select((eb) => [
     "projects.id",
+    "projects.organization_id",
     "projects.name",
     "projects.public_key",
     "projects.allowed_hostnames",
@@ -92,6 +95,7 @@ type ProjectRow = Awaited<ReturnType<ReturnType<typeof baseQuery>["executeTakeFi
 function toProject(row: ProjectRow): Project {
   return {
     id: row.id,
+    organizationId: row.organization_id,
     name: row.name,
     publicKey: row.public_key,
     allowedHostnames: row.allowed_hostnames,
@@ -101,23 +105,41 @@ function toProject(row: ProjectRow): Project {
   };
 }
 
-export async function listProjects(db: Kysely<Database>): Promise<Project[]> {
-  const rows = await baseQuery(db).orderBy("projects.created_at").orderBy("projects.id").execute();
+/** The projects of every organization the user belongs to, oldest first. */
+export async function listProjects(db: Kysely<Database>, userId: string): Promise<Project[]> {
+  const rows = await baseQuery(db)
+    .innerJoin("memberships", (join) =>
+      join
+        .onRef("memberships.organization_id", "=", "projects.organization_id")
+        .on("memberships.user_id", "=", userId),
+    )
+    .orderBy("projects.created_at")
+    .orderBy("projects.id")
+    .execute();
   return rows.map(toProject);
 }
 
+/**
+ * Any project by ID, whichever organization owns it. Routes call it only
+ * after requireProjectAccess (organizations/access.ts) has checked the user.
+ */
 export async function findProject(db: Kysely<Database>, id: string): Promise<Project | null> {
   const row = await baseQuery(db).where("projects.id", "=", id).executeTakeFirst();
   return row === undefined ? null : toProject(row);
 }
 
+/** A new project in an organization. Checking that the user may add one is the caller's job. */
 export async function createProject(
   db: Kysely<Database>,
-  input: { name: string; allowedHostnames: string[] },
+  input: { organizationId: string; name: string; allowedHostnames: string[] },
 ): Promise<Project> {
   const { id } = await db
     .insertInto("projects")
-    .values({ name: input.name, allowed_hostnames: input.allowedHostnames })
+    .values({
+      organization_id: input.organizationId,
+      name: input.name,
+      allowed_hostnames: input.allowedHostnames,
+    })
     .returning("id")
     .executeTakeFirstOrThrow();
   const project = await findProject(db, id);

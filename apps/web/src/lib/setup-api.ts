@@ -16,6 +16,8 @@ export interface OwnerDetails {
   name: string;
   email: string;
   password: string;
+  /** The owner's organization, created with them. */
+  organizationName: string;
 }
 
 export type CreateOwnerResult = { ok: true } | { ok: false; message: string };

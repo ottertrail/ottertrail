@@ -70,9 +70,18 @@ try {
   db = bench;
   await migrateToLatest(bench, { schema });
 
+  const organization = await bench
+    .insertInto("organizations")
+    .values({ name: "Benchmark (fake data)", time_zone: "UTC" })
+    .returning("id")
+    .executeTakeFirstOrThrow();
   const project = await bench
     .insertInto("projects")
-    .values({ name: "Benchmark (fake data)", allowed_hostnames: ["example.com"] })
+    .values({
+      organization_id: organization.id,
+      name: "Benchmark (fake data)",
+      allowed_hostnames: ["example.com"],
+    })
     .returning("id")
     .executeTakeFirstOrThrow();
 

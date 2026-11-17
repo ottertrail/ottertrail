@@ -29,7 +29,7 @@ describe("loadConfig", () => {
       trustProxy: false,
       geoSource: "database",
       geoDatabasePath: DEFAULT_GEO_DATABASE_PATH,
-      timeZone: "UTC",
+      defaultTimeZone: "UTC",
       publicUrl: DEVELOPMENT_PUBLIC_URL,
       trustedOrigins: [DEVELOPMENT_PUBLIC_URL, "http://localhost:*", "http://127.0.0.1:*"],
       authSecret: DEVELOPMENT_AUTH_SECRET,
@@ -62,7 +62,7 @@ describe("loadConfig", () => {
       trustProxy: 1,
       geoSource: "cloudflare",
       geoDatabasePath: "/var/lib/ottertrail/geo.mmdb",
-      timeZone: "Asia/Singapore",
+      defaultTimeZone: "Asia/Singapore",
       publicUrl: "https://analytics.example.com",
       trustedOrigins: ["https://analytics.example.com", "http://localhost:*", "http://127.0.0.1:*"],
       authSecret: "s".repeat(44),
@@ -137,7 +137,7 @@ describe("loadConfig", () => {
   );
 
   test("stores the official name for a timezone alias", () => {
-    expect(loadConfig({ TIMEZONE: "singapore" }).timeZone).toBe("Asia/Singapore");
+    expect(loadConfig({ TIMEZONE: "singapore" }).defaultTimeZone).toBe("Asia/Singapore");
   });
 
   test.each(["Mars/Olympus_Mons", "GMT+25", "singapore time", "+08:00"])(

@@ -33,7 +33,7 @@ cp env.example .env
 chmod 600 .env
 ```
 
-Edit `.env`: set `OTTERTRAIL_DOMAIN`, then fill `POSTGRES_PASSWORD` and `AUTH_SECRET` with the output of `openssl rand -hex 32` (a different value each). Hex keeps the password safe inside the database URL. Set `TIMEZONE` now: reports count days in it, and changing it later moves the day boundaries of past data.
+Edit `.env`: set `OTTERTRAIL_DOMAIN`, then fill `POSTGRES_PASSWORD` and `AUTH_SECRET` with the output of `openssl rand -hex 32` (a different value each). Hex keeps the password safe inside the database URL. `TIMEZONE` is the timezone of the first organization, the one the setup link creates; its owner can change it later in the organization's settings.
 
 ```sh
 docker compose up -d --build
@@ -98,7 +98,7 @@ Tested with Podman: after deleting the whole stack with `down -v`, these steps g
 | `OTTERTRAIL_DOMAIN` | The instance's domain, without `https://`. The public URL is `https://` and this domain                                                                                                                                                   |
 | `POSTGRES_PASSWORD` | The database password. Only the containers use it; PostgreSQL has no port open. PostgreSQL keeps the password it was first created with: to change it, run `ALTER USER ottertrail PASSWORD '…'` in the database first, then change `.env` |
 | `AUTH_SECRET`       | Signs sign-in cookies. Changing it signs everyone out                                                                                                                                                                                     |
-| `TIMEZONE`          | The instance's IANA timezone, such as `Europe/Berlin`. Default `UTC`                                                                                                                                                                      |
+| `TIMEZONE`          | The IANA timezone, such as `Europe/Berlin`, of the organization the setup link creates. Default `UTC`                                                                                                                                     |
 | `LOG_LEVEL`         | Optional, default `info`                                                                                                                                                                                                                  |
 | `OTTERTRAIL_IMAGE`  | Optional: an image to run instead of building this checkout, such as one from a registry                                                                                                                                                  |
 

@@ -7,6 +7,8 @@ export const PUBLIC_KEY_PATTERN = "^pk_[0-9a-f]{32}$";
 export interface CollectingProject {
   id: string;
   allowedHostnames: string[];
+  /** Its organization's timezone, whose midnight starts a new visitor salt. */
+  timeZone: string;
 }
 
 interface CacheEntry {
@@ -22,8 +24,9 @@ interface CacheEntry {
  * so repeating a made-up key costs one query per cache lifetime. A stream of
  * different made-up keys still costs a query each; the per-IP rate limit,
  * checked first, bounds it. Changes to a project's allowed hostnames take
- * effect within the cache lifetime; a replaced key or a deleted project at
- * once in this process, because the project routes call forget().
+ * effect within the cache lifetime; a replaced key, a deleted project, or a
+ * new timezone at once in this process, because the project and
+ * organization routes call forget().
  */
 export class ProjectKeyCache {
   readonly #db: Kysely<Database>;
@@ -51,11 +54,14 @@ export class ProjectKeyCache {
 
     const row = await this.#db
       .selectFrom("projects")
-      .select(["id", "allowed_hostnames"])
-      .where("public_key", "=", publicKey)
+      .innerJoin("organizations", "organizations.id", "projects.organization_id")
+      .select(["projects.id", "projects.allowed_hostnames", "organizations.time_zone"])
+      .where("projects.public_key", "=", publicKey)
       .executeTakeFirst();
     const project =
-      row === undefined ? null : { id: row.id, allowedHostnames: row.allowed_hostnames };
+      row === undefined
+        ? null
+        : { id: row.id, allowedHostnames: row.allowed_hostnames, timeZone: row.time_zone };
 
     this.#entries.delete(publicKey);
     this.#entries.set(publicKey, { project, expiresAt: now + this.#ttlMs });
@@ -67,7 +73,7 @@ export class ProjectKeyCache {
     return project;
   }
 
-  /** Drops a key, so its next request reads the database: after a key is replaced or its project deleted. */
+  /** Drops a key, so its next request reads the database: after a key is replaced, its project deleted, or its timezone changed. */
   forget(publicKey: string) {
     this.#entries.delete(publicKey);
   }

@@ -81,7 +81,7 @@ Almost every report asks "this project, between these two times", so the table h
 
 Each project keeps its events forever unless its owner chooses a limit (`retention_days`: 6 months, 1 year, 2 years, or 5 years in the dashboard; any number from 30 to 3,650 days through the API). Nothing is deleted until then: how long to keep data is the customer's decision.
 
-The worker (`apps/api/src/worker.ts`, a process of its own beside the API) deletes events older than the limit at start and every 6 hours (`retention/retention.ts`). The cut-off is a midnight in the instance's timezone, the limit's number of days before today, so a report never shows a day with only some of its events. Deletes run 5,000 events at a time, so none holds its locks for long, and running the job twice, or in two workers at once, is harmless.
+The worker (`apps/api/src/worker.ts`, a process of its own beside the API) deletes events older than the limit at start and every 6 hours (`retention/retention.ts`). The cut-off is a midnight in the timezone of the project's organization, the limit's number of days before today there, so a report never shows a day with only some of its events. Deletes run 5,000 events at a time, so none holds its locks for long, and running the job twice, or in two workers at once, is harmless.
 
 ### Not done yet
 
@@ -401,11 +401,13 @@ visitor_id = first 8 bytes of HMAC-SHA256(today's salt, project + IP address + U
 
 The same browser on the same network gets the same ID for the rest of the day, so pageviews can be counted per visitor. The salt is a random 32-byte secret for one day. Including the project means one person on two projects gets two unrelated IDs. The ID is stored in `events.visitor_id` as a 64-bit integer; the IP address and the salt are never stored with an event.
 
-### One salt per day, in the instance's timezone
+### One salt per timezone and day
 
-`TIMEZONE` (an IANA name such as `Asia/Singapore`; default `UTC`) sets the instance's midnight. A new salt starts there, and reports (step 7) count days in the same timezone, so a visit is never split across two salts inside one reported day. With a UTC midnight, a visitor in Singapore reading from 07:30 to 08:30 local time would cross 00:00 UTC and be counted twice that morning.
+Each organization has a timezone, an IANA name such as `Asia/Singapore`. The organization the setup link creates gets the deployment's `TIMEZONE` (default `UTC`); its owner can change it in the organization's settings. A new salt starts at its midnight, and reports (step 7) count days in the same timezone, so a visit is never split across two salts inside one reported day. With a UTC midnight, a visitor in Singapore reading from 07:30 to 08:30 local time would cross 00:00 UTC and be counted twice that morning.
 
-Aliases become the official name: `singapore` is stored as `Asia/Singapore`, `GMT` as `UTC`.
+`visitor_salts` holds one salt per timezone and day: organizations in different timezones never share one, and organizations in the same timezone do, which is harmless because the project is part of every visitor ID. Changing an organization's timezone moves where days start in all its reports, past days included, and gives its visitors new IDs from the change until midnight.
+
+Aliases become the name Node.js resolves them to: `singapore` is stored as `Asia/Singapore`, `GMT` as `UTC`.
 
 Each event uses the salt of the local day it happened on. A pageview from 23:55 that arrives at 00:05 joins the rest of that day's visit instead of starting a new visitor.
 
@@ -413,8 +415,8 @@ Each event uses the salt of the local day it happened on. A pageview from 23:55 
 
 - A day's salt is created the first time that day is needed, in the `visitor_salts` table, so every API process and every restart uses the same salt. Each process caches salts in memory.
 - Events arrive up to 24 hours late, so a salt is needed until 24 hours after its day ends. It is kept one hour longer (`SALT_GRACE_MS`), then deleted. The endpoint and the cleanup read the clock at slightly different moments; without the extra hour, an event accepted at the very edge of the window could find its salt deleted a moment later, get a new salt, and with it a different visitor ID. A test reproduces that case.
-- Deletion runs when the API starts, every hour after that, and whenever a new day's salt is created, so salts go on time even when no events arrive. Every API process runs the hourly cleanup; deleting twice is harmless. The background worker will take it over once it exists.
-- Once a salt is gone, nobody can tell which IP address one of that day's visitor IDs came from, not even the instance's operator. (A deleted row's bytes can stay in PostgreSQL's data files until the space is reused, and in backups, so the promise is complete once those copies are gone too.)
+- Deletion runs when the API starts, every hour after that, and whenever a new day's salt is created, so salts go on time even when no events arrive. Each timezone's salts are deleted by its own calendar. Every API process runs the hourly cleanup; deleting twice is harmless. The background worker will take it over once it exists.
+- Once a salt is gone, nobody can tell which IP address one of that day's visitor IDs came from, not even Ottertrail's operator. (A deleted row's bytes can stay in PostgreSQL's data files until the space is reused, and in backups, so the promise is complete once those copies are gone too.)
 - There is no setting for the rotation period. Daily keeps the privacy promise simple: an anonymous visitor is never linked across days, which is also why a visit that crosses midnight counts as two (section 6). Changing the period later would split the data into two eras, because IDs cannot be recomputed without the IP addresses. The period lives in one place (`dayIn` and `MAX_EVENT_AGE_MS`) if a real need appears.
 
 ### What "visitors" means
@@ -498,7 +500,7 @@ A visit counts in the range in which it **started**. Visitor IDs change at midni
 
 ### Midnight
 
-Visitor IDs change at midnight in the instance's timezone (step 5), so a visit that crosses midnight counts as two: one that ends before midnight and one that starts after it. Joining them would need a stored link between the visitor's IDs on the two days, and the link would outlive the salts. Anyone who could compute today's ID from a guessed address could follow it back to yesterday's events, which is what daily salts exist to prevent.
+Visitor IDs change at midnight in the organization's timezone (step 5), so a visit that crosses midnight counts as two: one that ends before midnight and one that starts after it. Joining them would need a stored link between the visitor's IDs on the two days, and the link would outlive the salts. Anyone who could compute today's ID from a guessed address could follow it back to yesterday's events, which is what daily salts exist to prevent.
 
 The first version stored such a link (`previous_visitor_id`) on every event in the first 30 minutes after midnight. A review found the privacy problem; migration 0006 clears and removes the column. The cost is small: a visit is split only if it is in progress at midnight, so a 10-minute visit has about a 10 in 1,440 (0.7%) chance.
 
@@ -509,7 +511,7 @@ vp run visits                      # the first project, last 24 hours
 vp run visits -- Playground 6      # a project by name, last 6 hours
 ```
 
-Times are shown in the instance's `TIMEZONE`.
+Times are shown in the timezone of the project's organization.
 
 ### Not done yet
 
@@ -520,9 +522,9 @@ Times are shown in the instance's `TIMEZONE`.
 
 Reports turn events and visits into the numbers a dashboard shows. Code: `apps/api/src/reports/reports.ts`. Like visits, every number is computed from the stored events when asked.
 
-### Days in the instance's timezone
+### Days in the organization's timezone
 
-A report covers whole calendar days in `TIMEZONE`, the timezone that also starts each visitor salt. `localDays` asks PostgreSQL where those days begin and end (`'2026-11-16'::date::timestamp at time zone 'Asia/Singapore'`), so a 23- or 25-hour day, when clocks change for daylight saving, comes out right. Charts count by local day too, and days without data appear with zeros.
+A report covers whole calendar days in the timezone of the project's organization, the timezone that also starts each visitor salt. `localDays` asks PostgreSQL where those days begin and end (`'2026-11-16'::date::timestamp at time zone 'Asia/Singapore'`), so a 23- or 25-hour day, when clocks change for daylight saving, comes out right. Charts count by local day too, and days without data appear with zeros.
 
 ### The numbers
 

@@ -49,7 +49,7 @@ export interface PreviousPeriod extends Pick<PreviousDays, "firstDay" | "lastDay
 }
 
 export interface Analytics {
-  /** The instance's timezone, which the days are counted in. */
+  /** The timezone of the project's organization, which the days are counted in. */
   timeZone: string;
   /** First and last day of the range, "YYYY-MM-DD", both included. */
   firstDay: string;
@@ -71,7 +71,7 @@ const VISIT_COLUMNS = sql`
 
 /**
  * Every report the analytics page shows, for one project and a range of
- * days in the instance's timezone.
+ * days in the organization's timezone.
  *
  * Working out visits sorts every event in the range, and most reports need
  * them (docs/web-analytics.md, section 7). Here they are worked out once,

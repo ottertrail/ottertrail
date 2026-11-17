@@ -1,4 +1,5 @@
 import type { Analytics, BreakdownRow, DayPoint } from "../../src/lib/analytics-api.ts";
+import type { Organization } from "../../src/lib/organizations-api.ts";
 import type { Project } from "../../src/lib/projects-api.ts";
 
 /**
@@ -8,6 +9,8 @@ import type { Project } from "../../src/lib/projects-api.ts";
  */
 export interface FakeApi {
   signedIn: boolean;
+  /** The signed-in user's organizations; PATCH changes them (the owner's only). */
+  organizations: Organization[];
   projects: Project[];
   /** Answers GET /api/projects/:id/analytics. A Response stands for an error. */
   analytics: (
@@ -52,8 +55,17 @@ export function fakeList(query: URLSearchParams) {
   return { rows, hasMore: offset + limit < names.length };
 }
 
+export const ORGANIZATION: Organization = {
+  id: "99999999-9999-4999-8999-999999999999",
+  name: "Acme Inc",
+  timeZone: "Asia/Singapore",
+  role: "owner",
+  createdAt: "2026-10-01T00:00:00.000Z",
+};
+
 export const PROJECT: Project = {
   id: "11111111-1111-4111-8111-111111111111",
+  organizationId: ORGANIZATION.id,
   name: "Main site",
   publicKey: "pk_test",
   allowedHostnames: ["example.com"],
@@ -223,8 +235,39 @@ async function answer(api: FakeApi, url: URL, init: RequestInit | undefined): Pr
   if (path === "/api/auth/get-session") {
     return json(api.signedIn ? SESSION : null);
   }
+  if (path === "/api/auth/sign-out") {
+    api.signedIn = false;
+    return json({ success: true });
+  }
+  if (path === "/api/auth/sign-in/email") {
+    api.signedIn = true;
+    return json({ redirect: false, token: "fake", user: SESSION.user });
+  }
   if (path === "/api/health") {
     return json({ status: "ok" });
+  }
+  // As the API: everything else needs a session (sign-in and setup are above or public).
+  if (!api.signedIn && !path.startsWith("/api/auth/") && path !== "/api/setup") {
+    return json({ error: "unauthorized", message: "Sign in to continue." }, 401);
+  }
+  if (path === "/api/organizations") {
+    return json({ organizations: api.organizations });
+  }
+  const organization = /^\/api\/organizations\/([^/]+)$/.exec(path);
+  const ownOrganization = api.organizations.find((item) => item.id === organization?.[1]);
+  if (ownOrganization !== undefined && init?.method === "PATCH") {
+    if (ownOrganization.role !== "owner") {
+      return json(
+        { error: "forbidden", message: "Only the organization's owner can change its settings." },
+        403,
+      );
+    }
+    const changes: unknown = JSON.parse(typeof init.body === "string" ? init.body : "{}");
+    const updated = { ...ownOrganization, ...(typeof changes === "object" ? changes : {}) };
+    api.organizations = api.organizations.map((item) =>
+      item.id === ownOrganization.id ? updated : item,
+    );
+    return json({ organization: updated });
   }
   if (path === "/api/projects" && init?.method === "POST") {
     return createProject(api, JSON.parse(typeof init.body === "string" ? init.body : "null"));
@@ -290,6 +333,7 @@ export async function fakeFetch(input: RequestInfo | URL, init?: RequestInit): P
 export function installFakeApi(overrides: Partial<FakeApi> = {}): FakeApi {
   active = {
     signedIn: true,
+    organizations: [ORGANIZATION],
     projects: [PROJECT],
     analytics: () => analyticsFixture(),
     list: fakeList,

@@ -8,6 +8,7 @@ import type { RateLimit } from "./collection/rate-limiter.ts";
 import { type CollectionOptions, collectionRoutes } from "./collection/routes.ts";
 import { dashboardAppRoutes, sendsHsts } from "./dashboard-app/routes.ts";
 import type { Database } from "./db/schema.ts";
+import { organizationRoutes } from "./organizations/routes.ts";
 import { projectRoutes } from "./projects/routes.ts";
 import { reportRoutes } from "./reports/routes.ts";
 import { healthRoutes } from "./routes/health.ts";
@@ -29,8 +30,11 @@ export interface AppOptions extends Omit<FastifyServerOptions, "logger"> {
     publicUrl: string;
     /** Origins dashboard requests may come from (Config.trustedOrigins). */
     trustedOrigins: readonly string[];
-    /** The instance's timezone: reports count days in it. */
-    timeZone: string;
+    /**
+     * The timezone of the organization the setup link creates. Each
+     * organization keeps its own after that; reports count days in it.
+     */
+    defaultTimeZone: string;
     /** The clock that decides "today" for report periods; tests fix it. */
     now?: () => Date;
     setupLimit?: RateLimit;
@@ -89,6 +93,7 @@ export function buildApp({
   }
   if (dashboard !== undefined) {
     app.decorateRequest("dashboardUser", null);
+    app.decorateRequest("projectAccess", null);
     app.register(betterAuthRoutes, {
       prefix: "/api",
       auth: dashboard.auth,
@@ -98,7 +103,15 @@ export function buildApp({
       prefix: "/api",
       db,
       auth: dashboard.auth,
+      defaultTimeZone: dashboard.defaultTimeZone,
       ...(dashboard.setupLimit === undefined ? {} : { setupLimit: dashboard.setupLimit }),
+    });
+    app.register(organizationRoutes, {
+      prefix: "/api",
+      db,
+      auth: dashboard.auth,
+      trustedOrigins: dashboard.trustedOrigins,
+      projectKeys,
     });
     app.register(projectRoutes, {
       prefix: "/api",
@@ -111,7 +124,6 @@ export function buildApp({
       prefix: "/api",
       db,
       auth: dashboard.auth,
-      timeZone: dashboard.timeZone,
       ...(dashboard.now === undefined ? {} : { now: dashboard.now }),
     });
   }

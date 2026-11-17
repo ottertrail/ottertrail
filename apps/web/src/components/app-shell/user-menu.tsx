@@ -1,3 +1,4 @@
+import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { LogOutIcon } from "lucide-react";
 
@@ -8,6 +9,7 @@ import { authClient } from "@/lib/auth-client";
 /** Who is signed in, with a sign-out button. */
 export function UserMenu() {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const { data } = authClient.useSession();
   if (!data) {
     return null;
@@ -15,6 +17,9 @@ export function UserMenu() {
 
   async function signOut() {
     await authClient.signOut();
+    // The next person to sign in here may belong to another organization:
+    // nothing of this one's may show for them, not even while refetching.
+    queryClient.clear();
     await navigate({ to: "/sign-in" });
   }
 

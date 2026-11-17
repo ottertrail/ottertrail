@@ -15,6 +15,7 @@ import {
   type VisitDimension,
 } from "../src/reports/reports.ts";
 import { dayIn } from "../src/visitors/visitor-ids.ts";
+import { insertProject } from "./helpers/projects.ts";
 import { createTestDatabase, type TestDatabase } from "./helpers/test-database.ts";
 
 let testDb: TestDatabase | undefined;
@@ -86,11 +87,10 @@ const EVENTS: NewEvent[] = [
 
 beforeAll(async () => {
   testDb = await createTestDatabase();
-  const project = await db()
-    .insertInto("projects")
-    .values({ name: "Reports test", allowed_hostnames: ["example.com", "www.example.com"] })
-    .returning("id")
-    .executeTakeFirstOrThrow();
+  const project = await insertProject(db(), {
+    name: "Reports test",
+    allowed_hostnames: ["example.com", "www.example.com"],
+  });
   projectId = project.id;
   await storeEvents(db(), projectId, EVENTS);
   const days = await localDays(db(), "2026-11-16", "2026-11-17", "Asia/Singapore");
@@ -229,11 +229,10 @@ describe("breakdown", () => {
   });
 
   test("sources: an IPv6 address in a referrer is the whole host", async () => {
-    const other = await db()
-      .insertInto("projects")
-      .values({ name: "IPv6 referrer", allowed_hostnames: ["example.com"] })
-      .returning("id")
-      .executeTakeFirstOrThrow();
+    const other = await insertProject(db(), {
+      name: "IPv6 referrer",
+      allowed_hostnames: ["example.com"],
+    });
     await storeEvents(db(), other.id, [
       pv("7", "2026-11-16T02:00:00Z", "/", { referrer: "https://[2001:db8::1]:8443/page" }),
     ]);
