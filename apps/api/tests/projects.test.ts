@@ -78,6 +78,18 @@ describe("project routes", () => {
     return app.inject({ method, url, headers, ...(payload === undefined ? {} : { payload }) });
   }
 
+  /** A server-side event sent with `key`. */
+  const sendWith = (key: string) =>
+    app.inject({
+      method: "POST",
+      url: "/api/server-events",
+      headers: { authorization: `Bearer ${key}`, "content-type": "application/json" },
+      payload: JSON.stringify({
+        v: 1,
+        events: [{ id: randomUUID(), name: "paid", occurredAt: Date.now(), userId: "42" }],
+      }),
+    });
+
   test("need a signed-in user", async () => {
     const response = await request("GET", "/api/projects", undefined, {});
     expect(response.statusCode).toBe(401);
@@ -155,6 +167,61 @@ describe("project routes", () => {
       const refused = await request("PATCH", `/api/projects/${created.id}`, { retentionDays });
       expect({ retentionDays, status: refused.statusCode }).toEqual({ retentionDays, status: 400 });
     }
+  });
+
+  test("give each project a secret key for its server; replacing it stops the old one at once", async () => {
+    const created = (await request("POST", "/api/projects", { name: "API" })).json().project;
+    expect(created.secretKey).toMatch(/^sk_[0-9a-f]{32}$/);
+    expect(created.requireSignedUserIds).toBe(false);
+    expect((await sendWith(created.secretKey)).statusCode).toBe(202);
+
+    const replaced = await request("POST", `/api/projects/${created.id}/secret-key`);
+    expect(replaced.statusCode).toBe(200);
+    const newKey = replaced.json().project.secretKey;
+    expect(newKey).not.toBe(created.secretKey);
+
+    expect((await sendWith(created.secretKey)).statusCode).toBe(401);
+    expect((await sendWith(newKey)).statusCode).toBe(202);
+  });
+
+  test("require signed user IDs, from the next event on", async () => {
+    const created = (
+      await request("POST", "/api/projects", { name: "Signed", allowedHostnames: ["shop.example"] })
+    ).json().project;
+    const browserEvent = () =>
+      app.inject({
+        method: "POST",
+        url: "/api/events",
+        headers: {
+          "content-type": "text/plain",
+          origin: "https://shop.example",
+          "user-agent":
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+        },
+        payload: JSON.stringify({
+          v: 1,
+          key: created.publicKey,
+          sentAt: Date.now(),
+          events: [
+            {
+              id: randomUUID(),
+              name: "pageview",
+              occurredAt: Date.now(),
+              url: "https://shop.example/",
+              userId: "42",
+            },
+          ],
+        }),
+      });
+    // Read once, so collection has the project cached.
+    expect((await browserEvent()).json().unverifiedUsers).toBe(0);
+
+    const changed = await request("PATCH", `/api/projects/${created.id}`, {
+      requireSignedUserIds: true,
+    });
+    expect(changed.json().project.requireSignedUserIds).toBe(true);
+
+    expect((await browserEvent()).json().unverifiedUsers).toBe(1);
   });
 
   test("report when the latest event happened", async () => {

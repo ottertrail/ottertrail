@@ -30,7 +30,8 @@ function toClickHouse(event: Selectable<EventsTable>) {
     name: event.name,
     occurred_at: clickHouseTime(event.occurred_at),
     received_at: clickHouseTime(event.received_at),
-    path: event.path,
+    // ClickHouse's path is not nullable: a server-side event without a page has "".
+    path: event.path ?? "",
     referrer: event.referrer,
     utm_source: event.utm_source,
     utm_medium: event.utm_medium,

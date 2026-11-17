@@ -73,6 +73,54 @@ describe("a project's settings", () => {
   });
 });
 
+describe("your server", () => {
+  test("hides the secret key until asked, then offers to copy it", async () => {
+    installFakeApi();
+    renderApp(SETTINGS);
+    await expect.element(page.getByRole("heading", { name: "Your server" })).toBeVisible();
+    expect(document.body.textContent).not.toContain(PROJECT.secretKey);
+
+    await page.getByRole("button", { name: "Show" }).click();
+
+    await expect.element(page.getByText(PROJECT.secretKey, { exact: true })).toBeVisible();
+    await expect.element(page.getByRole("button", { name: "Copy the secret key" })).toBeVisible();
+    await page.getByRole("button", { name: "Hide" }).click();
+    expect(document.body.textContent).not.toContain(PROJECT.secretKey);
+  });
+
+  test("turns on signed user IDs", async () => {
+    const api = installFakeApi();
+    renderApp(SETTINGS);
+    const toggle = page.getByRole("switch", { name: "Only accept user IDs signed by your server" });
+    await expect.element(toggle).not.toBeChecked();
+
+    await toggle.click();
+
+    await expect.element(toggle).toBeChecked();
+    expect(api.bodies).toContainEqual({
+      method: "PATCH",
+      path: `/api/projects/${PROJECT.id}`,
+      body: { requireSignedUserIds: true },
+    });
+  });
+
+  test("replaces the secret key from the danger zone", async () => {
+    const api = installFakeApi();
+    renderApp(SETTINGS);
+
+    await page.getByRole("button", { name: "Replace secret key" }).click();
+    await expect
+      .element(page.getByRole("dialog", { name: "Replace the secret key?" }))
+      .toBeVisible();
+    await page.getByRole("button", { name: "Replace key" }).click();
+    await expect.element(page.getByRole("dialog")).not.toBeInTheDocument();
+    expect(api.requests).toContain(`/api/projects/${PROJECT.id}/secret-key`);
+
+    await page.getByRole("button", { name: "Show" }).click();
+    await expect.element(page.getByText("sk_replaced", { exact: true })).toBeVisible();
+  });
+});
+
 describe("the danger zone", () => {
   test("replacing the key asks first, then shows the new snippet", async () => {
     const api = installFakeApi();

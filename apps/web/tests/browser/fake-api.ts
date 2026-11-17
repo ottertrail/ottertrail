@@ -135,6 +135,8 @@ export const PROJECT: Project = {
   createdAt: "2026-10-01T00:00:00.000Z",
   lastEventAt: "2026-11-16T09:00:00.000Z",
   retentionDays: null,
+  secretKey: "sk_00000000000000000000000000000001",
+  requireSignedUserIds: false,
 };
 
 export const OTHER_PROJECT: Project = {
@@ -142,6 +144,7 @@ export const OTHER_PROJECT: Project = {
   id: "22222222-2222-4222-8222-222222222222",
   name: "Docs",
   publicKey: "pk_docs",
+  secretKey: "sk_00000000000000000000000000000002",
 };
 
 const DAYS: DayPoint[] = [
@@ -363,6 +366,13 @@ async function answer(api: FakeApi, url: URL, init: RequestInit | undefined): Pr
       url.searchParams,
     );
     return result instanceof Response ? result : json(result);
+  }
+  const secretFor = /^\/api\/projects\/([^/]+)\/secret-key$/.exec(path);
+  const secreted = api.projects.find((item) => item.id === secretFor?.[1]);
+  if (secreted !== undefined && init?.method === "POST") {
+    const replaced = { ...secreted, secretKey: "sk_replaced" };
+    api.projects = api.projects.map((item) => (item.id === secreted.id ? replaced : item));
+    return json({ project: replaced });
   }
   const keyFor = /^\/api\/projects\/([^/]+)\/public-key$/.exec(path);
   const keyed = api.projects.find((item) => item.id === keyFor?.[1]);

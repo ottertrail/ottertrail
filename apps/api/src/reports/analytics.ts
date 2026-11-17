@@ -112,9 +112,10 @@ async function dayRange(
 }
 
 /**
- * The environments with events in the range, most events first, then the
- * range's own environment and production, even without events: the page
- * can always switch back to the one it shows by default.
+ * The environments with browser events in the range, most events first,
+ * then the range's own environment and production, even without events:
+ * the page can always switch back to the one it shows by default. Events
+ * from a site's server have no visitor and are not web analytics.
  */
 async function environmentsIn(reader: Reader, range: ReportRange): Promise<string[]> {
   const params = new QueryParams();
@@ -124,6 +125,7 @@ async function environmentsIn(reader: Reader, range: ReportRange): Promise<strin
      WHERE project_id = ${params.add(range.projectId, "UUID")}
        AND occurred_at >= ${params.time(range.from)}
        AND occurred_at < ${params.time(range.to)}
+       AND visitor_id IS NOT NULL
      GROUP BY environment
      ORDER BY count() DESC, environment`,
     params,

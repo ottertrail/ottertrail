@@ -19,6 +19,7 @@ import {
   MIN_RETENTION_DAYS,
   parseHostnames,
   replacePublicKey,
+  replaceSecretKey,
   updateProject,
 } from "./projects.ts";
 
@@ -63,7 +64,7 @@ export const projectRoutes: FastifyPluginCallback<{
   auth: Auth;
   trustedOrigins: readonly string[];
   /** The collection endpoint's key cache, which must forget replaced and deleted keys. */
-  projectKeys?: { forget(publicKey: string): void };
+  projectKeys?: { forget(publicKey: string): void; forgetProject(projectId: string): void };
 }> = (app, { db, auth, trustedOrigins, projectKeys }, done) => {
   const signedIn = requireSession(auth);
   const fromDashboard = requireTrustedOrigin(trustedOrigins);
@@ -143,7 +144,12 @@ export const projectRoutes: FastifyPluginCallback<{
 
   app.patch<{
     Params: { id: string };
-    Body: { name?: string; allowedHostnames?: string[]; retentionDays?: number | null };
+    Body: {
+      name?: string;
+      allowedHostnames?: string[];
+      retentionDays?: number | null;
+      requireSignedUserIds?: boolean;
+    };
   }>(
     "/projects/:id",
     {
@@ -163,12 +169,13 @@ export const projectRoutes: FastifyPluginCallback<{
               minimum: MIN_RETENTION_DAYS,
               maximum: MAX_RETENTION_DAYS,
             },
+            requireSignedUserIds: { type: "boolean" },
           },
         },
       },
     },
     async (request, reply) => {
-      const { name, allowedHostnames, retentionDays } = request.body;
+      const { name, allowedHostnames, retentionDays, requireSignedUserIds } = request.body;
       let hostnames: string[] | undefined;
       if (allowedHostnames !== undefined) {
         const parsed = parseHostnames(allowedHostnames);
@@ -181,7 +188,10 @@ export const projectRoutes: FastifyPluginCallback<{
         ...(name === undefined ? {} : { name: name.trim() }),
         ...(hostnames === undefined ? {} : { allowedHostnames: hostnames }),
         ...(retentionDays === undefined ? {} : { retentionDays }),
+        ...(requireSignedUserIds === undefined ? {} : { requireSignedUserIds }),
       });
+      // Collection reads the signing rule from its cache: the change applies at once.
+      if (requireSignedUserIds !== undefined) projectKeys?.forgetProject(request.params.id);
       return project === null
         ? reply.code(404).send(problem("not_found", "No project has this ID."))
         : { project };
@@ -219,6 +229,7 @@ export const projectRoutes: FastifyPluginCallback<{
       const deleted = await deleteProject(db, project.id);
       if (deleted !== null) {
         projectKeys?.forget(deleted.publicKey);
+        projectKeys?.forgetProject(project.id);
       }
       return reply.code(204).send();
     },
@@ -235,6 +246,23 @@ export const projectRoutes: FastifyPluginCallback<{
       }
       projectKeys?.forget(replaced.oldKey);
       return { project: replaced.project };
+    },
+  );
+
+  /**
+   * Replaces a project's secret key: servers with the old one stop sending
+   * events, and user IDs signed with it no longer pass.
+   */
+  app.post<{ Params: { id: string } }>(
+    "/projects/:id/secret-key",
+    { preHandler: [fromDashboard, signedIn, projectAccess], schema: { params: idParamsSchema } },
+    async (request, reply) => {
+      const project = await replaceSecretKey(db, request.params.id);
+      if (project === null) {
+        return reply.code(404).send(problem("not_found", "No project has this ID."));
+      }
+      projectKeys?.forgetProject(project.id);
+      return { project };
     },
   );
   done();

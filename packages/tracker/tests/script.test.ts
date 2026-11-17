@@ -47,7 +47,7 @@ function fakePage(
     ottertrail: undefined as
       | {
           track(name: string, properties?: object): void;
-          identify(userId: string): void;
+          identify(userId: string, signature?: string): void;
           reset(): void;
         }
       | undefined,
@@ -351,6 +351,32 @@ describe("the signed-in user", () => {
       (event) => event.name === "pageview" && event.url === "https://example.com/dashboard",
     );
     expect(dashboard?.userId).toBe("user-42");
+  });
+
+  test("a signature from the page goes with the user ID, and a malformed one is left out", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const signature = "c".repeat(64);
+    const page = fakePage("https://example.com/", "", {
+      attributes: { userId: "user-42", userSignature: signature },
+    });
+    await runScript();
+    page.window.ottertrail?.identify("user-43", "NOT-HEX");
+    page.window.ottertrail?.track("as-43");
+    // Upper case and stray spaces are fine: the API compares lower-cased.
+    page.window.ottertrail?.identify("user-44", ` ${"AB".repeat(32)} `);
+    page.window.ottertrail?.track("as-44");
+    page.hide();
+    await page.settle();
+
+    const byName = Object.fromEntries(
+      page.events.map((event) => [event.name, [event.userId, event.userSignature]]),
+    );
+    expect(byName).toMatchObject({
+      pageview: ["user-42", signature],
+      "as-43": ["user-43", undefined],
+      "as-44": ["user-44", "AB".repeat(32)],
+    });
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("signature"));
   });
 
   test("an invalid ID is ignored, with a warning, and the events still go", async () => {

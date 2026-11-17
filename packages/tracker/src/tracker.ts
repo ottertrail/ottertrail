@@ -32,6 +32,8 @@ export interface QueuedEvent {
   properties?: Properties;
   /** The site's ID for the signed-in user, when the site named one. */
   userId?: string;
+  /** The site server's signature for userId, when the site gave one. */
+  userSignature?: string;
 }
 
 export interface TrackerOptions {
@@ -50,13 +52,24 @@ export interface TrackerOptions {
   release?: string;
 }
 
+/** A signed-in user: the site's ID, and its server's signature for it when it gave one. */
+export interface SignedUser {
+  userId: string;
+  signature?: string | undefined;
+}
+
 export interface Tracker {
   /**
-   * Queues an event, with the signed-in user's ID (setUser), or `as.userId`
+   * Queues an event, with the signed-in user (setUser), or `as.user`
    * when given: the user when the page was viewed, for its engagement
    * report. Never throws.
    */
-  track(name: unknown, page: Page, properties?: unknown, as?: { userId: string | undefined }): void;
+  track(
+    name: unknown,
+    page: Page,
+    properties?: unknown,
+    as?: { user: SignedUser | undefined },
+  ): void;
   /** Sends one batch now unless a send is in flight. Never rejects. */
   flush(): Promise<void>;
   /** The page is being hidden or closed: hand every queued event to the browser. */
@@ -64,11 +77,11 @@ export interface Tracker {
   /** Number of queued events, for tests and debugging. */
   queued(): number;
   /**
-   * The signed-in user's ID, already checked (cleanUserId), which events
-   * tracked from now on carry; undefined for an anonymous visitor. Kept in
-   * memory only: nothing is stored on the device.
+   * The signed-in user, already checked (cleanUserId, cleanSignature), whom
+   * events tracked from now on belong to; undefined for an anonymous
+   * visitor. Kept in memory only: nothing is stored on the device.
    */
-  setUser(userId: string | undefined): void;
+  setUser(user: SignedUser | undefined): void;
 }
 
 /** Exponential backoff with ±20% jitter: about 1, 2, 4, 8 … seconds, capped at 60. */
@@ -86,7 +99,7 @@ export function createTracker({
   release,
 }: TrackerOptions): Tracker {
   let queue: QueuedEvent[] = [];
-  let user: string | undefined;
+  let user: SignedUser | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let sending = false;
   /** Consecutive failed sends of the batch at the front of the queue. */
@@ -196,7 +209,7 @@ export function createTracker({
           return;
         }
         const cleanProperties = sanitizeProperties(properties);
-        const owner = as === undefined ? user : as.userId;
+        const owner = as === undefined ? user : as.user;
         if (queue.length >= MAX_QUEUE) {
           queue.shift(); // Bounded memory: drop the oldest event.
         }
@@ -207,7 +220,8 @@ export function createTracker({
           url: page.url,
           ...(page.referrer === undefined ? {} : { referrer: page.referrer }),
           ...(cleanProperties === undefined ? {} : { properties: cleanProperties }),
-          ...(owner === undefined ? {} : { userId: owner }),
+          ...(owner === undefined ? {} : { userId: owner.userId }),
+          ...(owner?.signature === undefined ? {} : { userSignature: owner.signature }),
         });
         if (queue.length >= MAX_EVENTS_PER_BATCH && Date.now() >= retryAt) {
           void flush();
@@ -241,8 +255,8 @@ export function createTracker({
 
     queued: () => queue.length,
 
-    setUser(userId) {
-      user = userId;
+    setUser(next) {
+      user = next;
     },
   };
 }

@@ -24,14 +24,34 @@ import {
   projectQuery,
   projectsQuery,
   replacePublicKey,
+  replaceSecretKey,
 } from "@/lib/projects-api";
 
-/** Asks before giving the project a new key, which stops the current snippet. */
-function ReplaceKeyDialog({ project }: { project: Project }) {
+/** What replacing each key means, for its dialog. */
+const KEYS = {
+  public: {
+    button: "Replace public key",
+    title: "Replace the public key?",
+    description:
+      "Pages with the current snippet stop sending events at once. Put the new snippet on your site right after. The project's data stays.",
+    replace: replacePublicKey,
+  },
+  secret: {
+    button: "Replace secret key",
+    title: "Replace the secret key?",
+    description:
+      "Your server's events with the current key are refused at once, and user IDs signed with it no longer count. Give your server the new key right after. The project's data stays.",
+    replace: replaceSecretKey,
+  },
+} as const;
+
+/** Asks before giving the project a new key, which stops the current one at once. */
+function ReplaceKeyDialog({ project, which }: { project: Project; which: keyof typeof KEYS }) {
+  const texts = KEYS[which];
   const [open, setOpen] = React.useState(false);
   const queryClient = useQueryClient();
   const replace = useMutation({
-    mutationFn: () => replacePublicKey(project.id),
+    mutationFn: () => texts.replace(project.id),
     onSuccess: (updated) => {
       // The Install card shows the new snippet at once.
       queryClient.setQueryData(projectQuery(project.id).queryKey, updated);
@@ -48,15 +68,12 @@ function ReplaceKeyDialog({ project }: { project: Project }) {
       }}
     >
       <Button variant="outline" onClick={() => setOpen(true)}>
-        Replace public key
+        {texts.button}
       </Button>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>Replace the public key?</DialogTitle>
-          <DialogDescription>
-            Pages with the current snippet stop sending events at once. Put the new snippet on your
-            site right after. The project&apos;s data stays.
-          </DialogDescription>
+          <DialogTitle>{texts.title}</DialogTitle>
+          <DialogDescription>{texts.description}</DialogDescription>
         </DialogHeader>
         {replace.error !== null && (
           <Alert variant="destructive" role="alert">
@@ -173,7 +190,17 @@ export function DangerZone({ project }: { project: Project }) {
               For a key that ended up where it should not. The current snippet stops working.
             </p>
           </div>
-          <ReplaceKeyDialog project={project} />
+          <ReplaceKeyDialog project={project} which="public" />
+        </div>
+        <div className="flex flex-wrap items-center justify-between gap-3 py-4">
+          <div className="min-w-0 flex-1">
+            <h4 className="text-sm font-medium text-ink">Replace the secret key</h4>
+            <p className="text-sm text-muted-foreground">
+              For a key that ended up where it should not. Your server&apos;s current key stops
+              working.
+            </p>
+          </div>
+          <ReplaceKeyDialog project={project} which="secret" />
         </div>
         <div className="flex flex-wrap items-center justify-between gap-3 pt-4">
           <div className="min-w-0 flex-1">

@@ -22,8 +22,12 @@ import { type Activity, userQuery } from "@/lib/users-api";
 import { countryName } from "../analytics/format";
 import { dayKey, formatLongDay, formatMoment, formatTime } from "./format";
 
-/** What happened: "Viewed /pricing", or a custom event's name. */
+/** What happened: "Viewed /pricing", or a custom event's name, and its page if it has one. */
 function ActivityTitle({ activity }: { activity: Activity }) {
+  // An event the site's server sent may name no page.
+  if (activity.path === "") {
+    return <span className="font-medium">{activity.name}</span>;
+  }
   if (activity.name === "pageview") {
     return (
       <>

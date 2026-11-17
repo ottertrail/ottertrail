@@ -15,6 +15,10 @@ export interface Project {
   lastEventAt: string | null;
   /** Days of events kept; null keeps them forever. */
   retentionDays: number | null;
+  /** For the site's own server only: sends server-side events and signs user IDs. */
+  secretKey: string;
+  /** A browser's user ID counts only with a valid signature from the site's server. */
+  requireSignedUserIds: boolean;
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -31,7 +35,9 @@ function isProject(value: unknown): value is Project {
     value.allowedHostnames.every((hostname) => typeof hostname === "string") &&
     typeof value.createdAt === "string" &&
     (value.lastEventAt === null || typeof value.lastEventAt === "string") &&
-    (value.retentionDays === null || typeof value.retentionDays === "number")
+    (value.retentionDays === null || typeof value.retentionDays === "number") &&
+    typeof value.secretKey === "string" &&
+    typeof value.requireSignedUserIds === "boolean"
   );
 }
 
@@ -67,7 +73,12 @@ export async function createProject(input: { name: string; allowedHostnames: str
 
 export async function updateProject(
   id: string,
-  changes: { name?: string; allowedHostnames?: string[]; retentionDays?: number | null },
+  changes: {
+    name?: string;
+    allowedHostnames?: string[];
+    retentionDays?: number | null;
+    requireSignedUserIds?: boolean;
+  },
 ) {
   const body = await apiRequest(`/api/projects/${encodeURIComponent(id)}`, {
     method: "PATCH",
@@ -87,6 +98,14 @@ export async function deleteProject(id: string, confirmName: string) {
 /** Gives a project a new public key; pages with the old snippet stop sending events. */
 export async function replacePublicKey(id: string) {
   const body = await apiRequest(`/api/projects/${encodeURIComponent(id)}/public-key`, {
+    method: "POST",
+  });
+  return expectShape(body, isOneProject).project;
+}
+
+/** Gives a project a new secret key; servers with the old one stop sending events. */
+export async function replaceSecretKey(id: string) {
+  const body = await apiRequest(`/api/projects/${encodeURIComponent(id)}/secret-key`, {
     method: "POST",
   });
   return expectShape(body, isOneProject).project;

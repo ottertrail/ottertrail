@@ -7,8 +7,10 @@
  * Optional: data-environment="staging" on a site other than the live one,
  * whose events then never mix with production's, data-release="1.4.2", the
  * site's version, and data-user-id="42", the site's ID for the signed-in
- * user. A single-page app that signs someone in or out without a page load
- * calls window.ottertrail.identify("42") and window.ottertrail.reset().
+ * user, with data-user-signature="…" when the project requires the site's
+ * server to sign user IDs. A single-page app that signs someone in or out
+ * without a page load calls window.ottertrail.identify("42", signature)
+ * and window.ottertrail.reset().
  * The user's ID is kept in memory only: the tracker stores nothing on the
  * device, so the site gives it on every page load.
  *
@@ -24,15 +26,18 @@ import {
 } from "./engagement.ts";
 import { watchNavigation } from "./navigation.ts";
 import { randomId } from "./random-id.ts";
-import { cleanUserId } from "./sanitize.ts";
-import { createTracker, type Page } from "./tracker.ts";
+import { cleanSignature, cleanUserId } from "./sanitize.ts";
+import { createTracker, type Page, type SignedUser } from "./tracker.ts";
 import { browserTransport } from "./transport.ts";
 import { cleanPageUrl, cleanReferrer } from "./url.ts";
 
 export interface OttertrailApi {
   track(name: string, properties?: Record<string, unknown>): void;
-  /** Events from now on carry this user ID: the site's own ID for the signed-in user. */
-  identify(userId: string): void;
+  /**
+   * Events from now on carry this user ID: the site's own ID for the
+   * signed-in user, with its server's signature when the project needs one.
+   */
+  identify(userId: string, signature?: string): void;
   /** Events from now on are anonymous again, as after signing out. */
   reset(): void;
 }
@@ -97,11 +102,21 @@ function landing(): Page {
     let current: Page | undefined;
     // The signed-in user now, and when the current page was viewed: its
     // engagement report is theirs, not that of whoever signed in since.
-    let user: string | undefined;
-    let viewedBy: string | undefined;
-    const setUser = (id: string | undefined) => {
-      user = id;
-      tracker.setUser(id);
+    let user: SignedUser | undefined;
+    let viewedBy: SignedUser | undefined;
+    /** Sets the signed-in user from a page's values, warning about any it cannot use. */
+    const setUser = (id: unknown, signature: unknown, from: string) => {
+      const userId = id === undefined ? undefined : cleanUserId(id);
+      if (id !== undefined && userId === undefined) {
+        // Anonymous, never the user before: they may have signed out.
+        console.warn(`Ottertrail: invalid user ID in ${from}, so events go without one.`);
+      }
+      const clean = cleanSignature(signature);
+      if (signature !== undefined && clean === undefined) {
+        console.warn(`Ottertrail: invalid user signature in ${from}, so it is left out.`);
+      }
+      user = userId === undefined ? undefined : { userId, signature: clean };
+      tracker.setUser(user);
     };
     const engaged = createEngagementTimer();
 
@@ -110,7 +125,7 @@ function landing(): Page {
       // A tab left open for days still reports at most what the API accepts.
       const engagedMs = Math.min(engaged.take(), MAX_ENGAGED_MS);
       if (current !== undefined && engagedMs >= MIN_REPORTED_MS) {
-        tracker.track(ENGAGEMENT, current, { engagedMs }, { userId: viewedBy });
+        tracker.track(ENGAGEMENT, current, { engagedMs }, { user: viewedBy });
       }
     };
 
@@ -133,25 +148,13 @@ function landing(): Page {
       tracker.track("pageview", current);
     };
 
-    const userId = script?.dataset.userId;
-    if (userId !== undefined) {
-      const clean = cleanUserId(userId);
-      if (clean === undefined) {
-        console.warn("Ottertrail: invalid data-user-id, so events are sent without one.");
-      }
-      setUser(clean);
+    if (script?.dataset.userId !== undefined) {
+      setUser(script.dataset.userId, script.dataset.userSignature, "data-user-id");
     }
 
     window.ottertrail = {
-      identify: (id) => {
-        const clean = cleanUserId(id);
-        if (clean === undefined) {
-          // Anonymous, never the user before: they may have signed out.
-          console.warn("Ottertrail: invalid user ID for identify(), so events go without one.");
-        }
-        setUser(clean);
-      },
-      reset: () => setUser(undefined),
+      identify: (id, signature) => setUser(id, signature, "identify()"),
+      reset: () => setUser(undefined, undefined, "reset()"),
       track: (name, properties) => {
         // The tracker sends these itself; a page sending them would distort reports.
         if (name === "pageview" || name === ENGAGEMENT) {

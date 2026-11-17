@@ -65,6 +65,16 @@ async function createProject(allowedHostnames = [SITE, "localhost"], timeZone = 
   );
 }
 
+/** A project that may require signed user IDs. Secret keys are unique: give a fixed one once. */
+async function signingProject(required: boolean, secretKey?: string) {
+  return insertProject(db(), {
+    name: "Signed",
+    allowed_hostnames: [SITE],
+    require_signed_user_ids: required,
+    ...(secretKey === undefined ? {} : { secret_key: secretKey }),
+  });
+}
+
 function pageview(overrides: Record<string, unknown> = {}) {
   return {
     id: randomUUID(),
@@ -127,7 +137,13 @@ describe("POST /api/events", () => {
     const response = await send(body);
 
     expect(response.statusCode).toBe(202);
-    expect(response.json()).toEqual({ stored: 2, duplicates: 0, tooOld: 0, bots: 0 });
+    expect(response.json()).toEqual({
+      stored: 2,
+      duplicates: 0,
+      tooOld: 0,
+      bots: 0,
+      unverifiedUsers: 0,
+    });
     const [first, second] = await storedEvents(project.id);
     expect(first).toMatchObject({
       name: "pageview",
@@ -159,7 +175,13 @@ describe("POST /api/events", () => {
     const retry = await send(body);
 
     expect(retry.statusCode).toBe(202);
-    expect(retry.json()).toEqual({ stored: 0, duplicates: 2, tooOld: 0, bots: 0 });
+    expect(retry.json()).toEqual({
+      stored: 0,
+      duplicates: 2,
+      tooOld: 0,
+      bots: 0,
+      unverifiedUsers: 0,
+    });
     expect(await storedEvents(project.id)).toHaveLength(2);
   });
 
@@ -169,7 +191,13 @@ describe("POST /api/events", () => {
     const response = await send(
       batch(project.public_key, [pageview({ occurredAt: NOW - day - 1 }), pageview()]),
     );
-    expect(response.json()).toEqual({ stored: 1, duplicates: 0, tooOld: 1, bots: 0 });
+    expect(response.json()).toEqual({
+      stored: 1,
+      duplicates: 0,
+      tooOld: 1,
+      bots: 0,
+      unverifiedUsers: 0,
+    });
   });
 
   test("ignores unknown fields, so newer trackers still work", async () => {
@@ -631,6 +659,49 @@ describe("POST /api/events", () => {
       const response = await send(batch(project.public_key, [pageview({ userId })]));
       expect(response.statusCode).toBe(400);
       expect(await storedEvents(project.id)).toHaveLength(0);
+    });
+  });
+
+  describe("signed user IDs", () => {
+    const SECRET = "sk_00000000000000000000000000000001";
+    // HMAC-SHA256("42") with SECRET, worked out apart from the code under test.
+    const SIGNED_42 = "cd39dcecfe1dab56c3167aadc4175538cc535737786788fb11552b3028d9bbf4";
+
+    test("when required, keeps a correctly signed ID and drops the rest, keeping the events", async () => {
+      const project = await signingProject(true, SECRET);
+      const response = await send(
+        batch(project.public_key, [
+          pageview({ occurredAt: NOW - 3000, userId: "42", userSignature: SIGNED_42 }),
+          // Someone else's ID with 42's signature.
+          pageview({ occurredAt: NOW - 2000, userId: "43", userSignature: SIGNED_42 }),
+          // No signature at all.
+          pageview({ occurredAt: NOW - 1000, userId: "42" }),
+        ]),
+      );
+      expect(response.statusCode).toBe(202);
+      expect(response.json()).toMatchObject({ stored: 3, unverifiedUsers: 2 });
+      const stored = await storedEvents(project.id);
+      expect(stored.map((event) => event.user_id)).toEqual(["42", null, null]);
+    });
+
+    test("when not required, takes the ID as sent", async () => {
+      const project = await signingProject(false);
+      await send(batch(project.public_key, [pageview({ userId: "43" })]));
+      const [event] = await storedEvents(project.id);
+      expect(event?.user_id).toBe("43");
+    });
+
+    test("refuses a signature that is not 64 hex digits", async () => {
+      const project = await signingProject(true);
+      for (const userSignature of [SIGNED_42.slice(1), `${SIGNED_42.slice(1)}g`]) {
+        const response = await send(
+          batch(project.public_key, [pageview({ userId: "42", userSignature })]),
+        );
+        expect({ userSignature, status: response.statusCode }).toEqual({
+          userSignature,
+          status: 400,
+        });
+      }
     });
   });
 

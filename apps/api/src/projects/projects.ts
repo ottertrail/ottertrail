@@ -24,6 +24,13 @@ export interface Project {
   lastEventAt: Date | null;
   /** Days of events kept; null keeps them forever. The worker deletes older ones. */
   retentionDays: number | null;
+  /**
+   * For the site's own server only: sends server-side events and signs user
+   * IDs. Shown to the organization's members, never put in a page.
+   */
+  secretKey: string;
+  /** Accept a browser's user ID only with a valid signature from the site's server. */
+  requireSignedUserIds: boolean;
 }
 
 /** The fewest and most days a project may keep its events; the database checks the same. */
@@ -87,6 +94,8 @@ function baseQuery(db: Kysely<Database>) {
       "projects.created_at",
       "projects.retention_days",
       "projects.last_event_at",
+      "projects.secret_key",
+      "projects.require_signed_user_ids",
     ]);
 }
 
@@ -102,6 +111,8 @@ function toProject(row: ProjectRow): Project {
     createdAt: row.created_at,
     lastEventAt: row.last_event_at,
     retentionDays: row.retention_days,
+    secretKey: row.secret_key,
+    requireSignedUserIds: row.require_signed_user_ids,
   };
 }
 
@@ -153,7 +164,12 @@ export async function createProject(
 export async function updateProject(
   db: Kysely<Database>,
   id: string,
-  changes: { name?: string; allowedHostnames?: string[]; retentionDays?: number | null },
+  changes: {
+    name?: string;
+    allowedHostnames?: string[];
+    retentionDays?: number | null;
+    requireSignedUserIds?: boolean;
+  },
 ): Promise<Project | null> {
   const values = {
     ...(changes.name === undefined ? {} : { name: changes.name }),
@@ -161,6 +177,9 @@ export async function updateProject(
       ? {}
       : { allowed_hostnames: changes.allowedHostnames }),
     ...(changes.retentionDays === undefined ? {} : { retention_days: changes.retentionDays }),
+    ...(changes.requireSignedUserIds === undefined
+      ? {}
+      : { require_signed_user_ids: changes.requireSignedUserIds }),
   };
   if (Object.keys(values).length > 0) {
     const result = await db
@@ -218,4 +237,19 @@ export async function replacePublicKey(
     .executeTakeFirst();
   const project = result.numUpdatedRows === 0n ? null : await findProject(db, id);
   return project === null ? null : { project, oldKey: old.public_key };
+}
+
+/**
+ * Gives a project a new server key; servers with the old one can no longer
+ * send events, and user IDs signed with it no longer pass. Returns the
+ * project, or null when no project has this ID.
+ */
+export async function replaceSecretKey(db: Kysely<Database>, id: string): Promise<Project | null> {
+  const result = await db
+    .updateTable("projects")
+    // The same form as the column's default (migration 0016).
+    .set({ secret_key: sql<string>`'sk_' || replace(gen_random_uuid()::text, '-', '')` })
+    .where("id", "=", id)
+    .executeTakeFirst();
+  return result.numUpdatedRows === 0n ? null : findProject(db, id);
 }

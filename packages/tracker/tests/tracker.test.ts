@@ -397,12 +397,16 @@ describe("the signed-in user", () => {
     const tracker = createTracker({ key: "pk_test", transport, randomId });
 
     tracker.track("pageview", page);
-    tracker.setUser("user-42");
+    tracker.setUser({ userId: "user-42", signature: "a".repeat(64) });
     tracker.track("signup", page);
     tracker.setUser(undefined);
     tracker.track("pageview", page);
     await vi.advanceTimersByTimeAsync(FLUSH_DELAY_MS);
 
-    expect(sent[0]?.events.map((event) => event.userId)).toEqual([undefined, "user-42", undefined]);
+    expect(sent[0]?.events.map((event) => [event.userId, event.userSignature] as const)).toEqual([
+      [undefined, undefined],
+      ["user-42", "a".repeat(64)],
+      [undefined, undefined],
+    ]);
   });
 });

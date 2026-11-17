@@ -25,6 +25,7 @@ import { type Project, projectQuery, updateProject } from "@/lib/projects-api";
 import { DangerZone } from "./danger-zone";
 import { hostnamesFromText, installSnippet, timeAgo } from "./format";
 import { NoSuchProject } from "./no-such-project";
+import { ServerCard } from "./server-card";
 
 /** While waiting for the first event, check every few seconds. */
 const STATUS_REFRESH_MS = 10_000;
@@ -285,6 +286,7 @@ export function ProjectSettingsPage({ projectId }: { projectId: string }) {
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-6 p-6">
       <InstallCard project={project.data} />
+      <ServerCard project={project.data} />
       <SettingsCard project={project.data} />
       <DangerZone project={project.data} />
     </div>

@@ -18,6 +18,7 @@ function projectRoutes(id: string): [string, string, object?][] {
     ["PATCH", `/api/projects/${id}`, { name: "Taken over" }],
     ["DELETE", `/api/projects/${id}`, { confirmName: "Bob's site" }],
     ["POST", `/api/projects/${id}/public-key`],
+    ["POST", `/api/projects/${id}/secret-key`],
     ["GET", `/api/projects/${id}/analytics?period=7d`],
     ["GET", `/api/projects/${id}/analytics/list?report=pages&period=7d`],
     ["GET", `/api/projects/${id}/users`],

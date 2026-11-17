@@ -10,7 +10,7 @@ import { VisitorIds } from "../visitors/visitor-ids.ts";
 import { ENGAGEMENT } from "../visits/visits.ts";
 import { ENVIRONMENT_PATTERN, environmentOf, RELEASE_PATTERN } from "./environment.ts";
 import { type NewEvent, storeEvents } from "./event-store.ts";
-import { USER_ID_PATTERN } from "./identity.ts";
+import { isSignedUserId, USER_ID_PATTERN, USER_SIGNATURE_PATTERN } from "./identity.ts";
 import {
   cleanReferrer,
   correctClock,
@@ -21,6 +21,7 @@ import {
 } from "./normalize.ts";
 import { type CollectingProject, ProjectKeyCache, PUBLIC_KEY_PATTERN } from "./project-keys.ts";
 import { type RateLimit, TokenBucketLimiter } from "./rate-limiter.ts";
+import { DEFAULT_SERVER_IP_LIMIT, serverEventsRoute } from "./server-events.ts";
 
 export const MAX_EVENTS_PER_BATCH = 50;
 export const MAX_BODY_BYTES = 64 * 1024;
@@ -50,6 +51,8 @@ export interface CollectionOptions {
   now?: () => number;
   /** Shared with the project routes, which must make it forget replaced and deleted keys. */
   projectKeys?: ProjectKeyCache;
+  /** Requests per IP address to /server-events (server-events.ts). */
+  serverIpLimit?: RateLimit;
 }
 
 type PropertyValue = string | number | boolean | null;
@@ -65,6 +68,8 @@ interface IncomingEvent {
   properties?: Record<string, PropertyValue>;
   /** The site's own ID for the signed-in user, when one is. */
   userId?: string;
+  /** The site server's signature for userId (identity.ts); needed when the project requires it. */
+  userSignature?: string;
 }
 
 interface EventBatch {
@@ -85,6 +90,25 @@ interface EventBatch {
 const UUID_PATTERN =
   "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$";
 const MAX_TIMESTAMP = 8_640_000_000_000_000; // The largest date JavaScript can represent.
+
+/** An event name: 1 to 200 characters, no control characters. */
+export const EVENT_NAME_SCHEMA = {
+  type: "string",
+  minLength: 1,
+  maxLength: 200,
+  pattern: "^[^\\u0000-\\u001F\\u007F]+$",
+} as const;
+
+/** Custom details: a flat object of at most 30 values. */
+export const PROPERTIES_SCHEMA = {
+  type: "object",
+  maxProperties: 30,
+  propertyNames: { minLength: 1, maxLength: 100 },
+  additionalProperties: {
+    type: ["string", "number", "boolean", "null"],
+    maxLength: 500,
+  },
+} as const;
 
 // Fastify validates every request against this before the handler runs.
 // Unknown fields are removed rather than rejected, so an older server
@@ -112,26 +136,13 @@ const eventBatchSchema = {
         additionalProperties: false,
         properties: {
           id: { type: "string", pattern: UUID_PATTERN },
-          // 1 to 200 characters, no control characters.
-          name: {
-            type: "string",
-            minLength: 1,
-            maxLength: 200,
-            pattern: "^[^\\u0000-\\u001F\\u007F]+$",
-          },
+          name: EVENT_NAME_SCHEMA,
           occurredAt: { type: "integer", minimum: 0, maximum: MAX_TIMESTAMP },
           url: { type: "string", minLength: 1, maxLength: 8192 },
           referrer: { type: "string", maxLength: 8192 },
           userId: { type: "string", maxLength: 200, pattern: USER_ID_PATTERN },
-          properties: {
-            type: "object",
-            maxProperties: 30,
-            propertyNames: { minLength: 1, maxLength: 100 },
-            additionalProperties: {
-              type: ["string", "number", "boolean", "null"],
-              maxLength: 500,
-            },
-          },
+          userSignature: { type: "string", pattern: USER_SIGNATURE_PATTERN },
+          properties: PROPERTIES_SCHEMA,
         },
       },
     },
@@ -147,6 +158,8 @@ const storedResponseSchema = {
     duplicates: { type: "integer" },
     tooOld: { type: "integer" },
     bots: { type: "integer" },
+    // Events whose user ID lacked a valid signature, stored without it.
+    unverifiedUsers: { type: "integer" },
   },
 } as const;
 
@@ -233,7 +246,8 @@ export const collectionRoutes: FastifyPluginCallback<CollectionOptions> = (app, 
   // shows a cross-site page by default, and the tracker waits as it says.
   app.addHook("onSend", async (request, reply) => {
     const origin = request.headers.origin;
-    if (origin !== undefined) {
+    // Not for server-side events: a page must never send the secret key.
+    if (origin !== undefined && request.routeOptions.url?.endsWith("/server-events") !== true) {
       reply
         .header("access-control-allow-origin", origin)
         .header("access-control-expose-headers", "Retry-After")
@@ -337,6 +351,7 @@ export const collectionRoutes: FastifyPluginCallback<CollectionOptions> = (app, 
 
       const accepted: NewEvent[] = [];
       let tooOld = 0;
+      let unverifiedUsers = 0;
       for (const [index, event] of events.entries()) {
         const page = parsePageUrl(event.url);
         if (page === null) {
@@ -429,6 +444,18 @@ export const collectionRoutes: FastifyPluginCallback<CollectionOptions> = (app, 
           tooOld += 1;
           continue;
         }
+        // A project that requires signed user IDs keeps an unsigned or
+        // wrongly signed one out, and the event anonymous: only the site's
+        // server can name a user.
+        let { userId } = event;
+        if (
+          userId !== undefined &&
+          project.requireSignedUserIds &&
+          !isSignedUserId(project.secretKey, userId, event.userSignature)
+        ) {
+          userId = undefined;
+          unverifiedUsers += 1;
+        }
         accepted.push({
           eventId: event.id,
           name: event.name,
@@ -441,7 +468,7 @@ export const collectionRoutes: FastifyPluginCallback<CollectionOptions> = (app, 
           location,
           environment,
           ...(release === undefined ? {} : { release }),
-          ...(event.userId === undefined ? {} : { userId: event.userId }),
+          ...(userId === undefined ? {} : { userId }),
         });
       }
 
@@ -469,11 +496,27 @@ export const collectionRoutes: FastifyPluginCallback<CollectionOptions> = (app, 
         request.log.error({ err: error }, "could not store events");
         return storageUnavailable(reply);
       }
-      return reply
-        .code(202)
-        .send({ stored: result.inserted, duplicates: result.duplicates, tooOld, bots: 0 });
+      return reply.code(202).send({
+        stored: result.inserted,
+        duplicates: result.duplicates,
+        tooOld,
+        bots: 0,
+        unverifiedUsers,
+      });
     },
   );
+
+  serverEventsRoute(app, {
+    db,
+    projects,
+    projectLimiter,
+    ipLimiter: new TokenBucketLimiter(options.serverIpLimit ?? DEFAULT_SERVER_IP_LIMIT, { now }),
+    maxEvents: MAX_EVENTS_PER_BATCH,
+    maxBodyBytes: MAX_BODY_BYTES,
+    maxPropertiesBytes: MAX_PROPERTIES_BYTES,
+    schemas: { name: EVENT_NAME_SCHEMA, properties: PROPERTIES_SCHEMA },
+    now,
+  });
 
   done();
 };

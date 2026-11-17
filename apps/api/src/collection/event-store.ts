@@ -19,7 +19,8 @@ export interface NewEvent {
   name: string;
   /** Sender's clock. */
   occurredAt: Date;
-  path: string;
+  /** Page path; left out for a server-side event that names no page. */
+  path?: string;
   referrer?: string;
   utm?: Utm;
   properties?: JsonObject;

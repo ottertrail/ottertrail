@@ -42,6 +42,13 @@ export function cleanUserId(value: unknown): string | undefined {
   return USER_ID.test(id) && !UNSTORABLE.test(id) ? id : undefined;
 }
 
+/** A user ID's signature as the API takes it: 64 hex digits, trimmed, or undefined. */
+export function cleanSignature(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const signature = value.trim();
+  return /^[0-9a-fA-F]{64}$/.test(signature) ? signature : undefined;
+}
+
 /** The first `max` UTF-16 units, without splitting a surrogate pair at the end. */
 function cut(text: string, max: number): string {
   const head = text.slice(0, max);

@@ -142,17 +142,53 @@ Visitors are anonymous: a daily visitor ID, nothing more ([section 5](#5-visitor
 
 User IDs are also masked in the API's request logs (`/users/…`, `search=…`): logs are not covered by a project's retention or deletion.
 
+### Signed user IDs
+
+The public key sits in every page, so anyone can copy it and send events that claim to be any user. A project can therefore require its user IDs to be signed by the site's own server (`require_signed_user_ids`, the switch "Only accept user IDs signed by your server" in its settings). The signature is HMAC-SHA256 of the user ID, in UTF-8, keyed with the project's secret key, in hex (either case). The site's server makes it for the signed-in user and puts it in the page beside the ID (`data-user-signature`, or the second argument of `identify()`). Ottertrail makes it again and compares, in constant time (`apps/api/src/collection/identity.ts`). Without the secret key, nobody can make the signature for another user's ID.
+
+```text
+Node.js   createHmac("sha256", secretKey).update(userId).digest("hex")      (node:crypto)
+Python    hmac.new(secret_key.encode(), user_id.encode(), hashlib.sha256).hexdigest()
+PHP       hash_hmac('sha256', $userId, $secretKey)
+Ruby      OpenSSL::HMAC.hexdigest('SHA256', secret_key, user_id)
+Go        mac := hmac.New(sha256.New, []byte(secretKey)); mac.Write([]byte(userID)); hex.EncodeToString(mac.Sum(nil))
+```
+
+When signing is required, a user ID without a valid signature is left out and the event kept, anonymous: the response counts them (`unverifiedUsers`). Refusing the batch would lose the visitor's pageviews over a site's mistake. A signature that is not 64 hex digits is refused as malformed (400); the tracker leaves it out, with a warning, rather than send it. When signing is not required, user IDs are taken as sent.
+
+A page shows its own user's signature, so whoever sees that page can send events as that user: as themselves. They still cannot sign any other ID.
+
+### Server-side events
+
+Some events are better sent by the site's own server than by a browser: a payment, a cancelled subscription. A browser can neither block nor fake them, and they can carry what a page should not see. Code: `apps/api/src/collection/server-events.ts`.
+
+```text
+POST /api/server-events
+Authorization: Bearer sk_…
+Content-Type: application/json
+
+{ "v": 1, "environment": "production", "release": "api@2.3.0",
+  "events": [{ "id": "<UUID>", "name": "subscription_started", "occurredAt": 1794823396705,
+               "userId": "42", "path": "/checkout", "properties": { "plan": "team" } }] }
+```
+
+- **The secret key** (`sk_` and 32 hex characters) is the project's own, shown to its organization's members in the project settings, and replaceable there. It must stay on the server: the endpoint sends no CORS headers, so a page cannot even read its answers. It is stored as it is, not as a hash, because checking a signature means making it again; anyone who can read the database can write events directly anyway.
+- **Checked before the body is read:** a missing or malformed key gets 401, and requests per IP address are limited (bursts of 600, then 50 a second) only to bound made-up keys, each of which costs a lookup. An unknown key gets 401 after the lookup.
+- **Every event belongs to a user** (`userId`, required, the same rule as in browsers) and to no visitor: it shows in the user's activity (Users), not in web analytics, which counts what browsers send. `path` is optional; the user's page shows an event without one by its name only. `pageview` and `engagement` are the tracker's and are refused.
+- **The server's clock is trusted:** `occurredAt` more than 5 minutes ahead is refused (400), more than 24 hours old is counted as too old, as for browsers. No location, browser, or device is recorded: the request comes from the site's server, not the user's.
+- **The rest is as for browsers:** at most 50 events, 64 KB, the same name and property limits, the project's event budget (shared with its browsers), each event ID stored once, 202 only after PostgreSQL commits. The answers are those in the table below, with 401 (`unauthorized`, `unknown_key`) for a missing, malformed, or unknown key in place of 403, and without `bots` or `unverifiedUsers`: retry only on 429 and 503.
+
 ### The responses
 
-| Status | Body `error`                                                | Meaning                                                  | Should the sender retry? |
-| ------ | ----------------------------------------------------------- | -------------------------------------------------------- | ------------------------ |
-| 202    | none: `{ "stored", "duplicates", "tooOld", "bots" }`        | Saved in PostgreSQL                                      | No                       |
-| 400    | `invalid_request`                                           | The batch breaks a rule below                            | No: it will fail again   |
-| 403    | `unknown_key`, `origin_not_allowed`, `hostname_not_allowed` | Wrong key, or a site the project does not allow          | No                       |
-| 413    | `payload_too_large`                                         | Body over 64 KB                                          | No: send smaller batches |
-| 415    | `unsupported_media_type`                                    | Not `text/plain` or `application/json`                   | No                       |
-| 429    | `rate_limited`                                              | Too many requests or events                              | Yes, after `Retry-After` |
-| 503    | `storage_unavailable`                                       | PostgreSQL could not save the events; nothing was stored | Yes, after `Retry-After` |
+| Status | Body `error`                                                            | Meaning                                                  | Should the sender retry? |
+| ------ | ----------------------------------------------------------------------- | -------------------------------------------------------- | ------------------------ |
+| 202    | none: `{ "stored", "duplicates", "tooOld", "bots", "unverifiedUsers" }` | Saved in PostgreSQL                                      | No                       |
+| 400    | `invalid_request`                                                       | The batch breaks a rule below                            | No: it will fail again   |
+| 403    | `unknown_key`, `origin_not_allowed`, `hostname_not_allowed`             | Wrong key, or a site the project does not allow          | No                       |
+| 413    | `payload_too_large`                                                     | Body over 64 KB                                          | No: send smaller batches |
+| 415    | `unsupported_media_type`                                                | Not `text/plain` or `application/json`                   | No                       |
+| 429    | `rate_limited`                                                          | Too many requests or events                              | Yes, after `Retry-After` |
+| 503    | `storage_unavailable`                                                   | PostgreSQL could not save the events; nothing was stored | Yes, after `Retry-After` |
 
 Ottertrail answers 202 only after PostgreSQL has committed the events. A batch is saved completely or not at all: if one event breaks a rule, nothing from the batch is stored.
 
@@ -238,7 +274,7 @@ Behind a proxy (Cloudflare, Caddy), every request seems to come from the proxy's
 
 ## 3. The tracker
 
-`packages/tracker` builds `dist/tracker.js`, the script a site adds to its pages: about 6.3 KB, 2.8 KB gzipped.
+`packages/tracker` builds `dist/tracker.js`, the script a site adds to its pages: about 6.7 KB, 2.9 KB gzipped.
 
 ```html
 <script
@@ -249,7 +285,7 @@ Behind a proxy (Cloudflare, Caddy), every request seems to come from the proxy's
 ></script>
 ```
 
-`data-user-id="42"` names the signed-in user ([section 2](#known-users)); a single-page app calls `window.ottertrail.identify("42")` when someone signs in without a page load, and `window.ottertrail.reset()` when they sign out. Events tracked from then on carry the ID, or none. A page's time-on-page report goes with whoever viewed the page, so the sign-in page stays anonymous even when its report is sent after `identify()`. An invalid ID (empty, over 200 characters, a control character) makes the events anonymous, with a warning in the console: never the user before, who may have signed out, and never no events, as the API would refuse a whole batch for one invalid ID.
+`data-user-id="42"` names the signed-in user ([section 2](#known-users)), with `data-user-signature="…"` when the project requires signed user IDs ([Signed user IDs](#signed-user-ids)); a single-page app calls `window.ottertrail.identify("42", signature)` when someone signs in without a page load, and `window.ottertrail.reset()` when they sign out. A malformed signature is left out, with a warning. Events tracked from then on carry the ID, or none. A page's time-on-page report goes with whoever viewed the page, so the sign-in page stays anonymous even when its report is sent after `identify()`. An invalid ID (empty, over 200 characters, a control character) makes the events anonymous, with a warning in the console: never the user before, who may have signed out, and never no events, as the API would refuse a whole batch for one invalid ID.
 
 Two optional attributes name the environment and release ([section 2](#environments-and-releases)): `data-environment="staging"` on a site other than the live one, and `data-release="1.4.2"`. The tracker checks both as the API does. With an invalid environment it sends nothing and warns in the console: its events would otherwise count as production's. With an invalid release it leaves the release out, warns, and sends the events.
 

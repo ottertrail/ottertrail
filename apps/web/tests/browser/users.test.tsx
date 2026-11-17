@@ -1,7 +1,7 @@
 import { describe, expect, test } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser/context";
 
-import { type FakeApi, fakeUsers, installFakeApi, PROJECT } from "./fake-api.ts";
+import { type FakeApi, fakeUser, fakeUsers, installFakeApi, PROJECT } from "./fake-api.ts";
 import { renderApp } from "./render.tsx";
 
 const USERS = `/projects/${PROJECT.id}/users`;
@@ -128,6 +128,27 @@ describe("a user's page", () => {
     expect(lastQuery(api, "/users/ada")).toMatchObject({
       beforeId: "00000000-0000-4000-8000-000000000099",
     });
+  });
+
+  test("shows an event from the site's server without a page", async () => {
+    installFakeApi({
+      user: (userId, query) => {
+        const found = fakeUser(userId, query);
+        if (found instanceof Response) return found;
+        const [first] = found.activity;
+        if (first === undefined) return found;
+        return {
+          ...found,
+          activity: [{ ...first, name: "invoice_paid", path: "" }],
+          hasMore: false,
+        };
+      },
+    });
+    renderApp(`${USERS}/ada`);
+
+    const item = page.getByRole("listitem").filter({ hasText: "invoice_paid" });
+    await expect.element(item).toBeVisible();
+    expect(item.element().textContent).not.toContain(" on ");
   });
 
   test("says when no event has the user ID", async () => {

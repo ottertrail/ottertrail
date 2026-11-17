@@ -132,10 +132,15 @@ The session cookie is `SameSite=Lax`, which keeps it off other sites' form posts
 
 The Settings form's "Keep events" sets how long the project keeps its events: forever (the default), 6 months, 1 year, 2 years, or 5 years ([web analytics](web-analytics.md#how-long-events-are-kept), section 1). Choosing a stricter limit than the current one says, before saving, that older events will be deleted for good within a few hours. The worker deletes them.
 
+### Your server
+
+The "Your server" card holds the project's secret key, hidden until "Show" and then copyable, with an example of a server-side event, and the switch "Only accept user IDs signed by your server", with an example of signing in Node.js ([web analytics](web-analytics.md#signed-user-ids)). The switch saves at once (`PATCH /api/projects/:id` with `requireSignedUserIds`), and collection uses the new rule from the next event: the route makes the key cache forget the project.
+
 ### Replacing the key, deleting the project
 
 The Settings page ends with a "Danger zone" of two changes that cannot be undone, each behind a confirmation:
 
+- **Replace the secret key** (`POST /api/projects/:id/secret-key`), for a secret key that ended up where it should not: servers with the old one are refused at once (a request already looking the key up may still pass), and user IDs signed with it no longer count.
 - **Replace the public key** (`POST /api/projects/:id/public-key`), for a key that ended up where it should not. The project gets a new key and keeps its data; pages with the old snippet can no longer send events, so the new snippet has to go on the site right after. The Install card shows it at once.
 - **Delete the project** (`DELETE /api/projects/:id`), with every event it has received: PostgreSQL deletes its events with the project, and the worker deletes them from ClickHouse within a minute, and usually from ClickHouse's disk within 6 hours ([clickhouse.md](clickhouse.md#retention-and-deleting-a-project)). The reports cannot be opened from the moment the project is gone. The request repeats the project's name (`{ "confirmName": "Main site" }`), and the dashboard asks for it to be typed, so a mistaken ID or a stray request cannot delete a project. Afterwards the dashboard opens the project list, and the home page stops opening the deleted project.
 

@@ -50,6 +50,13 @@ export interface ProjectsTable {
   /** Days of events to keep, 30 to 3650; null keeps them forever. */
   retention_days: ColumnType<number | null, number | null | undefined, number | null>;
   /**
+   * "sk_" + 32 hex characters, for the site's own server only: it sends
+   * server-side events and signs user IDs (migration 0016).
+   */
+  secret_key: ColumnType<string, string | undefined, string>;
+  /** Accept a browser's user ID only with a valid signature from the site's server. */
+  require_signed_user_ids: ColumnType<boolean, boolean | undefined, boolean>;
+  /**
    * When the latest event copied to ClickHouse happened; null before the
    * first. The worker sets it as it copies (clickhouse/copy-events.ts).
    */
@@ -79,8 +86,11 @@ export interface EventsTable {
   occurred_at: ColumnType<Date, Date, never>;
   /** When the server received it, by the server's clock. */
   received_at: DatabaseDefault<Date>;
-  /** Page path without the query string, for example "/lessons/closures". */
-  path: string;
+  /**
+   * Page path without the query string, for example "/lessons/closures";
+   * null for a server-side event that names no page.
+   */
+  path: Nullable<string>;
   referrer: Nullable<string>;
   utm_source: Nullable<string>;
   utm_medium: Nullable<string>;
