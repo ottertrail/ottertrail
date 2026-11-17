@@ -110,6 +110,10 @@ export interface EventsTable {
   visitor_id: Nullable<string>;
   /** When the worker copied it to ClickHouse; null until then (clickhouse/copy-events.ts). */
   copied_at: ColumnType<Date | null, never, Date | null>;
+  /** Where the app runs, in lower case: "production" unless the site named another. */
+  environment: ColumnType<string, string | undefined, string>;
+  /** The app's version, as the site named it, such as "1.4.2". */
+  release: Nullable<string>;
 }
 
 /** One random secret per day. Deleted once no event can still need it. */

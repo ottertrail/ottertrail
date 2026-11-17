@@ -2,14 +2,16 @@
  * Prints a project's reports for the last few days, counted in its
  * organization's timezone:
  *
- *   vp run report                    (the first project, last 7 days)
- *   vp run report -- Playground 30   (a project by name, last 30 days)
+ *   vp run report                            (the first project, last 7 days)
+ *   vp run report -- Playground 30           (a project by name, last 30 days)
+ *   vp run report -- Playground 30 staging   (another environment than production)
  *
  * The days are today and the days before it, so the last day is partial.
  * Reports read the events the worker has copied to ClickHouse.
  */
 import { createClickHouse } from "../src/clickhouse/clickhouse.ts";
 import type { Reader } from "../src/clickhouse/query.ts";
+import { DEFAULT_ENVIRONMENT } from "../src/collection/environment.ts";
 import { loadConfig } from "../src/config.ts";
 import { createDatabase } from "../src/db/database.ts";
 import {
@@ -24,7 +26,9 @@ import {
 import { dayIn } from "../src/visitors/visitor-ids.ts";
 
 // `vp run report -- …` passes the "--" separator through; skip it.
-const [projectName, daysArgument = "7"] = process.argv.slice(2).filter((arg) => arg !== "--");
+const [projectName, daysArgument = "7", environment = DEFAULT_ENVIRONMENT] = process.argv
+  .slice(2)
+  .filter((arg) => arg !== "--");
 const dayCount = Number(daysArgument);
 if (!Number.isInteger(dayCount) || dayCount < 1 || dayCount > 366) {
   console.error(
@@ -83,10 +87,13 @@ try {
       projectId: project.id,
       timeZone,
       ownHostnames: project.allowed_hostnames,
+      environment: environment.toLowerCase(),
       ...(await localDays(db, firstDay, today, timeZone)),
     };
 
-    console.log(`\n${project.name}: ${firstDay} to ${today} (${timeZone}; today is partial)\n`);
+    console.log(
+      `\n${project.name}, ${range.environment}: ${firstDay} to ${today} (${timeZone}; today is partial)\n`,
+    );
     const total = await summary(reader, range);
     console.table({
       Visitors: total.visitors,

@@ -78,6 +78,17 @@ function InstallCard({ project }: { project: Project }) {
           )}
         </output>
         <div className="flex flex-col gap-2 border-t pt-4">
+          <h4 className="text-sm font-medium text-ink">Environment and release (optional)</h4>
+          <p className="text-sm text-muted-foreground">
+            On a test or staging site, add{" "}
+            <code className="font-mono">data-environment=&quot;staging&quot;</code> to the tag: its
+            events then never mix with the live site&apos;s, and the analytics page can show either.
+            Without it, events count as <code className="font-mono">production</code>. Add{" "}
+            <code className="font-mono">data-release=&quot;1.4.2&quot;</code>, your app&apos;s
+            version, to see which versions visitors use.
+          </p>
+        </div>
+        <div className="flex flex-col gap-2 border-t pt-4">
           <h4 className="text-sm font-medium text-ink">Public key</h4>
           <CopyableCode text={project.publicKey} copyLabel="Copy the public key" />
           <p className="text-sm text-muted-foreground">

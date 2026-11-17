@@ -93,6 +93,8 @@ describe("copying events to ClickHouse", () => {
       properties: { plan: "free", seats: 3 },
       client: { browser: "Firefox", browserVersion: "142", os: "Linux", deviceType: "desktop" },
       location: { country: "DE", region: "Bavaria", city: "Munich" },
+      environment: "staging",
+      release: "1.4.2",
     });
     await storeEvents(db(), projectId, [event]);
 
@@ -121,6 +123,8 @@ describe("copying events to ClickHouse", () => {
         region: "Bavaria",
         city: "Munich",
         visitor_id: "-4611686018427387904",
+        environment: "staging",
+        release: "1.4.2",
       },
     ]);
     expect(await notCopied()).toBe(0);

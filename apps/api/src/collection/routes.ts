@@ -8,6 +8,7 @@ import { type Locate, noLocation } from "../enrichment/geo.ts";
 import { isBot, parseUserAgent } from "../enrichment/user-agent.ts";
 import { VisitorIds } from "../visitors/visitor-ids.ts";
 import { ENGAGEMENT } from "../visits/visits.ts";
+import { ENVIRONMENT_PATTERN, environmentOf, RELEASE_PATTERN } from "./environment.ts";
 import { type NewEvent, storeEvents } from "./event-store.ts";
 import {
   cleanReferrer,
@@ -71,6 +72,10 @@ interface EventBatch {
   sentAt: number;
   /** The device has a touchscreen; only ever true when sent. */
   touch?: boolean;
+  /** Where the site runs, such as "staging"; "production" when left out. */
+  environment?: string;
+  /** The site's version, such as "1.4.2". */
+  release?: string;
   events: IncomingEvent[];
 }
 
@@ -91,6 +96,9 @@ const eventBatchSchema = {
     sentAt: { type: "integer", minimum: 0, maximum: MAX_TIMESTAMP },
     // The device has a touchscreen: tells an iPad (which says it is a Mac) from a Mac.
     touch: { type: "boolean" },
+    // The same for every event of the batch: one page runs in one environment and release.
+    environment: { type: "string", pattern: ENVIRONMENT_PATTERN },
+    release: { type: "string", maxLength: 200, pattern: RELEASE_PATTERN },
     events: {
       type: "array",
       minItems: 1,
@@ -291,6 +299,20 @@ export const collectionRoutes: FastifyPluginCallback<CollectionOptions> = (app, 
         }
       }
 
+      // Checked before the budget below: a bad request costs nothing.
+      const environment = environmentOf(request.body.environment);
+      const { release } = request.body;
+      if (release !== undefined && !isStorableText(release)) {
+        return reply
+          .code(400)
+          .send(
+            problem(
+              "invalid_request",
+              "release contains an unpaired surrogate, which cannot be stored.",
+            ),
+          );
+      }
+
       // Bots are accepted and ignored: an error would only invite retries.
       // They are checked before the budget, so they cannot use it up.
       const userAgent = request.headers["user-agent"];
@@ -403,6 +425,8 @@ export const collectionRoutes: FastifyPluginCallback<CollectionOptions> = (app, 
           ...(event.properties === undefined ? {} : { properties: event.properties }),
           client,
           location,
+          environment,
+          ...(release === undefined ? {} : { release }),
         });
       }
 

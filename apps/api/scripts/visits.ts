@@ -2,20 +2,24 @@
  * Prints a project's recent visits, worked out from its events, so you can
  * see the visit rules at work:
  *
- *   vp run visits                    (the first project, last 24 hours)
- *   vp run visits -- Playground 6    (a project by name, last 6 hours)
+ *   vp run visits                            (the first project, last 24 hours)
+ *   vp run visits -- Playground 6            (a project by name, last 6 hours)
+ *   vp run visits -- Playground 6 staging    (another environment than production)
  *
  * Times are shown in the timezone of the project's organization. Visits are
  * worked out from the events the worker has copied to ClickHouse.
  */
 import { createClickHouse } from "../src/clickhouse/clickhouse.ts";
 import type { Reader } from "../src/clickhouse/query.ts";
+import { DEFAULT_ENVIRONMENT } from "../src/collection/environment.ts";
 import { loadConfig } from "../src/config.ts";
 import { createDatabase } from "../src/db/database.ts";
 import { findVisits } from "../src/visits/visits.ts";
 
 // `vp run visits -- …` passes the "--" separator through; skip it.
-const [projectName, hoursArgument = "24"] = process.argv.slice(2).filter((arg) => arg !== "--");
+const [projectName, hoursArgument = "24", environment = DEFAULT_ENVIRONMENT] = process.argv
+  .slice(2)
+  .filter((arg) => arg !== "--");
 const hours = Number(hoursArgument);
 if (!Number.isFinite(hours) || hours <= 0) {
   console.error(`The number of hours must be positive, received "${hoursArgument}".`);
@@ -53,9 +57,14 @@ try {
     });
     const to = new Date();
     const from = new Date(to.getTime() - hours * 60 * 60 * 1000);
-    const visits = await findVisits(reader, { projectId: project.id, from, to });
+    const visits = await findVisits(reader, {
+      projectId: project.id,
+      environment: environment.toLowerCase(),
+      from,
+      to,
+    });
     console.log(
-      `${project.name}: ${visits.length} visits started in the last ${hours} hours (${project.time_zone})`,
+      `${project.name}, ${environment.toLowerCase()}: ${visits.length} visits started in the last ${hours} hours (${project.time_zone})`,
     );
     console.table(
       visits.map((visit) => ({

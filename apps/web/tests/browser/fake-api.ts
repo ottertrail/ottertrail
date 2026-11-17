@@ -102,6 +102,8 @@ const row = (value: string | null, visitors: number, visits: number): BreakdownR
 export function analyticsFixture(overrides: Partial<Analytics> = {}): Analytics {
   return {
     timeZone: "Asia/Singapore",
+    environment: "production",
+    environments: ["production"],
     firstDay: "2026-11-10",
     lastDay: "2026-11-16",
     summary: {
@@ -129,6 +131,7 @@ export function analyticsFixture(overrides: Partial<Analytics> = {}): Analytics 
       deviceType: [row("desktop", 269, 290), row("mobile", 242, 250)],
       browser: [row("Firefox", 130, 140)],
       os: [row("macOS", 200, 210)],
+      release: [row("1.4.2", 500, 540), row(null, 265, 284)],
     },
     customEvents: [{ name: "signup", events: 140, visitors: 127 }],
     // The same week before, up to 15:00 on its last day (07:00 UTC).
@@ -178,6 +181,7 @@ export function emptyAnalytics(): Analytics {
       deviceType: [],
       browser: [],
       os: [],
+      release: [],
     },
     customEvents: [],
     previous: { ...fixture.previous, summary: empty },

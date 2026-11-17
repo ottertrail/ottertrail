@@ -5,6 +5,7 @@ import type { Kysely } from "kysely";
 import type { Auth } from "../auth/auth.ts";
 import { requireSession } from "../auth/routes.ts";
 import type { ClickHouseClient } from "../clickhouse/clickhouse.ts";
+import { ENVIRONMENT_PATTERN, environmentOf } from "../collection/environment.ts";
 import type { Database } from "../db/schema.ts";
 import { type ProjectAccess, requireProjectAccess } from "../organizations/access.ts";
 import { dayIn } from "../visitors/visitor-ids.ts";
@@ -105,12 +106,15 @@ interface RangeQuery {
   from?: string;
   to?: string;
   period?: Period;
+  /** The environment to count, any case; "production" when left out. */
+  environment?: string;
 }
 
 const RANGE_PROPERTIES = {
   from: { type: "string", pattern: DAY_PATTERN },
   to: { type: "string", pattern: DAY_PATTERN },
   period: { type: "string", enum: PERIODS },
+  environment: { type: "string", pattern: ENVIRONMENT_PATTERN },
 };
 
 const PARAMS_SCHEMA = {
@@ -164,12 +168,13 @@ function accessOf(request: { projectAccess: ProjectAccess | null }): ProjectAcce
 
 /**
  * GET /api/projects/:id/analytics?from=YYYY-MM-DD&to=YYYY-MM-DD[&limit=10]
- * GET /api/projects/:id/analytics?period=7d[&limit=10][&country=DE&page=/pricing …]
+ * GET /api/projects/:id/analytics?period=7d[&environment=staging][&limit=10][&country=DE&page=/pricing …]
  *
  * Every report of the analytics page for whole days in the timezone of the
- * project's organization, from and to included (see analytics.ts). A period
- * (today, 7d, 30d, 90d, 12m) ends today in that timezone. Filters
- * (FILTER_NAMES) narrow every report to the visits that match all of them.
+ * project's organization, from and to included (see analytics.ts), in one
+ * environment ("production" unless named). A period (today, 7d, 30d, 90d,
+ * 12m) ends today in that timezone. Filters (FILTER_NAMES) narrow every
+ * report to the visits that match all of them.
  * Like every project route, both run requireProjectAccess first.
  */
 export const reportRoutes: FastifyPluginCallback<{
@@ -242,6 +247,7 @@ export const reportRoutes: FastifyPluginCallback<{
       const { limit } = request.query;
       return projectAnalytics(db, clickhouse, {
         projectId: request.params.id,
+        environment: environmentOf(request.query.environment),
         firstDay: days.from,
         lastDay: days.to,
         timeZone,
@@ -305,6 +311,7 @@ export const reportRoutes: FastifyPluginCallback<{
       const { report, search, offset = 0, limit = LIST_PAGE_SIZE } = request.query;
       return projectList(db, clickhouse, {
         projectId: request.params.id,
+        environment: environmentOf(request.query.environment),
         firstDay: days.from,
         lastDay: days.to,
         timeZone,

@@ -70,4 +70,16 @@ export const CLICKHOUSE_MIGRATIONS: ClickHouseMigration[] = [
        MODIFY SETTING fsync_after_insert = 1, fsync_part_directory = 1`,
     ],
   },
+  {
+    /**
+     * Where the app runs and which version of it, as in PostgreSQL
+     * (migration 0014). Rows from before are "production" with no release.
+     */
+    name: "0003_add_events_environment_and_release",
+    statements: (database) => [
+      `ALTER TABLE ${database}.events
+       ADD COLUMN IF NOT EXISTS environment LowCardinality(String) DEFAULT 'production',
+       ADD COLUMN IF NOT EXISTS release Nullable(String)`,
+    ],
+  },
 ];

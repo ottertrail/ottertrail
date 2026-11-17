@@ -72,7 +72,11 @@ const EARLY = "201";
 const INSIDE = "202";
 const LATE = "203";
 
-const DAY = { from: new Date("2026-11-16T00:00:00Z"), to: new Date("2026-11-17T00:00:00Z") };
+const DAY = {
+  environment: "production",
+  from: new Date("2026-11-16T00:00:00Z"),
+  to: new Date("2026-11-17T00:00:00Z"),
+};
 const minutes = (n: number) => n * 60 * 1000;
 
 describe("findVisits", () => {
@@ -252,6 +256,7 @@ describe("findVisits", () => {
       ]);
       const visits = await findVisits(await reader(), {
         projectId,
+        environment: "production",
         from: new Date("2026-11-16T00:00:00Z"),
         to: new Date("2026-11-18T00:00:00Z"),
       });
@@ -274,6 +279,7 @@ describe("findVisits", () => {
       ]);
       const visits = await findVisits(await reader(), {
         projectId,
+        environment: "production",
         from: new Date("2026-11-16T10:00:00Z"),
         to: new Date("2026-11-16T12:00:00Z"),
       });
@@ -297,7 +303,7 @@ describe("findVisits", () => {
         engagement(EARLY, "09:55", "/", 60_000),
         event(EARLY, "10:10", "/docs"),
       ]);
-      const range = { projectId, to: new Date("2026-11-16T12:00:00Z") };
+      const range = { projectId, environment: "production", to: new Date("2026-11-16T12:00:00Z") };
       // The visit started at 09:10, before the range: not counted.
       expect(
         await findVisits(await reader(), { ...range, from: new Date("2026-11-16T10:00:00Z") }),
@@ -337,6 +343,30 @@ describe("findVisits", () => {
       region: "Bavaria",
       city: "Munich",
     });
+  });
+
+  test("counts one environment at a time, even for the same visitor ID", async () => {
+    const projectId = await createProject();
+    // A developer opens the live site, then the staging site, then the live
+    // one again: one visitor ID on both, the same day.
+    await storeEvents(db(), projectId, [
+      event("1", "10:00", "/", { release: "1.4.2" }),
+      event("1", "10:05", "/new-feature", { environment: "staging", release: "1.5.0-rc.1" }),
+      event("1", "10:10", "/docs", { release: "1.4.2" }),
+    ]);
+
+    const live = await findVisits(await reader(), { projectId, ...DAY });
+    expect(live).toMatchObject([
+      { pageviews: 2, entryPath: "/", exitPath: "/docs", release: "1.4.2" },
+    ]);
+    const staging = await findVisits(await reader(), {
+      projectId,
+      ...DAY,
+      environment: "staging",
+    });
+    expect(staging).toMatchObject([
+      { pageviews: 1, entryPath: "/new-feature", release: "1.5.0-rc.1" },
+    ]);
   });
 
   test("keeps what the first event lacks, even when a later event has it", async () => {

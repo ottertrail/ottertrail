@@ -29,6 +29,10 @@ export interface NewEvent {
   location?: Location;
   /** Daily cookieless visitor ID (see visitors/visitor-ids.ts). */
   visitorId?: string;
+  /** Where the app runs, in lower case; "production" when left out (collection/environment.ts). */
+  environment?: string;
+  /** The app's version, such as "1.4.2". */
+  release?: string;
 }
 
 export interface StoreResult {
@@ -79,6 +83,8 @@ export async function storeEvents(
         region: event.location?.region,
         city: event.location?.city,
         visitor_id: event.visitorId,
+        environment: event.environment,
+        release: event.release,
       })),
     )
     .onConflict((conflict) => conflict.columns(["project_id", "event_id"]).doNothing())

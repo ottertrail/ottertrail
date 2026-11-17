@@ -137,6 +137,7 @@ try {
       projectId: project.id,
       timeZone: "UTC",
       ownHostnames: ["example.com"],
+      environment: "production",
       ...(await localDays(bench, from, LAST_DAY, "UTC")),
     };
     for (const [name, report] of Object.entries(reports)) {
@@ -167,6 +168,7 @@ try {
       projectId: project.id,
       timeZone: "UTC",
       ownHostnames: ["example.com"],
+      environment: "production",
       ...(await localDays(bench, from, LAST_DAY, "UTC")),
     };
     const separately = await measure(async () => {

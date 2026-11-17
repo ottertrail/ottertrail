@@ -13,6 +13,7 @@ import * as addOrganizations from "./0010_add_organizations.ts";
 import * as addEventsCopiedAt from "./0011_add_events_copied_at.ts";
 import * as addProjectsLastEventAt from "./0012_add_projects_last_event_at.ts";
 import * as addProjectDeletions from "./0013_add_project_deletions.ts";
+import * as addEventsEnvironmentAndRelease from "./0014_add_events_environment_and_release.ts";
 
 /**
  * Every migration, in order. Kysely runs them by name, alphabetically, and
@@ -35,4 +36,5 @@ export const migrations: Record<string, Migration> = {
   "0011_add_events_copied_at": addEventsCopiedAt,
   "0012_add_projects_last_event_at": addProjectsLastEventAt,
   "0013_add_project_deletions": addProjectDeletions,
+  "0014_add_events_environment_and_release": addEventsEnvironmentAndRelease,
 };

@@ -126,6 +126,7 @@ describe("GET /api/projects/:id/analytics", () => {
       projectId,
       timeZone: TIME_ZONE,
       ownHostnames: ["example.com"],
+      environment: "production",
       ...(await localDays(db, "2026-11-16", "2026-11-17", TIME_ZONE)),
     };
     expect(body).toMatchObject({
@@ -320,6 +321,7 @@ describe("GET /api/projects/:id/analytics with filters", () => {
       projectId,
       timeZone: TIME_ZONE,
       ownHostnames: ["example.com"],
+      environment: "production",
       filters: [{ name: "country" as const, value: "DE" }],
       ...(await localDays(db, "2026-11-16", "2026-11-17", TIME_ZONE)),
     };
@@ -337,6 +339,7 @@ describe("GET /api/projects/:id/analytics with filters", () => {
       projectId,
       timeZone: TIME_ZONE,
       ownHostnames: ["example.com"],
+      environment: "production",
       filters: [
         { name: "page" as const, value: "/" },
         { name: "country" as const, value: "DE" },
@@ -486,6 +489,7 @@ describe("comparison with the previous period", () => {
         projectId: project?.id ?? "",
         timeZone: TIME_ZONE,
         ownHostnames: ["example.com"],
+        environment: "production",
         ...(await localDays(dashboard.db, "2026-11-16", "2026-11-16", TIME_ZONE)),
         until: new Date("2026-11-16T02:03:00Z"),
       };
@@ -641,6 +645,114 @@ describe("GET /api/projects/:id/analytics/list", () => {
     [{ report: "pages", sort: "name" }, "an unknown parameter"],
   ])("refuses %j (%s)", async (query) => {
     expect((await list(query)).statusCode).toBe(400);
+  });
+});
+
+/** Breakdown rows by value, "(unknown)" for none. */
+const byValue = <T extends { value: string | null }>(rows: T[]) =>
+  Object.fromEntries(rows.map((row) => [row.value ?? "(unknown)", row]));
+
+describe("environments and releases", () => {
+  let dashboard: Awaited<ReturnType<typeof signedInDashboard>>;
+  let projectId = "";
+
+  beforeAll(async () => {
+    dashboard = await signedInDashboard({
+      timeZone: TIME_ZONE,
+      now: () => new Date("2026-11-17T17:00:00Z"),
+    });
+    const project = await insertProject(dashboard.db, {
+      organization_id: dashboard.organizationId,
+      name: "Environments",
+      allowed_hostnames: ["example.com"],
+    });
+    projectId = project.id;
+    await dashboard.store(projectId, [
+      pv("1", "2026-11-16T02:00:00Z", "/", { release: "1.4.2" }),
+      pv("1", "2026-11-16T02:05:00Z", "/pricing", { release: "1.4.2" }),
+      pv("2", "2026-11-16T03:00:00Z", "/", { release: "1.5.0" }),
+      pv("3", "2026-11-16T04:00:00Z", "/"),
+      // The same visitor on the staging site: never part of production's numbers.
+      pv("1", "2026-11-16T02:03:00Z", "/beta", { environment: "staging", release: "1.6.0-rc.1" }),
+    ]);
+  });
+
+  afterAll(async () => {
+    await dashboard?.close();
+  });
+
+  async function analytics(query: string) {
+    return dashboard.app.inject({
+      url: `/api/projects/${projectId}/analytics?from=2026-11-16&to=2026-11-17&${query}`,
+      headers: { cookie: dashboard.cookie },
+    });
+  }
+
+  test("count production unless asked, and list the environments to switch to", async () => {
+    const body = (await analytics("")).json();
+    expect(body).toMatchObject({
+      environment: "production",
+      environments: ["production", "staging"],
+      summary: { visits: 3, pageviews: 4, visitors: 3 },
+    });
+    expect(body.pages.map((row: { path: string }) => row.path)).not.toContain("/beta");
+    expect(byValue(body.breakdowns.release)).toMatchObject({
+      "1.4.2": { visits: 1 },
+      "1.5.0": { visits: 1 },
+      "(unknown)": { visits: 1 },
+    });
+  });
+
+  test("count another environment, named in any case", async () => {
+    const body = (await analytics("environment=Staging")).json();
+    expect(body).toMatchObject({
+      environment: "staging",
+      summary: { visits: 1, pageviews: 1 },
+      pages: [{ path: "/beta" }],
+      breakdowns: { release: [{ value: "1.6.0-rc.1", visits: 1 }] },
+    });
+  });
+
+  test("an environment with nothing in the range shows zeros, and stays in the list", async () => {
+    const body = (await analytics("environment=preview")).json();
+    expect(body.environment).toBe("preview");
+    expect(body.environments).toEqual(["production", "staging", "preview"]);
+    expect(body.summary).toMatchObject({ visits: 0, pageviews: 0 });
+  });
+
+  test("filter by release, and list releases in full", async () => {
+    const filtered = (await analytics("release=1.4.2")).json();
+    expect(filtered.summary).toMatchObject({ visits: 1, pageviews: 2 });
+
+    const list = await dashboard.app.inject({
+      url: `/api/projects/${projectId}/analytics/list?report=release&from=2026-11-16&to=2026-11-17&environment=staging`,
+      headers: { cookie: dashboard.cookie },
+    });
+    expect(list.json().rows).toEqual([
+      { value: "1.6.0-rc.1", visitors: 1, visits: 1, bounceRate: 1 },
+    ]);
+  });
+
+  test("always list production, so the page can switch back to it", async () => {
+    const project = await insertProject(dashboard.db, {
+      organization_id: dashboard.organizationId,
+      name: "Not live yet",
+      allowed_hostnames: ["example.com"],
+    });
+    await dashboard.store(project.id, [
+      pv("9", "2026-11-16T02:00:00Z", "/", { environment: "staging" }),
+    ]);
+    for (const environment of ["production", "staging"]) {
+      const response = await dashboard.app.inject({
+        url: `/api/projects/${project.id}/analytics?from=2026-11-16&to=2026-11-17&environment=${environment}`,
+        headers: { cookie: dashboard.cookie },
+      });
+      expect(response.json().environments).toEqual(["staging", "production"]);
+    }
+  });
+
+  test.each(["my staging", "-staging", "s".repeat(65)])("refuses environment %j", async (name) => {
+    expect((await analytics(`environment=${encodeURIComponent(name)}`)).statusCode).toBe(400);
   });
 });
 

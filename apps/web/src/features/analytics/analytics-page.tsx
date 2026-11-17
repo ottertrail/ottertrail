@@ -38,6 +38,7 @@ import {
   type Breakdown,
   analyticsQuery,
   type DayPoint,
+  DEFAULT_ENVIRONMENT,
   type Filters,
   isPeriod,
   LIST_PREVIEW_ROWS,
@@ -492,6 +493,24 @@ function Reports({
         />
         <ListCard
           {...card}
+          title="Releases"
+          tabs={[
+            {
+              // Only "Unknown" means the site names no release: say how to.
+              ...visitsTab(
+                "release",
+                "Releases",
+                "Release",
+                "release",
+                breakdowns.release.every((row) => row.value === null) ? [] : rows("release"),
+              ),
+              empty:
+                'No visit in this period names a release. Add data-release="1.4.2" (your app\'s version) to the tracking snippet to see which versions visitors use.',
+            },
+          ]}
+        />
+        <ListCard
+          {...card}
           title="Custom events"
           tabs={[
             {
@@ -573,10 +592,13 @@ function NoData({
   projectId,
   project,
   search,
+  otherEnvironments,
 }: {
   projectId: string;
   project: Project | undefined;
   search: PageSearch;
+  /** Other environments have events, which the environment picker can show. */
+  otherEnvironments: boolean;
 }) {
   const neverReceived = project?.lastEventAt === null;
   const isYear = "period" in search.range && search.range.period === "12m";
@@ -615,7 +637,11 @@ function NoData({
         <EmptyDescription>
           {neverReceived
             ? "Install the tracking snippet on your site. Reports appear here as soon as the first pageview arrives."
-            : "No pageviews or events arrived in this period. Choose a longer one to see earlier data."}
+            : `No pageviews or events arrived${
+                search.environment === DEFAULT_ENVIRONMENT ? "" : ` in ${search.environment}`
+              } in this period. Choose a longer one to see earlier data${
+                otherEnvironments ? ", or another environment" : ""
+              }.`}
         </EmptyDescription>
       </EmptyHeader>
       {neverReceived && (
@@ -631,7 +657,7 @@ function NoData({
             variant="outline"
             to="/projects/$projectId/web-analytics"
             params={{ projectId }}
-            search={searchOf({ range: { period: "12m" }, filters: {} })}
+            search={searchOf({ ...search, range: { period: "12m" }, filters: {} })}
           >
             Show the last 12 months
           </ButtonLink>
@@ -659,22 +685,24 @@ export function AnalyticsPage({
   projectId,
   range,
   filters,
+  environment = DEFAULT_ENVIRONMENT,
 }: {
   projectId: string;
   range: PageRange;
   filters: Filters;
+  environment?: string;
 }) {
   const navigate = useNavigate();
   const project = useQuery(projectQuery(projectId));
-  const analytics = useQuery(analyticsQuery(projectId, range, filters));
-  const search: PageSearch = { range, filters };
+  const analytics = useQuery(analyticsQuery(projectId, range, filters, environment));
+  const search: PageSearch = { range, filters, environment };
   const [choosingDays, setChoosingDays] = React.useState(false);
-  const show = (next: PageRange) =>
+  const show = (next: Partial<PageSearch>) =>
     void navigate({
       to: "/projects/$projectId/web-analytics",
       params: { projectId },
-      // New days keep the filters.
-      search: searchOf({ range: next, filters }),
+      // New days, or another environment, keep everything else.
+      search: searchOf({ ...search, ...next }),
     });
 
   if (analytics.error instanceof ApiError && analytics.error.status === 404) {
@@ -692,7 +720,7 @@ export function AnalyticsPage({
           value={"period" in range ? range.period : CUSTOM}
           onValueChange={(value) => {
             if (isPeriod(value)) {
-              show({ period: value });
+              show({ range: { period: value } });
             } else if (value === CUSTOM) {
               setChoosingDays(true);
             }
@@ -709,6 +737,31 @@ export function AnalyticsPage({
             ))}
           </SelectContent>
         </Select>
+        {/* Only once there is a choice (most projects have production alone),
+            and always while another is shown, so there is a way back. */}
+        {data !== undefined &&
+          (data.environments.length > 1 || environment !== DEFAULT_ENVIRONMENT) && (
+            <Select
+              items={data.environments.map((name) => ({ value: name, label: name }))}
+              value={environment}
+              onValueChange={(value) => {
+                if (typeof value === "string") {
+                  show({ environment: value });
+                }
+              }}
+            >
+              <SelectTrigger aria-label="Environment" className="w-40">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {data.environments.map((name) => (
+                  <SelectItem key={name} value={name}>
+                    {name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
         {data !== undefined && (
           <p className="text-sm text-ink-subtle">
             {formatDayRange(data.firstDay, data.lastDay)} · {data.timeZone}
@@ -725,7 +778,7 @@ export function AnalyticsPage({
           timeZone={data?.timeZone}
           onApply={(from, to) => {
             setChoosingDays(false);
-            show({ from, to });
+            show({ range: { from, to } });
           }}
         />
       )}
@@ -763,7 +816,12 @@ export function AnalyticsPage({
           {hasData(data) ? (
             <Reports analytics={data} projectId={projectId} search={search} />
           ) : (
-            <NoData projectId={projectId} project={project.data} search={search} />
+            <NoData
+              projectId={projectId}
+              project={project.data}
+              search={search}
+              otherEnvironments={data.environments.some((name) => name !== environment)}
+            />
           )}
         </div>
       )}

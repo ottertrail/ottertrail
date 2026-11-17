@@ -47,6 +47,8 @@ function toClickHouse(event: Selectable<EventsTable>) {
     city: event.city,
     // A bigint arrives as a string; ClickHouse reads it as Int64.
     visitor_id: event.visitor_id,
+    environment: event.environment,
+    release: event.release,
   };
 }
 

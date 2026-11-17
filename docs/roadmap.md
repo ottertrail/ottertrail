@@ -1,6 +1,6 @@
 # Roadmap
 
-Status: stage 1 (web analytics) is built and being checked; see the step table in [web-analytics.md](web-analytics.md). Of stage 0, organizations with one access check, projects, public keys, the browser tracker, durable ingestion into PostgreSQL, and a deployment template ([deployment.md](deployment.md), tested locally) exist. Events are stored in ClickHouse, where reports read them, with retention, deletion, and backups ([clickhouse.md](clickhouse.md)). Open sign-up, invitations, environments, releases, identities, and a deployment in production do not yet. Later stages are not started.
+Status: stage 1 (web analytics) is built and being checked; see the step table in [web-analytics.md](web-analytics.md). Of stage 0, organizations with one access check, projects, public keys, the browser tracker, durable ingestion into PostgreSQL, and a deployment template ([deployment.md](deployment.md), tested locally) exist. Events are stored in ClickHouse, where reports read them, with retention, deletion, and backups ([clickhouse.md](clickhouse.md)). Environments and releases exist for analytics events: a site names them in its snippet, and reports show one environment at a time ([web analytics](web-analytics.md#environments-and-releases)). Open sign-up, invitations, identities, and a deployment in production do not yet. Later stages are not started.
 
 ## How stages are chosen
 

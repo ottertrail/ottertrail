@@ -15,6 +15,11 @@ import { ENGAGEMENT, PAGEVIEW, type VisitsQueryOptions, visitsSql } from "../vis
  */
 export interface ReportRange {
   projectId: string;
+  /**
+   * The one environment reports count ("production", "staging" …): the
+   * events of others never mix in (collection/environment.ts).
+   */
+  environment: string;
   from: Date;
   to: Date;
   /** IANA timezone that days are counted in, the timezone of the project's organization. */
@@ -254,6 +259,7 @@ function activity(range: ReportRange, visits: string, params: QueryParams): stri
     FROM events AS e FINAL
     ${filtered ? `INNER JOIN (${visits}) AS counted ON e.visitor_id = counted.visitor_id` : ""}
     WHERE e.project_id = ${params.add(range.projectId, "UUID")}
+      AND e.environment = ${params.add(range.environment, "String")}
       AND e.occurred_at >= ${params.time(range.from)}
       AND e.occurred_at < ${params.time(rangeEnd(range))}
       AND e.visitor_id IS NOT NULL
@@ -391,6 +397,7 @@ export async function topPages(
        FROM events AS e FINAL
        ${filtered ? `INNER JOIN (${visits}) AS counted ON e.visitor_id = counted.visitor_id` : ""}
        WHERE e.project_id = ${params.add(range.projectId, "UUID")}
+         AND e.environment = ${params.add(range.environment, "String")}
          AND e.occurred_at >= ${params.time(range.from)}
          AND e.occurred_at < ${params.time(rangeEnd(range))}
          AND e.name = '${ENGAGEMENT}'
@@ -429,6 +436,7 @@ export const VISIT_DIMENSION_NAMES = [
   "deviceType",
   "browser",
   "os",
+  "release",
 ] as const;
 
 export type VisitDimension = (typeof VISIT_DIMENSION_NAMES)[number];
@@ -457,6 +465,7 @@ const VISIT_DIMENSIONS: Record<Exclude<VisitDimension, "source">, string> = {
   deviceType: "device_type",
   browser: "browser",
   os: "os",
+  release: "release",
 };
 
 /**
@@ -525,6 +534,7 @@ function filterCondition(
         SELECT visitor_id, occurred_at
         FROM events FINAL
         WHERE project_id = ${params.add(range.projectId, "UUID")}
+          AND environment = ${params.add(range.environment, "String")}
           AND occurred_at >= ${params.time(range.from)}
           AND occurred_at < ${params.time(rangeEnd(range))}
           AND name = '${PAGEVIEW}'

@@ -3,7 +3,8 @@ import { randomUUID } from "node:crypto";
 import type { Kysely } from "kysely";
 
 import type { ClickHouseClient } from "../clickhouse/clickhouse.ts";
-import { QueryParams, type Reader, runCommand } from "../clickhouse/query.ts";
+import { QueryParams, queryRows, type Reader, runCommand } from "../clickhouse/query.ts";
+import { DEFAULT_ENVIRONMENT } from "../collection/environment.ts";
 import type { Database } from "../db/schema.ts";
 import { visitsSql } from "../visits/visits.ts";
 import {
@@ -39,6 +40,7 @@ export const ANALYTICS_BREAKDOWNS = [
   "deviceType",
   "browser",
   "os",
+  "release",
 ] as const satisfies readonly VisitDimension[];
 
 export type AnalyticsBreakdown = (typeof ANALYTICS_BREAKDOWNS)[number];
@@ -56,6 +58,13 @@ export interface PreviousPeriod extends Pick<PreviousDays, "firstDay" | "lastDay
 export interface Analytics {
   /** The timezone of the project's organization, which the days are counted in. */
   timeZone: string;
+  /** The environment every report counts, such as "production". */
+  environment: string;
+  /**
+   * The environments with events in the range, most events first, and the
+   * one shown even without: what the page can switch to.
+   */
+  environments: string[];
   /** First and last day of the range, "YYYY-MM-DD", both included. */
   firstDay: string;
   lastDay: string;
@@ -76,13 +85,14 @@ async function dayRange(
   db: Kysely<Database>,
   options: {
     projectId: string;
+    environment: string;
     firstDay: string;
     lastDay: string;
     timeZone: string;
     filters: readonly ReportFilter[];
   },
 ): Promise<ReportRange> {
-  const { projectId, firstDay, lastDay, timeZone, filters } = options;
+  const { projectId, environment, firstDay, lastDay, timeZone, filters } = options;
   const [days, project] = await Promise.all([
     localDays(db, firstDay, lastDay, timeZone),
     db
@@ -93,11 +103,36 @@ async function dayRange(
   ]);
   return {
     projectId,
+    environment,
     timeZone,
     filters,
     ownHostnames: project?.allowed_hostnames ?? [],
     ...days,
   };
+}
+
+/**
+ * The environments with events in the range, most events first, then the
+ * range's own environment and production, even without events: the page
+ * can always switch back to the one it shows by default.
+ */
+async function environmentsIn(reader: Reader, range: ReportRange): Promise<string[]> {
+  const params = new QueryParams();
+  const rows = await queryRows<{ environment: string }>(
+    reader,
+    `SELECT environment FROM events
+     WHERE project_id = ${params.add(range.projectId, "UUID")}
+       AND occurred_at >= ${params.time(range.from)}
+       AND occurred_at < ${params.time(range.to)}
+     GROUP BY environment
+     ORDER BY count() DESC, environment`,
+    params,
+  );
+  const names = rows.map((row) => row.environment);
+  for (const name of [range.environment, DEFAULT_ENVIRONMENT]) {
+    if (!names.includes(name)) names.push(name);
+  }
+  return names;
 }
 
 /** The temporary table the analytics page works out visits into, once per request. */
@@ -125,6 +160,8 @@ export async function projectAnalytics(
   clickhouse: ClickHouseClient,
   options: {
     projectId: string;
+    /** The environment to count; "production" when left out. */
+    environment?: string;
     firstDay: string;
     lastDay: string;
     timeZone: string;
@@ -136,6 +173,7 @@ export async function projectAnalytics(
 ): Promise<Analytics> {
   const {
     projectId,
+    environment = DEFAULT_ENVIRONMENT,
     firstDay,
     lastDay,
     timeZone,
@@ -144,7 +182,7 @@ export async function projectAnalytics(
     now = new Date(),
   } = options;
   const [range, previous] = await Promise.all([
-    dayRange(db, { projectId, firstDay, lastDay, timeZone, filters }),
+    dayRange(db, { projectId, environment, firstDay, lastDay, timeZone, filters }),
     previousDays(db, firstDay, lastDay, timeZone, now),
   ]);
   const reader: Reader = { client: clickhouse, sessionId: randomUUID() };
@@ -172,6 +210,7 @@ export async function projectAnalytics(
       deviceType: await by("deviceType"),
       browser: await by("browser"),
       os: await by("os"),
+      release: await by("release"),
     };
     // The period before: its own visits, so only the summary is compared.
     const previousSummary = await summary(reader, {
@@ -182,6 +221,8 @@ export async function projectAnalytics(
     });
     return {
       timeZone,
+      environment,
+      environments: await environmentsIn(reader, range),
       firstDay,
       lastDay,
       previous: {
@@ -215,6 +256,8 @@ export async function projectList(
   clickhouse: ClickHouseClient,
   options: {
     projectId: string;
+    /** The environment to count; "production" when left out. */
+    environment?: string;
     firstDay: string;
     lastDay: string;
     timeZone: string;
@@ -225,8 +268,24 @@ export async function projectList(
     search?: string;
   },
 ): Promise<{ rows: PageRow[] | BreakdownRow[] | CustomEventRow[]; hasMore: boolean }> {
-  const { projectId, firstDay, lastDay, timeZone, filters = [], report, limit } = options;
-  const range = await dayRange(db, { projectId, firstDay, lastDay, timeZone, filters });
+  const {
+    projectId,
+    environment = DEFAULT_ENVIRONMENT,
+    firstDay,
+    lastDay,
+    timeZone,
+    filters = [],
+    report,
+    limit,
+  } = options;
+  const range = await dayRange(db, {
+    projectId,
+    environment,
+    firstDay,
+    lastDay,
+    timeZone,
+    filters,
+  });
   const reader: Reader = { client: clickhouse };
   const page = { offset: options.offset, search: options.search };
   const rows =

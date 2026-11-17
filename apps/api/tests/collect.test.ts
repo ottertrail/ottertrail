@@ -560,6 +560,51 @@ describe("POST /api/events", () => {
     });
   });
 
+  describe("environment and release", () => {
+    test("stores the batch's environment, in lower case, and release on every event", async () => {
+      const project = await createProject();
+      const response = await send(
+        batch(project.public_key, [pageview(), pageview({ name: "signup" })], {
+          environment: "Staging",
+          release: "web@1.4.2+3f2a9c1",
+        }),
+      );
+      expect(response.statusCode).toBe(202);
+      const stored = await storedEvents(project.id);
+      expect(stored.map(({ environment, release }) => ({ environment, release }))).toEqual([
+        { environment: "staging", release: "web@1.4.2+3f2a9c1" },
+        { environment: "staging", release: "web@1.4.2+3f2a9c1" },
+      ]);
+    });
+
+    test("without them, events are production's, with no release", async () => {
+      const project = await createProject();
+      await send(batch(project.public_key));
+      const [event] = await storedEvents(project.id);
+      expect(event).toMatchObject({ environment: "production", release: null });
+    });
+
+    test.each([
+      [{ environment: "" }, "an empty environment"],
+      [{ environment: "my staging" }, "a space in the environment"],
+      [{ environment: "-staging" }, "an environment starting with a dash"],
+      [{ environment: "s".repeat(65) }, "an environment over 64 characters"],
+      [{ release: "" }, "an empty release"],
+      [{ release: "1.4 beta" }, "a space in the release"],
+      [{ release: "1.4\u0000" }, "a control character in the release"],
+      [{ release: "1.4\u0085" }, "a C1 control character in the release"],
+      [{ release: "1.4\u00A0" }, "a no-break space in the release"],
+      [{ release: "1".repeat(201) }, "a release over 200 characters"],
+      [{ release: "1.4.\uD800" }, "an unpaired surrogate in the release"],
+    ] as [object, string][])("refuses %j (%s)", async (fields) => {
+      const project = await createProject();
+      // JSON keeps the control character and the lone surrogate as escapes.
+      const response = await send(batch(project.public_key, [pageview()], fields));
+      expect(response.statusCode).toBe(400);
+      expect(await storedEvents(project.id)).toHaveLength(0);
+    });
+  });
+
   describe("visits across midnight", () => {
     test("splits a visit at midnight in the organization's timezone, with no link between the days", async () => {
       let clock = Date.parse("2026-11-16T15:50:00.000Z"); // 23:50 in Singapore
@@ -592,6 +637,7 @@ describe("POST /api/events", () => {
           { client: clickhouse.client },
           {
             projectId: project.id,
+            environment: "production",
             from: new Date("2026-11-16T00:00:00Z"),
             to: new Date("2026-11-17T00:00:00Z"),
           },

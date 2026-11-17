@@ -47,6 +47,8 @@ export interface Visit {
   country: string | null;
   region: string | null;
   city: string | null;
+  /** The app's version, as the site named it. */
+  release: string | null;
 }
 
 /**
@@ -67,11 +69,16 @@ export interface Visit {
  *   visit that crosses midnight counts as two. Joining them would link a
  *   visitor's IDs on two days, which daily salts exist to prevent.
  * - Entry and exit pages are the first and last pageviews. Referrer,
- *   campaign, browser, and location come from the first event that is not
- *   an engagement event.
+ *   campaign, browser, location, and release come from the first event that
+ *   is not an engagement event.
+ * - Only events of one environment count: a developer who opens the
+ *   staging site and the live one has the same visitor ID on both, and the
+ *   two must not join into one visit.
  */
 export interface VisitRange {
   projectId: string;
+  /** "production", "staging" … (collection/environment.ts). */
+  environment: string;
   from: Date;
   to: Date;
   /**
@@ -95,6 +102,7 @@ export const FIRST_EVENT_COLUMNS = [
   "country",
   "region",
   "city",
+  "release",
 ] as const;
 
 export interface VisitsQueryOptions {
@@ -124,7 +132,7 @@ export interface VisitsQueryOptions {
  * the order is always the same.
  */
 export function visitsSql(
-  { projectId, from, to, until }: VisitRange,
+  { projectId, environment, from, to, until }: VisitRange,
   params: QueryParams,
   { firstEventColumns = "separately" }: VisitsQueryOptions = {},
 ): string {
@@ -159,6 +167,7 @@ export function visitsSql(
                 toInt64(JSONExtractRaw(properties, 'engagedMs')), 0) AS engaged_ms
       FROM events FINAL
       WHERE project_id = ${params.add(projectId, "UUID")}
+        AND environment = ${params.add(environment, "String")}
         AND visitor_id IS NOT NULL
         AND occurred_at >= ${params.time(readFrom)}
         AND occurred_at < ${params.time(readTo)}
@@ -232,6 +241,7 @@ interface VisitRow {
   country: string | null;
   region: string | null;
   city: string | null;
+  release: string | null;
 }
 
 /** The visits as objects, oldest first. Reports aggregate visitsSql in ClickHouse instead. */
@@ -271,6 +281,7 @@ export async function findVisits(reader: Reader, range: VisitRange): Promise<Vis
       country: row.country,
       region: row.region,
       city: row.city,
+      release: row.release,
     };
   });
 }

@@ -22,7 +22,15 @@ import { OrganizationSettingsPage } from "@/features/organizations/organization-
 import { ProjectLayout } from "@/features/projects/project-layout";
 import { ProjectSettingsPage } from "@/features/projects/project-settings-page";
 import { ProjectsPage } from "@/features/projects/projects-page";
-import { type Filters, filtersFrom, isPeriod, type Period, rangeFrom } from "@/lib/analytics-api";
+import {
+  DEFAULT_ENVIRONMENT,
+  environmentFrom,
+  type Filters,
+  filtersFrom,
+  isPeriod,
+  type Period,
+  rangeFrom,
+} from "@/lib/analytics-api";
 import { ApiError } from "@/lib/api";
 import { authClient } from "@/lib/auth-client";
 import { lastProject } from "@/lib/last-project";
@@ -149,28 +157,37 @@ const webAnalyticsRoute = createRoute({
   // filtered view can be linked, reloaded, and left with the Back button.
   // Chosen days (from, to) win over a period; days the API would refuse are
   // dropped, so the page shows the default period instead of an error.
+  // The environment (env) is left out for production, the default.
   validateSearch: (
-    search: { period?: unknown; from?: unknown; to?: unknown } & Partial<
+    search: { period?: unknown; from?: unknown; to?: unknown; env?: unknown } & Partial<
       Record<keyof Filters, unknown>
     > &
       SearchSchemaInput,
-  ): { period: Period | undefined; from: string | undefined; to: string | undefined } & Filters => {
+  ): {
+    period: Period | undefined;
+    from: string | undefined;
+    to: string | undefined;
+    env: string | undefined;
+  } & Filters => {
     const range = rangeFrom(search);
+    const environment = environmentFrom(search.env);
     return {
       period: "period" in range && isPeriod(search.period) ? range.period : undefined,
       from: "from" in range ? range.from : undefined,
       to: "to" in range ? range.to : undefined,
+      env: environment === DEFAULT_ENVIRONMENT ? undefined : environment,
       ...filtersFrom(search),
     };
   },
   component: function WebAnalyticsRouteComponent() {
     const { projectId } = webAnalyticsRoute.useParams();
-    const { period, from, to, ...filters } = webAnalyticsRoute.useSearch();
+    const { period, from, to, env, ...filters } = webAnalyticsRoute.useSearch();
     return (
       <AnalyticsPage
         projectId={projectId}
         range={rangeFrom({ period, from, to })}
         filters={filters}
+        environment={env ?? DEFAULT_ENVIRONMENT}
       />
     );
   },

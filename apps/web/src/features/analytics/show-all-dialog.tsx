@@ -56,7 +56,7 @@ export function ShowAllDialog({
   const [text, setText] = React.useState("");
   const query = useSettled(text.trim(), 250);
   const list = useInfiniteQuery({
-    ...listQuery(projectId, search.range, search.filters, report, query),
+    ...listQuery(projectId, search.range, search.filters, search.environment, report, query),
     enabled: open,
   });
   const close = () => onOpenChange(false);

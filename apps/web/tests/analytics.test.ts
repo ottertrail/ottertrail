@@ -133,10 +133,13 @@ describe("isAnalytics", () => {
       "deviceType",
       "browser",
       "os",
+      "release",
     ].map((name) => [name, []]),
   );
   const valid = {
     timeZone: "UTC",
+    environment: "production",
+    environments: ["production"],
     firstDay: "2026-11-12",
     lastDay: "2026-11-18",
     summary: {

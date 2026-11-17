@@ -37,7 +37,7 @@ Created by `apps/api/src/db/migrations/0001_create_projects_and_events.ts`.
 | `utm_*` (5 columns) | Campaign tags from the page URL: source, medium, campaign, term, content    | Sender   |
 | `properties`        | Custom details as a JSON object, such as `{ "plan": "free" }`, at most 8 KB | Sender   |
 
-Later steps add columns in new migrations: browser, OS, device, country, region, and city (step 4), visitor (step 5), and session (step 6).
+Later steps add columns in new migrations: browser, OS, device, country, region, and city (step 4), visitor (step 5), and session (step 6). Migration 0014 adds `environment` and `release` ([Environments and releases](#environments-and-releases)).
 
 ### Two timestamps
 
@@ -115,8 +115,19 @@ The worker (`apps/api/src/worker.ts`, a process of its own beside the API) delet
 - `key` is the project's public key (the zeros above are a placeholder; find a project's key in the `projects` table).
 - Times are milliseconds since 1970 by the sender's clock.
 - `touch` (optional, only ever `true`) says the device has a touchscreen; the tracker sends it when `navigator.maxTouchPoints` is over 1. It tells an iPad from a Mac (see [Enrichment](#4-enrichment)).
+- `environment` and `release` (optional) say where the site runs and which version of it, for every event of the batch ([below](#environments-and-releases)).
 - Send it as `text/plain` from browsers (see [Cross-site requests](#cross-site-requests)); `application/json` also works.
 - Unknown fields are removed, not rejected, so a server accepts batches from a newer tracker.
+
+### Environments and releases
+
+A team runs the same app in several places: the live site, a staging site, a developer's machine. Each event says which (`environment`), and which version of the app sent it (`release`). Code: `apps/api/src/collection/environment.ts`.
+
+- **Environment:** 1 to 64 letters, digits, `.`, `_`, or `-`, starting with a letter or digit, such as `production`, `staging`, or `pr-142`. Stored in lower case, so `Staging` and `staging` are one. Without one, events are `production`: every site that names none is the live one, as every event stored before environments existed was.
+- **Release:** 1 to 200 characters without spaces or control characters, as the team names its versions: `1.4.2`, `web@2026.11.17+3f2a9c1`, a commit hash. Stored as sent.
+- Both belong to the batch, not to each event: one page runs in one environment and one release.
+
+Reports show one environment at a time, production unless another is chosen ([section 7](#one-environment-at-a-time)), so a test site never mixes into the live numbers. A release is a property of a visit, like its browser, with a breakdown and a filter. Errors (stage 2) will use releases to tell which version introduced a problem.
 
 ### The responses
 
@@ -175,6 +186,8 @@ The tracker runs on the customer's site (`example.com`) but sends to the Ottertr
 | Event name       | 1 to 200 characters, no control characters or unpaired surrogates                                                                                                                                                                                                |
 | Page URL         | Valid `http` or `https` URL, at most 8,192 characters, path at most 2,048                                                                                                                                                                                        |
 | Properties       | Flat object: at most 30 keys of up to 100 characters; values are strings (up to 500 characters), numbers, booleans, or null; at most 8 KB in total. Keys and string values must not contain NUL characters or unpaired surrogates, which PostgreSQL cannot store |
+| Environment      | Optional: 1 to 64 letters, digits, `.`, `_`, or `-`, starting with a letter or digit                                                                                                                                                                             |
+| Release          | Optional: 1 to 200 characters, no spaces, control characters, or unpaired surrogates                                                                                                                                                                             |
 
 ### URL cleanup
 
@@ -212,7 +225,7 @@ Behind a proxy (Cloudflare, Caddy), every request seems to come from the proxy's
 
 ## 3. The tracker
 
-`packages/tracker` builds `dist/tracker.js`, the script a site adds to its pages: about 5.2 KB, 2.4 KB gzipped.
+`packages/tracker` builds `dist/tracker.js`, the script a site adds to its pages: about 5.8 KB, 2.6 KB gzipped.
 
 ```html
 <script
@@ -222,6 +235,8 @@ Behind a proxy (Cloudflare, Caddy), every request seems to come from the proxy's
   data-host="https://analytics.example.com"
 ></script>
 ```
+
+Two optional attributes name the environment and release ([section 2](#environments-and-releases)): `data-environment="staging"` on a site other than the live one, and `data-release="1.4.2"`. The tracker checks both as the API does. With an invalid environment it sends nothing and warns in the console: its events would otherwise count as production's. With an invalid release it leaves the release out, warns, and sends the events.
 
 It sends a pageview when the page loads and whenever the path changes, and gives the page `window.ottertrail.track(name, properties)` for custom events:
 
@@ -456,6 +471,8 @@ A visit (often called a session) is one visitor's run of activity. Code: `apps/a
 
 **A visit ends after 30 minutes without an event.** The next event starts a new visit. A gap of exactly 30 minutes keeps the visit going.
 
+Visits are worked out for one environment at a time. A developer who opens the live site and then the staging site has the same visitor ID on both (same browser, same network, same day), and the two must not join into one visit.
+
 ### Worked out when a report asks
 
 Nothing about visits is stored. `visitsQuery` works them out from the events with SQL window functions. Reports use it inside their own SQL; `findVisits` returns the visits as objects.
@@ -491,6 +508,7 @@ A visit counts in the range in which it **started**. Visitor IDs change at midni
 | `exitPath`         | Path of the last pageview                                                        |
 | `bounce`           | One pageview and no interaction                                                  |
 | Source and visitor | Referrer, UTM tags, browser, OS, device, and location of the visit's first event |
+| `release`          | The release of the visit's first event                                           |
 
 **Exit page.** Nobody is told when a person leaves: closing the tab, switching apps, losing signal, and walking away all look the same. The exit page is simply the last page viewed, known for certain only once 30 minutes pass without another event.
 
@@ -546,7 +564,7 @@ Visitors and pageviews count events in the range. Visits, bounce rate, and durat
 
 ### Breakdowns
 
-A breakdown groups visits by one property: `source`, `entryPage`, `exitPage`, `utmSource`, `utmMedium`, `utmCampaign`, `country`, `region`, `city`, `deviceType`, `browser`, or `os`. All but the exit page come from the start of the visit, so each visit counts once, under where it began. Rows are sorted by visitors, then visits. A missing value (no location, an unknown browser) is a row of its own, which the report script prints as "(unknown)".
+A breakdown groups visits by one property: `source`, `entryPage`, `exitPage`, `utmSource`, `utmMedium`, `utmCampaign`, `country`, `region`, `city`, `deviceType`, `browser`, `os`, or `release`. All but the exit page come from the start of the visit, so each visit counts once, under where it began. Rows are sorted by visitors, then visits. A missing value (no location, an unknown browser) is a row of its own, which the report script prints as "(unknown)".
 
 **Source** is the first of these that exists:
 
@@ -558,11 +576,15 @@ A referrer on one of the project's own allowed hostnames is not a source. It mea
 
 **Region and city** keep their country (`Springfield, US`), because the same names exist in several countries.
 
+### One environment at a time
+
+Every report counts the events of one environment, `production` unless another is named ([section 2](#environments-and-releases)): its visitors, visits, pages, and lists. Other environments' events never mix in, filtered or not. An environment is not a filter of visits but where the reports look, as the project is.
+
 ### Filters
 
 A filter narrows every report to the visits that match it, and to those visits' events. Several filters must all match. Two kinds:
 
-- **A breakdown's value** (`source`, `entryPage`, `exitPage`, `utmSource`, `utmMedium`, `utmCampaign`, `country`, `region`, `city`, `deviceType`, `browser`, `os`): visits whose property has exactly the value its breakdown row shows, such as `google.com`, `Direct / none`, or `Munich, DE`. The filter and the breakdown use the same SQL expression, so a row's filter keeps exactly the visits that row counted, and a test checks that filtering by each row of a breakdown adds up to all visits. An empty value matches visits where the property is unknown, the "Unknown" row.
+- **A breakdown's value** (`source`, `entryPage`, `exitPage`, `utmSource`, `utmMedium`, `utmCampaign`, `country`, `region`, `city`, `deviceType`, `browser`, `os`, `release`): visits whose property has exactly the value its breakdown row shows, such as `google.com`, `Direct / none`, or `Munich, DE`. The filter and the breakdown use the same SQL expression, so a row's filter keeps exactly the visits that row counted, and a test checks that filtering by each row of a breakdown adds up to all visits. An empty value matches visits where the property is unknown, the "Unknown" row.
 - **A page** (`page`): visits with a pageview of that path. Every number then describes those visits, so the pageviews count all their pages, not only the filtered one: filtering by `/pricing` shows what else visitors who saw the pricing page looked at.
 
 "Their events" is exact because a visit lies within one local day (visitor IDs change at midnight) and reports cover whole local days: every pageview and custom event in a range belongs to exactly one of the range's visits, from its first event to its last. Visitors and pageviews under a filter therefore count the matching visits' events. One small difference from the unfiltered page: the average time on a page leaves out stale engagement reports (section 6), which belong to no visit.

@@ -42,6 +42,10 @@ export interface TrackerOptions {
    * tells the API which "Macs" are iPads.
    */
   touch?: boolean;
+  /** Where the site runs, such as "staging"; the API counts events as "production" without it. */
+  environment?: string;
+  /** The site's version, such as "1.4.2". */
+  release?: string;
 }
 
 export interface Tracker {
@@ -66,6 +70,8 @@ export function createTracker({
   transport,
   randomId,
   touch = false,
+  environment,
+  release,
 }: TrackerOptions): Tracker {
   let queue: QueuedEvent[] = [];
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -117,7 +123,15 @@ export function createTracker({
 
   /** sentAt is read at each attempt, so the API's clock correction stays right on retries. */
   function requestBody(events: QueuedEvent[]): string {
-    return JSON.stringify({ v: 1, key, sentAt: Date.now(), ...(touch ? { touch } : {}), events });
+    return JSON.stringify({
+      v: 1,
+      key,
+      sentAt: Date.now(),
+      ...(touch ? { touch } : {}),
+      ...(environment === undefined ? {} : { environment }),
+      ...(release === undefined ? {} : { release }),
+      events,
+    });
   }
 
   function remove(events: QueuedEvent[]) {

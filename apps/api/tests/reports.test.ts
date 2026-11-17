@@ -114,6 +114,7 @@ beforeAll(async () => {
   const days = await localDays(db(), "2026-11-16", "2026-11-17", "Asia/Singapore");
   range = {
     projectId,
+    environment: "production",
     ...days,
     timeZone: "Asia/Singapore",
     ownHostnames: ["example.com", "www.example.com"],

@@ -10,7 +10,14 @@ interface SentBatch {
 type Listener = (event: { persisted?: boolean }) => void;
 
 /** Just enough of a browser page to run src/script.ts as a <script> tag would. */
-function fakePage(href: string, referrer = "", { maxTouchPoints = 0 } = {}) {
+function fakePage(
+  href: string,
+  referrer = "",
+  {
+    maxTouchPoints = 0,
+    attributes = {},
+  }: { maxTouchPoints?: number; attributes?: Record<string, string> } = {},
+) {
   const listeners: Record<string, Listener[]> = {};
   const on = (type: string, listener: Listener) => {
     (listeners[type] ??= []).push(listener);
@@ -22,7 +29,12 @@ function fakePage(href: string, referrer = "", { maxTouchPoints = 0 } = {}) {
     },
   };
   const document = {
-    currentScript: { dataset: { key: "pk_test", host: "https://analytics.example.com" } },
+    currentScript: {
+      dataset: { key: "pk_test", host: "https://analytics.example.com", ...attributes } as Record<
+        string,
+        string | undefined
+      >,
+    },
     referrer,
     visibilityState: "visible" as "visible" | "hidden",
     prerendering: false,
@@ -37,9 +49,13 @@ function fakePage(href: string, referrer = "", { maxTouchPoints = 0 } = {}) {
   /** Everything the tracker handed over, by beacon or fetch. */
   const events: QueuedEvent[] = [];
   /** Every batch as sent, envelope included. */
-  const batches: (SentBatch & { touch?: boolean })[] = [];
+  const batches: (SentBatch & { touch?: boolean; environment?: string; release?: string })[] = [];
   const record = (body: string) => {
-    const batch = JSON.parse(body) as SentBatch & { touch?: boolean };
+    const batch = JSON.parse(body) as SentBatch & {
+      touch?: boolean;
+      environment?: string;
+      release?: string;
+    };
     batches.push(batch);
     events.push(...batch.events);
   };
@@ -215,5 +231,56 @@ describe("the touch hint", () => {
     for (const batch of page.batches) {
       expect(batch.touch).toBe(touch);
     }
+  });
+});
+
+describe("environment and release", () => {
+  test("data-environment and data-release go with every batch", async () => {
+    const page = fakePage("https://staging.example.com/", "", {
+      attributes: { environment: "staging", release: "web@1.4.2+3f2a9c1" },
+    });
+    await runScript();
+    page.hide();
+    await page.settle();
+
+    expect(page.batches.length).toBeGreaterThan(0);
+    for (const batch of page.batches) {
+      expect(batch).toMatchObject({ environment: "staging", release: "web@1.4.2+3f2a9c1" });
+    }
+  });
+
+  test("without them, batches name neither: the API counts them as production's", async () => {
+    const page = fakePage("https://example.com/");
+    await runScript();
+    page.hide();
+    await page.settle();
+
+    expect(page.batches[0]).not.toHaveProperty("environment");
+    expect(page.batches[0]).not.toHaveProperty("release");
+  });
+
+  test("an invalid environment sends nothing, rather than mixing into production", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const page = fakePage("https://example.com/", "", {
+      attributes: { environment: "my staging" },
+    });
+    await runScript();
+    page.hide();
+    await page.settle();
+
+    expect(page.batches).toEqual([]);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("data-environment"));
+  });
+
+  test("an invalid release is left out, and the events still go", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const page = fakePage("https://example.com/", "", { attributes: { release: "1.4 beta" } });
+    await runScript();
+    page.hide();
+    await page.settle();
+
+    expect(page.events.length).toBeGreaterThan(0);
+    expect(page.batches[0]).not.toHaveProperty("release");
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("data-release"));
   });
 });

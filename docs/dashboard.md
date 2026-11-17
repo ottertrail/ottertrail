@@ -116,6 +116,7 @@ Every module belongs to one project (its records carry `project_id`), so a modul
 - `src`: the instance serves the built tracker at `/t.js`. A short, neutral name, because ad-block lists often match file names such as `tracker.js` or `analytics.js`. Browsers may cache it for an hour, then check it again with its ETag, so a new tracker reaches sites within an hour. The API reads the file on each request, so a new build needs no restart; until the tracker is built (`vp run -r build`), `/t.js` answers 503.
 - `data-key`: the project's public key. It only lets pages on the allowed sites send events; it cannot read anything.
 - `data-host`: where events go (`/api/events` on the same instance).
+- `data-environment` and `data-release` (optional): where the site runs, such as `staging`, and which version of it ([web analytics](web-analytics.md#environments-and-releases)). The Install card explains both under the snippet; without them, events count as `production`.
 
 The page shows "Waiting for the first event" and checks every 10 seconds, so after installing, opening the site in a browser turns it into "Receiving events".
 
@@ -152,12 +153,12 @@ Code: `apps/api/src/reports/analytics.ts` and `apps/api/src/reports/routes.ts`.
 
 ```text
 GET /api/projects/:id/analytics?from=2026-11-01&to=2026-11-16[&limit=10]
-GET /api/projects/:id/analytics?period=7d[&limit=10][&country=DE&page=/pricing …]
+GET /api/projects/:id/analytics?period=7d[&environment=staging][&limit=10][&country=DE&page=/pricing …]
 ```
 
 A `period` (`today`, `7d`, `30d`, `90d`, or `12m`) ends today, and the API works out "today" in the timezone of the project's organization: the browser showing the dashboard may be in another one. `7d` is today and the six days before it; `12m` starts the day after the same date last year.
 
-One request returns every report of the analytics page, for whole days in the timezone of the project's organization, `from` and `to` included: the summary, visitors per day, top pages, ten breakdowns (sources, campaigns, entry and exit pages, countries, regions, cities, devices, browsers, operating systems), and custom events. It needs a signed-in user. A range covers at most 366 days, and lists hold at most `limit` rows (default 10, at most 100).
+One request returns every report of the analytics page, for whole days in the timezone of the project's organization, `from` and `to` included: the summary, visitors per day, top pages, eleven breakdowns (sources, campaigns, entry and exit pages, countries, regions, cities, devices, browsers, operating systems, releases), and custom events. All of it counts one environment: `environment` names it, in any case, and is `production` when left out. The response says which (`environment`) and lists `environments`: those with events in the range, most events first, then the one shown and `production` even without any, so the page can always switch back. It needs a signed-in user. A range covers at most 366 days, and lists hold at most `limit` rows (default 10, at most 100).
 
 The response also holds `previous`: the summary of the period before (`firstDay`, `lastDay`, and `until`, the cut-off when the period is still running, on `lastDay`), with the same filters (section 7 of [web analytics](web-analytics.md#comparison-with-the-previous-period)). It costs one more summary over the earlier days: on PostgreSQL's benchmark, the whole page went from 56 to 89 ms for 1 day and from 225 to 313 ms for 7 days at 1,000 visits a day.
 
@@ -214,10 +215,10 @@ Code: `apps/web/src/features/analytics/`.
 
 From top to bottom, the page shows:
 
-1. A picker for the period, with "Custom range…" for chosen days, then the days covered and the organization's timezone. The days come from the API, so they are the organization's days, not the browser's.
+1. A picker for the period, with "Custom range…" for chosen days; a picker for the environment, once there is a choice (another environment has events in the range) and always while another than production is shown, so there is a way back; then the days covered and the organization's timezone. The days come from the API, so they are the organization's days, not the browser's. The environment goes in the address as `env=staging`, left out for production, and switching it keeps the period and filters.
 2. Seven numbers: visitors, visits, pageviews, views per visit, bounce rate, visit duration, and time engaged (defined in section 7 of [web analytics](web-analytics.md#the-numbers)). Under each, its change from the period before: an arrow and a size ("12%", or "6 pts" for the bounce rate), read out as a sentence ("Up 12% from 683"). The arrows stay in text colors: status colors are reserved for state, and up is not always better (a bounce rate). A note names the days compared and, for a running period, the time of day the comparison stops; it also says that a visitor is recognized for one day only, so the same person on two days counts twice.
 3. Visitors, visits, or pageviews per day, as a line. Hovering over the chart shows all three numbers for the nearest day. "Show the numbers" opens the same data as a table. A one-day period draws no line, since one point shows no trend.
-4. Ranked lists, most visitors first, each with a bar for its visitors: pages (top, entry, and exit), sources and campaigns, countries, regions, and cities, devices, browsers, and operating systems, and custom events. Each list shows its first 10 rows; when it shows all 10, "Show all" opens it in full. A missing value (no location, an unknown browser) shows as "Unknown", and a visit without a campaign as "No campaign".
+4. Ranked lists, most visitors first, each with a bar for its visitors: pages (top, entry, and exit), sources and campaigns, countries, regions, and cities, devices, browsers, and operating systems, releases, and custom events. While no visit names a release, the Releases card says how to name one instead of listing every visit as "Unknown". An empty period in another environment than production names it, and suggests another environment. Each list shows its first 10 rows; when it shows all 10, "Show all" opens it in full. A missing value (no location, an unknown browser) shows as "Unknown", and a visit without a campaign as "No campaign".
 
 A project without events shows how to install the snippet instead; a period without events offers the last 12 months.
 

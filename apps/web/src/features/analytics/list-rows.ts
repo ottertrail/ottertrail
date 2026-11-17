@@ -3,6 +3,7 @@ import type * as React from "react";
 import {
   type BreakdownRow,
   type CustomEventRow,
+  DEFAULT_ENVIRONMENT,
   DEFAULT_PERIOD,
   FILTER_LABELS,
   type FilterName,
@@ -35,19 +36,22 @@ export function valueText(name: FilterName, value: string): string {
 export const filterText = (name: FilterName, value: string) =>
   `${FILTER_LABELS[name]}: ${valueText(name, value)}`;
 
-/** What the page's address holds: its days and its filters. */
+/** What the page's address holds: its days, its environment, and its filters. */
 export interface PageSearch {
   range: PageRange;
   filters: Filters;
+  /** "production", "staging" …: the one environment the page counts. */
+  environment: string;
 }
 
-/** The address query for a page search; the default period is left out. */
-export const searchOf = ({ range, filters }: PageSearch) => ({
+/** The address query for a page search; the default period and environment are left out. */
+export const searchOf = ({ range, filters, environment }: PageSearch) => ({
   ...("period" in range
     ? range.period === DEFAULT_PERIOD
       ? {}
       : { period: range.period }
     : { from: range.from, to: range.to }),
+  ...(environment === DEFAULT_ENVIRONMENT ? {} : { env: environment }),
   ...filters,
 });
 
@@ -65,6 +69,7 @@ export const LIST_FILTERS: Record<ListReport, FilterName | undefined> = {
   deviceType: "deviceType",
   browser: "browser",
   os: "os",
+  release: "release",
 };
 
 /** Makes a row's name into a link that filters by it. */

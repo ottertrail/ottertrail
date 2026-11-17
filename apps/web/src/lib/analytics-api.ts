@@ -112,6 +112,7 @@ export const BREAKDOWNS = [
   "deviceType",
   "browser",
   "os",
+  "release",
 ] as const;
 
 export type Breakdown = (typeof BREAKDOWNS)[number];
@@ -125,9 +126,26 @@ export interface PreviousPeriod {
   summary: Summary;
 }
 
+/** The environment a page shows when its address names none, as the API counts it. */
+export const DEFAULT_ENVIRONMENT = "production";
+
+/** As the API checks an environment's name: letters, digits, ".", "_", "-". */
+const ENVIRONMENT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+
+/** The environment from the address bar's query, in lower case; the default when unusable. */
+export function environmentFrom(value: unknown): string {
+  return typeof value === "string" && ENVIRONMENT_PATTERN.test(value)
+    ? value.toLowerCase()
+    : DEFAULT_ENVIRONMENT;
+}
+
 /** GET /api/projects/:id/analytics */
 export interface Analytics {
   timeZone: string;
+  /** The environment every number counts, such as "production". */
+  environment: string;
+  /** The environments with events in the range, most events first, and the one shown. */
+  environments: string[];
   firstDay: string;
   lastDay: string;
   summary: Summary;
@@ -192,6 +210,8 @@ const isPreviousPeriod = (value: unknown): value is PreviousPeriod =>
 export const isAnalytics = (value: unknown): value is Analytics =>
   isRecord(value) &&
   typeof value.timeZone === "string" &&
+  typeof value.environment === "string" &&
+  isListOf(value.environments, (item): item is string => typeof item === "string") &&
   typeof value.firstDay === "string" &&
   typeof value.lastDay === "string" &&
   isSummary(value.summary) &&
@@ -221,6 +241,7 @@ export const FILTER_NAMES = [
   "deviceType",
   "browser",
   "os",
+  "release",
 ] as const satisfies readonly ("page" | Breakdown)[];
 
 export type FilterName = (typeof FILTER_NAMES)[number];
@@ -240,6 +261,7 @@ export const FILTER_LABELS: Record<FilterName, string> = {
   deviceType: "Device",
   browser: "Browser",
   os: "Operating system",
+  release: "Release",
 };
 
 /** The API refuses longer values; an address with one is treated as unfiltered for it. */
@@ -283,6 +305,7 @@ export function filtersFrom(
     deviceType: filterValue(search.deviceType),
     browser: filterValue(search.browser),
     os: filterValue(search.os),
+    release: filterValue(search.release),
   };
 }
 
@@ -297,12 +320,22 @@ export function activeFilters(filters: Filters): [FilterName, string][] {
 /** How often a page that shows today refreshes on its own. */
 const REFRESH_MS = 60_000;
 
-export const analyticsQuery = (projectId: string, range: PageRange, filters: Filters = {}) =>
+/** The API's environment parameter: left out for the default. */
+const environmentParams = (environment: string): Record<string, string> =>
+  environment === DEFAULT_ENVIRONMENT ? {} : { environment };
+
+export const analyticsQuery = (
+  projectId: string,
+  range: PageRange,
+  filters: Filters = {},
+  environment = DEFAULT_ENVIRONMENT,
+) =>
   queryOptions({
-    queryKey: ["analytics", projectId, range, filters],
+    queryKey: ["analytics", projectId, range, filters, environment],
     queryFn: async ({ signal }) => {
       const query = new URLSearchParams({
         ...rangeParams(range),
+        ...environmentParams(environment),
         ...Object.fromEntries(activeFilters(filters)),
       });
       return expectShape(
@@ -383,19 +416,21 @@ function listPage(report: ListReport, value: unknown): ListPage | null {
     : null;
 }
 
-/** One list in full, LIST_PAGE_SIZE rows at a time, with the page's period and filters. */
+/** One list in full, LIST_PAGE_SIZE rows at a time, with the page's period, environment, and filters. */
 export const listQuery = (
   projectId: string,
   range: PageRange,
   filters: Filters,
+  environment: string,
   report: ListReport,
   search: string,
 ) =>
   infiniteQueryOptions({
-    queryKey: ["analytics-list", projectId, range, filters, report, search],
+    queryKey: ["analytics-list", projectId, range, filters, environment, report, search],
     queryFn: async ({ pageParam, signal }) => {
       const query = new URLSearchParams({
         ...rangeParams(range),
+        ...environmentParams(environment),
         ...Object.fromEntries(activeFilters(filters)),
         report,
         offset: String(pageParam),
