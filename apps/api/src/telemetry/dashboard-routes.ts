@@ -1,3 +1,5 @@
+import { Buffer } from "node:buffer";
+
 import type { FastifyPluginCallback } from "fastify";
 import type { Kysely } from "kysely";
 
@@ -12,6 +14,7 @@ import { type ProjectAccess, requireProjectAccess } from "../organizations/acces
 import { localDays } from "../reports/reports.ts";
 import { RANGE_PROPERTIES, type RangeQuery, requestDays } from "../reports/routes.ts";
 import { dayIn } from "../visitors/visitor-ids.ts";
+import { OrganizationLimiter } from "./dashboard-limit.ts";
 import {
   CURSOR_PATTERN,
   cursorOf,
@@ -30,6 +33,9 @@ import {
   SEVERITIES,
   type Severity,
 } from "./logs.ts";
+import { listMetrics, METRIC_KINDS, type MetricKind, metricChart } from "./metrics.ts";
+import { MAX_KEY_CHARS, MAX_NAME_BYTES } from "./normalize.ts";
+import { listServices } from "./services.ts";
 import { listTraces, spanDetail, traceDetail, traceWindow } from "./traces.ts";
 
 const UUID_PATTERN =
@@ -99,6 +105,11 @@ type TracesQuery = RangeQuery & {
   before?: string;
 };
 
+type ChartQuery = RangeQuery & { name: string; kind: MetricKind; split?: string };
+
+/** The range's parameters alone, for the lists that take nothing else. */
+const RANGE_QUERY = { type: "object", additionalProperties: false, properties: RANGE_PROPERTIES };
+
 type LogsQuery = RangeQuery & {
   service?: string;
   severity?: Severity;
@@ -116,8 +127,12 @@ type LogsQuery = RangeQuery & {
  *     (summaries: the body cut to 1,000 characters)
  * GET /api/projects/:id/logs/:logId?time=<ns since 1970>
  *     (one whole record: body, attributes, resource attributes)
+ * GET /api/projects/:id/metrics[?period=…&environment=…]
+ * GET /api/projects/:id/metrics/chart?name=…&kind=gauge|counter|updown|histogram[&split=<attribute key>&period=…&environment=…]
+ * GET /api/projects/:id/services[?period=…&environment=…]
  *
- * The Traces and Logs pages (traces.ts, logs.ts). Like every project
+ * The Traces, Logs, Metrics, and Services pages (traces.ts, logs.ts,
+ * metrics.ts, services.ts). Like every project
  * route, each runs requireProjectAccess first, and reads only the project
  * it found.
  */
@@ -128,10 +143,43 @@ export const telemetryDashboardRoutes: FastifyPluginCallback<{
   /** Days telemetry is kept (TELEMETRY_RETENTION_DAYS): nothing older is read. */
   retentionDays: number;
   now?: () => Date;
-}> = (app, { db, clickhouse, auth, retentionDays, now = () => new Date() }, done) => {
+  /** Queries in flight per organization (dashboard-limit.ts); tests pass a smaller one. */
+  limiter?: OrganizationLimiter;
+}> = (
+  app,
+  {
+    db,
+    clickhouse,
+    auth,
+    retentionDays,
+    now = () => new Date(),
+    limiter = new OrganizationLimiter(),
+  },
+  done,
+) => {
   const signedIn = requireSession(auth);
   const projectAccess = requireProjectAccess(db);
-  const reader: Reader = { client: clickhouse };
+  /**
+   * Where a request's queries run: each waits for a place among its
+   * organization's (OrganizationLimiter), and all end when the request is
+   * closed before its answer, as when the browser gives up.
+   */
+  function readerOf(
+    request: { projectAccess: ProjectAccess | null },
+    reply: {
+      raw: { writableFinished: boolean; once: (event: "close", listener: () => void) => unknown };
+    },
+  ): Reader {
+    const controller = new AbortController();
+    reply.raw.once("close", () => {
+      if (!reply.raw.writableFinished) controller.abort();
+    });
+    return {
+      client: clickhouse,
+      signal: controller.signal,
+      gate: limiter.gate(accessOf(request).organizationId, controller.signal),
+    };
+  }
   app.setErrorHandler(clickHouseErrorHandler);
 
   /** The request's days, in the organization's timezone, from the oldest kept; or the reason it is refused. */
@@ -153,6 +201,7 @@ export const telemetryDashboardRoutes: FastifyPluginCallback<{
         timeZone,
         firstDay: days.from,
         lastDay: days.to,
+        dayStart: from,
         from: start > to ? to : start,
         to,
       },
@@ -196,7 +245,7 @@ export const telemetryDashboardRoutes: FastifyPluginCallback<{
       const { service, name, errors, minDuration } = request.query;
       const before = cursorOf(request.query.before);
       if (before === null) return reply.code(400).send(BAD_CURSOR);
-      const list = await listTraces(reader, range, {
+      const list = await listTraces(readerOf(request, reply), range, {
         service,
         name,
         errors: errors === true,
@@ -228,7 +277,7 @@ export const telemetryDashboardRoutes: FastifyPluginCallback<{
       }
       const traceId = request.params.traceId.toLowerCase();
       const detail = await traceDetail(
-        reader,
+        readerOf(request, reply),
         projectId,
         traceId,
         traceWindow(now(), retentionDays, at),
@@ -257,7 +306,7 @@ export const telemetryDashboardRoutes: FastifyPluginCallback<{
         return reply.code(400).send({ error: "invalid_time", message: "start is out of range." });
       }
       const span = await spanDetail(
-        reader,
+        readerOf(request, reply),
         projectId,
         request.params.traceId.toLowerCase(),
         request.params.spanId.toLowerCase(),
@@ -307,7 +356,7 @@ export const telemetryDashboardRoutes: FastifyPluginCallback<{
       const asked = await rangeOf(request);
       if ("problem" in asked) return reply.code(400).send(asked.problem);
       const { range } = asked;
-      const result = await searchLogs(reader, range, {
+      const result = await searchLogs(readerOf(request, reply), range, {
         service,
         severity,
         search,
@@ -330,7 +379,7 @@ export const telemetryDashboardRoutes: FastifyPluginCallback<{
       if (time > MAX_NS) {
         return reply.code(400).send({ error: "invalid_time", message: "time is out of range." });
       }
-      const log = await logDetail(reader, projectId, request.params.logId, time);
+      const log = await logDetail(readerOf(request, reply), projectId, request.params.logId, time);
       if (log === null) {
         // Not "not_found", which the access check answers for an unknown project.
         return reply.code(404).send({
@@ -339,6 +388,70 @@ export const telemetryDashboardRoutes: FastifyPluginCallback<{
         });
       }
       return { timeZone, log };
+    },
+  );
+
+  app.get<{ Params: { id: string }; Querystring: RangeQuery }>(
+    "/projects/:id/metrics",
+    { preHandler: [signedIn, projectAccess], schema: { params: PARAMS, querystring: RANGE_QUERY } },
+    async (request, reply) => {
+      const asked = await rangeOf(request);
+      if ("problem" in asked) return reply.code(400).send(asked.problem);
+      const { range } = asked;
+      return { ...answered(range), ...(await listMetrics(readerOf(request, reply), range)) };
+    },
+  );
+
+  app.get<{ Params: { id: string }; Querystring: ChartQuery }>(
+    "/projects/:id/metrics/chart",
+    {
+      preHandler: [signedIn, projectAccess],
+      schema: {
+        params: PARAMS,
+        querystring: {
+          type: "object",
+          required: ["name", "kind"],
+          additionalProperties: false,
+          properties: {
+            ...RANGE_PROPERTIES,
+            // As ingestion stores them: a name cut to 1,024 bytes (so at most
+            // as many characters), a key to 256 characters.
+            name: { type: "string", maxLength: MAX_NAME_BYTES },
+            kind: { type: "string", enum: METRIC_KINDS },
+            split: { type: "string", minLength: 1, maxLength: MAX_KEY_CHARS },
+          },
+        },
+      },
+    },
+    async (request, reply) => {
+      const { name, kind, split } = request.query;
+      if (Buffer.byteLength(name) > MAX_NAME_BYTES) {
+        return reply.code(400).send({
+          error: "invalid_name",
+          message: `A metric's name holds at most ${MAX_NAME_BYTES} bytes.`,
+        });
+      }
+      const asked = await rangeOf(request);
+      if ("problem" in asked) return reply.code(400).send(asked.problem);
+      const { range } = asked;
+      const chart = await metricChart(
+        readerOf(request, reply),
+        range,
+        { name, kind, split },
+        now(),
+      );
+      return { ...answered(range), ...chart };
+    },
+  );
+
+  app.get<{ Params: { id: string }; Querystring: RangeQuery }>(
+    "/projects/:id/services",
+    { preHandler: [signedIn, projectAccess], schema: { params: PARAMS, querystring: RANGE_QUERY } },
+    async (request, reply) => {
+      const asked = await rangeOf(request);
+      if ("problem" in asked) return reply.code(400).send(asked.problem);
+      const { range } = asked;
+      return { ...answered(range), ...(await listServices(readerOf(request, reply), range)) };
     },
   );
 

@@ -8,6 +8,7 @@ import {
   flattenAttributes,
   keepWithin,
   MAX_ATTRIBUTES,
+  MAX_HISTOGRAM_BOUNDS,
   MAX_RESOURCE_ATTRIBUTE_BYTES,
   nanosText,
   normalizeLogs,
@@ -62,6 +63,22 @@ function span(overrides: Record<string, unknown> = {}) {
 function traces(spans: object[], resource = keyValues({ "service.name": "shop" })) {
   return { resourceSpans: [{ resource: { attributes: resource }, scopeSpans: [{ spans }] }] };
 }
+
+/** A histogram point with this many bounds, one value in its first bucket. */
+const boundsPoint = (bounds: number) => ({
+  timeUnixNano: String(NOW - SECOND),
+  count: "1",
+  explicitBounds: Array.from({ length: bounds }, (_, i) => i + 1),
+  bucketCounts: Array.from({ length: bounds + 1 }, (_, i) => (i === 0 ? "1" : "0")),
+});
+
+/** A histogram point of one bucket, with this count and bucket count. */
+const countPoint = (count: string, bucket: string) => ({
+  timeUnixNano: String(NOW - SECOND),
+  count,
+  explicitBounds: [],
+  bucketCounts: [bucket],
+});
 
 describe("the vendored message definitions", () => {
   // SHA-256 of each file at opentelemetry-proto v1.11.1, as GitHub serves it.
@@ -663,6 +680,44 @@ describe("normalizeMetrics", () => {
       },
     ]);
     expect(() => normalizeMetrics(request, context)).toThrow(MalformedError);
+  });
+
+  test(`a histogram with more than ${MAX_HISTOGRAM_BOUNDS} bounds is refused, and counted`, () => {
+    const result = normalizeMetrics(
+      metrics([
+        {
+          name: "h",
+          histogram: {
+            dataPoints: [boundsPoint(MAX_HISTOGRAM_BOUNDS), boundsPoint(MAX_HISTOGRAM_BOUNDS + 1)],
+          },
+        },
+      ]),
+      context,
+    );
+    expect(result.histograms.map((row) => row.bounds.length)).toEqual([MAX_HISTOGRAM_BOUNDS]);
+    expect(result.refused).toBe(1);
+    expect(result.message).toContain(`more than ${MAX_HISTOGRAM_BOUNDS} bucket bounds`);
+  });
+
+  test("a histogram count of 2^63 or more is refused, so a chart never sees it wrap", () => {
+    const result = normalizeMetrics(
+      metrics([
+        {
+          name: "h",
+          histogram: {
+            dataPoints: [
+              countPoint("9223372036854775807", "9223372036854775807"),
+              countPoint("9223372036854775808", "1"),
+              countPoint("1", "9223372036854775808"),
+            ],
+          },
+        },
+      ]),
+      context,
+    );
+    expect(result.histograms).toHaveLength(1);
+    expect(result.refused).toBe(2);
+    expect(result.message).toContain("a count of 2^63 or more");
   });
 
   test("the same point gives the same ID; another value, another", () => {

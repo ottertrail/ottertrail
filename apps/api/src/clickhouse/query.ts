@@ -10,6 +10,10 @@ import type { ClickHouseClient } from "./clickhouse.ts";
 export interface Reader {
   client: ClickHouseClient;
   sessionId?: string | undefined;
+  /** Ends the query when it fires, such as when the browser gives up on the request. */
+  signal?: AbortSignal | undefined;
+  /** Runs each query, such as within a limit of queries at once (telemetry/dashboard-limit.ts). */
+  gate?: (<T>(work: () => Promise<T>) => Promise<T>) | undefined;
 }
 
 /** "2026-11-16 12:00:00.000": how ClickHouse writes and reads a DateTime64(3) in UTC. */
@@ -53,14 +57,19 @@ export async function queryRows<Row>(
   /** ClickHouse settings for this query only, such as max_execution_time. */
   settings?: ClickHouseSettings,
 ): Promise<Row[]> {
-  const result = await reader.client.query({
-    query,
-    query_params: params.values,
-    format: "JSONEachRow",
-    ...(settings === undefined ? {} : { clickhouse_settings: settings }),
-    ...(reader.sessionId === undefined ? {} : { session_id: reader.sessionId }),
-  });
-  return result.json<Row>();
+  const run = async () => {
+    const result = await reader.client.query({
+      query,
+      query_params: params.values,
+      format: "JSONEachRow",
+      ...(settings === undefined ? {} : { clickhouse_settings: settings }),
+      ...(reader.sessionId === undefined ? {} : { session_id: reader.sessionId }),
+      ...(reader.signal === undefined ? {} : { abort_signal: reader.signal }),
+    });
+    // Read whole within the gate: the query runs until its rows are read.
+    return result.json<Row>();
+  };
+  return reader.gate === undefined ? run() : reader.gate(run);
 }
 
 /** Runs a statement that returns nothing, such as CREATE TEMPORARY TABLE. */

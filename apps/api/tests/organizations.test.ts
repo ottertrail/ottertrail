@@ -75,6 +75,9 @@ function projectRoutes(id: string): [string, string, object?][] {
     ],
     ["GET", `/api/projects/${id}/logs?period=7d`],
     ["GET", `/api/projects/${id}/logs/${"0".repeat(32)}?time=1795003200000000000`],
+    ["GET", `/api/projects/${id}/metrics?period=7d`],
+    ["GET", `/api/projects/${id}/metrics/chart?period=7d&name=http.requests&kind=counter`],
+    ["GET", `/api/projects/${id}/services?period=7d`],
   ];
 }
 

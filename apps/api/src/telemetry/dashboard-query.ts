@@ -2,7 +2,7 @@ import { QueryParams, queryRows, type Reader } from "../clickhouse/query.ts";
 import { DEFAULT_ENVIRONMENT } from "../collection/environment.ts";
 
 /**
- * What the dashboard's Traces and Logs pages share: the range they read,
+ * What the dashboard's telemetry pages share: the range they read,
  * the cursor they page back with, and times as ClickHouse gives them
  * (docs/telemetry.md, "The dashboard").
  */
@@ -15,6 +15,8 @@ export interface TelemetryRange {
   /** "YYYY-MM-DD", both included. */
   firstDay: string;
   lastDay: string;
+  /** Start of firstDay, before the retention's cut: where a chart's time buckets are counted from. */
+  dayStart: Date;
   /** Start of firstDay, or the oldest time telemetry is kept from, whichever is later. */
   from: Date;
   /** End of lastDay. */
@@ -61,11 +63,27 @@ export const dateOfNs = (ns: string | bigint) => new Date(Number(BigInt(ns) / NA
 /** Nanoseconds as microseconds, as the dashboard shows durations: µs keep sub-millisecond spans. */
 export const microseconds = (ns: string | bigint) => Number(BigInt(ns)) / 1000;
 
+/** The tables the dashboard's telemetry pages read. */
+export type TelemetryTable = "spans" | "logs" | "metric_points" | "metric_histograms";
+
 /**
- * Settings of every query the Traces and Logs pages make: a query that
- * runs past this many seconds ends, and the page says to narrow it.
+ * Settings of every query the telemetry pages make: a query that runs
+ * past 15 seconds or 300 MB ends, and the page says to narrow it; large
+ * groupings and sorts spill to disk before that.
  */
-export const DASHBOARD_SETTINGS = { max_execution_time: 15 };
+export const DASHBOARD_SETTINGS = {
+  max_execution_time: 15,
+  /** 300 MB a query: past it, the page says to narrow the range, as after a timeout. */
+  max_memory_usage: "300000000",
+  /**
+   * Past 100 MB, a GROUP BY or a sort goes on in parts on disk instead of
+   * failing: slower, but a period with a million span names still answers.
+   */
+  max_bytes_before_external_group_by: "100000000",
+  max_bytes_before_external_sort: "100000000",
+  /** A query ends when the API closes its request, as when the browser gives up (Reader.signal). */
+  cancel_http_readonly_queries_on_client_close: 1,
+} as const;
 
 /**
  * One page of a newest-first list read without FINAL (traces.ts, logs.ts).
@@ -106,27 +124,34 @@ export function belowCursor(params: QueryParams, cursor: Cursor | undefined): st
 }
 
 /**
- * The environments and services a table has in the range, from its rows'
- * labels: environments with the most rows first, then the one shown and
- * production even without, so the page can always switch back; the
- * shown environment's services, most rows first.
+ * The environments and services one or more tables have in the range,
+ * from their rows' labels: environments with the most rows first, then the
+ * one shown and production even without, so the page can always switch
+ * back; the shown environment's services, most rows first.
  */
 export async function labelsInRange(
   reader: Reader,
-  table: "spans" | "logs",
+  tables: TelemetryTable | readonly TelemetryTable[],
   range: TelemetryRange,
-  /** Only root spans, for the traces list. */
+  /** A condition on each table's rows, such as only root spans for the traces list. */
   extra = "",
 ): Promise<{ environments: string[]; services: string[] }> {
   const params = new QueryParams();
-  // The table name is one of two constants, never input.
+  const project = params.add(range.projectId, "UUID");
+  const from = params.time(range.from);
+  const to = params.time(range.to);
+  // Table names are constants, never input.
+  const reads = (typeof tables === "string" ? [tables] : tables).map(
+    (table) =>
+      `SELECT environment, service
+       FROM ${table}
+       WHERE project_id = ${project} AND timestamp >= ${from} AND timestamp < ${to}
+         ${extra}`,
+  );
   const rows = await queryRows<{ environment: string; service: string; count: string }>(
     reader,
     `SELECT environment, service, count() AS count
-     FROM ${table}
-     WHERE project_id = ${params.add(range.projectId, "UUID")}
-       AND timestamp >= ${params.time(range.from)} AND timestamp < ${params.time(range.to)}
-       ${extra}
+     FROM (${reads.join(" UNION ALL ")})
      GROUP BY environment, service
      ORDER BY count DESC, environment, service
      LIMIT 1000`,
@@ -145,16 +170,20 @@ export async function labelsInRange(
   return { environments, services };
 }
 
-/** Whether the project has any row in the table: whether it has sent any at all, within the retention. */
+/** Whether the project has any row in the tables: whether it has sent any at all, within the retention. */
 export async function hasAnyRow(
   reader: Reader,
-  table: "spans" | "logs",
+  tables: TelemetryTable | readonly TelemetryTable[],
   projectId: string,
 ): Promise<boolean> {
   const params = new QueryParams();
+  const project = params.add(projectId, "UUID");
+  const reads = (typeof tables === "string" ? [tables] : tables).map(
+    (table) => `SELECT 1 AS found FROM ${table} WHERE project_id = ${project} LIMIT 1`,
+  );
   const rows = await queryRows<{ found: number }>(
     reader,
-    `SELECT 1 AS found FROM ${table} WHERE project_id = ${params.add(projectId, "UUID")} LIMIT 1`,
+    `SELECT found FROM (${reads.join(" UNION ALL ")}) LIMIT 1`,
     params,
     DASHBOARD_SETTINGS,
   );

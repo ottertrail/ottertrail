@@ -1,6 +1,6 @@
 # Events in ClickHouse
 
-How analytics events reach ClickHouse, and why. The decision to use ClickHouse, and the measurements behind it, are in [storage-benchmark.md](storage-benchmark.md). Events, traces, logs, and metrics ([telemetry](telemetry.md)) all go straight to ClickHouse; PostgreSQL holds accounts, organizations, projects, and settings. Deleting a project, the orphan sweep, and backups below cover every table.
+How analytics events reach ClickHouse, and why. The decision to use ClickHouse, and the measurements behind it, are in [storage-benchmark.md](storage-benchmark.md). Events, traces, logs, and metrics ([telemetry](telemetry.md)) all go straight to ClickHouse, each table ordered by project first, then time (metrics by project, then name, then time, [telemetry](telemetry.md#storage)); PostgreSQL holds accounts, organizations, projects, and settings. Deleting a project, the orphan sweep, and backups below cover every table.
 
 | Step                                                                        | Status |
 | --------------------------------------------------------------------------- | ------ |

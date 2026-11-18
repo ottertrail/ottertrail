@@ -10,6 +10,13 @@ import {
 import type { SavedFunnel } from "../../src/lib/funnels-api.ts";
 import type { GoalResult } from "../../src/lib/goals-api.ts";
 import type { LogList, LogRecord, LogSummary } from "../../src/lib/logs-api.ts";
+import {
+  isMetricKind,
+  MEASURES,
+  type MetricChart,
+  type MetricList,
+  type MetricSeries,
+} from "../../src/lib/metrics-api.ts";
 import type { Organization } from "../../src/lib/organizations-api.ts";
 import {
   type Funnel,
@@ -21,6 +28,7 @@ import {
   type Retention,
 } from "../../src/lib/product-api.ts";
 import type { Project } from "../../src/lib/projects-api.ts";
+import type { ServiceList } from "../../src/lib/services-api.ts";
 import type { SourceMapFile, SourceMapRelease } from "../../src/lib/source-maps-api.ts";
 import type { Speed } from "../../src/lib/speed-api.ts";
 import type { SpanDetail, TraceDetail, TraceList, TraceSummary } from "../../src/lib/traces-api.ts";
@@ -97,6 +105,12 @@ export interface FakeApi {
   logs: (query: URLSearchParams) => LogList | Response;
   /** Answers GET /api/projects/:id/logs/:logId; by default, fakeLog. */
   log: (logId: string, query: URLSearchParams) => LogRecord | Response;
+  /** Answers GET /api/projects/:id/metrics; by default, fakeMetrics. */
+  metrics: (query: URLSearchParams) => MetricList | Response;
+  /** Answers GET /api/projects/:id/metrics/chart; by default, fakeMetricChart. */
+  metricChart: (query: URLSearchParams) => MetricChart | Response;
+  /** Answers GET /api/projects/:id/services; by default, fakeServices. */
+  services: (query: URLSearchParams) => ServiceList | Response;
   /** Answers DELETE /api/projects/:id; by default, removes the project (204). */
   deleteProject: (api: FakeApi, id: string) => Response;
   /** Every path the page asked for, with its query, in order. */
@@ -745,6 +759,137 @@ export function noLogs(query: URLSearchParams): LogList {
 }
 
 /** What the fake API keeps of a project's session replays. */
+const telemetryRange = (query: URLSearchParams) => ({
+  timeZone: "Asia/Singapore",
+  environment: query.get("environment") ?? "production",
+  environments: ["production", "staging"],
+  firstDay: "2026-11-10",
+  lastDay: "2026-11-16",
+  retentionDays: 30,
+});
+
+/** Three metrics: a histogram, a counter, and a gauge. */
+export function fakeMetrics(query: URLSearchParams): MetricList {
+  return {
+    ...telemetryRange(query),
+    metrics: [
+      {
+        name: "http.server.request.duration",
+        kind: "histogram",
+        unit: "ms",
+        services: ["api", "web"],
+        serviceCount: 2,
+        lastSeen: "2026-11-16T08:00:00.000Z",
+      },
+      {
+        name: "http.server.requests",
+        kind: "counter",
+        unit: "{request}",
+        services: ["web"],
+        serviceCount: 1,
+        lastSeen: "2026-11-16T08:01:00.000Z",
+      },
+      {
+        name: "process.memory.usage",
+        kind: "gauge",
+        unit: "By",
+        services: Array.from({ length: 10 }, (_, i) => `worker-${i}`),
+        serviceCount: 12,
+        lastSeen: "2026-11-16T08:02:00.000Z",
+      },
+    ],
+    truncated: false,
+    received: true,
+  };
+}
+
+/** No metric ever received. */
+export function noMetrics(query: URLSearchParams): MetricList {
+  return { ...fakeMetrics(query), metrics: [], received: false };
+}
+
+/** Values over 12 buckets, with the 4th missing: base, base + 1 … */
+const bucketValues = (base: number) =>
+  Array.from({ length: 12 }, (_, i): number | null => (i === 3 ? null : base + i));
+
+/**
+ * A metric over 12 buckets of an hour, from 16 Nov 2026 08:00 in
+ * Singapore. Split, its lines are "/orders" (most volume), "/cart", and
+ * "Other values".
+ */
+export function fakeMetricChart(query: URLSearchParams): MetricChart {
+  const kindParam = query.get("kind");
+  const kind = isMetricKind(kindParam) ? kindParam : "gauge";
+  const split = query.get("split");
+  const line = (value: string | null, other: boolean, base: number): MetricSeries => ({
+    value,
+    other,
+    volume: base * 10,
+    values: Object.fromEntries(
+      MEASURES[kind].map((measure, index) => [measure, bucketValues(base + index * 10)]),
+    ),
+  });
+  return {
+    ...telemetryRange(query),
+    name: query.get("name") ?? "",
+    kind,
+    unit: kind === "gauge" ? "By" : kind === "counter" ? "{request}" : "ms",
+    start: "2026-11-16T00:00:00.000Z",
+    stepSeconds: 3600,
+    buckets: 12,
+    split,
+    keys: ["http.route", "host.name"],
+    series:
+      split === null
+        ? [line(null, false, 100)]
+        : [line("/orders", false, 300), line("/cart", false, 200), line(null, true, 50)],
+    seriesCount: 14,
+    seriesCapped: false,
+    skippedSeries: 0,
+    bounds: kind === "histogram" ? [10, 50, 100] : [],
+    percentiles: kind === "histogram",
+  };
+}
+
+/** Two services: web with two routes, billing with one. */
+export function fakeServices(query: URLSearchParams): ServiceList {
+  return {
+    ...telemetryRange(query),
+    services: [
+      {
+        service: "web",
+        requests: 1200,
+        failed: 30,
+        p50Us: 25_000,
+        p95Us: 182_400,
+        routeCount: 2,
+        routes: [
+          { route: "/orders/{id}", requests: 1000, failed: 30, p50Us: 30_000, p95Us: 190_000 },
+          { route: "GET /health", requests: 200, failed: 0, p50Us: 850, p95Us: 1200 },
+        ],
+      },
+      {
+        service: "billing",
+        requests: 40,
+        failed: 0,
+        p50Us: 1_250_000,
+        p95Us: 2_000_000,
+        routeCount: 140,
+        routes: [
+          { route: "POST /charge", requests: 40, failed: 0, p50Us: 1_250_000, p95Us: 2_000_000 },
+        ],
+      },
+    ],
+    truncated: false,
+    received: true,
+  };
+}
+
+/** No span ever received. */
+export function noServices(query: URLSearchParams): ServiceList {
+  return { ...fakeServices(query), services: [], received: false };
+}
+
 export interface FakeReplays {
   /** false: the install has no object store. */
   configured: boolean;
@@ -1702,6 +1847,18 @@ async function answer(api: FakeApi, url: URL, init: RequestInit | undefined): Pr
     const result = api.logs(url.searchParams);
     return result instanceof Response ? result : json(result);
   }
+  if (/^\/api\/projects\/[^/]+\/metrics\/chart$/.test(path)) {
+    const result = api.metricChart(url.searchParams);
+    return result instanceof Response ? result : json(result);
+  }
+  if (/^\/api\/projects\/[^/]+\/metrics$/.test(path)) {
+    const result = api.metrics(url.searchParams);
+    return result instanceof Response ? result : json(result);
+  }
+  if (/^\/api\/projects\/[^/]+\/services$/.test(path)) {
+    const result = api.services(url.searchParams);
+    return result instanceof Response ? result : json(result);
+  }
   if (/^\/api\/projects\/[^/]+\/errors$/.test(path)) {
     const result = api.errors(url.searchParams, api);
     return result instanceof Response ? result : json(result);
@@ -1812,6 +1969,9 @@ export function installFakeApi(overrides: Partial<FakeApi> = {}): FakeApi {
     span: fakeSpan,
     logs: fakeLogs,
     log: fakeLog,
+    metrics: fakeMetrics,
+    metricChart: fakeMetricChart,
+    services: fakeServices,
     deleteProject: removeProject,
     requests: [],
     bodies: [],

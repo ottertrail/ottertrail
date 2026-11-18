@@ -38,7 +38,10 @@ import { ProjectSettingsPage } from "@/features/projects/project-settings-page";
 import { ProjectsPage } from "@/features/projects/projects-page";
 import { SpeedPage } from "@/features/speed/speed-page";
 import { LogsPage } from "@/features/telemetry/logs-page";
-import { logFiltersFrom, traceFiltersFrom } from "@/features/telemetry/search";
+import { MetricPage } from "@/features/telemetry/metric-page";
+import { MetricsPage } from "@/features/telemetry/metrics-page";
+import { logFiltersFrom, metricChoicesFrom, traceFiltersFrom } from "@/features/telemetry/search";
+import { ServicesPage } from "@/features/telemetry/services-page";
 import { TracePage } from "@/features/telemetry/trace-page";
 import { TracesPage } from "@/features/telemetry/traces-page";
 import { UserPage } from "@/features/users/user-page";
@@ -464,6 +467,83 @@ const logsRoute = createRoute({
   },
 });
 
+/** A server's metrics: days and environment, as on the other telemetry pages. */
+const metricsRoute = createRoute({
+  getParentRoute: () => projectRoute,
+  path: "/metrics",
+  staticData: { title: "Metrics" },
+  validateSearch: (search: ErrorSearchInput) => ({
+    ...rangeSearch(search),
+    ...environmentSearch(search),
+  }),
+  component: function MetricsRouteComponent() {
+    const { projectId } = metricsRoute.useParams();
+    const { period, from, to, env } = metricsRoute.useSearch();
+    return (
+      <MetricsPage
+        projectId={projectId}
+        range={rangeFrom({ period, from, to })}
+        environment={env ?? DEFAULT_ENVIRONMENT}
+      />
+    );
+  },
+});
+
+/**
+ * One metric: its name in the path, its kind (a name may be sent as two
+ * kinds), and the attribute it is split by and the measure shown, each
+ * left out when unset.
+ */
+const metricRoute = createRoute({
+  getParentRoute: () => projectRoute,
+  path: "/metrics/$name",
+  staticData: { title: "Metric" },
+  validateSearch: (
+    search: ErrorSearchInput & { kind?: unknown; split?: unknown; stat?: unknown },
+  ) => ({
+    ...rangeSearch(search),
+    ...environmentSearch(search),
+    ...metricChoicesFrom(search),
+  }),
+  component: function MetricRouteComponent() {
+    const { projectId, name } = metricRoute.useParams();
+    const { period, from, to, env, kind, split, stat } = metricRoute.useSearch();
+    return (
+      <MetricPage
+        projectId={projectId}
+        name={name}
+        kind={kind}
+        range={rangeFrom({ period, from, to })}
+        environment={env ?? DEFAULT_ENVIRONMENT}
+        split={split}
+        stat={stat}
+      />
+    );
+  },
+});
+
+/** Each service's requests by route: days and environment. */
+const servicesRoute = createRoute({
+  getParentRoute: () => projectRoute,
+  path: "/services",
+  staticData: { title: "Services" },
+  validateSearch: (search: ErrorSearchInput) => ({
+    ...rangeSearch(search),
+    ...environmentSearch(search),
+  }),
+  component: function ServicesRouteComponent() {
+    const { projectId } = servicesRoute.useParams();
+    const { period, from, to, env } = servicesRoute.useSearch();
+    return (
+      <ServicesPage
+        projectId={projectId}
+        range={rangeFrom({ period, from, to })}
+        environment={env ?? DEFAULT_ENVIRONMENT}
+      />
+    );
+  },
+});
+
 /** Product analytics: its reports (events, funnel, retention) as tabs, each its own page. */
 const productRoute = createRoute({
   getParentRoute: () => projectRoute,
@@ -650,6 +730,9 @@ const routeTree = rootRoute.addChildren([
       tracesRoute,
       traceRoute,
       logsRoute,
+      metricsRoute,
+      metricRoute,
+      servicesRoute,
       productRoute.addChildren([
         productIndexRoute,
         productEventsRoute,

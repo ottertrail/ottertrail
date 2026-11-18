@@ -312,4 +312,90 @@ export const CLICKHOUSE_MIGRATIONS: ClickHouseMigration[] = [
        ADD COLUMN IF NOT EXISTS service LowCardinality(String) DEFAULT ''`,
     ],
   },
+  {
+    /**
+     * Metrics ordered by project, then name, then time: a chart reads one
+     * metric, and an export holds all of a process's metrics at one time,
+     * so ordered by time alone a chart read every metric's rows of the
+     * range (docs/telemetry.md, "How metrics are charted").
+     *
+     * Each row also carries its series: a hash of what tells one series of
+     * a metric from another (service, scope, attributes, resource
+     * attributes, temporality; a histogram's bounds), worked out once when
+     * the row is written, so a chart does not hash the attribute maps of
+     * every row it reads.
+     *
+     * Rebuilt beside the old tables, filled, and swapped, as 0008 rebuilt
+     * events. The TTL is the default's; `vp run migrate` then applies
+     * TELEMETRY_RETENTION_DAYS (applyTelemetryRetention).
+     */
+    name: "0010_order_metrics_by_name",
+    statements: (database) => [
+      `DROP TABLE IF EXISTS ${database}.metric_points_by_name`,
+      `CREATE TABLE ${database}.metric_points_by_name (
+        project_id UUID,
+        timestamp DateTime64(9, 'UTC'),
+        id String,
+        start_timestamp DateTime64(9, 'UTC'),
+        name LowCardinality(String),
+        unit LowCardinality(String),
+        kind Enum8('gauge' = 1, 'sum' = 2),
+        temporality Enum8('unspecified' = 0, 'delta' = 1, 'cumulative' = 2),
+        monotonic Bool,
+        value Float64,
+        service LowCardinality(String),
+        release LowCardinality(String),
+        environment LowCardinality(String),
+        resource_attributes Map(LowCardinality(String), String),
+        attributes Map(LowCardinality(String), String),
+        dropped_attributes_count UInt32,
+        scope_name LowCardinality(String),
+        scope_version LowCardinality(String),
+        series UInt64 MATERIALIZED
+          cityHash64(service, scope_name, scope_version, attributes, resource_attributes, temporality)
+      )
+      ENGINE = ReplacingMergeTree
+      PARTITION BY toDate(timestamp)
+      ORDER BY (project_id, name, timestamp, id)
+      TTL toDateTime(timestamp) + INTERVAL 30 DAY
+      SETTINGS ttl_only_drop_parts = 1`,
+      `INSERT INTO ${database}.metric_points_by_name SELECT * FROM ${database}.metric_points`,
+      `EXCHANGE TABLES ${database}.metric_points AND ${database}.metric_points_by_name`,
+      `DROP TABLE ${database}.metric_points_by_name`,
+      `DROP TABLE IF EXISTS ${database}.metric_histograms_by_name`,
+      `CREATE TABLE ${database}.metric_histograms_by_name (
+        project_id UUID,
+        timestamp DateTime64(9, 'UTC'),
+        id String,
+        start_timestamp DateTime64(9, 'UTC'),
+        name LowCardinality(String),
+        unit LowCardinality(String),
+        temporality Enum8('unspecified' = 0, 'delta' = 1, 'cumulative' = 2),
+        count UInt64,
+        sum Nullable(Float64),
+        min Nullable(Float64),
+        max Nullable(Float64),
+        bounds Array(Float64),
+        bucket_counts Array(UInt64),
+        service LowCardinality(String),
+        release LowCardinality(String),
+        environment LowCardinality(String),
+        resource_attributes Map(LowCardinality(String), String),
+        attributes Map(LowCardinality(String), String),
+        dropped_attributes_count UInt32,
+        scope_name LowCardinality(String),
+        scope_version LowCardinality(String),
+        series UInt64 MATERIALIZED
+          cityHash64(service, scope_name, scope_version, attributes, resource_attributes, temporality, bounds)
+      )
+      ENGINE = ReplacingMergeTree
+      PARTITION BY toDate(timestamp)
+      ORDER BY (project_id, name, timestamp, id)
+      TTL toDateTime(timestamp) + INTERVAL 30 DAY
+      SETTINGS ttl_only_drop_parts = 1`,
+      `INSERT INTO ${database}.metric_histograms_by_name SELECT * FROM ${database}.metric_histograms`,
+      `EXCHANGE TABLES ${database}.metric_histograms AND ${database}.metric_histograms_by_name`,
+      `DROP TABLE ${database}.metric_histograms_by_name`,
+    ],
+  },
 ];

@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link, useMatchRoute, useNavigate, useParams } from "@tanstack/react-router";
 import {
+  ActivityIcon,
   ArrowLeftIcon,
   BugIcon,
   ChartColumnIcon,
@@ -11,6 +12,7 @@ import {
   GaugeIcon,
   PaletteIcon,
   ScrollTextIcon,
+  ServerIcon,
   SettingsIcon,
   UsersIcon,
   WaypointsIcon,
@@ -262,6 +264,34 @@ function ProjectMenu({ projectId }: { projectId: string }) {
             >
               <ScrollTextIcon />
               <span>Logs</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              render={<Link to="/projects/$projectId/metrics" params={{ projectId }} />}
+              isActive={
+                matchRoute({
+                  to: "/projects/$projectId/metrics",
+                  params: { projectId },
+                  fuzzy: true,
+                }) !== false
+              }
+              tooltip="Metrics"
+            >
+              <ActivityIcon />
+              <span>Metrics</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              render={<Link to="/projects/$projectId/services" params={{ projectId }} />}
+              isActive={
+                matchRoute({ to: "/projects/$projectId/services", params: { projectId } }) !== false
+              }
+              tooltip="Services"
+            >
+              <ServerIcon />
+              <span>Services</span>
             </SidebarMenuButton>
           </SidebarMenuItem>
           <SidebarMenuItem>

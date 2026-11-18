@@ -23,8 +23,11 @@ OTEL_SERVICE_NAME=checkout
 OTEL_RESOURCE_ATTRIBUTES=deployment.environment.name=production,service.version=1.4.2`;
 }
 
+const TITLES = { traces: "No traces yet", logs: "No logs yet", metrics: "No metrics yet" };
+
 /**
- * Shown while a project has sent no spans (or no log records) at all:
+ * Shown while a project has sent no spans (or no log records, or no
+ * metrics) at all:
  * how a server sends them, over OTLP/HTTP with the project's secret key.
  */
 export function SendTelemetry({
@@ -33,7 +36,7 @@ export function SendTelemetry({
   retentionDays,
 }: {
   projectId: string;
-  signal: "traces" | "logs";
+  signal: "traces" | "logs" | "metrics";
   retentionDays: number;
 }) {
   const origin = window.location.origin;
@@ -43,19 +46,20 @@ export function SendTelemetry({
         <EmptyMedia variant="icon">
           <RadioTowerIcon />
         </EmptyMedia>
-        <EmptyTitle>{signal === "traces" ? "No traces yet" : "No logs yet"}</EmptyTitle>
+        <EmptyTitle>{TITLES[signal]}</EmptyTitle>
         <EmptyDescription>
-          Your servers send {signal === "traces" ? "traces" : "logs"} with OpenTelemetry: any of its
-          SDKs, or a Collector, over OTLP/HTTP to this instance. Requests need the project&apos;s
-          secret key, under &ldquo;Your server&rdquo; in the project&apos;s settings; keep it on
-          your server. They are kept {retentionDays} days.
+          Your servers send {signal} with OpenTelemetry: any of its SDKs, or a Collector, over
+          OTLP/HTTP to this instance. Requests need the project&apos;s secret key, under &ldquo;Your
+          server&rdquo; in the project&apos;s settings; keep it on your server. They are kept{" "}
+          {retentionDays} days.
         </EmptyDescription>
       </EmptyHeader>
       <EmptyContent className="max-w-2xl text-left">
         <CopyableCode text={exporterSettings(origin)} copyLabel="Copy the settings" />
         <p className="text-sm text-ink-subtle">
-          The SDK adds <code className="font-mono">/v1/traces</code> and{" "}
-          <code className="font-mono">/v1/logs</code> to the endpoint. Replace{" "}
+          The SDK adds <code className="font-mono">/v1/traces</code>,{" "}
+          <code className="font-mono">/v1/logs</code>, and{" "}
+          <code className="font-mono">/v1/metrics</code> to the endpoint. Replace{" "}
           <code className="font-mono">sk_…</code> with the secret key, and name your service and
           environment.
         </p>

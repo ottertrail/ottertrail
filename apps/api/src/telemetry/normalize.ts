@@ -74,6 +74,16 @@ const MAX_AHEAD_NS = 3600n * NANOS_PER_SECOND;
 const EXCEPTION_SLACK_NS = 60n * NANOS_PER_SECOND;
 const MAX_UINT32 = 0xffff_ffff;
 const MAX_UINT64 = 0xffff_ffff_ffff_ffffn;
+/**
+ * Counts a histogram may hold: below 2^63, so a chart's arithmetic on
+ * them (as Int64, to take differences) never wraps to a negative count.
+ */
+const MAX_HISTOGRAM_COUNT = 0x7fff_ffff_ffff_ffffn;
+/**
+ * Bounds a histogram point may have: a chart's memory grows with its
+ * buckets. OpenTelemetry's default has 15; Prometheus's classic 11.
+ */
+export const MAX_HISTOGRAM_BOUNDS = 64;
 
 const ENVIRONMENT = new RegExp(ENVIRONMENT_PATTERN);
 const RELEASE = new RegExp(RELEASE_PATTERN);
@@ -798,6 +808,18 @@ export function normalizeMetrics(
               refusals.add("histograms whose bucket counts do not match their bounds");
               continue;
             }
+            if (bounds.length > MAX_HISTOGRAM_BOUNDS) {
+              refusals.add(`histograms with more than ${MAX_HISTOGRAM_BOUNDS} bucket bounds`);
+              continue;
+            }
+            const total = uint64(point, "count");
+            if (
+              total > MAX_HISTOGRAM_COUNT ||
+              counts.some((count) => BigInt(count) > MAX_HISTOGRAM_COUNT)
+            ) {
+              refusals.add("histograms with a count of 2^63 or more");
+              continue;
+            }
             const { attributes, dropped } = flattenAttributes(messages(point, "attributes"));
             const row: Omit<HistogramRow, "id" | "resource_attributes"> = {
               ...shared,
@@ -806,7 +828,7 @@ export function normalizeMetrics(
               name,
               unit,
               temporality,
-              count: uint64(point, "count").toString(),
+              count: total.toString(),
               sum: finiteOrNull(double(point, "sum")),
               min: finiteOrNull(double(point, "min")),
               max: finiteOrNull(double(point, "max")),

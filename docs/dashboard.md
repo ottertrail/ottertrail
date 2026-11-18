@@ -430,11 +430,28 @@ Loading, failure with Retry, an unknown project, and the dimmed previous list wh
 
 ### Not done yet
 
-- Metrics and Services pages.
 - A trace's span count in the list counts its spans in the period, an hour either side; a longer trace's page shows them all.
 - Zooming the waterfall into part of a trace, and collapsing a span's children.
 - Searching logs for a phrase: each word is matched on its own (see [telemetry](telemetry.md#how-the-pages-read)).
 - Filtering by an attribute.
+
+## 8.10 Metrics and services
+
+Code: `apps/web/src/features/telemetry/` (`metrics-page.tsx`, `metric-page.tsx`, `time-chart.tsx`, `services-page.tsx`), `apps/web/src/lib/metrics-api.ts` and `services-api.ts`. In the project's menu after Logs, with the same period, environment, and addresses. How the API works the numbers out is in [telemetry](telemetry.md#how-metrics-are-charted).
+
+- **Metrics** (`/projects/<id>/metrics`): the metrics with points in the period, by name: name (a link to its chart), kind (Gauge, Counter, Up-down counter, Histogram), unit (an annotation such as `{request}` shown as "request"), up to 10 services and how many more, and when it was last seen. Past 1,000 metrics, a line says the list holds the first by name.
+- **A metric** (`/projects/<id>/metrics/<name>?kind=counter`, with `split` and `stat` when chosen): its name, kind, and unit, then its charts over the period, in the buckets the API chose (5 minutes for a day, an hour for 7 days), each card saying what it draws: a gauge's average, minimum, and maximum ("Value"); an up-down counter's total, each series' last value added up ("Total"); a counter's rate ("Per second"); a histogram's median, 95th, and 99th percentile ("Percentiles") and its observations per second, as two charts, since they have different units. Values read in the metric's unit: durations as the other telemetry pages show them, bytes in KiB, MiB, and GiB, rates with "/s". "Split by" offers the metric's attribute keys: one line per value, and with it a "Measure" choice for a gauge (average, minimum, maximum) or a histogram (median, 95th or 99th percentile, the 95th first). A histogram whose points carry no bucket counts says so in place of its percentiles, and still charts its observations per second. Under the charts, how many series were read, and, when it applies, that values past eight were added up as "Other values", that the 1,000-series cap was reached, or that histogram series were left out of the percentiles (other bounds, or no bucket counts). An address without a kind says so without asking the API.
+- **Services** (`/projects/<id>/services`): a card per service, busiest first, with its requests, the share that failed, its median and 95th-percentile duration, and a table of its routes, busiest first, with the same numbers. A route is a link to the Traces page filtered by the service and the route as part of the name. Past 100 routes, a line says how many there are.
+- **No data yet:** a project that has sent no metric sees how to send them, and one that has sent no span sees how to send traces on the Services page, with the Traces page's settings to copy ([8.9](#89-traces-and-logs)). A period without any says so, with the retention.
+
+The charts are drawn in SVG, as the analytics page's are ([charts](#charts-without-a-chart-library)), by one component for lines over time buckets (`time-chart.tsx`), following the [design system's chart rules](design-system.md#charts): one y-axis; lines 2px in the chart colors in slot order; a legend from two lines; a crosshair with every line's value at the bucket under the pointer, values first; gaps where no point arrived. A split's value takes the first free color when it first shows and keeps it while the page is open (`split-colors.ts`), so a value keeps its color when the ranking or the set of values changes with the period or measure; a new value takes a color no value has had, while one is left. Colors are found by each line's key, its value, never its label, so a value that reads like the page's own labels ("(not set)", "Other values") has a color of its own. "Other values" is the de-emphasis gray (`ink-tertiary`), so there are at most eight lines and no color is reused. Reloading the page starts the colors over. No palette was added. Each chart holds a hidden range input, as the analytics chart does, that moves between buckets and reads each with every line's value, and "Show the numbers" opens a table of every bucket with a value.
+
+`metrics-services.test.tsx` covers the sidebar links and their order, the list, opening a metric with the period kept, a gauge's three lines, legend, and keyboard readout, a histogram's two charts and table, the split control and measure in the address and the request, the colors of split lines and "other", a value keeping its color when the values change, values named like the page's labels, a histogram without bucket counts, an up-down counter's total, the empty states without the key, an address without a kind, a failed load with Retry, the services' tables, and a route's link to its traces; `apps/api/tests/telemetry-metrics.test.ts` the routes and numbers.
+
+### Not done yet
+
+- Splitting by a resource attribute or by service, filtering a chart by an attribute, and charts of several metrics on one page.
+- A chart's period from a selection on the chart (zoom).
 
 ## Organizations
 
