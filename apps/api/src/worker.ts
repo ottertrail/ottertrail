@@ -7,13 +7,17 @@
  * - Joining each session replay's chunks into one object every few
  *   seconds, and deleting replays past their 30 days with retention
  *   (replays/replays.ts).
+ * - Running due uptime checks every few seconds, at most 20 requests at
+ *   once, and recording their state, incidents, and results
+ *   (uptime/scheduler.ts).
  * - At start and every few hours: finding projects ClickHouse still holds
  *   events of but PostgreSQL no longer knows, deleting events older than
  *   each project's retention (retention/retention.ts),
  *   and taking deleted rows off ClickHouse's disk.
  *
- * All are safe to repeat and to run in two workers at once, so plain
- * timers are enough; a job queue comes with work that needs one.
+ * All are safe to repeat and to run in two workers at once (uptime checks
+ * are taken with FOR UPDATE SKIP LOCKED), so plain timers are enough; a
+ * job queue comes with work that needs one.
  */
 import { createClickHouse } from "./clickhouse/clickhouse.ts";
 import {
@@ -26,6 +30,8 @@ import { createDatabase } from "./db/database.ts";
 import { deleteExpiredReplays, deleteJoinedChunks, joinReplays } from "./replays/replays.ts";
 import { deleteExpiredEvents } from "./retention/retention.ts";
 import { s3ObjectStore } from "./storage/object-store.ts";
+import { addressPolicy } from "./uptime/addresses.ts";
+import { CHECK_TICK_MS, CheckScheduler } from "./uptime/scheduler.ts";
 
 /**
  * How often retention runs, with the search for forgotten projects and the
@@ -101,6 +107,40 @@ const stopReplays = every(REPLAY_INTERVAL_MS, async () => {
   }
 });
 
+const checks = new CheckScheduler({
+  db,
+  clickhouse,
+  policy: addressPolicy({
+    allowPrivate: config.uptimeAllowPrivateAddresses,
+    deny: config.uptimeDenyAddresses,
+  }),
+  log,
+  onStateChange: (change) =>
+    log(
+      "info",
+      change.to === "down" ? "an uptime check went down" : "an uptime check is up again",
+      {
+        check: change.checkId,
+        project: change.projectId,
+        cause: change.cause,
+      },
+    ),
+});
+
+/** Whether the last look for due checks failed: an outage is logged once. */
+let checksFailing = false;
+
+const stopChecks = every(CHECK_TICK_MS, async () => {
+  try {
+    await checks.tick();
+    if (checksFailing) log("info", "taking due uptime checks works again");
+    checksFailing = false;
+  } catch (error) {
+    if (!checksFailing) log("error", "taking due uptime checks failed", { err: String(error) });
+    checksFailing = true;
+  }
+});
+
 const stopRetention = every(RETENTION_INTERVAL_MS, async () => {
   if (objectStore !== null) {
     try {
@@ -146,7 +186,9 @@ async function shutdown(signal: NodeJS.Signals) {
   log("info", "shutting down", { signal });
   stopping = true;
   // Runs in progress finish their batch first.
-  await Promise.all([stopPurging(), stopReplays(), stopRetention()]);
+  await Promise.all([stopPurging(), stopReplays(), stopChecks(), stopRetention()]);
+  // Requests under way finish and are recorded: each is at most 30 seconds.
+  await checks.drain();
   await clickhouse.close();
   objectStore?.close();
   await db.destroy();
@@ -159,4 +201,6 @@ for (const signal of ["SIGINT", "SIGTERM"] as const) {
 log("info", "worker started", {
   purgeIntervalMs: PURGE_INTERVAL_MS,
   retentionIntervalMs: RETENTION_INTERVAL_MS,
+  uptimeAllowPrivateAddresses: config.uptimeAllowPrivateAddresses,
+  uptimeDenyAddresses: config.uptimeDenyAddresses,
 });

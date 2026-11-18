@@ -10,6 +10,7 @@ import {
 } from "../src/clickhouse/delete-events.ts";
 import type { NewEvent } from "../src/collection/event-store.ts";
 import { loadConfig } from "../src/config.ts";
+import { storeResult } from "../src/uptime/results.ts";
 import { PUBLIC_URL, signedInDashboard } from "./helpers/dashboard.ts";
 import { insertOrganization, insertProject } from "./helpers/projects.ts";
 import { nowNs, secretKeyOf } from "./helpers/telemetry.ts";
@@ -204,6 +205,51 @@ describe("deleting a project's events from ClickHouse", { timeout: 60_000 }, () 
     });
     expect(await telemetryOf(doomed, { onDisk: true })).toEqual([0, 0, 0, 0]);
     expect(await telemetryOf(kept)).toEqual([1, 1, 1, 1]);
+  });
+
+  test("a deleted project's uptime check results leave ClickHouse too, and an orphan's are found", async () => {
+    const results = async (projectId: string) => {
+      const result = await dashboard.reader.client.query({
+        query: "SELECT count() AS n FROM check_results WHERE project_id = {project:UUID}",
+        query_params: { project: projectId },
+        format: "JSONEachRow",
+      });
+      const [row] = await result.json<{ n: string }>();
+      return Number(row?.n ?? 0);
+    };
+    const outcome = {
+      up: true,
+      statusCode: 200,
+      responseMs: 42,
+      cause: null,
+      detail: "",
+      tlsExpiresAt: null,
+    };
+    const doomed = await projectWith("Doomed checks", 0);
+    const orphan = await projectWith("Orphaned checks", 0);
+    for (const projectId of [doomed, orphan]) {
+      await storeResult(
+        dashboard.reader.client,
+        { id: randomUUID(), projectId },
+        outcome,
+        new Date(),
+      );
+    }
+    await deleteThroughDashboard(doomed, "Doomed checks");
+    expect(await purgeDeletedProjects(dashboard.db, dashboard.reader.client)).toMatchObject({
+      projects: 1,
+      rows: 1,
+    });
+    expect(await results(doomed)).toBe(0);
+
+    await dashboard.db.deleteFrom("projects").where("id", "=", orphan).execute();
+    await dashboard.db.deleteFrom("project_deletions").execute();
+    expect(await queueOrphanedProjects(dashboard.db, dashboard.reader.client)).toEqual({
+      orphans: 1,
+      queued: true,
+    });
+    await purgeDeletedProjects(dashboard.db, dashboard.reader.client);
+    expect(await results(orphan)).toBe(0);
   });
 
   test("while ClickHouse is unreachable, the deletion waits for the next run", async () => {

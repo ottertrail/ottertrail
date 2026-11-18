@@ -53,6 +53,8 @@ describe("loadConfig", () => {
       sourceMapBytesPerOrganization: DEFAULT_SOURCE_MAP_BYTES_PER_ORGANIZATION,
       replayBytesPerOrganization: DEFAULT_REPLAY_BYTES_PER_ORGANIZATION,
       telemetryRetentionDays: DEFAULT_TELEMETRY_RETENTION_DAYS,
+      uptimeAllowPrivateAddresses: false,
+      uptimeDenyAddresses: [],
     });
   });
 
@@ -86,6 +88,8 @@ describe("loadConfig", () => {
         SOURCE_MAP_BYTES_PER_ORGANIZATION: String(5 * 1024 ** 3),
         REPLAY_BYTES_PER_ORGANIZATION: String(10 * 1024 ** 3),
         TELEMETRY_RETENTION_DAYS: "90",
+        UPTIME_ALLOW_PRIVATE_ADDRESSES: "true",
+        UPTIME_DENY_ADDRESSES: " 203.0.113.10, 2001:db8::/32 ,",
       }),
     ).toEqual({
       host: "0.0.0.0",
@@ -120,7 +124,32 @@ describe("loadConfig", () => {
       sourceMapBytesPerOrganization: 5 * 1024 ** 3,
       replayBytesPerOrganization: 10 * 1024 ** 3,
       telemetryRetentionDays: 90,
+      uptimeAllowPrivateAddresses: true,
+      uptimeDenyAddresses: ["203.0.113.10", "2001:db8::/32"],
     });
+  });
+
+  test("refuses an uptime deny list entry that is not an address or CIDR range", () => {
+    for (const entry of ["example.com", "10.0.0.0/33", "::1/129", "10.0.0.1/8/2", "10.0.0"]) {
+      expect(() => loadConfig({ UPTIME_DENY_ADDRESSES: `203.0.113.10,${entry}` })).toThrow(
+        `UPTIME_DENY_ADDRESSES must be a comma-separated list of IP addresses and CIDR ranges; "${entry}" is not valid`,
+      );
+    }
+  });
+
+  test("reads whether uptime checks may reach private addresses: off unless true", () => {
+    expect(loadConfig({ UPTIME_ALLOW_PRIVATE_ADDRESSES: "" }).uptimeAllowPrivateAddresses).toBe(
+      false,
+    );
+    expect(loadConfig({ UPTIME_ALLOW_PRIVATE_ADDRESSES: "1" }).uptimeAllowPrivateAddresses).toBe(
+      true,
+    );
+    expect(
+      loadConfig({ UPTIME_ALLOW_PRIVATE_ADDRESSES: "false" }).uptimeAllowPrivateAddresses,
+    ).toBe(false);
+    expect(() => loadConfig({ UPTIME_ALLOW_PRIVATE_ADDRESSES: "yes" })).toThrow(
+      "UPTIME_ALLOW_PRIVATE_ADDRESSES must be true or false",
+    );
   });
 
   test("refuses a telemetry retention outside 1 to 365 days, or not a whole number", () => {

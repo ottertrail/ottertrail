@@ -95,12 +95,13 @@ describe("inside a project", () => {
       "Metrics",
       "Services",
       "Hosts",
+      "Uptime",
       "Product analytics",
       "Settings",
     ]);
     // Right under the last module, not pinned to the bottom of the sidebar.
-    const lastModule = items[10]?.getBoundingClientRect();
-    const settings = items[11]?.getBoundingClientRect();
+    const lastModule = items[11]?.getBoundingClientRect();
+    const settings = items[12]?.getBoundingClientRect();
     expect((settings?.top ?? 0) - (lastModule?.bottom ?? 0)).toBeLessThan(8);
     await expect.poll(breadcrumb).toBe("Main site / Web analytics");
   });

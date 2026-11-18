@@ -398,4 +398,36 @@ export const CLICKHOUSE_MIGRATIONS: ClickHouseMigration[] = [
       `DROP TABLE ${database}.metric_histograms_by_name`,
     ],
   },
+  {
+    /**
+     * The result of each uptime check's request (docs/uptime-alerts.md),
+     * written by the worker; the checks themselves and their incidents are
+     * in PostgreSQL.
+     *
+     * - Ordered by project, then check, then time: every query reads one
+     *   check's results, as metrics are ordered by name.
+     * - Partitioned by day and kept 90 days: ClickHouse drops a whole day
+     *   past it (ttl_only_drop_parts).
+     * - A plain MergeTree: only the worker writes a result, once.
+     * - status_code 0 when nothing answered; cause empty when it was up.
+     */
+    name: "0011_create_check_results",
+    statements: (database) => [
+      `CREATE TABLE IF NOT EXISTS ${database}.check_results (
+        project_id UUID,
+        check_id UUID,
+        timestamp DateTime64(3, 'UTC'),
+        up Bool,
+        status_code UInt16,
+        response_ms UInt32,
+        cause LowCardinality(String),
+        detail String
+      )
+      ENGINE = MergeTree
+      PARTITION BY toDate(timestamp)
+      ORDER BY (project_id, check_id, timestamp)
+      TTL toDateTime(timestamp) + INTERVAL 90 DAY
+      SETTINGS ttl_only_drop_parts = 1`,
+    ],
+  },
 ];

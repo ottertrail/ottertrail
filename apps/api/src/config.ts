@@ -1,5 +1,6 @@
 import { isIP } from "node:net";
 
+import { parseAddressRange } from "./uptime/addresses.ts";
 import { canonicalTimeZone } from "./visitors/visitor-ids.ts";
 
 const LOG_LEVELS = ["fatal", "error", "warn", "info", "debug", "trace", "silent"] as const;
@@ -113,6 +114,18 @@ export interface Config {
    * older records are refused, and ClickHouse drops whole days past it.
    */
   telemetryRetentionDays: number;
+  /**
+   * Whether uptime checks may reach loopback, private, unique-local, and
+   * shared (CGNAT) addresses (uptime/addresses.ts): off unless a
+   * self-hosted install must check its own private network.
+   */
+  uptimeAllowPrivateAddresses: boolean;
+  /**
+   * Addresses and CIDR ranges uptime checks may never reach, whatever
+   * else is allowed: the server's own public address, whose ports a cloud
+   * firewall closes only to the outside.
+   */
+  uptimeDenyAddresses: string[];
 }
 
 export interface ObjectStoreConfig {
@@ -308,6 +321,28 @@ function parseTelemetryRetentionDays(raw: string | undefined): number {
   return days;
 }
 
+function parseBoolean(name: string, raw: string | undefined): boolean {
+  const value = raw?.trim().toLowerCase() ?? "";
+  if (value === "" || value === "false" || value === "0") return false;
+  if (value === "true" || value === "1") return true;
+  throw new ConfigError(`${name} must be true or false, received "${raw}"`);
+}
+
+function parseDenyAddresses(raw: string | undefined): string[] {
+  const entries = (raw ?? "")
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter((entry) => entry !== "");
+  for (const entry of entries) {
+    if (parseAddressRange(entry) === null) {
+      throw new ConfigError(
+        `UPTIME_DENY_ADDRESSES must be a comma-separated list of IP addresses and CIDR ranges; "${entry}" is not valid`,
+      );
+    }
+  }
+  return entries;
+}
+
 function parseTrustProxy(raw: string | undefined): false | number | string[] {
   if (raw === undefined || raw.trim() === "" || raw.trim() === "false") {
     return false;
@@ -434,6 +469,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       DEFAULT_REPLAY_BYTES_PER_ORGANIZATION,
     ),
     telemetryRetentionDays: parseTelemetryRetentionDays(env.TELEMETRY_RETENTION_DAYS),
+    uptimeAllowPrivateAddresses: parseBoolean(
+      "UPTIME_ALLOW_PRIVATE_ADDRESSES",
+      env.UPTIME_ALLOW_PRIVATE_ADDRESSES,
+    ),
+    uptimeDenyAddresses: parseDenyAddresses(env.UPTIME_DENY_ADDRESSES),
   };
 }
 

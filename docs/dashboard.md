@@ -470,6 +470,22 @@ The charts are those of the Metrics page (`time-chart.tsx`, in a card from `char
 - Swap, paging, disk operations, per-CPU and per-interface charts, and processes: each can be charted on the Metrics page.
 - Sorting the table by a value, and filtering hosts by name.
 
+## 8.12 Uptime
+
+Code: `apps/web/src/features/uptime/` (`uptime-page.tsx`, `check-page.tsx`, `check-form-dialog.tsx`, `check-actions.tsx`), `apps/web/src/lib/uptime-api.ts`. A project's uptime checks, in the project's menu after Hosts. How checks run, and the addresses they may not reach, are in [uptime and alerts](uptime-alerts.md#step-1-uptime-checks-as-built).
+
+- **Uptime** (`/projects/<id>/uptime`): a table of the project's checks, oldest first: the check's name (a link to its page) with its method, URL, and how often it runs; its state as a badge with an icon and a word (Up, Down, Pending before it has run enough, or Paused); its uptime over the last 24 hours, 7 days, and 30 days, cut to two decimals rather than rounded, so a check that was down at all never reads 100% (a dash for a period the check did not exist in); its latest run, the response time or the failure's cause with its status code; and when it last ran, in the organization's timezone. Each row has Edit, Pause or Resume, and Delete buttons named for the check. A line above the table says how many checks the project has of its 50; at 50, Add is off and a line says why. The list is read again every 30 seconds.
+- **Adding and editing** share one form in a dialog: the URL, a name (the URL's host when left empty), how often (every 1, 2, 5, 10, 15, 30, or 60 minutes), the method (GET or HEAD), the timeout in seconds (10 by default, at most 30), how many failures in a row make it down (2 by default), the status codes that count as up (200-399 by default), and an optional word that must, or must not, be in the body. The form checks what it can before sending (a URL that starts with http:// or https://, a status list, a timeout, a word with GET), and shows the API's own refusal, such as a host that resolves to an address checks may not reach, under the field it is about. Deleting asks first.
+- **A check** (`/projects/<id>/uptime/<check ID>`): its name, URL, how often it runs, and its word; its state in words, such as "Down since 16 Nov 2026, 09:40: Status code."; Edit, Pause, and Delete (which goes back to the list); the period picker of the other pages (whole days, without an environment); its uptime in the period with its runs and failures, and over the last 24 hours, 7 days, and 30 days; when its certificate expires, for HTTPS; its response time over the period, the average of the runs that got an answer per bucket, on the Metrics page's chart (`time-chart.tsx` in `chart-card.tsx`: one line, so no legend, a crosshair, a keyboard readout, and "Show the numbers"); its incidents in the period, newest first, with when each started and ended (Ongoing as a badge), how long it lasted, and its first cause; and the latest 20 failed runs with their cause, status code, time taken, and what happened. A check that does not exist says so, with a link back.
+- **No checks yet:** a short explanation of what a check does, and the Add check button. Nothing else is shown until there is a check.
+
+Loading, failure with Retry, an unknown project, and the dimmed previous chart while another period loads work as on the telemetry pages; the results are not retried after the API answered, a 503 included. `uptime.test.tsx` covers the sidebar link, the table with states in words and uptime cut to two decimals, the empty state, the form's own checks and the API's refusal under the URL, adding with every field, editing, pausing, and deleting from a row, a check's page with its state line, figures, chart readout, incidents, and failures, the period in the address and the request, a period with no runs, pausing and deleting from the page, an unknown check, and a failed load with Retry, against the fake API; `navigation.test.tsx` the menu's order; `apps/api/tests/uptime.test.ts` the routes.
+
+### Not done yet
+
+- Alerts when a check goes down or its certificate is about to expire ([uptime and alerts](uptime-alerts.md)).
+- Sorting or filtering the checks, and a chart of every check's state over time.
+
 ## Organizations
 
 Code: `apps/api/src/organizations/` and `apps/web/src/features/organizations/`.

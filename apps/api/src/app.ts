@@ -29,9 +29,12 @@ import { SourceMapCache } from "./source-maps/resolve.ts";
 import { sourceMapRoutes, sourceMapUploadRoutes } from "./source-maps/routes.ts";
 import { speedRoutes } from "./speed/routes.ts";
 import type { ObjectStore } from "./storage/object-store.ts";
+import { OrganizationLimiter } from "./telemetry/dashboard-limit.ts";
 import { telemetryDashboardRoutes } from "./telemetry/dashboard-routes.ts";
 import { type TelemetryOptions, telemetryRoutes } from "./telemetry/routes.ts";
 import { trackerScriptRoutes } from "./tracker-script/routes.ts";
+import { addressPolicy, type Lookup } from "./uptime/addresses.ts";
+import { uptimeRoutes } from "./uptime/routes.ts";
 
 export interface AppOptions extends Omit<FastifyServerOptions, "logger"> {
   db: Kysely<Database>;
@@ -92,6 +95,13 @@ export interface AppOptions extends Omit<FastifyServerOptions, "logger"> {
    * Not served without a ClickHouse client.
    */
   telemetry?: Partial<Omit<TelemetryOptions, "projects" | "now">>;
+  /**
+   * Uptime checks (docs/uptime-alerts.md): whether they may reach private
+   * addresses (UPTIME_ALLOW_PRIVATE_ADDRESSES, off by default), the
+   * addresses they may never reach (UPTIME_DENY_ADDRESSES), and the
+   * resolver that checks a URL's host when a check is saved (tests fake it).
+   */
+  uptime?: { allowPrivateAddresses?: boolean; denyAddresses?: string[]; lookup?: Lookup };
   /** The built tracker, served at /t.js. Not served when omitted. */
   trackerScriptPath?: string;
   /** The built dashboard's directory, served at /. Not served when omitted. */
@@ -123,6 +133,7 @@ export function buildApp({
   sourceMaps = { limitBytes: DEFAULT_SOURCE_MAP_BYTES_PER_ORGANIZATION },
   replays = { limitBytes: DEFAULT_REPLAY_BYTES_PER_ORGANIZATION },
   telemetry = {},
+  uptime = {},
   trackerScriptPath,
   dashboardPath,
   replayPlayerPath,
@@ -267,12 +278,29 @@ export function buildApp({
       sourceMaps: { store: objectStore, cache: new SourceMapCache() },
       ...(dashboard.now === undefined ? {} : { now: dashboard.now }),
     });
+    // One limit on each organization's ClickHouse queries, for every page that reads them.
+    const limiter = new OrganizationLimiter();
     app.register(telemetryDashboardRoutes, {
       prefix: "/api",
       db,
       clickhouse: telemetry.clickhouse ?? dashboard.clickhouse,
       auth: dashboard.auth,
       retentionDays: telemetry.retentionDays ?? DEFAULT_TELEMETRY_RETENTION_DAYS,
+      limiter,
+      ...(dashboard.now === undefined ? {} : { now: dashboard.now }),
+    });
+    app.register(uptimeRoutes, {
+      prefix: "/api",
+      db,
+      clickhouse: dashboard.clickhouse,
+      auth: dashboard.auth,
+      trustedOrigins: dashboard.trustedOrigins,
+      policy: addressPolicy({
+        allowPrivate: uptime.allowPrivateAddresses ?? false,
+        deny: uptime.denyAddresses ?? [],
+      }),
+      limiter,
+      ...(uptime.lookup === undefined ? {} : { lookup: uptime.lookup }),
       ...(dashboard.now === undefined ? {} : { now: dashboard.now }),
     });
     app.register(replayRoutes, {

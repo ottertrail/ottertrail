@@ -51,6 +51,12 @@ x-app: &app
     # Traces, logs, and metrics over OTLP (docs/telemetry.md): days kept,
     # 30 by default. The migrate service applies it to ClickHouse's tables.
     TELEMETRY_RETENTION_DAYS: ${TELEMETRY_RETENTION_DAYS:-}
+    # Uptime checks may not reach private addresses unless this is true
+    # (docs/deployment.md, "Uptime checks"). Off by default.
+    UPTIME_ALLOW_PRIVATE_ADDRESSES: ${UPTIME_ALLOW_PRIVATE_ADDRESSES:-false}
+    # Addresses and CIDR ranges checks may never reach, such as this
+    # server's own public address (docs/deployment.md, "Uptime checks").
+    UPTIME_DENY_ADDRESSES: ${UPTIME_DENY_ADDRESSES:-}
 
 services:
   postgres:
@@ -156,6 +162,9 @@ services:
   worker:
     <<: *app
     command: ["node", "--enable-source-maps", "dist/worker.mjs"]
+    # On shutdown the worker lets running uptime checks finish and records
+    # them: up to 30 seconds each, past Compose's default 10.
+    stop_grace_period: 45s
     depends_on:
       migrate:
         condition: service_completed_successfully

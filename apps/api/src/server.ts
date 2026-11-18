@@ -55,6 +55,10 @@ const app = buildApp({
   sourceMaps: { limitBytes: config.sourceMapBytesPerOrganization },
   replays: { limitBytes: config.replayBytesPerOrganization },
   telemetry: { retentionDays: config.telemetryRetentionDays },
+  uptime: {
+    allowPrivateAddresses: config.uptimeAllowPrivateAddresses,
+    denyAddresses: config.uptimeDenyAddresses,
+  },
   trackerScriptPath: config.trackerScriptPath,
   dashboardPath: resolve(config.dashboardPath),
   replayPlayerPath: resolve(config.replayPlayerPath),

@@ -80,6 +80,13 @@ function projectRoutes(id: string): [string, string, object?][] {
     ["GET", `/api/projects/${id}/services?period=7d`],
     ["GET", `/api/projects/${id}/hosts?period=7d`],
     ["GET", `/api/projects/${id}/hosts/charts?period=7d&host=web-1`],
+    ["GET", `/api/projects/${id}/checks`],
+    ["POST", `/api/projects/${id}/checks`, { url: "https://example.com/health" }],
+    ["GET", `/api/projects/${id}/checks/00000000-0000-4000-8000-000000000000`],
+    ["PATCH", `/api/projects/${id}/checks/00000000-0000-4000-8000-000000000000`, { paused: true }],
+    ["DELETE", `/api/projects/${id}/checks/00000000-0000-4000-8000-000000000000`],
+    ["GET", `/api/projects/${id}/checks/00000000-0000-4000-8000-000000000000/results?period=7d`],
+    ["GET", `/api/projects/${id}/checks/00000000-0000-4000-8000-000000000000/incidents?period=7d`],
   ];
 }
 

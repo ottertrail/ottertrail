@@ -11,6 +11,7 @@ import {
   FolderIcon,
   GaugeIcon,
   HardDriveIcon,
+  HeartPulseIcon,
   PaletteIcon,
   ScrollTextIcon,
   ServerIcon,
@@ -309,6 +310,22 @@ function ProjectMenu({ projectId }: { projectId: string }) {
             >
               <HardDriveIcon />
               <span>Hosts</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              render={<Link to="/projects/$projectId/uptime" params={{ projectId }} />}
+              isActive={
+                matchRoute({
+                  to: "/projects/$projectId/uptime",
+                  params: { projectId },
+                  fuzzy: true,
+                }) !== false
+              }
+              tooltip="Uptime"
+            >
+              <HeartPulseIcon />
+              <span>Uptime</span>
             </SidebarMenuButton>
           </SidebarMenuItem>
           <SidebarMenuItem>

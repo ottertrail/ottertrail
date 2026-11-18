@@ -1,5 +1,11 @@
+import type { Kysely } from "kysely";
+
 import { QueryParams, queryRows, type Reader } from "../clickhouse/query.ts";
-import { DEFAULT_ENVIRONMENT } from "../collection/environment.ts";
+import { DEFAULT_ENVIRONMENT, environmentOf } from "../collection/environment.ts";
+import type { Database } from "../db/schema.ts";
+import { localDays } from "../reports/reports.ts";
+import { type RangeQuery, requestDays } from "../reports/routes.ts";
+import { dayIn } from "../visitors/visitor-ids.ts";
 
 /**
  * What the dashboard's telemetry pages share: the range they read,
@@ -21,6 +27,37 @@ export interface TelemetryRange {
   from: Date;
   /** End of lastDay. */
   to: Date;
+}
+
+/**
+ * The days a request asks for, in the organization's timezone, cut to
+ * the last `retentionDays` before `now`; or why they are refused.
+ */
+export async function telemetryRange(
+  db: Kysely<Database>,
+  query: RangeQuery,
+  access: { projectId: string; timeZone: string },
+  now: Date,
+  retentionDays: number,
+): Promise<{ range: TelemetryRange } | { problem: { error: string; message: string } }> {
+  const { projectId, timeZone } = access;
+  const days = requestDays(query, dayIn(timeZone)(now));
+  if ("problem" in days) return days;
+  const { from, to } = await localDays(db, days.from, days.to, timeZone);
+  const kept = new Date(now.getTime() - retentionDays * 86_400_000);
+  const start = from < kept ? kept : from;
+  return {
+    range: {
+      projectId,
+      environment: environmentOf(query.environment),
+      timeZone,
+      firstDay: days.from,
+      lastDay: days.to,
+      dayStart: from,
+      from: start > to ? to : start,
+      to,
+    },
+  };
 }
 
 /**

@@ -14,7 +14,7 @@ Status: tested on one machine with Podman (see [What has been tested](#what-has-
 | `clickhouse` | ClickHouse 26.8, for analytics events and later logs and traces, data in `clickhouse-data`. Capped at 40% of the server's memory (see below)                                   | No                     |
 | `migrate`    | Brings both databases' schemas up to date, then exits. The API and the worker start only after it succeeds                                                                     | No                     |
 | `api`        | The API, the dashboard's files, and the tracker (`/t.js`), on port 3000 inside the stack. Geolocation file in `geo-data`                                                       | No, only through Caddy |
-| `worker`     | Background work: deletes events past each project's retention and those of deleted projects, and joins session replays                                                         | No                     |
+| `worker`     | Background work: runs uptime checks, deletes events past each project's retention and those of deleted projects, and joins session replays                                     | No                     |
 | `caddy`      | HTTPS: gets and renews the certificate, redirects HTTP to HTTPS, compresses responses, passes every request to the API                                                         | Ports 80 and 443       |
 | `garage`     | Only with `--profile object-store`: [Garage](https://garagehq.deuxfleurs.fr/) (AGPL-3.0), an S3-compatible store for source maps, in `garage-data`. About 10 MB of memory idle | No                     |
 
@@ -136,6 +136,15 @@ Source maps turn minified stack traces back into a site's own code ([errors](err
 A server sends them to the instance's address over OTLP/HTTP, with its project's secret key ([telemetry](telemetry.md#receiving)); Caddy passes `/v1/traces`, `/v1/logs`, and `/v1/metrics` to the API like every other path, and nothing needs to be set. ClickHouse keeps them `TELEMETRY_RETENTION_DAYS`, 30 by default (1 to 365), and drops whole days past it on its own. After changing it, run `docker compose up -d`, as for an [update](#updating): `migrate` applies it to ClickHouse's tables, and the API, which refuses records older than it, restarts with it.
 
 Containers keep at most 50 MB of logs each (`docker compose logs api` shows them). The API and the worker log one JSON object per line.
+
+### Uptime checks
+
+The worker runs each project's uptime checks from the server it is on ([uptime and alerts](uptime-alerts.md)). A check may not reach loopback, private, link-local, unique-local, shared (CGNAT), multicast, unspecified, or reserved addresses, so a member cannot point one at the stack's own PostgreSQL or ClickHouse, a cloud's metadata service, or the private network behind the server. Checks resolve host names with the name servers the server is set up with (`/etc/resolv.conf`; in Docker, the container's), not with `/etc/hosts`.
+
+- **The server's own public address.** A check to it on another port reaches services a cloud firewall closes only to the outside, such as a port Docker publishes on the host. List it, and any other address or range checks must never reach, in `UPTIME_DENY_ADDRESSES` in `.env`, separated by commas, such as `UPTIME_DENY_ADDRESSES=203.0.113.10,2001:db8:1::/64`. The API and the worker refuse to start on an entry that is not an IP address or CIDR range.
+- **A private network to check.** A self-hosted install that must check services on its own private network can set `UPTIME_ALLOW_PRIVATE_ADDRESSES=true`: checks may then reach loopback, private, unique-local, and shared addresses, the stack's own containers included. Every member can then point a check at any of them, and a check's word reads their answers one yes or no per run, enough to read out, a word at a time, what a service shows without a password. Set it only where every member may read those services, and list what they must not reach in `UPTIME_DENY_ADDRESSES`. Link-local addresses and the known cloud metadata services (`169.254.169.254`, `100.100.100.200`, `168.63.129.16`, `fd00:ec2::254`, `fd20:ce::254`, `fd00:c1::a9fe:a9fe`) stay refused. The hosted service leaves it off.
+
+On shutdown the worker lets running checks finish, at most 30 seconds each, so Compose gives it 45 seconds (`stop_grace_period`) before stopping it.
 
 ### One organization
 

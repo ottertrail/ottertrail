@@ -33,6 +33,7 @@ import type { ServiceList } from "../../src/lib/services-api.ts";
 import type { SourceMapFile, SourceMapRelease } from "../../src/lib/source-maps-api.ts";
 import type { Speed } from "../../src/lib/speed-api.ts";
 import type { SpanDetail, TraceDetail, TraceList, TraceSummary } from "../../src/lib/traces-api.ts";
+import type { Check, CheckResults, IncidentList } from "../../src/lib/uptime-api.ts";
 import type { Activity, User, UserActivity, UserList } from "../../src/lib/users-api.ts";
 
 /**
@@ -116,6 +117,15 @@ export interface FakeApi {
   hosts: (query: URLSearchParams) => HostList | Response;
   /** Answers GET /api/projects/:id/hosts/charts; by default, fakeHostCharts. */
   hostCharts: (query: URLSearchParams) => HostCharts | Response;
+  /**
+   * The project's uptime checks: the routes list, add (refusing what the
+   * API refuses), change, and delete them. By default, fakeChecks.
+   */
+  checks: Check[];
+  /** Answers GET /api/projects/:id/checks/:checkId/results; by default, fakeCheckResults. */
+  checkResults: (checkId: string, query: URLSearchParams) => CheckResults | Response;
+  /** Answers GET /api/projects/:id/checks/:checkId/incidents; by default, fakeIncidents. */
+  incidents: (checkId: string, query: URLSearchParams) => IncidentList | Response;
   /** Answers DELETE /api/projects/:id; by default, removes the project (204). */
   deleteProject: (api: FakeApi, id: string) => Response;
   /** Every path the page asked for, with its query, in order. */
@@ -1773,6 +1783,186 @@ export function fakeRetention(query: URLSearchParams): Retention {
 export const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 
+/** Two checks: one up, one down since 09:40 in Singapore, with their uptime. */
+export function fakeChecks(): Check[] {
+  const base = {
+    method: "GET" as const,
+    timeoutSeconds: 10,
+    expectedStatuses: "200-399",
+    word: null,
+    wordMode: "present" as const,
+    failuresBeforeDown: 2,
+    paused: false,
+    createdAt: "2026-10-01T00:00:00.000Z",
+    updatedAt: "2026-10-01T00:00:00.000Z",
+  };
+  return [
+    {
+      ...base,
+      id: "cccccccc-cccc-4ccc-8ccc-000000000001",
+      name: "Shop home",
+      url: "https://shop.example/",
+      intervalSeconds: 60,
+      state: "up",
+      consecutiveFailures: 0,
+      failingSince: null,
+      failingCause: null,
+      lastCheckedAt: "2026-11-16T08:59:30.000Z",
+      lastUp: true,
+      lastStatusCode: 200,
+      lastResponseMs: 123,
+      lastCause: null,
+      tlsExpiresAt: "2027-01-31T12:00:00.000Z",
+      uptime: { day: 1, week: 0.99951, month: 0.9875 },
+    },
+    {
+      ...base,
+      id: "cccccccc-cccc-4ccc-8ccc-000000000002",
+      name: "API health",
+      url: "https://api.shop.example/health",
+      intervalSeconds: 300,
+      word: "healthy",
+      state: "down",
+      consecutiveFailures: 4,
+      failingSince: "2026-11-16T01:40:00.000Z",
+      failingCause: "status",
+      lastCheckedAt: "2026-11-16T09:00:00.000Z",
+      lastUp: false,
+      lastStatusCode: 503,
+      lastResponseMs: 48,
+      lastCause: "status",
+      tlsExpiresAt: null,
+      uptime: { day: 0.7, week: 0.95, month: null },
+    },
+  ];
+}
+
+/** 24 hourly buckets of 16 November in Singapore; nothing answered in the 4th. */
+export function fakeCheckResults(_checkId: string, query: URLSearchParams): CheckResults {
+  return {
+    timeZone: "Asia/Singapore",
+    firstDay: query.get("from") ?? "2026-11-16",
+    lastDay: query.get("to") ?? "2026-11-16",
+    retentionDays: 90,
+    uptime: 0.98765,
+    start: "2026-11-15T16:00:00.000Z",
+    stepSeconds: 3600,
+    buckets: 24,
+    responseMs: Array.from({ length: 24 }, (_, index) => (index === 3 ? null : 100 + index * 10)),
+    runs: 288,
+    failures: 3,
+    latestFailures: [
+      {
+        at: "2026-11-16T01:45:00.000Z",
+        statusCode: 503,
+        responseMs: 48,
+        cause: "status",
+        detail: "It answered 503, which does not count as up.",
+      },
+      {
+        at: "2026-11-15T19:10:00.000Z",
+        statusCode: null,
+        responseMs: 10_000,
+        cause: "timeout",
+        detail: "No complete answer within 10 seconds.",
+      },
+    ],
+  };
+}
+
+/** One incident still open, one that lasted 25 minutes. */
+export function fakeIncidents(_checkId: string, query: URLSearchParams): IncidentList {
+  return {
+    timeZone: "Asia/Singapore",
+    firstDay: query.get("from") ?? "2026-11-16",
+    lastDay: query.get("to") ?? "2026-11-16",
+    truncated: false,
+    incidents: [
+      {
+        id: "dddddddd-dddd-4ddd-8ddd-000000000001",
+        startedAt: "2026-11-16T01:40:00.000Z",
+        endedAt: null,
+        cause: "status",
+        detail: "It answered 503, which does not count as up.",
+      },
+      {
+        id: "dddddddd-dddd-4ddd-8ddd-000000000002",
+        startedAt: "2026-11-15T19:05:00.000Z",
+        endedAt: "2026-11-15T19:30:00.000Z",
+        cause: "timeout",
+        detail: "No complete answer within 10 seconds.",
+      },
+    ],
+  };
+}
+
+/** A check added or changed as the API would, refusing what it refuses for these tests. */
+function saveCheck(api: FakeApi, body: unknown, existing?: Check): Response {
+  const input = fieldsOf(body);
+  const text = (key: string) => (typeof input[key] === "string" ? input[key] : undefined);
+  const url = text("url") ?? existing?.url ?? "";
+  if (!/^https?:\/\//.test(url)) {
+    return json(
+      { error: "invalid_url", message: "A check's URL starts with http:// or https://." },
+      400,
+    );
+  }
+  const host = new URL(url).hostname;
+  if (host.endsWith(".internal")) {
+    return json(
+      {
+        error: "address_not_allowed",
+        message: `${host} resolves to an address checks may not reach.`,
+      },
+      400,
+    );
+  }
+  if (existing === undefined && api.checks.length >= 50) {
+    return json({ error: "too_many_checks", message: "A project has at most 50 checks." }, 409);
+  }
+  const now = new Date().toISOString();
+  const word = input.word === null ? null : (text("word") ?? existing?.word ?? null);
+  const check: Check = {
+    ...(existing ?? fakeChecks()[0]),
+    id: existing?.id ?? crypto.randomUUID(),
+    name: (text("name") ?? "").trim() || existing?.name || host,
+    url,
+    method: input.method === "HEAD" ? "HEAD" : "GET",
+    intervalSeconds: Number(input.intervalSeconds ?? existing?.intervalSeconds ?? 300),
+    timeoutSeconds: Number(input.timeoutSeconds ?? existing?.timeoutSeconds ?? 10),
+    expectedStatuses: text("expectedStatuses") ?? existing?.expectedStatuses ?? "200-399",
+    word: word === "" ? null : word,
+    wordMode: input.wordMode === "absent" ? "absent" : "present",
+    failuresBeforeDown: Number(input.failuresBeforeDown ?? existing?.failuresBeforeDown ?? 2),
+    paused: typeof input.paused === "boolean" ? input.paused : (existing?.paused ?? false),
+    ...(existing === undefined
+      ? {
+          state: "pending",
+          consecutiveFailures: 0,
+          failingSince: null,
+          failingCause: null,
+          lastCheckedAt: null,
+          lastUp: null,
+          lastStatusCode: null,
+          lastResponseMs: null,
+          lastCause: null,
+          tlsExpiresAt: null,
+          createdAt: now,
+          uptime: { day: null, week: null, month: null },
+        }
+      : {}),
+    updatedAt: now,
+  };
+  api.checks =
+    existing === undefined
+      ? [...api.checks, check]
+      : api.checks.map((item) => (item.id === check.id ? check : item));
+  return json({ check }, existing === undefined ? 201 : 200);
+}
+
+const checkNotFound = () =>
+  json({ error: "check_not_found", message: "The project has no check with this ID." }, 404);
+
 const SESSION = {
   session: {
     id: "session-1",
@@ -1987,6 +2177,36 @@ async function answer(api: FakeApi, url: URL, init: RequestInit | undefined): Pr
     const result = api.hosts(url.searchParams);
     return result instanceof Response ? result : json(result);
   }
+  const checkSubPath = /^\/api\/projects\/[^/]+\/checks\/([^/]+)\/(results|incidents)$/.exec(path);
+  if (checkSubPath?.[1] !== undefined) {
+    const checkId = decodeURIComponent(checkSubPath[1]);
+    if (!api.checks.some((check) => check.id === checkId)) return checkNotFound();
+    const result =
+      checkSubPath[2] === "results"
+        ? api.checkResults(checkId, url.searchParams)
+        : api.incidents(checkId, url.searchParams);
+    return result instanceof Response ? result : json(result);
+  }
+  const checkPath = /^\/api\/projects\/[^/]+\/checks\/([^/]+)$/.exec(path);
+  if (checkPath?.[1] !== undefined) {
+    const checkId = decodeURIComponent(checkPath[1]);
+    const existing = api.checks.find((check) => check.id === checkId);
+    if (existing === undefined) return checkNotFound();
+    if (init?.method === "DELETE") {
+      api.checks = api.checks.filter((check) => check.id !== checkId);
+      return new Response(null, { status: 204 });
+    }
+    if (init?.method === "PATCH") {
+      return saveCheck(api, JSON.parse(typeof init.body === "string" ? init.body : "{}"), existing);
+    }
+    return json({ timeZone: "Asia/Singapore", check: existing });
+  }
+  if (/^\/api\/projects\/[^/]+\/checks$/.test(path)) {
+    if (init?.method === "POST") {
+      return saveCheck(api, JSON.parse(typeof init.body === "string" ? init.body : "null"));
+    }
+    return json({ timeZone: "Asia/Singapore", maxChecks: 50, checks: api.checks });
+  }
   if (/^\/api\/projects\/[^/]+\/services$/.test(path)) {
     const result = api.services(url.searchParams);
     return result instanceof Response ? result : json(result);
@@ -2106,6 +2326,9 @@ export function installFakeApi(overrides: Partial<FakeApi> = {}): FakeApi {
     services: fakeServices,
     hosts: fakeHosts,
     hostCharts: fakeHostCharts,
+    checks: fakeChecks(),
+    checkResults: fakeCheckResults,
+    incidents: fakeIncidents,
     deleteProject: removeProject,
     requests: [],
     bodies: [],

@@ -76,6 +76,66 @@ export interface ProjectDeletionsTable {
   deleted_at: DatabaseDefault<Date>;
 }
 
+/** Why a check's request failed (uptime/request.ts). */
+export type CheckCause =
+  | "timeout"
+  | "refused"
+  | "connection"
+  | "dns"
+  | "tls"
+  | "status"
+  | "word"
+  | "redirects"
+  | "address";
+
+/** A project's HTTP(S) uptime check, and its state (migration 0026; docs/uptime-alerts.md). */
+export interface UptimeChecksTable {
+  id: ColumnType<string, string | undefined, never>;
+  project_id: ColumnType<string, string, never>;
+  name: string;
+  url: string;
+  method: "GET" | "HEAD";
+  interval_seconds: number;
+  timeout_seconds: number;
+  /** Status codes that count as up, such as "200-399" or "200,204,300-302" (uptime/checks.ts). */
+  expected_statuses: string;
+  /** A word the body must hold (word_mode present) or must not (absent); null for none. */
+  word: Nullable<string>;
+  word_mode: "present" | "absent";
+  failures_before_down: number;
+  paused: ColumnType<boolean, boolean | undefined, boolean>;
+  state: ColumnType<"pending" | "up" | "down", "pending" | "up" | "down" | undefined>;
+  consecutive_failures: ColumnType<number, number | undefined, number>;
+  /** The first failure of the current run of failures, and its cause; null while the latest succeeded. */
+  failing_since: Nullable<Date>;
+  failing_cause: Nullable<CheckCause>;
+  failing_detail: Nullable<string>;
+  next_due_at: Date;
+  last_checked_at: Nullable<Date>;
+  last_up: Nullable<boolean>;
+  last_status_code: Nullable<number>;
+  last_response_ms: Nullable<number>;
+  last_cause: Nullable<CheckCause>;
+  /** When the HTTPS certificate seen last expires. */
+  tls_expires_at: Nullable<Date>;
+  /** When the URL last changed: a run started before it is not recorded. */
+  url_changed_at: Nullable<Date>;
+  created_at: ColumnType<Date, Date | undefined, never>;
+  updated_at: ColumnType<Date, Date | undefined, Date>;
+}
+
+/** One time a check was down: open (ended_at null) while it still is (migration 0026). */
+export interface UptimeIncidentsTable {
+  id: ColumnType<string, string | undefined, never>;
+  check_id: ColumnType<string, string, never>;
+  project_id: ColumnType<string, string, never>;
+  started_at: Date;
+  ended_at: Nullable<Date>;
+  /** The first failure's cause and what it said. */
+  cause: CheckCause;
+  detail: ColumnType<string, string | undefined, string>;
+}
+
 /** A project's saved conversion: a page or a product event (migration 0020). */
 export interface GoalsTable {
   id: ColumnType<string, string | undefined, never>;
@@ -222,6 +282,8 @@ export interface Database {
   error_resolutions: ErrorResolutionsTable;
   goals: GoalsTable;
   saved_funnels: SavedFunnelsTable;
+  uptime_checks: UptimeChecksTable;
+  uptime_incidents: UptimeIncidentsTable;
   source_maps: SourceMapsTable;
   replay_chunks: ReplayChunksTable;
   replays: ReplaysTable;

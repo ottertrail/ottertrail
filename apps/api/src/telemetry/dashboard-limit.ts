@@ -1,3 +1,6 @@
+import type { ClickHouseClient } from "../clickhouse/clickhouse.ts";
+import type { Reader } from "../clickhouse/query.ts";
+
 /**
  * At most a few of one organization's telemetry dashboard queries run at
  * once on this process (docs/telemetry.md, "How the pages read"), so one
@@ -145,4 +148,31 @@ export class OrganizationLimiter {
     if (running <= 0) this.#running.delete(organizationId);
     else this.#running.set(organizationId, running);
   }
+}
+
+/**
+ * Where a dashboard request's queries run (the telemetry and uptime
+ * pages): each waits for a place among its organization's
+ * (OrganizationLimiter), at most QUERIES_PER_REQUEST of them at once, and
+ * all end when the request is closed or answered, as when the browser
+ * gives up or one query failed.
+ */
+export function dashboardReader(
+  clickhouse: ClickHouseClient,
+  limiter: OrganizationLimiter,
+  organizationId: string,
+  reply: {
+    raw: { writableFinished: boolean; once: (event: "close", listener: () => void) => unknown };
+  },
+): Reader {
+  const controller = new AbortController();
+  // Once the answer is sent or the request is gone, nothing more is
+  // needed: a failed query's 503 also ends the request's other queries,
+  // running or waiting, so they free the organization's places.
+  reply.raw.once("close", () => controller.abort());
+  return {
+    client: clickhouse,
+    signal: controller.signal,
+    gate: limiter.gate(organizationId, controller.signal),
+  };
 }

@@ -165,7 +165,10 @@ export interface Buckets {
  * fall on whole minutes and hours of the organization's time, from the
  * range's start (or the retention's) to its end or now, whichever is sooner.
  */
-export function bucketsOf(range: TelemetryRange, now: Date): Buckets {
+export function bucketsOf(
+  range: Pick<TelemetryRange, "dayStart" | "from" | "to">,
+  now: Date,
+): Buckets {
   const anchor = range.dayStart.getTime();
   const fromMs = range.from.getTime();
   const endMs = Math.max(fromMs, Math.min(range.to.getTime(), now.getTime()));

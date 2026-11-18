@@ -6,15 +6,11 @@ import type { Kysely } from "kysely";
 import type { Auth } from "../auth/auth.ts";
 import { requireSession } from "../auth/routes.ts";
 import type { ClickHouseClient } from "../clickhouse/clickhouse.ts";
-import type { Reader } from "../clickhouse/query.ts";
 import { clickHouseErrorHandler } from "../clickhouse/route-errors.ts";
-import { environmentOf } from "../collection/environment.ts";
 import type { Database } from "../db/schema.ts";
 import { type ProjectAccess, requireProjectAccess } from "../organizations/access.ts";
-import { localDays } from "../reports/reports.ts";
-import { RANGE_PROPERTIES, type RangeQuery, requestDays } from "../reports/routes.ts";
-import { dayIn } from "../visitors/visitor-ids.ts";
-import { OrganizationLimiter } from "./dashboard-limit.ts";
+import { RANGE_PROPERTIES, type RangeQuery } from "../reports/routes.ts";
+import { dashboardReader, OrganizationLimiter } from "./dashboard-limit.ts";
 import {
   CURSOR_PATTERN,
   cursorOf,
@@ -22,6 +18,7 @@ import {
   SERVICE_PATTERN,
   SPAN_ID_PATTERN,
   type TelemetryRange,
+  telemetryRange,
   TRACE_ID_PATTERN,
 } from "./dashboard-query.ts";
 import { hostCharts, listHosts } from "./hosts.ts";
@@ -164,56 +161,15 @@ export const telemetryDashboardRoutes: FastifyPluginCallback<{
 ) => {
   const signedIn = requireSession(auth);
   const projectAccess = requireProjectAccess(db);
-  /**
-   * Where a request's queries run: each waits for a place among its
-   * organization's (OrganizationLimiter), at most QUERIES_PER_REQUEST of
-   * them at once, and all end when the request is closed or answered, as
-   * when the browser gives up or one query failed.
-   */
-  function readerOf(
+  const readerOf = (
     request: { projectAccess: ProjectAccess | null },
-    reply: {
-      raw: { writableFinished: boolean; once: (event: "close", listener: () => void) => unknown };
-    },
-  ): Reader {
-    const controller = new AbortController();
-    // Once the answer is sent or the request is gone, nothing more is
-    // needed: a failed query's 503 also ends the request's other queries,
-    // running or waiting, so they free the organization's places.
-    reply.raw.once("close", () => controller.abort());
-    return {
-      client: clickhouse,
-      signal: controller.signal,
-      gate: limiter.gate(accessOf(request).organizationId, controller.signal),
-    };
-  }
+    reply: Parameters<typeof dashboardReader>[3],
+  ) => dashboardReader(clickhouse, limiter, accessOf(request).organizationId, reply);
   app.setErrorHandler(clickHouseErrorHandler);
 
   /** The request's days, in the organization's timezone, from the oldest kept; or the reason it is refused. */
-  async function rangeOf(request: {
-    query: RangeQuery;
-    projectAccess: ProjectAccess | null;
-  }): Promise<{ range: TelemetryRange } | { problem: { error: string; message: string } }> {
-    const { projectId, timeZone } = accessOf(request);
-    const moment = now();
-    const days = requestDays(request.query, dayIn(timeZone)(moment));
-    if ("problem" in days) return days;
-    const { from, to } = await localDays(db, days.from, days.to, timeZone);
-    const kept = new Date(moment.getTime() - retentionDays * 86_400_000);
-    const start = from < kept ? kept : from;
-    return {
-      range: {
-        projectId,
-        environment: environmentOf(request.query.environment),
-        timeZone,
-        firstDay: days.from,
-        lastDay: days.to,
-        dayStart: from,
-        from: start > to ? to : start,
-        to,
-      },
-    };
-  }
+  const rangeOf = (request: { query: RangeQuery; projectAccess: ProjectAccess | null }) =>
+    telemetryRange(db, request.query, accessOf(request), now(), retentionDays);
 
   const BAD_CURSOR = { error: "invalid_cursor", message: "before is out of range." };
 

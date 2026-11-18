@@ -46,6 +46,8 @@ import { logFiltersFrom, metricChoicesFrom, traceFiltersFrom } from "@/features/
 import { ServicesPage } from "@/features/telemetry/services-page";
 import { TracePage } from "@/features/telemetry/trace-page";
 import { TracesPage } from "@/features/telemetry/traces-page";
+import { CheckPage } from "@/features/uptime/check-page";
+import { UptimePage } from "@/features/uptime/uptime-page";
 import { UserPage } from "@/features/users/user-page";
 import { UsersPage } from "@/features/users/users-page";
 import {
@@ -591,6 +593,34 @@ const hostRoute = createRoute({
   },
 });
 
+/** The project's uptime checks. */
+const uptimeRoute = createRoute({
+  getParentRoute: () => projectRoute,
+  path: "/uptime",
+  staticData: { title: "Uptime" },
+  component: function UptimeRouteComponent() {
+    const { projectId } = uptimeRoute.useParams();
+    return <UptimePage projectId={projectId} />;
+  },
+});
+
+/** One check: its ID in the path, and the days its chart, failures, and incidents cover. */
+const checkRoute = createRoute({
+  getParentRoute: () => projectRoute,
+  path: "/uptime/$checkId",
+  staticData: { title: "Check" },
+  validateSearch: (
+    search: { period?: unknown; from?: unknown; to?: unknown } & SearchSchemaInput,
+  ) => rangeSearch(search),
+  component: function CheckRouteComponent() {
+    const { projectId, checkId } = checkRoute.useParams();
+    const { period, from, to } = checkRoute.useSearch();
+    return (
+      <CheckPage projectId={projectId} checkId={checkId} range={rangeFrom({ period, from, to })} />
+    );
+  },
+});
+
 /** Product analytics: its reports (events, funnel, retention) as tabs, each its own page. */
 const productRoute = createRoute({
   getParentRoute: () => projectRoute,
@@ -782,6 +812,8 @@ const routeTree = rootRoute.addChildren([
       servicesRoute,
       hostsRoute,
       hostRoute,
+      uptimeRoute,
+      checkRoute,
       productRoute.addChildren([
         productIndexRoute,
         productEventsRoute,
