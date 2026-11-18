@@ -34,11 +34,9 @@ deploy/backups/
 *.sln
 *.sw?
 
-# AI agent worktrees
-.claude/worktrees/
-
-# Local Claude Code settings (personal; shared settings go in .claude/settings.json)
-.claude/settings.local.json
+# AI agents' local settings, skills, and worktrees: never committed
+.claude/
+.agents/
 
 # Test coverage and TypeScript build info
 coverage
