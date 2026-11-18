@@ -1,12 +1,12 @@
 # Ottertrail
 
-Web analytics, product analytics, error tracking, and monitoring (logs, metrics, traces) for small software teams, in one connected tool. One deployment serves many customers; a self-hosted install is the same software with one organization. Features ship in stages: see `docs/roadmap.md`.
+Web analytics, product analytics, error tracking, and monitoring (logs, metrics, traces) for small software teams, in one connected tool. Each customer gets an instance of their own, hosted or self-hosted: the same software with one organization, on servers no other customer shares (decided 18 November 2026). Features ship in stages: see `docs/roadmap.md`.
 
 If `docs/private/product-spec.md` exists, read it before work on product scope or deployment. It holds the full spec and is not in git. Hosting, pricing, and final branding are undecided; do not invent business commitments.
 
 ## Architecture
 
-- Multi-tenant: an organization is one customer. It owns projects, and dashboard users reach it through memberships. Everything a customer stores belongs to a project (`project_id`), and through the project to one organization.
+- Multi-tenant code, single-customer instances: an organization is one customer. It owns projects, and dashboard users reach it through memberships. Everything a customer stores belongs to a project (`project_id`), and through the project to one organization. An instance holds one organization, but the code keeps organizations apart as if several shared it.
 - Check access on the server, in one place: every route that reads or changes a project first checks that the signed-in user is a member of the project's organization. An organization or project ID sent by the browser is never enough on its own. Tests prove that one organization's members cannot reach another's data.
 - Settings that differ between customers, such as the timezone, belong to the organization, not to the deployment's configuration.
 - Stack: Fastify API, React dashboard (Vite), a separate Node.js worker, PostgreSQL, ClickHouse, Docker Compose. PostgreSQL holds accounts, organizations, projects, settings, and jobs. ClickHouse holds the high-volume data: analytics events, and later logs, traces, and metrics (`docs/storage-benchmark.md`). Events and telemetry go straight to ClickHouse, and reports read them there (`docs/clickhouse.md`). No Redis, Kafka, or Kubernetes without a measured need.

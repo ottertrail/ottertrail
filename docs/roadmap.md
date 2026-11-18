@@ -32,7 +32,7 @@ In this order, so that later work builds on the final model:
 
 ## Notes
 
-- One deployment serves every organization. A customer who needs their own servers can run the same image with one organization, as self-hosters do.
+- One instance per customer (decided 18 November 2026): the hosted service gives each customer an instance of their own, the same image with one organization, as self-hosters run it, so no customer can slow another. Provisioning instances (servers, backups, DNS, upgrades) is separate work, not built.
 - Access model, later: an owner plus unlimited invited members per organization, with roles per module. Until then, every member of an organization may do everything in it.
 - When replacing a tool, run the old and new side by side and compare their numbers. The OpenTelemetry Collector can export to both at once.
 - Traces and logs are the highest-volume data. They go to ClickHouse, ordered by project and time, with retention by dropping old partitions. Each organization's volume is limited so one customer cannot crowd out the others.

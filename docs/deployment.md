@@ -139,7 +139,7 @@ Containers keep at most 50 MB of logs each (`docker compose logs api` shows them
 
 ### One organization
 
-An install is the same software as a hosted service with many customers: organizations, memberships, and the access check on every project route are all there. A self-hosted install runs one organization, the one its setup link creates: nobody can sign up (open sign-up, for a hosted service, is not built), invitations are not built yet, and the dashboard offers no second organization. Nothing needs to be set for that; a later setting to allow sign-up (off unless a deployment turns it on) will keep it so.
+Every install runs one organization, the one its setup link creates, whether self-hosted or hosted for a customer: each hosted customer gets an instance of their own (decided 18 November 2026). Organizations, memberships, and the access check on every project route are all there, as if several organizations shared the install. Nobody can sign up in an install, invitations are not built yet, and the dashboard offers no second organization. Nothing needs to be set for that.
 
 ## Decisions
 

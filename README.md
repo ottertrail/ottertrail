@@ -1,6 +1,6 @@
 # Ottertrail
 
-Web analytics, product analytics, error tracking, and monitoring for developers and small teams, in one app. One deployment serves many organizations; a self-hosted install runs the same software with one. See [CLAUDE.md](CLAUDE.md) for the architecture rules and [docs/roadmap.md](docs/roadmap.md) for the build order.
+Web analytics, product analytics, error tracking, and monitoring for developers and small teams, in one app. Each customer runs an instance of their own, hosted or self-hosted: the same software with one organization. See [CLAUDE.md](CLAUDE.md) for the architecture rules and [docs/roadmap.md](docs/roadmap.md) for the build order.
 
 ## Current state
 

@@ -457,7 +457,7 @@ The charts are drawn in SVG, as the analytics page's are ([charts](#charts-witho
 
 Code: `apps/api/src/organizations/` and `apps/web/src/features/organizations/`.
 
-One deployment serves many customers ([CLAUDE.md](../CLAUDE.md)). An organization is one customer: it owns projects, and users belong to it through memberships, as its **owner** or a **member**. The owner of the whole install (`dashboard_users.role`, the account the setup link created) is a separate thing from an organization's owner (`memberships.role`).
+Each customer has an instance of their own ([CLAUDE.md](../CLAUDE.md)), which holds one organization; the code keeps organizations apart as if several shared an instance. An organization is one customer: it owns projects, and users belong to it through memberships, as its **owner** or a **member**. The owner of the whole install (`dashboard_users.role`, the account the setup link created) is a separate thing from an organization's owner (`memberships.role`).
 
 ### The one check
 
@@ -478,7 +478,7 @@ Reports count days in the organization's timezone, and visitor IDs change at its
 
 ### Not done yet
 
-- Open sign-up for the hosted service. It needs account email (verification, password resets).
+- Signing up for the hosted service, which creates the customer's instance and its owner (a control plane outside the app; not built).
 - Invitations and roles per module.
 - Switching between several organizations in the dashboard. A user belongs to one until invitations exist; the API already handles several.
 - Deleting an organization and all of its data.
