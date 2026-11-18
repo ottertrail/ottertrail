@@ -55,10 +55,8 @@ async function newProject(
   name: string,
   replayMode: "off" | "errors" = "errors",
   db = dashboard.db,
-  organizationId = dashboard.organizationId,
 ) {
   const project = await insertProject(db, {
-    organization_id: organizationId,
     name,
     allowed_hostnames: ["shop.example"],
     replay_mode: replayMode,
@@ -150,7 +148,6 @@ describe("collecting a replay's chunks", () => {
     const plain = await signedInDashboard();
     try {
       const project = await insertProject(plain.db, {
-        organization_id: plain.organizationId,
         name: "No store",
         allowed_hostnames: ["shop.example"],
         replay_mode: "errors",
@@ -233,7 +230,7 @@ describe("collecting a replay's chunks", () => {
     expect(await chunkCount(project.id, replay)).toBe("0");
   });
 
-  test("stops a replay past 2 MB, and a new one past the organization's storage", async () => {
+  test("stops a replay past 2 MB, and a new one past the instance's storage", async () => {
     const project = await newProject("Large");
     const replay = randomUUID();
     // Random bytes do not shrink: each chunk about 60 KB.
@@ -257,7 +254,7 @@ describe("collecting a replay's chunks", () => {
 
     const full = await signedInDashboard({ objectStore: store, replays: { limitBytes: 1024 } });
     try {
-      const small = await newProject("Full", "errors", full.db, full.organizationId);
+      const small = await newProject("Full", "errors", full.db);
       const first = await send(small.public_key, randomUUID(), 0, gzipSync(randomBytes(2000)), {
         app: full.app,
       });
@@ -278,7 +275,7 @@ describe("collecting a replay's chunks", () => {
       replays: { limitBytes: 1024 ** 3, projectLimit: { capacity: 100, refillPerSecond: 1 } },
     });
     try {
-      const project = await newProject("Budget", "errors", tight.db, tight.organizationId);
+      const project = await newProject("Budget", "errors", tight.db);
       const replay = randomUUID();
       const statuses = [];
       for (let seq = 0; seq < 3; seq += 1) {
@@ -578,7 +575,7 @@ describe("replays in the dashboard", () => {
 
     const summary = (await get(`${project.id}/replays`)).json();
     expect(summary).toMatchObject({ configured: true, mode: "errors", replays: { count: 1 } });
-    expect(summary.organization.limitBytes).toBe(1024 ** 3);
+    expect(summary.instance.limitBytes).toBe(1024 ** 3);
 
     const remove = (origin: string) =>
       dashboard.app.inject({

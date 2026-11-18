@@ -3,7 +3,7 @@ import type { Kysely } from "kysely";
 
 import { type RateLimit, TokenBucketLimiter } from "../collection/rate-limiter.ts";
 import type { Database } from "../db/schema.ts";
-import { MAX_ORGANIZATION_NAME_LENGTH } from "../organizations/organizations.ts";
+import { MAX_INSTANCE_NAME_LENGTH } from "../settings/settings.ts";
 import {
   type Auth,
   canSignInWith,
@@ -96,7 +96,7 @@ export const betterAuthRoutes: FastifyPluginCallback<{ auth: Auth; publicUrl: st
 
 const setupBodySchema = {
   type: "object",
-  required: ["token", "name", "email", "password", "organizationName"],
+  required: ["token", "name", "email", "password", "instanceName"],
   additionalProperties: false,
   properties: {
     token: { type: "string", minLength: 1, maxLength: 200 },
@@ -104,10 +104,10 @@ const setupBodySchema = {
     // Checked against sign-in's own rule in the handler (canSignInWith).
     email: { type: "string", minLength: 3, maxLength: 320 },
     password: { type: "string", minLength: MIN_PASSWORD_LENGTH, maxLength: MAX_PASSWORD_LENGTH },
-    organizationName: {
+    instanceName: {
       type: "string",
       minLength: 1,
-      maxLength: MAX_ORGANIZATION_NAME_LENGTH,
+      maxLength: MAX_INSTANCE_NAME_LENGTH,
       pattern: "\\S",
     },
   },
@@ -125,7 +125,7 @@ export const DEFAULT_SETUP_LIMIT: RateLimit = { capacity: 10, refillPerSecond: 1
 export const setupRoutes: FastifyPluginCallback<{
   db: Kysely<Database>;
   auth: Auth;
-  /** The timezone of the organization the setup link creates. */
+  /** The instance's timezone, which the setup link sets (TIMEZONE). */
   defaultTimeZone: string;
   setupLimit?: RateLimit;
 }> = (app, { db, auth, defaultTimeZone, setupLimit = DEFAULT_SETUP_LIMIT }, done) => {
@@ -139,7 +139,7 @@ export const setupRoutes: FastifyPluginCallback<{
       name: string;
       email: string;
       password: string;
-      organizationName: string;
+      instanceName: string;
     };
   }>(
     "/setup",
@@ -163,7 +163,7 @@ export const setupRoutes: FastifyPluginCallback<{
       },
     },
     async (request, reply) => {
-      const { token, name, email, password, organizationName } = request.body;
+      const { token, name, email, password, instanceName } = request.body;
       if (!canSignInWith(email)) {
         return reply
           .code(400)
@@ -177,7 +177,7 @@ export const setupRoutes: FastifyPluginCallback<{
       const result = await completeSetup(
         db,
         auth,
-        { token, name: name.trim(), email, password, organizationName: organizationName.trim() },
+        { token, name: name.trim(), email, password, instanceName: instanceName.trim() },
         { timeZone: defaultTimeZone },
       );
       if (result === "invalid_link") {
@@ -216,4 +216,12 @@ export function requireSession(auth: Auth) {
     // Nothing sent: Fastify goes on to the route handler.
     return undefined;
   };
+}
+
+/** The user requireSession set. Routes that call it always run requireSession first. */
+export function signedInUser(request: FastifyRequest): DashboardUser {
+  if (request.dashboardUser === null) {
+    throw new Error("requireSession must run before this route");
+  }
+  return request.dashboardUser;
 }

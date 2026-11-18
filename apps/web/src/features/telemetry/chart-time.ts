@@ -1,4 +1,4 @@
-/** Time buckets on the Metrics page's charts: axis ticks, and buckets' labels in the organization's timezone. */
+/** Time buckets on the Metrics page's charts: axis ticks, and buckets' labels in the timezone set in Settings. */
 
 /** About `count` ticks covering lo..hi (always 0), on steps of 1, 2, or 5 times a power of ten. */
 export function ticksFor(lo: number, hi: number, count = 4): number[] {
@@ -46,7 +46,7 @@ export function tickLabel(
   return `${part("day")} ${part("month")} ${time}`;
 }
 
-/** "Tue 17 Nov 2026, 10:00–10:05": a bucket, in the organization's timezone. */
+/** "Tue 17 Nov 2026, 10:00–10:05": a bucket, in the timezone set in Settings. */
 export function bucketLabel(start: Date, stepSeconds: number, timeZone: string): string {
   const options: Intl.DateTimeFormatOptions = {
     weekday: "short",

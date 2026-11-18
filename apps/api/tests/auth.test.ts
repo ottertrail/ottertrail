@@ -13,6 +13,7 @@ import {
 import { createClickHouse } from "../src/clickhouse/clickhouse.ts";
 import type { RateLimit } from "../src/collection/rate-limiter.ts";
 import { loadConfig } from "../src/config.ts";
+import { readInstanceSettings } from "../src/settings/settings.ts";
 import { createTestDatabase } from "./helpers/test-database.ts";
 
 const PUBLIC_URL = "http://localhost:5173";
@@ -20,7 +21,7 @@ const OWNER = {
   name: "Ada Owner",
   email: "Ada@Example.com",
   password: "correct horse battery",
-  organizationName: "Ada's company",
+  instanceName: "Ada's company",
 };
 
 /** A fresh instance: its own database schema, no owner yet. */
@@ -45,7 +46,8 @@ async function instance({
       clickhouse,
       publicUrl: PUBLIC_URL,
       trustedOrigins: [PUBLIC_URL],
-      defaultTimeZone: "UTC",
+      // Not the migration's UTC, so the setup tests see that setup sets it.
+      defaultTimeZone: "Asia/Singapore",
       ...(setupLimit === undefined ? {} : { setupLimit }),
     },
   });
@@ -131,7 +133,7 @@ describe("owner setup", () => {
       // A valid email format that sign-in refuses: the owner could never sign in.
       { ...OWNER, email: "ops!alerts@example.com" },
       { ...OWNER, name: "   " },
-      { ...OWNER, organizationName: "   " },
+      { ...OWNER, instanceName: "   " },
       { token: link?.token, name: OWNER.name, email: OWNER.email, password: OWNER.password },
     ]) {
       expect((await setUp(current.app, { token: link?.token, ...body })).statusCode).toBe(400);
@@ -174,41 +176,14 @@ describe("owner setup", () => {
     expect(account?.password).not.toContain(OWNER.password);
     expect((await current.app.inject({ url: "/api/setup" })).json()).toEqual({ ownerExists: true });
 
-    // The owner's organization comes with them, in the deployment's default timezone.
-    const organizations = await current.db.selectFrom("organizations").selectAll().execute();
-    expect(organizations).toMatchObject([{ name: "Ada's company", time_zone: "UTC" }]);
-    const memberships = await current.db.selectFrom("memberships").selectAll().execute();
-    expect(memberships).toMatchObject([
-      { organization_id: organizations[0]?.id, user_id: users[0]?.id, role: "owner" },
-    ]);
-  });
-
-  test("takes over an organization with no members, holding projects from before setup", async () => {
-    // A fresh install of its own: this file's other setup tests share one.
-    const fresh = await instance();
-    try {
-      const orphan = await fresh.db
-        .insertInto("organizations")
-        .values({ name: "My organization", time_zone: "Asia/Singapore" })
-        .returning("id")
-        .executeTakeFirstOrThrow();
-      await fresh.db
-        .insertInto("projects")
-        .values({ organization_id: orphan.id, name: "Old site" })
-        .execute();
-      const link = await createSetupToken(fresh.db);
-      expect((await setUp(fresh.app, { token: link?.token, ...OWNER })).statusCode).toBe(201);
-
-      const organizations = await fresh.db.selectFrom("organizations").selectAll().execute();
-      // Renamed as the form asked; its timezone stays, so its days do not move.
-      expect(organizations).toMatchObject([
-        { id: orphan.id, name: "Ada's company", time_zone: "Asia/Singapore" },
-      ]);
-      const memberships = await fresh.db.selectFrom("memberships").selectAll().execute();
-      expect(memberships).toMatchObject([{ organization_id: orphan.id, role: "owner" }]);
-    } finally {
-      await fresh.close();
-    }
+    // Setup names the instance, and sets its timezone from TIMEZONE (the
+    // migration's row says UTC until then).
+    const settings = await current.db.selectFrom("instance_settings").selectAll().execute();
+    expect(settings).toMatchObject([{ name: "Ada's company", time_zone: "Asia/Singapore" }]);
+    expect(await readInstanceSettings(current.db)).toEqual({
+      name: "Ada's company",
+      timeZone: "Asia/Singapore",
+    });
   });
 
   test("gives no new link once the owner exists", async () => {
@@ -232,7 +207,7 @@ describe("owner setup: the slow work comes last", () => {
       name: "Eve",
       email: "eve@example.com",
       password: "x".repeat(20),
-      organizationName: "Eve's company",
+      instanceName: "Eve's company",
     };
     const options = { timeZone: "UTC" };
     expect(await completeSetup(current.db, auth, details, options)).toBe("invalid_link");

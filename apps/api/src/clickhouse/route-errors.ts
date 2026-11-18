@@ -18,12 +18,12 @@ export function clickHouseErrorHandler(
     throw error;
   }
   if (error instanceof DashboardBusyError) {
-    // The organization's pages already run as many queries as they may (telemetry's dashboard).
-    request.log.warn("an organization's dashboard queries waited too long for a place");
+    // The dashboard's pages already run as many queries as they may (telemetry/dashboard-limit.ts).
+    request.log.warn("a dashboard query waited too long for a place");
     return reply.code(503).header("retry-after", "10").send({
       error: "reports_busy",
       message:
-        "Your organization's pages are already running as many queries as they may. Try again in a few seconds.",
+        "The dashboard's pages are already running as many queries as they may. Try again in a few seconds.",
     });
   }
   if (request.raw.destroyed || (error instanceof Error && error.name === "AbortError")) {

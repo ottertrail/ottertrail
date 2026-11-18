@@ -2,15 +2,13 @@ import { type Kysely, sql } from "kysely";
 
 import type { Database } from "../db/schema.ts";
 
-/** Matches the check in migration 0002. */
+/** Matches the projects table's check (migration 0001_create_schema). */
 export const MAX_ALLOWED_HOSTNAMES = 50;
 export const MAX_PROJECT_NAME_LENGTH = 100;
 
 /** A project as the dashboard sees it. */
 export interface Project {
   id: string;
-  /** The organization that owns it. */
-  organizationId: string;
   name: string;
   /** Goes in the site's script tag. Public: it only lets a page send events. */
   publicKey: string;
@@ -26,7 +24,7 @@ export interface Project {
   retentionDays: number | null;
   /**
    * For the site's own server only: sends server-side events and signs user
-   * IDs. Shown to the organization's members, never put in a page.
+   * IDs. Shown in the dashboard, never put in a page.
    */
   secretKey: string;
   /** Accept a browser's user ID only with a valid signature from the site's server. */
@@ -91,7 +89,6 @@ function baseQuery(db: Kysely<Database>) {
     .selectFrom("projects")
     .select([
       "projects.id",
-      "projects.organization_id",
       "projects.name",
       "projects.public_key",
       "projects.allowed_hostnames",
@@ -110,7 +107,6 @@ type ProjectRow = Awaited<ReturnType<ReturnType<typeof baseQuery>["executeTakeFi
 function toProject(row: ProjectRow): Project {
   return {
     id: row.id,
-    organizationId: row.organization_id,
     name: row.name,
     publicKey: row.public_key,
     allowedHostnames: row.allowed_hostnames,
@@ -124,38 +120,29 @@ function toProject(row: ProjectRow): Project {
   };
 }
 
-/** The projects of every organization the user belongs to, oldest first. */
-export async function listProjects(db: Kysely<Database>, userId: string): Promise<Project[]> {
-  const rows = await baseQuery(db)
-    .innerJoin("memberships", (join) =>
-      join
-        .onRef("memberships.organization_id", "=", "projects.organization_id")
-        .on("memberships.user_id", "=", userId),
-    )
-    .orderBy("projects.created_at")
-    .orderBy("projects.id")
-    .execute();
+/** The instance's projects, oldest first. */
+export async function listProjects(db: Kysely<Database>): Promise<Project[]> {
+  const rows = await baseQuery(db).orderBy("projects.created_at").orderBy("projects.id").execute();
   return rows.map(toProject);
 }
 
 /**
- * Any project by ID, whichever organization owns it. Routes call it only
- * after requireProjectAccess (organizations/access.ts) has checked the user.
+ * A project by ID. Routes call it only after requireProjectAccess
+ * (projects/access.ts) has checked the request.
  */
 export async function findProject(db: Kysely<Database>, id: string): Promise<Project | null> {
   const row = await baseQuery(db).where("projects.id", "=", id).executeTakeFirst();
   return row === undefined ? null : toProject(row);
 }
 
-/** A new project in an organization. Checking that the user may add one is the caller's job. */
+/** A new project. Checking that the user may add one is the caller's job. */
 export async function createProject(
   db: Kysely<Database>,
-  input: { organizationId: string; name: string; allowedHostnames: string[] },
+  input: { name: string; allowedHostnames: string[] },
 ): Promise<Project> {
   const { id } = await db
     .insertInto("projects")
     .values({
-      organization_id: input.organizationId,
       name: input.name,
       allowed_hostnames: input.allowedHostnames,
     })
@@ -212,7 +199,7 @@ export async function updateProject(
  * Deletes a project and, with it, all its data: PostgreSQL's rows at once
  * (the database cascades the delete), its events and telemetry in
  * ClickHouse within a minute, by the worker, which a trigger asks to
- * (project_deletions, migration 0013).
+ * (project_deletions).
  * Returns the project's public key, or null when no project has this ID.
  */
 export async function deleteProject(
@@ -246,7 +233,7 @@ export async function replacePublicKey(
   }
   const result = await db
     .updateTable("projects")
-    // The same form as the column's default (migration 0002).
+    // The same form as the column's default.
     .set({ public_key: sql<string>`'pk_' || replace(gen_random_uuid()::text, '-', '')` })
     .where("id", "=", id)
     .executeTakeFirst();
@@ -262,7 +249,7 @@ export async function replacePublicKey(
 export async function replaceSecretKey(db: Kysely<Database>, id: string): Promise<Project | null> {
   const result = await db
     .updateTable("projects")
-    // The same form as the column's default (migration 0016).
+    // The same form as the column's default.
     .set({ secret_key: sql<string>`'sk_' || replace(gen_random_uuid()::text, '-', '')` })
     .where("id", "=", id)
     .executeTakeFirst();

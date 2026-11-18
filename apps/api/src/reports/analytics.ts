@@ -60,7 +60,7 @@ export interface PreviousPeriod extends Pick<PreviousDays, "firstDay" | "lastDay
 }
 
 export interface Analytics {
-  /** The timezone of the project's organization, which the days are counted in. */
+  /** The instance's timezone, which the days are counted in. */
   timeZone: string;
   /** The environment every report counts, such as "production". */
   environment: string;
@@ -112,7 +112,7 @@ async function goalResults(
 }
 
 /**
- * The report range of whole days in the organization's timezone: PostgreSQL
+ * The report range of whole days in the instance's timezone: PostgreSQL
  * counts the days, and holds the project's allowed hostnames, which tell a
  * referrer from in-app navigation.
  */
@@ -178,7 +178,7 @@ const VISITS_TABLE = "analytics_visits";
 
 /**
  * Every report the analytics page shows, for one project and a range of
- * days in the organization's timezone.
+ * days in the instance's timezone.
  *
  * Working out visits sorts every event in the range, and most reports need
  * them (docs/web-analytics.md, section 7). Here they are worked out once,

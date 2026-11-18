@@ -7,7 +7,7 @@ import { fingerprint } from "../src/errors/fingerprint.ts";
 import { OWNER, PUBLIC_URL, signedInDashboard } from "./helpers/dashboard.ts";
 import { insertProject } from "./helpers/projects.ts";
 
-/** Noon on 17 November 2026 in UTC, the organization's timezone. */
+/** Noon on 17 November 2026 in UTC, the instance's timezone. */
 const NOW = new Date("2026-11-17T12:00:00.000Z");
 const hoursAgo = (hours: number) => new Date(NOW.getTime() - hours * 3_600_000);
 
@@ -62,7 +62,6 @@ beforeAll(async () => {
   dashboard = await signedInDashboard({ now: () => NOW });
   projectId = (
     await insertProject(dashboard.db, {
-      organization_id: dashboard.organizationId,
       name: "Shop",
     })
   ).id;
@@ -246,7 +245,6 @@ describe("resolving", () => {
 
   test("an event a site named error before errors existed stays a custom event", async () => {
     const other = await insertProject(dashboard.db, {
-      organization_id: dashboard.organizationId,
       name: "Old events",
     });
     await dashboard.store(other.id, [

@@ -4,7 +4,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from "vite-pl
 import type { UptimeChecksTable, UptimeIncidentsTable } from "../src/db/schema.ts";
 import { MAX_CHECKS, MAX_FIRST_RUN_DELAY_SECONDS } from "../src/uptime/checks.ts";
 import { storeResult } from "../src/uptime/results.ts";
-import { PUBLIC_URL, signedInDashboard, signedInUser } from "./helpers/dashboard.ts";
+import { PUBLIC_URL, signedInDashboard } from "./helpers/dashboard.ts";
 import { insertProject } from "./helpers/projects.ts";
 import { testLookup } from "./helpers/uptime-servers.ts";
 
@@ -15,7 +15,7 @@ import { testLookup } from "./helpers/uptime-servers.ts";
  * ClickHouse.
  */
 
-/** Yesterday, in UTC (the organization's timezone): results stay within ClickHouse's 90 days. */
+/** Yesterday, in UTC (the instance's timezone): results stay within ClickHouse's 90 days. */
 const YESTERDAY = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
 const at = (time: string) => new Date(`${YESTERDAY}T${time}Z`);
 /** The dashboard's clock: yesterday at noon. */
@@ -94,9 +94,7 @@ beforeAll(async () => {
     // The server's own public address, as an operator lists it in UPTIME_DENY_ADDRESSES.
     uptime: { lookup, denyAddresses: ["203.0.114.7"] },
   });
-  projectId = (
-    await insertProject(dashboard.db, { organization_id: dashboard.organizationId, name: "Shop" })
-  ).id;
+  projectId = (await insertProject(dashboard.db, { name: "Shop" })).id;
 });
 
 afterAll(async () => {
@@ -319,7 +317,6 @@ describe("a project's checks", () => {
 
   test("deleting the project deletes its checks and incidents", async () => {
     const other = await insertProject(dashboard.db, {
-      organization_id: dashboard.organizationId,
       name: "Doomed",
     });
     const check = await insertCheck({ project_id: other.id });
@@ -501,19 +498,11 @@ describe("a check's page", () => {
   });
 });
 
-describe("another organization", () => {
-  test("cannot see or reach a project's checks through its own project", async () => {
+describe("another project", () => {
+  test("cannot see or reach a project's checks through its own ID", async () => {
     const check = await insertCheck();
-    const bob = await signedInUser(
-      dashboard,
-      { name: "Bob", email: "bob-uptime@example.com" },
-      { newOrganization: "Bob's shop" },
-    );
-    const bobProject = await insertProject(dashboard.db, {
-      organization_id: bob.organizationId ?? "",
-      name: "Bob's site",
-    });
-    // Ada's check ID under Bob's own project: not his check.
+    const otherProject = await insertProject(dashboard.db, { name: "Another site" });
+    // The shop's check ID under another project: not that project's check.
     for (const [method, path] of [
       ["GET", ""],
       ["GET", "/results?period=7d"],
@@ -523,8 +512,8 @@ describe("another organization", () => {
     ] as const) {
       const response = await dashboard.app.inject({
         method,
-        url: `/api/projects/${bobProject.id}/checks/${check.id}${path}`,
-        headers: { cookie: bob.cookie, origin: PUBLIC_URL },
+        url: `/api/projects/${otherProject.id}/checks/${check.id}${path}`,
+        headers: { cookie: dashboard.cookie, origin: PUBLIC_URL },
         ...(method === "PATCH" ? { payload: { paused: true } } : {}),
       });
       expect([method, path, response.statusCode]).toEqual([method, path, 404]);

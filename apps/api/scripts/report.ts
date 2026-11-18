@@ -1,6 +1,6 @@
 /**
- * Prints a project's reports for the last few days, counted in its
- * organization's timezone:
+ * Prints a project's reports for the last few days, counted in the
+ * instance's timezone:
  *
  *   vp run report                            (the first project, last 7 days)
  *   vp run report -- Playground 30           (a project by name, last 30 days)
@@ -23,6 +23,7 @@ import {
   timeseries,
   topPages,
 } from "../src/reports/reports.ts";
+import { readInstanceSettings } from "../src/settings/settings.ts";
 import { dayIn } from "../src/visitors/visitor-ids.ts";
 
 // `vp run report -- …` passes the "--" separator through; skip it.
@@ -60,13 +61,7 @@ function daysBefore(day: string, count: number): string {
 try {
   const query = db
     .selectFrom("projects")
-    .innerJoin("organizations", "organizations.id", "projects.organization_id")
-    .select([
-      "projects.id",
-      "projects.name",
-      "projects.allowed_hostnames",
-      "organizations.time_zone",
-    ])
+    .select(["projects.id", "projects.name", "projects.allowed_hostnames"])
     .orderBy("projects.created_at")
     .limit(1);
   const project = await (
@@ -80,7 +75,7 @@ try {
     );
     process.exitCode = 1;
   } else {
-    const timeZone = project.time_zone;
+    const { timeZone } = await readInstanceSettings(db);
     const today = dayIn(timeZone)(new Date());
     const firstDay = daysBefore(today, dayCount - 1);
     const range: ReportRange = {

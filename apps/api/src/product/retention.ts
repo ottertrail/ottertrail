@@ -13,7 +13,7 @@ export const MAX_COHORTS = 13;
 export const MAX_WEEKS = 12;
 
 export interface Cohort {
-  /** The Monday the cohort's week starts, "YYYY-MM-DD", in the organization's timezone. */
+  /** The Monday the cohort's week starts, "YYYY-MM-DD", in the instance's timezone. */
   week: string;
   /** Users first seen that week. */
   users: number;

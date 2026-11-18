@@ -1,11 +1,11 @@
 import { describe, expect, test } from "vite-plus/test";
 import { page } from "vite-plus/test/browser/context";
 
-import { installFakeApi, ORGANIZATION } from "./fake-api.ts";
+import { installFakeApi, SETTINGS } from "./fake-api.ts";
 import { renderApp } from "./render.tsx";
 
-describe("the organization's settings", () => {
-  test("the workspace menu carries the organization's name and leads to its settings", async () => {
+describe("the instance's settings", () => {
+  test("the workspace menu carries the instance's name and leads to its settings", async () => {
     installFakeApi();
     renderApp("/projects");
 
@@ -13,7 +13,7 @@ describe("the organization's settings", () => {
     await expect.element(page.getByText("Acme Inc", { exact: true })).toBeVisible();
     await workspace.getByRole("link", { name: "Settings" }).click();
 
-    await expect.element(page.getByRole("heading", { name: "Organization" })).toBeVisible();
+    await expect.element(page.getByRole("heading", { name: "Workspace" })).toBeVisible();
     await expect.element(page.getByRole("textbox", { name: "Name" })).toHaveValue("Acme Inc");
     await expect
       .element(page.getByRole("combobox", { name: "Timezone" }))
@@ -37,7 +37,7 @@ describe("the organization's settings", () => {
     await expect.element(page.getByText("Saved.")).toBeVisible();
     expect(api.bodies).toContainEqual({
       method: "PATCH",
-      path: `/api/organizations/${ORGANIZATION.id}`,
+      path: "/api/settings",
       body: { name: "Acme Labs", timeZone: "Europe/Berlin" },
     });
     // The menu shows the new name, and the warning is gone with the change saved.
@@ -45,13 +45,11 @@ describe("the organization's settings", () => {
     await expect.element(page.getByText(/Reports count days in this timezone/)).toBeVisible();
   });
 
-  test("a member sees the settings but cannot change them", async () => {
-    installFakeApi({ organizations: [{ ...ORGANIZATION, role: "member" }] });
+  test("another user sees the settings but cannot change them", async () => {
+    installFakeApi({ settings: { ...SETTINGS, canEdit: false } });
     renderApp("/settings");
 
-    await expect
-      .element(page.getByText("Only the organization's owner can change these."))
-      .toBeVisible();
+    await expect.element(page.getByText("Only the owner can change these.")).toBeVisible();
     await expect.element(page.getByRole("textbox", { name: "Name" })).toBeDisabled();
     await expect.element(page.getByRole("combobox", { name: "Timezone" })).toBeDisabled();
     await expect
@@ -59,16 +57,7 @@ describe("the organization's settings", () => {
       .not.toBeInTheDocument();
   });
 
-  test("says so when the account belongs to no organization", async () => {
-    installFakeApi({ organizations: [] });
-    renderApp("/settings");
-
-    await expect.element(page.getByText("No organization")).toBeVisible();
-    // The menu falls back to a neutral name.
-    await expect.element(page.getByText("Workspace", { exact: true })).toBeVisible();
-  });
-
-  test("signing out forgets the organization before someone else signs in", async () => {
+  test("signing out forgets the settings before someone else signs in", async () => {
     const api = installFakeApi();
     const router = renderApp("/projects");
     await expect.element(page.getByText("Acme Inc", { exact: true })).toBeVisible();
@@ -76,10 +65,8 @@ describe("the organization's settings", () => {
     await page.getByRole("button", { name: "Sign out" }).click();
     await expect.poll(() => router.state.location.pathname).toBe("/sign-in");
 
-    // Someone from another organization signs in on the same browser.
-    api.organizations = [
-      { ...ORGANIZATION, id: "88888888-8888-4888-8888-888888888888", name: "Other Co" },
-    ];
+    // Another user signs in on the same browser, after the settings changed.
+    api.settings = { ...SETTINGS, name: "Other Co", canEdit: false };
     api.projects = [];
     await page.getByRole("textbox", { name: "Email" }).fill("other@example.com");
     await page.getByLabelText("Password").fill("correct horse battery");

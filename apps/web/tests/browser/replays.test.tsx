@@ -144,7 +144,7 @@ describe("the project's Session replay card", () => {
       expect(text).toContain(option);
     }
     expect(text).toContain("3 replays, 1.5 MB in this project.");
-    expect(text).toContain("2 MB of 5 GB used, by all the organization's projects together.");
+    expect(text).toContain("2 MB of 5 GB used, by all projects together.");
     expect(text).toContain("Replays are kept 30 days");
   });
 

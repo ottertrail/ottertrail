@@ -17,8 +17,7 @@ export const ENVIRONMENT_PATTERN = "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$";
 
 /**
  * 1 to 200 characters, with no spaces or control characters (C0, DEL, and
- * C1): "1.4.2", "web@2026.11.17+3f2a9c1". At least as strict as the
- * database's check (migration 0014), so a release it refuses gets a 400.
+ * C1): "1.4.2", "web@2026.11.17+3f2a9c1". Anything else gets a 400.
  */
 export const RELEASE_PATTERN = "^[^\\s\\u0000-\\u001F\\u007F-\\u009F]{1,200}$";
 

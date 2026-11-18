@@ -1,5 +1,5 @@
 /**
- * Times on the user pages, in the organization's timezone (the API sends it
+ * Times on the user pages, in the timezone set in Settings (the API sends it
  * with every page), written as the rest of the dashboard writes them.
  */
 export { timeAgo } from "../projects/format";

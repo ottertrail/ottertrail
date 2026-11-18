@@ -16,7 +16,7 @@ import {
 import { MAX_MESSAGES } from "../src/telemetry/wire.ts";
 import { signedInDashboard } from "./helpers/dashboard.ts";
 import { countEvents, storedEvents } from "./helpers/events.ts";
-import { insertOrganization, insertProject } from "./helpers/projects.ts";
+import { insertProject } from "./helpers/projects.ts";
 import {
   decodeResponse,
   encodeProtobuf,
@@ -37,8 +37,8 @@ afterAll(async () => {
 });
 
 /** A project of its own for each test, so counts never mix. */
-async function newProject(name: string, organizationId = dashboard.organizationId) {
-  const project = await insertProject(dashboard.db, { organization_id: organizationId, name });
+async function newProject(name: string) {
+  const project = await insertProject(dashboard.db, { name });
   return {
     id: project.id,
     publicKey: project.public_key,
@@ -143,9 +143,9 @@ describe("authentication", () => {
     expect(await storedRows(dashboard.reader.client, "spans", project.id)).toHaveLength(1);
   });
 
-  test("a key stores only into its own project, whatever the organization", async () => {
+  test("a key stores only into its own project", async () => {
     const mine = await newProject("Mine");
-    const other = await insertProject(dashboard.db, { name: "Another organization's" });
+    const other = await insertProject(dashboard.db, { name: "Another project" });
     const response = await post(
       "/v1/traces",
       protobufTraces([protobufSpan(randomHex(16), randomHex(8))]),
@@ -690,12 +690,11 @@ describe("budgets", () => {
     const limited = await signedInDashboard({
       telemetry: {
         projectLimit: { capacity: 3, refillPerSecond: 0.01 },
-        organizationLimit: { capacity: 9, refillPerSecond: 0.03 },
+        instanceLimit: { capacity: 9, refillPerSecond: 0.03 },
       },
     });
     try {
       const project = await insertProject(limited.db, {
-        organization_id: limited.organizationId,
         name: "Budget",
       });
       const key = await secretKeyOf(limited.db, project.id);
@@ -767,7 +766,7 @@ describe("budgets by size", () => {
     limited = await signedInDashboard({
       telemetry: {
         projectLimit: { capacity: 10, refillPerSecond: 0.01 },
-        organizationLimit: { capacity: 1000, refillPerSecond: 1 },
+        instanceLimit: { capacity: 1000, refillPerSecond: 1 },
       },
     });
   });
@@ -778,7 +777,6 @@ describe("budgets by size", () => {
 
   async function limitedProject(name: string) {
     const project = await insertProject(limited.db, {
-      organization_id: limited.organizationId,
       name,
     });
     return { id: project.id, secretKey: await secretKeyOf(limited.db, project.id) };
@@ -836,7 +834,7 @@ describe("budgets by size", () => {
 });
 
 describe("requests in progress", () => {
-  test("503 past the process's limit, 429 past one organization's, each given back with its answer", async () => {
+  test("503 past the process's limit, 429 past one project's, each given back with its answer", async () => {
     let open!: () => void;
     const gate = new Promise<void>((resolve) => {
       open = resolve;
@@ -851,12 +849,11 @@ describe("requests in progress", () => {
     } as unknown as ClickHouseClient;
     const app = buildApp({
       db: dashboard.db,
-      telemetry: { clickhouse: held, maxInFlight: 3, maxInFlightPerOrganization: 2 },
+      telemetry: { clickhouse: held, maxInFlight: 3, maxInFlightPerProject: 2 },
     });
     try {
       const ours = await newProject("Busy");
-      const otherOrganization = await insertOrganization(dashboard.db);
-      const theirs = await newProject("Busy elsewhere", otherOrganization);
+      const theirs = await newProject("Busy elsewhere");
       const send = (secretKey: string) =>
         post("/v1/traces", protobufTraces([protobufSpan(randomHex(16), randomHex(8))]), {
           key: secretKey,
@@ -865,9 +862,9 @@ describe("requests in progress", () => {
 
       const waiting = [send(ours.secretKey), send(ours.secretKey)];
       await expect.poll(() => inserts).toBe(2);
-      const organizationFull = await send(ours.secretKey);
-      expect(organizationFull.statusCode).toBe(429);
-      expect(organizationFull.headers["retry-after"]).toBe("1");
+      const projectFull = await send(ours.secretKey);
+      expect(projectFull.statusCode).toBe(429);
+      expect(projectFull.headers["retry-after"]).toBe("1");
 
       waiting.push(send(theirs.secretKey));
       await expect.poll(() => inserts).toBe(3);
@@ -1136,12 +1133,11 @@ describe("exceptions join the error list", () => {
     const limited = await signedInDashboard({
       telemetry: {
         projectLimit: { capacity: 5, refillPerSecond: 0.01 },
-        organizationLimit: { capacity: 1000, refillPerSecond: 1 },
+        instanceLimit: { capacity: 1000, refillPerSecond: 1 },
       },
     });
     try {
       const project = await insertProject(limited.db, {
-        organization_id: limited.organizationId,
         name: "Exception budget",
       });
       const key = await secretKeyOf(limited.db, project.id);
@@ -1163,7 +1159,6 @@ describe("exceptions join the error list", () => {
       // 4, does not fit in the 3 left (it keeps the 1 its decoding cost),
       // where the span alone does.
       const project2 = await insertProject(limited.db, {
-        organization_id: limited.organizationId,
         name: "Exception budget 2",
       });
       const key2 = await secretKeyOf(limited.db, project2.id);

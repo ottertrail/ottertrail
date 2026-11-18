@@ -44,16 +44,15 @@ import {
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
 import { Skeleton } from "@/components/ui/skeleton";
-import { organizationsQuery } from "@/lib/organizations-api";
 import { projectsQuery } from "@/lib/projects-api";
+import { settingsQuery } from "@/lib/settings-api";
 
-/** The organization level: things above any one project, under the organization's name. */
+/** The workspace level: things above any one project, under the instance's name. */
 function WorkspaceMenu() {
   const matchRoute = useMatchRoute();
-  const organizations = useQuery(organizationsQuery());
-  // One organization per user until invitations exist; with none or several, a neutral label.
-  const label =
-    organizations.data?.length === 1 ? (organizations.data[0]?.name ?? "Workspace") : "Workspace";
+  const settings = useQuery(settingsQuery());
+  // A neutral label until the settings load, or if they cannot.
+  const label = settings.data?.name ?? "Workspace";
   return (
     <SidebarGroup>
       <SidebarGroupLabel className="truncate">{label}</SidebarGroupLabel>

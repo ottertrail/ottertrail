@@ -54,7 +54,7 @@ export function SetupPage() {
       name: formText(form, "name"),
       email,
       password,
-      organizationName: formText(form, "organization"),
+      instanceName: formText(form, "workspace"),
     });
     if (!created.ok) {
       setPending(false);
@@ -88,10 +88,7 @@ export function SetupPage() {
   }
 
   return (
-    <AuthLayout
-      title="Create the owner account"
-      description="The owner manages this install and its first organization. You can invite teammates later."
-    >
+    <AuthLayout title="Create the owner account" description="The owner manages this install.">
       <form onSubmit={(event) => void createAccount(event)}>
         <FieldGroup>
           <Field>
@@ -103,17 +100,18 @@ export function SetupPage() {
             <Input id="email" name="email" type="email" autoComplete="email" required />
           </Field>
           <Field>
-            <FieldLabel htmlFor="organization">Organization</FieldLabel>
+            <FieldLabel htmlFor="workspace">Workspace name</FieldLabel>
             <Input
-              id="organization"
-              name="organization"
+              id="workspace"
+              name="workspace"
               autoComplete="organization"
               required
               maxLength={100}
-              aria-describedby="organization-hint"
+              aria-describedby="workspace-hint"
             />
-            <FieldDescription id="organization-hint">
-              Your company or team. Its projects, settings, and later its members belong to it.
+            <FieldDescription id="workspace-hint">
+              Shown at the top of the sidebar, such as your company&apos;s or team&apos;s name. You
+              can change it later in Settings.
             </FieldDescription>
           </Field>
           <Field>

@@ -1,10 +1,10 @@
-import { randomBytes } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 
 import { afterAll, beforeAll, describe, expect, test } from "vite-plus/test";
 
 import { searchWords } from "../src/telemetry/logs.ts";
 import { MAX_TRACE_SPANS } from "../src/telemetry/traces.ts";
-import { signedInDashboard, signedInUser } from "./helpers/dashboard.ts";
+import { signedInDashboard } from "./helpers/dashboard.ts";
 import { insertProject } from "./helpers/projects.ts";
 import { keyValues, secretKeyOf } from "./helpers/telemetry.ts";
 
@@ -114,8 +114,8 @@ async function sendLogs(
   });
 }
 
-async function newProject(name: string, organizationId = dashboard.organizationId) {
-  const project = await insertProject(dashboard.db, { organization_id: organizationId, name });
+async function newProject(name: string) {
+  const project = await insertProject(dashboard.db, { name });
   return { id: project.id, secretKey: await secretKeyOf(dashboard.db, project.id) };
 }
 
@@ -893,12 +893,8 @@ describe("ingestion for the pages", () => {
 });
 
 describe("access", () => {
-  test("a member of another organization gets nothing, as for a project that does not exist", async () => {
-    const bob = await signedInUser(
-      dashboard,
-      { name: "Bob", email: "bob@example.com" },
-      { newOrganization: "Bob's shop" },
-    );
+  test("a project that does not exist gets 404; another project reads nothing of this one's", async () => {
+    const missing = randomUUID();
     const [log] = (await getJson(shop.id, "/logs?period=7d")).logs;
     const logPath = `/logs/${log.id}?time=${log.timeNs}`;
     expect((await get(shop.id, logPath)).statusCode).toBe(200);
@@ -910,28 +906,22 @@ describe("access", () => {
       `/logs?period=7d&traceId=${ORDER.trace}`,
       logPath,
     ];
-    const answers = await Promise.all(
-      paths.map(async (path) => (await get(shop.id, path, bob.cookie)).json()),
-    );
-    expect(await statuses(shop.id, paths, bob.cookie)).toEqual(all(paths, 404));
+    const answers = await Promise.all(paths.map(async (path) => (await get(missing, path)).json()));
+    expect(await statuses(missing, paths)).toEqual(all(paths, 404));
     expect(answers).toEqual(
       paths.map(() => ({ error: "not_found", message: "No project has this ID." })),
     );
-    // Bob's own project is empty: an ID from the browser reaches only its own project.
-    const bobs = await insertProject(dashboard.db, {
-      organization_id: bob.organizationId ?? "",
-      name: "Bob's site",
-    });
-    const own = await get(bobs.id, `/traces/${ORDER.trace}`, bob.cookie);
+    // Another project is empty: the IDs in a path reach only the project named.
+    const other = await insertProject(dashboard.db, { name: "Another site" });
+    const own = await get(other.id, `/traces/${ORDER.trace}`);
     expect(own.json()).toMatchObject({ spans: [], logs: [], totalSpans: 0 });
     const ownSpan = await get(
-      bobs.id,
+      other.id,
       `/traces/${ORDER.trace}/spans/${ORDER.root}?start=${ORDER_START}`,
-      bob.cookie,
     );
     expect(ownSpan.statusCode).toBe(404);
-    expect((await get(bobs.id, logPath, bob.cookie)).statusCode).toBe(404);
-    const ownLogs = await get(bobs.id, `/logs?period=7d&traceId=${ORDER.trace}`, bob.cookie);
+    expect((await get(other.id, logPath)).statusCode).toBe(404);
+    const ownLogs = await get(other.id, `/logs?period=7d&traceId=${ORDER.trace}`);
     expect(ownLogs.json()).toMatchObject({ logs: [], received: false });
   });
 

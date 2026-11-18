@@ -169,12 +169,9 @@ function DeleteAllDialog({
           : {
               ...overview,
               replays: { count: 0, bytes: 0 },
-              organization: {
-                ...overview.organization,
-                storedBytes: Math.max(
-                  0,
-                  overview.organization.storedBytes - overview.replays.bytes,
-                ),
+              instance: {
+                ...overview.instance,
+                storedBytes: Math.max(0, overview.instance.storedBytes - overview.replays.bytes),
               },
             },
       );
@@ -240,7 +237,7 @@ function Usage({
   returnFocus: React.RefObject<HTMLHeadingElement | null>;
 }) {
   const { count, bytes } = overview.replays;
-  const { storedBytes, limitBytes } = overview.organization;
+  const { storedBytes, limitBytes } = overview.instance;
   return (
     <div className="flex flex-col gap-3 border-t pt-4 text-sm text-ink-muted">
       <h4 className="text-sm font-medium text-ink">Stored</h4>
@@ -254,7 +251,7 @@ function Usage({
         <span className="text-ink tabular-nums">
           {formatBytes(storedBytes)} of {formatBytes(limitBytes)}
         </span>{" "}
-        used, by all the organization&apos;s projects together.
+        used, by all projects together.
       </p>
       <p>Replays are kept 30 days, then deleted.</p>
       {count > 0 && (

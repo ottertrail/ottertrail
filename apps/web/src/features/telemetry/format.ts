@@ -1,6 +1,6 @@
 /**
  * Durations and times on the Traces and Logs pages: durations in µs, ms,
- * or s as their size needs; times in the organization's timezone, to the
+ * or s as their size needs; times in the timezone set in Settings, to the
  * millisecond, since a trace's spans and logs are milliseconds apart.
  */
 

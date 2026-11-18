@@ -190,9 +190,9 @@ function DeleteReleaseDialog({
             ? undefined
             : {
                 ...overview,
-                organization: {
-                  ...overview.organization,
-                  storedBytes: Math.max(0, overview.organization.storedBytes - release.bytes),
+                instance: {
+                  ...overview.instance,
+                  storedBytes: Math.max(0, overview.instance.storedBytes - release.bytes),
                 },
                 releases: overview.releases.filter((item) => item.release !== release.release),
                 totalReleases: Math.max(0, overview.totalReleases - 1),
@@ -393,14 +393,14 @@ function Overview({
       </p>
     );
   }
-  const { storedBytes, limitBytes } = overview.organization;
+  const { storedBytes, limitBytes } = overview.instance;
   return (
     <>
       <p className="text-sm text-ink-muted">
         <span className="text-ink tabular-nums">
           {formatBytes(storedBytes)} of {formatBytes(limitBytes)}
         </span>{" "}
-        used, by all the organization&apos;s projects together.
+        used, by all projects together.
       </p>
       {overview.releases.length === 0 ? (
         <>
@@ -434,7 +434,7 @@ function Overview({
 
 /**
  * The project's source maps (docs/errors.md, "Source maps"): what each
- * release has, how much the organization stores, and how a build uploads
+ * release has, how much all projects store together, and how a build uploads
  * them. Deleting a release's maps keeps its errors.
  */
 export function SourceMapsCard({ projectId }: { projectId: string }) {

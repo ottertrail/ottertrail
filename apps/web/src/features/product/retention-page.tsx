@@ -182,7 +182,7 @@ function RetentionNotes({ timeZone }: { timeZone: string | undefined }) {
           100%.
         </li>
         <li>
-          Weeks start on Monday in the organization&apos;s timezone
+          Weeks start on Monday in the timezone set in Settings
           {timeZone === undefined ? "" : ` (${timeZone})`}. Events can arrive up to a day late, so a
           week can still grow for a day after it ends.
         </li>

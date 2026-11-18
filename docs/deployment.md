@@ -1,6 +1,6 @@
 # Deployment
 
-How to run Ottertrail on one server, and the decisions behind it. The hosted service is one such deployment serving every organization; a self-hosted install is the same stack, usually with one organization. Events, traces, logs, and metrics are stored in ClickHouse, where reports read them ([clickhouse.md](clickhouse.md)); PostgreSQL holds accounts, organizations, projects, and settings.
+How to run Ottertrail on one server, and the decisions behind it. Each customer runs an instance of their own, hosted or self-hosted, on this same stack. Events, traces, logs, and metrics are stored in ClickHouse, where reports read them ([clickhouse.md](clickhouse.md)); PostgreSQL holds accounts, projects, and settings.
 
 Status: tested on one machine with Podman (see [What has been tested](#what-has-been-tested)). Nothing runs in production yet, and backups are manual.
 
@@ -37,7 +37,7 @@ cp env.example .env
 chmod 600 .env
 ```
 
-Edit `.env`: set `OTTERTRAIL_DOMAIN`, then fill `POSTGRES_PASSWORD`, `CLICKHOUSE_PASSWORD`, and `AUTH_SECRET` with the output of `openssl rand -hex 32` (a different value each). Hex keeps the password safe inside the database URL. `TIMEZONE` is the timezone of the first organization, the one the setup link creates; its owner can change it later in the organization's settings.
+Edit `.env`: set `OTTERTRAIL_DOMAIN`, then fill `POSTGRES_PASSWORD`, `CLICKHOUSE_PASSWORD`, and `AUTH_SECRET` with the output of `openssl rand -hex 32` (a different value each). Hex keeps the password safe inside the database URL. `TIMEZONE` is the instance's timezone, which the setup link sets; the owner can change it later on the dashboard's Settings page.
 
 ```sh
 docker compose build migrate
@@ -81,7 +81,7 @@ Not automated yet. Before each update, and regularly, in `deploy/`:
 ./backup.sh
 ```
 
-It writes two files into `deploy/backups/`, named by the time: `ottertrail-<time>.zip`, ClickHouse's backup of the events (its own `BACKUP DATABASE`), and `ottertrail-<time>.dump`, PostgreSQL's (`pg_dump`: accounts, organizations, projects, and settings). The instance keeps running. PostgreSQL's dump comes first, so every project in it has its events in ClickHouse's backup ([ClickHouse](clickhouse.md#backups)). ClickHouse writes its backup into its own volume, and the script then moves it out, so the disk needs free space of about twice ClickHouse's data while it runs. The files are readable only by the user who ran the script, and a run that fails leaves no file that looks like a backup. Copy both files off the server: a backup on the same disk is lost with it. Delete old ones yourself; they hold your customers' data, and events deleted since stay in them.
+It writes two files into `deploy/backups/`, named by the time: `ottertrail-<time>.zip`, ClickHouse's backup of the events (its own `BACKUP DATABASE`), and `ottertrail-<time>.dump`, PostgreSQL's (`pg_dump`: accounts, projects, and settings). The instance keeps running. PostgreSQL's dump comes first, so every project in it has its events in ClickHouse's backup ([ClickHouse](clickhouse.md#backups)). ClickHouse writes its backup into its own volume, and the script then moves it out, so the disk needs free space of about twice ClickHouse's data while it runs. The files are readable only by the user who ran the script, and a run that fails leaves no file that looks like a backup. Copy both files off the server: a backup on the same disk is lost with it. Delete old ones yourself; they hold your customers' data, and events deleted since stay in them.
 
 To restore into empty databases (a new server, or after `docker compose down -v`), with both files in `deploy/backups/`:
 
@@ -105,7 +105,7 @@ Restoring PostgreSQL alone, or moving it to a new major version (dump, new volum
 | `POSTGRES_PASSWORD`   | The database password. Only the containers use it; PostgreSQL has no port open. PostgreSQL keeps the password it was first created with: to change it, run `ALTER USER ottertrail PASSWORD '…'` in the database first, then change `.env` |
 | `CLICKHOUSE_PASSWORD` | ClickHouse's password. Only the containers use it; ClickHouse has no port open. Like PostgreSQL's, it is set when ClickHouse first creates its data                                                                                       |
 | `AUTH_SECRET`         | Signs sign-in cookies. Changing it signs everyone out                                                                                                                                                                                     |
-| `TIMEZONE`            | The IANA timezone, such as `Europe/Berlin`, of the organization the setup link creates. Default `UTC`                                                                                                                                     |
+| `TIMEZONE`            | The IANA timezone, such as `Europe/Berlin`, that the setup link sets for the instance. Default `UTC`                                                                                                                                      |
 | `LOG_LEVEL`           | Optional, default `info`                                                                                                                                                                                                                  |
 | `OTTERTRAIL_IMAGE`    | Optional: an image to run instead of building this checkout, such as one from a registry                                                                                                                                                  |
 
@@ -129,7 +129,7 @@ Source maps turn minified stack traces back into a site's own code ([errors](err
 
 - **Cloudflare R2, Amazon S3, or another S3-compatible store.** Create a bucket and an access key for it there, set `OBJECT_STORE_URL` to its endpoint (for R2, `https://<account ID>.r2.cloudflarestorage.com`), `OBJECT_STORE_REGION` (`auto` for R2), `OBJECT_STORE_BUCKET`, `OBJECT_STORE_ACCESS_KEY_ID`, and `OBJECT_STORE_SECRET_ACCESS_KEY`, and leave the profile off.
 
-`SOURCE_MAP_BYTES_PER_ORGANIZATION` limits each organization's compressed maps, 1 GiB by default, and `REPLAY_BYTES_PER_ORGANIZATION` its compressed replays, 2 GiB by default (a first guess, until measured on real sites). Replays are kept 30 days. The API logs `OBJECT_STORE_URL is not set: source maps are off` at start when there is no store; a project's replay setting then says replays are off on the install.
+`SOURCE_MAP_STORAGE_BYTES` limits the instance's compressed maps, all projects together, 1 GiB by default, and `REPLAY_STORAGE_BYTES` its compressed replays, 2 GiB by default (a first guess, until measured on real sites). Replays are kept 30 days. The API logs `OBJECT_STORE_URL is not set: source maps are off` at start when there is no store; a project's replay setting then says replays are off on the install.
 
 ### Traces, logs, and metrics
 
@@ -139,16 +139,16 @@ Containers keep at most 50 MB of logs each (`docker compose logs api` shows them
 
 ### Uptime checks
 
-The worker runs each project's uptime checks from the server it is on ([uptime and alerts](uptime-alerts.md)). A check may not reach loopback, private, link-local, unique-local, shared (CGNAT), multicast, unspecified, or reserved addresses, so a member cannot point one at the stack's own PostgreSQL or ClickHouse, a cloud's metadata service, or the private network behind the server. Checks resolve host names with the name servers the server is set up with (`/etc/resolv.conf`; in Docker, the container's), not with `/etc/hosts`.
+The worker runs each project's uptime checks from the server it is on ([uptime and alerts](uptime-alerts.md)). A check may not reach loopback, private, link-local, unique-local, shared (CGNAT), multicast, unspecified, or reserved addresses, so a dashboard user cannot point one at the stack's own PostgreSQL or ClickHouse, a cloud's metadata service, or the private network behind the server. Checks resolve host names with the name servers the server is set up with (`/etc/resolv.conf`; in Docker, the container's), not with `/etc/hosts`.
 
 - **The server's own public address.** A check to it on another port reaches services a cloud firewall closes only to the outside, such as a port Docker publishes on the host. List it, and any other address or range checks must never reach, in `UPTIME_DENY_ADDRESSES` in `.env`, separated by commas, such as `UPTIME_DENY_ADDRESSES=203.0.113.10,2001:db8:1::/64`. The API and the worker refuse to start on an entry that is not an IP address or CIDR range.
-- **A private network to check.** A self-hosted install that must check services on its own private network can set `UPTIME_ALLOW_PRIVATE_ADDRESSES=true`: checks may then reach loopback, private, unique-local, and shared addresses, the stack's own containers included. Every member can then point a check at any of them, and a check's word reads their answers one yes or no per run, enough to read out, a word at a time, what a service shows without a password. Set it only where every member may read those services, and list what they must not reach in `UPTIME_DENY_ADDRESSES`. Link-local addresses and the known cloud metadata services (`169.254.169.254`, `100.100.100.200`, `168.63.129.16`, `fd00:ec2::254`, `fd20:ce::254`, `fd00:c1::a9fe:a9fe`) stay refused. The hosted service leaves it off.
+- **A private network to check.** A self-hosted install that must check services on its own private network can set `UPTIME_ALLOW_PRIVATE_ADDRESSES=true`: checks may then reach loopback, private, unique-local, and shared addresses, the stack's own containers included. Every dashboard user can then point a check at any of them, and a check's word reads their answers one yes or no per run, enough to read out, a word at a time, what a service shows without a password. Set it only where every dashboard user may read those services, and list what they must not reach in `UPTIME_DENY_ADDRESSES`. Link-local addresses and the known cloud metadata services (`169.254.169.254`, `100.100.100.200`, `168.63.129.16`, `fd00:ec2::254`, `fd20:ce::254`, `fd00:c1::a9fe:a9fe`) stay refused. The hosted service leaves it off.
 
 On shutdown the worker lets running checks finish, at most 30 seconds each, so Compose gives it 45 seconds (`stop_grace_period`) before stopping it.
 
-### One organization
+### One customer per instance
 
-Every install runs one organization, the one its setup link creates, whether self-hosted or hosted for a customer: each hosted customer gets an instance of their own (decided 18 November 2026). Organizations, memberships, and the access check on every project route are all there, as if several organizations shared the install. Nobody can sign up in an install, invitations are not built yet, and the dashboard offers no second organization. Nothing needs to be set for that.
+Every install serves one customer, whether self-hosted or hosted: each hosted customer gets an instance of their own (decided 18 November 2026), so no customer can slow another. An instance holds projects, its owner (the account the setup link creates), and its instance settings: a display name and the timezone reports count days in, which the owner changes on the dashboard's Settings page ([dashboard](dashboard.md#instance-settings)). The limits on events, source maps, and replays apply to the whole instance, all projects together, with a budget per project inside them. Nobody can sign up in an install, and invitations are not built yet. Nothing needs to be set for that.
 
 ## Decisions
 

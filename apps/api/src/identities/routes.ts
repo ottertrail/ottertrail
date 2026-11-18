@@ -9,7 +9,7 @@ import { clickHouseErrorHandler } from "../clickhouse/route-errors.ts";
 import { ENVIRONMENT_PATTERN, environmentOf } from "../collection/environment.ts";
 import { USER_ID_PATTERN } from "../collection/identity.ts";
 import type { Database } from "../db/schema.ts";
-import { type ProjectAccess, requireProjectAccess } from "../organizations/access.ts";
+import { type ProjectAccess, requireProjectAccess } from "../projects/access.ts";
 import {
   ACTIVITY_PAGE_SIZE,
   listUsers,

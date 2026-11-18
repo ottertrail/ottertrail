@@ -12,7 +12,7 @@ import type { NewEvent } from "../src/collection/event-store.ts";
 import { loadConfig } from "../src/config.ts";
 import { storeResult } from "../src/uptime/results.ts";
 import { PUBLIC_URL, signedInDashboard } from "./helpers/dashboard.ts";
-import { insertOrganization, insertProject } from "./helpers/projects.ts";
+import { insertProject } from "./helpers/projects.ts";
 import { nowNs, secretKeyOf } from "./helpers/telemetry.ts";
 
 let dashboard: Awaited<ReturnType<typeof signedInDashboard>>;
@@ -35,10 +35,9 @@ function pageviews(count: number): NewEvent[] {
   }));
 }
 
-/** A project of the dashboard's organization with `events` pageviews, in both databases. */
+/** A project with `events` pageviews, in both databases. */
 async function projectWith(name: string, events: number) {
   const project = await insertProject(dashboard.db, {
-    organization_id: dashboard.organizationId,
     name,
   });
   await dashboard.store(project.id, pageviews(events));
@@ -282,22 +281,6 @@ describe("deleting a project's events from ClickHouse", { timeout: 60_000 }, () 
       files: 0,
     });
     expect(await pendingDeletions()).toEqual([]);
-  });
-
-  test("deleting an organization records each of its projects too", async () => {
-    const organizationId = await insertOrganization(dashboard.db, { name: "Going away" });
-    const { id: projectId } = await insertProject(dashboard.db, {
-      organization_id: organizationId,
-      name: "With its organization",
-    });
-    await dashboard.store(projectId, pageviews(1));
-
-    // No route deletes organizations yet: the database's cascade does it.
-    await dashboard.db.deleteFrom("organizations").where("id", "=", organizationId).execute();
-
-    expect(await pendingDeletions()).toEqual([projectId]);
-    await purgeDeletedProjects(dashboard.db, dashboard.reader.client);
-    expect(await inClickHouse(projectId)).toBe(0);
   });
 
   test("finds events of projects PostgreSQL no longer knows, and deletes them", async () => {

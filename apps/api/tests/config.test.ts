@@ -5,11 +5,11 @@ import {
   DEFAULT_DASHBOARD_PATH,
   DEFAULT_DATA_CENTERS_PATH,
   DEFAULT_GEO_DATABASE_PATH,
-  DEFAULT_ORGANIZATION_EVENTS_PER_SECOND,
+  DEFAULT_INSTANCE_EVENTS_PER_SECOND,
   DEFAULT_REPLAY_PLAYER_PATH,
-  DEFAULT_REPLAY_BYTES_PER_ORGANIZATION,
+  DEFAULT_REPLAY_STORAGE_BYTES,
   DEFAULT_TELEMETRY_RETENTION_DAYS,
-  DEFAULT_SOURCE_MAP_BYTES_PER_ORGANIZATION,
+  DEFAULT_SOURCE_MAP_STORAGE_BYTES,
   DEVELOPMENT_AUTH_SECRET,
   DEFAULT_TRACKER_SCRIPT_PATH,
   DEVELOPMENT_PUBLIC_URL,
@@ -41,7 +41,7 @@ describe("loadConfig", () => {
       geoSource: "database",
       geoDatabasePath: DEFAULT_GEO_DATABASE_PATH,
       dataCentersPath: DEFAULT_DATA_CENTERS_PATH,
-      organizationEventsPerSecond: DEFAULT_ORGANIZATION_EVENTS_PER_SECOND,
+      instanceEventsPerSecond: DEFAULT_INSTANCE_EVENTS_PER_SECOND,
       defaultTimeZone: "UTC",
       publicUrl: DEVELOPMENT_PUBLIC_URL,
       trustedOrigins: [DEVELOPMENT_PUBLIC_URL, "http://localhost:*", "http://127.0.0.1:*"],
@@ -50,8 +50,8 @@ describe("loadConfig", () => {
       dashboardPath: DEFAULT_DASHBOARD_PATH,
       replayPlayerPath: DEFAULT_REPLAY_PLAYER_PATH,
       objectStore: LOCAL_OBJECT_STORE,
-      sourceMapBytesPerOrganization: DEFAULT_SOURCE_MAP_BYTES_PER_ORGANIZATION,
-      replayBytesPerOrganization: DEFAULT_REPLAY_BYTES_PER_ORGANIZATION,
+      sourceMapStorageBytes: DEFAULT_SOURCE_MAP_STORAGE_BYTES,
+      replayStorageBytes: DEFAULT_REPLAY_STORAGE_BYTES,
       telemetryRetentionDays: DEFAULT_TELEMETRY_RETENTION_DAYS,
       uptimeAllowPrivateAddresses: false,
       uptimeDenyAddresses: [],
@@ -73,7 +73,7 @@ describe("loadConfig", () => {
         GEO_SOURCE: "cloudflare",
         GEO_DATABASE_PATH: "/var/lib/ottertrail/geo.mmdb",
         DATA_CENTERS_PATH: "/var/lib/ottertrail/data-centers.json",
-        ORGANIZATION_EVENTS_PER_SECOND: "2000",
+        INSTANCE_EVENTS_PER_SECOND: "2000",
         TIMEZONE: "Asia/Singapore",
         PUBLIC_URL: "https://analytics.example.com/",
         AUTH_SECRET: "s".repeat(44),
@@ -85,8 +85,8 @@ describe("loadConfig", () => {
         OBJECT_STORE_BUCKET: "ottertrail-files",
         OBJECT_STORE_ACCESS_KEY_ID: "id-123",
         OBJECT_STORE_SECRET_ACCESS_KEY: "o".repeat(40),
-        SOURCE_MAP_BYTES_PER_ORGANIZATION: String(5 * 1024 ** 3),
-        REPLAY_BYTES_PER_ORGANIZATION: String(10 * 1024 ** 3),
+        SOURCE_MAP_STORAGE_BYTES: String(5 * 1024 ** 3),
+        REPLAY_STORAGE_BYTES: String(10 * 1024 ** 3),
         TELEMETRY_RETENTION_DAYS: "90",
         UPTIME_ALLOW_PRIVATE_ADDRESSES: "true",
         UPTIME_DENY_ADDRESSES: " 203.0.113.10, 2001:db8::/32 ,",
@@ -106,7 +106,7 @@ describe("loadConfig", () => {
       geoSource: "cloudflare",
       geoDatabasePath: "/var/lib/ottertrail/geo.mmdb",
       dataCentersPath: "/var/lib/ottertrail/data-centers.json",
-      organizationEventsPerSecond: 2000,
+      instanceEventsPerSecond: 2000,
       defaultTimeZone: "Asia/Singapore",
       publicUrl: "https://analytics.example.com",
       trustedOrigins: ["https://analytics.example.com", "http://localhost:*", "http://127.0.0.1:*"],
@@ -121,8 +121,8 @@ describe("loadConfig", () => {
         accessKeyId: "id-123",
         secretAccessKey: "o".repeat(40),
       },
-      sourceMapBytesPerOrganization: 5 * 1024 ** 3,
-      replayBytesPerOrganization: 10 * 1024 ** 3,
+      sourceMapStorageBytes: 5 * 1024 ** 3,
+      replayStorageBytes: 10 * 1024 ** 3,
       telemetryRetentionDays: 90,
       uptimeAllowPrivateAddresses: true,
       uptimeDenyAddresses: ["203.0.113.10", "2001:db8::/32"],
@@ -163,10 +163,10 @@ describe("loadConfig", () => {
     }
   });
 
-  test("refuses an organization event rate below one batch in ten seconds, or not a whole number", () => {
+  test("refuses an instance event rate below one batch in ten seconds, or not a whole number", () => {
     for (const value of ["4", "2.5", "-1", "lots", "1000001"]) {
-      expect(() => loadConfig({ ORGANIZATION_EVENTS_PER_SECOND: value })).toThrow(
-        "ORGANIZATION_EVENTS_PER_SECOND must be an integer",
+      expect(() => loadConfig({ INSTANCE_EVENTS_PER_SECOND: value })).toThrow(
+        "INSTANCE_EVENTS_PER_SECOND must be an integer",
       );
     }
   });
@@ -317,8 +317,8 @@ describe("loadConfig", () => {
 
     test("refuses a source map limit below 1 MiB, above 1 TiB, or not a whole number", () => {
       for (const value of ["1000", String(1024 ** 4 + 1), "2097152.5", "lots"]) {
-        expect(() => loadConfig({ SOURCE_MAP_BYTES_PER_ORGANIZATION: value })).toThrow(
-          "SOURCE_MAP_BYTES_PER_ORGANIZATION must be a number of bytes",
+        expect(() => loadConfig({ SOURCE_MAP_STORAGE_BYTES: value })).toThrow(
+          "SOURCE_MAP_STORAGE_BYTES must be a number of bytes",
         );
       }
     });

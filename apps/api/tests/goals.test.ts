@@ -7,7 +7,7 @@ import { MAX_GOALS } from "../src/goals/goals.ts";
 import { PUBLIC_URL, signedInDashboard } from "./helpers/dashboard.ts";
 import { insertProject } from "./helpers/projects.ts";
 
-/** Noon on 17 November 2026 in UTC, the organization's timezone. */
+/** Noon on 17 November 2026 in UTC, the instance's timezone. */
 const NOW = new Date("2026-11-17T12:00:00.000Z");
 const minutesAgo = (minutes: number) => new Date(NOW.getTime() - minutes * 60_000);
 
@@ -51,9 +51,7 @@ const TEAM_SIGNUP = { type: "event", name: "signup", filter: { key: "plan", valu
 
 beforeAll(async () => {
   dashboard = await signedInDashboard({ now: () => NOW });
-  projectId = (
-    await insertProject(dashboard.db, { organization_id: dashboard.organizationId, name: "Shop" })
-  ).id;
+  projectId = (await insertProject(dashboard.db, { name: "Shop" })).id;
   await dashboard.store(projectId, [
     // 1: pricing, then a team signup, on a desktop.
     event("pageview", "1", { path: "/pricing", occurredAt: minutesAgo(70) }),
@@ -169,9 +167,8 @@ describe("goals", () => {
   });
 });
 
-/** A new project in the same organization, for tests that need their own goals. */
-const otherProject = async (name: string) =>
-  (await insertProject(dashboard.db, { organization_id: dashboard.organizationId, name })).id;
+/** Another project, for tests that need their own goals. */
+const otherProject = async (name: string) => (await insertProject(dashboard.db, { name })).id;
 
 /** Adds a goal to any project, from the dashboard. */
 const post = (project: string, payload: object) =>

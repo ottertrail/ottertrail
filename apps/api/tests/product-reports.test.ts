@@ -7,7 +7,7 @@ import { parseSteps } from "../src/product/routes.ts";
 import { signedInDashboard } from "./helpers/dashboard.ts";
 import { insertProject } from "./helpers/projects.ts";
 
-/** Noon on Tuesday 17 November 2026 in UTC, the organization's timezone. */
+/** Noon on Tuesday 17 November 2026 in UTC, the instance's timezone. */
 const NOW = new Date("2026-11-17T12:00:00.000Z");
 const minutesAgo = (minutes: number) => new Date(NOW.getTime() - minutes * 60_000);
 const at = (iso: string) => new Date(iso);
@@ -47,8 +47,7 @@ const PRICING_SIGNUP_INVITE = [
 
 beforeAll(async () => {
   dashboard = await signedInDashboard({ now: () => NOW });
-  const insert = async (name: string) =>
-    (await insertProject(dashboard.db, { organization_id: dashboard.organizationId, name })).id;
+  const insert = async (name: string) => (await insertProject(dashboard.db, { name })).id;
   funnelProject = await insert("Funnel");
   retentionProject = await insert("Retention");
 

@@ -692,7 +692,7 @@ const PERIOD_ITEMS = [...PERIODS, { value: CUSTOM, label: "Custom range" }];
 /**
  * Web analytics for one project: the numbers, a trend, and ranked lists,
  * all for a period that ends today or for chosen days, in the
- * organization's timezone.
+ * timezone set in Settings.
  */
 export function AnalyticsPage({
   projectId,

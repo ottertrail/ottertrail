@@ -21,10 +21,10 @@ The spec asks for these before any report: each report below counts by them.
 
 **Who did it** is counted two ways:
 
-- **Visitors:** the cookieless daily visitor ID ([web analytics](web-analytics.md#the-visitor-id)). It is the same for one browser and address within one day in the organization's timezone, and new the next day, by design. So a visitor is "one browser on one day": a person who comes back tomorrow counts again, and anything that needs the same person across days cannot use visitors.
+- **Visitors:** the cookieless daily visitor ID ([web analytics](web-analytics.md#the-visitor-id)). It is the same for one browser and address within one day in the instance's timezone, and new the next day, by design. So a visitor is "one browser on one day": a person who comes back tomorrow counts again, and anything that needs the same person across days cannot use visitors.
 - **Users:** the site's own ID for its signed-in user ([known users](web-analytics.md#known-users)), the same on every day and device. Only events sent while someone was signed in have one.
 
-**Days and weeks** are the organization's: a day starts at midnight in its timezone, and a week on Monday, as ISO weeks do. Ranges are whole days, as on the analytics page.
+**Days and weeks** are the instance's: a day starts at midnight in its timezone, and a week on Monday, as ISO weeks do. Ranges are whole days, as on the analytics page.
 
 **Late events:** the API accepts an event up to 24 hours after it happened, and reports place it when it happened (`occurred_at`), not when it arrived. So the last day of a report can still grow for a day, and a week for a day after it ends. Events reach the reports as soon as ClickHouse has written them, before the API answers.
 
@@ -36,7 +36,7 @@ The spec asks for these before any report: each report below counts by them.
 
 ## Goals
 
-Code: `apps/api/src/goals/`. A goal is a named conversion a project saves: a page viewed, or a product event with an optional property filter, the same shape as a funnel step (`product/steps.ts`), checked by the same rules. A project has at most 20, each with its own name. They live in PostgreSQL (`goals`, migration 0020); nothing about them is stored in ClickHouse, so a goal added today counts past events too, and deleting one loses only its definition.
+Code: `apps/api/src/goals/`. A goal is a named conversion a project saves: a page viewed, or a product event with an optional property filter, the same shape as a funnel step (`product/steps.ts`), checked by the same rules. A project has at most 20, each with its own name. They live in PostgreSQL (`goals`); nothing about them is stored in ClickHouse, so a goal added today counts past events too, and deleting one loses only its definition.
 
 The web analytics page counts them, in the same visits and filters as the rest of the page: for each goal, the **visitors** who reached it (daily visitor IDs, as the summary counts them), how many **times** it happened, and its **conversion rate**, those visitors as a share of the page's visitors. A filtered page counts the goals among its own visits only. Counting by visitors means an event goal counts browser events only: an event from the site's server has no visitor.
 
@@ -62,7 +62,7 @@ Choices: count by visitors (the default) or users, and a window of 5 or 30 minut
 
 ### Saved funnels
 
-Code: `apps/api/src/funnels/`. A project can name a funnel to open it again: its steps, who it counts, and its window, checked by the same rules as the funnel report's, so a saved funnel is always one the report can count. The period and the environment are the page's, not the funnel's. A project has at most 50, each with its own name, listed by name. They live in PostgreSQL (`saved_funnels`, migration 0021), the steps as the report's JSON; nothing is stored in ClickHouse, so a funnel saved today counts past events too, and deleting one loses only its definition. Changing one replaces its name and definition together, and names the version it was read at (`updatedAt`): if the funnel was changed since, such as by someone else or in another tab, the change is refused (409 `funnel_changed`) rather than undoing theirs without a word. `updated_at` is kept in whole milliseconds, as JSON carries it, and moves forward with every change.
+Code: `apps/api/src/funnels/`. A project can name a funnel to open it again: its steps, who it counts, and its window, checked by the same rules as the funnel report's, so a saved funnel is always one the report can count. The period and the environment are the page's, not the funnel's. A project has at most 50, each with its own name, listed by name. They live in PostgreSQL (`saved_funnels`), the steps as the report's JSON; nothing is stored in ClickHouse, so a funnel saved today counts past events too, and deleting one loses only its definition. Changing one replaces its name and definition together, and names the version it was read at (`updatedAt`): if the funnel was changed since, such as by someone else or in another tab, the change is refused (409 `funnel_changed`) rather than undoing theirs without a word. `updated_at` is kept in whole milliseconds, as JSON carries it, and moves forward with every change.
 
 The funnel page's address still holds the steps, the count, and the window, so a link shows what was viewed even after the saved funnel changes; it also names the saved funnel it was opened from (`funnel=<id>`), so the page can tell when the shown funnel differs from it.
 
@@ -84,7 +84,7 @@ PUT    /api/projects/:id/funnels/:funnelId   (the same, and "updatedAt": the ver
 DELETE /api/projects/:id/funnels/:funnelId
 ```
 
-Like every project route, each runs the organization access check first. Saving, changing, or deleting a funnel also needs the dashboard's origin; a name already taken, a 51st funnel, or a change from an older version answers 409, and steps the report would refuse answer 400 with the report's own error.
+Like every project route, each runs the access check first. Saving, changing, or deleting a funnel also needs the dashboard's origin; a name already taken, a 51st funnel, or a change from an older version answers 409, and steps the report would refuse answer 400 with the report's own error.
 
 ## Not done yet
 

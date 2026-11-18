@@ -7,11 +7,7 @@ export const SECRET_KEY_PATTERN = "^sk_[0-9a-f]{32}$";
 
 export interface CollectingProject {
   id: string;
-  /** Its organization, whose event budget its own sits inside. */
-  organizationId: string;
   allowedHostnames: string[];
-  /** Its organization's timezone, whose midnight starts a new visitor salt. */
-  timeZone: string;
   /** Signs user IDs (collection/identity.ts). */
   secretKey: string;
   /** Accept a browser's user ID only with a valid signature. */
@@ -36,10 +32,10 @@ interface CacheEntry {
  * so repeating a made-up key costs one query per cache lifetime. A stream of
  * different made-up keys still costs a query each; the per-IP rate limit,
  * checked first, bounds it. Changes to a project's allowed hostnames take
- * effect within the cache lifetime; a replaced key, a deleted project, or a
- * new timezone at once in this process, because the project and
- * organization routes call forget(). A lookup still running when they do
- * answers its own request but is not cached: it may have read the old row.
+ * effect within the cache lifetime; a replaced key or a deleted project at
+ * once in this process, because the project routes call forget(). A lookup
+ * still running when they do answers its own request but is not cached: it
+ * may have read the old row.
  */
 export class ProjectKeyCache {
   readonly #db: Kysely<Database>;
@@ -85,16 +81,13 @@ export class ProjectKeyCache {
 
     const row = await this.#db
       .selectFrom("projects")
-      .innerJoin("organizations", "organizations.id", "projects.organization_id")
       .select([
         "projects.id",
-        "projects.organization_id",
         "projects.allowed_hostnames",
         "projects.secret_key",
         "projects.require_signed_user_ids",
         "projects.ignore_data_centers",
         "projects.replay_mode",
-        "organizations.time_zone",
       ])
       .where(`projects.${column}`, "=", key)
       .executeTakeFirst();
@@ -103,9 +96,7 @@ export class ProjectKeyCache {
         ? null
         : {
             id: row.id,
-            organizationId: row.organization_id,
             allowedHostnames: row.allowed_hostnames,
-            timeZone: row.time_zone,
             secretKey: row.secret_key,
             requireSignedUserIds: row.require_signed_user_ids,
             ignoreDataCenters: row.ignore_data_centers,
@@ -123,7 +114,7 @@ export class ProjectKeyCache {
     return project;
   }
 
-  /** Drops a key, so its next request reads the database: after a key is replaced, its project deleted, or its timezone changed. */
+  /** Drops a key, so its next request reads the database: after a key is replaced or its project deleted. */
   forget(publicKey: string) {
     this.#forgotten += 1;
     this.#entries.delete(publicKey);

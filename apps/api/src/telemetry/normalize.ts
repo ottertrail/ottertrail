@@ -36,7 +36,7 @@ import {
 
 /**
  * OTLP requests, decoded (wire.ts), as rows of ClickHouse's telemetry
- * tables (migration 0007; docs/telemetry.md), and the exceptions they
+ * tables (clickhouse/migrations.ts; docs/telemetry.md), and the exceptions they
  * record as error events (exceptions.ts). Pure functions: the same
  * request, with the same project, always gives the same rows, so a retried
  * request stores rows ReplacingMergeTree keeps once. (A log record with no

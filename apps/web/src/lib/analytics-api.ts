@@ -3,7 +3,7 @@ import { infiniteQueryOptions, keepPreviousData, queryOptions } from "@tanstack/
 import { ApiError, apiRequest, expectShape } from "./api";
 import { type GoalResult, isGoalResult } from "./goals-api";
 
-/** Ranges the analytics page offers; each ends today in the organization's timezone. */
+/** Ranges the analytics page offers; each ends today in the timezone set in Settings. */
 export const PERIODS = [
   { value: "today", label: "Today" },
   { value: "7d", label: "Last 7 days" },

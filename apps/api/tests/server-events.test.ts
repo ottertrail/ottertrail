@@ -29,7 +29,6 @@ let publicKey = "";
 beforeAll(async () => {
   dashboard = await signedInDashboard();
   const project = await insertProject(dashboard.db, {
-    organization_id: dashboard.organizationId,
     name: "Server events",
     allowed_hostnames: ["example.com"],
   });
@@ -101,7 +100,6 @@ describe("POST /api/server-events", () => {
 
   test("counts a retried event once: its time is stored as sent", async () => {
     const project = await insertProject(dashboard.db, {
-      organization_id: dashboard.organizationId,
       name: "Retries",
     });
     const key = await secretKeyOf(project.id);
@@ -216,7 +214,6 @@ describe("POST /api/server-events", () => {
 
   test("a key replaced while its lookup runs is not cached", async () => {
     const project = await insertProject(dashboard.db, {
-      organization_id: dashboard.organizationId,
       name: "Replaced",
     });
     const oldKey = await secretKeyOf(project.id);

@@ -16,13 +16,8 @@ export async function migrateToLatest(
   return migrate(db, "latest", options);
 }
 
-/**
- * Applies the migrations up to and including `target`, as migrateToLatest()
- * does; a database past `target` is migrated back to it. The report
- * benchmark makes its fake events at migration 0023, the last with an
- * events table, in a schema of its own.
- */
-export async function migrate(
+/** Applies the migrations up to and including `target` ("latest" for all). */
+async function migrate(
   db: Kysely<Database>,
   target: string,
   options: { schema?: string } = {},

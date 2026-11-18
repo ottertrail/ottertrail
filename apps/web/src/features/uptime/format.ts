@@ -36,7 +36,7 @@ export function formatMs(ms: number): string {
   return `${(ms / 1000).toFixed(2).replace(/\.?0+$/, "")} s`;
 }
 
-/** "16 Nov 2026, 10:05", in the organization's timezone. */
+/** "16 Nov 2026, 10:05", in the timezone set in Settings. */
 export function formatMoment(iso: string, timeZone: string): string {
   const parts = new Intl.DateTimeFormat("en-GB", {
     timeZone,

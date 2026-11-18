@@ -13,7 +13,7 @@ import { dayIn } from "../visitors/visitor-ids.ts";
  * (docs/telemetry.md, "The dashboard").
  */
 
-/** Whole days in the organization's timezone, in one environment, cut to what telemetry keeps. */
+/** Whole days in the instance's timezone, in one environment, cut to what telemetry keeps. */
 export interface TelemetryRange {
   projectId: string;
   environment: string;
@@ -30,7 +30,7 @@ export interface TelemetryRange {
 }
 
 /**
- * The days a request asks for, in the organization's timezone, cut to
+ * The days a request asks for, in the instance's timezone, cut to
  * the last `retentionDays` before `now`; or why they are refused.
  */
 export async function telemetryRange(

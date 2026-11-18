@@ -96,48 +96,52 @@ export class TokenBucketLimiter {
   }
 }
 
+/** The instance budget's one key. */
+const INSTANCE = "instance";
+
 /**
- * Events a project may store: its own budget, inside its organization's.
- * Without the second, a customer could add projects to multiply its share
- * of the instance, which every customer shares.
+ * Events a project may store: its own budget, inside the instance's.
+ * Without the first, one busy project could take the whole instance's
+ * budget from the others; without the second, adding projects would raise
+ * what the instance takes in without bound.
  */
 export class EventBudget {
   readonly #projects: TokenBucketLimiter;
-  readonly #organizations: TokenBucketLimiter;
+  readonly #instance: TokenBucketLimiter;
 
-  constructor(projects: TokenBucketLimiter, organizations: TokenBucketLimiter) {
+  constructor(projects: TokenBucketLimiter, instance: TokenBucketLimiter) {
     this.#projects = projects;
-    this.#organizations = organizations;
+    this.#instance = instance;
   }
 
   /**
    * Spends `events` from both budgets, or from neither. A refusal waits for
-   * both: retrying when only the organization's has refilled would only be
+   * both: retrying when only the instance's has refilled would only be
    * refused again.
    */
-  take(project: { id: string; organizationId: string }, events: number): TakeResult {
-    const organization = this.#organizations.take(project.organizationId, events);
-    if (!organization.allowed) {
+  take(projectId: string, events: number): TakeResult {
+    const instance = this.#instance.take(INSTANCE, events);
+    if (!instance.allowed) {
       const retryAfterSeconds = Math.max(
-        organization.retryAfterSeconds,
-        this.#projects.wait(project.id, events),
+        instance.retryAfterSeconds,
+        this.#projects.wait(projectId, events),
       );
       return { allowed: false, retryAfterSeconds };
     }
-    const own = this.#projects.take(project.id, events);
-    if (!own.allowed) this.#organizations.refund(project.organizationId, events);
+    const own = this.#projects.take(projectId, events);
+    if (!own.allowed) this.#instance.refund(INSTANCE, events);
     return own;
   }
 
   /** Puts back what take() spent, for records that were not stored after all. */
-  refund(project: { id: string; organizationId: string }, events: number): void {
-    this.#projects.refund(project.id, events);
-    this.#organizations.refund(project.organizationId, events);
+  refund(projectId: string, events: number): void {
+    this.#projects.refund(projectId, events);
+    this.#instance.refund(INSTANCE, events);
   }
 
   /** The most one take() may ask for: more could never be allowed. */
   get capacity(): number {
-    return Math.min(this.#projects.capacity, this.#organizations.capacity);
+    return Math.min(this.#projects.capacity, this.#instance.capacity);
   }
 }
 
@@ -150,8 +154,8 @@ export class EventBudget {
  */
 export const TELEMETRY_PROJECT_LIMIT: RateLimit = { capacity: 50_000, refillPerSecond: 5_000 };
 
-/** An organization's telemetry budget, all its projects together: three projects' worth. */
-export const TELEMETRY_ORGANIZATION_LIMIT: RateLimit = {
+/** The instance's telemetry budget, all its projects together: three projects' worth. */
+export const TELEMETRY_INSTANCE_LIMIT: RateLimit = {
   capacity: 150_000,
   refillPerSecond: 15_000,
 };

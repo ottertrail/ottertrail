@@ -13,7 +13,7 @@ import type { Buckets } from "../telemetry/metrics.ts";
 import type { CheckOutcome } from "./request.ts";
 
 /**
- * Check results in ClickHouse (check_results, migration 0011): the worker
+ * Check results in ClickHouse (check_results, clickhouse/migrations.ts): the worker
  * writes one per run, and a check's page reads its response times and
  * latest failures. Every query names the project first, then the check,
  * as the table is ordered.

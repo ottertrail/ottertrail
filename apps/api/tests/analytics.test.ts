@@ -92,7 +92,6 @@ describe("GET /api/projects/:id/analytics", () => {
       now: () => new Date("2026-11-17T17:00:00Z"),
     });
     const project = await insertProject(dashboard.db, {
-      organization_id: dashboard.organizationId,
       name: "Analytics test",
       allowed_hostnames: ["example.com"],
     });
@@ -202,7 +201,6 @@ describe("GET /api/projects/:id/analytics with filters", () => {
       now: () => new Date("2026-11-17T17:00:00Z"),
     });
     const project = await insertProject(dashboard.db, {
-      organization_id: dashboard.organizationId,
       name: "Filter test",
       allowed_hostnames: ["example.com"],
     });
@@ -380,7 +378,6 @@ describe("GET /api/projects/:id/analytics with filters", () => {
 async function dashboardAt(now: string) {
   const dashboard = await signedInDashboard({ timeZone: TIME_ZONE, now: () => new Date(now) });
   const project = await insertProject(dashboard.db, {
-    organization_id: dashboard.organizationId,
     name: "Comparison test",
     allowed_hostnames: ["example.com"],
   });
@@ -550,7 +547,6 @@ describe("GET /api/projects/:id/analytics/list", () => {
       now: () => new Date("2026-11-17T17:00:00Z"),
     });
     const project = await insertProject(dashboard.db, {
-      organization_id: dashboard.organizationId,
       name: "List test",
       allowed_hostnames: ["example.com"],
     });
@@ -664,7 +660,6 @@ describe("environments and releases", () => {
       now: () => new Date("2026-11-17T17:00:00Z"),
     });
     const project = await insertProject(dashboard.db, {
-      organization_id: dashboard.organizationId,
       name: "Environments",
       allowed_hostnames: ["example.com"],
     });
@@ -737,7 +732,6 @@ describe("environments and releases", () => {
 
   test("always list production, so the page can switch back to it", async () => {
     const project = await insertProject(dashboard.db, {
-      organization_id: dashboard.organizationId,
       name: "Not live yet",
       allowed_hostnames: ["example.com"],
     });
@@ -765,7 +759,6 @@ describe("when ClickHouse fails", () => {
   beforeAll(async () => {
     dashboard = await signedInDashboard({ timeZone: TIME_ZONE });
     const project = await insertProject(dashboard.db, {
-      organization_id: dashboard.organizationId,
       name: "Failures",
       allowed_hostnames: ["example.com"],
     });

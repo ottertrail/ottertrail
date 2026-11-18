@@ -5,9 +5,7 @@ import type { Auth } from "../auth/auth.ts";
 import { requireTrustedOrigin } from "../auth/origin.ts";
 import { requireSession } from "../auth/routes.ts";
 import type { Database } from "../db/schema.ts";
-import { requireProjectAccess } from "../organizations/access.ts";
-import { listOrganizations } from "../organizations/organizations.ts";
-import { signedInUser } from "../organizations/routes.ts";
+import { requireProjectAccess } from "./access.ts";
 import {
   createProject,
   deleteProject,
@@ -49,10 +47,10 @@ function problem(code: string, message: string) {
 }
 
 /**
- * Projects, for the signed-in dashboard. A user sees and manages the
- * projects of the organizations they belong to: every route on one project
- * runs requireProjectAccess first, and the list and the create route check
- * memberships themselves. Every member may manage them until roles exist.
+ * Projects, for the signed-in dashboard. Every signed-in user sees and
+ * manages the instance's projects until roles exist: every route on one
+ * project runs requireProjectAccess first, and the list and the create
+ * route need a session.
  *
  * Changes to allowed hostnames reach the collection endpoint within a
  * minute, the lifetime of its project cache (collection/project-keys.ts).
@@ -70,8 +68,8 @@ export const projectRoutes: FastifyPluginCallback<{
   const fromDashboard = requireTrustedOrigin(trustedOrigins);
   const projectAccess = requireProjectAccess(db);
 
-  app.get("/projects", { preHandler: signedIn }, async (request) => ({
-    projects: await listProjects(db, signedInUser(request).id),
+  app.get("/projects", { preHandler: signedIn }, async () => ({
+    projects: await listProjects(db),
   }));
 
   app.get<{ Params: { id: string } }>(
@@ -85,11 +83,7 @@ export const projectRoutes: FastifyPluginCallback<{
     },
   );
 
-  /**
-   * Creates a project in one of the user's organizations: the one named, or
-   * the user's only one when none is named.
-   */
-  app.post<{ Body: { name: string; allowedHostnames?: string[]; organizationId?: string } }>(
+  app.post<{ Body: { name: string; allowedHostnames?: string[] } }>(
     "/projects",
     {
       preHandler: [fromDashboard, signedIn],
@@ -98,11 +92,7 @@ export const projectRoutes: FastifyPluginCallback<{
           type: "object",
           required: ["name"],
           additionalProperties: false,
-          properties: {
-            name: nameSchema,
-            allowedHostnames: hostnamesSchema,
-            organizationId: { type: "string", pattern: UUID_PATTERN },
-          },
+          properties: { name: nameSchema, allowedHostnames: hostnamesSchema },
         },
       },
     },
@@ -111,30 +101,7 @@ export const projectRoutes: FastifyPluginCallback<{
       if (!hostnames.ok) {
         return reply.code(400).send(problem("invalid_hostname", hostnames.message));
       }
-      const organizations = await listOrganizations(db, signedInUser(request).id);
-      const { organizationId } = request.body;
-      const organization =
-        organizationId === undefined
-          ? organizations.length === 1
-            ? organizations[0]
-            : undefined
-          : organizations.find((candidate) => candidate.id === organizationId);
-      if (organization === undefined) {
-        return organizationId === undefined
-          ? reply
-              .code(400)
-              .send(
-                problem(
-                  "organization_required",
-                  organizations.length === 0
-                    ? "You belong to no organization, so you cannot create a project."
-                    : "Choose the organization the project belongs to.",
-                ),
-              )
-          : reply.code(404).send(problem("not_found", "No organization has this ID."));
-      }
       const project = await createProject(db, {
-        organizationId: organization.id,
         name: request.body.name.trim(),
         allowedHostnames: hostnames.hostnames,
       });

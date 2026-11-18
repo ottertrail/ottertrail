@@ -4,7 +4,7 @@ import { ApiError } from "./api";
 
 /**
  * Retries of a telemetry page's request: none after an answer from the
- * API. A 503 says ClickHouse or the organization's queries are busy, and an
+ * API. A 503 says ClickHouse or the instance's queries are busy, and an
  * automatic retry would only add to them; the page offers Retry instead.
  * A request that never reached the API is retried once.
  */

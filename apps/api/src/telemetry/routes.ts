@@ -10,7 +10,7 @@ import type { CollectingProject, ProjectKeyCache } from "../collection/project-k
 import {
   EventBudget,
   type RateLimit,
-  TELEMETRY_ORGANIZATION_LIMIT,
+  TELEMETRY_INSTANCE_LIMIT,
   TELEMETRY_PROJECT_LIMIT,
   TokenBucketLimiter,
 } from "../collection/rate-limiter.ts";
@@ -48,7 +48,7 @@ const gunzipAsync = promisify(gunzip);
 export const MAX_TELEMETRY_BODY_BYTES = 16 * 1024 * 1024;
 
 /**
- * What a request spends of its project's and organization's budgets: one
+ * What a request spends of its project's and the instance's budgets: one
  * per record, or, when it holds more than records usually do, one per
  * MESSAGES_PER_UNIT messages it decodes into, or per BYTES_PER_UNIT bytes
  * its rows hold (its body, and the resource attributes each row repeats).
@@ -61,8 +61,8 @@ export const BYTES_PER_UNIT = 2048;
 
 /** Requests one process works on at once, by default: each holds its body, decoded, in memory. */
 export const DEFAULT_MAX_IN_FLIGHT = 8;
-/** Of those, one organization's at most, by default, so one customer cannot take them all. */
-export const DEFAULT_MAX_IN_FLIGHT_PER_ORGANIZATION = 4;
+/** Of those, one project's at most, by default, so one project's exporters cannot take them all. */
+export const DEFAULT_MAX_IN_FLIGHT_PER_PROJECT = 4;
 
 /** What a request costs before it is decoded: what its size and messages alone make. */
 function costBeforeDecoding(messages: number, bodyBytes: number): number {
@@ -127,13 +127,13 @@ export interface TelemetryOptions {
   retentionDays: number;
   /** Requests per client address. */
   ipLimit?: RateLimit;
-  /** Spans, log records, and data points per project, and per organization (see BYTES_PER_UNIT). */
+  /** Spans, log records, and data points per project, and per instance (see BYTES_PER_UNIT). */
   projectLimit?: RateLimit;
-  organizationLimit?: RateLimit;
+  instanceLimit?: RateLimit;
   /** Requests this process works on at once (DEFAULT_MAX_IN_FLIGHT). */
   maxInFlight?: number;
-  /** Of those, one organization's (DEFAULT_MAX_IN_FLIGHT_PER_ORGANIZATION). */
-  maxInFlightPerOrganization?: number;
+  /** Of those, one project's (DEFAULT_MAX_IN_FLIGHT_PER_PROJECT). */
+  maxInFlightPerProject?: number;
   /** The clock, in milliseconds since 1970; tests fix it. */
   now?: () => number;
 }
@@ -166,7 +166,7 @@ function fail(
  * one: these come from servers.
  *
  * Before the body is read: the key's form, the address's rate, the
- * encoding, how many requests this process and the key's organization
+ * encoding, how many requests this process and the key's project
  * have in progress, and the key itself. Then the body is unpacked (at most
  * 16 MiB), and its messages counted without decoding (at most
  * MAX_MESSAGES), which pays the budgets for decoding it. Then it is decoded
@@ -185,29 +185,29 @@ export const telemetryRoutes: FastifyPluginCallback<TelemetryOptions> = (app, op
     retentionDays,
     now = Date.now,
     maxInFlight = DEFAULT_MAX_IN_FLIGHT,
-    maxInFlightPerOrganization = DEFAULT_MAX_IN_FLIGHT_PER_ORGANIZATION,
+    maxInFlightPerProject = DEFAULT_MAX_IN_FLIGHT_PER_PROJECT,
   } = options;
   const ipLimiter = new TokenBucketLimiter(options.ipLimit ?? DEFAULT_SERVER_IP_LIMIT);
   const budget = new EventBudget(
     new TokenBucketLimiter(options.projectLimit ?? TELEMETRY_PROJECT_LIMIT),
-    new TokenBucketLimiter(options.organizationLimit ?? TELEMETRY_ORGANIZATION_LIMIT),
+    new TokenBucketLimiter(options.instanceLimit ?? TELEMETRY_INSTANCE_LIMIT),
   );
   /** The project each request's key names, found before its body is read. */
   const projectOf = new WeakMap<FastifyRequest, CollectingProject>();
   /**
    * Requests in progress, each counted once until its answer is sent or it
-   * is abandoned, with its organization once its key is found.
+   * is abandoned, with its project once its key is found.
    */
   const inFlight = new Map<FastifyRequest, string | null>();
   const inFlightOf = new Map<string, number>();
   const finished = async (request: FastifyRequest) => {
     if (!inFlight.has(request)) return;
-    const organizationId = inFlight.get(request) ?? null;
+    const projectId = inFlight.get(request) ?? null;
     inFlight.delete(request);
-    if (organizationId === null) return;
-    const left = (inFlightOf.get(organizationId) ?? 1) - 1;
-    if (left === 0) inFlightOf.delete(organizationId);
-    else inFlightOf.set(organizationId, left);
+    if (projectId === null) return;
+    const left = (inFlightOf.get(projectId) ?? 1) - 1;
+    if (left === 0) inFlightOf.delete(projectId);
+    else inFlightOf.set(projectId, left);
   };
 
   // Both encodings as bytes: protobuf needs them, and JSON is parsed only
@@ -283,18 +283,18 @@ export const telemetryRoutes: FastifyPluginCallback<TelemetryOptions> = (app, op
     if (project === null) {
       return fail(request, reply, 401, "No project has this secret key.");
     }
-    const ofOrganization = inFlightOf.get(project.organizationId) ?? 0;
-    if (ofOrganization >= maxInFlightPerOrganization) {
+    const ofProject = inFlightOf.get(project.id) ?? 0;
+    if (ofProject >= maxInFlightPerProject) {
       return fail(
         request,
         reply,
         429,
-        "Too many of this organization's requests in progress. Retry shortly.",
+        "Too many of this project's requests in progress. Retry shortly.",
         1,
       );
     }
-    inFlight.set(request, project.organizationId);
-    inFlightOf.set(project.organizationId, ofOrganization + 1);
+    inFlight.set(request, project.id);
+    inFlightOf.set(project.id, ofProject + 1);
     projectOf.set(request, project);
     return undefined;
   };
@@ -363,7 +363,7 @@ export const telemetryRoutes: FastifyPluginCallback<TelemetryOptions> = (app, op
           );
         const prepaid = costBeforeDecoding(messageCount, body.length);
         if (prepaid > budget.capacity) return tooLarge(prepaid);
-        const paid = budget.take(project, prepaid);
+        const paid = budget.take(project.id, prepaid);
         if (!paid.allowed) return tooMuch(paid.retryAfterSeconds);
 
         // Neither a malformed request nor one refused below gets its
@@ -401,7 +401,7 @@ export const telemetryRoutes: FastifyPluginCallback<TelemetryOptions> = (app, op
           ) + outcome.errors.length;
         if (cost > budget.capacity) return tooLarge(cost);
         if (cost > prepaid) {
-          const rest = budget.take(project, cost - prepaid);
+          const rest = budget.take(project.id, cost - prepaid);
           if (!rest.allowed) return tooMuch(rest.retryAfterSeconds);
         }
         try {
@@ -413,7 +413,7 @@ export const telemetryRoutes: FastifyPluginCallback<TelemetryOptions> = (app, op
           ]);
         } catch (error) {
           // Not the sender's doing: all of it back.
-          budget.refund(project, cost);
+          budget.refund(project.id, cost);
           request.log.error({ err: error }, "could not store telemetry");
           return fail(request, reply, 503, "Telemetry was not stored. Retry later.", 5);
         }

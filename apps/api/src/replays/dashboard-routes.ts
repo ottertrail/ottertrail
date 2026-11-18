@@ -8,9 +8,9 @@ import type { Auth } from "../auth/auth.ts";
 import { requireTrustedOrigin } from "../auth/origin.ts";
 import { requireSession } from "../auth/routes.ts";
 import type { Database } from "../db/schema.ts";
-import { type ProjectAccess, requireProjectAccess } from "../organizations/access.ts";
+import { type ProjectAccess, requireProjectAccess } from "../projects/access.ts";
 import type { ObjectStore } from "../storage/object-store.ts";
-import { deleteProjectReplays, organizationReplayBytes, projectReplays } from "./replays.ts";
+import { deleteProjectReplays, projectReplays, storedReplayBytes } from "./replays.ts";
 
 const UUID_PATTERN =
   "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$";
@@ -73,7 +73,7 @@ function playerPage(replayUrl: string, errorAt: number | null): string {
 }
 
 /**
- * GET    /api/projects/:id/replays                         the project's replays, and the organization's use
+ * GET    /api/projects/:id/replays                         the project's replays, and the instance's use
  * GET    /api/projects/:id/replays/:replayId               one replay: its recording, as JSON
  * GET    /api/projects/:id/replays/:replayId/player        the page that plays it, in a frame of the dashboard
  * DELETE /api/projects/:id/replays                         deletes every replay of the project
@@ -87,7 +87,7 @@ export const replayRoutes: FastifyPluginCallback<{
   store: ObjectStore | null;
   auth: Auth;
   trustedOrigins: readonly string[];
-  /** Compressed replay bytes each organization may keep. */
+  /** Compressed replay bytes the instance may keep. */
   limitBytes: number;
 }> = (app, { db, store, auth, trustedOrigins, limitBytes }, done) => {
   const signedIn = requireSession(auth);
@@ -112,7 +112,7 @@ export const replayRoutes: FastifyPluginCallback<{
     "/projects/:id/replays",
     { preHandler: [signedIn, projectAccess], schema: { params } },
     async (request) => {
-      const { projectId, organizationId } = accessOf(request);
+      const { projectId } = accessOf(request);
       const [project, replays, stored] = await Promise.all([
         db
           .selectFrom("projects")
@@ -120,13 +120,13 @@ export const replayRoutes: FastifyPluginCallback<{
           .where("id", "=", projectId)
           .executeTakeFirstOrThrow(),
         projectReplays(db, projectId),
-        organizationReplayBytes(db, organizationId),
+        storedReplayBytes(db),
       ]);
       return {
         configured: store !== null,
         mode: project.replay_mode,
         replays,
-        organization: { storedBytes: stored, limitBytes },
+        instance: { storedBytes: stored, limitBytes },
       };
     },
   );

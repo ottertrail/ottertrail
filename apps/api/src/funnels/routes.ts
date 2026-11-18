@@ -5,7 +5,6 @@ import type { Auth } from "../auth/auth.ts";
 import { requireTrustedOrigin } from "../auth/origin.ts";
 import { requireSession } from "../auth/routes.ts";
 import type { Database } from "../db/schema.ts";
-import { type ProjectAccess, requireProjectAccess } from "../organizations/access.ts";
 import {
   FUNNEL_COUNTS,
   FUNNEL_WINDOWS,
@@ -16,6 +15,7 @@ import {
   INVALID_STEPS,
   MAX_STEPS,
 } from "../product/funnel.ts";
+import { type ProjectAccess, requireProjectAccess } from "../projects/access.ts";
 import {
   createSavedFunnel,
   deleteSavedFunnel,

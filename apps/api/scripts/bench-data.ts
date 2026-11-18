@@ -1,7 +1,8 @@
 /**
- * Fake visits for the report benchmark (bench-reports.ts), written into
- * the events table of whatever schema `db` points at, which must be at
- * migration 0023, the last with one. Never run against a real project.
+ * Fake visits for the report benchmark (bench-reports.ts), made in a
+ * PostgreSQL table of the benchmark's own schema (createFakeEventsTable),
+ * where SQL generates them quickly, then copied to ClickHouse. Never run
+ * against a real project.
  */
 import { type Kysely, type RawBuilder, sql } from "kysely";
 
@@ -12,6 +13,52 @@ import type { Database } from "../src/db/schema.ts";
 
 /** Events per ClickHouse insert: ClickHouse prefers few large inserts. */
 const COPY_BATCH_SIZE = 10_000;
+
+/**
+ * An events table for fake events, in the schema `db` points at, with a
+ * column for each of ClickHouse's (EventRow). Unlogged: it lives only as
+ * long as the benchmark.
+ */
+export async function createFakeEventsTable(db: Kysely<Database>): Promise<void> {
+  await sql`
+    create unlogged table events (
+      project_id         uuid        not null,
+      event_id           uuid        not null,
+      name               text        not null,
+      occurred_at        timestamptz not null,
+      received_at        timestamptz not null,
+      path               text,
+      referrer           text,
+      utm_source         text,
+      utm_medium         text,
+      utm_campaign       text,
+      utm_term           text,
+      utm_content        text,
+      properties         jsonb       not null default '{}',
+      browser            text,
+      browser_version    text,
+      os                 text,
+      device_type        text,
+      country            text,
+      region             text,
+      city               text,
+      visitor_id         bigint,
+      environment        text        not null default 'production',
+      release            text,
+      user_id            text,
+      error_type         text,
+      error_message      text,
+      error_stack        text,
+      error_handled      boolean,
+      error_fingerprint  text,
+      replay_id          uuid,
+      service            text        not null default '',
+      trace_id           text        not null default '',
+      span_id            text        not null default '',
+      primary key (project_id, event_id)
+    )
+  `.execute(db);
+}
 
 /**
  * Copies the fake events from the schema's events table to ClickHouse's,

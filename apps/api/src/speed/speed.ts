@@ -9,7 +9,7 @@ import { VITALS } from "../visits/visits.ts";
  * "Web Vitals").
  */
 
-/** A range of whole days in the organization's timezone, in one environment. */
+/** A range of whole days in the instance's timezone, in one environment. */
 export interface SpeedRange {
   projectId: string;
   environment: string;

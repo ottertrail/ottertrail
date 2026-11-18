@@ -11,7 +11,7 @@ import { isStorableText } from "../collection/normalize.ts";
 import type { CollectingProject, ProjectKeyCache } from "../collection/project-keys.ts";
 import { type RateLimit, TokenBucketLimiter } from "../collection/rate-limiter.ts";
 import type { Database } from "../db/schema.ts";
-import { type ProjectAccess, requireProjectAccess } from "../organizations/access.ts";
+import { type ProjectAccess, requireProjectAccess } from "../projects/access.ts";
 import type { ObjectStore } from "../storage/object-store.ts";
 import {
   checkSourceMap,
@@ -66,7 +66,7 @@ export const sourceMapUploadRoutes: FastifyPluginCallback<{
   db: Kysely<Database>;
   store: ObjectStore | null;
   projects: ProjectKeyCache;
-  /** Compressed bytes each organization may store (Config.sourceMapBytesPerOrganization). */
+  /** Compressed bytes the instance may store (Config.sourceMapStorageBytes). */
   limitBytes: number;
   /** Uploads per client address: a build sends one per file, in a burst. */
   ipLimit?: RateLimit;
@@ -231,7 +231,7 @@ export const sourceMapUploadRoutes: FastifyPluginCallback<{
       try {
         result = await storeSourceMap(
           { db, store, limitBytes },
-          { id: project.id, organizationId: project.organizationId },
+          { id: project.id },
           release,
           path,
           text,
@@ -248,7 +248,7 @@ export const sourceMapUploadRoutes: FastifyPluginCallback<{
               .send(
                 problem(
                   "storage_limit",
-                  `The organization's source maps would pass its ${sizeText(limitBytes)} limit. Delete older releases' maps first.`,
+                  `The instance's source maps would pass its ${sizeText(limitBytes)} limit. Delete older releases' maps first.`,
                 ),
               );
       }
@@ -269,7 +269,7 @@ function accessOf(request: { projectAccess: ProjectAccess | null }): ProjectAcce
 
 /**
  * GET    /api/projects/:id/source-maps[?order=oldest]     the releases with maps (100, newest or oldest
- *                                                         first, and how many in all), and the organization's use
+ *                                                         first, and how many in all), and the instance's use
  * GET    /api/projects/:id/source-maps/files?release=…    one release's files
  * DELETE /api/projects/:id/source-maps?release=…          deletes one release's maps
  *
@@ -312,15 +312,15 @@ export const sourceMapRoutes: FastifyPluginCallback<{
       },
     },
     async (request) => {
-      const { projectId, organizationId } = accessOf(request);
+      const { projectId } = accessOf(request);
       const order = request.query.order ?? "newest";
       const [listed, stored] = await Promise.all([
         listReleases(db, projectId, { order }),
-        storedBytes(db, organizationId),
+        storedBytes(db),
       ]);
       return {
         configured: store !== null,
-        organization: { storedBytes: stored, limitBytes },
+        instance: { storedBytes: stored, limitBytes },
         order,
         releases: listed.releases,
         totalReleases: listed.total,

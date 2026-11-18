@@ -26,7 +26,6 @@ function event(iso: string, overrides: Partial<NewEvent> = {}): NewEvent {
 beforeAll(async () => {
   dashboard = await signedInDashboard({ timeZone: "Asia/Singapore" });
   const project = await insertProject(dashboard.db, {
-    organization_id: dashboard.organizationId,
     name: "Users",
     allowed_hostnames: ["example.com"],
   });

@@ -16,31 +16,24 @@ type Nullable<T> = ColumnType<T | null, T | null | undefined, T | null>;
 
 export type JsonObject = { [key: string]: unknown };
 
-/** One customer. Owns projects; dashboard users reach it through memberships. */
-export interface OrganizationsTable {
-  id: ColumnType<string, string | undefined, never>;
+/**
+ * The instance's settings: one row (migration 0001_create_schema). Read them
+ * through settings/settings.ts, which caches them.
+ */
+export interface InstanceSettingsTable {
+  id: ColumnType<boolean, never, never>;
+  /** What the dashboard shows above the projects. */
   name: string;
   /**
    * IANA timezone, such as "Asia/Singapore". Reports count days in it, and
    * visitor salts change at its midnight.
    */
   time_zone: string;
-  created_at: DatabaseDefault<Date>;
-}
-
-export type MembershipRole = "owner" | "member";
-
-export interface MembershipsTable {
-  organization_id: ColumnType<string, string, never>;
-  user_id: ColumnType<string, string, never>;
-  role: MembershipRole;
-  created_at: DatabaseDefault<Date>;
+  updated_at: ColumnType<Date, never, Date>;
 }
 
 export interface ProjectsTable {
   id: ColumnType<string, string | undefined, never>;
-  /** The organization that owns the project. Never changes. */
-  organization_id: ColumnType<string, string, never>;
   name: string;
   created_at: DatabaseDefault<Date>;
   /** "pk_" + 32 hex characters. Public: identifies the project to the collection endpoint. */
@@ -51,14 +44,14 @@ export interface ProjectsTable {
   retention_days: ColumnType<number | null, number | null | undefined, number | null>;
   /**
    * "sk_" + 32 hex characters, for the site's own server only: it sends
-   * server-side events and signs user IDs (migration 0016).
+   * server-side events and telemetry, and signs user IDs.
    */
   secret_key: ColumnType<string, string | undefined, string>;
   /** Accept a browser's user ID only with a valid signature from the site's server. */
   require_signed_user_ids: ColumnType<boolean, boolean | undefined, boolean>;
-  /** Ignore browser events from cloud and hosting providers' addresses (migration 0017). */
+  /** Ignore browser events from cloud and hosting providers' addresses. */
   ignore_data_centers: ColumnType<boolean, boolean | undefined, boolean>;
-  /** Session replays: "off", or "errors", around errors (migration 0023). */
+  /** Session replays: "off", or "errors", around errors. */
   replay_mode: ColumnType<"off" | "errors", "off" | "errors" | undefined, "off" | "errors">;
   /**
    * When the project's latest event happened; null before the first. The
@@ -88,7 +81,7 @@ export type CheckCause =
   | "redirects"
   | "address";
 
-/** A project's HTTP(S) uptime check, and its state (migration 0026; docs/uptime-alerts.md). */
+/** A project's HTTP(S) uptime check, and its state (docs/uptime-alerts.md). */
 export interface UptimeChecksTable {
   id: ColumnType<string, string | undefined, never>;
   project_id: ColumnType<string, string, never>;
@@ -124,7 +117,7 @@ export interface UptimeChecksTable {
   updated_at: ColumnType<Date, Date | undefined, Date>;
 }
 
-/** One time a check was down: open (ended_at null) while it still is (migration 0026). */
+/** One time a check was down: open (ended_at null) while it still is. */
 export interface UptimeIncidentsTable {
   id: ColumnType<string, string | undefined, never>;
   check_id: ColumnType<string, string, never>;
@@ -136,7 +129,7 @@ export interface UptimeIncidentsTable {
   detail: ColumnType<string, string | undefined, string>;
 }
 
-/** A project's saved conversion: a page or a product event (migration 0020). */
+/** A project's saved conversion: a page or a product event. */
 export interface GoalsTable {
   id: ColumnType<string, string | undefined, never>;
   project_id: string;
@@ -151,7 +144,7 @@ export interface GoalsTable {
   created_at: ColumnType<Date, Date | undefined, never>;
 }
 
-/** A project's named funnel (migration 0021). */
+/** A project's named funnel. */
 export interface SavedFunnelsTable {
   id: ColumnType<string, string | undefined, never>;
   project_id: string;
@@ -164,7 +157,7 @@ export interface SavedFunnelsTable {
   updated_at: ColumnType<Date, Date | undefined, Date>;
 }
 
-/** A piece of a session replay as a browser sent it: one gzip member (migration 0023). */
+/** A piece of a session replay as a browser sent it: one gzip member. */
 export interface ReplayChunksTable {
   project_id: string;
   replay_id: string;
@@ -178,7 +171,7 @@ export interface ReplayChunksTable {
   received_at: ColumnType<Date, Date | undefined, never>;
 }
 
-/** A session replay, joined from its chunks into one object (migration 0023). */
+/** A session replay, joined from its chunks into one object. */
 export interface ReplaysTable {
   project_id: string;
   replay_id: string;
@@ -190,7 +183,7 @@ export interface ReplaysTable {
   created_at: ColumnType<Date, Date | undefined, never>;
 }
 
-/** A source map a project uploaded, for one release and minified file (migration 0022). */
+/** A source map a project uploaded, for one release and minified file. */
 export interface SourceMapsTable {
   project_id: string;
   release: string;
@@ -203,7 +196,7 @@ export interface SourceMapsTable {
   uploaded_at: ColumnType<Date, Date | undefined, Date>;
 }
 
-/** An error group a project's team marked resolved (migration 0019). No row: unresolved. */
+/** An error group a project's team marked resolved. No row: unresolved. */
 export interface ErrorResolutionsTable {
   project_id: string;
   /** The group (errors/fingerprint.ts). */
@@ -235,8 +228,7 @@ export interface DashboardUsersTable {
   image: Nullable<string>;
   /**
    * "owner" for the one account the setup flow creates, the owner of the
-   * whole install; "member" otherwise. Roles inside an organization are in
-   * memberships.
+   * instance, who may change its settings; "member" otherwise.
    */
   role: ColumnType<"owner" | "member", "owner" | "member" | undefined, "owner" | "member">;
   created_at: DatabaseDefault<Date>;
@@ -275,8 +267,7 @@ export interface OwnerSetupTokensTable {
 }
 
 export interface Database {
-  organizations: OrganizationsTable;
-  memberships: MembershipsTable;
+  instance_settings: InstanceSettingsTable;
   projects: ProjectsTable;
   project_deletions: ProjectDeletionsTable;
   error_resolutions: ErrorResolutionsTable;

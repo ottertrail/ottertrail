@@ -78,7 +78,7 @@ export function serverEventsRoute(
     projects: ProjectKeyCache;
     /** Shared with browser events (last-event.ts). */
     lastEvents: LastEventRecorder;
-    /** Shared with browser events: one budget per project, inside its organization's. */
+    /** Shared with browser events: one budget per project, inside the instance's. */
     budget: EventBudget;
     ipLimiter: TokenBucketLimiter;
     maxEvents: number;
@@ -246,7 +246,7 @@ export function serverEventsRoute(
         });
       }
 
-      const spent = budget.take(project, accepted.length);
+      const spent = budget.take(project.id, accepted.length);
       if (!spent.allowed) {
         return reply
           .code(429)
@@ -262,7 +262,7 @@ export function serverEventsRoute(
         await storeEvents(clickhouse, project.id, accepted, { receivedAt: new Date(receivedAt) });
       } catch (error) {
         // Not the sender's doing: the budget back, so its retries are not refused for it.
-        budget.refund(project, accepted.length);
+        budget.refund(project.id, accepted.length);
         request.log.error({ err: error }, "could not store server events");
         return storageUnavailable(reply);
       }

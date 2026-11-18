@@ -68,7 +68,6 @@ function exported(exportWith: (done: (result: ExportResult) => void) => void) {
 
 async function newProject(name: string) {
   const project = await insertProject(dashboard.db, {
-    organization_id: dashboard.organizationId,
     name,
   });
   return { id: project.id, key: await secretKeyOf(dashboard.db, project.id) };

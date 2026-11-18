@@ -9,7 +9,7 @@ import { clickHouseErrorHandler } from "../clickhouse/route-errors.ts";
 import { environmentOf } from "../collection/environment.ts";
 import { EVENT_NAME_SCHEMA } from "../collection/routes.ts";
 import type { Database } from "../db/schema.ts";
-import { type ProjectAccess, requireProjectAccess } from "../organizations/access.ts";
+import { type ProjectAccess, requireProjectAccess } from "../projects/access.ts";
 import { localDays } from "../reports/reports.ts";
 import { RANGE_PROPERTIES, type RangeQuery, requestDays } from "../reports/routes.ts";
 import { dayIn } from "../visitors/visitor-ids.ts";

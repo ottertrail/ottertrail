@@ -106,18 +106,15 @@ export interface StoredSourceMap {
   uploadedAt: Date;
 }
 
-/** The compressed bytes of every source map of an organization's projects. */
-async function organizationBytes(
+/** The compressed bytes of every source map of the instance, all projects'. */
+export async function storedBytes(
   db: Kysely<Database>,
-  organizationId: string,
   /** A map not to count: the one an upload replaces. */
   except?: { projectId: string; release: string; path: string },
 ): Promise<number> {
   let query = db
     .selectFrom("source_maps")
-    .innerJoin("projects", "projects.id", "source_maps.project_id")
-    .select(sql<string>`coalesce(sum(source_maps.bytes), 0)`.as("bytes"))
-    .where("projects.organization_id", "=", organizationId);
+    .select(sql<string>`coalesce(sum(source_maps.bytes), 0)`.as("bytes"));
   if (except !== undefined) {
     query = query.where((eb) =>
       eb.not(
@@ -143,12 +140,12 @@ const isForeignKeyViolation = (error: unknown) =>
  * object store, then the commit. A failed write leaves neither, and a
  * deletion of the release (deleteRelease) waits for the commit, so the two
  * cannot leave a row without its map or a map without its row. Refused when
- * the organization's maps would pass `limitBytes` (a soft limit: uploads at
+ * the instance's maps would pass `limitBytes` (a soft limit: uploads at
  * the same moment can each pass the check), or when the project is gone.
  */
 export async function storeSourceMap(
   deps: { db: Kysely<Database>; store: ObjectStore; limitBytes: number },
-  project: { id: string; organizationId: string },
+  project: { id: string },
   release: string,
   path: string,
   text: string,
@@ -168,7 +165,7 @@ export async function storeSourceMap(
         .where("path", "=", path)
         .forUpdate()
         .executeTakeFirst();
-      const others = await organizationBytes(trx, project.organizationId, {
+      const others = await storedBytes(trx, {
         projectId: project.id,
         release,
         path,
@@ -279,10 +276,6 @@ export async function listFiles(
     uploadedAt: row.uploaded_at,
   }));
 }
-
-/** What an organization's maps take, all its projects together. */
-export const storedBytes = async (db: Kysely<Database>, organizationId: string) =>
-  organizationBytes(db, organizationId);
 
 /**
  * Deletes a release's maps, in a transaction that holds their rows: the

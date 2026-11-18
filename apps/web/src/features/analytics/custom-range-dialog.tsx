@@ -86,7 +86,7 @@ function DayInput({
 
 /**
  * Chosen days for the page: a first and a last day, both included, in the
- * organization's timezone. Picked in the calendar (a first click, then a
+ * timezone set in Settings. Picked in the calendar (a first click, then a
  * last), or typed, day first. Either way, the days are checked as the API
  * checks them.
  */

@@ -18,8 +18,8 @@ export interface ReplayOverview {
   mode: ReplayMode;
   /** The project's replays: how many, and their compressed size. */
   replays: { count: number; bytes: number };
-  /** What the organization's replays take, all its projects together, and its limit. */
-  organization: { storedBytes: number; limitBytes: number };
+  /** What all projects' replays take together, and the instance's limit. */
+  instance: { storedBytes: number; limitBytes: number };
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -36,9 +36,9 @@ const isOverview = (value: unknown): value is ReplayOverview =>
   isRecord(value.replays) &&
   isNumber(value.replays.count) &&
   isNumber(value.replays.bytes) &&
-  isRecord(value.organization) &&
-  isNumber(value.organization.storedBytes) &&
-  isNumber(value.organization.limitBytes);
+  isRecord(value.instance) &&
+  isNumber(value.instance.storedBytes) &&
+  isNumber(value.instance.limitBytes);
 
 const replaysPath = (projectId: string) => `/api/projects/${encodeURIComponent(projectId)}/replays`;
 

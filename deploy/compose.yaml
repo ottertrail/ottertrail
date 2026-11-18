@@ -37,7 +37,7 @@ x-app: &app
     # Requests reach the API only through Caddy, one proxy hop.
     TRUST_PROXY: "1"
     LOG_LEVEL: ${LOG_LEVEL:-info}
-    ORGANIZATION_EVENTS_PER_SECOND: ${ORGANIZATION_EVENTS_PER_SECOND:-600}
+    INSTANCE_EVENTS_PER_SECOND: ${INSTANCE_EVENTS_PER_SECOND:-600}
     # Source maps: off unless OBJECT_STORE_URL is set, to the stack's own
     # Garage (http://garage:3900, with --profile object-store) or another
     # S3-compatible store such as Cloudflare R2 (docs/deployment.md).
@@ -46,8 +46,8 @@ x-app: &app
     OBJECT_STORE_BUCKET: ${OBJECT_STORE_BUCKET:-ottertrail}
     OBJECT_STORE_ACCESS_KEY_ID: ${OBJECT_STORE_ACCESS_KEY_ID:-}
     OBJECT_STORE_SECRET_ACCESS_KEY: ${OBJECT_STORE_SECRET_ACCESS_KEY:-}
-    SOURCE_MAP_BYTES_PER_ORGANIZATION: ${SOURCE_MAP_BYTES_PER_ORGANIZATION:-}
-    REPLAY_BYTES_PER_ORGANIZATION: ${REPLAY_BYTES_PER_ORGANIZATION:-}
+    SOURCE_MAP_STORAGE_BYTES: ${SOURCE_MAP_STORAGE_BYTES:-}
+    REPLAY_STORAGE_BYTES: ${REPLAY_STORAGE_BYTES:-}
     # Traces, logs, and metrics over OTLP (docs/telemetry.md): days kept,
     # 30 by default. The migrate service applies it to ClickHouse's tables.
     TELEMETRY_RETENTION_DAYS: ${TELEMETRY_RETENTION_DAYS:-}

@@ -119,7 +119,7 @@ function Properties({ properties }: { properties: Record<string, unknown> }) {
 
 /**
  * One known user: when first and last seen, and what they did, newest
- * first, by day in the organization's timezone. Only events that carry the
+ * first, by day in the timezone set in Settings. Only events that carry the
  * user's ID: anonymous browsing before a sign-in is not theirs for sure.
  */
 export function UserPage({

@@ -1,16 +1,16 @@
-import { randomBytes } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 
 import { afterAll, beforeAll, describe, expect, test } from "vite-plus/test";
 
 import { MAX_SERIES, quantileOfBuckets, SPLIT_LINES } from "../src/telemetry/metrics.ts";
-import { signedInDashboard, signedInUser } from "./helpers/dashboard.ts";
+import { signedInDashboard } from "./helpers/dashboard.ts";
 import { insertProject } from "./helpers/projects.ts";
 import { keyValues, secretKeyOf } from "./helpers/telemetry.ts";
 
 let dashboard: Awaited<ReturnType<typeof signedInDashboard>>;
 
 const MS = 1_000_000n;
-/** Yesterday, in UTC (the organization's timezone): the one day every chart here reads, in 5-minute buckets. */
+/** Yesterday, in UTC (the instance's timezone): the one day every chart here reads, in 5-minute buckets. */
 const YESTERDAY = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
 const DAY = `from=${YESTERDAY}&to=${YESTERDAY}`;
 /** Yesterday at a time of day, "10:02:30", in nanoseconds since 1970. */
@@ -139,8 +139,8 @@ async function sendMetrics(
   });
 }
 
-async function newProject(name: string, organizationId = dashboard.organizationId) {
-  const project = await insertProject(dashboard.db, { organization_id: organizationId, name });
+async function newProject(name: string) {
+  const project = await insertProject(dashboard.db, { name });
   return { id: project.id, secretKey: await secretKeyOf(dashboard.db, project.id) };
 }
 
@@ -708,37 +708,26 @@ describe("GET /api/projects/:id/services", () => {
 });
 
 describe("access", () => {
-  test("a member of another organization gets nothing, as for a project that does not exist", async () => {
-    const bob = await signedInUser(
-      dashboard,
-      { name: "Bob", email: "bob@example.com" },
-      { newOrganization: "Bob's shop" },
-    );
+  test("a project that does not exist gets 404; another project reads nothing of this one's", async () => {
+    const missing = randomUUID();
     const paths = [
       `/metrics?${DAY}`,
       `/metrics/chart?${DAY}&name=process.memory&kind=gauge`,
       `/services?${DAY}`,
     ];
     expect(await statuses(shop.id, paths)).toEqual(all(paths, 200));
-    expect(await statuses(shop.id, paths, bob.cookie)).toEqual(all(paths, 404));
+    expect(await statuses(missing, paths)).toEqual(all(paths, 404));
     for (const path of paths) {
-      expect((await get(shop.id, path, bob.cookie)).json()).toEqual({
+      expect((await get(missing, path)).json()).toEqual({
         error: "not_found",
         message: "No project has this ID.",
       });
     }
-    // Bob's own project is empty: an ID from the browser reaches only its own project.
-    const bobs = await insertProject(dashboard.db, {
-      organization_id: bob.organizationId ?? "",
-      name: "Bob's site",
-    });
-    const own = await get(
-      bobs.id,
-      `/metrics/chart?${DAY}&name=process.memory&kind=gauge`,
-      bob.cookie,
-    );
+    // Another project is empty: the ID in a path reaches only the project named.
+    const other = await insertProject(dashboard.db, { name: "Another site" });
+    const own = await get(other.id, `/metrics/chart?${DAY}&name=process.memory&kind=gauge`);
     expect(own.json()).toMatchObject({ series: [], seriesCount: 0 });
-    expect((await get(bobs.id, `/metrics?${DAY}`, bob.cookie)).json()).toMatchObject({
+    expect((await get(other.id, `/metrics?${DAY}`)).json()).toMatchObject({
       metrics: [],
       received: false,
     });

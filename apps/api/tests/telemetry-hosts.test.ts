@@ -1,7 +1,9 @@
+import { randomUUID } from "node:crypto";
+
 import { afterAll, beforeAll, describe, expect, test } from "vite-plus/test";
 
 import { latestWindows, staleness } from "../src/telemetry/hosts.ts";
-import { signedInDashboard, signedInUser } from "./helpers/dashboard.ts";
+import { signedInDashboard } from "./helpers/dashboard.ts";
 import { insertProject } from "./helpers/projects.ts";
 import { keyValues, secretKeyOf } from "./helpers/telemetry.ts";
 
@@ -13,7 +15,7 @@ import { keyValues, secretKeyOf } from "./helpers/telemetry.ts";
  */
 
 const MS = 1_000_000n;
-/** Yesterday, in UTC (the organization's timezone): every chart reads it, in 5-minute buckets. */
+/** Yesterday, in UTC (the instance's timezone): every chart reads it, in 5-minute buckets. */
 const YESTERDAY = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
 const DAY = `from=${YESTERDAY}&to=${YESTERDAY}`;
 /** Yesterday at a time of day, in milliseconds since 1970. */
@@ -152,7 +154,6 @@ async function sendMetrics(
 
 async function newProject(name: string) {
   const project = await insertProject(dashboard.db, {
-    organization_id: dashboard.organizationId,
     name,
   });
   return { id: project.id, secretKey: await secretKeyOf(dashboard.db, project.id) };
@@ -597,7 +598,7 @@ describe("a long period", () => {
 });
 
 describe("a failed query", () => {
-  test("ends its request's other queries, so they free the organization's places", async () => {
+  test("ends its request's other queries, so they free their places", async () => {
     const client = dashboard.reader.client;
     const original = client.query.bind(client);
     let answered = false;
@@ -664,31 +665,24 @@ describe("parameters", () => {
 });
 
 describe("access", () => {
-  test("a member of another organization gets nothing, as for a project that does not exist", async () => {
-    const bob = await signedInUser(
-      dashboard,
-      { name: "Bob", email: "bob@example.com" },
-      { newOrganization: "Bob's shop" },
-    );
+  test("a project that does not exist gets 404; another project reads nothing of this one's", async () => {
+    const missing = randomUUID();
     const paths = [`/hosts?${DAY}`, `/hosts/charts?${DAY}&host=web-1`];
     for (const path of paths) {
       expect((await get(shop.id, path)).statusCode).toBe(200);
-      const answer = await get(shop.id, path, bob.cookie);
+      const answer = await get(missing, path);
       expect({ status: answer.statusCode, body: answer.json() }).toEqual({
         status: 404,
         body: { error: "not_found", message: "No project has this ID." },
       });
     }
-    // Bob's own project names the same host and reads nothing of Ada's.
-    const bobs = await insertProject(dashboard.db, {
-      organization_id: bob.organizationId ?? "",
-      name: "Bob's site",
-    });
-    expect((await get(bobs.id, `/hosts?${DAY}`, bob.cookie)).json()).toMatchObject({
+    // Another project names the same host and reads nothing of this one's.
+    const other = await insertProject(dashboard.db, { name: "Another site" });
+    expect((await get(other.id, `/hosts?${DAY}`)).json()).toMatchObject({
       hosts: [],
       received: false,
     });
-    const charts = (await get(bobs.id, `/hosts/charts?${DAY}&host=web-1`, bob.cookie)).json();
+    const charts = (await get(other.id, `/hosts/charts?${DAY}&host=web-1`)).json();
     expect(charts).toMatchObject({ lastSeen: null });
     for (const chart of charts.charts) expect(chart.lines).toEqual([]);
   });

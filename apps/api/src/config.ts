@@ -73,16 +73,16 @@ export interface Config {
   /** Address ranges of data centers, whose "browsers" are ignored (enrichment/data-centers.ts). */
   dataCentersPath: string;
   /**
-   * Events each organization may store per second, all its projects
-   * together, with bursts of ten seconds' worth (collection/rate-limiter.ts,
-   * EventBudget). It keeps customers from crowding each other out; an
-   * install with one organization may raise it.
+   * Events the instance may store per second, all its projects together,
+   * with bursts of ten seconds' worth (collection/rate-limiter.ts,
+   * EventBudget), inside which each project has its own budget. It bounds
+   * what the instance takes in, however many projects it has.
    */
-  organizationEventsPerSecond: number;
+  instanceEventsPerSecond: number;
   /**
-   * IANA timezone, such as "Asia/Singapore", of the organization the setup
-   * link creates. Each organization has its own after that (reports count
-   * days in it, and visitor salts change at its midnight).
+   * IANA timezone, such as "Asia/Singapore", that the setup link sets for
+   * the instance. The owner changes it in the settings after that (reports
+   * count days in it, and visitor salts change at its midnight).
    */
   defaultTimeZone: string;
   /** The instance's address, such as "https://analytics.example.com": an origin, no path. */
@@ -105,10 +105,10 @@ export interface Config {
    * "Source maps"); null when the install has none, and source maps are off.
    */
   objectStore: ObjectStoreConfig | null;
-  /** Bytes of source maps, compressed, each organization may store, all its projects together. */
-  sourceMapBytesPerOrganization: number;
-  /** Bytes of session replays, compressed, each organization may keep (docs/session-replay.md). */
-  replayBytesPerOrganization: number;
+  /** Bytes of source maps, compressed, the instance may store, all its projects together. */
+  sourceMapStorageBytes: number;
+  /** Bytes of session replays, compressed, the instance may keep (docs/session-replay.md). */
+  replayStorageBytes: number;
   /**
    * Days ClickHouse keeps traces, logs, and metrics (docs/telemetry.md):
    * older records are refused, and ClickHouse drops whole days past it.
@@ -168,15 +168,15 @@ function parsePort(raw: string): number {
 }
 
 /** The default: three projects at their full 200 events a second. */
-export const DEFAULT_ORGANIZATION_EVENTS_PER_SECOND = 600;
+export const DEFAULT_INSTANCE_EVENTS_PER_SECOND = 600;
 
-function parseOrganizationEventsPerSecond(raw: string | undefined): number {
-  if (raw === undefined || raw.trim() === "") return DEFAULT_ORGANIZATION_EVENTS_PER_SECOND;
+function parseInstanceEventsPerSecond(raw: string | undefined): number {
+  if (raw === undefined || raw.trim() === "") return DEFAULT_INSTANCE_EVENTS_PER_SECOND;
   const rate = Number(raw);
   // At least one full batch of 50 events, as bursts are ten seconds' worth.
   if (!Number.isInteger(rate) || rate < 5 || rate > 1_000_000) {
     throw new ConfigError(
-      `ORGANIZATION_EVENTS_PER_SECOND must be an integer between 5 and 1000000, received "${raw}"`,
+      `INSTANCE_EVENTS_PER_SECOND must be an integer between 5 and 1000000, received "${raw}"`,
     );
   }
   return rate;
@@ -289,11 +289,11 @@ function parseObjectStore(env: NodeJS.ProcessEnv): ObjectStoreConfig | null {
   };
 }
 
-/** The default: 1 GiB of compressed source maps per organization. */
-export const DEFAULT_SOURCE_MAP_BYTES_PER_ORGANIZATION = 1024 ** 3;
+/** The default: 1 GiB of compressed source maps. */
+export const DEFAULT_SOURCE_MAP_STORAGE_BYTES = 1024 ** 3;
 
-/** The default: 2 GiB of compressed replays per organization, until measured on real sites. */
-export const DEFAULT_REPLAY_BYTES_PER_ORGANIZATION = 2 * 1024 ** 3;
+/** The default: 2 GiB of compressed replays, until measured on real sites. */
+export const DEFAULT_REPLAY_STORAGE_BYTES = 2 * 1024 ** 3;
 
 /** A number of bytes from 1 MiB to 1 TiB, named `name`; `fallback` when unset. */
 function parseBytes(name: string, raw: string | undefined, fallback: number): number {
@@ -448,9 +448,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     geoSource: parseGeoSource(env.GEO_SOURCE ?? "database"),
     geoDatabasePath: env.GEO_DATABASE_PATH?.trim() || DEFAULT_GEO_DATABASE_PATH,
     dataCentersPath: env.DATA_CENTERS_PATH?.trim() || DEFAULT_DATA_CENTERS_PATH,
-    organizationEventsPerSecond: parseOrganizationEventsPerSecond(
-      env.ORGANIZATION_EVENTS_PER_SECOND,
-    ),
+    instanceEventsPerSecond: parseInstanceEventsPerSecond(env.INSTANCE_EVENTS_PER_SECOND),
     defaultTimeZone: parseTimeZone(env.TIMEZONE?.trim() || "UTC"),
     ...publicUrlAndOrigins(env),
     authSecret: parseAuthSecret(env),
@@ -458,15 +456,15 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     dashboardPath: env.DASHBOARD_PATH?.trim() || DEFAULT_DASHBOARD_PATH,
     replayPlayerPath: env.REPLAY_PLAYER_PATH?.trim() || DEFAULT_REPLAY_PLAYER_PATH,
     objectStore: parseObjectStore(env),
-    sourceMapBytesPerOrganization: parseBytes(
-      "SOURCE_MAP_BYTES_PER_ORGANIZATION",
-      env.SOURCE_MAP_BYTES_PER_ORGANIZATION,
-      DEFAULT_SOURCE_MAP_BYTES_PER_ORGANIZATION,
+    sourceMapStorageBytes: parseBytes(
+      "SOURCE_MAP_STORAGE_BYTES",
+      env.SOURCE_MAP_STORAGE_BYTES,
+      DEFAULT_SOURCE_MAP_STORAGE_BYTES,
     ),
-    replayBytesPerOrganization: parseBytes(
-      "REPLAY_BYTES_PER_ORGANIZATION",
-      env.REPLAY_BYTES_PER_ORGANIZATION,
-      DEFAULT_REPLAY_BYTES_PER_ORGANIZATION,
+    replayStorageBytes: parseBytes(
+      "REPLAY_STORAGE_BYTES",
+      env.REPLAY_STORAGE_BYTES,
+      DEFAULT_REPLAY_STORAGE_BYTES,
     ),
     telemetryRetentionDays: parseTelemetryRetentionDays(env.TELEMETRY_RETENTION_DAYS),
     uptimeAllowPrivateAddresses: parseBoolean(

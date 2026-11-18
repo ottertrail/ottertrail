@@ -6,7 +6,7 @@ import { removeDeletedRows } from "../src/clickhouse/delete-events.ts";
 import { fromClickHouseTime } from "../src/clickhouse/query.ts";
 import { storeEvents } from "../src/collection/event-store.ts";
 import { deleteExpiredEvents } from "../src/retention/retention.ts";
-import { insertProject } from "./helpers/projects.ts";
+import { insertProject, setInstanceTimeZone } from "./helpers/projects.ts";
 import { createTestClickHouse, type TestClickHouse } from "./helpers/test-clickhouse.ts";
 import { createTestDatabase, type TestDatabase } from "./helpers/test-database.ts";
 
@@ -27,6 +27,7 @@ beforeAll(async () => {
   // One after the other: if the second fails, afterAll still drops the first.
   testDb = await createTestDatabase();
   testClickHouse = await createTestClickHouse();
+  await setInstanceTimeZone(testDb.db, TIME_ZONE);
 });
 
 afterAll(async () => {
@@ -34,13 +35,12 @@ afterAll(async () => {
   await testClickHouse?.destroy();
 });
 
-/** A project in an organization of its own, in `timeZone` (Singapore unless given). */
-async function project(retentionDays: number | null, timeZone = TIME_ZONE) {
-  const { id } = await insertProject(
-    db(),
-    { name: "Retention test", retention_days: retentionDays },
-    { timeZone },
-  );
+/** A project that keeps its events `retentionDays` days. */
+async function project(retentionDays: number | null) {
+  const { id } = await insertProject(db(), {
+    name: "Retention test",
+    retention_days: retentionDays,
+  });
   return id;
 }
 
@@ -84,7 +84,7 @@ const TIME_ZONE = "Asia/Singapore";
 
 // ClickHouse carries out a DELETE in the background, which takes seconds.
 describe("deleteExpiredEvents", { timeout: 60_000 }, () => {
-  test("deletes events from before the midnight that many days ago, in the organization's timezone", async () => {
+  test("deletes events from before the midnight that many days ago, in the instance's timezone", async () => {
     const id = await project(30);
     await events(id, ["2026-10-17T15:59:59Z", "2026-10-17T16:00:00Z", "2026-11-17T03:00:00Z"]);
 
@@ -144,46 +144,44 @@ describe("deleteExpiredEvents", { timeout: 60_000 }, () => {
     });
   });
 
-  test("each project's cut-off is midnight in its own organization's timezone", async () => {
-    const singapore = await project(30, "Asia/Singapore");
-    const utc = await project(30, "UTC");
-
-    const results = await deleteExpiredEvents(db(), clickhouse(), { now: NOW });
-
-    // Midnight starting 18 October: 16:00 UTC on 17 October in Singapore,
-    // 00:00 UTC on 18 October in UTC.
-    expect(results.find((result) => result.projectId === singapore)?.before).toEqual(
-      new Date("2026-10-17T16:00:00Z"),
-    );
-    expect(results.find((result) => result.projectId === utc)?.before).toEqual(
-      new Date("2026-10-18T00:00:00Z"),
-    );
-  });
-
-  test("an organization in a timezone PostgreSQL does not know is skipped, not everyone", async () => {
-    const lost = await project(30, "Nowhere/Nothing");
-    const fine = await project(30, "UTC");
-    await events(lost, ["2020-01-01T00:00:00Z"]);
-    await events(fine, ["2020-01-01T00:00:00Z"]);
-
-    const results = await deleteExpiredEvents(db(), clickhouse(), { now: NOW });
-
-    expect(results.map((result) => result.projectId)).not.toContain(lost);
-    expect(await remainingInClickHouse(lost)).toEqual(["2020-01-01T00:00:00.000Z"]);
-    expect(await remainingInClickHouse(fine)).toEqual([]);
-  });
-
-  test("each project's own cut-off applies in the same run", async () => {
-    const singapore = await project(30, "Asia/Singapore");
-    const utc = await project(30, "UTC");
+  test("the cut-off moves with the instance's timezone", async () => {
+    const id = await project(30);
     // After Singapore's cut-off (16:00 UTC on 17 October), before UTC's (midnight on the 18th).
-    await events(singapore, ["2026-10-17T20:00:00Z"]);
-    await events(utc, ["2026-10-17T20:00:00Z"]);
+    await events(id, ["2026-10-17T20:00:00Z"]);
 
-    await deleteExpiredEvents(db(), clickhouse(), { now: NOW });
+    const inSingapore = await deleteExpiredEvents(db(), clickhouse(), { now: NOW });
+    expect(inSingapore.find((result) => result.projectId === id)).toMatchObject({
+      before: new Date("2026-10-17T16:00:00Z"),
+      deleted: 0,
+    });
+    expect(await remainingInClickHouse(id)).toEqual(["2026-10-17T20:00:00.000Z"]);
 
-    expect(await remainingInClickHouse(singapore)).toEqual(["2026-10-17T20:00:00.000Z"]);
-    expect(await remainingInClickHouse(utc)).toEqual([]);
+    await setInstanceTimeZone(db(), "UTC");
+    try {
+      const inUtc = await deleteExpiredEvents(db(), clickhouse(), { now: NOW });
+      expect(inUtc.find((result) => result.projectId === id)).toMatchObject({
+        before: new Date("2026-10-18T00:00:00Z"),
+        deleted: 1,
+      });
+      expect(await remainingInClickHouse(id)).toEqual([]);
+    } finally {
+      await setInstanceTimeZone(db(), TIME_ZONE);
+    }
+  });
+
+  test("a timezone PostgreSQL does not know stops the run before anything is deleted", async () => {
+    const id = await project(30);
+    await events(id, ["2020-01-01T00:00:00Z"]);
+    // The settings page refuses such a name; as if one had been written by hand.
+    await setInstanceTimeZone(db(), "Nowhere/Nothing");
+    try {
+      await expect(deleteExpiredEvents(db(), clickhouse(), { now: NOW })).rejects.toThrow(
+        /time zone "Nowhere\/Nothing" not recognized/,
+      );
+    } finally {
+      await setInstanceTimeZone(db(), TIME_ZONE);
+    }
+    expect(await remainingInClickHouse(id)).toEqual(["2020-01-01T00:00:00.000Z"]);
   });
 
   test("deleted rows leave ClickHouse's disk afterwards, even those an earlier run left", async () => {

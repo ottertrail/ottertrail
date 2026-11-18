@@ -4,13 +4,13 @@ import type { Kysely } from "kysely";
 import type { Auth } from "../auth/auth.ts";
 import { requireTrustedOrigin } from "../auth/origin.ts";
 import { requireSession } from "../auth/routes.ts";
+import { signedInUser } from "../auth/routes.ts";
 import type { ClickHouseClient } from "../clickhouse/clickhouse.ts";
 import type { Reader } from "../clickhouse/query.ts";
 import { clickHouseErrorHandler } from "../clickhouse/route-errors.ts";
 import { environmentOf } from "../collection/environment.ts";
 import type { Database } from "../db/schema.ts";
-import { type ProjectAccess, requireProjectAccess } from "../organizations/access.ts";
-import { signedInUser } from "../organizations/routes.ts";
+import { type ProjectAccess, requireProjectAccess } from "../projects/access.ts";
 import { replayStatuses } from "../replays/replays.ts";
 import { localDays } from "../reports/reports.ts";
 import { RANGE_PROPERTIES, type RangeQuery, requestDays } from "../reports/routes.ts";
@@ -81,7 +81,7 @@ export const errorRoutes: FastifyPluginCallback<{
   const reader: Reader = { client: clickhouse };
   app.setErrorHandler(clickHouseErrorHandler);
 
-  /** The request's days, in the organization's timezone; or the reason it is refused. */
+  /** The request's days, in the instance's timezone; or the reason it is refused. */
   async function rangeOf(request: {
     query: RangeQuery;
     projectAccess: ProjectAccess | null;

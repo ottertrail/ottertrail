@@ -11,7 +11,7 @@ import { ERROR } from "../visits/visits.ts";
  * PostgreSQL (error_resolutions). See docs/errors.md.
  */
 
-/** A range of whole days in the organization's timezone, in one environment. */
+/** A range of whole days in the instance's timezone, in one environment. */
 export interface ErrorRange {
   projectId: string;
   environment: string;
@@ -267,7 +267,7 @@ export async function listErrors(
 }
 
 export interface ErrorDay {
-  /** "YYYY-MM-DD" in the organization's timezone. */
+  /** "YYYY-MM-DD" in the instance's timezone. */
   day: string;
   occurrences: number;
 }

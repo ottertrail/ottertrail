@@ -223,7 +223,7 @@ const releaseRows = (order: "newest" | "oldest" = "newest") =>
   );
 
 describe("the project's Source maps card", () => {
-  test("lists the releases, latest upload first, and the organization's use", async () => {
+  test("lists the releases, latest upload first, and the use of all projects together", async () => {
     installFakeApi();
     renderApp(SETTINGS);
 
@@ -233,9 +233,7 @@ describe("the project's Source maps card", () => {
       ["1.4.1", "1", "1.9 MB"],
     ]);
     // 10 MB of other projects', and this project's 4.4 MB.
-    expect(card().textContent).toContain(
-      "14 MB of 1 GB used, by all the organization's projects together.",
-    );
+    expect(card().textContent).toContain("14 MB of 1 GB used, by all projects together.");
     // The instructions are there, folded.
     await expect
       .element(page.getByRole("button", { name: "Show how to upload" }))

@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import type { FastifyInstance } from "fastify";
-import { afterAll, beforeAll, describe, expect, test } from "vite-plus/test";
+import { afterAll, beforeAll, describe, expect, onTestFinished, test } from "vite-plus/test";
 
 import { type AppOptions, buildApp } from "../src/app.ts";
 import { createClickHouse } from "../src/clickhouse/clickhouse.ts";
@@ -10,7 +10,7 @@ import { createDatabase } from "../src/db/database.ts";
 import type { Locate, Location } from "../src/enrichment/geo.ts";
 import { findVisits } from "../src/visits/visits.ts";
 import { countEvents, storedEvents as storedIn } from "./helpers/events.ts";
-import { insertOrganization, insertProject } from "./helpers/projects.ts";
+import { insertProject, setInstanceTimeZone } from "./helpers/projects.ts";
 import { createTestClickHouse, type TestClickHouse } from "./helpers/test-clickhouse.ts";
 import { createTestDatabase, type TestDatabase } from "./helpers/test-database.ts";
 
@@ -74,12 +74,8 @@ function appWith(options: Partial<AppOptions>) {
   return instance;
 }
 
-async function createProject(allowedHostnames = [SITE, "localhost"], timeZone = "UTC") {
-  return insertProject(
-    db(),
-    { name: "Test site", allowed_hostnames: allowedHostnames },
-    { timeZone },
-  );
+async function createProject(allowedHostnames = [SITE, "localhost"]) {
+  return insertProject(db(), { name: "Test site", allowed_hostnames: allowedHostnames });
 }
 
 /** A project that may require signed user IDs. Secret keys are unique: give a fixed one once. */
@@ -461,33 +457,31 @@ describe("POST /api/events", () => {
       });
       return expect(tooSmall.ready()).rejects.toThrow(/full batch/);
     });
-    test("keeps an organization's projects inside one budget", async () => {
+    test("keeps the instance's projects inside one budget", async () => {
       const limited = appWith({
         collection: {
           now: () => NOW,
           projectLimit: { capacity: 50, refillPerSecond: 0.001 },
-          organizationLimit: { capacity: 80, refillPerSecond: 0.001 },
+          instanceLimit: { capacity: 80, refillPerSecond: 0.001 },
         },
       });
-      const organizationId = await insertOrganization(db());
-      const site = (name: string) =>
-        insertProject(db(), { name, allowed_hostnames: [SITE], organization_id: organizationId });
-      const [first, second] = [await site("Site"), await site("Docs")];
+      const first = await insertProject(db(), { name: "Site", allowed_hostnames: [SITE] });
+      const second = await insertProject(db(), { name: "Docs", allowed_hostnames: [SITE] });
 
       expect(
         (await send(batch(first.public_key, pageviews(50)), { instance: limited })).statusCode,
       ).toBe(202);
-      // The second project has its own 50, but the organization only 30 left.
+      // The second project has its own 50, but the instance only 30 left.
       const over = await send(batch(second.public_key, pageviews(31)), { instance: limited });
       expect(over.statusCode).toBe(429);
       expect(
         (await send(batch(second.public_key, pageviews(30)), { instance: limited })).statusCode,
       ).toBe(202);
-      // Another customer is not held back.
-      const other = await createProject();
+      // Adding a project does not add to the instance's budget.
+      const third = await createProject();
       expect(
-        (await send(batch(other.public_key, pageviews(50)), { instance: limited })).statusCode,
-      ).toBe(202);
+        (await send(batch(third.public_key, pageviews(1)), { instance: limited })).statusCode,
+      ).toBe(429);
     });
   });
 
@@ -720,7 +714,7 @@ describe("POST /api/events", () => {
       expect(new Set(ids).size).toBe(3);
     });
 
-    test("starts the visitor's day at midnight in the organization's timezone", async () => {
+    test("starts the visitor's day at midnight in the instance's timezone", async () => {
       // The server's clock: 00:31 UTC, which is 08:31 in Singapore.
       const now = Date.parse("2026-11-17T00:31:00.000Z");
       const twoEvents = (key: string) =>
@@ -733,13 +727,16 @@ describe("POST /api/events", () => {
           { sentAt: now },
         );
 
-      // One API serves both organizations: each project's own timezone decides.
       const instance = appWith({ collection: { now: () => now } });
-      const inSingapore = await createProject([SITE, "localhost"], "Asia/Singapore");
-      await send(twoEvents(inSingapore.public_key), { instance });
-      expect(new Set(await visitorIds(inSingapore.id)).size).toBe(1);
-
-      const inUtc = await createProject([SITE, "localhost"], "UTC");
+      try {
+        await setInstanceTimeZone(db(), "Asia/Singapore");
+        const inSingapore = await createProject();
+        await send(twoEvents(inSingapore.public_key), { instance });
+        expect(new Set(await visitorIds(inSingapore.id)).size).toBe(1);
+      } finally {
+        await setInstanceTimeZone(db(), "UTC");
+      }
+      const inUtc = await createProject();
       await send(twoEvents(inUtc.public_key), { instance });
       expect(new Set(await visitorIds(inUtc.id)).size).toBe(2);
     });
@@ -920,10 +917,12 @@ describe("POST /api/events", () => {
   });
 
   describe("visits across midnight", () => {
-    test("splits a visit at midnight in the organization's timezone, with no link between the days", async () => {
+    test("splits a visit at midnight in the instance's timezone, with no link between the days", async () => {
       let clock = Date.parse("2026-11-16T15:50:00.000Z"); // 23:50 in Singapore
       const singapore = appWith({ collection: { now: () => clock } });
-      const project = await createProject([SITE, "localhost"], "Asia/Singapore");
+      await setInstanceTimeZone(db(), "Asia/Singapore");
+      onTestFinished(() => setInstanceTimeZone(db(), "UTC"));
+      const project = await createProject();
 
       await send(
         batch(project.public_key, [pageview({ occurredAt: clock, url: `https://${SITE}/` })], {

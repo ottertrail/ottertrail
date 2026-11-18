@@ -22,8 +22,8 @@ export interface SourceMapRelease {
 export interface SourceMapOverview {
   /** false: the install has no object store, so source maps are off. */
   configured: boolean;
-  /** What the organization's maps take, all its projects together, and its limit. */
-  organization: { storedBytes: number; limitBytes: number };
+  /** What all projects' maps take together, and the instance's limit. */
+  instance: { storedBytes: number; limitBytes: number };
   /** Which come first: by their latest upload. */
   order: ReleaseOrder;
   /** At most 100, in `order`. */
@@ -59,9 +59,9 @@ const isRelease = (value: unknown): value is SourceMapRelease =>
 const isOverview = (value: unknown): value is SourceMapOverview =>
   isRecord(value) &&
   typeof value.configured === "boolean" &&
-  isRecord(value.organization) &&
-  isNumber(value.organization.storedBytes) &&
-  isNumber(value.organization.limitBytes) &&
+  isRecord(value.instance) &&
+  isNumber(value.instance.storedBytes) &&
+  isNumber(value.instance.limitBytes) &&
   (value.order === "newest" || value.order === "oldest") &&
   Array.isArray(value.releases) &&
   value.releases.every(isRelease) &&
@@ -80,7 +80,7 @@ const sourceMapsPath = (projectId: string) =>
 /** The key every source map change invalidates: the list and each release's files. */
 export const sourceMapsKey = (projectId: string) => ["source-maps", projectId] as const;
 
-/** The project's releases with maps, newest or oldest first, and the organization's use. */
+/** The project's releases with maps, newest or oldest first, and the use of all projects together. */
 export const sourceMapsQuery = (projectId: string, order: ReleaseOrder = "newest") =>
   queryOptions({
     queryKey: [...sourceMapsKey(projectId), "list", order],

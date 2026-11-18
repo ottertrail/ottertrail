@@ -73,22 +73,24 @@ describe("TokenBucketLimiter", () => {
 });
 
 describe("EventBudget", () => {
-  const ADA = { id: "ada-site", organizationId: "ada" };
-  const ADA_DOCS = { id: "ada-docs", organizationId: "ada" };
-  const BOB = { id: "bob-shop", organizationId: "bob" };
+  const SITE = "site";
+  const DOCS = "docs";
+  const SHOP = "shop";
 
-  test("keeps an organization's projects together inside its own budget", () => {
+  test("keeps every project inside the instance's budget, and each inside its own", () => {
     const clock = fakeClock();
     const budget = new EventBudget(
       new TokenBucketLimiter({ capacity: 100, refillPerSecond: 10 }, clock),
       new TokenBucketLimiter({ capacity: 150, refillPerSecond: 15 }, clock),
     );
-    expect(budget.take(ADA, 100)).toEqual({ allowed: true });
-    // Another project of the same organization: only its organization's 50 left.
-    expect(budget.take(ADA_DOCS, 60)).toEqual({ allowed: false, retryAfterSeconds: 1 });
-    expect(budget.take(ADA_DOCS, 50)).toEqual({ allowed: true });
-    // Another organization has its own.
-    expect(budget.take(BOB, 100)).toEqual({ allowed: true });
+    expect(budget.take(SITE, 100)).toEqual({ allowed: true });
+    // The site's own budget is spent, though the instance has 50 left.
+    expect(budget.take(SITE, 1)).toEqual({ allowed: false, retryAfterSeconds: 1 });
+    // Another project: only the instance's 50 left.
+    expect(budget.take(DOCS, 60)).toEqual({ allowed: false, retryAfterSeconds: 1 });
+    expect(budget.take(DOCS, 50)).toEqual({ allowed: true });
+    // Adding a project does not add to the instance's budget.
+    expect(budget.take(SHOP, 1).allowed).toBe(false);
   });
 
   test("a refusal waits for both budgets", () => {
@@ -97,38 +99,37 @@ describe("EventBudget", () => {
       new TokenBucketLimiter({ capacity: 100, refillPerSecond: 10 }, clock),
       new TokenBucketLimiter({ capacity: 150, refillPerSecond: 50 }, clock),
     );
-    expect(budget.take(ADA, 100)).toEqual({ allowed: true });
-    expect(budget.take(ADA_DOCS, 50)).toEqual({ allowed: true });
-    // The organization needs 1 second for 50 more; the project, 5.
-    expect(budget.take(ADA, 50)).toEqual({ allowed: false, retryAfterSeconds: 5 });
+    expect(budget.take(SITE, 100)).toEqual({ allowed: true });
+    expect(budget.take(DOCS, 50)).toEqual({ allowed: true });
+    // The instance needs 1 second for 50 more; the project, 5.
+    expect(budget.take(SITE, 50)).toEqual({ allowed: false, retryAfterSeconds: 5 });
   });
 
-  test("a project's own limit refusing leaves its organization's budget untouched", () => {
+  test("a project's own limit refusing leaves the instance's budget untouched", () => {
     const clock = fakeClock();
     const budget = new EventBudget(
       new TokenBucketLimiter({ capacity: 50, refillPerSecond: 5 }, clock),
       new TokenBucketLimiter({ capacity: 100, refillPerSecond: 10 }, clock),
     );
-    expect(budget.take(ADA, 50)).toEqual({ allowed: true });
-    expect(budget.take(ADA, 50).allowed).toBe(false);
-    // The refused 50 went back: the organization still has 50 for another project.
-    expect(budget.take(ADA_DOCS, 50)).toEqual({ allowed: true });
+    expect(budget.take(SITE, 50)).toEqual({ allowed: true });
+    expect(budget.take(SITE, 50).allowed).toBe(false);
+    // The refused 50 went back: the instance still has 50 for another project.
+    expect(budget.take(DOCS, 50)).toEqual({ allowed: true });
   });
 });
 
 describe("EventBudget.refund", () => {
-  test("gives back to the project and its organization what was not stored", () => {
+  test("gives back to the project and the instance what was not stored", () => {
     const clock = fakeClock();
     const budget = new EventBudget(
       new TokenBucketLimiter({ capacity: 50, refillPerSecond: 5 }, clock),
       new TokenBucketLimiter({ capacity: 60, refillPerSecond: 6 }, clock),
     );
-    const project = { id: "ada-site", organizationId: "ada" };
     expect(budget.capacity).toBe(50);
-    expect(budget.take(project, 50)).toEqual({ allowed: true });
-    expect(budget.take(project, 1).allowed).toBe(false);
-    budget.refund(project, 50);
-    expect(budget.take(project, 50)).toEqual({ allowed: true });
+    expect(budget.take("site", 50)).toEqual({ allowed: true });
+    expect(budget.take("site", 1).allowed).toBe(false);
+    budget.refund("site", 50);
+    expect(budget.take("site", 50)).toEqual({ allowed: true });
   });
 });
 

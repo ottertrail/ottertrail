@@ -9,31 +9,30 @@ import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { formText } from "@/lib/form";
-import { type Organization, organizationsQuery, updateOrganization } from "@/lib/organizations-api";
+import { type Settings, settingsQuery, updateSettings } from "@/lib/settings-api";
 
 /**
  * Timezone names to suggest while typing. The browser's list leaves out
- * "UTC", which most organizations start with, so it is added. The API
+ * "UTC", which most installs start with, so it is added. The API
  * checks whatever is typed and stores its official name.
  */
 const TIME_ZONES = ["UTC", ...Intl.supportedValuesOf("timeZone")];
 
-function OrganizationCard({ organization }: { organization: Organization }) {
+function SettingsCard({ settings }: { settings: Settings }) {
   const queryClient = useQueryClient();
-  const isOwner = organization.role === "owner";
-  const [timeZone, setTimeZone] = React.useState(organization.timeZone);
-  const movesDays = timeZone.trim() !== "" && timeZone.trim() !== organization.timeZone;
+  const isOwner = settings.canEdit;
+  const [timeZone, setTimeZone] = React.useState(settings.timeZone);
+  const movesDays = timeZone.trim() !== "" && timeZone.trim() !== settings.timeZone;
   const save = useMutation({
-    mutationFn: (changes: { name: string; timeZone: string }) =>
-      updateOrganization(organization.id, changes),
+    mutationFn: (changes: { name: string; timeZone: string }) => updateSettings(changes),
     onSuccess: (updated) => {
-      queryClient.setQueryData(organizationsQuery().queryKey, (previous) =>
-        previous?.map((item) => (item.id === updated.id ? updated : item)),
-      );
+      queryClient.setQueryData(settingsQuery().queryKey, updated);
       setTimeZone(updated.timeZone);
-      // Reports count days in the timezone: everything shown may change.
-      void queryClient.invalidateQueries({ queryKey: ["analytics"] });
-      void queryClient.invalidateQueries({ queryKey: ["analytics-list"] });
+      // Every page counts days in the timezone: everything shown but the
+      // settings themselves may change.
+      void queryClient.invalidateQueries({
+        predicate: (query) => query.queryKey[0] !== settingsQuery().queryKey[0],
+      });
     },
   });
 
@@ -47,54 +46,54 @@ function OrganizationCard({ organization }: { organization: Organization }) {
     <Card>
       <CardHeader>
         <CardTitle>
-          <h3>Organization</h3>
+          <h3>Workspace</h3>
         </CardTitle>
         <CardDescription>
           {isOwner
-            ? "Your projects belong to this organization."
-            : "Only the organization's owner can change these."}
+            ? "The name and timezone of this install, for all its projects."
+            : "Only the owner can change these."}
         </CardDescription>
       </CardHeader>
       <CardContent>
         {/* Remounts with the saved values, so the form shows what the API stored. */}
-        <form key={JSON.stringify([organization.name, organization.timeZone])} onSubmit={submit}>
+        <form key={JSON.stringify([settings.name, settings.timeZone])} onSubmit={submit}>
           <FieldGroup>
             <Field>
-              <FieldLabel htmlFor="organization-name">Name</FieldLabel>
+              <FieldLabel htmlFor="settings-name">Name</FieldLabel>
               <Input
-                id="organization-name"
+                id="settings-name"
                 name="name"
-                defaultValue={organization.name}
+                defaultValue={settings.name}
                 required
                 maxLength={100}
-                autoComplete="organization"
+                autoComplete="off"
                 disabled={!isOwner}
               />
             </Field>
             <Field>
-              <FieldLabel htmlFor="organization-time-zone">Timezone</FieldLabel>
+              <FieldLabel htmlFor="settings-time-zone">Timezone</FieldLabel>
               <Input
-                id="organization-time-zone"
+                id="settings-time-zone"
                 name="timeZone"
                 value={timeZone}
                 onChange={(event) => setTimeZone(event.target.value)}
-                list="organization-time-zones"
+                list="settings-time-zones"
                 required
                 maxLength={100}
                 autoComplete="off"
                 spellCheck={false}
                 disabled={!isOwner}
                 className="w-72"
-                aria-describedby="organization-time-zone-hint"
+                aria-describedby="settings-time-zone-hint"
               />
-              <datalist id="organization-time-zones">
+              <datalist id="settings-time-zones">
                 {TIME_ZONES.map((zone) => (
                   <option key={zone} value={zone}>
                     {zone}
                   </option>
                 ))}
               </datalist>
-              <FieldDescription id="organization-time-zone-hint">
+              <FieldDescription id="settings-time-zone-hint">
                 {movesDays
                   ? "Changing it moves where days start in every report, past days included. Visitors seen before the change count again after it, until midnight."
                   : "Reports count days in this timezone. A name such as Europe/Berlin or Asia/Singapore."}
@@ -128,29 +127,26 @@ function OrganizationCard({ organization }: { organization: Organization }) {
   );
 }
 
-/**
- * The organization's settings: /settings. Users belong to one organization
- * until invitations exist, so this shows the first one.
- */
-export function OrganizationSettingsPage() {
-  const organizations = useQuery(organizationsQuery());
+/** The instance's settings: /settings. Everyone signed in sees them; the owner changes them. */
+export function SettingsPage() {
+  const settings = useQuery(settingsQuery());
 
-  if (organizations.isPending) {
+  if (settings.isPending) {
     return (
       <div className="mx-auto flex max-w-3xl flex-col gap-4 p-6" aria-busy="true">
         <Skeleton className="h-64 w-full" />
       </div>
     );
   }
-  if (organizations.isError) {
+  if (settings.isError) {
     return (
       <div className="mx-auto max-w-3xl p-6">
         <Alert variant="destructive">
           <OctagonAlertIcon />
-          <AlertTitle>The organization could not load</AlertTitle>
-          <AlertDescription>{organizations.error.message}</AlertDescription>
+          <AlertTitle>The settings could not load</AlertTitle>
+          <AlertDescription>{settings.error.message}</AlertDescription>
           <AlertAction>
-            <Button variant="outline" size="sm" onClick={() => void organizations.refetch()}>
+            <Button variant="outline" size="sm" onClick={() => void settings.refetch()}>
               Retry
             </Button>
           </AlertAction>
@@ -158,23 +154,9 @@ export function OrganizationSettingsPage() {
       </div>
     );
   }
-  const [organization] = organizations.data;
-  if (organization === undefined) {
-    return (
-      <div className="mx-auto max-w-3xl p-6">
-        <Alert>
-          <OctagonAlertIcon />
-          <AlertTitle>No organization</AlertTitle>
-          <AlertDescription>
-            Your account belongs to no organization yet, so there are no settings to show.
-          </AlertDescription>
-        </Alert>
-      </div>
-    );
-  }
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-6 p-6">
-      <OrganizationCard organization={organization} />
+      <SettingsCard settings={settings.data} />
     </div>
   );
 }

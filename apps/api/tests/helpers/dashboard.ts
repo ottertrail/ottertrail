@@ -4,8 +4,6 @@ import { createSetupToken } from "../../src/auth/setup.ts";
 import type { Reader } from "../../src/clickhouse/query.ts";
 import { type NewEvent, storeEvents } from "../../src/collection/event-store.ts";
 import { LastEventRecorder } from "../../src/collection/last-event.ts";
-import type { MembershipRole } from "../../src/db/schema.ts";
-import { createOrganization } from "../../src/organizations/organizations.ts";
 import { createTestClickHouse } from "./test-clickhouse.ts";
 import { createTestDatabase } from "./test-database.ts";
 
@@ -14,14 +12,14 @@ export const OWNER = {
   name: "Ada Owner",
   email: "ada@example.com",
   password: "correct horse battery",
-  organizationName: "Ada's company",
+  instanceName: "Ada's company",
 };
 
 /**
  * An app with the dashboard API on a fresh test database and ClickHouse,
- * its owner created and signed in, with their organization in `timeZone`.
- * Send `cookie` (and `origin` for changes) with requests; put projects in
- * `organizationId`; add events with `store`, which reports then read.
+ * its owner created and signed in, the instance's timezone `timeZone`.
+ * Send `cookie` (and `origin` for changes) with requests; add events with
+ * `store`, which reports then read.
  */
 export async function signedInDashboard({
   timeZone = "UTC",
@@ -88,10 +86,6 @@ export async function signedInDashboard({
     payload: JSON.stringify({ email: OWNER.email, password: OWNER.password }),
   });
   const cookie = signedIn.cookies.map((c) => `${c.name}=${c.value}`).join("; ");
-  const { organization_id: organizationId } = await testDb.db
-    .selectFrom("memberships")
-    .select("organization_id")
-    .executeTakeFirstOrThrow();
   const reader: Reader = { client: testClickHouse.client };
   return {
     db: testDb.db,
@@ -102,7 +96,6 @@ export async function signedInDashboard({
     app,
     auth,
     cookie,
-    organizationId,
     /** Stores events in ClickHouse and records the project's latest, as collection does. */
     store: async (projectId: string, events: readonly NewEvent[]) => {
       await storeEvents(testClickHouse.client, projectId, events);
@@ -118,10 +111,7 @@ export async function signedInDashboard({
 
 type Dashboard = Awaited<ReturnType<typeof signedInDashboard>>;
 
-/**
- * Another dashboard user, signed in: a member of an existing organization,
- * the owner of a new one, or in no organization at all.
- */
+/** Another dashboard user, signed in: a "member", not the owner. */
 export async function signedInUser(
   { db, app, auth }: Pick<Dashboard, "db" | "app" | "auth">,
   {
@@ -129,11 +119,7 @@ export async function signedInUser(
     email,
     password = "another correct horse",
   }: { name: string; email: string; password?: string },
-  membership:
-    | { organizationId: string; role: MembershipRole }
-    | { newOrganization: string; timeZone?: string }
-    | null,
-): Promise<{ userId: string; cookie: string; organizationId: string | null }> {
+): Promise<{ userId: string; cookie: string }> {
   const user = await db
     .insertInto("dashboard_users")
     .values({ name, email })
@@ -148,22 +134,6 @@ export async function signedInUser(
       password: await (await auth.$context).password.hash(password),
     })
     .execute();
-  let organizationId: string | null = null;
-  if (membership !== null && "organizationId" in membership) {
-    organizationId = membership.organizationId;
-    await db
-      .insertInto("memberships")
-      .values({ organization_id: organizationId, user_id: user.id, role: membership.role })
-      .execute();
-  } else if (membership !== null) {
-    organizationId = (
-      await createOrganization(db, {
-        name: membership.newOrganization,
-        timeZone: membership.timeZone ?? "UTC",
-        ownerId: user.id,
-      })
-    ).id;
-  }
   const signedIn = await app.inject({
     method: "POST",
     url: "/api/auth/sign-in/email",
@@ -174,5 +144,5 @@ export async function signedInUser(
     throw new Error(`${email} could not sign in: ${signedIn.body}`);
   }
   const cookie = signedIn.cookies.map((c) => `${c.name}=${c.value}`).join("; ");
-  return { userId: user.id, cookie, organizationId };
+  return { userId: user.id, cookie };
 }

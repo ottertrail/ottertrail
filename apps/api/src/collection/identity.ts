@@ -9,9 +9,8 @@ import { createHmac, timingSafeEqual } from "node:crypto";
  */
 
 /**
- * 1 to 200 characters, no control characters (C0, DEL, and C1). At least as
- * strict as the database's check (migration 0015), so an ID it refuses
- * gets a 400.
+ * 1 to 200 characters, no control characters (C0, DEL, and C1). Anything
+ * else gets a 400.
  */
 export const USER_ID_PATTERN = "^[^\\u0000-\\u001F\\u007F-\\u009F]{1,200}$";
 

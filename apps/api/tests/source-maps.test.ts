@@ -14,7 +14,7 @@ import { s3ObjectStore } from "../src/storage/object-store.ts";
 import { PUBLIC_URL, signedInDashboard } from "./helpers/dashboard.ts";
 import { insertProject } from "./helpers/projects.ts";
 
-/** Noon on 17 November 2026 in UTC, the organization's timezone. */
+/** Noon on 17 November 2026 in UTC, the instance's timezone. */
 const NOW = new Date("2026-11-17T12:00:00.000Z");
 
 /**
@@ -52,7 +52,6 @@ const projects: string[] = [];
 
 async function newProject(name: string): Promise<{ id: string; secretKey: string }> {
   const { id } = await insertProject(dashboard.db, {
-    organization_id: dashboard.organizationId,
     name,
   });
   projects.push(id);
@@ -148,7 +147,7 @@ describe("uploading a source map", () => {
     const list = (await dashboardGet(project.id, "/source-maps")).json();
     expect(list.configured).toBe(true);
     expect(list.releases).toMatchObject([{ release: RELEASE, files: 1 }]);
-    expect(list.organization.limitBytes).toBe(1024 ** 2);
+    expect(list.instance.limitBytes).toBe(1024 ** 2);
     const files = (await dashboardGet(project.id, `/source-maps/files?release=${RELEASE}`)).json();
     expect(files.files).toMatchObject([{ path: FILE }]);
   });
@@ -286,7 +285,6 @@ describe("uploading a source map", () => {
     });
     try {
       const { id } = await insertProject(busy.db, {
-        organization_id: busy.organizationId,
         name: "Busy",
       });
       projects.push(id);
@@ -315,7 +313,7 @@ describe("uploading a source map", () => {
     }
   });
 
-  test("stops at the organization's limit, but a replacement only counts once", async () => {
+  test("stops at the instance's limit, but a replacement only counts once", async () => {
     const project = await newProject("Full");
     // Random hex: gzip halves it at best, so about 600 KB stored, and a
     // second file passes the 1 MiB limit.
@@ -445,7 +443,6 @@ describe("an error's stack with source maps", () => {
     const plain = await signedInDashboard({ now: () => NOW });
     try {
       const { id } = await insertProject(plain.db, {
-        organization_id: plain.organizationId,
         name: "Plain",
       });
       const event = anError(STACK, RELEASE);

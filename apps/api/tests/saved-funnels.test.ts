@@ -6,9 +6,8 @@ import { insertProject } from "./helpers/projects.ts";
 
 let dashboard: Awaited<ReturnType<typeof signedInDashboard>>;
 
-/** A new project in the dashboard's organization, so each test has its own funnels. */
-const newProject = async (name: string) =>
-  (await insertProject(dashboard.db, { organization_id: dashboard.organizationId, name })).id;
+/** A new project, so each test has its own funnels. */
+const newProject = async (name: string) => (await insertProject(dashboard.db, { name })).id;
 
 function call(
   method: "GET" | "POST" | "PUT" | "DELETE",

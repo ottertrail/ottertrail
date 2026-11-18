@@ -7,7 +7,7 @@ import { analyticsEvent, ENGAGEMENT, PAGEVIEW, VITALS } from "../visits/visits.t
  * properties (docs/product-analytics.md, "Definitions").
  */
 
-/** A range of whole days in the organization's timezone, in one environment. */
+/** A range of whole days in the instance's timezone, in one environment. */
 export interface ProductRange {
   projectId: string;
   environment: string;

@@ -5,8 +5,8 @@ import type { Auth } from "../auth/auth.ts";
 import { requireTrustedOrigin } from "../auth/origin.ts";
 import { requireSession } from "../auth/routes.ts";
 import type { Database } from "../db/schema.ts";
-import { type ProjectAccess, requireProjectAccess } from "../organizations/access.ts";
 import { stepOf } from "../product/steps.ts";
+import { type ProjectAccess, requireProjectAccess } from "../projects/access.ts";
 import { createGoal, deleteGoal, listGoals, MAX_GOALS } from "./goals.ts";
 
 const UUID_PATTERN =

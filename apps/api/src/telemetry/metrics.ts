@@ -15,7 +15,7 @@ import {
  * A series is one combination of a metric's service, scope, attributes,
  * resource attributes, and temporality (a histogram's also its bounds):
  * the `series` column, a hash worked out when the row is written
- * (ClickHouse migration 0010). Rates and histogram steps are worked out per
+ * (clickhouse/migrations.ts). Rates and histogram steps are worked out per
  * series in ClickHouse, with window functions over the series ordered by
  * time, then added up per bucket and per value of the split attribute.
  * The metric tables are ordered by project, then name, then time, so a
@@ -162,7 +162,7 @@ export interface Buckets {
 /**
  * The buckets of a range: the shortest step that keeps them within
  * MAX_BUCKETS, counted from the start of the range's first day so they
- * fall on whole minutes and hours of the organization's time, from the
+ * fall on whole minutes and hours of the instance's time, from the
  * range's start (or the retention's) to its end or now, whichever is sooner.
  */
 export function bucketsOf(

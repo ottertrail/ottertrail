@@ -4,10 +4,10 @@
  *   vp run bench:reports                    (200,000 visits over 30 days)
  *   vp run bench:reports -- 50000 14        (50,000 visits over 14 days)
  *
- * The fake events are made in a temporary PostgreSQL schema, at migration
- * 0023, the last with an events table, which generates them quickly in
- * SQL; they are copied to a temporary ClickHouse database
- * (copyFakeEvents in bench-data.ts), and reports read them there. Both are dropped at the end: no real project or event is
+ * The fake events are made in a table of a temporary PostgreSQL schema,
+ * where SQL generates them quickly; they are copied to a temporary
+ * ClickHouse database (copyFakeEvents in bench-data.ts), and reports read
+ * them there. Both are dropped at the end: no real project or event is
  * read or written. Numbers depend on the machine, so they show the shape of
  * the cost, not a capacity promise.
  */
@@ -20,7 +20,7 @@ import { migrateClickHouse } from "../src/clickhouse/migrate.ts";
 import type { Reader } from "../src/clickhouse/query.ts";
 import { loadConfig } from "../src/config.ts";
 import { createDatabase } from "../src/db/database.ts";
-import { migrate } from "../src/db/migrate.ts";
+import { migrateToLatest } from "../src/db/migrate.ts";
 import type { Database } from "../src/db/schema.ts";
 import { projectAnalytics } from "../src/reports/analytics.ts";
 import {
@@ -32,7 +32,7 @@ import {
   timeseries,
   topPages,
 } from "../src/reports/reports.ts";
-import { copyFakeEvents, seedFakeVisits } from "./bench-data.ts";
+import { copyFakeEvents, createFakeEventsTable, seedFakeVisits } from "./bench-data.ts";
 
 const [visitsArgument = "200000", daysArgument = "30"] = process.argv
   .slice(2)
@@ -81,18 +81,13 @@ try {
     schema,
   });
   db = bench;
-  await migrate(bench, "0023_create_replays", { schema });
+  await migrateToLatest(bench, { schema });
+  await createFakeEventsTable(bench);
   await migrateClickHouse(clickhouseAdmin, schema);
 
-  const organization = await bench
-    .insertInto("organizations")
-    .values({ name: "Benchmark (fake data)", time_zone: "UTC" })
-    .returning("id")
-    .executeTakeFirstOrThrow();
   const project = await bench
     .insertInto("projects")
     .values({
-      organization_id: organization.id,
       name: "Benchmark (fake data)",
       allowed_hostnames: ["example.com"],
     })

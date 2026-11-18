@@ -17,14 +17,14 @@ const UUID_PATTERN =
 /** Chunks per client address: one replay is a few dozen at most. */
 export const DEFAULT_REPLAY_IP_LIMIT: RateLimit = { capacity: 100, refillPerSecond: 2 };
 /**
- * Replay bytes, in KiB, per project and per organization, apart from
- * events' budgets, so recordings never crowd events out: bursts of a few
- * replays, and a steady flow of about one 2 MB replay every 8 seconds for a
- * project and 3 for an organization. Provisional, until measured on real
+ * Replay bytes, in KiB, per project and per instance, apart from events'
+ * budgets, so recordings never crowd events out: bursts of a few replays,
+ * and a steady flow of about one 2 MB replay every 8 seconds for a project
+ * and 3 for the instance. Provisional, until measured on real
  * sites (docs/session-replay.md, "Decisions still open").
  */
 export const DEFAULT_REPLAY_PROJECT_LIMIT: RateLimit = { capacity: 8192, refillPerSecond: 256 };
-export const DEFAULT_REPLAY_ORGANIZATION_LIMIT: RateLimit = {
+export const DEFAULT_REPLAY_INSTANCE_LIMIT: RateLimit = {
   capacity: 24_576,
   refillPerSecond: 768,
 };
@@ -68,13 +68,13 @@ interface ChunkQuery {
 export const replayCollectionRoutes: FastifyPluginCallback<{
   db: Kysely<Database>;
   projects: ProjectKeyCache;
-  /** Compressed replay bytes each organization may keep (Config.replayBytesPerOrganization). */
+  /** Compressed replay bytes the instance may keep (Config.replayStorageBytes). */
   limitBytes: number;
   /** Whether the install has an object store to keep replays in: without one, they are off. */
   storeConfigured: boolean;
   ipLimit?: RateLimit;
   projectLimit?: RateLimit;
-  organizationLimit?: RateLimit;
+  instanceLimit?: RateLimit;
   isDataCenter?: IsDataCenter;
   now?: () => number;
 }> = (app, options, done) => {
@@ -90,9 +90,7 @@ export const replayCollectionRoutes: FastifyPluginCallback<{
   // In KiB: a chunk costs its size.
   const budget = new EventBudget(
     new TokenBucketLimiter(options.projectLimit ?? DEFAULT_REPLAY_PROJECT_LIMIT, { now }),
-    new TokenBucketLimiter(options.organizationLimit ?? DEFAULT_REPLAY_ORGANIZATION_LIMIT, {
-      now,
-    }),
+    new TokenBucketLimiter(options.instanceLimit ?? DEFAULT_REPLAY_INSTANCE_LIMIT, { now }),
   );
 
   // The chunk as bytes: gzip, kept as sent.
@@ -209,7 +207,7 @@ export const replayCollectionRoutes: FastifyPluginCallback<{
       ) {
         return reply.code(202).send({ stored: 0 });
       }
-      const spent = budget.take(project, Math.ceil(request.body.byteLength / 1024));
+      const spent = budget.take(project.id, Math.ceil(request.body.byteLength / 1024));
       if (!spent.allowed) return tooManyRequests(reply, spent.retryAfterSeconds);
 
       let result;
@@ -237,7 +235,7 @@ export const replayCollectionRoutes: FastifyPluginCallback<{
             .send(
               problem(
                 "replay_storage_full",
-                "The organization's replays have reached their storage limit.",
+                "The instance's replays have reached their storage limit.",
               ),
             );
         case "too_large":

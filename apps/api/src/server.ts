@@ -6,7 +6,7 @@ import { createClickHouse } from "./clickhouse/clickhouse.ts";
 import { DEVELOPMENT_AUTH_SECRET, loadConfig } from "./config.ts";
 import { createDatabase } from "./db/database.ts";
 import { setUpDataCenters, setUpLocation } from "./enrichment/setup.ts";
-import { postgresKnowsTimeZone } from "./organizations/organizations.ts";
+import { postgresKnowsTimeZone } from "./settings/settings.ts";
 import { s3ObjectStore } from "./storage/object-store.ts";
 
 const config = loadConfig();
@@ -21,7 +21,7 @@ const auth = createAuth({
   trustedOrigins: config.trustedOrigins,
   secret: config.authSecret,
 });
-// The setup link creates an organization in TIMEZONE, and PostgreSQL
+// The setup link sets the instance's timezone to TIMEZONE, and PostgreSQL
 // counts its days: refuse to start with a name only Node.js knows.
 if (!(await postgresKnowsTimeZone(db, config.defaultTimeZone))) {
   console.error(
@@ -39,9 +39,9 @@ const app = buildApp({
   collection: {
     locate: location.locate,
     isDataCenter: dataCenters.isDataCenter,
-    organizationLimit: {
-      capacity: config.organizationEventsPerSecond * 10,
-      refillPerSecond: config.organizationEventsPerSecond,
+    instanceLimit: {
+      capacity: config.instanceEventsPerSecond * 10,
+      refillPerSecond: config.instanceEventsPerSecond,
     },
   },
   dashboard: {
@@ -52,8 +52,8 @@ const app = buildApp({
     defaultTimeZone: config.defaultTimeZone,
   },
   objectStore,
-  sourceMaps: { limitBytes: config.sourceMapBytesPerOrganization },
-  replays: { limitBytes: config.replayBytesPerOrganization },
+  sourceMaps: { limitBytes: config.sourceMapStorageBytes },
+  replays: { limitBytes: config.replayStorageBytes },
   telemetry: { retentionDays: config.telemetryRetentionDays },
   uptime: {
     allowPrivateAddresses: config.uptimeAllowPrivateAddresses,

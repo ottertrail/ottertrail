@@ -16,7 +16,7 @@ import {
  * project's log records, newest first, by period, environment, service,
  * severity, words in the body, and trace. Every query filters by project
  * first, then time; the words use the text index on `body`, a trace the
- * bloom filter on `trace_id` (ClickHouse migration 0007).
+ * bloom filter on `trace_id` (clickhouse/migrations.ts).
  */
 
 /** Records a page of the search holds. */

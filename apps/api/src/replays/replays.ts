@@ -37,23 +37,16 @@ export const replayPrefix = (projectId: string) => `replays/${projectId}/`;
 export const replayKeyOf = (projectId: string, replayId: string) =>
   `${replayPrefix(projectId)}${replayId}.json.gz`;
 
-/** The compressed bytes of an organization's replays and of chunks not yet joined. */
-export async function organizationReplayBytes(
-  db: Kysely<Database>,
-  organizationId: string,
-): Promise<number> {
+/** The compressed bytes of the instance's replays, all projects', and of chunks not yet joined. */
+export async function storedReplayBytes(db: Kysely<Database>): Promise<number> {
   const [replays, chunks] = await Promise.all([
     db
       .selectFrom("replays")
-      .innerJoin("projects", "projects.id", "replays.project_id")
-      .select(sql<string>`coalesce(sum(replays.bytes), 0)`.as("bytes"))
-      .where("projects.organization_id", "=", organizationId)
+      .select(sql<string>`coalesce(sum(bytes), 0)`.as("bytes"))
       .executeTakeFirstOrThrow(),
     db
       .selectFrom("replay_chunks")
-      .innerJoin("projects", "projects.id", "replay_chunks.project_id")
-      .select(sql<string>`coalesce(sum(octet_length(replay_chunks.data)), 0)`.as("bytes"))
-      .where("projects.organization_id", "=", organizationId)
+      .select(sql<string>`coalesce(sum(octet_length(data)), 0)`.as("bytes"))
       .executeTakeFirstOrThrow(),
   ]);
   return Number(replays.bytes) + Number(chunks.bytes);
@@ -69,13 +62,13 @@ export interface Chunk {
 
 /**
  * Keeps one chunk, once: "stored", or why not. A new replay (its first
- * chunk) is refused when the organization's replays already take
+ * chunk) is refused when the instance's replays already take
  * `limitBytes`; a replay past MAX_REPLAY_BYTES is refused; a chunk of a
  * replay already joined, or already kept, is a duplicate, as a retry is.
  */
 export async function storeChunk(
   db: Kysely<Database>,
-  project: { id: string; organizationId: string },
+  project: { id: string },
   chunk: Chunk,
   limitBytes: number,
 ): Promise<"stored" | "duplicate" | "storage_full" | "too_large"> {
@@ -96,10 +89,7 @@ export async function storeChunk(
     .where("project_id", "=", project.id)
     .where("replay_id", "=", chunk.replayId)
     .executeTakeFirstOrThrow();
-  if (
-    Number(sofar.chunks) === 0 &&
-    (await organizationReplayBytes(db, project.organizationId)) >= limitBytes
-  ) {
+  if (Number(sofar.chunks) === 0 && (await storedReplayBytes(db)) >= limitBytes) {
     return "storage_full";
   }
   if (Number(sofar.bytes) + chunk.data.byteLength > MAX_REPLAY_BYTES) return "too_large";

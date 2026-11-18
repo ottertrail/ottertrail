@@ -20,7 +20,6 @@ import { SignInPage } from "@/features/auth/sign-in-page";
 import { DesignSystemPage } from "@/features/design-system/design-system-page";
 import { ErrorPage } from "@/features/errors/error-page";
 import { ErrorsPage } from "@/features/errors/errors-page";
-import { OrganizationSettingsPage } from "@/features/organizations/organization-settings-page";
 import { EventPage } from "@/features/product/event-page";
 import { EventsPage } from "@/features/product/events-page";
 import { FunnelPage } from "@/features/product/funnel-page";
@@ -36,6 +35,7 @@ import {
 import { ProjectLayout } from "@/features/projects/project-layout";
 import { ProjectSettingsPage } from "@/features/projects/project-settings-page";
 import { ProjectsPage } from "@/features/projects/projects-page";
+import { SettingsPage } from "@/features/settings/settings-page";
 import { SpeedPage } from "@/features/speed/speed-page";
 import { HostPage } from "@/features/telemetry/host-page";
 import { HostsPage } from "@/features/telemetry/hosts-page";
@@ -775,12 +775,12 @@ const projectSettingsRoute = createRoute({
   },
 });
 
-/** The organization's settings: the workspace level, above any one project. */
-const organizationSettingsRoute = createRoute({
+/** The instance's settings: the workspace level, above any one project. */
+const settingsRoute = createRoute({
   getParentRoute: () => appRoute,
   path: "/settings",
   staticData: { title: "Settings" },
-  component: OrganizationSettingsPage,
+  component: SettingsPage,
 });
 
 const designSystemRoute = createRoute({
@@ -823,7 +823,7 @@ const routeTree = rootRoute.addChildren([
       ]),
       projectSettingsRoute,
     ]),
-    organizationSettingsRoute,
+    settingsRoute,
     designSystemRoute,
   ]),
 ]);

@@ -3,7 +3,7 @@ import { createHash, randomBytes } from "node:crypto";
 import type { Kysely } from "kysely";
 
 import type { Database } from "../db/schema.ts";
-import { createOrganization } from "../organizations/organizations.ts";
+import { forgetInstanceSettings, updateInstanceSettings } from "../settings/settings.ts";
 import type { Auth } from "./auth.ts";
 
 /** How long a setup link works. */
@@ -62,27 +62,28 @@ export interface OwnerDetails {
   name: string;
   email: string;
   password: string;
-  /** The owner's organization, created with them. */
-  organizationName: string;
+  /** The instance's name, which the dashboard shows above the projects. */
+  instanceName: string;
 }
 
 export type SetupResult = "created" | "invalid_link" | "already_set_up";
 
 /**
- * Creates the owner from a setup link, with their organization. Everything
- * happens in one transaction: the token is used up, and the user, their
- * password, and their organization are stored together or not at all. Two requests with the same link cannot both
+ * Creates the owner from a setup link, and names the instance and sets its
+ * timezone. Everything happens in one transaction: the token is used up,
+ * and the user, their password, and the settings are stored together or
+ * not at all. Two requests with the same link cannot both
  * succeed: the first deletes the token, and the second finds nothing.
  */
 export async function completeSetup(
   db: Kysely<Database>,
   auth: Auth,
-  { token, name, email, password, organizationName }: OwnerDetails,
+  { token, name, email, password, instanceName }: OwnerDetails,
   {
     timeZone,
     now = new Date(),
   }: {
-    /** The new organization's timezone. */
+    /** The instance's timezone (TIMEZONE). */
     timeZone: string;
     now?: Date;
   },
@@ -107,7 +108,7 @@ export async function completeSetup(
   // transaction, which then checks the link again before using it.
   const passwordHash = await (await auth.$context).password.hash(password);
 
-  return db.transaction().execute(async (trx) => {
+  const result = await db.transaction().execute(async (trx): Promise<SetupResult> => {
     const used = await trx
       .deleteFrom("owner_setup_tokens")
       .where("token_hash", "=", hashToken(token))
@@ -135,37 +136,10 @@ export async function completeSetup(
         password: passwordHash,
       })
       .execute();
-    // An organization without members holds projects stored before anyone
-    // signed up (migration 0010 on an install that never ran setup). The
-    // owner takes it over, with its timezone, instead of leaving it unreachable.
-    const unclaimed = await trx
-      .selectFrom("organizations")
-      .select("id")
-      .where((eb) =>
-        eb.not(
-          eb.exists(
-            eb
-              .selectFrom("memberships")
-              .select("memberships.user_id")
-              .whereRef("memberships.organization_id", "=", "organizations.id"),
-          ),
-        ),
-      )
-      .orderBy("created_at")
-      .executeTakeFirst();
-    if (unclaimed === undefined) {
-      await createOrganization(trx, { name: organizationName, timeZone, ownerId: user.id });
-    } else {
-      await trx
-        .updateTable("organizations")
-        .set({ name: organizationName })
-        .where("id", "=", unclaimed.id)
-        .execute();
-      await trx
-        .insertInto("memberships")
-        .values({ organization_id: unclaimed.id, user_id: user.id, role: "owner" })
-        .execute();
-    }
+    await updateInstanceSettings(trx, { name: instanceName, timeZone });
     return "created";
   });
+  // Read again once committed: an earlier read may have cached the defaults.
+  forgetInstanceSettings(db);
+  return result;
 }

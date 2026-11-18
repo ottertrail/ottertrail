@@ -18,7 +18,7 @@ import {
  * section 7, and docs/clickhouse.md).
  *
  * A range is [from, to) in absolute time; localDays() turns calendar days in
- * the organization's timezone into one. Days in charts are local days too.
+ * the instance's timezone into one. Days in charts are local days too.
  */
 export interface ReportRange {
   projectId: string;
@@ -29,7 +29,7 @@ export interface ReportRange {
   environment: string;
   from: Date;
   to: Date;
-  /** IANA timezone that days are counted in, the timezone of the project's organization. */
+  /** IANA timezone that days are counted in, the instance's timezone. */
   timeZone: string;
   /**
    * The project's allowed hostnames. A referrer on one of them is in-app

@@ -9,6 +9,7 @@ import { type IsDataCenter, noDataCenters } from "../enrichment/data-centers.ts"
 import { type Locate, noLocation } from "../enrichment/geo.ts";
 import { isBot, parseUserAgent } from "../enrichment/user-agent.ts";
 import { fingerprint } from "../errors/fingerprint.ts";
+import { readInstanceSettings } from "../settings/settings.ts";
 import { VisitorIds } from "../visitors/visitor-ids.ts";
 import { ENGAGEMENT, ERROR, VITALS } from "../visits/visits.ts";
 import { ENVIRONMENT_PATTERN, environmentOf, RELEASE_PATTERN } from "./environment.ts";
@@ -44,12 +45,12 @@ export const DEFAULT_IP_LIMIT: RateLimit = { capacity: 120, refillPerSecond: 2 }
 /** Events per project: bursts of 2,000, then 200 per second. */
 export const DEFAULT_PROJECT_LIMIT: RateLimit = { capacity: 2_000, refillPerSecond: 200 };
 /**
- * Events per organization, all its projects together: three projects at
- * full rate, unless ORGANIZATION_EVENTS_PER_SECOND says otherwise
- * (config.ts). One customer cannot take more of the instance by adding
- * projects (rate-limiter.ts, EventBudget).
+ * Events per instance, all its projects together: three projects at full
+ * rate, unless INSTANCE_EVENTS_PER_SECOND says otherwise (config.ts).
+ * Adding projects does not raise what the instance takes in
+ * (rate-limiter.ts, EventBudget).
  */
-export const DEFAULT_ORGANIZATION_LIMIT: RateLimit = { capacity: 6_000, refillPerSecond: 600 };
+export const DEFAULT_INSTANCE_LIMIT: RateLimit = { capacity: 6_000, refillPerSecond: 600 };
 
 export interface CollectionOptions {
   db: Kysely<Database>;
@@ -57,7 +58,7 @@ export interface CollectionOptions {
   clickhouse: ClickHouseClient;
   ipLimit?: RateLimit;
   projectLimit?: RateLimit;
-  organizationLimit?: RateLimit;
+  instanceLimit?: RateLimit;
   /** Finds the visitor's location from the request. Default: no location. */
   locate?: Locate;
   /** Whether an address is a data center's. Default: none is. */
@@ -107,8 +108,7 @@ const UUID_PATTERN =
 /**
  * An error as the tracker reports it. Message and stack keep tabs and line
  * breaks, as browsers write them; no other control characters. The tracker
- * cuts them to these lengths (packages/tracker/src/errors.ts), and the
- * database checks the same (migration 0018).
+ * cuts them to these lengths (packages/tracker/src/errors.ts).
  */
 const MULTILINE_TEXT = "^[^\\u0000-\\u0008\\u000B-\\u001F\\u007F-\\u009F]*$";
 const ERROR_SCHEMA = {
@@ -265,12 +265,12 @@ export const collectionRoutes: FastifyPluginCallback<CollectionOptions> = (app, 
   // cloud would otherwise lose them all without a trace.
   const dataCenterProjects = new Set<string>();
   const projectLimit = options.projectLimit ?? DEFAULT_PROJECT_LIMIT;
-  const organizationLimit = options.organizationLimit ?? DEFAULT_ORGANIZATION_LIMIT;
-  if (Math.min(projectLimit.capacity, organizationLimit.capacity) < MAX_EVENTS_PER_BATCH) {
+  const instanceLimit = options.instanceLimit ?? DEFAULT_INSTANCE_LIMIT;
+  if (Math.min(projectLimit.capacity, instanceLimit.capacity) < MAX_EVENTS_PER_BATCH) {
     // Plugins report setup errors through done(); app.ready() then rejects.
     done(
       new Error(
-        `The project and organization limits must allow a full batch of ${MAX_EVENTS_PER_BATCH} events`,
+        `The project and instance limits must allow a full batch of ${MAX_EVENTS_PER_BATCH} events`,
       ),
     );
     return;
@@ -286,7 +286,7 @@ export const collectionRoutes: FastifyPluginCallback<CollectionOptions> = (app, 
   const ipLimiter = new TokenBucketLimiter(options.ipLimit ?? DEFAULT_IP_LIMIT, { now });
   const budget = new EventBudget(
     new TokenBucketLimiter(projectLimit, { now }),
-    new TokenBucketLimiter(organizationLimit, { now }),
+    new TokenBucketLimiter(instanceLimit, { now }),
   );
   const projects = options.projectKeys ?? new ProjectKeyCache(db, { now });
   const lastEvents = new LastEventRecorder(db, { now });
@@ -420,7 +420,7 @@ export const collectionRoutes: FastifyPluginCallback<CollectionOptions> = (app, 
         return reply.code(202).send({ stored: 0, tooOld: 0, bots: events.length });
       }
 
-      const spent = budget.take(project, events.length);
+      const spent = budget.take(project.id, events.length);
       if (!spent.allowed) {
         return tooManyRequests(reply, spent.retryAfterSeconds);
       }
@@ -605,10 +605,11 @@ export const collectionRoutes: FastifyPluginCallback<CollectionOptions> = (app, 
       try {
         // Each event gets the visitor ID of the day it happened, so a late
         // event from just before midnight joins the rest of that day's visit.
+        const { timeZone } = await readInstanceSettings(db);
         for (const event of accepted) {
           event.visitorId = await visitors.idFor({
             projectId: project.id,
-            timeZone: project.timeZone,
+            timeZone,
             ip: request.ip,
             userAgent: userAgent ?? "",
             occurredAt: event.occurredAt,
@@ -617,7 +618,7 @@ export const collectionRoutes: FastifyPluginCallback<CollectionOptions> = (app, 
         await storeEvents(clickhouse, project.id, accepted, { receivedAt: new Date(receivedAt) });
       } catch (error) {
         // Not the sender's doing: the budget back, so its retries are not refused for it.
-        budget.refund(project, events.length);
+        budget.refund(project.id, events.length);
         request.log.error({ err: error }, "could not store events");
         return storageUnavailable(reply);
       }

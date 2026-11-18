@@ -18,7 +18,6 @@ import {
   type MetricList,
   type MetricSeries,
 } from "../../src/lib/metrics-api.ts";
-import type { Organization } from "../../src/lib/organizations-api.ts";
 import {
   type Funnel,
   isFunnelCount,
@@ -30,6 +29,7 @@ import {
 } from "../../src/lib/product-api.ts";
 import type { Project } from "../../src/lib/projects-api.ts";
 import type { ServiceList } from "../../src/lib/services-api.ts";
+import type { Settings } from "../../src/lib/settings-api.ts";
 import type { SourceMapFile, SourceMapRelease } from "../../src/lib/source-maps-api.ts";
 import type { Speed } from "../../src/lib/speed-api.ts";
 import type { SpanDetail, TraceDetail, TraceList, TraceSummary } from "../../src/lib/traces-api.ts";
@@ -43,8 +43,8 @@ import type { Activity, User, UserActivity, UserList } from "../../src/lib/users
  */
 export interface FakeApi {
   signedIn: boolean;
-  /** The signed-in user's organizations; PATCH changes them (the owner's only). */
-  organizations: Organization[];
+  /** The instance's settings; PATCH changes them (the owner's only: canEdit). */
+  settings: Settings;
   projects: Project[];
   /**
    * Answers GET /api/projects/:id/analytics. A Response stands for an error.
@@ -1029,12 +1029,12 @@ export interface FakeReplays {
   configured: boolean;
   count: number;
   bytes: number;
-  /** What the organization's other projects store. */
+  /** What the other projects store. */
   otherProjectsBytes: number;
   limitBytes: number;
 }
 
-/** Three replays, 1.5 MB, of 5 GB the organization may keep. */
+/** Three replays, 1.5 MB, of 5 GB the instance may keep. */
 export const fakeReplays = (): FakeReplays => ({
   configured: true,
   count: 3,
@@ -1050,7 +1050,7 @@ function replayOverview(api: FakeApi, projectId: string) {
     configured: api.replays.configured,
     mode: project?.replayMode ?? "off",
     replays: { count: api.replays.count, bytes: api.replays.bytes },
-    organization: {
+    instance: {
       storedBytes: api.replays.otherProjectsBytes + api.replays.bytes,
       limitBytes: api.replays.limitBytes,
     },
@@ -1062,7 +1062,7 @@ export interface FakeSourceMaps {
   /** false: the install has no object store. */
   configured: boolean;
   limitBytes: number;
-  /** What the organization's other projects store. */
+  /** What the other projects store. */
   otherProjectsBytes: number;
   files: SourceMapFile[];
 }
@@ -1116,7 +1116,7 @@ function sourceMapOverview(maps: FakeSourceMaps, order: "newest" | "oldest", lim
   }
   return {
     configured: maps.configured,
-    organization: {
+    instance: {
       storedBytes: maps.otherProjectsBytes + maps.files.reduce((sum, file) => sum + file.bytes, 0),
       limitBytes: maps.limitBytes,
     },
@@ -1400,17 +1400,14 @@ export function fakeList(query: URLSearchParams) {
   return { rows, hasMore: offset + limit < names.length };
 }
 
-export const ORGANIZATION: Organization = {
-  id: "99999999-9999-4999-8999-999999999999",
+export const SETTINGS: Settings = {
   name: "Acme Inc",
   timeZone: "Asia/Singapore",
-  role: "owner",
-  createdAt: "2026-10-01T00:00:00.000Z",
+  canEdit: true,
 };
 
 export const PROJECT: Project = {
   id: "11111111-1111-4111-8111-111111111111",
-  organizationId: ORGANIZATION.id,
   name: "Main site",
   publicKey: "pk_test",
   allowedHostnames: ["example.com"],
@@ -2026,24 +2023,19 @@ async function answer(api: FakeApi, url: URL, init: RequestInit | undefined): Pr
   if (!api.signedIn && !path.startsWith("/api/auth/") && path !== "/api/setup") {
     return json({ error: "unauthorized", message: "Sign in to continue." }, 401);
   }
-  if (path === "/api/organizations") {
-    return json({ organizations: api.organizations });
-  }
-  const organization = /^\/api\/organizations\/([^/]+)$/.exec(path);
-  const ownOrganization = api.organizations.find((item) => item.id === organization?.[1]);
-  if (ownOrganization !== undefined && init?.method === "PATCH") {
-    if (ownOrganization.role !== "owner") {
+  if (path === "/api/settings" && init?.method === "PATCH") {
+    if (!api.settings.canEdit) {
       return json(
-        { error: "forbidden", message: "Only the organization's owner can change its settings." },
+        { error: "forbidden", message: "Only the owner can change these settings." },
         403,
       );
     }
     const changes: unknown = JSON.parse(typeof init.body === "string" ? init.body : "{}");
-    const updated = { ...ownOrganization, ...(typeof changes === "object" ? changes : {}) };
-    api.organizations = api.organizations.map((item) =>
-      item.id === ownOrganization.id ? updated : item,
-    );
-    return json({ organization: updated });
+    api.settings = { ...api.settings, ...(typeof changes === "object" ? changes : {}) };
+    return json({ settings: api.settings });
+  }
+  if (path === "/api/settings") {
+    return json({ settings: api.settings });
   }
   if (path === "/api/projects" && init?.method === "POST") {
     return createProject(api, JSON.parse(typeof init.body === "string" ? init.body : "null"));
@@ -2297,7 +2289,7 @@ export async function fakeFetch(input: RequestInfo | URL, init?: RequestInit): P
 export function installFakeApi(overrides: Partial<FakeApi> = {}): FakeApi {
   active = {
     signedIn: true,
-    organizations: [ORGANIZATION],
+    settings: SETTINGS,
     projects: [PROJECT],
     analytics: (_projectId, _period, _query, api) => analyticsFixture({ goals: api.goals }),
     goals: fakeGoals(),

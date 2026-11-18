@@ -7,9 +7,9 @@ import { requireSession } from "../auth/routes.ts";
 import type { ClickHouseClient } from "../clickhouse/clickhouse.ts";
 import { clickHouseErrorHandler } from "../clickhouse/route-errors.ts";
 import type { Database } from "../db/schema.ts";
-import { type ProjectAccess, requireProjectAccess } from "../organizations/access.ts";
+import { type ProjectAccess, requireProjectAccess } from "../projects/access.ts";
 import { PERIODS, type RangeQuery } from "../reports/routes.ts";
-import { dashboardReader, OrganizationLimiter } from "../telemetry/dashboard-limit.ts";
+import { DashboardQueryLimiter, dashboardReader } from "../telemetry/dashboard-limit.ts";
 import { telemetryRange } from "../telemetry/dashboard-query.ts";
 import { bucketsOf } from "../telemetry/metrics.ts";
 import {
@@ -118,7 +118,7 @@ const NO_CHECK: Problem = {
  * check's state and uptime over the last 24 hours, 7 days, and 30 days;
  * changes, which need the dashboard's origin; and a check's page: its
  * response times and latest failures (ClickHouse, with the dashboard's
- * query settings and per-organization limit), its uptime over the
+ * query settings and limit), its uptime over the
  * period, and its incidents (PostgreSQL). Like every project route, each
  * runs requireProjectAccess first, and reads only the project it found.
  */
@@ -132,8 +132,8 @@ export const uptimeRoutes: FastifyPluginCallback<{
   /** Resolves a check's host when it is saved; tests pass a fake. */
   lookup?: Lookup;
   now?: () => Date;
-  /** The organization's dashboard query limit, shared with the telemetry pages. */
-  limiter?: OrganizationLimiter;
+  /** The dashboard's query limit, shared with the telemetry pages. */
+  limiter?: DashboardQueryLimiter;
 }> = (
   app,
   {
@@ -144,7 +144,7 @@ export const uptimeRoutes: FastifyPluginCallback<{
     policy,
     lookup = systemLookup,
     now = () => new Date(),
-    limiter = new OrganizationLimiter(),
+    limiter = new DashboardQueryLimiter(),
   },
   done,
 ) => {
@@ -321,7 +321,7 @@ export const uptimeRoutes: FastifyPluginCallback<{
       const { check, range, timeZone } = found;
       const moment = now();
       const buckets = bucketsOf(range, moment);
-      const reader = dashboardReader(clickhouse, limiter, accessOf(request).organizationId, reply);
+      const reader = dashboardReader(clickhouse, limiter, reply);
       const target = { id: check.id, projectId: range.projectId };
       const chart = await responseChart(reader, target, buckets);
       const failures = await latestFailures(reader, target, range.from, range.to);

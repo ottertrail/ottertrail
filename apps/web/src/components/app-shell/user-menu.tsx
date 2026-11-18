@@ -17,7 +17,7 @@ export function UserMenu() {
 
   async function signOut() {
     await authClient.signOut();
-    // The next person to sign in here may belong to another organization:
+    // The next person to sign in here may be another user of this instance:
     // nothing of this one's may show for them, not even while refetching.
     queryClient.clear();
     await navigate({ to: "/sign-in" });

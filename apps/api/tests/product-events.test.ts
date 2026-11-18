@@ -6,7 +6,7 @@ import type { NewEvent } from "../src/collection/event-store.ts";
 import { signedInDashboard } from "./helpers/dashboard.ts";
 import { insertProject } from "./helpers/projects.ts";
 
-/** Noon on 17 November 2026 in UTC, the organization's timezone. */
+/** Noon on 17 November 2026 in UTC, the instance's timezone. */
 const NOW = new Date("2026-11-17T12:00:00.000Z");
 const hoursAgo = (hours: number) => new Date(NOW.getTime() - hours * 3_600_000);
 
@@ -35,7 +35,6 @@ beforeAll(async () => {
   dashboard = await signedInDashboard({ now: () => NOW });
   projectId = (
     await insertProject(dashboard.db, {
-      organization_id: dashboard.organizationId,
       name: "App",
     })
   ).id;
@@ -172,7 +171,6 @@ describe("property filters, at their edges", () => {
   beforeAll(async () => {
     other = (
       await insertProject(dashboard.db, {
-        organization_id: dashboard.organizationId,
         name: "Edges",
       })
     ).id;

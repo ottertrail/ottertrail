@@ -7,7 +7,7 @@ import type { ClickHouseClient } from "../clickhouse/clickhouse.ts";
 import { clickHouseErrorHandler } from "../clickhouse/route-errors.ts";
 import { ENVIRONMENT_PATTERN, environmentOf } from "../collection/environment.ts";
 import type { Database } from "../db/schema.ts";
-import { type ProjectAccess, requireProjectAccess } from "../organizations/access.ts";
+import { type ProjectAccess, requireProjectAccess } from "../projects/access.ts";
 import { dayIn } from "../visitors/visitor-ids.ts";
 import { LIST_REPORTS, type ListReport, projectAnalytics, projectList } from "./analytics.ts";
 import { FILTER_NAMES, type FilterName, MAX_LIMIT, type ReportFilter } from "./reports.ts";
@@ -15,7 +15,7 @@ import { FILTER_NAMES, type FilterName, MAX_LIMIT, type ReportFilter } from "./r
 /** The longest range one request may cover, to bound the work it causes. */
 export const MAX_RANGE_DAYS = 366;
 
-/** Ranges that end today in the organization's timezone, which the browser does not know. */
+/** Ranges that end today in the instance's timezone, which the browser does not know. */
 export const PERIODS = ["today", "7d", "30d", "90d", "12m"] as const;
 export type Period = (typeof PERIODS)[number];
 
@@ -170,8 +170,8 @@ function accessOf(request: { projectAccess: ProjectAccess | null }): ProjectAcce
  * GET /api/projects/:id/analytics?from=YYYY-MM-DD&to=YYYY-MM-DD[&limit=10]
  * GET /api/projects/:id/analytics?period=7d[&environment=staging][&limit=10][&country=DE&page=/pricing …]
  *
- * Every report of the analytics page for whole days in the timezone of the
- * project's organization, from and to included (see analytics.ts), in one
+ * Every report of the analytics page for whole days in the instance's
+ * timezone, from and to included (see analytics.ts), in one
  * environment ("production" unless named). A period (today, 7d, 30d, 90d,
  * 12m) ends today in that timezone. Filters (FILTER_NAMES) narrow every
  * report to the visits that match all of them.

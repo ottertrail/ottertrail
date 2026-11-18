@@ -5,7 +5,7 @@ export const VISIT_TIMEOUT_MS = 30 * 60 * 1000;
 
 /**
  * How far before and after a range the query reads. Visitor IDs change at
- * midnight in the organization's timezone, so every visit lies within one
+ * midnight in the instance's timezone, so every visit lies within one
  * local day, and no local day is longer than 25 hours (when clocks go back).
  * With this much on each side, the query sees every visit that touches the
  * range from its first event to its last: whether it started inside the
@@ -84,7 +84,7 @@ export interface Visit {
  *   not counted, even when a new visit starts right after it. At the same
  *   moment, an engagement event comes before a pageview: it reports the
  *   time up to that moment.
- * - Visitor IDs change at midnight in the organization's timezone, so a
+ * - Visitor IDs change at midnight in the instance's timezone, so a
  *   visit that crosses midnight counts as two. Joining them would link a
  *   visitor's IDs on two days, which daily salts exist to prevent.
  * - Entry and exit pages are the first and last pageviews. Referrer,

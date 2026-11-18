@@ -118,7 +118,7 @@ describe("VisitorIds", () => {
 
   /**
    * A VisitorIds whose clock reads `iso`, as one API process would see it,
-   * for projects of an organization in `timeZone`.
+   * with the instance's timezone `timeZone`.
    */
   function visitorsAt(iso: string, timeZone = "UTC") {
     const visitors = new VisitorIds(db(), { now: () => Date.parse(iso) });
@@ -167,7 +167,7 @@ describe("VisitorIds", () => {
     expect(new Set(ids).size).toBe(3);
   });
 
-  test("starts a new day at midnight in the organization's timezone", async () => {
+  test("starts a new day at midnight in the instance's timezone", async () => {
     // 07:30 and 08:30 in Singapore are the same local day but different UTC days.
     const beforeUtcMidnight = "2026-11-16T23:30:00Z";
     const afterUtcMidnight = "2026-11-17T00:30:00Z";
@@ -183,7 +183,7 @@ describe("VisitorIds", () => {
     );
   });
 
-  test("keeps separate salts per timezone: organizations elsewhere get their own", async () => {
+  test("keeps separate salts per timezone, so a new timezone does not reuse another's days", async () => {
     const moment = "2026-11-16T12:00:00Z";
     const utc = await visitorsAt(moment, "UTC").idFor(visit(moment));
     const singapore = await visitorsAt(moment, "Asia/Singapore").idFor(visit(moment));

@@ -7,8 +7,8 @@ import type { Database } from "../db/schema.ts";
 
 /**
  * Returns the calendar day of a moment in a timezone, as "YYYY-MM-DD".
- * Salts change at midnight in the organization's timezone, the same days
- * that its reports count in, so one visit is never split across two salts
+ * Salts change at midnight in the instance's timezone, the same days
+ * that reports count in, so one visit is never split across two salts
  * within a reported day.
  */
 export function dayIn(timeZone: string): (moment: Date) => string {
@@ -88,9 +88,9 @@ interface SaltKey {
  * Hands out visitor IDs, creating each salt the first time it is needed and
  * deleting salts no event can still need.
  *
- * There is one salt per timezone and day: each organization's visitor IDs
- * change at its own midnight, and organizations in the same timezone share
- * salts (the project in every ID keeps them apart). Salts live in
+ * There is one salt per timezone and day: visitor IDs change at midnight
+ * in the instance's timezone, and a visit on the day it changes is not
+ * split. Projects share salts (the project in every ID keeps them apart). Salts live in
  * PostgreSQL so every API process and every restart uses the same salt for
  * the same day. Each process caches them in memory.
  */
@@ -109,11 +109,11 @@ export class VisitorIds {
 
   /**
    * The visitor ID for an event, using the salt of the day the event
-   * happened in its organization's timezone.
+   * happened in the instance's timezone.
    */
   async idFor(input: {
     projectId: string;
-    /** The project's organization's timezone. */
+    /** The instance's timezone. */
     timeZone: string;
     ip: string;
     userAgent: string;

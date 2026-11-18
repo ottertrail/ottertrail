@@ -23,7 +23,7 @@ This makes definitions changeable. If the session timeout changes from 30 to 20 
 
 ### The events table
 
-ClickHouse's `events` table holds them (`apps/api/src/clickhouse/migrations.ts`; [clickhouse.md](clickhouse.md)). Until 18 November 2026 they arrived in PostgreSQL first, in a table with the same columns (`apps/api/src/db/migrations/`, 0001 to 0023; 0024 drops it).
+ClickHouse's `events` table holds them (`apps/api/src/clickhouse/migrations.ts`; [clickhouse.md](clickhouse.md)). Until 18 November 2026 they arrived in PostgreSQL first, in a table with the same columns; that table is gone, and so are the migrations that made it, squashed since into one.
 
 | Column              | Meaning                                                                     | Set by |
 | ------------------- | --------------------------------------------------------------------------- | ------ |
@@ -37,7 +37,7 @@ ClickHouse's `events` table holds them (`apps/api/src/clickhouse/migrations.ts`;
 | `utm_*` (5 columns) | Campaign tags from the page URL: source, medium, campaign, term, content    | Sender |
 | `properties`        | Custom details as a JSON object, such as `{ "plan": "free" }`, at most 8 KB | Sender |
 
-Later steps added columns: browser, OS, device, country, region, and city (step 4), visitor (step 5), and session (step 6). Migration 0014 adds `environment` and `release` ([Environments and releases](#environments-and-releases)), 0015 `user_id` ([Known users](#known-users)), and 0018 five `error_*` columns that only an `error` event has ([errors](errors.md#2-storage)).
+Later steps added columns: browser, OS, device, country, region, and city (step 4), visitor (step 5), and session (step 6). Then came `environment` and `release` ([Environments and releases](#environments-and-releases)), `user_id` ([Known users](#known-users)), and five `error_*` columns that only an `error` event has ([errors](errors.md#2-storage)).
 
 ### Two timestamps
 
@@ -81,7 +81,7 @@ Almost every report asks "this project, between these two times", so the table i
 
 Each project keeps its events forever unless its owner chooses a limit (`retention_days`: 6 months, 1 year, 2 years, or 5 years in the dashboard; any number from 30 to 3,650 days through the API). Nothing is deleted until then: how long to keep data is the customer's decision.
 
-The worker (`apps/api/src/worker.ts`, a process of its own beside the API) deletes events older than the limit from ClickHouse at start and every 6 hours (`retention/retention.ts`; [clickhouse.md](clickhouse.md#retention-and-deleting-a-project)). The cut-off is a midnight in the timezone of the project's organization, the limit's number of days before today there, so a report never shows a day with only some of its events. One statement deletes the expired events of a thousand projects, and the rows usually leave the disk in the same run ([clickhouse.md](clickhouse.md#retention-and-deleting-a-project)). Running the job twice, or in two workers at once, is harmless.
+The worker (`apps/api/src/worker.ts`, a process of its own beside the API) deletes events older than the limit from ClickHouse at start and every 6 hours (`retention/retention.ts`; [clickhouse.md](clickhouse.md#retention-and-deleting-a-project)). The cut-off is a midnight in the instance's timezone, the limit's number of days before today there, so a report never shows a day with only some of its events. One statement deletes the expired events of a thousand projects, and the rows usually leave the disk in the same run ([clickhouse.md](clickhouse.md#retention-and-deleting-a-project)). Running the job twice, or in two workers at once, is harmless.
 
 ### Not done yet
 
@@ -172,7 +172,7 @@ Content-Type: application/json
                "userId": "42", "path": "/checkout", "properties": { "plan": "team" } }] }
 ```
 
-- **The secret key** (`sk_` and 32 hex characters) is the project's own, shown to its organization's members in the project settings, and replaceable there. It must stay on the server: the endpoint sends no CORS headers, so a page cannot even read its answers. It is stored as it is, not as a hash, because checking a signature means making it again; anyone who can read the database can write events directly anyway.
+- **The secret key** (`sk_` and 32 hex characters) is the project's own, shown to dashboard users in the project settings, and replaceable there. It must stay on the server: the endpoint sends no CORS headers, so a page cannot even read its answers. It is stored as it is, not as a hash, because checking a signature means making it again; anyone who can read the database can write events directly anyway.
 - **Checked before the body is read:** a missing or malformed key gets 401, and requests per IP address are limited (bursts of 600, then 50 a second) only to bound made-up keys, each of which costs a lookup. An unknown key gets 401 after the lookup.
 - **Every event belongs to a user** (`userId`, required, the same rule as in browsers) and to no visitor: it shows in the user's activity (Users), not in web analytics, which counts what browsers send. `path` is optional; the user's page shows an event without one by its name only. `pageview` and `engagement` are the tracker's and are refused.
 - **The server's clock is trusted:** `occurredAt` more than 5 minutes ahead is refused (400), more than 24 hours old is counted as too old, as for browsers. No location, browser, or device is recorded: the request comes from the site's server, not the user's.
@@ -260,13 +260,13 @@ The time the request spent on the way is not seen, so an event is placed that mu
 
 Both limits use a token bucket: each key has a bucket of tokens that refills at a steady rate. A request (or each event in it) spends tokens; a full bucket allows a short burst, and the refill rate is the sustained limit. An empty bucket answers 429 with `Retry-After`, the seconds until enough tokens return.
 
-| Limit                              | Burst        | Sustained                                            | Checked                 |
-| ---------------------------------- | ------------ | ---------------------------------------------------- | ----------------------- |
-| Per client IP                      | 120 requests | 2 requests/second                                    | Before the body is read |
-| Per project                        | 2,000 events | 200 events/second                                    | After the key is known  |
-| Per organization, all its projects | 6,000 events | 600 events/second (`ORGANIZATION_EVENTS_PER_SECOND`) | With the project's      |
+| Limit                      | Burst        | Sustained                                        | Checked                 |
+| -------------------------- | ------------ | ------------------------------------------------ | ----------------------- |
+| Per client IP              | 120 requests | 2 requests/second                                | Before the body is read |
+| Per project                | 2,000 events | 200 events/second                                | After the key is known  |
+| Per instance, all projects | 6,000 events | 600 events/second (`INSTANCE_EVENTS_PER_SECOND`) | With the project's      |
 
-A batch spends from its project's bucket and its organization's, or from neither: without the second, a customer could add projects to take more of an instance every customer shares (`EventBudget` in `rate-limiter.ts`). Server-side events spend from the same buckets, so a flood of browser events with an organization's public keys, which anyone can copy, can hold its servers' events back too (429, to retry). An install with one organization may raise its limit. A refusal's `Retry-After` waits for both buckets. The buckets live in the API process's memory: each process enforces its own limits, and a restart resets them. Ottertrail runs one API process per instance for now.
+A batch spends from its project's bucket and the instance's, or from neither: the first keeps one project from crowding out the others, and the second keeps the instance's total bounded however many projects it has (`EventBudget` in `rate-limiter.ts`). Server-side events spend from the same buckets, so a flood of browser events with a project's public key, which anyone can copy, can hold its servers' events back too (429, to retry). An instance that needs more may raise its limit. A refusal's `Retry-After` waits for both buckets. The buckets live in the API process's memory: each process enforces its own limits, and a restart resets them. Ottertrail runs one API process per instance for now.
 
 Behind a proxy (Cloudflare, Caddy), every request seems to come from the proxy's address. Set `TRUST_PROXY` (see the README) so the API reads the client's address from `X-Forwarded-For`. Leave it unset without a proxy: otherwise any client could claim any address.
 
@@ -395,7 +395,7 @@ It asks for a project's public key; the project must allow the hostname `localho
 
 ## 4. Enrichment
 
-Each request carries two clues the visitor never typed: the `User-Agent` header names the browser and operating system, and the IP address shows roughly where the visitor is. When events arrive, the API turns those into columns. Code: `apps/api/src/enrichment/`; columns added by migration `0003_add_event_enrichment`.
+Each request carries two clues the visitor never typed: the `User-Agent` header names the browser and operating system, and the IP address shows roughly where the visitor is. When events arrive, the API turns those into columns. Code: `apps/api/src/enrichment/`; the columns are in ClickHouse's events table (migration `0001_create_tables`).
 
 | Column            | From       | Example                             |
 | ----------------- | ---------- | ----------------------------------- |
@@ -507,7 +507,7 @@ Every range is checked before use (`parseRange` in `data-centers.ts`), so one ba
 
 ## 5. Visitors
 
-Counting unique visitors without cookies, local storage, or anything else kept on the visitor's device. Code: `apps/api/src/visitors/visitor-ids.ts`; migration `0004_add_visitor_ids`.
+Counting unique visitors without cookies, local storage, or anything else kept on the visitor's device. Code: `apps/api/src/visitors/visitor-ids.ts`; the salts are in PostgreSQL's `visitor_salts` table (migration `0001_create_schema`).
 
 ### The visitor ID
 
@@ -519,9 +519,9 @@ The same browser on the same network gets the same ID for the rest of the day, s
 
 ### One salt per timezone and day
 
-Each organization has a timezone, an IANA name such as `Asia/Singapore`. The organization the setup link creates gets the deployment's `TIMEZONE` (default `UTC`); its owner can change it in the organization's settings. A new salt starts at its midnight, and reports (step 7) count days in the same timezone, so a visit is never split across two salts inside one reported day. With a UTC midnight, a visitor in Singapore reading from 07:30 to 08:30 local time would cross 00:00 UTC and be counted twice that morning.
+The instance has a timezone, an IANA name such as `Asia/Singapore`, in its settings. The setup link sets it from the deployment's `TIMEZONE` (default `UTC`); the owner can change it on the dashboard's Settings page ([dashboard](dashboard.md#instance-settings)). A new salt starts at its midnight, and reports (step 7) count days in the same timezone, so a visit is never split across two salts inside one reported day. With a UTC midnight, a visitor in Singapore reading from 07:30 to 08:30 local time would cross 00:00 UTC and be counted twice that morning.
 
-`visitor_salts` holds one salt per timezone and day: organizations in different timezones never share one, and organizations in the same timezone do, which is harmless because the project is part of every visitor ID. Changing an organization's timezone moves where days start in all its reports, past days included, and gives its visitors new IDs from the change until midnight.
+`visitor_salts` holds one salt per timezone and day, and the project is part of every visitor ID, so projects sharing a salt never share visitor IDs. Changing the instance's timezone moves where days start in all its reports, past days included, and gives its visitors new IDs from the change until midnight.
 
 Aliases become the name Node.js resolves them to: `singapore` is stored as `Asia/Singapore`, `GMT` as `UTC`.
 
@@ -619,9 +619,9 @@ A visit counts in the range in which it **started**. Visitor IDs change at midni
 
 ### Midnight
 
-Visitor IDs change at midnight in the organization's timezone (step 5), so a visit that crosses midnight counts as two: one that ends before midnight and one that starts after it. Joining them would need a stored link between the visitor's IDs on the two days, and the link would outlive the salts. Anyone who could compute today's ID from a guessed address could follow it back to yesterday's events, which is what daily salts exist to prevent.
+Visitor IDs change at midnight in the instance's timezone (step 5), so a visit that crosses midnight counts as two: one that ends before midnight and one that starts after it. Joining them would need a stored link between the visitor's IDs on the two days, and the link would outlive the salts. Anyone who could compute today's ID from a guessed address could follow it back to yesterday's events, which is what daily salts exist to prevent.
 
-The first version stored such a link (`previous_visitor_id`) on every event in the first 30 minutes after midnight. A review found the privacy problem; migration 0006 clears and removes the column. The cost is small: a visit is split only if it is in progress at midnight, so a 10-minute visit has about a 10 in 1,440 (0.7%) chance.
+The first version stored such a link (`previous_visitor_id`) on every event in the first 30 minutes after midnight. A review found the privacy problem, and the column was removed. The cost is small: a visit is split only if it is in progress at midnight, so a 10-minute visit has about a 10 in 1,440 (0.7%) chance.
 
 ### Try it
 
@@ -630,7 +630,7 @@ vp run visits                      # the first project, last 24 hours
 vp run visits -- Playground 6      # a project by name, last 6 hours
 ```
 
-Times are shown in the timezone of the project's organization.
+Times are shown in the instance's timezone.
 
 ### Not done yet
 
@@ -641,9 +641,9 @@ Times are shown in the timezone of the project's organization.
 
 Reports turn events and visits into the numbers a dashboard shows. Code: `apps/api/src/reports/reports.ts`. Like visits, every number is computed from the stored events when asked. Reports read the events in ClickHouse, where the API stores them ([clickhouse.md](clickhouse.md)); PostgreSQL counts the days.
 
-### Days in the organization's timezone
+### Days in the instance's timezone
 
-A report covers whole calendar days in the timezone of the project's organization, the timezone that also starts each visitor salt. `localDays` asks PostgreSQL where those days begin and end (`'2026-11-16'::date::timestamp at time zone 'Asia/Singapore'`), so a 23- or 25-hour day, when clocks change for daylight saving, comes out right. Charts count by local day too, and days without data appear with zeros.
+A report covers whole calendar days in the instance's timezone, the timezone that also starts each visitor salt. `localDays` asks PostgreSQL where those days begin and end (`'2026-11-16'::date::timestamp at time zone 'Asia/Singapore'`), so a 23- or 25-hour day, when clocks change for daylight saving, comes out right. Charts count by local day too, and days without data appear with zeros.
 
 ### The numbers
 
@@ -715,7 +715,7 @@ The last day is today, so it is partial.
 
 ### Speed
 
-`vp run bench:reports -- <visits> <days>` fills a temporary PostgreSQL schema (at migration 0023, the last with an events table) with fake data, copies it to a temporary ClickHouse database, times each report (the median of three runs after a warm-up), and drops both. Each fake visit has 1-5 pages two minutes apart and an engagement report per page.
+`vp run bench:reports -- <visits> <days>` makes fake data in a temporary PostgreSQL schema, copies it to a temporary ClickHouse database, times each report (the median of three runs after a warm-up), and drops both. Each fake visit has 1-5 pages two minutes apart and an engagement report per page.
 
 In ClickHouse, on the development stack (Apple M4 Max; Podman's 2 GB machine, shared with other containers):
 

@@ -3,7 +3,7 @@ import { afterAll, beforeAll, describe, expect, test } from "vite-plus/test";
 
 import { QueryParams, queryRows } from "../src/clickhouse/query.ts";
 import { clickHouseErrorHandler } from "../src/clickhouse/route-errors.ts";
-import { DashboardBusyError, OrganizationLimiter } from "../src/telemetry/dashboard-limit.ts";
+import { DashboardBusyError, DashboardQueryLimiter } from "../src/telemetry/dashboard-limit.ts";
 import { DASHBOARD_SETTINGS } from "../src/telemetry/dashboard-query.ts";
 import { createTestClickHouse, type TestClickHouse } from "./helpers/test-clickhouse.ts";
 
@@ -61,19 +61,17 @@ describe("a dashboard query's memory", () => {
   });
 });
 
-describe("an organization's queries in flight", () => {
-  test("are at most the limit; the next waits for a place, other organizations do not", async () => {
-    const limiter = new OrganizationLimiter({ max: 2, waitMs: 5000 });
+describe("the dashboard's queries in flight", () => {
+  test("are at most the limit; the next waits for a place", async () => {
+    const limiter = new DashboardQueryLimiter({ max: 2, waitMs: 5000 });
     const held = [later(), later()];
-    const running = held.map((hold) => limiter.run("org-a", () => hold.promise));
-    expect(limiter.running("org-a")).toBe(2);
+    const running = held.map((hold) => limiter.run(() => hold.promise));
+    expect(limiter.running).toBe(2);
 
     let third = false;
-    const waiting = limiter.run("org-a", async () => {
+    const waiting = limiter.run(async () => {
       third = true;
     });
-    // Another organization is not held up.
-    await limiter.run("org-b", async () => undefined);
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(third).toBe(false);
 
@@ -82,14 +80,14 @@ describe("an organization's queries in flight", () => {
     expect(third).toBe(true);
     held[1]?.settle();
     await Promise.all(running);
-    expect(limiter.running("org-a")).toBe(0);
+    expect(limiter.running).toBe(0);
   });
 
   test("past the wait, a query is refused, and the route answers 503 with Retry-After", async () => {
-    const limiter = new OrganizationLimiter({ max: 1, waitMs: 30 });
+    const limiter = new DashboardQueryLimiter({ max: 1, waitMs: 30 });
     const hold = later();
-    const running = limiter.run("org-a", () => hold.promise);
-    const refused = await limiter.run("org-a", async () => "ran").catch((error: unknown) => error);
+    const running = limiter.run(() => hold.promise);
+    const refused = await limiter.run(async () => "ran").catch((error: unknown) => error);
     expect(refused).toBeInstanceOf(DashboardBusyError);
     expect(await answerTo(refused)).toEqual({
       status: 503,
@@ -99,13 +97,13 @@ describe("an organization's queries in flight", () => {
     hold.settle();
     await running;
     // The refused query left no place taken.
-    expect(limiter.running("org-a")).toBe(0);
-    expect(await limiter.run("org-a", async () => "ran")).toBe("ran");
+    expect(limiter.running).toBe(0);
+    expect(await limiter.run(async () => "ran")).toBe("ran");
   });
 
-  test("one request holds at most its share of the organization's places", async () => {
-    const limiter = new OrganizationLimiter({ max: 4, waitMs: 5000 });
-    const gate = limiter.gate("org-a", undefined, 2);
+  test("one request holds at most its share of the places", async () => {
+    const limiter = new DashboardQueryLimiter({ max: 4, waitMs: 5000 });
+    const gate = limiter.gate(undefined, 2);
     const held = [later(), later(), later()];
     const started: number[] = [];
     const queries = held.map((hold, index) =>
@@ -115,46 +113,46 @@ describe("an organization's queries in flight", () => {
       }),
     );
     await new Promise((resolve) => setTimeout(resolve, 20));
-    // Two run; the third waits, though the organization has places left for its other pages.
+    // Two run; the third waits, though places are left for other pages.
     expect(started).toEqual([0, 1]);
-    expect(limiter.running("org-a")).toBe(2);
-    expect(await limiter.run("org-a", async () => "another page")).toBe("another page");
+    expect(limiter.running).toBe(2);
+    expect(await limiter.run(async () => "another page")).toBe("another page");
     held[0]?.settle();
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(started).toEqual([0, 1, 2]);
     held[1]?.settle();
     held[2]?.settle();
     await Promise.all(queries);
-    expect(limiter.running("org-a")).toBe(0);
+    expect(limiter.running).toBe(0);
   });
 
   test("a request's waiting queries leave when it is closed", async () => {
-    const limiter = new OrganizationLimiter({ max: 4, waitMs: 5000 });
+    const limiter = new DashboardQueryLimiter({ max: 4, waitMs: 5000 });
     const closed = new AbortController();
-    const gate = limiter.gate("org-a", closed.signal, 1);
+    const gate = limiter.gate(closed.signal, 1);
     const hold = later();
     const running = gate(() => hold.promise);
     const waiting = gate(async () => "ran");
     // The first has its place; the second waits for the request's.
     await new Promise((resolve) => setTimeout(resolve, 10));
-    expect(limiter.running("org-a")).toBe(1);
+    expect(limiter.running).toBe(1);
     closed.abort(new Error("closed"));
     await expect(waiting).rejects.toThrow("closed");
     hold.settle();
     await running;
-    expect(limiter.running("org-a")).toBe(0);
+    expect(limiter.running).toBe(0);
   });
 
   test("a waiting query leaves when its request is closed", async () => {
-    const limiter = new OrganizationLimiter({ max: 1, waitMs: 5000 });
+    const limiter = new DashboardQueryLimiter({ max: 1, waitMs: 5000 });
     const hold = later();
-    const running = limiter.run("org-a", () => hold.promise);
+    const running = limiter.run(() => hold.promise);
     const closed = new AbortController();
-    const waiting = limiter.run("org-a", async () => "ran", closed.signal);
+    const waiting = limiter.run(async () => "ran", closed.signal);
     closed.abort(new Error("closed"));
     await expect(waiting).rejects.toThrow("closed");
     hold.settle();
     await running;
-    expect(limiter.running("org-a")).toBe(0);
+    expect(limiter.running).toBe(0);
   });
 });

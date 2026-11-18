@@ -6,7 +6,7 @@
  *   vp run visits -- Playground 6            (a project by name, last 6 hours)
  *   vp run visits -- Playground 6 staging    (another environment than production)
  *
- * Times are shown in the timezone of the project's organization. Visits are
+ * Times are shown in the instance's timezone. Visits are
  * worked out from the events in ClickHouse.
  */
 import { createClickHouse } from "../src/clickhouse/clickhouse.ts";
@@ -14,6 +14,7 @@ import type { Reader } from "../src/clickhouse/query.ts";
 import { DEFAULT_ENVIRONMENT } from "../src/collection/environment.ts";
 import { loadConfig } from "../src/config.ts";
 import { createDatabase } from "../src/db/database.ts";
+import { readInstanceSettings } from "../src/settings/settings.ts";
 import { findVisits } from "../src/visits/visits.ts";
 
 // `vp run visits -- …` passes the "--" separator through; skip it.
@@ -35,8 +36,7 @@ const seconds = (ms: number) => `${Math.round(ms / 1000)} s`;
 try {
   const query = db
     .selectFrom("projects")
-    .innerJoin("organizations", "organizations.id", "projects.organization_id")
-    .select(["projects.id", "projects.name", "organizations.time_zone"])
+    .select(["projects.id", "projects.name"])
     .orderBy("projects.created_at")
     .limit(1);
   const project = await (
@@ -50,8 +50,9 @@ try {
     );
     process.exitCode = 1;
   } else {
+    const { timeZone } = await readInstanceSettings(db);
     const time = new Intl.DateTimeFormat("en-GB", {
-      timeZone: project.time_zone,
+      timeZone,
       dateStyle: "short",
       timeStyle: "medium",
     });
@@ -64,7 +65,7 @@ try {
       to,
     });
     console.log(
-      `${project.name}, ${environment.toLowerCase()}: ${visits.length} visits started in the last ${hours} hours (${project.time_zone})`,
+      `${project.name}, ${environment.toLowerCase()}: ${visits.length} visits started in the last ${hours} hours (${timeZone})`,
     );
     console.table(
       visits.map((visit) => ({

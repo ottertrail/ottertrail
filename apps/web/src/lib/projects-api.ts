@@ -5,8 +5,6 @@ import { apiRequest, expectShape } from "./api";
 /** A project, as GET /api/projects returns it. */
 export interface Project {
   id: string;
-  /** The organization that owns it. */
-  organizationId: string;
   name: string;
   publicKey: string;
   allowedHostnames: string[];
@@ -32,7 +30,6 @@ function isProject(value: unknown): value is Project {
   return (
     isRecord(value) &&
     typeof value.id === "string" &&
-    typeof value.organizationId === "string" &&
     typeof value.name === "string" &&
     typeof value.publicKey === "string" &&
     Array.isArray(value.allowedHostnames) &&

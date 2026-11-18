@@ -8,9 +8,9 @@ import { requireSession } from "../auth/routes.ts";
 import type { ClickHouseClient } from "../clickhouse/clickhouse.ts";
 import { clickHouseErrorHandler } from "../clickhouse/route-errors.ts";
 import type { Database } from "../db/schema.ts";
-import { type ProjectAccess, requireProjectAccess } from "../organizations/access.ts";
+import { type ProjectAccess, requireProjectAccess } from "../projects/access.ts";
 import { RANGE_PROPERTIES, type RangeQuery } from "../reports/routes.ts";
-import { dashboardReader, OrganizationLimiter } from "./dashboard-limit.ts";
+import { DashboardQueryLimiter, dashboardReader } from "./dashboard-limit.ts";
 import {
   CURSOR_PATTERN,
   cursorOf,
@@ -145,8 +145,8 @@ export const telemetryDashboardRoutes: FastifyPluginCallback<{
   /** Days telemetry is kept (TELEMETRY_RETENTION_DAYS): nothing older is read. */
   retentionDays: number;
   now?: () => Date;
-  /** Queries in flight per organization (dashboard-limit.ts); tests pass a smaller one. */
-  limiter?: OrganizationLimiter;
+  /** Queries in flight on this process (dashboard-limit.ts); tests pass a smaller one. */
+  limiter?: DashboardQueryLimiter;
 }> = (
   app,
   {
@@ -155,19 +155,17 @@ export const telemetryDashboardRoutes: FastifyPluginCallback<{
     auth,
     retentionDays,
     now = () => new Date(),
-    limiter = new OrganizationLimiter(),
+    limiter = new DashboardQueryLimiter(),
   },
   done,
 ) => {
   const signedIn = requireSession(auth);
   const projectAccess = requireProjectAccess(db);
-  const readerOf = (
-    request: { projectAccess: ProjectAccess | null },
-    reply: Parameters<typeof dashboardReader>[3],
-  ) => dashboardReader(clickhouse, limiter, accessOf(request).organizationId, reply);
+  const readerOf = (reply: Parameters<typeof dashboardReader>[2]) =>
+    dashboardReader(clickhouse, limiter, reply);
   app.setErrorHandler(clickHouseErrorHandler);
 
-  /** The request's days, in the organization's timezone, from the oldest kept; or the reason it is refused. */
+  /** The request's days, in the instance's timezone, from the oldest kept; or the reason it is refused. */
   const rangeOf = (request: { query: RangeQuery; projectAccess: ProjectAccess | null }) =>
     telemetryRange(db, request.query, accessOf(request), now(), retentionDays);
 
@@ -208,7 +206,7 @@ export const telemetryDashboardRoutes: FastifyPluginCallback<{
       const { service, name, errors, minDuration } = request.query;
       const before = cursorOf(request.query.before);
       if (before === null) return reply.code(400).send(BAD_CURSOR);
-      const list = await listTraces(readerOf(request, reply), range, {
+      const list = await listTraces(readerOf(reply), range, {
         service,
         name,
         errors: errors === true,
@@ -240,7 +238,7 @@ export const telemetryDashboardRoutes: FastifyPluginCallback<{
       }
       const traceId = request.params.traceId.toLowerCase();
       const detail = await traceDetail(
-        readerOf(request, reply),
+        readerOf(reply),
         projectId,
         traceId,
         traceWindow(now(), retentionDays, at),
@@ -269,7 +267,7 @@ export const telemetryDashboardRoutes: FastifyPluginCallback<{
         return reply.code(400).send({ error: "invalid_time", message: "start is out of range." });
       }
       const span = await spanDetail(
-        readerOf(request, reply),
+        readerOf(reply),
         projectId,
         request.params.traceId.toLowerCase(),
         request.params.spanId.toLowerCase(),
@@ -319,7 +317,7 @@ export const telemetryDashboardRoutes: FastifyPluginCallback<{
       const asked = await rangeOf(request);
       if ("problem" in asked) return reply.code(400).send(asked.problem);
       const { range } = asked;
-      const result = await searchLogs(readerOf(request, reply), range, {
+      const result = await searchLogs(readerOf(reply), range, {
         service,
         severity,
         search,
@@ -342,7 +340,7 @@ export const telemetryDashboardRoutes: FastifyPluginCallback<{
       if (time > MAX_NS) {
         return reply.code(400).send({ error: "invalid_time", message: "time is out of range." });
       }
-      const log = await logDetail(readerOf(request, reply), projectId, request.params.logId, time);
+      const log = await logDetail(readerOf(reply), projectId, request.params.logId, time);
       if (log === null) {
         // Not "not_found", which the access check answers for an unknown project.
         return reply.code(404).send({
@@ -361,7 +359,7 @@ export const telemetryDashboardRoutes: FastifyPluginCallback<{
       const asked = await rangeOf(request);
       if ("problem" in asked) return reply.code(400).send(asked.problem);
       const { range } = asked;
-      return { ...answered(range), ...(await listMetrics(readerOf(request, reply), range)) };
+      return { ...answered(range), ...(await listMetrics(readerOf(reply), range)) };
     },
   );
 
@@ -397,12 +395,7 @@ export const telemetryDashboardRoutes: FastifyPluginCallback<{
       const asked = await rangeOf(request);
       if ("problem" in asked) return reply.code(400).send(asked.problem);
       const { range } = asked;
-      const chart = await metricChart(
-        readerOf(request, reply),
-        range,
-        { name, kind, split },
-        now(),
-      );
+      const chart = await metricChart(readerOf(reply), range, { name, kind, split }, now());
       return { ...answered(range), ...chart };
     },
   );
@@ -414,7 +407,7 @@ export const telemetryDashboardRoutes: FastifyPluginCallback<{
       const asked = await rangeOf(request);
       if ("problem" in asked) return reply.code(400).send(asked.problem);
       const { range } = asked;
-      return { ...answered(range), ...(await listServices(readerOf(request, reply), range)) };
+      return { ...answered(range), ...(await listServices(readerOf(reply), range)) };
     },
   );
 
@@ -427,7 +420,7 @@ export const telemetryDashboardRoutes: FastifyPluginCallback<{
       const { range } = asked;
       return {
         ...answered(range),
-        ...(await listHosts(readerOf(request, reply), range, now())),
+        ...(await listHosts(readerOf(reply), range, now())),
       };
     },
   );
@@ -463,7 +456,7 @@ export const telemetryDashboardRoutes: FastifyPluginCallback<{
       const { range } = asked;
       return {
         ...answered(range),
-        ...(await hostCharts(readerOf(request, reply), range, host, now())),
+        ...(await hostCharts(readerOf(reply), range, host, now())),
       };
     },
   );

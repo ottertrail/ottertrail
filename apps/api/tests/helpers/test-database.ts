@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import { type Kysely, sql } from "kysely";
-import { Migrator } from "kysely/migration";
+import { type MigrationResult, Migrator } from "kysely/migration";
 
 import { loadConfig } from "../../src/config.ts";
 import { createDatabase } from "../../src/db/database.ts";
@@ -59,23 +59,29 @@ export async function createTestDatabase(): Promise<TestDatabase> {
 
 /**
  * Moves a test database to a migration, back or forward ("latest" for the
- * newest), for tests of migrations themselves. Going back drops tables, as
- * destroy() drops a schema, so it holds SCHEMA_LOCK exclusively too: other
- * files' migrators list every table while they run.
+ * newest), for tests of migrations themselves, and returns what ran. Going
+ * back drops tables, as destroy() drops a schema, so it holds SCHEMA_LOCK
+ * exclusively too: other files' migrators list every table while they run.
  */
-export async function migrateTestDatabase(testDb: TestDatabase, target: string): Promise<void> {
+export async function migrateTestDatabase(
+  testDb: TestDatabase,
+  target: string,
+): Promise<MigrationResult[]> {
   const migrator = new Migrator({
     db: testDb.db,
     provider: { getMigrations: () => Promise.resolve(migrations) },
     migrationTableSchema: testDb.schema,
   });
+  let ran: MigrationResult[] = [];
   await withSchemaLock(loadConfig().databaseUrl, "exclusive", async () => {
-    const { error } =
+    const { error, results = [] } =
       target === "latest" ? await migrator.migrateToLatest() : await migrator.migrateTo(target);
     if (error !== undefined) {
       throw new Error(`Migrating the test database to ${target} failed`, { cause: error });
     }
+    ran = results;
   });
+  return ran;
 }
 
 async function withAdmin(

@@ -59,7 +59,7 @@ The tracker cuts and cleans to these limits; the API refuses a batch that breaks
 
 ## 2. Storage
 
-An error is an event with five more columns, `error_type`, `error_message`, `error_stack`, `error_handled`, and `error_fingerprint`, empty for every other event (PostgreSQL migration 0018, ClickHouse migration 0005). So errors share everything events have: the visitor ID and user ID, environment and release, browser and location, retention, project deletion, and backups. ClickHouse compresses stacks with ZSTD, and a bloom filter on the fingerprint lets one group's page skip the parts without it. A server's exception also fills `service`, `trace_id`, and `span_id` (ClickHouse migration 0009, [server errors](#server-errors)), empty for every other event.
+An error is an event with five more columns, `error_type`, `error_message`, `error_stack`, `error_handled`, and `error_fingerprint`, empty for every other event. So errors share everything events have: the visitor ID and user ID, environment and release, browser and location, retention, project deletion, and backups. ClickHouse compresses stacks with ZSTD, and a bloom filter on the fingerprint lets one group's page skip the parts without it. A server's exception also fills `service`, `trace_id`, and `span_id` ([server errors](#server-errors)), empty for every other event.
 
 Errors are not web analytics: visits, pages, sources, custom events, and the environment list of the analytics page leave them out (`NOT_AN_ERROR` in `visits.ts`: only errors have a fingerprint), so a page that throws does not turn a bounce into an engaged visit. They are part of the user's activity, with a link to their group.
 
@@ -79,9 +79,9 @@ The number in front is the rule's version. A new rule gets a new number, so old 
 
 ## 4. Status and counts
 
-A group is **unresolved** until someone marks it **resolved**. If it happens again after that, it is **regressed**, which counts as unresolved: the Errors list shows it again, marked. The status belongs to the project, across environments, and is kept in PostgreSQL's `error_resolutions` (migration 0019) with the time and the dashboard user who resolved it. Whether a group regressed is worked out when the list is read, from its latest occurrence in any environment, so collection never writes there: a group resolved and seen again on staging shows as regressed in production's list too.
+A group is **unresolved** until someone marks it **resolved**. If it happens again after that, it is **regressed**, which counts as unresolved: the Errors list shows it again, marked. The status belongs to the project, across environments, and is kept in PostgreSQL's `error_resolutions` with the time and the dashboard user who resolved it. Whether a group regressed is worked out when the list is read, from its latest occurrence in any environment, so collection never writes there: a group resolved and seen again on staging shows as regressed in production's list too.
 
-For a range of days in the organization's timezone and one environment, each group shows:
+For a range of days in the instance's timezone and one environment, each group shows:
 
 - **Occurrences,** in the range.
 - **Users,** distinct known user IDs ([web analytics](web-analytics.md#known-users)), and **visitors,** distinct visitor IDs. Visitor IDs change every day, so a visitor who hits the error on three days counts three times, as in web analytics.
@@ -95,7 +95,7 @@ GET   /api/projects/:id/errors/:fingerprint?period=7d&environment=production
 PATCH /api/projects/:id/errors/:fingerprint   { "status": "resolved" | "unresolved" }
 ```
 
-The list reads at most 1,000 groups, the most recently seen, and says when there were more (`truncated`). Like every project route, these run the organization access check first; the PATCH also needs the dashboard's origin.
+The list reads at most 1,000 groups, the most recently seen, and says when there were more (`truncated`). Like every project route, these run the access check first; the PATCH also needs the dashboard's origin.
 
 ## 5. Source maps
 
@@ -119,9 +119,9 @@ Content-Encoding: gzip   (optional)
 - The secret key, never the public one: a map often holds the site's source code (`sourcesContent`), and a public key is on every page, so it can only send events.
 - `packages/sourcemaps` is a command that uploads a build's maps (not yet published to npm). Build the maps without publishing them, so visitors cannot read the code: Vite's `build.sourcemap: "hidden"` writes them without the comment that points browsers at them, and the command can delete them after uploading.
 
-**Keeping.** The maps are in the install's object store, gzip-compressed, one object per project, release, and path under `source-maps/<project>/`: uploading again replaces. PostgreSQL records each with its size (`source_maps`, migration 0022). An upload writes its row, then its object, then commits, and deleting a release holds its rows until its objects are gone, so the two never leave a row without its map, or a map nothing counts. An install without an object store has source maps off ([deployment](deployment.md#source-maps-and-session-replays)): uploads answer 503 and the error page says so.
+**Keeping.** The maps are in the install's object store, gzip-compressed, one object per project, release, and path under `source-maps/<project>/`: uploading again replaces. PostgreSQL records each with its size (`source_maps`). An upload writes its row, then its object, then commits, and deleting a release holds its rows until its objects are gone, so the two never leave a row without its map, or a map nothing counts. An install without an object store has source maps off ([deployment](deployment.md#source-maps-and-session-replays)): uploads answer 503 and the error page says so.
 
-- Each organization may keep `SOURCE_MAP_BYTES_PER_ORGANIZATION` (1 GiB by default) of compressed maps, all its projects together; an upload past it answers 409. A soft limit: uploads at the same moment can each pass the check.
+- The instance may keep `SOURCE_MAP_STORAGE_BYTES` (1 GiB by default) of compressed maps, all projects together; an upload past it answers 409. A soft limit: uploads at the same moment can each pass the check.
 - Maps stay until someone deletes them: a release can still run in browsers long after its maps were uploaded, so neither their age nor the project's event retention removes them. The project's settings list each release's maps, with their size, newest or oldest first (the oldest are the ones to delete for room), and delete a release's maps.
 - Deleting a project deletes its maps, with its events: the worker, from the same record (`project_deletions`), which stays until the object store has confirmed.
 

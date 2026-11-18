@@ -4,7 +4,6 @@ import { afterAll, beforeAll, describe, expect, test } from "vite-plus/test";
 
 import { createClickHouse } from "../src/clickhouse/clickhouse.ts";
 import { migrateClickHouse } from "../src/clickhouse/migrate.ts";
-import { CLICKHOUSE_MIGRATIONS } from "../src/clickhouse/migrations.ts";
 import { loadConfig } from "../src/config.ts";
 import { createTestClickHouse, type TestClickHouse } from "./helpers/test-clickhouse.ts";
 
@@ -44,7 +43,6 @@ describe("ClickHouse migrations", () => {
         partition_key: "toYYYYMM(occurred_at)",
       },
     ]);
-    // Rebuilt by migration 0008, with the bloom filters of 0004 and 0005.
     const indexes = await ch().client.query({
       query: `SELECT name, type FROM system.data_skipping_indices
               WHERE database = {database:String} AND table = 'events' ORDER BY name`,
@@ -69,35 +67,22 @@ describe("ClickHouse migrations", () => {
     expect(table?.create_table_query).toMatch(/fsync_part_directory = 1/);
   });
 
-  test("migration 0008 keeps the events it orders by day", async () => {
-    const admin = createClickHouse(loadConfig().clickhouse, { database: "default" });
-    const database = `test_${randomUUID().replaceAll("-", "")}`;
-    const before = CLICKHOUSE_MIGRATIONS.findIndex(
-      (migration) => migration.name === "0008_order_events_by_day",
-    );
-    try {
-      await migrateClickHouse(admin, database, CLICKHOUSE_MIGRATIONS.slice(0, before));
-      const ids = [randomUUID(), randomUUID()];
-      await admin.insert({
-        table: `${database}.events`,
-        values: ids.map((id) => ({ ...row(id), user_id: "user-42" })),
-        format: "JSONEachRow",
-      });
-      expect(
-        await migrateClickHouse(admin, database, CLICKHOUSE_MIGRATIONS.slice(0, before + 1)),
-      ).toEqual([{ migrationName: "0008_order_events_by_day", status: "Success" }]);
-      const result = await admin.query({
-        query: `SELECT event_id, user_id FROM ${database}.events FINAL`,
-        format: "JSONEachRow",
-      });
-      const kept = await result.json<{ event_id: string; user_id: string }>();
-      expect(kept.toSorted((a, b) => a.event_id.localeCompare(b.event_id))).toEqual(
-        ids.toSorted().map((id) => ({ event_id: id, user_id: "user-42" })),
-      );
-    } finally {
-      await admin.command({ query: `DROP DATABASE IF EXISTS ${database}` });
-      await admin.close();
-    }
+  test("create the telemetry tables with their order and TTL, and uptime's results", async () => {
+    const result = await ch().client.query({
+      query: `SELECT name, sorting_key FROM system.tables
+              WHERE database = {database:String} AND name != 'schema_migrations'
+              ORDER BY name`,
+      query_params: { database: ch().database },
+      format: "JSONEachRow",
+    });
+    expect(await result.json()).toEqual([
+      { name: "check_results", sorting_key: "project_id, check_id, timestamp" },
+      { name: "events", sorting_key: "project_id, toDate(occurred_at), event_id" },
+      { name: "logs", sorting_key: "project_id, timestamp, id" },
+      { name: "metric_histograms", sorting_key: "project_id, name, timestamp, id" },
+      { name: "metric_points", sorting_key: "project_id, name, timestamp, id" },
+      { name: "spans", sorting_key: "project_id, timestamp, id" },
+    ]);
   });
 
   test("running them again changes nothing", async () => {
