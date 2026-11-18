@@ -523,8 +523,8 @@ export function NotificationChannelsCard({ timeZone }: { timeZone: string }) {
           <h3>Notification channels</h3>
         </CardTitle>
         <CardDescription>
-          Where alerts go: email addresses, or a webhook of your own. Every project can use them.
-          Alert rules, which send to them, are planned.
+          Where alerts go: email addresses, or a webhook of your own. Every project can use them: a
+          project's alert rules choose which channels they send to.
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
