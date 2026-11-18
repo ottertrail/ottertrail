@@ -40,6 +40,17 @@ export interface NewEvent {
   userId?: string;
   /** For an "error" event: what went wrong, and its group (errors/fingerprint.ts). */
   error?: StoredError;
+  /** For a server's exception received over OTLP: where it happened (telemetry/exceptions.ts). */
+  server?: ServerOrigin;
+}
+
+/** The service, trace, and span a server's exception happened in. */
+export interface ServerOrigin {
+  /** The resource's service.name. */
+  service: string;
+  /** In hex, as the spans table has them; "" when the record had none. */
+  traceId: string;
+  spanId: string;
 }
 
 export interface StoredError {
@@ -88,6 +99,10 @@ export interface EventRow {
   error_handled: boolean | null;
   error_fingerprint: string | null;
   replay_id: string | null;
+  /** A server's exception's (ServerOrigin); "" for every other event. */
+  service: string;
+  trace_id: string;
+  span_id: string;
 }
 
 /** One event as ClickHouse's events table takes it (clickhouse/migrations.ts). */
@@ -126,6 +141,9 @@ export function toClickHouse(event: EventRow) {
     error_handled: event.error_handled ?? false,
     error_fingerprint: event.error_fingerprint ?? "",
     replay_id: event.replay_id,
+    service: event.service,
+    trace_id: event.trace_id,
+    span_id: event.span_id,
   };
 }
 
@@ -161,6 +179,9 @@ function toRow(projectId: string, event: NewEvent, receivedAt: Date): EventRow {
     error_handled: event.error?.handled ?? null,
     error_fingerprint: event.error?.fingerprint ?? null,
     replay_id: event.error?.replayId ?? null,
+    service: event.server?.service ?? "",
+    trace_id: event.server?.traceId ?? "",
+    span_id: event.server?.spanId ?? "",
   };
 }
 

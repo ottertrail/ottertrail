@@ -5,6 +5,7 @@ import { gunzip } from "node:zlib";
 import type { FastifyPluginCallback, FastifyReply, FastifyRequest } from "fastify";
 
 import type { ClickHouseClient } from "../clickhouse/clickhouse.ts";
+import { type NewEvent, storeEvents } from "../collection/event-store.ts";
 import type { CollectingProject, ProjectKeyCache } from "../collection/project-keys.ts";
 import {
   EventBudget,
@@ -79,7 +80,10 @@ interface Signal {
   messages: SignalMessages;
   /** The response's partial_success field counting refused records. */
   rejectedField: string;
-  normalize: (request: object, context: NormalizeContext) => Outcome & { rows: TelemetryRows };
+  normalize: (
+    request: object,
+    context: NormalizeContext,
+  ) => Outcome & { rows: TelemetryRows; errors: NewEvent[] };
 }
 
 const SIGNALS: Signal[] = [
@@ -107,7 +111,11 @@ const SIGNALS: Signal[] = [
     rejectedField: "rejectedDataPoints",
     normalize: (request, context) => {
       const { points, histograms, ...outcome } = normalizeMetrics(request, context);
-      return { ...outcome, rows: { metric_points: points, metric_histograms: histograms } };
+      return {
+        ...outcome,
+        rows: { metric_points: points, metric_histograms: histograms },
+        errors: [],
+      };
     },
   },
 ];
@@ -163,10 +171,12 @@ function fail(
  * 16 MiB), and its messages counted without decoding (at most
  * MAX_MESSAGES), which pays the budgets for decoding it. Then it is decoded
  * and turned into rows; records the tables cannot take are refused and
- * counted in partial_success; the rest of its cost is paid. The budgets
- * are apart from events'. The answer is sent once ClickHouse has written
- * the rows (asynchronous inserts, waiting for them), and is 503 while it
- * cannot, which exporters retry.
+ * counted in partial_success; the rest of its cost is paid, with a unit
+ * more for each exception that becomes an error event (exceptions.ts). The
+ * budgets are apart from events'. The answer is sent once ClickHouse has
+ * written the rows and the error events (asynchronous inserts, waiting for
+ * them), and is 503 while it cannot, which exporters retry: a retry writes
+ * the same rows and events again, which ClickHouse keeps once.
  */
 export const telemetryRoutes: FastifyPluginCallback<TelemetryOptions> = (app, options, done) => {
   const {
@@ -358,11 +368,12 @@ export const telemetryRoutes: FastifyPluginCallback<TelemetryOptions> = (app, op
 
         // Neither a malformed request nor one refused below gets its
         // decoding back: it was done.
-        let outcome: Outcome & { rows: TelemetryRows };
+        let outcome: Outcome & { rows: TelemetryRows; errors: NewEvent[] };
+        const receivedAt = now();
         try {
           outcome = signal.normalize(decodeRequest(signal.messages, body, encoding), {
             projectId: project.id,
-            receivedAtNs: BigInt(now()) * 1_000_000n,
+            receivedAtNs: BigInt(receivedAt) * 1_000_000n,
             retentionDays,
           });
         } catch (error) {
@@ -380,18 +391,26 @@ export const telemetryRoutes: FastifyPluginCallback<TelemetryOptions> = (app, op
             `A request holds at most ${budget.capacity} records; this one holds ${outcome.records}. Send smaller batches.`,
           );
         }
-        const cost = Math.max(
-          prepaid,
-          outcome.records,
-          Math.ceil((body.length + outcome.sharedBytes) / BYTES_PER_UNIT),
-        );
+        // Each error event is one more row, in the events table: so a
+        // span's exceptions cannot multiply rows for free.
+        const cost =
+          Math.max(
+            prepaid,
+            outcome.records,
+            Math.ceil((body.length + outcome.sharedBytes) / BYTES_PER_UNIT),
+          ) + outcome.errors.length;
         if (cost > budget.capacity) return tooLarge(cost);
         if (cost > prepaid) {
           const rest = budget.take(project, cost - prepaid);
           if (!rest.allowed) return tooMuch(rest.retryAfterSeconds);
         }
         try {
-          await insertTelemetry(clickhouse, outcome.rows);
+          await Promise.all([
+            insertTelemetry(clickhouse, outcome.rows),
+            storeEvents(clickhouse, project.id, outcome.errors, {
+              receivedAt: new Date(receivedAt),
+            }),
+          ]);
         } catch (error) {
           // Not the sender's doing: all of it back.
           budget.refund(project, cost);

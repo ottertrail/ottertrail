@@ -121,6 +121,10 @@ describe("storeEvents", () => {
         error_handled: false,
         error_fingerprint: "",
         replay_id: null,
+        // Only a server's exception has these.
+        service: "",
+        trace_id: "",
+        span_id: "",
       },
     ]);
   });

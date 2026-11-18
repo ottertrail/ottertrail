@@ -83,9 +83,9 @@ describe("ClickHouse migrations", () => {
         values: ids.map((id) => ({ ...row(id), user_id: "user-42" })),
         format: "JSONEachRow",
       });
-      expect(await migrateClickHouse(admin, database)).toEqual([
-        { migrationName: "0008_order_events_by_day", status: "Success" },
-      ]);
+      expect(
+        await migrateClickHouse(admin, database, CLICKHOUSE_MIGRATIONS.slice(0, before + 1)),
+      ).toEqual([{ migrationName: "0008_order_events_by_day", status: "Success" }]);
       const result = await admin.query({
         query: `SELECT event_id, user_id FROM ${database}.events FINAL`,
         format: "JSONEachRow",

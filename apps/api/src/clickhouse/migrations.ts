@@ -297,4 +297,19 @@ export const CLICKHOUSE_MIGRATIONS: ClickHouseMigration[] = [
       `DROP TABLE ${database}.events_by_day`,
     ],
   },
+  {
+    /**
+     * A server's exception, received over OTLP, is an error event too
+     * (docs/telemetry.md, "Exceptions join the error list"): its service,
+     * and the trace and span it happened in, in hex as the spans table has
+     * them. Empty for every other event, browser errors included.
+     */
+    name: "0009_add_events_server_origin",
+    statements: (database) => [
+      `ALTER TABLE ${database}.events
+       ADD COLUMN IF NOT EXISTS trace_id String DEFAULT '',
+       ADD COLUMN IF NOT EXISTS span_id String DEFAULT '',
+       ADD COLUMN IF NOT EXISTS service LowCardinality(String) DEFAULT ''`,
+    ],
+  },
 ];

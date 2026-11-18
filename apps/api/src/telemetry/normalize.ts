@@ -6,6 +6,16 @@ import {
   ENVIRONMENT_PATTERN,
   RELEASE_PATTERN,
 } from "../collection/environment.ts";
+import type { NewEvent } from "../collection/event-store.ts";
+import {
+  EXCEPTION_MESSAGE,
+  EXCEPTION_STACKTRACE,
+  EXCEPTION_TYPE,
+  type ExceptionAttributes,
+  exceptionEvent,
+  isException,
+  MAX_EXCEPTIONS_PER_SPAN,
+} from "./exceptions.ts";
 import {
   bool,
   bytesOf,
@@ -26,7 +36,8 @@ import {
 
 /**
  * OTLP requests, decoded (wire.ts), as rows of ClickHouse's telemetry
- * tables (migration 0007; docs/telemetry.md). Pure functions: the same
+ * tables (migration 0007; docs/telemetry.md), and the exceptions they
+ * record as error events (exceptions.ts). Pure functions: the same
  * request, with the same project, always gives the same rows, so a retried
  * request stores rows ReplacingMergeTree keeps once. (A log record with no
  * time at all takes its arrival's, so a retry of it is stored again.)
@@ -59,6 +70,8 @@ const NANOS_PER_SECOND = 1_000_000_000n;
 const NANOS_PER_DAY = 86_400n * NANOS_PER_SECOND;
 /** How far ahead of the server's clock a record may be. */
 const MAX_AHEAD_NS = 3600n * NANOS_PER_SECOND;
+/** How long after its span's end an exception event's own time is still taken. */
+const EXCEPTION_SLACK_NS = 60n * NANOS_PER_SECOND;
 const MAX_UINT32 = 0xffff_ffff;
 const MAX_UINT64 = 0xffff_ffff_ffff_ffffn;
 
@@ -397,12 +410,42 @@ function enumValue(from: object, key: string, max: number): number {
 const ZERO_TRACE = "0".repeat(32);
 const ZERO_SPAN = "0".repeat(16);
 
-/** ExportTraceServiceRequest → spans rows. */
+/**
+ * An exception's attributes, as sent: read from the record's own
+ * KeyValues, not its row's, so a stack is cut to what an error holds
+ * (exceptions.ts), not to an attribute's MAX_VALUE_BYTES.
+ */
+function exceptionAttributesOf(items: object[]): ExceptionAttributes {
+  const found: ExceptionAttributes = {};
+  for (const item of items) {
+    const key = text(item, "key");
+    if (key === EXCEPTION_TYPE) found.type = valueText(message(item, "value"));
+    else if (key === EXCEPTION_MESSAGE) found.message = valueText(message(item, "value"));
+    else if (key === EXCEPTION_STACKTRACE) found.stacktrace = valueText(message(item, "value"));
+  }
+  return found;
+}
+
+/** The resource's labels an error event takes. */
+function errorLabels(resource: Resource) {
+  return {
+    projectId: resource.labels.project_id,
+    service: resource.labels.service,
+    environment: resource.labels.environment,
+    release: resource.labels.release,
+  };
+}
+
+/**
+ * ExportTraceServiceRequest → spans rows, and an error event for each of a
+ * kept span's first MAX_EXCEPTIONS_PER_SPAN events named "exception".
+ */
 export function normalizeTraces(
   request: object,
   context: NormalizeContext,
-): Outcome & { rows: SpanRow[] } {
+): Outcome & { rows: SpanRow[]; errors: NewEvent[] } {
   const rows: SpanRow[] = [];
+  const errors: NewEvent[] = [];
   const refusals = new Refusals();
   let records = 0;
   let sharedBytes = 0;
@@ -436,6 +479,7 @@ export function normalizeTraces(
         const events = messages(span, "events");
         const links = messages(span, "links");
         const status = message(span, "status");
+        const statusCode = status === undefined ? 0 : enumValue(status, "code", 2);
         sharedBytes += resource.bytes;
         rows.push({
           ...shared,
@@ -447,7 +491,7 @@ export function normalizeTraces(
           name: cutBytes(text(span, "name"), MAX_NAME_BYTES),
           kind: enumValue(span, "kind", 5),
           duration_ns: (end - start).toString(),
-          status_code: status === undefined ? 0 : enumValue(status, "code", 2),
+          status_code: statusCode,
           status_message:
             status === undefined ? "" : cutBytes(text(status, "message"), MAX_VALUE_BYTES),
           attributes,
@@ -477,18 +521,57 @@ export function normalizeTraces(
               Math.max(0, links.length - MAX_SPAN_LINKS),
           ),
         });
+        let exceptions = 0;
+        // Only the events the span's row keeps, so an error's span holds it.
+        for (const [position, event] of events.slice(0, MAX_SPAN_EVENTS).entries()) {
+          if (exceptions === MAX_EXCEPTIONS_PER_SPAN) break;
+          if (text(event, "name") !== "exception") continue;
+          const exception = exceptionAttributesOf(messages(event, "attributes"));
+          if (!isException(exception)) continue;
+          exceptions += 1;
+          const time = uint64(event, "timeUnixNano");
+          errors.push(
+            exceptionEvent({
+              ...errorLabels(resource),
+              attributes,
+              exception,
+              // Its own time when within the span (a minute's slack after
+              // its end), else the span's start: decided from the span
+              // alone, so every attempt gives the same time.
+              occurredAtNs: time >= start && time <= end + EXCEPTION_SLACK_NS ? time : start,
+              // An exception on a span that did not fail was dealt with.
+              handled: statusCode !== 2,
+              traceId,
+              spanId,
+              // Its place among the span's events too: two alike stay two.
+              identity: [
+                "span",
+                traceId,
+                spanId,
+                position.toString(),
+                time.toString(),
+                exception.type ?? "",
+                exception.message ?? "",
+              ],
+            }),
+          );
+        }
       }
     }
   }
-  return { rows, ...refusals.outcome(records, "spans", sharedBytes) };
+  return { rows, errors, ...refusals.outcome(records, "spans", sharedBytes) };
 }
 
-/** ExportLogsServiceRequest → logs rows. */
+/**
+ * ExportLogsServiceRequest → logs rows, and an error event for each kept
+ * record with exception.type or exception.message.
+ */
 export function normalizeLogs(
   request: object,
   context: NormalizeContext,
-): Outcome & { rows: LogRow[] } {
+): Outcome & { rows: LogRow[]; errors: NewEvent[] } {
   const rows: LogRow[] = [];
+  const errors: NewEvent[] = [];
   const refusals = new Refusals();
   let records = 0;
   let sharedBytes = 0;
@@ -507,7 +590,8 @@ export function normalizeLogs(
           refusals.add(problem);
           continue;
         }
-        const { attributes, dropped } = flattenAttributes(messages(record, "attributes"));
+        const items = messages(record, "attributes");
+        const { attributes, dropped } = flattenAttributes(items);
         const row: Omit<LogRow, "id" | "resource_attributes"> = {
           ...shared,
           timestamp: nanosText(at),
@@ -524,15 +608,46 @@ export function normalizeLogs(
           dropped_attributes_count: droppedCount(record, dropped),
         };
         sharedBytes += resource.bytes;
-        rows.push({
-          ...row,
-          resource_attributes: resource.attributes,
-          id: contentId(resource, row),
-        });
+        const rowId = contentId(resource, row);
+        rows.push({ ...row, resource_attributes: resource.attributes, id: rowId });
+        const exception = exceptionAttributesOf(items);
+        if (isException(exception)) {
+          errors.push(
+            exceptionEvent({
+              ...errorLabels(resource),
+              attributes,
+              exception,
+              occurredAtNs: at,
+              // Below ERROR (17) it was dealt with; ERROR and above, or no severity, it was not.
+              handled: row.severity_number >= 1 && row.severity_number <= 16,
+              traceId: row.trace_id === ZERO_TRACE ? "" : row.trace_id,
+              spanId: row.span_id === ZERO_SPAN ? "" : row.span_id,
+              // The record as sent, not the row: a record with no time takes
+              // its arrival's, which a retry's differs from.
+              identity: [
+                "log",
+                resource.hash,
+                time.toString(),
+                observed.toString(),
+                JSON.stringify([
+                  row.scope_name,
+                  row.scope_version,
+                  row.severity_number,
+                  row.severity_text,
+                  row.body,
+                  row.trace_id,
+                  row.span_id,
+                  row.event_name,
+                  attributes,
+                ]),
+              ],
+            }),
+          );
+        }
       }
     }
   }
-  return { rows, ...refusals.outcome(records, "log records", sharedBytes) };
+  return { rows, errors, ...refusals.outcome(records, "log records", sharedBytes) };
 }
 
 /** OTLP's DataPointFlags: the point marks a missing value, not a value. */

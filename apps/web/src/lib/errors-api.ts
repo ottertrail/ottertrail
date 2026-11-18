@@ -99,7 +99,17 @@ export interface Occurrence {
   release: string | null;
   /** null: the page recorded no replay for it. */
   replay: OccurrenceReplay | null;
+  /**
+   * A server's exception (received over OTLP): its service, and the trace
+   * and span it happened in. null for a browser's error.
+   */
+  service: string | null;
+  traceId: string | null;
+  spanId: string | null;
 }
+
+/** Where an occurrence comes from: the tracker in a browser, or a server over OTLP. */
+export type ErrorSource = "browser" | "server";
 
 /** The original source around a mapped frame's line. */
 export interface SourceContext {
@@ -157,7 +167,7 @@ export interface StackSourceMaps {
   paths: string[];
 }
 
-export const ERROR_BREAKDOWNS = ["path", "browser", "os", "release"] as const;
+export const ERROR_BREAKDOWNS = ["path", "browser", "os", "release", "service"] as const;
 export type ErrorBreakdown = (typeof ERROR_BREAKDOWNS)[number];
 
 /** GET /api/projects/:id/errors/:fingerprint */
@@ -173,11 +183,16 @@ export interface ErrorDetail {
   breakdowns: Record<ErrorBreakdown, ErrorBreakdownRow[]>;
   /** The latest 20 in the range, newest first. */
   occurrences: Occurrence[];
-  /** The latest occurrence's stack, as the browser wrote it. */
+  /** Where the latest occurrence comes from. */
+  source: ErrorSource;
+  /** The latest occurrence's stack, as the browser or server wrote it. */
   stack: string | null;
-  /** That stack's frames, mapped where its release's source maps allow; null without a stack. */
+  /**
+   * That stack's frames, mapped where its release's source maps allow;
+   * null without a stack, or for a server's, which is never mapped.
+   */
   frames: ResolvedFrame[] | null;
-  /** How the frames were mapped; null without a stack. */
+  /** How the frames were mapped; null without a stack, or for a server's. */
   sourceMaps: StackSourceMaps | null;
 }
 
@@ -243,7 +258,10 @@ const isOccurrence = (value: unknown): value is Occurrence =>
   isTextOrNull(value.deviceType) &&
   isTextOrNull(value.country) &&
   isTextOrNull(value.release) &&
-  (value.replay === null || isOccurrenceReplay(value.replay));
+  (value.replay === null || isOccurrenceReplay(value.replay)) &&
+  isTextOrNull(value.service) &&
+  isTextOrNull(value.traceId) &&
+  isTextOrNull(value.spanId);
 
 const isNumberOrNull = (value: unknown) => value === null || isNumber(value);
 
@@ -294,6 +312,7 @@ const isErrorDetail = (value: unknown): value is ErrorDetail =>
     isListOf(isRecord(value.breakdowns) ? value.breakdowns[name] : undefined, isBreakdownRow),
   ) &&
   isListOf(value.occurrences, isOccurrence) &&
+  (value.source === "browser" || value.source === "server") &&
   isTextOrNull(value.stack) &&
   (value.frames === null || isListOf(value.frames, isResolvedFrame)) &&
   (value.sourceMaps === null || isStackSourceMaps(value.sourceMaps));

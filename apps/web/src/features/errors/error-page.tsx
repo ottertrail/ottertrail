@@ -133,12 +133,35 @@ function Stats({ detail }: { detail: ErrorDetail }) {
   );
 }
 
-const BREAKDOWN_CARDS: { name: ErrorBreakdown; title: string; heading: string }[] = [
-  { name: "path", title: "Pages", heading: "Path" },
-  { name: "browser", title: "Browsers", heading: "Browser" },
-  { name: "os", title: "Operating systems", heading: "Operating system" },
-  { name: "release", title: "Releases", heading: "Release" },
-];
+const known = (rows: ErrorBreakdownRow[]) => rows.some((row) => row.value !== null);
+
+/** Whether the group happens on servers, in browsers, or both, from its breakdowns. */
+function sourcesOf(detail: ErrorDetail) {
+  const servers = known(detail.breakdowns.service);
+  const browsers = !servers || known(detail.breakdowns.browser) || known(detail.breakdowns.os);
+  return { servers, browsers };
+}
+
+/** The breakdowns the group has: a browser's, a server's, or both. */
+function breakdownCards(detail: ErrorDetail) {
+  const { servers, browsers } = sourcesOf(detail);
+  const cards: { name: ErrorBreakdown; title: string; heading: string }[] = [
+    servers && browsers
+      ? { name: "path", title: "Pages and routes", heading: "Path or route" }
+      : servers
+        ? { name: "path", title: "Routes", heading: "Route" }
+        : { name: "path", title: "Pages", heading: "Path" },
+  ];
+  if (browsers) {
+    cards.push(
+      { name: "browser", title: "Browsers", heading: "Browser" },
+      { name: "os", title: "Operating systems", heading: "Operating system" },
+    );
+  }
+  if (servers) cards.push({ name: "service", title: "Services", heading: "Service" });
+  cards.push({ name: "release", title: "Releases", heading: "Release" });
+  return cards;
+}
 
 function BreakdownCard({
   title,
@@ -185,6 +208,59 @@ function BreakdownCard({
 const browserText = (occurrence: Occurrence) =>
   [occurrence.browser, occurrence.browserVersion].filter((part) => part !== null).join(" ");
 
+const isServer = (occurrence: Occurrence) => occurrence.service !== null;
+
+/** A column's heading for browsers' occurrences, servers', or both. */
+function columnHeading(occurrences: Occurrence[], browser: string, server: string, both: string) {
+  const servers = occurrences.some(isServer);
+  const browsers = occurrences.some((occurrence) => !isServer(occurrence));
+  return servers && browsers ? both : servers ? server : browser;
+}
+
+/** The trace and span IDs, as a tooltip. */
+const traceTitle = (occurrence: Occurrence) =>
+  `Trace ${occurrence.traceId ?? "(none)"}, span ${occurrence.spanId ?? "(none)"}`;
+
+/**
+ * The latest occurrence's service, trace, and span, for a server's
+ * exception. The trace's own page comes with the Traces pages (planned).
+ */
+function ServerCard({ occurrence }: { occurrence: Occurrence }) {
+  const items = [
+    { label: "Service", value: occurrence.service },
+    { label: "Trace ID", value: occurrence.traceId },
+    { label: "Span ID", value: occurrence.spanId },
+  ];
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>
+          <h3>Server</h3>
+        </CardTitle>
+        <CardDescription>
+          The latest occurrence came from a server, over OpenTelemetry.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-4">
+        <dl className="grid gap-x-6 gap-y-4 sm:grid-cols-3">
+          {items.map((item) => (
+            <div key={item.label} className="flex min-w-0 flex-col gap-1">
+              <dt className="text-xs text-ink-subtle">{item.label}</dt>
+              <dd className="font-mono text-sm break-all text-ink">
+                {item.value ?? <span className="font-sans text-ink-subtle">(none)</span>}
+              </dd>
+            </div>
+          ))}
+        </dl>
+        <p className="flex flex-wrap items-center gap-2 text-sm text-ink-muted">
+          <Badge variant="secondary">Planned</Badge>
+          Opening the trace, with its spans and logs, comes with the Traces pages.
+        </p>
+      </CardContent>
+    </Card>
+  );
+}
+
 function OccurrencesCard({
   projectId,
   detail,
@@ -213,9 +289,15 @@ function OccurrencesCard({
             <TableRow>
               <TableHead>Time</TableHead>
               <TableHead>User</TableHead>
-              <TableHead>Page</TableHead>
-              <TableHead>Browser</TableHead>
-              <TableHead>Operating system</TableHead>
+              <TableHead>
+                {columnHeading(detail.occurrences, "Page", "Route", "Page or route")}
+              </TableHead>
+              <TableHead>
+                {columnHeading(detail.occurrences, "Browser", "Service", "Browser or service")}
+              </TableHead>
+              <TableHead>
+                {columnHeading(detail.occurrences, "Operating system", "Trace", "System or trace")}
+              </TableHead>
               <TableHead>Release</TableHead>
               <TableHead>Replay</TableHead>
             </TableRow>
@@ -229,7 +311,14 @@ function OccurrencesCard({
                       {formatMoment(occurrence.occurredAt, detail.timeZone)}
                     </time>
                     {occurrence.handled && (
-                      <Badge variant="secondary" title="Reported with captureError()">
+                      <Badge
+                        variant="secondary"
+                        title={
+                          isServer(occurrence)
+                            ? "On a span that did not fail, or logged below the error level"
+                            : "Reported with captureError()"
+                        }
+                      >
                         Caught
                       </Badge>
                     )}
@@ -256,8 +345,26 @@ function OccurrencesCard({
                     occurrence.path
                   )}
                 </TableCell>
-                <TableCell>{browserText(occurrence) || "(unknown)"}</TableCell>
-                <TableCell>{occurrence.os ?? "(unknown)"}</TableCell>
+                {isServer(occurrence) ? (
+                  <>
+                    <TableCell className="max-w-48 truncate font-mono">
+                      {occurrence.service}
+                    </TableCell>
+                    <TableCell
+                      className="max-w-40 truncate font-mono"
+                      title={traceTitle(occurrence)}
+                    >
+                      {occurrence.traceId ?? (
+                        <span className="font-sans text-ink-subtle">(none)</span>
+                      )}
+                    </TableCell>
+                  </>
+                ) : (
+                  <>
+                    <TableCell>{browserText(occurrence) || "(unknown)"}</TableCell>
+                    <TableCell>{occurrence.os ?? "(unknown)"}</TableCell>
+                  </>
+                )}
                 <TableCell>{occurrence.release ?? "(unknown)"}</TableCell>
                 <TableCell className="py-1">
                   <OccurrenceReplayCell
@@ -285,6 +392,7 @@ function Detail({
   environment: string;
 }) {
   const { group, breakdowns } = detail;
+  const latest = detail.occurrences[0];
   return (
     <>
       <div className="flex flex-col gap-3">
@@ -304,7 +412,7 @@ function Detail({
         noun="Occurrences"
       />
       <div className="grid gap-6 lg:grid-cols-2">
-        {BREAKDOWN_CARDS.map((card) => (
+        {breakdownCards(detail).map((card) => (
           <BreakdownCard
             key={card.name}
             title={card.title}
@@ -314,8 +422,10 @@ function Detail({
           />
         ))}
       </div>
+      {detail.source === "server" && latest !== undefined && <ServerCard occurrence={latest} />}
       <StackCard
         projectId={projectId}
+        source={detail.source}
         stack={detail.stack}
         frames={detail.frames}
         sourceMaps={detail.sourceMaps}
@@ -375,9 +485,9 @@ function NoOccurrence({
 
 /**
  * One error group: its status (with Resolve or Reopen), its numbers and a
- * trend for a period, where it happens, the latest stack trace (mapped with
- * the release's source maps where it can be), and its
- * latest occurrences.
+ * trend for a period, where it happens, the latest occurrence's server (for
+ * a server's exception), the latest stack trace (a browser's mapped with
+ * the release's source maps where it can be), and its latest occurrences.
  */
 export function ErrorPage({
   projectId,

@@ -6,6 +6,7 @@ import { afterAll, beforeAll, describe, expect, test } from "vite-plus/test";
 import { buildApp } from "../src/app.ts";
 import { type ClickHouseClient, createClickHouse } from "../src/clickhouse/clickhouse.ts";
 import { loadConfig } from "../src/config.ts";
+import { fingerprint } from "../src/errors/fingerprint.ts";
 import {
   LOGS_MESSAGES,
   METRICS_MESSAGES,
@@ -14,6 +15,7 @@ import {
 } from "../src/telemetry/proto/definitions.ts";
 import { MAX_MESSAGES } from "../src/telemetry/wire.ts";
 import { signedInDashboard } from "./helpers/dashboard.ts";
+import { countEvents, storedEvents } from "./helpers/events.ts";
 import { insertOrganization, insertProject } from "./helpers/projects.ts";
 import {
   decodeResponse,
@@ -916,6 +918,284 @@ describe("ClickHouse", () => {
           message: "Telemetry was not stored. Retry later.",
         });
       }
+    } finally {
+      await app.close();
+      await unreachable.close();
+    }
+  });
+});
+
+const SERVER_STACK = `java.lang.IllegalStateException: Cart 7731 is empty
+\tat com.example.shop.cart.CartService.checkout(CartService.java:88)
+\tat com.example.shop.cart.CartController.post(CartController.java:41)`;
+
+/** A span event recording an exception, as OpenTelemetry's SDKs do. */
+function exceptionEvent(message: string, at = nowNs(-4000)) {
+  return {
+    name: "exception",
+    timeUnixNano: String(at),
+    attributes: keyValues({
+      "exception.type": "java.lang.IllegalStateException",
+      "exception.message": message,
+      "exception.stacktrace": SERVER_STACK,
+    }),
+  };
+}
+
+/** A log record with an exception's attributes, as OpenTelemetry's log bridges write them. */
+function exceptionLog(message: string, traceId: string, spanId: string) {
+  return {
+    timeUnixNano: String(nowNs(-3000)),
+    severityNumber: 17,
+    body: { stringValue: "charge failed" },
+    traceId,
+    spanId,
+    attributes: keyValues({
+      "exception.type": "TimeoutError",
+      "exception.message": message,
+      "user.id": "ada",
+    }),
+  };
+}
+
+describe("exceptions join the error list", () => {
+  test("a span's exception and a log's, in protobuf and JSON, become error events; a retry keeps one of each", async () => {
+    const project = await newProject("Server errors");
+    const traceId = randomHex(16);
+    const spanId = randomHex(8);
+    const traceBody = protobufTraces([
+      protobufSpan(traceId, spanId, {
+        attributes: keyValues({ "http.route": "/pay", "user.id": "ada" }),
+        events: [exceptionEvent("Cart 7731 is empty")],
+      }),
+    ]);
+    const logBody = JSON.stringify(
+      logsRequest([exceptionLog("gateway timed out", traceId, spanId)], "payments"),
+    );
+    const jsonTraceBody = JSON.stringify({
+      resourceSpans: [
+        {
+          resource: { attributes: keyValues({ "service.name": "api" }) },
+          scopeSpans: [
+            {
+              spans: [
+                {
+                  traceId,
+                  spanId: randomHex(8),
+                  name: "GET /cart",
+                  startTimeUnixNano: String(nowNs(-6000)),
+                  endTimeUnixNano: String(nowNs(-5900)),
+                  status: { code: 1 },
+                  events: [exceptionEvent("Cart 9 is empty", nowNs(-5950))],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+    const protobufLogBody = encodeProtobuf(
+      LOGS_MESSAGES,
+      logsRequest([
+        {
+          ...exceptionLog("gateway refused", traceId, spanId),
+          traceId: Buffer.from(traceId, "hex"),
+          spanId: Buffer.from(spanId, "hex"),
+          severityNumber: 13,
+        },
+      ]),
+    );
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      expect((await post("/v1/traces", traceBody, { key: project.secretKey })).statusCode).toBe(
+        200,
+      );
+      expect(
+        (await post("/v1/traces", jsonTraceBody, { key: project.secretKey, type: JSON_TYPE }))
+          .statusCode,
+      ).toBe(200);
+      expect(
+        (await post("/v1/logs", logBody, { key: project.secretKey, type: JSON_TYPE })).statusCode,
+      ).toBe(200);
+      expect((await post("/v1/logs", protobufLogBody, { key: project.secretKey })).statusCode).toBe(
+        200,
+      );
+    }
+
+    expect(await countEvents(dashboard.reader.client, project.id)).toBe(4);
+    const events = await storedEvents(dashboard.reader.client, project.id);
+    const byMessage = Object.fromEntries(events.map((event) => [event.error_message, event]));
+    expect(byMessage["Cart 7731 is empty"]).toMatchObject({
+      name: "error",
+      path: "/pay",
+      user_id: "ada",
+      environment: "staging",
+      release: "2.3.1",
+      visitor_id: null,
+      browser: null,
+      properties: {},
+      error_type: "java.lang.IllegalStateException",
+      error_stack: SERVER_STACK,
+      error_handled: false,
+      error_fingerprint: fingerprint({
+        type: "java.lang.IllegalStateException",
+        message: "Cart 7731 is empty",
+        stack: SERVER_STACK,
+      }),
+      service: "checkout",
+      trace_id: traceId,
+      span_id: spanId,
+    });
+    // On a span that did not fail: handled. No route: no path.
+    expect(byMessage["Cart 9 is empty"]).toMatchObject({
+      path: null,
+      environment: "production",
+      error_handled: true,
+      service: "api",
+      trace_id: traceId,
+    });
+    expect(byMessage["gateway timed out"]).toMatchObject({
+      error_type: "TimeoutError",
+      error_stack: null,
+      error_handled: false,
+      user_id: "ada",
+      environment: "qa",
+      service: "payments",
+      trace_id: traceId,
+      span_id: spanId,
+    });
+    // Below the error severity: handled.
+    expect(byMessage["gateway refused"]).toMatchObject({ error_handled: true, span_id: spanId });
+  });
+
+  test("the error list shows the group, and its page the service and trace", async () => {
+    const project = await newProject("Server error pages");
+    const traceId = randomHex(16);
+    const spanId = randomHex(8);
+    const response = await post(
+      "/v1/traces",
+      protobufTraces([
+        protobufSpan(traceId, spanId, { events: [exceptionEvent("Cart 7731 is empty")] }),
+      ]),
+      { key: project.secretKey },
+    );
+    expect(response.statusCode).toBe(200);
+    const group = fingerprint({
+      type: "java.lang.IllegalStateException",
+      message: "Cart 7731 is empty",
+      stack: SERVER_STACK,
+    });
+    const get = (path: string) =>
+      dashboard.app.inject({
+        url: `/api/projects/${project.id}${path}`,
+        headers: { cookie: dashboard.cookie },
+      });
+
+    const list = await get("/errors?period=7d&environment=staging");
+    expect(list.statusCode).toBe(200);
+    expect(list.json().groups).toMatchObject([
+      {
+        fingerprint: group,
+        type: "java.lang.IllegalStateException",
+        message: "Cart 7731 is empty",
+        occurrences: 1,
+        users: 0,
+        visitors: 0,
+      },
+    ]);
+
+    const detail = await get(`/errors/${group}?period=7d&environment=staging`);
+    expect(detail.statusCode).toBe(200);
+    const body = detail.json();
+    expect(body).toMatchObject({
+      source: "server",
+      stack: SERVER_STACK,
+      // Source maps are for browser code.
+      frames: null,
+      sourceMaps: null,
+      breakdowns: {
+        path: [{ value: "/pay", occurrences: 1 }],
+        browser: [{ value: null, occurrences: 1 }],
+        service: [{ value: "checkout", occurrences: 1 }],
+      },
+    });
+    expect(body.occurrences).toMatchObject([
+      {
+        path: "/pay",
+        release: "2.3.1",
+        browser: null,
+        os: null,
+        service: "checkout",
+        traceId,
+        spanId,
+        replay: null,
+      },
+    ]);
+  });
+
+  test("each error event costs a unit more", async () => {
+    const limited = await signedInDashboard({
+      telemetry: {
+        projectLimit: { capacity: 5, refillPerSecond: 0.01 },
+        organizationLimit: { capacity: 1000, refillPerSecond: 1 },
+      },
+    });
+    try {
+      const project = await insertProject(limited.db, {
+        organization_id: limited.organizationId,
+        name: "Exception budget",
+      });
+      const key = await secretKeyOf(limited.db, project.id);
+      const withExceptions = (count: number) =>
+        protobufTraces([
+          protobufSpan(randomHex(16), randomHex(8), {
+            events: Array.from({ length: count }, (_, i) => exceptionEvent(`failure ${i}`)),
+          }),
+        ]);
+
+      // One span of about 3 KB (10 stacks), 2 units, and its 10 exceptions:
+      // 12, over the 5 a project has.
+      const tooMany = await post("/v1/traces", withExceptions(10), { key, app: limited.app });
+      expect(tooMany.statusCode).toBe(413);
+      expect(statusOf(tooMany.rawPayload).message).toMatch(/this one costs 12\./);
+      expect(await countEvents(limited.reader.client, project.id)).toBe(0);
+
+      // A span and its exception: 2 of the 5. Then a span and 3 exceptions,
+      // 4, does not fit in the 3 left (it keeps the 1 its decoding cost),
+      // where the span alone does.
+      const project2 = await insertProject(limited.db, {
+        organization_id: limited.organizationId,
+        name: "Exception budget 2",
+      });
+      const key2 = await secretKeyOf(limited.db, project2.id);
+      const send = (count: number) =>
+        post("/v1/traces", withExceptions(count), { key: key2, app: limited.app });
+      expect((await send(1)).statusCode).toBe(200);
+      expect((await send(3)).statusCode).toBe(429);
+      expect((await send(0)).statusCode).toBe(200);
+      expect(await countEvents(limited.reader.client, project2.id)).toBe(1);
+    } finally {
+      await limited.close();
+    }
+  });
+
+  test("503 when ClickHouse cannot take them, and neither the spans nor the errors are stored", async () => {
+    const unreachable = createClickHouse(
+      { ...loadConfig().clickhouse, url: "http://127.0.0.1:1" },
+      { database: dashboard.clickhouseDatabase },
+    );
+    const app = buildApp({ db: dashboard.db, telemetry: { clickhouse: unreachable } });
+    try {
+      const project = await newProject("Server errors, ClickHouse down");
+      const response = await post(
+        "/v1/traces",
+        protobufTraces([
+          protobufSpan(randomHex(16), randomHex(8), { events: [exceptionEvent("lost")] }),
+        ]),
+        { key: project.secretKey, app },
+      );
+      expect(response.statusCode).toBe(503);
+      expect(await storedRows(dashboard.reader.client, "spans", project.id)).toEqual([]);
+      expect(await countEvents(dashboard.reader.client, project.id)).toBe(0);
     } finally {
       await app.close();
       await unreachable.close();

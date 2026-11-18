@@ -58,7 +58,8 @@ function accessOf(request: { projectAccess: ProjectAccess | null }): ProjectAcce
  * GET   /api/projects/:id/errors[?period=7d|from=…&to=…&environment=…&status=unresolved]
  * GET   /api/projects/:id/errors/:fingerprint[?period=…&environment=…]
  *       (the latest stack's frames mapped to the original source by the
- *       project's source maps for its release: ../source-maps/resolve.ts)
+ *       project's source maps for its release: ../source-maps/resolve.ts;
+ *       a server's stack is not mapped)
  * PATCH /api/projects/:id/errors/:fingerprint  { "status": "resolved" | "unresolved" }
  *
  * The project's error groups, one group's detail, and its status
@@ -162,8 +163,9 @@ export const errorRoutes: FastifyPluginCallback<{
         });
       }
       // The stack is the latest occurrence's, so its release is the one to map with.
+      // Source maps are for browser code: a server's stack is shown as it was sent.
       const resolved =
-        detail.stack === null
+        detail.stack === null || detail.source === "server"
           ? null
           : await resolveStack(
               {

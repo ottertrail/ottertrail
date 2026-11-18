@@ -4,6 +4,7 @@ import * as React from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import type {
+  ErrorSource,
   OriginalPosition,
   ResolvedFrame,
   SourceContext,
@@ -300,17 +301,20 @@ function RawStackToggle({ stack }: { stack: string }) {
 }
 
 /**
- * The latest occurrence's stack: mapped to the original source where the
- * release's source maps allow (docs/errors.md, "Source maps"), else as the
- * browser reported it, with a note on why.
+ * The latest occurrence's stack: a browser's mapped to the original source
+ * where the release's source maps allow (docs/errors.md, "Source maps"),
+ * else as the browser reported it, with a note on why; a server's as it was
+ * sent.
  */
 export function StackCard({
   projectId,
+  source,
   stack,
   frames,
   sourceMaps,
 }: {
   projectId: string;
+  source: ErrorSource;
   stack: string | null;
   frames: ResolvedFrame[] | null;
   sourceMaps: StackSourceMaps | null;
@@ -326,7 +330,17 @@ export function StackCard({
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
         {stack === null ? (
-          <p className="text-sm text-ink-subtle">The browser gave no stack trace for this error.</p>
+          <p className="text-sm text-ink-subtle">
+            The {source} gave no stack trace for this error.
+          </p>
+        ) : source === "server" ? (
+          <>
+            <p className="text-sm text-ink-muted">
+              As the server sent it: source maps are for browser code, so a server&apos;s stack is
+              not mapped.
+            </p>
+            <RawStack stack={stack} />
+          </>
         ) : (
           <>
             {sourceMaps !== null && <SourceMapNote projectId={projectId} sourceMaps={sourceMaps} />}

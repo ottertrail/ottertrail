@@ -337,6 +337,9 @@ export function fakeError(
     country: "DE",
     release: "1.4.2",
     replay: null,
+    service: null,
+    traceId: null,
+    spanId: null,
   };
   return {
     timeZone: "Asia/Singapore",
@@ -362,7 +365,9 @@ export function fakeError(
         { value: "1.4.2", occurrences: 1200 },
         { value: null, occurrences: 34 },
       ],
+      service: [{ value: null, occurrences: 1234 }],
     },
+    source: "browser",
     occurrences: [
       {
         ...occurrence,
@@ -388,6 +393,56 @@ export function fakeError(
           sourceMaps: { status: "applied", release: "1.4.2", paths: [] },
         }
       : { stack: null, frames: null, sourceMaps: null }),
+  };
+}
+
+/** A server's stack, as OpenTelemetry's Python SDK records it. */
+export const FAKE_SERVER_STACK = `Traceback (most recent call last):
+  File "/srv/shop/payments/views.py", line 41, in charge
+    receipt = gateway.charge(order)
+  File "/srv/shop/payments/gateway.py", line 88, in charge
+    raise CardDeclined(reason)
+payments.gateway.CardDeclined: card declined for order 5120`;
+
+/**
+ * The TypeError group's detail as a server's exception would give it: from
+ * a service over OTLP, with a trace, and a stack never mapped.
+ */
+export function fakeServerError(
+  fingerprint: string,
+  query: URLSearchParams,
+  api: FakeApi,
+): ErrorDetail | Response {
+  const detail = fakeError(fingerprint, query, api);
+  if (detail instanceof Response) return detail;
+  const server = {
+    browser: null,
+    browserVersion: null,
+    os: null,
+    deviceType: null,
+    country: null,
+    service: "payments",
+    traceId: "4bf92f3577b34da6a3ce929d0e0e4736",
+    spanId: "00f067aa0ba902b7",
+  };
+  return {
+    ...detail,
+    breakdowns: {
+      path: [{ value: "/orders/{id}/charge", occurrences: 1234 }],
+      browser: [{ value: null, occurrences: 1234 }],
+      os: [{ value: null, occurrences: 1234 }],
+      release: [{ value: "1.4.2", occurrences: 1234 }],
+      service: [{ value: "payments", occurrences: 1234 }],
+    },
+    source: "server",
+    occurrences: detail.occurrences.map((occurrence) => ({
+      ...occurrence,
+      ...server,
+      path: "/orders/{id}/charge",
+    })),
+    stack: FAKE_SERVER_STACK,
+    frames: null,
+    sourceMaps: null,
   };
 }
 

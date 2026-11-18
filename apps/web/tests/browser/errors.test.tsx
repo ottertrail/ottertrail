@@ -5,6 +5,7 @@ import {
   ERROR_FINGERPRINTS,
   type FakeApi,
   fakeErrors,
+  fakeServerError,
   installFakeApi,
   json,
   PROJECT,
@@ -216,6 +217,61 @@ describe("an error's page", () => {
         "(unknown)",
         "—No replay",
       ],
+    ]);
+  });
+
+  test("shows a server's exception: its service and trace, its routes, and its stack unmapped", async () => {
+    installFakeApi({ error: fakeServerError });
+    renderApp(TYPE_ERROR);
+
+    await expect.element(page.getByRole("heading", { name: "Server" })).toBeVisible();
+    const server = Object.fromEntries(
+      [...document.querySelectorAll("dl > div")].map((item) => [
+        item.querySelector("dt")?.textContent,
+        item.querySelector("dd")?.textContent,
+      ]),
+    );
+    expect(server).toMatchObject({
+      Service: "payments",
+      "Trace ID": "4bf92f3577b34da6a3ce929d0e0e4736",
+      "Span ID": "00f067aa0ba902b7",
+    });
+    // The trace's page does not exist yet: labelled, and no link.
+    await expect.element(page.getByText("Planned", { exact: true })).toBeVisible();
+    expect(page.getByRole("link", { name: /trace/i }).elements()).toEqual([]);
+
+    // Where it happens: routes and services, not browsers.
+    await expect
+      .element(page.getByRole("table", { name: "Routes, most occurrences first" }))
+      .toMatchTextContent(/\/orders\/\{id\}\/charge1,234/);
+    await expect
+      .element(page.getByRole("table", { name: "Services, most occurrences first" }))
+      .toMatchTextContent(/payments1,234/);
+    expect(
+      page.getByRole("table", { name: "Browsers, most occurrences first" }).elements(),
+    ).toEqual([]);
+
+    // The stack as sent, with no source maps.
+    await expect.element(page.getByText(/source maps are for browser code/)).toBeVisible();
+    await expect.element(page.getByText(/payments\.gateway\.CardDeclined/)).toBeVisible();
+    expect(page.getByRole("list", { name: "Frames, top first" }).elements()).toEqual([]);
+
+    const occurrences = page.getByRole("table", { name: "Latest occurrences, newest first" });
+    const headings = [...occurrences.element().querySelectorAll("thead th")].map(
+      (cell) => cell.textContent,
+    );
+    expect(headings).toEqual(["Time", "User", "Route", "Service", "Trace", "Release", "Replay"]);
+    const [first] = [...occurrences.element().querySelectorAll("tbody tr")].map((row) =>
+      [...row.querySelectorAll("td")].map((cell) => cell.textContent),
+    );
+    expect(first).toEqual([
+      "16 Nov 2026, 16:00",
+      "ada",
+      "/orders/{id}/charge",
+      "payments",
+      "4bf92f3577b34da6a3ce929d0e0e4736",
+      "1.4.2",
+      "—No replay",
     ]);
   });
 

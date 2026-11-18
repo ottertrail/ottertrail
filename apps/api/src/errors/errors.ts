@@ -42,7 +42,10 @@ export interface ErrorGroup {
   occurrences: number;
   /** Known users (user IDs) who had it, in the range. */
   users: number;
-  /** Visitors who had it, in the range: daily visitor IDs, as in web analytics. */
+  /**
+   * Visitors who had it, in the range: daily visitor IDs, as in web
+   * analytics. A server's exceptions have none.
+   */
   visitors: number;
   /** Its first and latest occurrence in the environment, at any time the project keeps. */
   firstSeen: Date;
@@ -285,7 +288,17 @@ export interface Occurrence {
   release: string | null;
   /** The session replay its page sent with it, if any (docs/session-replay.md). */
   replayId: string | null;
+  /**
+   * A server's exception (received over OTLP, docs/telemetry.md): its
+   * service, and the trace and span it happened in. null for a browser's.
+   */
+  service: string | null;
+  traceId: string | null;
+  spanId: string | null;
 }
+
+/** Where an occurrence comes from: the tracker in a browser, or a server over OTLP. */
+export type ErrorSource = "browser" | "server";
 
 export interface BreakdownRow {
   /** null: not known. */
@@ -301,10 +314,14 @@ export interface ErrorDetail {
     browser: BreakdownRow[];
     os: BreakdownRow[];
     release: BreakdownRow[];
+    /** A server's exceptions' services; null for a browser's errors. */
+    service: BreakdownRow[];
   };
   /** The latest occurrences in the range, newest first. */
   occurrences: Occurrence[];
-  /** The latest occurrence's stack, as the browser wrote it; null without one. */
+  /** Where the latest occurrence comes from: its stack is a browser's or a server's. */
+  source: ErrorSource;
+  /** The latest occurrence's stack, as the browser or server wrote it; null without one. */
   stack: string | null;
 }
 
@@ -327,6 +344,7 @@ const BREAKDOWN_COLUMNS = {
   browser: "browser",
   os: "os",
   release: "release",
+  service: "nullIf(service, '')",
 } as const;
 
 const breakdown = (rows: { value: string | null; occurrences: string }[] | undefined) =>
@@ -374,10 +392,14 @@ export async function errorDetail(
       country: string | null;
       release: string | null;
       replay_id: string | null;
+      service: string;
+      trace_id: string;
+      span_id: string;
     }>(
       reader,
       `SELECT event_id, occurred_at, error_message, error_handled, error_stack, path, user_id,
-              browser, browser_version, os, device_type, country, release, replay_id
+              browser, browser_version, os, device_type, country, release, replay_id,
+              service, trace_id, span_id
        FROM events FINAL
        WHERE ${scoped(occurrenceParams)}
        ORDER BY occurred_at DESC, event_id DESC
@@ -414,6 +436,7 @@ export async function errorDetail(
       browser: breakdown(breakdownRows[1]),
       os: breakdown(breakdownRows[2]),
       release: breakdown(breakdownRows[3]),
+      service: breakdown(breakdownRows[4]),
     },
     occurrences: occurrenceRows.map((occurrence) => ({
       eventId: occurrence.event_id,
@@ -429,7 +452,12 @@ export async function errorDetail(
       country: occurrence.country,
       release: occurrence.release,
       replayId: occurrence.replay_id,
+      service: occurrence.service || null,
+      traceId: occurrence.trace_id || null,
+      spanId: occurrence.span_id || null,
     })),
+    // Only a server's exceptions have a service.
+    source: (occurrenceRows[0]?.service ?? "") === "" ? "browser" : "server",
     stack: occurrenceRows[0]?.error_stack || null,
   };
 }
