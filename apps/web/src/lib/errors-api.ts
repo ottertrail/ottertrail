@@ -241,7 +241,7 @@ const isBreakdownRow = (value: unknown): value is ErrorBreakdownRow =>
 const isReplayStatus = (value: unknown): value is ReplayStatus =>
   value === "ready" || value === "pending" || value === "missing";
 
-const isOccurrenceReplay = (value: unknown): value is OccurrenceReplay =>
+export const isOccurrenceReplay = (value: unknown): value is OccurrenceReplay =>
   isRecord(value) && isText(value.id) && isReplayStatus(value.status);
 
 const isOccurrence = (value: unknown): value is Occurrence =>

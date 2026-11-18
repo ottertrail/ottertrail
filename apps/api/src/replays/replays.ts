@@ -4,6 +4,7 @@ import { type Kysely, sql } from "kysely";
 
 import type { Database } from "../db/schema.ts";
 import type { ObjectStore } from "../storage/object-store.ts";
+import { deriveReplay } from "./derive.ts";
 
 /**
  * Session replays around errors (docs/session-replay.md): what a browser
@@ -120,7 +121,7 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
  */
 export function joinChunks(chunks: readonly Buffer[]): string | null {
   const text = unpack(chunks);
-  return text === null ? null : checkRecording(text);
+  return text === null ? null : (checkRecording(text)?.text ?? null);
 }
 
 /** The chunks' text, unpacked: each is one gzip member. Null when they are not gzip. */
@@ -165,8 +166,14 @@ export function closeRecording(start: string): string | null {
   return lastEventEnd === -1 ? null : `${start.slice(0, lastEventEnd)}]}`;
 }
 
-/** The recording's text when it is one, as joinChunks describes; null when not. */
-function checkRecording(text: string): string | null {
+interface RecordedEvent {
+  type: number;
+  timestamp: number;
+  data?: unknown;
+}
+
+/** The recording's text and events when it is one, as joinChunks describes; null when not. */
+function checkRecording(text: string): { text: string; events: RecordedEvent[] } | null {
   let parsed: unknown;
   try {
     parsed = JSON.parse(text);
@@ -174,14 +181,15 @@ function checkRecording(text: string): string | null {
     return null;
   }
   if (!isRecord(parsed) || parsed.v !== 1 || !Array.isArray(parsed.events)) return null;
-  const { events } = parsed;
-  const valid =
-    events.length > 0 &&
-    events.every(
-      (event) =>
-        isRecord(event) && typeof event.type === "number" && typeof event.timestamp === "number",
-    );
-  return valid ? text : null;
+  const events: unknown[] = parsed.events;
+  const isEvent = (event: unknown): event is RecordedEvent =>
+    isRecord(event) &&
+    typeof event.type === "number" &&
+    typeof event.timestamp === "number" &&
+    Number.isFinite(event.timestamp);
+  return events.length > 0 && events.every(isEvent)
+    ? { text, events: events.filter(isEvent) }
+    : null;
 }
 
 /**
@@ -263,8 +271,8 @@ export async function joinReplays(
       const kept = complete ? chunks.slice(0, lastAt + 1) : chunks.slice(0, inOrder);
       const unpacked = kept.length === 0 ? null : unpack(kept.map((chunk) => chunk.data));
       const closed = complete || unpacked === null ? unpacked : closeRecording(unpacked);
-      const text = closed === null ? null : checkRecording(closed);
-      if (text === null) {
+      const recording = closed === null ? null : checkRecording(closed);
+      if (recording === null) {
         // Not a recording, or nothing of one: once its last chunk came, or
         // it went quiet, nothing more will make it one.
         await trx
@@ -274,7 +282,13 @@ export async function joinReplays(
           .execute();
         return "dropped";
       }
-      const compressed = gzipSync(text);
+      const compressed = gzipSync(recording.text);
+      // What the list and the timeline show, worked out once, here.
+      const firstReceivedAt = kept.reduce(
+        (time, chunk) => (chunk.received_at < time ? chunk.received_at : time),
+        kept[0]?.received_at ?? now,
+      );
+      const details = deriveReplay(recording.events, firstReceivedAt);
       const objectKey = replayKeyOf(projectId, replayId);
       await store.put(objectKey, compressed, "application/gzip");
       await trx
@@ -285,6 +299,13 @@ export async function joinReplays(
           object_key: objectKey,
           bytes: compressed.byteLength,
           cut: !complete || kept.some((chunk) => chunk.cut),
+          started_at: details.startedAt,
+          ended_at: details.endedAt,
+          clock_offset_ms: details.clockOffsetMs,
+          pages: details.pages,
+          clicks: details.clicks,
+          page_changes: details.pageChanges,
+          timeline: JSON.stringify(details.timeline),
         })
         .onConflict((oc) => oc.columns(["project_id", "replay_id"]).doNothing())
         .execute();

@@ -10,6 +10,7 @@ import {
   CheckIcon,
   ChevronsUpDownIcon,
   DatabaseIcon,
+  FilmIcon,
   FolderIcon,
   GaugeIcon,
   HardDriveIcon,
@@ -239,6 +240,22 @@ function ProjectMenu({ projectId }: { projectId: string }) {
             >
               <BugIcon />
               <span>Errors</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              render={<Link to="/projects/$projectId/replays" params={{ projectId }} />}
+              isActive={
+                matchRoute({
+                  to: "/projects/$projectId/replays",
+                  params: { projectId },
+                  fuzzy: true,
+                }) !== false
+              }
+              tooltip="Replays"
+            >
+              <FilmIcon />
+              <span>Replays</span>
             </SidebarMenuButton>
           </SidebarMenuItem>
           <SidebarMenuItem>

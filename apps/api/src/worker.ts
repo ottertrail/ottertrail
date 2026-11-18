@@ -5,8 +5,9 @@
  *   maps and replays from the object store, every minute
  *   (clickhouse/delete-events.ts).
  * - Joining each session replay's chunks into one object every few
- *   seconds, and deleting replays past their 30 days with retention
- *   (replays/replays.ts).
+ *   seconds, with what the Replays page lists and its timeline, then
+ *   finding each new replay's error in ClickHouse (replays/link.ts), and
+ *   deleting replays past their 30 days with retention (replays/replays.ts).
  * - Running due uptime checks every few seconds, at most 20 requests at
  *   once, and recording their state, incidents, and results
  *   (uptime/scheduler.ts).
@@ -41,6 +42,7 @@ import { pruneDeliveries } from "./notifications/deliveries.ts";
 import { smtpMailer } from "./notifications/email.ts";
 import { DELIVERY_TICK_MS, DeliverySender, PRUNE_INTERVAL_MS } from "./notifications/sender.ts";
 import { addressPolicy } from "./outbound/addresses.ts";
+import { linkReplays } from "./replays/link.ts";
 import { deleteExpiredReplays, deleteJoinedChunks, joinReplays } from "./replays/replays.ts";
 import { deleteExpiredEvents } from "./retention/retention.ts";
 import { s3ObjectStore } from "./storage/object-store.ts";
@@ -117,6 +119,25 @@ const stopReplays = every(REPLAY_INTERVAL_MS, async () => {
   } catch (error) {
     if (!replaysFailing) log("error", "joining session replays failed", { err: String(error) });
     replaysFailing = true;
+  }
+});
+
+/** Whether the last search for replays' errors failed: a ClickHouse outage is logged once. */
+let linkingFailing = false;
+
+const stopLinking = every(REPLAY_INTERVAL_MS, async () => {
+  if (objectStore === null) return;
+  try {
+    const links = await linkReplays(db, { client: clickhouse });
+    if (links.linked + links.givenUp > 0)
+      log("info", "session replays linked to their errors", links);
+    if (linkingFailing) log("info", "finding session replays' errors works again");
+    linkingFailing = false;
+  } catch (error) {
+    if (!linkingFailing) {
+      log("error", "finding session replays' errors failed", { err: String(error) });
+    }
+    linkingFailing = true;
   }
 });
 
@@ -243,6 +264,7 @@ async function shutdown(signal: NodeJS.Signals) {
   await Promise.all([
     stopPurging(),
     stopReplays(),
+    stopLinking(),
     stopChecks(),
     stopAlerts(),
     stopTelemetryAlerts(),

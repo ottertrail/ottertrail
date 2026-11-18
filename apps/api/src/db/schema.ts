@@ -302,6 +302,31 @@ export interface ReplaysTable {
   bytes: number;
   cut: boolean;
   created_at: ColumnType<Date, Date | undefined, never>;
+  /** The recording's first and last event, on the server's clock (migration 0005). */
+  started_at: Date;
+  ended_at: Date;
+  /** The server's clock minus the recording's, in ms: 0 unless the visitor's was off. */
+  clock_offset_ms: ColumnType<string, number | undefined, never>;
+  /** Paths visited, in the order first seen, at most 30. */
+  pages: ColumnType<string[], string[] | undefined, never>;
+  clicks: ColumnType<number, number | undefined, never>;
+  page_changes: ColumnType<number, number | undefined, never>;
+  /** `{"items":[…],"truncated":false|"scrolls"|"earliest"}` (replays/derive.ts); written as JSON text. */
+  timeline: ColumnType<unknown, string | undefined, never>;
+  /** The worker's search for the replay's error is over: found, or given up. */
+  linked: ColumnType<boolean, boolean | undefined, boolean>;
+  /** When the worker looks for the error again. */
+  next_link_at: ColumnType<Date, Date | undefined, Date>;
+  /** From the replay's first error event, once found; null until then, or when never found. */
+  error_at: ColumnType<Date | null, never, Date | null>;
+  error_fingerprint: ColumnType<string | null, never, string | null>;
+  error_type: ColumnType<string | null, never, string | null>;
+  error_message: ColumnType<string | null, never, string | null>;
+  user_id: ColumnType<string | null, never, string | null>;
+  environment: ColumnType<string | null, never, string | null>;
+  browser: ColumnType<string | null, never, string | null>;
+  os: ColumnType<string | null, never, string | null>;
+  device_type: ColumnType<string | null, never, string | null>;
 }
 
 /** A source map a project uploaded, for one release and minified file. */

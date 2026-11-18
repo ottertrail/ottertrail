@@ -119,3 +119,52 @@ export function readRecording(value: unknown): Recording | null {
   }
   return { v: 1, events, width: meta.data.width, height: meta.data.height };
 }
+
+/**
+ * Messages between the dashboard and the player page, which the dashboard
+ * shows in a frame (docs/session-replay.md, "The timeline"): the dashboard
+ * asks the player to move to a moment, and the player says where it is.
+ * The dashboard has the same names (apps/web/src/lib/replay-messages.ts).
+ * Each side takes a message only from the other window, from its own
+ * origin, in exactly this shape; anything else is ignored.
+ */
+export const SEEK_MESSAGE = "ottertrail:replay-seek";
+export const TIME_MESSAGE = "ottertrail:replay-time";
+/** Offsets past this are no moment of any replay: a day. */
+export const MAX_MESSAGE_OFFSET_MS = 86_400_000;
+
+const isOffset = (value: unknown): value is number =>
+  typeof value === "number" &&
+  Number.isFinite(value) &&
+  value >= 0 &&
+  value <= MAX_MESSAGE_OFFSET_MS;
+
+/** Exactly these keys, and no others: what a structured clone of the message gives. */
+const hasExactly = (value: Record<string, unknown>, keys: readonly string[]) => {
+  const own = Object.keys(value);
+  return own.length === keys.length && keys.every((key) => own.includes(key));
+};
+
+/** The offset a seek message asks for, in ms from the recording's start; null for anything else. */
+export function readSeekMessage(data: unknown): number | null {
+  if (!isRecord(data) || !hasExactly(data, ["type", "offsetMs"])) return null;
+  if (data.type !== SEEK_MESSAGE || !isOffset(data.offsetMs)) return null;
+  return data.offsetMs;
+}
+
+/** Where the player is, for the dashboard: ms from the recording's start, and its length. */
+export const timeMessage = (offsetMs: number, totalMs: number) => ({
+  type: TIME_MESSAGE,
+  offsetMs: Math.max(0, Math.round(offsetMs)),
+  totalMs: Math.max(0, Math.round(totalMs)),
+});
+
+/** Where messages to the player may come from: its parent window, on its own origin. */
+export interface MessagePeer {
+  window: { postMessage: (message: unknown, targetOrigin: string) => void };
+  origin: string;
+}
+
+/** Whether a message event comes from the peer: its window, and its origin. */
+export const fromPeer = (event: { origin: string; source: unknown }, peer: MessagePeer) =>
+  event.origin === peer.origin && event.source === peer.window;

@@ -5,6 +5,7 @@ import {
   BugIcon,
   LoaderCircleIcon,
   OctagonAlertIcon,
+  PlayIcon,
   UserXIcon,
 } from "lucide-react";
 
@@ -23,9 +24,12 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { DEFAULT_ENVIRONMENT } from "@/lib/analytics-api";
 import { ApiError } from "@/lib/api";
+import type { ReplaySummary } from "@/lib/replays-api";
 import { type Activity, type ActivityError, userQuery } from "@/lib/users-api";
 
 import { countryName } from "../analytics/format";
+import { ARRIVING_HINT } from "../errors/occurrence-replay";
+import { formatReplayDuration, pagesText } from "../replays/format";
 import { dayKey, formatLongDay, formatMoment, formatTime, rangeCovering } from "./format";
 
 /** An error: its type and message, linked to its group on the Errors page. */
@@ -66,6 +70,105 @@ function ErrorTitle({
         </span>
       )}
     </span>
+  );
+}
+
+/** An error's replay: a link to play it, or that it is on its way; nothing without one. */
+function ActivityReplay({
+  activity,
+  projectId,
+  when,
+}: {
+  activity: Activity;
+  projectId: string;
+  when: string;
+}) {
+  const { replay } = activity;
+  if (replay?.status === "ready") {
+    return (
+      <Link
+        to="/projects/$projectId/replays/$replayId"
+        params={{ projectId, replayId: replay.id }}
+        className="inline-flex w-fit items-center gap-1 text-xs text-link hover:underline"
+        aria-label={`Play the replay of the error at ${when}`}
+      >
+        <PlayIcon aria-hidden="true" className="size-3.5" />
+        Play replay
+      </Link>
+    );
+  }
+  if (replay?.status === "pending") {
+    return (
+      <span className="text-xs text-ink-subtle" title={ARRIVING_HINT}>
+        Replay arriving…<span className="sr-only"> {ARRIVING_HINT}</span>
+      </span>
+    );
+  }
+  return null;
+}
+
+/** The user's latest replays, each linked to its page. */
+function UserReplays({
+  replays,
+  projectId,
+  environment,
+  timeZone,
+}: {
+  replays: ReplaySummary[];
+  projectId: string;
+  environment: string;
+  timeZone: string;
+}) {
+  return (
+    <section className="flex flex-col gap-2" aria-labelledby="user-replays">
+      <h3 id="user-replays" className="text-sm font-medium text-ink-subtle">
+        Replays
+      </h3>
+      {replays.length === 0 ? (
+        <p className="text-sm text-ink-subtle">
+          No session replay of this user&apos;s errors in {environment}. Replays are recorded around
+          errors, when the project has them on, and kept 30 days.
+        </p>
+      ) : (
+        <Card className="py-0">
+          <CardContent className="px-0">
+            <ul aria-label="The user's latest replays">
+              {replays.map((replay) => (
+                <li
+                  key={replay.id}
+                  className="flex flex-wrap items-baseline gap-x-4 gap-y-1 border-b px-4 py-3 last:border-b-0"
+                >
+                  <Link
+                    to="/projects/$projectId/replays/$replayId"
+                    params={{ projectId, replayId: replay.id }}
+                    className="text-sm font-medium text-link hover:underline"
+                  >
+                    <time dateTime={replay.startedAt}>
+                      {formatMoment(replay.startedAt, timeZone)}
+                    </time>
+                  </Link>
+                  <span className="text-sm text-ink-subtle tabular-nums">
+                    {formatReplayDuration(replay.durationMs)}
+                    {replay.cut && ", cut"}
+                  </span>
+                  {replay.error !== null && (
+                    <span
+                      className="min-w-0 truncate text-sm text-ink"
+                      title={replay.error.message}
+                    >
+                      {replay.error.type}
+                    </span>
+                  )}
+                  <span className="min-w-0 truncate font-mono text-xs text-ink-subtle">
+                    {pagesText(replay.pages)}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </CardContent>
+        </Card>
+      )}
+    </section>
   );
 }
 
@@ -239,6 +342,14 @@ export function UserPage({
         </Alert>
       ) : (
         <div className="flex flex-col gap-6">
+          {first !== undefined && (
+            <UserReplays
+              replays={first.replays}
+              projectId={projectId}
+              environment={environment}
+              timeZone={first.timeZone}
+            />
+          )}
           {days.map((day) => (
             <section key={day.key} className="flex flex-col gap-2">
               <h3 className="text-sm font-medium text-ink-subtle">
@@ -278,6 +389,13 @@ export function UserPage({
                                 )}
                               />
                             </p>
+                          )}
+                          {item.error !== null && (
+                            <ActivityReplay
+                              activity={item}
+                              projectId={projectId}
+                              when={formatMoment(item.occurredAt, timeZone)}
+                            />
                           )}
                           <Properties properties={item.properties} />
                           {activityDetails(item) !== "" && (

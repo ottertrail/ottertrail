@@ -320,14 +320,14 @@ The card shows only when the period has data, as the page's other cards do: on a
 Code: `apps/web/src/features/users/`, `apps/api/src/identities/`. The users a site names ([web analytics, Known users](web-analytics.md#known-users)), in one environment, production unless `env=` names another; the picker appears once another environment has known users.
 
 - `/projects/<id>/users`: the known users, most recently seen first, 50 at a time with "Load more": user ID, last seen (relative, the exact time on hover), first seen, and events. A search by ID, case ignored. While the site names no user, the page shows how: `data-user-id` and `identify()`, with an example to copy.
-- `/projects/<id>/users/<user ID>`: when the user was first and last seen, their event count, and their pageviews, custom events, and errors, newest first, under a heading for each day in the instance's timezone, 100 at a time. Each event shows its time, its page or name and properties, and browser, OS, place, and release.
+- `/projects/<id>/users/<user ID>`: when the user was first and last seen, their event count, their latest 10 session replays in the environment (each with its time, a link to its page, its length, its error's type, and its paths; or a line saying there are none), and their pageviews, custom events, and errors, newest first, under a heading for each day in the instance's timezone, 100 at a time. Each event shows its time, its page or name and properties, and browser, OS, place, and release. An error with a replay ready has a "Play replay" link to the replay's page; one whose replay is on its way says "Replay arriving…".
 
 ```text
 GET /api/projects/:id/users[?environment=staging&search=…&offset=0&limit=50]
 GET /api/projects/:id/users/:userId[?environment=staging&before=…&beforeId=…&limit=100]
 ```
 
-Both run `requireProjectAccess`, as every project route ([the one check](#the-one-check)). The list's answer names the instance's timezone and the environments with known users. A user's answer pages back with `before` and `beforeId`, the time and ID of the last event of the page before, so events arriving meanwhile cannot shift the pages. An ID without events in the environment answers 404. Both are worked out from the events in ClickHouse when asked. A bloom filter index on `user_id` lets a user's page skip blocks of a project's events that do not hold the ID. The list reads the project's whole history in the environment on every request, and its environments only for the first page.
+Both run `requireProjectAccess`, as every project route ([the one check](#the-one-check)). The list's answer names the instance's timezone and the environments with known users. A user's answer gives each error's replay as the error page does (`replay`: its ID, and ready, pending, or missing), and on the first page `replays`, the user's latest replays from PostgreSQL ([session replay](session-replay.md#a-users-replays)). A user's answer pages back with `before` and `beforeId`, the time and ID of the last event of the page before, so events arriving meanwhile cannot shift the pages. An ID without events in the environment answers 404. Both are worked out from the events in ClickHouse when asked. A bloom filter index on `user_id` lets a user's page skip blocks of a project's events that do not hold the ID. The list reads the project's whole history in the environment on every request, and its environments only for the first page.
 
 ### Not done yet
 
@@ -360,13 +360,28 @@ The group's page shows the latest occurrence's stack, mapped with its release's 
 
 The latest occurrences have a Replay column (`apps/web/src/features/errors/occurrence-replay.tsx`), from each occurrence's `replay` in the API's answer:
 
-- **Ready:** a "Play replay" button, named with the occurrence's time for screen readers ("Play replay of the error at 16 Nov 2026, 16:00"). It opens a dialog that takes most of the screen, with the error's time, timezone, and page, around a frame of the player page (`/api/projects/:id/replays/:replayId/player?errorAt=<ms>`, titled "Session replay around the error at …", `referrerpolicy="no-referrer"`). The frame has no `sandbox` or `allow` attribute: the player has to run its own script and read the replay as the signed-in user, and the API serves its page with a Content Security Policy of its own ([session replay](session-replay.md#playback)). Closing the dialog returns focus to the button.
+- **Ready:** a "Play replay" button, named with the occurrence's time for screen readers ("Play replay of the error at 16 Nov 2026, 16:00"). It opens a dialog that takes most of the screen, with the error's time, timezone, and page, around the replay's timeline ([below](#replays)) and a frame of the player page (`/api/projects/:id/replays/:replayId/player?errorAt=<ms>`, titled "Session replay around the error at …", `referrerpolicy="no-referrer"`). The frame has no `sandbox` or `allow` attribute: the player has to run its own script and read the replay as the signed-in user, and the API serves its page with a Content Security Policy of its own ([session replay](session-replay.md#playback)). Closing the dialog returns focus to the button.
 - **Pending:** "Arriving…" in muted text; on hover, and for screen readers, "The page sends its replay about 10 seconds after the error."
 - **Missing, or none:** a dash, read as "No replay".
 
 The player itself is `packages/replay-player`, plain DOM and TypeScript around rrweb's `Replayer` (`@rrweb/replay`), built into one script (`dist/player.js`) that the API serves at `/replay-player.js`. It fetches the recording, checks its shape (version 1, rrweb events, a viewport size, a full snapshot), and fits the recorded viewport into the frame, keeping its shape. Its controls: Play or Pause (also Space, unless focus is on a control that uses it), a timeline (the arrow keys move 5 seconds; its spoken value reads "0:12 of 1:05") with the error marked on it, the elapsed and total time, "Jump to the error", speeds of 1×, 2×, and 4×, and "Skip inactivity" (on by default). It starts a minute before the error at most. A line says what was masked never reached Ottertrail. A replay that is gone says "This replay is not available: it may have expired."; other failures say to try again. rrweb builds the recorded page in a frame sandboxed with `allow-same-origin` only, never `allow-scripts` (rrweb 2.2.2's `createSandboxedIframe`; `UNSAFE_replayCanvas` is never set). The package's browser test plays a recording with a `<script>` and `onerror`, `onclick`, and `onload` handlers and checks that none of them runs.
 
-`replays.test.tsx` covers the column's three states and the dialog with its frame.
+`replays.test.tsx` covers the column's three states and the dialog with its frame and timeline.
+
+### Replays
+
+Code: `apps/web/src/features/replays/`, `apps/api/src/replays/list.ts`. Session replays, each recorded around an error ([session replay](session-replay.md#finding-replays)), with the same period choices and environments as the Errors page.
+
+- `/projects/<id>/replays`, after Errors in the project's menu: the period's replays, newest first, 50 at a time with "Load older replays". Each row: when it started (a link to its page), its length with a Cut badge when cut, its error's type and message (a link to the error's page on the error's own day) or "Error not found" or "Looking for its error…", the user (a link to their page) or Anonymous, the paths visited, the environment, and the browser, OS, and device. Filters beside the period and environment: "Path contains", "User ID", an error group (the period's in the environment shown, from the first page), and a minimum length (10 s, 30 s, 1 min); each is kept in the address (`path`, `user`, `error`, `min`). Empty states say whether the filters match nothing, replays are off for the project (with a link to its settings), the period has none, or the install has no object store.
+- `/projects/<id>/replays/<replay ID>`: the replay's time, error, length, user, environment, browser, and paths, then the player beside its timeline. A replay that is gone says so, with a link back to the list.
+- The timeline (`replay-viewer.tsx`): "What the visitor did", each item a button with its time ("0:12: Went to /checkout. Play from here") that moves the player there; the item the player is at is marked (`aria-current`), and follows the player as it plays. Scrolls show only after "Show scrolls (N)" is ticked. The player's frame is the same as the error page's: no `sandbox`, `referrerpolicy="no-referrer"`, the player page's own policy. The page and its frame talk only by `postMessage`, each checking the other's window, origin, and message shape ([session replay](session-replay.md#the-timeline)).
+
+```text
+GET /api/projects/:id/replays/list?period=7d[&environment=…&path=…&userId=…&fingerprint=…&minDuration=…&before=…&limit=50]
+GET /api/projects/:id/replays/:replayId/timeline
+```
+
+Both run `requireProjectAccess`; a replay of another project answers 404, and a bad parameter 400. `replays-page.test.tsx` covers the list and its links, paging, each filter and the address, the empty states, a replay's page and its timeline, seeking and following the player with a fake player in place of the frame's window (and ignoring messages from another origin, another window, or in another shape), a missing replay, and a user's replays; `replay-messages.test.ts` covers the message checks.
 
 The API is in [errors](errors.md#4-status-and-counts). Resolve and Reopen refresh the list and the group. A group the range does not include answers 404 with `no_occurrences`, distinct from the `not_found` of a project the user cannot reach. `errors.test.tsx` covers the list, tabs, environments, empty states, the group's page, Resolve, and both 404s, against the fake API. `source-maps.test.tsx` covers the stack card: mapped frames with their source and marked line, the folded frames, the raw stack, each note, and no stack.
 
@@ -375,7 +390,8 @@ The API is in [errors](errors.md#4-status-and-counts). Resolve and Reopen refres
 - Counts per tab: the Unresolved tab cannot tell "no errors" from "all resolved".
 - The status filter applies to the 1,000 most recently seen groups of the range: a shorter range shows older ones.
 - The group's page lists environments only through the one in its address.
-- The replay player shows no list of the visitor's clicks and pages beside the recording yet, which the design plans ([session replay](session-replay.md#playback)).
+- The Replays page cannot search by what was clicked, and sees a single-page app's route changes only at the recording's next full snapshot ([session replay](session-replay.md#what-the-worker-derives)).
+- The Replays page's API, like the other list routes, drops query parameters it does not know rather than refusing them.
 
 ## 8.7 Speed
 

@@ -4,10 +4,14 @@ import {
   errorOffset,
   fitScale,
   formatClock,
+  fromPeer,
   markerPercent,
+  type MessagePeer,
   readRecording,
+  readSeekMessage,
   type Recording,
   startOffset,
+  timeMessage,
   timelineText,
 } from "./format.ts";
 import { PLAYER_CSS } from "./styles.ts";
@@ -38,6 +42,8 @@ const SPEEDS = [1, 2, 4] as const;
 
 /** The timeline's arrow keys move this far. */
 const ARROW_STEP_MS = 5_000;
+/** While playing, the dashboard hears where the player is this often at most. */
+const TIME_MESSAGE_MS = 250;
 
 type Fetch = (input: string, init?: RequestInit) => Promise<Response>;
 
@@ -116,6 +122,12 @@ export interface PlayerOptions {
   errorAt: number | null;
   /** The page's fetch; tests pass a fake. */
   fetch?: Fetch;
+  /**
+   * The dashboard that shows the player in a frame: its window and origin.
+   * It may ask the player to move to a moment (readSeekMessage), and hears
+   * where it is (timeMessage). Without one, no message is taken or sent.
+   */
+  peer?: MessagePeer | null;
 }
 
 export interface Player {
@@ -189,6 +201,25 @@ export function startPlayer(root: HTMLElement, options: PlayerOptions): Player {
   let frame = 0;
   let resizeObserver: ResizeObserver | null = null;
   const cleanups: (() => void)[] = [];
+  const peer = options.peer ?? null;
+  /** Where the dashboard asked to go before the recording was ready. */
+  let pendingSeek: number | null = null;
+  /** Moves to a moment the dashboard asked for; set once the recording plays. */
+  let seekTo: ((offset: number) => void) | null = null;
+
+  const win = doc.defaultView;
+  if (peer !== null && win !== null) {
+    const onMessage = (event: MessageEvent) => {
+      // Only the dashboard that framed this page, from its own origin, in the one shape.
+      if (!fromPeer(event, peer)) return;
+      const offset = readSeekMessage(event.data);
+      if (offset === null) return;
+      if (seekTo === null) pendingSeek = offset;
+      else seekTo(offset);
+    };
+    win.addEventListener("message", onMessage);
+    cleanups.push(() => win.removeEventListener("message", onMessage));
+  }
 
   const ready = (async () => {
     const loaded = await load(
@@ -225,6 +256,8 @@ export function startPlayer(root: HTMLElement, options: PlayerOptions): Player {
     let playing = false;
 
     slider.max = String(totalTime);
+    let lastPosted = Number.NEGATIVE_INFINITY;
+    let lastPostedAt = 0;
 
     const fit = () => {
       const wrapper = stage.querySelector<HTMLElement>(".replayer-wrapper");
@@ -252,6 +285,17 @@ export function startPlayer(root: HTMLElement, options: PlayerOptions): Player {
       time.textContent = `${formatClock(shown)} / ${formatClock(totalTime)}`;
       play.textContent = playing ? "Pause" : "Play";
       play.setAttribute("aria-label", playing ? "Pause the replay" : "Play the replay");
+      // Tells the dashboard where the player is: a few times a second while playing.
+      const at = performance.now();
+      if (
+        peer !== null &&
+        shown !== lastPosted &&
+        (!playing || at - lastPostedAt >= TIME_MESSAGE_MS)
+      ) {
+        lastPosted = shown;
+        lastPostedAt = at;
+        peer.window.postMessage(timeMessage(shown, totalTime), peer.origin);
+      }
     };
 
     const tick = () => {
@@ -335,6 +379,9 @@ export function startPlayer(root: HTMLElement, options: PlayerOptions): Player {
     controls.hidden = false;
     player.pause(current);
     show();
+    seekTo = seek;
+    if (pendingSeek !== null) seek(pendingSeek);
+    pendingSeek = null;
   })();
 
   return {

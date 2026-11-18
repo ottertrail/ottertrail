@@ -4,8 +4,13 @@ import {
   errorOffset,
   fitScale,
   formatClock,
+  fromPeer,
   markerPercent,
   readRecording,
+  readSeekMessage,
+  SEEK_MESSAGE,
+  TIME_MESSAGE,
+  timeMessage,
   startOffset,
   timelineText,
 } from "../src/format.ts";
@@ -113,5 +118,50 @@ describe("readRecording", () => {
     ]) {
       expect(readRecording(value)).toBeNull();
     }
+  });
+});
+
+describe("messages from the dashboard", () => {
+  test("takes a seek to a moment, in exactly its shape", () => {
+    expect(readSeekMessage({ type: SEEK_MESSAGE, offsetMs: 0 })).toBe(0);
+    expect(readSeekMessage({ type: SEEK_MESSAGE, offsetMs: 12_345.5 })).toBe(12_345.5);
+  });
+
+  test("ignores any other shape", () => {
+    for (const data of [
+      null,
+      "ottertrail:replay-seek",
+      [SEEK_MESSAGE, 1],
+      { type: SEEK_MESSAGE },
+      { type: SEEK_MESSAGE, offsetMs: "100" },
+      { type: SEEK_MESSAGE, offsetMs: -1 },
+      { type: SEEK_MESSAGE, offsetMs: Number.NaN },
+      { type: SEEK_MESSAGE, offsetMs: Number.POSITIVE_INFINITY },
+      { type: SEEK_MESSAGE, offsetMs: 86_400_001 },
+      { type: TIME_MESSAGE, offsetMs: 1 },
+      { type: "seek", offsetMs: 1 },
+      // Anything more than the two keys.
+      { type: SEEK_MESSAGE, offsetMs: 1, html: "<img onerror=alert(1)>" },
+    ]) {
+      expect(readSeekMessage(data)).toBeNull();
+    }
+  });
+
+  test("comes only from the peer window, on its origin", () => {
+    const parent = { postMessage: () => undefined };
+    const peer = { window: parent, origin: "https://ottertrail.example" };
+    expect(fromPeer({ origin: "https://ottertrail.example", source: parent }, peer)).toBe(true);
+    expect(fromPeer({ origin: "https://evil.example", source: parent }, peer)).toBe(false);
+    expect(fromPeer({ origin: "https://ottertrail.example", source: {} }, peer)).toBe(false);
+    expect(fromPeer({ origin: "https://ottertrail.example", source: null }, peer)).toBe(false);
+  });
+
+  test("tells where the player is, in whole ms", () => {
+    expect(timeMessage(1234.6, 60_000.2)).toEqual({
+      type: TIME_MESSAGE,
+      offsetMs: 1235,
+      totalMs: 60_000,
+    });
+    expect(timeMessage(-5, 10).offsetMs).toBe(0);
   });
 });

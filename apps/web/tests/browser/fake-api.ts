@@ -43,6 +43,12 @@ import {
   type Retention,
 } from "../../src/lib/product-api.ts";
 import type { Project } from "../../src/lib/projects-api.ts";
+import type {
+  ReplayList,
+  ReplaySummary,
+  ReplayTimeline,
+  TimelineItem,
+} from "../../src/lib/replays-api.ts";
 import type { ServiceChart, ServiceList, StatusCounts } from "../../src/lib/services-api.ts";
 import type { Settings } from "../../src/lib/settings-api.ts";
 import type { SourceMapFile, SourceMapRelease } from "../../src/lib/source-maps-api.ts";
@@ -112,6 +118,10 @@ export interface FakeApi {
   sourceMaps: FakeSourceMaps;
   /** The project's session replays; GET and DELETE /api/projects/:id/replays read and empty them. */
   replays: FakeReplays;
+  /** Answers GET /api/projects/:id/replays/list; by default, fakeReplayList. */
+  replayList: (query: URLSearchParams) => ReplayList | Response;
+  /** Answers GET /api/projects/:id/replays/:replayId/timeline; by default, fakeReplayTimeline. */
+  replayTimeline: (replayId: string) => ReplayTimeline | Response;
   /** Answers GET /api/projects/:id/traces; by default, fakeTraces. */
   traces: (query: URLSearchParams) => TraceList | Response;
   /** Answers GET /api/projects/:id/traces/:traceId; by default, fakeTrace. */
@@ -209,6 +219,7 @@ export function fakeUser(userId: string, query: URLSearchParams): UserActivity |
     city: "Munich",
     release: "1.4.2",
     error: null,
+    replay: null,
   }));
   const beforeId = query.get("beforeId");
   const start = beforeId === null ? 0 : all.findIndex((item) => item.eventId === beforeId) + 1;
@@ -223,6 +234,7 @@ export function fakeUser(userId: string, query: URLSearchParams): UserActivity |
     },
     activity: all.slice(start, start + 100),
     hasMore: start + 100 < all.length,
+    replays: [],
   };
 }
 
@@ -1395,6 +1407,120 @@ export const fakeReplays = (): FakeReplays => ({
   otherProjectsBytes: 512 * 1024,
   limitBytes: 5 * 1024 ** 3,
 });
+
+/** The fake replays' IDs: the nth, from 0. */
+export const fakeReplayId = (index: number) =>
+  `aaaaaaaa-0000-4000-8000-${String(index).padStart(12, "0")}`;
+
+/** A replay as the list shows it, the nth newest of 60, an hour apart. */
+export function fakeReplay(index: number): ReplaySummary {
+  const startedAt = new Date(Date.UTC(2026, 10, 16, 8, 0) - index * 3_600_000);
+  const durationMs = [45_000, 12_000, 61_000][index % 3] ?? 45_000;
+  const typeError = index % 2 === 0;
+  return {
+    id: fakeReplayId(index),
+    startedAt: startedAt.toISOString(),
+    endedAt: new Date(startedAt.getTime() + durationMs).toISOString(),
+    durationMs,
+    cut: index === 1,
+    pages: index % 3 === 0 ? ["/cart", "/checkout"] : ["/pricing"],
+    clicks: 3,
+    pageChanges: index % 3 === 0 ? 1 : 0,
+    // 2: its error was never found; 3: still looked for.
+    error:
+      index === 2 || index === 3
+        ? null
+        : {
+            fingerprint: typeError
+              ? ERROR_FINGERPRINTS.typeError
+              : ERROR_FINGERPRINTS.referenceError,
+            type: typeError ? "TypeError" : "ReferenceError",
+            message: typeError ? "cart is undefined" : "pay is not defined",
+            occurredAt: new Date(startedAt.getTime() + durationMs - 10_000).toISOString(),
+          },
+    linked: index !== 3,
+    userId: index % 4 === 0 ? "ada" : null,
+    environment: index === 2 ? null : "production",
+    browser: "Firefox",
+    os: "Linux",
+    deviceType: "desktop",
+  };
+}
+
+/** 60 replays, newest first, filtered and paged (50 at a time) as the API does. */
+export function fakeReplayList(query: URLSearchParams): ReplayList {
+  const path = query.get("path")?.toLowerCase();
+  const userId = query.get("userId");
+  const fingerprint = query.get("fingerprint");
+  const minDuration = Number(query.get("minDuration") ?? 0);
+  const environment = query.get("environment") ?? "production";
+  const all = Array.from({ length: 60 }, (_, index) => fakeReplay(index)).filter(
+    (replay) =>
+      (replay.environment === null || replay.environment === environment) &&
+      (path === undefined || replay.pages.some((page) => page.toLowerCase().includes(path))) &&
+      (userId === null || replay.userId === userId) &&
+      (fingerprint === null || replay.error?.fingerprint === fingerprint) &&
+      replay.durationMs >= minDuration,
+  );
+  const before = query.get("before");
+  const start = before === null ? 0 : all.findIndex((replay) => replay.id === before) + 1;
+  const page = all.slice(start, start + 50);
+  return {
+    configured: true,
+    timeZone: "Asia/Singapore",
+    environment,
+    environments: ["production", "staging"],
+    errorGroups:
+      before === null
+        ? [
+            {
+              fingerprint: ERROR_FINGERPRINTS.typeError,
+              type: "TypeError",
+              message: "cart is undefined",
+              replays: 30,
+            },
+            {
+              fingerprint: ERROR_FINGERPRINTS.referenceError,
+              type: "ReferenceError",
+              message: "pay is not defined",
+              replays: 29,
+            },
+          ]
+        : [],
+    firstDay: "2026-11-10",
+    lastDay: "2026-11-16",
+    replays: page,
+    next: start + 50 < all.length ? (page.at(-1)?.id ?? null) : null,
+  };
+}
+
+/** A replay's timeline: the nth fake replay, a visit to the cart ending in its error. */
+export function fakeReplayTimeline(replayId: string): ReplayTimeline | Response {
+  const index = Array.from({ length: 60 }, (_, i) => fakeReplayId(i)).indexOf(replayId);
+  if (index === -1) {
+    return json(
+      { error: "replay_not_found", message: "The project has no replay with this ID." },
+      404,
+    );
+  }
+  const items: TimelineItem[] = [
+    { at: 0, kind: "page", path: "/cart" },
+    { at: 2_000, kind: "click", tag: "button", role: "button", x: 120, y: 340 },
+    { at: 4_000, kind: "scroll", y: 600 },
+    { at: 6_500, kind: "input", tag: "input", role: "textbox" },
+    { at: 9_000, kind: "input", tag: "input", role: "checkbox" },
+    { at: 12_000, kind: "page", path: "/checkout" },
+    { at: 15_000, kind: "click", tag: "div", role: null, x: 10, y: 20 },
+    { at: 35_000, kind: "error" },
+  ];
+  return {
+    timeZone: "Asia/Singapore",
+    replay: fakeReplay(index),
+    timeline: { items, truncated: false },
+    errorOffsetMs: 35_000,
+    recordingStartMs: Date.UTC(2026, 10, 16, 8, 0),
+  };
+}
 
 /** GET /api/projects/:id/replays, as the API answers it. */
 function replayOverview(api: FakeApi, projectId: string) {
@@ -2996,6 +3122,15 @@ async function answer(api: FakeApi, url: URL, init: RequestInit | undefined): Pr
       ),
     );
   }
+  if (/^\/api\/projects\/[^/]+\/replays\/list$/.test(path)) {
+    const result = api.replayList(url.searchParams);
+    return result instanceof Response ? result : json(result);
+  }
+  const timelinePath = /^\/api\/projects\/[^/]+\/replays\/([^/]+)\/timeline$/.exec(path);
+  if (timelinePath?.[1] !== undefined) {
+    const result = api.replayTimeline(decodeURIComponent(timelinePath[1]));
+    return result instanceof Response ? result : json(result);
+  }
   const replaysFor = /^\/api\/projects\/([^/]+)\/replays$/.exec(path);
   if (replaysFor?.[1] !== undefined) {
     if (init?.method === "DELETE") {
@@ -3214,6 +3349,8 @@ export function installFakeApi(overrides: Partial<FakeApi> = {}): FakeApi {
     resolutions: fakeResolutions(),
     sourceMaps: fakeSourceMaps(),
     replays: fakeReplays(),
+    replayList: fakeReplayList,
+    replayTimeline: fakeReplayTimeline,
     traces: fakeTraces,
     trace: fakeTrace,
     span: fakeSpan,

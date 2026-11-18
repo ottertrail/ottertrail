@@ -1,3 +1,4 @@
+import { useQuery } from "@tanstack/react-query";
 import { PlayIcon } from "lucide-react";
 import * as React from "react";
 
@@ -10,19 +11,45 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import type { Occurrence } from "@/lib/errors-api";
-import { playerUrl } from "@/lib/replays-api";
+import { playerUrl, playerUrlAt, replayTimelineQuery } from "@/lib/replays-api";
 
+import { ReplayViewer } from "../replays/replay-viewer";
 import { formatMoment } from "../users/format";
 
 /** Why a recent occurrence has no replay yet. */
 export const ARRIVING_HINT = "The page sends its replay about 10 seconds after the error.";
 
 /**
- * The replay of one occurrence, in a dialog that takes most of the screen.
- * The player is a page of the API's (docs/session-replay.md, "Playback"),
- * served with its own Content Security Policy, so this frame needs no
- * sandbox of its own and loosens nothing: nothing from the recording comes
- * into the dashboard's page.
+ * The player and its timeline. The player marks the error where the
+ * timeline does: at the recording's start plus the error's offset, on the
+ * recording's own clock, which a visitor's wrong clock moves away from the
+ * server's; at the occurrence's time while the timeline loads, or without one.
+ */
+function OccurrenceReplayViewer({
+  projectId,
+  replayId,
+  occurredAt,
+  title,
+}: {
+  projectId: string;
+  replayId: string;
+  occurredAt: string;
+  title: string;
+}) {
+  const timeline = useQuery(replayTimelineQuery(projectId, replayId));
+  const offset = timeline.data?.errorOffsetMs ?? null;
+  const playerSrc =
+    timeline.data === undefined || offset === null
+      ? playerUrl(projectId, replayId, occurredAt)
+      : playerUrlAt(projectId, replayId, timeline.data.recordingStartMs + offset);
+  return (
+    <ReplayViewer projectId={projectId} replayId={replayId} playerSrc={playerSrc} title={title} />
+  );
+}
+
+/**
+ * The replay of one occurrence, in a dialog that takes most of the screen:
+ * the player beside its timeline (ReplayViewer).
  */
 function ReplayDialog({
   projectId,
@@ -56,15 +83,11 @@ function ReplayDialog({
             {occurrence.path === "" ? "" : `, on ${occurrence.path}`}.
           </DialogDescription>
         </DialogHeader>
-        {/* No sandbox: the player must run its script and read the replay as the
-            signed-in user, and the page's own Content Security Policy keeps the
-            recording from running anything (its frame inside is rrweb's sandbox). */}
-        {/* oxlint-disable-next-line react/iframe-missing-sandbox */}
-        <iframe
-          src={playerUrl(projectId, replayId, occurrence.occurredAt)}
+        <OccurrenceReplayViewer
+          projectId={projectId}
+          replayId={replayId}
+          occurredAt={occurrence.occurredAt}
           title={`Session replay around the error at ${when}`}
-          referrerPolicy="no-referrer"
-          className="min-h-0 w-full flex-1 rounded-lg border-0 bg-canvas ring-1 ring-border"
         />
       </DialogContent>
     </Dialog>

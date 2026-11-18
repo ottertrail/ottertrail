@@ -136,6 +136,8 @@ export interface Activity {
   release: string | null;
   /** For an error: what went wrong, and its group on the Errors page (docs/errors.md). */
   error: { type: string; message: string; fingerprint: string } | null;
+  /** For an error: the session replay its page sent with it, if any (docs/session-replay.md). */
+  replayId: string | null;
 }
 
 interface ActivityRowData {
@@ -155,6 +157,7 @@ interface ActivityRowData {
   error_type: string;
   error_message: string;
   error_fingerprint: string;
+  replay_id: string | null;
 }
 
 const isObject = (value: unknown): value is Record<string, unknown> =>
@@ -220,7 +223,8 @@ export async function userActivity(
   const rows = await queryRows<ActivityRowData>(
     reader,
     `SELECT event_id, name, occurred_at, path, referrer, properties, browser, os, device_type,
-            country, region, city, release, error_type, error_message, error_fingerprint
+            country, region, city, release, error_type, error_message, error_fingerprint,
+            replay_id
      FROM events FINAL
      WHERE ${where} AND ${NOT_THEIRS} ${after}
      ORDER BY occurred_at DESC, event_id DESC
@@ -247,6 +251,7 @@ export async function userActivity(
         row.name === ERROR && row.error_fingerprint !== ""
           ? { type: row.error_type, message: row.error_message, fingerprint: row.error_fingerprint }
           : null,
+      replayId: row.name === ERROR ? row.replay_id : null,
     })),
     hasMore: rows.length > limit,
   };

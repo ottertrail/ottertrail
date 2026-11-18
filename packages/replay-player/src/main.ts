@@ -14,7 +14,13 @@ function errorAtOf(text: string | undefined): number | null {
 const { replayUrl, errorAt } = document.body.dataset;
 // Only a path on this origin: the page's own policy allows nothing else.
 if (replayUrl !== undefined && replayUrl.startsWith("/") && !replayUrl.startsWith("//")) {
-  startPlayer(document.body, { replayUrl, errorAt: errorAtOf(errorAt) });
+  startPlayer(document.body, {
+    replayUrl,
+    errorAt: errorAtOf(errorAt),
+    // The dashboard that frames this page (frame-ancestors 'self'): the
+    // parent window, on this page's own origin. Not framed: no messages.
+    peer: window.parent === window ? null : { window: window.parent, origin: location.origin },
+  });
 } else {
   const message = document.createElement("p");
   message.setAttribute("role", "alert");

@@ -36,6 +36,9 @@ import {
 import { ProjectLayout } from "@/features/projects/project-layout";
 import { ProjectSettingsPage } from "@/features/projects/project-settings-page";
 import { ProjectsPage } from "@/features/projects/projects-page";
+import { ReplayPage } from "@/features/replays/replay-page";
+import { ReplaysPage } from "@/features/replays/replays-page";
+import { replayFiltersFrom } from "@/features/replays/search";
 import { SettingsPage } from "@/features/settings/settings-page";
 import { SpeedPage } from "@/features/speed/speed-page";
 import { DatabasesPage } from "@/features/telemetry/databases-page";
@@ -348,6 +351,52 @@ const errorRoute = createRoute({
         environment={env ?? DEFAULT_ENVIRONMENT}
       />
     );
+  },
+});
+
+/**
+ * The project's session replays: days and environment as on errors, and
+ * filters (a path, a user, an error group, a minimum length), each left
+ * out when unset.
+ */
+const replaysRoute = createRoute({
+  getParentRoute: () => projectRoute,
+  path: "/replays",
+  staticData: { title: "Replays" },
+  validateSearch: (
+    search: ErrorSearchInput & { path?: unknown; user?: unknown; error?: unknown; min?: unknown },
+  ) => {
+    const filters = replayFiltersFrom(search);
+    return {
+      ...rangeSearch(search),
+      ...environmentSearch(search),
+      path: filters.path,
+      user: filters.userId,
+      error: filters.fingerprint,
+      min: filters.minDuration,
+    };
+  },
+  component: function ReplaysRouteComponent() {
+    const { projectId } = replaysRoute.useParams();
+    const { period, from, to, env, path, user, error, min } = replaysRoute.useSearch();
+    return (
+      <ReplaysPage
+        projectId={projectId}
+        range={rangeFrom({ period, from, to })}
+        environment={env ?? DEFAULT_ENVIRONMENT}
+        filters={{ path, userId: user, fingerprint: error, minDuration: min }}
+      />
+    );
+  },
+});
+
+const replayRoute = createRoute({
+  getParentRoute: () => projectRoute,
+  path: "/replays/$replayId",
+  staticData: { title: "Replay" },
+  component: function ReplayRouteComponent() {
+    const { projectId, replayId } = replayRoute.useParams();
+    return <ReplayPage projectId={projectId} replayId={replayId} key={replayId} />;
   },
 });
 
@@ -986,6 +1035,8 @@ const routeTree = rootRoute.addChildren([
       userRoute,
       errorsRoute,
       errorRoute,
+      replaysRoute,
+      replayRoute,
       tracesRoute,
       traceRoute,
       logsRoute,

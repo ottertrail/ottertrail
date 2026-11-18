@@ -340,6 +340,7 @@ export function buildApp({
       auth: dashboard.auth,
       trustedOrigins: dashboard.trustedOrigins,
       limitBytes: replays.limitBytes,
+      ...(dashboard.now === undefined ? {} : { now: dashboard.now }),
     });
     if (replayPlayerPath !== undefined) {
       // At the site's root, beside the dashboard: not under /api.

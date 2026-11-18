@@ -1,0 +1,521 @@
+{
+  "v": 1,
+  "events": [
+    {
+      "type": 4,
+      "data": { "href": "http://localhost:23315/cart", "width": 1280, "height": 900 },
+      "timestamp": 1794999608968
+    },
+    {
+      "type": 2,
+      "data": {
+        "node": {
+          "type": 0,
+          "id": 1,
+          "childNodes": [
+            { "type": 1, "id": 2, "name": "html", "publicId": "", "systemId": "" },
+            {
+              "type": 2,
+              "id": 3,
+              "tagName": "html",
+              "attributes": { "lang": "en" },
+              "childNodes": [
+                {
+                  "type": 2,
+                  "id": 4,
+                  "tagName": "head",
+                  "attributes": {},
+                  "childNodes": [
+                    {
+                      "type": 2,
+                      "id": 5,
+                      "tagName": "meta",
+                      "attributes": { "charset": "UTF-8" },
+                      "childNodes": []
+                    },
+                    {
+                      "type": 2,
+                      "id": 6,
+                      "tagName": "link",
+                      "attributes": {
+                        "rel": "icon",
+                        "href": "http://localhost:23315/__vitest__/favicon.svg",
+                        "type": "image/svg+xml"
+                      },
+                      "childNodes": []
+                    },
+                    {
+                      "type": 2,
+                      "id": 7,
+                      "tagName": "meta",
+                      "attributes": {
+                        "name": "viewport",
+                        "content": "******************* *****************"
+                      },
+                      "childNodes": []
+                    },
+                    {
+                      "type": 2,
+                      "id": 8,
+                      "tagName": "title",
+                      "attributes": {},
+                      "childNodes": [{ "type": 3, "id": 9, "textContent": "****** ******* ******" }]
+                    },
+                    {
+                      "type": 2,
+                      "id": 10,
+                      "tagName": "style",
+                      "attributes": {
+                        "_cssText": "html { padding: 0px; margin: 0px; }body { padding: 0px; margin: 0px; min-height: 100vh; }"
+                      },
+                      "childNodes": []
+                    }
+                  ]
+                },
+                { "type": 3, "id": 11, "textContent": "\n  " },
+                {
+                  "type": 2,
+                  "id": 12,
+                  "tagName": "body",
+                  "attributes": {},
+                  "childNodes": [
+                    { "type": 3, "id": 13, "textContent": "\n    " },
+                    {
+                      "type": 2,
+                      "id": 14,
+                      "tagName": "main",
+                      "attributes": {},
+                      "childNodes": [
+                        { "type": 3, "id": 15, "textContent": "\n      " },
+                        {
+                          "type": 2,
+                          "id": 16,
+                          "tagName": "nav",
+                          "attributes": {},
+                          "childNodes": [
+                            {
+                              "type": 2,
+                              "id": 17,
+                              "tagName": "a",
+                              "attributes": {
+                                "id": "pricing",
+                                "href": "http://localhost:23315/pricing"
+                              },
+                              "childNodes": [{ "type": 3, "id": 18, "textContent": "*******" }]
+                            }
+                          ]
+                        },
+                        { "type": 3, "id": 19, "textContent": "\n      " },
+                        {
+                          "type": 2,
+                          "id": 20,
+                          "tagName": "h1",
+                          "attributes": {},
+                          "childNodes": [{ "type": 3, "id": 21, "textContent": "**** ****" }]
+                        },
+                        { "type": 3, "id": 22, "textContent": "\n      " },
+                        {
+                          "type": 2,
+                          "id": 23,
+                          "tagName": "label",
+                          "attributes": {},
+                          "childNodes": [
+                            { "type": 3, "id": 24, "textContent": "***** " },
+                            {
+                              "type": 2,
+                              "id": 25,
+                              "tagName": "input",
+                              "attributes": {
+                                "id": "email",
+                                "type": "email",
+                                "placeholder": "***************"
+                              },
+                              "childNodes": []
+                            }
+                          ]
+                        },
+                        { "type": 3, "id": 26, "textContent": "\n      " },
+                        {
+                          "type": 2,
+                          "id": 27,
+                          "tagName": "label",
+                          "attributes": {},
+                          "childNodes": [
+                            {
+                              "type": 2,
+                              "id": 28,
+                              "tagName": "input",
+                              "attributes": { "id": "terms", "type": "checkbox" },
+                              "childNodes": []
+                            },
+                            { "type": 3, "id": 29, "textContent": " * *****" }
+                          ]
+                        },
+                        { "type": 3, "id": 30, "textContent": "\n      " },
+                        {
+                          "type": 2,
+                          "id": 31,
+                          "tagName": "div",
+                          "attributes": { "role": "button", "id": "custom", "tabindex": "0" },
+                          "childNodes": [{ "type": 3, "id": 32, "textContent": "******" }]
+                        },
+                        { "type": 3, "id": 33, "textContent": "\n      " },
+                        {
+                          "type": 2,
+                          "id": 34,
+                          "tagName": "button",
+                          "attributes": { "id": "pay", "type": "submit" },
+                          "childNodes": [
+                            {
+                              "type": 2,
+                              "id": 35,
+                              "tagName": "svg",
+                              "attributes": { "rr_width": "10px", "rr_height": "10px" },
+                              "childNodes": [],
+                              "isSVG": true
+                            },
+                            {
+                              "type": 2,
+                              "id": 36,
+                              "tagName": "span",
+                              "attributes": { "id": "pay-label" },
+                              "childNodes": [{ "type": 3, "id": 37, "textContent": "*** ***" }]
+                            }
+                          ]
+                        },
+                        { "type": 3, "id": 38, "textContent": "\n      " },
+                        {
+                          "type": 2,
+                          "id": 39,
+                          "tagName": "div",
+                          "attributes": { "style": "height: 3000px" },
+                          "childNodes": [{ "type": 3, "id": 40, "textContent": "****" }]
+                        },
+                        { "type": 3, "id": 41, "textContent": "\n    " }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        "initialOffset": { "top": 0, "left": 0 }
+      },
+      "timestamp": 1794999608977
+    },
+    {
+      "type": 3,
+      "data": { "source": 4, "width": 1280, "height": 900 },
+      "timestamp": 1794999608978
+    },
+    {
+      "type": 3,
+      "data": { "source": 1, "positions": [{ "x": 43, "y": 148, "id": 36, "timeOffset": -2 }] },
+      "timestamp": 1794999609162
+    },
+    {
+      "type": 3,
+      "data": { "source": 2, "type": 1, "id": 36, "x": 43.56999969482422, "y": 148.3699951171875 },
+      "timestamp": 1794999609162
+    },
+    { "type": 3, "data": { "source": 2, "type": 5, "id": 34 }, "timestamp": 1794999609162 },
+    {
+      "type": 3,
+      "data": { "source": 2, "type": 0, "id": 36, "x": 43.56999969482422, "y": 148.3699951171875 },
+      "timestamp": 1794999609162
+    },
+    {
+      "type": 3,
+      "data": { "source": 2, "type": 2, "id": 36, "x": 43, "y": 148, "pointerType": 0 },
+      "timestamp": 1794999609162
+    },
+    { "type": 3, "data": { "source": 2, "type": 6, "id": 34 }, "timestamp": 1794999609299 },
+    { "type": 3, "data": { "source": 2, "type": 5, "id": 25 }, "timestamp": 1794999609299 },
+    { "type": 3, "data": { "source": 3, "id": 1, "x": 0, "y": 200 }, "timestamp": 1794999609460 },
+    { "type": 3, "data": { "source": 3, "id": 1, "x": 0, "y": 600 }, "timestamp": 1794999609612 },
+    {
+      "type": 4,
+      "data": { "href": "http://localhost:23315/checkout", "width": 1280, "height": 900 },
+      "timestamp": 1794999610849
+    },
+    {
+      "type": 2,
+      "data": {
+        "node": {
+          "type": 0,
+          "id": 1,
+          "childNodes": [
+            { "type": 1, "id": 2, "name": "html", "publicId": "", "systemId": "" },
+            {
+              "type": 2,
+              "id": 3,
+              "tagName": "html",
+              "attributes": { "lang": "en", "rr_scrollTop": 600 },
+              "childNodes": [
+                {
+                  "type": 2,
+                  "id": 4,
+                  "tagName": "head",
+                  "attributes": {},
+                  "childNodes": [
+                    {
+                      "type": 2,
+                      "id": 5,
+                      "tagName": "meta",
+                      "attributes": { "charset": "UTF-8" },
+                      "childNodes": []
+                    },
+                    {
+                      "type": 2,
+                      "id": 6,
+                      "tagName": "link",
+                      "attributes": {
+                        "rel": "icon",
+                        "href": "http://localhost:23315/__vitest__/favicon.svg",
+                        "type": "image/svg+xml"
+                      },
+                      "childNodes": []
+                    },
+                    {
+                      "type": 2,
+                      "id": 7,
+                      "tagName": "meta",
+                      "attributes": {
+                        "name": "viewport",
+                        "content": "******************* *****************"
+                      },
+                      "childNodes": []
+                    },
+                    {
+                      "type": 2,
+                      "id": 8,
+                      "tagName": "title",
+                      "attributes": {},
+                      "childNodes": [{ "type": 3, "id": 9, "textContent": "****** ******* ******" }]
+                    },
+                    {
+                      "type": 2,
+                      "id": 10,
+                      "tagName": "style",
+                      "attributes": {
+                        "_cssText": "html { padding: 0px; margin: 0px; }body { padding: 0px; margin: 0px; min-height: 100vh; }"
+                      },
+                      "childNodes": []
+                    }
+                  ]
+                },
+                { "type": 3, "id": 11, "textContent": "\n  " },
+                {
+                  "type": 2,
+                  "id": 12,
+                  "tagName": "body",
+                  "attributes": {},
+                  "childNodes": [
+                    { "type": 3, "id": 13, "textContent": "\n    " },
+                    {
+                      "type": 2,
+                      "id": 14,
+                      "tagName": "main",
+                      "attributes": {},
+                      "childNodes": [
+                        { "type": 3, "id": 15, "textContent": "\n      " },
+                        {
+                          "type": 2,
+                          "id": 16,
+                          "tagName": "nav",
+                          "attributes": {},
+                          "childNodes": [
+                            {
+                              "type": 2,
+                              "id": 17,
+                              "tagName": "a",
+                              "attributes": {
+                                "id": "pricing",
+                                "href": "http://localhost:23315/pricing"
+                              },
+                              "childNodes": [{ "type": 3, "id": 18, "textContent": "*******" }]
+                            }
+                          ]
+                        },
+                        { "type": 3, "id": 19, "textContent": "\n      " },
+                        {
+                          "type": 2,
+                          "id": 20,
+                          "tagName": "h1",
+                          "attributes": {},
+                          "childNodes": [{ "type": 3, "id": 21, "textContent": "**** ****" }]
+                        },
+                        { "type": 3, "id": 22, "textContent": "\n      " },
+                        {
+                          "type": 2,
+                          "id": 23,
+                          "tagName": "label",
+                          "attributes": {},
+                          "childNodes": [
+                            { "type": 3, "id": 24, "textContent": "***** " },
+                            {
+                              "type": 2,
+                              "id": 25,
+                              "tagName": "input",
+                              "attributes": {
+                                "id": "email",
+                                "type": "email",
+                                "placeholder": "***************",
+                                "value": "***************"
+                              },
+                              "childNodes": []
+                            }
+                          ]
+                        },
+                        { "type": 3, "id": 26, "textContent": "\n      " },
+                        {
+                          "type": 2,
+                          "id": 27,
+                          "tagName": "label",
+                          "attributes": {},
+                          "childNodes": [
+                            {
+                              "type": 2,
+                              "id": 28,
+                              "tagName": "input",
+                              "attributes": { "id": "terms", "type": "checkbox" },
+                              "childNodes": []
+                            },
+                            { "type": 3, "id": 29, "textContent": " * *****" }
+                          ]
+                        },
+                        { "type": 3, "id": 30, "textContent": "\n      " },
+                        {
+                          "type": 2,
+                          "id": 31,
+                          "tagName": "div",
+                          "attributes": { "role": "button", "id": "custom", "tabindex": "0" },
+                          "childNodes": [{ "type": 3, "id": 32, "textContent": "******" }]
+                        },
+                        { "type": 3, "id": 33, "textContent": "\n      " },
+                        {
+                          "type": 2,
+                          "id": 34,
+                          "tagName": "button",
+                          "attributes": { "id": "pay", "type": "submit" },
+                          "childNodes": [
+                            {
+                              "type": 2,
+                              "id": 35,
+                              "tagName": "svg",
+                              "attributes": { "rr_width": "10px", "rr_height": "10px" },
+                              "childNodes": [],
+                              "isSVG": true
+                            },
+                            {
+                              "type": 2,
+                              "id": 36,
+                              "tagName": "span",
+                              "attributes": { "id": "pay-label" },
+                              "childNodes": [{ "type": 3, "id": 37, "textContent": "*** ***" }]
+                            }
+                          ]
+                        },
+                        { "type": 3, "id": 38, "textContent": "\n      " },
+                        {
+                          "type": 2,
+                          "id": 39,
+                          "tagName": "div",
+                          "attributes": { "style": "height: 3000px" },
+                          "childNodes": [{ "type": 3, "id": 40, "textContent": "****" }]
+                        },
+                        { "type": 3, "id": 41, "textContent": "\n    " }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        "initialOffset": { "top": 600, "left": 0 }
+      },
+      "timestamp": 1794999610852
+    },
+    { "type": 3, "data": { "source": 3, "id": 1, "x": 0, "y": 0 }, "timestamp": 1794999610989 },
+    {
+      "type": 3,
+      "data": { "source": 1, "positions": [{ "x": 209, "y": 107, "id": 28, "timeOffset": 0 }] },
+      "timestamp": 1794999611024
+    },
+    {
+      "type": 3,
+      "data": { "source": 2, "type": 1, "id": 28, "x": 209.7100067138672, "y": 107.37000274658203 },
+      "timestamp": 1794999611025
+    },
+    {
+      "type": 3,
+      "data": { "source": 5, "id": 25, "isChecked": false, "text": "***************" },
+      "timestamp": 1794999611025
+    },
+    { "type": 3, "data": { "source": 2, "type": 6, "id": 25 }, "timestamp": 1794999611025 },
+    { "type": 3, "data": { "source": 2, "type": 5, "id": 28 }, "timestamp": 1794999611025 },
+    {
+      "type": 3,
+      "data": { "source": 2, "type": 0, "id": 28, "x": 209.7100067138672, "y": 107.37000274658203 },
+      "timestamp": 1794999611025
+    },
+    {
+      "type": 3,
+      "data": { "source": 2, "type": 2, "id": 28, "x": 209, "y": 107, "pointerType": 0 },
+      "timestamp": 1794999611025
+    },
+    {
+      "type": 3,
+      "data": { "source": 5, "id": 28, "isChecked": true, "text": "**" },
+      "timestamp": 1794999611025
+    },
+    {
+      "type": 3,
+      "data": { "source": 2, "type": 1, "id": 31, "x": 640, "y": 128.8699951171875 },
+      "timestamp": 1794999611188
+    },
+    { "type": 3, "data": { "source": 2, "type": 6, "id": 28 }, "timestamp": 1794999611188 },
+    { "type": 3, "data": { "source": 2, "type": 5, "id": 31 }, "timestamp": 1794999611189 },
+    {
+      "type": 3,
+      "data": { "source": 2, "type": 0, "id": 31, "x": 640, "y": 128.8699951171875 },
+      "timestamp": 1794999611189
+    },
+    {
+      "type": 3,
+      "data": { "source": 2, "type": 2, "id": 31, "x": 640, "y": 128, "pointerType": 0 },
+      "timestamp": 1794999611189
+    },
+    {
+      "type": 3,
+      "data": { "source": 2, "type": 1, "id": 17, "x": 23.100000381469727, "y": 9 },
+      "timestamp": 1794999611337
+    },
+    { "type": 3, "data": { "source": 2, "type": 6, "id": 31 }, "timestamp": 1794999611338 },
+    { "type": 3, "data": { "source": 2, "type": 5, "id": 17 }, "timestamp": 1794999611338 },
+    {
+      "type": 3,
+      "data": { "source": 2, "type": 0, "id": 17, "x": 23.100000381469727, "y": 9 },
+      "timestamp": 1794999611338
+    },
+    {
+      "type": 3,
+      "data": { "source": 2, "type": 2, "id": 17, "x": 23, "y": 9, "pointerType": 0 },
+      "timestamp": 1794999611338
+    },
+    { "type": 5, "data": { "tag": "error", "payload": {} }, "timestamp": 1794999611475 },
+    {
+      "type": 3,
+      "data": {
+        "source": 1,
+        "positions": [
+          { "x": 640, "y": 128, "id": 31, "timeOffset": -337 },
+          { "x": 23, "y": 9, "id": 17, "timeOffset": -188 }
+        ]
+      },
+      "timestamp": 1794999611525
+    }
+  ]
+}

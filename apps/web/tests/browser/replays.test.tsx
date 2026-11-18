@@ -5,8 +5,10 @@ import type { Occurrence } from "../../src/lib/errors-api.ts";
 import {
   deferred,
   ERROR_FINGERPRINTS,
+  type FakeApi,
   fakeError,
   fakeReplays,
+  fakeReplayTimeline,
   installFakeApi,
   json,
   PROJECT,
@@ -19,8 +21,9 @@ const REPLAYS_PATH = `/api/projects/${PROJECT.id}/replays`;
 const REPLAY_ID = "aaaaaaaa-0000-4000-8000-000000000001";
 
 /** The TypeError's page, its three occurrences with a replay ready, arriving, and missing. */
-function installWithReplays() {
+function installWithReplays(overrides: Partial<FakeApi> = {}) {
   return installFakeApi({
+    ...overrides,
     error: (fingerprint, query, api) => {
       const detail = fakeError(fingerprint, query, api);
       if (detail instanceof Response) return detail;
@@ -89,10 +92,19 @@ describe("an occurrence's replay", () => {
       )
       .toBeVisible();
     const frame = dialog.element().querySelector("iframe");
-    expect(frame?.getAttribute("src")).toBe(
-      `${REPLAYS_PATH}/${REPLAY_ID}/player?errorAt=${Date.parse("2026-11-16T08:00:00.000Z")}`,
-    );
+    // Where the timeline marks the error: the recording's start, plus 35 seconds.
+    await expect
+      .poll(() => frame?.getAttribute("src"))
+      .toBe(
+        `${REPLAYS_PATH}/${REPLAY_ID}/player?errorAt=${Date.parse("2026-11-16T08:00:35.000Z")}`,
+      );
     expect(frame?.title).toBe("Session replay around the error at 16 Nov 2026, 16:00");
+    // Beside it, what the visitor did, each moment a way to move the player there.
+    const timeline = dialog.getByRole("list", { name: "Timeline of the replay" });
+    await expect.element(timeline).toBeVisible();
+    await expect
+      .element(timeline.getByRole("button", { name: "0:35: The error. Play from here" }))
+      .toBeVisible();
     expect(frame?.getAttribute("referrerpolicy")).toBe("no-referrer");
     // Nothing loosened: the player page's own policy protects it.
     expect(frame?.hasAttribute("sandbox")).toBe(false);
@@ -105,6 +117,43 @@ describe("an occurrence's replay", () => {
     await dialog.getByRole("button", { name: "Close" }).click();
     await expect.element(dialog).not.toBeInTheDocument();
     await expect.element(button).toHaveFocus();
+  });
+});
+
+/** Opens the TypeError's first replay; the player frame's address, as it is now. */
+const openReplay = async () => {
+  renderApp(TYPE_ERROR);
+  await page
+    .getByRole("button", { name: "Play replay of the error at 16 Nov 2026, 16:00" })
+    .click();
+  const dialog = page.getByRole("dialog", { name: "Session replay" });
+  await expect.element(dialog).toBeVisible();
+  return () => dialog.element().querySelector("iframe")?.getAttribute("src");
+};
+
+describe("the error marked in the player", () => {
+  test("is where the timeline marks it, on a visitor's clock three hours off", async () => {
+    const skewed = Date.parse("2026-11-16T05:00:00.000Z");
+    installWithReplays({
+      replayTimeline: (replayId) => {
+        const answer = fakeReplayTimeline(replayId);
+        return answer instanceof Response ? answer : { ...answer, recordingStartMs: skewed };
+      },
+    });
+    const src = await openReplay();
+    // The recording's own clock, not the server's time of the occurrence.
+    await expect.poll(src).toBe(`${REPLAYS_PATH}/${REPLAY_ID}/player?errorAt=${skewed + 35_000}`);
+  });
+
+  test("is at the occurrence's time when the timeline cannot load", async () => {
+    installWithReplays({
+      replayTimeline: () => json({ error: "internal", message: "Unavailable." }, 500),
+    });
+    const src = await openReplay();
+    await expect.element(page.getByText("The timeline could not load")).toBeVisible();
+    expect(src()).toBe(
+      `${REPLAYS_PATH}/${REPLAY_ID}/player?errorAt=${Date.parse("2026-11-16T08:00:00.000Z")}`,
+    );
   });
 });
 

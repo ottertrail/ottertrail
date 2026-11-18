@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser/context";
 
+import { SEEK_MESSAGE, TIME_MESSAGE } from "../../src/format.ts";
 import {
   NOT_AVAILABLE,
   NOT_LOADED,
@@ -111,7 +112,11 @@ const json = (body: unknown, status = 200) =>
 let player: Player | undefined;
 
 /** Starts the player in this page, its fetch answering with `respond`. */
-async function start(respond: () => Response, errorAt: number | null = ERROR_AT) {
+async function start(
+  respond: () => Response,
+  errorAt: number | null = ERROR_AT,
+  peer: Parameters<typeof startPlayer>[1]["peer"] = null,
+) {
   const root = document.createElement("div");
   root.style.height = "600px";
   document.body.append(root);
@@ -123,6 +128,7 @@ async function start(respond: () => Response, errorAt: number | null = ERROR_AT)
       asked.push({ url, init });
       return respond();
     },
+    peer,
   });
   await player.ready;
   return { root, asked };
@@ -265,5 +271,89 @@ describe("the replay player", () => {
 
     await start(() => json({ v: 1, events: [] }));
     await expect.element(page.getByRole("alert")).toHaveTextContent(NOT_READABLE);
+  });
+});
+
+/** A dashboard: a window of its own (a blank frame), what the player posts to it kept. */
+function fakeDashboard() {
+  const frame = document.createElement("iframe");
+  document.body.append(frame);
+  const dashboard = frame.contentWindow;
+  if (dashboard === null) throw new Error("No frame window");
+  const posted: { message: unknown; origin: string }[] = [];
+  dashboard.postMessage = (message: unknown, origin: unknown) => {
+    posted.push({ message, origin: String(origin) });
+  };
+  return { dashboard, posted, peer: { window: dashboard, origin: location.origin } };
+}
+
+/** A message as the browser delivers it, from `source` on `origin`. */
+const deliver = (data: unknown, origin: string, source: Window | null) =>
+  window.dispatchEvent(new MessageEvent("message", { data, origin, source }));
+
+describe("messages with the dashboard", () => {
+  test("moves to the moment the dashboard asks for, and says where it is", async () => {
+    const { dashboard, posted, peer } = fakeDashboard();
+    await start(() => json(recording()), ERROR_AT, peer);
+    // Where it starts: a minute before the error.
+    expect(posted.at(-1)).toEqual({
+      message: { type: TIME_MESSAGE, offsetMs: 30_000, totalMs: 120_000 },
+      origin: location.origin,
+    });
+
+    deliver({ type: SEEK_MESSAGE, offsetMs: 75_000 }, location.origin, dashboard);
+    await expect.element(slider()).toHaveAttribute("aria-valuetext", "1:15 of 2:00");
+    expect(posted.at(-1)?.message).toEqual({
+      type: TIME_MESSAGE,
+      offsetMs: 75_000,
+      totalMs: 120_000,
+    });
+    // Past the end: at the end.
+    deliver({ type: SEEK_MESSAGE, offsetMs: 500_000 }, location.origin, dashboard);
+    await expect.element(slider()).toHaveAttribute("aria-valuetext", "2:00 of 2:00");
+  });
+
+  test("ignores other origins, other windows, and other shapes", async () => {
+    const { dashboard, peer } = fakeDashboard();
+    await start(() => json(recording()), ERROR_AT, peer);
+    await expect.element(slider()).toHaveAttribute("aria-valuetext", "0:30 of 2:00");
+
+    deliver({ type: SEEK_MESSAGE, offsetMs: 75_000 }, "https://evil.example", dashboard);
+    deliver({ type: SEEK_MESSAGE, offsetMs: 75_000 }, location.origin, window);
+    deliver({ type: SEEK_MESSAGE, offsetMs: 75_000 }, location.origin, null);
+    deliver({ type: SEEK_MESSAGE, offsetMs: "75000" }, location.origin, dashboard);
+    deliver({ type: SEEK_MESSAGE, offsetMs: 75_000, extra: 1 }, location.origin, dashboard);
+    deliver("seek 75000", location.origin, dashboard);
+    // A real message after them shows they were read, and ignored.
+    deliver({ type: SEEK_MESSAGE, offsetMs: 10_000 }, location.origin, dashboard);
+    await expect.element(slider()).toHaveAttribute("aria-valuetext", "0:10 of 2:00");
+  });
+
+  test("a seek asked for while the recording loads is made once it is ready", async () => {
+    const { dashboard, peer } = fakeDashboard();
+    const root = document.createElement("div");
+    root.style.height = "600px";
+    document.body.append(root);
+    let answer: ((response: Response) => void) | undefined;
+    player = startPlayer(root, {
+      replayUrl: "/api/projects/p/replays/r",
+      errorAt: ERROR_AT,
+      fetch: () =>
+        new Promise((resolve) => {
+          answer = resolve;
+        }),
+      peer,
+    });
+    deliver({ type: SEEK_MESSAGE, offsetMs: 100_000 }, location.origin, dashboard);
+    answer?.(json(recording()));
+    await player.ready;
+    await expect.element(slider()).toHaveAttribute("aria-valuetext", "1:40 of 2:00");
+  });
+
+  test("without a dashboard, takes no message", async () => {
+    await start(() => json(recording()));
+    deliver({ type: SEEK_MESSAGE, offsetMs: 75_000 }, location.origin, window.parent);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    await expect.element(slider()).toHaveAttribute("aria-valuetext", "0:30 of 2:00");
   });
 });

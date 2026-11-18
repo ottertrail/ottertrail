@@ -1,6 +1,6 @@
 # Session replay
 
-**Status: the first version is built, replays around errors, as described here; what it leaves out is under [Not in the first version](#not-in-the-first-version). Stage 5 of the [roadmap](roadmap.md).**
+**Status: the first version is built, replays around errors, as described here, with a Replays page that lists and filters them, a timeline beside the player, and a user's replays on the user's page ([Finding replays](#finding-replays)); what it leaves out is under [Not in the first version](#not-in-the-first-version). Stage 5 of the [roadmap](roadmap.md).**
 
 A replay shows what a visitor saw and did on a site: the page, their clicks, scrolling, and typing, played back in the dashboard. Its most useful view is the minute before an error: what the visitor did that broke the page. The first version records only that: replays around errors, attached to the error's group ([errors](errors.md)).
 
@@ -75,6 +75,8 @@ Two switches, both needed:
 
 The site decides about consent: it leaves `data-replay` off until a visitor agrees, or calls `window.ottertrail.replay(false)` to stop and drop the buffer.
 
+A site should keep personal data out of its paths, such as an email address or a reset token in `/users/ada@example.com/reset/tok_…`. Query strings and fragments are always dropped, but a path is kept whole, as page analytics keeps it, and the Replays page lists and searches the paths of each replay ([below](#what-the-worker-derives)).
+
 ### The recorder script
 
 `r.js`, served beside the tracker as `v.js` is ([Web Vitals](web-analytics.md#web-vitals)), loaded by the tracker only when the snippet asks for it, so pages that do not record never download it: 93 KB, 29 KB gzipped, nearly all of it rrweb. The loader made `tracker.js` 135 bytes larger, gzipped. It inherits `v.js`'s limits: no recorder for a tracker pinned with `integrity`, the tracker's `nonce` under a strict Content Security Policy.
@@ -104,7 +106,7 @@ Decided on 17 November 2026: recordings are files in an object store, reached th
 
 - **The object store:** any server that speaks the S3 API, set by its endpoint, bucket, and keys. A hosted deployment uses Cloudflare R2 (or Amazon S3); development and self-hosted installs run [Garage](https://garagehq.deuxfleurs.fr/) (AGPL-3.0) in Docker Compose. Not MinIO: its community edition is no longer maintained upstream, nor published as Docker images. Ottertrail uses only the basic calls (put, get, list, and delete objects), so any of them works the same.
 - **Landing in PostgreSQL first:** chunks land in PostgreSQL (`replay_chunks`: project, replay ID, number, the compressed bytes, received time), which confirms them once committed; its unique `(project_id, replay_id, seq)` makes a retry harmless.
-- **One object per replay:** every 10 seconds the worker (`apps/api/src/replays/replays.ts`) joins each complete replay, its chunks from 0 to the last with none missing, unpacks it, checks that it is a recording, and stores it as one gzip-compressed object, recorded in PostgreSQL (`replays`: project, replay ID, the object's key, size, whether it was cut). A replay costs one write and one read in the store, which charges per request, rather than one per 60 KB chunk. The worker deletes the chunks an hour later, past the tracker's retries (eight attempts, at most a minute apart); a retry after that finds the replay joined and is ignored.
+- **One object per replay:** every 10 seconds the worker (`apps/api/src/replays/replays.ts`) joins each complete replay, its chunks from 0 to the last with none missing, unpacks it, checks that it is a recording, and stores it as one gzip-compressed object, recorded in PostgreSQL (`replays`: project, replay ID, the object's key, size, whether it was cut, and what the Replays page lists, [below](#what-the-worker-derives)). A replay costs one write and one read in the store, which charges per request, rather than one per 60 KB chunk. The worker deletes the chunks an hour later, past the tracker's retries (eight attempts, at most a minute apart); a retry after that finds the replay joined and is ignored.
 - **A replay whose end never came:** a missing chunk may still come as a retry, so the worker waits until none has come for 5 minutes. Then it keeps what came in order from the first chunk, cut after its last complete event and closed, marked cut; one with no complete event, or that is not a recording, is dropped.
 - **Deleting a project's replays** (its settings offer it when replays are turned off) holds the project's row exclusively, and the worker holds it shared while it joins a replay: a deletion waits for a join in progress, then deletes what that join wrote, and a join after it finds no chunks. A test holds a join's upload open, deletes meanwhile, and checks nothing is left.
 - **One bucket per instance,** keys by project: `replays/<project_id>/<replay_id>.gz`. A bucket per project would add nothing, and stores limit how many there can be. Who may read what is decided where it always is: the API's access check. The browser never gets the store's keys; playback reads a replay through the API, after that check.
@@ -122,12 +124,51 @@ A recording is whatever a browser sent with a public key, which anyone can copy 
 - The player runs in a page of its own, `GET /api/projects/:id/replays/:replayId/player` (`apps/api/src/replays/dashboard-routes.ts`), served with a Content Security Policy that lets images, stylesheets, and fonts load only from the project's allowed hostnames ([keys and allowed hostnames](web-analytics.md#keys-and-allowed-hostnames)), so a forged recording cannot make the viewer's browser call other servers; scripts only from Ottertrail, none inline; no forms or `<base>`; and only the dashboard may frame it. The recording itself comes from `GET /api/projects/:id/replays/:replayId`, after the access check every project route runs.
 - Nothing from a recording is put into the dashboard's own page.
 
+## Finding replays
+
+Replays stay error-only (decided 18 November 2026): the three views below show the recordings the rules above already made, and add nothing to what a page records or sends.
+
+### What the worker derives
+
+When the worker joins a replay, it reads the recording once more, as it is stored, already masked in the visitor's browser (`apps/api/src/replays/derive.ts`), and keeps in the replay's row (migration `0005_replay_details`):
+
+- **When:** the first and last event's times, so the replay's length. A visitor's clock can be wrong, and the recorder sends a replay's first chunk as the recording ends, so a recording that ends more than 10 minutes away from that chunk's arrival is moved by the difference. Ten minutes is far beyond the tracker's retries (eight attempts, at most a minute apart): a first chunk that came only on a retry, minutes late, does not move a right clock, and a clock off by less is left as it is. The row keeps the correction, and the player, which counts on the recording's own clock, gets its times back.
+- **Pages:** the paths of rrweb's Meta events, in the order first seen, at most 30, cleaned as page URLs are ([collecting](web-analytics.md#2-collecting)): no origin, query string, or fragment. The path itself is kept whole, so an email address or token a site puts in a path segment is kept too, as page analytics keeps it, and is listed and searchable on the Replays page; sites should keep personal data out of paths ([turning it on](#turning-it-on)). rrweb writes a Meta event when the page loads and with each full snapshot, every 30 seconds, so a single-page app's route change shows at the next snapshot, up to 30 seconds late, and one undone before it is not seen.
+- **Counts:** clicks, and page changes (a Meta event with another path).
+- **A timeline,** at most 500 items, as JSON in the row: each page change, each click, each run of inputs in one field (one item, "typed in a field" or "changed a field"), scrolls (those less than a second apart are one item), and the recorder's own error marker, each with its time from the recording's start. Past 500, only as many scrolls as needed are dropped, the earliest; when that is not enough, every scroll goes and then the earliest items. The timeline stores which happened (`truncated`: `"scrolls"` or `"earliest"`), and says so.
+
+A click is described only by what the recording holds without text: the element's tag, its role, and the click's position in the viewport. The role is the element's own `role` attribute when it is one of a fixed list (button, link, checkbox, tab, and so on), otherwise its tag's (a link for `<a>`, a text field for `<input type="text">`); a click on the icon inside a button is the button's. `role` and `type` are among the structure attributes the recorder's filter keeps as they are, and here they are only matched against those lists. No text, typed value, or other attribute is read; inputs never say what was typed, which the recording masks anyway (`*` for each character).
+
+Then the worker finds the replay's error (`apps/api/src/replays/link.ts`): the error events in ClickHouse that carry the replay's ID, read by project first, within an hour of the replay. From the first of them it keeps the error's time, group, type, and message, the known user, the environment, and the browser, OS, and device. The page sends its error before its replay, so the error is almost always there at once; one not found is looked for again later after each miss (half the replay's age, from 10 seconds to 10 minutes, `next_link_at`), and given up an hour after the join, when the row says its error was not found. Each run takes the most due replays, at most 20 of one project, so a project whose errors never come keeps no other project's replays waiting. The worker runs this apart from joining, so a ClickHouse outage stops only the search, logged once until it works again.
+
+### The Replays page
+
+`/projects/<id>/replays`, beside Errors in the project's menu ([dashboard](dashboard.md#replays)): every replay of the project, newest first, with when it started, its length, whether it was cut, its error (a link to the error's page), the known user (a link to their page), the paths visited, the environment, and the browser and device. Filters: the period and environment, as on every page; a path visited contains some text (case ignored, matched as it is, no wildcards); a user ID; an error group; and a minimum length. A replay whose error was not found has no environment, and shows in every one.
+
+`GET /api/projects/:id/replays/list` reads PostgreSQL alone, not ClickHouse: the worker has already copied what the list shows and filters by, so a page is one query on the replays table, by project, then start time and replay ID (an index of its own), never a scan across projects. Every value is a parameter, and each is checked before the query: days as on reports, an environment name, a path and user ID of at most 200 characters without control characters, a fingerprint, a minimum length up to an hour. It answers 50 replays at a time (at most 100), and a cursor (the last replay's start and ID) for the next page, so replays joined meanwhile cannot shift the pages. The first page also lists the period's environments and error groups, at most 50 of each, for the filters. Replays are kept 30 days, so a project's table stays bounded by its budgets.
+
+### The timeline
+
+Beside the player, on a replay's own page (`/projects/<id>/replays/<replay ID>`) and in the error page's replay dialog: the timeline's items, each with its time: "On /cart", "Clicked a button at 120, 340", "Typed in a field", "Went to /checkout", "The error". Scrolls are hidden until "Show scrolls" is ticked. Clicking an item moves the player to that moment, and the item the player is at is marked as it plays. `GET /api/projects/:id/replays/:replayId/timeline` serves the stored timeline with the replay's details, so the browser never reads the recording a second time. Paths and tags from a recording are shown as text only.
+
+The player stays on its own page, under the same Content Security Policy, in a frame where no script of the recording runs. The dashboard and the player talk with `postMessage` (`apps/web/src/lib/replay-messages.ts`, `packages/replay-player/src/format.ts`):
+
+- The dashboard sends `{"type":"ottertrail:replay-seek","offsetMs":…}` only to the player's frame, with its own origin as the target.
+- The player takes a message only from its parent window, from its own origin (the dashboard's: `frame-ancestors 'self'`), with exactly those two keys and an offset from 0 to a day; a seek that comes while the recording loads is made once it is ready. It answers with `{"type":"ottertrail:replay-time","offsetMs":…,"totalMs":…}`, to its parent and its own origin only, a few times a second while it plays.
+- The dashboard takes a message only from the player's frame, from its own origin, in exactly that shape.
+
+Anything else is ignored. The recording's own frame, inside the player, runs no script, so it can send nothing.
+
+### A user's replays
+
+On a user's page, each error the page recorded a replay for links to it ("Play replay"), or says it is on its way; and the page lists the user's latest 10 replays in the environment, from the replays table, by the user ID copied from their error.
+
 ## Retention and deletion
 
 - Replays are kept 30 days, the shortest retention a project can choose for events, so a replay outlives its error by a day at most. The worker deletes expired replays, object and row, itself rather than through the store's lifecycle rules, which differ from one store to another.
 - Deleting a project deletes its replays, everything under its key prefix, through the same `project_deletions` path as events ([ClickHouse](clickhouse.md#retention-and-deleting-a-project)).
 - Turning replay off keeps the recordings already made until they expire; the setting offers to delete them now.
-- Replays carry no user or visitor ID: a person's replays are found through their errors, which do. Deleting one user's data (not built) will have to delete those.
+- A recording carries no user or visitor ID. Its row in PostgreSQL keeps the user ID of its first error, copied from that error event, so the user's page can list it. Deleting one user's data (not built) will have to delete those replays, and their rows.
 
 ## What has been tested end to end
 
@@ -139,12 +180,12 @@ On 18 November 2026, in headless Chromium against a running API and the developm
 - Showing typed values, even for one field.
 - Network requests and console output beside the replay.
 - `<canvas>`, video frames, and frames from other domains.
-- Search across replays (by page, click, or user), and replays on a user's activity timeline.
-- A list of the visitor's clicks and pages beside the player.
+- Search by what was clicked, or by anything in a recording that the worker does not derive.
+- A single-page app's route changes as they happen: they show at the next full snapshot ([above](#what-the-worker-derives)).
 - Mobile apps.
 - Click heatmaps ([roadmap](roadmap.md#notes)).
 
 ## Decisions still open
 
 1. **Budgets:** the bytes per second and stored set above are a first guess: measure a real site's recordings, and set them from that.
-2. **Whole sessions:** whether to record any without an error. They would need consent wording and much more storage.
+2. **Whole sessions:** decided on 18 November 2026: not recorded. Replays stay error-only, which keeps a privacy-first product's strongest promise, that nothing is kept unless something broke. Server-side failures are seen in logs, traces, and metrics instead ([telemetry](telemetry.md)).

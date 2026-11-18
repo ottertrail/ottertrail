@@ -7,9 +7,23 @@ import type { Kysely } from "kysely";
 import type { Auth } from "../auth/auth.ts";
 import { requireTrustedOrigin } from "../auth/origin.ts";
 import { requireSession } from "../auth/routes.ts";
+import { DEFAULT_ENVIRONMENT, environmentOf } from "../collection/environment.ts";
+import { USER_ID_PATTERN } from "../collection/identity.ts";
 import type { Database } from "../db/schema.ts";
+import { FINGERPRINT_PATTERN } from "../errors/fingerprint.ts";
 import { type ProjectAccess, requireProjectAccess } from "../projects/access.ts";
+import { localDays } from "../reports/reports.ts";
+import { RANGE_PROPERTIES, type RangeQuery, requestDays } from "../reports/routes.ts";
 import type { ObjectStore } from "../storage/object-store.ts";
+import { dayIn } from "../visitors/visitor-ids.ts";
+import {
+  listReplays,
+  MAX_REPLAYS_PAGE_SIZE,
+  REPLAY_CURSOR_PATTERN,
+  replayChoices,
+  replayCursorOf,
+  replayTimeline,
+} from "./list.ts";
 import { deleteProjectReplays, projectReplays, storedReplayBytes } from "./replays.ts";
 
 const UUID_PATTERN =
@@ -27,6 +41,20 @@ function accessOf(request: { projectAccess: ProjectAccess | null }): ProjectAcce
 }
 
 const problem = (error: string, message: string) => ({ error, message });
+
+/** Text a filter may hold: no control characters. */
+const FILTER_TEXT_PATTERN = "^[^\\u0000-\\u001F\\u007F]{1,200}$";
+/** The longest minimum duration the list takes, in ms: far past any replay. */
+const MAX_MIN_DURATION_MS = 3_600_000;
+
+interface ListQuery extends RangeQuery {
+  path?: string;
+  userId?: string;
+  fingerprint?: string;
+  minDuration?: number;
+  before?: string;
+  limit?: number;
+}
 
 /**
  * The player page's Content Security Policy. A recording is whatever a
@@ -74,7 +102,10 @@ function playerPage(replayUrl: string, errorAt: number | null): string {
 
 /**
  * GET    /api/projects/:id/replays                         the project's replays, and the instance's use
+ * GET    /api/projects/:id/replays/list?period=…[&environment=…&path=…&userId=…&fingerprint=…&minDuration=…&before=…&limit=…]
+ *                                                          the project's replays, newest first, a page at a time
  * GET    /api/projects/:id/replays/:replayId               one replay: its recording, as JSON
+ * GET    /api/projects/:id/replays/:replayId/timeline      one replay: what it shows, and its timeline
  * GET    /api/projects/:id/replays/:replayId/player        the page that plays it, in a frame of the dashboard
  * DELETE /api/projects/:id/replays                         deletes every replay of the project
  *
@@ -89,7 +120,8 @@ export const replayRoutes: FastifyPluginCallback<{
   trustedOrigins: readonly string[];
   /** Compressed replay bytes the instance may keep. */
   limitBytes: number;
-}> = (app, { db, store, auth, trustedOrigins, limitBytes }, done) => {
+  now?: () => Date;
+}> = (app, { db, store, auth, trustedOrigins, limitBytes, now = () => new Date() }, done) => {
   const signedIn = requireSession(auth);
   const projectAccess = requireProjectAccess(db);
   const fromDashboard = requireTrustedOrigin(trustedOrigins);
@@ -128,6 +160,86 @@ export const replayRoutes: FastifyPluginCallback<{
         replays,
         instance: { storedBytes: stored, limitBytes },
       };
+    },
+  );
+
+  app.get<{ Params: { id: string }; Querystring: ListQuery }>(
+    "/projects/:id/replays/list",
+    {
+      preHandler: [signedIn, projectAccess],
+      schema: {
+        params,
+        querystring: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            ...RANGE_PROPERTIES,
+            path: { type: "string", maxLength: 200, pattern: FILTER_TEXT_PATTERN },
+            userId: { type: "string", maxLength: 200, pattern: USER_ID_PATTERN },
+            fingerprint: { type: "string", pattern: FINGERPRINT_PATTERN },
+            minDuration: { type: "integer", minimum: 0, maximum: MAX_MIN_DURATION_MS },
+            before: { type: "string", pattern: REPLAY_CURSOR_PATTERN },
+            limit: { type: "integer", minimum: 1, maximum: MAX_REPLAYS_PAGE_SIZE },
+          },
+        },
+      },
+    },
+    async (request, reply) => {
+      const { projectId, timeZone } = accessOf(request);
+      const { query } = request;
+      const days = requestDays(query, dayIn(timeZone)(now()));
+      if ("problem" in days) return reply.code(400).send(days.problem);
+      const before = query.before === undefined ? undefined : replayCursorOf(query.before);
+      if (before === null) {
+        return reply
+          .code(400)
+          .send(problem("invalid_query", "before is not a cursor of this list."));
+      }
+      const { from, to } = await localDays(db, days.from, days.to, timeZone);
+      const environment = environmentOf(query.environment);
+      const [page, choices] = await Promise.all([
+        listReplays(
+          db,
+          projectId,
+          {
+            from,
+            to,
+            environment,
+            path: query.path,
+            userId: query.userId,
+            fingerprint: query.fingerprint,
+            minDurationMs: query.minDuration,
+          },
+          { before, ...(query.limit === undefined ? {} : { limit: query.limit }) },
+        ),
+        // The filters' choices, on the first page only: later pages skip them.
+        before === undefined ? replayChoices(db, projectId, { from, to }, environment) : null,
+      ]);
+      const environments = choices?.environments ?? [];
+      for (const name of [environment, DEFAULT_ENVIRONMENT]) {
+        if (choices !== null && !environments.includes(name)) environments.push(name);
+      }
+      return {
+        configured: store !== null,
+        timeZone,
+        environment,
+        environments,
+        errorGroups: choices?.errorGroups ?? [],
+        firstDay: days.from,
+        lastDay: days.to,
+        ...page,
+      };
+    },
+  );
+
+  app.get<{ Params: { id: string; replayId: string } }>(
+    "/projects/:id/replays/:replayId/timeline",
+    { preHandler: [signedIn, projectAccess], schema: { params: replayParams } },
+    async (request, reply) => {
+      const { projectId, timeZone } = accessOf(request);
+      const found = await replayTimeline(db, projectId, request.params.replayId.toLowerCase());
+      if (found === null) return reply.code(404).send(NOT_FOUND);
+      return { timeZone, ...found };
     },
   );
 

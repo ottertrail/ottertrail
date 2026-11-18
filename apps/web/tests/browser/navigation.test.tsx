@@ -78,6 +78,9 @@ describe("inside a project", () => {
     await expect.element(projectMenu().getByRole("link", { name: "Users" })).toBeVisible();
     await expect.element(projectMenu().getByRole("link", { name: "Errors" })).toBeVisible();
     await expect
+      .element(projectMenu().getByRole("link", { name: "Replays" }))
+      .toHaveAttribute("href", `/projects/${PROJECT.id}/replays`);
+    await expect
       .element(projectMenu().getByRole("link", { name: "Product analytics" }))
       .toHaveAttribute("href", `/projects/${PROJECT.id}/product/events`);
     // Every module is built: none is shown as planned.
@@ -90,6 +93,7 @@ describe("inside a project", () => {
       "Speed",
       "Users",
       "Errors",
+      "Replays",
       "Traces",
       "Logs",
       "Metrics",

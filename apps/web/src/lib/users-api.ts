@@ -2,6 +2,8 @@ import { infiniteQueryOptions, keepPreviousData } from "@tanstack/react-query";
 
 import { DEFAULT_ENVIRONMENT } from "./analytics-api";
 import { apiRequest, expectShape } from "./api";
+import { isOccurrenceReplay, type OccurrenceReplay } from "./errors-api";
+import { isReplaySummary, type ReplaySummary } from "./replays-api";
 
 /** A known user: the site's own ID for someone signed in, with when they were seen. */
 export interface User {
@@ -46,6 +48,8 @@ export interface Activity {
   release: string | null;
   /** For an error event; null for the others. */
   error: ActivityError | null;
+  /** For an error event: the session replay its page sent with it, if any. */
+  replay: OccurrenceReplay | null;
 }
 
 /** One page of GET /api/projects/:id/users/:userId. */
@@ -55,6 +59,8 @@ export interface UserActivity {
   user: User;
   activity: Activity[];
   hasMore: boolean;
+  /** The user's latest session replays in the environment; on the first page only. */
+  replays: ReplaySummary[];
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -97,7 +103,8 @@ const isActivity = (value: unknown): value is Activity =>
   isTextOrNull(value.region) &&
   isTextOrNull(value.city) &&
   isTextOrNull(value.release) &&
-  (value.error === null || isActivityError(value.error));
+  (value.error === null || isActivityError(value.error)) &&
+  (value.replay === null || isOccurrenceReplay(value.replay));
 
 const isUserActivity = (value: unknown): value is UserActivity =>
   isRecord(value) &&
@@ -106,7 +113,9 @@ const isUserActivity = (value: unknown): value is UserActivity =>
   isUser(value.user) &&
   Array.isArray(value.activity) &&
   value.activity.every(isActivity) &&
-  typeof value.hasMore === "boolean";
+  typeof value.hasMore === "boolean" &&
+  Array.isArray(value.replays) &&
+  value.replays.every(isReplaySummary);
 
 /** The API's environment parameter: left out for the default. */
 const environmentParams = (environment: string): Record<string, string> =>

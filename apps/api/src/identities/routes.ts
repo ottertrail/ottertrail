@@ -10,6 +10,8 @@ import { ENVIRONMENT_PATTERN, environmentOf } from "../collection/environment.ts
 import { USER_ID_PATTERN } from "../collection/identity.ts";
 import type { Database } from "../db/schema.ts";
 import { type ProjectAccess, requireProjectAccess } from "../projects/access.ts";
+import { userReplays } from "../replays/list.ts";
+import { replayStatuses } from "../replays/replays.ts";
 import {
   ACTIVITY_PAGE_SIZE,
   listUsers,
@@ -35,8 +37,10 @@ function accessOf(request: { projectAccess: ProjectAccess | null }): ProjectAcce
  * GET /api/projects/:id/users[?environment=staging&search=…&offset=0&limit=50]
  * GET /api/projects/:id/users/:userId[?environment=staging&before=…&beforeId=…&limit=100]
  *
- * The project's known users, and one user's activity (users.ts). Like
- * every project route, both run requireProjectAccess first.
+ * The project's known users, and one user's activity (users.ts): each
+ * error with its session replay's state, and on the first page the user's
+ * latest replays (replays/list.ts). Like every project route, both run
+ * requireProjectAccess first.
  */
 export const userRoutes: FastifyPluginCallback<{
   db: Kysely<Database>;
@@ -157,7 +161,27 @@ export const userRoutes: FastifyPluginCallback<{
           message: "No event in this environment has this user ID.",
         });
       }
-      return { timeZone, environment, ...found };
+      const current = new Date();
+      const [statuses, replays] = await Promise.all([
+        replayStatuses(db, projectId, found.activity, current),
+        // The user's latest replays, on the first page only.
+        before === undefined
+          ? userReplays(db, projectId, request.params.userId, environment)
+          : Promise.resolve([]),
+      ]);
+      return {
+        timeZone,
+        environment,
+        ...found,
+        activity: found.activity.map(({ replayId, ...activity }) => ({
+          ...activity,
+          replay:
+            replayId === null
+              ? null
+              : { id: replayId, status: statuses.get(replayId) ?? "missing" },
+        })),
+        replays,
+      };
     },
   );
 
