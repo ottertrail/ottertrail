@@ -279,11 +279,20 @@ service:
 - **In a container,** the receiver needs the host's root filesystem mounted and named with `root_path` (such as `/hostfs`), or it measures the container.
 - **The key** is the project's secret key, under "Your server" in its settings; the page shows `sk_…` in its place and never prints the key.
 
+## Planned next
+
+Decided on 18 November 2026, after the alerts of stage 4 ([uptime and alerts](uptime-alerts.md)), in this order:
+
+1. **Alerts on telemetry:** a route's p95 or p99 duration, or its failed share, above a value, and any metric (a queue's depth, a dead-letter queue, a connection pool's use, a host's CPU) above or below one, over a window; stage 4's fourth step.
+2. **Services over time:** per route, the 99th percentile beside the median and the 95th, requests by status class (2xx, 3xx, 4xx, 5xx, from `http.response.status_code`), and charts over the period of requests per second, the failed share, and p95, as well as the totals.
+3. **Databases:** the database calls inside traces (client spans with `db.system`), summed by database and operation: calls, the 95th-percentile duration, and failures, over the period, with a link to traces that hold them. The answer to "which query got slow".
+
 ## Not in the first version
 
+- Charts that combine metrics, such as a cache's hit ratio from its hit and miss counters; saturation on the Hosts pages beyond the load average.
 - gRPC, and OTLP from browsers.
 - Exponential histograms and summaries (refused, and counted in `partial_success`).
-- Profiles, a live tail of logs, alerts (stage 4), sampling.
+- Profiles, a live tail of logs, sampling.
 - Retention chosen per organization.
 - Linking a browser's page load to the backend trace it started (`traceparent`).
 - Searching log bodies for a phrase: each word is matched on its own ([above](#how-the-pages-read)).
