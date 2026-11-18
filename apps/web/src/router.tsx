@@ -37,6 +37,10 @@ import { ProjectLayout } from "@/features/projects/project-layout";
 import { ProjectSettingsPage } from "@/features/projects/project-settings-page";
 import { ProjectsPage } from "@/features/projects/projects-page";
 import { SpeedPage } from "@/features/speed/speed-page";
+import { LogsPage } from "@/features/telemetry/logs-page";
+import { logFiltersFrom, traceFiltersFrom } from "@/features/telemetry/search";
+import { TracePage } from "@/features/telemetry/trace-page";
+import { TracesPage } from "@/features/telemetry/traces-page";
 import { UserPage } from "@/features/users/user-page";
 import { UsersPage } from "@/features/users/users-page";
 import {
@@ -353,6 +357,113 @@ const speedRoute = createRoute({
   },
 });
 
+/**
+ * A server's traces: days and environment as on errors, and filters
+ * (service, name, errors, a minimum duration), each left out when unset.
+ */
+const tracesRoute = createRoute({
+  getParentRoute: () => projectRoute,
+  path: "/traces",
+  staticData: { title: "Traces" },
+  validateSearch: (
+    search: ErrorSearchInput & {
+      service?: unknown;
+      name?: unknown;
+      errors?: unknown;
+      min?: unknown;
+    },
+  ) => {
+    const filters = traceFiltersFrom(search);
+    return {
+      ...rangeSearch(search),
+      ...environmentSearch(search),
+      service: filters.service,
+      name: filters.name,
+      errors: filters.errors,
+      min: filters.minDuration,
+    };
+  },
+  component: function TracesRouteComponent() {
+    const { projectId } = tracesRoute.useParams();
+    const { period, from, to, env, service, name, errors, min } = tracesRoute.useSearch();
+    return (
+      <TracesPage
+        projectId={projectId}
+        range={rangeFrom({ period, from, to })}
+        environment={env ?? DEFAULT_ENVIRONMENT}
+        filters={{ service, name, errors, minDuration: min }}
+      />
+    );
+  },
+});
+
+/** An ISO time in UTC, as the API takes it: when the trace is known to have run. */
+const isMoment = (value: unknown): value is string =>
+  typeof value === "string" &&
+  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,9})?Z$/.test(value) &&
+  !Number.isNaN(Date.parse(value));
+
+/**
+ * One trace. `at` (when it ran, from an error or a list) narrows where it
+ * is looked for; `span` is the span shown, so a link can open on it.
+ */
+const traceRoute = createRoute({
+  getParentRoute: () => projectRoute,
+  path: "/traces/$traceId",
+  staticData: { title: "Trace" },
+  validateSearch: (
+    search: { at?: unknown; span?: unknown } & SearchSchemaInput,
+  ): { at: string | undefined; span: string | undefined } => ({
+    at: isMoment(search.at) ? search.at : undefined,
+    span:
+      typeof search.span === "string" && /^[0-9a-f]{16}$/.test(search.span)
+        ? search.span
+        : undefined,
+  }),
+  component: function TraceRouteComponent() {
+    const { projectId, traceId } = traceRoute.useParams();
+    const { at, span } = traceRoute.useSearch();
+    return <TracePage projectId={projectId} traceId={traceId} at={at} spanId={span} />;
+  },
+});
+
+/** A server's log records: days and environment, and filters (service, severity, words, trace). */
+const logsRoute = createRoute({
+  getParentRoute: () => projectRoute,
+  path: "/logs",
+  staticData: { title: "Logs" },
+  validateSearch: (
+    search: ErrorSearchInput & {
+      service?: unknown;
+      severity?: unknown;
+      q?: unknown;
+      trace?: unknown;
+    },
+  ) => {
+    const filters = logFiltersFrom(search);
+    return {
+      ...rangeSearch(search),
+      ...environmentSearch(search),
+      service: filters.service,
+      severity: filters.severity,
+      q: filters.search,
+      trace: filters.traceId,
+    };
+  },
+  component: function LogsRouteComponent() {
+    const { projectId } = logsRoute.useParams();
+    const { period, from, to, env, service, severity, q, trace } = logsRoute.useSearch();
+    return (
+      <LogsPage
+        projectId={projectId}
+        range={rangeFrom({ period, from, to })}
+        environment={env ?? DEFAULT_ENVIRONMENT}
+        filters={{ service, severity, search: q, traceId: trace }}
+      />
+    );
+  },
+});
+
 /** Product analytics: its reports (events, funnel, retention) as tabs, each its own page. */
 const productRoute = createRoute({
   getParentRoute: () => projectRoute,
@@ -536,6 +647,9 @@ const routeTree = rootRoute.addChildren([
       userRoute,
       errorsRoute,
       errorRoute,
+      tracesRoute,
+      traceRoute,
+      logsRoute,
       productRoute.addChildren([
         productIndexRoute,
         productEventsRoute,

@@ -67,6 +67,14 @@ function projectRoutes(id: string): [string, string, object?][] {
     ["GET", `/api/projects/${id}/errors?period=7d`],
     ["GET", `/api/projects/${id}/errors/1-0123456789abcdef0123?period=7d`],
     ["PATCH", `/api/projects/${id}/errors/1-0123456789abcdef0123`, { status: "resolved" }],
+    ["GET", `/api/projects/${id}/traces?period=7d`],
+    ["GET", `/api/projects/${id}/traces/4bf92f3577b34da6a3ce929d0e0e4736`],
+    [
+      "GET",
+      `/api/projects/${id}/traces/4bf92f3577b34da6a3ce929d0e0e4736/spans/00f067aa0ba902b7?start=1795003200000000000`,
+    ],
+    ["GET", `/api/projects/${id}/logs?period=7d`],
+    ["GET", `/api/projects/${id}/logs/${"0".repeat(32)}?time=1795003200000000000`],
   ];
 }
 

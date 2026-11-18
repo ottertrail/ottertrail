@@ -9,6 +9,7 @@ import {
 } from "../../src/lib/errors-api.ts";
 import type { SavedFunnel } from "../../src/lib/funnels-api.ts";
 import type { GoalResult } from "../../src/lib/goals-api.ts";
+import type { LogList, LogRecord, LogSummary } from "../../src/lib/logs-api.ts";
 import type { Organization } from "../../src/lib/organizations-api.ts";
 import {
   type Funnel,
@@ -22,6 +23,7 @@ import {
 import type { Project } from "../../src/lib/projects-api.ts";
 import type { SourceMapFile, SourceMapRelease } from "../../src/lib/source-maps-api.ts";
 import type { Speed } from "../../src/lib/speed-api.ts";
+import type { SpanDetail, TraceDetail, TraceList, TraceSummary } from "../../src/lib/traces-api.ts";
 import type { Activity, User, UserActivity, UserList } from "../../src/lib/users-api.ts";
 
 /**
@@ -85,6 +87,16 @@ export interface FakeApi {
   sourceMaps: FakeSourceMaps;
   /** The project's session replays; GET and DELETE /api/projects/:id/replays read and empty them. */
   replays: FakeReplays;
+  /** Answers GET /api/projects/:id/traces; by default, fakeTraces. */
+  traces: (query: URLSearchParams) => TraceList | Response;
+  /** Answers GET /api/projects/:id/traces/:traceId; by default, fakeTrace. */
+  trace: (traceId: string, query: URLSearchParams) => TraceDetail | Response;
+  /** Answers GET /api/projects/:id/traces/:traceId/spans/:spanId; by default, fakeSpan. */
+  span: (traceId: string, spanId: string, query: URLSearchParams) => SpanDetail | Response;
+  /** Answers GET /api/projects/:id/logs; by default, fakeLogs. */
+  logs: (query: URLSearchParams) => LogList | Response;
+  /** Answers GET /api/projects/:id/logs/:logId; by default, fakeLog. */
+  log: (logId: string, query: URLSearchParams) => LogRecord | Response;
   /** Answers DELETE /api/projects/:id; by default, removes the project (204). */
   deleteProject: (api: FakeApi, id: string) => Response;
   /** Every path the page asked for, with its query, in order. */
@@ -444,6 +456,292 @@ export function fakeServerError(
     frames: null,
     sourceMaps: null,
   };
+}
+
+/** The trace of fakeServerError's occurrences, and its spans. */
+export const FAKE_TRACE_ID = "4bf92f3577b34da6a3ce929d0e0e4736";
+export const FAKE_SPANS = {
+  root: "a1a1a1a1a1a1a1a1",
+  query: "b2b2b2b2b2b2b2b2",
+  charge: "00f067aa0ba902b7",
+  gateway: "c3c3c3c3c3c3c3c3",
+  orphan: "d4d4d4d4d4d4d4d4",
+};
+const TRACE_START_NS = 1_795_000_000_000_000_000n;
+const nsAfter = (us: number) => String(TRACE_START_NS + BigInt(us) * 1000n);
+
+/** 130 traces, newest first, a hundred a page, the third of each ten failed, as the API pages them. */
+export function fakeTraces(query: URLSearchParams): TraceList {
+  const all: TraceSummary[] = Array.from({ length: 130 }, (_, i) => ({
+    traceId: i === 0 ? FAKE_TRACE_ID : i.toString(16).padStart(32, "0"),
+    spanId: i === 0 ? FAKE_SPANS.root : i.toString(16).padStart(16, "0"),
+    service: i % 2 === 0 ? "web" : "worker",
+    name: i === 0 ? "POST /orders/{id}/charge" : `job ${i}`,
+    start: new Date(Date.UTC(2026, 10, 16, 8, 0) - i * 60_000).toISOString(),
+    durationUs: i === 0 ? 182_400 : 1500 + i,
+    error: i % 10 === 0,
+    spans: i === 0 ? 5 : 1,
+  }));
+  const service = query.get("service");
+  const listed = all.filter(
+    (trace) =>
+      (service === null || trace.service === service) &&
+      (query.get("errors") !== "true" || trace.error),
+  );
+  const before = query.get("before");
+  const start = before === null ? 0 : Number(before.split("-")[0]);
+  const page = listed.slice(start, start + 100);
+  return {
+    timeZone: "Asia/Singapore",
+    environment: query.get("environment") ?? "production",
+    environments: ["production", "staging"],
+    services: ["web", "worker"],
+    firstDay: "2026-11-10",
+    lastDay: "2026-11-16",
+    retentionDays: 30,
+    traces: page,
+    next: start + 100 < listed.length ? `${start + 100}-${"0".repeat(48)}` : null,
+    received: true,
+  };
+}
+
+/** No span ever received. */
+export function noTraces(query: URLSearchParams): TraceList {
+  return { ...fakeTraces(query), traces: [], next: null, services: [], received: false };
+}
+
+export function fakeLogRecord(overrides: Partial<LogRecord> = {}): LogRecord {
+  return {
+    id: "0".repeat(32),
+    time: "2026-11-16T00:00:00.050Z",
+    timeNs: "1795305600050000000",
+    observedTime: "2026-11-16T00:00:00.051Z",
+    severityNumber: 9,
+    severityText: "INFO",
+    body: "loading order 5120",
+    traceId: null,
+    spanId: null,
+    eventName: "",
+    service: "web",
+    release: "1.4.2",
+    environment: "production",
+    attributes: { "order.id": "5120" },
+    resourceAttributes: { "service.name": "web", "host.name": "web-1" },
+    scope: { name: "app", version: "" },
+    ...overrides,
+  };
+}
+
+/** A record as a list gives it, the body cut to 1,000 characters, as the API does. */
+export function summaryOf(record: LogRecord): LogSummary {
+  return {
+    id: record.id,
+    time: record.time,
+    timeNs: record.timeNs,
+    severityNumber: record.severityNumber,
+    severityText: record.severityText,
+    body: record.body.slice(0, 1000),
+    bodyTruncated: record.body.length > 1000,
+    traceId: record.traceId,
+    spanId: record.spanId,
+    eventName: record.eventName,
+    service: record.service,
+    environment: record.environment,
+  };
+}
+
+/** A long body: its list's row shows the first 1,000 characters, and opening it the rest. */
+export const LONG_BODY = `stack dump ${"frame ".repeat(300)}the end`;
+
+/** Every whole record the fake API keeps: the trace's, then the list's. */
+const fakeLogRecords = (): LogRecord[] => [...traceLogRecords(FAKE_TRACE_ID), ...allLogRecords()];
+
+/** Answers GET /api/projects/:id/logs/:logId?time=: the record with that ID and time. */
+export function fakeLog(logId: string, query: URLSearchParams): LogRecord | Response {
+  const found = fakeLogRecords().find(
+    (record) => record.id === logId && record.timeNs === query.get("time"),
+  );
+  return found ?? json({ error: "no_log", message: "No log record with this ID is kept." }, 404);
+}
+
+function traceLogRecords(traceId: string): LogRecord[] {
+  return [
+    fakeLogRecord({ id: "1".repeat(32), traceId, spanId: FAKE_SPANS.root }),
+    fakeLogRecord({
+      id: "2".repeat(32),
+      time: "2026-11-16T00:00:00.170Z",
+      timeNs: "1795305600170000000",
+      severityNumber: 17,
+      severityText: "ERROR",
+      body: "Payment declined: card_declined",
+      traceId,
+      spanId: FAKE_SPANS.charge,
+      service: "payments",
+    }),
+  ];
+}
+
+/** A span of the fake trace, as the waterfall lists it. */
+const waterfallSpan = (
+  spanId: string,
+  parentSpanId: string,
+  name: string,
+  service: string,
+  offsetUs: number,
+  durationUs: number,
+  status: "unset" | "error" = "unset",
+) => ({
+  spanId,
+  parentSpanId,
+  name,
+  service,
+  kind: "server" as const,
+  status,
+  startNs: nsAfter(offsetUs),
+  offsetUs,
+  durationUs,
+});
+
+/** The charge's trace: an HTTP request, its query, the charge that failed, its call, and a span whose parent never came. */
+export function fakeTrace(traceId: string): TraceDetail {
+  if (traceId !== FAKE_TRACE_ID) {
+    return {
+      traceId,
+      timeZone: "Asia/Singapore",
+      retentionDays: 30,
+      start: null,
+      durationUs: 0,
+      spans: [],
+      totalSpans: 0,
+      logs: [],
+      logsTruncated: false,
+    };
+  }
+  return {
+    traceId,
+    timeZone: "Asia/Singapore",
+    retentionDays: 30,
+    start: "2026-11-16T00:00:00.000Z",
+    durationUs: 182_400,
+    // By start, as the API reads them.
+    spans: [
+      waterfallSpan(FAKE_SPANS.root, "", "POST /orders/{id}/charge", "web", 0, 182_400),
+      waterfallSpan(FAKE_SPANS.query, FAKE_SPANS.root, "SELECT orders", "web", 1200, 850),
+      waterfallSpan(FAKE_SPANS.orphan, "e5e5e5e5e5e5e5e5", "background refresh", "web", 2000, 400),
+      waterfallSpan(
+        FAKE_SPANS.charge,
+        FAKE_SPANS.root,
+        "charge card",
+        "payments",
+        5000,
+        170_000,
+        "error",
+      ),
+      waterfallSpan(
+        FAKE_SPANS.gateway,
+        FAKE_SPANS.charge,
+        "gateway call",
+        "payments",
+        6000,
+        150_000,
+      ),
+    ],
+    totalSpans: 5,
+    logs: traceLogRecords(traceId).map(summaryOf),
+    logsTruncated: false,
+  };
+}
+
+/** A span's detail, from the fake trace. */
+export function fakeSpan(traceId: string, spanId: string): SpanDetail | Response {
+  const row = fakeTrace(traceId).spans.find((span) => span.spanId === spanId);
+  if (row === undefined) {
+    return json({ error: "no_span", message: "No span with this ID is kept." }, 404);
+  }
+  const charge = spanId === FAKE_SPANS.charge;
+  return {
+    traceId,
+    spanId,
+    parentSpanId: row.parentSpanId,
+    name: row.name,
+    kind: row.kind,
+    status: row.status,
+    statusMessage: charge ? "card declined" : "",
+    service: row.service,
+    release: "1.4.2",
+    environment: "production",
+    start: new Date(Date.UTC(2026, 10, 16) + row.offsetUs / 1000).toISOString(),
+    durationUs: row.durationUs,
+    attributes: charge
+      ? { "http.route": "/orders/{id}/charge", "order.id": "5120" }
+      : { "http.route": "/orders/{id}" },
+    resourceAttributes: { "service.name": row.service, "host.name": "web-1" },
+    droppedAttributes: charge ? 2 : 0,
+    events: charge
+      ? [
+          {
+            name: "exception",
+            time: "2026-11-16T00:00:00.170Z",
+            offsetUs: 165_000,
+            attributes: { "exception.type": "CardDeclined" },
+          },
+        ]
+      : [],
+    droppedEvents: 0,
+    links: charge
+      ? [{ traceId: "f".repeat(32), spanId: "e".repeat(16), attributes: { reason: "retry of" } }]
+      : [],
+    droppedLinks: 0,
+    scope: { name: "http", version: "1.0" },
+  };
+}
+
+/** 70 log records, newest first, every fifth a warning, the first in the charge's trace, the second long. */
+function allLogRecords(): LogRecord[] {
+  return Array.from({ length: 70 }, (_, i) => {
+    const time = Date.UTC(2026, 10, 16, 8, 0) - i * 60_000;
+    return fakeLogRecord({
+      id: i.toString(16).padStart(32, "0"),
+      time: new Date(time).toISOString(),
+      timeNs: `${time}000000`,
+      severityNumber: i % 5 === 0 ? 13 : 9,
+      severityText: i % 5 === 0 ? "WARN" : "INFO",
+      body: i === 0 ? "Payment declined: card_declined" : i === 1 ? LONG_BODY : `line ${i}`,
+      ...(i === 0
+        ? { traceId: FAKE_TRACE_ID, spanId: FAKE_SPANS.charge, service: "payments" }
+        : {}),
+    });
+  });
+}
+
+/** The records as the API lists them, fifty a page. */
+export function fakeLogs(query: URLSearchParams): LogList {
+  const all = allLogRecords();
+  const search = query.get("search");
+  const listed = all.filter(
+    (log) =>
+      (search === null || log.body.toLowerCase().includes(search.toLowerCase())) &&
+      (query.get("severity") !== "warn" || log.severityNumber >= 13),
+  );
+  const before = query.get("before");
+  const start = before === null ? 0 : Number(before.split("-")[0]);
+  return {
+    timeZone: "Asia/Singapore",
+    environment: query.get("environment") ?? "production",
+    environments: ["production"],
+    services: ["payments", "web"],
+    firstDay: "2026-11-10",
+    lastDay: "2026-11-16",
+    retentionDays: 30,
+    logs: listed.slice(start, start + 50).map(summaryOf),
+    next: start + 50 < listed.length ? `${start + 50}-${"0".repeat(32)}` : null,
+    received: true,
+  };
+}
+
+/** No log record ever received. */
+export function noLogs(query: URLSearchParams): LogList {
+  return { ...fakeLogs(query), logs: [], next: null, services: [], received: false };
 }
 
 /** What the fake API keeps of a project's session replays. */
@@ -1381,6 +1679,29 @@ async function answer(api: FakeApi, url: URL, init: RequestInit | undefined): Pr
     const result = api.speed(url.searchParams);
     return result instanceof Response ? result : json(result);
   }
+  if (/^\/api\/projects\/[^/]+\/traces$/.test(path)) {
+    const result = api.traces(url.searchParams);
+    return result instanceof Response ? result : json(result);
+  }
+  const spanPath = /^\/api\/projects\/[^/]+\/traces\/([^/]+)\/spans\/([^/]+)$/.exec(path);
+  if (spanPath?.[1] !== undefined && spanPath[2] !== undefined) {
+    const result = api.span(spanPath[1], spanPath[2], url.searchParams);
+    return result instanceof Response ? result : json({ timeZone: "Asia/Singapore", span: result });
+  }
+  const tracePath = /^\/api\/projects\/[^/]+\/traces\/([^/]+)$/.exec(path);
+  if (tracePath?.[1] !== undefined) {
+    const result = api.trace(tracePath[1], url.searchParams);
+    return result instanceof Response ? result : json(result);
+  }
+  const logPath = /^\/api\/projects\/[^/]+\/logs\/([^/]+)$/.exec(path);
+  if (logPath?.[1] !== undefined) {
+    const result = api.log(logPath[1], url.searchParams);
+    return result instanceof Response ? result : json({ timeZone: "Asia/Singapore", log: result });
+  }
+  if (/^\/api\/projects\/[^/]+\/logs$/.test(path)) {
+    const result = api.logs(url.searchParams);
+    return result instanceof Response ? result : json(result);
+  }
   if (/^\/api\/projects\/[^/]+\/errors$/.test(path)) {
     const result = api.errors(url.searchParams, api);
     return result instanceof Response ? result : json(result);
@@ -1486,6 +1807,11 @@ export function installFakeApi(overrides: Partial<FakeApi> = {}): FakeApi {
     resolutions: fakeResolutions(),
     sourceMaps: fakeSourceMaps(),
     replays: fakeReplays(),
+    traces: fakeTraces,
+    trace: fakeTrace,
+    span: fakeSpan,
+    logs: fakeLogs,
+    log: fakeLog,
     deleteProject: removeProject,
     requests: [],
     bodies: [],

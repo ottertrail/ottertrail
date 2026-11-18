@@ -29,6 +29,7 @@ import { SourceMapCache } from "./source-maps/resolve.ts";
 import { sourceMapRoutes, sourceMapUploadRoutes } from "./source-maps/routes.ts";
 import { speedRoutes } from "./speed/routes.ts";
 import type { ObjectStore } from "./storage/object-store.ts";
+import { telemetryDashboardRoutes } from "./telemetry/dashboard-routes.ts";
 import { type TelemetryOptions, telemetryRoutes } from "./telemetry/routes.ts";
 import { trackerScriptRoutes } from "./tracker-script/routes.ts";
 
@@ -264,6 +265,14 @@ export function buildApp({
       auth: dashboard.auth,
       trustedOrigins: dashboard.trustedOrigins,
       sourceMaps: { store: objectStore, cache: new SourceMapCache() },
+      ...(dashboard.now === undefined ? {} : { now: dashboard.now }),
+    });
+    app.register(telemetryDashboardRoutes, {
+      prefix: "/api",
+      db,
+      clickhouse: telemetry.clickhouse ?? dashboard.clickhouse,
+      auth: dashboard.auth,
+      retentionDays: telemetry.retentionDays ?? DEFAULT_TELEMETRY_RETENTION_DAYS,
       ...(dashboard.now === undefined ? {} : { now: dashboard.now }),
     });
     app.register(replayRoutes, {

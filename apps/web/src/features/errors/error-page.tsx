@@ -221,14 +221,49 @@ function columnHeading(occurrences: Occurrence[], browser: string, server: strin
 const traceTitle = (occurrence: Occurrence) =>
   `Trace ${occurrence.traceId ?? "(none)"}, span ${occurrence.spanId ?? "(none)"}`;
 
+/** A server occurrence's trace, as a link to the trace's page, opened on its span. */
+function TraceLink({
+  projectId,
+  occurrence,
+  className,
+}: {
+  projectId: string;
+  occurrence: Occurrence & { traceId: string };
+  className?: string;
+}) {
+  return (
+    <Link
+      to="/projects/$projectId/traces/$traceId"
+      params={{ projectId, traceId: occurrence.traceId }}
+      search={{
+        at: occurrence.occurredAt,
+        ...(occurrence.spanId === null ? {} : { span: occurrence.spanId }),
+      }}
+      className={className ?? "font-mono text-link hover:underline"}
+      aria-label={`Open trace ${occurrence.traceId}`}
+    >
+      {occurrence.traceId}
+    </Link>
+  );
+}
+
+const hasTrace = (occurrence: Occurrence): occurrence is Occurrence & { traceId: string } =>
+  occurrence.traceId !== null;
+
 /**
  * The latest occurrence's service, trace, and span, for a server's
- * exception. The trace's own page comes with the Traces pages (planned).
+ * exception. The trace ID opens the trace's page, with its spans and logs,
+ * on the span the exception happened in.
  */
-function ServerCard({ occurrence }: { occurrence: Occurrence }) {
+function ServerCard({ projectId, occurrence }: { projectId: string; occurrence: Occurrence }) {
   const items = [
     { label: "Service", value: occurrence.service },
-    { label: "Trace ID", value: occurrence.traceId },
+    {
+      label: "Trace ID",
+      value: hasTrace(occurrence) ? (
+        <TraceLink projectId={projectId} occurrence={occurrence} />
+      ) : null,
+    },
     { label: "Span ID", value: occurrence.spanId },
   ];
   return (
@@ -238,10 +273,11 @@ function ServerCard({ occurrence }: { occurrence: Occurrence }) {
           <h3>Server</h3>
         </CardTitle>
         <CardDescription>
-          The latest occurrence came from a server, over OpenTelemetry.
+          The latest occurrence came from a server, over OpenTelemetry. Its trace shows the spans
+          and logs around it, while the trace is kept.
         </CardDescription>
       </CardHeader>
-      <CardContent className="flex flex-col gap-4">
+      <CardContent>
         <dl className="grid gap-x-6 gap-y-4 sm:grid-cols-3">
           {items.map((item) => (
             <div key={item.label} className="flex min-w-0 flex-col gap-1">
@@ -252,10 +288,6 @@ function ServerCard({ occurrence }: { occurrence: Occurrence }) {
             </div>
           ))}
         </dl>
-        <p className="flex flex-wrap items-center gap-2 text-sm text-ink-muted">
-          <Badge variant="secondary">Planned</Badge>
-          Opening the trace, with its spans and logs, comes with the Traces pages.
-        </p>
       </CardContent>
     </Card>
   );
@@ -354,7 +386,13 @@ function OccurrencesCard({
                       className="max-w-40 truncate font-mono"
                       title={traceTitle(occurrence)}
                     >
-                      {occurrence.traceId ?? (
+                      {hasTrace(occurrence) ? (
+                        <TraceLink
+                          projectId={projectId}
+                          occurrence={occurrence}
+                          className="text-link hover:underline"
+                        />
+                      ) : (
                         <span className="font-sans text-ink-subtle">(none)</span>
                       )}
                     </TableCell>
@@ -422,7 +460,9 @@ function Detail({
           />
         ))}
       </div>
-      {detail.source === "server" && latest !== undefined && <ServerCard occurrence={latest} />}
+      {detail.source === "server" && latest !== undefined && (
+        <ServerCard projectId={projectId} occurrence={latest} />
+      )}
       <StackCard
         projectId={projectId}
         source={detail.source}

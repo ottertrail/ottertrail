@@ -23,6 +23,14 @@ export function clickHouseErrorHandler(
         "These reports need more memory than the server has free now. Try a shorter range, or try again in a minute.",
     });
   }
+  if (error instanceof ClickHouseError && error.type === "TIMEOUT_EXCEEDED") {
+    // A query past its max_execution_time (telemetry's dashboard queries set one).
+    request.log.warn({ err: error }, "a report took too long");
+    return reply.code(503).header("retry-after", "60").send({
+      error: "reports_busy",
+      message: "This took too long to work out. Try a shorter range or narrower filters.",
+    });
+  }
   request.log.error({ err: error }, "a report failed");
   return reply.code(500).send({
     error: "internal_error",

@@ -236,9 +236,12 @@ describe("an error's page", () => {
       "Trace ID": "4bf92f3577b34da6a3ce929d0e0e4736",
       "Span ID": "00f067aa0ba902b7",
     });
-    // The trace's page does not exist yet: labelled, and no link.
-    await expect.element(page.getByText("Planned", { exact: true })).toBeVisible();
-    expect(page.getByRole("link", { name: /trace/i }).elements()).toEqual([]);
+    // The trace ID opens the trace's page (tests/browser/telemetry.test.tsx).
+    await expect
+      .element(
+        page.getByRole("link", { name: "Open trace 4bf92f3577b34da6a3ce929d0e0e4736" }).first(),
+      )
+      .toHaveAttribute("href", expect.stringContaining("/traces/4bf92f3577b34da6a3ce929d0e0e4736"));
 
     // Where it happens: routes and services, not browsers.
     await expect

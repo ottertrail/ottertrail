@@ -10,8 +10,10 @@ import {
   FolderIcon,
   GaugeIcon,
   PaletteIcon,
+  ScrollTextIcon,
   SettingsIcon,
   UsersIcon,
+  WaypointsIcon,
 } from "lucide-react";
 
 import { ApiStatus } from "@/components/api-status";
@@ -232,6 +234,34 @@ function ProjectMenu({ projectId }: { projectId: string }) {
             >
               <BugIcon />
               <span>Errors</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              render={<Link to="/projects/$projectId/traces" params={{ projectId }} />}
+              isActive={
+                matchRoute({
+                  to: "/projects/$projectId/traces",
+                  params: { projectId },
+                  fuzzy: true,
+                }) !== false
+              }
+              tooltip="Traces"
+            >
+              <WaypointsIcon />
+              <span>Traces</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              render={<Link to="/projects/$projectId/logs" params={{ projectId }} />}
+              isActive={
+                matchRoute({ to: "/projects/$projectId/logs", params: { projectId } }) !== false
+              }
+              tooltip="Logs"
+            >
+              <ScrollTextIcon />
+              <span>Logs</span>
             </SidebarMenuButton>
           </SidebarMenuItem>
           <SidebarMenuItem>

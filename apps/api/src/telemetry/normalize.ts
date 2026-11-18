@@ -222,6 +222,22 @@ export function cutBytes(value: string, max: number): string {
   return wellFormed.startsWith(cut) ? cut : cut.slice(0, -1);
 }
 
+/** Whether a UTF-16 unit is a control character: C0, DEL, or C1. */
+const isControl = (code: number) => code < 0x20 || (code >= 0x7f && code <= 0x9f);
+
+/**
+ * A label (a service's or scope's name, a severity's or event's name, a
+ * unit) without control characters, cut to MAX_LABEL_CHARS: the dashboard
+ * lists labels as filters, and its filters refuse control characters.
+ */
+export function label(value: string): string {
+  let clean = "";
+  for (const char of value) {
+    if (!isControl(char.charCodeAt(0))) clean += char;
+  }
+  return cutChars(clean, MAX_LABEL_CHARS);
+}
+
 /** Text cut to `max` UTF-16 units; a surrogate pair split at the end is replaced. */
 export function cutChars(value: string, max: number): string {
   return (value.length <= max ? value : value.slice(0, max)).toWellFormed();
@@ -351,7 +367,7 @@ function resourceOf(container: object, projectId: string): Resource {
   const { attributes: all } = flattenAttributes(
     resource === undefined ? [] : messages(resource, "attributes"),
   );
-  const service = cutChars(all["service.name"] ?? "", MAX_LABEL_CHARS);
+  const service = label(all["service.name"] ?? "");
   const version = all["service.version"] ?? "";
   const { attributes, bytes } = keepWithin(all, MAX_RESOURCE_ATTRIBUTE_BYTES);
   return {
@@ -371,8 +387,8 @@ function withScope(resource: Resource, container: object): Labels {
   const scope = message(container, "scope");
   return {
     ...resource.labels,
-    scope_name: scope === undefined ? "" : cutChars(text(scope, "name"), MAX_LABEL_CHARS),
-    scope_version: scope === undefined ? "" : cutChars(text(scope, "version"), MAX_LABEL_CHARS),
+    scope_name: scope === undefined ? "" : label(text(scope, "name")),
+    scope_version: scope === undefined ? "" : label(text(scope, "version")),
   };
 }
 
@@ -409,6 +425,16 @@ function enumValue(from: object, key: string, max: number): number {
 
 const ZERO_TRACE = "0".repeat(32);
 const ZERO_SPAN = "0".repeat(16);
+
+/**
+ * An ID a record may leave out (a log's trace and span, a span's parent, a
+ * link's): all zeros means none, as OTLP says, and is stored as "", so a
+ * span with an all-zero parent is a root and a log has no trace.
+ */
+function optionalId(from: object, key: string, length: number): string {
+  const value = id(from, key, length);
+  return value === ZERO_TRACE || value === ZERO_SPAN ? "" : value;
+}
 
 /**
  * An exception's attributes, as sent: read from the record's own
@@ -487,7 +513,7 @@ export function normalizeTraces(
           id: traceId + spanId,
           trace_id: traceId,
           span_id: spanId,
-          parent_span_id: id(span, "parentSpanId", 8),
+          parent_span_id: optionalId(span, "parentSpanId", 8),
           name: cutBytes(text(span, "name"), MAX_NAME_BYTES),
           kind: enumValue(span, "kind", 5),
           duration_ns: (end - start).toString(),
@@ -510,8 +536,8 @@ export function normalizeTraces(
           ),
           links: JSON.stringify(
             links.slice(0, MAX_SPAN_LINKS).map((link) => ({
-              traceId: id(link, "traceId", 16),
-              spanId: id(link, "spanId", 8),
+              traceId: optionalId(link, "traceId", 16),
+              spanId: optionalId(link, "spanId", 8),
               attributes: flattenAttributes(messages(link, "attributes")).attributes,
             })),
           ),
@@ -599,11 +625,11 @@ export function normalizeLogs(
             observed !== 0n && observed <= context.receivedAtNs + MAX_AHEAD_NS ? observed : at,
           ),
           severity_number: enumValue(record, "severityNumber", 24),
-          severity_text: cutChars(text(record, "severityText"), MAX_LABEL_CHARS),
+          severity_text: label(text(record, "severityText")),
           body: cutBytes(valueText(message(record, "body")), MAX_BODY_BYTES),
-          trace_id: id(record, "traceId", 16),
-          span_id: id(record, "spanId", 8),
-          event_name: cutChars(text(record, "eventName"), MAX_LABEL_CHARS),
+          trace_id: optionalId(record, "traceId", 16),
+          span_id: optionalId(record, "spanId", 8),
+          event_name: label(text(record, "eventName")),
           attributes,
           dropped_attributes_count: droppedCount(record, dropped),
         };
@@ -620,8 +646,8 @@ export function normalizeLogs(
               occurredAtNs: at,
               // Below ERROR (17) it was dealt with; ERROR and above, or no severity, it was not.
               handled: row.severity_number >= 1 && row.severity_number <= 16,
-              traceId: row.trace_id === ZERO_TRACE ? "" : row.trace_id,
-              spanId: row.span_id === ZERO_SPAN ? "" : row.span_id,
+              traceId: row.trace_id,
+              spanId: row.span_id,
               // The record as sent, not the row: a record with no time takes
               // its arrival's, which a retry's differs from.
               identity: [
@@ -687,7 +713,7 @@ export function normalizeMetrics(
       const shared = withScope(resource, scopeMetrics);
       for (const metric of messages(scopeMetrics, "metrics")) {
         const name = cutBytes(text(metric, "name"), MAX_NAME_BYTES);
-        const unit = cutChars(text(metric, "unit"), MAX_LABEL_CHARS);
+        const unit = label(text(metric, "unit"));
         const gauge = message(metric, "gauge");
         const sum = message(metric, "sum");
         const histogram = message(metric, "histogram");

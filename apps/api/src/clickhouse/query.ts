@@ -1,3 +1,5 @@
+import type { ClickHouseSettings } from "@clickhouse/client";
+
 import type { ClickHouseClient } from "./clickhouse.ts";
 
 /**
@@ -48,11 +50,14 @@ export async function queryRows<Row>(
   reader: Reader,
   query: string,
   params: QueryParams,
+  /** ClickHouse settings for this query only, such as max_execution_time. */
+  settings?: ClickHouseSettings,
 ): Promise<Row[]> {
   const result = await reader.client.query({
     query,
     query_params: params.values,
     format: "JSONEachRow",
+    ...(settings === undefined ? {} : { clickhouse_settings: settings }),
     ...(reader.sessionId === undefined ? {} : { session_id: reader.sessionId }),
   });
   return result.json<Row>();
