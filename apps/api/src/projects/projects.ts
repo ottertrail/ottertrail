@@ -19,7 +19,7 @@ export interface Project {
   createdAt: Date;
   /**
    * When the most recent event happened, or null before the first one. Set
-   * as the worker copies events to ClickHouse: a few seconds behind.
+   * as events are stored, at most once a minute (collection/last-event.ts).
    */
   lastEventAt: Date | null;
   /** Days of events kept; null keeps them forever. The worker deletes older ones. */
@@ -209,9 +209,10 @@ export async function updateProject(
 }
 
 /**
- * Deletes a project and, with it, all its events: PostgreSQL's at once
- * (the database cascades the delete), ClickHouse's within a minute, by the
- * worker, which a trigger asks to (project_deletions, migration 0013).
+ * Deletes a project and, with it, all its data: PostgreSQL's rows at once
+ * (the database cascades the delete), its events and telemetry in
+ * ClickHouse within a minute, by the worker, which a trigger asks to
+ * (project_deletions, migration 0013).
  * Returns the project's public key, or null when no project has this ID.
  */
 export async function deleteProject(

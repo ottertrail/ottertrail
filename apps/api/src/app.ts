@@ -34,18 +34,22 @@ import { trackerScriptRoutes } from "./tracker-script/routes.ts";
 
 export interface AppOptions extends Omit<FastifyServerOptions, "logger"> {
   db: Kysely<Database>;
-  /** Rate limits, location lookup, and clock for the collection endpoint. */
-  collection?: Omit<CollectionOptions, "db">;
+  /**
+   * Rate limits, location lookup, and clock for the collection endpoints,
+   * and the ClickHouse they store events in: the dashboard's unless
+   * `clickhouse` names another. Not served without a ClickHouse client.
+   */
+  collection?: Omit<CollectionOptions, "db" | "clickhouse"> & { clickhouse?: ClickHouseClient };
   /** Logging; off when omitted. Tests pass a stream to read the log. */
   log?: { level: string; stream?: { write(line: string): void } };
   /**
    * Dashboard sign-in (src/auth/auth.ts) and the instance's public URL.
-   * Without it the API serves only health and event collection, which is
-   * all some tests need.
+   * Without it the API serves only health, and event collection when
+   * `collection.clickhouse` is given, which is all some tests need.
    */
   dashboard?: {
     auth: Auth;
-    /** The events reports read (docs/clickhouse.md). */
+    /** Where events are stored and reports read them (docs/clickhouse.md). */
     clickhouse: ClickHouseClient;
     publicUrl: string;
     /** Origins dashboard requests may come from (Config.trustedOrigins). */
@@ -143,7 +147,16 @@ export function buildApp({
     db,
     collection.now === undefined ? {} : { now: collection.now },
   );
-  app.register(collectionRoutes, { prefix: "/api", db, projectKeys, ...collection });
+  const collectionClickHouse = collection.clickhouse ?? dashboard?.clickhouse;
+  if (collectionClickHouse !== undefined) {
+    app.register(collectionRoutes, {
+      prefix: "/api",
+      db,
+      projectKeys,
+      ...collection,
+      clickhouse: collectionClickHouse,
+    });
+  }
   app.register(replayCollectionRoutes, {
     prefix: "/api",
     db,

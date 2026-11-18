@@ -15,16 +15,17 @@ export const TELEMETRY_TABLES = ["spans", "logs", "metric_points", "metric_histo
 export const CLICKHOUSE_MIGRATIONS: ClickHouseMigration[] = [
   {
     /**
-     * Analytics events, as PostgreSQL's events table has them (db/schema.ts).
-     * PostgreSQL still receives them first; the worker copies them here.
+     * Analytics events, with the columns PostgreSQL's events table had.
+     * Until PostgreSQL migration 0024 they arrived there first and the
+     * worker copied them here; now the API inserts them here directly
+     * (collection/event-store.ts).
      *
      * - Ordered by project, then time: one project's range is one
      *   contiguous read, and every query filters by project first.
      * - Partitioned by month: a range's query reads only its months' parts.
      * - ReplacingMergeTree keeps one row per (project_id, occurred_at,
-     *   event_id) when parts merge. The worker sends each event once, so this
-     *   only matters if a batch is sent twice after a crash, and the insert
-     *   deduplication window already drops a repeated batch (tested).
+     *   event_id) when parts merge, and reports read with FINAL: a retried
+     *   event is the same row, so it counts once (docs/clickhouse.md).
      * - LowCardinality for columns with few distinct values: smaller and faster.
      */
     name: "0001_create_events",
@@ -61,11 +62,11 @@ export const CLICKHOUSE_MIGRATIONS: ClickHouseMigration[] = [
   {
     /**
      * An insert returns only once its data is on disk (fsync), as
-     * PostgreSQL's commit does. The worker marks a batch copied when the
-     * insert returns, and PostgreSQL later deletes its own copy
-     * (copy-events.ts), so a batch only in the operating system's cache
-     * when the power goes would otherwise be lost for good. The worker
-     * inserts one batch every few seconds, so the cost is small.
+     * PostgreSQL's commit does: the API confirms events when the insert
+     * returns, so events only in the operating system's cache when the
+     * power goes would otherwise be lost after the sender heard they were
+     * stored. Asynchronous inserts gather many requests into one part, so
+     * the cost stays small.
      */
     name: "0002_sync_events_inserts",
     statements: (database) => [

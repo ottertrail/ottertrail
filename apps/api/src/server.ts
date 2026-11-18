@@ -11,7 +11,7 @@ import { s3ObjectStore } from "./storage/object-store.ts";
 
 const config = loadConfig();
 const db = createDatabase({ connectionString: config.databaseUrl });
-// Reports read events here; collection never needs it (docs/clickhouse.md).
+// Events and telemetry are stored here, and reports read them (docs/clickhouse.md).
 const clickhouse = createClickHouse(config.clickhouse);
 // Source maps; none when the install has no object store (docs/errors.md).
 const objectStore = config.objectStore === null ? null : s3ObjectStore(config.objectStore);

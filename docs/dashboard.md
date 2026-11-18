@@ -165,13 +165,12 @@ The Settings page ends with a "Danger zone" of two changes that cannot be undone
 
 - **Replace the secret key** (`POST /api/projects/:id/secret-key`), for a secret key that ended up where it should not: servers with the old one are refused at once (a request already looking the key up may still pass), and user IDs signed with it no longer count.
 - **Replace the public key** (`POST /api/projects/:id/public-key`), for a key that ended up where it should not. The project gets a new key and keeps its data; pages with the old snippet can no longer send events, so the new snippet has to go on the site right after. The Install card shows it at once.
-- **Delete the project** (`DELETE /api/projects/:id`), with every event it has received: PostgreSQL deletes its events with the project, and the worker deletes them from ClickHouse within a minute, and usually from ClickHouse's disk within 6 hours ([clickhouse.md](clickhouse.md#retention-and-deleting-a-project)). The reports cannot be opened from the moment the project is gone. The request repeats the project's name (`{ "confirmName": "Main site" }`), and the dashboard asks for it to be typed, so a mistaken ID or a stray request cannot delete a project. Afterwards the dashboard opens the project list, and the home page stops opening the deleted project.
+- **Delete the project** (`DELETE /api/projects/:id`), with every event it has received: the worker deletes its events from ClickHouse within a minute, and usually from ClickHouse's disk within 6 hours ([clickhouse.md](clickhouse.md#retention-and-deleting-a-project)). The reports cannot be opened from the moment the project is gone. The request repeats the project's name (`{ "confirmName": "Main site" }`), and the dashboard asks for it to be typed, so a mistaken ID or a stray request cannot delete a project. Afterwards the dashboard opens the project list, and the home page stops opening the deleted project.
 
-The collection endpoint keeps keys in a cache for a minute (a key is checked on every event). The project routes tell it to forget a replaced or deleted key, so the key stops working at once in that API process. A batch already on its way when its project is deleted, or a key cached in another API process, fails to store because the project is gone; the endpoint answers that as an unknown key (403), which the tracker does not retry, instead of as an outage (503), which it would.
+The collection endpoint keeps keys in a cache for a minute (a key is checked on every event). The project routes tell it to forget a replaced or deleted key, so the key stops working at once in that API process. A batch already on its way when its project is deleted, or a key cached in another API process, is still stored: ClickHouse cannot check that the project exists. The worker's purge deletes those events with the project, or, if they land after it, the orphan sweep does ([clickhouse.md](clickhouse.md#retention-and-deleting-a-project)).
 
 ### Not done yet
 
-- Deleting a project deletes its events in PostgreSQL, at most two days' worth, while the request waits.
 - Deleted events can stay in backups until those are deleted; there is no backup policy yet.
 - Permissions: any signed-in user can manage projects, which is only the owner until invitations exist.
 
@@ -227,7 +226,7 @@ Before ClickHouse, in PostgreSQL, the same benchmark measured the whole page:
 
 With filters, the temporary table holds only the matching visits, so the reports after it have less to read. At 1,000 visits a day over 30 days, the whole page took 864 ms unfiltered, 539 ms filtered by a country, and 745 ms filtered by a page (which looks up the page's pageviews for each visit).
 
-In PostgreSQL, the page's reports also shared one snapshot (REPEATABLE READ), so their numbers agreed with each other even while new events arrived. ClickHouse has no snapshot across queries: events the worker copies while the page is worked out, a few seconds' worth, can reach some cards and not others.
+In PostgreSQL, the page's reports also shared one snapshot (REPEATABLE READ), so their numbers agreed with each other even while new events arrived. ClickHouse has no snapshot across queries: events stored while the page is worked out can reach some cards and not others.
 
 The individual report functions (`summary`, `breakdown`, …) still work on their own, as `vp run report` uses them; a test checks that both ways give the same numbers.
 

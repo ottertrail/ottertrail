@@ -7,7 +7,7 @@
  *   vp run report -- Playground 30 staging   (another environment than production)
  *
  * The days are today and the days before it, so the last day is partial.
- * Reports read the events the worker has copied to ClickHouse.
+ * Reports read the events in ClickHouse.
  */
 import { createClickHouse } from "../src/clickhouse/clickhouse.ts";
 import type { Reader } from "../src/clickhouse/query.ts";

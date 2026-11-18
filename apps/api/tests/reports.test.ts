@@ -2,7 +2,6 @@ import { randomUUID } from "node:crypto";
 
 import { afterAll, beforeAll, describe, expect, test } from "vite-plus/test";
 
-import { copyEventsToClickHouse } from "../src/clickhouse/copy-events.ts";
 import type { Reader } from "../src/clickhouse/query.ts";
 import { type NewEvent, storeEvents } from "../src/collection/event-store.ts";
 import {
@@ -37,10 +36,9 @@ function reader(): Reader {
   return { client: testClickHouse.client };
 }
 
-/** Stores events as collection does, and copies them to ClickHouse as the worker does. */
+/** Stores events as collection does. */
 async function store(id: string, events: NewEvent[]) {
-  await storeEvents(db(), id, events);
-  await copyEventsToClickHouse(db(), reader().client);
+  await storeEvents(reader().client, id, events);
 }
 
 function pv(visitorId: string, iso: string, path: string, extra: Partial<NewEvent> = {}): NewEvent {

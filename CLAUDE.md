@@ -9,7 +9,7 @@ If `docs/private/product-spec.md` exists, read it before work on product scope o
 - Multi-tenant: an organization is one customer. It owns projects, and dashboard users reach it through memberships. Everything a customer stores belongs to a project (`project_id`), and through the project to one organization.
 - Check access on the server, in one place: every route that reads or changes a project first checks that the signed-in user is a member of the project's organization. An organization or project ID sent by the browser is never enough on its own. Tests prove that one organization's members cannot reach another's data.
 - Settings that differ between customers, such as the timezone, belong to the organization, not to the deployment's configuration.
-- Stack: Fastify API, React dashboard (Vite), a separate Node.js worker, PostgreSQL, ClickHouse, Docker Compose. PostgreSQL holds accounts, organizations, projects, settings, and jobs. ClickHouse holds the high-volume data: analytics events, and later logs, traces, and metrics (`docs/storage-benchmark.md`). Events arrive in PostgreSQL, which keeps them until they are copied and past any retry; reports read ClickHouse (`docs/clickhouse.md`). No Redis, Kafka, or Kubernetes without a measured need.
+- Stack: Fastify API, React dashboard (Vite), a separate Node.js worker, PostgreSQL, ClickHouse, Docker Compose. PostgreSQL holds accounts, organizations, projects, settings, and jobs. ClickHouse holds the high-volume data: analytics events, and later logs, traces, and metrics (`docs/storage-benchmark.md`). Events and telemetry go straight to ClickHouse, and reports read them there (`docs/clickhouse.md`). No Redis, Kafka, or Kubernetes without a measured need.
 - ClickHouse tables are ordered by project, then time, and every query filters by `project_id` first.
 - All modules share one model: organization, project, environment, release, identity (anonymous and known end users), and session. Each module links into the per-user and per-release timelines.
 - A module is complete when it can replace the tool it targets for a real production app.
@@ -19,8 +19,8 @@ If `docs/private/product-spec.md` exists, read it before work on product scope o
 
 - Public project keys allow bounded event collection only. They never allow reads, exports, or configuration.
 - Browser payloads are untrusted. Validate them with Fastify schemas, limit body size, batch size, and field lengths, and check timestamps.
-- Store when an event happened and when it arrived. A unique `(project_id, event_id)` makes retries harmless; assume at-least-once delivery. A retried event counts once in whichever store the reports read.
-- Acknowledge events only after they are durably stored (today: committed to PostgreSQL).
+- Store when an event happened and when it arrived. Assume at-least-once delivery: a retry must be the same row (same `project_id`, time, and `event_id`), which ClickHouse's `ReplacingMergeTree` keeps once and reports read with `FINAL`. Nothing is looked up before an insert.
+- Acknowledge events and telemetry only after ClickHouse has written them (asynchronous inserts, waiting for the write); answer 503 while it cannot.
 - Rate-limit per IP and per project, and limit each organization's volume so one customer cannot crowd out the others. Reject bad requests before any database work.
 
 ## Working in this repository

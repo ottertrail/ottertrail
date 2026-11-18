@@ -96,24 +96,59 @@ export function cleanReferrer(raw: string | undefined): string | undefined {
   return cleaned.length > MAX_REFERRER_LENGTH ? undefined : cleaned;
 }
 
+/** A sender's clock off by less than this is taken as right (correctClock). */
+export const CLOCK_TOLERANCE_MS = 60 * 1000;
+
 /**
  * Converts a time on the sender's clock to the server's clock.
  *
  * The sender reports when the event happened (occurredAt) and when it sent
  * the batch (sentAt), both by its own clock, which may be wrong by minutes
- * or days. Only the difference between the two is trusted: the event
- * happened (sentAt - occurredAt) before the server received the batch.
+ * or days. The difference between when the server received the batch and
+ * when the sender says it sent it is the sender's clock error plus the
+ * time the request spent on the way:
  *
- * An event cannot happen after it was sent, so a later occurredAt is
- * treated as sentAt. Returns null when the corrected time is older than
- * MAX_EVENT_AGE_MS.
+ * - Under a minute either way, the clock is taken as right, and the event
+ *   keeps the sender's time.
+ * - Otherwise the event's time moves by that difference rounded to whole
+ *   minutes.
+ *
+ * The result must be the same on every attempt to send the event: a retry
+ * is stored as a second row with the same ID and time, which ClickHouse
+ * keeps once (event-store.ts). The tracker reads sentAt again for each
+ * attempt, and the time on the way differs each time, so the correction
+ * leaves that time out: the event cannot simply be placed
+ * (sentAt - occurredAt) before arrival. The cost is that a corrected time
+ * can be off by up to half a minute plus the time on the way, which
+ * reports, counting by day and hour, do not show.
+ *
+ * One case still counts twice: a clock off by about a minute or more,
+ * whose attempts' times on the way differ enough that the difference
+ * rounds to another whole minute (or crosses the one-minute line). That
+ * needs a wrong clock and a slow attempt; it is rare.
+ *
+ * An event cannot happen after it was sent, but a clock set back between
+ * the two (by a time sync) can make it seem so. Up to a minute after, the
+ * event keeps its time; further, it is placed at the start of the minute
+ * it was sent in. Neither uses sentAt as it is, which changes with each
+ * attempt. Returns null when the event was more than MAX_EVENT_AGE_MS old
+ * when it was sent.
  */
 export function correctClock(occurredAt: number, sentAt: number, receivedAt: number): Date | null {
   const ageAtSend = Math.max(0, sentAt - occurredAt);
   if (ageAtSend > MAX_EVENT_AGE_MS) {
     return null;
   }
-  return new Date(receivedAt - ageAtSend);
+  const offset = receivedAt - sentAt;
+  const correction =
+    Math.abs(offset) < CLOCK_TOLERANCE_MS
+      ? 0
+      : Math.round(offset / CLOCK_TOLERANCE_MS) * CLOCK_TOLERANCE_MS;
+  const at =
+    occurredAt <= sentAt + CLOCK_TOLERANCE_MS
+      ? occurredAt
+      : Math.floor(sentAt / CLOCK_TOLERANCE_MS) * CLOCK_TOLERANCE_MS;
+  return new Date(at + correction);
 }
 
 /** Whether a hostname is one of the project's allowed hostnames (exact, case-insensitive). */

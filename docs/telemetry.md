@@ -46,7 +46,7 @@ Exporters retry 429, 502, 503, and 504, and nothing else.
 
 ## Stored straight in ClickHouse
 
-Decided on 18 November 2026. Analytics events land in PostgreSQL first, which confirms them, and are copied to ClickHouse ([ClickHouse](clickhouse.md)). Telemetry does not: it is the largest data Ottertrail takes, often many times a site's events, and writing it twice would double the cost of the busiest path. An OTLP request is confirmed once ClickHouse has written it (asynchronous inserts, waiting for the write), and while ClickHouse cannot take it the answer is 503, which every exporter retries, keeping the data in its queue meanwhile.
+Decided on 18 November 2026. Analytics events then landed in PostgreSQL first, which confirmed them, and were copied to ClickHouse. Telemetry did not: it is the largest data Ottertrail takes, often many times a site's events, and writing it twice would double the cost of the busiest path. Events have gone straight to ClickHouse the same way since ([ClickHouse](clickhouse.md)). An OTLP request is confirmed once ClickHouse has written it (asynchronous inserts, waiting for the write), and while ClickHouse cannot take it the answer is 503, which every exporter retries, keeping the data in its queue meanwhile.
 
 A retry after an answer that was lost stores a record twice. Each record has an ID, a span its trace and span IDs, a log record or data point a hash of its content, and the tables keep one row per ID (`ReplacingMergeTree`); what counts records reads them deduplicated. One exception: a log record with neither a time nor an observed time takes the time it arrived, which differs on a retry, so a retry of it stays twice. OpenTelemetry's SDKs and the Collector always set the observed time.
 

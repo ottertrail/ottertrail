@@ -2,7 +2,6 @@ import { randomUUID } from "node:crypto";
 
 import { afterAll, beforeAll, describe, expect, test } from "vite-plus/test";
 
-import { copyEventsToClickHouse } from "../src/clickhouse/copy-events.ts";
 import { removeDeletedRows } from "../src/clickhouse/delete-events.ts";
 import { fromClickHouseTime } from "../src/clickhouse/query.ts";
 import { storeEvents } from "../src/collection/event-store.ts";
@@ -45,10 +44,10 @@ async function project(retentionDays: number | null, timeZone = TIME_ZONE) {
   return id;
 }
 
-/** Events stored as collection does, then copied to ClickHouse as the worker does. */
+/** Events stored as collection does. */
 async function events(projectId: string, times: string[]) {
   await storeEvents(
-    db(),
+    clickhouse(),
     projectId,
     times.map((iso) => ({
       eventId: randomUUID(),
@@ -57,18 +56,6 @@ async function events(projectId: string, times: string[]) {
       path: "/",
     })),
   );
-  await copyEventsToClickHouse(db(), clickhouse());
-}
-
-/** The project's events left in PostgreSQL. */
-async function remaining(projectId: string): Promise<string[]> {
-  const rows = await db()
-    .selectFrom("events")
-    .select("occurred_at")
-    .where("project_id", "=", projectId)
-    .orderBy("occurred_at")
-    .execute();
-  return rows.map((row) => row.occurred_at.toISOString());
 }
 
 /**
@@ -107,11 +94,9 @@ describe("deleteExpiredEvents", { timeout: 60_000 }, () => {
       projectId: id,
       before: new Date("2026-10-17T16:00:00Z"),
       deleted: 1,
-      clickhouseDeleted: 1,
     });
     // The whole day of 18 October stays: no report shows half a day.
     const kept = ["2026-10-17T16:00:00.000Z", "2026-11-17T03:00:00.000Z"];
-    expect(await remaining(id)).toEqual(kept);
     expect(await remainingInClickHouse(id)).toEqual(kept);
   });
 
@@ -124,13 +109,11 @@ describe("deleteExpiredEvents", { timeout: 60_000 }, () => {
     const results = await deleteExpiredEvents(db(), clickhouse(), { now: NOW });
 
     expect(results.map((result) => result.projectId)).not.toContain(forever);
-    expect(await remaining(forever)).toEqual(["2020-01-01T00:00:00.000Z"]);
     expect(await remainingInClickHouse(forever)).toEqual(["2020-01-01T00:00:00.000Z"]);
-    expect(await remaining(short)).toEqual([]);
     expect(await remainingInClickHouse(short)).toEqual([]);
   });
 
-  test("deletes in batches until nothing old is left", async () => {
+  test("deletes every old event of a project at once", async () => {
     const id = await project(30);
     await events(id, [
       "2026-01-01T00:00:00Z",
@@ -141,13 +124,11 @@ describe("deleteExpiredEvents", { timeout: 60_000 }, () => {
       "2026-11-17T00:00:00Z",
     ]);
 
-    const results = await deleteExpiredEvents(db(), clickhouse(), { now: NOW, batchSize: 2 });
+    const results = await deleteExpiredEvents(db(), clickhouse(), { now: NOW });
 
     expect(results.find((result) => result.projectId === id)).toMatchObject({
       deleted: 5,
-      clickhouseDeleted: 5,
     });
-    expect(await remaining(id)).toEqual(["2026-11-17T00:00:00.000Z"]);
     expect(await remainingInClickHouse(id)).toEqual(["2026-11-17T00:00:00.000Z"]);
   });
 
@@ -160,9 +141,7 @@ describe("deleteExpiredEvents", { timeout: 60_000 }, () => {
 
     expect(again.find((result) => result.projectId === id)).toMatchObject({
       deleted: 0,
-      clickhouseDeleted: 0,
     });
-    expect(await remaining(id)).toEqual(["2026-11-17T00:00:00.000Z"]);
   });
 
   test("each project's cut-off is midnight in its own organization's timezone", async () => {
@@ -191,7 +170,6 @@ describe("deleteExpiredEvents", { timeout: 60_000 }, () => {
 
     expect(results.map((result) => result.projectId)).not.toContain(lost);
     expect(await remainingInClickHouse(lost)).toEqual(["2020-01-01T00:00:00.000Z"]);
-    expect(await remaining(fine)).toEqual([]);
     expect(await remainingInClickHouse(fine)).toEqual([]);
   });
 
@@ -205,9 +183,7 @@ describe("deleteExpiredEvents", { timeout: 60_000 }, () => {
     await deleteExpiredEvents(db(), clickhouse(), { now: NOW });
 
     expect(await remainingInClickHouse(singapore)).toEqual(["2026-10-17T20:00:00.000Z"]);
-    expect(await remaining(singapore)).toEqual(["2026-10-17T20:00:00.000Z"]);
     expect(await remainingInClickHouse(utc)).toEqual([]);
-    expect(await remaining(utc)).toEqual([]);
   });
 
   test("deleted rows leave ClickHouse's disk afterwards, even those an earlier run left", async () => {

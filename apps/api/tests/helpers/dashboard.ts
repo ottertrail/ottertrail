@@ -1,9 +1,9 @@
 import { type AppOptions, buildApp } from "../../src/app.ts";
 import { createAuth } from "../../src/auth/auth.ts";
 import { createSetupToken } from "../../src/auth/setup.ts";
-import { copyEventsToClickHouse } from "../../src/clickhouse/copy-events.ts";
 import type { Reader } from "../../src/clickhouse/query.ts";
 import { type NewEvent, storeEvents } from "../../src/collection/event-store.ts";
+import { LastEventRecorder } from "../../src/collection/last-event.ts";
 import type { MembershipRole } from "../../src/db/schema.ts";
 import { createOrganization } from "../../src/organizations/organizations.ts";
 import { createTestClickHouse } from "./test-clickhouse.ts";
@@ -99,10 +99,10 @@ export async function signedInDashboard({
     auth,
     cookie,
     organizationId,
-    /** Stores events as collection does, then copies them to ClickHouse as the worker does. */
+    /** Stores events in ClickHouse and records the project's latest, as collection does. */
     store: async (projectId: string, events: readonly NewEvent[]) => {
-      await storeEvents(testDb.db, projectId, events);
-      await copyEventsToClickHouse(testDb.db, testClickHouse.client);
+      await storeEvents(testClickHouse.client, projectId, events);
+      await new LastEventRecorder(testDb.db).record(projectId, events);
     },
     close: async () => {
       await app.close();

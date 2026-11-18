@@ -1,13 +1,13 @@
 import { Buffer } from "node:buffer";
 
 import type { FastifyInstance, FastifyReply } from "fastify";
-import type { Kysely } from "kysely";
 
-import type { Database } from "../db/schema.ts";
+import type { ClickHouseClient } from "../clickhouse/clickhouse.ts";
 import { ENGAGEMENT, PAGEVIEW, VITALS } from "../visits/visits.ts";
 import { ENVIRONMENT_PATTERN, environmentOf, RELEASE_PATTERN } from "./environment.ts";
 import { type NewEvent, storeEvents } from "./event-store.ts";
 import { USER_ID_PATTERN } from "./identity.ts";
+import type { LastEventRecorder } from "./last-event.ts";
 import { isStorableText, MAX_EVENT_AGE_MS } from "./normalize.ts";
 import type { ProjectKeyCache } from "./project-keys.ts";
 import type { EventBudget, RateLimit, TokenBucketLimiter } from "./rate-limiter.ts";
@@ -67,14 +67,17 @@ function storageUnavailable(reply: FastifyReply) {
  * activity, not in web analytics, which counts what browsers send.
  *
  * The rest is as for browsers: a schema check before any database work,
- * the project's event budget, each event ID stored once, and 202 only
- * after PostgreSQL commits.
+ * the project's event budget, a retried event counted once, and 202 only
+ * after ClickHouse has written the events. Each event keeps the time the
+ * server sent, so a retry is the same row (event-store.ts).
  */
 export function serverEventsRoute(
   app: FastifyInstance,
   options: {
-    db: Kysely<Database>;
+    clickhouse: ClickHouseClient;
     projects: ProjectKeyCache;
+    /** Shared with browser events (last-event.ts). */
+    lastEvents: LastEventRecorder;
     /** Shared with browser events: one budget per project, inside its organization's. */
     budget: EventBudget;
     ipLimiter: TokenBucketLimiter;
@@ -85,8 +88,17 @@ export function serverEventsRoute(
     now: () => number;
   },
 ) {
-  const { db, projects, budget, ipLimiter, maxEvents, maxBodyBytes, maxPropertiesBytes, now } =
-    options;
+  const {
+    clickhouse,
+    projects,
+    lastEvents,
+    budget,
+    ipLimiter,
+    maxEvents,
+    maxBodyBytes,
+    maxPropertiesBytes,
+    now,
+  } = options;
 
   app.post<{ Body: ServerBatch }>(
     "/server-events",
@@ -247,24 +259,19 @@ export function serverEventsRoute(
           );
       }
       try {
-        const result = await storeEvents(db, project.id, accepted);
-        return await reply
-          .code(202)
-          .send({ stored: result.inserted, duplicates: result.duplicates, tooOld });
+        await storeEvents(clickhouse, project.id, accepted, { receivedAt: new Date(receivedAt) });
       } catch (error) {
-        // The project was deleted after its key was looked up.
-        if (
-          typeof error === "object" &&
-          error !== null &&
-          "code" in error &&
-          error.code === "23503"
-        ) {
-          projects.forgetProject(project.id);
-          return reply.code(401).send(problem("unknown_key", "No project has this secret key."));
-        }
+        // Not the sender's doing: the budget back, so its retries are not refused for it.
+        budget.refund(project, accepted.length);
         request.log.error({ err: error }, "could not store server events");
         return storageUnavailable(reply);
       }
+      // Not waited for: the events are stored, and a slow PostgreSQL must
+      // not hold the answer up, nor fail it.
+      lastEvents.record(project.id, accepted).catch((error: unknown) => {
+        request.log.warn({ err: error }, "could not record the project's latest event");
+      });
+      return reply.code(202).send({ stored: accepted.length, tooOld });
     },
   );
 }

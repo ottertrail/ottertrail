@@ -3,11 +3,13 @@ import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, test } from "vite-plus/test";
 
 import { buildApp } from "../src/app.ts";
-import { copyEventsToClickHouse } from "../src/clickhouse/copy-events.ts";
+import { createClickHouse } from "../src/clickhouse/clickhouse.ts";
 import { ProjectKeyCache } from "../src/collection/project-keys.ts";
+import { loadConfig } from "../src/config.ts";
 import { createDatabase } from "../src/db/database.ts";
 import { replaceSecretKey } from "../src/projects/projects.ts";
 import { signedInDashboard } from "./helpers/dashboard.ts";
+import { countEvents, storedEvents } from "./helpers/events.ts";
 import { insertProject } from "./helpers/projects.ts";
 
 let dashboard: Awaited<ReturnType<typeof signedInDashboard>>;
@@ -63,13 +65,11 @@ function send(body: unknown, headers: Record<string, string> = {}) {
   });
 }
 
+/** The event with this ID in ClickHouse, if it is there. */
 async function stored(id: string) {
-  return dashboard.db
-    .selectFrom("events")
-    .selectAll()
-    .where("project_id", "=", projectId)
-    .where("event_id", "=", id)
-    .executeTakeFirst();
+  return (await storedEvents(dashboard.reader.client, projectId)).find(
+    (event) => event.event_id === id,
+  );
 }
 
 describe("POST /api/server-events", () => {
@@ -83,7 +83,7 @@ describe("POST /api/server-events", () => {
       events: [event, withPage],
     });
     expect(response.statusCode).toBe(202);
-    expect(response.json()).toEqual({ stored: 2, duplicates: 0, tooOld: 0 });
+    expect(response.json()).toEqual({ stored: 2, tooOld: 0 });
 
     expect(await stored(event.id)).toMatchObject({
       name: "subscription_started",
@@ -99,11 +99,17 @@ describe("POST /api/server-events", () => {
     expect(await stored(withPage.id)).toMatchObject({ path: "/checkout" });
   });
 
-  test("stores a retried event once", async () => {
+  test("counts a retried event once: its time is stored as sent", async () => {
+    const project = await insertProject(dashboard.db, {
+      organization_id: dashboard.organizationId,
+      name: "Retries",
+    });
+    const key = await secretKeyOf(project.id);
     const event = serverEvent();
-    await send({ v: 1, events: [event] });
-    const again = await send({ v: 1, events: [event] });
-    expect(again.json()).toEqual({ stored: 0, duplicates: 1, tooOld: 0 });
+    await send({ v: 1, events: [event] }, { authorization: `Bearer ${key}` });
+    const again = await send({ v: 1, events: [event] }, { authorization: `Bearer ${key}` });
+    expect(again.json()).toEqual({ stored: 1, tooOld: 0 });
+    expect(await countEvents(dashboard.reader.client, project.id)).toBe(1);
   });
 
   test("needs the project's secret key, checked before the body is read", async () => {
@@ -164,7 +170,10 @@ describe("POST /api/server-events", () => {
     const unreachable = createDatabase({
       connectionString: "postgres://unused@127.0.0.1:1/unused",
     });
-    const broken = buildApp({ db: unreachable });
+    const broken = buildApp({
+      db: unreachable,
+      collection: { clickhouse: dashboard.reader.client },
+    });
     try {
       const response = await broken.inject({
         method: "POST",
@@ -178,6 +187,30 @@ describe("POST /api/server-events", () => {
     } finally {
       await broken.close();
       await unreachable.destroy();
+    }
+  });
+
+  test("answers 503, for a retry, and stores nothing, if ClickHouse cannot take the events", async () => {
+    const unreachable = createClickHouse(
+      { ...loadConfig().clickhouse, url: "http://127.0.0.1:1" },
+      { database: dashboard.clickhouseDatabase },
+    );
+    const broken = buildApp({ db: dashboard.db, collection: { clickhouse: unreachable } });
+    const event = serverEvent();
+    try {
+      const response = await broken.inject({
+        method: "POST",
+        url: "/api/server-events",
+        headers: { "content-type": "application/json", authorization: `Bearer ${secretKey}` },
+        payload: JSON.stringify({ v: 1, events: [event] }),
+      });
+      expect(response.statusCode).toBe(503);
+      expect(response.headers["retry-after"]).toBe("5");
+      expect(response.json()).toMatchObject({ error: "storage_unavailable" });
+      expect(await stored(event.id)).toBeUndefined();
+    } finally {
+      await broken.close();
+      await unreachable.close();
     }
   });
 
@@ -200,7 +233,7 @@ describe("POST /api/server-events", () => {
   test("counts an event over a day old instead of storing it", async () => {
     const event = serverEvent({ occurredAt: Date.now() - 25 * 60 * 60 * 1000 });
     const response = await send({ v: 1, events: [event] });
-    expect(response.json()).toEqual({ stored: 0, duplicates: 0, tooOld: 1 });
+    expect(response.json()).toEqual({ stored: 0, tooOld: 1 });
   });
 
   test("never lets a page read the answer: a page must not hold the secret key", async () => {
@@ -216,7 +249,6 @@ describe("POST /api/server-events", () => {
     const event = serverEvent({ userId: "server-user", name: "invoice_paid" });
     await send({ v: 1, events: [event] });
     await send({ v: 1, environment: "billing-worker", events: [serverEvent()] });
-    await copyEventsToClickHouse(dashboard.db, dashboard.reader.client);
 
     const user = await dashboard.app.inject({
       url: `/api/projects/${projectId}/users/server-user`,

@@ -3,7 +3,6 @@ import { gunzipSync, gzipSync } from "node:zlib";
 
 import { afterAll, beforeAll, describe, expect, test } from "vite-plus/test";
 
-import { copyEventsToClickHouse } from "../src/clickhouse/copy-events.ts";
 import { purgeDeletedProjects } from "../src/clickhouse/delete-events.ts";
 import { LOCAL_OBJECT_STORE } from "../src/config.ts";
 import { fingerprint } from "../src/errors/fingerprint.ts";
@@ -418,21 +417,14 @@ describe("an error's replay", () => {
       }),
     });
     expect(response.statusCode).toBe(202);
-    const row = await dashboard.db
-      .selectFrom("events")
-      .select("replay_id")
-      .where("project_id", "=", project.id)
-      .executeTakeFirstOrThrow();
-    expect(row.replay_id).toBe(replayId);
-    // And in ClickHouse, which the error page reads.
-    await copyEventsToClickHouse(dashboard.db, dashboard.reader.client);
-    const copied = await dashboard.reader.client.query({
+    // In ClickHouse, which the error page reads, in lower case.
+    const stored = await dashboard.reader.client.query({
       query:
-        "SELECT toString(replay_id) AS replay_id FROM events WHERE project_id = {project:UUID}",
+        "SELECT toString(replay_id) AS replay_id FROM events FINAL WHERE project_id = {project:UUID}",
       query_params: { project: project.id },
       format: "JSONEachRow",
     });
-    expect(await copied.json()).toEqual([{ replay_id: replayId }]);
+    expect(await stored.json()).toEqual([{ replay_id: replayId }]);
   });
 });
 
@@ -461,7 +453,8 @@ describe("replays in the dashboard", () => {
       occurrence(lost, 60),
     ]);
 
-    const body = (await get(`${project.id}/errors/${fingerprint(error)}?period=today`)).json();
+    // Seven days, not today: an hour ago is yesterday just after midnight.
+    const body = (await get(`${project.id}/errors/${fingerprint(error)}?period=7d`)).json();
     const byId = Object.fromEntries(
       body.occurrences.map((item: { replay: { id: string; status: string } }) => [
         item.replay.id,

@@ -189,9 +189,8 @@ const VISITS_TABLE = "analytics_visits";
  * With filters, the table holds only the matching visits, and every report
  * counts those visits and their events.
  *
- * ClickHouse has no snapshot that spans queries: events the worker copies
- * while the page is worked out (a few seconds' worth) can reach some of
- * its reports and not others.
+ * ClickHouse has no snapshot that spans queries: events stored while the
+ * page is worked out can reach some of its reports and not others.
  */
 export async function projectAnalytics(
   db: Kysely<Database>,

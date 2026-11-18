@@ -23,6 +23,7 @@ import * as createGoals from "./0020_create_goals.ts";
 import * as createSavedFunnels from "./0021_create_saved_funnels.ts";
 import * as createSourceMaps from "./0022_create_source_maps.ts";
 import * as createReplays from "./0023_create_replays.ts";
+import * as dropEvents from "./0024_drop_events.ts";
 
 /**
  * Every migration, in order. Kysely runs them by name, alphabetically, and
@@ -55,4 +56,5 @@ export const migrations: Record<string, Migration> = {
   "0021_create_saved_funnels": createSavedFunnels,
   "0022_create_source_maps": createSourceMaps,
   "0023_create_replays": createReplays,
+  "0024_drop_events": dropEvents,
 };

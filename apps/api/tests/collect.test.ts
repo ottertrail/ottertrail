@@ -1,16 +1,17 @@
 import { randomUUID } from "node:crypto";
 
 import type { FastifyInstance } from "fastify";
-import { sql } from "kysely";
 import { afterAll, beforeAll, describe, expect, test } from "vite-plus/test";
 
 import { type AppOptions, buildApp } from "../src/app.ts";
-import { copyEventsToClickHouse } from "../src/clickhouse/copy-events.ts";
+import { createClickHouse } from "../src/clickhouse/clickhouse.ts";
+import { loadConfig } from "../src/config.ts";
 import { createDatabase } from "../src/db/database.ts";
 import type { Locate, Location } from "../src/enrichment/geo.ts";
 import { findVisits } from "../src/visits/visits.ts";
+import { countEvents, storedEvents as storedIn } from "./helpers/events.ts";
 import { insertOrganization, insertProject } from "./helpers/projects.ts";
-import { createTestClickHouse } from "./helpers/test-clickhouse.ts";
+import { createTestClickHouse, type TestClickHouse } from "./helpers/test-clickhouse.ts";
 import { createTestDatabase, type TestDatabase } from "./helpers/test-database.ts";
 
 /** The server's clock in these tests. */
@@ -26,18 +27,25 @@ const locations: Record<string, Location> = {
 const fakeLocate: Locate = (request) => locations[request.ip] ?? {};
 
 let testDb: TestDatabase | undefined;
+let testClickHouse: TestClickHouse | undefined;
 let app: FastifyInstance | undefined;
 const extraApps: FastifyInstance[] = [];
 
 beforeAll(async () => {
+  // One after the other: if the second fails, afterAll still drops the first.
   testDb = await createTestDatabase();
-  app = buildApp({ db: testDb.db, collection: { now: () => NOW, locate: fakeLocate } });
+  testClickHouse = await createTestClickHouse();
+  app = buildApp({
+    db: testDb.db,
+    collection: { now: () => NOW, locate: fakeLocate, clickhouse: testClickHouse.client },
+  });
 });
 
 afterAll(async () => {
   const apps = app === undefined ? extraApps : [app, ...extraApps];
   await Promise.all(apps.map((instance) => instance.close()));
   await testDb?.destroy();
+  await testClickHouse?.destroy();
 });
 
 function db() {
@@ -45,14 +53,23 @@ function db() {
   return testDb.db;
 }
 
+function clickhouse() {
+  if (testClickHouse === undefined) throw new Error("The test ClickHouse was not created");
+  return testClickHouse.client;
+}
+
 function server() {
   if (app === undefined) throw new Error("The app was not created");
   return app;
 }
 
-/** A separate app with its own limits or database, closed after all tests. */
+/** A separate app with its own limits or database, closed after all tests; the test ClickHouse unless `collection` names another. */
 function appWith(options: Partial<AppOptions>) {
-  const instance = buildApp({ db: db(), ...options });
+  const instance = buildApp({
+    db: db(),
+    ...options,
+    collection: { clickhouse: clickhouse(), ...options.collection },
+  });
   extraApps.push(instance);
   return instance;
 }
@@ -109,13 +126,18 @@ async function visitorIds(projectId: string) {
   return (await storedEvents(projectId)).map((event) => event.visitor_id);
 }
 
+/** The project's events in ClickHouse, each once, oldest first. */
 async function storedEvents(projectId: string) {
-  return db()
-    .selectFrom("events")
-    .selectAll()
-    .where("project_id", "=", projectId)
-    .orderBy("occurred_at")
-    .execute();
+  return storedIn(clickhouse(), projectId);
+}
+
+async function lastEventAt(projectId: string) {
+  const project = await db()
+    .selectFrom("projects")
+    .select("last_event_at")
+    .where("id", "=", projectId)
+    .executeTakeFirstOrThrow();
+  return project.last_event_at;
 }
 
 describe("POST /api/events", () => {
@@ -142,7 +164,6 @@ describe("POST /api/events", () => {
     expect(response.statusCode).toBe(202);
     expect(response.json()).toEqual({
       stored: 2,
-      duplicates: 0,
       tooOld: 0,
       bots: 0,
       unverifiedUsers: 0,
@@ -170,22 +191,40 @@ describe("POST /api/events", () => {
     expect(response.statusCode).toBe(202);
   });
 
-  test("stores a retried batch only once", async () => {
+  test.each([
+    ["a sender whose clock is right", 0],
+    ["a sender whose clock is 10 minutes slow", -10 * 60 * 1000],
+    ["a sender whose clock is 10 minutes fast", 10 * 60 * 1000],
+  ])("counts a retried batch once, from %s", async (_label, clockError) => {
+    let clock = NOW;
+    const instance = appWith({ collection: { now: () => clock } });
     const project = await createProject();
-    const body = batch(project.public_key, [pageview(), pageview()]);
+    // By the sender's clock: two events, then the batch sent at once.
+    const at = NOW - 3000 + clockError;
+    const events = [pageview({ occurredAt: at }), pageview({ occurredAt: at + 1000 })];
 
-    await send(body);
-    const retry = await send(body);
-
-    expect(retry.statusCode).toBe(202);
-    expect(retry.json()).toEqual({
-      stored: 0,
-      duplicates: 2,
-      tooOld: 0,
-      bots: 0,
-      unverifiedUsers: 0,
+    // The first attempt took 80 ms, but its answer was lost.
+    clock = NOW + 80;
+    const first = await send(batch(project.public_key, events, { sentAt: NOW + clockError }), {
+      instance,
     });
-    expect(await storedEvents(project.id)).toHaveLength(2);
+    // The tracker sends the batch again 2 seconds later, with a new sentAt,
+    // and this time it takes 4 seconds.
+    clock = NOW + 6000;
+    const retry = await send(
+      batch(project.public_key, events, { sentAt: NOW + 2000 + clockError }),
+      { instance },
+    );
+
+    expect(first.json()).toMatchObject({ stored: 2 });
+    // Each answer counts what it was sent: the server looks nothing up.
+    expect(retry.json()).toEqual({ stored: 2, tooOld: 0, bots: 0, unverifiedUsers: 0 });
+    // Both attempts gave each event the same time, so ClickHouse keeps it once.
+    expect(await countEvents(clickhouse(), project.id)).toBe(2);
+    expect((await storedEvents(project.id)).map((event) => event.occurred_at)).toEqual([
+      new Date(NOW - 3000),
+      new Date(NOW - 2000),
+    ]);
   });
 
   test("counts events older than 24 hours as too old and stores the rest", async () => {
@@ -196,7 +235,6 @@ describe("POST /api/events", () => {
     );
     expect(response.json()).toEqual({
       stored: 1,
-      duplicates: 0,
       tooOld: 1,
       bots: 0,
       unverifiedUsers: 0,
@@ -525,7 +563,7 @@ describe("POST /api/events", () => {
         headers: { "user-agent": userAgent },
       });
       expect(response.statusCode).toBe(202);
-      expect(response.json()).toEqual({ stored: 0, duplicates: 0, tooOld: 0, bots: 2 });
+      expect(response.json()).toEqual({ stored: 0, tooOld: 0, bots: 2 });
       expect(await storedEvents(project.id)).toHaveLength(0);
     });
 
@@ -557,7 +595,7 @@ describe("POST /api/events", () => {
           remoteAddress: CLOUD,
         });
         expect(response.statusCode).toBe(202);
-        expect(response.json()).toEqual({ stored: 0, duplicates: 0, tooOld: 0, bots: 2 });
+        expect(response.json()).toEqual({ stored: 0, tooOld: 0, bots: 2 });
         expect(await storedEvents(project.id)).toHaveLength(0);
 
         // The same browser from anywhere else counts.
@@ -902,23 +940,51 @@ describe("POST /api/events", () => {
       expect(after?.visitor_id).not.toBe(before?.visitor_id); // A new day, a new ID …
       expect(Object.keys(after ?? {})).not.toContain("previous_visitor_id"); // … and no link.
 
-      // Reports work out visits in ClickHouse, once the worker has copied the events there.
-      const clickhouse = await createTestClickHouse();
-      try {
-        await copyEventsToClickHouse(db(), clickhouse.client);
-        const visits = await findVisits(
-          { client: clickhouse.client },
-          {
-            projectId: project.id,
-            environment: "production",
-            from: new Date("2026-11-16T00:00:00Z"),
-            to: new Date("2026-11-17T00:00:00Z"),
-          },
-        );
-        expect(visits.map((visit) => visit.entryPath)).toEqual(["/", "/docs"]);
-      } finally {
-        await clickhouse.destroy();
-      }
+      // Reports work out visits in ClickHouse.
+      const visits = await findVisits(
+        { client: clickhouse() },
+        {
+          projectId: project.id,
+          environment: "production",
+          from: new Date("2026-11-16T00:00:00Z"),
+          to: new Date("2026-11-17T00:00:00Z"),
+        },
+      );
+      expect(visits.map((visit) => visit.entryPath)).toEqual(["/", "/docs"]);
+    });
+  });
+
+  describe("the project's latest event", () => {
+    test("is recorded at once, then at most once a minute, and a late, earlier event leaves it", async () => {
+      let clock = NOW;
+      const instance = appWith({ collection: { now: () => clock } });
+      const project = await createProject();
+      const other = await createProject();
+      const at = (offset: number) => pageview({ occurredAt: clock + offset });
+      const sendAt = (key: string, events: unknown[]) =>
+        send(batch(key, events, { sentAt: clock }), { instance });
+      expect(await lastEventAt(project.id)).toBeNull();
+
+      // Recorded after the answer, so the test waits for it.
+      await sendAt(project.public_key, [at(-5000), at(-1000)]);
+      await sendAt(other.public_key, [at(-9000)]);
+      await expect.poll(() => lastEventAt(project.id)).toEqual(new Date(NOW - 1000));
+      await expect.poll(() => lastEventAt(other.id)).toEqual(new Date(NOW - 9000));
+
+      // Within the minute: stored, not recorded.
+      clock = NOW + 30_000;
+      await sendAt(project.public_key, [at(0)]);
+      expect(await lastEventAt(project.id)).toEqual(new Date(NOW - 1000));
+
+      // A minute on, the next request records its latest event.
+      clock = NOW + 61_000;
+      await sendAt(project.public_key, [at(0)]);
+      await expect.poll(() => lastEventAt(project.id)).toEqual(new Date(NOW + 61_000));
+
+      // Sent late from a browser that was offline: it happened before the latest.
+      clock = NOW + 130_000;
+      await sendAt(project.public_key, [at(-60 * 60 * 1000)]);
+      expect(await lastEventAt(project.id)).toEqual(new Date(NOW + 61_000));
     });
   });
 
@@ -943,7 +1009,7 @@ describe("POST /api/events", () => {
     });
   });
 
-  describe("when PostgreSQL fails", () => {
+  describe("when storage fails", () => {
     test("answers 503 if the project cannot be looked up", async () => {
       const unreachable = createDatabase({
         connectionString: "postgres://unused@127.0.0.1:1/unused",
@@ -957,22 +1023,37 @@ describe("POST /api/events", () => {
       expect(response.json()).toMatchObject({ error: "storage_unavailable" });
     });
 
-    test("answers 503, never 202, if the events cannot be saved", async () => {
-      const separate = await createTestDatabase();
+    test("answers 503, never 202, and stores nothing, if ClickHouse cannot take the events", async () => {
+      const unreachable = createClickHouse(
+        { ...loadConfig().clickhouse, url: "http://127.0.0.1:1" },
+        { database: testClickHouse?.database ?? "default" },
+      );
       try {
-        const project = await insertProject(separate.db, {
-          name: "Broken",
-          allowed_hostnames: [SITE],
+        const broken = appWith({
+          collection: {
+            now: () => NOW,
+            clickhouse: unreachable,
+            projectLimit: { capacity: 50, refillPerSecond: 0.001 },
+          },
         });
-        await sql`drop table events`.execute(separate.db);
-        const broken = appWith({ db: separate.db, collection: { now: () => NOW } });
+        const project = await createProject();
 
-        const response = await send(batch(project.public_key), { instance: broken });
-
-        expect(response.statusCode).toBe(503);
-        expect(response.json()).toMatchObject({ error: "storage_unavailable" });
+        // Twice: the first attempt's budget was given back, so the retry
+        // is refused for the store, not for the budget.
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+          // A full batch: the whole budget.
+          const response = await send(batch(project.public_key, pageviews(50)), {
+            instance: broken,
+          });
+          expect(response.statusCode).toBe(503);
+          expect(response.headers["retry-after"]).toBe("5");
+          expect(response.json()).toMatchObject({ error: "storage_unavailable" });
+        }
+        expect(await countEvents(clickhouse(), project.id)).toBe(0);
+        // Nor is the project's latest event recorded.
+        expect(await lastEventAt(project.id)).toBeNull();
       } finally {
-        await separate.destroy();
+        await unreachable.close();
       }
     });
   });

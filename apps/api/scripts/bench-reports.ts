@@ -4,8 +4,10 @@
  *   vp run bench:reports                    (200,000 visits over 30 days)
  *   vp run bench:reports -- 50000 14        (50,000 visits over 14 days)
  *
- * The fake events go into a temporary PostgreSQL schema, then to a
- * temporary ClickHouse database the way the worker copies them, and reports
+ * The fake events are made in a temporary PostgreSQL schema, at migration
+ * 0023, the last with an events table, which generates them quickly in
+ * SQL; they are copied to a temporary ClickHouse database as an upgrade
+ * copies such events (clickhouse/drain-postgres-events.ts), and reports
  * read them there. Both are dropped at the end: no real project or event is
  * read or written. Numbers depend on the machine, so they show the shape of
  * the cost, not a capacity promise.
@@ -15,12 +17,12 @@ import { randomUUID } from "node:crypto";
 import { type Kysely, sql } from "kysely";
 
 import { createClickHouse, identifier } from "../src/clickhouse/clickhouse.ts";
-import { copyEventsToClickHouse } from "../src/clickhouse/copy-events.ts";
+import { drainPostgresEvents } from "../src/clickhouse/drain-postgres-events.ts";
 import { migrateClickHouse } from "../src/clickhouse/migrate.ts";
 import type { Reader } from "../src/clickhouse/query.ts";
 import { loadConfig } from "../src/config.ts";
 import { createDatabase } from "../src/db/database.ts";
-import { migrateToLatest } from "../src/db/migrate.ts";
+import { migrate } from "../src/db/migrate.ts";
 import type { Database } from "../src/db/schema.ts";
 import { projectAnalytics } from "../src/reports/analytics.ts";
 import {
@@ -81,7 +83,7 @@ try {
     schema,
   });
   db = bench;
-  await migrateToLatest(bench, { schema });
+  await migrate(bench, "0023_create_replays", { schema });
   await migrateClickHouse(clickhouseAdmin, schema);
 
   const organization = await bench
@@ -109,9 +111,9 @@ try {
   const eventCount = Number(rows[0]?.count);
   console.log(`${eventCount.toLocaleString("en")} events in ${(seedMs / 1000).toFixed(1)} s`);
 
-  // As the worker does, then merged as ClickHouse does in the background
-  // over time, so reports read a table as it usually is.
-  const copyMs = await timed(() => copyEventsToClickHouse(bench, clickhouse));
+  // Then merged as ClickHouse does in the background over time, so reports
+  // read a table as it usually is.
+  const copyMs = await timed(() => drainPostgresEvents(bench, clickhouse));
   console.log(
     `Copied to ClickHouse in ${(copyMs / 1000).toFixed(1)} s (${Math.round(eventCount / (copyMs / 1000)).toLocaleString("en")} events a second)`,
   );

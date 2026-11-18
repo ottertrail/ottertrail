@@ -1,7 +1,7 @@
 #!/bin/sh
 # Backs up both databases of a running instance into ./backups/, as
-# ottertrail-<time>.zip (ClickHouse: the events) and ottertrail-<time>.dump
-# (PostgreSQL: accounts, projects, settings, the last two days' events).
+# ottertrail-<time>.zip (ClickHouse: events, traces, logs, metrics) and
+# ottertrail-<time>.dump (PostgreSQL: accounts, projects, settings).
 # Run it in this folder, next to compose.yaml. Copy both files off the
 # server: a backup on the same disk is lost with it. docs/deployment.md
 # has the details; restore.sh puts a backup back.
@@ -28,13 +28,10 @@ trap cleanup EXIT
 # Ctrl-C ends the script: exit instead, which runs it.
 trap 'exit 1' INT TERM HUP
 
-# PostgreSQL first. The worker deletes an event from PostgreSQL only once it
-# is in ClickHouse, so every event PostgreSQL had confirmed when its dump
-# began is in the dump, or already in ClickHouse and so in ClickHouse's
-# backup, taken after. The other order lost events: one copied after
-# ClickHouse's backup and deleted before the dump, as when the worker
-# catches up after a long ClickHouse outage, was in neither. restore.sh
-# sends PostgreSQL's events again; ClickHouse keeps one row per event.
+# PostgreSQL first, so every project in its dump has its events in
+# ClickHouse's backup, taken after. Events of a project created in between
+# belong to no restored project; the worker's orphan sweep deletes them
+# (docs/clickhouse.md).
 $compose exec -T postgres pg_dump -U ottertrail -Fc ottertrail > "backups/$name.dump.partial"
 
 # clickhouse-client takes the password from the container's

@@ -3,6 +3,7 @@ import { Buffer } from "node:buffer";
 import type { FastifyError, FastifyPluginCallback, FastifyReply } from "fastify";
 import type { Kysely } from "kysely";
 
+import type { ClickHouseClient } from "../clickhouse/clickhouse.ts";
 import type { Database } from "../db/schema.ts";
 import { type IsDataCenter, noDataCenters } from "../enrichment/data-centers.ts";
 import { type Locate, noLocation } from "../enrichment/geo.ts";
@@ -13,6 +14,7 @@ import { ENGAGEMENT, ERROR, VITALS } from "../visits/visits.ts";
 import { ENVIRONMENT_PATTERN, environmentOf, RELEASE_PATTERN } from "./environment.ts";
 import { type NewEvent, storeEvents } from "./event-store.ts";
 import { isSignedUserId, USER_ID_PATTERN, USER_SIGNATURE_PATTERN } from "./identity.ts";
+import { LastEventRecorder } from "./last-event.ts";
 import {
   cleanReferrer,
   correctClock,
@@ -51,6 +53,8 @@ export const DEFAULT_ORGANIZATION_LIMIT: RateLimit = { capacity: 6_000, refillPe
 
 export interface CollectionOptions {
   db: Kysely<Database>;
+  /** Where events are stored (docs/clickhouse.md). */
+  clickhouse: ClickHouseClient;
   ipLimit?: RateLimit;
   projectLimit?: RateLimit;
   organizationLimit?: RateLimit;
@@ -203,11 +207,11 @@ const eventBatchSchema = {
 
 const storedResponseSchema = {
   type: "object",
-  required: ["stored", "duplicates", "tooOld", "bots"],
+  required: ["stored", "tooOld", "bots"],
   additionalProperties: false,
   properties: {
+    // Events accepted and written. A retry counts again here, and once in reports.
     stored: { type: "integer" },
-    duplicates: { type: "integer" },
     tooOld: { type: "integer" },
     bots: { type: "integer" },
     // Events whose user ID lacked a valid signature, stored without it.
@@ -224,11 +228,6 @@ function tooManyRequests(reply: FastifyReply, retryAfterSeconds: number) {
     .code(429)
     .header("retry-after", String(retryAfterSeconds))
     .send(problem("rate_limited", `Too many requests. Retry after ${retryAfterSeconds} seconds.`));
-}
-
-/** PostgreSQL's foreign_key_violation: here, events for a project that no longer exists. */
-function isForeignKeyViolation(error: unknown): boolean {
-  return typeof error === "object" && error !== null && "code" in error && error.code === "23503";
 }
 
 function storageUnavailable(reply: FastifyReply) {
@@ -250,10 +249,17 @@ function storageUnavailable(reply: FastifyReply) {
  * 4. Origin header and page hostnames against the project's allowed hostnames.
  * 5. Event budget per project.
  * 6. URL cleanup and clock correction.
- * 7. One INSERT. 202 is sent only after PostgreSQL commits it.
+ * 7. One insert into ClickHouse. 202 is sent only after ClickHouse has
+ *    written it; 503 while it cannot, which the tracker retries.
  */
 export const collectionRoutes: FastifyPluginCallback<CollectionOptions> = (app, options, done) => {
-  const { db, locate = noLocation, isDataCenter = noDataCenters, now = Date.now } = options;
+  const {
+    db,
+    clickhouse,
+    locate = noLocation,
+    isDataCenter = noDataCenters,
+    now = Date.now,
+  } = options;
   // Projects whose events were ignored as coming from a data center, logged
   // once each: a site that forwards its events through its own server in a
   // cloud would otherwise lose them all without a trace.
@@ -283,6 +289,7 @@ export const collectionRoutes: FastifyPluginCallback<CollectionOptions> = (app, 
     new TokenBucketLimiter(organizationLimit, { now }),
   );
   const projects = options.projectKeys ?? new ProjectKeyCache(db, { now });
+  const lastEvents = new LastEventRecorder(db, { now });
 
   // Browsers send the batch as text/plain: that is a "simple" cross-site
   // request, so the browser sends it directly instead of first asking
@@ -410,7 +417,7 @@ export const collectionRoutes: FastifyPluginCallback<CollectionOptions> = (app, 
         );
       }
       if (bot || dataCenter) {
-        return reply.code(202).send({ stored: 0, duplicates: 0, tooOld: 0, bots: events.length });
+        return reply.code(202).send({ stored: 0, tooOld: 0, bots: events.length });
       }
 
       const spent = budget.take(project, events.length);
@@ -595,7 +602,6 @@ export const collectionRoutes: FastifyPluginCallback<CollectionOptions> = (app, 
         });
       }
 
-      let result: Awaited<ReturnType<typeof storeEvents>>;
       try {
         // Each event gets the visitor ID of the day it happened, so a late
         // event from just before midnight joins the rest of that day's visit.
@@ -608,20 +614,20 @@ export const collectionRoutes: FastifyPluginCallback<CollectionOptions> = (app, 
             occurredAt: event.occurredAt,
           });
         }
-        result = await storeEvents(db, project.id, accepted);
+        await storeEvents(clickhouse, project.id, accepted, { receivedAt: new Date(receivedAt) });
       } catch (error) {
-        // The project was deleted after its key was looked up (another API
-        // process, or a moment's race): the key is gone, not the storage.
-        if (isForeignKeyViolation(error)) {
-          projects.forget(key);
-          return reply.code(403).send(problem("unknown_key", "No project has this key."));
-        }
+        // Not the sender's doing: the budget back, so its retries are not refused for it.
+        budget.refund(project, events.length);
         request.log.error({ err: error }, "could not store events");
         return storageUnavailable(reply);
       }
+      // Not waited for: the events are stored, and a slow PostgreSQL must
+      // not hold the answer up, nor fail it.
+      lastEvents.record(project.id, accepted).catch((error: unknown) => {
+        request.log.warn({ err: error }, "could not record the project's latest event");
+      });
       return reply.code(202).send({
-        stored: result.inserted,
-        duplicates: result.duplicates,
+        stored: accepted.length,
         tooOld,
         bots: 0,
         unverifiedUsers,
@@ -630,8 +636,9 @@ export const collectionRoutes: FastifyPluginCallback<CollectionOptions> = (app, 
   );
 
   serverEventsRoute(app, {
-    db,
+    clickhouse,
     projects,
+    lastEvents,
     budget,
     ipLimiter: new TokenBucketLimiter(options.serverIpLimit ?? DEFAULT_SERVER_IP_LIMIT, { now }),
     maxEvents: MAX_EVENTS_PER_BATCH,

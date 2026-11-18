@@ -1,8 +1,6 @@
 /**
  * The worker: background work, in its own process beside the API.
  *
- * - Copying events to ClickHouse every few seconds, and deleting them from
- *   PostgreSQL once copied and two days old, every hour (clickhouse/copy-events.ts).
  * - Deleting a deleted project's events from ClickHouse, and its source
  *   maps and replays from the object store, every minute
  *   (clickhouse/delete-events.ts).
@@ -11,14 +9,13 @@
  *   (replays/replays.ts).
  * - At start and every few hours: finding projects ClickHouse still holds
  *   events of but PostgreSQL no longer knows, deleting events older than
- *   each project's retention in both databases (retention/retention.ts),
+ *   each project's retention (retention/retention.ts),
  *   and taking deleted rows off ClickHouse's disk.
  *
- * Both are safe to repeat and to run in two workers at once, so plain
+ * All are safe to repeat and to run in two workers at once, so plain
  * timers are enough; a job queue comes with work that needs one.
  */
 import { createClickHouse } from "./clickhouse/clickhouse.ts";
-import { copyEventsToClickHouse, deleteCopiedEvents } from "./clickhouse/copy-events.ts";
 import {
   purgeDeletedProjects,
   queueOrphanedProjects,
@@ -35,12 +32,6 @@ import { s3ObjectStore } from "./storage/object-store.ts";
  * removal of deleted rows from disk. Expired events wait at most this long.
  */
 export const RETENTION_INTERVAL_MS = 6 * 60 * 60 * 1000;
-
-/** How often events are copied to ClickHouse: how far reports there can trail. */
-export const COPY_INTERVAL_MS = 5_000;
-
-/** How often copied events leave PostgreSQL. They stay at most this long past their day. */
-export const PRUNE_INTERVAL_MS = 60 * 60 * 1000;
 
 /** How often a deleted project's events are deleted from ClickHouse: at most this late. */
 export const PURGE_INTERVAL_MS = 60 * 1000;
@@ -79,30 +70,6 @@ function every(intervalMs: number, job: () => Promise<void>): () => Promise<void
     await running;
   };
 }
-
-/** Whether the last copy failed: an outage is logged once, not every few seconds. */
-let copyFailing = false;
-
-const stopCopying = every(COPY_INTERVAL_MS, async () => {
-  try {
-    const copied = await copyEventsToClickHouse(db, clickhouse);
-    if (copied > 0) log("info", "events copied to ClickHouse", { copied });
-    if (copyFailing) log("info", "copying events to ClickHouse works again");
-    copyFailing = false;
-  } catch (error) {
-    if (!copyFailing) log("error", "copying events to ClickHouse failed", { err: String(error) });
-    copyFailing = true;
-  }
-});
-
-const stopPruning = every(PRUNE_INTERVAL_MS, async () => {
-  try {
-    const deleted = await deleteCopiedEvents(db);
-    log("info", "copied events deleted from PostgreSQL", { deleted });
-  } catch (error) {
-    log("error", "deleting copied events from PostgreSQL failed", { err: String(error) });
-  }
-});
 
 const stopPurging = every(PURGE_INTERVAL_MS, async () => {
   try {
@@ -158,12 +125,10 @@ const stopRetention = every(RETENTION_INTERVAL_MS, async () => {
     }
     const results = await deleteExpiredEvents(db, clickhouse);
     const deleted = results.reduce((sum, result) => sum + result.deleted, 0);
-    const clickhouseDeleted = results.reduce((sum, result) => sum + result.clickhouseDeleted, 0);
     const cleanup = await removeDeletedRows(clickhouse);
     log("info", "retention ran", {
       projects: results.length,
       deleted,
-      clickhouseDeleted,
       rewriting: cleanup.started,
     });
     if (cleanup.waitingFor?.failReason) {
@@ -181,7 +146,7 @@ async function shutdown(signal: NodeJS.Signals) {
   log("info", "shutting down", { signal });
   stopping = true;
   // Runs in progress finish their batch first.
-  await Promise.all([stopCopying(), stopPruning(), stopPurging(), stopReplays(), stopRetention()]);
+  await Promise.all([stopPurging(), stopReplays(), stopRetention()]);
   await clickhouse.close();
   objectStore?.close();
   await db.destroy();
@@ -192,8 +157,6 @@ for (const signal of ["SIGINT", "SIGTERM"] as const) {
 }
 
 log("info", "worker started", {
-  copyIntervalMs: COPY_INTERVAL_MS,
-  pruneIntervalMs: PRUNE_INTERVAL_MS,
   purgeIntervalMs: PURGE_INTERVAL_MS,
   retentionIntervalMs: RETENTION_INTERVAL_MS,
 });

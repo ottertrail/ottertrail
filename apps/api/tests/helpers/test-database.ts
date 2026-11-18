@@ -5,7 +5,7 @@ import { Migrator } from "kysely/migration";
 
 import { loadConfig } from "../../src/config.ts";
 import { createDatabase } from "../../src/db/database.ts";
-import { migrateToLatest } from "../../src/db/migrate.ts";
+import { migrate } from "../../src/db/migrate.ts";
 import { migrations } from "../../src/db/migrations/index.ts";
 import type { Database } from "../../src/db/schema.ts";
 
@@ -26,13 +26,15 @@ export interface TestDatabase {
 }
 
 /**
- * Creates an empty schema with every migration applied, so each test file
- * starts from a clean database and never sees development data. Drop it
- * with destroy() when the tests finish.
+ * Creates an empty schema with every migration applied, or those up to
+ * `target`, so each test file starts from a clean database and never sees
+ * development data. Drop it with destroy() when the tests finish.
  *
  * Needs the local database: `podman compose up -d` (or `docker compose up -d`).
  */
-export async function createTestDatabase(): Promise<TestDatabase> {
+export async function createTestDatabase({
+  target = "latest",
+}: { target?: string } = {}): Promise<TestDatabase> {
   const connectionString = loadConfig().databaseUrl;
   const schema = `test_${randomUUID().replaceAll("-", "")}`;
 
@@ -49,7 +51,7 @@ export async function createTestDatabase(): Promise<TestDatabase> {
   }
 
   try {
-    await withSchemaLock(connectionString, "shared", () => migrateToLatest(db, { schema }));
+    await withSchemaLock(connectionString, "shared", () => migrate(db, target, { schema }));
   } catch (error) {
     await destroy();
     throw error;
@@ -76,6 +78,16 @@ export async function migrateTestDatabase(testDb: TestDatabase, target: string):
       throw new Error(`Migrating the test database to ${target} failed`, { cause: error });
     }
   });
+}
+
+/**
+ * Migrates a test database forward with migrate(), as migrate.ts does,
+ * which refuses to go back.
+ */
+export async function migrateForward(testDb: TestDatabase, target: string): Promise<void> {
+  await withSchemaLock(loadConfig().databaseUrl, "shared", () =>
+    migrate(testDb.db, target, { schema: testDb.schema }),
+  );
 }
 
 async function withAdmin(

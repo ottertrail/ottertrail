@@ -7,8 +7,10 @@ import { afterAll, beforeAll, describe, expect, test } from "vite-plus/test";
 
 import { buildApp } from "../src/app.ts";
 import { isTrustedOrigin } from "../src/auth/origin.ts";
+import { purgeDeletedProjects } from "../src/clickhouse/delete-events.ts";
 import { parseHostname } from "../src/projects/projects.ts";
 import { PUBLIC_URL, signedInDashboard } from "./helpers/dashboard.ts";
+import { countEvents } from "./helpers/events.ts";
 import { createTestDatabase, type TestDatabase } from "./helpers/test-database.ts";
 
 describe("parseHostname", () => {
@@ -332,16 +334,7 @@ describe("deleting a project and replacing its key", () => {
       payload: { confirmName },
     });
 
-  const eventCount = async (projectId: string) =>
-    Number(
-      (
-        await dashboard.db
-          .selectFrom("events")
-          .select((eb) => eb.fn.countAll().as("count"))
-          .where("project_id", "=", projectId)
-          .executeTakeFirstOrThrow()
-      ).count,
-    );
+  const eventCount = (projectId: string) => countEvents(dashboard.reader.client, projectId);
 
   test("deleting takes the project's events with it, and only its own", async () => {
     const doomed = await create("Old shop");
@@ -352,6 +345,8 @@ describe("deleting a project and replacing its key", () => {
     const response = await remove(doomed.id, " Old shop ");
 
     expect(response.statusCode).toBe(204);
+    // ClickHouse's events go when the worker next purges deleted projects.
+    await purgeDeletedProjects(dashboard.db, dashboard.reader.client);
     expect(await eventCount(doomed.id)).toBe(0);
     expect(await eventCount(kept.id)).toBe(1);
     const gone = await dashboard.app.inject({
@@ -396,15 +391,16 @@ describe("deleting a project and replacing its key", () => {
     expect(after.json()).toMatchObject({ error: "unknown_key" });
   });
 
-  test("events for a project deleted elsewhere are refused as an unknown key, not as an outage", async () => {
+  test("events a cached key lets in after the project was deleted elsewhere are purged with it", async () => {
     const project = await create("Deleted elsewhere");
     expect((await send(project.publicKey)).statusCode).toBe(202);
     // As another API process would: the cache here still holds the key.
     await dashboard.db.deleteFrom("projects").where("id", "=", project.id).execute();
 
-    const after = await send(project.publicKey);
-    expect(after.statusCode).toBe(403);
-    expect(after.json()).toMatchObject({ error: "unknown_key" });
+    // ClickHouse cannot check that the project still exists.
+    expect((await send(project.publicKey)).statusCode).toBe(202);
+    await purgeDeletedProjects(dashboard.db, dashboard.reader.client);
+    expect(await eventCount(project.id)).toBe(0);
   });
 
   test("a replaced key stops working at once, and the new one works", async () => {

@@ -1,6 +1,7 @@
 /**
  * Fake visits for the report benchmark (bench-reports.ts), written into
- * whatever schema `db` points at. Never run against a real project.
+ * the events table of whatever schema `db` points at, which must be at
+ * migration 0023, the last with one. Never run against a real project.
  */
 import { type Kysely, sql } from "kysely";
 

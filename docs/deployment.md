@@ -1,6 +1,6 @@
 # Deployment
 
-How to run Ottertrail on one server, and the decisions behind it. The hosted service is one such deployment serving every organization; a self-hosted install is the same stack, usually with one organization. Events arrive in PostgreSQL and are copied to ClickHouse, where reports read them ([clickhouse.md](clickhouse.md)); PostgreSQL keeps them for two days.
+How to run Ottertrail on one server, and the decisions behind it. The hosted service is one such deployment serving every organization; a self-hosted install is the same stack, usually with one organization. Events, traces, logs, and metrics are stored in ClickHouse, where reports read them ([clickhouse.md](clickhouse.md)); PostgreSQL holds accounts, organizations, projects, and settings.
 
 Status: tested on one machine with Podman (see [What has been tested](#what-has-been-tested)). Nothing runs in production yet, and backups are manual.
 
@@ -14,7 +14,7 @@ Status: tested on one machine with Podman (see [What has been tested](#what-has-
 | `clickhouse` | ClickHouse 26.8, for analytics events and later logs and traces, data in `clickhouse-data`. Capped at 40% of the server's memory (see below)                                   | No                     |
 | `migrate`    | Brings both databases' schemas up to date, then exits. The API and the worker start only after it succeeds                                                                     | No                     |
 | `api`        | The API, the dashboard's files, and the tracker (`/t.js`), on port 3000 inside the stack. Geolocation file in `geo-data`                                                       | No, only through Caddy |
-| `worker`     | Background work: copies events to ClickHouse, deletes them from PostgreSQL after two days, and deletes events past each project's retention                                    | No                     |
+| `worker`     | Background work: deletes events past each project's retention and those of deleted projects, and joins session replays                                                         | No                     |
 | `caddy`      | HTTPS: gets and renews the certificate, redirects HTTP to HTTPS, compresses responses, passes every request to the API                                                         | Ports 80 and 443       |
 | `garage`     | Only with `--profile object-store`: [Garage](https://garagehq.deuxfleurs.fr/) (AGPL-3.0), an S3-compatible store for source maps, in `garage-data`. About 10 MB of memory idle | No                     |
 
@@ -69,6 +69,8 @@ docker compose up -d
 
 Compose rebuilds the image, runs `migrate`, and replaces the API and the worker. The API is unavailable for a few seconds while its container is replaced; the tracker retries events it could not send.
 
+Updating from a release where events still arrived in PostgreSQL (before 18 November 2026): run `docker compose stop api worker` first. `migrate` copies the events PostgreSQL has not copied to ClickHouse yet, then drops PostgreSQL's events table, and never drops one ClickHouse lacks: if the old API keeps storing events in between, it copies again, and after 5 tries stops and asks for the API and the worker to be stopped ([ClickHouse](clickhouse.md#upgrading-from-postgresql-first)). The tracker retries what it could not send meanwhile.
+
 With `OTTERTRAIL_IMAGE` set, update with `docker compose pull` and then `docker compose up -d` instead, never with `--build`: that would build this checkout and tag it with the registry image's name.
 
 To go back to an earlier release, check it out and run the same command, as long as no migration ran in between. The deployment only runs migrations forward, and an older release may not work with a newer schema: after a migration, restore the backup taken before the update.
@@ -81,7 +83,7 @@ Not automated yet. Before each update, and regularly, in `deploy/`:
 ./backup.sh
 ```
 
-It writes two files into `deploy/backups/`, named by the time: `ottertrail-<time>.zip`, ClickHouse's backup of the events (its own `BACKUP DATABASE`), and `ottertrail-<time>.dump`, PostgreSQL's (`pg_dump`: accounts, organizations, projects, settings, and the last two days' events). The instance keeps running. PostgreSQL's dump comes first, so no event falls between the two ([ClickHouse](clickhouse.md#backups)). ClickHouse writes its backup into its own volume, and the script then moves it out, so the disk needs free space of about twice ClickHouse's data while it runs. The files are readable only by the user who ran the script, and a run that fails leaves no file that looks like a backup. Copy both files off the server: a backup on the same disk is lost with it. Delete old ones yourself; they hold your customers' data, and events deleted since stay in them.
+It writes two files into `deploy/backups/`, named by the time: `ottertrail-<time>.zip`, ClickHouse's backup of the events (its own `BACKUP DATABASE`), and `ottertrail-<time>.dump`, PostgreSQL's (`pg_dump`: accounts, organizations, projects, and settings). The instance keeps running. PostgreSQL's dump comes first, so every project in it has its events in ClickHouse's backup ([ClickHouse](clickhouse.md#backups)). ClickHouse writes its backup into its own volume, and the script then moves it out, so the disk needs free space of about twice ClickHouse's data while it runs. The files are readable only by the user who ran the script, and a run that fails leaves no file that looks like a backup. Copy both files off the server: a backup on the same disk is lost with it. Delete old ones yourself; they hold your customers' data, and events deleted since stay in them.
 
 To restore into empty databases (a new server, or after `docker compose down -v`), with both files in `deploy/backups/`:
 
@@ -91,7 +93,7 @@ To restore into empty databases (a new server, or after `docker compose down -v`
 
 It starts only PostgreSQL and ClickHouse, restores both, then starts the rest. PostgreSQL's restore runs as one transaction, so a failure leaves it empty rather than half restored. The databases must be empty and not yet migrated: ClickHouse refuses to restore into a table that holds data, and the migrations record themselves in one. If a restore fails, run `docker compose down -v` and start again.
 
-ClickHouse's backup is made first. Events the worker copies in the seconds before PostgreSQL's backup are then marked copied in it but missing from ClickHouse's, so the restore marks every event PostgreSQL holds as not copied, and the worker sends them again. ClickHouse keeps one row per event ([clickhouse.md](clickhouse.md#each-event-once)), so those it already had count once.
+A backup from before 18 November 2026 still holds PostgreSQL's last two days of events. `restore.sh` marks them all as not copied, since ClickHouse's backup, taken separately, may lack the last ones; `migrate`, which it runs with the rest, then copies them to ClickHouse, where each event counts once, and drops the table ([ClickHouse](clickhouse.md#upgrading-from-postgresql-first)).
 
 With Podman, run both as `COMPOSE="podman compose" ./backup.sh`.
 
@@ -188,7 +190,7 @@ With ClickHouse in the stack (17 November 2026), driving the API from inside the
 - `up -d --build` failed on Podman's 2 GB machine: podman-compose built the shared image once for each of the three services that use it, at the same time, and two of the builds ran out of memory. The third finished, hence `build migrate` first in [First start](#first-start). The later `build migrate` reused that build's cached layers, so a build from scratch alone was not timed.
 - The `object-store` profile (18 November 2026, Podman): without it, the stack has no Garage; with it, Garage started from this file healthy, and created its bucket and access key from the settings. Uploading, reading, and deleting source maps were tested against the development stack's Garage (the same image and `deploy/garage/garage.toml`), not yet inside this stack.
 
-Not tested yet: the whole stack with the `object-store` profile, Docker Engine and Docker Compose on a Linux server, a real domain with a Let's Encrypt certificate, an `amd64` image, an update that runs a migration on existing data, and a restore on a new server.
+Not tested yet: the stack since events go straight to ClickHouse (18 November 2026), including an upgrade that copies PostgreSQL's remaining events and a backup and restore without them; the whole stack with the `object-store` profile, Docker Engine and Docker Compose on a Linux server, a real domain with a Let's Encrypt certificate, an `amd64` image, an update that runs a migration on existing data, and a restore on a new server.
 
 ## Known limitations
 

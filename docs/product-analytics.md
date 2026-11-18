@@ -26,7 +26,7 @@ The spec asks for these before any report: each report below counts by them.
 
 **Days and weeks** are the organization's: a day starts at midnight in its timezone, and a week on Monday, as ISO weeks do. Ranges are whole days, as on the analytics page.
 
-**Late events:** the API accepts an event up to 24 hours after it happened, and reports place it when it happened (`occurred_at`), not when it arrived. So the last day of a report can still grow for a day, and a week for a day after it ends. Events reach the reports a few seconds after they arrive (the copy to ClickHouse).
+**Late events:** the API accepts an event up to 24 hours after it happened, and reports place it when it happened (`occurred_at`), not when it arrived. So the last day of a report can still grow for a day, and a week for a day after it ends. Events reach the reports as soon as ClickHouse has written them, before the API answers.
 
 **Environments:** every report reads one environment, production unless another is chosen, as the other pages do.
 

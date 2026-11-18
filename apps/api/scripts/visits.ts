@@ -7,7 +7,7 @@
  *   vp run visits -- Playground 6 staging    (another environment than production)
  *
  * Times are shown in the timezone of the project's organization. Visits are
- * worked out from the events the worker has copied to ClickHouse.
+ * worked out from the events in ClickHouse.
  */
 import { createClickHouse } from "../src/clickhouse/clickhouse.ts";
 import type { Reader } from "../src/clickhouse/query.ts";

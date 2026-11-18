@@ -2,7 +2,6 @@ import { randomUUID } from "node:crypto";
 
 import { afterAll, beforeAll, describe, expect, test } from "vite-plus/test";
 
-import { copyEventsToClickHouse } from "../src/clickhouse/copy-events.ts";
 import type { Reader } from "../src/clickhouse/query.ts";
 import { type NewEvent, storeEvents } from "../src/collection/event-store.ts";
 import { findVisits } from "../src/visits/visits.ts";
@@ -24,11 +23,14 @@ afterAll(async () => {
   await testClickHouse?.destroy();
 });
 
-/** ClickHouse, with every stored event copied there, as the worker does. */
-async function reader(): Promise<Reader> {
+function clickhouse() {
   if (testClickHouse === undefined) throw new Error("The test ClickHouse was not created");
-  await copyEventsToClickHouse(db(), testClickHouse.client);
-  return { client: testClickHouse.client };
+  return testClickHouse.client;
+}
+
+/** Where visits are worked out: the test's ClickHouse. */
+async function reader(): Promise<Reader> {
+  return { client: clickhouse() };
 }
 
 function db() {
@@ -82,7 +84,7 @@ const minutes = (n: number) => n * 60 * 1000;
 describe("findVisits", () => {
   test("a visit is a run of events with no gap over 30 minutes", async () => {
     const projectId = await createProject();
-    await storeEvents(db(), projectId, [
+    await storeEvents(clickhouse(), projectId, [
       event("1", "10:00", "/"),
       event("1", "10:10", "/pricing"),
       event("1", "10:39", "/docs"), // 29 minutes later: same visit
@@ -113,13 +115,16 @@ describe("findVisits", () => {
 
   test("a gap of exactly 30 minutes keeps the visit going", async () => {
     const projectId = await createProject();
-    await storeEvents(db(), projectId, [event("1", "10:00", "/"), event("1", "10:30", "/docs")]);
+    await storeEvents(clickhouse(), projectId, [
+      event("1", "10:00", "/"),
+      event("1", "10:30", "/docs"),
+    ]);
     expect(await findVisits(await reader(), { projectId, ...DAY })).toHaveLength(1);
   });
 
   test("keeps different visitors' visits apart, even when their events interleave", async () => {
     const projectId = await createProject();
-    await storeEvents(db(), projectId, [
+    await storeEvents(clickhouse(), projectId, [
       event("1", "10:00", "/"),
       event("2", "10:01", "/pricing"),
       event("1", "10:02", "/docs"),
@@ -135,14 +140,14 @@ describe("findVisits", () => {
   describe("bounces", () => {
     test("one pageview and nothing else is a bounce", async () => {
       const projectId = await createProject();
-      await storeEvents(db(), projectId, [event("1", "10:00", "/pricing")]);
+      await storeEvents(clickhouse(), projectId, [event("1", "10:00", "/pricing")]);
       const [visit] = await findVisits(await reader(), { projectId, ...DAY });
       expect(visit).toMatchObject({ pageviews: 1, interactions: 0, bounce: true });
     });
 
     test("a custom event means the visitor interacted: not a bounce", async () => {
       const projectId = await createProject();
-      await storeEvents(db(), projectId, [
+      await storeEvents(clickhouse(), projectId, [
         event("1", "10:00", "/pricing"),
         event("1", "10:02", "/pricing", { name: "signup" }),
       ]);
@@ -154,7 +159,7 @@ describe("findVisits", () => {
   describe("engagement (time on page)", () => {
     test("extends the visit and adds engaged time without changing the bounce", async () => {
       const projectId = await createProject();
-      await storeEvents(db(), projectId, [
+      await storeEvents(clickhouse(), projectId, [
         event("1", "10:00", "/blog/post"),
         engagement("1", "10:04", "/blog/post", minutes(4)),
       ]);
@@ -170,7 +175,7 @@ describe("findVisits", () => {
 
     test("never starts a visit on its own", async () => {
       const projectId = await createProject();
-      await storeEvents(db(), projectId, [
+      await storeEvents(clickhouse(), projectId, [
         event("1", "10:00", "/"),
         // The tab stayed open 45 minutes with no event: too late to belong to the visit.
         engagement("1", "10:45", "/", minutes(45)),
@@ -183,7 +188,7 @@ describe("findVisits", () => {
 
     test("does not give a late report's time to the visit that starts after it", async () => {
       const projectId = await createProject();
-      await storeEvents(db(), projectId, [
+      await storeEvents(clickhouse(), projectId, [
         event("1", "10:00", "/blog/post"),
         // After a 45-minute read, the visitor clicks a link. The tracker reports the
         // old page's time and the new pageview at the same moment. These IDs sort the
@@ -204,7 +209,7 @@ describe("findVisits", () => {
 
     test("counts a malformed engagement time as 0 instead of failing the report", async () => {
       const projectId = await createProject();
-      await storeEvents(db(), projectId, [
+      await storeEvents(clickhouse(), projectId, [
         event("1", "10:00", "/"),
         event("1", "10:01", "/", { name: "engagement", properties: { engagedMs: "lots" } }),
       ]);
@@ -216,19 +221,22 @@ describe("findVisits", () => {
   describe("late, out-of-order, and repeated events", () => {
     test("gives the same visits whatever order events arrive in", async () => {
       const projectId = await createProject();
-      await storeEvents(db(), projectId, [event("1", "10:20", "/docs")]);
-      await storeEvents(db(), projectId, [event("1", "10:00", "/")]);
+      await storeEvents(clickhouse(), projectId, [event("1", "10:20", "/docs")]);
+      await storeEvents(clickhouse(), projectId, [event("1", "10:00", "/")]);
       const [visit] = await findVisits(await reader(), { projectId, ...DAY });
       expect(visit).toMatchObject({ entryPath: "/", exitPath: "/docs", pageviews: 2 });
     });
 
     test("joins two visits when a late event fills the gap between them", async () => {
       const projectId = await createProject();
-      await storeEvents(db(), projectId, [event("1", "10:00", "/"), event("1", "11:00", "/docs")]);
+      await storeEvents(clickhouse(), projectId, [
+        event("1", "10:00", "/"),
+        event("1", "11:00", "/docs"),
+      ]);
       expect(await findVisits(await reader(), { projectId, ...DAY })).toHaveLength(2);
 
       // A phone was offline; its 10:30 pageview arrives afterwards.
-      await storeEvents(db(), projectId, [event("1", "10:30", "/pricing")]);
+      await storeEvents(clickhouse(), projectId, [event("1", "10:30", "/pricing")]);
       const visits = await findVisits(await reader(), { projectId, ...DAY });
       expect(visits).toHaveLength(1);
       expect(visits[0]).toMatchObject({ pageviews: 3, entryPath: "/", exitPath: "/docs" });
@@ -237,8 +245,8 @@ describe("findVisits", () => {
     test("does not count a retried event twice", async () => {
       const projectId = await createProject();
       const batch = [event("1", "10:00", "/"), event("1", "10:05", "/docs")];
-      await storeEvents(db(), projectId, batch);
-      await storeEvents(db(), projectId, batch);
+      await storeEvents(clickhouse(), projectId, batch);
+      await storeEvents(clickhouse(), projectId, batch);
       const [visit] = await findVisits(await reader(), { projectId, ...DAY });
       expect(visit?.pageviews).toBe(2);
     });
@@ -249,7 +257,7 @@ describe("findVisits", () => {
     // two IDs would link a visitor across days, so the visit splits.
     test("counts a visit that crosses midnight as two", async () => {
       const projectId = await createProject();
-      await storeEvents(db(), projectId, [
+      await storeEvents(clickhouse(), projectId, [
         event(YESTERDAY_ID, "2026-11-16T23:50:00Z", "/"),
         event(TODAY_ID, "2026-11-17T00:05:00Z", "/pricing"),
         event(TODAY_ID, "2026-11-17T00:25:00Z", "/docs"),
@@ -270,7 +278,7 @@ describe("findVisits", () => {
   describe("the time range", () => {
     test("counts a visit in the range where it started, with its events after the range end", async () => {
       const projectId = await createProject();
-      await storeEvents(db(), projectId, [
+      await storeEvents(clickhouse(), projectId, [
         event(EARLY, "09:50", "/"), // Started before 10:00 …
         event(EARLY, "10:05", "/docs"), // … so not counted, though this event is inside.
         event(INSIDE, "11:50", "/"),
@@ -295,7 +303,7 @@ describe("findVisits", () => {
 
     test("reads far enough back to see where a visit started", async () => {
       const projectId = await createProject();
-      await storeEvents(db(), projectId, [
+      await storeEvents(clickhouse(), projectId, [
         event(EARLY, "09:10", "/"),
         // Engagement reports keep the visit going, though no page is viewed
         // in the 30 minutes before the range starts.
@@ -318,7 +326,7 @@ describe("findVisits", () => {
 
   test("takes the referrer, campaign, browser, and location from the visit's first event", async () => {
     const projectId = await createProject();
-    await storeEvents(db(), projectId, [
+    await storeEvents(clickhouse(), projectId, [
       event("1", "10:00", "/", {
         referrer: "https://www.google.com/",
         utm: { source: "newsletter", campaign: "launch" },
@@ -349,7 +357,7 @@ describe("findVisits", () => {
     const projectId = await createProject();
     // A developer opens the live site, then the staging site, then the live
     // one again: one visitor ID on both, the same day.
-    await storeEvents(db(), projectId, [
+    await storeEvents(clickhouse(), projectId, [
       event("1", "10:00", "/", { release: "1.4.2" }),
       event("1", "10:05", "/new-feature", { environment: "staging", release: "1.5.0-rc.1" }),
       event("1", "10:10", "/docs", { release: "1.4.2" }),
@@ -371,7 +379,7 @@ describe("findVisits", () => {
 
   test("keeps what the first event lacks, even when a later event has it", async () => {
     const projectId = await createProject();
-    await storeEvents(db(), projectId, [
+    await storeEvents(clickhouse(), projectId, [
       event("1", "10:00", "/"),
       event("1", "10:05", "/docs", {
         referrer: "https://example.com/",
@@ -386,7 +394,7 @@ describe("findVisits", () => {
 
   test("ignores events stored before visitor IDs existed", async () => {
     const projectId = await createProject();
-    await storeEvents(db(), projectId, [
+    await storeEvents(clickhouse(), projectId, [
       {
         eventId: randomUUID(),
         name: "pageview",
