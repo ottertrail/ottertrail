@@ -21,13 +21,18 @@ const OWNER = {
   name: "Ada Owner",
   email: "Ada@Example.com",
   password: "correct horse battery",
+  confirmPassword: "correct horse battery",
   instanceName: "Ada's company",
+  // Not the migration's UTC, so the setup tests see that setup sets it; an
+  // alias, stored by its official name.
+  timeZone: "singapore",
 };
 
 /** A fresh instance: its own database schema, no owner yet. */
 async function instance({
   rateLimit = false,
-  setupLimit,
+  // No limit unless a test sets one: the tests below send many refused setups.
+  setupLimit = { capacity: 1000, refillPerSecond: 1000 },
 }: { rateLimit?: boolean; setupLimit?: RateLimit } = {}) {
   const testDb = await createTestDatabase();
   const auth = createAuth({
@@ -46,9 +51,7 @@ async function instance({
       clickhouse,
       publicUrl: PUBLIC_URL,
       trustedOrigins: [PUBLIC_URL],
-      // Not the migration's UTC, so the setup tests see that setup sets it.
-      defaultTimeZone: "Asia/Singapore",
-      ...(setupLimit === undefined ? {} : { setupLimit }),
+      setupLimit,
     },
   });
   // A route only signed-in users may use, to test the session check.
@@ -135,6 +138,11 @@ describe("owner setup", () => {
       { ...OWNER, name: "   " },
       { ...OWNER, instanceName: "   " },
       { token: link?.token, name: OWNER.name, email: OWNER.email, password: OWNER.password },
+      // The confirmation differs, or the timezone is not one: checked here too, not only on the page.
+      { ...OWNER, confirmPassword: "correct horse batterY" },
+      { ...OWNER, timeZone: "+08:00" },
+      { ...OWNER, timeZone: "Mars/Olympus_Mons" },
+      { ...OWNER, timeZone: undefined },
     ]) {
       expect((await setUp(current.app, { token: link?.token, ...body })).statusCode).toBe(400);
     }
@@ -154,6 +162,7 @@ describe("owner setup", () => {
   test("creates the owner from a link, once, even when two requests race", async () => {
     expect((await current.app.inject({ url: "/api/setup" })).json()).toEqual({
       ownerExists: false,
+      emailConfigured: false,
     });
     const link = await createSetupToken(current.db);
     const responses = await Promise.all([
@@ -174,16 +183,47 @@ describe("owner setup", () => {
       .executeTakeFirst();
     expect(account?.provider_id).toBe("credential");
     expect(account?.password).not.toContain(OWNER.password);
-    expect((await current.app.inject({ url: "/api/setup" })).json()).toEqual({ ownerExists: true });
+    expect((await current.app.inject({ url: "/api/setup" })).json()).toEqual({
+      ownerExists: true,
+      emailConfigured: false,
+    });
 
-    // Setup names the instance, and sets its timezone from TIMEZONE (the
-    // migration's row says UTC until then).
+    // Setup names the instance, and sets the timezone chosen on the page,
+    // by its official name (the migration's row says UTC until then).
     const settings = await current.db.selectFrom("instance_settings").selectAll().execute();
     expect(settings).toMatchObject([{ name: "Ada's company", time_zone: "Asia/Singapore" }]);
     expect(await readInstanceSettings(current.db)).toEqual({
       name: "Ada's company",
       timeZone: "Asia/Singapore",
     });
+  });
+
+  test("says whether alert email is set up, for the setup page", async () => {
+    const clickhouse = createClickHouse(loadConfig().clickhouse);
+    const withEmail = buildApp({
+      db: current.db,
+      dashboard: {
+        auth: createAuth({
+          db: current.db,
+          publicUrl: PUBLIC_URL,
+          trustedOrigins: [PUBLIC_URL],
+          secret: "a-secret-only-these-tests-use-0123456789",
+          rateLimit: false,
+        }),
+        clickhouse,
+        publicUrl: PUBLIC_URL,
+        trustedOrigins: [PUBLIC_URL],
+      },
+      notifications: { emailConfigured: true },
+    });
+    try {
+      expect((await withEmail.inject({ url: "/api/setup" })).json()).toMatchObject({
+        emailConfigured: true,
+      });
+    } finally {
+      await withEmail.close();
+      await clickhouse.close();
+    }
   });
 
   test("gives no new link once the owner exists", async () => {

@@ -1,3 +1,4 @@
+import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { LoaderCircleIcon, OctagonAlertIcon } from "lucide-react";
 import * as React from "react";
@@ -8,34 +9,28 @@ import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui
 import { Input } from "@/components/ui/input";
 import { authClient, signInErrorMessage } from "@/lib/auth-client";
 import { formText } from "@/lib/form";
-import { createOwner } from "@/lib/setup-api";
+import { createOwner, fetchSetupStatus } from "@/lib/setup-api";
 
 import { AuthLayout } from "./auth-layout";
-
-/** Matches the API's minimum (MIN_PASSWORD_LENGTH in apps/api/src/auth/auth.ts). */
-const MIN_PASSWORD_LENGTH = 12;
+import { MIN_PASSWORD_LENGTH, useLinkToken } from "./link-token";
 
 /**
- * Reads the setup token from the link's fragment (#token=…) once, then
- * removes it from the address bar, so it does not stay on screen or in the
- * browser's history.
+ * Timezone names to suggest while typing, as the settings page does. The
+ * browser's list leaves out "UTC", which is added.
  */
-function useSetupToken(): string | null {
-  const [token] = React.useState(() => {
-    const value = new URLSearchParams(window.location.hash.slice(1)).get("token");
-    return value === null || value === "" ? null : value;
-  });
-  React.useEffect(() => {
-    if (window.location.hash !== "") {
-      window.history.replaceState(window.history.state, "", window.location.pathname);
-    }
-  }, []);
-  return token;
-}
+const TIME_ZONES = ["UTC", ...Intl.supportedValuesOf("timeZone")];
+
+/** The browser's own timezone, chosen until another is typed. */
+const browserTimeZone = () => Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
 
 export function SetupPage() {
   const navigate = useNavigate();
-  const token = useSetupToken();
+  const token = useLinkToken();
+  const status = useQuery({
+    queryKey: ["setup"],
+    queryFn: ({ signal }) => fetchSetupStatus(signal),
+  });
+  const [timeZone, setTimeZone] = React.useState(browserTimeZone);
   const [error, setError] = React.useState<string | null>(null);
   const [pending, setPending] = React.useState(false);
 
@@ -47,6 +42,10 @@ export function SetupPage() {
     const form = new FormData(event.currentTarget);
     const email = formText(form, "email");
     const password = formText(form, "password");
+    if (password !== formText(form, "confirm-password")) {
+      setError("The two passwords differ. Type the same password twice.");
+      return;
+    }
     setPending(true);
     setError(null);
     const created = await createOwner({
@@ -54,7 +53,9 @@ export function SetupPage() {
       name: formText(form, "name"),
       email,
       password,
+      confirmPassword: password,
       instanceName: formText(form, "workspace"),
+      timeZone: timeZone.trim(),
     });
     if (!created.ok) {
       setPending(false);
@@ -130,6 +131,56 @@ export function SetupPage() {
               At least {MIN_PASSWORD_LENGTH} characters. A passphrase of a few words works well.
             </FieldDescription>
           </Field>
+          <Field>
+            <FieldLabel htmlFor="confirm-password">Confirm password</FieldLabel>
+            <Input
+              id="confirm-password"
+              name="confirm-password"
+              type="password"
+              autoComplete="new-password"
+              required
+              maxLength={128}
+            />
+          </Field>
+          <Field>
+            <FieldLabel htmlFor="time-zone">Timezone</FieldLabel>
+            <Input
+              id="time-zone"
+              name="time-zone"
+              value={timeZone}
+              onChange={(event) => setTimeZone(event.target.value)}
+              list="setup-time-zones"
+              required
+              maxLength={100}
+              autoComplete="off"
+              spellCheck={false}
+              aria-describedby="time-zone-hint"
+            />
+            <datalist id="setup-time-zones">
+              {TIME_ZONES.map((zone) => (
+                <option key={zone} value={zone}>
+                  {zone}
+                </option>
+              ))}
+            </datalist>
+            <FieldDescription id="time-zone-hint">
+              Reports count days in it. Your browser&apos;s is chosen; the owner can change it later
+              in Settings.
+            </FieldDescription>
+          </Field>
+          {status.data !== undefined && (
+            <p className="text-sm text-ink-muted" aria-label="Alert email">
+              {status.data.emailConfigured ? (
+                "Email for alerts is set up on this server."
+              ) : (
+                <>
+                  Email for alerts is not set up. Alerts can still go to webhooks; to send email,
+                  set <code className="font-mono">SMTP_URL</code> and{" "}
+                  <code className="font-mono">EMAIL_FROM</code> on the server and restart it.
+                </>
+              )}
+            </p>
+          )}
           {error !== null && (
             <Alert variant="destructive" role="alert">
               <OctagonAlertIcon />

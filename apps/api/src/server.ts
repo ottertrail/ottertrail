@@ -6,7 +6,6 @@ import { createClickHouse } from "./clickhouse/clickhouse.ts";
 import { DEVELOPMENT_AUTH_SECRET, loadConfig } from "./config.ts";
 import { createDatabase } from "./db/database.ts";
 import { setUpDataCenters, setUpLocation } from "./enrichment/setup.ts";
-import { postgresKnowsTimeZone } from "./settings/settings.ts";
 import { s3ObjectStore } from "./storage/object-store.ts";
 
 const config = loadConfig();
@@ -21,16 +20,6 @@ const auth = createAuth({
   trustedOrigins: config.trustedOrigins,
   secret: config.authSecret,
 });
-// The setup link sets the instance's timezone to TIMEZONE, and PostgreSQL
-// counts its days: refuse to start with a name only Node.js knows.
-if (!(await postgresKnowsTimeZone(db, config.defaultTimeZone))) {
-  console.error(
-    `TIMEZONE "${config.defaultTimeZone}" is not a timezone PostgreSQL knows. Choose another, such as "Europe/Berlin".`,
-  );
-  await db.destroy();
-  await clickhouse.close();
-  process.exit(1);
-}
 const location = await setUpLocation(config.geoSource, config.geoDatabasePath);
 const dataCenters = await setUpDataCenters(config.dataCentersPath);
 const app = buildApp({
@@ -49,7 +38,6 @@ const app = buildApp({
     clickhouse,
     publicUrl: config.publicUrl,
     trustedOrigins: config.trustedOrigins,
-    defaultTimeZone: config.defaultTimeZone,
   },
   objectStore,
   sourceMaps: { limitBytes: config.sourceMapStorageBytes },

@@ -456,8 +456,9 @@ export interface DashboardPasswordResetsTable {
   user_id: string;
   token_hash: ColumnType<Buffer, Buffer, Buffer>;
   expires_at: Date;
-  /** Null when the server's command made it, or once its maker is deleted. */
+  /** Who made it; null exactly when the server's command did (made_by_command). */
   created_by: Nullable<string>;
+  made_by_command: ColumnType<boolean, boolean | undefined, boolean>;
   created_at: ColumnType<Date, Date | undefined, Date>;
 }
 

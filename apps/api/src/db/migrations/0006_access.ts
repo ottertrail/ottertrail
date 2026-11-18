@@ -17,8 +17,10 @@ import { type Kysely, sql } from "kysely";
  *   foreign key, so accepting drops those deleted since. Deleted with the
  *   user who invited.
  * - dashboard_password_resets: a one-time link that sets a user's
- *   password. One per user, a hash only. created_by is null when the
- *   server's command made it, or once its maker is deleted.
+ *   password. One per user, a hash only. Either the server's command made
+ *   it (made_by_command) or a user did (created_by), never both; a user's
+ *   links go with them. Using one checks again that its maker may still
+ *   reset the user (access/password-resets.ts).
  *
  * error_resolutions.resolved_by, the only other column that names a
  * dashboard user, is already set to null when the user is deleted.
@@ -84,8 +86,10 @@ export async function up(db: Kysely<unknown>): Promise<void> {
       user_id    uuid        primary key references dashboard_users (id) on delete cascade,
       token_hash bytea       not null unique,
       expires_at timestamptz not null,
-      created_by uuid        references dashboard_users (id) on delete set null,
-      created_at timestamptz not null default now()
+      created_by uuid        references dashboard_users (id) on delete cascade,
+      made_by_command boolean not null default false,
+      created_at timestamptz not null default now(),
+      check ((created_by is null) = made_by_command)
     )
   `.execute(db);
 }

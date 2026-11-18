@@ -3,7 +3,6 @@ import { isIP } from "node:net";
 import { z } from "zod";
 
 import { parseAddressRange } from "./outbound/addresses.ts";
-import { canonicalTimeZone } from "./visitors/visitor-ids.ts";
 
 const LOG_LEVELS = ["fatal", "error", "warn", "info", "debug", "trace", "silent"] as const;
 
@@ -81,12 +80,6 @@ export interface Config {
    * what the instance takes in, however many projects it has.
    */
   instanceEventsPerSecond: number;
-  /**
-   * IANA timezone, such as "Asia/Singapore", that the setup link sets for
-   * the instance. The owner changes it in the settings after that (reports
-   * count days in it, and visitor salts change at its midnight).
-   */
-  defaultTimeZone: string;
   /** The instance's address, such as "https://analytics.example.com": an origin, no path. */
   publicUrl: string;
   /**
@@ -443,16 +436,6 @@ function parseGeoSource(raw: string): GeoSource {
   return source;
 }
 
-function parseTimeZone(raw: string): string {
-  const timeZone = canonicalTimeZone(raw);
-  if (timeZone === undefined) {
-    throw new ConfigError(
-      `TIMEZONE must be an IANA timezone name such as "Europe/Berlin", not a fixed offset such as "+08:00", received "${raw}"`,
-    );
-  }
-  return timeZone;
-}
-
 function parsePublicUrl(env: NodeJS.ProcessEnv): string {
   const raw = env.PUBLIC_URL?.trim();
   if (raw === undefined || raw === "") {
@@ -513,7 +496,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     geoDatabasePath: env.GEO_DATABASE_PATH?.trim() || DEFAULT_GEO_DATABASE_PATH,
     dataCentersPath: env.DATA_CENTERS_PATH?.trim() || DEFAULT_DATA_CENTERS_PATH,
     instanceEventsPerSecond: parseInstanceEventsPerSecond(env.INSTANCE_EVENTS_PER_SECOND),
-    defaultTimeZone: parseTimeZone(env.TIMEZONE?.trim() || "UTC"),
     ...publicUrlAndOrigins(env),
     authSecret: parseAuthSecret(env),
     trackerScriptPath: env.TRACKER_SCRIPT_PATH?.trim() || DEFAULT_TRACKER_SCRIPT_PATH,

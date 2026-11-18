@@ -519,7 +519,7 @@ The same browser on the same network gets the same ID for the rest of the day, s
 
 ### One salt per timezone and day
 
-The instance has a timezone, an IANA name such as `Asia/Singapore`, in its settings. The setup link sets it from the deployment's `TIMEZONE` (default `UTC`); the owner can change it on the dashboard's Settings page ([dashboard](dashboard.md#instance-settings)). A new salt starts at its midnight, and reports (step 7) count days in the same timezone, so a visit is never split across two salts inside one reported day. With a UTC midnight, a visitor in Singapore reading from 07:30 to 08:30 local time would cross 00:00 UTC and be counted twice that morning.
+The instance has a timezone, an IANA name such as `Asia/Singapore`, in its settings. It is chosen on the setup page (UTC until then); the owner can change it on the dashboard's Settings page ([dashboard](dashboard.md#instance-settings)). A new salt starts at its midnight, and reports (step 7) count days in the same timezone, so a visit is never split across two salts inside one reported day. With a UTC midnight, a visitor in Singapore reading from 07:30 to 08:30 local time would cross 00:00 UTC and be counted twice that morning.
 
 `visitor_salts` holds one salt per timezone and day, and the project is part of every visitor ID, so projects sharing a salt never share visitor IDs. Changing the instance's timezone moves where days start in all its reports, past days included, and gives its visitors new IDs from the change until midnight.
 

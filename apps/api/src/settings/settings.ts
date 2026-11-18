@@ -93,3 +93,10 @@ export async function postgresKnowsTimeZone(db: Kysely<Database>, name: string):
   `.execute(db);
   return rows[0]?.known === true;
 }
+
+/** The answer to a timezone that is not one both Node.js and PostgreSQL know. */
+export const INVALID_TIME_ZONE = {
+  error: "invalid_time_zone",
+  message:
+    'Use an IANA timezone name such as "Europe/Berlin"; fixed offsets such as "+08:00" are not accepted.',
+} as const;

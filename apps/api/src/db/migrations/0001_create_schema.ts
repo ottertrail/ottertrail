@@ -15,8 +15,8 @@ export async function up(db: Kysely<unknown>): Promise<void> {
    *
    * - name: what the dashboard shows above the projects.
    * - time_zone: an IANA timezone, such as "Asia/Singapore". Reports count
-   *   days in it, and visitor salts change at its midnight. Setup sets it
-   *   from TIMEZONE; the owner changes it in the dashboard's settings.
+   *   days in it, and visitor salts change at its midnight. The setup
+   *   page sets it; the owner changes it in the dashboard's settings.
    */
   await sql`
     create table instance_settings (

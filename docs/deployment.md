@@ -37,7 +37,7 @@ cp env.example .env
 chmod 600 .env
 ```
 
-Edit `.env`: set `OTTERTRAIL_DOMAIN`, then fill `POSTGRES_PASSWORD`, `CLICKHOUSE_PASSWORD`, and `AUTH_SECRET` with the output of `openssl rand -hex 32` (a different value each). Hex keeps the password safe inside the database URL. `TIMEZONE` is the instance's timezone, which the setup link sets; the owner can change it later on the dashboard's Settings page.
+Edit `.env`: set `OTTERTRAIL_DOMAIN`, then fill `POSTGRES_PASSWORD`, `CLICKHOUSE_PASSWORD`, and `AUTH_SECRET` with the output of `openssl rand -hex 32` (a different value each). Hex keeps the password safe inside the database URL. The instance's timezone is chosen on the setup page; the owner can change it later on the dashboard's Settings page.
 
 ```sh
 docker compose build migrate
@@ -55,7 +55,7 @@ docker compose exec api node dist/update-geo.mjs
 docker compose up -d --force-recreate --no-deps api
 ```
 
-`setup.mjs` prints a link, valid for an hour, that creates the owner. `update-geo.mjs` saves DB-IP's location database (about 130 MB) and the address ranges of cloud and hosting providers (about 400 KB) in the `geo-data` volume; the API reads both at startup, hence the restart. Without them, events are stored without a location, and events from cloud servers are not recognized ([web analytics](web-analytics.md#data-centers)). DB-IP publishes a new file each month, and providers add ranges every week: run the last two commands again monthly. The API warns at startup when either file is missing or old.
+`setup.mjs` prints a link, valid for an hour, that creates the owner. Teammates join by invitation links from the dashboard's Members page ([access](access.md)). An account whose password is lost gets a reset link from the Members page, or from the server: `docker compose exec api node dist/reset-password.mjs <email>` prints one, valid for an hour. `update-geo.mjs` saves DB-IP's location database (about 130 MB) and the address ranges of cloud and hosting providers (about 400 KB) in the `geo-data` volume; the API reads both at startup, hence the restart. Without them, events are stored without a location, and events from cloud servers are not recognized ([web analytics](web-analytics.md#data-centers)). DB-IP publishes a new file each month, and providers add ranges every week: run the last two commands again monthly. The API warns at startup when either file is missing or old.
 
 The last command restarts only the API by recreating its container. `docker compose restart api` is the usual way, but Podman refuses it because `migrate` has exited.
 
@@ -105,7 +105,6 @@ Restoring PostgreSQL alone, or moving it to a new major version (dump, new volum
 | `POSTGRES_PASSWORD`   | The database password. Only the containers use it; PostgreSQL has no port open. PostgreSQL keeps the password it was first created with: to change it, run `ALTER USER ottertrail PASSWORD '…'` in the database first, then change `.env` |
 | `CLICKHOUSE_PASSWORD` | ClickHouse's password. Only the containers use it; ClickHouse has no port open. Like PostgreSQL's, it is set when ClickHouse first creates its data                                                                                       |
 | `AUTH_SECRET`         | Signs sign-in cookies. Changing it signs everyone out                                                                                                                                                                                     |
-| `TIMEZONE`            | The IANA timezone, such as `Europe/Berlin`, that the setup link sets for the instance. Default `UTC`                                                                                                                                      |
 | `LOG_LEVEL`           | Optional, default `info`                                                                                                                                                                                                                  |
 | `OTTERTRAIL_IMAGE`    | Optional: an image to run instead of building this checkout, such as one from a registry                                                                                                                                                  |
 | `SMTP_URL`            | Optional: the SMTP server alert email goes through, with its user name and password ([alert email](#alert-email)). Never logged                                                                                                           |
@@ -161,7 +160,7 @@ Messages are plain text: what happened, when (in the instance's timezone), the p
 
 ### One customer per instance
 
-Every install serves one customer, whether self-hosted or hosted: each hosted customer gets an instance of their own (decided 18 November 2026), so no customer can slow another. An instance holds projects, its owner (the account the setup link creates), and its instance settings: a display name and the timezone reports count days in, which the owner changes on the dashboard's Settings page ([dashboard](dashboard.md#instance-settings)). The limits on events, source maps, and replays apply to the whole instance, all projects together, with a budget per project inside them. Nobody can sign up in an install, and invitations are not built yet ([access](access.md)). Nothing needs to be set for that.
+Every install serves one customer, whether self-hosted or hosted: each hosted customer gets an instance of their own (decided 18 November 2026), so no customer can slow another. An instance holds projects, its owner (the account the setup link creates), and its instance settings: a display name and the timezone reports count days in, which the owner changes on the dashboard's Settings page ([dashboard](dashboard.md#instance-settings)). The limits on events, source maps, and replays apply to the whole instance, all projects together, with a budget per project inside them. Nobody can sign up in an install; teammates join by invitation ([access](access.md)). Nothing needs to be set for that.
 
 ## Decisions
 

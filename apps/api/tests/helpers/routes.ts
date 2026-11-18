@@ -51,7 +51,6 @@ export async function registeredRoutes(): Promise<Map<string, AccessDeclaration[
       clickhouse,
       publicUrl: "http://localhost:5173",
       trustedOrigins: ["http://localhost:5173"],
-      defaultTimeZone: "UTC",
     },
     trackerScriptPath: "tracker.js",
     dashboardPath: tmpdir(),

@@ -22,7 +22,71 @@ export const AREAS = [
 export type Area = (typeof AREAS)[number];
 export type AreaLevel = "none" | "view" | "manage";
 export type Role = "owner" | "admin" | "member";
-export type Permission = "settings" | "members" | "channels" | "projects";
+export type Permission = "settings" | "ownership" | "members" | "channels" | "projects";
+export type Areas = Record<Area, AreaLevel>;
+
+/** The levels each area takes: an area with nothing to change has no "manage". */
+export const AREA_LEVELS: Record<Area, readonly AreaLevel[]> = {
+  web_analytics: ["none", "view"],
+  product_analytics: ["none", "view", "manage"],
+  errors: ["none", "view", "manage"],
+  replays: ["none", "view"],
+  users: ["none", "view"],
+  monitoring: ["none", "view"],
+  uptime_alerts: ["none", "view", "manage"],
+};
+
+/** Each area's name, and the pages it covers, as the Members page shows them. */
+export const AREA_LABELS: Record<Area, { name: string; pages: string }> = {
+  web_analytics: { name: "Web analytics", pages: "Analytics and Speed" },
+  product_analytics: { name: "Product analytics", pages: "Events, funnels, goals, retention" },
+  errors: { name: "Errors", pages: "Errors and occurrences" },
+  replays: { name: "Replays", pages: "Session replays, which show individual people" },
+  users: { name: "Users", pages: "Identified end users and their activity" },
+  monitoring: { name: "Monitoring", pages: "Traces, logs, metrics, services, databases, hosts" },
+  uptime_alerts: { name: "Uptime and alerts", pages: "Uptime checks and alert rules" },
+};
+
+/** Presets that fill in a member's areas (apps/api/src/access/areas.ts has the same). */
+export const PRESETS = {
+  viewer: {
+    web_analytics: "view",
+    product_analytics: "view",
+    errors: "view",
+    replays: "none",
+    users: "none",
+    monitoring: "view",
+    uptime_alerts: "view",
+  },
+  engineering: {
+    web_analytics: "view",
+    product_analytics: "view",
+    errors: "manage",
+    replays: "view",
+    users: "none",
+    monitoring: "view",
+    uptime_alerts: "manage",
+  },
+  marketing: {
+    web_analytics: "view",
+    product_analytics: "manage",
+    errors: "none",
+    replays: "none",
+    users: "none",
+    monitoring: "none",
+    uptime_alerts: "none",
+  },
+} as const satisfies Record<string, Areas>;
+export type Preset = keyof typeof PRESETS | "custom";
+export const PRESET_NAMES = ["viewer", "engineering", "marketing"] as const;
+
+/** The preset these areas match, or "custom". */
+export function presetOf(areas: Areas): Preset {
+  const found = PRESET_NAMES.find((preset) =>
+    AREAS.every((area) => PRESETS[preset][area] === areas[area]),
+  );
+  return found ?? "custom";
+}
 
 export interface Me {
   user: { id: string; name: string; email: string; role: Role };
@@ -42,7 +106,7 @@ const isAreas = (value: unknown): value is Me["access"]["areas"] =>
 
 const isPermissions = (value: unknown): value is Me["permissions"] =>
   isRecord(value) &&
-  (["settings", "members", "channels", "projects"] as const).every(
+  (["settings", "ownership", "members", "channels", "projects"] as const).every(
     (permission) => typeof value[permission] === "boolean",
   );
 

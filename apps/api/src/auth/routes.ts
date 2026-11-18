@@ -1,9 +1,14 @@
 import type { FastifyPluginCallback, FastifyReply, FastifyRequest } from "fastify";
 import type { Kysely } from "kysely";
 
-import { type RateLimit, TokenBucketLimiter } from "../collection/rate-limiter.ts";
+import { clientKey, type RateLimit, TokenBucketLimiter } from "../collection/rate-limiter.ts";
 import type { Database, Role } from "../db/schema.ts";
-import { MAX_INSTANCE_NAME_LENGTH } from "../settings/settings.ts";
+import {
+  INVALID_TIME_ZONE,
+  MAX_INSTANCE_NAME_LENGTH,
+  postgresKnowsTimeZone,
+} from "../settings/settings.ts";
+import { canonicalTimeZone } from "../visitors/visitor-ids.ts";
 import {
   type Auth,
   canSignInWith,
@@ -98,22 +103,35 @@ export const betterAuthRoutes: FastifyPluginCallback<{ auth: Auth; publicUrl: st
   done();
 };
 
+/** A new password and its confirmation, as the setup, invitation, and reset forms send them. */
+export const newPasswordProperties = {
+  password: { type: "string", minLength: MIN_PASSWORD_LENGTH, maxLength: MAX_PASSWORD_LENGTH },
+  confirmPassword: { type: "string", maxLength: MAX_PASSWORD_LENGTH },
+} as const;
+
+/** The answer when the confirmation differs, checked by the API as well as the page. */
+export const PASSWORDS_DIFFER = problem(
+  "passwords_differ",
+  "The two passwords differ. Type the same password twice.",
+);
+
 const setupBodySchema = {
   type: "object",
-  required: ["token", "name", "email", "password", "instanceName"],
+  required: ["token", "name", "email", "password", "confirmPassword", "instanceName", "timeZone"],
   additionalProperties: false,
   properties: {
     token: { type: "string", minLength: 1, maxLength: 200 },
     name: { type: "string", minLength: 1, maxLength: 200, pattern: "\\S" },
     // Checked against sign-in's own rule in the handler (canSignInWith).
     email: { type: "string", minLength: 3, maxLength: 320 },
-    password: { type: "string", minLength: MIN_PASSWORD_LENGTH, maxLength: MAX_PASSWORD_LENGTH },
+    ...newPasswordProperties,
     instanceName: {
       type: "string",
       minLength: 1,
       maxLength: MAX_INSTANCE_NAME_LENGTH,
       pattern: "\\S",
     },
+    timeZone: { type: "string", minLength: 1, maxLength: 100 },
   },
 } as const;
 
@@ -122,20 +140,21 @@ export const DEFAULT_SETUP_LIMIT: RateLimit = { capacity: 10, refillPerSecond: 1
 
 /**
  * GET /api/setup says whether the instance still needs an owner, so the
- * dashboard can explain how to create one. POST /api/setup creates the owner
- * from a setup link (see setup.ts). Anyone can call it, so attempts are
- * limited per client address.
+ * dashboard can explain how to create one, and whether alert email is set
+ * up (SMTP_URL), which the setup page shows. POST /api/setup creates the
+ * owner from a setup link (see setup.ts), with the timezone chosen on the
+ * page. Anyone can call it, so attempts are limited per client address.
  */
 export const setupRoutes: FastifyPluginCallback<{
   db: Kysely<Database>;
   auth: Auth;
-  /** The instance's timezone, which the setup link sets (TIMEZONE). */
-  defaultTimeZone: string;
+  /** Whether SMTP_URL is set: a status line on the page, nothing sent. */
+  emailConfigured: boolean;
   setupLimit?: RateLimit;
-}> = (app, { db, auth, defaultTimeZone, setupLimit = DEFAULT_SETUP_LIMIT }, done) => {
+}> = (app, { db, auth, emailConfigured, setupLimit = DEFAULT_SETUP_LIMIT }, done) => {
   const limiter = new TokenBucketLimiter(setupLimit);
 
-  app.get("/setup", async () => ({ ownerExists: await ownerExists(db) }));
+  app.get("/setup", async () => ({ ownerExists: await ownerExists(db), emailConfigured }));
 
   app.post<{
     Body: {
@@ -143,7 +162,9 @@ export const setupRoutes: FastifyPluginCallback<{
       name: string;
       email: string;
       password: string;
+      confirmPassword: string;
       instanceName: string;
+      timeZone: string;
     };
   }>(
     "/setup",
@@ -151,7 +172,7 @@ export const setupRoutes: FastifyPluginCallback<{
       schema: { body: setupBodySchema },
       // Before the body is read or checked.
       onRequest: async (request, reply) => {
-        const result = limiter.take(request.ip);
+        const result = limiter.take(clientKey(request.ip));
         if (!result.allowed) {
           return reply
             .code(429)
@@ -167,7 +188,7 @@ export const setupRoutes: FastifyPluginCallback<{
       },
     },
     async (request, reply) => {
-      const { token, name, email, password, instanceName } = request.body;
+      const { token, name, email, password, confirmPassword, instanceName } = request.body;
       if (!canSignInWith(email)) {
         return reply
           .code(400)
@@ -178,11 +199,19 @@ export const setupRoutes: FastifyPluginCallback<{
             ),
           );
       }
+      if (password !== confirmPassword) {
+        return reply.code(400).send(PASSWORDS_DIFFER);
+      }
+      // Checked as the settings page checks it: PostgreSQL counts the days.
+      const timeZone = canonicalTimeZone(request.body.timeZone);
+      if (timeZone === undefined || !(await postgresKnowsTimeZone(db, timeZone))) {
+        return reply.code(400).send(INVALID_TIME_ZONE);
+      }
       const result = await completeSetup(
         db,
         auth,
         { token, name: name.trim(), email, password, instanceName: instanceName.trim() },
-        { timeZone: defaultTimeZone },
+        { timeZone },
       );
       if (result === "invalid_link") {
         return reply

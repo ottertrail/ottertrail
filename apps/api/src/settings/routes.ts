@@ -8,16 +8,13 @@ import { requireSession } from "../auth/routes.ts";
 import type { Database } from "../db/schema.ts";
 import { canonicalTimeZone } from "../visitors/visitor-ids.ts";
 import {
+  INVALID_TIME_ZONE,
   type InstanceSettings,
   MAX_INSTANCE_NAME_LENGTH,
   postgresKnowsTimeZone,
   readInstanceSettings,
   updateInstanceSettings,
 } from "./settings.ts";
-
-function problem(code: string, message: string) {
-  return { error: code, message };
-}
 
 /** The settings as the dashboard gets them. */
 function view(settings: InstanceSettings) {
@@ -69,14 +66,7 @@ export const settingsRoutes: FastifyPluginCallback<{
       if (request.body.timeZone !== undefined) {
         timeZone = canonicalTimeZone(request.body.timeZone);
         if (timeZone === undefined || !(await postgresKnowsTimeZone(db, timeZone))) {
-          return reply
-            .code(400)
-            .send(
-              problem(
-                "invalid_time_zone",
-                'Use an IANA timezone name such as "Europe/Berlin"; fixed offsets such as "+08:00" are not accepted.',
-              ),
-            );
+          return reply.code(400).send(INVALID_TIME_ZONE);
         }
       }
       const name = request.body.name?.trim();

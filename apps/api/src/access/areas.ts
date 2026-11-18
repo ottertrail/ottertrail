@@ -85,10 +85,11 @@ export const PRESETS = {
  * What instance routes need, by role. Settings: the instance's name and
  * timezone. Members: the Members page. Channels: notification channels.
  * Projects: creating, changing, and deleting projects, their keys and
- * settings.
+ * settings. Ownership: handing it to another user.
  */
 export const PERMISSIONS = {
   settings: ["owner"],
+  ownership: ["owner"],
   members: ["owner", "admin"],
   channels: ["owner", "admin"],
   projects: ["owner", "admin"],

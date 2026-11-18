@@ -10,6 +10,7 @@
     "geo:update": "vp run -r geo:update",
     "visits": "vp -C apps/api run visits",
     "setup": "vp -C apps/api run setup",
+    "reset-password": "vp -C apps/api run reset-password",
     "report": "vp -C apps/api run report",
     "bench:reports": "vp -C apps/api run bench:reports",
     "ready": "vp check && vp run -r test && vp run -r build",

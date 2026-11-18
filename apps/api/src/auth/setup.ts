@@ -1,10 +1,9 @@
-import { createHash, randomBytes } from "node:crypto";
-
 import type { Kysely } from "kysely";
 
 import type { Database } from "../db/schema.ts";
 import { forgetInstanceSettings, updateInstanceSettings } from "../settings/settings.ts";
 import type { Auth } from "./auth.ts";
+import { hashToken, newToken } from "./tokens.ts";
 
 /** How long a setup link works. */
 export const SETUP_LINK_TTL_MS = 60 * 60 * 1000;
@@ -22,7 +21,6 @@ export const SETUP_LINK_TTL_MS = 60 * 60 * 1000;
  * The database keeps only a SHA-256 hash of the token, so reading the
  * database does not reveal a working link.
  */
-const hashToken = (token: string) => createHash("sha256").update(token).digest();
 
 export async function ownerExists(db: Kysely<Database>): Promise<boolean> {
   const owner = await db
@@ -44,8 +42,7 @@ export async function createSetupToken(
   if (await ownerExists(db)) {
     return null;
   }
-  // 32 random bytes: guessing a working token is not feasible.
-  const token = randomBytes(32).toString("base64url");
+  const { token } = newToken();
   const expiresAt = new Date(now.getTime() + SETUP_LINK_TTL_MS);
   await db.transaction().execute(async (trx) => {
     await trx.deleteFrom("owner_setup_tokens").execute();
@@ -83,7 +80,7 @@ export async function completeSetup(
     timeZone,
     now = new Date(),
   }: {
-    /** The instance's timezone (TIMEZONE). */
+    /** The instance's timezone, chosen on the setup page. */
     timeZone: string;
     now?: Date;
   },

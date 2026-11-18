@@ -45,7 +45,6 @@ describe("loadConfig", () => {
       geoDatabasePath: DEFAULT_GEO_DATABASE_PATH,
       dataCentersPath: DEFAULT_DATA_CENTERS_PATH,
       instanceEventsPerSecond: DEFAULT_INSTANCE_EVENTS_PER_SECOND,
-      defaultTimeZone: "UTC",
       publicUrl: DEVELOPMENT_PUBLIC_URL,
       trustedOrigins: [DEVELOPMENT_PUBLIC_URL, "http://localhost:*", "http://127.0.0.1:*"],
       authSecret: DEVELOPMENT_AUTH_SECRET,
@@ -78,7 +77,6 @@ describe("loadConfig", () => {
         GEO_DATABASE_PATH: "/var/lib/ottertrail/geo.mmdb",
         DATA_CENTERS_PATH: "/var/lib/ottertrail/data-centers.json",
         INSTANCE_EVENTS_PER_SECOND: "2000",
-        TIMEZONE: "Asia/Singapore",
         PUBLIC_URL: "https://analytics.example.com/",
         AUTH_SECRET: "s".repeat(44),
         TRACKER_SCRIPT_PATH: "/srv/ottertrail/tracker.js",
@@ -113,7 +111,6 @@ describe("loadConfig", () => {
       geoDatabasePath: "/var/lib/ottertrail/geo.mmdb",
       dataCentersPath: "/var/lib/ottertrail/data-centers.json",
       instanceEventsPerSecond: 2000,
-      defaultTimeZone: "Asia/Singapore",
       publicUrl: "https://analytics.example.com",
       trustedOrigins: ["https://analytics.example.com", "http://localhost:*", "http://127.0.0.1:*"],
       authSecret: "s".repeat(44),
@@ -299,17 +296,6 @@ describe("loadConfig", () => {
     "rejects TRUST_PROXY %j",
     (value) => {
       expect(() => loadConfig({ TRUST_PROXY: value })).toThrow(ConfigError);
-    },
-  );
-
-  test("stores the official name for a timezone alias", () => {
-    expect(loadConfig({ TIMEZONE: "singapore" }).defaultTimeZone).toBe("Asia/Singapore");
-  });
-
-  test.each(["Mars/Olympus_Mons", "GMT+25", "singapore time", "+08:00"])(
-    "rejects TIMEZONE %j",
-    (timeZone) => {
-      expect(() => loadConfig({ TIMEZONE: timeZone })).toThrow(ConfigError);
     },
   );
 

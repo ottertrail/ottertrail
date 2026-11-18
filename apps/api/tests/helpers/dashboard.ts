@@ -8,6 +8,7 @@ import { createSetupToken } from "../../src/auth/setup.ts";
 import type { Reader } from "../../src/clickhouse/query.ts";
 import { type NewEvent, storeEvents } from "../../src/collection/event-store.ts";
 import { LastEventRecorder } from "../../src/collection/last-event.ts";
+import type { RateLimit } from "../../src/collection/rate-limiter.ts";
 import type { Database } from "../../src/db/schema.ts";
 import { createTestClickHouse } from "./test-clickhouse.ts";
 import { createTestDatabase } from "./test-database.ts";
@@ -36,6 +37,7 @@ export async function signedInDashboard({
   telemetry,
   uptime,
   notifications,
+  linkLimit = { capacity: 1000, refillPerSecond: 1000 },
 }: {
   timeZone?: string;
   now?: () => Date;
@@ -51,6 +53,8 @@ export async function signedInDashboard({
   uptime?: AppOptions["uptime"];
   /** Whether email is set up, for notification channels (tests/channels.test.ts). */
   notifications?: AppOptions["notifications"];
+  /** Accepting invitations and using reset links, per client address; no limit by default. */
+  linkLimit?: RateLimit;
 } = {}) {
   const testDb = await createTestDatabase();
   const testClickHouse = await createTestClickHouse().catch(async (error: unknown) => {
@@ -71,7 +75,7 @@ export async function signedInDashboard({
       clickhouse: testClickHouse.client,
       publicUrl: PUBLIC_URL,
       trustedOrigins: [PUBLIC_URL],
-      defaultTimeZone: timeZone,
+      linkLimit,
       ...(now === undefined ? {} : { now }),
     },
     ...(objectStore === undefined ? {} : { objectStore }),
@@ -86,7 +90,7 @@ export async function signedInDashboard({
   await app.inject({
     method: "POST",
     url: "/api/setup",
-    payload: { token: link?.token, ...OWNER },
+    payload: { token: link?.token, ...OWNER, confirmPassword: OWNER.password, timeZone },
   });
   const signedIn = await app.inject({
     method: "POST",

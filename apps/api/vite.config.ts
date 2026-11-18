@@ -10,6 +10,7 @@ export default defineConfig({
       worker: "src/worker.ts",
       migrate: "src/migrate.ts",
       setup: "scripts/setup.ts",
+      "reset-password": "scripts/reset-password.ts",
       "update-geo": "scripts/update-geo.ts",
     },
     platform: "node",

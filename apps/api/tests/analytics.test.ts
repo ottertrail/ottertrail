@@ -778,7 +778,6 @@ describe("when ClickHouse fails", () => {
         clickhouse,
         publicUrl: PUBLIC_URL,
         trustedOrigins: [PUBLIC_URL],
-        defaultTimeZone: TIME_ZONE,
       },
     });
     try {

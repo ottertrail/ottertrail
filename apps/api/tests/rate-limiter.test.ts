@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vite-plus/test";
 
-import { EventBudget, TokenBucketLimiter } from "../src/collection/rate-limiter.ts";
+import { clientKey, EventBudget, TokenBucketLimiter } from "../src/collection/rate-limiter.ts";
 
 function fakeClock(start = 0) {
   let time = start;
@@ -142,5 +142,15 @@ describe("refund", () => {
     limiter.refund("a", 100);
     expect(limiter.take("a", 10)).toEqual({ allowed: true });
     expect(limiter.take("a", 1).allowed).toBe(false);
+  });
+});
+
+describe("clientKey", () => {
+  test("keys IPv4 by the address, IPv6 by its /64, and IPv4-mapped IPv6 as IPv4", () => {
+    expect(clientKey("203.0.113.10")).toBe("203.0.113.10");
+    expect(clientKey("2001:db8:1:2::1")).toBe("2001:db8:1:2::/64");
+    expect(clientKey("2001:0db8:0001:0002:abcd:ef01:2345:6789")).toBe("2001:db8:1:2::/64");
+    expect(clientKey("2001:db8:1:3::1")).toBe("2001:db8:1:3::/64");
+    expect(clientKey("::ffff:203.0.113.10")).toBe("203.0.113.10");
   });
 });

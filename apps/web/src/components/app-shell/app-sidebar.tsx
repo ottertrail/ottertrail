@@ -82,6 +82,18 @@ function WorkspaceMenu() {
             <span>Design system</span>
           </SidebarMenuButton>
         </SidebarMenuItem>
+        {can("members") && (
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              render={<Link to="/settings/members" />}
+              isActive={matchRoute({ to: "/settings/members" }) !== false}
+              tooltip="Members"
+            >
+              <UsersIcon />
+              <span>Members</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        )}
         {showSettings && (
           <SidebarMenuItem>
             <SidebarMenuButton

@@ -1,6 +1,7 @@
 import Fastify, { type FastifyServerOptions } from "fastify";
 import type { Kysely } from "kysely";
 
+import { memberRoutes } from "./access/member-routes.ts";
 import { meRoutes } from "./access/routes.ts";
 import { alertRoutes } from "./alerts/routes.ts";
 import type { Auth } from "./auth/auth.ts";
@@ -61,14 +62,11 @@ export interface AppOptions extends Omit<FastifyServerOptions, "logger"> {
     publicUrl: string;
     /** Origins dashboard requests may come from (Config.trustedOrigins). */
     trustedOrigins: readonly string[];
-    /**
-     * The timezone the setup link sets for the instance (TIMEZONE). The
-     * owner changes it in the settings after that; reports count days in it.
-     */
-    defaultTimeZone: string;
     /** The clock that decides "today" for report periods; tests fix it. */
     now?: () => Date;
     setupLimit?: RateLimit;
+    /** Accepting invitations and using reset links, per client address (access/member-routes.ts). */
+    linkLimit?: RateLimit;
   };
   /**
    * The S3-compatible object store that holds source maps and session
@@ -231,10 +229,19 @@ export function buildApp({
       prefix: "/api",
       db,
       auth: dashboard.auth,
-      defaultTimeZone: dashboard.defaultTimeZone,
+      emailConfigured: notifications.emailConfigured ?? false,
       ...(dashboard.setupLimit === undefined ? {} : { setupLimit: dashboard.setupLimit }),
     });
     app.register(meRoutes, { prefix: "/api", db, auth: dashboard.auth });
+    app.register(memberRoutes, {
+      prefix: "/api",
+      db,
+      auth: dashboard.auth,
+      trustedOrigins: dashboard.trustedOrigins,
+      publicUrl: dashboard.publicUrl,
+      ...(dashboard.linkLimit === undefined ? {} : { linkLimit: dashboard.linkLimit }),
+      ...(dashboard.now === undefined ? {} : { now: dashboard.now }),
+    });
     app.register(settingsRoutes, {
       prefix: "/api",
       db,

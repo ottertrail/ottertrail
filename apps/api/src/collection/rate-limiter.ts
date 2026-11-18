@@ -10,6 +10,27 @@
  * Limits are per API process. Ottertrail runs one API process per instance
  * for now; several processes would each allow the full rate.
  */
+import { isIP } from "node:net";
+
+import { ipv6Bytes } from "../outbound/addresses.ts";
+
+/**
+ * The key a client address is limited by: an IPv4 address as it is, and an
+ * IPv6 address by its /64, the block one household or server usually
+ * holds, so a client cannot dodge a limit with each of its addresses. An
+ * IPv4-mapped address (::ffff:a.b.c.d) counts as its IPv4 address.
+ */
+export function clientKey(ip: string): string {
+  if (isIP(ip) !== 6) return ip;
+  const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/i.exec(ip);
+  if (mapped?.[1] !== undefined) return mapped[1];
+  const bytes = ipv6Bytes(ip);
+  const groups = [0, 2, 4, 6].map((at) =>
+    (((bytes[at] ?? 0) << 8) | (bytes[at + 1] ?? 0)).toString(16),
+  );
+  return `${groups.join(":")}::/64`;
+}
+
 export interface RateLimit {
   capacity: number;
   refillPerSecond: number;

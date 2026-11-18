@@ -33,7 +33,6 @@ x-app: &app
     CLICKHOUSE_DATABASE: ottertrail
     PUBLIC_URL: https://${OTTERTRAIL_DOMAIN:?set OTTERTRAIL_DOMAIN in .env}
     AUTH_SECRET: ${AUTH_SECRET:?set AUTH_SECRET in .env}
-    TIMEZONE: ${TIMEZONE:-UTC}
     # Requests reach the API only through Caddy, one proxy hop.
     TRUST_PROXY: "1"
     LOG_LEVEL: ${LOG_LEVEL:-info}

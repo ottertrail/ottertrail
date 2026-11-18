@@ -26,6 +26,7 @@ export const meRoutes: FastifyPluginCallback<{ db: Kysely<Database>; auth: Auth 
     const access = userAccessOf(request);
     const permissions: Record<Permission, boolean> = {
       settings: can(access, "settings"),
+      ownership: can(access, "ownership"),
       members: can(access, "members"),
       channels: can(access, "channels"),
       projects: can(access, "projects"),

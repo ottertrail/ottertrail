@@ -13,7 +13,8 @@ export type AccessChange =
  * old grant can come back. An admin keeps no grants rows; a member gets
  * exactly `projects` and `areas`, and "all" clears their project list.
  * Projects deleted meanwhile are dropped. The owner is never changed here
- * (handing ownership over is its own step). Returns false when no such
+ * (handing ownership over is its own step). Their pending reset link goes:
+ * whoever made it judged the user as they were. Returns false when no such
  * user, or the owner.
  */
 export async function setUserAccess(
@@ -42,6 +43,8 @@ export async function setUserAccessIn(
   }
   // The projects go with it (a foreign key).
   await trx.deleteFrom("dashboard_member_access").where("user_id", "=", userId).execute();
+  // A reset link was judged against the role and access they had: it goes.
+  await trx.deleteFrom("dashboard_password_resets").where("user_id", "=", userId).execute();
   if (change.role === "admin") {
     return true;
   }

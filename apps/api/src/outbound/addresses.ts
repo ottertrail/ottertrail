@@ -104,7 +104,7 @@ GLOBAL_UNICAST.addSubnet("2000::", 3, "ipv6");
 const groupsOf = (part: string) => (part === "" ? [] : part.split(":"));
 
 /** An IPv6 address as its 16 bytes; it must be valid (isIP 6). */
-function ipv6Bytes(address: string): number[] {
+export function ipv6Bytes(address: string): number[] {
   let text = address;
   const bytes: number[] = [];
   // A dotted IPv4 address at the end stands for the last 32 bits.

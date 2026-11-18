@@ -14,6 +14,7 @@
     "geo:update": "vpx scripts/update-geo.ts",
     "visits": "vpx scripts/visits.ts",
     "setup": "vpx scripts/setup.ts",
+    "reset-password": "vpx scripts/reset-password.ts",
     "report": "vpx scripts/report.ts",
     "bench:reports": "vpx scripts/bench-reports.ts",
     "worker": "vpx src/worker.ts",

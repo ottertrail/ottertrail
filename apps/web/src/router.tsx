@@ -17,6 +17,8 @@ import { NoAccess } from "@/components/no-access";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AlertsPage } from "@/features/alerts/alerts-page";
 import { AnalyticsPage } from "@/features/analytics/analytics-page";
+import { InvitePage } from "@/features/auth/invite-page";
+import { ResetPasswordPage } from "@/features/auth/reset-password-page";
 import { SetupPage } from "@/features/auth/setup-page";
 import { SignInPage } from "@/features/auth/sign-in-page";
 import { DesignSystemPage } from "@/features/design-system/design-system-page";
@@ -40,6 +42,7 @@ import { ProjectsPage } from "@/features/projects/projects-page";
 import { ReplayPage } from "@/features/replays/replay-page";
 import { ReplaysPage } from "@/features/replays/replays-page";
 import { replayFiltersFrom } from "@/features/replays/search";
+import { MembersPage } from "@/features/settings/members-page";
 import { SettingsPage } from "@/features/settings/settings-page";
 import { SpeedPage } from "@/features/speed/speed-page";
 import { DatabasesPage } from "@/features/telemetry/databases-page";
@@ -140,6 +143,20 @@ const setupRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/setup",
   component: SetupPage,
+});
+
+/** Accepting an invitation: public, the token in the fragment (docs/access.md). */
+const inviteRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/invite",
+  component: InvitePage,
+});
+
+/** Setting a password from a reset link: public, the token in the fragment. */
+const resetPasswordRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/reset-password",
+  component: ResetPasswordPage,
 });
 
 /** Every page inside needs a session; without one, the visitor goes to sign-in. */
@@ -1027,6 +1044,14 @@ const settingsRoute = createRoute({
   component: SettingsPage,
 });
 
+/** Members and invitations, for the owner and admins (docs/access.md). */
+const membersRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: "/settings/members",
+  staticData: { title: "Members" },
+  component: MembersPage,
+});
+
 const designSystemRoute = createRoute({
   getParentRoute: () => appRoute,
   path: "/design-system",
@@ -1037,6 +1062,8 @@ const designSystemRoute = createRoute({
 const routeTree = rootRoute.addChildren([
   signInRoute,
   setupRoute,
+  inviteRoute,
+  resetPasswordRoute,
   appRoute.addChildren([
     homeRoute,
     projectsRoute,
@@ -1074,6 +1101,7 @@ const routeTree = rootRoute.addChildren([
       projectSettingsRoute,
     ]),
     settingsRoute,
+    membersRoute,
     designSystemRoute,
   ]),
 ]);

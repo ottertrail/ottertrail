@@ -1,5 +1,5 @@
 import { stepsOverlap } from "../../src/features/product/funnel-steps.ts";
-import type { Area, AreaLevel, Role } from "../../src/lib/access.ts";
+import { type Area, type AreaLevel, PRESETS, type Role } from "../../src/lib/access.ts";
 import {
   type FiringAlert,
   type HistoryEntry,
@@ -27,6 +27,7 @@ import type { SavedFunnel } from "../../src/lib/funnels-api.ts";
 import type { GoalResult } from "../../src/lib/goals-api.ts";
 import type { HostCharts, HostList } from "../../src/lib/hosts-api.ts";
 import type { LogList, LogRecord, LogSummary } from "../../src/lib/logs-api.ts";
+import type { Invitation, Member } from "../../src/lib/members-api.ts";
 import {
   isMetricKind,
   MEASURES,
@@ -69,6 +70,10 @@ export interface FakeApi {
   settings: Settings;
   /** Who is signed in and what they may reach (GET /api/me); the owner by default. */
   access: FakeAccess;
+  /** The Members page's users and pending invitations (GET /api/members). */
+  members: { members: Member[]; invitations: Invitation[] };
+  /** Whether the server has SMTP_URL, as GET /api/setup says. */
+  emailConfigured: boolean;
   projects: Project[];
   /**
    * Answers GET /api/projects/:id/analytics. A Response stands for an error.
@@ -1931,7 +1936,13 @@ function meOf(api: FakeApi) {
     user: { ...SESSION.user, role },
     instance: { name: api.settings.name, timeZone: api.settings.timeZone },
     access: { projects, areas },
-    permissions: { settings: role === "owner", members: admin, channels: admin, projects: admin },
+    permissions: {
+      settings: role === "owner",
+      ownership: role === "owner",
+      members: admin,
+      channels: admin,
+      projects: admin,
+    },
   };
 }
 
@@ -3089,6 +3100,8 @@ async function answer(api: FakeApi, url: URL, init: RequestInit | undefined): Pr
     return json({ status: "ok" });
   }
   // As the API: everything else needs a session (sign-in and setup are above or public).
+  const links = answerLinks(api, url, init);
+  if (links !== null) return links;
   if (!api.signedIn && !path.startsWith("/api/auth/") && path !== "/api/setup") {
     return json({ error: "unauthorized", message: "Sign in to continue." }, 401);
   }
@@ -3111,6 +3124,8 @@ async function answer(api: FakeApi, url: URL, init: RequestInit | undefined): Pr
   if (path === "/api/me") {
     return json(meOf(api));
   }
+  const members = answerMembers(api, url, init);
+  if (members !== null) return members;
   if (/^\/api\/projects\/[^/]+\/alert-channels$/.test(path)) {
     return json({
       channels: api.channels.list.map(({ id, name, kind }) => ({ id, name, kind })),
@@ -3413,6 +3428,8 @@ export function installFakeApi(overrides: Partial<FakeApi> = {}): FakeApi {
     signedIn: true,
     settings: SETTINGS,
     access: OWNER_ACCESS,
+    members: fakeMembers(),
+    emailConfigured: false,
     projects: [PROJECT],
     analytics: (_projectId, _period, _query, api) => analyticsFixture({ goals: api.goals }),
     goals: fakeGoals(),
@@ -3472,4 +3489,203 @@ export function deferred<T>() {
     resolve = done;
   });
   return { promise, resolve };
+}
+
+/** The tokens the fake invitation and reset links accept; any other no longer works. */
+export const GOOD_INVITE = "good-invite";
+export const GOOD_RESET = "good-reset";
+export const ADMIN_PASSWORD = "correct horse battery";
+
+/** The owner (the signed-in "user-1"), an admin, a member, and one invitation. */
+export function fakeMembers(): FakeApi["members"] {
+  return {
+    members: [
+      {
+        id: "user-1",
+        name: "Test Owner",
+        email: "owner@example.com",
+        role: "owner",
+        access: null,
+        lastSignInAt: "2026-11-16T08:00:00.000Z",
+        createdAt: "2026-11-01T08:00:00.000Z",
+      },
+      {
+        id: "user-2",
+        name: "Ada Admin",
+        email: "ada@example.com",
+        role: "admin",
+        access: null,
+        lastSignInAt: null,
+        createdAt: "2026-11-02T08:00:00.000Z",
+      },
+      {
+        id: "user-3",
+        name: "Mia Member",
+        email: "mia@example.com",
+        role: "member",
+        access: { projects: "all", areas: { ...PRESETS.viewer } },
+        lastSignInAt: "2026-11-15T08:00:00.000Z",
+        createdAt: "2026-11-03T08:00:00.000Z",
+      },
+    ],
+    invitations: [
+      {
+        id: "invite-1",
+        email: "zoe@example.com",
+        role: "member",
+        access: { projects: [PROJECT.id], areas: { ...PRESETS.marketing } },
+        invitedBy: { id: "user-1", name: "Test Owner" },
+        expiresAt: "2099-01-01T00:00:00.000Z",
+        createdAt: "2026-11-16T08:00:00.000Z",
+      },
+    ],
+  };
+}
+
+const isPlainRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null;
+
+/** Enough of a check for the fake: the page sends what it built. */
+const isMemberAccess = (value: unknown): value is NonNullable<Member["access"]> =>
+  isPlainRecord(value) && "areas" in value && "projects" in value;
+
+const linkUrl = (path: string, token: string) => `http://localhost:5173${path}#token=${token}`;
+
+function answerMembers(api: FakeApi, url: URL, init: RequestInit | undefined): Response | null {
+  const path = url.pathname;
+  const body = (): Record<string, unknown> => {
+    const parsed: unknown = JSON.parse(typeof init?.body === "string" ? init.body : "{}");
+    return isPlainRecord(parsed) ? parsed : {};
+  };
+  const state = api.members;
+  if (path === "/api/members") {
+    return json({
+      you: { id: "user-1", role: api.access.role },
+      invitationDays: 7,
+      members: state.members,
+      invitations: state.invitations,
+    });
+  }
+  if (path === "/api/invitations" && init?.method === "POST") {
+    const input = body();
+    const email = typeof input.email === "string" ? input.email.toLowerCase() : "";
+    if (state.members.some((member) => member.email === email)) {
+      return json(
+        { error: "account_exists", message: "Someone with this email already has an account." },
+        409,
+      );
+    }
+    const invitation: Invitation = {
+      id: `invite-${state.invitations.length + 2}`,
+      email,
+      role: input.role === "admin" ? "admin" : "member",
+      access: input.role === "admin" || !isMemberAccess(input.access) ? null : input.access,
+      invitedBy: { id: "user-1", name: "Test Owner" },
+      expiresAt: "2099-01-01T00:00:00.000Z",
+      createdAt: "2026-11-17T08:00:00.000Z",
+    };
+    state.invitations = [invitation, ...state.invitations.filter((item) => item.email !== email)];
+    return json({ invitation, url: linkUrl("/invite", "new-invite-token") }, 201);
+  }
+  const invitation = /^\/api\/invitations\/([^/]+)(\/link)?$/.exec(path);
+  if (invitation?.[1] !== undefined) {
+    const found = state.invitations.find((item) => item.id === invitation[1]);
+    if (found === undefined) return json({ error: "invitation_not_found", message: "Gone." }, 404);
+    if (invitation[2] !== undefined) {
+      return json({ invitation: found, url: linkUrl("/invite", "renewed-invite-token") });
+    }
+    state.invitations = state.invitations.filter((item) => item.id !== found.id);
+    return new Response(null, { status: 204 });
+  }
+  const member = /^\/api\/members\/([^/]+)(?:\/(reset-link|ownership))?$/.exec(path);
+  if (member?.[1] === undefined) return null;
+  const found = state.members.find((item) => item.id === member[1]);
+  if (found === undefined) return json({ error: "member_not_found", message: "Gone." }, 404);
+  if (member[2] === "reset-link") {
+    return json(
+      { url: linkUrl("/reset-password", "reset-token"), expiresAt: "2026-11-18T08:00:00.000Z" },
+      201,
+    );
+  }
+  if (member[2] === "ownership") {
+    if (body().password !== ADMIN_PASSWORD) {
+      return json(
+        { error: "wrong_password", message: "That is not your password. Type it again." },
+        403,
+      );
+    }
+    state.members = state.members.map((item) =>
+      item.id === found.id
+        ? { ...item, role: "owner", access: null }
+        : item.role === "owner"
+          ? { ...item, role: "admin" }
+          : item,
+    );
+    api.access = ADMIN_ACCESS;
+    return new Response(null, { status: 204 });
+  }
+  if (init?.method === "DELETE") {
+    state.members = state.members.filter((item) => item.id !== found.id);
+    return new Response(null, { status: 204 });
+  }
+  if (init?.method === "PATCH") {
+    const input = body();
+    state.members = state.members.map((item) =>
+      item.id !== found.id
+        ? item
+        : input.role === "admin"
+          ? { ...item, role: "admin", access: null }
+          : { ...item, role: "member", access: isMemberAccess(input.access) ? input.access : null },
+    );
+    return new Response(null, { status: 204 });
+  }
+  return null;
+}
+
+/** The public routes: setup's status, invitation and reset links. */
+function answerLinks(api: FakeApi, url: URL, init: RequestInit | undefined): Response | null {
+  const path = url.pathname;
+  const token = (() => {
+    const parsed: unknown = JSON.parse(typeof init?.body === "string" ? init.body : "{}");
+    return typeof parsed === "object" && parsed !== null && "token" in parsed
+      ? parsed.token
+      : undefined;
+  })();
+  const inviteGone = json(
+    { error: "invalid_link", message: "This invitation link no longer works. Ask for a new one." },
+    404,
+  );
+  const resetGone = json(
+    { error: "invalid_link", message: "This reset link no longer works. Ask for a new one." },
+    404,
+  );
+  if (path === "/api/setup" && init?.method !== "POST") {
+    return json({ ownerExists: false, emailConfigured: api.emailConfigured });
+  }
+  if (path === "/api/setup") {
+    return new Response(JSON.stringify({ created: true }), { status: 201 });
+  }
+  if (path === "/api/invite/preview") {
+    return token !== GOOD_INVITE
+      ? inviteGone
+      : json({
+          invitation: {
+            email: "zoe@example.com",
+            role: "member",
+            invitedBy: "Test Owner",
+            instanceName: api.settings.name,
+            access: { projects: ["Main site"], areas: { ...PRESETS.marketing } },
+          },
+        });
+  }
+  if (path === "/api/invite/accept") {
+    return token !== GOOD_INVITE ? inviteGone : json({ email: "zoe@example.com" }, 201);
+  }
+  if (path === "/api/reset-password/preview") {
+    return token !== GOOD_RESET ? resetGone : json({ email: "mia@example.com" });
+  }
+  if (path === "/api/reset-password") {
+    return token !== GOOD_RESET ? resetGone : json({ email: "mia@example.com" });
+  }
+  return null;
 }

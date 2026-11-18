@@ -237,12 +237,24 @@ describe("members, admins, and the one access check", () => {
         projects: [site.id],
         areas: { ...ALL_AREAS, replays: "none", users: "none", errors: "view" },
       },
-      permissions: { settings: false, members: false, channels: false, projects: false },
+      permissions: {
+        settings: false,
+        ownership: false,
+        members: false,
+        channels: false,
+        projects: false,
+      },
     });
     expect((await send(dashboard.cookie, "GET", "/api/me")).json()).toMatchObject({
       user: { role: "owner" },
       access: { projects: "all", areas: ALL_AREAS },
-      permissions: { settings: true, members: true, channels: true, projects: true },
+      permissions: {
+        settings: true,
+        ownership: true,
+        members: true,
+        channels: true,
+        projects: true,
+      },
     });
   });
 

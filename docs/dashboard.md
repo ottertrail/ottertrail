@@ -15,7 +15,7 @@ Code: `apps/api/src/auth/` and `apps/web/src/features/auth/`.
 
 ### Who can sign in
 
-The install's first account is its **owner**, created with the setup link ([below](#creating-the-owner)), which also names the instance ([Settings](#settings)). Other users are admins or members, with access per area and project ([access](access.md)). They will join by invitation (planned). Nobody can sign up yet: open sign-up, for the hosted service, needs Ottertrail's own account email for verification and password resets.
+The install's first account is its **owner**, created with the setup link ([below](#creating-the-owner)), which also names the instance ([Settings](#settings)). Other users are admins or members, with access per area and project ([access](access.md)). They join by invitation: an owner or admin copies a link from the Members page and sends it ([access](access.md#invitations)). Nobody can sign up yet: open sign-up, for the hosted service, needs Ottertrail's own account email for verification and password resets.
 
 ### Creating the owner
 
@@ -25,7 +25,7 @@ There is no default password. Whoever runs the install creates the owner:
 vp run setup
 ```
 
-The command prints a link such as `https://analytics.example.com/setup#token=…`. Opening it shows a form for the owner's name, email, password, and the workspace name (the instance's name in the sidebar), which is saved with the account. The link:
+The command prints a link such as `https://analytics.example.com/setup#token=…`. Opening it shows a form for the owner's name, email, password and its confirmation, the workspace name (the instance's name in the sidebar), and the timezone reports count days in, the browser's chosen at first; all are saved with the account. The API checks the confirmation and the timezone too, as the settings page checks a timezone. A line says whether alert email (`SMTP_URL`) is set up on the server, and how to set it when not. The link:
 
 - works once, and for one hour; running the command again replaces it;
 - stops working for good once an owner exists, and the command then refuses;
@@ -56,13 +56,13 @@ Passwords are at least 12 characters and are stored as scrypt hashes. scrypt is 
 
 ### Built on Better Auth
 
-[Better Auth](https://better-auth.com) handles passwords, sessions, cookies, origin checks, and rate limits. Ottertrail uses only its core (email and password, database sessions), with no plugins, and keeps the owner, setup, roles, and later invitations in its own code and tables ([access](access.md)). Most of Better Auth's security advisories in 2026 were in plugins this setup does not use. The version is pinned; an advisory that affects the core means a new Ottertrail release.
+[Better Auth](https://better-auth.com) handles passwords, sessions, cookies, origin checks, and rate limits. Ottertrail uses only its core (email and password, database sessions), with no plugins, and keeps the owner, setup, roles, invitations, and reset links in its own code and tables ([access](access.md)). Most of Better Auth's security advisories in 2026 were in plugins this setup does not use. The version is pinned; an advisory that affects the core means a new Ottertrail release.
 
 Settings that differ from Better Auth's defaults, and why:
 
 | Setting                                   | Why                                                                                                    |
 | ----------------------------------------- | ------------------------------------------------------------------------------------------------------ |
-| Sign-up disabled                          | The owner comes from the setup link; teammates will come by invitation.                                |
+| Sign-up disabled                          | The owner comes from the setup link; teammates come by invitation.                                     |
 | No IP address on sessions                 | Ottertrail keeps no IP addresses.                                                                      |
 | Rate limits keyed on the API's own header | Better Auth reads `X-Forwarded-For` by default, which a client can forge.                              |
 | Origin and CSRF checks always on          | Better Auth turns them off when `NODE_ENV` is `test` unless they are set; set, they cannot be skipped. |
@@ -80,8 +80,7 @@ Settings that differ from Better Auth's defaults, and why:
 
 ### Not done yet
 
-- Invitations (planned: [access](access.md#invitations-planned-part-b)).
-- Password reset (planned, with links instead of email: [access](access.md#password-reset-links-planned-part-b)). Until then, an owner who forgets their password cannot get back in without help from the database.
+- Password reset by email. Instead, the owner or an admin makes a reset link on the Members page, and anyone with the server runs `vp run reset-password -- <email>` ([access](access.md#password-reset-links)).
 - Two-factor sign-in and passkeys.
 - Serving the dashboard from the API in production. In development, the dashboard's dev server forwards `/api` to the API.
 
@@ -549,9 +548,9 @@ Each customer has an instance of their own ([CLAUDE.md](../CLAUDE.md)). The inst
 PostgreSQL's `instance_settings` table has one row:
 
 - `name`: the display name at the top of the sidebar. The setup form sets it (the field "Workspace name").
-- `time_zone`: an IANA timezone. Setup sets it from the deployment's `TIMEZONE`.
+- `time_zone`: an IANA timezone, UTC until the setup page sets the one chosen there.
 
-`/settings` shows both (`GET /api/settings`) to the install's owner (`dashboard_users.role = 'owner'`), who alone can change them (`PATCH /api/settings`). Admins see only the notification channels there; members do not see the page ([access](access.md)). The timezone field suggests IANA names as you type. The API stores the name Node.js resolves it to (`US/Pacific` becomes `America/Los_Angeles`, and a few newer names come back as older ones: `Europe/Kyiv` as `Europe/Kiev`). It refuses fixed offsets such as `+08:00`, and names PostgreSQL does not know: Node.js and PostgreSQL carry separate timezone databases, and reports and retention use PostgreSQL's to work out where days start. (ClickHouse, which puts events on their days, knows every name Node.js does.) For the same reason the API refuses to start with a `TIMEZONE` PostgreSQL does not know.
+`/settings` shows both (`GET /api/settings`) to the install's owner (`dashboard_users.role = 'owner'`), who alone can change them (`PATCH /api/settings`). Admins see only the notification channels there; members do not see the page ([access](access.md)). The timezone field suggests IANA names as you type. The API stores the name Node.js resolves it to (`US/Pacific` becomes `America/Los_Angeles`, and a few newer names come back as older ones: `Europe/Kyiv` as `Europe/Kiev`). It refuses fixed offsets such as `+08:00`, and names PostgreSQL does not know: Node.js and PostgreSQL carry separate timezone databases, and reports and retention use PostgreSQL's to work out where days start. (ClickHouse, which puts events on their days, knows every name Node.js does.)
 
 Reports count days in the instance's timezone, and visitor IDs change at its midnight ([web analytics](web-analytics.md#one-salt-per-timezone-and-day)). Changing it therefore moves where days start in every report, past days included, and counts visitors afresh from the change until midnight; the page says so before saving.
 
@@ -570,7 +569,10 @@ Code: `apps/web/src/features/settings/` (`notification-channels.tsx`, `channel-f
 
 Loading shows skeletons, and a failed load says so with Retry. `channels.test.tsx` covers the list and the email notice both ways, the empty state, adding an email channel (with the form's own check) and a webhook (with the API's refusal under the URL), editing and deleting, showing (fetched only on Show), hiding, copying, and replacing a secret, a test send and the test-send limit, the deliveries with their states (Sending apart from Retrying) and paging, the limit of 20, and a failed load, against the fake API; `apps/api/tests/channels.test.ts` the routes.
 
+### Members
+
+`/settings/members`, in the workspace menu for the owner and admins: everyone's role or access and last sign-in, pending invitations, and the actions on them: inviting with a link to copy, changing access, removing, reset links, and handing over ownership. How it works, and the rules, are in [access](access.md#members).
+
 ### Not done yet
 
 - Signing up for the hosted service, which creates the customer's instance and its owner (a control plane outside the app; not built).
-- Invitations, the Members page, and reset links ([access](access.md), part B).

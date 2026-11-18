@@ -24,11 +24,15 @@ const PUBLIC_ROUTES = new Set([
   "GET /r.js",
   "GET /replay-player.js",
   "GET /*",
-  // Sign-in (Better Auth) and setup.
+  // Sign-in (Better Auth), setup, accepting an invitation, and a reset link.
   "GET /api/auth/*",
   "POST /api/auth/*",
   "GET /api/setup",
   "POST /api/setup",
+  "POST /api/invite/preview",
+  "POST /api/invite/accept",
+  "POST /api/reset-password/preview",
+  "POST /api/reset-password",
 ]);
 
 /** What each dashboard route declares, as text: "errors:manage", "permission:channels" … */
@@ -37,6 +41,14 @@ const EXPECTED: Record<string, string> = {
   "GET /api/settings": "permission:settings",
   "PATCH /api/settings": "permission:settings",
   "GET /api/projects": "signed_in",
+  "GET /api/members": "permission:members",
+  "PATCH /api/members/:userId": "permission:members",
+  "DELETE /api/members/:userId": "permission:members",
+  "POST /api/members/:userId/reset-link": "permission:members",
+  "POST /api/members/:userId/ownership": "permission:ownership",
+  "POST /api/invitations": "permission:members",
+  "POST /api/invitations/:invitationId/link": "permission:members",
+  "DELETE /api/invitations/:invitationId": "permission:members",
   "POST /api/projects": "permission:projects",
   "GET /api/channels": "permission:channels",
   "POST /api/channels": "permission:channels",
