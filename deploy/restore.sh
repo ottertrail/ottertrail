@@ -1,8 +1,9 @@
 #!/bin/sh
 # Restores a backup made by backup.sh into an instance with empty
-# databases: a new server, or after `docker compose down -v`. Run it in
-# this folder, next to compose.yaml, with the backup's path without its
-# ending. Its .dump, .zip, and -objects.tar must be there. Without the
+# databases: a new server, or after `docker compose down -v`. Keep it next
+# to compose.yaml and .env, as a release's files are; it runs Compose in
+# its own folder, wherever it is called from. Give it the backup's path
+# without its ending. Its .dump, .zip, and -objects.tar must be there. Without the
 # tar, it refuses, unless given --without-objects: then the source maps
 # and session replays are not restored.
 #
@@ -29,6 +30,13 @@ if [ "${1:-}" = "--without-objects" ]; then
   shift
 fi
 backup=${1:?Give the backup without its ending, such as backups/ottertrail-2026-11-17T120000Z}
+# The path counts from where the script was called. Then Compose runs in
+# the script's own folder, where it finds compose.yaml and .env.
+case "$backup" in
+  /*) ;;
+  *) backup=$PWD/$backup ;;
+esac
+cd "$(dirname "$0")"
 name=$(basename "$backup")
 # The name goes into commands inside the containers: only names backup.sh makes.
 case "$name" in

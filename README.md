@@ -10,7 +10,7 @@ This repository is a foundation, not a working product yet. It contains:
 - `apps/api`: Fastify API with `GET /api/health` (a liveness check) and `POST /api/events`, which collects events into ClickHouse, where reports read them ([docs/clickhouse.md](docs/clickhouse.md)). Dashboard sign-in works (the owner account comes from `vp run setup`). An instance holds projects; dashboard users read their reports (`GET /api/projects/:id/analytics`; `vp run report` prints the same reports in a terminal). Users are the owner, admins, and members with access per area and project, and one check runs on every route ([docs/access.md](docs/access.md)). The owner sets the instance's name and timezone on the Settings page ([instance settings](docs/dashboard.md#instance-settings)), where the owner and admins also manage the notification channels alerts go to: email over SMTP and signed webhooks ([docs/webhooks.md](docs/webhooks.md)). Each project's Alerts page holds its alert rules: a check down, a certificate about to expire, new, regressed, or spiking errors, a route's latency or failed share, and a metric above or below a value ([docs/uptime-alerts.md](docs/uptime-alerts.md)). Teammates join by invitation links from the Members page, with reset links for lost passwords. There is no open sign-up or job queue yet.
 - `packages/tracker`: the browser script (`dist/tracker.js`, about 3.9 KB gzipped, and `dist/v.js` for Web Vitals) that sends pageviews, custom events, and errors, with a playground page in `demo/`. The API serves the built script at `/t.js`, so sites load it from their instance.
 
-To run an instance on a server, see [docs/deployment.md](docs/deployment.md): one Docker image (`Dockerfile`) and a Compose stack with PostgreSQL and Caddy (`deploy/`).
+To run an instance on a server, see [docs/deployment.md](docs/deployment.md): each release publishes one Docker image (`Dockerfile`) and a Compose file with PostgreSQL, ClickHouse, and Caddy (`deploy/compose.yaml`), which a server downloads with `example.env` and starts with `docker compose up -d`.
 
 The design system is documented in [docs/design-system.md](docs/design-system.md). How web analytics works, and the decisions behind it, are in [docs/web-analytics.md](docs/web-analytics.md); error tracking in [docs/errors.md](docs/errors.md); product analytics in [docs/product-analytics.md](docs/product-analytics.md); the planned session replay's design in [docs/session-replay.md](docs/session-replay.md); the dashboard, including sign-in, in [docs/dashboard.md](docs/dashboard.md); roles and access in [docs/access.md](docs/access.md).
 
@@ -75,6 +75,7 @@ Run from the repository root.
 | `vp check`              | Formats, lints, and type-checks the whole workspace. `vp check --fix` applies fixes.                                                                                                                                                                                                                                                     |
 | `vp run -r test`        | Runs the tests in every package. The API tests need the local databases running; each test file uses its own temporary PostgreSQL schema and ClickHouse database. The dashboard's browser tests need Chromium (see Setup).                                                                                                               |
 | `vp run -r build`       | Builds the dashboard (`apps/web/dist`), the tracker, and the API (`apps/api/dist/`: `server.mjs`, `worker.mjs`, `migrate.mjs`, `setup.mjs`, `reset-password.mjs`, `update-geo.mjs`, `backup-objects.mjs`, `restore-objects.mjs`, with their dependencies bundled in). Each build writes `THIRD_PARTY_LICENSES.txt`.                      |
+| `vp run version`        | Sets the release version in `package.json`, `apps/api/package.json`, and `deploy/compose.yaml` together: `vp run version 0.2.0`. Refuses a version that is not semantic. The release steps are in [docs/deployment.md](docs/deployment.md#images-and-releases).                                                                          |
 | `vp run ready`          | `vp check`, then all tests, then all builds. Run before committing.                                                                                                                                                                                                                                                                      |
 
 Inside one package: `vp -C apps/api run dev`, `vp -C apps/web test`, and so on.
@@ -169,7 +170,7 @@ Dashboard dev server (`apps/web`):
 | ----------------------- | ----------------------- | ------------------------------------ |
 | `OTTERTRAIL_API_ORIGIN` | `http://127.0.0.1:3000` | Where the dev server proxies `/api`. |
 
-`compose.yaml` at the root is for local development only. Instances use `deploy/compose.yaml`.
+`compose.yaml` at the root is for local development only. Instances use the `compose.yaml` of a release (`deploy/compose.yaml`), which can also run an image built from source ([docs/deployment.md](docs/deployment.md#images-and-releases)).
 
 ## Adding UI components
 

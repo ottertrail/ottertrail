@@ -6,46 +6,65 @@ Status: tested on one machine with Podman (see [What has been tested](#what-has-
 
 ## What runs
 
-`deploy/compose.yaml` starts six services, and a seventh with the `object-store` profile ([source maps](#source-maps)), from the [Dockerfile](../Dockerfile) at the repository root, which builds one image for all of Ottertrail, [deploy/Caddyfile](../deploy/Caddyfile), and ClickHouse's settings in [deploy/clickhouse/](../deploy/clickhouse/).
+[deploy/compose.yaml](../deploy/compose.yaml) starts six services, and a seventh, Garage, with the `object-store` profile, which `example.env` turns on ([session replays and source maps](#session-replays-and-source-maps)). The API, the worker, and the migrations run one image, built from the [Dockerfile](../Dockerfile) for each release and published as `ghcr.io/ottertrail/ottertrail` ([Images and releases](#images-and-releases)). The settings of Caddy, ClickHouse, and Garage are inside the Compose file (`configs:`), so the file works on its own, next to its `.env`.
 
-| Service      | What it does                                                                                                                                                                                    | Reachable from outside |
-| ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------- |
-| `postgres`   | PostgreSQL 18, data in the `postgres-data` volume                                                                                                                                               | No                     |
-| `clickhouse` | ClickHouse 26.8, for analytics events and later logs and traces, data in `clickhouse-data`. Capped at 40% of the server's memory (see below)                                                    | No                     |
-| `migrate`    | Brings both databases' schemas up to date, then exits. The API and the worker start only after it succeeds                                                                                      | No                     |
-| `api`        | The API, the dashboard's files, and the tracker (`/t.js`), on port 3000 inside the stack. Geolocation file in `geo-data`                                                                        | No, only through Caddy |
-| `worker`     | Background work: runs uptime checks, evaluates alert rules and sends their notifications, deletes events past each project's retention and those of deleted projects, and joins session replays | No                     |
-| `caddy`      | HTTPS: gets and renews the certificate, redirects HTTP to HTTPS, compresses responses, passes every request to the API                                                                          | Ports 80 and 443       |
-| `garage`     | Only with `--profile object-store`: [Garage](https://garagehq.deuxfleurs.fr/) (AGPL-3.0), an S3-compatible store for source maps, in `garage-data`. About 10 MB of memory idle                  | No                     |
+| Service      | What it does                                                                                                                                                                                                                  | Reachable from outside |
+| ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------- |
+| `postgres`   | PostgreSQL 18, data in the `postgres-data` volume                                                                                                                                                                             | No                     |
+| `clickhouse` | ClickHouse 26.8, for analytics events and later logs and traces, data in `clickhouse-data`. Capped at 40% of the server's memory (see below)                                                                                  | No                     |
+| `migrate`    | Brings both databases' schemas up to date, then exits. The API and the worker start only after it succeeds                                                                                                                    | No                     |
+| `api`        | The API, the dashboard's files, and the tracker (`/t.js`), on port 3000 inside the stack. Geolocation file in `geo-data`                                                                                                      | No, only through Caddy |
+| `worker`     | Background work: runs uptime checks, evaluates alert rules and sends their notifications, deletes events past each project's retention and those of deleted projects, and joins session replays                               | No                     |
+| `caddy`      | HTTPS: gets and renews the certificate, redirects HTTP to HTTPS, compresses responses, passes every request to the API                                                                                                        | Ports 80 and 443       |
+| `garage`     | With the `object-store` profile, which `example.env` turns on: [Garage](https://garagehq.deuxfleurs.fr/) (AGPL-3.0), an S3-compatible store for session replays and source maps, in `garage-data`. About 10 MB of memory idle | No                     |
 
 Idle, the whole stack with Garage used about 425 MB of memory on 18 November 2026 (ClickHouse 158 MB, API 146 MB, worker 54 MB, PostgreSQL 39 MB, Caddy 23 MB, Garage 6 MB), measured with the test data below. The image is about 300 MB, almost all of it Node.js's own image. No sizing under real traffic has been measured.
 
-ClickHouse's defaults assume a machine of its own with 16 GB or more, and its own sizing guide puts 8 GB as the floor. `deploy/clickhouse/` sets it up to share a server of about 8 GB: at most 40% of the memory it could have (its own plus what is free, worked out again as it runs, so it leaves more to other services as they grow), a 512 MiB mark cache instead of 5 GiB, internal logs Ottertrail never reads switched off, at most 1 GB per query, and large sorts and groupings continued on disk past 400 MB instead of failing ([storage benchmark](storage-benchmark.md)). Plan on 8 GB: on 2 GB, ClickHouse was killed for lack of memory at 6 million events.
+ClickHouse's defaults assume a machine of its own with 16 GB or more, and its own sizing guide puts 8 GB as the floor. The Compose file's ClickHouse settings (`clickhouse-config` and `clickhouse-users`) set it up to share a server of about 8 GB: at most 40% of the memory it could have (its own plus what is free, worked out again as it runs, so it leaves more to other services as they grow), a 512 MiB mark cache instead of 5 GiB, internal logs Ottertrail never reads switched off, at most 1 GB per query, and large sorts and groupings continued on disk past 400 MB instead of failing ([storage benchmark](storage-benchmark.md)). Plan on 8 GB: on 2 GB, ClickHouse was killed for lack of memory at 6 million events.
 
 ## What you need
 
-- A Linux server with Docker Engine and the Docker Compose plugin. Podman with `podman compose` works too (that is what was tested).
+- A Linux server with Docker Engine and Docker Compose 5.0.2 or later (`docker compose version`). Docker Compose reads inline settings files (`configs:` with `content:`) from 2.23.1 on ([Compose's reference](https://docs.docker.com/reference/compose-file/configs/)), but the Compose file also asks for the object store's keys only when they are needed, with a check inside a condition (`${A:-${B:+${A:?…}}}`). Docker Compose evaluates that check only when the condition holds from 5.0.2 on. 2.23.1, 2.24.0, 2.29.0, 2.35.0, 2.40.3, 5.0.0, and 5.0.1 evaluated it always, so an install with its own S3 store, or none, stopped asking for Garage's secret ([What has been tested](#what-has-been-tested)).
+- Podman works with Docker Compose too: `podman compose` runs Docker Compose when it is installed (`PODMAN_COMPOSE_PROVIDER` chooses), or point Docker Compose at Podman's socket with `DOCKER_HOST`. Use Docker Compose 5.0.2 or later there too. podman-compose does not work: version 1.6 skips inline configs without a warning, so Caddy, ClickHouse, and Garage start without their settings, and Garage stops at once ([What has been tested](#what-has-been-tested)).
 - A domain or subdomain for the instance, such as `analytics.example.com`, with its DNS A record (and AAAA, for IPv6) pointing at the server.
 - Ports 80 and 443 open to the internet: Caddy needs them to get a certificate from Let's Encrypt, and sites send events to 443. Nothing else needs to be open besides SSH.
-- This repository on the server, at the release to run.
+
+No checkout of this repository is needed. An install is a folder with four files from a release, and the `.env` made from one of them.
 
 ## First start
 
+Make a folder, and download the release's files into it: `compose.yaml` and `example.env`, and the backup scripts.
+
 ```sh
-cd ottertrail/deploy
-cp env.example .env
+mkdir ottertrail && cd ottertrail
+curl -fLO https://github.com/ottertrail/ottertrail/releases/latest/download/compose.yaml
+curl -fLO https://github.com/ottertrail/ottertrail/releases/latest/download/example.env
+curl -fLO https://github.com/ottertrail/ottertrail/releases/latest/download/backup.sh
+curl -fLO https://github.com/ottertrail/ottertrail/releases/latest/download/restore.sh
+chmod +x backup.sh restore.sh
+cp example.env .env
 chmod 600 .env
 ```
 
-Edit `.env`: set `OTTERTRAIL_DOMAIN`, then fill `POSTGRES_PASSWORD`, `CLICKHOUSE_PASSWORD`, and `AUTH_SECRET` with the output of `openssl rand -hex 32` (a different value each). Hex keeps the password safe inside the database URL. The instance's timezone is chosen on the setup page; the owner can change it later on the dashboard's Settings page.
+While the repository is private, these links answer 404 without a GitHub sign-in, and the image needs one too:
+
+- Download the files with the [GitHub CLI](https://cli.github.com/), signed in with `gh auth login`: `gh release download --repo ottertrail/ottertrail --pattern compose.yaml --pattern example.env --pattern backup.sh --pattern restore.sh` takes the latest release; put a release's tag (`vX.Y.Z`) before `--repo` for another. Without the CLI, GitHub's API serves each file with a token: list the release's files with `curl -fsSL -H "Authorization: Bearer $TOKEN" https://api.github.com/repos/ottertrail/ottertrail/releases/latest`, then download each from its `url` with the same header and `-H "Accept: application/octet-stream"`.
+- Log in to the registry once, with a GitHub token that can only read packages (a classic token with `read:packages`): `echo "$TOKEN" | docker login ghcr.io -u <GitHub user> --password-stdin`.
+
+Edit `.env`:
+
+- `OTTERTRAIL_DOMAIN`: the instance's domain.
+- `POSTGRES_PASSWORD`, `CLICKHOUSE_PASSWORD`, `AUTH_SECRET`, `OBJECT_STORE_SECRET_ACCESS_KEY`, and `GARAGE_RPC_SECRET`: the output of `openssl rand -hex 32`, a different value each. Hex keeps the password safe inside the database URL.
+- `OBJECT_STORE_ACCESS_KEY_ID`: the output of `printf 'GK%s\n' "$(openssl rand -hex 12)"`, the form Garage's keys take.
+
+`example.env` turns on the stack's own object store, Garage, for session replays and source maps. To use another store, or none, see [Session replays and source maps](#session-replays-and-source-maps) before the first start. Alert email is optional ([Alert email](#alert-email)). The instance's timezone is chosen on the setup page; the owner can change it later on the dashboard's Settings page.
 
 ```sh
-docker compose build migrate
 docker compose up -d
 docker compose ps
 ```
 
-The first command builds the image that `migrate`, `api`, and `worker` share, once. `docker compose up -d --build` would work too, but podman-compose builds it once for each of the three, all at the same time, and on a 2 GB machine that ran out of memory. `migrate` should show "Exited (0)" and `api` "healthy". The build installs every development dependency inside the image and takes a few minutes; one of those three builds finished in Podman's 2 GB machine, but a small server may need swap or a build elsewhere (see [Images](#images)).
+Compose pulls the images, then starts the databases, `migrate`, the API, the worker, and Caddy. `migrate` should show "Exited (0)" and `api` "healthy". A setting left empty stops Compose before anything starts, with "set … in .env".
 
 Create the owner account, then download what the API knows about IP addresses:
 
@@ -61,27 +80,28 @@ The last command restarts only the API by recreating its container. `docker comp
 
 ## Updating
 
+Back up first ([Backups](#backups)). Then replace `compose.yaml` with the new release's, and the backup scripts with its own, the same way as at the first start. Then:
+
 ```sh
-git fetch && git checkout <release>
-docker compose build migrate
+docker compose pull
 docker compose up -d
 ```
 
-Compose rebuilds the image, runs `migrate`, and replaces the API and the worker. The API is unavailable for a few seconds while its container is replaced; the tracker retries events it could not send.
+Compose pulls the new image, runs `migrate`, and replaces the API and the worker. The API is unavailable for a few seconds while its container is replaced; the tracker retries events it could not send. Read the release's notes first: a release whose `compose.yaml` adds a required setting names it there, and Compose stops until `.env` has it.
 
-With `OTTERTRAIL_IMAGE` set, update with `docker compose pull` and then `docker compose up -d` instead, never with `--build`: that would build this checkout and tag it with the registry image's name.
+`OTTERTRAIL_VERSION` in `.env` chooses the release instead: each release's `compose.yaml` runs its own release by default, and `OTTERTRAIL_VERSION=0.2.0` runs 0.2.0 with the `compose.yaml` already there. That works while the Compose file itself has not changed between the two; the release notes say when it has.
 
-To go back to an earlier release, check it out and run the same command, as long as no migration ran in between. The deployment only runs migrations forward, and an older release may not work with a newer schema: after a migration, restore the backup taken before the update.
+To go back to an earlier release, use its `compose.yaml` (or its version in `OTTERTRAIL_VERSION`) and run the same commands, as long as no migration ran in between. The deployment only runs migrations forward, and an older release may not work with a newer schema: after a migration, restore the backup taken before the update.
 
 ## Backups
 
-Not automated yet. Before each update, and regularly, in `deploy/`:
+Not automated yet. Before each update, and regularly, in the install's folder:
 
 ```sh
 ./backup.sh
 ```
 
-It writes three files into `deploy/backups/`, named by the time:
+It writes three files into `backups/` beside it, named by the time:
 
 - `ottertrail-<time>.zip`: ClickHouse's backup of the events, traces, logs, and metrics (its own `BACKUP DATABASE`).
 - `ottertrail-<time>.dump`: PostgreSQL's (`pg_dump`): accounts, projects, and settings.
@@ -96,7 +116,7 @@ The files are readable only by the user who ran the script. A run that fails say
 
 Disk space for a backup: ClickHouse writes its backup into its own volume, and the script then moves it out, so the disk needs free space of about twice ClickHouse's data. The objects need about twice their size too: once as files, once in the tar. Copy all three files off the server: a backup on the same disk is lost with it. Delete old ones yourself; they hold your customers' data, and events deleted since stay in them.
 
-To restore into empty databases (a new server, or after `docker compose down -v`), with the three files in `deploy/backups/`:
+Both scripts run Compose in their own folder, next to `compose.yaml` and `.env`, wherever they are called from. To restore into empty databases (a new server, or after `docker compose down -v`), with the three files in `backups/`:
 
 ```sh
 ./restore.sh backups/ottertrail-2026-11-17T062707Z
@@ -117,7 +137,7 @@ It works in this order:
 
 Disk space for a restore: the three files, plus the unpacked objects, about as large as their tar, until the restore ends.
 
-With Podman, run both as `COMPOSE="podman compose" ./backup.sh`. With the `object-store` profile, give it in `COMPOSE` too (`COMPOSE="docker compose --profile object-store"`), unless `COMPOSE_PROFILES` sets it. Without it, `restore.sh` does not start Garage, and its check stops after a minute because the bucket does not answer.
+Both run `docker compose`. `COMPOSE` replaces it, such as `COMPOSE="podman compose" ./backup.sh`. The `object-store` profile comes from `COMPOSE_PROFILES` in `.env`, as `example.env` sets it. Without it, `restore.sh` does not start Garage, and its check stops after a minute because the bucket does not answer.
 
 The one-off containers run as the user who runs the script (`-u` with its user and group IDs), so the files they write are that user's. That suits Docker running as root, and Podman on macOS, where it was tested. Rootless Docker and rootless Podman on Linux map container users to other IDs, so there the container may not be able to write into `backups/`, or read the unpacked objects; this is not tested. The bind mounts carry `:z`, which SELinux hosts (Fedora, RHEL) need so the container may use the folder; other hosts ignore it. Podman on macOS was tested with it; an SELinux host was not.
 
@@ -134,29 +154,23 @@ Restoring PostgreSQL alone, or moving it to a new major version (dump, new volum
 | `CLICKHOUSE_PASSWORD` | ClickHouse's password. Only the containers use it; ClickHouse has no port open. Like PostgreSQL's, it is set when ClickHouse first creates its data                                                                                       |
 | `AUTH_SECRET`         | Signs sign-in cookies. Changing it signs everyone out                                                                                                                                                                                     |
 | `LOG_LEVEL`           | Optional, default `info`                                                                                                                                                                                                                  |
-| `OTTERTRAIL_IMAGE`    | Optional: an image to run instead of building this checkout, such as one from a registry                                                                                                                                                  |
+| `OTTERTRAIL_VERSION`  | Optional: the release to run, such as `0.2.0`. Each release's `compose.yaml` runs its own release when this is unset ([Updating](#updating))                                                                                              |
+| `COMPOSE_PROFILES`    | `object-store` in `example.env`: Docker Compose then starts Garage ([session replays and source maps](#session-replays-and-source-maps))                                                                                                  |
+| `OBJECT_STORE_…`      | The object store for session replays and source maps, and its keys ([session replays and source maps](#session-replays-and-source-maps))                                                                                                  |
 | `SMTP_URL`            | Optional: the SMTP server alert email goes through, with its user name and password ([alert email](#alert-email)). Never logged                                                                                                           |
 | `EMAIL_FROM`          | The sender of alert email, required with `SMTP_URL`                                                                                                                                                                                       |
 
 Compose stops with "set … in .env" when a required one is missing.
 
-### Source maps and session replays
+### Session replays and source maps
 
-Source maps turn minified stack traces back into a site's own code ([errors](errors.md#5-source-maps)), and session replays show what a visitor did before an error ([session replay](session-replay.md)). Both need an S3-compatible object store; without one, they are off and everything else works. Either:
+Session replays show what a visitor did before an error ([session replay](session-replay.md)), and source maps turn minified stack traces back into a site's own code ([errors](errors.md#5-source-maps)). Both need an S3-compatible object store; without one, they are off and everything else works. Pick one of three before the first start:
 
-- **Garage on the same server.** Generate the store's access key and Garage's own secret, put them in `.env` with `OBJECT_STORE_URL`, and start the stack with the `object-store` profile:
+- **Garage on the same server**, as `example.env` has it: `COMPOSE_PROFILES=object-store` starts [Garage](https://garagehq.deuxfleurs.fr/) in the stack, and `OBJECT_STORE_URL=http://garage:3900` points the API at it. Fill `OBJECT_STORE_ACCESS_KEY_ID`, `OBJECT_STORE_SECRET_ACCESS_KEY`, and `GARAGE_RPC_SECRET` as [First start](#first-start) says. Garage creates its bucket (`OBJECT_STORE_BUCKET`, default `ottertrail`) and that key on its first start, from the same settings the API reads. Docker Compose reads `COMPOSE_PROFILES` from `.env`, so every `docker compose` command includes Garage without `--profile`.
+- **Cloudflare R2, Amazon S3, or another S3-compatible store.** Remove the `COMPOSE_PROFILES` line. Create a bucket and an access key for it there, set `OBJECT_STORE_URL` to its endpoint (for R2, `https://<account ID>.r2.cloudflarestorage.com`), `OBJECT_STORE_REGION` (`auto` for R2), `OBJECT_STORE_BUCKET`, `OBJECT_STORE_ACCESS_KEY_ID`, and `OBJECT_STORE_SECRET_ACCESS_KEY`. `GARAGE_RPC_SECRET` can stay empty.
+- **No object store.** Remove the `COMPOSE_PROFILES` and `OBJECT_STORE_URL` lines. Replays and source maps are then off.
 
-  ```sh
-  printf 'OBJECT_STORE_URL=http://garage:3900\n' >> .env
-  printf 'OBJECT_STORE_ACCESS_KEY_ID=GK%s\n' "$(openssl rand -hex 12)" >> .env
-  printf 'OBJECT_STORE_SECRET_ACCESS_KEY=%s\n' "$(openssl rand -hex 32)" >> .env
-  printf 'GARAGE_RPC_SECRET=%s\n' "$(openssl rand -hex 32)" >> .env
-  docker compose --profile object-store up -d
-  ```
-
-  Garage creates its bucket (`OBJECT_STORE_BUCKET`, default `ottertrail`) and that key on its first start, from the same settings the API reads. Give `--profile object-store` to every later `docker compose` command too (`pull`, `up`, `down`), or set `COMPOSE_PROFILES=object-store` in `.env`, which Docker Compose reads.
-
-- **Cloudflare R2, Amazon S3, or another S3-compatible store.** Create a bucket and an access key for it there, set `OBJECT_STORE_URL` to its endpoint (for R2, `https://<account ID>.r2.cloudflarestorage.com`), `OBJECT_STORE_REGION` (`auto` for R2), `OBJECT_STORE_BUCKET`, `OBJECT_STORE_ACCESS_KEY_ID`, and `OBJECT_STORE_SECRET_ACCESS_KEY`, and leave the profile off.
+Compose stops with a message when a key is missing: both access keys while `OBJECT_STORE_URL` is set, and Garage's secret and keys while `COMPOSE_PROFILES` is set. Compose checks every service's required settings, even those of a profile that is off, so the Compose file asks for Garage's only while `COMPOSE_PROFILES` has a value. With `--profile object-store` on the command line instead, it cannot tell, and Garage stops at start with an empty secret: set the profile in `.env`.
 
 `SOURCE_MAP_STORAGE_BYTES` limits the instance's compressed maps, all projects together, 1 GiB by default, and `REPLAY_STORAGE_BYTES` its compressed replays, 2 GiB by default (a first guess, until measured on real sites). Replays are kept 30 days. The API logs `OBJECT_STORE_URL is not set: source maps are off` at start when there is no store; a project's replay setting then says replays are off on the install.
 
@@ -179,7 +193,7 @@ On shutdown the worker lets running checks and deliveries finish, at most 30 sec
 
 ### Alert email
 
-Alerts go to email channels through an SMTP server the instance is set up with: an email provider's or a relay of your own. Without one, email channels can still be made, the Settings page says email is not set up on this instance, and each email delivery fails with that reason. Webhooks need no setting.
+Optional, and only for alerts: invitations and password reset links are links the dashboard shows, and never need email. Alerts go to email channels through an SMTP server the instance is set up with: an email provider's or a relay of your own. Without one, email channels can still be made, the Settings page says email is not set up on this instance, and each email delivery fails with that reason. Webhooks need no setting.
 
 - `SMTP_URL` in `.env`: `smtps://user:password@smtp.example.com:465` for TLS from the start, or `smtp://user:password@smtp.example.com:587` for STARTTLS, which is then required, so the password never crosses the network in plain text. Percent-encode a user name or password that holds `@`, `:`, `/`, `?`, `#`, or `%`. A relay that needs no password takes `smtp://relay.internal:25`. The URL takes no query string: the TLS, timeout, and logging settings are Ottertrail's, and none can be changed from it. The API and the worker refuse to start on a URL that is not `smtp://` or `smtps://`, has a path, a query string, or a fragment, or has a user name without a password; their messages never repeat it, and neither logs it.
 - `EMAIL_FROM`: the sender, an address or a name and an address, such as `Ottertrail <alerts@example.com>`. Required with `SMTP_URL`. The provider must allow sending from that address (its domain verified, with SPF and DKIM), or messages land in spam or are refused.
@@ -202,31 +216,36 @@ Every install serves one customer, whether self-hosted or hosted: each hosted cu
 
 **Migrations as their own step.** The `migrate` service runs before the API and the worker start, and they wait for it to succeed. The API never migrates on startup, so two API processes could never race to change the schema.
 
+**One Compose file per release, with its settings inside.** An install downloads `compose.yaml` and `example.env` from a release, not the repository. The Caddyfile and the settings of ClickHouse and Garage are in the Compose file (`configs:` with `content:`), so they always match the release, and a server needs no other file. The development stack (`compose.yaml` at the repository root) reads the same ClickHouse and Garage settings from `deploy/clickhouse/` and `deploy/garage/`; a test (`apps/api/tests/deploy-files.test.ts`) fails when they differ from the Compose file's. `deploy/clickhouse/development.xml` is for the development stack only. Docker Compose does not recreate a container when only the content of one of its configs changes, so each service carries a label with its configs' hashes (`ottertrail.config.<name>`), and Caddy reads the domain from its environment: a release that changes a config, or a new `OTTERTRAIL_DOMAIN`, changes the service, and `up -d` recreates it. The same test fails when a label does not match its config.
+
 **Its own Compose project name.** The stack is named `ottertrail-instance`, not `ottertrail`: the development stack (`compose.yaml` at the root) uses that name, and the two would share a database volume on a developer's machine.
 
-## Images
+## Images and releases
 
-There are two ways to get the image: pull a release from the registry, or build it on the server from the checkout.
+**From the registry.** Each release is built once in CI (`.github/workflows/release.yml`), for `linux/amd64` and `linux/arm64`, and pushed to the GitHub Container Registry as `ghcr.io/ottertrail/ottertrail`. Every server that pulls a release runs the identical image, and building needs no memory or toolchain on the server. Images are tagged with the version (`0.1.0`) and the commit (`sha-1a2b3c4`), never `latest`. While the repository is private, so is the image ([First start](#first-start) shows the login).
 
-**From the registry.** Each release is built once in CI (`.github/workflows/image.yml`), for `linux/amd64` and `linux/arm64`, and pushed to the GitHub Container Registry as `ghcr.io/ottertrail/ottertrail`. Every server that pulls a release runs the identical image, and building needs no memory or toolchain on the server. Images are tagged with the version (`0.1.0`) and the commit (`sha-1a2b3c4`), never `latest`. While the repository is private, so is the image: log in once on the server with a GitHub token that can only read packages (`read:packages`). In `.env`, set the release to run:
-
-```sh
-echo "$TOKEN" | docker login ghcr.io -u <github user> --password-stdin
-# deploy/.env
-OTTERTRAIL_IMAGE=ghcr.io/ottertrail/ottertrail:0.1.0
-```
-
-Then start or update with `docker compose pull` and `docker compose up -d`, never `--build` (see [Updating](#updating)). The server still needs the checkout's `deploy/` folder: the Compose file, ClickHouse's and Garage's settings, and the backup scripts.
-
-To release: set the version in `apps/api/package.json` (the API reports it, and webhooks name it), commit, and push a tag of the same version, `v0.1.0`. The workflow refuses a tag that does not match. It can also be run by hand from the Actions tab, which tags the image with the commit only.
-
-**Built on the server.** Without `OTTERTRAIL_IMAGE`, the Compose file builds the image from the checkout. Building needs the full development toolchain, so it is slower and heavier than running.
+**Releasing.** The version is written in three places: the root `package.json`, `apps/api/package.json` (the API reports it, and webhooks name it), and the image `deploy/compose.yaml` runs by default. One command sets all three:
 
 ```sh
-docker build -t ottertrail:local .   # at the repository root
+vp run version 0.2.0
+git commit -am "chore(release): 0.2.0"
+git tag v0.2.0
+git push origin main v0.2.0
 ```
 
-An image built on an Apple Silicon Mac is for ARM servers; add `--platform linux/amd64` for most VPS providers (slow, through emulation).
+It refuses a version that is not [semantic](https://semver.org) (`x.y.z`, without a `v`). Run `vp run ready` before tagging. For the tag, the workflow first checks that all three hold the tag's version (`node scripts/version.ts --check`), then builds and pushes the image. Once the image is pushed, it creates the GitHub Release "Ottertrail 0.2.0" with `compose.yaml`, `example.env`, `backup.sh`, and `restore.sh`, and notes written from the commits since the previous tag (`scripts/release-notes.ts`): breaking changes (a `!` or a `BREAKING CHANGE:` footer) first, then features, fixes, and the rest, then how to install or update. `node scripts/release-notes.ts 0.2.0 HEAD` shows them before tagging. A version with a hyphen, such as `0.2.0-rc.1`, becomes a pre-release, and its notes count from the tag before it; a final release's notes count from the previous final release, so they include what its release candidates listed. Build metadata (`1.0.0+b1`) is refused: a Docker tag cannot hold a `+`.
+
+A version's image is pushed once and never replaced: servers pull it by its version. When the workflow finds the image already in the registry, as when it runs again after the release step failed, it says so in its log and skips the build and the push; the release step then runs again, and replaces the files and notes of the release if it exists. To change a released image, release a new version. The workflow can also be run by hand from the Actions tab, which pushes an image tagged with the commit only, and releases nothing.
+
+**Built from source.** For contributors and local deployment tests, or to run code that is not released: build the image from the checkout under the release image's name, with a tag of your own, and set that tag in `.env`. Compose only pulls an image it does not have, so it runs the local one:
+
+```sh
+docker build -t ghcr.io/ottertrail/ottertrail:dev .   # at the repository root
+# deploy/.env: OTTERTRAIL_VERSION=dev
+docker compose up -d                                  # in deploy/
+```
+
+Do not run `docker compose pull` with such a tag: there is no published image to pull. With a `docker-container` buildx builder (one made with `docker buildx create`), the built image stays in the builder's cache: add `--load` to `docker build` so Compose can use it. The build installs every development dependency inside the image and takes a few minutes; a small server may need swap, or a build elsewhere. An image built on an Apple Silicon Mac is for ARM servers; add `--platform linux/amd64` for most VPS providers (slow, through emulation).
 
 ## What has been tested
 
@@ -246,7 +265,7 @@ With ClickHouse in the stack (17 November 2026), driving the API from inside the
 - Deleting a project: the trigger records it, its events leave reports within half a minute, and they leave ClickHouse's disk with the next retention run (the worker runs one at start). The other project keeps its own.
 - `backup.sh`, then `down -v`, then `restore.sh`: the same report, and sign-in still works. After the worker sent PostgreSQL's events again, ClickHouse held 12 rows for 6 events and reported 6. The deleted project stayed deleted. The backup files are readable by their owner only. A backup that failed (PostgreSQL stopped) left no file behind, here or in ClickHouse's volume, and `restore.sh` refuses a name that is not a backup's.
 - On the first try, the restore failed: ClickHouse's image answers queries from a temporary server while it sets itself up on an empty volume, and the restore reached it in between. `restore.sh` now waits for the real server.
-- `up -d --build` failed on Podman's 2 GB machine: podman-compose built the shared image once for each of the three services that use it, at the same time, and two of the builds ran out of memory. The third finished, hence `build migrate` first in [First start](#first-start). The later `build migrate` reused that build's cached layers, so a build from scratch alone was not timed.
+- `up -d --build` failed on Podman's 2 GB machine: podman-compose built the shared image once for each of the three services that use it, at the same time, and two of the builds ran out of memory. The third finished. (Since then, installs pull a built image, and a build from source is one `docker build`: [Images and releases](#images-and-releases).) The later `build migrate` reused that build's cached layers, so a build from scratch alone was not timed.
 - The `object-store` profile (18 November 2026, Podman): without it, the stack has no Garage; with it, Garage started from this file healthy, and created its bucket and access key from the settings. Uploading, reading, and deleting source maps were tested against the development stack's Garage (the same image and `deploy/garage/garage.toml`), not yet inside this stack.
 
 The whole stack (18 November 2026), with the `object-store` profile, on Podman 6.2 and podman-compose 1.6 in a 4 GB machine shared with another project, through Caddy and HTTPS. Rootless Podman cannot open ports 80 and 443, so an override file kept outside `deploy/` published Caddy on 8443 (and 80 on 8081) and set `PUBLIC_URL` to `https://localhost:8443`, with `OTTERTRAIL_DOMAIN=localhost`; the settings were exported in the shell instead of `.env`. Headless Chromium went through Caddy, with Caddy's local certificate accepted:
@@ -274,6 +293,16 @@ Backups with the object store (18 November 2026), the same setup: Podman 6.2, po
 
 Not tested yet: Docker Engine and Docker Compose on a Linux server, a real domain with a Let's Encrypt certificate, ports 80 and 443, an `amd64` image, alert email through an SMTP server, an update that runs a migration on existing data, a restore on a new server, an object backup of Cloudflare R2 or Amazon S3, and the backup scripts under rootless Docker, rootless Podman on Linux, or SELinux.
 
+Releases as an install gets them (18 November 2026), on macOS with Podman 6.2 in a 4 GB machine shared with another project, and Docker Compose 5.8.0 (the standalone binary) on Podman's socket. The image was built from a clean export of the commit (`git archive`), tagged `ghcr.io/ottertrail/ottertrail:0.0.0-releasetest`, and chosen with `OTTERTRAIL_VERSION`, so nothing was pulled. The install folder held only `compose.yaml`, `example.env`, `backup.sh`, `restore.sh`, and a `.env` made from `example.env`; an override file kept elsewhere published Caddy on 8443 and 8081 and set `PUBLIC_URL`, as above.
+
+- `up -d` started all seven services: `COMPOSE_PROFILES=object-store` in `.env` was enough to start Garage. Inside the containers, the Caddyfile held the domain, ClickHouse ran with the inline settings (a mark cache of 512 MiB, 40% of the memory, 1 GB per query), and Garage created its bucket. The health check answered 200 over HTTP/2 through Caddy, and HTTP redirected to HTTPS.
+- The setup link created the owner, a project was made, a test site on another origin loaded `/t.js` and sent one pageview (202), and the analytics page showed it: 1 visitor, 1 pageview, `/index.html`.
+- `backup.sh`, called from another folder, wrote its three files into `backups/` beside it, readable by their owner only. `down -v` removed every volume. `restore.sh`, called from a third folder with a relative path, restored them, exit 0, and the analytics page showed the same pageview, with the owner's sign-in.
+- Settings missing from `.env` stop `docker compose config` with their message: an object store's keys while `OBJECT_STORE_URL` is set, Garage's secret while `COMPOSE_PROFILES` is set, and none of Garage's while it is unset.
+- Docker Compose versions, with `config` on the same file and settings, for five cases: Garage on with everything set; Garage on without its secret (must stop); an own S3 store with its keys; an own S3 store without them (must stop); and no store. 5.0.2, 5.1.0, 5.1.4, 5.2.0, 5.3.0, 5.4.0, 5.7.0, and 5.8.0 got all five right. 2.23.1, 2.24.0, 2.29.0, 2.35.0, 2.40.3, 5.0.0, and 5.0.1 stopped the own-store and no-store installs too, asking for Garage's secret or the store's keys. Hence 5.0.2 in [What you need](#what-you-need).
+- Recreating on 5.0.2 and 5.8.0, with a Caddy container on its own: `up -d` kept the container when only the content of its inline config changed, so the new content never reached it. A changed environment variable or label recreated it, with the new content. Hence the domain in Caddy's environment, and each config's hash in a label ([Decisions](#decisions)).
+- podman-compose 1.6, the same folder: it read `COMPOSE_PROFILES` from `.env` and started Garage, but skipped every inline config without a warning. Caddy ran with its image's default Caddyfile, ClickHouse with its defaults, and Garage stopped at once: "Failed to read config file /etc/garage.toml". Hence Docker Compose in [What you need](#what-you-need).
+
 ## Known limitations
 
 - No automated or off-site backups.
@@ -281,7 +310,10 @@ Not tested yet: Docker Engine and Docker Compose on a Linux server, a real domai
 - The object backup copies every object each time, without increments. That suits the default limits (1 GiB of source maps, 2 GiB of replays); a much larger bucket takes long and needs the disk space twice.
 - The geolocation database and the data-center ranges are updated by hand, monthly.
 - One server: no failover, and a few seconds of downtime for each update.
-- Release images are built in CI and pushed to ghcr.io, but nothing tests them there before they are pushed: run `vp run ready` before tagging a release.
+- Release images are built in CI and pushed to ghcr.io, but nothing tests them there before they are pushed, and the release workflow has not run for a tag yet: run `vp run ready` before tagging a release.
+- podman-compose cannot run the Compose file (inline configs); Docker Compose 5.0.2 or later is needed, with Docker or Podman.
+- The workflow's check for an image already in the registry (`docker buildx imagetools inspect`, which says "not found" for a new version) has not run in CI yet.
+- `docker compose pull` from the private registry, and the release downloads with `gh` or a token, are not tested yet.
 - One deployment per server. Two stacks on one host would both need ports 80 and 443; sharing a host needs one proxy in front of both, not set up.
 - No CDN or proxy in front of Caddy (see "Client addresses").
 - The API prints one line that is not JSON at startup: a warning from its JSON schema validator about union types.

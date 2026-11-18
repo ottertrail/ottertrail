@@ -13,6 +13,7 @@
     "reset-password": "vp -C apps/api run reset-password",
     "report": "vp -C apps/api run report",
     "bench:reports": "vp -C apps/api run bench:reports",
+    "version": "node scripts/version.ts",
     "ready": "vp check && vp run -r test && vp run -r build",
     "prepare": "vp config --no-agent"
   },

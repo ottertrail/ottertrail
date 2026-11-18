@@ -3,10 +3,11 @@
 # ottertrail-<time>.zip (ClickHouse: events, traces, logs, metrics),
 # ottertrail-<time>.dump (PostgreSQL: accounts, projects, settings), and
 # ottertrail-<time>-objects.tar (the object store: source maps and session
-# replays; without a store, a manifest that says there is none). Run it in
-# this folder, next to compose.yaml. Copy all three off the server: a
-# backup on the same disk is lost with it. docs/deployment.md has the
-# details; restore.sh puts a backup back.
+# replays; without a store, a manifest that says there is none). Keep it
+# next to compose.yaml and .env, as a release's files are; it runs Compose
+# in its own folder, wherever it is called from. Copy all three files off
+# the server: a backup on the same disk is lost with it. docs/deployment.md
+# has the details; restore.sh puts a backup back.
 #
 #   ./backup.sh
 #   COMPOSE="podman compose" ./backup.sh
@@ -16,6 +17,8 @@ set -eu
 umask 077
 
 compose=${COMPOSE:-docker compose}
+# Compose finds compose.yaml and .env in the folder it runs in.
+cd "$(dirname "$0")"
 name=ottertrail-$(date -u +%Y-%m-%dT%H%M%SZ)
 objects=backups/$name-objects
 mkdir -p backups
@@ -59,8 +62,8 @@ $compose exec -T postgres pg_dump -U ottertrail -Fc ottertrail > "backups/$name.
 step="backing up ClickHouse"
 $compose exec -T clickhouse clickhouse-client --user ottertrail --receive_timeout 86400 \
   --query "BACKUP DATABASE ottertrail TO File('$name.zip')" > /dev/null
-# ClickHouse writes it into its own volume (deploy/clickhouse/config.d):
-# move it out to this folder.
+# ClickHouse writes it into its own volume (the backups setting in
+# compose.yaml's clickhouse-config): move it out to this folder.
 step="copying ClickHouse's backup out of its volume"
 $compose exec -T clickhouse cat "/var/lib/clickhouse/backups/$name.zip" > "backups/$name.zip.partial"
 
@@ -83,4 +86,4 @@ mv "$objects.tar.partial" "$objects.tar"
 mv "backups/$name.zip.partial" "backups/$name.zip"
 mv "backups/$name.dump.partial" "backups/$name.dump"
 step=
-echo "Backed up to backups/$name.zip, backups/$name.dump, and $objects.tar. Copy all three off the server."
+echo "Backed up to $PWD/backups/: $name.zip, $name.dump, and $name-objects.tar. Copy all three off the server."

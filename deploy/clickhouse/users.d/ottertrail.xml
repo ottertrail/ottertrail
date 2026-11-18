@@ -1,5 +1,5 @@
 <!--
-  Limits for every query on a small server (see ../config.d/ottertrail.xml).
+  Limits for every query on a small server (see config.d/ottertrail.xml).
   Reports work out visits by sorting a range's events; past these sizes the
   sort and grouping continue on disk instead of failing (docs/storage-benchmark.md).
 -->

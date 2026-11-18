@@ -17,7 +17,6 @@ dist-ssr
 # dotenv environment variable files
 .env
 .env.*
-!.env.example
 
 # Backups made by deploy/backup.sh: they hold customer data.
 deploy/backups/

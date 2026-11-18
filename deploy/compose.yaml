@@ -1,17 +1,20 @@
 # Ottertrail on one server: PostgreSQL, ClickHouse, the API (which also
 # serves the dashboard and the tracker), the worker, and Caddy, which gets
 # HTTPS certificates and is the only service reachable from outside. With
-# the "object-store" profile, Garage too, which holds source maps and
-# session replays.
+# the "object-store" profile, which example.env turns on, Garage too: it
+# holds session replays and source maps.
 #
-# Settings come from a file named .env next to this one (copy env.example).
-# See docs/deployment.md for the steps.
+# This file works on its own: put it in an empty folder with a .env made
+# from example.env, and run `docker compose up -d`. It runs the published
+# image of one release (OTTERTRAIL_VERSION), and holds the settings of
+# Caddy, ClickHouse, and Garage at the end (configs). It needs Docker
+# Compose 5.0.2 or later; podman-compose cannot run it. Steps:
+# https://github.com/ottertrail/ottertrail/blob/main/docs/deployment.md
 #
-# Not "ottertrail": that is the local development stack (../compose.yaml),
-# and the same name would share its database volume.
+# Not "ottertrail": that is the development stack (compose.yaml at the
+# repository root), and the same name would share its database volume.
 name: ottertrail-instance
 
-# Docker keeps container logs forever by default; keep the last 50 MB per service.
 x-logging: &logging
   driver: json-file
   options:
@@ -19,9 +22,9 @@ x-logging: &logging
     max-file: "5"
 
 x-app: &app
-  image: ${OTTERTRAIL_IMAGE:-ottertrail:local}
-  build:
-    context: ..
+  # The release this file comes from. `vp run version` sets the default,
+  # and the release workflow checks it against the tag.
+  image: ghcr.io/ottertrail/ottertrail:${OTTERTRAIL_VERSION:-0.1.0}
   restart: unless-stopped
   logging: *logging
   environment:
@@ -37,14 +40,16 @@ x-app: &app
     TRUST_PROXY: "1"
     LOG_LEVEL: ${LOG_LEVEL:-info}
     INSTANCE_EVENTS_PER_SECOND: ${INSTANCE_EVENTS_PER_SECOND:-600}
-    # Source maps: off unless OBJECT_STORE_URL is set, to the stack's own
-    # Garage (http://garage:3900, with --profile object-store) or another
-    # S3-compatible store such as Cloudflare R2 (docs/deployment.md).
+    # Session replays and source maps: off unless OBJECT_STORE_URL is set,
+    # to the stack's own Garage (http://garage:3900, the object-store
+    # profile) or another S3-compatible store such as Cloudflare R2
+    # (docs/deployment.md). With a URL, both keys are required. Each reads:
+    # the key if it is set; else, if there is a URL, stop with a message.
     OBJECT_STORE_URL: ${OBJECT_STORE_URL:-}
     OBJECT_STORE_REGION: ${OBJECT_STORE_REGION:-garage}
     OBJECT_STORE_BUCKET: ${OBJECT_STORE_BUCKET:-ottertrail}
-    OBJECT_STORE_ACCESS_KEY_ID: ${OBJECT_STORE_ACCESS_KEY_ID:-}
-    OBJECT_STORE_SECRET_ACCESS_KEY: ${OBJECT_STORE_SECRET_ACCESS_KEY:-}
+    OBJECT_STORE_ACCESS_KEY_ID: ${OBJECT_STORE_ACCESS_KEY_ID:-${OBJECT_STORE_URL:+${OBJECT_STORE_ACCESS_KEY_ID:?set OBJECT_STORE_ACCESS_KEY_ID in .env, or remove OBJECT_STORE_URL}}}
+    OBJECT_STORE_SECRET_ACCESS_KEY: ${OBJECT_STORE_SECRET_ACCESS_KEY:-${OBJECT_STORE_URL:+${OBJECT_STORE_SECRET_ACCESS_KEY:?set OBJECT_STORE_SECRET_ACCESS_KEY in .env, or remove OBJECT_STORE_URL}}}
     SOURCE_MAP_STORAGE_BYTES: ${SOURCE_MAP_STORAGE_BYTES:-}
     REPLAY_STORAGE_BYTES: ${REPLAY_STORAGE_BYTES:-}
     # Traces, logs, and metrics over OTLP (docs/telemetry.md): days kept,
@@ -81,8 +86,8 @@ services:
       timeout: 3s
       retries: 20
 
-  # Analytics events, and later logs, traces, and metrics, with settings for
-  # a server it shares (./clickhouse/; docs/storage-benchmark.md).
+  # Analytics events, traces, logs, and metrics, with settings for a server
+  # it shares (the clickhouse-* configs at the end; docs/storage-benchmark.md).
   clickhouse:
     image: docker.io/clickhouse/clickhouse-server:26.8.38.9
     restart: unless-stopped
@@ -97,8 +102,14 @@ services:
         hard: 262144
     volumes:
       - clickhouse-data:/var/lib/clickhouse
-      - ./clickhouse/config.d/ottertrail.xml:/etc/clickhouse-server/config.d/ottertrail.xml:ro
-      - ./clickhouse/users.d/ottertrail.xml:/etc/clickhouse-server/users.d/ottertrail.xml:ro
+    labels:
+      ottertrail.config.clickhouse-config: "464daecd354a"
+      ottertrail.config.clickhouse-users: "59ff9fd82108"
+    configs:
+      - source: clickhouse-config
+        target: /etc/clickhouse-server/config.d/ottertrail.xml
+      - source: clickhouse-users
+        target: /etc/clickhouse-server/users.d/ottertrail.xml
     healthcheck:
       # clickhouse-client takes the password from the container's own
       # CLICKHOUSE_PASSWORD, so it never appears on a command line.
@@ -107,9 +118,12 @@ services:
       timeout: 5s
       retries: 30
 
-  # An S3-compatible object store for source maps, on this server: only
-  # with --profile object-store. It creates its bucket and access key from
-  # the same settings the API reads, and nothing outside reaches it.
+  # An S3-compatible object store for session replays and source maps, on
+  # this server: only with the object-store profile (COMPOSE_PROFILES in
+  # .env). It creates its bucket and access key from the same settings the
+  # API reads, and nothing outside reaches it. Its secrets are required
+  # while COMPOSE_PROFILES is set, and not when it is unset: Compose checks
+  # a service's required variables even when its profile is off.
   garage:
     image: docker.io/dxflrs/garage:v2.5.0
     profiles: ["object-store"]
@@ -117,13 +131,17 @@ services:
     logging: *logging
     command: ["/garage", "server", "--single-node", "--default-bucket"]
     environment:
-      GARAGE_RPC_SECRET: ${GARAGE_RPC_SECRET:-}
-      GARAGE_DEFAULT_ACCESS_KEY: ${OBJECT_STORE_ACCESS_KEY_ID:-}
-      GARAGE_DEFAULT_SECRET_KEY: ${OBJECT_STORE_SECRET_ACCESS_KEY:-}
+      GARAGE_RPC_SECRET: ${GARAGE_RPC_SECRET:-${COMPOSE_PROFILES:+${GARAGE_RPC_SECRET:?set GARAGE_RPC_SECRET in .env, or remove COMPOSE_PROFILES}}}
+      GARAGE_DEFAULT_ACCESS_KEY: ${OBJECT_STORE_ACCESS_KEY_ID:-${COMPOSE_PROFILES:+${OBJECT_STORE_ACCESS_KEY_ID:?set OBJECT_STORE_ACCESS_KEY_ID in .env, or remove COMPOSE_PROFILES}}}
+      GARAGE_DEFAULT_SECRET_KEY: ${OBJECT_STORE_SECRET_ACCESS_KEY:-${COMPOSE_PROFILES:+${OBJECT_STORE_SECRET_ACCESS_KEY:?set OBJECT_STORE_SECRET_ACCESS_KEY in .env, or remove COMPOSE_PROFILES}}}
       GARAGE_DEFAULT_BUCKET: ${OBJECT_STORE_BUCKET:-ottertrail}
     volumes:
       - garage-data:/var/lib/garage
-      - ./garage/garage.toml:/etc/garage.toml:ro
+    labels:
+      ottertrail.config.garage: "f4a5d83f52a5"
+    configs:
+      - source: garage
+        target: /etc/garage.toml
     healthcheck:
       test: ["CMD", "/garage", "status"]
       interval: 5s
@@ -178,15 +196,19 @@ services:
     logging: *logging
     environment:
       OTTERTRAIL_DOMAIN: ${OTTERTRAIL_DOMAIN:?set OTTERTRAIL_DOMAIN in .env}
+    labels:
+      ottertrail.config.caddyfile: "4174046c37ba"
     ports:
       - "80:80"
       - "443:443"
       - "443:443/udp"
     volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
       # Certificates and keys: keep this volume, or Caddy asks for new ones on every start.
       - caddy-data:/data
       - caddy-config:/config
+    configs:
+      - source: caddyfile
+        target: /etc/caddy/Caddyfile
     depends_on:
       - api
 
@@ -197,3 +219,107 @@ volumes:
   caddy-data:
   caddy-config:
   garage-data:
+
+# The settings files the services read, held here so this file needs no
+# others. Compose replaces ${...} in them with values from .env, so a
+# literal dollar sign is written $$.
+#
+# Compose does not recreate a container when only its config's content
+# changes. So each service carries a label with the first 12 hex digits of
+# each config's SHA-256 (of the text as written here): a release that
+# changes a config changes its label, and `up -d` recreates the service.
+# apps/api/tests/deploy-files.test.ts fails when a label is out of date,
+# and names the right value. The development stack
+# (compose.yaml at the repository root) reads the same ClickHouse and
+# Garage settings from deploy/clickhouse/ and deploy/garage/; a test
+# (apps/api/tests/deploy-files.test.ts) fails when the two differ.
+configs:
+  # Caddy gets and renews the HTTPS certificate for the instance's domain,
+  # redirects HTTP to HTTPS, and passes every request to the API. It
+  # replaces any X-Forwarded-For a client sends with the client's real
+  # address, which the API reads (TRUST_PROXY=1).
+  caddyfile:
+    content: |
+      {$$OTTERTRAIL_DOMAIN} {
+      	encode zstd gzip
+      	reverse_proxy api:3000
+      }
+
+  # ClickHouse on a small server it shares (docs/storage-benchmark.md).
+  clickhouse-config:
+    content: |
+      <!--
+        ClickHouse on a small server it shares with PostgreSQL, the API, and the
+        worker, such as 8 GB in all. ClickHouse's defaults assume a machine of its
+        own with 16 GB or more; its own guide suggests these changes for less
+        (https://clickhouse.com/docs/operations/tips). deploy/compose.yaml holds
+        this file inline; the development stack (compose.yaml at the repository
+        root) reads the copy in deploy/clickhouse/. A test keeps the two the same.
+      -->
+      <clickhouse>
+          <!-- At most 40% of the machine's memory. A query that would go over fails
+               on its own instead of the kernel killing the whole server. -->
+          <max_server_memory_usage_to_ram_ratio>0.4</max_server_memory_usage_to_ram_ratio>
+
+          <!-- 512 MiB instead of 5 GiB: the guide's lowest suggestion. -->
+          <mark_cache_size>536870912</mark_cache_size>
+
+          <!-- Internal logs Ottertrail never reads. Each costs memory and disk. -->
+          <trace_log remove="1"/>
+          <text_log remove="1"/>
+          <metric_log remove="1"/>
+          <asynchronous_metric_log remove="1"/>
+          <query_thread_log remove="1"/>
+          <query_views_log remove="1"/>
+          <part_log remove="1"/>
+          <processors_profile_log remove="1"/>
+
+          <logger>
+              <level>warning</level>
+          </logger>
+
+          <!-- Where BACKUP ... TO File('name.zip') writes, and RESTORE reads
+               (docs/deployment.md, "Backups"). Inside ClickHouse's data volume,
+               which its user owns; copy each backup off the server. -->
+          <backups>
+              <allowed_path>/var/lib/clickhouse/backups/</allowed_path>
+          </backups>
+      </clickhouse>
+
+  clickhouse-users:
+    content: |
+      <!--
+        Limits for every query on a small server (see config.d/ottertrail.xml).
+        Reports work out visits by sorting a range's events; past these sizes the
+        sort and grouping continue on disk instead of failing (docs/storage-benchmark.md).
+      -->
+      <clickhouse>
+          <profiles>
+              <default>
+                  <max_memory_usage>1000000000</max_memory_usage>
+                  <max_bytes_before_external_sort>400000000</max_bytes_before_external_sort>
+                  <max_bytes_before_external_group_by>400000000</max_bytes_before_external_group_by>
+              </default>
+          </profiles>
+      </clickhouse>
+
+  # Garage: one node. Its secret, access key, and bucket come from the
+  # environment (the garage service above), not from here.
+  garage:
+    content: |
+      # Garage, the S3-compatible object store for session replays and source
+      # maps: one node, as an install runs it. Its secret, access key, and
+      # bucket come from the environment, not from here. deploy/compose.yaml
+      # holds this file inline; the development stack reads the copy in
+      # deploy/garage/. A test keeps the two the same.
+      metadata_dir = "/var/lib/garage/meta"
+      data_dir = "/var/lib/garage/data"
+      db_engine = "sqlite"
+      replication_factor = 1
+
+      rpc_bind_addr = "[::]:3901"
+      rpc_public_addr = "127.0.0.1:3901"
+
+      [s3_api]
+      s3_region = "garage"
+      api_bind_addr = "[::]:3900"

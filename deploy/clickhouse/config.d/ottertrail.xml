@@ -2,8 +2,9 @@
   ClickHouse on a small server it shares with PostgreSQL, the API, and the
   worker, such as 8 GB in all. ClickHouse's defaults assume a machine of its
   own with 16 GB or more; its own guide suggests these changes for less
-  (https://clickhouse.com/docs/operations/tips). Used by the development
-  stack (../../compose.yaml) and by deploy/compose.yaml.
+  (https://clickhouse.com/docs/operations/tips). deploy/compose.yaml holds
+  this file inline; the development stack (compose.yaml at the repository
+  root) reads the copy in deploy/clickhouse/. A test keeps the two the same.
 -->
 <clickhouse>
     <!-- At most 40% of the machine's memory. A query that would go over fails
