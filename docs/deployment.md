@@ -206,7 +206,21 @@ Every install serves one customer, whether self-hosted or hosted: each hosted cu
 
 ## Images
 
-The Compose file builds the image on the server from the checkout. Building needs the full development toolchain, so it is slower and heavier than running. The alternative, not set up yet, is to build each release once in CI, for `linux/amd64` and `linux/arm64`, push it to a registry, and set `OTTERTRAIL_IMAGE` on each server; every instance then runs the identical image.
+There are two ways to get the image: pull a release from the registry, or build it on the server from the checkout.
+
+**From the registry.** Each release is built once in CI (`.github/workflows/image.yml`), for `linux/amd64` and `linux/arm64`, and pushed to the GitHub Container Registry as `ghcr.io/ottertrail/ottertrail`. Every server that pulls a release runs the identical image, and building needs no memory or toolchain on the server. Images are tagged with the version (`0.1.0`) and the commit (`sha-1a2b3c4`), never `latest`. While the repository is private, so is the image: log in once on the server with a GitHub token that can only read packages (`read:packages`). In `.env`, set the release to run:
+
+```sh
+echo "$TOKEN" | docker login ghcr.io -u <github user> --password-stdin
+# deploy/.env
+OTTERTRAIL_IMAGE=ghcr.io/ottertrail/ottertrail:0.1.0
+```
+
+Then start or update with `docker compose pull` and `docker compose up -d`, never `--build` (see [Updating](#updating)). The server still needs the checkout's `deploy/` folder: the Compose file, ClickHouse's and Garage's settings, and the backup scripts.
+
+To release: set the version in `apps/api/package.json` (the API reports it, and webhooks name it), commit, and push a tag of the same version, `v0.1.0`. The workflow refuses a tag that does not match. It can also be run by hand from the Actions tab, which tags the image with the commit only.
+
+**Built on the server.** Without `OTTERTRAIL_IMAGE`, the Compose file builds the image from the checkout. Building needs the full development toolchain, so it is slower and heavier than running.
 
 ```sh
 docker build -t ottertrail:local .   # at the repository root
@@ -267,7 +281,7 @@ Not tested yet: Docker Engine and Docker Compose on a Linux server, a real domai
 - The object backup copies every object each time, without increments. That suits the default limits (1 GiB of source maps, 2 GiB of replays); a much larger bucket takes long and needs the disk space twice.
 - The geolocation database and the data-center ranges are updated by hand, monthly.
 - One server: no failover, and a few seconds of downtime for each update.
-- No image registry or CI builds: each server builds its own image.
+- Release images are built in CI and pushed to ghcr.io, but nothing tests them there before they are pushed: run `vp run ready` before tagging a release.
 - One deployment per server. Two stacks on one host would both need ports 80 and 443; sharing a host needs one proxy in front of both, not set up.
 - No CDN or proxy in front of Caddy (see "Client addresses").
 - The API prints one line that is not JSON at startup: a warning from its JSON schema validator about union types.

@@ -9,6 +9,7 @@
 **/*.tsbuildinfo
 .git
 .claude
+.agents
 .vscode
 .idea
 **/.DS_Store
