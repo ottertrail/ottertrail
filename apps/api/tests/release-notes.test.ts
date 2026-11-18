@@ -150,17 +150,26 @@ describe("this repository's history", () => {
     expect(notes).toContain(`(${first})`);
   });
 
-  test("after v0.1.0, the notes cover v0.1.0..HEAD", () => {
+  test("the notes for HEAD cover the commits since the latest earlier release", () => {
     const head = git("rev-parse", "HEAD");
-    const expected = Number(git("rev-list", "--count", "--no-merges", "v0.1.0..HEAD"));
-    // HEAD may be the tag itself; then there is nothing after it.
+    // The newest final release tag before HEAD, found another way than
+    // previousTag does: every tag merged into HEAD's parent, highest
+    // version first. It changes with each release, so nothing here names
+    // a version.
+    const latest =
+      git("tag", "--list", "v[0-9]*", "--merged", "HEAD^", "--sort=-v:refname")
+        .split("\n")
+        .find((tag) => tag !== "" && !tag.includes("-")) ?? null;
     const previous = previousTag(head, true);
-    expect(previous).toBe(head === git("rev-parse", "v0.1.0^{commit}") ? null : "v0.1.0");
+    expect(previous).toBe(latest);
     if (previous === null) return;
+    const expected = Number(git("rev-list", "--count", "--no-merges", `${previous}..HEAD`));
     expect(commitsBetween(previous, head)).toHaveLength(expected);
-    const notes = notesFor("0.2.0", head);
-    expect(notes).toContain("Changes since v0.1.0:");
-    for (const line of git("log", "--no-merges", "--format=%h %s", "v0.1.0..HEAD").split("\n")) {
+    const notes = notesFor("9.9.9", head);
+    expect(notes).toContain(`Changes since ${previous}:`);
+    for (const line of git("log", "--no-merges", "--format=%h %s", `${previous}..HEAD`).split(
+      "\n",
+    )) {
       const [hash = "", ...subject] = line.split(" ");
       if (hash === "" || subject.join(" ").startsWith("chore(release): ")) continue;
       expect(notes).toContain(`(${hash})`);
