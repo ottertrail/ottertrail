@@ -48,6 +48,7 @@ export function TimeChart({
   lines,
   label,
   formatValue,
+  domain,
 }: {
   /** The first bucket's start, ISO. */
   start: string;
@@ -59,6 +60,8 @@ export function TimeChart({
   /** What the chart shows: its accessible name. */
   label: string;
   formatValue: (value: number) => string;
+  /** A fixed y-axis range, such as 0 to 100 for percentages; values past it widen it. */
+  domain?: { min: number; max: number } | undefined;
 }) {
   const containerRef = React.useRef<HTMLDivElement>(null);
   const [width, setWidth] = React.useState(0);
@@ -79,7 +82,7 @@ export function TimeChart({
   const timeOf = (index: number) => new Date(startMs + index * stepSeconds * 1000);
   const last = buckets - 1;
   const all = lines.flatMap((line) => line.values.filter((value) => value !== null));
-  const ticks = ticksFor(Math.min(0, ...all), Math.max(0, ...all));
+  const ticks = ticksFor(Math.min(domain?.min ?? 0, ...all), Math.max(domain?.max ?? 0, ...all));
   const bottom = ticks[0] ?? 0;
   const top = ticks.at(-1) ?? 1;
   const plotWidth = Math.max(0, width - MARGIN.left - MARGIN.right);

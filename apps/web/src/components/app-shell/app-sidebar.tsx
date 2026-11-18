@@ -10,6 +10,7 @@ import {
   ChevronsUpDownIcon,
   FolderIcon,
   GaugeIcon,
+  HardDriveIcon,
   PaletteIcon,
   ScrollTextIcon,
   ServerIcon,
@@ -292,6 +293,22 @@ function ProjectMenu({ projectId }: { projectId: string }) {
             >
               <ServerIcon />
               <span>Services</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              render={<Link to="/projects/$projectId/hosts" params={{ projectId }} />}
+              isActive={
+                matchRoute({
+                  to: "/projects/$projectId/hosts",
+                  params: { projectId },
+                  fuzzy: true,
+                }) !== false
+              }
+              tooltip="Hosts"
+            >
+              <HardDriveIcon />
+              <span>Hosts</span>
             </SidebarMenuButton>
           </SidebarMenuItem>
           <SidebarMenuItem>

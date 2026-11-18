@@ -2,7 +2,15 @@ import { infiniteQueryOptions, keepPreviousData, queryOptions } from "@tanstack/
 
 import { DEFAULT_ENVIRONMENT, type PageRange, rangeParams } from "./analytics-api";
 import { apiRequest, expectShape } from "./api";
-import { isListOf, isNumber, isRecord, isText, isTextMap, isTextOrNull } from "./telemetry-shapes";
+import {
+  isListOf,
+  isNumber,
+  isRecord,
+  isText,
+  isTextMap,
+  isTextOrNull,
+  telemetryRetry,
+} from "./telemetry-shapes";
 
 /** A record as lists have it: the whole record comes when it is opened (logQuery). */
 export interface LogSummary {
@@ -140,6 +148,7 @@ export const logsQuery = (
       filters.search ?? null,
       filters.traceId ?? null,
     ],
+    retry: telemetryRetry,
     queryFn: async ({ pageParam, signal }) => {
       const query = new URLSearchParams({
         ...rangeParams(range),
@@ -170,6 +179,7 @@ const isLogAnswer = (value: unknown): value is { timeZone: string; log: LogRecor
 export const logQuery = (projectId: string, log: LogSummary) =>
   queryOptions({
     queryKey: ["log", projectId, log.id, log.timeNs],
+    retry: telemetryRetry,
     queryFn: async ({ signal }) =>
       expectShape(
         await apiRequest(

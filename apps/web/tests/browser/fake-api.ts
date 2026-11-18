@@ -9,6 +9,7 @@ import {
 } from "../../src/lib/errors-api.ts";
 import type { SavedFunnel } from "../../src/lib/funnels-api.ts";
 import type { GoalResult } from "../../src/lib/goals-api.ts";
+import type { HostCharts, HostList } from "../../src/lib/hosts-api.ts";
 import type { LogList, LogRecord, LogSummary } from "../../src/lib/logs-api.ts";
 import {
   isMetricKind,
@@ -111,6 +112,10 @@ export interface FakeApi {
   metricChart: (query: URLSearchParams) => MetricChart | Response;
   /** Answers GET /api/projects/:id/services; by default, fakeServices. */
   services: (query: URLSearchParams) => ServiceList | Response;
+  /** Answers GET /api/projects/:id/hosts; by default, fakeHosts. */
+  hosts: (query: URLSearchParams) => HostList | Response;
+  /** Answers GET /api/projects/:id/hosts/charts; by default, fakeHostCharts. */
+  hostCharts: (query: URLSearchParams) => HostCharts | Response;
   /** Answers DELETE /api/projects/:id; by default, removes the project (204). */
   deleteProject: (api: FakeApi, id: string) => Response;
   /** Every path the page asked for, with its query, in order. */
@@ -888,6 +893,125 @@ export function fakeServices(query: URLSearchParams): ServiceList {
 /** No span ever received. */
 export function noServices(query: URLSearchParams): ServiceList {
   return { ...fakeServices(query), services: [], received: false };
+}
+
+/**
+ * Two hosts: db-1, stale, with every value; web-1, reporting, without a
+ * load average.
+ */
+export function fakeHosts(query: URLSearchParams): HostList {
+  return {
+    ...telemetryRange(query),
+    hosts: [
+      {
+        host: "db-1",
+        lastSeen: "2026-11-16T08:10:00.000Z",
+        stale: true,
+        cpuPercent: 25,
+        memoryPercent: 80,
+        filesystemPercent: 42,
+        filesystemMount: "/",
+        load1m: 2,
+      },
+      {
+        host: "web-1",
+        lastSeen: "2026-11-16T08:19:00.000Z",
+        stale: false,
+        cpuPercent: 22.5,
+        memoryPercent: 50.04,
+        filesystemPercent: 90,
+        filesystemMount: "/data",
+        load1m: null,
+      },
+    ],
+    truncated: false,
+    received: true,
+  };
+}
+
+/** No host metric ever received. */
+export function noHosts(query: URLSearchParams): HostList {
+  return { ...fakeHosts(query), hosts: [], received: false };
+}
+
+/** 12 hourly values from `base`, the 4th missing. */
+const hostValues = (base: number) =>
+  Array.from({ length: 12 }, (_, i): number | null => (i === 3 ? null : base + i));
+
+/** A line of a host's chart. */
+const line = (value: string | null, base: number, other = false) => ({
+  value,
+  other,
+  values: hostValues(base),
+});
+
+/**
+ * A host's charts over 12 buckets of an hour, from 16 Nov 2026 08:00 in
+ * Singapore, from the default metrics (no utilization); no disk metrics.
+ */
+export function fakeHostCharts(query: URLSearchParams): HostCharts {
+  const host = query.get("host") ?? "";
+  return {
+    ...telemetryRange(query),
+    host,
+    lastSeen: "2026-11-16T08:19:00.000Z",
+    stale: host === "db-1",
+    start: "2026-11-16T00:00:00.000Z",
+    stepSeconds: 3600,
+    buckets: 12,
+    charts: [
+      {
+        id: "cpu",
+        unit: "%",
+        metrics: ["system.cpu.time"],
+        lines: [line(null, 20)],
+        capped: false,
+      },
+      {
+        id: "cpuStates",
+        unit: "%",
+        metrics: ["system.cpu.time"],
+        lines: [line("idle", 70), line("user", 18), line("system", 2)],
+        capped: false,
+      },
+      {
+        id: "memoryPercent",
+        unit: "%",
+        metrics: ["system.memory.usage"],
+        lines: [line("used", 50)],
+        capped: false,
+      },
+      {
+        id: "memoryBytes",
+        unit: "By",
+        metrics: ["system.memory.usage"],
+        lines: [line("used", 4 * 1024 ** 3)],
+        capped: false,
+      },
+      {
+        id: "filesystem",
+        unit: "%",
+        metrics: ["system.filesystem.usage"],
+        lines: [line("/", 60), line("/data", 80)],
+        capped: false,
+      },
+      {
+        id: "network",
+        unit: "By/s",
+        metrics: ["system.network.io"],
+        lines: [line("transmit", 2048), line("receive", 1024)],
+        capped: false,
+      },
+      { id: "disk", unit: "By/s", metrics: [], lines: [], capped: false },
+      {
+        id: "load",
+        unit: "{thread}",
+        metrics: ["system.cpu.load_average.1m", "system.cpu.load_average.5m"],
+        lines: [line("system.cpu.load_average.1m", 1), line("system.cpu.load_average.5m", 2)],
+        capped: false,
+      },
+    ],
+  };
 }
 
 export interface FakeReplays {
@@ -1855,6 +1979,14 @@ async function answer(api: FakeApi, url: URL, init: RequestInit | undefined): Pr
     const result = api.metrics(url.searchParams);
     return result instanceof Response ? result : json(result);
   }
+  if (/^\/api\/projects\/[^/]+\/hosts\/charts$/.test(path)) {
+    const result = api.hostCharts(url.searchParams);
+    return result instanceof Response ? result : json(result);
+  }
+  if (/^\/api\/projects\/[^/]+\/hosts$/.test(path)) {
+    const result = api.hosts(url.searchParams);
+    return result instanceof Response ? result : json(result);
+  }
   if (/^\/api\/projects\/[^/]+\/services$/.test(path)) {
     const result = api.services(url.searchParams);
     return result instanceof Response ? result : json(result);
@@ -1972,6 +2104,8 @@ export function installFakeApi(overrides: Partial<FakeApi> = {}): FakeApi {
     metrics: fakeMetrics,
     metricChart: fakeMetricChart,
     services: fakeServices,
+    hosts: fakeHosts,
+    hostCharts: fakeHostCharts,
     deleteProject: removeProject,
     requests: [],
     bodies: [],

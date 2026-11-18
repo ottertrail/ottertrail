@@ -2,7 +2,14 @@ import { keepPreviousData, queryOptions } from "@tanstack/react-query";
 
 import { DEFAULT_ENVIRONMENT, type PageRange, rangeParams } from "./analytics-api";
 import { apiRequest, expectShape } from "./api";
-import { isListOf, isNumber, isRecord, isText, isTextOrNull } from "./telemetry-shapes";
+import {
+  isListOf,
+  isNumber,
+  isRecord,
+  isText,
+  isTextOrNull,
+  telemetryRetry,
+} from "./telemetry-shapes";
 
 /** A gauge, a monotonic sum (counter), a sum that goes up and down, or a histogram. */
 export const METRIC_KINDS = ["gauge", "counter", "updown", "histogram"] as const;
@@ -153,6 +160,7 @@ const rangeQuery = (range: PageRange, environment: string) => ({
 export const metricsQuery = (projectId: string, range: PageRange, environment: string) =>
   queryOptions({
     queryKey: ["metrics", projectId, range, environment],
+    retry: telemetryRetry,
     queryFn: async ({ signal }) => {
       const query = new URLSearchParams(rangeQuery(range, environment));
       return expectShape(
@@ -180,6 +188,7 @@ export const metricChartQuery = (
       metric.kind,
       metric.split ?? null,
     ],
+    retry: telemetryRetry,
     queryFn: async ({ signal }) => {
       const query = new URLSearchParams({
         ...rangeQuery(range, environment),

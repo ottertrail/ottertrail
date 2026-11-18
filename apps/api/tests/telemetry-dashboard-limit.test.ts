@@ -103,6 +103,48 @@ describe("an organization's queries in flight", () => {
     expect(await limiter.run("org-a", async () => "ran")).toBe("ran");
   });
 
+  test("one request holds at most its share of the organization's places", async () => {
+    const limiter = new OrganizationLimiter({ max: 4, waitMs: 5000 });
+    const gate = limiter.gate("org-a", undefined, 2);
+    const held = [later(), later(), later()];
+    const started: number[] = [];
+    const queries = held.map((hold, index) =>
+      gate(async () => {
+        started.push(index);
+        await hold.promise;
+      }),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    // Two run; the third waits, though the organization has places left for its other pages.
+    expect(started).toEqual([0, 1]);
+    expect(limiter.running("org-a")).toBe(2);
+    expect(await limiter.run("org-a", async () => "another page")).toBe("another page");
+    held[0]?.settle();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(started).toEqual([0, 1, 2]);
+    held[1]?.settle();
+    held[2]?.settle();
+    await Promise.all(queries);
+    expect(limiter.running("org-a")).toBe(0);
+  });
+
+  test("a request's waiting queries leave when it is closed", async () => {
+    const limiter = new OrganizationLimiter({ max: 4, waitMs: 5000 });
+    const closed = new AbortController();
+    const gate = limiter.gate("org-a", closed.signal, 1);
+    const hold = later();
+    const running = gate(() => hold.promise);
+    const waiting = gate(async () => "ran");
+    // The first has its place; the second waits for the request's.
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(limiter.running("org-a")).toBe(1);
+    closed.abort(new Error("closed"));
+    await expect(waiting).rejects.toThrow("closed");
+    hold.settle();
+    await running;
+    expect(limiter.running("org-a")).toBe(0);
+  });
+
   test("a waiting query leaves when its request is closed", async () => {
     const limiter = new OrganizationLimiter({ max: 1, waitMs: 5000 });
     const hold = later();

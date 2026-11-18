@@ -37,6 +37,8 @@ import { ProjectLayout } from "@/features/projects/project-layout";
 import { ProjectSettingsPage } from "@/features/projects/project-settings-page";
 import { ProjectsPage } from "@/features/projects/projects-page";
 import { SpeedPage } from "@/features/speed/speed-page";
+import { HostPage } from "@/features/telemetry/host-page";
+import { HostsPage } from "@/features/telemetry/hosts-page";
 import { LogsPage } from "@/features/telemetry/logs-page";
 import { MetricPage } from "@/features/telemetry/metric-page";
 import { MetricsPage } from "@/features/telemetry/metrics-page";
@@ -544,6 +546,51 @@ const servicesRoute = createRoute({
   },
 });
 
+/** The hosts that sent host metrics: days and environment. */
+const hostsRoute = createRoute({
+  getParentRoute: () => projectRoute,
+  path: "/hosts",
+  staticData: { title: "Hosts" },
+  validateSearch: (search: ErrorSearchInput) => ({
+    ...rangeSearch(search),
+    ...environmentSearch(search),
+  }),
+  component: function HostsRouteComponent() {
+    const { projectId } = hostsRoute.useParams();
+    const { period, from, to, env } = hostsRoute.useSearch();
+    return (
+      <HostsPage
+        projectId={projectId}
+        range={rangeFrom({ period, from, to })}
+        environment={env ?? DEFAULT_ENVIRONMENT}
+      />
+    );
+  },
+});
+
+/** One host's charts: its host.name in the path. */
+const hostRoute = createRoute({
+  getParentRoute: () => projectRoute,
+  path: "/hosts/$host",
+  staticData: { title: "Host" },
+  validateSearch: (search: ErrorSearchInput) => ({
+    ...rangeSearch(search),
+    ...environmentSearch(search),
+  }),
+  component: function HostRouteComponent() {
+    const { projectId, host } = hostRoute.useParams();
+    const { period, from, to, env } = hostRoute.useSearch();
+    return (
+      <HostPage
+        projectId={projectId}
+        host={host}
+        range={rangeFrom({ period, from, to })}
+        environment={env ?? DEFAULT_ENVIRONMENT}
+      />
+    );
+  },
+});
+
 /** Product analytics: its reports (events, funnel, retention) as tabs, each its own page. */
 const productRoute = createRoute({
   getParentRoute: () => projectRoute,
@@ -733,6 +780,8 @@ const routeTree = rootRoute.addChildren([
       metricsRoute,
       metricRoute,
       servicesRoute,
+      hostsRoute,
+      hostRoute,
       productRoute.addChildren([
         productIndexRoute,
         productEventsRoute,

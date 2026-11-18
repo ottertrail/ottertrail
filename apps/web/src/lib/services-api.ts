@@ -2,7 +2,7 @@ import { keepPreviousData, queryOptions } from "@tanstack/react-query";
 
 import { DEFAULT_ENVIRONMENT, type PageRange, rangeParams } from "./analytics-api";
 import { apiRequest, expectShape } from "./api";
-import { isListOf, isNumber, isRecord, isText } from "./telemetry-shapes";
+import { isListOf, isNumber, isRecord, isText, telemetryRetry } from "./telemetry-shapes";
 
 export interface RouteStats {
   requests: number;
@@ -66,6 +66,7 @@ const isServiceList = (value: unknown): value is ServiceList =>
 export const servicesQuery = (projectId: string, range: PageRange, environment: string) =>
   queryOptions({
     queryKey: ["services", projectId, range, environment],
+    retry: telemetryRetry,
     queryFn: async ({ signal }) => {
       const query = new URLSearchParams({
         ...rangeParams(range),

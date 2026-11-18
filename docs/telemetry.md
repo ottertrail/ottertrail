@@ -1,6 +1,6 @@
 # Backend telemetry: traces, logs, and metrics
 
-**Status: stage 3 of the [roadmap](roadmap.md), in progress. Receiving and storing, exceptions in the error list, and the dashboard's Traces, Logs, Metrics, and Services pages (steps 1 to 3 of [How it is built](#how-it-is-built)) are built.**
+**Status: stage 3 of the [roadmap](roadmap.md). Receiving and storing, exceptions in the error list, and the dashboard's Traces, Logs, Metrics, Services, and Hosts pages (steps 1 to 3 of [How it is built](#how-it-is-built)) are built.**
 
 A site's servers send what they did, in the OpenTelemetry protocol (OTLP): traces (each request through the services it touched, as spans), logs, and metrics. Ottertrail keeps them in ClickHouse, beside the browser's events, and the dashboard shows each with the others: a slow request's trace and its logs, an exception on a span in the same error list as the browser's errors. Any OpenTelemetry SDK or Collector can send to it; nothing of Ottertrail's own runs on the servers.
 
@@ -97,10 +97,11 @@ The error's page shows the latest occurrence's service, trace ID, and span ID. T
 - **Logs** (built): search by period, service, environment, severity, words in the body, and trace; newest first; each record with its attributes, and its trace when it has one.
 - **Metrics** (built): each metric by name, with its kind, unit, services, and when it was last seen; a metric's page charts it over the period: a gauge's average, minimum, and maximum; a counter's rate per second; a histogram's percentiles from its buckets and its observations per second; split by one attribute ([below](#how-metrics-are-charted)).
 - **Services** (built): for each service, and each route of its server spans: requests, the share that failed, and the median and 95th-percentile duration, over the period ([below](#how-services-are-counted)).
+- **Hosts** (built): the servers an OpenTelemetry Collector reports on, by host name, with their latest CPU, memory, fullest filesystem, and load, and each host's charts over the period ([below](#hosts)).
 
 ### How the pages read
 
-Eight routes, beside the other project routes (`apps/api/src/telemetry/dashboard-routes.ts`, queries in `traces.ts`, `logs.ts`, `metrics.ts`, `services.ts`, and `dashboard-query.ts`). Each runs the access check every project route runs and reads only the project it found; a member of another organization gets the 404 of a project that does not exist. Every query filters by project first, then time (a metric's, by project, then name, then time), passes every value as a query parameter, and has a `LIMIT`. Each runs with the same settings (`DASHBOARD_SETTINGS`): it stops after 15 seconds (`max_execution_time`) or 300 MB (`max_memory_usage`), and either answers 503, saying to narrow the range or filters; a grouping or sort past 100 MB goes on in parts on disk first (`max_bytes_before_external_group_by`, `max_bytes_before_external_sort`). A query ends when its request is closed before it is answered, as when the browser gives up: the route passes an abort signal to the ClickHouse client, and `cancel_http_readonly_queries_on_client_close` has ClickHouse stop it. At most 4 of one organization's queries run at once on each API process (`dashboard-limit.ts`); the next waits for a place, and after 10 seconds answers 503 with `Retry-After`, so one customer's pages cannot fill ClickHouse for the others. The pages are described in the [dashboard](dashboard.md#89-traces-and-logs).
+Ten routes, beside the other project routes (`apps/api/src/telemetry/dashboard-routes.ts`, queries in `traces.ts`, `logs.ts`, `metrics.ts`, `services.ts`, `hosts.ts`, and `dashboard-query.ts`). Each runs the access check every project route runs and reads only the project it found; a member of another organization gets the 404 of a project that does not exist. Every query filters by project first, then time (a metric's, by project, then name, then time), passes every value as a query parameter, and has a `LIMIT`. Each runs with the same settings (`DASHBOARD_SETTINGS`): it stops after 15 seconds (`max_execution_time`) or 300 MB (`max_memory_usage`), and either answers 503, saying to narrow the range or filters; a grouping or sort past 100 MB goes on in parts on disk first (`max_bytes_before_external_group_by`, `max_bytes_before_external_sort`). A request's queries end once it is answered or closed, whichever comes first: when the browser gives up, and when one query fails and the route answers with an error while the request's other queries still run or wait. The route passes an abort signal to the ClickHouse client, and `cancel_http_readonly_queries_on_client_close` has ClickHouse stop the query. At most 4 of one organization's queries run at once on each API process (`dashboard-limit.ts`), and at most 2 of one request's, so a page that makes many queries, such as a host's, leaves places for the organization's other pages; the next waits for a place, and after 10 seconds answers 503 with `Retry-After`, so one customer's pages cannot fill ClickHouse for the others. The dashboard does not retry a telemetry request the API answered, a 503 included, which would only add to the load: the page says it failed and offers Retry. A request that never reached the API is retried once. The pages are described in the [dashboard](dashboard.md#89-traces-and-logs).
 
 A retried record may be stored twice until ClickHouse merges its parts, so what counts or shows records must not see a copy. Queries that read a few rows found by a key or an index read `FINAL`: a trace's spans and logs, a span, a log record, and each listed trace's span count. The two lists do not: `FINAL` merges every row of the range before the first can be sent, so each page of the Logs list read every record of the period (410,283 of 410,283 rows, on 400,000 records over 8 days). Without it, ClickHouse reads the project's rows in key order, newest first (`Read type: InReverseOrder` in `EXPLAIN actions = 1`), and stops at the `LIMIT`: 82,603 rows for the same page, about one block per day's part, however many records the period holds; the traces list read 23,168 of 400,000 root spans instead of all of them. A list fetches twice its page and one more row, and drops a row with the same time and ID as the row before it: copies of one record share those, so they sit next to each other in that order. The cursor is the last row's time and ID, as before. The environments and services lists, and "has the project sent anything", read no `FINAL` either: copies do not change them.
 
@@ -113,6 +114,8 @@ GET /api/projects/:id/logs/:logId?time=<ns since 1970>
 GET /api/projects/:id/metrics?period=7d&environment=…
 GET /api/projects/:id/metrics/chart?period=7d&environment=…&name=…&kind=gauge|counter|updown|histogram&split=<attribute key>
 GET /api/projects/:id/services?period=7d&environment=…
+GET /api/projects/:id/hosts?period=7d&environment=…
+GET /api/projects/:id/hosts/charts?host=<host.name>&period=7d&environment=…
 ```
 
 - **Time:** the days asked for, in the organization's timezone, as on the other pages (at most 366), cut to the retention: nothing older than `TELEMETRY_RETENTION_DAYS` is read.
@@ -144,6 +147,138 @@ A request is a span of kind `SERVER`; its route is its `http.route` attribute, o
 
 Measured on 3 million server spans over 7 days with a million span names and no `http.route`: before, one query kept every route's durations (443 MiB of memory, measured in review). Now the counts read 3,000,000 rows (174 MiB) in 1.7 s with 206 MiB of memory, a million route groups spilled to disk past 100 MB; the percentiles read the same rows in 268 ms with 84 MiB. Earlier, on 300,000 spans and 30,000 retried copies, `FINAL` cost 33 ms and 14 MiB against 26 ms and 12 MiB without it (which would have counted the copies). A route links to the Traces page filtered by its service and the route as part of the root span's name, so a route that is only ever a child span's (behind a gateway) finds no trace there.
 
+## Hosts
+
+A server's own health (its CPU, memory, disks, network, and load) comes from an OpenTelemetry Collector running on it, with the Collector's host metrics receiver. The Collector sends these as ordinary OTLP metrics, which Ottertrail stores as any other ([storage](#storage)); the Metrics page can chart each one alone. The Hosts pages read them together, per host. Nothing of Ottertrail's own runs on the server.
+
+### What the pages read
+
+A host is the `host.name` attribute of the metrics' resource, which the Collector's resource detection processor sets ([below](#the-collector)). The host's name is matched as ingestion stores it: a value of at most 4 KB, any characters.
+
+Only the receiver's metrics count. An app's SDK can send metrics with the same names under the same `host.name`: OpenTelemetry's Node.js SDK sets `host.name` with its host detector, and its `@opentelemetry/host-metrics` package sends `system.cpu.time`, `system.cpu.utilization`, and `system.memory.usage` for the app's machine. Counted as the host's, an app alone would be listed as a host, and an app beside a Collector would add its own series to the host's CPU and memory. So every query keeps only the series of an instrumentation scope whose name starts as the receiver's scrapers name theirs: `github.com/open-telemetry/opentelemetry-collector-contrib/receiver/hostmetricsreceiver/` (now: the scraper's package, such as `…/internal/scraper/cpuscraper`), or `otelcol/hostmetricsreceiver/` (older releases, such as `otelcol/hostmetricsreceiver/cpu` in v0.80.0). Both were read in the receiver's generated code (`internal/metadata`) on 18 November 2026.
+
+The names, units, and attributes are those of the host metrics receiver's scrapers and of OpenTelemetry's semantic conventions for system metrics, checked on 18 November 2026 (the receiver's [CPU](https://github.com/open-telemetry/opentelemetry-collector-contrib/blob/main/receiver/hostmetricsreceiver/internal/scraper/cpuscraper/documentation.md), [memory](https://github.com/open-telemetry/opentelemetry-collector-contrib/blob/main/receiver/hostmetricsreceiver/internal/scraper/memoryscraper/documentation.md), [filesystem](https://github.com/open-telemetry/opentelemetry-collector-contrib/blob/main/receiver/hostmetricsreceiver/internal/scraper/filesystemscraper/documentation.md), [network](https://github.com/open-telemetry/opentelemetry-collector-contrib/blob/main/receiver/hostmetricsreceiver/internal/scraper/networkscraper/documentation.md), [disk](https://github.com/open-telemetry/opentelemetry-collector-contrib/blob/main/receiver/hostmetricsreceiver/internal/scraper/diskscraper/documentation.md), and [load](https://github.com/open-telemetry/opentelemetry-collector-contrib/blob/main/receiver/hostmetricsreceiver/internal/scraper/loadscraper/documentation.md) scrapers; the [semantic conventions](https://opentelemetry.io/docs/specs/semconv/system/system-metrics/), still in development):
+
+| Metric                                                             | Kind and unit          | Attributes read                                                          | On by default |
+| ------------------------------------------------------------------ | ---------------------- | ------------------------------------------------------------------------ | ------------- |
+| `system.cpu.time`                                                  | Counter, seconds       | `state` (`idle`, `user`, `system`, `wait`, …)                            | Yes           |
+| `system.cpu.utilization`                                           | Gauge, 0 to 1          | `state`                                                                  | No            |
+| `system.memory.usage`                                              | Up-down counter, bytes | `state` (`used`, `free`, `buffered`, `cached`, `slab_…`)                 | Yes           |
+| `system.memory.utilization`                                        | Gauge, 0 to 1          | `state`                                                                  | No            |
+| `system.filesystem.usage`                                          | Up-down counter, bytes | `mountpoint`, `mode`, `state` (`used`, `free`, `reserved`)               | Yes           |
+| `system.filesystem.utilization`                                    | Gauge, 0 to 1          | `mountpoint`, `mode` (the receiver's has no state: it is the share used) | No            |
+| `system.network.io`                                                | Counter, bytes         | `direction` (`receive`, `transmit`), every `device` added up             | Yes           |
+| `system.disk.io`                                                   | Counter, bytes         | `direction` (`read`, `write`), every `device` added up                   | Yes           |
+| `system.cpu.load_average.1m`, `system.cpu.load_average.5m`, `…15m` | Gauge, threads         | none                                                                     | Yes           |
+
+The semantic conventions name some attributes differently from the receiver: `cpu.mode` for the CPU's state, `system.memory.state`, `system.filesystem.state`, `system.filesystem.mountpoint`, `system.filesystem.mode`, `network.io.direction`, and `disk.io.direction`; older conventions had `system.cpu.state`. The pages read any of them, the receiver's first, so a receiver that moves to the conventions' names keeps working. The conventions define no load average; the receiver's names are read.
+
+The utilization metrics are off by default, so without them the shares are worked out from the default metrics, the fallbacks below. The configuration the page shows ([below](#the-collector)) turns them on, so the shares are exact; the pages prefer them when sent.
+
+### How the values are worked out
+
+Each chart reads its metrics as the Metrics page does ([above](#how-metrics-are-charted)): rates from cumulative sums with resets and restarts, a gauge's average per bucket, an up-down counter's last value per series and bucket added up. Every chart query also filters by the host (`resource_attributes['host.name']` equal to a query parameter) and the receiver's scopes, and splits by the first of the attribute's names a point has. Shares are percentages from 0 to 100.
+
+- **CPU busy:** the share of CPU time not in the `idle` state, all CPUs together. From `system.cpu.utilization` when the host sends it: per bucket, each state's average, and the busy share is all states but idle over all states. Otherwise from `system.cpu.time`: each state's time per second (its rate, all CPUs added up), and the busy share is the same ratio of rates. `wait` (time waiting for I/O) counts as busy: it is not idle. The page also charts each state's share.
+- **Memory used:** from `system.memory.utilization`'s `used` state when sent. Otherwise `system.memory.usage`'s `used` over the sum of its states but `slab_reclaimable` and `slab_unreclaimable`, which the receiver reports as parts of the others. That fallback is the default case, and it reads a little low: the receiver's feature gate that reads Linux's `MemAvailable` is in beta, so on by default, and with it `used` is the total less available memory, so the states add up to a little more than the total. (With the gate off, `used` is the total less free, buffers, and cache, and the states add up to the total exactly.) `system.memory.utilization` divides by the true total. The bytes chart is `system.memory.usage`'s `used`.
+- **Filesystem used, per mount point:** read-only filesystems (`mode` `ro`) are left out: a snap package's squashfs image is always 100% used, so on Ubuntu the fullest would always be a snap. Then `system.filesystem.utilization` when sent (its `used` state, if it has states as the conventions define them); otherwise `system.filesystem.usage`'s `used` over all its states (used, free, and reserved): the share of the whole filesystem. Two charts of `system.filesystem.usage` are read, one of its `used` points and one of all, and divided line by line. Past eight mount points, the rest are added up as one line, as a split chart's are.
+- **Network and disk:** `system.network.io` and `system.disk.io` per second, by direction, every device the receiver reads added up. The receiver reads the loopback interface, containers' virtual interfaces, whole disks with their partitions, and device-mapper and loop devices too, so without exclusions loopback traffic counts and a disk's bytes count two or three times (`sda`, `sda1`, and the `dm-0` on it). The configuration below leaves them out.
+- **Load:** the 1, 5, and 15-minute load averages, each bucket's average, read in one query (`name IN (…)`, a line per metric).
+
+The list shows each host's latest values in the period:
+
+- a gauge's latest point per series (utilization, load), shares worked out as above;
+- `system.cpu.time`: each series' increase between its last two points when both are of one run and the value did not go down (a delta point's value is its increase); a scrape interval up to about 7 minutes leaves two points in the window;
+- per state, the latest value across the host's series of a metric (`argMax`), not their sum: after a Collector is upgraded, the old and new series (their scopes differ) both have recent points, and added up the memory share could pass 100%. A CPU's series stay apart, one per CPU, and are added up;
+- the fullest filesystem: the share per mount point, read-only ones left out, then the highest, with its mount point.
+
+A host is stale when nothing arrived from it in the 5 minutes before the request. That says something only while the period runs to now: for a period that ended before, the answer's `stale` is null and the page shows no badge.
+
+### Routes
+
+```text
+GET /api/projects/:id/hosts?period=7d&environment=…
+GET /api/projects/:id/hosts/charts?host=<host.name>&period=7d&environment=…
+```
+
+- **The list** makes three queries. The first finds the hosts and when each was last seen, from the host metrics' names (`name IN (…)`, so with the project ID a prefix of the sort key: only those metrics' rows are read), at most 500, by name; the answer says when there were more. The second lists the environments, as the other pages do. The third reads the latest values of the hosts listed, and only of the metrics the list shows (CPU, memory, filesystem, and the 1-minute load). Its time condition is each host's own window, from 15 minutes before its last point to that point, merged where they overlap, as ranges of the sort key (`(timestamp >= a AND timestamp < b) OR …`); each row is then kept only within its own host's window (`transform(host, hosts, cutoffs, 0)`). A host that stopped early in a long period thus reads its last minutes, not the period since. Measured on the development machine with 100 hosts sending 8 series a minute for 2 days, one of which stopped after its first hour (2.28 million rows): the query read 2,273,248 rows in 390 ms when bounded by the earliest window, and reads 86,860 rows in 30 ms by each host's. The first two queries still read the whole period's rows of those metrics, as finding the hosts needs.
+- **A host's charts** make at most 10 chart queries and one for when it was last seen: each chart ranks its series (at most 1,000) inside its own query, rather than in a query of its own as the Metrics page does, since one host has few series. Each reads within its metric's rows of the project.
+- A host name is refused past 4 KB, as ingestion cuts attribute values there.
+
+All carry the dashboard's settings and the per-organization limit ([how the pages read](#how-the-pages-read)).
+
+### The Collector
+
+The configuration the Hosts page shows, with the instance's address, while a project has sent no host metrics:
+
+```yaml
+receivers:
+  host_metrics:
+    collection_interval: 1m
+    scrapers:
+      cpu:
+        metrics:
+          system.cpu.utilization:
+            enabled: true
+      memory:
+        metrics:
+          system.memory.utilization:
+            enabled: true
+      filesystem:
+        exclude_fs_types:
+          fs_types: [squashfs]
+          match_type: strict
+        exclude_mount_points:
+          mount_points: ["^/snap/.*$"]
+          match_type: regexp
+        metrics:
+          system.filesystem.utilization:
+            enabled: true
+      network:
+        exclude:
+          interfaces: ["^(lo|veth.*|docker.*|br-.*)$"]
+          match_type: regexp
+      disk:
+        exclude:
+          devices:
+            - "^(loop|ram|sr|dm-)[0-9]*$"
+            - "^(sd|vd|xvd|hd)[a-z]+[0-9]+$"
+            - "^(nvme[0-9]+n[0-9]+|mmcblk[0-9]+)p[0-9]+$"
+          match_type: regexp
+      load:
+
+processors:
+  resource_detection:
+    detectors: [system]
+    system:
+      hostname_sources: [os]
+  batch:
+    send_batch_max_size: 8192
+
+exporters:
+  otlp_http:
+    endpoint: https://analytics.example.com
+    headers:
+      Authorization: Bearer sk_…
+
+service:
+  pipelines:
+    metrics:
+      receivers: [host_metrics]
+      processors: [resource_detection, batch]
+      exporters: [otlp_http]
+```
+
+- **Names:** the Collector's components were renamed with underscores (`host_metrics`, `resource_detection`, `otlp_http`); older releases know them as `hostmetrics`, `resourcedetection`, and `otlphttp`. The exporter's and the processor's documentation keep the old names as deprecated aliases.
+- **Utilization metrics:** on, so CPU, memory, and filesystem shares are the receiver's own, divided by the true totals.
+- **Filesystems:** snap packages' read-only squashfs images and their `/snap/…` mount points are left out (the pages also leave out any read-only filesystem).
+- **Network:** the loopback interface and containers' (`veth…`, `docker…`, `br-…`) are left out, so only traffic in and out of the machine counts.
+- **Disks:** loop, RAM, optical, and device-mapper devices, and partitions (`sda1`, `nvme0n1p1`, `mmcblk0p1`) are left out, so each disk's bytes count once, from the whole disk. The patterns are anchored (`^…$`), so they mean the same whether the receiver matches a whole name or a part of one.
+- **`host.name`:** the resource detection processor's `system` detector sets it. `hostname_sources: [os]` takes the operating system's name; its default tries DNS first, for a fully qualified name.
+- **Batches:** `send_batch_max_size` bounds each request ([limits](#limits)).
+- **In a container,** the receiver needs the host's root filesystem mounted and named with `root_path` (such as `/hostfs`), or it measures the container.
+- **The key** is the project's secret key, under "Your server" in its settings; the page shows `sk_…` in its place and never prints the key.
+
 ## Not in the first version
 
 - gRPC, and OTLP from browsers.
@@ -154,17 +289,18 @@ Measured on 3 million server spans over 7 days with a million span names and no 
 - Searching log bodies for a phrase: each word is matched on its own ([above](#how-the-pages-read)).
 - Filtering traces by an attribute, and a trace's whole span count in the list (it counts the trace's spans in the period, an hour either side).
 - "With errors" over more than the latest 10,000 failed spans of a period.
-- Splitting a metric by a resource attribute or by service, filtering a chart by an attribute, and a histogram's series with other bounds in the same chart.
+- Splitting a metric by a resource attribute or by service, filtering a chart by an attribute on the Metrics page (the Hosts pages filter by `host.name`), and a histogram's series with other bounds in the same chart.
+- On the Hosts pages: swap, paging, disk operations and time, per-CPU and per-interface charts, processes (`process.*` metrics), and a total memory from `system.memory.limit`. Each can be charted alone on the Metrics page when the receiver sends it.
 - A route's request methods apart: `GET` and `POST` of one `http.route` are one route.
 
 ## How it is built
 
-| Step                                                                                                                          | Status  |
-| ----------------------------------------------------------------------------------------------------------------------------- | ------- |
-| 1. ClickHouse's tables, decoding, the three routes, their answers, limits, and budgets; tests with protobuf and JSON requests | Done    |
-| 2. Exceptions into the error list                                                                                             | Done    |
-| 3. The dashboard's Traces, Logs, Metrics, and Services pages                                                                  | Done    |
-| 4. Deployment: the settings ([deployment](deployment.md#traces-logs-and-metrics)), and what has been tested                   | Started |
+| Step                                                                                                                          | Status                       |
+| ----------------------------------------------------------------------------------------------------------------------------- | ---------------------------- |
+| 1. ClickHouse's tables, decoding, the three routes, their answers, limits, and budgets; tests with protobuf and JSON requests | Done                         |
+| 2. Exceptions into the error list                                                                                             | Done                         |
+| 3. The dashboard's Traces, Logs, Metrics, Services, and Hosts pages                                                           | Done                         |
+| 4. Deployment: the settings ([deployment](deployment.md#traces-logs-and-metrics)), and what has been tested                   | Waiting for the hosting work |
 
 Step 1 is in `apps/api/src/telemetry/` (routes, decoding, rows) and ClickHouse migration `0007_create_telemetry`. Besides requests built by hand in both encodings, its tests send through OpenTelemetry's own JavaScript exporters (protobuf and JSON, for traces, logs, and metrics) and check what ClickHouse stored. The message definitions are those of opentelemetry-proto 1.11.1, kept in `apps/api/src/telemetry/proto/` with their licence, which the built API carries in its `THIRD_PARTY_LICENSES.txt`.
 
@@ -173,3 +309,5 @@ Step 2 is in `apps/api/src/telemetry/exceptions.ts` (the error events), `normali
 Step 3's first half, the Traces and Logs pages, is in `apps/api/src/telemetry/dashboard-routes.ts`, `traces.ts`, `logs.ts`, and `dashboard-query.ts`, and `apps/web/src/features/telemetry/`. Its API tests (`apps/api/tests/telemetry-dashboard.test.ts`) send spans and log records over OTLP and check the list, its filters and pages, a trace's spans, parents, logs, and cap, a span's detail, the log search (words, severity, service, trace, pages), log summaries (their size and cut body) and a record's detail, a retried span's and record's copies dropped across pages of rows at one time, all-zero IDs and labels with control characters, that the plans still use the indexes, bad parameters, and that another organization's member gets nothing.
 
 Step 3's second half, the Metrics and Services pages, is in `metrics.ts` and `services.ts` beside them, and `apps/web/src/features/telemetry/`. Its API tests (`apps/api/tests/telemetry-metrics.test.ts`) send metrics and spans over OTLP, each twice as a retry would, and check numbers worked out by hand: a gauge's average, minimum, and maximum per bucket; a cumulative counter's rate with a reset and a restart; a delta counter's; sparse, staggered senders; two writers of one series told apart by their start; an up-down counter's total; a cumulative and a delta histogram's percentiles and rate, and one without bucket counts; a split with its top values and "other"; the series cap; the list of metrics; services' requests, failures, median, and 95th percentile per service and route; bad parameters; and that another organization's member gets nothing. `telemetry-dashboard-limit.test.ts` checks the 300 MB limit and its 503, and the per-organization limit of queries (waiting, refusal with `Retry-After`, a closed request leaving the queue); `telemetry-normalize.test.ts` the refusal of histograms with more than 64 bounds or counts of 2^63 or more.
+
+The Hosts pages are in `hosts.ts`, which reads through `metrics.ts`'s charts with a filter by a resource attribute, and `apps/web/src/features/telemetry/` (`hosts-page.tsx`, `host-page.tsx`). Their API tests (`apps/api/tests/telemetry-hosts.test.ts`) send two hosts' metrics over OTLP as the receiver would, each twice as a retry would, and check numbers worked out by hand: the list's CPU busy share from the last two points of `system.cpu.time` across two CPUs, memory without the slab, the fullest of two filesystems, the latest load, last seen and stale against a fixed clock; a host's charts (CPU busy and by state, memory in percent and bytes, filesystems per mount point, network bytes per second by direction, load); the utilization metrics preferred when sent, with the conventions' `cpu.mode`; that one host's chart leaves the other's out; that metrics without `host.name`, and an SDK's with it (`@opentelemetry/host-metrics`, `system.cpu.state`), are no host's, even under a Collector's host name; scopes of older and newer receivers; a snap's read-only filesystem left out of the fullest and the charts; an upgraded Collector's two series counted once; that a host that stopped early in the day leaves the latest values' query reading its last minutes (under 40,000 rows of `system.query_log`'s `read_rows`, where the day holds 247,600); the merged windows; staleness only for a period that runs to now; that a failed query ends its request's other queries over a real connection, so they free the organization's places; bad parameters; and that another organization's member gets nothing. `telemetry-dashboard-limit.test.ts` checks a request's share of the places.

@@ -230,6 +230,47 @@ export interface ChartOptions {
   kind: MetricKind;
   /** An attribute key: one line per value of it. */
   split?: string | undefined;
+  /**
+   * Instead of `split`, several keys that name one thing (the Collector's
+   * `state` and the semantic conventions' `cpu.mode`): each point's line is
+   * the value of the first of them it has. The chart's `split` is the first.
+   */
+  splitAny?: readonly string[] | undefined;
+  /** Only the series whose resource has this attribute value, such as one host's (hosts.ts). */
+  resource?: { key: string; value: string } | undefined;
+  /**
+   * Only the points whose first present key of `keys` has this value, such
+   * as a state of "used"; with `orMissing`, also the points with none of them.
+   */
+  attribute?: { keys: readonly string[]; value: string; orMissing?: boolean } | undefined;
+  /** Leaves out the points whose first present key of `keys` has this value, such as a mode of "ro". */
+  exclude?: { keys: readonly string[]; value: string } | undefined;
+  /** Only the series of an instrumentation scope whose name starts with one of these. */
+  scopePrefixes?: readonly string[] | undefined;
+  /**
+   * Gauges only: several metrics in one chart, one line per metric's name
+   * (in place of `name` and a split), such as the three load averages.
+   */
+  names?: readonly string[] | undefined;
+  /**
+   * One query instead of two: the series are ranked inside the chart's
+   * query, so `keys` and `unit` stay empty. For pages that read many small
+   * charts, such as a host's (hosts.ts). Not for histograms.
+   */
+  single?: boolean | undefined;
+}
+
+/**
+ * The value of the first of `keys` a point's attributes have, else NULL.
+ * The keys go in as query parameters.
+ */
+export function firstAttribute(params: QueryParams, keys: readonly string[]): string {
+  if (keys.length === 0) return "CAST(NULL AS Nullable(String))";
+  const branches = keys.map((key) => {
+    const placeholder = params.add(key, "String");
+    return `mapContains(attributes, ${placeholder}), attributes[${placeholder}]`;
+  });
+  return `multiIf(${branches.join(", ")}, NULL)`;
 }
 
 /** One line's values per bucket; null where the bucket has no point. */
@@ -323,6 +364,10 @@ export async function metricChart(
   const { table, condition } = KIND_ROWS[options.kind];
   const histogram = options.kind === "histogram";
 
+  const splitKeys = options.splitAny ?? (options.split === undefined ? [] : [options.split]);
+  const { resource, attribute, exclude, scopePrefixes, names } = options;
+  const single = options.single === true;
+  if (single && histogram) throw new Error("a single-query chart takes no histogram");
   const empty: MetricChart = {
     name: options.name,
     kind: options.kind,
@@ -330,7 +375,7 @@ export async function metricChart(
     start: new Date(buckets.firstMs),
     stepSeconds: buckets.stepMs / 1000,
     buckets: buckets.count,
-    split: options.split ?? null,
+    split: splitKeys[0] ?? null,
     keys: [],
     series: [],
     seriesCount: 0,
@@ -344,16 +389,48 @@ export async function metricChart(
   /** The metric's rows, from `from`, before the range's end (or now): the sorting key's prefix. */
   const metricRows = (params: QueryParams, from: Date) =>
     `project_id = ${params.add(range.projectId, "UUID")}
-     AND name = ${params.add(options.name, "String")}
+     AND ${
+       names === undefined
+         ? `name = ${params.add(options.name, "String")}`
+         : `name IN ${params.add(names, "Array(String)")}`
+     }
      AND timestamp >= ${params.time(from)} AND timestamp < ${params.time(new Date(buckets.endMs))}
      AND environment = ${params.add(range.environment, "String")}
-     AND ${condition}`;
+     AND ${condition}
+     ${
+       resource === undefined
+         ? ""
+         : `AND resource_attributes[${params.add(resource.key, "String")}] = ${params.add(resource.value, "String")}`
+     }
+     ${(() => {
+       if (attribute === undefined) return "";
+       const value = params.add(attribute.value, "String");
+       const found = firstAttribute(params, attribute.keys);
+       return attribute.orMissing === true
+         ? `AND ifNull(${found}, ${value}) = ${value}`
+         : `AND ${found} = ${value}`;
+     })()}
+     ${
+       exclude === undefined
+         ? ""
+         : `AND ifNull(${firstAttribute(params, exclude.keys)}, '') != ${params.add(exclude.value, "String")}`
+     }
+     ${
+       scopePrefixes === undefined
+         ? ""
+         : `AND (${scopePrefixes
+             .map((prefix) => `startsWith(scope_name, ${params.add(prefix, "String")})`)
+             .join(" OR ")})`
+     }`;
 
   // The series with the most points in the range. No FINAL: copies only weigh the ranking.
+  // A single-query chart ranks them inside its own query instead (below).
   const selectParams = new QueryParams();
-  const found = await queryRows<SeriesRow>(
-    reader,
-    `SELECT toString(series) AS series_key, count() AS points, any(unit) AS series_unit,
+  const found = single
+    ? []
+    : await queryRows<SeriesRow>(
+        reader,
+        `SELECT toString(series) AS series_key, count() AS points, any(unit) AS series_unit,
             any(mapKeys(attributes)) AS keys
             ${histogram ? ", any(bounds) AS series_bounds, max(length(bucket_counts)) AS series_buckets" : ""}
      FROM ${table}
@@ -361,9 +438,9 @@ export async function metricChart(
      GROUP BY series
      ORDER BY points DESC, series_key
      LIMIT ${MAX_SERIES + 1}`,
-    selectParams,
-    DASHBOARD_SETTINGS,
-  );
+        selectParams,
+        DASHBOARD_SETTINGS,
+      );
   const listed = found.slice(0, MAX_SERIES);
   const keys = [...new Set(listed.flatMap((row) => row.keys))]
     .toSorted((a, b) => a.localeCompare(b))
@@ -400,18 +477,13 @@ export async function metricChart(
     bounds,
     percentiles: withBuckets.length > 0,
   };
-  if (listed.length === 0) return chart;
+  if (!single && listed.length === 0) return chart;
 
   const params = new QueryParams();
   const lookback = Math.max(buckets.stepMs, MIN_LOOKBACK_MS);
   const lookFrom = new Date(buckets.fromMs - lookback);
   const label =
-    options.split === undefined
-      ? "CAST(NULL AS Nullable(String))"
-      : (() => {
-          const key = params.add(options.split, "String");
-          return `if(mapContains(attributes, ${key}), attributes[${key}], NULL)`;
-        })();
+    names === undefined ? firstAttribute(params, splitKeys) : "toNullable(toString(name))";
   const fromNs = params.add(ns(buckets.fromMs), "Int64");
   const lookNs = params.add(ns(lookFrom.getTime()), "Int64");
   const firstNs = params.add(ns(buckets.firstMs), "Int64");
@@ -422,10 +494,13 @@ export async function metricChart(
     withBuckets.map((row) => row.series_key),
     "Array(String)",
   );
-  const seriesListed = params.add(
-    listed.map((row) => row.series_key),
-    "Array(String)",
-  );
+  const seriesListed = single
+    ? `series IN (SELECT series FROM ${table} WHERE ${metricRows(params, range.from)}
+                  GROUP BY series ORDER BY count() DESC, series LIMIT ${MAX_SERIES})`
+    : `toString(series) IN ${params.add(
+        listed.map((row) => row.series_key),
+        "Array(String)",
+      )}`;
   /** The series' points, deduplicated, from the lookback on, with `columns`. */
   const rowsWith = (columns: string, only = seriesListed) =>
     `SELECT series, ${label} AS label, temporality = 'delta' AS is_delta,
@@ -433,7 +508,7 @@ export async function metricChart(
             toUnixTimestamp64Nano(start_timestamp) AS start_ns,
             ${columns}
      FROM ${table} FINAL
-     WHERE ${metricRows(params, lookFrom)} AND toString(series) IN ${only}`;
+     WHERE ${metricRows(params, lookFrom)} AND ${only}`;
   const rows = rowsWith(histogram ? "toInt64(count) AS n" : "value");
   // Per series and start time, by time: the point before (none: 0), whether
   // this point starts the run with a start known within what was read (the
@@ -513,7 +588,7 @@ export async function metricChart(
     const pointBucket = `if(t_ns < ${fromNs}, -1, ${bucketOf("t_ns")})`;
     const counts = rowsWith(
       "CAST(bucket_counts AS Array(Int64)) AS counts, min AS low_value, max AS high_value",
-      percentileSeries,
+      `toString(series) IN ${percentileSeries}`,
     );
     perValue = `
       SELECT label, bucket, sumForEach(step_counts) AS step_counts, sum(part) AS increase,
@@ -568,6 +643,12 @@ export async function metricChart(
     reader,
     `SELECT ranks > ${slots} AND rank >= ${slots} AS other, if(other, NULL, label) AS value,
             bucket, ${fold}, sum(vol) AS volume
+            ${
+              single
+                ? `, (SELECT uniqExact(series) FROM ${table}
+                      WHERE ${metricRows(params, range.from)}) AS found_series`
+                : ""
+            }
      FROM (
        SELECT *, max(rank) OVER () AS ranks
        FROM (
@@ -582,10 +663,20 @@ export async function metricChart(
     params,
     DASHBOARD_SETTINGS,
   );
-  return { ...chart, series: seriesOf(folded, options.kind, buckets, bounds) };
+  const series = seriesOf(folded, options.kind, buckets, bounds);
+  if (!single) return { ...chart, series };
+  const foundSeries = Number(folded[0]?.found_series ?? 0);
+  return {
+    ...chart,
+    series,
+    seriesCount: Math.min(foundSeries, MAX_SERIES),
+    seriesCapped: foundSeries > MAX_SERIES,
+  };
 }
 
 interface FoldedRow {
+  /** A single-query chart's series in the range, before the cap (UInt64, as text). */
+  found_series?: string;
   other: boolean | number;
   value: string | null;
   bucket: string | number;

@@ -1,3 +1,8 @@
+/** The design system's chart colors, assigned in order, never cycled (8 at most). */
+export const SLOTS = Array.from({ length: 8 }, (_, index) => `var(--chart-${index + 1})`);
+/** "Other": the de-emphasis gray, so folded values recede. */
+export const OTHER_COLOR = "var(--ink-tertiary)";
+
 /**
  * Chart color slots for a split chart's lines, kept while the page is
  * open: a value keeps the slot it first got when the set of values shown

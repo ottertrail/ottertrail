@@ -1,0 +1,221 @@
+import { useQuery } from "@tanstack/react-query";
+import { Link, useNavigate } from "@tanstack/react-router";
+import { OctagonAlertIcon, SearchXIcon } from "lucide-react";
+
+import { StatusBadge } from "@/components/status-badge";
+import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import {
+  Empty,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from "@/components/ui/empty";
+import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { DEFAULT_ENVIRONMENT, type PageRange } from "@/lib/analytics-api";
+import { ApiError } from "@/lib/api";
+import { hostsQuery } from "@/lib/hosts-api";
+
+import { formatWhole } from "../analytics/format";
+import { RangeControls } from "../errors/range-controls";
+import { NoSuchProject } from "../projects/no-such-project";
+import { formatPreciseMoment } from "./format";
+import { formatLoad, formatPercent } from "./host-format";
+import { environmentSearch, rangeSearch } from "./search";
+import { SendHostMetrics } from "./send-host-metrics";
+
+/**
+ * Fresh or stale, in words beside the icon: never color alone. Nothing for
+ * a period that ended before now, which says nothing about the host now.
+ */
+export function Freshness({ stale }: { stale: boolean | null }) {
+  if (stale === null) return null;
+  return stale ? (
+    <StatusBadge tone="warning">Stale</StatusBadge>
+  ) : (
+    <StatusBadge tone="good">Reporting</StatusBadge>
+  );
+}
+
+/** A value, or a dash that says nothing was sent to work it out from. */
+function ValueCell({ text }: { text: string | null }) {
+  return (
+    <TableCell className="text-right tabular-nums">
+      {text ?? (
+        <span title="Not sent" aria-label="Not sent">
+          –
+        </span>
+      )}
+    </TableCell>
+  );
+}
+
+/**
+ * The hosts that sent host metrics in the period, by name, each with when
+ * it was last seen, whether it is stale, and its latest CPU, memory,
+ * fullest filesystem, and load. A host opens its charts.
+ */
+export function HostsPage({
+  projectId,
+  range,
+  environment = DEFAULT_ENVIRONMENT,
+}: {
+  projectId: string;
+  range: PageRange;
+  environment?: string;
+}) {
+  const navigate = useNavigate();
+  const list = useQuery(hostsQuery(projectId, range, environment));
+  const show = (next: { range?: PageRange; environment?: string }) =>
+    void navigate({
+      to: "/projects/$projectId/hosts",
+      params: { projectId },
+      search: {
+        ...rangeSearch(next.range ?? range),
+        ...environmentSearch(next.environment ?? environment),
+      },
+    });
+
+  if (list.error instanceof ApiError && list.error.status === 404) {
+    return <NoSuchProject />;
+  }
+  const data = list.data;
+
+  return (
+    <div className="mx-auto flex max-w-6xl flex-col gap-6 p-6">
+      <RangeControls
+        range={range}
+        environment={environment}
+        answered={data}
+        onRange={(next) => show({ range: next })}
+        onEnvironment={(next) => show({ environment: next })}
+      />
+
+      {list.isError && (
+        <Alert variant="destructive">
+          <OctagonAlertIcon />
+          <AlertTitle>
+            {data === undefined ? "The hosts could not load" : "The hosts could not refresh"}
+          </AlertTitle>
+          <AlertDescription>
+            {list.error.message}
+            {data !== undefined && " The list below is from the last successful load."}
+          </AlertDescription>
+          <AlertAction>
+            <Button variant="outline" size="sm" onClick={() => void list.refetch()}>
+              Retry
+            </Button>
+          </AlertAction>
+        </Alert>
+      )}
+      {data === undefined ? (
+        !list.isError && (
+          <div className="flex flex-col gap-2" aria-busy="true" aria-label="Loading">
+            <Skeleton className="h-10 w-full" />
+            <Skeleton className="h-40 w-full" />
+          </div>
+        )
+      ) : !data.received ? (
+        <SendHostMetrics projectId={projectId} retentionDays={data.retentionDays} />
+      ) : (
+        <div
+          className="flex flex-col gap-4 transition-opacity data-[stale=true]:opacity-60"
+          data-stale={list.isPlaceholderData}
+          aria-busy={list.isPlaceholderData}
+        >
+          {data.hosts.length === 0 ? (
+            <Empty className="border border-dashed p-10">
+              <EmptyHeader>
+                <EmptyMedia variant="icon">
+                  <SearchXIcon />
+                </EmptyMedia>
+                <EmptyTitle>No hosts in this period</EmptyTitle>
+                <EmptyDescription>
+                  No host metrics arrived
+                  {environment === DEFAULT_ENVIRONMENT ? "" : ` in ${environment}`} in this period.
+                  Metrics are kept {data.retentionDays} days.
+                </EmptyDescription>
+              </EmptyHeader>
+            </Empty>
+          ) : (
+            <>
+              <Table>
+                <caption className="sr-only">Hosts, by name</caption>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Host</TableHead>
+                    <TableHead>Last seen</TableHead>
+                    <TableHead className="text-right">CPU busy</TableHead>
+                    <TableHead className="text-right">Memory used</TableHead>
+                    <TableHead className="text-right">Fullest filesystem</TableHead>
+                    <TableHead className="text-right">Load (1 min)</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {data.hosts.map((host) => (
+                    <TableRow key={host.host}>
+                      <TableCell className="max-w-xs">
+                        <Link
+                          to="/projects/$projectId/hosts/$host"
+                          params={{ projectId, host: host.host }}
+                          search={{ ...rangeSearch(range), ...environmentSearch(environment) }}
+                          className="block truncate font-mono text-xs text-link hover:underline"
+                          title={host.host}
+                        >
+                          {host.host}
+                        </Link>
+                      </TableCell>
+                      <TableCell>
+                        <span className="flex flex-wrap items-center gap-2">
+                          <time dateTime={host.lastSeen} className="whitespace-nowrap">
+                            {formatPreciseMoment(host.lastSeen, data.timeZone)}
+                          </time>
+                          <Freshness stale={host.stale} />
+                        </span>
+                      </TableCell>
+                      <ValueCell text={formatPercent(host.cpuPercent)} />
+                      <ValueCell text={formatPercent(host.memoryPercent)} />
+                      <ValueCell
+                        text={
+                          host.filesystemPercent === null
+                            ? null
+                            : `${formatPercent(host.filesystemPercent)}${
+                                host.filesystemMount === null || host.filesystemMount === ""
+                                  ? ""
+                                  : ` (${host.filesystemMount})`
+                              }`
+                        }
+                      />
+                      <ValueCell text={formatLoad(host.load1m)} />
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+              <p className="text-sm text-ink-subtle">
+                Each value is the host&apos;s latest in the period. Stale: nothing arrived from the
+                host in the last 5 minutes (shown while the period runs to now). A dash: the host
+                sent nothing to work the value out from. Read-only filesystems, such as snap
+                packages&apos; images, are always full and are left out of the fullest.
+              </p>
+              {data.truncated && (
+                <p className="text-sm text-ink-subtle">
+                  More than {formatWhole(data.hosts.length)} hosts sent metrics: these are the first
+                  by name.
+                </p>
+              )}
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}

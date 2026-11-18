@@ -24,6 +24,7 @@ import {
   type TelemetryRange,
   TRACE_ID_PATTERN,
 } from "./dashboard-query.ts";
+import { hostCharts, listHosts } from "./hosts.ts";
 import {
   logDetail,
   MAX_SEARCH_LENGTH,
@@ -34,7 +35,7 @@ import {
   type Severity,
 } from "./logs.ts";
 import { listMetrics, METRIC_KINDS, type MetricKind, metricChart } from "./metrics.ts";
-import { MAX_KEY_CHARS, MAX_NAME_BYTES } from "./normalize.ts";
+import { MAX_KEY_CHARS, MAX_NAME_BYTES, MAX_VALUE_BYTES } from "./normalize.ts";
 import { listServices } from "./services.ts";
 import { listTraces, spanDetail, traceDetail, traceWindow } from "./traces.ts";
 
@@ -107,6 +108,8 @@ type TracesQuery = RangeQuery & {
 
 type ChartQuery = RangeQuery & { name: string; kind: MetricKind; split?: string };
 
+type HostQuery = RangeQuery & { host: string };
+
 /** The range's parameters alone, for the lists that take nothing else. */
 const RANGE_QUERY = { type: "object", additionalProperties: false, properties: RANGE_PROPERTIES };
 
@@ -130,9 +133,11 @@ type LogsQuery = RangeQuery & {
  * GET /api/projects/:id/metrics[?period=…&environment=…]
  * GET /api/projects/:id/metrics/chart?name=…&kind=gauge|counter|updown|histogram[&split=<attribute key>&period=…&environment=…]
  * GET /api/projects/:id/services[?period=…&environment=…]
+ * GET /api/projects/:id/hosts[?period=…&environment=…]
+ * GET /api/projects/:id/hosts/charts?host=<host.name>[&period=…&environment=…]
  *
- * The Traces, Logs, Metrics, and Services pages (traces.ts, logs.ts,
- * metrics.ts, services.ts). Like every project
+ * The Traces, Logs, Metrics, Services, and Hosts pages (traces.ts,
+ * logs.ts, metrics.ts, services.ts, hosts.ts). Like every project
  * route, each runs requireProjectAccess first, and reads only the project
  * it found.
  */
@@ -161,8 +166,9 @@ export const telemetryDashboardRoutes: FastifyPluginCallback<{
   const projectAccess = requireProjectAccess(db);
   /**
    * Where a request's queries run: each waits for a place among its
-   * organization's (OrganizationLimiter), and all end when the request is
-   * closed before its answer, as when the browser gives up.
+   * organization's (OrganizationLimiter), at most QUERIES_PER_REQUEST of
+   * them at once, and all end when the request is closed or answered, as
+   * when the browser gives up or one query failed.
    */
   function readerOf(
     request: { projectAccess: ProjectAccess | null },
@@ -171,9 +177,10 @@ export const telemetryDashboardRoutes: FastifyPluginCallback<{
     },
   ): Reader {
     const controller = new AbortController();
-    reply.raw.once("close", () => {
-      if (!reply.raw.writableFinished) controller.abort();
-    });
+    // Once the answer is sent or the request is gone, nothing more is
+    // needed: a failed query's 503 also ends the request's other queries,
+    // running or waiting, so they free the organization's places.
+    reply.raw.once("close", () => controller.abort());
     return {
       client: clickhouse,
       signal: controller.signal,
@@ -452,6 +459,56 @@ export const telemetryDashboardRoutes: FastifyPluginCallback<{
       if ("problem" in asked) return reply.code(400).send(asked.problem);
       const { range } = asked;
       return { ...answered(range), ...(await listServices(readerOf(request, reply), range)) };
+    },
+  );
+
+  app.get<{ Params: { id: string }; Querystring: RangeQuery }>(
+    "/projects/:id/hosts",
+    { preHandler: [signedIn, projectAccess], schema: { params: PARAMS, querystring: RANGE_QUERY } },
+    async (request, reply) => {
+      const asked = await rangeOf(request);
+      if ("problem" in asked) return reply.code(400).send(asked.problem);
+      const { range } = asked;
+      return {
+        ...answered(range),
+        ...(await listHosts(readerOf(request, reply), range, now())),
+      };
+    },
+  );
+
+  app.get<{ Params: { id: string }; Querystring: HostQuery }>(
+    "/projects/:id/hosts/charts",
+    {
+      preHandler: [signedIn, projectAccess],
+      schema: {
+        params: PARAMS,
+        querystring: {
+          type: "object",
+          required: ["host"],
+          additionalProperties: false,
+          properties: {
+            ...RANGE_PROPERTIES,
+            // As ingestion stores an attribute's value: at most 4 KB (so at most as many characters).
+            host: { type: "string", minLength: 1, maxLength: MAX_VALUE_BYTES },
+          },
+        },
+      },
+    },
+    async (request, reply) => {
+      const { host } = request.query;
+      if (Buffer.byteLength(host) > MAX_VALUE_BYTES) {
+        return reply.code(400).send({
+          error: "invalid_host",
+          message: `A host's name holds at most ${MAX_VALUE_BYTES} bytes.`,
+        });
+      }
+      const asked = await rangeOf(request);
+      if ("problem" in asked) return reply.code(400).send(asked.problem);
+      const { range } = asked;
+      return {
+        ...answered(range),
+        ...(await hostCharts(readerOf(request, reply), range, host, now())),
+      };
     },
   );
 

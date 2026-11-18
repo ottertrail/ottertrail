@@ -5,7 +5,6 @@ import * as React from "react";
 
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Empty,
   EmptyDescription,
@@ -32,7 +31,8 @@ import {
 
 import { RangeControls } from "../errors/range-controls";
 import { NoSuchProject } from "../projects/no-such-project";
-import { bucketLabel, stepText } from "./chart-time";
+import { ChartCard } from "./chart-card";
+import { stepText } from "./chart-time";
 import { ChoiceFilter } from "./filters";
 import {
   formatMetricValue,
@@ -50,8 +50,8 @@ import {
   type MetricStat,
   rangeSearch,
 } from "./search";
-import { assignSlots } from "./split-colors";
-import { type ChartLine, TimeChart } from "./time-chart";
+import { assignSlots, OTHER_COLOR, SLOTS } from "./split-colors";
+import type { ChartLine } from "./time-chart";
 
 /** What each measure is called, in the legend, the tooltip, and the measure picker. */
 const MEASURE_LABELS: Record<string, string> = {
@@ -64,11 +64,6 @@ const MEASURE_LABELS: Record<string, string> = {
   p95: "95th percentile",
   p99: "99th percentile",
 };
-
-/** The design system's chart colors, assigned in order, never cycled (8 at most). */
-const SLOTS = Array.from({ length: 8 }, (_, index) => `var(--chart-${index + 1})`);
-/** "Other": the de-emphasis gray, so the folded values recede. */
-const OTHER_COLOR = "var(--ink-tertiary)";
 
 /** A line's name: the split attribute's value, "(not set)" for points without it, or "Other". */
 const valueLabel = (value: string | null, other: boolean) =>
@@ -116,149 +111,6 @@ function linesOf(
       values: series.values[measure] ?? [],
     };
   });
-}
-
-/** One chart in a card, with its numbers as a table on demand. */
-function ChartCard({
-  title,
-  description,
-  chart,
-  lines,
-  formatValue,
-  missing,
-}: {
-  title: string;
-  description: React.ReactNode;
-  chart: MetricChart;
-  lines: ChartLine[];
-  formatValue: (value: number) => string;
-  /** Why this chart cannot be drawn, shown in its place. */
-  missing?: string | undefined;
-}) {
-  const [showTable, setShowTable] = React.useState(false);
-  const tableId = React.useId();
-  const startMs = Date.parse(chart.start);
-  const rows = Array.from({ length: chart.buckets }, (_, index) => index).filter((index) =>
-    lines.some((line) => line.values[index] !== null && line.values[index] !== undefined),
-  );
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle>
-          <h3>{title}</h3>
-        </CardTitle>
-        <CardDescription>{description}</CardDescription>
-      </CardHeader>
-      <CardContent className="flex flex-col gap-3">
-        {missing === undefined ? (
-          <ChartAndTable
-            title={title}
-            chart={chart}
-            lines={lines}
-            formatValue={formatValue}
-            showTable={showTable}
-            setShowTable={setShowTable}
-            tableId={tableId}
-            rows={rows}
-            startMs={startMs}
-          />
-        ) : (
-          <p className="py-10 text-center text-sm text-ink-subtle">{missing}</p>
-        )}
-      </CardContent>
-    </Card>
-  );
-}
-
-/** A card's chart, and its numbers as a table on demand. */
-function ChartAndTable({
-  title,
-  chart,
-  lines,
-  formatValue,
-  showTable,
-  setShowTable,
-  tableId,
-  rows,
-  startMs,
-}: {
-  title: string;
-  chart: MetricChart;
-  lines: ChartLine[];
-  formatValue: (value: number) => string;
-  showTable: boolean;
-  setShowTable: React.Dispatch<React.SetStateAction<boolean>>;
-  tableId: string;
-  rows: number[];
-  startMs: number;
-}) {
-  return (
-    <>
-      <TimeChart
-        start={chart.start}
-        stepSeconds={chart.stepSeconds}
-        buckets={chart.buckets}
-        timeZone={chart.timeZone}
-        lines={lines}
-        label={`${title}, ${chart.name}, per ${stepText(chart.stepSeconds)}`}
-        formatValue={formatValue}
-      />
-      <div>
-        <Button
-          variant="ghost"
-          size="sm"
-          aria-expanded={showTable}
-          aria-controls={tableId}
-          onClick={() => setShowTable((shown) => !shown)}
-        >
-          {showTable ? "Hide the numbers" : "Show the numbers"}
-        </Button>
-      </div>
-      <div id={tableId} hidden={!showTable} className="max-h-96 overflow-auto">
-        {showTable && (
-          <table className="w-full text-sm">
-            <caption className="sr-only">{title}</caption>
-            <thead className="sticky top-0 bg-card">
-              <tr className="text-xs text-ink-subtle">
-                <th scope="col" className="pb-2 text-left font-normal">
-                  Time
-                </th>
-                {lines.map((line) => (
-                  <th key={line.key} scope="col" className="pb-2 pl-4 text-right font-normal">
-                    {line.label}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((index) => (
-                <tr key={index} className="border-t border-hairline">
-                  <th
-                    scope="row"
-                    className="py-1.5 text-left font-normal whitespace-nowrap text-ink"
-                  >
-                    {bucketLabel(
-                      new Date(startMs + index * chart.stepSeconds * 1000),
-                      chart.stepSeconds,
-                      chart.timeZone,
-                    )}
-                  </th>
-                  {lines.map((line) => {
-                    const value = line.values[index];
-                    return (
-                      <td key={line.key} className="py-1.5 pl-4 text-right text-ink tabular-nums">
-                        {value === null || value === undefined ? "–" : formatValue(value)}
-                      </td>
-                    );
-                  })}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </div>
-    </>
-  );
 }
 
 /** The cards a kind of metric shows, each with its lines and the way its values read. */
@@ -496,7 +348,8 @@ export function MetricPage({
                       key={card.title}
                       title={card.title}
                       description={card.description}
-                      chart={data}
+                      frame={data}
+                      subject={data.name}
                       lines={card.lines}
                       formatValue={card.format}
                       missing={"missing" in card ? card.missing : undefined}

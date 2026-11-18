@@ -3,7 +3,15 @@ import { infiniteQueryOptions, keepPreviousData, queryOptions } from "@tanstack/
 import { DEFAULT_ENVIRONMENT, type PageRange, rangeParams } from "./analytics-api";
 import { apiRequest, expectShape } from "./api";
 import { isLogSummary, type LogSummary } from "./logs-api";
-import { isListOf, isNumber, isRecord, isText, isTextMap, isTextOrNull } from "./telemetry-shapes";
+import {
+  isListOf,
+  isNumber,
+  isRecord,
+  isText,
+  isTextMap,
+  isTextOrNull,
+  telemetryRetry,
+} from "./telemetry-shapes";
 
 export type SpanKind = "unspecified" | "internal" | "server" | "client" | "producer" | "consumer";
 export type SpanStatus = "unset" | "ok" | "error";
@@ -226,6 +234,7 @@ export const tracesQuery = (
       filters.errors === true,
       filters.minDuration ?? null,
     ],
+    retry: telemetryRetry,
     queryFn: async ({ pageParam, signal }) => {
       const query = new URLSearchParams({
         ...rangeParams(range),
@@ -251,6 +260,7 @@ export const tracesQuery = (
 export const traceQuery = (projectId: string, traceId: string, at: string | undefined) =>
   queryOptions({
     queryKey: ["trace", projectId, traceId, at],
+    retry: telemetryRetry,
     queryFn: async ({ signal }) => {
       const query = at === undefined ? "" : `?${new URLSearchParams({ at }).toString()}`;
       return expectShape(
@@ -267,6 +277,7 @@ export const traceQuery = (projectId: string, traceId: string, at: string | unde
 export const spanQuery = (projectId: string, traceId: string, span: WaterfallSpan) =>
   queryOptions({
     queryKey: ["span", projectId, traceId, span.spanId, span.startNs],
+    retry: telemetryRetry,
     queryFn: async ({ signal }) =>
       expectShape(
         await apiRequest(

@@ -8,6 +8,12 @@
 
 /** Queries of one organization in flight on one process. */
 export const QUERIES_PER_ORGANIZATION = 4;
+/**
+ * Places one request may hold at once, of its organization's: a page that
+ * makes many queries, such as a host's, leaves room for the organization's
+ * other pages.
+ */
+export const QUERIES_PER_REQUEST = 2;
 /** How long a query waits for a place before it is refused. */
 export const QUEUE_WAIT_MS = 10_000;
 
@@ -46,9 +52,49 @@ export class OrganizationLimiter {
     }
   }
 
-  /** A gate for a Reader: every query it runs takes a place of the organization's. */
-  gate(organizationId: string, signal?: AbortSignal) {
-    return <T>(work: () => Promise<T>) => this.run(organizationId, work, signal);
+  /**
+   * A gate for one request's Reader: every query it runs takes a place of
+   * the organization's, and at most `perRequest` run or wait for one at
+   * once; the rest wait their turn within the request. All end when
+   * `signal` fires.
+   */
+  gate(organizationId: string, signal?: AbortSignal, perRequest = QUERIES_PER_REQUEST) {
+    let held = 0;
+    const turns: (() => void)[] = [];
+    /** A place among the request's: at once when one is free, else when one is handed on. */
+    const turn = () =>
+      new Promise<void>((resolve, reject) => {
+        if (signal?.aborted === true) {
+          reject(signal.reason);
+          return;
+        }
+        if (held < perRequest) {
+          held += 1;
+          resolve();
+          return;
+        }
+        const aborted = () => {
+          turns.splice(turns.indexOf(start), 1);
+          reject(signal?.reason);
+        };
+        const start = () => {
+          signal?.removeEventListener("abort", aborted);
+          resolve();
+        };
+        signal?.addEventListener("abort", aborted, { once: true });
+        turns.push(start);
+      });
+    return async <T>(work: () => Promise<T>): Promise<T> => {
+      await turn();
+      try {
+        return await this.run(organizationId, work, signal);
+      } finally {
+        // The place passes straight to the request's next query, if one waits.
+        const next = turns.shift();
+        if (next === undefined) held -= 1;
+        else next();
+      }
+    };
   }
 
   #acquire(organizationId: string, signal?: AbortSignal): Promise<void> {
