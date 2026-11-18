@@ -7,6 +7,7 @@ import type { Auth } from "../auth/auth.ts";
 import { requireSession } from "../auth/routes.ts";
 import type { ClickHouseClient } from "../clickhouse/clickhouse.ts";
 import { clickHouseErrorHandler } from "../clickhouse/route-errors.ts";
+import { ENVIRONMENT_PATTERN, environmentOf } from "../collection/environment.ts";
 import type { Database } from "../db/schema.ts";
 import { type ProjectAccess, requireProjectAccess } from "../projects/access.ts";
 import { RANGE_PROPERTIES, type RangeQuery } from "../reports/routes.ts";
@@ -21,7 +22,7 @@ import {
   telemetryRange,
   TRACE_ID_PATTERN,
 } from "./dashboard-query.ts";
-import { hostCharts, listHosts } from "./hosts.ts";
+import { HOST_KEY, hostCharts, listHosts } from "./hosts.ts";
 import {
   logDetail,
   MAX_SEARCH_LENGTH,
@@ -33,7 +34,7 @@ import {
 } from "./logs.ts";
 import { listMetrics, METRIC_KINDS, type MetricKind, metricChart } from "./metrics.ts";
 import { MAX_KEY_CHARS, MAX_NAME_BYTES, MAX_VALUE_BYTES } from "./normalize.ts";
-import { listServices } from "./services.ts";
+import { listServices, MAX_RECENT_ROUTES, recentRoutes } from "./services.ts";
 import { listTraces, spanDetail, traceDetail, traceWindow } from "./traces.ts";
 
 const UUID_PATTERN =
@@ -41,6 +42,9 @@ const UUID_PATTERN =
 
 /** A moment as the dashboard sends it: an ISO 8601 time in UTC, such as an error's occurrence. */
 const MOMENT_PATTERN = "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,9})?Z$";
+
+/** How far back the alert form's route suggestions look: a day. */
+const RECENT_ROUTES_MS = 86_400_000;
 
 /** The longest minimum duration a filter takes: a day, in milliseconds. */
 const MAX_MIN_DURATION_MS = 86_400_000;
@@ -103,7 +107,14 @@ type TracesQuery = RangeQuery & {
   before?: string;
 };
 
-type ChartQuery = RangeQuery & { name: string; kind: MetricKind; split?: string };
+type ChartQuery = RangeQuery & {
+  name: string;
+  kind: MetricKind;
+  split?: string;
+  host?: string;
+  attr?: string;
+  attrValue?: string;
+};
 
 type HostQuery = RangeQuery & { host: string };
 
@@ -128,8 +139,11 @@ type LogsQuery = RangeQuery & {
  * GET /api/projects/:id/logs/:logId?time=<ns since 1970>
  *     (one whole record: body, attributes, resource attributes)
  * GET /api/projects/:id/metrics[?period=…&environment=…]
- * GET /api/projects/:id/metrics/chart?name=…&kind=gauge|counter|updown|histogram[&split=<attribute key>&period=…&environment=…]
+ * GET /api/projects/:id/metrics/chart?name=…&kind=gauge|counter|updown|histogram[&split=<attribute key>&host=<host.name>&attr=<key>&attrValue=<value>&period=…&environment=…]
+ *     (host: one host's series only; attr and attrValue: one attribute value's points only)
  * GET /api/projects/:id/services[?period=…&environment=…]
+ * GET /api/projects/:id/services/routes[?environment=…]
+ *     (up to 200 distinct services and routes of the last 24 hours, for the alert form)
  * GET /api/projects/:id/hosts[?period=…&environment=…]
  * GET /api/projects/:id/hosts/charts?host=<host.name>[&period=…&environment=…]
  *
@@ -380,22 +394,52 @@ export const telemetryDashboardRoutes: FastifyPluginCallback<{
             name: { type: "string", maxLength: MAX_NAME_BYTES },
             kind: { type: "string", enum: METRIC_KINDS },
             split: { type: "string", minLength: 1, maxLength: MAX_KEY_CHARS },
+            host: { type: "string", minLength: 1, maxLength: MAX_VALUE_BYTES },
+            attr: { type: "string", minLength: 1, maxLength: MAX_KEY_CHARS },
+            attrValue: { type: "string", maxLength: MAX_VALUE_BYTES },
           },
+          dependencies: { attr: ["attrValue"], attrValue: ["attr"] },
         },
       },
     },
     async (request, reply) => {
-      const { name, kind, split } = request.query;
+      const { name, kind, split, host, attr, attrValue } = request.query;
       if (Buffer.byteLength(name) > MAX_NAME_BYTES) {
         return reply.code(400).send({
           error: "invalid_name",
           message: `A metric's name holds at most ${MAX_NAME_BYTES} bytes.`,
         });
       }
+      if (Buffer.byteLength(host ?? "") > MAX_VALUE_BYTES) {
+        return reply.code(400).send({
+          error: "invalid_host",
+          message: `A host's name holds at most ${MAX_VALUE_BYTES} bytes.`,
+        });
+      }
+      if (Buffer.byteLength(attrValue ?? "") > MAX_VALUE_BYTES) {
+        return reply.code(400).send({
+          error: "invalid_attribute",
+          message: `An attribute's value holds at most ${MAX_VALUE_BYTES} bytes.`,
+        });
+      }
       const asked = await rangeOf(request);
       if ("problem" in asked) return reply.code(400).send(asked.problem);
       const { range } = asked;
-      const chart = await metricChart(readerOf(reply), range, { name, kind, split }, now());
+      const chart = await metricChart(
+        readerOf(reply),
+        range,
+        {
+          name,
+          kind,
+          split,
+          resource: host === undefined ? undefined : { key: HOST_KEY, value: host },
+          attribute:
+            attr === undefined || attrValue === undefined
+              ? undefined
+              : { keys: [attr], value: attrValue },
+        },
+        now(),
+      );
       return { ...answered(range), ...chart };
     },
   );
@@ -408,6 +452,32 @@ export const telemetryDashboardRoutes: FastifyPluginCallback<{
       if ("problem" in asked) return reply.code(400).send(asked.problem);
       const { range } = asked;
       return { ...answered(range), ...(await listServices(readerOf(reply), range)) };
+    },
+  );
+
+  app.get<{ Params: { id: string }; Querystring: { environment?: string } }>(
+    "/projects/:id/services/routes",
+    {
+      preHandler: [signedIn, projectAccess],
+      schema: {
+        params: PARAMS,
+        querystring: {
+          type: "object",
+          additionalProperties: false,
+          properties: { environment: { type: "string", pattern: ENVIRONMENT_PATTERN } },
+        },
+      },
+    },
+    async (request, reply) => {
+      const at = now();
+      const environment = environmentOf(request.query.environment);
+      const found = await recentRoutes(readerOf(reply), {
+        projectId: accessOf(request).projectId,
+        environment,
+        from: new Date(at.getTime() - RECENT_ROUTES_MS),
+        to: at,
+      });
+      return { environment, maxRoutes: MAX_RECENT_ROUTES, ...found };
     },
   );
 

@@ -22,6 +22,42 @@ export function filterText(value: unknown): string | undefined {
   return text === "" || text.length > 200 ? undefined : text;
 }
 
+/**
+ * A value an address names, such as a route, a host, or an attribute's
+ * value: up to `max` characters (4 KB, as the API takes them); a number
+ * the address parsed comes back as text.
+ */
+export function searchValue(value: unknown, max = 4096): string | undefined {
+  const found = typeof value === "number" ? String(value) : value;
+  return typeof found === "string" && found !== "" && found.length <= max ? found : undefined;
+}
+
+/** The Services page's address: besides the days and environment, a service and route to show. */
+export interface ServicesSearch {
+  range: PageRange;
+  environment: string;
+  /** Only this service's card. */
+  service?: string | undefined;
+  /** Its route, marked. */
+  route?: string | undefined;
+}
+
+export const servicesSearchOf = ({ range, environment, service, route }: ServicesSearch) => ({
+  ...rangeSearch(range),
+  ...environmentSearch(environment),
+  ...(service === undefined ? {} : { service }),
+  ...(service === undefined || route === undefined ? {} : { route }),
+});
+
+/** The service and route an address names. */
+export function serviceChoiceFrom(search: { service?: unknown; route?: unknown }): {
+  service: string | undefined;
+  route: string | undefined;
+} {
+  const service = searchValue(search.service, 256);
+  return { service, route: service === undefined ? undefined : searchValue(search.route) };
+}
+
 /** The Traces page's address: what it shows, the defaults left out. */
 export interface TracesSearch {
   range: PageRange;
@@ -101,22 +137,54 @@ export const DEFAULT_STAT: Record<MetricKind, MetricStat> = {
   histogram: "p95",
 };
 
-/** A metric's page's address, besides its name: its kind, and the split and measure shown. */
+/**
+ * A metric's page's address, besides its name: its kind, the split and
+ * measure shown, and what it reads only (one host, one attribute value).
+ */
 export interface MetricSearch {
   range: PageRange;
   environment: string;
   kind: MetricKind;
   split: string | undefined;
   stat: MetricStat;
+  host?: string | undefined;
+  attr?: { key: string; value: string } | undefined;
 }
 
-export const metricSearchOf = ({ range, environment, kind, split, stat }: MetricSearch) => ({
+export const metricSearchOf = ({
+  range,
+  environment,
+  kind,
+  split,
+  stat,
+  host,
+  attr,
+}: MetricSearch) => ({
   ...rangeSearch(range),
   ...environmentSearch(environment),
   kind,
   ...(split === undefined ? {} : { split }),
   ...(stat === DEFAULT_STAT[kind] ? {} : { stat }),
+  ...(host === undefined ? {} : { host }),
+  ...(attr === undefined ? {} : { attr: attr.key, attrValue: attr.value }),
 });
+
+/** The host and attribute value a metric's address narrows it to. */
+export function metricFiltersFrom(search: {
+  host?: unknown;
+  attr?: unknown;
+  attrValue?: unknown;
+}): { host: string | undefined; attr: { key: string; value: string } | undefined } {
+  const key = searchValue(search.attr, 256);
+  const value =
+    typeof search.attrValue === "string" && search.attrValue.length <= 4096
+      ? search.attrValue
+      : searchValue(search.attrValue);
+  return {
+    host: searchValue(search.host),
+    attr: key === undefined || value === undefined ? undefined : { key, value },
+  };
+}
 
 /** The kind, split, and measure from an address; a kind that is not one leaves undefined. */
 export function metricChoicesFrom(search: { kind?: unknown; split?: unknown; stat?: unknown }): {

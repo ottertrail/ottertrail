@@ -316,6 +316,8 @@ export function buildApp({
     app.register(alertRoutes, {
       prefix: "/api",
       db,
+      clickhouse: telemetry.clickhouse ?? dashboard.clickhouse,
+      limiter,
       auth: dashboard.auth,
       trustedOrigins: dashboard.trustedOrigins,
       ...(dashboard.now === undefined ? {} : { now: dashboard.now }),

@@ -118,7 +118,15 @@ export const DASHBOARD_SETTINGS = {
    */
   max_bytes_before_external_group_by: "100000000",
   max_bytes_before_external_sort: "100000000",
-  /** A query ends when the API closes its request, as when the browser gives up (Reader.signal). */
+  /**
+   * Read-only, settings still changeable: these queries only read (a
+   * grouping or sort spilled to disk is still a read). ClickHouse stops a
+   * query whose HTTP connection closes only when it is read-only, and the
+   * client sends its queries as POST with readonly 0 unless told; with
+   * readonly 2, a query ends when the API closes its request, as when the
+   * browser gives up or the reader's signal fires (Reader.signal).
+   */
+  readonly: "2",
   cancel_http_readonly_queries_on_client_close: 1,
 } as const;
 

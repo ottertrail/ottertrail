@@ -5,6 +5,7 @@ import {
   isRuleKind,
   KIND_LABEL,
   type Rule,
+  type SaveWarning,
 } from "../../src/lib/alerts-api.ts";
 import type { Analytics, BreakdownRow, DayPoint } from "../../src/lib/analytics-api.ts";
 import type { Channel, Delivery } from "../../src/lib/channels-api.ts";
@@ -2002,6 +2003,7 @@ export function fakeAlerts(): FakeAlerts {
   const [, apiHealth] = fakeChecks();
   const base = {
     disabledReason: null,
+    evaluationError: null,
     lastFiredAt: null,
     createdAt: "2026-11-12T00:00:00.000Z",
     updatedAt: "2026-11-12T00:00:00.000Z",
@@ -2155,6 +2157,7 @@ function saveRule(api: FakeApi, body: unknown, existing?: Rule): Response {
     channelIds,
     enabled,
     disabledReason: enabled ? null : (existing?.disabledReason ?? null),
+    evaluationError: existing?.evaluationError ?? null,
     firing: enabled ? (existing?.firing ?? 0) : 0,
     lastFiredAt: existing?.lastFiredAt ?? null,
     createdAt: existing?.createdAt ?? now,
@@ -2164,7 +2167,43 @@ function saveRule(api: FakeApi, body: unknown, existing?: Rule): Response {
     existing === undefined
       ? [...api.alerts.rules, rule]
       : api.alerts.rules.map((item) => (item.id === rule.id ? rule : item));
-  return json({ rule }, existing === undefined ? 201 : 200);
+  return json({ rule, warning: notSeenWarning(rule) }, existing === undefined ? 201 : 200);
+}
+
+/** As the API warns: a telemetry rule's service or metric the fixtures do not have. */
+function notSeenWarning(rule: Rule): SaveWarning | null {
+  const { settings } = rule;
+  const environment = settings.environment ?? "production";
+  if (rule.kind === "route_latency" || rule.kind === "route_failures") {
+    const known = fakeServices(new URLSearchParams()).services.some(
+      (item) => item.service === settings.service,
+    );
+    if (settings.service === "unreachable") {
+      return {
+        reason: "not_checked",
+        message:
+          "Whether what the rule watches has reported in the last 24 hours could not be checked. The rule is saved.",
+      };
+    }
+    return known
+      ? null
+      : {
+          reason: "not_seen",
+          message: `No request of ${settings.service ?? ""} has arrived in ${environment} in the last 24 hours. The rule is saved: it starts watching once the service reports.`,
+        };
+  }
+  if (rule.kind === "metric_threshold") {
+    const known = fakeMetrics(new URLSearchParams()).metrics.some(
+      (item) => item.name === settings.metric && item.kind === settings.metricKind,
+    );
+    return known
+      ? null
+      : {
+          reason: "not_seen",
+          message: `No point of the ${settings.metricKind ?? ""} ${settings.metric ?? ""} has arrived in ${environment} in the last 24 hours. The rule is saved: it starts watching once the metric reports.`,
+        };
+  }
+  return null;
 }
 
 /** The alert routes; null for any other path. */
@@ -2711,6 +2750,19 @@ async function answer(api: FakeApi, url: URL, init: RequestInit | undefined): Pr
   if (/^\/api\/projects\/[^/]+\/services$/.test(path)) {
     const result = api.services(url.searchParams);
     return result instanceof Response ? result : json(result);
+  }
+  if (/^\/api\/projects\/[^/]+\/services\/routes$/.test(path)) {
+    // The fixtures' services and routes, as the last day's would be.
+    const list = api.services(url.searchParams);
+    if (list instanceof Response) return list;
+    return json({
+      environment: url.searchParams.get("environment") ?? "production",
+      maxRoutes: 200,
+      routes: list.services.flatMap((item) =>
+        item.routes.map((route) => ({ service: item.service, route: route.route })),
+      ),
+      truncated: false,
+    });
   }
   if (/^\/api\/projects\/[^/]+\/errors$/.test(path)) {
     const result = api.errors(url.searchParams, api);

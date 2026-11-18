@@ -13,7 +13,8 @@
  * - Evaluating alert rules (alerts/evaluator.ts): a check's rules as soon
  *   as it changes state or shows a new certificate, and every minute the
  *   check-down and error rules of every project, recording each alert
- *   with its notification.
+ *   with its notification; and, on a loop of their own every few seconds,
+ *   the telemetry rules due (each once a minute, taken by one worker).
  * - Sending due notifications every few seconds, at most 10 at once, by
  *   email and webhook, retrying failures for about an hour, and deleting
  *   deliveries past their 30 days every hour (notifications/sender.ts).
@@ -27,6 +28,7 @@
  * are enough; a job queue comes with work that needs one.
  */
 import { ALERT_TICK_MS, AlertEvaluator } from "./alerts/evaluator.ts";
+import { TELEMETRY_TICK_MS } from "./alerts/telemetry-rules.ts";
 import { createClickHouse } from "./clickhouse/clickhouse.ts";
 import {
   purgeDeletedProjects,
@@ -73,9 +75,9 @@ let stopping = false;
  * shutdown. Returns what stops it: the waiting timer is cleared, and a run
  * in progress finishes first.
  */
-function every(intervalMs: number, job: () => Promise<void>): () => Promise<void> {
+function every(intervalMs: number, job: () => Promise<unknown>): () => Promise<void> {
   let timer: ReturnType<typeof setTimeout> | undefined;
-  let running: Promise<void> = Promise.resolve();
+  let running: Promise<unknown> = Promise.resolve();
   const run = () => {
     running = job().finally(() => {
       if (!stopping) timer = setTimeout(run, intervalMs);
@@ -147,6 +149,8 @@ const checks = new CheckScheduler({
 });
 
 const stopAlerts = every(ALERT_TICK_MS, () => alerts.tick());
+// Telemetry rules due, every few seconds, on a loop of their own.
+const stopTelemetryAlerts = every(TELEMETRY_TICK_MS, () => alerts.telemetryTick());
 
 /** Whether the last look for due checks failed: an outage is logged once. */
 let checksFailing = false;
@@ -233,12 +237,15 @@ const stopRetention = every(RETENTION_INTERVAL_MS, async () => {
 async function shutdown(signal: NodeJS.Signals) {
   log("info", "shutting down", { signal });
   stopping = true;
+  // Telemetry rules not started yet are left to another worker, or the next start.
+  alerts.stop();
   // Runs in progress finish their batch first.
   await Promise.all([
     stopPurging(),
     stopReplays(),
     stopChecks(),
     stopAlerts(),
+    stopTelemetryAlerts(),
     stopDeliveries(),
     stopPruning(),
     stopRetention(),

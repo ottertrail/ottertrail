@@ -4,9 +4,11 @@ import type { Kysely } from "kysely";
 import type { Auth } from "../auth/auth.ts";
 import { requireTrustedOrigin } from "../auth/origin.ts";
 import { requireSession } from "../auth/routes.ts";
+import type { ClickHouseClient } from "../clickhouse/clickhouse.ts";
 import type { Database } from "../db/schema.ts";
 import type { Problem } from "../outbound/url.ts";
 import { type ProjectAccess, requireProjectAccess } from "../projects/access.ts";
+import { DashboardQueryLimiter, dashboardReader } from "../telemetry/dashboard-limit.ts";
 import { RULE_HOURLY_CAP } from "./fire.ts";
 import {
   MAX_RULE_CHANNELS,
@@ -24,11 +26,13 @@ import {
   listHistory,
   listRules,
   MAX_HISTORY_PAGE,
+  type Rule,
   type RuleInput,
   ruleValuesOf,
   updateRule,
   valuesOfRule,
 } from "./rules.ts";
+import { notSeenWarning } from "./telemetry-rules.ts";
 
 const UUID_PATTERN =
   "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$";
@@ -100,19 +104,53 @@ function accessOf(request: { projectAccess: ProjectAccess | null }): ProjectAcce
  * A project's alert rules (rules.ts; docs/uptime-alerts.md, "Alerts"):
  * at most 50, each sending to one or more of the instance's channels. A
  * rule's channels must exist and its check must be the project's (400
- * otherwise). Changes need the dashboard's origin. Like every project
+ * otherwise). A telemetry rule whose service, route, or metric has not
+ * reported in the last days is saved, with a `warning` saying so: it may
+ * be set up before the app is deployed. Changes need the dashboard's
+ * origin. Like every project
  * route, each runs requireProjectAccess first, and reads only the
  * project it found.
  */
 export const alertRoutes: FastifyPluginCallback<{
   db: Kysely<Database>;
+  /** Where a telemetry rule's service or metric is looked for. */
+  clickhouse: ClickHouseClient;
   auth: Auth;
   trustedOrigins: readonly string[];
+  /** The dashboard's limit on ClickHouse queries at once, shared with its pages. */
+  limiter?: DashboardQueryLimiter;
   now?: () => Date;
-}> = (app, { db, auth, trustedOrigins, now = () => new Date() }, done) => {
+}> = (
+  app,
+  {
+    db,
+    clickhouse,
+    auth,
+    trustedOrigins,
+    limiter = new DashboardQueryLimiter(),
+    now = () => new Date(),
+  },
+  done,
+) => {
   const signedIn = requireSession(auth);
   const projectAccess = requireProjectAccess(db);
   const fromDashboard = requireTrustedOrigin(trustedOrigins);
+
+  /** The rule as answered, with why a telemetry rule may not fire yet, if it may not. */
+  const saved = async (
+    rule: Rule,
+    projectId: string,
+    reply: Parameters<typeof dashboardReader>[2],
+  ) => ({
+    rule,
+    warning: await notSeenWarning(
+      dashboardReader(clickhouse, limiter, reply),
+      projectId,
+      rule.kind,
+      rule.settings,
+      now(),
+    ),
+  });
 
   app.get<{ Params: { id: string } }>(
     "/projects/:id/alert-rules",
@@ -155,7 +193,7 @@ export const alertRoutes: FastifyPluginCallback<{
         });
       }
       if ("problem" in created) return reply.code(400).send(created.problem);
-      return reply.code(201).send({ rule: created.rule });
+      return reply.code(201).send(await saved(created.rule, projectId, reply));
     },
   );
 
@@ -194,7 +232,10 @@ export const alertRoutes: FastifyPluginCallback<{
       });
       if (updated === null) return reply.code(404).send(NO_RULE);
       if ("problem" in updated) return reply.code(400).send(updated.problem);
-      return { rule: updated.rule };
+      // Only a change of what it watches is looked for again.
+      return request.body.kind === undefined && request.body.settings === undefined
+        ? { rule: updated.rule, warning: null }
+        : saved(updated.rule, projectId, reply);
     },
   );
 

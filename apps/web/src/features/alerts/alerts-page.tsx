@@ -3,11 +3,13 @@ import { Link, useNavigate } from "@tanstack/react-router";
 import {
   BellIcon,
   BellOffIcon,
+  InfoIcon,
   LoaderCircleIcon,
   OctagonAlertIcon,
   PencilIcon,
   PlusIcon,
   Trash2Icon,
+  TriangleAlertIcon,
 } from "lucide-react";
 import * as React from "react";
 
@@ -49,6 +51,7 @@ import {
   historyQuery,
   type Rule,
   rulesQuery,
+  type SaveWarning,
   updateRule,
 } from "@/lib/alerts-api";
 import { ApiError } from "@/lib/api";
@@ -122,17 +125,25 @@ function DeleteRuleDialog({
   );
 }
 
+/** What the page says after a rule is saved whose service or metric has not reported lately. */
+type SavedWarning = { ruleName: string; warning: SaveWarning | null };
+
 /** One rule's row: what it watches, its channels, its state, on or off, edit and delete. */
 function RuleRow({
   projectId,
   rule,
   checks,
   channels,
+  timeZone,
+  onWarning,
 }: {
   projectId: string;
   rule: Rule;
   checks: readonly { id: string; name: string }[];
   channels: readonly Channel[];
+  /** The instance's, for when a rule stopped being evaluated. */
+  timeZone: string;
+  onWarning: (saved: SavedWarning) => void;
 }) {
   const queryClient = useQueryClient();
   const [editing, setEditing] = React.useState(false);
@@ -153,6 +164,18 @@ function RuleRow({
           <RuleStateBadge rule={rule} />
           {!rule.enabled && rule.disabledReason !== null && (
             <span className="max-w-60 text-xs text-ink-subtle">{rule.disabledReason}</span>
+          )}
+          {rule.enabled && rule.evaluationError !== null && (
+            <span className="flex max-w-60 items-start gap-1 text-xs text-destructive">
+              <TriangleAlertIcon aria-hidden="true" className="mt-0.5 size-3 shrink-0" />
+              <span>
+                Not evaluated since{" "}
+                <time dateTime={rule.evaluationError.since}>
+                  {formatMoment(rule.evaluationError.since, timeZone)}
+                </time>
+                : {rule.evaluationError.message}
+              </span>
+            </span>
           )}
         </div>
       </TableCell>
@@ -195,6 +218,7 @@ function RuleRow({
           rule={rule}
           checks={checks}
           channels={channels}
+          onWarning={onWarning}
         />
         <DeleteRuleDialog
           projectId={projectId}
@@ -219,7 +243,7 @@ function FiringCard({ projectId }: { projectId: string }) {
         </CardTitle>
         <CardDescription>
           Alerts that have not resolved: a check still down, a certificate still close to its end,
-          errors still above a spike&apos;s threshold.
+          errors still above a spike&apos;s threshold, a route or a metric still past its threshold.
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -357,6 +381,7 @@ export function AlertsPage({ projectId, prefill }: { projectId: string; prefill:
   const channels = useQuery(channelsQuery());
   const checks = useQuery(checksQuery(projectId));
   const [adding, setAdding] = React.useState(false);
+  const [notice, setNotice] = React.useState<SavedWarning | null>(null);
 
   if (list.error instanceof ApiError && list.error.status === 404) {
     return <NoSuchProject />;
@@ -406,6 +431,22 @@ export function AlertsPage({ projectId, prefill }: { projectId: string; prefill:
           </AlertAction>
         </Alert>
       )}
+      {notice !== null && notice.warning !== null && (
+        <Alert>
+          <InfoIcon />
+          <AlertTitle>
+            {notice.warning.reason === "not_seen"
+              ? `“${notice.ruleName}” is saved, and has nothing to watch yet`
+              : `“${notice.ruleName}” is saved; whether it has anything to watch could not be checked`}
+          </AlertTitle>
+          <AlertDescription>{notice.warning.message}</AlertDescription>
+          <AlertAction>
+            <Button variant="outline" size="sm" onClick={() => setNotice(null)}>
+              Dismiss
+            </Button>
+          </AlertAction>
+        </Alert>
+      )}
       {noChannels && (
         <Alert>
           <BellOffIcon />
@@ -438,8 +479,9 @@ export function AlertsPage({ projectId, prefill }: { projectId: string; prefill:
             <EmptyDescription>
               A rule watches the project and tells your team when something breaks: a check that
               goes down or a certificate about to expire, an error never seen before or back after
-              being resolved, a sudden rise in errors. It sends to the channels you choose, by email
-              or webhook, and again when it is over.
+              being resolved, a sudden rise in errors, a slow or failing route, a metric above or
+              below a value. It sends to the channels you choose, by email or webhook, and again
+              when it is over.
             </EmptyDescription>
           </EmptyHeader>
           <EmptyContent>{addButton}</EmptyContent>
@@ -479,6 +521,8 @@ export function AlertsPage({ projectId, prefill }: { projectId: string; prefill:
                   rule={rule}
                   checks={checkList}
                   channels={channelList}
+                  timeZone={data.timeZone}
+                  onWarning={setNotice}
                 />
               ))}
             </TableBody>
@@ -500,6 +544,7 @@ export function AlertsPage({ projectId, prefill }: { projectId: string; prefill:
           prefill={prefill}
           checks={checkList}
           channels={channelList}
+          onWarning={setNotice}
         />
       )}
     </div>

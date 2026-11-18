@@ -65,24 +65,30 @@ The body, version 1:
 
 ### Event types
 
-| Type                   | Sent when                                                                                     |
-| ---------------------- | --------------------------------------------------------------------------------------------- |
-| `check.down`           | An uptime check goes down                                                                     |
-| `check.up`             | It is no longer down: up again, paused, or its URL changed                                    |
-| `certificate.expiring` | A check's certificate expires within the rule's number of days                                |
-| `certificate.renewed`  | Its expiry moved past the rule's days, or the check no longer reports a certificate           |
-| `error.new`            | An error group is seen for the first time                                                     |
-| `error.regressed`      | A resolved error group occurs again                                                           |
-| `error.spike`          | Errors in the rule's window reach its threshold                                               |
-| `error.spike_resolved` | They stay below it for the same window                                                        |
-| `alert.held_back`      | A rule held notifications back after sending 20 in an hour; says how many, once the hour ends |
-| `test`                 | Someone sends a test from the Settings page                                                   |
+| Type                        | Sent when                                                                                     |
+| --------------------------- | --------------------------------------------------------------------------------------------- |
+| `check.down`                | An uptime check goes down                                                                     |
+| `check.up`                  | It is no longer down: up again, paused, or its URL changed                                    |
+| `certificate.expiring`      | A check's certificate expires within the rule's number of days                                |
+| `certificate.renewed`       | Its expiry moved past the rule's days, or the check no longer reports a certificate           |
+| `error.new`                 | An error group is seen for the first time                                                     |
+| `error.regressed`           | A resolved error group occurs again                                                           |
+| `error.spike`               | Errors in the rule's window reach its threshold                                               |
+| `error.spike_resolved`      | They stay below it for the same window                                                        |
+| `route.latency`             | A route's (or a service's) p95 or p99 duration over the rule's window is above its threshold  |
+| `route.latency_resolved`    | It stays at or below it for the same window                                                   |
+| `route.failures`            | A route's (or a service's) failed share over the window is above the rule's percentage        |
+| `route.failures_resolved`   | It stays at or below it for the same window                                                   |
+| `metric.threshold`          | A metric, read as its chart reads it, is above (or below) the rule's value over the window    |
+| `metric.threshold_resolved` | It is back on the right side for the same window                                              |
+| `alert.held_back`           | A rule held notifications back after sending 20 in an hour; says how many, once the hour ends |
+| `test`                      | Someone sends a test from the Settings page                                                   |
 
-Alert rules ([step 3](uptime-alerts.md#step-3-alert-rules-as-built)) send all but `test`; alerts on telemetry will add types of their own. A receiver should ignore a type it does not know.
+Alert rules ([step 3](uptime-alerts.md#step-3-alert-rules-as-built), and [step 4](uptime-alerts.md#step-4-alerts-on-telemetry-as-built) for the route and metric types) send all but `test`. A receiver should ignore a type it does not know.
 
 ### Example bodies
 
-Each alert's `subject` names what it is about, with `ruleId` and `ruleName`, the rule that sent it. Messages say what happened and name the project; an error's message is cut to 200 characters. The links point at the dashboard: the check's page, the error group's page in the alert's environment, the error list, or the Alerts page.
+Each alert's `subject` names what it is about, with `ruleId` and `ruleName`, the rule that sent it. Messages say what happened and name the project; an error's message is cut to 200 characters, and a route, a host, or an attribute's value to 300 (a rule names one of at most 1,000). A link that would pass 2,048 characters leaves out a route, host, or attribute value, the longest first. The links point at the dashboard: the check's page, the error group's page in the alert's environment, the error list, the Services page on a service, a metric's page, or the Alerts page.
 
 #### `check.down` and `check.up`
 
@@ -222,6 +228,106 @@ Each alert's `subject` names what it is about, with `ruleId` and `ruleName`, the
 ```
 
 With one group, `fingerprint` is its ID, the message names its type and message ("27 occurrences of TypeError: …"), and the link is the group's page, in the rule's environment or, for a rule over every environment, in the environment of the window's latest occurrence. `error.spike_resolved` has the same subject, with the count at that time, and a message such as `Shop: errors in production stayed below the threshold of 20 for 10 minutes: 4 in the last 10 minutes.`
+
+#### `route.latency` and `route.latency_resolved`
+
+```json
+{
+  "version": 1,
+  "id": "3c2d9f0e-61a4-4c3b-9d27-5b8e1f0a7c64",
+  "type": "route.latency",
+  "time": "2026-11-18T09:12:00.000Z",
+  "project": {
+    "id": "0d6e5f80-0c4f-4b8e-9d3a-3f8f6a1c2b7e",
+    "name": "Shop"
+  },
+  "subject": {
+    "type": "route",
+    "service": "checkout",
+    "route": "GET /cart",
+    "environment": "production",
+    "windowMinutes": 10,
+    "requests": 1204,
+    "percentile": "p95",
+    "valueMs": 812.4,
+    "thresholdMs": 500,
+    "ruleId": "5a2c7e10-3b4d-4e6f-8a9b-0c1d2e3f4a5b",
+    "ruleName": "Cart latency"
+  },
+  "message": "Shop: the 95th percentile duration of GET /cart in checkout in production was 812.4 ms over the last 10 minutes, above the rule's 500 ms, across 1,204 requests.",
+  "url": "https://analytics.example.com/projects/0d6e5f80-0c4f-4b8e-9d3a-3f8f6a1c2b7e/services?env=%22production%22&service=%22checkout%22&route=%22GET+%2Fcart%22"
+}
+```
+
+`valueMs` is the window's percentile, rounded to 3 decimals; `percentile` is `p95` or `p99`. For a rule on the whole service, `route` is `null`, the message says "requests of checkout", and the link has no `route`. The link opens the Services page on the service, its route marked. `route.latency_resolved` has the same subject, with the values at that time, and a message such as `Shop: the 95th percentile duration of GET /cart in checkout in production stayed at or below 500 ms for 10 minutes: 230 ms over the last 10 minutes, across 980 requests.` Durations of a second or more read in seconds ("1.25 s").
+
+#### `route.failures` and `route.failures_resolved`
+
+```json
+{
+  "version": 1,
+  "id": "9e41c7b2-0f6d-4a85-b3c1-27d8e5f6a903",
+  "type": "route.failures",
+  "time": "2026-11-18T09:20:00.000Z",
+  "project": {
+    "id": "0d6e5f80-0c4f-4b8e-9d3a-3f8f6a1c2b7e",
+    "name": "Shop"
+  },
+  "subject": {
+    "type": "route",
+    "service": "checkout",
+    "route": null,
+    "environment": "production",
+    "windowMinutes": 5,
+    "requests": 480,
+    "failed": 31,
+    "failedPercent": 6.458,
+    "thresholdPercent": 5,
+    "ruleId": "5a2c7e10-3b4d-4e6f-8a9b-0c1d2e3f4a5b",
+    "ruleName": "Checkout failing"
+  },
+  "message": "Shop: 6.458% of requests of checkout in production failed over the last 5 minutes, above the rule's 5%: 31 of 480 requests.",
+  "url": "https://analytics.example.com/projects/0d6e5f80-0c4f-4b8e-9d3a-3f8f6a1c2b7e/services?env=%22production%22&service=%22checkout%22"
+}
+```
+
+A request failed when its span's status is Error. `route.failures_resolved` has the same subject, and a message such as `Shop: the failed share of requests of checkout in production stayed at or below 5% for 5 minutes: 0.4% over the last 5 minutes, 2 of 500 requests.`
+
+#### `metric.threshold` and `metric.threshold_resolved`
+
+```json
+{
+  "version": 1,
+  "id": "d07f5a3b-8c19-4e62-a4f0-6b2e9c1d8e75",
+  "type": "metric.threshold",
+  "time": "2026-11-18T09:31:00.000Z",
+  "project": {
+    "id": "0d6e5f80-0c4f-4b8e-9d3a-3f8f6a1c2b7e",
+    "name": "Shop"
+  },
+  "subject": {
+    "type": "metric",
+    "metric": "http.server.request.duration",
+    "metricKind": "histogram",
+    "aggregate": "p95",
+    "direction": "below",
+    "value": 1.2,
+    "threshold": 2,
+    "unit": "ms",
+    "environment": "production",
+    "host": "web-1",
+    "attributeKey": null,
+    "attributeValue": null,
+    "windowMinutes": 10,
+    "ruleId": "5a2c7e10-3b4d-4e6f-8a9b-0c1d2e3f4a5b",
+    "ruleName": "Pages answer too fast"
+  },
+  "message": "Shop: the 95th percentile of http.server.request.duration on host web-1 in production was 1.2 ms over the last 10 minutes, below the rule's 2 ms.",
+  "url": "https://analytics.example.com/projects/0d6e5f80-0c4f-4b8e-9d3a-3f8f6a1c2b7e/metrics/http.server.request.duration?kind=%22histogram%22&env=%22production%22&host=%22web-1%22"
+}
+```
+
+`metricKind` is `gauge`, `counter`, `updown`, or `histogram`; `aggregate` is what the rule reads of it, as the metric's chart does: `avg`, `min`, or `max` (a gauge), `rate` (a counter, per second), `sum` (an up-down counter), or `p50`, `p95`, or `p99` (a histogram); `direction` is `above` or `below`; `value` is the window's, unrounded, and `unit` the metric's, as the series with the most points in the window names it. A rule narrowed to an attribute value has `attributeKey` and `attributeValue`, and its message says so ("where queue is emails"). The link opens the metric's page with its kind, environment, and filters. `metric.threshold_resolved` has the same subject, and a message such as `Shop: the 95th percentile of http.server.request.duration on host web-1 in production stayed at or above 2 ms for 10 minutes: 38.5 ms over the last 10 minutes.` A message leaves out a unit of `1` and an annotation in braces such as `{request}`.
 
 #### `alert.held_back`
 

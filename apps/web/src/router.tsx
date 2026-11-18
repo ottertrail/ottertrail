@@ -43,7 +43,14 @@ import { HostsPage } from "@/features/telemetry/hosts-page";
 import { LogsPage } from "@/features/telemetry/logs-page";
 import { MetricPage } from "@/features/telemetry/metric-page";
 import { MetricsPage } from "@/features/telemetry/metrics-page";
-import { logFiltersFrom, metricChoicesFrom, traceFiltersFrom } from "@/features/telemetry/search";
+import {
+  logFiltersFrom,
+  metricChoicesFrom,
+  metricFiltersFrom,
+  searchValue,
+  serviceChoiceFrom,
+  traceFiltersFrom,
+} from "@/features/telemetry/search";
 import { ServicesPage } from "@/features/telemetry/services-page";
 import { TracePage } from "@/features/telemetry/trace-page";
 import { TracesPage } from "@/features/telemetry/traces-page";
@@ -65,6 +72,7 @@ import { ApiError } from "@/lib/api";
 import { authClient } from "@/lib/auth-client";
 import { DEFAULT_STATUS_FILTER, isStatusFilter, type StatusFilter } from "@/lib/errors-api";
 import { lastProject } from "@/lib/last-project";
+import { isMetricKind, type MetricKind } from "@/lib/metrics-api";
 import {
   DEFAULT_FUNNEL_WINDOW,
   type FunnelStep,
@@ -505,15 +513,29 @@ const metricRoute = createRoute({
   path: "/metrics/$name",
   staticData: { title: "Metric" },
   validateSearch: (
-    search: ErrorSearchInput & { kind?: unknown; split?: unknown; stat?: unknown },
-  ) => ({
-    ...rangeSearch(search),
-    ...environmentSearch(search),
-    ...metricChoicesFrom(search),
-  }),
+    search: ErrorSearchInput & {
+      kind?: unknown;
+      split?: unknown;
+      stat?: unknown;
+      host?: unknown;
+      attr?: unknown;
+      attrValue?: unknown;
+    },
+  ) => {
+    const { host, attr } = metricFiltersFrom(search);
+    return {
+      ...rangeSearch(search),
+      ...environmentSearch(search),
+      ...metricChoicesFrom(search),
+      host,
+      attr: attr?.key,
+      attrValue: attr?.value,
+    };
+  },
   component: function MetricRouteComponent() {
     const { projectId, name } = metricRoute.useParams();
-    const { period, from, to, env, kind, split, stat } = metricRoute.useSearch();
+    const { period, from, to, env, kind, split, stat, host, attr, attrValue } =
+      metricRoute.useSearch();
     return (
       <MetricPage
         projectId={projectId}
@@ -523,28 +545,37 @@ const metricRoute = createRoute({
         environment={env ?? DEFAULT_ENVIRONMENT}
         split={split}
         stat={stat}
+        host={host}
+        attr={
+          attr === undefined || attrValue === undefined
+            ? undefined
+            : { key: attr, value: attrValue }
+        }
       />
     );
   },
 });
 
-/** Each service's requests by route: days and environment. */
+/** Each service's requests by route: days and environment; optionally one service, a route of it marked. */
 const servicesRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: "/services",
   staticData: { title: "Services" },
-  validateSearch: (search: ErrorSearchInput) => ({
+  validateSearch: (search: ErrorSearchInput & { service?: unknown; route?: unknown }) => ({
     ...rangeSearch(search),
     ...environmentSearch(search),
+    ...serviceChoiceFrom(search),
   }),
   component: function ServicesRouteComponent() {
     const { projectId } = servicesRoute.useParams();
-    const { period, from, to, env } = servicesRoute.useSearch();
+    const { period, from, to, env, service, route } = servicesRoute.useSearch();
     return (
       <ServicesPage
         projectId={projectId}
         range={rangeFrom({ period, from, to })}
         environment={env ?? DEFAULT_ENVIRONMENT}
+        service={service}
+        route={route}
       />
     );
   },
@@ -628,8 +659,9 @@ const FINGERPRINT = /^[0-9]{1,3}-[0-9a-f]{20}$/;
 
 /**
  * The project's alert rules. `add` opens the form for a new rule of that
- * kind, with what the check or error page it came from knows: its check,
- * or its error group and environment.
+ * kind, with what the page it came from knows: its check, its error group
+ * and environment, a service and route (the Services page), or a metric
+ * with its kind and filters (a metric's page).
  */
 const alertsRoute = createRoute({
   getParentRoute: () => projectRoute,
@@ -641,12 +673,26 @@ const alertsRoute = createRoute({
       check?: unknown;
       fingerprint?: unknown;
       env?: unknown;
+      service?: unknown;
+      route?: unknown;
+      metric?: unknown;
+      metricKind?: unknown;
+      host?: unknown;
+      attr?: unknown;
+      attrValue?: unknown;
     } & SearchSchemaInput,
   ): {
     add: RuleKind | undefined;
     check: string | undefined;
     fingerprint: string | undefined;
     env: string | undefined;
+    service: string | undefined;
+    route: string | undefined;
+    metric: string | undefined;
+    metricKind: MetricKind | undefined;
+    host: string | undefined;
+    attr: string | undefined;
+    attrValue: string | undefined;
   } => ({
     add: isRuleKind(search.add) ? search.add : undefined,
     check: typeof search.check === "string" && UUID.test(search.check) ? search.check : undefined,
@@ -658,6 +704,13 @@ const alertsRoute = createRoute({
       search.env === undefined
         ? undefined
         : environmentFrom(typeof search.env === "number" ? String(search.env) : search.env),
+    ...serviceChoiceFrom(search),
+    metric: searchValue(search.metric, 1024),
+    metricKind: isMetricKind(search.metricKind) ? search.metricKind : undefined,
+    ...(() => {
+      const { host, attr } = metricFiltersFrom(search);
+      return { host, attr: attr?.key, attrValue: attr?.value };
+    })(),
   }),
   component: function AlertsRouteComponent() {
     const { projectId } = alertsRoute.useParams();

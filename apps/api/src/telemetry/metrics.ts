@@ -364,41 +364,43 @@ export async function metricChart(
   now: Date,
 ): Promise<MetricChart> {
   const buckets = bucketsOf(range, now);
-  const { table, condition } = KIND_ROWS[options.kind];
-  const histogram = options.kind === "histogram";
+  return chartIn(reader, range, options, buckets, {
+    untilMs: buckets.endMs,
+    lookbackMs: Math.max(buckets.stepMs, MIN_LOOKBACK_MS),
+  });
+}
 
-  const splitKeys = options.splitAny ?? (options.split === undefined ? [] : [options.split]);
+/** Whose points a chart reads: a project's, in one environment, its series ranked from `from`. */
+interface ChartScope {
+  projectId: string;
+  environment: string;
+  from: Date;
+}
+
+/**
+ * The rows of a metric that a chart reads, from `from` to before `until`:
+ * the sorting key's prefix (project, name, time), then the chart's filters.
+ */
+export function metricFilter(
+  params: QueryParams,
+  scope: { projectId: string; environment: string },
+  options: Pick<
+    ChartOptions,
+    "name" | "kind" | "names" | "resource" | "attribute" | "exclude" | "scopePrefixes"
+  >,
+  from: Date,
+  until: Date,
+): string {
+  const { condition } = KIND_ROWS[options.kind];
   const { resource, attribute, exclude, scopePrefixes, names } = options;
-  const single = options.single === true;
-  if (single && histogram) throw new Error("a single-query chart takes no histogram");
-  const empty: MetricChart = {
-    name: options.name,
-    kind: options.kind,
-    unit: "",
-    start: new Date(buckets.firstMs),
-    stepSeconds: buckets.stepMs / 1000,
-    buckets: buckets.count,
-    split: splitKeys[0] ?? null,
-    keys: [],
-    series: [],
-    seriesCount: 0,
-    seriesCapped: false,
-    skippedSeries: 0,
-    bounds: [],
-    percentiles: false,
-  };
-  if (buckets.count === 0) return empty;
-
-  /** The metric's rows, from `from`, before the range's end (or now): the sorting key's prefix. */
-  const metricRows = (params: QueryParams, from: Date) =>
-    `project_id = ${params.add(range.projectId, "UUID")}
+  return `project_id = ${params.add(scope.projectId, "UUID")}
      AND ${
        names === undefined
          ? `name = ${params.add(options.name, "String")}`
          : `name IN ${params.add(names, "Array(String)")}`
      }
-     AND timestamp >= ${params.time(from)} AND timestamp < ${params.time(new Date(buckets.endMs))}
-     AND environment = ${params.add(range.environment, "String")}
+     AND timestamp >= ${params.time(from)} AND timestamp < ${params.time(until)}
+     AND environment = ${params.add(scope.environment, "String")}
      AND ${condition}
      ${
        resource === undefined
@@ -425,6 +427,63 @@ export async function metricChart(
              .map((prefix) => `startsWith(scope_name, ${params.add(prefix, "String")})`)
              .join(" OR ")})`
      }`;
+}
+
+/**
+ * A chart over `buckets`, reading points before `untilMs` (which may be
+ * past the last bucket, so a counter's step that ends after it still
+ * counts its part inside), and from `lookbackMs` before the first bucket,
+ * so the first point of a cumulative series has the one before it.
+ */
+async function chartIn(
+  reader: Reader,
+  range: ChartScope,
+  options: ChartOptions,
+  buckets: Buckets,
+  {
+    untilMs,
+    lookbackMs,
+    freshMs,
+  }: {
+    untilMs: number;
+    lookbackMs: number;
+    /**
+     * Up-down counters: a series counts in a bucket's total only when its
+     * last point there is within this much of the bucket's end, so series
+     * that stopped (pods replaced in a deploy) do not add to those that
+     * took over.
+     */
+    freshMs?: number | undefined;
+  },
+): Promise<MetricChart> {
+  const { table } = KIND_ROWS[options.kind];
+  const histogram = options.kind === "histogram";
+
+  const splitKeys = options.splitAny ?? (options.split === undefined ? [] : [options.split]);
+  const { names } = options;
+  const single = options.single === true;
+  if (single && histogram) throw new Error("a single-query chart takes no histogram");
+  const empty: MetricChart = {
+    name: options.name,
+    kind: options.kind,
+    unit: "",
+    start: new Date(buckets.firstMs),
+    stepSeconds: buckets.stepMs / 1000,
+    buckets: buckets.count,
+    split: splitKeys[0] ?? null,
+    keys: [],
+    series: [],
+    seriesCount: 0,
+    seriesCapped: false,
+    skippedSeries: 0,
+    bounds: [],
+    percentiles: false,
+  };
+  if (buckets.count === 0) return empty;
+
+  /** The metric's rows, from `from`, before `untilMs`. */
+  const metricRows = (params: QueryParams, from: Date) =>
+    metricFilter(params, range, options, from, new Date(untilMs));
 
   // The series with the most points in the range. No FINAL: copies only weigh the ranking.
   // A single-query chart ranks them inside its own query instead (below).
@@ -483,8 +542,7 @@ export async function metricChart(
   if (!single && listed.length === 0) return chart;
 
   const params = new QueryParams();
-  const lookback = Math.max(buckets.stepMs, MIN_LOOKBACK_MS);
-  const lookFrom = new Date(buckets.fromMs - lookback);
+  const lookFrom = new Date(buckets.fromMs - lookbackMs);
   const label =
     names === undefined ? firstAttribute(params, splitKeys) : "toNullable(toString(name))";
   const fromNs = params.add(ns(buckets.fromMs), "Int64");
@@ -556,14 +614,21 @@ export async function metricChart(
     fold =
       "sum(total_value) AS total_value, sum(points) AS points, min(low) AS low, max(high) AS high";
   } else if (options.kind === "updown") {
-    // Each series' last value in the bucket, added up.
+    // Each series' last value in the bucket, added up; with freshMs, only
+    // the series whose last point is that close to the bucket's end.
+    const fresh =
+      freshMs === undefined
+        ? ""
+        : `HAVING last_ns >= least(${firstNs} + (bucket + 1) * ${stepNs}, ${params.add(ns(buckets.endMs), "Int64")})
+                   - ${params.add(ns(freshMs), "Int64")}`;
     perValue = `
       SELECT label, bucket, sum(last_value) AS total, sum(points) AS vol
       FROM (
         SELECT label, ${bucketOf("t_ns")} AS bucket, argMax(value, t_ns) AS last_value,
-               count() AS points
+               count() AS points, max(t_ns) AS last_ns
         FROM (${rows}) WHERE t_ns >= ${fromNs}
         GROUP BY series, label, bucket
+        ${fresh}
       )
       GROUP BY label, bucket`;
     fold = "sum(total) AS total";
@@ -746,4 +811,90 @@ function seriesOf(
   return [...lines.values()].toSorted(
     (a, b) => Number(a.other) - Number(b.other) || b.volume - a.volume,
   );
+}
+
+/**
+ * How far before a window a metric's window reads at least (metricWindow):
+ * the window's own length, or this when longer, so the point before the
+ * window's first is there for a series exported every minute or every
+ * few, as SDKs and the Collector do by default, and for one exported less
+ * often than its window is long.
+ */
+export const WINDOW_LOOKBACK_MS = 5 * 60_000;
+/**
+ * An up-down counter's series counts in a window's total only when its
+ * last point is within this of the window's end: two export intervals of
+ * a minute. A series that stopped earlier, as a pod replaced in a rolling
+ * deploy, is no longer there.
+ */
+export const FRESH_SERIES_MS = 2 * 60_000;
+
+/** A metric's value over one window, as its chart reads it, per measure; null without data. */
+export interface MetricWindow {
+  /** Per kind, as ChartSeries' values: gauge avg, min, max; updown sum; counter rate; histogram p50, p95, p99, rate. */
+  values: Record<string, number | null>;
+  unit: string;
+  /** Series read: at most MAX_SERIES. */
+  seriesCount: number;
+}
+
+/**
+ * One metric over [from, to), as a chart of one bucket covering it reads
+ * it (chartIn): a gauge's average, minimum, and maximum over the points;
+ * an up-down counter's total of the last value of each series still
+ * reporting at the window's end (its last point within FRESH_SERIES_MS of
+ * it); a counter's rate per second; a histogram's percentiles from the
+ * window's bucket counts. Points are read until `readUntil` (past `to`), so
+ * a counter's step that ends after the window counts the part inside it,
+ * and from the window's length (at least WINDOW_LOOKBACK_MS) before `from`.
+ */
+export async function metricWindow(
+  reader: Reader,
+  scope: { projectId: string; environment: string },
+  options: Pick<ChartOptions, "name" | "kind" | "resource" | "attribute">,
+  from: Date,
+  to: Date,
+  readUntil: Date,
+): Promise<MetricWindow> {
+  const fromMs = from.getTime();
+  const toMs = to.getTime();
+  const chart = await chartIn(
+    reader,
+    { ...scope, from },
+    options,
+    { firstMs: fromMs, stepMs: toMs - fromMs, count: 1, fromMs, endMs: toMs },
+    {
+      untilMs: Math.max(toMs, readUntil.getTime()),
+      lookbackMs: Math.max(WINDOW_LOOKBACK_MS, toMs - fromMs),
+      freshMs: FRESH_SERIES_MS,
+    },
+  );
+  const [line] = chart.series;
+  return {
+    values: Object.fromEntries(
+      MEASURES[options.kind].map((measure) => [measure, line?.values[measure]?.[0] ?? null]),
+    ),
+    unit: chart.unit,
+    seriesCount: chart.seriesCount,
+  };
+}
+
+/** Whether any point of the metric, of this kind and with these filters, arrived in [from, to). */
+export async function metricSeen(
+  reader: Reader,
+  scope: { projectId: string; environment: string },
+  options: Pick<ChartOptions, "name" | "kind" | "resource" | "attribute">,
+  from: Date,
+  to: Date,
+): Promise<boolean> {
+  const params = new QueryParams();
+  const rows = await queryRows<{ found: number }>(
+    reader,
+    `SELECT 1 AS found FROM ${KIND_ROWS[options.kind].table}
+     WHERE ${metricFilter(params, scope, options, from, to)}
+     LIMIT 1`,
+    params,
+    DASHBOARD_SETTINGS,
+  );
+  return rows.length > 0;
 }

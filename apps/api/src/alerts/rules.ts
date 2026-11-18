@@ -39,6 +39,8 @@ export interface Rule {
   disabledReason: string | null;
   /** Subjects it is firing for now. */
   firing: number;
+  /** A telemetry rule whose evaluations fail: why the last one did, and since when they have. */
+  evaluationError: { message: string; since: Date } | null;
   lastFiredAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
@@ -149,6 +151,8 @@ const ruleColumns = [
   "r.channel_ids",
   "r.enabled",
   "r.disabled_reason",
+  "r.evaluation_error",
+  "r.evaluation_failing_since",
   "r.created_at",
   "r.updated_at",
 ] as const;
@@ -182,6 +186,10 @@ function ruleOf(row: RuleRow): Rule {
     enabled: row.enabled && isRuleKind(row.kind),
     disabledReason: row.disabled_reason,
     firing: Number(row.firing),
+    evaluationError:
+      row.evaluation_error === null || row.evaluation_failing_since === null
+        ? null
+        : { message: row.evaluation_error, since: row.evaluation_failing_since },
     lastFiredAt: row.last_fired_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -322,6 +330,11 @@ export async function updateRule(
         enabled,
         ...(enabled ? { disabled_reason: null } : {}),
         ...(watchesElse || (enabled && !current.enabled) ? { active_since: now } : {}),
+        // A telemetry rule watching something else, or back on, is due at once,
+        // and its old failures no longer say anything about it.
+        ...(watchesElse || enabled !== current.enabled
+          ? { next_evaluation_at: null, evaluation_error: null, evaluation_failing_since: null }
+          : {}),
         updated_at: now,
       })
       .where("id", "=", ruleId)

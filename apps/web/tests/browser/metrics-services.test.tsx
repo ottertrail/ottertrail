@@ -329,12 +329,13 @@ describe("the services page", () => {
       .toBeVisible();
     const web = page.getByRole("table", { name: "Routes of web, busiest first" });
     expect([...web.element().querySelectorAll("tbody tr")].map(cellsOf)).toEqual([
-      ["/orders/{id}", "1,000", "3.0%", "30 ms", "190 ms"],
-      ["GET /health", "200", "0%", "850 µs", "1.2 ms"],
+      // The last cell is the route's "Add an alert rule" link (telemetry-alerts.test.tsx).
+      ["/orders/{id}", "1,000", "3.0%", "30 ms", "190 ms", ""],
+      ["GET /health", "200", "0%", "850 µs", "1.2 ms", ""],
     ]);
     await expect.element(page.getByText("The 1 busiest of 140 routes.")).toBeVisible();
 
-    await page.getByRole("link", { name: "/orders/{id}" }).click();
+    await page.getByRole("link", { name: "/orders/{id}", exact: true }).click();
     await expect.poll(() => router.state.location.pathname).toBe(`/projects/${PROJECT.id}/traces`);
     expect(router.state.location.search).toEqual({ service: "web", name: "/orders/{id}" });
     await expect

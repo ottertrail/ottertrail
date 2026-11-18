@@ -8,8 +8,8 @@
  * The event types, as webhooks name them. Alert rules (step 3 of
  * docs/uptime-alerts.md, alerts/) send the check, certificate, and error
  * ones, and `alert.held_back` when a rule's hourly cap held notifications
- * back; telemetry alerts (step 4) add theirs here. `test` is the
- * dashboard's test send.
+ * back; telemetry alerts (step 4) send the route and metric ones.
+ * `test` is the dashboard's test send.
  */
 export const EVENT_TYPES = [
   "check.down",
@@ -20,6 +20,12 @@ export const EVENT_TYPES = [
   "error.regressed",
   "error.spike",
   "error.spike_resolved",
+  "route.latency",
+  "route.latency_resolved",
+  "route.failures",
+  "route.failures_resolved",
+  "metric.threshold",
+  "metric.threshold_resolved",
   "alert.held_back",
   "test",
 ] as const;

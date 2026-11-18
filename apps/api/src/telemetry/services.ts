@@ -55,6 +55,204 @@ interface DurationRow {
   durations: number[];
 }
 
+/** A request's route: its `http.route` attribute, else its name. */
+const ROUTE = "if(attributes['http.route'] != '', attributes['http.route'], name)";
+
+/** Which requests to read: a project's, in one environment, in [from, to), optionally one service's and route's. */
+export interface SpanScope {
+  projectId: string;
+  environment: string;
+  from: Date;
+  to: Date;
+  service?: string | undefined;
+  /** null or undefined: every route of the service. */
+  route?: string | null | undefined;
+}
+
+/**
+ * The requests in scope, each once (FINAL): their service, route, status,
+ * and duration. The Services page and the route alert rules
+ * (alerts/telemetry-rules.ts) both count from this.
+ */
+export function serverSpans(params: QueryParams, scope: SpanScope, { final = true } = {}): string {
+  return `
+    SELECT service, ${ROUTE} AS route, status_code, duration_ns
+    FROM spans ${final ? "FINAL" : ""}
+    WHERE project_id = ${params.add(scope.projectId, "UUID")}
+      AND timestamp >= ${params.time(scope.from)} AND timestamp < ${params.time(scope.to)}
+      AND environment = ${params.add(scope.environment, "String")}
+      AND kind = 'server'
+      ${scope.service === undefined ? "" : `AND service = ${params.add(scope.service, "String")}`}
+      ${
+        scope.route === undefined || scope.route === null
+          ? ""
+          : `AND ${ROUTE} = ${params.add(scope.route, "String")}`
+      }`;
+}
+
+/** One service's, or one route's, requests over a window. */
+export interface WindowStats {
+  requests: number;
+  failed: number;
+  /** null without a request. Interpolated, as the Services page's. */
+  p95Us: number | null;
+  p99Us: number | null;
+}
+
+/** A route rule's requests: one service's, of one route or all (null). */
+export interface RouteTarget {
+  service: string;
+  route: string | null;
+}
+
+/** A target over its own window, which ends where the read does. */
+export interface WindowTarget extends RouteTarget {
+  from: Date;
+}
+
+/**
+ * The requests of each target (a service, or one of its routes) in its
+ * window, all ending at `to`, of one environment, all in one read of the
+ * longest window: how many,
+ * how many failed, and their 95th and 99th percentile duration, counted
+ * as the Services page counts them (a SERVER span; its route its
+ * `http.route`, else its name), each target with its own -If combinators.
+ *
+ * PREWHERE keeps the read to the targets' services before anything else
+ * is read; a span's attributes, for its route, are read only for those,
+ * and only when a target names a route.
+ *
+ * Read without FINAL (`final` false, as the alert rules read it): a
+ * retried copy not yet merged away counts twice in the window, which
+ * barely moves a share or a percentile, and FINAL's merge of every part
+ * of a busy window costs far more (docs/uptime-alerts.md, step 4).
+ */
+export async function routeWindows(
+  reader: Reader,
+  scope: { projectId: string; environment: string; to: Date },
+  targets: readonly WindowTarget[],
+  { final = false }: { final?: boolean } = {},
+): Promise<WindowStats[]> {
+  if (targets.length === 0) return [];
+  const params = new QueryParams();
+  const services = [...new Set(targets.map((target) => target.service))];
+  const from = new Date(Math.min(...targets.map((target) => target.from.getTime())));
+  const condition = (target: WindowTarget) =>
+    `timestamp >= ${params.time(target.from)} AND service = ${params.add(target.service, "String")}${
+      target.route === null ? "" : ` AND route = ${params.add(target.route, "String")}`
+    }`;
+  // The aliases are built from the index, never from input.
+  const columns = targets.map((target, index) => {
+    const where = condition(target);
+    return `countIf(${where}) AS r${index},
+            countIf(${where} AND status_code = 'error') AS f${index},
+            quantilesExactInclusiveIf(0.95, 0.99)(duration_ns, ${where}) AS d${index}`;
+  });
+  const [row] = await queryRows<Record<string, string | number[]>>(
+    reader,
+    `SELECT ${columns.join(",\n")}
+     FROM (
+       SELECT timestamp, service, ${ROUTE} AS route, status_code, duration_ns
+       FROM spans ${final ? "FINAL" : ""}
+       PREWHERE project_id = ${params.add(scope.projectId, "UUID")}
+         AND timestamp >= ${params.time(from)} AND timestamp < ${params.time(scope.to)}
+         AND service IN ${params.add(services, "Array(String)")}
+       WHERE environment = ${params.add(scope.environment, "String")}
+         AND kind = 'server'
+     )`,
+    params,
+    DASHBOARD_SETTINGS,
+  );
+  return targets.map((_, index) => {
+    const requests = Number(row?.[`r${index}`] ?? 0);
+    const durations = row?.[`d${index}`];
+    const [p95, p99] = Array.isArray(durations) ? durations : [];
+    return {
+      requests,
+      failed: Number(row?.[`f${index}`] ?? 0),
+      p95Us: requests === 0 || p95 === undefined ? null : p95 / 1000,
+      p99Us: requests === 0 || p99 === undefined ? null : p99 / 1000,
+    };
+  });
+}
+
+/**
+ * Whether any request of the service (and route) arrived in [from, to):
+ * first whether the service sent any span at all, from the narrow columns
+ * only; then, for a route, one of its requests, its spans' attributes read
+ * only for the service's.
+ */
+export async function requestsSeen(
+  reader: Reader,
+  scope: SpanScope & { service: string },
+): Promise<boolean> {
+  const params = new QueryParams();
+  const where = `project_id = ${params.add(scope.projectId, "UUID")}
+       AND timestamp >= ${params.time(scope.from)} AND timestamp < ${params.time(scope.to)}
+       AND service = ${params.add(scope.service, "String")}`;
+  const services = await queryRows<{ found: number }>(
+    reader,
+    `SELECT 1 AS found FROM spans
+     PREWHERE ${where}
+     WHERE environment = ${params.add(scope.environment, "String")} AND kind = 'server'
+     LIMIT 1`,
+    params,
+    DASHBOARD_SETTINGS,
+  );
+  if (services.length === 0 || scope.route === undefined || scope.route === null) {
+    return services.length > 0;
+  }
+  const routeParams = new QueryParams();
+  const rows = await queryRows<{ found: number }>(
+    reader,
+    `SELECT 1 AS found FROM spans
+     PREWHERE project_id = ${routeParams.add(scope.projectId, "UUID")}
+       AND timestamp >= ${routeParams.time(scope.from)} AND timestamp < ${routeParams.time(scope.to)}
+       AND service = ${routeParams.add(scope.service, "String")}
+     WHERE environment = ${routeParams.add(scope.environment, "String")} AND kind = 'server'
+       AND ${ROUTE} = ${routeParams.add(scope.route, "String")}
+     LIMIT 1`,
+    routeParams,
+    DASHBOARD_SETTINGS,
+  );
+  return rows.length > 0;
+}
+
+/** Routes a project's services had in a period: what the alert form suggests. */
+export const MAX_RECENT_ROUTES = 200;
+
+/**
+ * Up to MAX_RECENT_ROUTES distinct (service, route) pairs of the server
+ * spans in [from, to) and one environment, for the alert form's
+ * suggestions: DISTINCT with a LIMIT stops reading once it has them, so a
+ * busy day costs a little of its spans, not the Services page's counts.
+ */
+export async function recentRoutes(
+  reader: Reader,
+  scope: { projectId: string; environment: string; from: Date; to: Date },
+): Promise<{ routes: RouteTarget[]; truncated: boolean }> {
+  const params = new QueryParams();
+  const rows = await queryRows<{ service: string; route: string }>(
+    reader,
+    `SELECT DISTINCT service, ${ROUTE} AS route
+     FROM spans
+     PREWHERE project_id = ${params.add(scope.projectId, "UUID")}
+       AND timestamp >= ${params.time(scope.from)} AND timestamp < ${params.time(scope.to)}
+     WHERE environment = ${params.add(scope.environment, "String")} AND kind = 'server'
+       AND route != ''
+     LIMIT ${MAX_RECENT_ROUTES + 1}`,
+    params,
+    DASHBOARD_SETTINGS,
+  );
+  return {
+    routes: rows
+      .slice(0, MAX_RECENT_ROUTES)
+      .map((row) => ({ service: row.service, route: row.route }))
+      .toSorted((a, b) => a.service.localeCompare(b.service) || a.route.localeCompare(b.route)),
+    truncated: rows.length > MAX_RECENT_ROUTES,
+  };
+}
+
 export async function listServices(
   reader: Reader,
   range: TelemetryRange,
@@ -66,15 +264,7 @@ export async function listServices(
   /** Whether the project has sent any span at all. */
   received: boolean;
 }> {
-  const spans = (params: QueryParams) => `
-    SELECT service,
-           if(attributes['http.route'] != '', attributes['http.route'], name) AS route,
-           status_code, duration_ns
-    FROM spans FINAL
-    WHERE project_id = ${params.add(range.projectId, "UUID")}
-      AND timestamp >= ${params.time(range.from)} AND timestamp < ${params.time(range.to)}
-      AND environment = ${params.add(range.environment, "String")}
-      AND kind = 'server'`;
+  const spans = (params: QueryParams) => serverSpans(params, range);
   // First counts alone, by a hash of each route rather than its name, so
   // a service with a million span names costs a million small groups:
   // each service once (grouping by service alone), then each of its

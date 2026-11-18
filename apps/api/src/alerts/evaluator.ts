@@ -5,6 +5,15 @@ import { evaluateCertificates, evaluateCheckDown } from "./check-rules.ts";
 import { evaluateErrorRules } from "./error-rules.ts";
 import { type AlertContext, flushHeldBack } from "./fire.ts";
 import { endOrphanedCheckAlerts, pruneHistory } from "./rules.ts";
+import {
+  countsOf,
+  evaluateTelemetryPass,
+  type PassOptions,
+  type PassResult,
+  recordEvaluation,
+  releaseRules,
+  takeDueRules,
+} from "./telemetry-rules.ts";
 
 /** How often the worker evaluates alert rules. */
 export const ALERT_TICK_MS = 60_000;
@@ -24,23 +33,53 @@ export const HISTORY_PRUNE_INTERVAL_MS = 60 * 60 * 1000;
  *   summaries of what rules' hourly caps held back; every hour,
  *   certificates (whose window moves with time) and the history's pruning.
  *
+ * - telemetryTick, every few seconds on a loop of its own: the route
+ *   latency, route failures, and metric rules due (each once a minute,
+ *   taken by one worker), a few projects at a time (telemetry-rules.ts).
+ *   Each rule's outcome is recorded on it; one that fails is logged once,
+ *   when it starts failing, and again when it works. stop() lets the
+ *   rules running finish and starts no more.
+ *
  * Each step logs its own failure and lets the others go on.
  */
 export class AlertEvaluator {
   readonly #context: AlertContext;
   readonly #reader: Reader;
   readonly #now: () => Date;
+  readonly #telemetry: Omit<PassOptions, "now" | "stopping">;
   #certificatesAt = 0;
   #prunedAt = 0;
+  #stopping = false;
 
   constructor({
     clickhouse,
     now = () => new Date(),
+    telemetry = {},
     ...context
-  }: AlertContext & { clickhouse: ClickHouseClient; now?: () => Date }) {
+  }: AlertContext & {
+    clickhouse: ClickHouseClient;
+    now?: () => Date;
+    /** How telemetry rules are read and bounded (tests pass their own). */
+    telemetry?: Partial<Omit<PassOptions, "now" | "stopping">>;
+  }) {
     this.#context = context;
     this.#reader = { client: clickhouse };
     this.#now = now;
+    this.#telemetry = {
+      // A project's queries end by its budget: each one's time limit is cut
+      // to what is left, and the signal closes any still running then.
+      readerOf: (_projectId, deadline) => ({
+        client: clickhouse,
+        deadline,
+        signal: AbortSignal.timeout(Math.max(1, deadline - Date.now())),
+      }),
+      ...telemetry,
+    };
+  }
+
+  /** The worker is stopping: telemetry rules not started yet are not started. */
+  stop(): void {
+    this.#stopping = true;
   }
 
   #failed(step: string, error: unknown) {
@@ -67,6 +106,55 @@ export class AlertEvaluator {
     } catch (error) {
       this.#failed("a check's new certificate", error);
     }
+  }
+
+  /**
+   * The telemetry rules due now: taken (by this worker only), evaluated a
+   * few projects at a time, and each one's outcome recorded on it.
+   * Returns each rule's result.
+   */
+  async telemetryTick(): Promise<PassResult[]> {
+    if (this.#stopping) return [];
+    let results: PassResult[] = [];
+    try {
+      const rules = await takeDueRules(this.#context.db, this.#now());
+      if (rules.length === 0) return [];
+      const pass = await evaluateTelemetryPass(this.#context, rules, {
+        ...this.#telemetry,
+        now: this.#now,
+        stopping: () => this.#stopping,
+      });
+      results = pass.results;
+      await releaseRules(
+        this.#context.db,
+        pass.released.map((rule) => rule.id),
+      );
+    } catch (error) {
+      this.#failed("telemetry rules", error);
+      return results;
+    }
+    for (const item of results) {
+      const fields = { rule: item.rule.id, project: item.rule.projectId };
+      const error = "error" in item ? item.error : null;
+      try {
+        const change = await recordEvaluation(this.#context.db, item.rule.id, error, this.#now());
+        if (change === "failing") {
+          this.#context.log?.("error", "alert rules: evaluating a telemetry rule failed", {
+            ...fields,
+            err: String(error),
+          });
+        } else if (change === "recovered") {
+          this.#context.log?.("info", "alert rules: a telemetry rule evaluates again", fields);
+        }
+      } catch (recording) {
+        this.#failed("recording a telemetry rule's evaluation", recording);
+      }
+    }
+    const counts = countsOf(results);
+    if (counts.sent + counts.held > 0) {
+      this.#context.log?.("info", "telemetry alerts sent", { ...counts });
+    }
+    return results;
   }
 
   /** One minute's evaluation. */

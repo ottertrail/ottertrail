@@ -171,12 +171,18 @@ export const metricsQuery = (projectId: string, range: PageRange, environment: s
     placeholderData: keepPreviousData,
   });
 
-/** One metric over the range, split by an attribute when one is given. */
+/** What a metric's chart reads only: one host's series, one attribute value's points. */
+export interface MetricFilters {
+  host?: string | undefined;
+  attr?: { key: string; value: string } | undefined;
+}
+
+/** One metric over the range, split by an attribute when one is given, within its filters. */
 export const metricChartQuery = (
   projectId: string,
   range: PageRange,
   environment: string,
-  metric: { name: string; kind: MetricKind; split: string | undefined },
+  metric: { name: string; kind: MetricKind; split: string | undefined } & MetricFilters,
 ) =>
   queryOptions({
     queryKey: [
@@ -187,6 +193,8 @@ export const metricChartQuery = (
       metric.name,
       metric.kind,
       metric.split ?? null,
+      metric.host ?? null,
+      metric.attr ?? null,
     ],
     retry: telemetryRetry,
     queryFn: async ({ signal }) => {
@@ -195,6 +203,10 @@ export const metricChartQuery = (
         name: metric.name,
         kind: metric.kind,
         ...(metric.split === undefined ? {} : { split: metric.split }),
+        ...(metric.host === undefined ? {} : { host: metric.host }),
+        ...(metric.attr === undefined
+          ? {}
+          : { attr: metric.attr.key, attrValue: metric.attr.value }),
       });
       return expectShape(
         await apiRequest(`${projectPath(projectId)}/metrics/chart?${query.toString()}`, { signal }),

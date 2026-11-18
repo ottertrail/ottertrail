@@ -193,6 +193,11 @@ export interface AlertRulesTable {
   active_since: ColumnType<Date, Date | undefined, Date>;
   created_at: ColumnType<Date, Date | undefined, never>;
   updated_at: ColumnType<Date, Date | undefined, Date>;
+  /** Telemetry rules: when it is due next; null, due now (taken FOR UPDATE SKIP LOCKED). */
+  next_evaluation_at: Nullable<Date>;
+  /** Telemetry rules: why the last evaluation failed, and since when they have; null after one that worked. */
+  evaluation_error: Nullable<string>;
+  evaluation_failing_since: Nullable<Date>;
 }
 
 /** Whether a rule fires for one subject (a check, a fingerprint, or '' for a spike rule). */

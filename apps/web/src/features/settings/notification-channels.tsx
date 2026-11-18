@@ -72,6 +72,12 @@ const EVENT_TEXT: Record<string, string> = {
   "error.regressed": "Regressed error",
   "error.spike": "Error spike",
   "error.spike_resolved": "Error spike over",
+  "route.latency": "Route latency",
+  "route.latency_resolved": "Route latency over",
+  "route.failures": "Route failures",
+  "route.failures_resolved": "Route failures over",
+  "metric.threshold": "Metric",
+  "metric.threshold_resolved": "Metric back",
   "alert.held_back": "Alerts held back",
   test: "Test",
 };

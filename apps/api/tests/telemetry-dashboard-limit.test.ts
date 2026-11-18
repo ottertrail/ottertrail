@@ -156,3 +156,57 @@ describe("the dashboard's queries in flight", () => {
     expect(limiter.running).toBe(0);
   });
 });
+
+/** The queries running now that hold `marker`, other than this look itself. */
+async function runningWith(marker: string): Promise<number> {
+  const result = await clickhouse.client.query({
+    query: `SELECT count() AS n FROM system.processes
+            WHERE position(query, {marker:String}) > 0 AND position(query, 'system.processes') = 0`,
+    query_params: { marker },
+    format: "JSONEachRow",
+  });
+  const [row] = await result.json<{ n: string }>();
+  return Number(row?.n ?? 0);
+}
+
+describe("a dashboard query whose request is gone", () => {
+  test("is stopped by ClickHouse within about a second of the abort", async () => {
+    const marker = `abort-${crypto.randomUUID()}`;
+    const controller = new AbortController();
+    const params = new QueryParams();
+    // Runs for minutes unless stopped: a sum over a trillion hashed numbers.
+    const query = queryRows(
+      { client: clickhouse.client, signal: controller.signal },
+      `SELECT ${params.add(marker, "String")} AS marker, sum(cityHash64(number)) AS total
+       FROM numbers(1000000000000) -- ${marker}`,
+      params,
+      DASHBOARD_SETTINGS,
+    ).catch((error: unknown) => error);
+    await expect.poll(() => runningWith(marker), { timeout: 5000 }).toBe(1);
+    controller.abort();
+    expect(await query).toBeInstanceOf(Error);
+    const aborted = Date.now();
+    await expect.poll(() => runningWith(marker), { timeout: 1500, interval: 100 }).toBe(0);
+    expect(Date.now() - aborted).toBeLessThan(1500);
+  });
+
+  test("a reader's deadline cuts the time a query may run, and refuses one past it", async () => {
+    const params = new QueryParams();
+    const started = Date.now();
+    const error = await queryRows(
+      { client: clickhouse.client, deadline: Date.now() + 1500 },
+      "SELECT sum(cityHash64(number)) AS total FROM numbers(1000000000000)",
+      params,
+      DASHBOARD_SETTINGS,
+    ).catch((caught: unknown) => caught);
+    expect(String(error)).toMatch(/TIMEOUT_EXCEEDED|Timeout exceeded/u);
+    expect(Date.now() - started).toBeLessThan(5000);
+    await expect(
+      queryRows(
+        { client: clickhouse.client, deadline: Date.now() - 1 },
+        "SELECT 1",
+        new QueryParams(),
+      ),
+    ).rejects.toThrow("The time for this work ran out before the query.");
+  });
+});

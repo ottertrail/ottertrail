@@ -10,10 +10,38 @@ import type { ClickHouseClient } from "./clickhouse.ts";
 export interface Reader {
   client: ClickHouseClient;
   sessionId?: string | undefined;
-  /** Ends the query when it fires, such as when the browser gives up on the request. */
+  /**
+   * Closes the query's connection when it fires, such as when the browser
+   * gives up on the request. ClickHouse then stops the query only if it
+   * runs read-only (DASHBOARD_SETTINGS' readonly); otherwise it runs on to
+   * its own limits.
+   */
   signal?: AbortSignal | undefined;
   /** Runs each query, such as within a limit of queries at once (telemetry/dashboard-limit.ts). */
   gate?: (<T>(work: () => Promise<T>) => Promise<T>) | undefined;
+  /**
+   * When the reader's work must be over (milliseconds since 1970), such as
+   * an alert rule's budget: each query's max_execution_time is cut to the
+   * time left, and a query that would start past it is refused.
+   */
+  deadline?: number | undefined;
+}
+
+/** A query refused because the reader's deadline had passed. */
+export class DeadlineError extends Error {
+  override name = "DeadlineError";
+}
+
+/** The settings with max_execution_time cut to what is left before the reader's deadline. */
+function withinDeadline(
+  reader: Reader,
+  settings: ClickHouseSettings | undefined,
+): ClickHouseSettings | undefined {
+  if (reader.deadline === undefined) return settings;
+  const left = Math.floor((reader.deadline - Date.now()) / 1000);
+  if (left < 1) throw new DeadlineError("The time for this work ran out before the query.");
+  const limit = settings?.max_execution_time ?? Number.POSITIVE_INFINITY;
+  return { ...settings, max_execution_time: Math.min(limit, left) };
 }
 
 /** "2026-11-16 12:00:00.000": how ClickHouse writes and reads a DateTime64(3) in UTC. */
@@ -58,11 +86,12 @@ export async function queryRows<Row>(
   settings?: ClickHouseSettings,
 ): Promise<Row[]> {
   const run = async () => {
+    const limited = withinDeadline(reader, settings);
     const result = await reader.client.query({
       query,
       query_params: params.values,
       format: "JSONEachRow",
-      ...(settings === undefined ? {} : { clickhouse_settings: settings }),
+      ...(limited === undefined ? {} : { clickhouse_settings: limited }),
       ...(reader.sessionId === undefined ? {} : { session_id: reader.sessionId }),
       ...(reader.signal === undefined ? {} : { abort_signal: reader.signal }),
     });

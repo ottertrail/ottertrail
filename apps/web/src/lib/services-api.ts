@@ -62,6 +62,43 @@ const isServiceList = (value: unknown): value is ServiceList =>
   typeof value.truncated === "boolean" &&
   typeof value.received === "boolean";
 
+/** GET /api/projects/:id/services/routes: distinct services and routes of the last day. */
+export interface RecentRoutes {
+  environment: string;
+  maxRoutes: number;
+  routes: { service: string; route: string }[];
+  truncated: boolean;
+}
+
+const isRecentRoutes = (value: unknown): value is RecentRoutes =>
+  isRecord(value) &&
+  isText(value.environment) &&
+  isNumber(value.maxRoutes) &&
+  isListOf(
+    value.routes,
+    (item): item is { service: string; route: string } =>
+      isRecord(item) && isText(item.service) && isText(item.route),
+  ) &&
+  typeof value.truncated === "boolean";
+
+/** Up to 200 services and routes of the last day: what the alert form suggests. */
+export const recentRoutesQuery = (projectId: string, environment: string) =>
+  queryOptions({
+    queryKey: ["services", projectId, "recent-routes", environment],
+    retry: telemetryRetry,
+    queryFn: async ({ signal }) => {
+      const query = new URLSearchParams(environment === DEFAULT_ENVIRONMENT ? {} : { environment });
+      return expectShape(
+        await apiRequest(
+          `/api/projects/${encodeURIComponent(projectId)}/services/routes?${query.toString()}`,
+          { signal },
+        ),
+        isRecentRoutes,
+      );
+    },
+    placeholderData: keepPreviousData,
+  });
+
 /** Each service's and route's requests, failures, and durations in the range. */
 export const servicesQuery = (projectId: string, range: PageRange, environment: string) =>
   queryOptions({

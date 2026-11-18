@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { ArrowLeftIcon, OctagonAlertIcon, SearchXIcon } from "lucide-react";
+import { ArrowLeftIcon, BellPlusIcon, OctagonAlertIcon, SearchXIcon, XIcon } from "lucide-react";
 import * as React from "react";
 
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -171,7 +171,12 @@ function chartCards(chart: MetricChart, stat: MetricStat, colors: Map<string, nu
   ];
 }
 
-/** One metric over a period: charts of it, optionally split by one of its attributes. */
+/**
+ * One metric over a period: charts of it, optionally split by one of its
+ * attributes, and narrowed to one host or one attribute value when the
+ * address says so (as an alert's link does). It links to a new alert rule
+ * on it, with its kind and filters filled in.
+ */
 export function MetricPage({
   projectId,
   name,
@@ -180,6 +185,8 @@ export function MetricPage({
   environment = DEFAULT_ENVIRONMENT,
   split,
   stat,
+  host,
+  attr,
 }: {
   projectId: string;
   name: string;
@@ -189,6 +196,10 @@ export function MetricPage({
   environment?: string;
   split: string | undefined;
   stat: MetricStat | undefined;
+  /** Only this host's series (its resource's host.name). */
+  host?: string | undefined;
+  /** Only the points with this attribute value. */
+  attr?: { key: string; value: string } | undefined;
 }) {
   const navigate = useNavigate();
   const chosenKind: MetricKind = kind ?? "gauge";
@@ -203,10 +214,24 @@ export function MetricPage({
     return fresh;
   };
   const chart = useQuery({
-    ...metricChartQuery(projectId, range, environment, { name, kind: chosenKind, split }),
+    ...metricChartQuery(projectId, range, environment, {
+      name,
+      kind: chosenKind,
+      split,
+      host,
+      attr,
+    }),
     enabled: kind !== undefined,
   });
-  const search: MetricSearch = { range, environment, kind: chosenKind, split, stat: shownStat };
+  const search: MetricSearch = {
+    range,
+    environment,
+    kind: chosenKind,
+    split,
+    stat: shownStat,
+    host,
+    attr,
+  };
   const show = (next: Partial<MetricSearch>) =>
     void navigate({
       to: "/projects/$projectId/metrics/$name",
@@ -234,10 +259,61 @@ export function MetricPage({
         </Link>
         <h2 className="font-mono text-lg font-medium break-all text-ink">{name}</h2>
         {kind !== undefined && (
-          <p className="text-sm text-ink-subtle">
-            {KIND_LABELS[kind]}
-            {data !== undefined && unitText(data.unit) !== "" && ` · ${unitText(data.unit)}`}
-          </p>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-sm text-ink-subtle">
+              {KIND_LABELS[kind]}
+              {data !== undefined && unitText(data.unit) !== "" && ` · ${unitText(data.unit)}`}
+            </p>
+            <Link
+              to="/projects/$projectId/alerts"
+              params={{ projectId }}
+              search={{
+                add: "metric_threshold",
+                metric: name,
+                metricKind: kind,
+                ...(environment === DEFAULT_ENVIRONMENT ? {} : { env: environment }),
+                ...(host === undefined ? {} : { host }),
+                ...(attr === undefined ? {} : { attr: attr.key, attrValue: attr.value }),
+              }}
+              className="flex items-center gap-1 text-sm text-link hover:underline"
+            >
+              <BellPlusIcon aria-hidden="true" className="size-4" />
+              Add an alert rule
+            </Link>
+          </div>
+        )}
+        {(host !== undefined || attr !== undefined) && (
+          <ul aria-label="Narrowed to" className="flex flex-wrap items-center gap-2 text-sm">
+            {host !== undefined && (
+              <li className="flex items-center gap-1 rounded-md border border-border px-2 py-0.5">
+                <span className="text-ink-subtle">Host</span>
+                <span className="font-mono break-all">{host}</span>
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  aria-label="Show every host"
+                  onClick={() => show({ host: undefined })}
+                >
+                  <XIcon aria-hidden="true" />
+                </Button>
+              </li>
+            )}
+            {attr !== undefined && (
+              <li className="flex items-center gap-1 rounded-md border border-border px-2 py-0.5">
+                <span className="font-mono break-all">
+                  {attr.key} = {attr.value}
+                </span>
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  aria-label={`Show every ${attr.key}`}
+                  onClick={() => show({ attr: undefined })}
+                >
+                  <XIcon aria-hidden="true" />
+                </Button>
+              </li>
+            )}
+          </ul>
         )}
       </div>
 
