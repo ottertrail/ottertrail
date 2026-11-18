@@ -144,7 +144,7 @@ The error's page shows a server's group by route and service instead of page, br
 
 - Grouping by the original files and functions that source maps give (fingerprint version 2), and mapping the stacks of occurrences other than the latest.
 - A link from a server's error to its trace, with the Traces page ([telemetry](telemetry.md#how-it-is-built), step 3).
-- Alerts on a new or regressed group, or a spike (stage 4).
+- Alerts on a new or regressed group, or a spike (stage 4; [design](uptime-alerts.md)).
 - Ignoring a group, merging two, searching messages, and "resolved in the next release".
 - The visit around an error: for a known user, their activity shows it; for an anonymous visitor there is no timeline page yet.
 - Errors from resources (images, scripts that fail to load) and from before the tracker runs.
