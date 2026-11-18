@@ -2,7 +2,15 @@ import { gunzipSync } from "node:zlib";
 
 import { describe, expect, test } from "vite-plus/test";
 
-import { createPacker, MAX_CHUNK_BYTES, MAX_REPLAY_BYTES, type Piece } from "../src/replay-pack.ts";
+import {
+  createPacker,
+  MAX_CHUNK_BYTES,
+  MAX_PIECE_TEXT_BYTES,
+  MAX_PIECES,
+  MAX_REPLAY_BYTES,
+  type Piece,
+  utf8Bytes,
+} from "../src/replay-pack.ts";
 
 /** The pieces joined and decompressed, as the API reads them (zlib reads every gzip member). */
 const unpack = (pieces: Piece[]) =>
@@ -85,4 +93,41 @@ describe("packing a recording", () => {
     expect(recording.events.length).toBeLessThan(40);
     expect(recording.events.map((item) => item.n)).toEqual(recording.events.map((_, n) => n));
   }, 30_000);
+});
+
+describe("what the API takes", () => {
+  test("utf8Bytes counts as UTF-8 encodes, lone surrogates included", () => {
+    for (const text of ["", "abc", "é", "€", "😀", "a😀é€", "\ud800", "x\udc00y", "\ud800\ud800"]) {
+      expect([text, utf8Bytes(text)]).toEqual([text, Buffer.byteLength(text)]);
+    }
+  });
+
+  test(`a piece unpacks to at most ${MAX_PIECE_TEXT_BYTES} bytes, however well it compresses`, async () => {
+    // A masked page: a million characters that compress to about a kilobyte.
+    const masked = event(0, "*".repeat(1_100_000));
+    const pieces = await createPacker().add([masked], true);
+    expectPieces(pieces);
+    expect(pieces.length).toBeGreaterThan(1);
+    for (const piece of pieces) {
+      expect(gunzipSync(piece.bytes).length).toBeLessThanOrEqual(MAX_PIECE_TEXT_BYTES);
+    }
+    expect(unpack(pieces)).toBe(`{"v":1,"events":[${masked}]}`);
+  });
+
+  test(`a recording has at most ${MAX_PIECES} pieces: past them, it is cut`, async () => {
+    // Each call makes a piece of its own, however small: more calls than
+    // pieces allowed, far under MAX_REPLAY_BYTES.
+    const packer = createPacker();
+    const pieces: Piece[] = [];
+    for (let n = 0; n < MAX_PIECES + 20 && !packer.done(); n += 1) {
+      pieces.push(...(await packer.add([event(n)], false)));
+    }
+    pieces.push(...(await packer.add([event(MAX_PIECES + 20)], true)));
+    expectPieces(pieces, true);
+    expect(pieces).toHaveLength(MAX_PIECES);
+    const sent = JSON.parse(unpack(pieces)) as { events: { n: number }[] };
+    expect(sent.events.map((sentEvent) => sentEvent.n)).toEqual(
+      Array.from({ length: MAX_PIECES - 1 }, (_, n) => n),
+    );
+  });
 });

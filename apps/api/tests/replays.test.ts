@@ -10,11 +10,13 @@ import {
   closeRecording,
   deleteExpiredReplays,
   deleteJoinedChunks,
+  deleteProjectReplays,
   joinReplays,
+  MAX_CHUNKS,
   MAX_REPLAY_BYTES,
   replayKeyOf,
 } from "../src/replays/replays.ts";
-import { s3ObjectStore } from "../src/storage/object-store.ts";
+import { type ObjectStore, s3ObjectStore } from "../src/storage/object-store.ts";
 import { PUBLIC_URL, signedInDashboard } from "./helpers/dashboard.ts";
 import { insertProject } from "./helpers/projects.ts";
 
@@ -196,7 +198,7 @@ describe("collecting a replay's chunks", () => {
       ],
       [send(project.public_key, replay, 0, "not gzip"), 400, "invalid_request"],
       [send(project.public_key, replay, 0, ""), 400, "invalid_request"],
-      [send(project.public_key, replay, 50, gzipSync("x")), 400, "invalid_request"],
+      [send(project.public_key, replay, MAX_CHUNKS, gzipSync("x")), 400, "invalid_request"],
       // A few kilobytes that unpack to 2 MiB.
       [
         send(project.public_key, replay, 0, gzipSync(Buffer.alloc(2 * 1024 ** 2, 32))),
@@ -212,6 +214,12 @@ describe("collecting a replay's chunks", () => {
         error,
       });
     }
+    // The last number a chunk may have is stored: the table's check agrees with MAX_CHUNKS.
+    const lastAllowed = randomUUID();
+    expect(
+      (await send(project.public_key, lastAllowed, MAX_CHUNKS - 1, gzipSync("x"))).statusCode,
+    ).toBe(202);
+    expect(await chunkCount(project.id, lastAllowed)).toBe("1");
     expect(await chunkCount(project.id, replay)).toBe("0");
   });
 
@@ -385,6 +393,66 @@ describe("joining a replay's chunks", () => {
       .where("project_id", "=", gone.id)
       .execute();
     expect(rows).toEqual([]);
+  });
+});
+
+describe("deleting a project's replays while one is joined", () => {
+  test("waits for the join, then deletes what it wrote", async () => {
+    const project = await newProject("Deleted while joining");
+    const replay = randomUUID();
+    const key = replayKeyOf(project.id, replay);
+    await sendRecording(project.public_key, replay);
+
+    // A store that holds this replay's upload until the test lets it go.
+    let uploading!: () => void;
+    const started = new Promise<void>((resolve) => {
+      uploading = resolve;
+    });
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const slow: ObjectStore = {
+      put: async (objectKey, body, contentType) => {
+        if (objectKey === key) {
+          uploading();
+          await held;
+        }
+        await store.put(objectKey, body, contentType);
+      },
+      get: (objectKey) => store.get(objectKey),
+      delete: (keys) => store.delete(keys),
+      deletePrefix: (prefix) => store.deletePrefix(prefix),
+      close: () => undefined,
+    };
+
+    const joining = joinReplays(dashboard.db, slow);
+    await started;
+    let deleted = false;
+    const deleting = deleteProjectReplays(dashboard.db, store, project.id).then(() => {
+      deleted = true;
+    });
+    // The deletion waits for the project's row, which the join holds.
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(deleted).toBe(false);
+
+    release();
+    await Promise.all([joining, deleting]);
+    expect(await store.get(key)).toBeNull();
+    expect(
+      await dashboard.db
+        .selectFrom("replays")
+        .select("replay_id")
+        .where("project_id", "=", project.id)
+        .execute(),
+    ).toEqual([]);
+    expect(
+      await dashboard.db
+        .selectFrom("replay_chunks")
+        .select("seq")
+        .where("project_id", "=", project.id)
+        .execute(),
+    ).toEqual([]);
   });
 });
 

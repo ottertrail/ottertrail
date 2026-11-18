@@ -4,12 +4,26 @@
  * piece is one gzip member of a part of that text, at most MAX_CHUNK_BYTES.
  * Joined in order and decompressed, the pieces give the text back exactly.
  *
- * A recording past MAX_REPLAY_BYTES in all is cut at an event's end: its
- * last piece closes the JSON, and is marked cut.
+ * Each piece also unpacks to at most MAX_PIECE_TEXT_BYTES, and a recording
+ * has at most MAX_PIECES, as the API takes. A recording that would go past
+ * MAX_REPLAY_BYTES in all, or past MAX_PIECES, is cut at an event's end:
+ * its last piece closes the JSON, and is marked cut.
  */
 
 /** Largest piece, in bytes: under the 64 KB browsers allow a beacon or keepalive request. */
 export const MAX_CHUNK_BYTES = 60_000;
+/**
+ * Largest piece once unpacked, in bytes of UTF-8: the API refuses a chunk
+ * that unpacks to more than 1 MiB. Text that compresses well, such as a
+ * masked page's runs of the same character, reaches it long before
+ * MAX_CHUNK_BYTES.
+ */
+export const MAX_PIECE_TEXT_BYTES = 1_000_000;
+/**
+ * Most pieces a recording has: the API numbers them 0 to 99. Pieces are at
+ * least about half full, so MAX_REPLAY_BYTES comes first; this guards the rest.
+ */
+export const MAX_PIECES = 100;
 /** Largest recording, in compressed bytes over all its pieces. */
 export const MAX_REPLAY_BYTES = 2_000_000;
 /** Room kept for the piece that closes a cut recording: gzip of "]}" is about 22 bytes. */
@@ -33,6 +47,24 @@ export async function gzip(text: string): Promise<Uint8Array<ArrayBuffer>> {
   return new Uint8Array(await new Response(stream).arrayBuffer());
 }
 
+/** The text's length in UTF-8, counted without encoding it. */
+export function utf8Bytes(text: string): number {
+  let bytes = 0;
+  for (let i = 0; i < text.length; i += 1) {
+    const code = text.charCodeAt(i);
+    if (code < 0x80) bytes += 1;
+    else if (code < 0x800) bytes += 2;
+    else if (code >= 0xd800 && code <= 0xdbff && i + 1 < text.length) {
+      const next = text.charCodeAt(i + 1);
+      if (next >= 0xdc00 && next <= 0xdfff) {
+        bytes += 4; // A pair: one character of four bytes.
+        i += 1;
+      } else bytes += 3; // Unpaired: encoded as U+FFFD, three bytes.
+    } else bytes += 3;
+  }
+  return bytes;
+}
+
 /** True when ending the text at `end` would split a character made of two UTF-16 units. */
 const splits = (text: string, end: number) => {
   const code = text.charCodeAt(end - 1);
@@ -49,7 +81,12 @@ async function splitText(text: string): Promise<Uint8Array<ArrayBuffer>[]> {
     const rest = text.length - start;
     let end = start + Math.ceil(rest / Math.ceil(rest / length));
     if (splits(text, end)) end -= 1;
-    const bytes = await gzip(text.slice(start, end));
+    const slice = text.slice(start, end);
+    if (utf8Bytes(slice) > MAX_PIECE_TEXT_BYTES && end - start > 1) {
+      length = Math.max(1, Math.floor((end - start) / 2));
+      continue;
+    }
+    const bytes = await gzip(slice);
     if (bytes.length > MAX_CHUNK_BYTES && end - start > 1) {
       length = Math.max(1, Math.floor((end - start) / 2));
       continue;
@@ -74,6 +111,7 @@ export function createPacker(): Packer {
   let started = false;
   let closed = false;
   let total = 0;
+  let count = 0;
   /** Characters of JSON tried per piece, adjusted as pieces come out. */
   let target = 256 * 1024;
 
@@ -96,8 +134,9 @@ export function createPacker(): Packer {
         events.slice(i, j).join(",") +
         (ends ? FOOTER : "");
       let pieces: Uint8Array<ArrayBuffer>[];
-      const bytes = await gzip(text);
-      if (bytes.length <= MAX_CHUNK_BYTES) {
+      // Not compressed at all when it would unpack past what the API takes.
+      const bytes = utf8Bytes(text) > MAX_PIECE_TEXT_BYTES ? null : await gzip(text);
+      if (bytes !== null && bytes.length <= MAX_CHUNK_BYTES) {
         pieces = [bytes];
         // Aim the next piece at about 55 KB compressed.
         target = Math.max(
@@ -105,14 +144,23 @@ export function createPacker(): Packer {
           Math.min(1024 * 1024, Math.floor((text.length * 55_000) / Math.max(1, bytes.length))),
         );
       } else if (j - i > 1) {
-        target = Math.max(1, Math.floor(length / 2));
-        continue; // Halved: fewer events.
+        // Fewer events: as many as the aim allows, judged by how this text
+        // compressed, so pieces stay near the aim rather than half of it.
+        target = Math.max(
+          1,
+          bytes === null ? Math.floor(length / 2) : Math.floor((length * 55_000) / bytes.length),
+        );
+        continue;
       } else {
         pieces = await splitText(text); // One event larger than a piece.
       }
       const size = pieces.reduce((sum, piece) => sum + piece.length, 0);
-      if (total + size > MAX_REPLAY_BYTES - (ends ? 0 : CLOSING_ROOM)) {
-        // Past the limit: close the JSON after the last whole event sent.
+      if (
+        total + size > MAX_REPLAY_BYTES - (ends ? 0 : CLOSING_ROOM) ||
+        count + pieces.length > MAX_PIECES - (ends ? 0 : 1)
+      ) {
+        // Past a limit (one piece kept for the closing one when it is not
+        // this): close the JSON after the last whole event sent.
         closed = true;
         ready.push({
           bytes: await gzip(started ? FOOTER : HEADER + FOOTER),
@@ -122,6 +170,7 @@ export function createPacker(): Packer {
         break;
       }
       total += size;
+      count += pieces.length;
       started = true;
       ready.push(...pieces.map((piece) => ({ bytes: piece, last: false, cut: false })));
       i = j;

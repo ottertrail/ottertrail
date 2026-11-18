@@ -16,8 +16,11 @@ import type { ObjectStore } from "../storage/object-store.ts";
 export const MAX_CHUNK_BYTES = 64 * 1024;
 /** Most a chunk unpacks to: a small body cannot unpack into a large one. */
 export const MAX_CHUNK_UNPACKED_BYTES = 1024 ** 2;
-/** Most chunks of one replay, numbered 0 to 49. */
-export const MAX_CHUNKS = 50;
+/**
+ * Most chunks of one replay, numbered 0 to 99: twice what MAX_REPLAY_BYTES
+ * needs, since the tracker fills each chunk at least about half.
+ */
+export const MAX_CHUNKS = 100;
 /** Most bytes of one replay's chunks: the browser stops at 2,000,000. */
 export const MAX_REPLAY_BYTES = 2_100_000;
 /** Most a replay unpacks to when joined: its JSON, read once by the worker. */
@@ -198,6 +201,12 @@ function checkRecording(text: string): string | null {
  * its last complete event, marked cut (closeRecording); one with nothing to
  * keep is given up, its chunks deleted. The worker runs it every few
  * seconds; running it twice at once is harmless.
+ *
+ * Each replay is joined holding its project's row (FOR SHARE), which
+ * deleteProjectReplays() takes exclusively: a deletion waits for a join in
+ * progress, then deletes what it wrote, and a join after a deletion finds
+ * no chunks. Without it, a join that had read the chunks could write the
+ * object and its row back after the user deleted them.
  */
 export async function joinReplays(
   db: Kysely<Database>,
@@ -232,55 +241,67 @@ export async function joinReplays(
   let joined = 0;
   let dropped = 0;
   for (const { project_id: projectId, replay_id: replayId } of candidates) {
-    const chunks = await db
-      .selectFrom("replay_chunks")
-      .select(["seq", "last", "cut", "data", "received_at"])
-      .where("project_id", "=", projectId)
-      .where("replay_id", "=", replayId)
-      .orderBy("seq")
-      .execute();
-    const lastAt = chunks.findIndex((chunk) => chunk.last);
-    // Complete: chunks 0 to the last, none missing.
-    const complete =
-      lastAt !== -1 && chunks.slice(0, lastAt + 1).every((chunk, index) => chunk.seq === index);
-    const latest = chunks.reduce((time, chunk) => Math.max(time, chunk.received_at.getTime()), 0);
-    if (!complete && latest >= idleSince.getTime()) {
-      // A chunk may still come, as a retry: wait.
-      continue;
-    }
-    // What came in order from the first chunk.
-    let inOrder = 0;
-    while (chunks[inOrder]?.seq === inOrder) inOrder += 1;
-    const kept = complete ? chunks.slice(0, lastAt + 1) : chunks.slice(0, inOrder);
-    const unpacked = kept.length === 0 ? null : unpack(kept.map((chunk) => chunk.data));
-    const closed = complete || unpacked === null ? unpacked : closeRecording(unpacked);
-    const text = closed === null ? null : checkRecording(closed);
-    if (text === null) {
-      // Not a recording, or nothing of one: once its last chunk came, or
-      // it went quiet, nothing more will make it one.
-      await db
-        .deleteFrom("replay_chunks")
+    const outcome = await db.transaction().execute(async (trx) => {
+      const project = await trx
+        .selectFrom("projects")
+        .select("id")
+        .where("id", "=", projectId)
+        .forShare()
+        .executeTakeFirst();
+      if (project === undefined) return "skipped"; // Deleted: its chunks went with it.
+      const chunks = await trx
+        .selectFrom("replay_chunks")
+        .select(["seq", "last", "cut", "data", "received_at"])
         .where("project_id", "=", projectId)
         .where("replay_id", "=", replayId)
+        .orderBy("seq")
         .execute();
-      dropped += 1;
-      continue;
-    }
-    const compressed = gzipSync(text);
-    const objectKey = replayKeyOf(projectId, replayId);
-    await store.put(objectKey, compressed, "application/gzip");
-    await db
-      .insertInto("replays")
-      .values({
-        project_id: projectId,
-        replay_id: replayId,
-        object_key: objectKey,
-        bytes: compressed.byteLength,
-        cut: !complete || kept.some((chunk) => chunk.cut),
-      })
-      .onConflict((oc) => oc.columns(["project_id", "replay_id"]).doNothing())
-      .execute();
-    joined += 1;
+      // Deleted since it was found: nothing to join.
+      if (chunks.length === 0) return "skipped";
+      const lastAt = chunks.findIndex((chunk) => chunk.last);
+      // Complete: chunks 0 to the last, none missing.
+      const complete =
+        lastAt !== -1 && chunks.slice(0, lastAt + 1).every((chunk, index) => chunk.seq === index);
+      const latest = chunks.reduce((time, chunk) => Math.max(time, chunk.received_at.getTime()), 0);
+      if (!complete && latest >= idleSince.getTime()) {
+        // A chunk may still come, as a retry: wait.
+        return "skipped";
+      }
+      // What came in order from the first chunk.
+      let inOrder = 0;
+      while (chunks[inOrder]?.seq === inOrder) inOrder += 1;
+      const kept = complete ? chunks.slice(0, lastAt + 1) : chunks.slice(0, inOrder);
+      const unpacked = kept.length === 0 ? null : unpack(kept.map((chunk) => chunk.data));
+      const closed = complete || unpacked === null ? unpacked : closeRecording(unpacked);
+      const text = closed === null ? null : checkRecording(closed);
+      if (text === null) {
+        // Not a recording, or nothing of one: once its last chunk came, or
+        // it went quiet, nothing more will make it one.
+        await trx
+          .deleteFrom("replay_chunks")
+          .where("project_id", "=", projectId)
+          .where("replay_id", "=", replayId)
+          .execute();
+        return "dropped";
+      }
+      const compressed = gzipSync(text);
+      const objectKey = replayKeyOf(projectId, replayId);
+      await store.put(objectKey, compressed, "application/gzip");
+      await trx
+        .insertInto("replays")
+        .values({
+          project_id: projectId,
+          replay_id: replayId,
+          object_key: objectKey,
+          bytes: compressed.byteLength,
+          cut: !complete || kept.some((chunk) => chunk.cut),
+        })
+        .onConflict((oc) => oc.columns(["project_id", "replay_id"]).doNothing())
+        .execute();
+      return "joined";
+    });
+    if (outcome === "joined") joined += 1;
+    if (outcome === "dropped") dropped += 1;
   }
   return { joined, dropped };
 }
@@ -390,14 +411,25 @@ export async function projectReplays(
 /**
  * Deletes every replay of a project, as its settings offer when replays
  * are turned off: the objects, then the rows and any chunks still waiting.
+ * Holds the project's row exclusively (FOR NO KEY UPDATE, which chunks
+ * arriving still may reference), so a join in progress finishes first and
+ * none starts until this is done (joinReplays()).
  */
 export async function deleteProjectReplays(
   db: Kysely<Database>,
   store: ObjectStore,
   projectId: string,
 ): Promise<number> {
-  const deleted = await store.deletePrefix(replayPrefix(projectId));
-  await db.deleteFrom("replays").where("project_id", "=", projectId).execute();
-  await db.deleteFrom("replay_chunks").where("project_id", "=", projectId).execute();
-  return deleted;
+  return db.transaction().execute(async (trx) => {
+    await trx
+      .selectFrom("projects")
+      .select("id")
+      .where("id", "=", projectId)
+      .forNoKeyUpdate()
+      .execute();
+    const deleted = await store.deletePrefix(replayPrefix(projectId));
+    await trx.deleteFrom("replays").where("project_id", "=", projectId).execute();
+    await trx.deleteFrom("replay_chunks").where("project_id", "=", projectId).execute();
+    return deleted;
+  });
 }
