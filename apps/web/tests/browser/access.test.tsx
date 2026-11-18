@@ -150,16 +150,20 @@ describe("a member's dashboard shows only what they may use", () => {
     await page.getByRole("button", { name: "Add rule" }).click();
     const form = page.getByRole("dialog", { name: "Add an alert rule" });
     await form.getByRole("combobox", { name: "When" }).click();
-    const options = page
-      .getByRole("option")
-      .elements()
-      .map((option) => option.textContent);
-    expect(options).toEqual([
-      "Check down",
-      "Certificate expiring",
-      "New error",
-      "Regressed error",
-      "Error spike",
-    ]);
+    // The list renders after the click resolves: wait for it, not just read it.
+    await expect
+      .poll(() =>
+        page
+          .getByRole("option")
+          .elements()
+          .map((option) => option.textContent),
+      )
+      .toEqual([
+        "Check down",
+        "Certificate expiring",
+        "New error",
+        "Regressed error",
+        "Error spike",
+      ]);
   });
 });
