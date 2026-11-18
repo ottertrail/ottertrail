@@ -58,6 +58,52 @@ export function serviceChoiceFrom(search: { service?: unknown; route?: unknown }
   return { service, route: service === undefined ? undefined : searchValue(search.route) };
 }
 
+/** A service's page's address, besides its name: the days, environment, and a route of it. */
+export interface ServiceSearch {
+  range: PageRange;
+  environment: string;
+  /** Only this route's requests. */
+  route?: string | undefined;
+}
+
+export const serviceSearchOf = ({ range, environment, route }: ServiceSearch) => ({
+  ...rangeSearch(range),
+  ...environmentSearch(environment),
+  ...(route === undefined ? {} : { route }),
+});
+
+/** The longest name the Traces page's filter takes. */
+const MAX_NAME_FILTER = 200;
+
+/** The Traces page's filters for a service's requests, or a route's (as part of the name). */
+export const routeTraceFilters = (service: string, route?: string) => ({
+  service,
+  name:
+    route === undefined || !isNamedRoute(route) || route.length > MAX_NAME_FILTER
+      ? undefined
+      : route.trim(),
+});
+
+/**
+ * Whether a route has a name to address it by: one of only spaces has
+ * none, so it gets no page and no alert rule, as an empty one.
+ */
+export const isNamedRoute = (route: string) => route.trim() !== "";
+
+/**
+ * Whether a service's name can be a path segment: a browser drops "." and
+ * "..", so their page could not be reached.
+ */
+export const isLinkableService = (service: string) => service !== "." && service !== "..";
+
+/** The Alerts page's address that opens the form for a route rule, filled in. */
+export const addRuleSearch = (environment: string, service: string, route?: string) => ({
+  add: "route_latency" as const,
+  service,
+  ...(route === undefined || !isNamedRoute(route) ? {} : { route }),
+  ...(environment === DEFAULT_ENVIRONMENT ? {} : { env: environment }),
+});
+
 /** The Traces page's address: what it shows, the defaults left out. */
 export interface TracesSearch {
   range: PageRange;

@@ -37,7 +37,7 @@ import {
   type Retention,
 } from "../../src/lib/product-api.ts";
 import type { Project } from "../../src/lib/projects-api.ts";
-import type { ServiceList } from "../../src/lib/services-api.ts";
+import type { ServiceChart, ServiceList, StatusCounts } from "../../src/lib/services-api.ts";
 import type { Settings } from "../../src/lib/settings-api.ts";
 import type { SourceMapFile, SourceMapRelease } from "../../src/lib/source-maps-api.ts";
 import type { Speed } from "../../src/lib/speed-api.ts";
@@ -122,6 +122,8 @@ export interface FakeApi {
   metricChart: (query: URLSearchParams) => MetricChart | Response;
   /** Answers GET /api/projects/:id/services; by default, fakeServices. */
   services: (query: URLSearchParams) => ServiceList | Response;
+  /** Answers GET /api/projects/:id/services/chart; by default, fakeServiceChart. */
+  serviceChart: (query: URLSearchParams) => ServiceChart | Response;
   /** Answers GET /api/projects/:id/hosts; by default, fakeHosts. */
   hosts: (query: URLSearchParams) => HostList | Response;
   /** Answers GET /api/projects/:id/hosts/charts; by default, fakeHostCharts. */
@@ -887,7 +889,16 @@ export function fakeMetricChart(query: URLSearchParams): MetricChart {
   };
 }
 
-/** Two services: web with two routes, billing with one. */
+const statusCounts = (counts: Partial<StatusCounts>): StatusCounts => ({
+  "2xx": 0,
+  "3xx": 0,
+  "4xx": 0,
+  "5xx": 0,
+  none: 0,
+  ...counts,
+});
+
+/** Two services: web with two routes, billing with one, whose spans have no status code. */
 export function fakeServices(query: URLSearchParams): ServiceList {
   return {
     ...telemetryRange(query),
@@ -898,10 +909,28 @@ export function fakeServices(query: URLSearchParams): ServiceList {
         failed: 30,
         p50Us: 25_000,
         p95Us: 182_400,
+        p99Us: 310_000,
+        statuses: statusCounts({ "2xx": 1100, "3xx": 20, "4xx": 50, "5xx": 30 }),
         routeCount: 2,
         routes: [
-          { route: "/orders/{id}", requests: 1000, failed: 30, p50Us: 30_000, p95Us: 190_000 },
-          { route: "GET /health", requests: 200, failed: 0, p50Us: 850, p95Us: 1200 },
+          {
+            route: "/orders/{id}",
+            requests: 1000,
+            failed: 30,
+            p50Us: 30_000,
+            p95Us: 190_000,
+            p99Us: 320_000,
+            statuses: statusCounts({ "2xx": 900, "3xx": 20, "4xx": 50, "5xx": 30 }),
+          },
+          {
+            route: "GET /health",
+            requests: 200,
+            failed: 0,
+            p50Us: 850,
+            p95Us: 1200,
+            p99Us: 2500,
+            statuses: statusCounts({ "2xx": 200 }),
+          },
         ],
       },
       {
@@ -910,14 +939,108 @@ export function fakeServices(query: URLSearchParams): ServiceList {
         failed: 0,
         p50Us: 1_250_000,
         p95Us: 2_000_000,
+        p99Us: 3_100_000,
+        statuses: statusCounts({ none: 40 }),
         routeCount: 140,
         routes: [
-          { route: "POST /charge", requests: 40, failed: 0, p50Us: 1_250_000, p95Us: 2_000_000 },
+          {
+            route: "POST /charge",
+            requests: 40,
+            failed: 0,
+            p50Us: 1_250_000,
+            p95Us: 2_000_000,
+            p99Us: 3_100_000,
+            statuses: statusCounts({ none: 40 }),
+          },
         ],
       },
     ],
     truncated: false,
     received: true,
+  };
+}
+
+const sumOf = (values: number[]) => values.reduce((total, value) => total + value, 0);
+/** Counts in an hour, per second. */
+const perSecond = (values: number[]) => values.map((value) => value / 3600);
+
+/**
+ * The service (and route) the query names, over 12 hourly buckets from
+ * 16 Nov 00:00 UTC: nothing in the first two hours; then 3,600 2xx an hour
+ * (1 a second), 7,200 at 03:00 (2 a second) with 360 4xx (0.1 a second);
+ * 36 5xx, the only failures, at 04:00. Every hour with requests has a
+ * median of 20 ms, a 95th percentile of 150 ms, and a 99th of 1.5 s.
+ */
+export function fakeServiceChart(query: URLSearchParams): ServiceChart {
+  const buckets = 12;
+  const at = (values: Record<number, number>, fill = 0) =>
+    Array.from({ length: buckets }, (_, index) => values[index] ?? (index < 2 ? 0 : fill));
+  const statuses = {
+    "2xx": at({ 3: 7200 }, 3600),
+    "3xx": at({}),
+    "4xx": at({ 3: 360 }),
+    "5xx": at({ 4: 36 }),
+    none: at({}),
+  };
+  const requests = statuses["2xx"].map(
+    (value, index) => value + (statuses["4xx"][index] ?? 0) + (statuses["5xx"][index] ?? 0),
+  );
+  const failed = statuses["5xx"];
+  const whenBusy = (value: number) => requests.map((count) => (count === 0 ? null : value));
+  return {
+    ...telemetryRange(query),
+    service: query.get("service") ?? "",
+    route: query.get("route"),
+    start: "2026-11-16T00:00:00.000Z",
+    stepSeconds: 3600,
+    buckets,
+    totals: {
+      requests: sumOf(requests),
+      failed: sumOf(failed),
+      p50Us: 20_000,
+      p95Us: 150_000,
+      p99Us: 1_500_000,
+      statuses: statusCounts({
+        "2xx": sumOf(statuses["2xx"]),
+        "4xx": sumOf(statuses["4xx"]),
+        "5xx": sumOf(statuses["5xx"]),
+      }),
+    },
+    counts: { requests, failed, statuses },
+    perSecond: {
+      "2xx": perSecond(statuses["2xx"]),
+      "3xx": perSecond(statuses["3xx"]),
+      "4xx": perSecond(statuses["4xx"]),
+      "5xx": perSecond(statuses["5xx"]),
+      none: perSecond(statuses.none),
+    },
+    failedShare: requests.map((count, index) =>
+      count === 0 ? null : (failed[index] ?? 0) / count,
+    ),
+    durations: {
+      p50Us: whenBusy(20_000),
+      p95Us: whenBusy(150_000),
+      p99Us: whenBusy(1_500_000),
+    },
+  };
+}
+
+/** No request of the service or route in the period. */
+export function noServiceChart(query: URLSearchParams): ServiceChart {
+  const chart = fakeServiceChart(query);
+  const zeros = Array.from({ length: chart.buckets }, () => 0);
+  const nulls = Array.from({ length: chart.buckets }, () => null);
+  return {
+    ...chart,
+    totals: { requests: 0, failed: 0, p50Us: 0, p95Us: 0, p99Us: 0, statuses: statusCounts({}) },
+    counts: {
+      requests: zeros,
+      failed: zeros,
+      statuses: { "2xx": zeros, "3xx": zeros, "4xx": zeros, "5xx": zeros, none: zeros },
+    },
+    perSecond: { "2xx": zeros, "3xx": zeros, "4xx": zeros, "5xx": zeros, none: zeros },
+    failedShare: nulls,
+    durations: { p50Us: nulls, p95Us: nulls, p99Us: nulls },
   };
 }
 
@@ -2751,6 +2874,10 @@ async function answer(api: FakeApi, url: URL, init: RequestInit | undefined): Pr
     const result = api.services(url.searchParams);
     return result instanceof Response ? result : json(result);
   }
+  if (/^\/api\/projects\/[^/]+\/services\/chart$/.test(path)) {
+    const result = api.serviceChart(url.searchParams);
+    return result instanceof Response ? result : json(result);
+  }
   if (/^\/api\/projects\/[^/]+\/services\/routes$/.test(path)) {
     // The fixtures' services and routes, as the last day's would be.
     const list = api.services(url.searchParams);
@@ -2877,6 +3004,7 @@ export function installFakeApi(overrides: Partial<FakeApi> = {}): FakeApi {
     metrics: fakeMetrics,
     metricChart: fakeMetricChart,
     services: fakeServices,
+    serviceChart: fakeServiceChart,
     hosts: fakeHosts,
     hostCharts: fakeHostCharts,
     checks: fakeChecks(),

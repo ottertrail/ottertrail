@@ -47,10 +47,12 @@ import {
   logFiltersFrom,
   metricChoicesFrom,
   metricFiltersFrom,
+  isNamedRoute,
   searchValue,
   serviceChoiceFrom,
   traceFiltersFrom,
 } from "@/features/telemetry/search";
+import { ServicePage } from "@/features/telemetry/service-page";
 import { ServicesPage } from "@/features/telemetry/services-page";
 import { TracePage } from "@/features/telemetry/trace-page";
 import { TracesPage } from "@/features/telemetry/traces-page";
@@ -581,6 +583,35 @@ const servicesRoute = createRoute({
   },
 });
 
+/** One service's charts: its name in the path; days, environment, and optionally one of its routes. */
+const serviceRoute = createRoute({
+  getParentRoute: () => projectRoute,
+  path: "/services/$service",
+  staticData: { title: "Service" },
+  validateSearch: (search: ErrorSearchInput & { route?: unknown }) => {
+    const route = searchValue(search.route);
+    return {
+      ...rangeSearch(search),
+      ...environmentSearch(search),
+      // A route of only spaces has no page: the service's shows instead.
+      route: route !== undefined && isNamedRoute(route) ? route : undefined,
+    };
+  },
+  component: function ServiceRouteComponent() {
+    const { projectId, service } = serviceRoute.useParams();
+    const { period, from, to, env, route } = serviceRoute.useSearch();
+    return (
+      <ServicePage
+        projectId={projectId}
+        service={service}
+        route={route}
+        range={rangeFrom({ period, from, to })}
+        environment={env ?? DEFAULT_ENVIRONMENT}
+      />
+    );
+  },
+});
+
 /** The hosts that sent host metrics: days and environment. */
 const hostsRoute = createRoute({
   getParentRoute: () => projectRoute,
@@ -908,6 +939,7 @@ const routeTree = rootRoute.addChildren([
       metricsRoute,
       metricRoute,
       servicesRoute,
+      serviceRoute,
       hostsRoute,
       hostRoute,
       uptimeRoute,

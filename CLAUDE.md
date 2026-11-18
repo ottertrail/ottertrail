@@ -19,7 +19,7 @@ If `docs/private/product-spec.md` exists, read it before work on product scope o
 
 - Public project keys allow bounded event collection only. They never allow reads, exports, or configuration.
 - Browser payloads are untrusted. Validate them with Fastify schemas, limit body size, batch size, and field lengths, and check timestamps.
-- Store when an event happened and when it arrived. Assume at-least-once delivery: a retry must be the same row (same `project_id`, day, and `event_id`: the day, not the exact time, which clock correction moves a little on each attempt), which ClickHouse's `ReplacingMergeTree` keeps once and reports read with `FINAL`. Nothing is looked up before an insert.
+- Store when an event happened and when it arrived. Assume at-least-once delivery: a retry must be the same row (same `project_id`, day, and `event_id`: the day, not the exact time, which clock correction moves a little on each attempt), which ClickHouse's `ReplacingMergeTree` keeps once and reports read with `FINAL`. Telemetry pages and alerts that aggregate large windows read without `FINAL` where measured necessary, and forced merges bound how long a copy counts. Nothing is looked up before an insert.
 - Acknowledge events and telemetry only after ClickHouse has written them (asynchronous inserts, waiting for the write); answer 503 while it cannot.
 - Rate-limit per IP and per project, and limit the instance's volume and each project's, so one project cannot crowd out the others. Reject bad requests before any database work.
 

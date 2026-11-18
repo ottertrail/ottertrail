@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { BellPlusIcon, OctagonAlertIcon, SearchXIcon } from "lucide-react";
+import { BellPlusIcon, OctagonAlertIcon, SearchXIcon, WaypointsIcon } from "lucide-react";
+import * as React from "react";
 
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -23,20 +24,44 @@ import {
 } from "@/components/ui/table";
 import { DEFAULT_ENVIRONMENT, type PageRange } from "@/lib/analytics-api";
 import { ApiError } from "@/lib/api";
-import { type RouteStats, servicesQuery } from "@/lib/services-api";
+import {
+  type RouteStats,
+  STATUS_CLASSES,
+  type ServiceSummary,
+  servicesQuery,
+} from "@/lib/services-api";
 
 import { formatConversion, formatWhole } from "../analytics/format";
 import { RangeControls } from "../errors/range-controls";
 import { NoSuchProject } from "../projects/no-such-project";
 import { formatDuration } from "./format";
-import { servicesSearchOf, tracesSearchOf } from "./search";
+import {
+  addRuleSearch,
+  isLinkableService,
+  isNamedRoute,
+  routeTraceFilters,
+  serviceSearchOf,
+  servicesSearchOf,
+  tracesSearchOf,
+} from "./search";
 import { SendTelemetry } from "./send-telemetry";
+import { StatusBar, StatusLegend } from "./status-classes";
+import { STATUS_LABELS } from "./status-format";
 
-/** The longest name the Traces page's filter takes. */
-const MAX_NAME_FILTER = 200;
-
-/** Requests, the share failed, and the durations, as cells of a row. */
-function StatCells({ stats }: { stats: RouteStats }) {
+/**
+ * Requests, the share failed, the durations, and the requests by status
+ * class, as cells of a row: a bar, or each class's count when the numbers
+ * are shown.
+ */
+function StatCells({
+  stats,
+  label,
+  numbers,
+}: {
+  stats: RouteStats;
+  label: string;
+  numbers: boolean;
+}) {
   return (
     <>
       <TableCell className="text-right tabular-nums">{formatWhole(stats.requests)}</TableCell>
@@ -45,23 +70,213 @@ function StatCells({ stats }: { stats: RouteStats }) {
       </TableCell>
       <TableCell className="text-right tabular-nums">{formatDuration(stats.p50Us)}</TableCell>
       <TableCell className="text-right tabular-nums">{formatDuration(stats.p95Us)}</TableCell>
+      <TableCell className="text-right tabular-nums">{formatDuration(stats.p99Us)}</TableCell>
+      {numbers ? (
+        STATUS_CLASSES.map((name) => (
+          <TableCell key={name} className="text-right tabular-nums">
+            {formatWhole(stats.statuses[name])}
+          </TableCell>
+        ))
+      ) : (
+        <TableCell className="w-32">
+          <StatusBar statuses={stats.statuses} label={`Status classes of ${label}`} />
+        </TableCell>
+      )}
     </>
   );
 }
 
-/** The Alerts page's address that opens the form for a route rule, filled in. */
-const addRuleSearch = (environment: string, service: string, route?: string) => ({
-  add: "route_latency" as const,
+/** One service's card: its numbers, and a table of its routes. */
+function ServiceCard({
+  projectId,
+  range,
+  environment,
   service,
-  ...(route === undefined || route === "" ? {} : { route }),
-  ...(environment === DEFAULT_ENVIRONMENT ? {} : { env: environment }),
-});
+  only,
+  marked,
+}: {
+  projectId: string;
+  range: PageRange;
+  environment: string;
+  service: ServiceSummary;
+  only: string | undefined;
+  marked: string | undefined;
+}) {
+  const [numbers, setNumbers] = React.useState(false);
+  const tableId = React.useId();
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex flex-wrap items-center justify-between gap-2">
+          <h3 className="break-all">
+            {isLinkableService(service.service) ? (
+              <Link
+                to="/projects/$projectId/services/$service"
+                params={{ projectId, service: service.service }}
+                search={serviceSearchOf({ range, environment })}
+                className="text-link hover:underline"
+              >
+                {service.service}
+              </Link>
+            ) : (
+              // A browser drops "." and ".." from a path: no page can be addressed for them.
+              service.service
+            )}
+          </h3>
+          <Link
+            to="/projects/$projectId/alerts"
+            params={{ projectId }}
+            search={addRuleSearch(environment, service.service)}
+            className="flex items-center gap-1 text-sm font-normal text-link hover:underline"
+          >
+            <BellPlusIcon aria-hidden="true" className="size-4" />
+            Add an alert rule
+            <span className="sr-only"> for {service.service}</span>
+          </Link>
+        </CardTitle>
+        <CardDescription className="flex flex-col gap-2">
+          <span>
+            {formatWhole(service.requests)} {service.requests === 1 ? "request" : "requests"},{" "}
+            {formatConversion(service.failed / service.requests)} failed, median{" "}
+            {formatDuration(service.p50Us)}, 95th percentile {formatDuration(service.p95Us)}, 99th
+            percentile {formatDuration(service.p99Us)}
+          </span>
+          <StatusBar
+            statuses={service.statuses}
+            label={`Status classes of ${service.service}`}
+            className="max-w-sm"
+          />
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-3">
+        <Table id={tableId}>
+          <caption className="sr-only">Routes of {service.service}, busiest first</caption>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Route</TableHead>
+              <TableHead className="text-right">Requests</TableHead>
+              <TableHead className="text-right">Failed</TableHead>
+              <TableHead className="text-right">Median</TableHead>
+              <TableHead className="text-right">95th percentile</TableHead>
+              <TableHead className="text-right">99th percentile</TableHead>
+              {numbers ? (
+                STATUS_CLASSES.map((name) => (
+                  <TableHead key={name} className="text-right">
+                    {STATUS_LABELS[name]}
+                  </TableHead>
+                ))
+              ) : (
+                <TableHead>Status classes</TableHead>
+              )}
+              <TableHead>
+                <span className="sr-only">Traces and alert rule</span>
+              </TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {service.routes.map((route) => (
+              <TableRow
+                key={route.route}
+                aria-current={
+                  only === service.service && marked === route.route ? "true" : undefined
+                }
+                className="aria-[current=true]:bg-muted"
+              >
+                <TableCell className="max-w-md">
+                  {!isNamedRoute(route.route) || !isLinkableService(service.service) ? (
+                    // A route without a name (or only spaces) has no page: its address could not name it.
+                    <span className="block truncate font-mono text-xs text-ink-subtle">
+                      {isNamedRoute(route.route) ? route.route : "(no name)"}
+                    </span>
+                  ) : (
+                    <Link
+                      to="/projects/$projectId/services/$service"
+                      params={{ projectId, service: service.service }}
+                      search={serviceSearchOf({ range, environment, route: route.route })}
+                      className="block truncate font-mono text-xs text-link hover:underline"
+                      title={route.route}
+                    >
+                      {route.route}
+                    </Link>
+                  )}
+                </TableCell>
+                <StatCells
+                  stats={route}
+                  label={isNamedRoute(route.route) ? route.route : "(no name)"}
+                  numbers={numbers}
+                />
+                <TableCell>
+                  <span className="flex items-center gap-1">
+                    <Link
+                      to="/projects/$projectId/traces"
+                      params={{ projectId }}
+                      search={tracesSearchOf({
+                        range,
+                        environment,
+                        filters: routeTraceFilters(service.service, route.route),
+                      })}
+                      aria-label={`Traces of ${isNamedRoute(route.route) ? route.route : "(no name)"} in ${service.service}`}
+                      title="Traces"
+                      className="inline-flex size-7 items-center justify-center rounded-md text-ink-subtle hover:bg-muted hover:text-ink"
+                    >
+                      <WaypointsIcon aria-hidden="true" className="size-4" />
+                    </Link>
+                    {/* A route without a name cannot be named in a rule. */}
+                    {isNamedRoute(route.route) && (
+                      <Link
+                        to="/projects/$projectId/alerts"
+                        params={{ projectId }}
+                        search={addRuleSearch(environment, service.service, route.route)}
+                        aria-label={`Add an alert rule for ${route.route} in ${service.service}`}
+                        title="Add an alert rule"
+                        className="inline-flex size-7 items-center justify-center rounded-md text-ink-subtle hover:bg-muted hover:text-ink"
+                      >
+                        <BellPlusIcon aria-hidden="true" className="size-4" />
+                      </Link>
+                    )}
+                  </span>
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+        <div>
+          <Button
+            variant="ghost"
+            size="sm"
+            aria-expanded={numbers}
+            aria-controls={tableId}
+            onClick={() => setNumbers((shown) => !shown)}
+          >
+            {numbers ? "Show status classes as bars" : "Show status classes as numbers"}
+          </Button>
+        </div>
+        {only === service.service &&
+          marked !== undefined &&
+          !service.routes.some((route) => route.route === marked) && (
+            <p className="text-sm text-ink-subtle">
+              {service.routeCount > service.routes.length
+                ? `The route ${marked} is not among the ${formatWhole(service.routes.length)} busiest listed here.`
+                : `No request of the route ${marked} arrived in this period.`}
+            </p>
+          )}
+        {service.routeCount > service.routes.length && (
+          <p className="text-sm text-ink-subtle">
+            The {formatWhole(service.routes.length)} busiest of {formatWhole(service.routeCount)}{" "}
+            routes.
+          </p>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
 
 /**
  * Each service of the project, busiest first, with its server spans'
- * routes: requests, the share that failed, and the median and 95th
- * percentile duration. A route opens the Traces page filtered by it, and
- * each service and route links to a new alert rule on it. An address
+ * routes: requests, the share that failed, the median, 95th, and 99th
+ * percentile duration, and the requests by status class. A service or
+ * route opens its page of charts; each route links to its traces, and
+ * each service and route to a new alert rule on it. An address
  * that names a service (as an alert's link does) shows only it, its
  * route marked.
  */
@@ -191,119 +406,23 @@ export function ServicesPage({
               <p className="text-sm text-ink-subtle">
                 A request is a span of kind SERVER; its route is its{" "}
                 <code className="font-mono">http.route</code> attribute, or its name. Failed: its
-                status is Error. The median and 95th percentile are of the requests&apos; durations.
+                status is Error. The median, 95th, and 99th percentile are of the requests&apos;
+                durations. A status class is from{" "}
+                <code className="font-mono">http.response.status_code</code>, else{" "}
+                <code className="font-mono">http.status_code</code>. A service or route opens its
+                charts over the period.
               </p>
+              <StatusLegend />
               {shown.map((service) => (
-                <Card key={service.service}>
-                  <CardHeader>
-                    <CardTitle className="flex flex-wrap items-center justify-between gap-2">
-                      <h3 className="break-all">{service.service}</h3>
-                      <Link
-                        to="/projects/$projectId/alerts"
-                        params={{ projectId }}
-                        search={addRuleSearch(environment, service.service)}
-                        className="flex items-center gap-1 text-sm font-normal text-link hover:underline"
-                      >
-                        <BellPlusIcon aria-hidden="true" className="size-4" />
-                        Add an alert rule
-                        <span className="sr-only"> for {service.service}</span>
-                      </Link>
-                    </CardTitle>
-                    <CardDescription>
-                      {formatWhole(service.requests)}{" "}
-                      {service.requests === 1 ? "request" : "requests"},{" "}
-                      {formatConversion(service.failed / service.requests)} failed, median{" "}
-                      {formatDuration(service.p50Us)}, 95th percentile{" "}
-                      {formatDuration(service.p95Us)}
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent className="flex flex-col gap-3">
-                    <Table>
-                      <caption className="sr-only">
-                        Routes of {service.service}, busiest first
-                      </caption>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead>Route</TableHead>
-                          <TableHead className="text-right">Requests</TableHead>
-                          <TableHead className="text-right">Failed</TableHead>
-                          <TableHead className="text-right">Median</TableHead>
-                          <TableHead className="text-right">95th percentile</TableHead>
-                          <TableHead>
-                            <span className="sr-only">Alert rule</span>
-                          </TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {service.routes.map((route) => (
-                          <TableRow
-                            key={route.route}
-                            aria-current={
-                              only === service.service && marked === route.route
-                                ? "true"
-                                : undefined
-                            }
-                            className="aria-[current=true]:bg-muted"
-                          >
-                            <TableCell className="max-w-md">
-                              <Link
-                                to="/projects/$projectId/traces"
-                                params={{ projectId }}
-                                search={tracesSearchOf({
-                                  range,
-                                  environment,
-                                  filters: {
-                                    service: service.service,
-                                    name:
-                                      route.route.trim() === "" ||
-                                      route.route.length > MAX_NAME_FILTER
-                                        ? undefined
-                                        : route.route.trim(),
-                                  },
-                                })}
-                                className="block truncate font-mono text-xs text-link hover:underline"
-                                title={`Traces of ${service.service} named like ${route.route}`}
-                              >
-                                {route.route === "" ? "(no name)" : route.route}
-                              </Link>
-                            </TableCell>
-                            <StatCells stats={route} />
-                            <TableCell>
-                              {/* A route without a name cannot be named in a rule. */}
-                              {route.route.trim() !== "" && (
-                                <Link
-                                  to="/projects/$projectId/alerts"
-                                  params={{ projectId }}
-                                  search={addRuleSearch(environment, service.service, route.route)}
-                                  aria-label={`Add an alert rule for ${route.route} in ${service.service}`}
-                                  title="Add an alert rule"
-                                  className="inline-flex size-7 items-center justify-center rounded-md text-ink-subtle hover:bg-muted hover:text-ink"
-                                >
-                                  <BellPlusIcon aria-hidden="true" className="size-4" />
-                                </Link>
-                              )}
-                            </TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                    {only === service.service &&
-                      marked !== undefined &&
-                      !service.routes.some((route) => route.route === marked) && (
-                        <p className="text-sm text-ink-subtle">
-                          {service.routeCount > service.routes.length
-                            ? `The route ${marked} is not among the ${formatWhole(service.routes.length)} busiest listed here.`
-                            : `No request of the route ${marked} arrived in this period.`}
-                        </p>
-                      )}
-                    {service.routeCount > service.routes.length && (
-                      <p className="text-sm text-ink-subtle">
-                        The {formatWhole(service.routes.length)} busiest of{" "}
-                        {formatWhole(service.routeCount)} routes.
-                      </p>
-                    )}
-                  </CardContent>
-                </Card>
+                <ServiceCard
+                  key={service.service}
+                  projectId={projectId}
+                  range={range}
+                  environment={environment}
+                  service={service}
+                  only={only}
+                  marked={marked}
+                />
               ))}
               {data.truncated && (
                 <p className="text-sm text-ink-subtle">

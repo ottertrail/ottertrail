@@ -15,6 +15,7 @@ import { DashboardQueryLimiter, dashboardReader } from "./dashboard-limit.ts";
 import {
   CURSOR_PATTERN,
   cursorOf,
+  labelsInRange,
   MAX_NS,
   SERVICE_PATTERN,
   SPAN_ID_PATTERN,
@@ -34,7 +35,7 @@ import {
 } from "./logs.ts";
 import { listMetrics, METRIC_KINDS, type MetricKind, metricChart } from "./metrics.ts";
 import { MAX_KEY_CHARS, MAX_NAME_BYTES, MAX_VALUE_BYTES } from "./normalize.ts";
-import { listServices, MAX_RECENT_ROUTES, recentRoutes } from "./services.ts";
+import { listServices, MAX_RECENT_ROUTES, recentRoutes, serviceChart } from "./services.ts";
 import { listTraces, spanDetail, traceDetail, traceWindow } from "./traces.ts";
 
 const UUID_PATTERN =
@@ -118,6 +119,8 @@ type ChartQuery = RangeQuery & {
 
 type HostQuery = RangeQuery & { host: string };
 
+type ServiceChartQuery = RangeQuery & { service: string; route?: string };
+
 /** The range's parameters alone, for the lists that take nothing else. */
 const RANGE_QUERY = { type: "object", additionalProperties: false, properties: RANGE_PROPERTIES };
 
@@ -142,6 +145,8 @@ type LogsQuery = RangeQuery & {
  * GET /api/projects/:id/metrics/chart?name=…&kind=gauge|counter|updown|histogram[&split=<attribute key>&host=<host.name>&attr=<key>&attrValue=<value>&period=…&environment=…]
  *     (host: one host's series only; attr and attrValue: one attribute value's points only)
  * GET /api/projects/:id/services[?period=…&environment=…]
+ * GET /api/projects/:id/services/chart?service=<name>[&route=<route>&period=…&environment=…]
+ *     (one service's requests, or one route's, over the period, in time buckets)
  * GET /api/projects/:id/services/routes[?environment=…]
  *     (up to 200 distinct services and routes of the last 24 hours, for the alert form)
  * GET /api/projects/:id/hosts[?period=…&environment=…]
@@ -452,6 +457,45 @@ export const telemetryDashboardRoutes: FastifyPluginCallback<{
       if ("problem" in asked) return reply.code(400).send(asked.problem);
       const { range } = asked;
       return { ...answered(range), ...(await listServices(readerOf(reply), range)) };
+    },
+  );
+
+  app.get<{ Params: { id: string }; Querystring: ServiceChartQuery }>(
+    "/projects/:id/services/chart",
+    {
+      preHandler: [signedIn, projectAccess],
+      schema: {
+        params: PARAMS,
+        querystring: {
+          type: "object",
+          required: ["service"],
+          additionalProperties: false,
+          properties: {
+            ...RANGE_PROPERTIES,
+            service: { type: "string", pattern: SERVICE_PATTERN },
+            // A route is its http.route attribute (a value, at most 4 KB) or its span's name.
+            route: { type: "string", minLength: 1, maxLength: MAX_VALUE_BYTES },
+          },
+        },
+      },
+    },
+    async (request, reply) => {
+      const { service, route } = request.query;
+      if (Buffer.byteLength(route ?? "") > MAX_VALUE_BYTES) {
+        return reply.code(400).send({
+          error: "invalid_route",
+          message: `A route holds at most ${MAX_VALUE_BYTES} bytes.`,
+        });
+      }
+      const asked = await rangeOf(request);
+      if ("problem" in asked) return reply.code(400).send(asked.problem);
+      const { range } = asked;
+      const reader = readerOf(reply);
+      const [chart, labels] = await Promise.all([
+        serviceChart(reader, range, { service, route: route ?? null }, now()),
+        labelsInRange(reader, "spans", range, "AND kind = 'server'"),
+      ]);
+      return { ...answered(range), environments: labels.environments, ...chart };
     },
   );
 

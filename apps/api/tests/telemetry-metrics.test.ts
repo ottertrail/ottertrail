@@ -645,30 +645,31 @@ describe("GET /api/projects/:id/services", () => {
       span("SELECT orders", 7, { kind: 3 }),
     ];
     const billing = [span("POST /charge", 100, { status: { code: 2 } })];
-    // Sent twice: retried copies count once.
-    for (let attempt = 0; attempt < 2; attempt += 1) {
-      await send("/v1/traces", api.secretKey, {
-        resourceSpans: [
-          {
-            resource: { attributes: keyValues({ "service.name": "web" }) },
-            scopeSpans: [{ spans: web }],
-          },
-          {
-            resource: { attributes: keyValues({ "service.name": "billing" }) },
-            scopeSpans: [{ spans: billing }],
-          },
-        ],
-      });
-    }
+    // Sent once: the page reads without FINAL, so a retried copy not yet
+    // merged away would count twice ("a retried batch not yet merged" in
+    // telemetry-services.test.ts).
+    await send("/v1/traces", api.secretKey, {
+      resourceSpans: [
+        {
+          resource: { attributes: keyValues({ "service.name": "web" }) },
+          scopeSpans: [{ spans: web }],
+        },
+        {
+          resource: { attributes: keyValues({ "service.name": "billing" }) },
+          scopeSpans: [{ spans: billing }],
+        },
+      ],
+    });
   });
 
   test("gives each service's and route's requests, failures, median, and 95th percentile", async () => {
     const list = await getJson(api.id, `/services?${DAY}`);
     expect(list).toMatchObject({ received: true, truncated: false, environment: "production" });
     // Busiest first. Percentiles interpolate between the two nearest
-    // durations: of 10, 20, 30, 40 ms, the median is 25 ms and the 95th
-    // percentile 30 + 0.85 × 10 = 38.5 ms; with the 5 ms health check, 20 and
-    // 30 + 0.8 × 10 = 38 ms.
+    // durations: of 10, 20, 30, 40 ms, the median is 25 ms, the 95th
+    // percentile 30 + 0.85 × 10 = 38.5 ms, and the 99th 30 + 0.97 × 10 =
+    // 39.7 ms; with the 5 ms health check, 20, 30 + 0.8 × 10 = 38 ms, and
+    // 30 + 0.96 × 10 = 39.6 ms. No span has a status code: all "none".
     expect(list.services).toEqual([
       {
         service: "web",
@@ -676,10 +677,28 @@ describe("GET /api/projects/:id/services", () => {
         failed: 1,
         p50Us: 20_000,
         p95Us: 38_000,
+        p99Us: 39_600,
+        statuses: { "2xx": 0, "3xx": 0, "4xx": 0, "5xx": 0, none: 5 },
         routeCount: 2,
         routes: [
-          { route: "/orders/{id}", requests: 4, failed: 1, p50Us: 25_000, p95Us: 38_500 },
-          { route: "GET /health", requests: 1, failed: 0, p50Us: 5000, p95Us: 5000 },
+          {
+            route: "/orders/{id}",
+            requests: 4,
+            failed: 1,
+            p50Us: 25_000,
+            p95Us: 38_500,
+            p99Us: 39_700,
+            statuses: { "2xx": 0, "3xx": 0, "4xx": 0, "5xx": 0, none: 4 },
+          },
+          {
+            route: "GET /health",
+            requests: 1,
+            failed: 0,
+            p50Us: 5000,
+            p95Us: 5000,
+            p99Us: 5000,
+            statuses: { "2xx": 0, "3xx": 0, "4xx": 0, "5xx": 0, none: 1 },
+          },
         ],
       },
       {
@@ -688,8 +707,20 @@ describe("GET /api/projects/:id/services", () => {
         failed: 1,
         p50Us: 100_000,
         p95Us: 100_000,
+        p99Us: 100_000,
+        statuses: { "2xx": 0, "3xx": 0, "4xx": 0, "5xx": 0, none: 1 },
         routeCount: 1,
-        routes: [{ route: "POST /charge", requests: 1, failed: 1, p50Us: 100_000, p95Us: 100_000 }],
+        routes: [
+          {
+            route: "POST /charge",
+            requests: 1,
+            failed: 1,
+            p50Us: 100_000,
+            p95Us: 100_000,
+            p99Us: 100_000,
+            statuses: { "2xx": 0, "3xx": 0, "4xx": 0, "5xx": 0, none: 1 },
+          },
+        ],
       },
     ]);
   });

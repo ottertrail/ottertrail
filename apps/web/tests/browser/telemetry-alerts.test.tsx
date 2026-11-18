@@ -330,7 +330,18 @@ describe("links that open the form filled in", () => {
       const list = fakeServices(query);
       const [web] = list.services;
       if (web !== undefined) {
-        web.routes = [...web.routes, { route: "", requests: 5, failed: 0, p50Us: 1, p95Us: 1 }];
+        web.routes = [
+          ...web.routes,
+          {
+            route: "",
+            requests: 5,
+            failed: 0,
+            p50Us: 1,
+            p95Us: 1,
+            p99Us: 1,
+            statuses: { "2xx": 5, "3xx": 0, "4xx": 0, "5xx": 0, none: 0 },
+          },
+        ];
       }
       return list;
     };

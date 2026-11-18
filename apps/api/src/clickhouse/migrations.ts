@@ -12,6 +12,9 @@ export interface ClickHouseMigration {
 /** The tables of traces, logs, and metrics (docs/telemetry.md). */
 export const TELEMETRY_TABLES = ["spans", "logs", "metric_points", "metric_histograms"] as const;
 
+/** How old every part of a telemetry table's day must be before it is merged into one (0002). */
+export const FORCE_MERGE_SECONDS = 3600;
+
 export const CLICKHOUSE_MIGRATIONS: ClickHouseMigration[] = [
   {
     name: "0001_create_tables",
@@ -266,5 +269,28 @@ export const CLICKHOUSE_MIGRATIONS: ClickHouseMigration[] = [
       TTL toDateTime(timestamp) + INTERVAL 90 DAY
       SETTINGS ttl_only_drop_parts = 1`,
     ],
+  },
+  {
+    name: "0002_force_telemetry_merges",
+    /**
+     * A retried record stays a second row until ClickHouse merges the parts
+     * that hold it, and ClickHouse merges when it decides: a day that gets
+     * no more inserts can keep its copies for its whole retention. The
+     * pages and alert rules that add up large windows of telemetry read
+     * without FINAL (telemetry/services.ts), and the lists without it drop
+     * only adjacent copies, so each telemetry table merges a day's parts
+     * into one once every part of the day is an hour old
+     * (FORCE_MERGE_SECONDS): a copy counts twice for at most about an hour
+     * after its day's last insert, plus the merge's own time. A day still
+     * written to keeps merging as usual; ttl_only_drop_parts still drops
+     * whole days.
+     */
+    statements: (database) =>
+      TELEMETRY_TABLES.map(
+        (table) =>
+          `ALTER TABLE ${database}.${table} MODIFY SETTING
+             min_age_to_force_merge_seconds = ${FORCE_MERGE_SECONDS},
+             min_age_to_force_merge_on_partition_only = 1`,
+      ),
   },
 ];
