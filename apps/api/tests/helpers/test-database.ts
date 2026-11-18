@@ -31,8 +31,13 @@ export interface TestDatabase {
  * with destroy() when the tests finish.
  *
  * Needs the local database: `podman compose up -d` (or `docker compose up -d`).
+ *
+ * `asDeployed` migrates as `vp run migrate` does, without naming the
+ * schema, so a test can check that path.
  */
-export async function createTestDatabase(): Promise<TestDatabase> {
+export async function createTestDatabase({
+  asDeployed = false,
+}: { asDeployed?: boolean } = {}): Promise<TestDatabase> {
   const connectionString = loadConfig().databaseUrl;
   const schema = `test_${randomUUID().replaceAll("-", "")}`;
 
@@ -49,7 +54,9 @@ export async function createTestDatabase(): Promise<TestDatabase> {
   }
 
   try {
-    await withSchemaLock(connectionString, "shared", () => migrateToLatest(db, { schema }));
+    await withSchemaLock(connectionString, "shared", () =>
+      asDeployed ? migrateToLatest(db) : migrateToLatest(db, { schema }),
+    );
   } catch (error) {
     await destroy();
     throw error;

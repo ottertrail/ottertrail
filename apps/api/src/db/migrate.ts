@@ -1,4 +1,4 @@
-import type { Kysely } from "kysely";
+import { type Kysely, sql } from "kysely";
 import { type MigrationResult, Migrator } from "kysely/migration";
 
 import { migrations } from "./migrations/index.ts";
@@ -22,13 +22,16 @@ async function migrate(
   target: string,
   options: { schema?: string } = {},
 ): Promise<MigrationResult[]> {
+  // Kysely's bookkeeping tables (kysely_migration, kysely_migration_lock)
+  // must live in the same schema as the tables they track, so it is always
+  // named: the given one, else the connection's own ("public" by default).
+  // Unnamed, Kysely looks for them in every schema, finds a test schema's,
+  // skips creating its own, and then fails to read them.
+  const schema = options.schema ?? (await currentSchema(db));
   const migrator = new Migrator({
     db,
     provider: { getMigrations: () => Promise.resolve(migrations) },
-    // Kysely's bookkeeping tables (kysely_migration, kysely_migration_lock)
-    // must live in the same schema as the tables they track. Without this,
-    // Kysely would find the ones in "public" and skip creating its own.
-    ...(options.schema === undefined ? {} : { migrationTableSchema: options.schema }),
+    ...(schema === undefined ? {} : { migrationTableSchema: schema }),
   });
   const { error, results = [] } =
     target === "latest" ? await migrator.migrateToLatest() : await migrator.migrateTo(target);
@@ -40,4 +43,12 @@ async function migrate(
     );
   }
   return results;
+}
+
+/** The first schema of the connection's search path that exists; undefined when none does. */
+async function currentSchema(db: Kysely<Database>): Promise<string | undefined> {
+  const { rows } = await sql<{ schema: string | null }>`select current_schema() as schema`.execute(
+    db,
+  );
+  return rows[0]?.schema ?? undefined;
 }
