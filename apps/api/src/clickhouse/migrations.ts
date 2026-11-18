@@ -22,10 +22,11 @@ export const CLICKHOUSE_MIGRATIONS: ClickHouseMigration[] = [
      *
      * - Ordered by project, then time: one project's range is one
      *   contiguous read, and every query filters by project first.
+     *   (Migration 0008 orders it by project, day, and event ID.)
      * - Partitioned by month: a range's query reads only its months' parts.
-     * - ReplacingMergeTree keeps one row per (project_id, occurred_at,
-     *   event_id) when parts merge, and reports read with FINAL: a retried
-     *   event is the same row, so it counts once (docs/clickhouse.md).
+     * - ReplacingMergeTree keeps one row per sorting key when parts merge,
+     *   and reports read with FINAL: a retried event is the same row, so it
+     *   counts once (docs/clickhouse.md).
      * - LowCardinality for columns with few distinct values: smaller and faster.
      */
     name: "0001_create_events",
@@ -260,6 +261,40 @@ export const CLICKHOUSE_MIGRATIONS: ClickHouseMigration[] = [
       ORDER BY (project_id, timestamp, id)
       TTL toDateTime(timestamp) + INTERVAL 30 DAY
       SETTINGS ttl_only_drop_parts = 1`,
+    ],
+  },
+  {
+    /**
+     * Events matched by project, day, and event ID, not by their exact time.
+     * A browser's time is corrected for a wrong clock from when its request
+     * arrives, so a retry, which spends another time on the way, comes out
+     * some milliseconds or seconds apart; with the exact time in the key it
+     * was a second row. ReplacingMergeTree keeps one row per sorting key,
+     * so the key now holds the day: a retry is the same row unless its two
+     * times fall either side of midnight UTC (docs/clickhouse.md). Within a day,
+     * rows are in event ID order, so a query reads whole days of a project.
+     *
+     * A sorting key cannot change in place: the table is made again beside
+     * the old one, filled, and swapped. Each step starts over cleanly if a
+     * run fails halfway.
+     */
+    name: "0008_order_events_by_day",
+    statements: (database) => [
+      `DROP TABLE IF EXISTS ${database}.events_by_day`,
+      `CREATE TABLE ${database}.events_by_day AS ${database}.events
+       ENGINE = ReplacingMergeTree
+       PARTITION BY toYYYYMM(occurred_at)
+       ORDER BY (project_id, toDate(occurred_at), event_id)
+       SETTINGS non_replicated_deduplication_window = 1000,
+         fsync_after_insert = 1, fsync_part_directory = 1`,
+      `ALTER TABLE ${database}.events_by_day
+       ADD INDEX IF NOT EXISTS user_id_index user_id TYPE bloom_filter GRANULARITY 4`,
+      `ALTER TABLE ${database}.events_by_day
+       ADD INDEX IF NOT EXISTS error_fingerprint_index error_fingerprint
+         TYPE bloom_filter GRANULARITY 4`,
+      `INSERT INTO ${database}.events_by_day SELECT * FROM ${database}.events`,
+      `EXCHANGE TABLES ${database}.events AND ${database}.events_by_day`,
+      `DROP TABLE ${database}.events_by_day`,
     ],
   },
 ];

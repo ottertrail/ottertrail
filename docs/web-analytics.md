@@ -55,9 +55,9 @@ The sender's clock can also simply be wrong. Step 2 corrects for that ([Clock co
 
 ### Event IDs make retries harmless
 
-Networks lose replies. A sender can deliver an event, never hear back, and send it again. The table keeps one row per `(project_id, occurred_at, event_id)` (a `ReplacingMergeTree`), and reports read it with `FINAL`, so:
+Networks lose replies. A sender can deliver an event, never hear back, and send it again. The table keeps one row per project, day, and event ID (a `ReplacingMergeTree` ordered by `(project_id, toDate(occurred_at), event_id)`), and reports read it with `FINAL`, so:
 
-- a retried event counts once, as long as it has the same time, which [clock correction](#clock-correction) sees to;
+- a retried event counts once, though [clock correction](#clock-correction) gives it a slightly different time, unless the two fall either side of midnight UTC ([ClickHouse](clickhouse.md#each-event-once));
 - the same event twice in one batch counts once;
 - the same ID in two different projects is two different events.
 
@@ -75,7 +75,7 @@ Step 2 validates every request before it is stored: text lengths (event name 200
 
 ### Ordered for the questions
 
-Almost every report asks "this project, between these two times", so the table is ordered by `(project_id, occurred_at, event_id)`. Add other indexes only when a real query needs one.
+Almost every report asks "this project, between these two times", so the table is ordered by project, then day (`(project_id, toDate(occurred_at), event_id)`): a report reads the project's days in its range. Add other indexes only when a real query needs one.
 
 ### How long events are kept
 
@@ -246,18 +246,15 @@ Referrers lose their query string and fragment too: `https://news.ycombinator.co
 
 ### Clock correction
 
-The sender's clock can be wrong by minutes or days. The batch carries two times from that clock: when each event happened (`occurredAt`) and when the batch was sent (`sentAt`). The server compares `sentAt` with when it received the batch: the difference is the clock's error plus the time the request spent on the way.
+The sender's clock can be wrong by minutes or days. The batch carries two times from that clock: when each event happened (`occurredAt`) and when the batch was sent (`sentAt`). The server trusts only the difference between the two: the event happened `sentAt - occurredAt` before the batch arrived.
 
 ```
-offset      = (time the server received the batch) - sentAt
-correction  = 0 if offset is under a minute either way, else offset rounded to whole minutes
-time        = occurredAt, or the start of sentAt's minute if occurredAt is more than a minute after sentAt
-occurred_at = time + correction
+occurred_at = (time the server received the batch) - (sentAt - occurredAt)
 ```
 
-A phone whose clock is two hours slow still gets times within half a minute or so, which reports, counting by hour and day, do not show. A clock off by less than a minute is taken as right. An `occurredAt` after `sentAt` is impossible, but a clock set back between the two by a time sync makes it seem so: up to a minute after, the event keeps its time; further, it takes the start of the minute it was sent in, not `sentAt` itself, which changes with each attempt. Events that happened more than 24 hours before sending are not stored and are counted in `tooOld` (`correctClock` in `apps/api/src/collection/normalize.ts`).
+A phone whose clock is two hours slow still gets the right times. An `occurredAt` after `sentAt` is impossible and is treated as `sentAt`. Events that happened more than 24 hours before sending are not stored and are counted in `tooOld` (`correctClock` in `apps/api/src/collection/normalize.ts`).
 
-Why whole minutes, and not the exact difference: a retry must get the same time as the first attempt, or it is a second row ([Event IDs make retries harmless](#event-ids-make-retries-harmless)). The tracker reads `sentAt` again for each attempt, and each attempt spends a different time on the way, so `received - (sentAt - occurredAt)` would differ by that time. Rounding leaves it out. One case still counts twice: a clock off by about a minute or more whose retry spends so much longer on the way that the difference rounds to another minute, or crosses the one-minute line. It needs a wrong clock and a slow attempt, and is rare.
+The time the request spent on the way is not seen, so an event is placed that much later than it happened, usually a fraction of a second. The tracker reads `sentAt` again for each attempt, so a retry's time comes out later by however much longer it spent on the way. The table matches events by day, not exact time, so the retry is still the same row ([Event IDs make retries harmless](#event-ids-make-retries-harmless)).
 
 ### Rate limits
 
@@ -589,7 +586,7 @@ Nothing about visits is stored. `visitsQuery` works them out from the events wit
 Because visits are computed from the stored facts every time:
 
 - late and out-of-order events land in the right visit; a late event that fills a gap joins two visits into one;
-- a retried event counts once: it is stored as the same row (the same project, time, and event ID), which ClickHouse keeps once and reports read with `FINAL` ([ClickHouse](clickhouse.md#each-event-once));
+- a retried event counts once: it is stored as the same row (the same project, day, and event ID), which ClickHouse keeps once and reports read with `FINAL` ([ClickHouse](clickhouse.md#each-event-once));
 - changing a rule (30 minutes to 20) applies to all past data at once.
 
 The cost is work at report time: every event in the range is sorted by visitor and time. Section 7 measures it (Speed).

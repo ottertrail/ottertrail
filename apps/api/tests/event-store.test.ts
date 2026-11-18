@@ -42,6 +42,26 @@ async function rows(projectId: string) {
 }
 
 describe("storeEvents", () => {
+  test("keeps one row per project, day, and event ID, whatever the time within the day", async () => {
+    const projectId = randomUUID();
+    const eventId = randomUUID();
+    const at = (time: string) => pageview({ eventId, occurredAt: new Date(time) });
+    // A retry whose corrected time came out 4 seconds later: the same row.
+    await storeEvents(clickhouse(), projectId, [at("2026-11-16T12:00:00.000Z")]);
+    await storeEvents(clickhouse(), projectId, [at("2026-11-16T12:00:04.000Z")]);
+    expect(await countEvents(clickhouse(), projectId)).toBe(1);
+
+    // Either side of midnight UTC: two rows, the one case a retry still counts twice.
+    const late = randomUUID();
+    await storeEvents(clickhouse(), projectId, [
+      pageview({ eventId: late, occurredAt: new Date("2026-11-16T23:59:59.900Z") }),
+    ]);
+    await storeEvents(clickhouse(), projectId, [
+      pageview({ eventId: late, occurredAt: new Date("2026-11-17T00:00:00.100Z") }),
+    ]);
+    expect(await countEvents(clickhouse(), projectId)).toBe(3);
+  });
+
   test("stores every column, with both timestamps", async () => {
     const projectId = randomUUID();
     const event = pageview({

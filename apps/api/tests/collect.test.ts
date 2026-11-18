@@ -219,12 +219,15 @@ describe("POST /api/events", () => {
     expect(first.json()).toMatchObject({ stored: 2 });
     // Each answer counts what it was sent: the server looks nothing up.
     expect(retry.json()).toEqual({ stored: 2, tooOld: 0, bots: 0, unverifiedUsers: 0 });
-    // Both attempts gave each event the same time, so ClickHouse keeps it once.
+    // The retry's times are later by the extra time on the way, about 4
+    // seconds, but on the same day: ClickHouse keeps each event once.
     expect(await countEvents(clickhouse(), project.id)).toBe(2);
-    expect((await storedEvents(project.id)).map((event) => event.occurred_at)).toEqual([
-      new Date(NOW - 3000),
-      new Date(NOW - 2000),
-    ]);
+    const stored = await storedEvents(project.id);
+    expect(new Set(stored.map((event) => event.event_id)).size).toBe(2);
+    for (const event of stored) {
+      expect(event.occurred_at.getTime()).toBeGreaterThanOrEqual(NOW - 2920);
+      expect(event.occurred_at.getTime()).toBeLessThanOrEqual(NOW + 2000);
+    }
   });
 
   test("counts events older than 24 hours as too old and stores the rest", async () => {

@@ -86,67 +86,21 @@ describe("cleanReferrer", () => {
 
 describe("correctClock", () => {
   const receivedAt = Date.parse("2026-11-16T10:00:00.000Z");
-  const MINUTE = 60 * 1000;
-  const HOUR = 60 * MINUTE;
 
-  test("keeps the sender's time when its clock is off by less than a minute", () => {
-    // Sent 300 ms before arrival: the time on the way.
-    expect(correctClock(receivedAt - 3300, receivedAt - 300, receivedAt)).toEqual(
-      new Date(receivedAt - 3300),
-    );
-    // A clock 59 seconds fast or slow is taken as right.
-    expect(correctClock(receivedAt + 59_000 - 3000, receivedAt + 59_000, receivedAt)).toEqual(
-      new Date(receivedAt + 59_000 - 3000),
-    );
-    expect(correctClock(receivedAt - 59_000 - 3000, receivedAt - 59_000, receivedAt)).toEqual(
-      new Date(receivedAt - 59_000 - 3000),
-    );
-  });
-
-  test("moves the sender's time by its clock error, in whole minutes", () => {
-    // The sender's clock is two hours slow, and the request took 400 ms. The
-    // event happened 3 seconds before the batch was sent.
-    const sentAt = receivedAt - 2 * HOUR - 400;
-    expect(correctClock(sentAt - 3000, sentAt, receivedAt)).toEqual(
-      new Date(sentAt - 3000 + 2 * HOUR),
-    );
+  test("uses only the difference between the sender's two timestamps", () => {
+    // The sender's clock is two hours slow. The event happened 3 seconds
+    // before the batch was sent, so it happened 3 seconds before arrival.
+    const sentAt = receivedAt - 2 * 60 * 60 * 1000;
+    expect(correctClock(sentAt - 3000, sentAt, receivedAt)).toEqual(new Date(receivedAt - 3000));
   });
 
   test("works the same when the sender's clock is ahead", () => {
-    const sentAt = receivedAt + 3 * 24 * HOUR + 250;
-    expect(correctClock(sentAt - 500, sentAt, receivedAt)).toEqual(
-      new Date(sentAt - 500 - 3 * 24 * HOUR),
-    );
+    const sentAt = receivedAt + 3 * 24 * 60 * 60 * 1000;
+    expect(correctClock(sentAt - 500, sentAt, receivedAt)).toEqual(new Date(receivedAt - 500));
   });
 
-  test("gives every attempt to send an event the same time", () => {
-    const occurredAt = Date.parse("2026-11-16T09:59:50.000Z");
-    for (const clockError of [0, 10 * MINUTE, -10 * MINUTE]) {
-      // The sender's clock reads clockError ahead of the server's. The first
-      // attempt left at once and took 80 ms; the retry left 2 seconds later
-      // and took 4 seconds.
-      const first = correctClock(occurredAt + clockError, occurredAt + clockError, occurredAt + 80);
-      const retry = correctClock(
-        occurredAt + clockError,
-        occurredAt + 2000 + clockError,
-        occurredAt + 6000,
-      );
-      expect(first).toEqual(new Date(occurredAt));
-      expect(retry).toEqual(first);
-    }
-  });
-
-  test("keeps an event up to a minute 'after' its send time; places a later one in its send minute", () => {
-    // A clock set back between the event and its send, by a time sync.
-    expect(correctClock(receivedAt + 10_000, receivedAt, receivedAt)).toEqual(
-      new Date(receivedAt + 10_000),
-    );
-    // Further: the start of the minute it was sent in, whichever second of
-    // that minute each attempt left.
-    const minute = Math.floor(receivedAt / 60_000) * 60_000;
-    for (const sentAt of [minute, minute + 30_000, minute + 59_999]) {
-      expect(correctClock(sentAt + 5 * 60_000, sentAt, sentAt + 80)).toEqual(new Date(minute));
-    }
+  test("treats an event 'after' its send time as happening at send time", () => {
+    expect(correctClock(receivedAt + 10_000, receivedAt, receivedAt)).toEqual(new Date(receivedAt));
   });
 
   test("keeps an event exactly 24 hours old and rejects anything older", () => {

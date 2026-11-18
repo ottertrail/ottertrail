@@ -66,7 +66,7 @@ Disk: PostgreSQL 428 MB (table and its `(project_id, ts)` index), ClickHouse 64 
    Either way, servers need more memory than PostgreSQL alone. 2 GB is too little; sizing is still to be measured.
 
 3. **Data is 6 to 7 times smaller,** so it stays in memory much longer as it grows. Logs and traces are where this matters most.
-4. **Retried events still need counting once.** ClickHouse has no unique constraint. `ReplacingMergeTree`, keyed by `(project_id, occurred_at, event_id)`, removes a retried event when it merges parts: a retry keeps its time and ID. Reports read with `FINAL` until then. The alternative is to keep landing events in PostgreSQL, which confirms them only once saved and keeps its unique key, then move batches to ClickHouse.
+4. **Retried events still need counting once.** ClickHouse has no unique constraint. `ReplacingMergeTree`, keyed by `(project_id, occurred_at, event_id)`, removes a retried event when it merges parts: a retry keeps its time and ID. (A browser retry turned out not to keep its exact time, since clock correction counts its time on the way; the key is now by day: [ClickHouse](clickhouse.md#each-event-once).) Reports read with `FINAL` until then. The alternative is to keep landing events in PostgreSQL, which confirms them only once saved and keeps its unique key, then move batches to ClickHouse.
 5. **Retention** becomes dropping old partitions, not deleting rows.
 
 ## Not measured
