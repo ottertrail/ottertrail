@@ -1,5 +1,6 @@
 import type { Kysely } from "kysely";
 
+import { forgetRegressions } from "../alerts/rules.ts";
 import { fromClickHouseTime, QueryParams, queryRows, type Reader } from "../clickhouse/query.ts";
 import { DEFAULT_ENVIRONMENT } from "../collection/environment.ts";
 import type { Database } from "../db/schema.ts";
@@ -159,7 +160,7 @@ async function seen(
 }
 
 /** The project's resolutions of these groups, with who resolved each. */
-async function resolutions(
+export async function resolutions(
   db: Kysely<Database>,
   projectId: string,
   fingerprints: string[],
@@ -181,7 +182,15 @@ async function resolutions(
   );
 }
 
-function statusOf(lastSeen: Date, resolution: { resolvedAt: Date } | undefined): ErrorStatus {
+/**
+ * A group's status from its latest occurrence anywhere and its resolution:
+ * regressed when it happened after it was resolved. Alert rules
+ * (alerts/error-rules.ts) decide "regressed" with this same rule.
+ */
+export function statusOf(
+  lastSeen: Date,
+  resolution: { resolvedAt: Date } | undefined,
+): ErrorStatus {
   if (resolution === undefined) return "unresolved";
   return lastSeen > resolution.resolvedAt ? "regressed" : "resolved";
 }
@@ -471,6 +480,8 @@ export async function setResolution(
   options: { projectId: string; fingerprint: string; resolved: boolean; userId: string },
 ): Promise<{ resolvedAt: Date } | null> {
   const { projectId, fingerprint, resolved, userId } = options;
+  // Regressed-error alerts guard the resolution they fired for; another one starts afresh.
+  await forgetRegressions(db, projectId, fingerprint);
   if (!resolved) {
     await db
       .deleteFrom("error_resolutions")

@@ -240,7 +240,7 @@ export const channelRoutes: FastifyPluginCallback<{
     "/channels/:channelId",
     { preHandler: [fromDashboard, signedIn], schema: { params: PARAMS } },
     async (request, reply) => {
-      const deleted = await deleteChannel(db, request.params.channelId);
+      const deleted = await deleteChannel(db, request.params.channelId, now());
       return deleted ? reply.code(204).send() : reply.code(404).send(NO_CHANNEL);
     },
   );

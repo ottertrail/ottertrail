@@ -67,10 +67,12 @@ const EVENT_TEXT: Record<string, string> = {
   "check.down": "Check down",
   "check.up": "Check up",
   "certificate.expiring": "Certificate expiring",
+  "certificate.renewed": "Certificate renewed",
   "error.new": "New error",
   "error.regressed": "Regressed error",
   "error.spike": "Error spike",
   "error.spike_resolved": "Error spike over",
+  "alert.held_back": "Alerts held back",
   test: "Test",
 };
 

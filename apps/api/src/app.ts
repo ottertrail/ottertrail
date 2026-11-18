@@ -1,6 +1,7 @@
 import Fastify, { type FastifyServerOptions } from "fastify";
 import type { Kysely } from "kysely";
 
+import { alertRoutes } from "./alerts/routes.ts";
 import type { Auth } from "./auth/auth.ts";
 import { betterAuthRoutes, setupRoutes } from "./auth/routes.ts";
 import type { ClickHouseClient } from "./clickhouse/clickhouse.ts";
@@ -310,6 +311,13 @@ export function buildApp({
       policy,
       limiter,
       ...(uptime.lookup === undefined ? {} : { lookup: uptime.lookup }),
+      ...(dashboard.now === undefined ? {} : { now: dashboard.now }),
+    });
+    app.register(alertRoutes, {
+      prefix: "/api",
+      db,
+      auth: dashboard.auth,
+      trustedOrigins: dashboard.trustedOrigins,
       ...(dashboard.now === undefined ? {} : { now: dashboard.now }),
     });
     app.register(channelRoutes, {

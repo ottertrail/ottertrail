@@ -10,6 +10,10 @@
  * - Running due uptime checks every few seconds, at most 20 requests at
  *   once, and recording their state, incidents, and results
  *   (uptime/scheduler.ts).
+ * - Evaluating alert rules (alerts/evaluator.ts): a check's rules as soon
+ *   as it changes state or shows a new certificate, and every minute the
+ *   check-down and error rules of every project, recording each alert
+ *   with its notification.
  * - Sending due notifications every few seconds, at most 10 at once, by
  *   email and webhook, retrying failures for about an hour, and deleting
  *   deliveries past their 30 days every hour (notifications/sender.ts).
@@ -22,6 +26,7 @@
  * and deliveries are taken with FOR UPDATE SKIP LOCKED), so plain timers
  * are enough; a job queue comes with work that needs one.
  */
+import { ALERT_TICK_MS, AlertEvaluator } from "./alerts/evaluator.ts";
 import { createClickHouse } from "./clickhouse/clickhouse.ts";
 import {
   purgeDeletedProjects,
@@ -119,12 +124,14 @@ const policy = addressPolicy({
   deny: config.uptimeDenyAddresses,
 });
 
+const alerts = new AlertEvaluator({ db, clickhouse, publicUrl: config.publicUrl, log });
+
 const checks = new CheckScheduler({
   db,
   clickhouse,
   policy,
   log,
-  onStateChange: (change) =>
+  onStateChange: async (change) => {
     log(
       "info",
       change.to === "down" ? "an uptime check went down" : "an uptime check is up again",
@@ -133,8 +140,13 @@ const checks = new CheckScheduler({
         project: change.projectId,
         cause: change.cause,
       },
-    ),
+    );
+    await alerts.onStateChange(change);
+  },
+  onCertificate: (check) => alerts.onCertificate(check),
 });
+
+const stopAlerts = every(ALERT_TICK_MS, () => alerts.tick());
 
 /** Whether the last look for due checks failed: an outage is logged once. */
 let checksFailing = false;
@@ -226,6 +238,7 @@ async function shutdown(signal: NodeJS.Signals) {
     stopPurging(),
     stopReplays(),
     stopChecks(),
+    stopAlerts(),
     stopDeliveries(),
     stopPruning(),
     stopRetention(),

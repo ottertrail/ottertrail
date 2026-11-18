@@ -14,6 +14,7 @@ import type * as React from "react";
 
 import { AppLayout } from "@/app";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { AlertsPage } from "@/features/alerts/alerts-page";
 import { AnalyticsPage } from "@/features/analytics/analytics-page";
 import { SetupPage } from "@/features/auth/setup-page";
 import { SignInPage } from "@/features/auth/sign-in-page";
@@ -50,6 +51,7 @@ import { CheckPage } from "@/features/uptime/check-page";
 import { UptimePage } from "@/features/uptime/uptime-page";
 import { UserPage } from "@/features/users/user-page";
 import { UsersPage } from "@/features/users/users-page";
+import { isRuleKind, type RuleKind } from "@/lib/alerts-api";
 import {
   DEFAULT_ENVIRONMENT,
   environmentFrom,
@@ -621,6 +623,49 @@ const checkRoute = createRoute({
   },
 });
 
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const FINGERPRINT = /^[0-9]{1,3}-[0-9a-f]{20}$/;
+
+/**
+ * The project's alert rules. `add` opens the form for a new rule of that
+ * kind, with what the check or error page it came from knows: its check,
+ * or its error group and environment.
+ */
+const alertsRoute = createRoute({
+  getParentRoute: () => projectRoute,
+  path: "/alerts",
+  staticData: { title: "Alerts" },
+  validateSearch: (
+    search: {
+      add?: unknown;
+      check?: unknown;
+      fingerprint?: unknown;
+      env?: unknown;
+    } & SearchSchemaInput,
+  ): {
+    add: RuleKind | undefined;
+    check: string | undefined;
+    fingerprint: string | undefined;
+    env: string | undefined;
+  } => ({
+    add: isRuleKind(search.add) ? search.add : undefined,
+    check: typeof search.check === "string" && UUID.test(search.check) ? search.check : undefined,
+    fingerprint:
+      typeof search.fingerprint === "string" && FINGERPRINT.test(search.fingerprint)
+        ? search.fingerprint
+        : undefined,
+    env:
+      search.env === undefined
+        ? undefined
+        : environmentFrom(typeof search.env === "number" ? String(search.env) : search.env),
+  }),
+  component: function AlertsRouteComponent() {
+    const { projectId } = alertsRoute.useParams();
+    const search = alertsRoute.useSearch();
+    return <AlertsPage projectId={projectId} prefill={search} />;
+  },
+});
+
 /** Product analytics: its reports (events, funnel, retention) as tabs, each its own page. */
 const productRoute = createRoute({
   getParentRoute: () => projectRoute,
@@ -814,6 +859,7 @@ const routeTree = rootRoute.addChildren([
       hostRoute,
       uptimeRoute,
       checkRoute,
+      alertsRoute,
       productRoute.addChildren([
         productIndexRoute,
         productEventsRoute,

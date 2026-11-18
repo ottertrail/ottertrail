@@ -1,4 +1,11 @@
 import { stepsOverlap } from "../../src/features/product/funnel-steps.ts";
+import {
+  type FiringAlert,
+  type HistoryEntry,
+  isRuleKind,
+  KIND_LABEL,
+  type Rule,
+} from "../../src/lib/alerts-api.ts";
 import type { Analytics, BreakdownRow, DayPoint } from "../../src/lib/analytics-api.ts";
 import type { Channel, Delivery } from "../../src/lib/channels-api.ts";
 import {
@@ -133,6 +140,12 @@ export interface FakeApi {
    * delete, replace a secret, and queue a test. By default, fakeChannels.
    */
   channels: FakeChannels;
+  /**
+   * The project's alert rules, the alerts firing now, and the history:
+   * the routes list, add (refusing what the API refuses for these tests),
+   * change, and delete rules. By default, fakeAlerts.
+   */
+  alerts: FakeAlerts;
   /** Answers DELETE /api/projects/:id; by default, removes the project (204). */
   deleteProject: (api: FakeApi, id: string) => Response;
   /** Every path the page asked for, with its query, in order. */
@@ -1964,6 +1977,237 @@ function saveCheck(api: FakeApi, body: unknown, existing?: Check): Response {
   return json({ check }, existing === undefined ? 201 : 200);
 }
 
+/** The fake API's alert rules and alerts, as the alert routes answer them. */
+export interface FakeAlerts {
+  rules: Rule[];
+  firing: FiringAlert[];
+  history: HistoryEntry[];
+}
+
+export const ALERT_RULE_IDS = {
+  apiDown: "abababab-abab-4bab-8bab-000000000001",
+  newErrors: "abababab-abab-4bab-8bab-000000000002",
+  checkoutSpike: "abababab-abab-4bab-8bab-000000000003",
+  certificates: "abababab-abab-4bab-8bab-000000000004",
+} as const;
+
+/**
+ * Four rules: "API health" down (firing), new errors in production to both
+ * channels, a spike of the TypeError group (turned off), and certificates,
+ * turned off by the server when its channel was deleted; one alert firing,
+ * three in the history, one of them held back.
+ */
+export function fakeAlerts(): FakeAlerts {
+  const [email, webhook] = fakeChannels().list;
+  const [, apiHealth] = fakeChecks();
+  const base = {
+    disabledReason: null,
+    lastFiredAt: null,
+    createdAt: "2026-11-12T00:00:00.000Z",
+    updatedAt: "2026-11-12T00:00:00.000Z",
+  };
+  return {
+    rules: [
+      {
+        ...base,
+        id: ALERT_RULE_IDS.apiDown,
+        name: "API down",
+        kind: "check_down",
+        settings: { checkId: apiHealth?.id ?? null },
+        channelIds: [email?.id ?? ""],
+        enabled: true,
+        firing: 1,
+        lastFiredAt: "2026-11-16T01:41:00.000Z",
+      },
+      {
+        ...base,
+        id: ALERT_RULE_IDS.newErrors,
+        name: "New errors",
+        kind: "error_new",
+        settings: { environment: "production" },
+        channelIds: [email?.id ?? "", webhook?.id ?? ""],
+        enabled: true,
+        firing: 0,
+      },
+      {
+        ...base,
+        id: ALERT_RULE_IDS.checkoutSpike,
+        name: "Checkout spike",
+        kind: "error_spike",
+        settings: {
+          environment: null,
+          fingerprint: ERROR_FINGERPRINTS.typeError,
+          windowMinutes: 10,
+          threshold: 20,
+        },
+        channelIds: [webhook?.id ?? ""],
+        enabled: false,
+        firing: 0,
+      },
+      {
+        ...base,
+        id: ALERT_RULE_IDS.certificates,
+        name: "Certificates",
+        kind: "certificate_expiring",
+        settings: { checkId: null, days: 14 },
+        channelIds: [],
+        enabled: false,
+        disabledReason:
+          "Turned off: its last channel was deleted. Choose a channel to turn it on again.",
+        firing: 0,
+      },
+    ],
+    firing: [
+      {
+        ruleId: ALERT_RULE_IDS.apiDown,
+        ruleName: "API down",
+        kind: "check_down",
+        subject: apiHealth?.id ?? "",
+        subjectName: "API health",
+        since: "2026-11-16T01:41:00.000Z",
+        message:
+          'Main site: the check "API health" (https://api.shop.example/health) is down. It answered 503, which does not count as up.',
+      },
+    ],
+    history: [
+      {
+        id: "acacacac-acac-4cac-8cac-000000000001",
+        ruleId: ALERT_RULE_IDS.apiDown,
+        ruleName: "API down",
+        kind: "check_down",
+        subject: apiHealth?.id ?? "",
+        subjectName: "API health",
+        firedAt: "2026-11-16T01:41:00.000Z",
+        resolvedAt: null,
+        message:
+          'Main site: the check "API health" (https://api.shop.example/health) is down. It answered 503, which does not count as up.',
+        notified: true,
+      },
+      {
+        id: "acacacac-acac-4cac-8cac-000000000002",
+        ruleId: ALERT_RULE_IDS.newErrors,
+        ruleName: "New errors",
+        kind: "error_new",
+        subject: ERROR_FINGERPRINTS.networkError,
+        subjectName: "NetworkError: Failed to fetch",
+        firedAt: "2026-11-15T22:10:00.000Z",
+        resolvedAt: null,
+        message: "Main site: a new error in production. NetworkError: Failed to fetch",
+        notified: false,
+      },
+      {
+        id: "acacacac-acac-4cac-8cac-000000000003",
+        ruleId: ALERT_RULE_IDS.apiDown,
+        ruleName: "API down",
+        kind: "check_down",
+        subject: apiHealth?.id ?? "",
+        subjectName: "API health",
+        firedAt: "2026-11-15T19:06:00.000Z",
+        resolvedAt: "2026-11-15T19:31:00.000Z",
+        message:
+          'Main site: the check "API health" (https://api.shop.example/health) is down. No complete answer within 10 seconds.',
+        notified: true,
+      },
+    ],
+  };
+}
+
+/** A rule added or changed as the API would, refusing what it refuses for these tests. */
+function saveRule(api: FakeApi, body: unknown, existing?: Rule): Response {
+  const input = fieldsOf(body);
+  const kind = input.kind === undefined ? existing?.kind : input.kind;
+  if (!isRuleKind(kind)) {
+    return json({ error: "invalid_kind", message: "Choose what the rule watches." }, 400);
+  }
+  const channelIds = Array.isArray(input.channelIds)
+    ? input.channelIds.filter((id): id is string => typeof id === "string")
+    : (existing?.channelIds ?? []);
+  if (channelIds.length === 0) {
+    return json(
+      { error: "invalid_channels", message: "Choose at least one channel to send to." },
+      400,
+    );
+  }
+  if (!channelIds.every((id) => api.channels.list.some((channel) => channel.id === id))) {
+    return json(
+      {
+        error: "channel_not_found",
+        message: "This instance has no notification channel with one of these IDs.",
+      },
+      400,
+    );
+  }
+  if (existing === undefined && api.alerts.rules.length >= 50) {
+    return json({ error: "too_many_rules", message: "A project has at most 50 alert rules." }, 409);
+  }
+  const settings =
+    typeof input.settings === "object" && input.settings !== null
+      ? (input.settings as Rule["settings"])
+      : (existing?.settings ?? {});
+  const enabled = typeof input.enabled === "boolean" ? input.enabled : (existing?.enabled ?? true);
+  const name = typeof input.name === "string" ? input.name.trim() : (existing?.name ?? "");
+  const now = new Date().toISOString();
+  const rule: Rule = {
+    id: existing?.id ?? crypto.randomUUID(),
+    name: name === "" ? KIND_LABEL[kind] : name,
+    kind,
+    settings,
+    channelIds,
+    enabled,
+    disabledReason: enabled ? null : (existing?.disabledReason ?? null),
+    firing: enabled ? (existing?.firing ?? 0) : 0,
+    lastFiredAt: existing?.lastFiredAt ?? null,
+    createdAt: existing?.createdAt ?? now,
+    updatedAt: now,
+  };
+  api.alerts.rules =
+    existing === undefined
+      ? [...api.alerts.rules, rule]
+      : api.alerts.rules.map((item) => (item.id === rule.id ? rule : item));
+  return json({ rule }, existing === undefined ? 201 : 200);
+}
+
+/** The alert routes; null for any other path. */
+function answerAlerts(api: FakeApi, path: string, init?: RequestInit): Response | null {
+  const body = () => JSON.parse(typeof init?.body === "string" ? init.body : "null") as unknown;
+  if (/^\/api\/projects\/[^/]+\/alerts\/firing$/.test(path)) {
+    return json({ timeZone: "Asia/Singapore", alerts: api.alerts.firing });
+  }
+  if (/^\/api\/projects\/[^/]+\/alerts$/.test(path)) {
+    return json({
+      timeZone: "Asia/Singapore",
+      retentionDays: 90,
+      alerts: api.alerts.history,
+      next: null,
+    });
+  }
+  if (/^\/api\/projects\/[^/]+\/alert-rules$/.test(path)) {
+    if (init?.method === "POST") return saveRule(api, body());
+    return json({
+      timeZone: "Asia/Singapore",
+      maxRules: 50,
+      hourlyCap: 20,
+      rules: api.alerts.rules,
+    });
+  }
+  const rulePath = /^\/api\/projects\/[^/]+\/alert-rules\/([^/]+)$/.exec(path);
+  if (rulePath?.[1] === undefined) return null;
+  const ruleId = decodeURIComponent(rulePath[1]);
+  const existing = api.alerts.rules.find((rule) => rule.id === ruleId);
+  if (existing === undefined) {
+    return json(
+      { error: "rule_not_found", message: "The project has no alert rule with this ID." },
+      404,
+    );
+  }
+  if (init?.method === "DELETE") {
+    api.alerts.rules = api.alerts.rules.filter((rule) => rule.id !== ruleId);
+    return new Response(null, { status: 204 });
+  }
+  if (init?.method === "PATCH") return saveRule(api, body(), existing);
+  return json({ rule: existing });
+}
+
 /** The fake API's notification channels, as GET /api/channels answers, with each one's deliveries. */
 export interface FakeChannels {
   emailConfigured: boolean;
@@ -2432,6 +2676,8 @@ async function answer(api: FakeApi, url: URL, init: RequestInit | undefined): Pr
     const result = api.hosts(url.searchParams);
     return result instanceof Response ? result : json(result);
   }
+  const alerts = answerAlerts(api, path, init);
+  if (alerts !== null) return alerts;
   const checkSubPath = /^\/api\/projects\/[^/]+\/checks\/([^/]+)\/(results|incidents)$/.exec(path);
   if (checkSubPath?.[1] !== undefined) {
     const checkId = decodeURIComponent(checkSubPath[1]);
@@ -2585,6 +2831,7 @@ export function installFakeApi(overrides: Partial<FakeApi> = {}): FakeApi {
     checkResults: fakeCheckResults,
     incidents: fakeIncidents,
     channels: fakeChannels(),
+    alerts: fakeAlerts(),
     deleteProject: removeProject,
     requests: [],
     bodies: [],

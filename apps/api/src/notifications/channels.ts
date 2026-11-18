@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 
 import type { Kysely, Selectable } from "kysely";
 
+import { forgetChannel } from "../alerts/rules.ts";
 import { canSignInWith } from "../auth/auth.ts";
 import type { Database, NotificationChannelsTable } from "../db/schema.ts";
 import { outboundUrlOf, type Problem } from "../outbound/url.ts";
@@ -279,11 +280,20 @@ export async function rotateSecret(
   return row === undefined ? null : { channel: channelOf(row), secret };
 }
 
-/** Deletes a channel and its deliveries; whether there was one. */
-export async function deleteChannel(db: Kysely<Database>, id: string): Promise<boolean> {
-  const result = await db
-    .deleteFrom("notification_channels")
-    .where("id", "=", id)
-    .executeTakeFirst();
-  return result.numDeletedRows > 0n;
+/** Deletes a channel and its deliveries, and takes it out of alert rules; whether there was one. */
+export async function deleteChannel(
+  db: Kysely<Database>,
+  id: string,
+  now: Date = new Date(),
+): Promise<boolean> {
+  return db.transaction().execute(async (trx) => {
+    // Rules drop it first, in the same transaction: a rule left with no
+    // channel is turned off, with the reason (alerts/rules.ts).
+    await forgetChannel(trx, id, now);
+    const result = await trx
+      .deleteFrom("notification_channels")
+      .where("id", "=", id)
+      .executeTakeFirst();
+    return result.numDeletedRows > 0n;
+  });
 }

@@ -3,6 +3,7 @@ import { Link, useMatchRoute, useNavigate, useParams } from "@tanstack/react-rou
 import {
   ActivityIcon,
   ArrowLeftIcon,
+  BellIcon,
   BugIcon,
   ChartColumnIcon,
   ChartLineIcon,
@@ -325,6 +326,18 @@ function ProjectMenu({ projectId }: { projectId: string }) {
             >
               <HeartPulseIcon />
               <span>Uptime</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              render={<Link to="/projects/$projectId/alerts" params={{ projectId }} />}
+              isActive={
+                matchRoute({ to: "/projects/$projectId/alerts", params: { projectId } }) !== false
+              }
+              tooltip="Alerts"
+            >
+              <BellIcon />
+              <span>Alerts</span>
             </SidebarMenuButton>
           </SidebarMenuItem>
           <SidebarMenuItem>

@@ -8,15 +8,15 @@ Status: tested on one machine with Podman (see [What has been tested](#what-has-
 
 `deploy/compose.yaml` starts six services, and a seventh with the `object-store` profile ([source maps](#source-maps)), from the [Dockerfile](../Dockerfile) at the repository root, which builds one image for all of Ottertrail, [deploy/Caddyfile](../deploy/Caddyfile), and ClickHouse's settings in [deploy/clickhouse/](../deploy/clickhouse/).
 
-| Service      | What it does                                                                                                                                                                   | Reachable from outside |
-| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------- |
-| `postgres`   | PostgreSQL 18, data in the `postgres-data` volume                                                                                                                              | No                     |
-| `clickhouse` | ClickHouse 26.8, for analytics events and later logs and traces, data in `clickhouse-data`. Capped at 40% of the server's memory (see below)                                   | No                     |
-| `migrate`    | Brings both databases' schemas up to date, then exits. The API and the worker start only after it succeeds                                                                     | No                     |
-| `api`        | The API, the dashboard's files, and the tracker (`/t.js`), on port 3000 inside the stack. Geolocation file in `geo-data`                                                       | No, only through Caddy |
-| `worker`     | Background work: runs uptime checks, deletes events past each project's retention and those of deleted projects, and joins session replays                                     | No                     |
-| `caddy`      | HTTPS: gets and renews the certificate, redirects HTTP to HTTPS, compresses responses, passes every request to the API                                                         | Ports 80 and 443       |
-| `garage`     | Only with `--profile object-store`: [Garage](https://garagehq.deuxfleurs.fr/) (AGPL-3.0), an S3-compatible store for source maps, in `garage-data`. About 10 MB of memory idle | No                     |
+| Service      | What it does                                                                                                                                                                                    | Reachable from outside |
+| ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------- |
+| `postgres`   | PostgreSQL 18, data in the `postgres-data` volume                                                                                                                                               | No                     |
+| `clickhouse` | ClickHouse 26.8, for analytics events and later logs and traces, data in `clickhouse-data`. Capped at 40% of the server's memory (see below)                                                    | No                     |
+| `migrate`    | Brings both databases' schemas up to date, then exits. The API and the worker start only after it succeeds                                                                                      | No                     |
+| `api`        | The API, the dashboard's files, and the tracker (`/t.js`), on port 3000 inside the stack. Geolocation file in `geo-data`                                                                        | No, only through Caddy |
+| `worker`     | Background work: runs uptime checks, evaluates alert rules and sends their notifications, deletes events past each project's retention and those of deleted projects, and joins session replays | No                     |
+| `caddy`      | HTTPS: gets and renews the certificate, redirects HTTP to HTTPS, compresses responses, passes every request to the API                                                                          | Ports 80 and 443       |
+| `garage`     | Only with `--profile object-store`: [Garage](https://garagehq.deuxfleurs.fr/) (AGPL-3.0), an S3-compatible store for source maps, in `garage-data`. About 10 MB of memory idle                  | No                     |
 
 Idle, the stack without ClickHouse used about 160 MB of memory (API 100 MB, PostgreSQL 27 MB, worker 18 MB, Caddy 14 MB), measured with the test data below. The image is about 290 MB, almost all of it Node.js's own image. No sizing under real traffic has been measured.
 

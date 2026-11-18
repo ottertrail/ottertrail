@@ -6,17 +6,21 @@
 
 /**
  * The event types, as webhooks name them. Alert rules (step 3 of
- * docs/uptime-alerts.md) send the check and error ones; telemetry alerts
- * (step 4) add theirs here. `test` is the dashboard's test send.
+ * docs/uptime-alerts.md, alerts/) send the check, certificate, and error
+ * ones, and `alert.held_back` when a rule's hourly cap held notifications
+ * back; telemetry alerts (step 4) add theirs here. `test` is the
+ * dashboard's test send.
  */
 export const EVENT_TYPES = [
   "check.down",
   "check.up",
   "certificate.expiring",
+  "certificate.renewed",
   "error.new",
   "error.regressed",
   "error.spike",
   "error.spike_resolved",
+  "alert.held_back",
   "test",
 ] as const;
 

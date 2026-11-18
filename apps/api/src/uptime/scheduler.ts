@@ -39,6 +39,15 @@ export interface SchedulerOptions {
   takeAt?: () => Date;
   /** Called with each check that goes down or comes back up (checks.ts, StateChange). */
   onStateChange?: (change: StateChange) => void | Promise<void>;
+  /**
+   * Called when a run recorded a certificate expiry other than the one the
+   * check had (alert rules on certificates, alerts/evaluator.ts).
+   */
+  onCertificate?: (check: {
+    checkId: string;
+    projectId: string;
+    expiresAt: Date;
+  }) => void | Promise<void>;
   /** Logs a failure to store results once per outage, and when it works again. */
   log?: (level: "info" | "error", msg: string, fields?: Record<string, unknown>) => void;
 }
@@ -148,6 +157,14 @@ export class CheckScheduler {
     try {
       const change = await recordOutcome(db, check.id, outcome, at);
       if (change !== null) await this.#options.onStateChange?.(change);
+      const expiresAt = outcome.tlsExpiresAt;
+      if (expiresAt !== null && expiresAt.getTime() !== check.tls_expires_at?.getTime()) {
+        await this.#options.onCertificate?.({
+          checkId: check.id,
+          projectId: check.project_id,
+          expiresAt,
+        });
+      }
     } catch (error) {
       log?.("error", "recording an uptime check's outcome failed", {
         check: check.id,

@@ -2,16 +2,16 @@
 
 Browser errors: the tracker reports them, Ottertrail groups them, and the Errors pages show each group with how often it happens, to whom, and since when. Part of stage 2 ([roadmap](roadmap.md)). Servers' exceptions, sent over OpenTelemetry, join the same list ([server errors](#server-errors), stage 3).
 
-| Part                                                  | Status  |
-| ----------------------------------------------------- | ------- |
-| Capture in the browser (uncaught, rejections, caught) | Done    |
-| Storage, with the rest of the project's events        | Done    |
-| Grouping (fingerprint version 1)                      | Done    |
-| Counts, affected users, first and last seen, status   | Done    |
-| Errors in a user's activity                           | Done    |
-| Source maps (original file names and lines)           | Done    |
-| Server errors (exceptions over OTLP, stage 3)         | Done    |
-| Alerts on new errors and spikes (stage 4)             | Planned |
+| Part                                                  | Status |
+| ----------------------------------------------------- | ------ |
+| Capture in the browser (uncaught, rejections, caught) | Done   |
+| Storage, with the rest of the project's events        | Done   |
+| Grouping (fingerprint version 1)                      | Done   |
+| Counts, affected users, first and last seen, status   | Done   |
+| Errors in a user's activity                           | Done   |
+| Source maps (original file names and lines)           | Done   |
+| Server errors (exceptions over OTLP, stage 3)         | Done   |
+| Alerts on new, regressed, and spiking errors          | Done   |
 
 ## 1. Capture
 
@@ -140,11 +140,14 @@ A server's exception, recorded on a span or in a log record and sent over OTLP (
 
 The error's page shows a server's group by route and service instead of page, browser, and operating system, and the latest occurrence's service, trace ID, and span ID. The trace's own page is planned (telemetry's step 3), so the trace ID is not a link yet. A server's stack is shown as it was sent: source maps are for browser code, so it is never mapped.
 
+## Alerts
+
+Alert rules ([uptime and alerts](uptime-alerts.md#step-3-alert-rules-as-built), stage 4) tell a team by email or webhook when an error group is seen for the first time (in one environment or any), when a resolved group happens again, and when errors (all, or one group, in one environment or any) reach a threshold within a window of 5 to 60 minutes, and again once they stay below it. The worker evaluates them every minute from this module's data: it reads only the groups whose occurrences arrived since its last look, then, for groups it has not seen before, their first arrival from ClickHouse once (kept in PostgreSQL after that, since the fingerprint's bloom filter cannot skip much of a frequent group's history), and decides "regressed" with the same rule as the list (`statusOf` in `errors.ts`). A group seen before a rule was added, or while it was off, is never new to it, and a regression before a rule was on is not told by it. A group's page lists the rules that watch it, with a link that adds a spike rule for it ([dashboard](dashboard.md#813-alerts)).
+
 ## 6. Not done yet
 
 - Grouping by the original files and functions that source maps give (fingerprint version 2), and mapping the stacks of occurrences other than the latest.
 - A link from a server's error to its trace, with the Traces page ([telemetry](telemetry.md#how-it-is-built), step 3).
-- Alerts on a new or regressed group, or a spike (stage 4; [design](uptime-alerts.md)).
 - Ignoring a group, merging two, searching messages, and "resolved in the next release".
 - The visit around an error: for a known user, their activity shows it; for an anonymous visitor there is no timeline page yet.
 - Errors from resources (images, scripts that fail to load) and from before the tracker runs.

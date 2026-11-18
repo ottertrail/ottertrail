@@ -1,5 +1,6 @@
 import { type Kysely, type Selectable, sql, type Transaction } from "kysely";
 
+import { forgetCheck } from "../alerts/rules.ts";
 import type { CheckCause, Database, UptimeChecksTable } from "../db/schema.ts";
 import { MAX_URL, outboundUrlOf, type Problem } from "../outbound/url.ts";
 import type { CheckOutcome } from "./request.ts";
@@ -372,18 +373,26 @@ export async function updateCheck(
   });
 }
 
-/** Deletes a check with its incidents; false when the project has none with this ID. */
+/**
+ * Deletes a check with its incidents; false when the project has none
+ * with this ID. Alert rules that watch only it are turned off, and alerts
+ * about it end (alerts/rules.ts, forgetCheck), in the same transaction.
+ */
 export async function deleteCheck(
   db: Kysely<Database>,
   projectId: string,
   checkId: string,
+  now: Date = new Date(),
 ): Promise<boolean> {
-  const result = await db
-    .deleteFrom("uptime_checks")
-    .where("project_id", "=", projectId)
-    .where("id", "=", checkId)
-    .executeTakeFirst();
-  return result.numDeletedRows > 0n;
+  return db.transaction().execute(async (trx) => {
+    await forgetCheck(trx, projectId, checkId, now);
+    const result = await trx
+      .deleteFrom("uptime_checks")
+      .where("project_id", "=", projectId)
+      .where("id", "=", checkId)
+      .executeTakeFirst();
+    return result.numDeletedRows > 0n;
+  });
 }
 
 /** A due check, as the worker runs it. */
@@ -399,6 +408,7 @@ export type DueCheck = Pick<
   | "word"
   | "word_mode"
   | "next_due_at"
+  | "tls_expires_at"
 > & {
   /** When it was due, before it was moved on. */
   due_at: Date;
@@ -479,7 +489,7 @@ export async function takeDueChecks(
     from chosen
     where c.id = chosen.id
     returning c.id, c.project_id, c.url, c.method, c.interval_seconds, c.timeout_seconds,
-      c.expected_statuses, c.word, c.word_mode, c.next_due_at,
+      c.expected_statuses, c.word, c.word_mode, c.next_due_at, c.tls_expires_at,
       chosen.next_due_at as due_at, ${at} as taken_at
   `.execute(db);
   return rows;
@@ -487,7 +497,7 @@ export async function takeDueChecks(
 
 /**
  * A check going down or coming back up: what recordOutcome returns, for
- * whatever acts on it (alerts, when they exist; docs/uptime-alerts.md).
+ * whatever acts on it (the worker's alert rules, alerts/evaluator.ts).
  */
 export interface StateChange {
   checkId: string;

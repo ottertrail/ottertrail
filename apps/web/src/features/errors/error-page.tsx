@@ -36,6 +36,7 @@ import {
   setErrorStatus,
 } from "@/lib/errors-api";
 
+import { AlertRulesCard } from "../alerts/alert-rules-card";
 import { DayCountCard } from "../analytics/day-count-card";
 import { formatWhole } from "../analytics/format";
 import { RankedList } from "../analytics/ranked-list";
@@ -445,6 +446,10 @@ function Detail({
         <Resolution projectId={projectId} detail={detail} />
       </div>
       <Stats detail={detail} />
+      <AlertRulesCard
+        projectId={projectId}
+        watched={{ fingerprint: group.fingerprint, environment }}
+      />
       <DayCountCard
         days={detail.days.map((day) => ({ day: day.day, count: day.occurrences }))}
         noun="Occurrences"

@@ -67,8 +67,11 @@ export function makeCertificate({
   const subject = sequence(
     set(sequence(oid("2.5.4.3"), tlv(0x0c, Buffer.from("Ottertrail test", "utf8")))),
   );
+  // DER wants the shortest form of a positive integer: no top bit (that
+  // would be negative), and no zero first byte (OpenSSL refuses one as
+  // "illegal padding"), so the first byte is 0x40 to 0x7f.
   const serial = randomBytes(8);
-  serial[0] = (serial[0] ?? 0) & 0x7f;
+  serial[0] = ((serial[0] ?? 0) & 0x3f) | 0x40;
   const altNames = sequence(
     ...names.map((name) => tlv(0x82, Buffer.from(name, "ascii"))),
     ...addresses.map((address) => tlv(0x87, address.split(".").map(Number))),

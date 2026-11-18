@@ -32,6 +32,7 @@ import {
   incidentsQuery,
 } from "@/lib/uptime-api";
 
+import { AlertRulesCard } from "../alerts/alert-rules-card";
 import { RangeControls } from "../errors/range-controls";
 import { NoSuchProject } from "../projects/no-such-project";
 import { ChartCard } from "../telemetry/chart-card";
@@ -390,6 +391,10 @@ export function CheckPage({
 
       {answer !== undefined && (
         <Stats check={answer.check} results={data} timeZone={answer.timeZone} />
+      )}
+
+      {answer !== undefined && (
+        <AlertRulesCard projectId={projectId} watched={{ checkId: answer.check.id }} />
       )}
 
       {results.isError && (

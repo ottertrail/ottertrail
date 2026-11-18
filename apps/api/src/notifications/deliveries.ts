@@ -212,6 +212,17 @@ export async function notify(db: Kysely<Database>, input: NotifyInput): Promise<
 }
 
 /**
+ * notify, in a transaction the caller holds: alert rules record the
+ * notification with the alert's state and history, so either all of it
+ * is written or none of it, and a restart sends nothing twice.
+ */
+export async function notifyIn(trx: Transaction<Database>, input: NotifyInput): Promise<Recorded> {
+  const payload = payloadFor(input);
+  const ids = await lockChannels(trx, input.channelIds);
+  return recordDeliveries(trx, ids, payload);
+}
+
+/**
  * The dashboard's test send: a `test` notification to one channel, unless
  * it had TEST_SENDS_PER_MINUTE test sends in the last minute. Null when
  * the channel does not exist.

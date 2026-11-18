@@ -1,0 +1,255 @@
+import type { FastifyPluginCallback } from "fastify";
+import type { Kysely } from "kysely";
+
+import type { Auth } from "../auth/auth.ts";
+import { requireTrustedOrigin } from "../auth/origin.ts";
+import { requireSession } from "../auth/routes.ts";
+import type { Database } from "../db/schema.ts";
+import type { Problem } from "../outbound/url.ts";
+import { type ProjectAccess, requireProjectAccess } from "../projects/access.ts";
+import { RULE_HOURLY_CAP } from "./fire.ts";
+import {
+  MAX_RULE_CHANNELS,
+  MAX_RULE_NAME,
+  MAX_RULES,
+  RULE_KINDS,
+  SETTINGS_SCHEMA,
+} from "./kinds.ts";
+import {
+  createRule,
+  deleteRule,
+  findRule,
+  firingAlerts,
+  HISTORY_RETENTION_DAYS,
+  listHistory,
+  listRules,
+  MAX_HISTORY_PAGE,
+  type RuleInput,
+  ruleValuesOf,
+  updateRule,
+  valuesOfRule,
+} from "./rules.ts";
+
+const UUID_PATTERN =
+  "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$";
+
+const PARAMS = {
+  type: "object",
+  required: ["id"],
+  properties: { id: { type: "string", pattern: UUID_PATTERN } },
+};
+
+const RULE_PARAMS = {
+  type: "object",
+  required: ["id", "ruleId"],
+  properties: {
+    id: { type: "string", pattern: UUID_PATTERN },
+    ruleId: { type: "string", pattern: UUID_PATTERN },
+  },
+};
+
+/** A rule's fields; bounds a little past the real ones where ruleValuesOf words them. */
+const RULE_FIELDS = {
+  name: { type: "string", maxLength: MAX_RULE_NAME * 2 },
+  kind: { type: "string", enum: [...RULE_KINDS] },
+  settings: SETTINGS_SCHEMA,
+  channelIds: {
+    type: "array",
+    maxItems: MAX_RULE_CHANNELS,
+    items: { type: "string", pattern: UUID_PATTERN },
+  },
+  enabled: { type: "boolean" },
+};
+
+const PAGE_QUERY = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    before: { type: "string", pattern: UUID_PATTERN },
+    limit: { type: "integer", minimum: 1, maximum: MAX_HISTORY_PAGE },
+  },
+};
+
+/** A rule is a name, a few settings, and up to 20 channel IDs. */
+const BODY_LIMIT = 16 * 1024;
+const DEFAULT_PAGE = 20;
+
+const NO_RULE: Problem = {
+  error: "rule_not_found",
+  message: "The project has no alert rule with this ID.",
+};
+
+/** The access requireProjectAccess set: these routes always run it. */
+function accessOf(request: { projectAccess: ProjectAccess | null }): ProjectAccess {
+  if (request.projectAccess === null) {
+    throw new Error("requireProjectAccess must run before this route");
+  }
+  return request.projectAccess;
+}
+
+/**
+ * GET    /api/projects/:id/alert-rules
+ * POST   /api/projects/:id/alert-rules                 { "kind": "check_down", "channelIds": […], … }
+ * GET    /api/projects/:id/alert-rules/:ruleId
+ * PATCH  /api/projects/:id/alert-rules/:ruleId         any fields, or { "enabled": false }
+ * DELETE /api/projects/:id/alert-rules/:ruleId
+ * GET    /api/projects/:id/alert-rules/:ruleId/history[?before=<alert ID>&limit=20]
+ * GET    /api/projects/:id/alerts[?before=<alert ID>&limit=20]   the project's alerts
+ * GET    /api/projects/:id/alerts/firing
+ *
+ * A project's alert rules (rules.ts; docs/uptime-alerts.md, "Alerts"):
+ * at most 50, each sending to one or more of the instance's channels. A
+ * rule's channels must exist and its check must be the project's (400
+ * otherwise). Changes need the dashboard's origin. Like every project
+ * route, each runs requireProjectAccess first, and reads only the
+ * project it found.
+ */
+export const alertRoutes: FastifyPluginCallback<{
+  db: Kysely<Database>;
+  auth: Auth;
+  trustedOrigins: readonly string[];
+  now?: () => Date;
+}> = (app, { db, auth, trustedOrigins, now = () => new Date() }, done) => {
+  const signedIn = requireSession(auth);
+  const projectAccess = requireProjectAccess(db);
+  const fromDashboard = requireTrustedOrigin(trustedOrigins);
+
+  app.get<{ Params: { id: string } }>(
+    "/projects/:id/alert-rules",
+    { preHandler: [signedIn, projectAccess], schema: { params: PARAMS } },
+    async (request) => {
+      const { projectId, timeZone } = accessOf(request);
+      return {
+        timeZone,
+        maxRules: MAX_RULES,
+        hourlyCap: RULE_HOURLY_CAP,
+        rules: await listRules(db, projectId),
+      };
+    },
+  );
+
+  app.post<{ Params: { id: string }; Body: RuleInput }>(
+    "/projects/:id/alert-rules",
+    {
+      preHandler: [fromDashboard, signedIn, projectAccess],
+      bodyLimit: BODY_LIMIT,
+      schema: {
+        params: PARAMS,
+        body: {
+          type: "object",
+          required: ["kind", "channelIds"],
+          additionalProperties: false,
+          properties: RULE_FIELDS,
+        },
+      },
+    },
+    async (request, reply) => {
+      const { projectId } = accessOf(request);
+      const values = ruleValuesOf(request.body);
+      if ("error" in values) return reply.code(400).send(values);
+      const created = await createRule(db, projectId, values, now());
+      if ("refused" in created) {
+        return reply.code(409).send({
+          error: "too_many_rules",
+          message: `A project has at most ${MAX_RULES} alert rules.`,
+        });
+      }
+      if ("problem" in created) return reply.code(400).send(created.problem);
+      return reply.code(201).send({ rule: created.rule });
+    },
+  );
+
+  app.get<{ Params: { id: string; ruleId: string } }>(
+    "/projects/:id/alert-rules/:ruleId",
+    { preHandler: [signedIn, projectAccess], schema: { params: RULE_PARAMS } },
+    async (request, reply) => {
+      const rule = await findRule(db, accessOf(request).projectId, request.params.ruleId);
+      return rule === null ? reply.code(404).send(NO_RULE) : { rule };
+    },
+  );
+
+  app.patch<{ Params: { id: string; ruleId: string }; Body: RuleInput }>(
+    "/projects/:id/alert-rules/:ruleId",
+    {
+      preHandler: [fromDashboard, signedIn, projectAccess],
+      bodyLimit: BODY_LIMIT,
+      schema: {
+        params: RULE_PARAMS,
+        body: {
+          type: "object",
+          additionalProperties: false,
+          minProperties: 1,
+          properties: RULE_FIELDS,
+        },
+      },
+    },
+    async (request, reply) => {
+      const { projectId } = accessOf(request);
+      const current = await findRule(db, projectId, request.params.ruleId);
+      if (current === null) return reply.code(404).send(NO_RULE);
+      const values = ruleValuesOf(request.body, valuesOfRule(current));
+      if ("error" in values) return reply.code(400).send(values);
+      const updated = await updateRule(db, projectId, current.id, values, now(), {
+        enabledSent: request.body.enabled !== undefined,
+      });
+      if (updated === null) return reply.code(404).send(NO_RULE);
+      if ("problem" in updated) return reply.code(400).send(updated.problem);
+      return { rule: updated.rule };
+    },
+  );
+
+  app.delete<{ Params: { id: string; ruleId: string } }>(
+    "/projects/:id/alert-rules/:ruleId",
+    { preHandler: [fromDashboard, signedIn, projectAccess], schema: { params: RULE_PARAMS } },
+    async (request, reply) => {
+      const deleted = await deleteRule(db, accessOf(request).projectId, request.params.ruleId);
+      return deleted ? reply.code(204).send() : reply.code(404).send(NO_RULE);
+    },
+  );
+
+  app.get<{
+    Params: { id: string; ruleId: string };
+    Querystring: { before?: string; limit?: number };
+  }>(
+    "/projects/:id/alert-rules/:ruleId/history",
+    {
+      preHandler: [signedIn, projectAccess],
+      schema: { params: RULE_PARAMS, querystring: PAGE_QUERY },
+    },
+    async (request, reply) => {
+      const { projectId, timeZone } = accessOf(request);
+      const rule = await findRule(db, projectId, request.params.ruleId);
+      if (rule === null) return reply.code(404).send(NO_RULE);
+      const page = await listHistory(db, projectId, {
+        ruleId: rule.id,
+        before: request.query.before,
+        limit: request.query.limit ?? DEFAULT_PAGE,
+      });
+      return { timeZone, retentionDays: HISTORY_RETENTION_DAYS, ...page };
+    },
+  );
+
+  app.get<{ Params: { id: string }; Querystring: { before?: string; limit?: number } }>(
+    "/projects/:id/alerts",
+    { preHandler: [signedIn, projectAccess], schema: { params: PARAMS, querystring: PAGE_QUERY } },
+    async (request) => {
+      const { projectId, timeZone } = accessOf(request);
+      const page = await listHistory(db, projectId, {
+        before: request.query.before,
+        limit: request.query.limit ?? DEFAULT_PAGE,
+      });
+      return { timeZone, retentionDays: HISTORY_RETENTION_DAYS, ...page };
+    },
+  );
+
+  app.get<{ Params: { id: string } }>(
+    "/projects/:id/alerts/firing",
+    { preHandler: [signedIn, projectAccess], schema: { params: PARAMS } },
+    async (request) => {
+      const { projectId, timeZone } = accessOf(request);
+      return { timeZone, alerts: await firingAlerts(db, projectId) };
+    },
+  );
+
+  done();
+};

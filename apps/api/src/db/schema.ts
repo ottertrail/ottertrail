@@ -169,6 +169,82 @@ export interface NotificationDeliveriesTable {
   sent_at: Nullable<Date>;
 }
 
+/**
+ * A project's alert rule (docs/uptime-alerts.md, "Alerts"; alerts/rules.ts):
+ * what it watches (its kind and settings) and the channels it sends to.
+ */
+export interface AlertRulesTable {
+  id: ColumnType<string, string | undefined, never>;
+  project_id: ColumnType<string, string, never>;
+  name: string;
+  /** One of alerts/kinds.ts's RULE_KINDS. */
+  kind: string;
+  /** The kind's settings (alerts/kinds.ts); written as JSON text. */
+  settings: ColumnType<unknown, string, string>;
+  channel_ids: ColumnType<string[], string[], string[]>;
+  enabled: ColumnType<boolean, boolean | undefined, boolean>;
+  /** Why the server turned the rule off; null when on, or turned off by a user. */
+  disabled_reason: Nullable<string>;
+  /** The hour the rule's notifications are counted in, and what it sent and held back. */
+  cap_window_start: Nullable<Date>;
+  cap_sent: ColumnType<number, number | undefined, number>;
+  cap_held: ColumnType<number, number | undefined, number>;
+  /** When it was created, turned on again, or changed what it watches: error rules read nothing older. */
+  active_since: ColumnType<Date, Date | undefined, Date>;
+  created_at: ColumnType<Date, Date | undefined, never>;
+  updated_at: ColumnType<Date, Date | undefined, Date>;
+}
+
+/** Whether a rule fires for one subject (a check, a fingerprint, or '' for a spike rule). */
+export interface AlertStatesTable {
+  rule_id: string;
+  subject: string;
+  firing: boolean;
+  /** What it fired for, when that matters: a certificate's expiry, a resolution's time. */
+  key: ColumnType<string, string | undefined, string>;
+  since: Date;
+  /** A spike rule's: since when its count has been below the threshold. */
+  clear_since: Nullable<Date>;
+  last_notified_at: Nullable<Date>;
+  /** The open alert in alert_history. */
+  history_id: Nullable<string>;
+}
+
+/** One alert: when it fired and resolved, what it said, and its notifications. */
+export interface AlertHistoryTable {
+  id: ColumnType<string, string | undefined, never>;
+  rule_id: ColumnType<string, string, never>;
+  project_id: ColumnType<string, string, never>;
+  subject: string;
+  subject_name: string;
+  fired_at: Date;
+  resolved_at: Nullable<Date>;
+  message: string;
+  /** The notification sent when it fired; null when the rule's hourly cap held it back. */
+  notification_id: Nullable<string>;
+  resolve_notification_id: Nullable<string>;
+}
+
+/**
+ * Up to when a project's error rules have read arrivals, and, when a
+ * minute read more groups than it takes, the last group read.
+ */
+export interface AlertEvaluationsTable {
+  project_id: string;
+  errors_until: Date;
+  after_arrival: Nullable<Date>;
+  after_fingerprint: Nullable<string>;
+  after_environment: Nullable<string>;
+}
+
+/** An error group (in one environment) new-error rules have seen, and when it first arrived. */
+export interface AlertErrorGroupsTable {
+  project_id: string;
+  fingerprint: string;
+  environment: string;
+  first_arrival: Date;
+}
+
 /** A project's saved conversion: a page or a product event. */
 export interface GoalsTable {
   id: ColumnType<string, string | undefined, never>;
@@ -317,6 +393,11 @@ export interface Database {
   uptime_incidents: UptimeIncidentsTable;
   notification_channels: NotificationChannelsTable;
   notification_deliveries: NotificationDeliveriesTable;
+  alert_rules: AlertRulesTable;
+  alert_states: AlertStatesTable;
+  alert_history: AlertHistoryTable;
+  alert_evaluations: AlertEvaluationsTable;
+  alert_error_groups: AlertErrorGroupsTable;
   source_maps: SourceMapsTable;
   replay_chunks: ReplayChunksTable;
   replays: ReplaysTable;

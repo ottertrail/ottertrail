@@ -290,7 +290,12 @@ export const uptimeRoutes: FastifyPluginCallback<{
     "/projects/:id/checks/:checkId",
     { preHandler: [fromDashboard, signedIn, projectAccess], schema: { params: CHECK_PARAMS } },
     async (request, reply) => {
-      const deleted = await deleteCheck(db, accessOf(request).projectId, request.params.checkId);
+      const deleted = await deleteCheck(
+        db,
+        accessOf(request).projectId,
+        request.params.checkId,
+        now(),
+      );
       return deleted ? reply.code(204).send() : reply.code(404).send(NO_CHECK);
     },
   );
