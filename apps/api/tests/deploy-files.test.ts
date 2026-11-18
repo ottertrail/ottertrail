@@ -48,6 +48,20 @@ describe("deploy/compose.yaml works on its own, as a release download", () => {
     expect(compose).not.toMatch(/^\s*build:/m);
   });
 
+  // Docker Compose before 5.0.2 evaluates a check inside a condition
+  // (${A:-${B:+${A:?…}}}) in every install. So Compose checks only what
+  // every install needs, and the services check the rest as they start.
+  test("Compose requires only what every install needs, with flat checks", () => {
+    expect(compose).not.toContain(":+");
+    const required = new Set([...compose.matchAll(/\$\{(\w+):\?/g)].map((match) => match[1] ?? ""));
+    expect([...required].toSorted((a, b) => a.localeCompare(b))).toEqual([
+      "AUTH_SECRET",
+      "CLICKHOUSE_PASSWORD",
+      "OTTERTRAIL_DOMAIN",
+      "POSTGRES_PASSWORD",
+    ]);
+  });
+
   test("it mounts no file from beside it", () => {
     expect(compose).not.toMatch(/^\s*- \.{1,2}\//m);
   });

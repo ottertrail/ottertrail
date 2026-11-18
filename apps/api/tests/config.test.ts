@@ -341,6 +341,16 @@ describe("loadConfig", () => {
       expect(() => loadConfig({ OBJECT_STORE_URL: "http://garage:3900" })).toThrow(
         /OBJECT_STORE_ACCESS_KEY_ID and OBJECT_STORE_SECRET_ACCESS_KEY are required/,
       );
+      // As deploy/compose.yaml passes them when .env leaves one empty.
+      for (const keys of [
+        { OBJECT_STORE_ACCESS_KEY_ID: "", OBJECT_STORE_SECRET_ACCESS_KEY: "" },
+        { OBJECT_STORE_ACCESS_KEY_ID: "GK1", OBJECT_STORE_SECRET_ACCESS_KEY: "" },
+        { OBJECT_STORE_ACCESS_KEY_ID: " ", OBJECT_STORE_SECRET_ACCESS_KEY: "secret" },
+      ]) {
+        expect(() =>
+          loadConfig({ ...PRODUCTION, OBJECT_STORE_URL: "http://garage:3900", ...keys }),
+        ).toThrow(/OBJECT_STORE_ACCESS_KEY_ID and OBJECT_STORE_SECRET_ACCESS_KEY are required/);
+      }
       expect(() => loadConfig({ OBJECT_STORE_URL: "http://id:hunter2@garage:3900" })).toThrow(
         expect.objectContaining({ message: expect.not.stringContaining("hunter2") }),
       );

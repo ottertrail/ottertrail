@@ -8,7 +8,7 @@
 # from example.env, and run `docker compose up -d`. It runs the published
 # image of one release (OTTERTRAIL_VERSION), and holds the settings of
 # Caddy, ClickHouse, and Garage at the end (configs). It needs Docker
-# Compose 5.0.2 or later; podman-compose cannot run it. Steps:
+# Compose 2.23.1 or later; podman-compose cannot run it. Steps:
 # https://github.com/ottertrail/ottertrail/blob/main/docs/deployment.md
 #
 # Not "ottertrail": that is the development stack (compose.yaml at the
@@ -43,13 +43,16 @@ x-app: &app
     # Session replays and source maps: off unless OBJECT_STORE_URL is set,
     # to the stack's own Garage (http://garage:3900, the object-store
     # profile) or another S3-compatible store such as Cloudflare R2
-    # (docs/deployment.md). With a URL, both keys are required. Each reads:
-    # the key if it is set; else, if there is a URL, stop with a message.
+    # (docs/deployment.md). With a URL, both keys are required: migrate,
+    # the API, and the worker refuse to start without them, and say so in
+    # their logs. Compose cannot check them itself: a required value only
+    # in some installs needs a nested check, which Docker Compose before
+    # 5.0.2 evaluates in every install.
     OBJECT_STORE_URL: ${OBJECT_STORE_URL:-}
     OBJECT_STORE_REGION: ${OBJECT_STORE_REGION:-garage}
     OBJECT_STORE_BUCKET: ${OBJECT_STORE_BUCKET:-ottertrail}
-    OBJECT_STORE_ACCESS_KEY_ID: ${OBJECT_STORE_ACCESS_KEY_ID:-${OBJECT_STORE_URL:+${OBJECT_STORE_ACCESS_KEY_ID:?set OBJECT_STORE_ACCESS_KEY_ID in .env, or remove OBJECT_STORE_URL}}}
-    OBJECT_STORE_SECRET_ACCESS_KEY: ${OBJECT_STORE_SECRET_ACCESS_KEY:-${OBJECT_STORE_URL:+${OBJECT_STORE_SECRET_ACCESS_KEY:?set OBJECT_STORE_SECRET_ACCESS_KEY in .env, or remove OBJECT_STORE_URL}}}
+    OBJECT_STORE_ACCESS_KEY_ID: ${OBJECT_STORE_ACCESS_KEY_ID:-}
+    OBJECT_STORE_SECRET_ACCESS_KEY: ${OBJECT_STORE_SECRET_ACCESS_KEY:-}
     SOURCE_MAP_STORAGE_BYTES: ${SOURCE_MAP_STORAGE_BYTES:-}
     REPLAY_STORAGE_BYTES: ${REPLAY_STORAGE_BYTES:-}
     # Traces, logs, and metrics over OTLP (docs/telemetry.md): days kept,
@@ -121,9 +124,9 @@ services:
   # An S3-compatible object store for session replays and source maps, on
   # this server: only with the object-store profile (COMPOSE_PROFILES in
   # .env). It creates its bucket and access key from the same settings the
-  # API reads, and nothing outside reaches it. Its secrets are required
-  # while COMPOSE_PROFILES is set, and not when it is unset: Compose checks
-  # a service's required variables even when its profile is off.
+  # API reads, and nothing outside reaches it. Without GARAGE_RPC_SECRET it
+  # stops at once, and `docker compose logs garage` says why
+  # (docs/deployment.md, "Session replays and source maps").
   garage:
     image: docker.io/dxflrs/garage:v2.5.0
     profiles: ["object-store"]
@@ -131,9 +134,9 @@ services:
     logging: *logging
     command: ["/garage", "server", "--single-node", "--default-bucket"]
     environment:
-      GARAGE_RPC_SECRET: ${GARAGE_RPC_SECRET:-${COMPOSE_PROFILES:+${GARAGE_RPC_SECRET:?set GARAGE_RPC_SECRET in .env, or remove COMPOSE_PROFILES}}}
-      GARAGE_DEFAULT_ACCESS_KEY: ${OBJECT_STORE_ACCESS_KEY_ID:-${COMPOSE_PROFILES:+${OBJECT_STORE_ACCESS_KEY_ID:?set OBJECT_STORE_ACCESS_KEY_ID in .env, or remove COMPOSE_PROFILES}}}
-      GARAGE_DEFAULT_SECRET_KEY: ${OBJECT_STORE_SECRET_ACCESS_KEY:-${COMPOSE_PROFILES:+${OBJECT_STORE_SECRET_ACCESS_KEY:?set OBJECT_STORE_SECRET_ACCESS_KEY in .env, or remove COMPOSE_PROFILES}}}
+      GARAGE_RPC_SECRET: ${GARAGE_RPC_SECRET:-}
+      GARAGE_DEFAULT_ACCESS_KEY: ${OBJECT_STORE_ACCESS_KEY_ID:-}
+      GARAGE_DEFAULT_SECRET_KEY: ${OBJECT_STORE_SECRET_ACCESS_KEY:-}
       GARAGE_DEFAULT_BUCKET: ${OBJECT_STORE_BUCKET:-ottertrail}
     volumes:
       - garage-data:/var/lib/garage

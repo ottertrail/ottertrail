@@ -24,8 +24,8 @@ ClickHouse's defaults assume a machine of its own with 16 GB or more, and its ow
 
 ## What you need
 
-- A Linux server with Docker Engine and Docker Compose 5.0.2 or later (`docker compose version`). Docker Compose reads inline settings files (`configs:` with `content:`) from 2.23.1 on ([Compose's reference](https://docs.docker.com/reference/compose-file/configs/)), but the Compose file also asks for the object store's keys only when they are needed, with a check inside a condition (`${A:-${B:+${A:?…}}}`). Docker Compose evaluates that check only when the condition holds from 5.0.2 on. 2.23.1, 2.24.0, 2.29.0, 2.35.0, 2.40.3, 5.0.0, and 5.0.1 evaluated it always, so an install with its own S3 store, or none, stopped asking for Garage's secret ([What has been tested](#what-has-been-tested)).
-- Podman works with Docker Compose too: `podman compose` runs Docker Compose when it is installed (`PODMAN_COMPOSE_PROVIDER` chooses), or point Docker Compose at Podman's socket with `DOCKER_HOST`. Use Docker Compose 5.0.2 or later there too. podman-compose does not work: version 1.6 skips inline configs without a warning, so Caddy, ClickHouse, and Garage start without their settings, and Garage stops at once ([What has been tested](#what-has-been-tested)).
+- A Linux server with Docker Engine and Docker Compose 2.23.1 or later (`docker compose version`). The Compose file holds its settings files inline (`configs:` with `content:`), which Docker Compose reads from 2.23.1 on ([Compose's reference](https://docs.docker.com/reference/compose-file/configs/)).
+- Podman works with Docker Compose too: `podman compose` runs Docker Compose when it is installed (`PODMAN_COMPOSE_PROVIDER` chooses), or point Docker Compose at Podman's socket with `DOCKER_HOST`. Use Docker Compose 2.23.1 or later there too. podman-compose does not work: version 1.6 skips inline configs without a warning, so Caddy, ClickHouse, and Garage start without their settings, and Garage stops at once ([What has been tested](#what-has-been-tested)).
 - A domain or subdomain for the instance, such as `analytics.example.com`, with its DNS A record (and AAAA, for IPv6) pointing at the server.
 - Ports 80 and 443 open to the internet: Caddy needs them to get a certificate from Let's Encrypt, and sites send events to 443. Nothing else needs to be open besides SSH.
 
@@ -64,7 +64,7 @@ docker compose up -d
 docker compose ps
 ```
 
-Compose pulls the images, then starts the databases, `migrate`, the API, the worker, and Caddy. `migrate` should show "Exited (0)" and `api` "healthy". A setting left empty stops Compose before anything starts, with "set … in .env".
+Compose pulls the images, then starts the databases, `migrate`, the API, the worker, and Caddy. `migrate` should show "Exited (0)" and `api` "healthy", and with Garage, `garage` "healthy". The domain and the three passwords are checked first: Compose stops before anything starts, with "set … in .env". The object store's settings are checked as the services start ([Missing settings](#missing-settings)).
 
 Create the owner account, then download what the API knows about IP addresses:
 
@@ -160,7 +160,18 @@ Restoring PostgreSQL alone, or moving it to a new major version (dump, new volum
 | `SMTP_URL`            | Optional: the SMTP server alert email goes through, with its user name and password ([alert email](#alert-email)). Never logged                                                                                                           |
 | `EMAIL_FROM`          | The sender of alert email, required with `SMTP_URL`                                                                                                                                                                                       |
 
-Compose stops with "set … in .env" when a required one is missing.
+Compose stops with "set … in .env" when `OTTERTRAIL_DOMAIN`, `POSTGRES_PASSWORD`, `CLICKHOUSE_PASSWORD`, or `AUTH_SECRET` is missing.
+
+### Missing settings
+
+The object store's settings are required only in some installs, so Compose passes them on as they are, and the services check them as they start. Compose cannot check them for only those installs: that needs a check inside a condition, which Docker Compose before 5.0.2 evaluates in every install.
+
+| Missing                                                                                       | What happens                                                                                                                                                                                                                          | Where it shows                                                                                                                                 |
+| --------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `OBJECT_STORE_ACCESS_KEY_ID` or `OBJECT_STORE_SECRET_ACCESS_KEY`, with `OBJECT_STORE_URL` set | `migrate` stops, and `docker compose up -d` ends with `service "migrate" didn't complete successfully: exit 1`. The API and the worker do not start: they make the same check                                                         | `docker compose logs migrate`: `ConfigError: OBJECT_STORE_ACCESS_KEY_ID and OBJECT_STORE_SECRET_ACCESS_KEY are required with OBJECT_STORE_URL` |
+| `GARAGE_RPC_SECRET`, with Garage on                                                           | Garage stops at once and restarts again and again; everything else starts, and uploads of replays and source maps fail. Garage's message does not name the setting: it is `GARAGE_RPC_SECRET`, 64 hex digits (`openssl rand -hex 32`) | `docker compose logs garage`: `Error: Invalid RPC secret key: expected 32 bytes of random hex`                                                 |
+
+After filling in the setting, run `docker compose up -d` again.
 
 ### Session replays and source maps
 
@@ -170,7 +181,7 @@ Session replays show what a visitor did before an error ([session replay](sessio
 - **Cloudflare R2, Amazon S3, or another S3-compatible store.** Remove the `COMPOSE_PROFILES` line. Create a bucket and an access key for it there, set `OBJECT_STORE_URL` to its endpoint (for R2, `https://<account ID>.r2.cloudflarestorage.com`), `OBJECT_STORE_REGION` (`auto` for R2), `OBJECT_STORE_BUCKET`, `OBJECT_STORE_ACCESS_KEY_ID`, and `OBJECT_STORE_SECRET_ACCESS_KEY`. `GARAGE_RPC_SECRET` can stay empty.
 - **No object store.** Remove the `COMPOSE_PROFILES` and `OBJECT_STORE_URL` lines. Replays and source maps are then off.
 
-Compose stops with a message when a key is missing: both access keys while `OBJECT_STORE_URL` is set, and Garage's secret and keys while `COMPOSE_PROFILES` is set. Compose checks every service's required settings, even those of a profile that is off, so the Compose file asks for Garage's only while `COMPOSE_PROFILES` has a value. With `--profile object-store` on the command line instead, it cannot tell, and Garage stops at start with an empty secret: set the profile in `.env`.
+A missing key does not stop Compose: `migrate` or Garage stops at start, and its log says why ([Missing settings](#missing-settings)).
 
 `SOURCE_MAP_STORAGE_BYTES` limits the instance's compressed maps, all projects together, 1 GiB by default, and `REPLAY_STORAGE_BYTES` its compressed replays, 2 GiB by default (a first guess, until measured on real sites). Replays are kept 30 days. The API logs `OBJECT_STORE_URL is not set: source maps are off` at start when there is no store; a project's replay setting then says replays are off on the install.
 
@@ -293,14 +304,15 @@ Backups with the object store (18 November 2026), the same setup: Podman 6.2, po
 
 Not tested yet: Docker Engine and Docker Compose on a Linux server, a real domain with a Let's Encrypt certificate, ports 80 and 443, an `amd64` image, alert email through an SMTP server, an update that runs a migration on existing data, a restore on a new server, an object backup of Cloudflare R2 or Amazon S3, and the backup scripts under rootless Docker, rootless Podman on Linux, or SELinux.
 
-Releases as an install gets them (18 November 2026), on macOS with Podman 6.2 in a 4 GB machine shared with another project, and Docker Compose 5.8.0 (the standalone binary) on Podman's socket. The image was built from a clean export of the commit (`git archive`), tagged `ghcr.io/ottertrail/ottertrail:0.0.0-releasetest`, and chosen with `OTTERTRAIL_VERSION`, so nothing was pulled. The install folder held only `compose.yaml`, `example.env`, `backup.sh`, `restore.sh`, and a `.env` made from `example.env`; an override file kept elsewhere published Caddy on 8443 and 8081 and set `PUBLIC_URL`, as above.
+Releases as an install gets them (18 and 19 November 2026), on macOS with Podman 6.2 in a 4 GB machine shared with another project, and Docker Compose 5.8.0 and then 2.23.1 (the standalone binaries) on Podman's socket. The image was built from a clean export of the commit (`git archive`), tagged `ghcr.io/ottertrail/ottertrail:0.0.0-releasetest`, and chosen with `OTTERTRAIL_VERSION`, so nothing was pulled. The install folder held only `compose.yaml`, `example.env`, `backup.sh`, `restore.sh`, and a `.env` made from `example.env`; an override file kept elsewhere published Caddy on 8443 and 8081 and set `PUBLIC_URL`, as above.
 
 - `up -d` started all seven services: `COMPOSE_PROFILES=object-store` in `.env` was enough to start Garage. Inside the containers, the Caddyfile held the domain, ClickHouse ran with the inline settings (a mark cache of 512 MiB, 40% of the memory, 1 GB per query), and Garage created its bucket. The health check answered 200 over HTTP/2 through Caddy, and HTTP redirected to HTTPS.
 - The setup link created the owner, a project was made, a test site on another origin loaded `/t.js` and sent one pageview (202), and the analytics page showed it: 1 visitor, 1 pageview, `/index.html`.
 - `backup.sh`, called from another folder, wrote its three files into `backups/` beside it, readable by their owner only. `down -v` removed every volume. `restore.sh`, called from a third folder with a relative path, restored them, exit 0, and the analytics page showed the same pageview, with the owner's sign-in.
-- Settings missing from `.env` stop `docker compose config` with their message: an object store's keys while `OBJECT_STORE_URL` is set, Garage's secret while `COMPOSE_PROFILES` is set, and none of Garage's while it is unset.
-- Docker Compose versions, with `config` on the same file and settings, for five cases: Garage on with everything set; Garage on without its secret (must stop); an own S3 store with its keys; an own S3 store without them (must stop); and no store. 5.0.2, 5.1.0, 5.1.4, 5.2.0, 5.3.0, 5.4.0, 5.7.0, and 5.8.0 got all five right. 2.23.1, 2.24.0, 2.29.0, 2.35.0, 2.40.3, 5.0.0, and 5.0.1 stopped the own-store and no-store installs too, asking for Garage's secret or the store's keys. Hence 5.0.2 in [What you need](#what-you-need).
-- Recreating on 5.0.2 and 5.8.0, with a Caddy container on its own: `up -d` kept the container when only the content of its inline config changed, so the new content never reached it. A changed environment variable or label recreated it, with the new content. Hence the domain in Caddy's environment, and each config's hash in a label ([Decisions](#decisions)).
+- Docker Compose 2.23.1, the oldest version the file asks for, from a fresh folder the same way (19 November 2026). Its override reset Caddy's ports with `!reset []` and added the high ports in a second file, because `!override` needs 2.24.4. `up -d` started all seven services; the Caddyfile, ClickHouse's settings (512 MiB mark cache, 0.4 of the memory, 1 GB per query), and Garage's (its bucket made) were in place; setup, a project, and one pageview went through, and the analytics page showed it.
+- Recreating on 2.23.1, 5.0.2, and 5.8.0, with a Caddy container on its own: `up -d` kept the container when only the content of its inline config changed, so the new content never reached it. A changed environment variable or label recreated it, with the new content. Hence the domain in Caddy's environment, and each config's hash in a label ([Decisions](#decisions)). In the 2.23.1 stack, a changed Caddyfile without its label left every container as it was; with its new label, `up -d` recreated Caddy alone, which then held the new Caddyfile and answered through HTTPS.
+- The three object store cases, from a fresh folder each, on 2.23.1 and on 5.8.0: Garage on (seven services, Garage healthy), an own S3 store (`COMPOSE_PROFILES` removed, no Garage secret; six services), and no store (six services; the API logs that source maps are off). Each started, with the API healthy through Caddy. With missing settings, on 2.23.1: the store's keys empty, with Garage or with an own store, stopped `migrate` with the `ConfigError` above, and `up -d` exited 1; `GARAGE_RPC_SECRET` empty left Garage restarting with "Invalid RPC secret key" (on 5.8.0 too), and everything else started ([Missing settings](#missing-settings)).
+- Before the object store's keys were left to the services (18 November 2026), the Compose file checked them itself, inside a condition. Docker Compose 2.23.1 to 2.40.3, 5.0.0, and 5.0.1 evaluated that check in every install, so installs with an own store or none stopped asking for Garage's secret; 5.0.2 and later did not. Hence [Missing settings](#missing-settings).
 - podman-compose 1.6, the same folder: it read `COMPOSE_PROFILES` from `.env` and started Garage, but skipped every inline config without a warning. Caddy ran with its image's default Caddyfile, ClickHouse with its defaults, and Garage stopped at once: "Failed to read config file /etc/garage.toml". Hence Docker Compose in [What you need](#what-you-need).
 
 ## Known limitations
@@ -311,7 +323,8 @@ Releases as an install gets them (18 November 2026), on macOS with Podman 6.2 in
 - The geolocation database and the data-center ranges are updated by hand, monthly.
 - One server: no failover, and a few seconds of downtime for each update.
 - Release images are built in CI and pushed to ghcr.io, but nothing tests them there before they are pushed, and the release workflow has not run for a tag yet: run `vp run ready` before tagging a release.
-- podman-compose cannot run the Compose file (inline configs); Docker Compose 5.0.2 or later is needed, with Docker or Podman.
+- podman-compose cannot run the Compose file (inline configs); Docker Compose 2.23.1 or later is needed, with Docker or Podman.
+- A missing object store key or Garage secret does not stop `docker compose up -d` before it starts anything, as the required settings do: `migrate` or Garage stops instead, and says so in its log ([Missing settings](#missing-settings)).
 - The workflow's check for an image already in the registry (`docker buildx imagetools inspect`, which says "not found" for a new version) has not run in CI yet.
 - `docker compose pull` from the private registry, and the release downloads with `gh` or a token, are not tested yet.
 - One deployment per server. Two stacks on one host would both need ports 80 and 443; sharing a host needs one proxy in front of both, not set up.
