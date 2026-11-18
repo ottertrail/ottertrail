@@ -1,6 +1,7 @@
 import { type Kysely, type Selectable, sql, type Transaction } from "kysely";
 
 import type { CheckCause, Database, UptimeChecksTable } from "../db/schema.ts";
+import { MAX_URL, outboundUrlOf, type Problem } from "../outbound/url.ts";
 import type { CheckOutcome } from "./request.ts";
 import { DEFAULT_STATUSES, formatStatuses, parseStatuses } from "./statuses.ts";
 
@@ -21,7 +22,7 @@ export const MAX_FAILURES_BEFORE_DOWN = 5;
 /** Checks a project may have. */
 export const MAX_CHECKS = 50;
 export const MAX_NAME = 100;
-export const MAX_URL = 2048;
+export { MAX_URL };
 export const MAX_WORD = 200;
 /**
  * A new or resumed check's first run comes at a random moment within its
@@ -103,42 +104,14 @@ export interface CheckInput {
   failuresBeforeDown?: number | undefined;
 }
 
-/** A refused value: a code and a sentence the dashboard shows as it is. */
-export interface Problem {
-  error: string;
-  message: string;
-}
+export type { Problem };
 
 // eslint-disable-next-line no-control-regex -- control characters are what it refuses
 const CONTROL = /[\u0000-\u001F\u007F]/u;
 
 /** The URL a check may request, or why not: http or https, a host, no user or password. */
 export function checkUrlOf(text: string): URL | Problem {
-  const trimmed = text.trim();
-  const url = URL.parse(trimmed);
-  if (trimmed === "" || url === null) {
-    return {
-      error: "invalid_url",
-      message: "Enter a full URL, such as https://example.com/health.",
-    };
-  }
-  if (url.protocol !== "http:" && url.protocol !== "https:") {
-    return { error: "invalid_url", message: "A check's URL starts with http:// or https://." };
-  }
-  if (url.hostname === "") {
-    return { error: "invalid_url", message: "The URL has no host." };
-  }
-  if (url.username !== "" || url.password !== "") {
-    return {
-      error: "invalid_url",
-      message: "A check's URL holds no user name or password: they would be stored as plain text.",
-    };
-  }
-  url.hash = "";
-  if (url.href.length > MAX_URL) {
-    return { error: "invalid_url", message: `A check's URL has at most ${MAX_URL} characters.` };
-  }
-  return url;
+  return outboundUrlOf(text, { label: "A check's URL", example: "https://example.com/health" });
 }
 
 /** A check's stored values, after defaults; or the first problem with them. */

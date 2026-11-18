@@ -7,18 +7,18 @@ import { requireSession } from "../auth/routes.ts";
 import type { ClickHouseClient } from "../clickhouse/clickhouse.ts";
 import { clickHouseErrorHandler } from "../clickhouse/route-errors.ts";
 import type { Database } from "../db/schema.ts";
-import { type ProjectAccess, requireProjectAccess } from "../projects/access.ts";
-import { PERIODS, type RangeQuery } from "../reports/routes.ts";
-import { DashboardQueryLimiter, dashboardReader } from "../telemetry/dashboard-limit.ts";
-import { telemetryRange } from "../telemetry/dashboard-query.ts";
-import { bucketsOf } from "../telemetry/metrics.ts";
 import {
   type AddressPolicy,
   AddressNotAllowedError,
   type Lookup,
   resolveTarget,
   systemLookup,
-} from "./addresses.ts";
+} from "../outbound/addresses.ts";
+import { type ProjectAccess, requireProjectAccess } from "../projects/access.ts";
+import { PERIODS, type RangeQuery } from "../reports/routes.ts";
+import { DashboardQueryLimiter, dashboardReader } from "../telemetry/dashboard-limit.ts";
+import { telemetryRange } from "../telemetry/dashboard-query.ts";
+import { bucketsOf } from "../telemetry/metrics.ts";
 import {
   type Check,
   type CheckInput,

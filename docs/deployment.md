@@ -108,6 +108,8 @@ Restoring PostgreSQL alone, or moving it to a new major version (dump, new volum
 | `TIMEZONE`            | The IANA timezone, such as `Europe/Berlin`, that the setup link sets for the instance. Default `UTC`                                                                                                                                      |
 | `LOG_LEVEL`           | Optional, default `info`                                                                                                                                                                                                                  |
 | `OTTERTRAIL_IMAGE`    | Optional: an image to run instead of building this checkout, such as one from a registry                                                                                                                                                  |
+| `SMTP_URL`            | Optional: the SMTP server alert email goes through, with its user name and password ([alert email](#alert-email)). Never logged                                                                                                           |
+| `EMAIL_FROM`          | The sender of alert email, required with `SMTP_URL`                                                                                                                                                                                       |
 
 Compose stops with "set … in .env" when a required one is missing.
 
@@ -144,7 +146,18 @@ The worker runs each project's uptime checks from the server it is on ([uptime a
 - **The server's own public address.** A check to it on another port reaches services a cloud firewall closes only to the outside, such as a port Docker publishes on the host. List it, and any other address or range checks must never reach, in `UPTIME_DENY_ADDRESSES` in `.env`, separated by commas, such as `UPTIME_DENY_ADDRESSES=203.0.113.10,2001:db8:1::/64`. The API and the worker refuse to start on an entry that is not an IP address or CIDR range.
 - **A private network to check.** A self-hosted install that must check services on its own private network can set `UPTIME_ALLOW_PRIVATE_ADDRESSES=true`: checks may then reach loopback, private, unique-local, and shared addresses, the stack's own containers included. Every dashboard user can then point a check at any of them, and a check's word reads their answers one yes or no per run, enough to read out, a word at a time, what a service shows without a password. Set it only where every dashboard user may read those services, and list what they must not reach in `UPTIME_DENY_ADDRESSES`. Link-local addresses and the known cloud metadata services (`169.254.169.254`, `100.100.100.200`, `168.63.129.16`, `fd00:ec2::254`, `fd20:ce::254`, `fd00:c1::a9fe:a9fe`) stay refused. The hosted service leaves it off.
 
-On shutdown the worker lets running checks finish, at most 30 seconds each, so Compose gives it 45 seconds (`stop_grace_period`) before stopping it.
+Webhooks, where alerts can go ([webhooks](webhooks.md)), follow the same rules with the same two settings: a webhook's URL is checked when it is saved and again on every delivery.
+
+On shutdown the worker lets running checks and deliveries finish, at most 30 seconds each, so Compose gives it 45 seconds (`stop_grace_period`) before stopping it.
+
+### Alert email
+
+Alerts go to email channels through an SMTP server the instance is set up with: an email provider's or a relay of your own. Without one, email channels can still be made, the Settings page says email is not set up on this instance, and each email delivery fails with that reason. Webhooks need no setting.
+
+- `SMTP_URL` in `.env`: `smtps://user:password@smtp.example.com:465` for TLS from the start, or `smtp://user:password@smtp.example.com:587` for STARTTLS, which is then required, so the password never crosses the network in plain text. Percent-encode a user name or password that holds `@`, `:`, `/`, `?`, `#`, or `%`. A relay that needs no password takes `smtp://relay.internal:25`. The URL takes no query string: the TLS, timeout, and logging settings are Ottertrail's, and none can be changed from it. The API and the worker refuse to start on a URL that is not `smtp://` or `smtps://`, has a path, a query string, or a fragment, or has a user name without a password; their messages never repeat it, and neither logs it.
+- `EMAIL_FROM`: the sender, an address or a name and an address, such as `Ottertrail <alerts@example.com>`. Required with `SMTP_URL`. The provider must allow sending from that address (its domain verified, with SPF and DKIM), or messages land in spam or are refused.
+
+Messages are plain text: what happened, when (in the instance's timezone), the project, and a link to the dashboard; the subject starts with the instance's name. A failed message is retried for about an hour ([uptime and alerts](uptime-alerts.md#step-2-channels-and-delivery-as-built)); its error shows in the channel's deliveries on the Settings page. After changing either setting, run `docker compose up -d`.
 
 ### One customer per instance
 

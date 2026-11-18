@@ -59,6 +59,7 @@ const app = buildApp({
     allowPrivateAddresses: config.uptimeAllowPrivateAddresses,
     denyAddresses: config.uptimeDenyAddresses,
   },
+  notifications: { emailConfigured: config.email !== null },
   trackerScriptPath: config.trackerScriptPath,
   dashboardPath: resolve(config.dashboardPath),
   replayPlayerPath: resolve(config.replayPlayerPath),

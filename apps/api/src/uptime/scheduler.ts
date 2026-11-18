@@ -2,7 +2,7 @@ import type { Kysely } from "kysely";
 
 import type { ClickHouseClient } from "../clickhouse/clickhouse.ts";
 import type { Database } from "../db/schema.ts";
-import type { AddressPolicy, Lookup } from "./addresses.ts";
+import type { AddressPolicy, Lookup } from "../outbound/addresses.ts";
 import { type DueCheck, recordOutcome, type StateChange, takeDueChecks } from "./checks.ts";
 import { type CheckOutcome, type RequestOptions, runRequest } from "./request.ts";
 import { storeResult } from "./results.ts";

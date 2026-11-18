@@ -18,6 +18,8 @@ import { errorRoutes } from "./errors/routes.ts";
 import { savedFunnelRoutes } from "./funnels/routes.ts";
 import { goalRoutes } from "./goals/routes.ts";
 import { userRoutes } from "./identities/routes.ts";
+import { channelRoutes } from "./notifications/routes.ts";
+import { addressPolicy, type Lookup } from "./outbound/addresses.ts";
 import { productRoutes } from "./product/routes.ts";
 import { projectRoutes } from "./projects/routes.ts";
 import { replayPlayerScriptRoute, replayRoutes } from "./replays/dashboard-routes.ts";
@@ -33,7 +35,6 @@ import { DashboardQueryLimiter } from "./telemetry/dashboard-limit.ts";
 import { telemetryDashboardRoutes } from "./telemetry/dashboard-routes.ts";
 import { type TelemetryOptions, telemetryRoutes } from "./telemetry/routes.ts";
 import { trackerScriptRoutes } from "./tracker-script/routes.ts";
-import { addressPolicy, type Lookup } from "./uptime/addresses.ts";
 import { uptimeRoutes } from "./uptime/routes.ts";
 
 export interface AppOptions extends Omit<FastifyServerOptions, "logger"> {
@@ -102,6 +103,12 @@ export interface AppOptions extends Omit<FastifyServerOptions, "logger"> {
    * resolver that checks a URL's host when a check is saved (tests fake it).
    */
   uptime?: { allowPrivateAddresses?: boolean; denyAddresses?: string[]; lookup?: Lookup };
+  /**
+   * Notification channels (docs/uptime-alerts.md, "Where alerts go"):
+   * whether SMTP_URL is set, which the dashboard shows beside email
+   * channels. Webhook URLs follow `uptime`'s address rules and resolver.
+   */
+  notifications?: { emailConfigured?: boolean };
   /** The built tracker, served at /t.js. Not served when omitted. */
   trackerScriptPath?: string;
   /** The built dashboard's directory, served at /. Not served when omitted. */
@@ -134,6 +141,7 @@ export function buildApp({
   replays = { limitBytes: DEFAULT_REPLAY_STORAGE_BYTES },
   telemetry = {},
   uptime = {},
+  notifications = {},
   trackerScriptPath,
   dashboardPath,
   replayPlayerPath,
@@ -288,17 +296,30 @@ export function buildApp({
       limiter,
       ...(dashboard.now === undefined ? {} : { now: dashboard.now }),
     });
+    // Uptime checks and webhooks follow the same address rules.
+    const policy = addressPolicy({
+      allowPrivate: uptime.allowPrivateAddresses ?? false,
+      deny: uptime.denyAddresses ?? [],
+    });
     app.register(uptimeRoutes, {
       prefix: "/api",
       db,
       clickhouse: dashboard.clickhouse,
       auth: dashboard.auth,
       trustedOrigins: dashboard.trustedOrigins,
-      policy: addressPolicy({
-        allowPrivate: uptime.allowPrivateAddresses ?? false,
-        deny: uptime.denyAddresses ?? [],
-      }),
+      policy,
       limiter,
+      ...(uptime.lookup === undefined ? {} : { lookup: uptime.lookup }),
+      ...(dashboard.now === undefined ? {} : { now: dashboard.now }),
+    });
+    app.register(channelRoutes, {
+      prefix: "/api",
+      db,
+      auth: dashboard.auth,
+      trustedOrigins: dashboard.trustedOrigins,
+      publicUrl: dashboard.publicUrl,
+      emailConfigured: notifications.emailConfigured ?? false,
+      policy,
       ...(uptime.lookup === undefined ? {} : { lookup: uptime.lookup }),
       ...(dashboard.now === undefined ? {} : { now: dashboard.now }),
     });

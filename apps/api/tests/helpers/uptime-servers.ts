@@ -1,7 +1,7 @@
 import http from "node:http";
 import https from "node:https";
 
-import type { Lookup } from "../../src/uptime/addresses.ts";
+import type { Lookup } from "../../src/outbound/addresses.ts";
 import { makeCertificate, type TestCertificate } from "./certificate.ts";
 
 /**

@@ -509,6 +509,19 @@ Reports count days in the instance's timezone, and visitor IDs change at its mid
 
 The API and the worker read the settings through one module (`apps/api/src/settings/settings.ts`), which caches them for a few seconds. The process that saved a change uses it at once, and any other process picks it up within seconds.
 
+### Notification channels
+
+Code: `apps/web/src/features/settings/` (`notification-channels.tsx`, `channel-form-dialog.tsx`), `apps/web/src/lib/channels-api.ts`, and `apps/api/src/notifications/`. The second card on `/settings` lists the instance's channels, where alerts go ([uptime and alerts](uptime-alerts.md#step-2-channels-and-delivery-as-built)). Every signed-in user manages them, not only the owner, until roles exist.
+
+- **Email set up or not:** a badge when the instance has an SMTP server; otherwise a notice that email is not set up on this instance, that email channels can be added but nothing is sent to them until the operator sets `SMTP_URL` and `EMAIL_FROM`, and that webhooks work without it. Each email channel repeats it in a line under its addresses.
+- **The list:** a line with how many channels there are of the 20 allowed (at 20, Add is off and the line says why), then each channel with its name, its kind as a badge (Email or Webhook), and its addresses or URL. Each has Send test, Edit, and Delete buttons named for the channel; Delete asks first. With no channels, a short explanation and the Add channel button.
+- **Adding and editing** share a form in a dialog: the kind (when adding; it never changes), the addresses (one per line or separated by commas, 1 to 20) or the URL, and a name (the first address or the URL's host when left empty). The form checks what it can before sending and shows the API's own refusal under the field it is about, such as an address sign-in would not accept, or a URL whose host resolves to an address webhooks may not reach.
+- **A webhook's secret:** not in the list's answer, and fetched from its own route only when Show is pressed (`GET /api/channels/:id/secret`), kept by the card while shown and forgotten on Hide, so it never sits in React Query's cache; shown as code with a Copy button ([design system](design-system.md#components)); Replace secret asks first, saying receivers refuse requests until they have the new one, then shows the new secret, which the API answers once. A line explains the `Ottertrail-Signature` header ([webhooks](webhooks.md)).
+- **Send test** queues a `test` notification (at most 5 a minute per channel; past that, the API's message shows under the channel), says it was queued, and opens the deliveries.
+- **Deliveries** opens a table of the channel's deliveries of the last 30 days, newest first, 20 at a time with Load more: when (in the instance's timezone), the event, the status as a badge with an icon and a word (Queued before the worker takes it, Sending while its first attempt is under way, Retrying after a failed attempt, Sent, Failed), the attempts, and what happened (when it was sent, or the last error, and for a retry when it is next tried). While one is queued or retrying, the table is read again every 5 seconds.
+
+Loading shows skeletons, and a failed load says so with Retry. `channels.test.tsx` covers the list and the email notice both ways, the empty state, adding an email channel (with the form's own check) and a webhook (with the API's refusal under the URL), editing and deleting, showing (fetched only on Show), hiding, copying, and replacing a secret, a test send and the test-send limit, the deliveries with their states (Sending apart from Retrying) and paging, the limit of 20, and a failed load, against the fake API; `apps/api/tests/channels.test.ts` the routes.
+
 ### Not done yet
 
 - Signing up for the hosted service, which creates the customer's instance and its owner (a control plane outside the app; not built).

@@ -10,7 +10,7 @@ import {
   METADATA_ADDRESSES,
   refusedKind,
   resolveTarget,
-} from "../src/uptime/addresses.ts";
+} from "../src/outbound/addresses.ts";
 
 const CLOSED = { allowPrivate: false };
 const OPEN = { allowPrivate: true };

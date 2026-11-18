@@ -2,7 +2,7 @@ import { stat } from "node:fs/promises";
 
 import { afterAll, beforeAll, describe, expect, test } from "vite-plus/test";
 
-import { type Lookup, resolverLookup } from "../src/uptime/addresses.ts";
+import { type Lookup, resolverLookup } from "../src/outbound/addresses.ts";
 import { type CheckRequest, MAX_REDIRECTS, runRequest } from "../src/uptime/request.ts";
 import { parseStatuses } from "../src/uptime/statuses.ts";
 import { startDnsServer } from "./helpers/dns-server.ts";

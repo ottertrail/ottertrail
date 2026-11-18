@@ -129,6 +129,46 @@ export interface UptimeIncidentsTable {
   detail: ColumnType<string, string | undefined, string>;
 }
 
+/** A place notifications go (docs/uptime-alerts.md, "Where alerts go"): an email list or a webhook. */
+export interface NotificationChannelsTable {
+  id: ColumnType<string, string | undefined, never>;
+  name: string;
+  kind: ColumnType<"email" | "webhook", "email" | "webhook", never>;
+  /** An email channel's 1 to 20 addresses; null for a webhook. */
+  email_addresses: Nullable<string[]>;
+  /** A webhook's URL and signing secret; null for an email channel. */
+  webhook_url: Nullable<string>;
+  webhook_secret: Nullable<string>;
+  created_at: ColumnType<Date, Date | undefined, never>;
+  updated_at: ColumnType<Date, Date | undefined, Date>;
+}
+
+export type DeliveryStatus = "pending" | "sent" | "failed";
+
+/** One notification to one channel, and how sending it went (notifications/deliveries.ts). */
+export interface NotificationDeliveriesTable {
+  id: ColumnType<string, string | undefined, never>;
+  /** The notification it belongs to: one per call to notify, shared by its channels. */
+  notification_id: ColumnType<string, string, never>;
+  channel_id: ColumnType<string, string, never>;
+  event_type: ColumnType<string, string, never>;
+  /** The webhook body, version 1 (notifications/events.ts, NotificationPayload). */
+  payload: ColumnType<unknown, string, never>;
+  status: ColumnType<DeliveryStatus, DeliveryStatus | undefined, DeliveryStatus>;
+  attempts: ColumnType<number, number | undefined, number>;
+  /** When it is next tried; null once it is sent or has failed. */
+  next_attempt_at: Nullable<Date>;
+  /** Why the latest attempt failed, in a sentence the dashboard shows. */
+  last_error: Nullable<string>;
+  /**
+   * For a row the channel's hourly cap refused: how many notifications it
+   * stands for (one row per channel and hour); 0 for every other row.
+   */
+  refused: ColumnType<number, number | undefined, number>;
+  created_at: ColumnType<Date, Date | undefined, Date>;
+  sent_at: Nullable<Date>;
+}
+
 /** A project's saved conversion: a page or a product event. */
 export interface GoalsTable {
   id: ColumnType<string, string | undefined, never>;
@@ -275,6 +315,8 @@ export interface Database {
   saved_funnels: SavedFunnelsTable;
   uptime_checks: UptimeChecksTable;
   uptime_incidents: UptimeIncidentsTable;
+  notification_channels: NotificationChannelsTable;
+  notification_deliveries: NotificationDeliveriesTable;
   source_maps: SourceMapsTable;
   replay_chunks: ReplayChunksTable;
   replays: ReplaysTable;

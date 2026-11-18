@@ -1,5 +1,6 @@
 import { stepsOverlap } from "../../src/features/product/funnel-steps.ts";
 import type { Analytics, BreakdownRow, DayPoint } from "../../src/lib/analytics-api.ts";
+import type { Channel, Delivery } from "../../src/lib/channels-api.ts";
 import {
   type ErrorDetail,
   type ErrorGroup,
@@ -126,6 +127,12 @@ export interface FakeApi {
   checkResults: (checkId: string, query: URLSearchParams) => CheckResults | Response;
   /** Answers GET /api/projects/:id/checks/:checkId/incidents; by default, fakeIncidents. */
   incidents: (checkId: string, query: URLSearchParams) => IncidentList | Response;
+  /**
+   * The instance's notification channels and their deliveries: the routes
+   * list, add (refusing what the API refuses for these tests), change,
+   * delete, replace a secret, and queue a test. By default, fakeChannels.
+   */
+  channels: FakeChannels;
   /** Answers DELETE /api/projects/:id; by default, removes the project (204). */
   deleteProject: (api: FakeApi, id: string) => Response;
   /** Every path the page asked for, with its query, in order. */
@@ -1957,6 +1964,260 @@ function saveCheck(api: FakeApi, body: unknown, existing?: Check): Response {
   return json({ check }, existing === undefined ? 201 : 200);
 }
 
+/** The fake API's notification channels, as GET /api/channels answers, with each one's deliveries. */
+export interface FakeChannels {
+  emailConfigured: boolean;
+  list: Channel[];
+  /** By channel ID, newest first. */
+  deliveries: Record<string, Delivery[]>;
+  /** Test sends left this minute, per channel; past them, 429 as the API answers. */
+  testsLeft: number;
+  /** Webhooks' secrets by channel ID: only GET and POST /api/channels/:id/secret answer them. */
+  secrets: Record<string, string>;
+}
+
+/** The fake webhook's secret, as GET /api/channels/:id/secret answers it. */
+// Made at run time, so the secret scanner sees no literal key.
+export const FAKE_SECRET = btoa("secret-for-the-browser-tests-only").replace(/=+$/, "");
+/** The secret a rotation answers with. */
+export const ROTATED_SECRET = btoa("rotated-secret-from-the-fake-api").replace(/=+$/, "");
+
+const delivery = (id: number, more: Partial<Delivery>): Delivery => ({
+  id: `eeeeeeee-eeee-4eee-8eee-${String(id).padStart(12, "0")}`,
+  notificationId: `ffffffff-ffff-4fff-8fff-${String(id).padStart(12, "0")}`,
+  type: "check.down",
+  message: "API health is down: it answered 503.",
+  status: "sent",
+  attempts: 1,
+  nextAttemptAt: null,
+  lastError: null,
+  createdAt: "2026-11-16T01:40:00.000Z",
+  sentAt: "2026-11-16T01:40:02.000Z",
+  ...more,
+});
+
+/**
+ * Two channels: an email list, and a webhook whose deliveries are one
+ * retrying, one that failed for good, and 23 sent, so they take two pages.
+ */
+export function fakeChannels(): FakeChannels {
+  const email: Channel = {
+    id: "cccccccc-cccc-4ccc-8ccc-000000000001",
+    name: "On call",
+    kind: "email",
+    addresses: ["ops@example.com", "dev@example.com"],
+    url: null,
+    hasSecret: false,
+    createdAt: "2026-11-10T00:00:00.000Z",
+    updatedAt: "2026-11-10T00:00:00.000Z",
+  };
+  const webhook: Channel = {
+    id: "cccccccc-cccc-4ccc-8ccc-000000000002",
+    name: "Ops relay",
+    kind: "webhook",
+    addresses: null,
+    url: "https://hooks.example.com/ottertrail",
+    hasSecret: true,
+    createdAt: "2026-11-11T00:00:00.000Z",
+    updatedAt: "2026-11-11T00:00:00.000Z",
+  };
+  return {
+    emailConfigured: false,
+    list: [email, webhook],
+    deliveries: {
+      [email.id]: [],
+      [webhook.id]: [
+        delivery(1, {
+          type: "check.up",
+          message: "API health is up again.",
+          status: "pending",
+          attempts: 2,
+          nextAttemptAt: "2026-11-16T02:12:00.000Z",
+          lastError: "It answered 503; a webhook must answer 2xx.",
+          createdAt: "2026-11-16T02:10:00.000Z",
+          sentAt: null,
+        }),
+        delivery(2, {
+          status: "failed",
+          attempts: 8,
+          lastError: "hooks.example.com resolves to an address webhooks may not reach.",
+          createdAt: "2026-11-16T01:50:00.000Z",
+          sentAt: null,
+        }),
+        ...Array.from({ length: 23 }, (_, index) =>
+          delivery(3 + index, {
+            createdAt: new Date(
+              Date.parse("2026-11-15T12:00:00.000Z") - index * 3_600_000,
+            ).toISOString(),
+            sentAt: new Date(
+              Date.parse("2026-11-15T12:00:02.000Z") - index * 3_600_000,
+            ).toISOString(),
+          }),
+        ),
+      ],
+    },
+    testsLeft: 5,
+    secrets: { [webhook.id]: FAKE_SECRET },
+  };
+}
+
+const channelNotFound = () =>
+  json(
+    {
+      error: "channel_not_found",
+      message: "This instance has no notification channel with this ID.",
+    },
+    404,
+  );
+
+/** A channel added or changed as the API would, refusing what it refuses for these tests. */
+function saveChannel(api: FakeApi, body: unknown, existing?: Channel): Response {
+  const input = fieldsOf(body);
+  const kind = existing?.kind ?? (input.kind === "webhook" ? "webhook" : "email");
+  const now = new Date().toISOString();
+  let addresses: string[] | null = null;
+  let url: string | null = null;
+  if (kind === "email") {
+    addresses = Array.isArray(input.addresses)
+      ? input.addresses.filter((item): item is string => typeof item === "string")
+      : (existing?.addresses ?? []);
+    const bad = addresses.find((address) => address.includes("!"));
+    if (bad !== undefined) {
+      return json(
+        {
+          error: "invalid_address",
+          message: `"${bad}" is not an address email can go to here. Use letters, digits, and . _ ' + - before the @, and a domain such as example.com.`,
+        },
+        400,
+      );
+    }
+  } else {
+    url = typeof input.url === "string" ? input.url : (existing?.url ?? "");
+    const host = URL.parse(url)?.hostname ?? "";
+    if (host.endsWith(".internal")) {
+      return json(
+        {
+          error: "address_not_allowed",
+          message: `${host} resolves to an address webhooks may not reach.`,
+        },
+        400,
+      );
+    }
+  }
+  if (existing === undefined && api.channels.list.length >= 20) {
+    return json(
+      { error: "too_many_channels", message: "An instance has at most 20 notification channels." },
+      409,
+    );
+  }
+  const typedName = typeof input.name === "string" ? input.name.trim() : "";
+  const channel: Channel = {
+    id: existing?.id ?? crypto.randomUUID(),
+    name:
+      typedName ||
+      (existing === undefined
+        ? (addresses?.[0] ?? URL.parse(url ?? "")?.hostname ?? "")
+        : existing.name),
+    kind,
+    addresses,
+    url,
+    hasSecret: kind === "webhook",
+    createdAt: existing?.createdAt ?? now,
+    updatedAt: now,
+  };
+  api.channels.list =
+    existing === undefined
+      ? [...api.channels.list, channel]
+      : api.channels.list.map((item) => (item.id === channel.id ? channel : item));
+  if (existing === undefined) api.channels.deliveries[channel.id] = [];
+  if (existing === undefined && kind === "webhook") {
+    api.channels.secrets[channel.id] = "bmV3LXNlY3JldC1tYWRlLWJ5LXRoZS1mYWtlLWFwaQ";
+  }
+  return json({ channel }, existing === undefined ? 201 : 200);
+}
+
+/** The notification channel routes, as the API answers them; null for another path. */
+function answerChannels(api: FakeApi, url: URL, init: RequestInit | undefined): Response | null {
+  const path = url.pathname;
+  const body = () => JSON.parse(typeof init?.body === "string" ? init.body : "{}") as unknown;
+  if (path === "/api/channels") {
+    if (init?.method === "POST") return saveChannel(api, body());
+    return json({
+      maxChannels: 20,
+      email: { configured: api.channels.emailConfigured },
+      channels: api.channels.list,
+    });
+  }
+  const match = /^\/api\/channels\/([^/]+)(?:\/(secret|test|deliveries))?$/.exec(path);
+  if (match?.[1] === undefined) return null;
+  const id = decodeURIComponent(match[1]);
+  const channel = api.channels.list.find((item) => item.id === id);
+  if (channel === undefined) return channelNotFound();
+  switch (match[2]) {
+    case "secret": {
+      if (channel.kind !== "webhook") {
+        return json({ error: "not_a_webhook", message: "Only a webhook has a secret." }, 400);
+      }
+      if (init?.method === "POST") {
+        const secret = ROTATED_SECRET;
+        api.channels.secrets[id] = secret;
+        return json({ channel, secret });
+      }
+      return json({ secret: api.channels.secrets[id] ?? "" });
+    }
+    case "test": {
+      if (api.channels.testsLeft <= 0) {
+        return json(
+          {
+            error: "too_many_tests",
+            message:
+              "A channel takes at most 5 test sends a minute. Wait a moment, then try again.",
+          },
+          429,
+        );
+      }
+      api.channels.testsLeft -= 1;
+      const queued = delivery(900 + api.channels.testsLeft, {
+        id: crypto.randomUUID(),
+        type: "test",
+        message: `A test notification for the channel "${channel.name}", sent by Test Owner from the dashboard.`,
+        status: "pending",
+        attempts: 0,
+        nextAttemptAt: new Date().toISOString(),
+        createdAt: new Date().toISOString(),
+        sentAt: null,
+      });
+      api.channels.deliveries[id] = [queued, ...(api.channels.deliveries[id] ?? [])];
+      return json(
+        {
+          notificationId: queued.notificationId,
+          delivery: { id: queued.id, channelId: id, status: "pending" },
+        },
+        202,
+      );
+    }
+    case "deliveries": {
+      const all = api.channels.deliveries[id] ?? [];
+      const before = url.searchParams.get("before");
+      const start = before === null ? 0 : all.findIndex((item) => item.id === before) + 1;
+      const page = all.slice(start, start + 20);
+      const more = start + 20 < all.length;
+      return json({
+        retentionDays: 30,
+        deliveries: page,
+        next: more ? (page.at(-1)?.id ?? null) : null,
+      });
+    }
+    default:
+      if (init?.method === "DELETE") {
+        api.channels.list = api.channels.list.filter((item) => item.id !== id);
+        return new Response(null, { status: 204 });
+      }
+      if (init?.method === "PATCH") return saveChannel(api, body(), channel);
+      return json({ channel });
+  }
+}
+
 const checkNotFound = () =>
   json({ error: "check_not_found", message: "The project has no check with this ID." }, 404);
 
@@ -2037,6 +2298,8 @@ async function answer(api: FakeApi, url: URL, init: RequestInit | undefined): Pr
   if (path === "/api/settings") {
     return json({ settings: api.settings });
   }
+  const channels = answerChannels(api, url, init);
+  if (channels !== null) return channels;
   if (path === "/api/projects" && init?.method === "POST") {
     return createProject(api, JSON.parse(typeof init.body === "string" ? init.body : "null"));
   }
@@ -2321,6 +2584,7 @@ export function installFakeApi(overrides: Partial<FakeApi> = {}): FakeApi {
     checks: fakeChecks(),
     checkResults: fakeCheckResults,
     incidents: fakeIncidents,
+    channels: fakeChannels(),
     deleteProject: removeProject,
     requests: [],
     bodies: [],

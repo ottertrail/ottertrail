@@ -1,6 +1,7 @@
 import type { Migration } from "kysely/migration";
 
 import * as createSchema from "./0001_create_schema.ts";
+import * as notificationChannels from "./0002_notification_channels.ts";
 
 /**
  * Every migration, in order. Kysely runs them by name, alphabetically, and
@@ -11,4 +12,5 @@ import * as createSchema from "./0001_create_schema.ts";
  */
 export const migrations: Record<string, Migration> = {
   "0001_create_schema": createSchema,
+  "0002_notification_channels": notificationChannels,
 };

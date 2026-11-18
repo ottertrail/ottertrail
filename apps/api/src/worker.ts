@@ -10,14 +10,17 @@
  * - Running due uptime checks every few seconds, at most 20 requests at
  *   once, and recording their state, incidents, and results
  *   (uptime/scheduler.ts).
+ * - Sending due notifications every few seconds, at most 10 at once, by
+ *   email and webhook, retrying failures for about an hour, and deleting
+ *   deliveries past their 30 days every hour (notifications/sender.ts).
  * - At start and every few hours: finding projects ClickHouse still holds
  *   events of but PostgreSQL no longer knows, deleting events older than
  *   each project's retention (retention/retention.ts),
  *   and taking deleted rows off ClickHouse's disk.
  *
  * All are safe to repeat and to run in two workers at once (uptime checks
- * are taken with FOR UPDATE SKIP LOCKED), so plain timers are enough; a
- * job queue comes with work that needs one.
+ * and deliveries are taken with FOR UPDATE SKIP LOCKED), so plain timers
+ * are enough; a job queue comes with work that needs one.
  */
 import { createClickHouse } from "./clickhouse/clickhouse.ts";
 import {
@@ -27,10 +30,13 @@ import {
 } from "./clickhouse/delete-events.ts";
 import { loadConfig } from "./config.ts";
 import { createDatabase } from "./db/database.ts";
+import { pruneDeliveries } from "./notifications/deliveries.ts";
+import { smtpMailer } from "./notifications/email.ts";
+import { DELIVERY_TICK_MS, DeliverySender, PRUNE_INTERVAL_MS } from "./notifications/sender.ts";
+import { addressPolicy } from "./outbound/addresses.ts";
 import { deleteExpiredReplays, deleteJoinedChunks, joinReplays } from "./replays/replays.ts";
 import { deleteExpiredEvents } from "./retention/retention.ts";
 import { s3ObjectStore } from "./storage/object-store.ts";
-import { addressPolicy } from "./uptime/addresses.ts";
 import { CHECK_TICK_MS, CheckScheduler } from "./uptime/scheduler.ts";
 
 /**
@@ -107,13 +113,16 @@ const stopReplays = every(REPLAY_INTERVAL_MS, async () => {
   }
 });
 
+// Uptime checks and webhooks follow the same address rules.
+const policy = addressPolicy({
+  allowPrivate: config.uptimeAllowPrivateAddresses,
+  deny: config.uptimeDenyAddresses,
+});
+
 const checks = new CheckScheduler({
   db,
   clickhouse,
-  policy: addressPolicy({
-    allowPrivate: config.uptimeAllowPrivateAddresses,
-    deny: config.uptimeDenyAddresses,
-  }),
+  policy,
   log,
   onStateChange: (change) =>
     log(
@@ -138,6 +147,33 @@ const stopChecks = every(CHECK_TICK_MS, async () => {
   } catch (error) {
     if (!checksFailing) log("error", "taking due uptime checks failed", { err: String(error) });
     checksFailing = true;
+  }
+});
+
+// SMTP_URL holds a password: it is never logged, only whether it is set.
+const mailer = config.email === null ? null : smtpMailer(config.email);
+const deliveries = new DeliverySender({ db, mailer, policy, log });
+
+/** Whether the last look for due deliveries failed: an outage is logged once. */
+let deliveriesFailing = false;
+
+const stopDeliveries = every(DELIVERY_TICK_MS, async () => {
+  try {
+    await deliveries.tick();
+    if (deliveriesFailing) log("info", "taking due notifications works again");
+    deliveriesFailing = false;
+  } catch (error) {
+    if (!deliveriesFailing) log("error", "taking due notifications failed", { err: String(error) });
+    deliveriesFailing = true;
+  }
+});
+
+const stopPruning = every(PRUNE_INTERVAL_MS, async () => {
+  try {
+    const pruned = await pruneDeliveries(db);
+    if (pruned > 0) log("info", "old notification deliveries deleted", { pruned });
+  } catch (error) {
+    log("error", "deleting old notification deliveries failed", { err: String(error) });
   }
 });
 
@@ -186,9 +222,17 @@ async function shutdown(signal: NodeJS.Signals) {
   log("info", "shutting down", { signal });
   stopping = true;
   // Runs in progress finish their batch first.
-  await Promise.all([stopPurging(), stopReplays(), stopChecks(), stopRetention()]);
+  await Promise.all([
+    stopPurging(),
+    stopReplays(),
+    stopChecks(),
+    stopDeliveries(),
+    stopPruning(),
+    stopRetention(),
+  ]);
   // Requests under way finish and are recorded: each is at most 30 seconds.
-  await checks.drain();
+  await Promise.all([checks.drain(), deliveries.drain()]);
+  mailer?.close();
   await clickhouse.close();
   objectStore?.close();
   await db.destroy();
@@ -203,4 +247,5 @@ log("info", "worker started", {
   retentionIntervalMs: RETENTION_INTERVAL_MS,
   uptimeAllowPrivateAddresses: config.uptimeAllowPrivateAddresses,
   uptimeDenyAddresses: config.uptimeDenyAddresses,
+  emailConfigured: config.email !== null,
 });

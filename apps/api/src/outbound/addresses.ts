@@ -2,13 +2,13 @@ import { promises as dns } from "node:dns";
 import { BlockList, isIP } from "node:net";
 
 /**
- * The addresses an uptime check may not reach (docs/uptime-alerts.md,
- * "Requests a check must not make"). A check is a request the instance
- * makes to an address a member types in, so it must not reach what is
- * behind the instance: its own databases, a cloud's metadata service, or
- * the private network.
+ * The addresses the instance's own requests may not reach: uptime checks
+ * and webhooks (docs/uptime-alerts.md, "Requests a check must not make").
+ * Each is a request the instance makes to an address a dashboard user
+ * types in, so it must not reach what is behind the instance: its own
+ * databases, a cloud's metadata service, or the private network.
  *
- * Every address a host resolves to is checked, and the check is refused
+ * Every address a host resolves to is checked, and the request is refused
  * when any one is not allowed. The request then connects to the checked
  * address and never resolves the host again (request.ts).
  */
@@ -270,27 +270,30 @@ const KIND_TEXT: Record<AddressKind, string> = {
   denied: "an address this instance refuses",
 };
 
+/** What makes the request, as refusals name it: "checks" or "webhooks". */
+export type Requester = "checks" | "webhooks";
+
 /**
- * A host that resolves to an address checks may not reach. For a host
- * name, the message names neither the address nor its kind: a member
- * could otherwise learn the instance's internal names and addresses (its
- * containers' among them) one refusal at a time. The address and kind
- * stay on the error for the server's log. An IP address the member typed
- * is named, with its kind: it tells them nothing new.
+ * A host that resolves to an address checks (or webhooks) may not reach.
+ * For a host name, the message names neither the address nor its kind: a
+ * member could otherwise learn the instance's internal names and
+ * addresses (its containers' among them) one refusal at a time. The
+ * address and kind stay on the error for the server's log. An IP address
+ * the member typed is named, with its kind: it tells them nothing new.
  */
 export class AddressNotAllowedError extends Error {
   override name = "AddressNotAllowedError";
   readonly host: string;
   readonly address: string;
   readonly kind: AddressKind;
-  constructor(host: string, address: string, kind: AddressKind) {
+  constructor(host: string, address: string, kind: AddressKind, who: Requester = "checks") {
     const literal = isIP(host) !== 0;
     const inner = literal && isIP(host) === 6 ? embeddedIpv4(host) : null;
     const what = inner === null ? KIND_TEXT[kind] : `${inner}, ${KIND_TEXT[kind]}`;
     super(
       literal
-        ? `${host} is ${inner === null ? "" : "an IPv6 form of "}${what}: checks may not reach it.`
-        : `${host} resolves to an address checks may not reach.`,
+        ? `${host} is ${inner === null ? "" : "an IPv6 form of "}${what}: ${who} may not reach it.`
+        : `${host} resolves to an address ${who} may not reach.`,
     );
     this.host = host;
     this.address = address;
@@ -381,7 +384,12 @@ export class NoAddressError extends Error {
  */
 export async function resolveTarget(
   url: URL,
-  { lookup, policy, signal }: { lookup: Lookup; policy: AddressPolicy; signal?: AbortSignal },
+  {
+    lookup,
+    policy,
+    signal,
+    who = "checks",
+  }: { lookup: Lookup; policy: AddressPolicy; signal?: AbortSignal; who?: Requester },
 ): Promise<ResolvedAddress> {
   const host = bare(url.hostname);
   const literal = isIP(host);
@@ -390,7 +398,7 @@ export async function resolveTarget(
   if (addresses.length === 0) throw new NoAddressError(`${host} has no address.`);
   for (const entry of addresses) {
     const kind = refusedKind(entry.address, policy);
-    if (kind !== null) throw new AddressNotAllowedError(host, bare(entry.address), kind);
+    if (kind !== null) throw new AddressNotAllowedError(host, bare(entry.address), kind, who);
   }
   const [first] = addresses;
   if (first === undefined) throw new NoAddressError(`${host} has no address.`);

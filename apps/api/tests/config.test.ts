@@ -19,6 +19,9 @@ import {
   loadConfig,
 } from "../src/config.ts";
 
+/** An SMTP server's URL with a password, built at run time so no secret scanner mistakes it for one. */
+const SMTP_URL = `smtps://alerts:${"m".repeat(20)}@smtp.example.com:465`;
+
 /** What production needs besides defaults. */
 const PRODUCTION = {
   NODE_ENV: "production",
@@ -55,6 +58,7 @@ describe("loadConfig", () => {
       telemetryRetentionDays: DEFAULT_TELEMETRY_RETENTION_DAYS,
       uptimeAllowPrivateAddresses: false,
       uptimeDenyAddresses: [],
+      email: null,
     });
   });
 
@@ -90,6 +94,8 @@ describe("loadConfig", () => {
         TELEMETRY_RETENTION_DAYS: "90",
         UPTIME_ALLOW_PRIVATE_ADDRESSES: "true",
         UPTIME_DENY_ADDRESSES: " 203.0.113.10, 2001:db8::/32 ,",
+        SMTP_URL: SMTP_URL,
+        EMAIL_FROM: "Ottertrail <alerts@example.com>",
       }),
     ).toEqual({
       host: "0.0.0.0",
@@ -126,7 +132,64 @@ describe("loadConfig", () => {
       telemetryRetentionDays: 90,
       uptimeAllowPrivateAddresses: true,
       uptimeDenyAddresses: ["203.0.113.10", "2001:db8::/32"],
+      email: { smtpUrl: SMTP_URL, from: "Ottertrail <alerts@example.com>" },
     });
+  });
+
+  test("reads email's settings: none without SMTP_URL, and EMAIL_FROM required with it", () => {
+    expect(loadConfig({ EMAIL_FROM: "alerts@example.com" }).email).toBeNull();
+    expect(
+      loadConfig({ SMTP_URL: "smtp://relay.internal:25", EMAIL_FROM: "alerts@example.com" }).email,
+    ).toEqual({ smtpUrl: "smtp://relay.internal:25", from: "alerts@example.com" });
+    for (const from of [undefined, "", "not an address", "Ops <ops!alerts@example.com>", "a@b"]) {
+      expect(() =>
+        loadConfig({ SMTP_URL, ...(from === undefined ? {} : { EMAIL_FROM: from }) }),
+      ).toThrow("EMAIL_FROM is required with SMTP_URL");
+    }
+  });
+
+  test("refuses an SMTP_URL that is not one, without repeating it", () => {
+    const password = "q".repeat(24);
+    for (const [url, message] of [
+      [
+        `https://alerts:${password}@smtp.example.com`,
+        "SMTP_URL must be an smtp:// or smtps:// URL",
+      ],
+      [`smtp://alerts:${password}@`, "SMTP_URL"],
+      [
+        `smtp://alerts@smtp.example.com`,
+        "SMTP_URL must hold both a user name and a password, or neither",
+      ],
+      [`smtps://alerts:${password}@smtp.example.com/mail`, "SMTP_URL must not have a path"],
+      ...[
+        "?requireTLS=false",
+        "?logger=true&debug=true",
+        "?tls.rejectUnauthorized=false",
+        "?socketTimeout=600000",
+        "?",
+        "#section",
+      ].map(
+        (suffix) =>
+          [
+            `smtp://alerts:${password}@smtp.example.com:587${suffix}`,
+            "SMTP_URL must not have a query string or fragment; percent-encode ? and # in the user name or password",
+          ] as const,
+      ),
+      [
+        `smtp://alerts:${password}#x@smtp.example.com:587`,
+        "SMTP_URL must not have a query string or fragment",
+      ],
+    ] as const) {
+      let error: unknown;
+      try {
+        loadConfig({ SMTP_URL: url, EMAIL_FROM: "alerts@example.com" });
+      } catch (caught) {
+        error = caught;
+      }
+      expect(error).toBeInstanceOf(ConfigError);
+      expect(String(error)).toContain(message);
+      expect(String(error)).not.toContain(password);
+    }
   });
 
   test("refuses an uptime deny list entry that is not an address or CIDR range", () => {

@@ -65,6 +65,10 @@ The dashboard bundles two fonts, installed from npm, both licensed under the [SI
 - Inter (`@fontsource-variable/inter`), Copyright 2016 The Inter Project Authors.
 - JetBrains Mono (`@fontsource-variable/jetbrains-mono`), Copyright 2020 The JetBrains Mono Project Authors.
 
+### Email
+
+The API's build bundles [Nodemailer](https://nodemailer.com) (`nodemailer`, Copyright (c) 2011-2023 Andris Reinman, [MIT No Attribution License](https://opensource.org/license/mit-0)), which sends alert email over SMTP. Its companion [smtp-server](https://github.com/nodemailer/smtp-server) (same author and licence) is a development dependency only: the API's tests receive email with it, and no build includes it.
+
 ### npm dependencies
 
 Other dependencies are installed from npm under their own licences, found in each package's `LICENSE` file. The dashboard and API builds bundle parts of them, the API all of its dependencies.

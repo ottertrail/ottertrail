@@ -272,6 +272,9 @@ catalogs:
     mmdb-lib:
       specifier: 3.0.5
       version: 3.0.5
+    nodemailer:
+      specifier: 10.6.0
+      version: 10.6.0
     pg:
       specifier: 8.23.1
       version: 8.23.1
@@ -287,6 +290,9 @@ catalogs:
     shadcn:
       specifier: ^4.23.0
       version: 4.23.0
+    smtp-server:
+      specifier: 3.21.6
+      version: 3.21.6
     tw-animate-css:
       specifier: ^1.4.0
       version: 1.4.0
@@ -352,6 +358,9 @@ importers:
       mmdb-lib:
         specifier: 'catalog:'
         version: 3.0.5
+      nodemailer:
+        specifier: 'catalog:'
+        version: 10.6.0
       pg:
         specifier: 'catalog:'
         version: 8.23.1
@@ -401,6 +410,9 @@ importers:
       '@types/pg':
         specifier: 'catalog:'
         version: 8.23.1
+      smtp-server:
+        specifier: 'catalog:'
+        version: 3.21.6
       typescript:
         specifier: 'catalog:'
         version: 7.0.2
@@ -2743,6 +2755,10 @@ packages:
     resolution: {integrity: sha512-zAPCKqMcnqs2nGy6nlkm7JduFseiBJy3EXHGLh+8pFR+TxGCBxxiEN21+UROU5CKwX/f4TlUcYjiM+vs/tsyxw==}
     engines: {node: '>=18'}
 
+  nodemailer@10.6.0:
+    resolution: {integrity: sha512-jWanL7D9GD3jvUDYKmoC5rWTiG8MnBgnN2yV68bgMKip1zUJhiSTyz7Eg+18y8sk5OvdVDzws5nZK5arSI4f5Q==}
+    engines: {node: '>=20.0.0'}
+
   npm-run-path@4.0.1:
     resolution: {integrity: sha512-S48WzZW777zhNIrn7gxOlISNAqi9ZC/uQFnRdbeIHhZhCA6UqpkOT8T1G7BvfdgP4Er8gF4sUbaS0i7QvIfCWw==}
     engines: {node: '>=8'}
@@ -2974,6 +2990,10 @@ packages:
     resolution: {integrity: sha512-d9e9179bjXSJdpJ3+R9fP8hzXsnKLyxTjHLG1dUzje8a27pPyXCe6PrcRtgx2rjoM3IZzHd2vAs+6J/BsO1k7Q==}
     engines: {node: '>=12.0.0'}
 
+  punycode.js@2.3.1:
+    resolution: {integrity: sha512-uxFIHU0YlHYhDQtV4R9J6a52SLx28BCjT+4ieh7IGbgwVJWO+km431c4yRlREUAsAmt/uMjQUyQHNEPf0M39CA==}
+    engines: {node: '>=6'}
+
   queue-microtask@1.2.3:
     resolution: {integrity: sha512-NuaNSa6flKT5JaSYQzJok04JzTL1CA6aGhv5rfLW3PgqA+M2ChpZQnAC8h8i4ZFkBS8X5RqkDBHA7r4hej3K9A==}
 
@@ -3119,6 +3139,10 @@ packages:
   smart-buffer@4.2.0:
     resolution: {integrity: sha512-94hK0Hh8rPqQl2xXc3HsaBoOXKV20MToPkcXvwbISWLEs+64sBq5kFgn2kJDHb1Pry9yrP0dxrCI9RRci7RXKg==}
     engines: {node: '>= 6.0.0', npm: '>= 3.0.0'}
+
+  smtp-server@3.21.6:
+    resolution: {integrity: sha512-QlCb8T8eS6qpiehMRdrDrKUwg4CBCQBSzfNEUQudQUau3xfRUp93X19oOuvjKyryFuEYh1cPEdYhYa09XuePvg==}
+    engines: {node: '>=20.0.0'}
 
   socks@2.8.10:
     resolution: {integrity: sha512-e0VyvkVTwVYViNovRkZ9aodhxVlyoMn7eJhVUPxZ+eK9P/7CBkxvvsBOHqFPEH416726W8tLXXXjKwqgTErrCQ==}
@@ -5298,6 +5322,8 @@ snapshots:
 
   node-releases@2.0.64: {}
 
+  nodemailer@10.6.0: {}
+
   npm-run-path@4.0.1:
     dependencies:
       path-key: 3.1.1
@@ -5549,6 +5575,8 @@ snapshots:
     dependencies:
       long: 5.3.2
 
+  punycode.js@2.3.1: {}
+
   queue-microtask@1.2.3: {}
 
   quick-format-unescaped@4.0.4: {}
@@ -5703,6 +5731,11 @@ snapshots:
   sisteransi@1.0.5: {}
 
   smart-buffer@4.2.0: {}
+
+  smtp-server@3.21.6:
+    dependencies:
+      nodemailer: 10.6.0
+      punycode.js: 2.3.1
 
   socks@2.8.10:
     dependencies:

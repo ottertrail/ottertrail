@@ -1,6 +1,8 @@
 import { isIP } from "node:net";
 
-import { parseAddressRange } from "./uptime/addresses.ts";
+import { z } from "zod";
+
+import { parseAddressRange } from "./outbound/addresses.ts";
 import { canonicalTimeZone } from "./visitors/visitor-ids.ts";
 
 const LOG_LEVELS = ["fatal", "error", "warn", "info", "debug", "trace", "silent"] as const;
@@ -126,6 +128,19 @@ export interface Config {
    * firewall closes only to the outside.
    */
   uptimeDenyAddresses: string[];
+  /**
+   * Where alert email goes out (notifications/email.ts): the SMTP server
+   * and the sender. Null when SMTP_URL is unset: email channels can be
+   * made, and their deliveries fail saying email is not set up.
+   */
+  email: EmailConfig | null;
+}
+
+export interface EmailConfig {
+  /** smtp:// or smtps://, with the user and password in it. Never logged. */
+  smtpUrl: string;
+  /** The sender: an address, or a name and an address ("Ottertrail <alerts@example.com>"). */
+  from: string;
 }
 
 export interface ObjectStoreConfig {
@@ -343,6 +358,55 @@ function parseDenyAddresses(raw: string | undefined): string[] {
   return entries;
 }
 
+const emailAddress = z.email();
+
+/** An address, or a name and an address in angle brackets, as EMAIL_FROM takes it; null when it is neither. */
+export function parseSender(raw: string): string | null {
+  const text = raw.trim();
+  // eslint-disable-next-line no-control-regex -- control characters are what it refuses
+  if (text === "" || text.length > 320 || /[\u0000-\u001F\u007F]/u.test(text)) return null;
+  const named = /^([^<>"]*?)\s*<([^<>\s]+)>$/.exec(text);
+  const address = named === null ? text : (named[2] ?? "");
+  return emailAddress.safeParse(address).success ? text : null;
+}
+
+function parseEmail(env: NodeJS.ProcessEnv): EmailConfig | null {
+  const raw = env.SMTP_URL?.trim() ?? "";
+  if (raw === "") return null;
+  // Error messages never repeat the URL: it holds the password.
+  // Nodemailer would read options from a query string over the ones the
+  // code sets (requireTLS, logging, certificate checks): none is taken.
+  if (raw.includes("?") || raw.includes("#")) {
+    throw new ConfigError(
+      "SMTP_URL must not have a query string or fragment; percent-encode ? and # in the user name or password",
+    );
+  }
+  const url = URL.parse(raw);
+  if (url === null || (url.protocol !== "smtp:" && url.protocol !== "smtps:")) {
+    throw new ConfigError("SMTP_URL must be an smtp:// or smtps:// URL");
+  }
+  if (url.hostname === "") {
+    throw new ConfigError("SMTP_URL has no host");
+  }
+  if (url.port !== "" && Number(url.port) < 1) {
+    throw new ConfigError("SMTP_URL has an invalid port");
+  }
+  if ((url.username === "") !== (url.password === "")) {
+    throw new ConfigError("SMTP_URL must hold both a user name and a password, or neither");
+  }
+  if (url.pathname !== "" && url.pathname !== "/") {
+    throw new ConfigError("SMTP_URL must not have a path");
+  }
+
+  const from = parseSender(env.EMAIL_FROM ?? "");
+  if (from === null) {
+    throw new ConfigError(
+      'EMAIL_FROM is required with SMTP_URL: an address, or a name and an address such as "Ottertrail <alerts@example.com>"',
+    );
+  }
+  return { smtpUrl: raw, from };
+}
+
 function parseTrustProxy(raw: string | undefined): false | number | string[] {
   if (raw === undefined || raw.trim() === "" || raw.trim() === "false") {
     return false;
@@ -472,6 +536,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       env.UPTIME_ALLOW_PRIVATE_ADDRESSES,
     ),
     uptimeDenyAddresses: parseDenyAddresses(env.UPTIME_DENY_ADDRESSES),
+    email: parseEmail(env),
   };
 }
 

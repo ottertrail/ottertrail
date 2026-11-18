@@ -30,6 +30,7 @@ export async function signedInDashboard({
   replayPlayerPath,
   telemetry,
   uptime,
+  notifications,
 }: {
   timeZone?: string;
   now?: () => Date;
@@ -43,6 +44,8 @@ export async function signedInDashboard({
   telemetry?: AppOptions["telemetry"];
   /** Uptime checks' address rules and resolver (tests/uptime.test.ts). */
   uptime?: AppOptions["uptime"];
+  /** Whether email is set up, for notification channels (tests/channels.test.ts). */
+  notifications?: AppOptions["notifications"];
 } = {}) {
   const testDb = await createTestDatabase();
   const testClickHouse = await createTestClickHouse().catch(async (error: unknown) => {
@@ -72,6 +75,7 @@ export async function signedInDashboard({
     ...(replayPlayerPath === undefined ? {} : { replayPlayerPath }),
     ...(telemetry === undefined ? {} : { telemetry }),
     ...(uptime === undefined ? {} : { uptime }),
+    ...(notifications === undefined ? {} : { notifications }),
   });
   const link = await createSetupToken(testDb.db);
   await app.inject({

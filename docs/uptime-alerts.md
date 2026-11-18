@@ -1,6 +1,6 @@
 # Uptime checks and alerts
 
-**Status: stage 4 of the [roadmap](roadmap.md). Step 1, uptime checks, is built ([what was built](#step-1-uptime-checks-as-built)); alerts and their channels are designed and not built.**
+**Status: stage 4 of the [roadmap](roadmap.md). Step 1, uptime checks, is built ([what was built](#step-1-uptime-checks-as-built)), and so is step 2, the channels alerts go to and their delivery ([what was built](#step-2-channels-and-delivery-as-built)); alert rules are designed and not built.**
 
 Ottertrail checks that a customer's sites and APIs answer, from outside the servers they run on, and tells the team when something breaks: a check that fails, an error never seen before or come back after being resolved, a sudden rise in errors. Alerts go out by email and by a signed webhook. The choices below were made on 18 November 2026.
 
@@ -35,6 +35,20 @@ A project's alert rules say what to watch and where to send it:
 - **State:** each rule keeps, per check or error group, whether it is firing and since when, in PostgreSQL, so a restart sends nothing twice and misses nothing.
 - **Noise:** a notification goes out when an alert fires and when it resolves. A rule sends at most 20 an hour; past that, one message says how many more were held back.
 
+### Alerts on telemetry (step 4)
+
+Added on 18 November 2026: the numbers a team watches on its servers, not only whether they answer.
+
+| Rule           | Fires when                                                                                                                                                                                                           | Resolves when                                    |
+| -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ |
+| Route latency  | A service's route (or the whole service) has its p95 or p99 duration above a value over the last N minutes, with at least a set number of requests                                                                   | It stays below for the same window               |
+| Route failures | A service's route (or the whole service) has its failed share above a value over the last N minutes, with at least a set number of requests                                                                          | It stays below for the same window               |
+| Metric         | A metric, read as its chart reads it (a gauge's average, minimum, or maximum; a counter's rate; a histogram's percentile), for one host or attribute value or all, is above or below a value over the last N minutes | It is back on the right side for the same window |
+
+- **Below too:** a value under a threshold can be what matters: response times that drop suddenly (an empty page answers fast), a queue that stops moving, requests that stop coming.
+- **Evaluation:** by the worker every minute, from the same data and computations as the Services and Metrics pages, over windows of 5 to 60 minutes; each rule's query is bounded like the dashboard's, and the worker evaluates a few at a time, so rules cannot crowd out ingestion or the dashboard.
+- **Not yet:** alerts on matching log lines, and on data that stops arriving.
+
 ## Where alerts go
 
 Channels belong to the instance (its settings), so every project can use them; each rule picks one or more.
@@ -52,12 +66,12 @@ Channels belong to the instance (its settings), so every project can use them; e
 
 ## Limits
 
-At most 50 checks per project. Requests: 30-second timeout at most, 5 redirects, 1 MB of body read. Rules: at most 50 per project, 20 notifications an hour each. A webhook's answer is read only for its status.
+At most 50 checks per project. Requests: 30-second timeout at most, 5 redirects, 1 MB of body read. Rules: at most 50 per project, 20 notifications an hour each. A webhook's answer is read only for its status. Channels: at most 20 per instance, 60 deliveries an hour each, 5 test sends a minute each; deliveries are kept 30 days.
 
 ## Not in the first version
 
 - Slack and Discord messages in their own formats (a webhook can reach a small relay meanwhile), SMS, and phone calls.
-- Alerts on telemetry: a metric past a value, a service's failure rate or latency, matching log lines.
+- Alerts on matching log lines, and on data that stops arriving.
 - Checks from several locations, and checks other than HTTP (TCP, ping, DNS); heartbeat checks that a job reports to.
 - Status pages, on-call schedules, escalation, and maintenance windows (a check can be paused).
 
@@ -66,8 +80,9 @@ At most 50 checks per project. Requests: 30-second timeout at most, 5 redirects,
 | Step                                                                                                                              | Status  |
 | --------------------------------------------------------------------------------------------------------------------------------- | ------- |
 | 1. Uptime checks: storage, scheduling, the request and its address rules, incidents, the Uptime pages                             | Done    |
-| 2. Channels and delivery: email over SMTP, signed webhooks, retries, delivery history and test sends                              | Planned |
+| 2. Channels and delivery: email over SMTP, signed webhooks, retries, delivery history and test sends                              | Done    |
 | 3. Alert rules: check down and certificates from the checker, new, regressed, and spiking errors from the worker, the Alerts page | Planned |
+| 4. Alerts on telemetry: route latency and failures, and metrics above or below a value                                            | Planned |
 
 ## Step 1, uptime checks, as built
 
@@ -95,7 +110,38 @@ Decided differently from the design, or settled where it said nothing:
 
 ### Not done in step 1
 
-- Alerts on a check going down or its certificate expiring (step 3), and their channels (step 2).
+- Alerts on a check going down or its certificate expiring (step 3). Their channels are built ([step 2](#step-2-channels-and-delivery-as-built)).
 - A check of a host that resolves to several addresses uses the first (IPv4 first); it does not try the others when that one fails.
 - Names from `/etc/hosts` do not resolve (above).
 - Request headers, a body, or authentication for a check; checks from several locations.
+
+## Step 2, channels and delivery, as built
+
+Built on 18 November 2026, from the design above. Code: `apps/api/src/notifications/`, the request machinery uptime checks and webhooks share (`apps/api/src/outbound/`), the worker (`apps/api/src/worker.ts`), and `apps/web/src/features/settings/`; the dashboard's part is in [the dashboard](dashboard.md#notification-channels), and the webhook format in [webhooks](webhooks.md).
+
+- **Channels** (`channels.ts`, PostgreSQL's `notification_channels`) belong to the instance, at most 20, each with a name (1 to 100 characters; the first address or the URL's host when left empty) and a kind that never changes. An email channel holds 1 to 20 addresses, each one sign-in would accept (zod's `z.email()`, as `canSignInWith` checks it), trimmed, and each kept once whatever its case. A webhook holds its URL, which follows the uptime checks' rules exactly (`outbound/url.ts`: `http` or `https`, a host, no user name or password, at most 2048 characters), and a secret the server makes: 32 random bytes as base64url, which any signed-in user can read from its own route and replace on demand. The list's and a channel's answers say only whether a webhook has one (`hasSecret`), so the secret reaches the browser only when asked for; replacing it answers the new one once. Both answers are `Cache-Control: no-store`. A webhook's host is resolved when it is saved, with the checks' resolver, deny list, and private-address setting (`outbound/addresses.ts`, moved from `uptime/` so both use it), and a refused address answers 400 with the checks' wording, "webhooks" in place of "checks"; a host that does not resolve yet is saved. Every signed-in user may manage channels; changes need the dashboard's origin.
+- **Notifications** (`deliveries.ts`, `notify`) are what step 3 calls: `notify(db, { channelIds, type, project, subject, message, url, time? })` writes one row per channel that exists in `notification_deliveries`, in one transaction, before anything is sent, and returns the notification's ID and each delivery's ID and status. The row holds the channel, the event type, the payload (the webhook body, version 1, as `json`, so its keys keep their order), the attempts, the next attempt, the status (pending, sent, or failed), the last error (one line, at most 300 characters, which never names an address the rules refused for a host name), and when it was sent. Unknown channels are skipped. Input no caller should send (an unknown type, an empty message, a relative URL, a subject that is not flat) throws.
+- **The channel's cap.** The transaction locks the channels' rows, then counts each channel's deliveries of the last hour, test sends left out (they have their own limit of 5 a minute, and a capped channel still takes one): at 60, the notification is refused ("Not sent: this channel had 60 deliveries in the last hour, its limit."). A channel's first refusal in an hour is a failed row; later ones in that hour only count on it (`refused`, and its error ends "N notifications refused so far."), so a flood does not fill the table. Refusals do not count towards the cap, so a flood that goes on does not keep a channel closed. A rule's own cap of 20 an hour is step 3's.
+- **The worker** (`sender.ts`) takes due deliveries every 2 seconds, as many as there is room for, at most 10 sending at once, with `FOR UPDATE SKIP LOCKED`, counting the attempt and moving its next attempt on to the retry's time in the same statement, before anything is sent, as uptime checks are taken. That statement, and the one before it that fails deliveries whose last attempt never finished, run in one transaction with one `now()`, and the take passes over any delivery already at its last attempt, so a lease that ends between the two can never push a delivery past it. Two workers never take one delivery at once, and a worker that stops mid-send leaves the delivery to be tried again after its wait. A late outcome never overwrites a newer one: only the attempt that took the delivery records it.
+- **Retries** wait 30 seconds, then 1, 2, 5, 10, 20, and 20 minutes: eight attempts over about an hour, then the delivery fails for good with its last error. The last attempt holds its delivery for 60 seconds; if no outcome is recorded by then, the delivery is recorded as failed ("The last attempt did not finish"), so one that stops the worker each time is not tried for ever.
+- **Email** (`email.ts`) goes through Nodemailer to the host, port, TLS mode, and login `SMTP_URL` names (handed over one by one, never as the URL), from `EMAIL_FROM` ([deployment](deployment.md#alert-email)), as one plain-text message to the channel's addresses: the message, when it happened in the instance's timezone, the project, and the dashboard link; the subject is the instance's name, a colon, and the message, on one line, at most 200 characters. Over `smtp://` with a password, STARTTLS is required. A message has 20 seconds. SMTP errors are put in words that never hold the URL or the password, with the server's code and answer where it gave one. Without `SMTP_URL`, an email delivery fails at its first attempt: "Email is not set up on this instance: its operator sets SMTP_URL and EMAIL_FROM."
+- **Webhooks** (`webhook.ts`) are a JSON `POST` with the headers and signature [webhooks](webhooks.md) describes. The host is resolved and checked again on every delivery and the request pinned to the checked address (`outbound/request.ts`, shared with uptime checks), so a DNS change after saving cannot reach an address the rules refuse; the refused address and its kind go to the worker's log only. One 10-second timeout covers resolving, connecting, and the answer's headers; any 2xx is delivered, a redirect is not followed, and the answer's body is not read.
+- **Pruning:** the worker deletes deliveries older than 30 days every hour; deleting a channel deletes its deliveries.
+- **Routes** (`routes.ts`), for any signed-in user, changes with the dashboard's origin, with Fastify schemas and bodies of at most 32 KB: `GET` and `POST /api/channels` (the list says whether email is set up), `GET`, `PATCH`, and `DELETE /api/channels/:id`, `GET /api/channels/:id/secret` (a webhook's secret), `POST /api/channels/:id/secret` (a new one, answered once), `POST /api/channels/:id/test` (a `test` notification, at most 5 a minute per channel, else 429), and `GET /api/channels/:id/deliveries?before=<delivery ID>&limit=<1 to 100, 20 by default>`, the last 30 days newest first, with the ID to ask for the next page.
+
+Decided differently from the design, or settled where it said nothing:
+
+- **Who manages channels:** every signed-in user, and every one can read a webhook's secret, as the design said, until roles exist; it comes only from its own route.
+- **Test sends** do not count towards a channel's hourly cap.
+- **`SMTP_URL` takes no query string:** Nodemailer would read options from it over Ottertrail's own (TLS, timeouts, logging), so the mailer gets its host, port, TLS, and login one by one.
+- **One message per email channel,** to all its addresses at once, so its recipients see each other's addresses: a channel is one team's list.
+- **`SMTP_URL` without a password** is accepted, for a relay that needs none.
+- **Two IDs:** the body's `id` is the notification, shared by its channels; `Ottertrail-Delivery` is the delivery, one per channel. Both stay the same on every retry.
+- **4xx answers are retried** like 5xx: a receiver that is being deployed or misconfigured for a moment often answers 404 or 401.
+- **Address refusals at send time are retried** like any failure, since DNS may change back; they fail for good after the last attempt.
+
+### Not done in step 2
+
+- Alert rules, which call `notify` (step 3).
+- An overlap when a secret is replaced, during which both secrets sign; a receiver must take the new one at once.
+- A cap on deliveries waiting across all channels, beyond each channel's 60 an hour.

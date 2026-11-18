@@ -1,27 +1,23 @@
 import { Buffer } from "node:buffer";
-import http, { type IncomingMessage } from "node:http";
-import https from "node:https";
-import type { LookupFunction } from "node:net";
+import type { IncomingMessage } from "node:http";
 import { performance } from "node:perf_hooks";
-import { TLSSocket } from "node:tls";
 
 import type { CheckCause } from "../db/schema.ts";
 import {
   type AddressPolicy,
   AddressNotAllowedError,
   type Lookup,
-  NoAddressError,
-  type ResolvedAddress,
   resolveTarget,
   systemLookup,
-} from "./addresses.ts";
+} from "../outbound/addresses.ts";
+import { classifyRequestError, pinnedRequest, untilAborted } from "../outbound/request.ts";
 import { type StatusRange, statusMatches } from "./statuses.ts";
 
 /**
  * One uptime check's request (docs/uptime-alerts.md): the URL's host is
- * resolved and its addresses checked (addresses.ts), the request connects
- * to the checked address without resolving again, each redirect is
- * checked the same way, at most MAX_REDIRECTS of them, and the body is
+ * resolved and its addresses checked (outbound/addresses.ts), the request
+ * connects to the checked address without resolving again
+ * (outbound/request.ts), each redirect is checked the same way, at most MAX_REDIRECTS of them, and the body is
  * read up to MAX_BODY_BYTES when a word is looked for. One timeout covers
  * it all: resolving, connecting, redirects, and the body.
  */
@@ -90,124 +86,14 @@ class TimeoutError extends Error {
   override name = "TimeoutError";
 }
 
-const DNS_CODES = new Set([
-  "ENOTFOUND",
-  "EAI_AGAIN",
-  "EAI_FAIL",
-  "EAI_NODATA",
-  "EAI_NONAME",
-  "ENODATA",
-  "ESERVFAIL",
-  "ENOTIMP",
-  "EREFUSED",
-  "ETIMEOUT",
-]);
-
-/** Node's and OpenSSL's codes for a certificate or handshake that failed. */
-function isTlsCode(code: string): boolean {
-  return (
-    code === "EPROTO" ||
-    code.startsWith("ERR_TLS_") ||
-    code.startsWith("ERR_SSL_") ||
-    code.startsWith("CERT_") ||
-    code.startsWith("UNABLE_TO_") ||
-    code === "DEPTH_ZERO_SELF_SIGNED_CERT" ||
-    code === "SELF_SIGNED_CERT_IN_CHAIN" ||
-    code === "HOSTNAME_MISMATCH"
-  );
-}
-
-const codeOf = (error: unknown) =>
-  typeof error === "object" && error !== null && "code" in error && typeof error.code === "string"
-    ? error.code
-    : "";
-
 /** The cause and sentence of an error the request threw. */
 export function classify(error: unknown): { cause: CheckCause; detail: string } {
   if (error instanceof CheckFailure) return { cause: error.cause, detail: error.message };
-  if (error instanceof AddressNotAllowedError) return { cause: "address", detail: error.message };
-  const code = codeOf(error);
-  const message = error instanceof Error ? error.message : String(error);
-  // c-ares's errors name the query (queryA, queryAaaa), whatever their code.
-  const syscall =
-    typeof error === "object" && error !== null && "syscall" in error ? String(error.syscall) : "";
-  if (error instanceof NoAddressError || DNS_CODES.has(code) || syscall.startsWith("query")) {
-    return { cause: "dns", detail: `The host could not be resolved (${code || "no address"}).` };
-  }
-  if (code === "ECONNREFUSED") return { cause: "refused", detail: "The connection was refused." };
-  if (isTlsCode(code)) return { cause: "tls", detail: `TLS failed: ${message}` };
-  return {
-    cause: "connection",
-    detail: `The connection failed: ${message}${code === "" || message.includes(code) ? "" : ` (${code})`}`,
-  };
+  return classifyRequestError(error);
 }
 
-/** Rejects when `signal` fires, so a step that cannot be aborted (a DNS lookup) still ends on time. */
-function untilAborted<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
-  if (signal.aborted) return Promise.reject(signal.reason);
-  return new Promise<T>((resolve, reject) => {
-    const aborted = () => reject(signal.reason);
-    signal.addEventListener("abort", aborted, { once: true });
-    work.then(
-      (value) => {
-        signal.removeEventListener("abort", aborted);
-        resolve(value);
-      },
-      (error: unknown) => {
-        signal.removeEventListener("abort", aborted);
-        reject(error);
-      },
-    );
-  });
-}
-
-/**
- * Sends one request to `target`, the checked address: the host name stays
- * in the URL, so the Host header and TLS's server name (SNI) and
- * certificate check use it, while the connection's lookup answers with the
- * checked address and nothing else.
- */
-function send(
-  url: URL,
-  method: string,
-  target: ResolvedAddress,
-  signal: AbortSignal,
-  ca: RequestOptions["ca"],
-): Promise<{ response: IncomingMessage; certificateExpiry: Date | null }> {
-  const pinned: LookupFunction = (_hostname, options, callback) => {
-    if (options.all === true) {
-      callback(null, [target]);
-    } else {
-      callback(null, target.address, target.family);
-    }
-  };
-  const client = url.protocol === "https:" ? https : http;
-  return new Promise((resolve, reject) => {
-    const request = client.request(
-      url,
-      {
-        method,
-        // A connection of its own each time: never one opened to another address.
-        agent: false,
-        lookup: pinned,
-        signal,
-        headers: { "user-agent": USER_AGENT, accept: "*/*", connection: "close" },
-        ...(ca === undefined ? {} : { ca }),
-      },
-      (response) => {
-        let certificateExpiry: Date | null = null;
-        if (response.socket instanceof TLSSocket) {
-          const certificate = response.socket.getPeerCertificate();
-          const expiry = new Date(certificate.valid_to);
-          if (!Number.isNaN(expiry.getTime())) certificateExpiry = expiry;
-        }
-        resolve({ response, certificateExpiry });
-      },
-    );
-    request.on("error", reject);
-    request.end();
-  });
-}
+/** The headers every check sends. */
+const HEADERS = { "user-agent": USER_AGENT, accept: "*/*", connection: "close" };
 
 /** The body's first `limit` bytes as text; the rest is never read. */
 function readBody(response: IncomingMessage, limit: number): Promise<string> {
@@ -255,7 +141,7 @@ export async function runRequest(
     let method: string = check.method;
     for (let redirects = 0; ; redirects += 1) {
       const target = await untilAborted(resolveTarget(url, { lookup, policy, signal }), signal);
-      const sent = await send(url, method, target, signal, ca);
+      const sent = await pinnedRequest(url, { method, target, signal, headers: HEADERS, ca });
       response = sent.response;
       if (url.protocol === "https:" && tlsExpiresAt === null) tlsExpiresAt = sent.certificateExpiry;
       const status = response.statusCode ?? 0;

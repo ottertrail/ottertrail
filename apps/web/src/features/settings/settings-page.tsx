@@ -11,6 +11,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { formText } from "@/lib/form";
 import { type Settings, settingsQuery, updateSettings } from "@/lib/settings-api";
 
+import { NotificationChannelsCard } from "./notification-channels";
+
 /**
  * Timezone names to suggest while typing. The browser's list leaves out
  * "UTC", which most installs start with, so it is added. The API
@@ -127,7 +129,11 @@ function SettingsCard({ settings }: { settings: Settings }) {
   );
 }
 
-/** The instance's settings: /settings. Everyone signed in sees them; the owner changes them. */
+/**
+ * The instance's settings: /settings. Everyone signed in sees them; the
+ * owner changes the name and timezone, and every user manages the
+ * notification channels.
+ */
 export function SettingsPage() {
   const settings = useQuery(settingsQuery());
 
@@ -157,6 +163,7 @@ export function SettingsPage() {
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-6 p-6">
       <SettingsCard settings={settings.data} />
+      <NotificationChannelsCard timeZone={settings.data.timeZone} />
     </div>
   );
 }

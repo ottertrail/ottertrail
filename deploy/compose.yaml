@@ -57,6 +57,10 @@ x-app: &app
     # Addresses and CIDR ranges checks may never reach, such as this
     # server's own public address (docs/deployment.md, "Uptime checks").
     UPTIME_DENY_ADDRESSES: ${UPTIME_DENY_ADDRESSES:-}
+    # Alert email (docs/deployment.md, "Alert email"): off unless SMTP_URL
+    # is set, with EMAIL_FROM. Webhooks need neither.
+    SMTP_URL: ${SMTP_URL:-}
+    EMAIL_FROM: ${EMAIL_FROM:-}
 
 services:
   postgres:
