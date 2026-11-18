@@ -37,6 +37,7 @@ deploy/backups/
 # AI agents' local settings, skills, and worktrees: never committed
 .claude/
 .agents/
+skills-lock.json
 
 # Test coverage and TypeScript build info
 coverage
