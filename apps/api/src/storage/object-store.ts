@@ -31,8 +31,12 @@ export interface ObjectStore {
 /** DeleteObjects takes at most this many keys. */
 const DELETE_BATCH = 1000;
 
-export function s3ObjectStore(config: ObjectStoreConfig): ObjectStore {
-  const client = new S3Client({
+/**
+ * The S3 client for the object store, with the settings every use of it
+ * shares: the store's own, and the backup commands' (object-backup.ts).
+ */
+export function s3Client(config: ObjectStoreConfig): S3Client {
+  return new S3Client({
     endpoint: config.url,
     region: config.region,
     credentials: { accessKeyId: config.accessKeyId, secretAccessKey: config.secretAccessKey },
@@ -53,6 +57,10 @@ export function s3ObjectStore(config: ObjectStoreConfig): ObjectStore {
     },
     maxAttempts: 2,
   });
+}
+
+export function s3ObjectStore(config: ObjectStoreConfig): ObjectStore {
+  const client = s3Client(config);
   const { bucket } = config;
 
   async function deleteKeys(keys: readonly string[]): Promise<void> {

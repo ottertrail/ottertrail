@@ -84,7 +84,7 @@ ClickHouse's backup may hold events from after the dump, which is mostly harmles
 - A project deleted between the two comes back from the dump, without the events ClickHouse had already purged.
 - If the two backups straddle a midnight in the instance's timezone, ClickHouse's may hold events whose visitor IDs came from the new day's salt, which the dump does not have. A restore within that day makes a new salt, so a visitor who returns that day counts twice. The window is the time ClickHouse's backup takes.
 
-`deploy/restore.sh` puts both back into an empty instance. How to use them: [deployment](deployment.md#backups).
+After both, it backs up the object store's source maps and session replays. `deploy/restore.sh` puts them all back into an empty instance. How to use them: [deployment](deployment.md#backups).
 
 ## 64-bit integers
 

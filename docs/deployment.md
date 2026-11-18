@@ -81,17 +81,45 @@ Not automated yet. Before each update, and regularly, in `deploy/`:
 ./backup.sh
 ```
 
-It writes two files into `deploy/backups/`, named by the time: `ottertrail-<time>.zip`, ClickHouse's backup of the events (its own `BACKUP DATABASE`), and `ottertrail-<time>.dump`, PostgreSQL's (`pg_dump`: accounts, projects, and settings). The instance keeps running. PostgreSQL's dump comes first, so every project in it has its events in ClickHouse's backup ([ClickHouse](clickhouse.md#backups)). ClickHouse writes its backup into its own volume, and the script then moves it out, so the disk needs free space of about twice ClickHouse's data while it runs. The files are readable only by the user who ran the script, and a run that fails leaves no file that looks like a backup. Copy both files off the server: a backup on the same disk is lost with it. Neither holds the object store, so source maps and session replays are not in the backup ([known limitations](#known-limitations)). Delete old ones yourself; they hold your customers' data, and events deleted since stay in them.
+It writes three files into `deploy/backups/`, named by the time:
 
-To restore into empty databases (a new server, or after `docker compose down -v`), with both files in `deploy/backups/`:
+- `ottertrail-<time>.zip`: ClickHouse's backup of the events, traces, logs, and metrics (its own `BACKUP DATABASE`).
+- `ottertrail-<time>.dump`: PostgreSQL's (`pg_dump`): accounts, projects, and settings.
+- `ottertrail-<time>-objects.tar`: the object store's source maps and session replays. When the instance has no object store, the tar holds only a manifest that says so.
+
+The instance keeps running. PostgreSQL's dump comes first, so every project in it has its events in ClickHouse's backup ([ClickHouse](clickhouse.md#backups)). The object store comes last. A one-off container of the app's image runs `dist/backup-objects.mjs` with the API's own settings, so the API and the backup always agree on whether there is a store. It lists every object in the bucket and streams each into its own file, with a manifest of each object's key, size, content type, and SHA-256. The script then packs them into the tar on the server. Because the instance keeps running:
+
+- An object written after PostgreSQL's dump can be in the tar while nothing in the dump refers to it. That is harmless: it only takes space.
+- An object deleted in between, such as a replay that expired or a deleted project's map, is listed but no longer there. It is left out, and the script says how many. That is the same as if it had expired before the backup.
+
+The files are readable only by the user who ran the script. A run that fails says which step failed, and leaves no file that looks like a backup: each file is written under a temporary name, and all three are renamed only when all three are complete. A failed object step also discards the finished `.zip` and `.dump`.
+
+Disk space for a backup: ClickHouse writes its backup into its own volume, and the script then moves it out, so the disk needs free space of about twice ClickHouse's data. The objects need about twice their size too: once as files, once in the tar. Copy all three files off the server: a backup on the same disk is lost with it. Delete old ones yourself; they hold your customers' data, and events deleted since stay in them.
+
+To restore into empty databases (a new server, or after `docker compose down -v`), with the three files in `deploy/backups/`:
 
 ```sh
 ./restore.sh backups/ottertrail-2026-11-17T062707Z
 ```
 
-It starts only PostgreSQL and ClickHouse, restores both, then starts the rest. PostgreSQL's restore runs as one transaction, so a failure leaves it empty rather than half restored. The databases must be empty and not yet migrated: ClickHouse refuses to restore into a table that holds data, and the migrations record themselves in one. If a restore fails, run `docker compose down -v` and start again.
+It works in this order:
 
-With Podman, run both as `COMPOSE="podman compose" ./backup.sh`.
+1. It checks the object backup before it changes anything. It unpacks the tar next to the backup, starts the stack's Garage when the `object-store` profile is on, and runs `dist/restore-objects.mjs --check`. That reads the manifest, checks every file against it (a regular file, not a link; its size; its SHA-256), refuses objects when no object store is set up, and waits up to a minute for the bucket to answer. A damaged tar, a missing store, or a store that cannot be reached stops the restore here, with the databases untouched.
+2. It starts only PostgreSQL and ClickHouse, and restores both.
+3. It runs `dist/restore-objects.mjs`, which checks everything again, then puts each object back under its key and content type. Each upload carries the file's MD5 (`Content-MD5`), so the store itself refuses bytes that differ from the checked file. An upload that fails because the store did not answer, or answered with a server error, is tried again, up to four times, from the file. The objects go back before the worker starts, because the worker deletes expired replays.
+4. It starts the rest.
+
+- PostgreSQL's restore runs as one transaction, so a failure leaves it empty rather than half restored.
+- The databases must be empty and not yet migrated: ClickHouse refuses to restore into a table that holds data, and the migrations record themselves in one. If a restore fails after step 1, the script says that the databases were changed: run `docker compose down -v` and start again.
+- The bucket does not need to be empty. An object with the same key is replaced; other objects stay.
+- If the `-objects.tar` is missing, the script refuses. To restore without the source maps and session replays, run it with `--without-objects` first: `./restore.sh --without-objects backups/ottertrail-…`. Replays then do not play, and source maps must be uploaded again.
+- A backup made without an object store restores no objects, into an instance with a store or without one.
+
+Disk space for a restore: the three files, plus the unpacked objects, about as large as their tar, until the restore ends.
+
+With Podman, run both as `COMPOSE="podman compose" ./backup.sh`. With the `object-store` profile, give it in `COMPOSE` too (`COMPOSE="docker compose --profile object-store"`), unless `COMPOSE_PROFILES` sets it. Without it, `restore.sh` does not start Garage, and its check stops after a minute because the bucket does not answer.
+
+The one-off containers run as the user who runs the script (`-u` with its user and group IDs), so the files they write are that user's. That suits Docker running as root, and Podman on macOS, where it was tested. Rootless Docker and rootless Podman on Linux map container users to other IDs, so there the container may not be able to write into `backups/`, or read the unpacked objects; this is not tested. The bind mounts carry `:z`, which SELinux hosts (Fedora, RHEL) need so the container may use the folder; other hosts ignore it. Podman on macOS was tested with it; an SELinux host was not.
 
 Restoring PostgreSQL alone, or moving it to a new major version (dump, new volume, restore), needs the worker stopped until PostgreSQL holds its data again (`docker compose stop worker`). A worker that finds PostgreSQL empty, or holding the wrong instance's data, deletes no events from ClickHouse, but logs an error ([clickhouse.md](clickhouse.md#retention-and-deleting-a-project)).
 
@@ -219,14 +247,24 @@ The whole stack (18 November 2026), with the `object-store` profile, on Podman 6
 - Members: an invitation with web analytics only, on one of two projects, made on the Members page. In a second browser context, Accept, then name and password, signed the member in on that project's analytics. The member's sidebar held Web analytics and Speed only; the other project's page said "No such project" (its API answered 404), the project's Errors page and the Members page said "You don't have access" (403). A reset link from the Members page set a new password and signed out the member's other session; `reset-password.mjs owner@example.com` printed a link that did the same for the owner, after which the old password failed, the new one worked, and the link did not work twice. For an email with no account it prints so and exits 1.
 - Headers: the dashboard carries its Content Security Policy, `X-Frame-Options: DENY`, `Referrer-Policy: same-origin`, and `nosniff`, over HTTP/2, with assets cached for a year and compressed (zstd). The replay player page carries its own policy (`default-src 'none'`, styles, images, and fonts only from the project's allowed hostnames, `frame-ancestors 'self'`), `Referrer-Policy: no-referrer`, and `Cache-Control: no-store`, and answers 401 without a session. No `Strict-Transport-Security`, as expected for `localhost`. No page broke a Content Security Policy.
 - `down`, then `up`, without `-v`: every count stayed the same (events, spans, logs, metric points, check results, users, replays, source maps, channels, rules, checks), Garage kept its 3 objects, and the replay still played; a delivery queued just before stopping was sent after the start.
-- `backup.sh`, then `down -v`, then `restore.sh`, both with `COMPOSE="podman compose …"`: both files readable by their owner only, the restore exited 0, and the counts above, both sign-ins, the member's access, and the source-mapped stack's release came back. Garage's bucket did not: the backups leave out the object store (see [Known limitations](#known-limitations)). After the restore, both replays were still listed with their errors and timelines, but the player said "This replay is not available: it may have expired", and the error page's stack was no longer mapped while the project's settings still listed the map. Uploading the map again mapped it again; the replays cannot be recovered.
+- `backup.sh`, then `down -v`, then `restore.sh`, both with `COMPOSE="podman compose …"`: both files readable by their owner only, the restore exited 0, and the counts above, both sign-ins, the member's access, and the source-mapped stack's release came back. Garage's bucket did not: the backups left out the object store (since added; see the next test). After the restore, both replays were still listed with their errors and timelines, but the player said "This replay is not available: it may have expired", and the error page's stack was no longer mapped while the project's settings still listed the map. Uploading the map again mapped it again; the replays cannot be recovered.
 
-Not tested yet: Docker Engine and Docker Compose on a Linux server, a real domain with a Let's Encrypt certificate, ports 80 and 443, an `amd64` image, alert email through an SMTP server, an update that runs a migration on existing data, and a restore on a new server.
+Backups with the object store (18 November 2026), the same setup: Podman 6.2, podman-compose 1.6, the `object-store` profile, the override file, and the settings exported in the shell. A new owner, a project with "Around errors", an error with its replay from the test site, and a source map uploaded with the secret key: Garage held 2 objects, 930 bytes. This is the second run; the first, the same day, found the restore checked the object backup only after the databases, which the steps above now do first.
+
+- `backup.sh` exited 0 and wrote the `.zip`, the `.dump`, and `-objects.tar`, all readable by their owner only. The tar held `manifest.json` and two files, with each object's key, size, content type (`application/gzip`), and SHA-256. No temporary file or folder was left. The bind mount's `:z` worked through podman-compose.
+- Without `OBJECT_STORE_URL`, and with it set to `" off"`, `backup.sh` exited 0 and wrote all three files; the tar's manifest had `"bucket": null` and no objects.
+- With Garage stopped, `backup.sh` exited 1 with "The backup failed while backing up the object store (source maps and session replays). No backup file was kept.", and left no file, here or in ClickHouse's volume.
+- After `down -v`, `restore.sh` refused each of these before any database container existed, with exit 1 and "the databases were not touched": the `-objects.tar` missing; the tar cut short (`tar` reported it truncated); the tar's 2 objects with no `OBJECT_STORE_URL`; and `COMPOSE` without the `object-store` profile, so no Garage: after 62 seconds, "the bucket ottertrail at http://garage:3900 did not answer".
+- Then `restore.sh` with all three files: "The object backup checks out: 2 objects (930 bytes), and the bucket answers", then the databases, then "Restored 2 objects (930 bytes)", exit 0, and no unpacked folder left. Before and after, the same: 4 events, 1 user, 2 projects, 1 replay, 1 source map, Garage's 2 objects and 930 bytes; the replay's recording answered 200 with 2,646 bytes, the player played it, and the stack mapped to `src/cart.ts` line 3.
+- After `down -v` again, `restore.sh --without-objects` with the tar missing warned, restored the databases, and exited 0. The player then said "This replay is not available: it may have expired", and the stack was not mapped.
+
+Not tested yet: Docker Engine and Docker Compose on a Linux server, a real domain with a Let's Encrypt certificate, ports 80 and 443, an `amd64` image, alert email through an SMTP server, an update that runs a migration on existing data, a restore on a new server, an object backup of Cloudflare R2 or Amazon S3, and the backup scripts under rootless Docker, rootless Podman on Linux, or SELinux.
 
 ## Known limitations
 
 - No automated or off-site backups.
-- The backups leave out the object store (Garage's `garage-data`, or the bucket elsewhere). After a restore, the source maps and session replays are still listed but their files are gone: upload the source maps of the releases still in use again; the replays are lost, and their player says they are not available. Garage runs as one node, without copies of its data on other servers.
+- Garage runs as one node, without copies of its data on other servers: only `backup.sh` keeps another copy.
+- The object backup copies every object each time, without increments. That suits the default limits (1 GiB of source maps, 2 GiB of replays); a much larger bucket takes long and needs the disk space twice.
 - The geolocation database and the data-center ranges are updated by hand, monthly.
 - One server: no failover, and a few seconds of downtime for each update.
 - No image registry or CI builds: each server builds its own image.

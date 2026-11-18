@@ -12,6 +12,8 @@ export default defineConfig({
       setup: "scripts/setup.ts",
       "reset-password": "scripts/reset-password.ts",
       "update-geo": "scripts/update-geo.ts",
+      "backup-objects": "scripts/backup-objects.ts",
+      "restore-objects": "scripts/restore-objects.ts",
     },
     platform: "node",
     // Dependencies go into the bundle, so a server needs only Node.js and

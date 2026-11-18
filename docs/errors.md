@@ -132,7 +132,7 @@ Content-Encoding: gzip   (optional)
 - Only the latest occurrence's stack is mapped.
 - The name shown is the one the map has at that position, which is not always the enclosing function's.
 - Maps are matched by release and path, not by an ID the build puts in each file: two builds given the same release and the same file names would share maps.
-- The object store is not in the backups ([deployment](deployment.md#backups)): after a restore, upload the maps of the releases still in use again.
+- Maps are in the backups with the rest of the object store ([deployment](deployment.md#backups)). A restore run with `--without-objects` brings them back listed but unreadable: then upload the maps of the releases still in use again.
 
 ## Server errors
 
