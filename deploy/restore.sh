@@ -54,14 +54,5 @@ $compose exec -T clickhouse clickhouse-client --user ottertrail --receive_timeou
   --query "RESTORE DATABASE ottertrail FROM File('$name.zip')" > /dev/null
 $compose exec -T -u clickhouse clickhouse rm "/var/lib/clickhouse/backups/$name.zip"
 
-# A backup made before events went straight to ClickHouse (18 November
-# 2026) still has PostgreSQL's events table, its last two days of events
-# each marked once the worker had copied it; ClickHouse's backup, taken
-# separately, may lack the last of those. Marked as not copied, migrate
-# (run by the next command) copies them all to ClickHouse before it drops
-# the table, and ClickHouse keeps each event once (docs/clickhouse.md).
-$compose exec -T postgres psql -q -U ottertrail -d ottertrail -v ON_ERROR_STOP=1 -c \
-  "do \$\$ begin if to_regclass('events') is not null then update events set copied_at = null; end if; end \$\$" > /dev/null
-
 $compose up -d
 echo "Restored $name."

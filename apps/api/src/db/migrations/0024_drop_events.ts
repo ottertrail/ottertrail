@@ -4,34 +4,12 @@ import { type Kysely, sql } from "kysely";
  * Drops PostgreSQL's events table, with its indexes and checks. Events now
  * go straight to ClickHouse, as traces, logs, and metrics do
  * (docs/clickhouse.md); until now they arrived here and the worker copied
- * them there. migrate.ts copies any events not yet copied to ClickHouse
- * before this runs (clickhouse/drain-postgres-events.ts).
+ * them there. No install held events here, so nothing is copied first.
  *
- * It never drops an event ClickHouse does not have: it locks the table,
- * so an API of the earlier version still running cannot add one, and
- * refuses while any is not copied yet (UncopiedEventsError), which
- * migrate.ts answers by copying them and trying again.
- *
- * Going back makes an empty table of migration 0023's shape: the events
- * stay in ClickHouse.
+ * Going back makes an empty table of migration 0023's shape.
  */
 export async function up(db: Kysely<unknown>): Promise<void> {
-  await sql`lock table events in access exclusive mode`.execute(db);
-  const { rows } = await sql<{ n: string }>`
-    select count(*) as n from events where copied_at is null
-  `.execute(db);
-  const uncopied = Number(rows[0]?.n ?? 0);
-  if (uncopied > 0) {
-    throw new UncopiedEventsError(
-      `${uncopied} events in PostgreSQL are not in ClickHouse yet: migrate (dist/migrate.mjs) copies them before this migration`,
-    );
-  }
   await sql`drop table events`.execute(db);
-}
-
-/** PostgreSQL still holds events ClickHouse does not have: copy them first. */
-export class UncopiedEventsError extends Error {
-  override name = "UncopiedEventsError";
 }
 
 export async function down(db: Kysely<unknown>): Promise<void> {

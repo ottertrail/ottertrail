@@ -53,9 +53,8 @@ export interface StoredError {
 }
 
 /**
- * One event as PostgreSQL's events table held it, column by column: what
- * storeEvents() builds from a NewEvent, and what the one-time drain of
- * that table reads (clickhouse/drain-postgres-events.ts).
+ * One event, column by column: what storeEvents() builds from a NewEvent
+ * for ClickHouse, and how tests read events back (tests/helpers/events.ts).
  */
 export interface EventRow {
   project_id: string;

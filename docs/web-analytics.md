@@ -718,7 +718,7 @@ The last day is today, so it is partial.
 
 ### Speed
 
-`vp run bench:reports -- <visits> <days>` fills a temporary PostgreSQL schema (at migration 0023, the last with an events table) with fake data, copies it to a temporary ClickHouse database as an upgrade does, times each report (the median of three runs after a warm-up), and drops both. Each fake visit has 1-5 pages two minutes apart and an engagement report per page.
+`vp run bench:reports -- <visits> <days>` fills a temporary PostgreSQL schema (at migration 0023, the last with an events table) with fake data, copies it to a temporary ClickHouse database, times each report (the median of three runs after a warm-up), and drops both. Each fake visit has 1-5 pages two minutes apart and an engagement report per page.
 
 In ClickHouse, on the development stack (Apple M4 Max; Podman's 2 GB machine, shared with other containers):
 

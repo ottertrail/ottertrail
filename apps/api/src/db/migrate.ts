@@ -18,8 +18,9 @@ export async function migrateToLatest(
 
 /**
  * Applies the migrations up to and including `target`, as migrateToLatest()
- * does. Only forward: a database already past `target` is an error, never
- * migrated back, which would drop the later migrations' tables.
+ * does; a database past `target` is migrated back to it. The report
+ * benchmark makes its fake events at migration 0023, the last with an
+ * events table, in a schema of its own.
  */
 export async function migrate(
   db: Kysely<Database>,
@@ -34,17 +35,6 @@ export async function migrate(
     // Kysely would find the ones in "public" and skip creating its own.
     ...(options.schema === undefined ? {} : { migrationTableSchema: options.schema }),
   });
-  if (target !== "latest") {
-    const known = await migrator.getMigrations();
-    const position = known.findIndex((migration) => migration.name === target);
-    if (position === -1) throw new Error(`No migration is named ${target}`);
-    const past = known.slice(position + 1).find((migration) => migration.executedAt !== undefined);
-    if (past !== undefined) {
-      throw new Error(
-        `The database is past ${target} (${past.name} ran); migrate() never goes back`,
-      );
-    }
-  }
   const { error, results = [] } =
     target === "latest" ? await migrator.migrateToLatest() : await migrator.migrateTo(target);
   if (error !== undefined) {

@@ -3,9 +3,41 @@
  * the events table of whatever schema `db` points at, which must be at
  * migration 0023, the last with one. Never run against a real project.
  */
-import { type Kysely, sql } from "kysely";
+import { type Kysely, type RawBuilder, sql } from "kysely";
 
+import type { ClickHouseClient } from "../src/clickhouse/clickhouse.ts";
+import { insertRows } from "../src/clickhouse/insert.ts";
+import { type EventRow, toClickHouse } from "../src/collection/event-store.ts";
 import type { Database } from "../src/db/schema.ts";
+
+/** Events per ClickHouse insert: ClickHouse prefers few large inserts. */
+const COPY_BATCH_SIZE = 10_000;
+
+/**
+ * Copies the fake events from the schema's events table to ClickHouse's,
+ * in batches along the primary key, and returns how many.
+ */
+export async function copyFakeEvents(
+  db: Kysely<Database>,
+  clickhouse: ClickHouseClient,
+): Promise<number> {
+  let copied = 0;
+  let after: { projectId: string; eventId: string } | null = null;
+  for (;;) {
+    const position: RawBuilder<unknown> =
+      after === null
+        ? sql`true`
+        : sql`(project_id, event_id) > (${after.projectId}::uuid, ${after.eventId}::uuid)`;
+    const { rows } = await sql<EventRow>`
+      select * from events where ${position} order by project_id, event_id limit ${COPY_BATCH_SIZE}
+    `.execute(db);
+    const last = rows.at(-1);
+    if (last === undefined) return copied;
+    await insertRows(clickhouse, "events", rows.map(toClickHouse));
+    copied += rows.length;
+    after = { projectId: last.project_id, eventId: last.event_id };
+  }
+}
 
 export interface FakeVisitsOptions {
   projectId: string;
