@@ -2,24 +2,19 @@ import { queryOptions } from "@tanstack/react-query";
 
 import { apiRequest, expectShape } from "./api";
 
-/** The instance's settings, as GET /api/settings returns them to a signed-in user. */
+/** The instance's settings, as GET /api/settings returns them to the owner. */
 export interface Settings {
   /** The instance's display name, shown at the top of the sidebar. */
   name: string;
   /** IANA timezone: reports count days in it. */
   timeZone: string;
-  /** Whether the signed-in user may change them: the owner only. */
-  canEdit: boolean;
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null;
 
 const isSettings = (value: unknown): value is Settings =>
-  isRecord(value) &&
-  typeof value.name === "string" &&
-  typeof value.timeZone === "string" &&
-  typeof value.canEdit === "boolean";
+  isRecord(value) && typeof value.name === "string" && typeof value.timeZone === "string";
 
 const isSettingsBody = (value: unknown): value is { settings: Settings } =>
   isRecord(value) && isSettings(value.settings);

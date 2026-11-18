@@ -169,10 +169,17 @@ function DeleteAllDialog({
           : {
               ...overview,
               replays: { count: 0, bytes: 0 },
-              instance: {
-                ...overview.instance,
-                storedBytes: Math.max(0, overview.instance.storedBytes - overview.replays.bytes),
-              },
+              ...(overview.instance === undefined
+                ? {}
+                : {
+                    instance: {
+                      ...overview.instance,
+                      storedBytes: Math.max(
+                        0,
+                        overview.instance.storedBytes - overview.replays.bytes,
+                      ),
+                    },
+                  }),
             },
       );
       void queryClient.invalidateQueries({ queryKey: replaysKey(projectId) });
@@ -237,7 +244,7 @@ function Usage({
   returnFocus: React.RefObject<HTMLHeadingElement | null>;
 }) {
   const { count, bytes } = overview.replays;
-  const { storedBytes, limitBytes } = overview.instance;
+  const { instance } = overview;
   return (
     <div className="flex flex-col gap-3 border-t pt-4 text-sm text-ink-muted">
       <h4 className="text-sm font-medium text-ink">Stored</h4>
@@ -247,11 +254,16 @@ function Usage({
             ? "No replays"
             : `${count.toLocaleString("en")} ${count === 1 ? "replay" : "replays"}, ${formatBytes(bytes)}`}
         </span>{" "}
-        in this project.{" "}
-        <span className="text-ink tabular-nums">
-          {formatBytes(storedBytes)} of {formatBytes(limitBytes)}
-        </span>{" "}
-        used, by all projects together.
+        in this project.
+        {instance !== undefined && (
+          <>
+            {" "}
+            <span className="text-ink tabular-nums">
+              {formatBytes(instance.storedBytes)} of {formatBytes(instance.limitBytes)}
+            </span>{" "}
+            used, by all projects together.
+          </>
+        )}
       </p>
       <p>Replays are kept 30 days, then deleted.</p>
       {count > 0 && (

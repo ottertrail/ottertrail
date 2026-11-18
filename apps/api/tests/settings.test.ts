@@ -9,88 +9,13 @@ import {
   updateInstanceSettings,
 } from "../src/settings/settings.ts";
 import { PUBLIC_URL, signedInDashboard, signedInUser } from "./helpers/dashboard.ts";
+import { PROJECT_REQUESTS } from "./helpers/project-routes.ts";
 import { createTestDatabase, migrateTestDatabase } from "./helpers/test-database.ts";
 
 const CHROME =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36";
 const NOT_FOUND = { error: "not_found", message: "No project has this ID." };
 const UNAUTHORIZED = { error: "unauthorized", message: "Sign in to continue." };
-const SOME_FUNNEL = {
-  name: "Some funnel",
-  steps: [
-    { type: "page", path: "/" },
-    { type: "event", name: "signup" },
-  ],
-  count: "visitors",
-  window: 3600,
-  updatedAt: "2026-11-17T12:00:00.000Z",
-};
-
-/** Every route on one project: the access check must guard each of them. */
-function projectRoutes(id: string): [string, string, object?][] {
-  return [
-    ["GET", `/api/projects/${id}`],
-    ["PATCH", `/api/projects/${id}`, { name: "Renamed" }],
-    ["DELETE", `/api/projects/${id}`, { confirmName: "Some site" }],
-    ["POST", `/api/projects/${id}/public-key`],
-    ["POST", `/api/projects/${id}/secret-key`],
-    ["GET", `/api/projects/${id}/analytics?period=7d`],
-    ["GET", `/api/projects/${id}/analytics/list?report=pages&period=7d`],
-    ["GET", `/api/projects/${id}/users`],
-    ["GET", `/api/projects/${id}/users/user-42`],
-    ["GET", `/api/projects/${id}/speed?period=7d`],
-    ["GET", `/api/projects/${id}/events?period=7d`],
-    ["GET", `/api/projects/${id}/events/signup?period=7d`],
-    [
-      "GET",
-      `/api/projects/${id}/funnel?period=7d&steps=${encodeURIComponent(
-        JSON.stringify([
-          { type: "page", path: "/" },
-          { type: "event", name: "signup" },
-        ]),
-      )}`,
-    ],
-    ["GET", `/api/projects/${id}/retention?period=30d`],
-    ["GET", `/api/projects/${id}/goals`],
-    ["POST", `/api/projects/${id}/goals`, { name: "A goal", step: { type: "page", path: "/" } }],
-    ["DELETE", `/api/projects/${id}/goals/00000000-0000-4000-8000-000000000000`],
-    ["GET", `/api/projects/${id}/funnels`],
-    ["POST", `/api/projects/${id}/funnels`, SOME_FUNNEL],
-    ["PUT", `/api/projects/${id}/funnels/00000000-0000-4000-8000-000000000000`, SOME_FUNNEL],
-    ["DELETE", `/api/projects/${id}/funnels/00000000-0000-4000-8000-000000000000`],
-    ["GET", `/api/projects/${id}/replays`],
-    ["GET", `/api/projects/${id}/replays/00000000-0000-4000-8000-000000000000`],
-    ["GET", `/api/projects/${id}/replays/00000000-0000-4000-8000-000000000000/player`],
-    ["DELETE", `/api/projects/${id}/replays`],
-    ["GET", `/api/projects/${id}/source-maps`],
-    ["GET", `/api/projects/${id}/source-maps/files?release=1.4.2`],
-    ["DELETE", `/api/projects/${id}/source-maps?release=1.4.2`],
-    ["GET", `/api/projects/${id}/errors?period=7d`],
-    ["GET", `/api/projects/${id}/errors/1-0123456789abcdef0123?period=7d`],
-    ["PATCH", `/api/projects/${id}/errors/1-0123456789abcdef0123`, { status: "resolved" }],
-    ["GET", `/api/projects/${id}/traces?period=7d`],
-    ["GET", `/api/projects/${id}/traces/4bf92f3577b34da6a3ce929d0e0e4736`],
-    [
-      "GET",
-      `/api/projects/${id}/traces/4bf92f3577b34da6a3ce929d0e0e4736/spans/00f067aa0ba902b7?start=1795003200000000000`,
-    ],
-    ["GET", `/api/projects/${id}/logs?period=7d`],
-    ["GET", `/api/projects/${id}/logs/${"0".repeat(32)}?time=1795003200000000000`],
-    ["GET", `/api/projects/${id}/metrics?period=7d`],
-    ["GET", `/api/projects/${id}/metrics/chart?period=7d&name=http.requests&kind=counter`],
-    ["GET", `/api/projects/${id}/services?period=7d`],
-    ["GET", `/api/projects/${id}/hosts?period=7d`],
-    ["GET", `/api/projects/${id}/hosts/charts?period=7d&host=web-1`],
-    ["GET", `/api/projects/${id}/checks`],
-    ["POST", `/api/projects/${id}/checks`, { url: "https://example.com/health" }],
-    ["GET", `/api/projects/${id}/checks/00000000-0000-4000-8000-000000000000`],
-    ["PATCH", `/api/projects/${id}/checks/00000000-0000-4000-8000-000000000000`, { paused: true }],
-    ["DELETE", `/api/projects/${id}/checks/00000000-0000-4000-8000-000000000000`],
-    ["GET", `/api/projects/${id}/checks/00000000-0000-4000-8000-000000000000/results?period=7d`],
-    ["GET", `/api/projects/${id}/checks/00000000-0000-4000-8000-000000000000/incidents?period=7d`],
-  ];
-}
-
 describe("the access check and the instance's settings", () => {
   let dashboard: Awaited<ReturnType<typeof signedInDashboard>>;
   let carol: Awaited<ReturnType<typeof signedInUser>>;
@@ -127,27 +52,32 @@ describe("the access check and the instance's settings", () => {
   test("every route on a project that does not exist answers 404", async () => {
     const id = randomUUID();
     const answers = await Promise.all(
-      projectRoutes(id).map(async ([method, url, payload]) => {
-        const response = await request(dashboard.cookie, method, url, payload);
-        return { method, url, status: response.statusCode, body: response.json() };
+      PROJECT_REQUESTS.map(async ({ method, url, payload }) => {
+        const response = await request(dashboard.cookie, method, url(id), payload);
+        return { method, url: url(id), status: response.statusCode, body: response.json() };
       }),
     );
     expect(answers).toEqual(
-      projectRoutes(id).map(([method, url]) => ({ method, url, status: 404, body: NOT_FOUND })),
+      PROJECT_REQUESTS.map(({ method, url }) => ({
+        method,
+        url: url(id),
+        status: 404,
+        body: NOT_FOUND,
+      })),
     );
   });
 
   test("every route on a project answers 401 without a session", async () => {
     const answers = await Promise.all(
-      projectRoutes(site.id).map(async ([method, url, payload]) => {
-        const response = await request(undefined, method, url, payload);
-        return { method, url, status: response.statusCode, body: response.json() };
+      PROJECT_REQUESTS.map(async ({ method, url, payload }) => {
+        const response = await request(undefined, method, url(site.id), payload);
+        return { method, url: url(site.id), status: response.statusCode, body: response.json() };
       }),
     );
     expect(answers).toEqual(
-      projectRoutes(site.id).map(([method, url]) => ({
+      PROJECT_REQUESTS.map(({ method, url }) => ({
         method,
-        url,
+        url: url(site.id),
         status: 401,
         body: UNAUTHORIZED,
       })),
@@ -157,36 +87,39 @@ describe("the access check and the instance's settings", () => {
     expect(seen.project).toMatchObject({ name: "Some site", publicKey: site.publicKey });
   });
 
-  test("every signed-in user sees and uses the instance's projects", async () => {
-    for (const cookie of [dashboard.cookie, carol.cookie]) {
+  test("the owner and admins see every project; a member without grants sees none", async () => {
+    const admin = await signedInUser(dashboard, {
+      name: "Dee",
+      email: "dee@example.com",
+      role: "admin",
+    });
+    for (const cookie of [dashboard.cookie, admin.cookie]) {
       const list = (await request(cookie, "GET", "/api/projects")).json();
       expect(list.projects.map((project: { name: string }) => project.name)).toEqual(["Some site"]);
       expect((await request(cookie, "GET", `/api/projects/${site.id}`)).statusCode).toBe(200);
     }
+    expect((await request(carol.cookie, "GET", "/api/projects")).json()).toEqual({ projects: [] });
+    expect((await request(carol.cookie, "GET", `/api/projects/${site.id}`)).json()).toEqual(
+      NOT_FOUND,
+    );
   });
 
-  test("reads the settings setup wrote, and says who may change them", async () => {
+  test("only the owner reads and changes the settings", async () => {
     expect((await request(dashboard.cookie, "GET", "/api/settings")).json()).toEqual({
-      settings: { name: "Ada's company", timeZone: "Asia/Singapore", canEdit: true },
+      settings: { name: "Ada's company", timeZone: "Asia/Singapore" },
     });
-    expect((await request(carol.cookie, "GET", "/api/settings")).json()).toEqual({
-      settings: { name: "Ada's company", timeZone: "Asia/Singapore", canEdit: false },
-    });
+    for (const [method, payload] of [["GET"], ["PATCH", { name: "Carol's now" }]] as const) {
+      const byMember = await request(carol.cookie, method, "/api/settings", payload);
+      expect(byMember.statusCode).toBe(403);
+      expect(byMember.json()).toMatchObject({ error: "forbidden" });
+    }
     expect((await request(undefined, "GET", "/api/settings")).statusCode).toBe(401);
-  });
-
-  test("only the owner changes the settings", async () => {
-    const byMember = await request(carol.cookie, "PATCH", "/api/settings", {
-      name: "Carol's now",
-    });
-    expect(byMember.statusCode).toBe(403);
-    expect(byMember.json()).toMatchObject({ error: "forbidden" });
 
     const byOwner = await request(dashboard.cookie, "PATCH", "/api/settings", {
       name: "  Ada & Co  ",
     });
     expect(byOwner.json()).toEqual({
-      settings: { name: "Ada & Co", timeZone: "Asia/Singapore", canEdit: true },
+      settings: { name: "Ada & Co", timeZone: "Asia/Singapore" },
     });
     const rows = await dashboard.db.selectFrom("instance_settings").select("name").execute();
     expect(rows).toEqual([{ name: "Ada & Co" }]);

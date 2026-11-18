@@ -21,6 +21,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
+import { WhenAllowed } from "@/components/when-allowed";
 import { DEFAULT_ENVIRONMENT, type PageRange } from "@/lib/analytics-api";
 import { ApiError } from "@/lib/api";
 import { savedFunnelsQuery } from "@/lib/funnels-api";
@@ -278,17 +279,19 @@ export function FunnelPage({
             </h3>
           </CardTitle>
           {ready && (
-            <CardAction>
-              <SaveFunnelActions
-                projectId={projectId}
-                shown={{ steps, count, window }}
-                funnels={saved.data}
-                loading={saved.isPending}
-                openId={funnel}
-                returnFocus={stepsHeadingRef}
-                onSaved={(created) => show({ funnel: created.id })}
-              />
-            </CardAction>
+            <WhenAllowed area="product_analytics" level="manage">
+              <CardAction>
+                <SaveFunnelActions
+                  projectId={projectId}
+                  shown={{ steps, count, window }}
+                  funnels={saved.data}
+                  loading={saved.isPending}
+                  openId={funnel}
+                  returnFocus={stepsHeadingRef}
+                  onSaved={(created) => show({ funnel: created.id })}
+                />
+              </CardAction>
+            </WhenAllowed>
           )}
         </CardHeader>
         <CardContent>

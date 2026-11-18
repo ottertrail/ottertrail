@@ -152,8 +152,34 @@ describe("channels", () => {
     });
   });
 
-  test("any signed-in user manages channels, not only the owner", async () => {
-    const carol = await signedInUser(dashboard, { name: "Carol", email: "carol@example.com" });
+  test("admins manage channels too; members cannot see them", async () => {
+    const erin = await signedInUser(dashboard, {
+      name: "Erin",
+      email: "erin@example.com",
+      grants: { projects: "all", areas: { uptime_alerts: "manage" } },
+    });
+    for (const [method, path] of [
+      ["GET", "/channels"],
+      ["POST", "/channels"],
+    ] as const) {
+      const refused = await call(
+        method,
+        path,
+        method === "POST" ? { kind: "email", addresses: ["e@example.com"] } : undefined,
+        { cookie: erin.cookie, origin: PUBLIC_URL },
+      );
+      expect(refused.statusCode).toBe(403);
+      expect(refused.json()).toEqual({
+        error: "forbidden",
+        message: "You don't have access to this.",
+      });
+    }
+
+    const carol = await signedInUser(dashboard, {
+      name: "Carol",
+      email: "carol@example.com",
+      role: "admin",
+    });
     const headers = { cookie: carol.cookie, origin: PUBLIC_URL };
     const created = await call(
       "POST",

@@ -24,6 +24,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { useAccess } from "@/lib/access";
 import { DEFAULT_ENVIRONMENT, type PageRange } from "@/lib/analytics-api";
 import { ApiError } from "@/lib/api";
 import {
@@ -63,21 +64,25 @@ function Resolution({ projectId, detail }: { projectId: string; detail: ErrorDet
       ]),
   });
   const resolved = group.status === "resolved";
+  // Resolving and reopening need errors at manage (docs/access.md).
+  const canChange = useAccess().canUse("errors", "manage");
   const when = group.resolvedAt === null ? "" : formatMoment(group.resolvedAt, timeZone);
   const by = group.resolvedBy === null ? "" : ` by ${group.resolvedBy}`;
   return (
     <div className="flex flex-col gap-3">
       <div className="flex flex-wrap items-center gap-3">
         <ErrorStatusBadge status={group.status} />
-        <Button
-          variant={resolved ? "outline" : "default"}
-          size="sm"
-          disabled={change.isPending}
-          onClick={() => change.mutate(resolved ? "unresolved" : "resolved")}
-        >
-          {change.isPending && <LoaderCircleIcon aria-hidden="true" className="animate-spin" />}
-          {resolved ? "Reopen" : "Resolve"}
-        </Button>
+        {canChange && (
+          <Button
+            variant={resolved ? "outline" : "default"}
+            size="sm"
+            disabled={change.isPending}
+            onClick={() => change.mutate(resolved ? "unresolved" : "resolved")}
+          >
+            {change.isPending && <LoaderCircleIcon aria-hidden="true" className="animate-spin" />}
+            {resolved ? "Reopen" : "Resolve"}
+          </Button>
+        )}
         {group.status === "resolved" && when !== "" && (
           <p className="text-sm text-ink-subtle">
             Resolved{by}, {when}
@@ -232,6 +237,11 @@ function TraceLink({
   occurrence: Occurrence & { traceId: string };
   className?: string;
 }) {
+  // Traces belong to monitoring: without it, the ID shows as text (docs/access.md).
+  const canOpen = useAccess().canUse("monitoring");
+  if (!canOpen) {
+    return <span className="font-mono">{occurrence.traceId}</span>;
+  }
   return (
     <Link
       to="/projects/$projectId/traces/$traceId"
@@ -304,6 +314,10 @@ function OccurrencesCard({
   environment: string;
 }) {
   const userSearch = environment === DEFAULT_ENVIRONMENT ? {} : { env: environment };
+  // Links into other areas only for those who have them (docs/access.md).
+  const { canUse } = useAccess();
+  const showUsers = canUse("users");
+  const showReplays = canUse("replays");
   return (
     <Card>
       <CardHeader>
@@ -332,7 +346,7 @@ function OccurrencesCard({
                 {columnHeading(detail.occurrences, "Operating system", "Trace", "System or trace")}
               </TableHead>
               <TableHead>Release</TableHead>
-              <TableHead>Replay</TableHead>
+              {showReplays && <TableHead>Replay</TableHead>}
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -360,6 +374,8 @@ function OccurrencesCard({
                 <TableCell className="max-w-48 truncate">
                   {occurrence.userId === null ? (
                     <span className="text-ink-subtle">Anonymous</span>
+                  ) : !showUsers ? (
+                    <span className="font-mono">{occurrence.userId}</span>
                   ) : (
                     <Link
                       to="/projects/$projectId/users/$userId"
@@ -405,13 +421,15 @@ function OccurrencesCard({
                   </>
                 )}
                 <TableCell>{occurrence.release ?? "(unknown)"}</TableCell>
-                <TableCell className="py-1">
-                  <OccurrenceReplayCell
-                    projectId={projectId}
-                    occurrence={occurrence}
-                    timeZone={detail.timeZone}
-                  />
-                </TableCell>
+                {showReplays && (
+                  <TableCell className="py-1">
+                    <OccurrenceReplayCell
+                      projectId={projectId}
+                      occurrence={occurrence}
+                      timeZone={detail.timeZone}
+                    />
+                  </TableCell>
+                )}
               </TableRow>
             ))}
           </TableBody>
@@ -432,6 +450,7 @@ function Detail({
 }) {
   const { group, breakdowns } = detail;
   const latest = detail.occurrences[0];
+  const { canUse } = useAccess();
   return (
     <>
       <div className="flex flex-col gap-3">
@@ -446,10 +465,12 @@ function Detail({
         <Resolution projectId={projectId} detail={detail} />
       </div>
       <Stats detail={detail} />
-      <AlertRulesCard
-        projectId={projectId}
-        watched={{ fingerprint: group.fingerprint, environment }}
-      />
+      {canUse("uptime_alerts") && (
+        <AlertRulesCard
+          projectId={projectId}
+          watched={{ fingerprint: group.fingerprint, environment }}
+        />
+      )}
       <DayCountCard
         days={detail.days.map((day) => ({ day: day.day, count: day.occurrences }))}
         noun="Occurrences"

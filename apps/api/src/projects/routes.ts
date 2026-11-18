@@ -1,11 +1,18 @@
 import type { FastifyPluginCallback } from "fastify";
 import type { Kysely } from "kysely";
 
+import {
+  can,
+  canReachProject,
+  requirePermission,
+  requireProjectAccess,
+  type UserAccess,
+  userAccessOf,
+} from "../access/access.ts";
 import type { Auth } from "../auth/auth.ts";
 import { requireTrustedOrigin } from "../auth/origin.ts";
 import { requireSession } from "../auth/routes.ts";
 import type { Database } from "../db/schema.ts";
-import { requireProjectAccess } from "./access.ts";
 import {
   createProject,
   deleteProject,
@@ -16,6 +23,7 @@ import {
   MAX_RETENTION_DAYS,
   MIN_RETENTION_DAYS,
   parseHostnames,
+  type Project,
   replacePublicKey,
   replaceSecretKey,
   updateProject,
@@ -47,10 +55,22 @@ function problem(code: string, message: string) {
 }
 
 /**
- * Projects, for the signed-in dashboard. Every signed-in user sees and
- * manages the instance's projects until roles exist: every route on one
- * project runs requireProjectAccess first, and the list and the create
- * route need a session.
+ * A project as this user may see it: in full for those who manage
+ * projects, otherwise without its keys and settings (docs/access.md).
+ */
+function shownTo(access: UserAccess, project: Project) {
+  if (can(access, "projects")) {
+    return project;
+  }
+  const { id, name, createdAt, lastEventAt } = project;
+  return { id, name, createdAt, lastEventAt };
+}
+
+/**
+ * Projects, for the signed-in dashboard. Every user sees the projects they
+ * may reach; only the owner and admins see keys and settings, and create,
+ * change, and delete projects (docs/access.md). Every route on one project
+ * runs requireProjectAccess first.
  *
  * Changes to allowed hostnames reach the collection endpoint within a
  * minute, the lifetime of its project cache (collection/project-keys.ts).
@@ -66,27 +86,35 @@ export const projectRoutes: FastifyPluginCallback<{
 }> = (app, { db, auth, trustedOrigins, projectKeys }, done) => {
   const signedIn = requireSession(auth);
   const fromDashboard = requireTrustedOrigin(trustedOrigins);
-  const projectAccess = requireProjectAccess(db);
+  const anyUser = requirePermission(db, "signed_in");
+  const manageProjects = requirePermission(db, "projects");
+  const reachProject = requireProjectAccess(db, "project");
+  const manageProject = requireProjectAccess(db, { permission: "projects" });
 
-  app.get("/projects", { preHandler: signedIn }, async () => ({
-    projects: await listProjects(db),
-  }));
+  app.get("/projects", { preHandler: [signedIn, anyUser] }, async (request) => {
+    const access = userAccessOf(request);
+    return {
+      projects: (await listProjects(db))
+        .filter((project) => canReachProject(access, project.id))
+        .map((project) => shownTo(access, project)),
+    };
+  });
 
   app.get<{ Params: { id: string } }>(
     "/projects/:id",
-    { preHandler: [signedIn, projectAccess], schema: { params: idParamsSchema } },
+    { preHandler: [signedIn, reachProject], schema: { params: idParamsSchema } },
     async (request, reply) => {
       const project = await findProject(db, request.params.id);
       return project === null
         ? reply.code(404).send(problem("not_found", "No project has this ID."))
-        : { project };
+        : { project: shownTo(userAccessOf(request), project) };
     },
   );
 
   app.post<{ Body: { name: string; allowedHostnames?: string[] } }>(
     "/projects",
     {
-      preHandler: [fromDashboard, signedIn],
+      preHandler: [fromDashboard, signedIn, manageProjects],
       schema: {
         body: {
           type: "object",
@@ -122,7 +150,7 @@ export const projectRoutes: FastifyPluginCallback<{
   }>(
     "/projects/:id",
     {
-      preHandler: [fromDashboard, signedIn, projectAccess],
+      preHandler: [fromDashboard, signedIn, manageProject],
       schema: {
         params: idParamsSchema,
         body: {
@@ -192,7 +220,7 @@ export const projectRoutes: FastifyPluginCallback<{
   app.delete<{ Params: { id: string }; Body: { confirmName: string } }>(
     "/projects/:id",
     {
-      preHandler: [fromDashboard, signedIn, projectAccess],
+      preHandler: [fromDashboard, signedIn, manageProject],
       schema: {
         params: idParamsSchema,
         body: {
@@ -225,7 +253,7 @@ export const projectRoutes: FastifyPluginCallback<{
   /** Replaces a project's public key: pages with the old snippet stop sending events. */
   app.post<{ Params: { id: string } }>(
     "/projects/:id/public-key",
-    { preHandler: [fromDashboard, signedIn, projectAccess], schema: { params: idParamsSchema } },
+    { preHandler: [fromDashboard, signedIn, manageProject], schema: { params: idParamsSchema } },
     async (request, reply) => {
       const replaced = await replacePublicKey(db, request.params.id);
       if (replaced === null) {
@@ -242,7 +270,7 @@ export const projectRoutes: FastifyPluginCallback<{
    */
   app.post<{ Params: { id: string } }>(
     "/projects/:id/secret-key",
-    { preHandler: [fromDashboard, signedIn, projectAccess], schema: { params: idParamsSchema } },
+    { preHandler: [fromDashboard, signedIn, manageProject], schema: { params: idParamsSchema } },
     async (request, reply) => {
       const project = await replaceSecretKey(db, request.params.id);
       if (project === null) {

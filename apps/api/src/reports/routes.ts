@@ -1,13 +1,13 @@
 import type { FastifyPluginCallback, FastifyReply, FastifyRequest } from "fastify";
 import type { Kysely } from "kysely";
 
+import { canUse, type ProjectAccess, requireProjectAccess } from "../access/access.ts";
 import type { Auth } from "../auth/auth.ts";
 import { requireSession } from "../auth/routes.ts";
 import type { ClickHouseClient } from "../clickhouse/clickhouse.ts";
 import { clickHouseErrorHandler } from "../clickhouse/route-errors.ts";
 import { ENVIRONMENT_PATTERN, environmentOf } from "../collection/environment.ts";
 import type { Database } from "../db/schema.ts";
-import { type ProjectAccess, requireProjectAccess } from "../projects/access.ts";
 import { dayIn } from "../visitors/visitor-ids.ts";
 import { LIST_REPORTS, type ListReport, projectAnalytics, projectList } from "./analytics.ts";
 import { FILTER_NAMES, type FilterName, MAX_LIMIT, type ReportFilter } from "./reports.ts";
@@ -185,7 +185,7 @@ export const reportRoutes: FastifyPluginCallback<{
   now?: () => Date;
 }> = (app, { db, clickhouse, auth, now = () => new Date() }, done) => {
   const signedIn = requireSession(auth);
-  const projectAccess = requireProjectAccess(db);
+  const canView = requireProjectAccess(db, { area: "web_analytics", level: "view" });
 
   // For these routes only (clickhouse/route-errors.ts).
   app.setErrorHandler(clickHouseErrorHandler);
@@ -195,7 +195,7 @@ export const reportRoutes: FastifyPluginCallback<{
   }>(
     "/projects/:id/analytics",
     {
-      preHandler: [signedIn, projectAccess],
+      preHandler: [signedIn, canView],
       preValidation: refuseUnknownParameters([
         ...Object.keys(RANGE_PROPERTIES),
         "limit",
@@ -223,7 +223,7 @@ export const reportRoutes: FastifyPluginCallback<{
         return reply.code(400).send(days.problem);
       }
       const { limit } = request.query;
-      return projectAnalytics(db, clickhouse, {
+      const report = await projectAnalytics(db, clickhouse, {
         projectId: request.params.id,
         environment: environmentOf(request.query.environment),
         firstDay: days.from,
@@ -233,6 +233,10 @@ export const reportRoutes: FastifyPluginCallback<{
         now: current,
         ...(limit === undefined ? {} : { limit }),
       });
+      // Goals belong to product analytics (docs/access.md).
+      return canUse(accessOf(request).user, "product_analytics", "view")
+        ? report
+        : { ...report, goals: [] };
     },
   );
 
@@ -254,7 +258,7 @@ export const reportRoutes: FastifyPluginCallback<{
   }>(
     "/projects/:id/analytics/list",
     {
-      preHandler: [signedIn, projectAccess],
+      preHandler: [signedIn, canView],
       preValidation: refuseUnknownParameters([
         ...Object.keys(RANGE_PROPERTIES),
         "report",

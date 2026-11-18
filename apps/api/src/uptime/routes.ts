@@ -1,6 +1,7 @@
 import type { FastifyPluginCallback } from "fastify";
 import type { Kysely } from "kysely";
 
+import { type ProjectAccess, requireProjectAccess } from "../access/access.ts";
 import type { Auth } from "../auth/auth.ts";
 import { requireTrustedOrigin } from "../auth/origin.ts";
 import { requireSession } from "../auth/routes.ts";
@@ -14,7 +15,6 @@ import {
   resolveTarget,
   systemLookup,
 } from "../outbound/addresses.ts";
-import { type ProjectAccess, requireProjectAccess } from "../projects/access.ts";
 import { PERIODS, type RangeQuery } from "../reports/routes.ts";
 import { DashboardQueryLimiter, dashboardReader } from "../telemetry/dashboard-limit.ts";
 import { telemetryRange } from "../telemetry/dashboard-query.ts";
@@ -149,7 +149,8 @@ export const uptimeRoutes: FastifyPluginCallback<{
   done,
 ) => {
   const signedIn = requireSession(auth);
-  const projectAccess = requireProjectAccess(db);
+  const canView = requireProjectAccess(db, { area: "uptime_alerts", level: "view" });
+  const canManage = requireProjectAccess(db, { area: "uptime_alerts", level: "manage" });
   const fromDashboard = requireTrustedOrigin(trustedOrigins);
   app.setErrorHandler(clickHouseErrorHandler);
 
@@ -198,7 +199,7 @@ export const uptimeRoutes: FastifyPluginCallback<{
 
   app.get<{ Params: { id: string } }>(
     "/projects/:id/checks",
-    { preHandler: [signedIn, projectAccess], schema: { params: PARAMS } },
+    { preHandler: [signedIn, canView], schema: { params: PARAMS } },
     async (request) => {
       const { projectId, timeZone } = accessOf(request);
       const checks = await listChecks(db, projectId);
@@ -213,7 +214,7 @@ export const uptimeRoutes: FastifyPluginCallback<{
   app.post<{ Params: { id: string }; Body: CheckInput }>(
     "/projects/:id/checks",
     {
-      preHandler: [fromDashboard, signedIn, projectAccess],
+      preHandler: [fromDashboard, signedIn, canManage],
       schema: {
         params: PARAMS,
         body: {
@@ -244,7 +245,7 @@ export const uptimeRoutes: FastifyPluginCallback<{
 
   app.get<{ Params: { id: string; checkId: string } }>(
     "/projects/:id/checks/:checkId",
-    { preHandler: [signedIn, projectAccess], schema: { params: CHECK_PARAMS } },
+    { preHandler: [signedIn, canView], schema: { params: CHECK_PARAMS } },
     async (request, reply) => {
       const { projectId, timeZone } = accessOf(request);
       const check = await findCheck(db, projectId, request.params.checkId);
@@ -257,7 +258,7 @@ export const uptimeRoutes: FastifyPluginCallback<{
   app.patch<{ Params: { id: string; checkId: string }; Body: CheckInput & { paused?: boolean } }>(
     "/projects/:id/checks/:checkId",
     {
-      preHandler: [fromDashboard, signedIn, projectAccess],
+      preHandler: [fromDashboard, signedIn, canManage],
       schema: {
         params: CHECK_PARAMS,
         body: {
@@ -288,7 +289,7 @@ export const uptimeRoutes: FastifyPluginCallback<{
 
   app.delete<{ Params: { id: string; checkId: string } }>(
     "/projects/:id/checks/:checkId",
-    { preHandler: [fromDashboard, signedIn, projectAccess], schema: { params: CHECK_PARAMS } },
+    { preHandler: [fromDashboard, signedIn, canManage], schema: { params: CHECK_PARAMS } },
     async (request, reply) => {
       const deleted = await deleteCheck(
         db,
@@ -317,7 +318,7 @@ export const uptimeRoutes: FastifyPluginCallback<{
   app.get<{ Params: { id: string; checkId: string }; Querystring: RangeQuery }>(
     "/projects/:id/checks/:checkId/results",
     {
-      preHandler: [signedIn, projectAccess],
+      preHandler: [signedIn, canView],
       schema: { params: CHECK_PARAMS, querystring: PERIOD_QUERY },
     },
     async (request, reply) => {
@@ -356,7 +357,7 @@ export const uptimeRoutes: FastifyPluginCallback<{
   app.get<{ Params: { id: string; checkId: string }; Querystring: RangeQuery }>(
     "/projects/:id/checks/:checkId/incidents",
     {
-      preHandler: [signedIn, projectAccess],
+      preHandler: [signedIn, canView],
       schema: { params: CHECK_PARAMS, querystring: PERIOD_QUERY },
     },
     async (request, reply) => {

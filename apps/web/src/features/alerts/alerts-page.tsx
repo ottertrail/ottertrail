@@ -45,9 +45,13 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { useAccess } from "@/lib/access";
 import {
+  alertChannelsQuery,
+  type ChannelName,
   deleteRule,
   firingQuery,
+  kindArea,
   historyQuery,
   type Rule,
   rulesQuery,
@@ -55,7 +59,6 @@ import {
   updateRule,
 } from "@/lib/alerts-api";
 import { ApiError } from "@/lib/api";
-import { type Channel, channelsQuery } from "@/lib/channels-api";
 import { checksQuery } from "@/lib/uptime-api";
 
 import { NoSuchProject } from "../projects/no-such-project";
@@ -136,14 +139,17 @@ function RuleRow({
   channels,
   timeZone,
   onWarning,
+  canManage,
 }: {
   projectId: string;
   rule: Rule;
   checks: readonly { id: string; name: string }[];
-  channels: readonly Channel[];
+  channels: readonly ChannelName[];
   /** The instance's, for when a rule stopped being evaluated. */
   timeZone: string;
   onWarning: (saved: SavedWarning) => void;
+  /** Whether the user may change rules (uptime and alerts, manage). */
+  canManage: boolean;
 }) {
   const queryClient = useQueryClient();
   const [editing, setEditing] = React.useState(false);
@@ -183,7 +189,7 @@ function RuleRow({
         <Switch
           aria-label={rule.enabled ? `Turn off ${rule.name}` : `Turn on ${rule.name}`}
           checked={rule.enabled}
-          disabled={toggle.isPending}
+          disabled={!canManage || toggle.isPending}
           onCheckedChange={(checked) => toggle.mutate(checked)}
         />
         {toggle.error !== null && (
@@ -193,39 +199,43 @@ function RuleRow({
         )}
       </TableCell>
       <TableCell>
-        <div className="flex items-center gap-1">
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            aria-label={`Edit ${rule.name}`}
-            onClick={() => setEditing(true)}
-          >
-            <PencilIcon aria-hidden="true" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            aria-label={`Delete ${rule.name}`}
-            onClick={() => setDeleting(true)}
-          >
-            <Trash2Icon aria-hidden="true" />
-          </Button>
-        </div>
-        <RuleFormDialog
-          open={editing}
-          onOpenChange={setEditing}
-          projectId={projectId}
-          rule={rule}
-          checks={checks}
-          channels={channels}
-          onWarning={onWarning}
-        />
-        <DeleteRuleDialog
-          projectId={projectId}
-          rule={rule}
-          open={deleting}
-          onOpenChange={setDeleting}
-        />
+        {canManage && (
+          <>
+            <div className="flex items-center gap-1">
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                aria-label={`Edit ${rule.name}`}
+                onClick={() => setEditing(true)}
+              >
+                <PencilIcon aria-hidden="true" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                aria-label={`Delete ${rule.name}`}
+                onClick={() => setDeleting(true)}
+              >
+                <Trash2Icon aria-hidden="true" />
+              </Button>
+            </div>
+            <RuleFormDialog
+              open={editing}
+              onOpenChange={setEditing}
+              projectId={projectId}
+              rule={rule}
+              checks={checks}
+              channels={channels}
+              onWarning={onWarning}
+            />
+            <DeleteRuleDialog
+              projectId={projectId}
+              rule={rule}
+              open={deleting}
+              onOpenChange={setDeleting}
+            />
+          </>
+        )}
       </TableCell>
     </TableRow>
   );
@@ -378,7 +388,9 @@ function HistoryCard({ projectId }: { projectId: string }) {
 export function AlertsPage({ projectId, prefill }: { projectId: string; prefill: RulePrefill }) {
   const navigate = useNavigate();
   const list = useQuery(rulesQuery(projectId));
-  const channels = useQuery(channelsQuery());
+  const channels = useQuery(alertChannelsQuery(projectId));
+  const { can, canUse } = useAccess();
+  const canManage = canUse("uptime_alerts", "manage");
   const checks = useQuery(checksQuery(projectId));
   const [adding, setAdding] = React.useState(false);
   const [notice, setNotice] = React.useState<SavedWarning | null>(null);
@@ -393,14 +405,23 @@ export function AlertsPage({ projectId, prefill }: { projectId: string; prefill:
   const full = data !== undefined && data.rules.length >= data.maxRules;
   const ready = data !== undefined && channels.data !== undefined;
   // A link from a check's or an error's page opens the form at once.
-  const open = adding || (prefill.add !== undefined && ready && !noChannels && !full);
+  // A link opens the form only for a kind the user may add.
+  const prefillArea = prefill.add === undefined ? null : kindArea(prefill.add);
+  const open =
+    adding ||
+    (prefill.add !== undefined &&
+      canManage &&
+      (prefillArea === null || canUse(prefillArea)) &&
+      ready &&
+      !noChannels &&
+      !full);
   const setOpen = (next: boolean) => {
     setAdding(next);
     if (!next && prefill.add !== undefined) {
       void navigate({ to: "/projects/$projectId/alerts", params: { projectId }, search: {} });
     }
   };
-  const addButton = (
+  const addButton = canManage && (
     <Button onClick={() => setAdding(true)} disabled={!ready || noChannels || full}>
       <PlusIcon aria-hidden="true" />
       Add rule
@@ -454,12 +475,15 @@ export function AlertsPage({ projectId, prefill }: { projectId: string; prefill:
           <AlertDescription>
             Alerts need somewhere to go: an email list or a webhook, which belong to the instance
             and every project can use.
+            {!can("channels") && " An admin adds them in Settings."}
           </AlertDescription>
-          <AlertAction>
-            <ButtonLink variant="outline" size="sm" to="/settings">
-              Go to Settings
-            </ButtonLink>
-          </AlertAction>
+          {can("channels") && (
+            <AlertAction>
+              <ButtonLink variant="outline" size="sm" to="/settings">
+                Go to Settings
+              </ButtonLink>
+            </AlertAction>
+          )}
         </Alert>
       )}
       {data === undefined ? (
@@ -484,7 +508,7 @@ export function AlertsPage({ projectId, prefill }: { projectId: string; prefill:
               when it is over.
             </EmptyDescription>
           </EmptyHeader>
-          <EmptyContent>{addButton}</EmptyContent>
+          {canManage && <EmptyContent>{addButton}</EmptyContent>}
         </Empty>
       ) : (
         <>
@@ -492,11 +516,16 @@ export function AlertsPage({ projectId, prefill }: { projectId: string; prefill:
             <p className="text-sm text-ink-subtle">
               {data.rules.length} of at most {data.maxRules} rules. Each sends at most{" "}
               {data.hourlyCap} notifications an hour; past that, one message says how many were held
-              back.{" "}
-              <Link to="/settings" className="text-link hover:underline">
-                Channels are in Settings
-              </Link>
-              .
+              back.
+              {can("channels") && (
+                <>
+                  {" "}
+                  <Link to="/settings" className="text-link hover:underline">
+                    Channels are in Settings
+                  </Link>
+                  .
+                </>
+              )}
             </p>
             {addButton}
           </div>
@@ -523,6 +552,7 @@ export function AlertsPage({ projectId, prefill }: { projectId: string; prefill:
                   channels={channelList}
                   timeZone={data.timeZone}
                   onWarning={setNotice}
+                  canManage={canManage}
                 />
               ))}
             </TableBody>

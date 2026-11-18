@@ -22,6 +22,7 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty";
 import { Skeleton } from "@/components/ui/skeleton";
+import { WhenAllowed } from "@/components/when-allowed";
 import { DEFAULT_ENVIRONMENT } from "@/lib/analytics-api";
 import { ApiError } from "@/lib/api";
 import type { ReplaySummary } from "@/lib/replays-api";
@@ -51,19 +52,29 @@ function ErrorTitle({
   return (
     <span className="flex min-w-0 items-center gap-1.5">
       <BugIcon aria-hidden="true" className="size-4 shrink-0 text-ink-subtle" />
-      <Link
-        to="/projects/$projectId/errors/$fingerprint"
-        params={{ projectId, fingerprint: error.fingerprint }}
-        search={{
-          ...range,
-          ...(environment === DEFAULT_ENVIRONMENT ? {} : { env: environment }),
-        }}
-        className="min-w-0 truncate text-link hover:underline"
-        title={text}
+      <WhenAllowed
+        area="errors"
+        fallback={
+          <span className="min-w-0 truncate" title={text}>
+            <span className="font-medium">{error.type}</span>
+            {error.message !== "" && `: ${error.message}`}
+          </span>
+        }
       >
-        <span className="font-medium">{error.type}</span>
-        {error.message !== "" && `: ${error.message}`}
-      </Link>
+        <Link
+          to="/projects/$projectId/errors/$fingerprint"
+          params={{ projectId, fingerprint: error.fingerprint }}
+          search={{
+            ...range,
+            ...(environment === DEFAULT_ENVIRONMENT ? {} : { env: environment }),
+          }}
+          className="min-w-0 truncate text-link hover:underline"
+          title={text}
+        >
+          <span className="font-medium">{error.type}</span>
+          {error.message !== "" && `: ${error.message}`}
+        </Link>
+      </WhenAllowed>
       {path !== "" && (
         <span className="shrink-0 text-ink-subtle">
           on <span className="font-mono">{path}</span>
@@ -343,12 +354,14 @@ export function UserPage({
       ) : (
         <div className="flex flex-col gap-6">
           {first !== undefined && (
-            <UserReplays
-              replays={first.replays}
-              projectId={projectId}
-              environment={environment}
-              timeZone={first.timeZone}
-            />
+            <WhenAllowed area="replays">
+              <UserReplays
+                replays={first.replays}
+                projectId={projectId}
+                environment={environment}
+                timeZone={first.timeZone}
+              />
+            </WhenAllowed>
           )}
           {days.map((day) => (
             <section key={day.key} className="flex flex-col gap-2">

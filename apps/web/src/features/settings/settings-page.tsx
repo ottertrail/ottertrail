@@ -2,12 +2,14 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { LoaderCircleIcon, OctagonAlertIcon } from "lucide-react";
 import * as React from "react";
 
+import { NoAccess } from "@/components/no-access";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
+import { meQuery } from "@/lib/access";
 import { formText } from "@/lib/form";
 import { type Settings, settingsQuery, updateSettings } from "@/lib/settings-api";
 
@@ -22,7 +24,6 @@ const TIME_ZONES = ["UTC", ...Intl.supportedValuesOf("timeZone")];
 
 function SettingsCard({ settings }: { settings: Settings }) {
   const queryClient = useQueryClient();
-  const isOwner = settings.canEdit;
   const [timeZone, setTimeZone] = React.useState(settings.timeZone);
   const movesDays = timeZone.trim() !== "" && timeZone.trim() !== settings.timeZone;
   const save = useMutation({
@@ -51,9 +52,8 @@ function SettingsCard({ settings }: { settings: Settings }) {
           <h3>Workspace</h3>
         </CardTitle>
         <CardDescription>
-          {isOwner
-            ? "The name and timezone of this install, for all its projects."
-            : "Only the owner can change these."}
+          The name and timezone of this install, for all its projects. Only the owner sees and
+          changes them.
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -69,7 +69,6 @@ function SettingsCard({ settings }: { settings: Settings }) {
                 required
                 maxLength={100}
                 autoComplete="off"
-                disabled={!isOwner}
               />
             </Field>
             <Field>
@@ -84,7 +83,6 @@ function SettingsCard({ settings }: { settings: Settings }) {
                 maxLength={100}
                 autoComplete="off"
                 spellCheck={false}
-                disabled={!isOwner}
                 className="w-72"
                 aria-describedby="settings-time-zone-hint"
               />
@@ -107,21 +105,17 @@ function SettingsCard({ settings }: { settings: Settings }) {
                 <AlertDescription>{save.error.message}</AlertDescription>
               </Alert>
             )}
-            {isOwner && (
-              <div className="flex items-center gap-3">
-                <Button type="submit" disabled={save.isPending}>
-                  {save.isPending && (
-                    <LoaderCircleIcon aria-hidden="true" className="animate-spin" />
-                  )}
-                  Save changes
-                </Button>
-                {save.isSuccess && (
-                  <output className="text-sm text-ink-muted" aria-live="polite">
-                    Saved.
-                  </output>
-                )}
-              </div>
-            )}
+            <div className="flex items-center gap-3">
+              <Button type="submit" disabled={save.isPending}>
+                {save.isPending && <LoaderCircleIcon aria-hidden="true" className="animate-spin" />}
+                Save changes
+              </Button>
+              {save.isSuccess && (
+                <output className="text-sm text-ink-muted" aria-live="polite">
+                  Saved.
+                </output>
+              )}
+            </div>
           </FieldGroup>
         </form>
       </CardContent>
@@ -129,30 +123,54 @@ function SettingsCard({ settings }: { settings: Settings }) {
   );
 }
 
-/**
- * The instance's settings: /settings. Everyone signed in sees them; the
- * owner changes the name and timezone, and every user manages the
- * notification channels.
- */
-export function SettingsPage() {
+/** The instance's name and timezone, for the owner. */
+function InstanceSettings() {
   const settings = useQuery(settingsQuery());
 
   if (settings.isPending) {
+    return <Skeleton className="h-64 w-full" />;
+  }
+  if (settings.isError) {
+    return (
+      <Alert variant="destructive">
+        <OctagonAlertIcon />
+        <AlertTitle>The settings could not load</AlertTitle>
+        <AlertDescription>{settings.error.message}</AlertDescription>
+        <AlertAction>
+          <Button variant="outline" size="sm" onClick={() => void settings.refetch()}>
+            Retry
+          </Button>
+        </AlertAction>
+      </Alert>
+    );
+  }
+  return <SettingsCard settings={settings.data} />;
+}
+
+/**
+ * The instance's settings: /settings (docs/access.md). The owner changes
+ * the name and timezone; the owner and admins manage the notification
+ * channels. Members do not see the page.
+ */
+export function SettingsPage() {
+  const me = useQuery(meQuery());
+
+  if (me.isPending) {
     return (
       <div className="mx-auto flex max-w-3xl flex-col gap-4 p-6" aria-busy="true">
         <Skeleton className="h-64 w-full" />
       </div>
     );
   }
-  if (settings.isError) {
+  if (me.isError) {
     return (
       <div className="mx-auto max-w-3xl p-6">
         <Alert variant="destructive">
           <OctagonAlertIcon />
           <AlertTitle>The settings could not load</AlertTitle>
-          <AlertDescription>{settings.error.message}</AlertDescription>
+          <AlertDescription>{me.error.message}</AlertDescription>
           <AlertAction>
-            <Button variant="outline" size="sm" onClick={() => void settings.refetch()}>
+            <Button variant="outline" size="sm" onClick={() => void me.refetch()}>
               Retry
             </Button>
           </AlertAction>
@@ -160,10 +178,14 @@ export function SettingsPage() {
       </div>
     );
   }
+  const { permissions, instance } = me.data;
+  if (!permissions.settings && !permissions.channels) {
+    return <NoAccess />;
+  }
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-6 p-6">
-      <SettingsCard settings={settings.data} />
-      <NotificationChannelsCard timeZone={settings.data.timeZone} />
+      {permissions.settings && <InstanceSettings />}
+      {permissions.channels && <NotificationChannelsCard timeZone={instance.timeZone} />}
     </div>
   );
 }

@@ -20,6 +20,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
+import { WhenAllowed } from "@/components/when-allowed";
 import { DEFAULT_ENVIRONMENT, type PageRange } from "@/lib/analytics-api";
 import { ApiError } from "@/lib/api";
 import {
@@ -264,22 +265,24 @@ export function MetricPage({
               {KIND_LABELS[kind]}
               {data !== undefined && unitText(data.unit) !== "" && ` · ${unitText(data.unit)}`}
             </p>
-            <Link
-              to="/projects/$projectId/alerts"
-              params={{ projectId }}
-              search={{
-                add: "metric_threshold",
-                metric: name,
-                metricKind: kind,
-                ...(environment === DEFAULT_ENVIRONMENT ? {} : { env: environment }),
-                ...(host === undefined ? {} : { host }),
-                ...(attr === undefined ? {} : { attr: attr.key, attrValue: attr.value }),
-              }}
-              className="flex items-center gap-1 text-sm text-link hover:underline"
-            >
-              <BellPlusIcon aria-hidden="true" className="size-4" />
-              Add an alert rule
-            </Link>
+            <WhenAllowed area="uptime_alerts" level="manage">
+              <Link
+                to="/projects/$projectId/alerts"
+                params={{ projectId }}
+                search={{
+                  add: "metric_threshold",
+                  metric: name,
+                  metricKind: kind,
+                  ...(environment === DEFAULT_ENVIRONMENT ? {} : { env: environment }),
+                  ...(host === undefined ? {} : { host }),
+                  ...(attr === undefined ? {} : { attr: attr.key, attrValue: attr.value }),
+                }}
+                className="flex items-center gap-1 text-sm text-link hover:underline"
+              >
+                <BellPlusIcon aria-hidden="true" className="size-4" />
+                Add an alert rule
+              </Link>
+            </WhenAllowed>
           </div>
         )}
         {(host !== undefined || attr !== undefined) && (

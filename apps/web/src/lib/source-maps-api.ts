@@ -22,8 +22,11 @@ export interface SourceMapRelease {
 export interface SourceMapOverview {
   /** false: the install has no object store, so source maps are off. */
   configured: boolean;
-  /** What all projects' maps take together, and the instance's limit. */
-  instance: { storedBytes: number; limitBytes: number };
+  /**
+   * What all projects' maps take together, and the instance's limit: only
+   * for those who manage projects (docs/access.md).
+   */
+  instance?: { storedBytes: number; limitBytes: number };
   /** Which come first: by their latest upload. */
   order: ReleaseOrder;
   /** At most 100, in `order`. */
@@ -59,9 +62,10 @@ const isRelease = (value: unknown): value is SourceMapRelease =>
 const isOverview = (value: unknown): value is SourceMapOverview =>
   isRecord(value) &&
   typeof value.configured === "boolean" &&
-  isRecord(value.instance) &&
-  isNumber(value.instance.storedBytes) &&
-  isNumber(value.instance.limitBytes) &&
+  (value.instance === undefined ||
+    (isRecord(value.instance) &&
+      isNumber(value.instance.storedBytes) &&
+      isNumber(value.instance.limitBytes))) &&
   (value.order === "newest" || value.order === "oldest") &&
   Array.isArray(value.releases) &&
   value.releases.every(isRelease) &&

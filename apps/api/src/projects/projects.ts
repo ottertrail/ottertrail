@@ -128,7 +128,7 @@ export async function listProjects(db: Kysely<Database>): Promise<Project[]> {
 
 /**
  * A project by ID. Routes call it only after requireProjectAccess
- * (projects/access.ts) has checked the request.
+ * (access/access.ts) has checked the request.
  */
 export async function findProject(db: Kysely<Database>, id: string): Promise<Project | null> {
   const row = await baseQuery(db).where("projects.id", "=", id).executeTakeFirst();

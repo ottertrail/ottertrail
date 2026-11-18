@@ -552,3 +552,14 @@ export function metricSettingsStored(value: unknown): MetricSettings {
 export function checkIdOf(settings: RuleSettings): string | null {
   return "checkId" in settings ? settings.checkId : null;
 }
+
+/**
+ * The area a kind's subject belongs to, besides uptime and alerts
+ * (docs/access.md): an error rule shows error groups and messages, a
+ * telemetry rule services, routes, and metrics. A user sees, creates, and
+ * changes a rule only with this area at view; check rules need none.
+ */
+export function sourceAreaOf(kind: RuleKind): "errors" | "monitoring" | null {
+  const { source } = KIND_INFO[kind];
+  return source === "errors" ? "errors" : source === "telemetry" ? "monitoring" : null;
+}

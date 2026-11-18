@@ -1,9 +1,10 @@
 import type { FastifyPluginCallback } from "fastify";
 import type { Kysely } from "kysely";
 
+import { requirePermission } from "../access/access.ts";
 import type { Auth } from "../auth/auth.ts";
 import { requireTrustedOrigin } from "../auth/origin.ts";
-import { requireSession, signedInUser } from "../auth/routes.ts";
+import { requireSession } from "../auth/routes.ts";
 import type { Database } from "../db/schema.ts";
 import { canonicalTimeZone } from "../visitors/visitor-ids.ts";
 import {
@@ -18,14 +19,14 @@ function problem(code: string, message: string) {
   return { error: code, message };
 }
 
-/** The settings as the dashboard gets them, with whether this user may change them. */
-function view(settings: InstanceSettings, role: "owner" | "member") {
-  return { settings: { ...settings, canEdit: role === "owner" } };
+/** The settings as the dashboard gets them. */
+function view(settings: InstanceSettings) {
+  return { settings };
 }
 
 /**
- * The instance's settings (settings.ts). GET reads them; PATCH changes the
- * name or timezone, for the owner only. A changed timezone moves where days
+ * The instance's settings (settings.ts), for the owner only (docs/access.md):
+ * GET reads them; PATCH changes the name or timezone. A changed timezone moves where days
  * start in every report, past ones included, and starts new visitor IDs
  * for the rest of the day, so the dashboard says so before saving.
  */
@@ -36,15 +37,16 @@ export const settingsRoutes: FastifyPluginCallback<{
 }> = (app, { db, auth, trustedOrigins }, done) => {
   const signedIn = requireSession(auth);
   const fromDashboard = requireTrustedOrigin(trustedOrigins);
+  const owner = requirePermission(db, "settings");
 
-  app.get("/settings", { preHandler: signedIn }, async (request) =>
-    view(await readInstanceSettings(db), signedInUser(request).role),
+  app.get("/settings", { preHandler: [signedIn, owner] }, async () =>
+    view(await readInstanceSettings(db)),
   );
 
   app.patch<{ Body: { name?: string; timeZone?: string } }>(
     "/settings",
     {
-      preHandler: [fromDashboard, signedIn],
+      preHandler: [fromDashboard, signedIn, owner],
       schema: {
         body: {
           type: "object",
@@ -63,12 +65,6 @@ export const settingsRoutes: FastifyPluginCallback<{
       },
     },
     async (request, reply) => {
-      const user = signedInUser(request);
-      if (user.role !== "owner") {
-        return reply
-          .code(403)
-          .send(problem("forbidden", "Only the owner can change these settings."));
-      }
       let timeZone: string | undefined;
       if (request.body.timeZone !== undefined) {
         timeZone = canonicalTimeZone(request.body.timeZone);
@@ -90,7 +86,7 @@ export const settingsRoutes: FastifyPluginCallback<{
         ...(name === undefined ? {} : { name }),
         ...(timeZone === undefined ? {} : { timeZone }),
       });
-      return view(await readInstanceSettings(db), user.role);
+      return view(await readInstanceSettings(db));
     },
   );
 

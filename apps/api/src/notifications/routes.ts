@@ -1,6 +1,7 @@
 import type { FastifyPluginCallback } from "fastify";
 import type { Kysely } from "kysely";
 
+import { requirePermission } from "../access/access.ts";
 import type { Auth } from "../auth/auth.ts";
 import { requireTrustedOrigin } from "../auth/origin.ts";
 import { requireSession, signedInUser } from "../auth/routes.ts";
@@ -87,9 +88,9 @@ const NO_CHANNEL: Problem = {
  * GET    /api/channels/:channelId/deliveries[?before=<delivery ID>&limit=20]
  *
  * The instance's notification channels (channels.ts; docs/uptime-alerts.md).
- * Every route needs a signed-in user; changes need the dashboard's origin
- * too. Until roles exist, every user may manage channels, and see a
- * webhook's secret, which only its own route serves (not the list or a
+ * Every route needs the owner or an admin (docs/access.md); changes need
+ * the dashboard's origin too. A webhook's secret is served only by its
+ * own route (not the list or a
  * channel's answers, so it stays out of the dashboard's cache until
  * asked for). A webhook's URL is resolved when it is saved, and refused
  * when its host resolves to an address the uptime checks' rules refuse;
@@ -124,6 +125,8 @@ export const channelRoutes: FastifyPluginCallback<{
 ) => {
   const signedIn = requireSession(auth);
   const fromDashboard = requireTrustedOrigin(trustedOrigins);
+  // The owner and admins (docs/access.md); members see channels by name on the Alerts page.
+  const manageChannels = requirePermission(db, "channels");
 
   /**
    * Why a webhook's URL may not be saved: its host resolves to an address
@@ -159,7 +162,7 @@ export const channelRoutes: FastifyPluginCallback<{
     }
   }
 
-  app.get("/channels", { preHandler: signedIn }, async () => ({
+  app.get("/channels", { preHandler: [signedIn, manageChannels] }, async () => ({
     maxChannels: MAX_CHANNELS,
     email: { configured: emailConfigured },
     channels: await listChannels(db),
@@ -168,7 +171,7 @@ export const channelRoutes: FastifyPluginCallback<{
   app.post<{ Body: ChannelInput }>(
     "/channels",
     {
-      preHandler: [fromDashboard, signedIn],
+      preHandler: [fromDashboard, signedIn, manageChannels],
       bodyLimit: BODY_LIMIT,
       schema: {
         body: {
@@ -199,7 +202,7 @@ export const channelRoutes: FastifyPluginCallback<{
 
   app.get<{ Params: { channelId: string } }>(
     "/channels/:channelId",
-    { preHandler: signedIn, schema: { params: PARAMS } },
+    { preHandler: [signedIn, manageChannels], schema: { params: PARAMS } },
     async (request, reply) => {
       const channel = await findChannel(db, request.params.channelId);
       return channel === null ? reply.code(404).send(NO_CHANNEL) : view(channel);
@@ -209,7 +212,7 @@ export const channelRoutes: FastifyPluginCallback<{
   app.patch<{ Params: { channelId: string }; Body: ChannelInput }>(
     "/channels/:channelId",
     {
-      preHandler: [fromDashboard, signedIn],
+      preHandler: [fromDashboard, signedIn, manageChannels],
       bodyLimit: BODY_LIMIT,
       schema: {
         params: PARAMS,
@@ -238,7 +241,7 @@ export const channelRoutes: FastifyPluginCallback<{
 
   app.delete<{ Params: { channelId: string } }>(
     "/channels/:channelId",
-    { preHandler: [fromDashboard, signedIn], schema: { params: PARAMS } },
+    { preHandler: [fromDashboard, signedIn, manageChannels], schema: { params: PARAMS } },
     async (request, reply) => {
       const deleted = await deleteChannel(db, request.params.channelId, now());
       return deleted ? reply.code(204).send() : reply.code(404).send(NO_CHANNEL);
@@ -247,7 +250,7 @@ export const channelRoutes: FastifyPluginCallback<{
 
   app.post<{ Params: { channelId: string } }>(
     "/channels/:channelId/secret",
-    { preHandler: [fromDashboard, signedIn], schema: { params: PARAMS } },
+    { preHandler: [fromDashboard, signedIn, manageChannels], schema: { params: PARAMS } },
     async (request, reply) => {
       const current = await findChannel(db, request.params.channelId);
       if (current === null) return reply.code(404).send(NO_CHANNEL);
@@ -262,7 +265,7 @@ export const channelRoutes: FastifyPluginCallback<{
 
   app.get<{ Params: { channelId: string } }>(
     "/channels/:channelId/secret",
-    { preHandler: signedIn, schema: { params: PARAMS } },
+    { preHandler: [signedIn, manageChannels], schema: { params: PARAMS } },
     async (request, reply) => {
       const secret = await secretOf(db, request.params.channelId);
       if (secret === undefined) return reply.code(404).send(NO_CHANNEL);
@@ -274,7 +277,7 @@ export const channelRoutes: FastifyPluginCallback<{
 
   app.post<{ Params: { channelId: string } }>(
     "/channels/:channelId/test",
-    { preHandler: [fromDashboard, signedIn], schema: { params: PARAMS } },
+    { preHandler: [fromDashboard, signedIn, manageChannels], schema: { params: PARAMS } },
     async (request, reply) => {
       const channel = await findChannel(db, request.params.channelId);
       if (channel === null) return reply.code(404).send(NO_CHANNEL);
@@ -301,7 +304,7 @@ export const channelRoutes: FastifyPluginCallback<{
   app.get<{ Params: { channelId: string }; Querystring: { before?: string; limit?: number } }>(
     "/channels/:channelId/deliveries",
     {
-      preHandler: signedIn,
+      preHandler: [signedIn, manageChannels],
       schema: {
         params: PARAMS,
         querystring: {

@@ -11,6 +11,7 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "@/components/ui/empty";
+import { useAccess } from "@/lib/access";
 import { type GoalResult, goalStepText, MAX_GOALS } from "@/lib/goals-api";
 
 import { AddGoalDialog } from "./add-goal-dialog";
@@ -50,10 +51,13 @@ function GoalTable({
   goals,
   projectId,
   returnFocus,
+  canManage,
 }: {
   goals: GoalResult[];
   projectId: string;
   returnFocus: React.RefObject<HTMLHeadingElement | null>;
+  /** Whether the user may delete goals (product analytics, manage). */
+  canManage: boolean;
 }) {
   return (
     <table className="w-full table-fixed text-sm">
@@ -72,9 +76,11 @@ function GoalTable({
           <th scope="col" className="w-16 pb-2 text-right font-normal">
             Events
           </th>
-          <th scope="col" className="w-10 pb-2">
-            <span className="sr-only">Actions</span>
-          </th>
+          {canManage && (
+            <th scope="col" className="w-10 pb-2">
+              <span className="sr-only">Actions</span>
+            </th>
+          )}
         </tr>
       </thead>
       <tbody>
@@ -104,9 +110,11 @@ function GoalTable({
               <td className="py-1.5 text-right align-top text-ink-subtle tabular-nums">
                 {formatWhole(goal.events)}
               </td>
-              <td className="py-0.5 text-right align-top">
-                <DeleteGoalDialog projectId={projectId} goal={goal} returnFocus={returnFocus} />
-              </td>
+              {canManage && (
+                <td className="py-0.5 text-right align-top">
+                  <DeleteGoalDialog projectId={projectId} goal={goal} returnFocus={returnFocus} />
+                </td>
+              )}
             </tr>
           );
         })}
@@ -117,7 +125,8 @@ function GoalTable({
 
 /**
  * The project's saved goals, counted in the page's period, environment, and
- * filters, as the rest of the page. Adding and deleting one refetches the page.
+ * filters, as the rest of the page. Adding and deleting one refetches the
+ * page; both need product analytics at manage (docs/access.md).
  */
 export function GoalsCard({
   goals,
@@ -129,6 +138,7 @@ export function GoalsCard({
   /** The page's custom events, offered when an event goal is added. */
   eventNames: readonly string[];
 }) {
+  const canManage = useAccess().canUse("product_analytics", "manage");
   const [adding, setAdding] = React.useState(false);
   // Where focus goes when a dialog closes: the button that opened it may be
   // gone once the list refetches (the empty state's, or a deleted row's).
@@ -143,7 +153,7 @@ export function GoalsCard({
             Goals
           </h3>
         </CardTitle>
-        {goals.length > 0 && (
+        {goals.length > 0 && canManage && (
           <CardAction>
             <AddGoalButton atLimit={atLimit} onClick={add} />
           </CardAction>
@@ -163,13 +173,20 @@ export function GoalsCard({
                 them that is.
               </EmptyDescription>
             </EmptyHeader>
-            <EmptyContent>
-              <AddGoalButton atLimit={false} onClick={add} />
-            </EmptyContent>
+            {canManage && (
+              <EmptyContent>
+                <AddGoalButton atLimit={false} onClick={add} />
+              </EmptyContent>
+            )}
           </Empty>
         ) : (
           <>
-            <GoalTable goals={goals} projectId={projectId} returnFocus={headingRef} />
+            <GoalTable
+              goals={goals}
+              projectId={projectId}
+              returnFocus={headingRef}
+              canManage={canManage}
+            />
             <p className="text-xs text-ink-subtle">
               Of this page&apos;s visitors, in its period, environment, and filters: how many
               reached each goal, and their share. Visitors are counted per day, as in the summary;

@@ -44,6 +44,17 @@ export const TELEMETRY_KINDS: readonly RuleKind[] = [
   "metric_threshold",
 ];
 
+/**
+ * The area a kind watches, besides uptime and alerts (docs/access.md): a
+ * user sees and adds such rules only with it. Check rules need none.
+ */
+export function kindArea(kind: RuleKind): "errors" | "monitoring" | null {
+  if (kind === "error_new" || kind === "error_regressed" || kind === "error_spike") {
+    return "errors";
+  }
+  return TELEMETRY_KINDS.includes(kind) ? "monitoring" : null;
+}
+
 export const MAX_RULE_NAME = 100;
 export const DEFAULT_CERTIFICATE_DAYS = 14;
 export const MAX_CERTIFICATE_DAYS = 90;
@@ -261,6 +272,38 @@ const rulePath = (projectId: string, ruleId: string) =>
   `${rulesPath(projectId)}/${encodeURIComponent(ruleId)}`;
 
 /** The project's rules; read again every 30 seconds, as whether each fires changes. */
+/**
+ * A notification channel by name, as a rule's form offers it: GET
+ * /api/projects/:id/alert-channels. Never its addresses, URL, or secret,
+ * which only the Settings page shows (docs/access.md).
+ */
+export interface ChannelName {
+  id: string;
+  name: string;
+  kind: "email" | "webhook";
+}
+
+const isChannelName = (value: unknown): value is ChannelName =>
+  isRecord(value) &&
+  isText(value.id) &&
+  isText(value.name) &&
+  (value.kind === "email" || value.kind === "webhook");
+
+const isChannelNames = (value: unknown): value is { channels: ChannelName[] } =>
+  isRecord(value) && isListOf(value.channels, isChannelName);
+
+export const alertChannelsQuery = (projectId: string) =>
+  queryOptions({
+    queryKey: ["alert-channels", projectId],
+    queryFn: async ({ signal }) =>
+      expectShape(
+        await apiRequest(`/api/projects/${encodeURIComponent(projectId)}/alert-channels`, {
+          signal,
+        }),
+        isChannelNames,
+      ),
+  });
+
 export const rulesQuery = (projectId: string) =>
   queryOptions({
     queryKey: ["alerts", projectId, "rules"],

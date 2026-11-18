@@ -20,6 +20,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { useAccess } from "@/lib/access";
 import { ApiError } from "@/lib/api";
 import { type Check, deleteCheck, updateCheck } from "@/lib/uptime-api";
 
@@ -105,6 +106,8 @@ export function CheckActions({
   onDeleted?: () => void;
 }) {
   const queryClient = useQueryClient();
+  // Changing checks needs uptime and alerts at manage (docs/access.md).
+  const canManage = useAccess().canUse("uptime_alerts", "manage");
   const [editing, setEditing] = React.useState(false);
   const [deleting, setDeleting] = React.useState(false);
   const pause = useMutation({
@@ -112,6 +115,9 @@ export function CheckActions({
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["checks", projectId] }),
   });
   const pauseLabel = check.paused ? "Resume" : "Pause";
+  if (!canManage) {
+    return null;
+  }
   return (
     <div className={compact ? "flex items-center gap-1" : "flex flex-wrap items-center gap-1"}>
       <Button

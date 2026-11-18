@@ -507,7 +507,18 @@ export interface HistoryEntry {
 export async function listHistory(
   db: Kysely<Database>,
   projectId: string,
-  { ruleId, before, limit }: { ruleId?: string; before?: string | undefined; limit: number },
+  {
+    ruleId,
+    before,
+    limit,
+    kinds,
+  }: {
+    ruleId?: string;
+    before?: string | undefined;
+    limit: number;
+    /** Only alerts of rules of these kinds: those the user may see (docs/access.md). */
+    kinds: readonly RuleKind[];
+  },
 ): Promise<{ alerts: HistoryEntry[]; next: string | null }> {
   let query = db
     .selectFrom("alert_history as h")
@@ -525,6 +536,7 @@ export async function listHistory(
       "h.notification_id",
     ])
     .where("h.project_id", "=", projectId)
+    .where("r.kind", "in", [...kinds])
     .where("h.fired_at", ">=", sql<Date>`now() - make_interval(days => ${HISTORY_RETENTION_DAYS})`);
   if (ruleId !== undefined) query = query.where("h.rule_id", "=", ruleId);
   if (before !== undefined) {
@@ -568,10 +580,11 @@ export interface FiringAlert {
   message: string;
 }
 
-/** The project's alerts firing now, of rules that are on, longest first. */
+/** The project's alerts firing now, of rules that are on and of `kinds`, longest first. */
 export async function firingAlerts(
   db: Kysely<Database>,
   projectId: string,
+  kinds: readonly RuleKind[],
 ): Promise<FiringAlert[]> {
   const rows = await db
     .selectFrom("alert_states as s")
@@ -587,6 +600,7 @@ export async function firingAlerts(
       "h.message",
     ])
     .where("r.project_id", "=", projectId)
+    .where("r.kind", "in", [...kinds])
     .where("r.enabled", "=", true)
     .where("s.firing", "=", true)
     .orderBy("s.since")

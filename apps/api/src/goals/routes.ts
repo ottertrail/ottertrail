@@ -1,12 +1,12 @@
 import type { FastifyPluginCallback } from "fastify";
 import type { Kysely } from "kysely";
 
+import { type ProjectAccess, requireProjectAccess } from "../access/access.ts";
 import type { Auth } from "../auth/auth.ts";
 import { requireTrustedOrigin } from "../auth/origin.ts";
 import { requireSession } from "../auth/routes.ts";
 import type { Database } from "../db/schema.ts";
 import { stepOf } from "../product/steps.ts";
-import { type ProjectAccess, requireProjectAccess } from "../projects/access.ts";
 import { createGoal, deleteGoal, listGoals, MAX_GOALS } from "./goals.ts";
 
 const UUID_PATTERN =
@@ -40,7 +40,8 @@ export const goalRoutes: FastifyPluginCallback<{
   trustedOrigins: readonly string[];
 }> = (app, { db, auth, trustedOrigins }, done) => {
   const signedIn = requireSession(auth);
-  const projectAccess = requireProjectAccess(db);
+  const canView = requireProjectAccess(db, { area: "product_analytics", level: "view" });
+  const canManage = requireProjectAccess(db, { area: "product_analytics", level: "manage" });
   const fromDashboard = requireTrustedOrigin(trustedOrigins);
   const params = {
     type: "object",
@@ -50,14 +51,14 @@ export const goalRoutes: FastifyPluginCallback<{
 
   app.get<{ Params: { id: string } }>(
     "/projects/:id/goals",
-    { preHandler: [signedIn, projectAccess], schema: { params } },
+    { preHandler: [signedIn, canView], schema: { params } },
     async (request) => ({ goals: await listGoals(db, accessOf(request).projectId) }),
   );
 
   app.post<{ Params: { id: string }; Body: { name: string; step: unknown } }>(
     "/projects/:id/goals",
     {
-      preHandler: [fromDashboard, signedIn, projectAccess],
+      preHandler: [fromDashboard, signedIn, canManage],
       schema: {
         params,
         body: {
@@ -108,7 +109,7 @@ export const goalRoutes: FastifyPluginCallback<{
   app.delete<{ Params: { id: string; goalId: string } }>(
     "/projects/:id/goals/:goalId",
     {
-      preHandler: [fromDashboard, signedIn, projectAccess],
+      preHandler: [fromDashboard, signedIn, canManage],
       schema: {
         params: {
           type: "object",

@@ -2,7 +2,7 @@ import type { FastifyPluginCallback, FastifyReply, FastifyRequest } from "fastif
 import type { Kysely } from "kysely";
 
 import { type RateLimit, TokenBucketLimiter } from "../collection/rate-limiter.ts";
-import type { Database } from "../db/schema.ts";
+import type { Database, Role } from "../db/schema.ts";
 import { MAX_INSTANCE_NAME_LENGTH } from "../settings/settings.ts";
 import {
   type Auth,
@@ -18,7 +18,11 @@ export interface DashboardUser {
   id: string;
   name: string;
   email: string;
-  role: "owner" | "member";
+  /**
+   * As the session found it. Access checks read the role again with the
+   * user's grants (access/access.ts), so use theirs.
+   */
+  role: Role;
 }
 
 declare module "fastify" {
@@ -212,7 +216,12 @@ export function requireSession(auth: Auth) {
       return reply.code(401).send(problem("unauthorized", "Sign in to continue."));
     }
     const { id, name, email, role } = session.user;
-    request.dashboardUser = { id, name, email, role: role === "owner" ? "owner" : "member" };
+    request.dashboardUser = {
+      id,
+      name,
+      email,
+      role: role === "owner" || role === "admin" ? role : "member",
+    };
     // Nothing sent: Fastify goes on to the route handler.
     return undefined;
   };

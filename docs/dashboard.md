@@ -15,7 +15,7 @@ Code: `apps/api/src/auth/` and `apps/web/src/features/auth/`.
 
 ### Who can sign in
 
-The install's first account is its **owner**, created with the setup link ([below](#creating-the-owner)), which also names the instance ([Settings](#settings)). Teammates will join by invitation, with roles (not built yet). Nobody can sign up yet: open sign-up, for the hosted service, needs Ottertrail's own account email for verification and password resets.
+The install's first account is its **owner**, created with the setup link ([below](#creating-the-owner)), which also names the instance ([Settings](#settings)). Other users are admins or members, with access per area and project ([access](access.md)). They will join by invitation (planned). Nobody can sign up yet: open sign-up, for the hosted service, needs Ottertrail's own account email for verification and password resets.
 
 ### Creating the owner
 
@@ -56,7 +56,7 @@ Passwords are at least 12 characters and are stored as scrypt hashes. scrypt is 
 
 ### Built on Better Auth
 
-[Better Auth](https://better-auth.com) handles passwords, sessions, cookies, origin checks, and rate limits. Ottertrail uses only its core (email and password, database sessions), with no plugins, and keeps the owner, setup, and later invitations and roles in its own code and tables. Most of Better Auth's security advisories in 2026 were in plugins this setup does not use. The version is pinned; an advisory that affects the core means a new Ottertrail release.
+[Better Auth](https://better-auth.com) handles passwords, sessions, cookies, origin checks, and rate limits. Ottertrail uses only its core (email and password, database sessions), with no plugins, and keeps the owner, setup, roles, and later invitations in its own code and tables ([access](access.md)). Most of Better Auth's security advisories in 2026 were in plugins this setup does not use. The version is pinned; an advisory that affects the core means a new Ottertrail release.
 
 Settings that differ from Better Auth's defaults, and why:
 
@@ -80,8 +80,8 @@ Settings that differ from Better Auth's defaults, and why:
 
 ### Not done yet
 
-- Invitations and roles per module (planned with the access model).
-- Password reset. It needs email, which is not set up yet. Until then, an owner who forgets their password cannot get back in without help from the database.
+- Invitations (planned: [access](access.md#invitations-planned-part-b)).
+- Password reset (planned, with links instead of email: [access](access.md#password-reset-links-planned-part-b)). Until then, an owner who forgets their password cannot get back in without help from the database.
 - Two-factor sign-in and passkeys.
 - Serving the dashboard from the API in production. In development, the dashboard's dev server forwards `/api` to the API.
 
@@ -172,7 +172,7 @@ The collection endpoint keeps keys in a cache for a minute (a key is checked on 
 ### Not done yet
 
 - Deleted events can stay in backups until those are deleted; there is no backup policy yet.
-- Permissions: any signed-in user can manage projects, which is only the owner until invitations exist.
+- The project list and a project's answer show members only its name and when its last event happened; its keys and settings, and creating, changing, and deleting projects, are for the owner and admins ([access](access.md)).
 
 ## 8.3 Report endpoints
 
@@ -536,13 +536,13 @@ Loading, failure with Retry, and an unknown project work as on the Uptime page. 
 
 ## Settings
 
-Code: `apps/api/src/settings/`, `apps/api/src/projects/access.ts`, and `apps/web/src/features/settings/`.
+Code: `apps/api/src/settings/`, `apps/api/src/access/access.ts`, and `apps/web/src/features/settings/`.
 
 Each customer has an instance of their own ([CLAUDE.md](../CLAUDE.md)). The instance holds projects, and the settings that differ between instances live in the instance, not in the deployment's environment.
 
 ### The one check
 
-`requireProjectAccess` (`projects/access.ts`) runs on every route under `/api/projects/:id`: settings, the key, deleting, the analytics page, and its lists. The request must be signed in, or the answer is 401, and the project must exist, or the answer is 404. A project ID sent by the browser is never enough on its own. Roles, when they come, go into this one function, so no route has its own rules.
+`requireProjectAccess` (`access/access.ts`) runs on every route under `/api/projects/:id`, and each route says what it needs: an area at view or manage, the `projects` permission, or only the project. The request must be signed in, or the answer is 401. The project must exist and be one the user may reach, or the answer is 404, the same for both. Without the area or permission, the answer is 403. A project ID sent by the browser is never enough on its own. Routes outside a project run `requirePermission` from the same file. Roles, areas, and the tests that walk every route are in [access](access.md).
 
 ### Instance settings
 
@@ -551,7 +551,7 @@ PostgreSQL's `instance_settings` table has one row:
 - `name`: the display name at the top of the sidebar. The setup form sets it (the field "Workspace name").
 - `time_zone`: an IANA timezone. Setup sets it from the deployment's `TIMEZONE`.
 
-`/settings` shows both (`GET /api/settings`). Only the install's owner (`dashboard_users.role = 'owner'`) can change them (`PATCH /api/settings`); other users see them read-only. The timezone field suggests IANA names as you type. The API stores the name Node.js resolves it to (`US/Pacific` becomes `America/Los_Angeles`, and a few newer names come back as older ones: `Europe/Kyiv` as `Europe/Kiev`). It refuses fixed offsets such as `+08:00`, and names PostgreSQL does not know: Node.js and PostgreSQL carry separate timezone databases, and reports and retention use PostgreSQL's to work out where days start. (ClickHouse, which puts events on their days, knows every name Node.js does.) For the same reason the API refuses to start with a `TIMEZONE` PostgreSQL does not know.
+`/settings` shows both (`GET /api/settings`) to the install's owner (`dashboard_users.role = 'owner'`), who alone can change them (`PATCH /api/settings`). Admins see only the notification channels there; members do not see the page ([access](access.md)). The timezone field suggests IANA names as you type. The API stores the name Node.js resolves it to (`US/Pacific` becomes `America/Los_Angeles`, and a few newer names come back as older ones: `Europe/Kyiv` as `Europe/Kiev`). It refuses fixed offsets such as `+08:00`, and names PostgreSQL does not know: Node.js and PostgreSQL carry separate timezone databases, and reports and retention use PostgreSQL's to work out where days start. (ClickHouse, which puts events on their days, knows every name Node.js does.) For the same reason the API refuses to start with a `TIMEZONE` PostgreSQL does not know.
 
 Reports count days in the instance's timezone, and visitor IDs change at its midnight ([web analytics](web-analytics.md#one-salt-per-timezone-and-day)). Changing it therefore moves where days start in every report, past days included, and counts visitors afresh from the change until midnight; the page says so before saving.
 
@@ -559,7 +559,7 @@ The API and the worker read the settings through one module (`apps/api/src/setti
 
 ### Notification channels
 
-Code: `apps/web/src/features/settings/` (`notification-channels.tsx`, `channel-form-dialog.tsx`), `apps/web/src/lib/channels-api.ts`, and `apps/api/src/notifications/`. The second card on `/settings` lists the instance's channels, where alerts go ([uptime and alerts](uptime-alerts.md#step-2-channels-and-delivery-as-built)). Every signed-in user manages them, not only the owner, until roles exist.
+Code: `apps/web/src/features/settings/` (`notification-channels.tsx`, `channel-form-dialog.tsx`), `apps/web/src/lib/channels-api.ts`, and `apps/api/src/notifications/`. The second card on `/settings` lists the instance's channels, where alerts go ([uptime and alerts](uptime-alerts.md#step-2-channels-and-delivery-as-built)). The owner and admins manage them; members see only their names, when choosing a rule's channels ([access](access.md)).
 
 - **Email set up or not:** a badge when the instance has an SMTP server; otherwise a notice that email is not set up on this instance, that email channels can be added but nothing is sent to them until the operator sets `SMTP_URL` and `EMAIL_FROM`, and that webhooks work without it. Each email channel repeats it in a line under its addresses.
 - **The list:** a line with how many channels there are of the 20 allowed (at 20, Add is off and the line says why), then each channel with its name, its kind as a badge (Email or Webhook), and its addresses or URL. Each has Send test, Edit, and Delete buttons named for the channel; Delete asks first. With no channels, a short explanation and the Add channel button.
@@ -573,4 +573,4 @@ Loading shows skeletons, and a failed load says so with Retry. `channels.test.ts
 ### Not done yet
 
 - Signing up for the hosted service, which creates the customer's instance and its owner (a control plane outside the app; not built).
-- Invitations and roles per module.
+- Invitations, the Members page, and reset links ([access](access.md), part B).

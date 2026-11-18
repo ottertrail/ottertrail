@@ -161,7 +161,7 @@ Messages are plain text: what happened, when (in the instance's timezone), the p
 
 ### One customer per instance
 
-Every install serves one customer, whether self-hosted or hosted: each hosted customer gets an instance of their own (decided 18 November 2026), so no customer can slow another. An instance holds projects, its owner (the account the setup link creates), and its instance settings: a display name and the timezone reports count days in, which the owner changes on the dashboard's Settings page ([dashboard](dashboard.md#instance-settings)). The limits on events, source maps, and replays apply to the whole instance, all projects together, with a budget per project inside them. Nobody can sign up in an install, and invitations are not built yet. Nothing needs to be set for that.
+Every install serves one customer, whether self-hosted or hosted: each hosted customer gets an instance of their own (decided 18 November 2026), so no customer can slow another. An instance holds projects, its owner (the account the setup link creates), and its instance settings: a display name and the timezone reports count days in, which the owner changes on the dashboard's Settings page ([dashboard](dashboard.md#instance-settings)). The limits on events, source maps, and replays apply to the whole instance, all projects together, with a budget per project inside them. Nobody can sign up in an install, and invitations are not built yet ([access](access.md)). Nothing needs to be set for that.
 
 ## Decisions
 

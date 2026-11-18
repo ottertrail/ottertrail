@@ -19,6 +19,7 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty";
 import { Skeleton } from "@/components/ui/skeleton";
+import { WhenAllowed } from "@/components/when-allowed";
 import { DEFAULT_ENVIRONMENT, type PageRange } from "@/lib/analytics-api";
 import { ApiError } from "@/lib/api";
 import { type ServiceChart, serviceChartQuery, STATUS_CLASSES } from "@/lib/services-api";
@@ -261,16 +262,18 @@ export function ServicePage({
               Traces
               <span className="sr-only"> of {subject}</span>
             </Link>
-            <Link
-              to="/projects/$projectId/alerts"
-              params={{ projectId }}
-              search={addRuleSearch(environment, service, route)}
-              className={linkClass}
-            >
-              <BellPlusIcon aria-hidden="true" className="size-4" />
-              Add an alert rule
-              <span className="sr-only"> for {subject}</span>
-            </Link>
+            <WhenAllowed area="uptime_alerts" level="manage">
+              <Link
+                to="/projects/$projectId/alerts"
+                params={{ projectId }}
+                search={addRuleSearch(environment, service, route)}
+                className={linkClass}
+              >
+                <BellPlusIcon aria-hidden="true" className="size-4" />
+                Add an alert rule
+                <span className="sr-only"> for {subject}</span>
+              </Link>
+            </WhenAllowed>
           </div>
         </div>
       </div>

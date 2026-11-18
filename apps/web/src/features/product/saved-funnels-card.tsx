@@ -15,6 +15,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { WhenAllowed } from "@/components/when-allowed";
 import { ApiError } from "@/lib/api";
 import {
   deleteFunnel,
@@ -211,13 +212,15 @@ function SavedFunnelTable({
                 {countLine(funnel.count, funnel.window)}
               </td>
               <td className="py-0.5 text-right align-top whitespace-nowrap">
-                <RenameFunnelDialog projectId={projectId} funnel={funnel} />
-                <DeleteFunnelDialog
-                  projectId={projectId}
-                  funnel={funnel}
-                  returnFocus={returnFocus}
-                  onDeleted={onDeleted}
-                />
+                <WhenAllowed area="product_analytics" level="manage">
+                  <RenameFunnelDialog projectId={projectId} funnel={funnel} />
+                  <DeleteFunnelDialog
+                    projectId={projectId}
+                    funnel={funnel}
+                    returnFocus={returnFocus}
+                    onDeleted={onDeleted}
+                  />
+                </WhenAllowed>
               </td>
             </tr>
           );

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "vite-plus/test";
 import { page } from "vite-plus/test/browser/context";
 
-import { installFakeApi, SETTINGS } from "./fake-api.ts";
+import { ADMIN_ACCESS, installFakeApi, memberAccess, SETTINGS } from "./fake-api.ts";
 import { renderApp } from "./render.tsx";
 
 describe("the instance's settings", () => {
@@ -45,16 +45,25 @@ describe("the instance's settings", () => {
     await expect.element(page.getByText(/Reports count days in this timezone/)).toBeVisible();
   });
 
-  test("another user sees the settings but cannot change them", async () => {
-    installFakeApi({ settings: { ...SETTINGS, canEdit: false } });
+  test("an admin sees the channels, but not the instance's name and timezone", async () => {
+    installFakeApi({ access: ADMIN_ACCESS });
     renderApp("/settings");
 
-    await expect.element(page.getByText("Only the owner can change these.")).toBeVisible();
-    await expect.element(page.getByRole("textbox", { name: "Name" })).toBeDisabled();
-    await expect.element(page.getByRole("combobox", { name: "Timezone" })).toBeDisabled();
     await expect
-      .element(page.getByRole("button", { name: "Save changes" }))
-      .not.toBeInTheDocument();
+      .element(page.getByRole("heading", { name: "Notification channels" }))
+      .toBeVisible();
+    await expect.element(page.getByRole("heading", { name: "Workspace" })).not.toBeInTheDocument();
+    await expect.element(page.getByRole("textbox", { name: "Name" })).not.toBeInTheDocument();
+  });
+
+  test("a member has no Settings page, and no link to it", async () => {
+    installFakeApi({ access: memberAccess({ web_analytics: "view" }) });
+    renderApp("/settings");
+
+    await expect.element(page.getByText("You don't have access")).toBeVisible();
+    const workspace = page.getByRole("navigation", { name: "Workspace" });
+    await expect.element(workspace.getByRole("link", { name: "Projects" })).toBeVisible();
+    await expect.element(workspace.getByRole("link", { name: "Settings" })).not.toBeInTheDocument();
   });
 
   test("signing out forgets the settings before someone else signs in", async () => {
@@ -66,7 +75,8 @@ describe("the instance's settings", () => {
     await expect.poll(() => router.state.location.pathname).toBe("/sign-in");
 
     // Another user signs in on the same browser, after the settings changed.
-    api.settings = { ...SETTINGS, name: "Other Co", canEdit: false };
+    api.settings = { ...SETTINGS, name: "Other Co" };
+    api.access = memberAccess({ web_analytics: "view" });
     api.projects = [];
     await page.getByRole("textbox", { name: "Email" }).fill("other@example.com");
     await page.getByLabelText("Password").fill("correct horse battery");

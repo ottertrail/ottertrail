@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 import type { FastifyPluginCallback } from "fastify";
 import type { Kysely } from "kysely";
 
+import { can, type ProjectAccess, requireProjectAccess } from "../access/access.ts";
 import type { Auth } from "../auth/auth.ts";
 import { requireTrustedOrigin } from "../auth/origin.ts";
 import { requireSession } from "../auth/routes.ts";
@@ -11,7 +12,6 @@ import { DEFAULT_ENVIRONMENT, environmentOf } from "../collection/environment.ts
 import { USER_ID_PATTERN } from "../collection/identity.ts";
 import type { Database } from "../db/schema.ts";
 import { FINGERPRINT_PATTERN } from "../errors/fingerprint.ts";
-import { type ProjectAccess, requireProjectAccess } from "../projects/access.ts";
 import { localDays } from "../reports/reports.ts";
 import { RANGE_PROPERTIES, type RangeQuery, requestDays } from "../reports/routes.ts";
 import type { ObjectStore } from "../storage/object-store.ts";
@@ -123,7 +123,9 @@ export const replayRoutes: FastifyPluginCallback<{
   now?: () => Date;
 }> = (app, { db, store, auth, trustedOrigins, limitBytes, now = () => new Date() }, done) => {
   const signedIn = requireSession(auth);
-  const projectAccess = requireProjectAccess(db);
+  const canView = requireProjectAccess(db, { area: "replays", level: "view" });
+  // Deleting every replay is a project setting (its Settings page), as the replay mode is.
+  const canManageProject = requireProjectAccess(db, { permission: "projects" });
   const fromDashboard = requireTrustedOrigin(trustedOrigins);
   const params = {
     type: "object",
@@ -142,7 +144,7 @@ export const replayRoutes: FastifyPluginCallback<{
 
   app.get<{ Params: { id: string } }>(
     "/projects/:id/replays",
-    { preHandler: [signedIn, projectAccess], schema: { params } },
+    { preHandler: [signedIn, canView], schema: { params } },
     async (request) => {
       const { projectId } = accessOf(request);
       const [project, replays, stored] = await Promise.all([
@@ -152,13 +154,16 @@ export const replayRoutes: FastifyPluginCallback<{
           .where("id", "=", projectId)
           .executeTakeFirstOrThrow(),
         projectReplays(db, projectId),
-        storedReplayBytes(db),
+        can(accessOf(request).user, "projects") ? storedReplayBytes(db) : Promise.resolve(0),
       ]);
       return {
         configured: store !== null,
         mode: project.replay_mode,
         replays,
-        instance: { storedBytes: stored, limitBytes },
+        // All projects together: for those who manage projects only (docs/access.md).
+        ...(can(accessOf(request).user, "projects")
+          ? { instance: { storedBytes: stored, limitBytes } }
+          : {}),
       };
     },
   );
@@ -166,7 +171,7 @@ export const replayRoutes: FastifyPluginCallback<{
   app.get<{ Params: { id: string }; Querystring: ListQuery }>(
     "/projects/:id/replays/list",
     {
-      preHandler: [signedIn, projectAccess],
+      preHandler: [signedIn, canView],
       schema: {
         params,
         querystring: {
@@ -234,7 +239,7 @@ export const replayRoutes: FastifyPluginCallback<{
 
   app.get<{ Params: { id: string; replayId: string } }>(
     "/projects/:id/replays/:replayId/timeline",
-    { preHandler: [signedIn, projectAccess], schema: { params: replayParams } },
+    { preHandler: [signedIn, canView], schema: { params: replayParams } },
     async (request, reply) => {
       const { projectId, timeZone } = accessOf(request);
       const found = await replayTimeline(db, projectId, request.params.replayId.toLowerCase());
@@ -245,7 +250,7 @@ export const replayRoutes: FastifyPluginCallback<{
 
   app.get<{ Params: { id: string; replayId: string } }>(
     "/projects/:id/replays/:replayId",
-    { preHandler: [signedIn, projectAccess], schema: { params: replayParams } },
+    { preHandler: [signedIn, canView], schema: { params: replayParams } },
     async (request, reply) => {
       if (store === null) return reply.code(404).send(NOT_FOUND);
       const row = await db
@@ -279,7 +284,7 @@ export const replayRoutes: FastifyPluginCallback<{
   app.get<{ Params: { id: string; replayId: string }; Querystring: { errorAt?: number } }>(
     "/projects/:id/replays/:replayId/player",
     {
-      preHandler: [signedIn, projectAccess],
+      preHandler: [signedIn, canView],
       schema: {
         params: replayParams,
         querystring: {
@@ -314,7 +319,7 @@ export const replayRoutes: FastifyPluginCallback<{
 
   app.delete<{ Params: { id: string } }>(
     "/projects/:id/replays",
-    { preHandler: [fromDashboard, signedIn, projectAccess], schema: { params } },
+    { preHandler: [fromDashboard, signedIn, canManageProject], schema: { params } },
     async (request, reply) => {
       if (store === null) return reply.code(204).send();
       try {

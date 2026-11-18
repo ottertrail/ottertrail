@@ -13,6 +13,7 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty";
 import { Skeleton } from "@/components/ui/skeleton";
+import { WhenAllowed } from "@/components/when-allowed";
 import { DEFAULT_ENVIRONMENT } from "@/lib/analytics-api";
 import { ApiError } from "@/lib/api";
 import { playerUrlAt, replayTimelineQuery } from "@/lib/replays-api";
@@ -115,18 +116,23 @@ export function ReplayPage({ projectId, replayId }: { projectId: string; replayI
               {replay.userId === null ? (
                 "Anonymous"
               ) : (
-                <Link
-                  to="/projects/$projectId/users/$userId"
-                  params={{ projectId, userId: replay.userId }}
-                  search={
-                    replay.environment === null || replay.environment === DEFAULT_ENVIRONMENT
-                      ? {}
-                      : { env: replay.environment }
-                  }
-                  className="font-mono text-xs break-all text-link hover:underline"
+                <WhenAllowed
+                  area="users"
+                  fallback={<span className="font-mono text-xs break-all">{replay.userId}</span>}
                 >
-                  {replay.userId}
-                </Link>
+                  <Link
+                    to="/projects/$projectId/users/$userId"
+                    params={{ projectId, userId: replay.userId }}
+                    search={
+                      replay.environment === null || replay.environment === DEFAULT_ENVIRONMENT
+                        ? {}
+                        : { env: replay.environment }
+                    }
+                    className="font-mono text-xs break-all text-link hover:underline"
+                  >
+                    {replay.userId}
+                  </Link>
+                </WhenAllowed>
               )}
             </dd>
           </div>

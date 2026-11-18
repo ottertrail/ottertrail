@@ -3,6 +3,7 @@ import * as React from "react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { WhenAllowed } from "@/components/when-allowed";
 import type {
   ErrorSource,
   OriginalPosition,
@@ -234,16 +235,18 @@ function SourceMapNote({
               </li>
             ))}
           </ul>
-          <p>
-            <Link
-              to="/projects/$projectId/settings"
-              params={{ projectId }}
-              hash="source-maps"
-              className="text-link hover:underline"
-            >
-              Source maps settings
-            </Link>
-          </p>
+          <WhenAllowed permission="projects">
+            <p>
+              <Link
+                to="/projects/$projectId/settings"
+                params={{ projectId }}
+                hash="source-maps"
+                className="text-link hover:underline"
+              >
+                Source maps settings
+              </Link>
+            </p>
+          </WhenAllowed>
         </div>
       );
     case "not_configured":

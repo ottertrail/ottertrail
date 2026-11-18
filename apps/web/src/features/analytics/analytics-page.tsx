@@ -32,6 +32,7 @@ import {
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { useAccess } from "@/lib/access";
 import {
   activeFilters,
   type Analytics,
@@ -47,7 +48,7 @@ import {
   type PageRange,
 } from "@/lib/analytics-api";
 import { ApiError } from "@/lib/api";
-import { type Project, projectQuery } from "@/lib/projects-api";
+import { projectQuery, type ProjectSummary } from "@/lib/projects-api";
 
 import { NoSuchProject } from "../projects/no-such-project";
 import { DayChart } from "./day-chart";
@@ -446,6 +447,7 @@ function Reports({
   search: PageSearch;
 }) {
   const { breakdowns } = analytics;
+  const showGoals = useAccess().canUse("product_analytics");
   const link: FilterLinkFor = (name, value) => (
     <FilterLink projectId={projectId} search={search} name={name} value={value} />
   );
@@ -532,11 +534,14 @@ function Reports({
             },
           ]}
         />
-        <GoalsCard
-          goals={analytics.goals}
-          projectId={projectId}
-          eventNames={analytics.customEvents.map((event) => event.name)}
-        />
+        {/* Goals belong to product analytics (docs/access.md). */}
+        {showGoals && (
+          <GoalsCard
+            goals={analytics.goals}
+            projectId={projectId}
+            eventNames={analytics.customEvents.map((event) => event.name)}
+          />
+        )}
       </div>
     </>
   );
@@ -608,12 +613,14 @@ function NoData({
   otherEnvironments,
 }: {
   projectId: string;
-  project: Project | undefined;
+  project: ProjectSummary | undefined;
   search: PageSearch;
   /** Other environments have events, which the environment picker can show. */
   otherEnvironments: boolean;
 }) {
   const neverReceived = project?.lastEventAt === null;
+  // The snippet is in the project's settings, for those who manage projects.
+  const canInstall = useAccess().can("projects");
   const isYear = "period" in search.range && search.range.period === "12m";
   if (!neverReceived && activeFilters(search.filters).length > 0) {
     return (
@@ -649,7 +656,9 @@ function NoData({
         <EmptyTitle>{neverReceived ? "No events yet" : "Nothing in this period"}</EmptyTitle>
         <EmptyDescription>
           {neverReceived
-            ? "Install the tracking snippet on your site. Reports appear here as soon as the first pageview arrives."
+            ? canInstall
+              ? "Install the tracking snippet on your site. Reports appear here as soon as the first pageview arrives."
+              : "Reports appear here as soon as the first pageview arrives. An admin installs the tracking snippet from the project's settings."
             : `No pageviews or events arrived${
                 search.environment === DEFAULT_ENVIRONMENT ? "" : ` in ${search.environment}`
               } in this period. Choose a longer one to see earlier data${
@@ -657,7 +666,7 @@ function NoData({
               }.`}
         </EmptyDescription>
       </EmptyHeader>
-      {neverReceived && (
+      {neverReceived && canInstall && (
         <EmptyContent>
           <ButtonLink variant="outline" to="/projects/$projectId/settings" params={{ projectId }}>
             Install the snippet

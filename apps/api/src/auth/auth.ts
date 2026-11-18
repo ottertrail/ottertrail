@@ -46,7 +46,7 @@ export interface AuthOptions {
  * email and password, and sessions stored in PostgreSQL. No plugins.
  *
  * - Nobody can sign up: the owner is created by the setup flow
- *   (auth/setup.ts), and teammates will join by invitation.
+ *   (auth/setup.ts), and teammates will join by invitation (docs/access.md).
  * - Sessions are random tokens in an httpOnly cookie, stored in
  *   dashboard_sessions, so signing out or revoking a session takes effect at
  *   once. They last 7 days and renew while in use.
@@ -84,8 +84,9 @@ export function createAuth({
         updatedAt: "updated_at",
       },
       additionalFields: {
-        // "owner" for the account the setup flow creates. Roles for invited
-        // teammates come later; nothing reads this column yet.
+        // "owner", "admin", or "member" (docs/access.md). Set by Ottertrail's
+        // own code, never by a request; access checks read it from the
+        // database with the user's grants (access/access.ts).
         role: { type: "string", required: true, defaultValue: "member", input: false },
       },
     },
@@ -129,6 +130,14 @@ export function createAuth({
           // Better Auth records the client's IP address on each session.
           // Ottertrail keeps no IP addresses, so it is dropped here.
           before: async (session) => ({ data: { ...session, ipAddress: undefined } }),
+          // For the Members page: when each user last signed in.
+          after: async (session) => {
+            await db
+              .updateTable("dashboard_users")
+              .set({ last_sign_in_at: new Date() })
+              .where("id", "=", session.userId)
+              .execute();
+          },
         },
       },
     },

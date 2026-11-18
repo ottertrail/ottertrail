@@ -3,6 +3,7 @@ import { gunzipSync } from "node:zlib";
 import type { FastifyPluginCallback, FastifyReply, FastifyRequest } from "fastify";
 import type { Kysely } from "kysely";
 
+import { can, type ProjectAccess, requireProjectAccess } from "../access/access.ts";
 import type { Auth } from "../auth/auth.ts";
 import { requireTrustedOrigin } from "../auth/origin.ts";
 import { requireSession } from "../auth/routes.ts";
@@ -11,7 +12,6 @@ import { isStorableText } from "../collection/normalize.ts";
 import type { CollectingProject, ProjectKeyCache } from "../collection/project-keys.ts";
 import { type RateLimit, TokenBucketLimiter } from "../collection/rate-limiter.ts";
 import type { Database } from "../db/schema.ts";
-import { type ProjectAccess, requireProjectAccess } from "../projects/access.ts";
 import type { ObjectStore } from "../storage/object-store.ts";
 import {
   checkSourceMap,
@@ -284,7 +284,8 @@ export const sourceMapRoutes: FastifyPluginCallback<{
   limitBytes: number;
 }> = (app, { db, store, auth, trustedOrigins, limitBytes }, done) => {
   const signedIn = requireSession(auth);
-  const projectAccess = requireProjectAccess(db);
+  const canView = requireProjectAccess(db, { area: "errors", level: "view" });
+  const canManage = requireProjectAccess(db, { area: "errors", level: "manage" });
   const fromDashboard = requireTrustedOrigin(trustedOrigins);
   const params = {
     type: "object",
@@ -301,7 +302,7 @@ export const sourceMapRoutes: FastifyPluginCallback<{
   app.get<{ Params: { id: string }; Querystring: { order?: "newest" | "oldest" } }>(
     "/projects/:id/source-maps",
     {
-      preHandler: [signedIn, projectAccess],
+      preHandler: [signedIn, canView],
       schema: {
         params,
         querystring: {
@@ -312,15 +313,17 @@ export const sourceMapRoutes: FastifyPluginCallback<{
       },
     },
     async (request) => {
-      const { projectId } = accessOf(request);
+      const { projectId, user } = accessOf(request);
       const order = request.query.order ?? "newest";
+      // All projects together: for those who manage projects only (docs/access.md).
+      const showInstance = can(user, "projects");
       const [listed, stored] = await Promise.all([
         listReleases(db, projectId, { order }),
-        storedBytes(db),
+        showInstance ? storedBytes(db) : Promise.resolve(0),
       ]);
       return {
         configured: store !== null,
-        instance: { storedBytes: stored, limitBytes },
+        ...(showInstance ? { instance: { storedBytes: stored, limitBytes } } : {}),
         order,
         releases: listed.releases,
         totalReleases: listed.total,
@@ -330,7 +333,7 @@ export const sourceMapRoutes: FastifyPluginCallback<{
 
   app.get<{ Params: { id: string }; Querystring: { release: string } }>(
     "/projects/:id/source-maps/files",
-    { preHandler: [signedIn, projectAccess], schema: { params, querystring: releaseQuery } },
+    { preHandler: [signedIn, canView], schema: { params, querystring: releaseQuery } },
     async (request) => ({
       release: request.query.release,
       files: await listFiles(db, accessOf(request).projectId, request.query.release),
@@ -340,7 +343,7 @@ export const sourceMapRoutes: FastifyPluginCallback<{
   app.delete<{ Params: { id: string }; Querystring: { release: string } }>(
     "/projects/:id/source-maps",
     {
-      preHandler: [fromDashboard, signedIn, projectAccess],
+      preHandler: [fromDashboard, signedIn, canManage],
       schema: { params, querystring: releaseQuery },
     },
     async (request, reply) => {

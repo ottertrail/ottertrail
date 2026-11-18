@@ -23,6 +23,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { WhenAllowed } from "@/components/when-allowed";
 import { DEFAULT_ENVIRONMENT, type PageRange } from "@/lib/analytics-api";
 import { ApiError } from "@/lib/api";
 import {
@@ -70,21 +71,31 @@ export function ReplayErrorLink({
   const text = `${error.type}${error.message === "" ? "" : `: ${error.message}`}`;
   const environment = replay.environment ?? DEFAULT_ENVIRONMENT;
   return (
-    <Link
-      to="/projects/$projectId/errors/$fingerprint"
-      params={{ projectId, fingerprint: error.fingerprint }}
-      // The error's own day, where it surely has an occurrence.
-      search={{
-        from: dayKey(error.occurredAt, timeZone),
-        to: dayKey(error.occurredAt, timeZone),
-        ...(environment === DEFAULT_ENVIRONMENT ? {} : { env: environment }),
-      }}
-      className="block truncate text-link hover:underline"
-      title={text}
+    <WhenAllowed
+      area="errors"
+      fallback={
+        <span className="block truncate" title={text}>
+          <span className="font-medium">{error.type}</span>
+          {error.message !== "" && `: ${error.message}`}
+        </span>
+      }
     >
-      <span className="font-medium">{error.type}</span>
-      {error.message !== "" && `: ${error.message}`}
-    </Link>
+      <Link
+        to="/projects/$projectId/errors/$fingerprint"
+        params={{ projectId, fingerprint: error.fingerprint }}
+        // The error's own day, where it surely has an occurrence.
+        search={{
+          from: dayKey(error.occurredAt, timeZone),
+          to: dayKey(error.occurredAt, timeZone),
+          ...(environment === DEFAULT_ENVIRONMENT ? {} : { env: environment }),
+        }}
+        className="block truncate text-link hover:underline"
+        title={text}
+      >
+        <span className="font-medium">{error.type}</span>
+        {error.message !== "" && `: ${error.message}`}
+      </Link>
+    </WhenAllowed>
   );
 }
 
@@ -241,20 +252,22 @@ export function ReplaysPage({
                   {filtered
                     ? "Change or clear a filter to see more."
                     : recordingOff
-                      ? "Turn them on in the project's settings, around errors: a page then sends the 30 to 60 seconds before an error, masked in the visitor's browser."
+                      ? "An admin turns them on in the project's settings, around errors: a page then sends the 30 to 60 seconds before an error, masked in the visitor's browser."
                       : `No page sent a replay of an error${environment === DEFAULT_ENVIRONMENT ? "" : ` in ${environment}`} in this period. Replays are kept 30 days.`}
                 </EmptyDescription>
               </EmptyHeader>
               {!filtered && recordingOff && (
-                <EmptyContent>
-                  <ButtonLink
-                    variant="outline"
-                    to="/projects/$projectId/settings"
-                    params={{ projectId }}
-                  >
-                    Open the project&apos;s settings
-                  </ButtonLink>
-                </EmptyContent>
+                <WhenAllowed permission="projects">
+                  <EmptyContent>
+                    <ButtonLink
+                      variant="outline"
+                      to="/projects/$projectId/settings"
+                      params={{ projectId }}
+                    >
+                      Open the project&apos;s settings
+                    </ButtonLink>
+                  </EmptyContent>
+                </WhenAllowed>
               )}
             </Empty>
           ) : (
@@ -310,20 +323,32 @@ export function ReplaysPage({
                       {replay.userId === null ? (
                         <span className="text-ink-subtle">Anonymous</span>
                       ) : (
-                        <Link
-                          to="/projects/$projectId/users/$userId"
-                          params={{ projectId, userId: replay.userId }}
-                          search={
-                            replay.environment === null ||
-                            replay.environment === DEFAULT_ENVIRONMENT
-                              ? {}
-                              : { env: replay.environment }
+                        <WhenAllowed
+                          area="users"
+                          fallback={
+                            <span
+                              className="block truncate font-mono text-xs"
+                              title={replay.userId}
+                            >
+                              {replay.userId}
+                            </span>
                           }
-                          className="block truncate font-mono text-xs text-link hover:underline"
-                          title={replay.userId}
                         >
-                          {replay.userId}
-                        </Link>
+                          <Link
+                            to="/projects/$projectId/users/$userId"
+                            params={{ projectId, userId: replay.userId }}
+                            search={
+                              replay.environment === null ||
+                              replay.environment === DEFAULT_ENVIRONMENT
+                                ? {}
+                                : { env: replay.environment }
+                            }
+                            className="block truncate font-mono text-xs text-link hover:underline"
+                            title={replay.userId}
+                          >
+                            {replay.userId}
+                          </Link>
+                        </WhenAllowed>
                       )}
                     </TableCell>
                     <TableCell

@@ -1,6 +1,7 @@
 import type { FastifyPluginCallback } from "fastify";
 import type { Kysely } from "kysely";
 
+import { type ProjectAccess, requireProjectAccess } from "../access/access.ts";
 import type { Auth } from "../auth/auth.ts";
 import { requireSession } from "../auth/routes.ts";
 import type { ClickHouseClient } from "../clickhouse/clickhouse.ts";
@@ -8,7 +9,6 @@ import type { Reader } from "../clickhouse/query.ts";
 import { clickHouseErrorHandler } from "../clickhouse/route-errors.ts";
 import { environmentOf } from "../collection/environment.ts";
 import type { Database } from "../db/schema.ts";
-import { type ProjectAccess, requireProjectAccess } from "../projects/access.ts";
 import { localDays } from "../reports/reports.ts";
 import { RANGE_PROPERTIES, type RangeQuery, requestDays } from "../reports/routes.ts";
 import { dayIn } from "../visitors/visitor-ids.ts";
@@ -44,14 +44,14 @@ export const speedRoutes: FastifyPluginCallback<{
   now?: () => Date;
 }> = (app, { db, clickhouse, auth, now = () => new Date() }, done) => {
   const signedIn = requireSession(auth);
-  const projectAccess = requireProjectAccess(db);
+  const canView = requireProjectAccess(db, { area: "web_analytics", level: "view" });
   const reader: Reader = { client: clickhouse };
   app.setErrorHandler(clickHouseErrorHandler);
 
   app.get<{ Params: { id: string }; Querystring: RangeQuery & { device?: DeviceType } }>(
     "/projects/:id/speed",
     {
-      preHandler: [signedIn, projectAccess],
+      preHandler: [signedIn, canView],
       schema: {
         params: {
           type: "object",

@@ -1,6 +1,7 @@
 import type { FastifyPluginCallback } from "fastify";
 import type { Kysely } from "kysely";
 
+import { canUse, type ProjectAccess, requireProjectAccess } from "../access/access.ts";
 import type { Auth } from "../auth/auth.ts";
 import { requireSession } from "../auth/routes.ts";
 import type { ClickHouseClient } from "../clickhouse/clickhouse.ts";
@@ -9,7 +10,6 @@ import { clickHouseErrorHandler } from "../clickhouse/route-errors.ts";
 import { ENVIRONMENT_PATTERN, environmentOf } from "../collection/environment.ts";
 import { USER_ID_PATTERN } from "../collection/identity.ts";
 import type { Database } from "../db/schema.ts";
-import { type ProjectAccess, requireProjectAccess } from "../projects/access.ts";
 import { userReplays } from "../replays/list.ts";
 import { replayStatuses } from "../replays/replays.ts";
 import {
@@ -48,7 +48,7 @@ export const userRoutes: FastifyPluginCallback<{
   auth: Auth;
 }> = (app, { db, clickhouse, auth }, done) => {
   const signedIn = requireSession(auth);
-  const projectAccess = requireProjectAccess(db);
+  const canView = requireProjectAccess(db, { area: "users", level: "view" });
   const reader: Reader = { client: clickhouse };
   app.setErrorHandler(clickHouseErrorHandler);
 
@@ -58,7 +58,7 @@ export const userRoutes: FastifyPluginCallback<{
   }>(
     "/projects/:id/users",
     {
-      preHandler: [signedIn, projectAccess],
+      preHandler: [signedIn, canView],
       schema: {
         params: {
           type: "object",
@@ -107,7 +107,7 @@ export const userRoutes: FastifyPluginCallback<{
   }>(
     "/projects/:id/users/:userId",
     {
-      preHandler: [signedIn, projectAccess],
+      preHandler: [signedIn, canView],
       schema: {
         params: {
           type: "object",
@@ -162,13 +162,17 @@ export const userRoutes: FastifyPluginCallback<{
         });
       }
       const current = new Date();
-      const [statuses, replays] = await Promise.all([
-        replayStatuses(db, projectId, found.activity, current),
-        // The user's latest replays, on the first page only.
-        before === undefined
-          ? userReplays(db, projectId, request.params.userId, environment)
-          : Promise.resolve([]),
-      ]);
+      // Replays only for those who may watch them (docs/access.md).
+      const showReplays = canUse(accessOf(request).user, "replays", "view");
+      const [statuses, replays] = showReplays
+        ? await Promise.all([
+            replayStatuses(db, projectId, found.activity, current),
+            // The user's latest replays, on the first page only.
+            before === undefined
+              ? userReplays(db, projectId, request.params.userId, environment)
+              : Promise.resolve([]),
+          ])
+        : [new Map<string, never>(), []];
       return {
         timeZone,
         environment,
@@ -176,7 +180,7 @@ export const userRoutes: FastifyPluginCallback<{
         activity: found.activity.map(({ replayId, ...activity }) => ({
           ...activity,
           replay:
-            replayId === null
+            replayId === null || !showReplays
               ? null
               : { id: replayId, status: statuses.get(replayId) ?? "missing" },
         })),

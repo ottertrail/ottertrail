@@ -1,6 +1,7 @@
 import Fastify, { type FastifyServerOptions } from "fastify";
 import type { Kysely } from "kysely";
 
+import { meRoutes } from "./access/routes.ts";
 import { alertRoutes } from "./alerts/routes.ts";
 import type { Auth } from "./auth/auth.ts";
 import { betterAuthRoutes, setupRoutes } from "./auth/routes.ts";
@@ -220,6 +221,7 @@ export function buildApp({
   if (dashboard !== undefined) {
     app.decorateRequest("dashboardUser", null);
     app.decorateRequest("projectAccess", null);
+    app.decorateRequest("userAccess", null);
     app.register(betterAuthRoutes, {
       prefix: "/api",
       auth: dashboard.auth,
@@ -232,6 +234,7 @@ export function buildApp({
       defaultTimeZone: dashboard.defaultTimeZone,
       ...(dashboard.setupLimit === undefined ? {} : { setupLimit: dashboard.setupLimit }),
     });
+    app.register(meRoutes, { prefix: "/api", db, auth: dashboard.auth });
     app.register(settingsRoutes, {
       prefix: "/api",
       db,

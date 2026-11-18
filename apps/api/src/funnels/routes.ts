@@ -1,6 +1,7 @@
 import type { FastifyPluginCallback, FastifyReply } from "fastify";
 import type { Kysely } from "kysely";
 
+import { type ProjectAccess, requireProjectAccess } from "../access/access.ts";
 import type { Auth } from "../auth/auth.ts";
 import { requireTrustedOrigin } from "../auth/origin.ts";
 import { requireSession } from "../auth/routes.ts";
@@ -15,7 +16,6 @@ import {
   INVALID_STEPS,
   MAX_STEPS,
 } from "../product/funnel.ts";
-import { type ProjectAccess, requireProjectAccess } from "../projects/access.ts";
 import {
   createSavedFunnel,
   deleteSavedFunnel,
@@ -110,7 +110,8 @@ export const savedFunnelRoutes: FastifyPluginCallback<{
   trustedOrigins: readonly string[];
 }> = (app, { db, auth, trustedOrigins }, done) => {
   const signedIn = requireSession(auth);
-  const projectAccess = requireProjectAccess(db);
+  const canView = requireProjectAccess(db, { area: "product_analytics", level: "view" });
+  const canManage = requireProjectAccess(db, { area: "product_analytics", level: "manage" });
   const fromDashboard = requireTrustedOrigin(trustedOrigins);
   const params = {
     type: "object",
@@ -128,14 +129,14 @@ export const savedFunnelRoutes: FastifyPluginCallback<{
 
   app.get<{ Params: { id: string } }>(
     "/projects/:id/funnels",
-    { preHandler: [signedIn, projectAccess], schema: { params } },
+    { preHandler: [signedIn, canView], schema: { params } },
     async (request) => ({ funnels: await listSavedFunnels(db, accessOf(request).projectId) }),
   );
 
   app.post<{ Params: { id: string }; Body: FunnelBody }>(
     "/projects/:id/funnels",
     {
-      preHandler: [fromDashboard, signedIn, projectAccess],
+      preHandler: [fromDashboard, signedIn, canManage],
       schema: { params, body: FUNNEL_BODY },
     },
     async (request, reply) => {
@@ -164,7 +165,7 @@ export const savedFunnelRoutes: FastifyPluginCallback<{
   }>(
     "/projects/:id/funnels/:funnelId",
     {
-      preHandler: [fromDashboard, signedIn, projectAccess],
+      preHandler: [fromDashboard, signedIn, canManage],
       schema: {
         params: funnelParams,
         body: {
@@ -214,7 +215,7 @@ export const savedFunnelRoutes: FastifyPluginCallback<{
 
   app.delete<{ Params: { id: string; funnelId: string } }>(
     "/projects/:id/funnels/:funnelId",
-    { preHandler: [fromDashboard, signedIn, projectAccess], schema: { params: funnelParams } },
+    { preHandler: [fromDashboard, signedIn, canManage], schema: { params: funnelParams } },
     async (request, reply) => {
       const deleted = await deleteSavedFunnel(
         db,

@@ -10,6 +10,7 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "@/components/ui/empty";
+import { WhenAllowed } from "@/components/when-allowed";
 
 /**
  * The environment variables every OpenTelemetry SDK reads. The secret key
@@ -63,14 +64,16 @@ export function SendTelemetry({
           <code className="font-mono">sk_…</code> with the secret key, and name your service and
           environment.
         </p>
-        <ButtonLink
-          variant="outline"
-          className="self-center"
-          to="/projects/$projectId/settings"
-          params={{ projectId }}
-        >
-          Project settings
-        </ButtonLink>
+        <WhenAllowed permission="projects">
+          <ButtonLink
+            variant="outline"
+            className="self-center"
+            to="/projects/$projectId/settings"
+            params={{ projectId }}
+          >
+            Project settings
+          </ButtonLink>
+        </WhenAllowed>
       </EmptyContent>
     </Empty>
   );

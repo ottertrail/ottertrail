@@ -22,6 +22,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { WhenAllowed } from "@/components/when-allowed";
 import { DEFAULT_ENVIRONMENT, type PageRange } from "@/lib/analytics-api";
 import { ApiError } from "@/lib/api";
 import {
@@ -123,16 +124,18 @@ function ServiceCard({
               service.service
             )}
           </h3>
-          <Link
-            to="/projects/$projectId/alerts"
-            params={{ projectId }}
-            search={addRuleSearch(environment, service.service)}
-            className="flex items-center gap-1 text-sm font-normal text-link hover:underline"
-          >
-            <BellPlusIcon aria-hidden="true" className="size-4" />
-            Add an alert rule
-            <span className="sr-only"> for {service.service}</span>
-          </Link>
+          <WhenAllowed area="uptime_alerts" level="manage">
+            <Link
+              to="/projects/$projectId/alerts"
+              params={{ projectId }}
+              search={addRuleSearch(environment, service.service)}
+              className="flex items-center gap-1 text-sm font-normal text-link hover:underline"
+            >
+              <BellPlusIcon aria-hidden="true" className="size-4" />
+              Add an alert rule
+              <span className="sr-only"> for {service.service}</span>
+            </Link>
+          </WhenAllowed>
         </CardTitle>
         <CardDescription className="flex flex-col gap-2">
           <span>
@@ -223,16 +226,18 @@ function ServiceCard({
                     </Link>
                     {/* A route without a name cannot be named in a rule. */}
                     {isNamedRoute(route.route) && (
-                      <Link
-                        to="/projects/$projectId/alerts"
-                        params={{ projectId }}
-                        search={addRuleSearch(environment, service.service, route.route)}
-                        aria-label={`Add an alert rule for ${route.route} in ${service.service}`}
-                        title="Add an alert rule"
-                        className="inline-flex size-7 items-center justify-center rounded-md text-ink-subtle hover:bg-muted hover:text-ink"
-                      >
-                        <BellPlusIcon aria-hidden="true" className="size-4" />
-                      </Link>
+                      <WhenAllowed area="uptime_alerts" level="manage">
+                        <Link
+                          to="/projects/$projectId/alerts"
+                          params={{ projectId }}
+                          search={addRuleSearch(environment, service.service, route.route)}
+                          aria-label={`Add an alert rule for ${route.route} in ${service.service}`}
+                          title="Add an alert rule"
+                          className="inline-flex size-7 items-center justify-center rounded-md text-ink-subtle hover:bg-muted hover:text-ink"
+                        >
+                          <BellPlusIcon aria-hidden="true" className="size-4" />
+                        </Link>
+                      </WhenAllowed>
                     )}
                   </span>
                 </TableCell>

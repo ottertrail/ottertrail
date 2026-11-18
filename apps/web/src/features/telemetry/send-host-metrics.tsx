@@ -10,6 +10,7 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "@/components/ui/empty";
+import { WhenAllowed } from "@/components/when-allowed";
 
 /**
  * A minimal OpenTelemetry Collector configuration for host metrics: the
@@ -118,14 +119,16 @@ export function SendHostMetrics({
           <code className="font-mono">resourcedetection</code>, and{" "}
           <code className="font-mono">otlphttp</code>.
         </p>
-        <ButtonLink
-          variant="outline"
-          className="self-center"
-          to="/projects/$projectId/settings"
-          params={{ projectId }}
-        >
-          Project settings
-        </ButtonLink>
+        <WhenAllowed permission="projects">
+          <ButtonLink
+            variant="outline"
+            className="self-center"
+            to="/projects/$projectId/settings"
+            params={{ projectId }}
+          >
+            Project settings
+          </ButtonLink>
+        </WhenAllowed>
       </EmptyContent>
     </Empty>
   );

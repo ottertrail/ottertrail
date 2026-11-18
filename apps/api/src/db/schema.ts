@@ -373,10 +373,12 @@ export interface DashboardUsersTable {
   email_verified: ColumnType<boolean, boolean | undefined, boolean>;
   image: Nullable<string>;
   /**
-   * "owner" for the one account the setup flow creates, the owner of the
-   * instance, who may change its settings; "member" otherwise.
+   * "owner" for the one account that owns the instance (the setup flow
+   * creates it); "admin" or "member" otherwise (docs/access.md).
    */
-  role: ColumnType<"owner" | "member", "owner" | "member" | undefined, "owner" | "member">;
+  role: ColumnType<Role, Role | undefined, Role>;
+  /** When the user last signed in; null before the first time. */
+  last_sign_in_at: Nullable<Date>;
   created_at: DatabaseDefault<Date>;
   updated_at: ColumnType<Date, Date | undefined, Date>;
 }
@@ -403,6 +405,60 @@ export interface DashboardAccountsTable {
   password: Nullable<string>;
   created_at: DatabaseDefault<Date>;
   updated_at: ColumnType<Date, Date | undefined, Date>;
+}
+
+/** A dashboard user's role (docs/access.md). */
+export type Role = "owner" | "admin" | "member";
+/** How far a member reaches into one area: an area with nothing to change has no "manage". */
+export type AreaLevel = "none" | "view" | "manage";
+
+/** The areas of a member's access, or of an invitation's, one column each. */
+interface AreaColumns {
+  web_analytics: ColumnType<"none" | "view", "none" | "view" | undefined, "none" | "view">;
+  product_analytics: ColumnType<AreaLevel, AreaLevel | undefined, AreaLevel>;
+  errors: ColumnType<AreaLevel, AreaLevel | undefined, AreaLevel>;
+  replays: ColumnType<"none" | "view", "none" | "view" | undefined, "none" | "view">;
+  users: ColumnType<"none" | "view", "none" | "view" | undefined, "none" | "view">;
+  monitoring: ColumnType<"none" | "view", "none" | "view" | undefined, "none" | "view">;
+  uptime_alerts: ColumnType<AreaLevel, AreaLevel | undefined, AreaLevel>;
+}
+
+/** What a member may reach. The owner and admins have no row: they reach everything. */
+export interface DashboardMemberAccessTable extends AreaColumns {
+  user_id: string;
+  /** Every project, including those created later; otherwise dashboard_member_projects. */
+  all_projects: ColumnType<boolean, boolean | undefined, boolean>;
+}
+
+/** The projects a member without all_projects may reach. */
+export interface DashboardMemberProjectsTable {
+  user_id: string;
+  project_id: string;
+}
+
+/** A pending invitation (docs/access.md). Only a SHA-256 hash of its token is kept. */
+export interface DashboardInvitationsTable extends AreaColumns {
+  id: ColumnType<string, string | undefined, never>;
+  token_hash: ColumnType<Buffer, Buffer, Buffer>;
+  /** Lowercase; one invitation per email. */
+  email: string;
+  role: "admin" | "member";
+  all_projects: ColumnType<boolean, boolean | undefined, boolean>;
+  /** Not a foreign key: accepting drops the projects deleted since. */
+  project_ids: ColumnType<string[], string[] | undefined, string[]>;
+  invited_by: string;
+  expires_at: Date;
+  created_at: ColumnType<Date, Date | undefined, Date>;
+}
+
+/** A one-time link that sets a user's password. One per user; a hash only. */
+export interface DashboardPasswordResetsTable {
+  user_id: string;
+  token_hash: ColumnType<Buffer, Buffer, Buffer>;
+  expires_at: Date;
+  /** Null when the server's command made it, or once its maker is deleted. */
+  created_by: Nullable<string>;
+  created_at: ColumnType<Date, Date | undefined, Date>;
 }
 
 /** One-time links that create the owner. Only a SHA-256 hash of each token is kept. */
@@ -436,4 +492,8 @@ export interface Database {
   dashboard_sessions: DashboardSessionsTable;
   dashboard_accounts: DashboardAccountsTable;
   owner_setup_tokens: OwnerSetupTokensTable;
+  dashboard_member_access: DashboardMemberAccessTable;
+  dashboard_member_projects: DashboardMemberProjectsTable;
+  dashboard_invitations: DashboardInvitationsTable;
+  dashboard_password_resets: DashboardPasswordResetsTable;
 }

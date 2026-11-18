@@ -22,6 +22,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { useAccess } from "@/lib/access";
 import { ApiError } from "@/lib/api";
 import { type Check, checksQuery } from "@/lib/uptime-api";
 
@@ -55,13 +56,14 @@ function LatestCell({ check }: { check: Check }) {
 export function UptimePage({ projectId }: { projectId: string }) {
   const list = useQuery(checksQuery(projectId));
   const [adding, setAdding] = React.useState(false);
+  const canManage = useAccess().canUse("uptime_alerts", "manage");
 
   if (list.error instanceof ApiError && list.error.status === 404) {
     return <NoSuchProject />;
   }
   const data = list.data;
   const full = data !== undefined && data.checks.length >= data.maxChecks;
-  const addButton = (
+  const addButton = canManage && (
     <Button onClick={() => setAdding(true)} disabled={full}>
       <PlusIcon aria-hidden="true" />
       Add check
@@ -106,7 +108,7 @@ export function UptimePage({ projectId }: { projectId: string }) {
               marks it down when it fails, so you see when it stopped answering and for how long.
             </EmptyDescription>
           </EmptyHeader>
-          <EmptyContent>{addButton}</EmptyContent>
+          {canManage && <EmptyContent>{addButton}</EmptyContent>}
         </Empty>
       ) : (
         <>

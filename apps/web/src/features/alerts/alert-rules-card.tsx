@@ -13,6 +13,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useAccess } from "@/lib/access";
 import { type Rule, type RuleKind, rulesQuery, watchesCheck, watchesError } from "@/lib/alerts-api";
 import { checksQuery } from "@/lib/uptime-api";
 
@@ -25,11 +26,13 @@ export type Watched = { checkId: string } | { fingerprint: string; environment: 
 /**
  * The alert rules that watch a check or an error group, with a link that
  * adds one, the form filled in with it: "check down" for a check, a spike
- * of this group in this environment for an error.
+ * of this group in this environment for an error. Shown to those with
+ * uptime and alerts; the link to those who manage it (docs/access.md).
  */
 export function AlertRulesCard({ projectId, watched }: { projectId: string; watched: Watched }) {
   const rules = useQuery(rulesQuery(projectId));
   const checks = useQuery(checksQuery(projectId));
+  const canAdd = useAccess().canUse("uptime_alerts", "manage");
   const watching = (rules.data?.rules ?? []).filter((rule: Rule) =>
     "checkId" in watched
       ? watchesCheck(rule, watched.checkId)
@@ -51,18 +54,20 @@ export function AlertRulesCard({ projectId, watched }: { projectId: string; watc
             ? "The rules that tell your team when this check goes down or its certificate nears its end."
             : "The rules that tell your team when this error comes back after being resolved, or spikes."}
         </CardDescription>
-        <CardAction>
-          <ButtonLink
-            variant="outline"
-            size="sm"
-            to="/projects/$projectId/alerts"
-            params={{ projectId }}
-            search={search}
-          >
-            <BellPlusIcon aria-hidden="true" />
-            Add an alert rule
-          </ButtonLink>
-        </CardAction>
+        {canAdd && (
+          <CardAction>
+            <ButtonLink
+              variant="outline"
+              size="sm"
+              to="/projects/$projectId/alerts"
+              params={{ projectId }}
+              search={search}
+            >
+              <BellPlusIcon aria-hidden="true" />
+              Add an alert rule
+            </ButtonLink>
+          </CardAction>
+        )}
       </CardHeader>
       <CardContent>
         {rules.isError ? (

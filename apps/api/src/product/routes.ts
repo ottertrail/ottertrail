@@ -1,6 +1,7 @@
 import type { FastifyPluginCallback } from "fastify";
 import type { Kysely } from "kysely";
 
+import { type ProjectAccess, requireProjectAccess } from "../access/access.ts";
 import type { Auth } from "../auth/auth.ts";
 import { requireSession } from "../auth/routes.ts";
 import type { ClickHouseClient } from "../clickhouse/clickhouse.ts";
@@ -9,7 +10,6 @@ import { clickHouseErrorHandler } from "../clickhouse/route-errors.ts";
 import { environmentOf } from "../collection/environment.ts";
 import { EVENT_NAME_SCHEMA } from "../collection/routes.ts";
 import type { Database } from "../db/schema.ts";
-import { type ProjectAccess, requireProjectAccess } from "../projects/access.ts";
 import { localDays } from "../reports/reports.ts";
 import { RANGE_PROPERTIES, type RangeQuery, requestDays } from "../reports/routes.ts";
 import { dayIn } from "../visitors/visitor-ids.ts";
@@ -105,7 +105,7 @@ export const productRoutes: FastifyPluginCallback<{
   now?: () => Date;
 }> = (app, { db, clickhouse, auth, now = () => new Date() }, done) => {
   const signedIn = requireSession(auth);
-  const projectAccess = requireProjectAccess(db);
+  const canView = requireProjectAccess(db, { area: "product_analytics", level: "view" });
   const reader: Reader = { client: clickhouse };
   app.setErrorHandler(clickHouseErrorHandler);
 
@@ -133,7 +133,7 @@ export const productRoutes: FastifyPluginCallback<{
   app.get<{ Params: { id: string }; Querystring: RangeQuery }>(
     "/projects/:id/events",
     {
-      preHandler: [signedIn, projectAccess],
+      preHandler: [signedIn, canView],
       schema: {
         params: {
           type: "object",
@@ -161,7 +161,7 @@ export const productRoutes: FastifyPluginCallback<{
   }>(
     "/projects/:id/events/:name",
     {
-      preHandler: [signedIn, projectAccess],
+      preHandler: [signedIn, canView],
       schema: {
         params: {
           type: "object",
@@ -208,7 +208,7 @@ export const productRoutes: FastifyPluginCallback<{
   }>(
     "/projects/:id/funnel",
     {
-      preHandler: [signedIn, projectAccess],
+      preHandler: [signedIn, canView],
       schema: {
         params: {
           type: "object",
@@ -249,7 +249,7 @@ export const productRoutes: FastifyPluginCallback<{
   app.get<{ Params: { id: string }; Querystring: RangeQuery }>(
     "/projects/:id/retention",
     {
-      preHandler: [signedIn, projectAccess],
+      preHandler: [signedIn, canView],
       schema: {
         params: {
           type: "object",

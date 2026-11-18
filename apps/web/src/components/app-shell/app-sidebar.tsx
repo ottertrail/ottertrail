@@ -47,15 +47,17 @@ import {
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
 import { Skeleton } from "@/components/ui/skeleton";
+import { canOpen, meQuery, useAccess } from "@/lib/access";
 import { projectsQuery } from "@/lib/projects-api";
-import { settingsQuery } from "@/lib/settings-api";
 
 /** The workspace level: things above any one project, under the instance's name. */
 function WorkspaceMenu() {
   const matchRoute = useMatchRoute();
-  const settings = useQuery(settingsQuery());
-  // A neutral label until the settings load, or if they cannot.
-  const label = settings.data?.name ?? "Workspace";
+  const { me, can } = useAccess();
+  // A neutral label until it loads, or if it cannot.
+  const label = me?.instance.name ?? "Workspace";
+  // The Settings page holds the instance's settings (the owner) and the channels (admins too).
+  const showSettings = can("settings") || can("channels");
   return (
     <SidebarGroup>
       <SidebarGroupLabel className="truncate">{label}</SidebarGroupLabel>
@@ -80,16 +82,18 @@ function WorkspaceMenu() {
             <span>Design system</span>
           </SidebarMenuButton>
         </SidebarMenuItem>
-        <SidebarMenuItem>
-          <SidebarMenuButton
-            render={<Link to="/settings" />}
-            isActive={matchRoute({ to: "/settings" }) !== false}
-            tooltip="Settings"
-          >
-            <SettingsIcon />
-            <span>Settings</span>
-          </SidebarMenuButton>
-        </SidebarMenuItem>
+        {showSettings && (
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              render={<Link to="/settings" />}
+              isActive={matchRoute({ to: "/settings" }) !== false}
+              tooltip="Settings"
+            >
+              <SettingsIcon />
+              <span>Settings</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        )}
       </SidebarMenu>
     </SidebarGroup>
   );
@@ -169,6 +173,8 @@ function ProjectSwitcher({ projectId }: { projectId: string }) {
 /** Inside one project: its modules, then its settings, in one list. */
 function ProjectMenu({ projectId }: { projectId: string }) {
   const matchRoute = useMatchRoute();
+  // Only the areas this user has, and the settings for those who manage projects.
+  const me = useQuery(meQuery()).data;
   return (
     <>
       <SidebarGroup>
@@ -185,227 +191,260 @@ function ProjectMenu({ projectId }: { projectId: string }) {
       <SidebarGroup>
         <SidebarGroupLabel>Project</SidebarGroupLabel>
         <SidebarMenu>
-          <SidebarMenuItem>
-            <SidebarMenuButton
-              render={<Link to="/projects/$projectId/web-analytics" params={{ projectId }} />}
-              isActive={
-                matchRoute({ to: "/projects/$projectId/web-analytics", params: { projectId } }) !==
-                false
-              }
-              tooltip="Web analytics"
-            >
-              <ChartLineIcon />
-              <span>Web analytics</span>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-          <SidebarMenuItem>
-            <SidebarMenuButton
-              render={<Link to="/projects/$projectId/speed" params={{ projectId }} />}
-              isActive={
-                matchRoute({ to: "/projects/$projectId/speed", params: { projectId } }) !== false
-              }
-              tooltip="Speed"
-            >
-              <GaugeIcon />
-              <span>Speed</span>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-          <SidebarMenuItem>
-            <SidebarMenuButton
-              render={<Link to="/projects/$projectId/users" params={{ projectId }} />}
-              isActive={
-                matchRoute({
-                  to: "/projects/$projectId/users",
-                  params: { projectId },
-                  fuzzy: true,
-                }) !== false
-              }
-              tooltip="Users"
-            >
-              <UsersIcon />
-              <span>Users</span>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-          <SidebarMenuItem>
-            <SidebarMenuButton
-              render={<Link to="/projects/$projectId/errors" params={{ projectId }} />}
-              isActive={
-                matchRoute({
-                  to: "/projects/$projectId/errors",
-                  params: { projectId },
-                  fuzzy: true,
-                }) !== false
-              }
-              tooltip="Errors"
-            >
-              <BugIcon />
-              <span>Errors</span>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-          <SidebarMenuItem>
-            <SidebarMenuButton
-              render={<Link to="/projects/$projectId/replays" params={{ projectId }} />}
-              isActive={
-                matchRoute({
-                  to: "/projects/$projectId/replays",
-                  params: { projectId },
-                  fuzzy: true,
-                }) !== false
-              }
-              tooltip="Replays"
-            >
-              <FilmIcon />
-              <span>Replays</span>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-          <SidebarMenuItem>
-            <SidebarMenuButton
-              render={<Link to="/projects/$projectId/traces" params={{ projectId }} />}
-              isActive={
-                matchRoute({
-                  to: "/projects/$projectId/traces",
-                  params: { projectId },
-                  fuzzy: true,
-                }) !== false
-              }
-              tooltip="Traces"
-            >
-              <WaypointsIcon />
-              <span>Traces</span>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-          <SidebarMenuItem>
-            <SidebarMenuButton
-              render={<Link to="/projects/$projectId/logs" params={{ projectId }} />}
-              isActive={
-                matchRoute({ to: "/projects/$projectId/logs", params: { projectId } }) !== false
-              }
-              tooltip="Logs"
-            >
-              <ScrollTextIcon />
-              <span>Logs</span>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-          <SidebarMenuItem>
-            <SidebarMenuButton
-              render={<Link to="/projects/$projectId/metrics" params={{ projectId }} />}
-              isActive={
-                matchRoute({
-                  to: "/projects/$projectId/metrics",
-                  params: { projectId },
-                  fuzzy: true,
-                }) !== false
-              }
-              tooltip="Metrics"
-            >
-              <ActivityIcon />
-              <span>Metrics</span>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-          <SidebarMenuItem>
-            <SidebarMenuButton
-              render={<Link to="/projects/$projectId/services" params={{ projectId }} />}
-              isActive={
-                matchRoute({
-                  to: "/projects/$projectId/services",
-                  params: { projectId },
-                  fuzzy: true,
-                }) !== false
-              }
-              tooltip="Services"
-            >
-              <ServerIcon />
-              <span>Services</span>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-          <SidebarMenuItem>
-            <SidebarMenuButton
-              render={<Link to="/projects/$projectId/databases" params={{ projectId }} />}
-              isActive={
-                matchRoute({
-                  to: "/projects/$projectId/databases",
-                  params: { projectId },
-                  fuzzy: true,
-                }) !== false
-              }
-              tooltip="Databases"
-            >
-              <DatabaseIcon />
-              <span>Databases</span>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-          <SidebarMenuItem>
-            <SidebarMenuButton
-              render={<Link to="/projects/$projectId/hosts" params={{ projectId }} />}
-              isActive={
-                matchRoute({
-                  to: "/projects/$projectId/hosts",
-                  params: { projectId },
-                  fuzzy: true,
-                }) !== false
-              }
-              tooltip="Hosts"
-            >
-              <HardDriveIcon />
-              <span>Hosts</span>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-          <SidebarMenuItem>
-            <SidebarMenuButton
-              render={<Link to="/projects/$projectId/uptime" params={{ projectId }} />}
-              isActive={
-                matchRoute({
-                  to: "/projects/$projectId/uptime",
-                  params: { projectId },
-                  fuzzy: true,
-                }) !== false
-              }
-              tooltip="Uptime"
-            >
-              <HeartPulseIcon />
-              <span>Uptime</span>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-          <SidebarMenuItem>
-            <SidebarMenuButton
-              render={<Link to="/projects/$projectId/alerts" params={{ projectId }} />}
-              isActive={
-                matchRoute({ to: "/projects/$projectId/alerts", params: { projectId } }) !== false
-              }
-              tooltip="Alerts"
-            >
-              <BellIcon />
-              <span>Alerts</span>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-          <SidebarMenuItem>
-            <SidebarMenuButton
-              render={<Link to="/projects/$projectId/product/events" params={{ projectId }} />}
-              isActive={
-                matchRoute({
-                  to: "/projects/$projectId/product",
-                  params: { projectId },
-                  fuzzy: true,
-                }) !== false
-              }
-              tooltip="Product analytics"
-            >
-              <ChartColumnIcon />
-              <span>Product analytics</span>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-          <SidebarMenuItem>
-            <SidebarMenuButton
-              render={<Link to="/projects/$projectId/settings" params={{ projectId }} />}
-              isActive={
-                matchRoute({ to: "/projects/$projectId/settings", params: { projectId } }) !== false
-              }
-              tooltip="Settings"
-            >
-              <SettingsIcon />
-              <span>Settings</span>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
+          {canOpen(me, "web_analytics") && (
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                render={<Link to="/projects/$projectId/web-analytics" params={{ projectId }} />}
+                isActive={
+                  matchRoute({
+                    to: "/projects/$projectId/web-analytics",
+                    params: { projectId },
+                  }) !== false
+                }
+                tooltip="Web analytics"
+              >
+                <ChartLineIcon />
+                <span>Web analytics</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          )}
+          {canOpen(me, "web_analytics") && (
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                render={<Link to="/projects/$projectId/speed" params={{ projectId }} />}
+                isActive={
+                  matchRoute({ to: "/projects/$projectId/speed", params: { projectId } }) !== false
+                }
+                tooltip="Speed"
+              >
+                <GaugeIcon />
+                <span>Speed</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          )}
+          {canOpen(me, "users") && (
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                render={<Link to="/projects/$projectId/users" params={{ projectId }} />}
+                isActive={
+                  matchRoute({
+                    to: "/projects/$projectId/users",
+                    params: { projectId },
+                    fuzzy: true,
+                  }) !== false
+                }
+                tooltip="Users"
+              >
+                <UsersIcon />
+                <span>Users</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          )}
+          {canOpen(me, "errors") && (
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                render={<Link to="/projects/$projectId/errors" params={{ projectId }} />}
+                isActive={
+                  matchRoute({
+                    to: "/projects/$projectId/errors",
+                    params: { projectId },
+                    fuzzy: true,
+                  }) !== false
+                }
+                tooltip="Errors"
+              >
+                <BugIcon />
+                <span>Errors</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          )}
+          {canOpen(me, "replays") && (
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                render={<Link to="/projects/$projectId/replays" params={{ projectId }} />}
+                isActive={
+                  matchRoute({
+                    to: "/projects/$projectId/replays",
+                    params: { projectId },
+                    fuzzy: true,
+                  }) !== false
+                }
+                tooltip="Replays"
+              >
+                <FilmIcon />
+                <span>Replays</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          )}
+          {canOpen(me, "monitoring") && (
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                render={<Link to="/projects/$projectId/traces" params={{ projectId }} />}
+                isActive={
+                  matchRoute({
+                    to: "/projects/$projectId/traces",
+                    params: { projectId },
+                    fuzzy: true,
+                  }) !== false
+                }
+                tooltip="Traces"
+              >
+                <WaypointsIcon />
+                <span>Traces</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          )}
+          {canOpen(me, "monitoring") && (
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                render={<Link to="/projects/$projectId/logs" params={{ projectId }} />}
+                isActive={
+                  matchRoute({ to: "/projects/$projectId/logs", params: { projectId } }) !== false
+                }
+                tooltip="Logs"
+              >
+                <ScrollTextIcon />
+                <span>Logs</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          )}
+          {canOpen(me, "monitoring") && (
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                render={<Link to="/projects/$projectId/metrics" params={{ projectId }} />}
+                isActive={
+                  matchRoute({
+                    to: "/projects/$projectId/metrics",
+                    params: { projectId },
+                    fuzzy: true,
+                  }) !== false
+                }
+                tooltip="Metrics"
+              >
+                <ActivityIcon />
+                <span>Metrics</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          )}
+          {canOpen(me, "monitoring") && (
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                render={<Link to="/projects/$projectId/services" params={{ projectId }} />}
+                isActive={
+                  matchRoute({
+                    to: "/projects/$projectId/services",
+                    params: { projectId },
+                    fuzzy: true,
+                  }) !== false
+                }
+                tooltip="Services"
+              >
+                <ServerIcon />
+                <span>Services</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          )}
+          {canOpen(me, "monitoring") && (
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                render={<Link to="/projects/$projectId/databases" params={{ projectId }} />}
+                isActive={
+                  matchRoute({
+                    to: "/projects/$projectId/databases",
+                    params: { projectId },
+                    fuzzy: true,
+                  }) !== false
+                }
+                tooltip="Databases"
+              >
+                <DatabaseIcon />
+                <span>Databases</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          )}
+          {canOpen(me, "monitoring") && (
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                render={<Link to="/projects/$projectId/hosts" params={{ projectId }} />}
+                isActive={
+                  matchRoute({
+                    to: "/projects/$projectId/hosts",
+                    params: { projectId },
+                    fuzzy: true,
+                  }) !== false
+                }
+                tooltip="Hosts"
+              >
+                <HardDriveIcon />
+                <span>Hosts</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          )}
+          {canOpen(me, "uptime_alerts") && (
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                render={<Link to="/projects/$projectId/uptime" params={{ projectId }} />}
+                isActive={
+                  matchRoute({
+                    to: "/projects/$projectId/uptime",
+                    params: { projectId },
+                    fuzzy: true,
+                  }) !== false
+                }
+                tooltip="Uptime"
+              >
+                <HeartPulseIcon />
+                <span>Uptime</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          )}
+          {canOpen(me, "uptime_alerts") && (
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                render={<Link to="/projects/$projectId/alerts" params={{ projectId }} />}
+                isActive={
+                  matchRoute({ to: "/projects/$projectId/alerts", params: { projectId } }) !== false
+                }
+                tooltip="Alerts"
+              >
+                <BellIcon />
+                <span>Alerts</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          )}
+          {canOpen(me, "product_analytics") && (
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                render={<Link to="/projects/$projectId/product/events" params={{ projectId }} />}
+                isActive={
+                  matchRoute({
+                    to: "/projects/$projectId/product",
+                    params: { projectId },
+                    fuzzy: true,
+                  }) !== false
+                }
+                tooltip="Product analytics"
+              >
+                <ChartColumnIcon />
+                <span>Product analytics</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          )}
+          {canOpen(me, "project_settings") && (
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                render={<Link to="/projects/$projectId/settings" params={{ projectId }} />}
+                isActive={
+                  matchRoute({ to: "/projects/$projectId/settings", params: { projectId } }) !==
+                  false
+                }
+                tooltip="Settings"
+              >
+                <SettingsIcon />
+                <span>Settings</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          )}
         </SidebarMenu>
       </SidebarGroup>
     </>

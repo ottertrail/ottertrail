@@ -3,13 +3,13 @@ import { Buffer } from "node:buffer";
 import type { FastifyPluginCallback } from "fastify";
 import type { Kysely } from "kysely";
 
+import { type ProjectAccess, requireProjectAccess } from "../access/access.ts";
 import type { Auth } from "../auth/auth.ts";
 import { requireSession } from "../auth/routes.ts";
 import type { ClickHouseClient } from "../clickhouse/clickhouse.ts";
 import { clickHouseErrorHandler } from "../clickhouse/route-errors.ts";
 import { ENVIRONMENT_PATTERN, environmentOf } from "../collection/environment.ts";
 import type { Database } from "../db/schema.ts";
-import { type ProjectAccess, requireProjectAccess } from "../projects/access.ts";
 import { RANGE_PROPERTIES, type RangeQuery } from "../reports/routes.ts";
 import { DashboardQueryLimiter, dashboardReader } from "./dashboard-limit.ts";
 import {
@@ -190,7 +190,7 @@ export const telemetryDashboardRoutes: FastifyPluginCallback<{
   done,
 ) => {
   const signedIn = requireSession(auth);
-  const projectAccess = requireProjectAccess(db);
+  const canView = requireProjectAccess(db, { area: "monitoring", level: "view" });
   const readerOf = (reply: Parameters<typeof dashboardReader>[2]) =>
     dashboardReader(clickhouse, limiter, reply);
   app.setErrorHandler(clickHouseErrorHandler);
@@ -212,7 +212,7 @@ export const telemetryDashboardRoutes: FastifyPluginCallback<{
   app.get<{ Params: { id: string }; Querystring: TracesQuery }>(
     "/projects/:id/traces",
     {
-      preHandler: [signedIn, projectAccess],
+      preHandler: [signedIn, canView],
       schema: {
         params: PARAMS,
         querystring: {
@@ -250,7 +250,7 @@ export const telemetryDashboardRoutes: FastifyPluginCallback<{
   app.get<{ Params: { id: string; traceId: string }; Querystring: { at?: string } }>(
     "/projects/:id/traces/:traceId",
     {
-      preHandler: [signedIn, projectAccess],
+      preHandler: [signedIn, canView],
       schema: {
         params: TRACE_PARAMS,
         querystring: {
@@ -284,7 +284,7 @@ export const telemetryDashboardRoutes: FastifyPluginCallback<{
   }>(
     "/projects/:id/traces/:traceId/spans/:spanId",
     {
-      preHandler: [signedIn, projectAccess],
+      preHandler: [signedIn, canView],
       schema: {
         params: SPAN_PARAMS,
         querystring: NS_QUERY("start"),
@@ -317,7 +317,7 @@ export const telemetryDashboardRoutes: FastifyPluginCallback<{
   app.get<{ Params: { id: string }; Querystring: LogsQuery }>(
     "/projects/:id/logs",
     {
-      preHandler: [signedIn, projectAccess],
+      preHandler: [signedIn, canView],
       schema: {
         params: PARAMS,
         querystring: {
@@ -361,7 +361,7 @@ export const telemetryDashboardRoutes: FastifyPluginCallback<{
   app.get<{ Params: { id: string; logId: string }; Querystring: { time: string } }>(
     "/projects/:id/logs/:logId",
     {
-      preHandler: [signedIn, projectAccess],
+      preHandler: [signedIn, canView],
       schema: { params: LOG_PARAMS, querystring: NS_QUERY("time") },
     },
     async (request, reply) => {
@@ -384,7 +384,7 @@ export const telemetryDashboardRoutes: FastifyPluginCallback<{
 
   app.get<{ Params: { id: string }; Querystring: RangeQuery }>(
     "/projects/:id/metrics",
-    { preHandler: [signedIn, projectAccess], schema: { params: PARAMS, querystring: RANGE_QUERY } },
+    { preHandler: [signedIn, canView], schema: { params: PARAMS, querystring: RANGE_QUERY } },
     async (request, reply) => {
       const asked = await rangeOf(request);
       if ("problem" in asked) return reply.code(400).send(asked.problem);
@@ -396,7 +396,7 @@ export const telemetryDashboardRoutes: FastifyPluginCallback<{
   app.get<{ Params: { id: string }; Querystring: ChartQuery }>(
     "/projects/:id/metrics/chart",
     {
-      preHandler: [signedIn, projectAccess],
+      preHandler: [signedIn, canView],
       schema: {
         params: PARAMS,
         querystring: {
@@ -462,7 +462,7 @@ export const telemetryDashboardRoutes: FastifyPluginCallback<{
 
   app.get<{ Params: { id: string }; Querystring: RangeQuery }>(
     "/projects/:id/services",
-    { preHandler: [signedIn, projectAccess], schema: { params: PARAMS, querystring: RANGE_QUERY } },
+    { preHandler: [signedIn, canView], schema: { params: PARAMS, querystring: RANGE_QUERY } },
     async (request, reply) => {
       const asked = await rangeOf(request);
       if ("problem" in asked) return reply.code(400).send(asked.problem);
@@ -474,7 +474,7 @@ export const telemetryDashboardRoutes: FastifyPluginCallback<{
   app.get<{ Params: { id: string }; Querystring: ServiceChartQuery }>(
     "/projects/:id/services/chart",
     {
-      preHandler: [signedIn, projectAccess],
+      preHandler: [signedIn, canView],
       schema: {
         params: PARAMS,
         querystring: {
@@ -513,7 +513,7 @@ export const telemetryDashboardRoutes: FastifyPluginCallback<{
   app.get<{ Params: { id: string }; Querystring: { environment?: string } }>(
     "/projects/:id/services/routes",
     {
-      preHandler: [signedIn, projectAccess],
+      preHandler: [signedIn, canView],
       schema: {
         params: PARAMS,
         querystring: {
@@ -539,7 +539,7 @@ export const telemetryDashboardRoutes: FastifyPluginCallback<{
   app.get<{ Params: { id: string }; Querystring: DatabasesQuery }>(
     "/projects/:id/databases",
     {
-      preHandler: [signedIn, projectAccess],
+      preHandler: [signedIn, canView],
       schema: {
         params: PARAMS,
         querystring: {
@@ -565,7 +565,7 @@ export const telemetryDashboardRoutes: FastifyPluginCallback<{
   app.get<{ Params: { id: string; shapeId: string }; Querystring: RangeQuery }>(
     "/projects/:id/databases/shapes/:shapeId",
     {
-      preHandler: [signedIn, projectAccess],
+      preHandler: [signedIn, canView],
       schema: {
         params: {
           type: "object",
@@ -599,7 +599,7 @@ export const telemetryDashboardRoutes: FastifyPluginCallback<{
 
   app.get<{ Params: { id: string }; Querystring: RangeQuery }>(
     "/projects/:id/hosts",
-    { preHandler: [signedIn, projectAccess], schema: { params: PARAMS, querystring: RANGE_QUERY } },
+    { preHandler: [signedIn, canView], schema: { params: PARAMS, querystring: RANGE_QUERY } },
     async (request, reply) => {
       const asked = await rangeOf(request);
       if ("problem" in asked) return reply.code(400).send(asked.problem);
@@ -614,7 +614,7 @@ export const telemetryDashboardRoutes: FastifyPluginCallback<{
   app.get<{ Params: { id: string }; Querystring: HostQuery }>(
     "/projects/:id/hosts/charts",
     {
-      preHandler: [signedIn, projectAccess],
+      preHandler: [signedIn, canView],
       schema: {
         params: PARAMS,
         querystring: {

@@ -3,6 +3,7 @@ import { LoaderCircleIcon, OctagonAlertIcon, TriangleAlertIcon } from "lucide-re
 import * as React from "react";
 
 import { CopyableCode } from "@/components/copyable-code";
+import { NoAccess } from "@/components/no-access";
 import { StatusBadge } from "@/components/status-badge";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -27,7 +28,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { ApiError } from "@/lib/api";
 import { formText } from "@/lib/form";
-import { type Project, projectQuery, updateProject } from "@/lib/projects-api";
+import { isFullProject, type Project, projectQuery, updateProject } from "@/lib/projects-api";
 
 import { DangerZone } from "./danger-zone";
 import { hostnamesFromText, installSnippet, timeAgo } from "./format";
@@ -327,6 +328,10 @@ export function ProjectSettingsPage({ projectId }: { projectId: string }) {
     );
   }
 
+  // Only those who manage projects get its keys and settings (docs/access.md).
+  if (!isFullProject(project.data)) {
+    return <NoAccess />;
+  }
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-6 p-6">
       <InstallCard project={project.data} />

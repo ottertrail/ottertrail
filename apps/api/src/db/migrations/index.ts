@@ -5,6 +5,7 @@ import * as notificationChannels from "./0002_notification_channels.ts";
 import * as alertRules from "./0003_alert_rules.ts";
 import * as telemetryRuleEvaluation from "./0004_telemetry_rule_evaluation.ts";
 import * as replayDetails from "./0005_replay_details.ts";
+import * as access from "./0006_access.ts";
 
 /**
  * Every migration, in order. Kysely runs them by name, alphabetically, and
@@ -19,4 +20,5 @@ export const migrations: Record<string, Migration> = {
   "0003_alert_rules": alertRules,
   "0004_telemetry_rule_evaluation": telemetryRuleEvaluation,
   "0005_replay_details": replayDetails,
+  "0006_access": access,
 };

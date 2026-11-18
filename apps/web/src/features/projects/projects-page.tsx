@@ -22,12 +22,13 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { type Project, projectsQuery } from "@/lib/projects-api";
+import { useAccess } from "@/lib/access";
+import { isFullProject, type ProjectSummary, projectsQuery } from "@/lib/projects-api";
 
 import { timeAgo } from "./format";
 import { NewProjectDialog } from "./new-project-dialog";
 
-function LastEvent({ project }: { project: Project }) {
+function LastEvent({ project }: { project: ProjectSummary }) {
   if (project.lastEventAt === null) {
     return <StatusBadge tone="neutral">No events yet</StatusBadge>;
   }
@@ -36,6 +37,8 @@ function LastEvent({ project }: { project: Project }) {
 
 export function ProjectsPage() {
   const projects = useQuery(projectsQuery());
+  // Creating projects, and their allowed sites, are for those who manage projects.
+  const canManage = useAccess().can("projects");
 
   return (
     <div className="mx-auto flex max-w-5xl flex-col gap-6 p-6">
@@ -46,7 +49,9 @@ export function ProjectsPage() {
             Each website or app you track is a project, with its own snippet and data.
           </p>
         </div>
-        {projects.data !== undefined && projects.data.length > 0 && <NewProjectDialog />}
+        {projects.data !== undefined && projects.data.length > 0 && canManage && (
+          <NewProjectDialog />
+        )}
       </div>
 
       {projects.isPending && (
@@ -78,12 +83,16 @@ export function ProjectsPage() {
             </EmptyMedia>
             <EmptyTitle>No projects yet</EmptyTitle>
             <EmptyDescription>
-              Create a project for your website or app to get its tracking snippet.
+              {canManage
+                ? "Create a project for your website or app to get its tracking snippet."
+                : "You have not been given any project yet. Ask an admin of this workspace."}
             </EmptyDescription>
           </EmptyHeader>
-          <EmptyContent>
-            <NewProjectDialog />
-          </EmptyContent>
+          {canManage && (
+            <EmptyContent>
+              <NewProjectDialog />
+            </EmptyContent>
+          )}
         </Empty>
       )}
 
@@ -92,7 +101,7 @@ export function ProjectsPage() {
           <TableHeader>
             <TableRow>
               <TableHead>Name</TableHead>
-              <TableHead>Allowed sites</TableHead>
+              {canManage && <TableHead>Allowed sites</TableHead>}
               <TableHead>Last event</TableHead>
             </TableRow>
           </TableHeader>
@@ -108,13 +117,15 @@ export function ProjectsPage() {
                     {project.name}
                   </Link>
                 </TableCell>
-                <TableCell className="text-ink-muted">
-                  {project.allowedHostnames.length === 0 ? (
-                    <StatusBadge tone="warning">None: events are refused</StatusBadge>
-                  ) : (
-                    project.allowedHostnames.join(", ")
-                  )}
-                </TableCell>
+                {canManage && (
+                  <TableCell className="text-ink-muted">
+                    {!isFullProject(project) ? null : project.allowedHostnames.length === 0 ? (
+                      <StatusBadge tone="warning">None: events are refused</StatusBadge>
+                    ) : (
+                      project.allowedHostnames.join(", ")
+                    )}
+                  </TableCell>
+                )}
                 <TableCell>
                   <LastEvent project={project} />
                 </TableCell>

@@ -13,6 +13,7 @@ import {
 import type * as React from "react";
 
 import { AppLayout } from "@/app";
+import { NoAccess } from "@/components/no-access";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AlertsPage } from "@/features/alerts/alerts-page";
 import { AnalyticsPage } from "@/features/analytics/analytics-page";
@@ -65,6 +66,7 @@ import { CheckPage } from "@/features/uptime/check-page";
 import { UptimePage } from "@/features/uptime/uptime-page";
 import { UserPage } from "@/features/users/user-page";
 import { UsersPage } from "@/features/users/users-page";
+import { firstPage, meQuery, type PageAccess } from "@/lib/access";
 import { isRuleKind, type RuleKind } from "@/lib/alerts-api";
 import {
   DEFAULT_ENVIRONMENT,
@@ -157,16 +159,18 @@ const homeRoute = createRoute({
   getParentRoute: () => appRoute,
   path: "/",
   beforeLoad: async ({ context }) => {
-    const projects = await context.queryClient.ensureQueryData(projectsQuery());
+    const [projects, me] = await Promise.all([
+      context.queryClient.ensureQueryData(projectsQuery()),
+      context.queryClient.ensureQueryData(meQuery()),
+    ]);
     const last = lastProject();
+    // The list holds only the projects this user may reach.
     const project = projects.find((item) => item.id === last) ?? projects[0];
-    if (project === undefined) {
+    const page = firstPage(me);
+    if (project === undefined || page === null) {
       throw redirect({ to: "/projects" });
     }
-    throw redirect({
-      to: "/projects/$projectId/web-analytics",
-      params: { projectId: project.id },
-    });
+    throw redirect({ to: page, params: { projectId: project.id } });
   },
 });
 
@@ -192,19 +196,28 @@ const projectRoute = createRoute({
   },
 });
 
-/** A project opens on its web analytics until it has an overview page. */
+/**
+ * A project opens on its web analytics until it has an overview page; a
+ * member without web analytics, on the first area they have. With none,
+ * the page says they have no access.
+ */
 const projectIndexRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: "/",
-  beforeLoad: ({ params }) => {
-    throw redirect({ to: "/projects/$projectId/web-analytics", params });
+  beforeLoad: async ({ params, context }) => {
+    const me = await context.queryClient.ensureQueryData(meQuery());
+    const page = firstPage(me);
+    if (page !== null) {
+      throw redirect({ to: page, params });
+    }
   },
+  component: NoAccess,
 });
 
 const webAnalyticsRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: "/web-analytics",
-  staticData: { title: "Web analytics" },
+  staticData: { title: "Web analytics", access: "web_analytics" },
   // An unknown or missing period falls back to the default instead of failing.
   // The router merges the result over the raw query, so an invalid period
   // has to be overwritten, not just left out.
@@ -257,7 +270,7 @@ const environmentSearch = (search: { env?: unknown }): { env: string | undefined
 const usersRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: "/users",
-  staticData: { title: "Users" },
+  staticData: { title: "Users", access: "users" },
   validateSearch: (search: { env?: unknown } & SearchSchemaInput) => environmentSearch(search),
   component: function UsersRouteComponent() {
     const { projectId } = usersRoute.useParams();
@@ -269,7 +282,7 @@ const usersRoute = createRoute({
 const userRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: "/users/$userId",
-  staticData: { title: "User" },
+  staticData: { title: "User", access: "users" },
   validateSearch: (search: { env?: unknown } & SearchSchemaInput) => environmentSearch(search),
   component: function UserRouteComponent() {
     const { projectId, userId } = userRoute.useParams();
@@ -305,7 +318,7 @@ type ErrorSearchInput = {
 const errorsRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: "/errors",
-  staticData: { title: "Errors" },
+  staticData: { title: "Errors", access: "errors" },
   validateSearch: (
     search: ErrorSearchInput & { status?: unknown },
   ): ReturnType<typeof rangeSearch> & { env: string | undefined } & {
@@ -335,7 +348,7 @@ const errorsRoute = createRoute({
 const errorRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: "/errors/$fingerprint",
-  staticData: { title: "Error" },
+  staticData: { title: "Error", access: "errors" },
   validateSearch: (search: ErrorSearchInput) => ({
     ...rangeSearch(search),
     ...environmentSearch(search),
@@ -362,7 +375,7 @@ const errorRoute = createRoute({
 const replaysRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: "/replays",
-  staticData: { title: "Replays" },
+  staticData: { title: "Replays", access: "replays" },
   validateSearch: (
     search: ErrorSearchInput & { path?: unknown; user?: unknown; error?: unknown; min?: unknown },
   ) => {
@@ -393,7 +406,7 @@ const replaysRoute = createRoute({
 const replayRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: "/replays/$replayId",
-  staticData: { title: "Replay" },
+  staticData: { title: "Replay", access: "replays" },
   component: function ReplayRouteComponent() {
     const { projectId, replayId } = replayRoute.useParams();
     return <ReplayPage projectId={projectId} replayId={replayId} key={replayId} />;
@@ -404,7 +417,7 @@ const replayRoute = createRoute({
 const speedRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: "/speed",
-  staticData: { title: "Speed" },
+  staticData: { title: "Speed", access: "web_analytics" },
   validateSearch: (
     search: ErrorSearchInput & { device?: unknown },
   ): ReturnType<typeof rangeSearch> & { env: string | undefined } & {
@@ -435,7 +448,7 @@ const speedRoute = createRoute({
 const tracesRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: "/traces",
-  staticData: { title: "Traces" },
+  staticData: { title: "Traces", access: "monitoring" },
   validateSearch: (
     search: ErrorSearchInput & {
       service?: unknown;
@@ -481,7 +494,7 @@ const isMoment = (value: unknown): value is string =>
 const traceRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: "/traces/$traceId",
-  staticData: { title: "Trace" },
+  staticData: { title: "Trace", access: "monitoring" },
   validateSearch: (
     search: { at?: unknown; span?: unknown } & SearchSchemaInput,
   ): { at: string | undefined; span: string | undefined } => ({
@@ -502,7 +515,7 @@ const traceRoute = createRoute({
 const logsRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: "/logs",
-  staticData: { title: "Logs" },
+  staticData: { title: "Logs", access: "monitoring" },
   validateSearch: (
     search: ErrorSearchInput & {
       service?: unknown;
@@ -539,7 +552,7 @@ const logsRoute = createRoute({
 const metricsRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: "/metrics",
-  staticData: { title: "Metrics" },
+  staticData: { title: "Metrics", access: "monitoring" },
   validateSearch: (search: ErrorSearchInput) => ({
     ...rangeSearch(search),
     ...environmentSearch(search),
@@ -565,7 +578,7 @@ const metricsRoute = createRoute({
 const metricRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: "/metrics/$name",
-  staticData: { title: "Metric" },
+  staticData: { title: "Metric", access: "monitoring" },
   validateSearch: (
     search: ErrorSearchInput & {
       kind?: unknown;
@@ -614,7 +627,7 @@ const metricRoute = createRoute({
 const servicesRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: "/services",
-  staticData: { title: "Services" },
+  staticData: { title: "Services", access: "monitoring" },
   validateSearch: (search: ErrorSearchInput & { service?: unknown; route?: unknown }) => ({
     ...rangeSearch(search),
     ...environmentSearch(search),
@@ -639,7 +652,7 @@ const servicesRoute = createRoute({
 const serviceRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: "/services/$service",
-  staticData: { title: "Service" },
+  staticData: { title: "Service", access: "monitoring" },
   validateSearch: (search: ErrorSearchInput & { route?: unknown }) => {
     const route = searchValue(search.route);
     return {
@@ -668,7 +681,7 @@ const serviceRoute = createRoute({
 const databasesRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: "/databases",
-  staticData: { title: "Databases" },
+  staticData: { title: "Databases", access: "monitoring" },
   validateSearch: (search: ErrorSearchInput & { sort?: unknown }) => ({
     ...rangeSearch(search),
     ...environmentSearch(search),
@@ -695,7 +708,7 @@ const databasesRoute = createRoute({
 const queryShapeRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: "/databases/$shapeId",
-  staticData: { title: "Query shape" },
+  staticData: { title: "Query shape", access: "monitoring" },
   validateSearch: (search: ErrorSearchInput) => ({
     ...rangeSearch(search),
     ...environmentSearch(search),
@@ -718,7 +731,7 @@ const queryShapeRoute = createRoute({
 const hostsRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: "/hosts",
-  staticData: { title: "Hosts" },
+  staticData: { title: "Hosts", access: "monitoring" },
   validateSearch: (search: ErrorSearchInput) => ({
     ...rangeSearch(search),
     ...environmentSearch(search),
@@ -740,7 +753,7 @@ const hostsRoute = createRoute({
 const hostRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: "/hosts/$host",
-  staticData: { title: "Host" },
+  staticData: { title: "Host", access: "monitoring" },
   validateSearch: (search: ErrorSearchInput) => ({
     ...rangeSearch(search),
     ...environmentSearch(search),
@@ -763,7 +776,7 @@ const hostRoute = createRoute({
 const uptimeRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: "/uptime",
-  staticData: { title: "Uptime" },
+  staticData: { title: "Uptime", access: "uptime_alerts" },
   component: function UptimeRouteComponent() {
     const { projectId } = uptimeRoute.useParams();
     return <UptimePage projectId={projectId} />;
@@ -774,7 +787,7 @@ const uptimeRoute = createRoute({
 const checkRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: "/uptime/$checkId",
-  staticData: { title: "Check" },
+  staticData: { title: "Check", access: "uptime_alerts" },
   validateSearch: (
     search: { period?: unknown; from?: unknown; to?: unknown } & SearchSchemaInput,
   ) => rangeSearch(search),
@@ -799,7 +812,7 @@ const FINGERPRINT = /^[0-9]{1,3}-[0-9a-f]{20}$/;
 const alertsRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: "/alerts",
-  staticData: { title: "Alerts" },
+  staticData: { title: "Alerts", access: "uptime_alerts" },
   validateSearch: (
     search: {
       add?: unknown;
@@ -856,7 +869,7 @@ const alertsRoute = createRoute({
 const productRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: "/product",
-  staticData: { title: "Product analytics" },
+  staticData: { title: "Product analytics", access: "product_analytics" },
   component: function ProductRouteComponent() {
     const { projectId } = productRoute.useParams();
     return <ProductLayout projectId={projectId} />;
@@ -999,7 +1012,7 @@ const productRetentionRoute = createRoute({
 const projectSettingsRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: "/settings",
-  staticData: { title: "Settings" },
+  staticData: { title: "Settings", access: "project_settings" },
   component: function ProjectSettingsRouteComponent() {
     const { projectId } = projectSettingsRoute.useParams();
     return <ProjectSettingsPage projectId={projectId} />;
@@ -1121,5 +1134,7 @@ declare module "@tanstack/react-router" {
   interface StaticDataRouteOption {
     /** Shown in the header of signed-in pages. */
     title?: string;
+    /** What a project page needs (docs/access.md); without it, the page says so. */
+    access?: PageAccess;
   }
 }

@@ -4,7 +4,7 @@ A webhook is a notification channel ([uptime and alerts](uptime-alerts.md#where-
 
 ## Setting one up
 
-On the Settings page, under **Notification channels**, add a channel of the kind Webhook with its URL. The instance makes the channel's secret (32 random bytes, written as 43 characters of base64url); any signed-in user can show it, copy it, and replace it. The dashboard fetches it only when Show is pressed. A replaced secret stops working at once. **Send test** queues a `test` notification, and the channel's deliveries show how it went.
+On the Settings page, under **Notification channels**, add a channel of the kind Webhook with its URL. The instance makes the channel's secret (32 random bytes, written as 43 characters of base64url); the owner and admins can show it, copy it, and replace it ([access](access.md)). The dashboard fetches it only when Show is pressed. A replaced secret stops working at once. **Send test** queues a `test` notification, and the channel's deliveries show how it went.
 
 The URL is `http` or `https`, without a user name or password. It follows the uptime checks' address rules ([deployment](deployment.md#uptime-checks)): a host that resolves to a loopback, private, link-local, or other internal address is refused when the channel is saved, and again on every delivery, so a DNS change after saving cannot point a webhook inside the instance's network. The request goes to the address that was checked, without resolving the host again.
 

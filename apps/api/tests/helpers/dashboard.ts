@@ -1,9 +1,14 @@
+import type { Kysely } from "kysely";
+
+import type { Areas } from "../../src/access/areas.ts";
+import { setUserAccess } from "../../src/access/grants.ts";
 import { type AppOptions, buildApp } from "../../src/app.ts";
 import { createAuth } from "../../src/auth/auth.ts";
 import { createSetupToken } from "../../src/auth/setup.ts";
 import type { Reader } from "../../src/clickhouse/query.ts";
 import { type NewEvent, storeEvents } from "../../src/collection/event-store.ts";
 import { LastEventRecorder } from "../../src/collection/last-event.ts";
+import type { Database } from "../../src/db/schema.ts";
 import { createTestClickHouse } from "./test-clickhouse.ts";
 import { createTestDatabase } from "./test-database.ts";
 
@@ -115,20 +120,64 @@ export async function signedInDashboard({
 
 type Dashboard = Awaited<ReturnType<typeof signedInDashboard>>;
 
-/** Another dashboard user, signed in: a "member", not the owner. */
+const NO_AREAS: Areas = {
+  web_analytics: "none",
+  product_analytics: "none",
+  errors: "none",
+  replays: "none",
+  users: "none",
+  monitoring: "none",
+  uptime_alerts: "none",
+};
+
+/** What a member is granted (docs/access.md): areas left out are none. */
+export interface MemberGrants {
+  /** "all", or the projects' IDs. */
+  projects: "all" | readonly string[];
+  areas?: Partial<Areas>;
+}
+
+/** Stores a member's grants, replacing any they had, as the Members page will (access/grants.ts). */
+export async function grantMember(
+  db: Kysely<Database>,
+  userId: string,
+  { projects, areas = {} }: MemberGrants,
+): Promise<void> {
+  await setUserAccess(db, userId, {
+    role: "member",
+    projects,
+    areas: { ...NO_AREAS, ...areas },
+  });
+}
+
+/**
+ * Another dashboard user, created in the database and signed in: a member
+ * (with `grants`, or nothing granted) unless `role` says "admin".
+ */
 export async function signedInUser(
   { db, app, auth }: Pick<Dashboard, "db" | "app" | "auth">,
   {
     name,
     email,
     password = "another correct horse",
-  }: { name: string; email: string; password?: string },
+    role = "member",
+    grants,
+  }: {
+    name: string;
+    email: string;
+    password?: string;
+    role?: "admin" | "member";
+    grants?: MemberGrants;
+  },
 ): Promise<{ userId: string; cookie: string }> {
   const user = await db
     .insertInto("dashboard_users")
-    .values({ name, email })
+    .values({ name, email, role })
     .returning("id")
     .executeTakeFirstOrThrow();
+  if (role === "member" && grants !== undefined) {
+    await grantMember(db, user.id, grants);
+  }
   await db
     .insertInto("dashboard_accounts")
     .values({

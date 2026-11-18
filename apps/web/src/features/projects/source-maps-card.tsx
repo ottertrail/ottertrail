@@ -190,10 +190,14 @@ function DeleteReleaseDialog({
             ? undefined
             : {
                 ...overview,
-                instance: {
-                  ...overview.instance,
-                  storedBytes: Math.max(0, overview.instance.storedBytes - release.bytes),
-                },
+                ...(overview.instance === undefined
+                  ? {}
+                  : {
+                      instance: {
+                        ...overview.instance,
+                        storedBytes: Math.max(0, overview.instance.storedBytes - release.bytes),
+                      },
+                    }),
                 releases: overview.releases.filter((item) => item.release !== release.release),
                 totalReleases: Math.max(0, overview.totalReleases - 1),
               },
@@ -393,15 +397,17 @@ function Overview({
       </p>
     );
   }
-  const { storedBytes, limitBytes } = overview.instance;
+  const { instance } = overview;
   return (
     <>
-      <p className="text-sm text-ink-muted">
-        <span className="text-ink tabular-nums">
-          {formatBytes(storedBytes)} of {formatBytes(limitBytes)}
-        </span>{" "}
-        used, by all projects together.
-      </p>
+      {instance !== undefined && (
+        <p className="text-sm text-ink-muted">
+          <span className="text-ink tabular-nums">
+            {formatBytes(instance.storedBytes)} of {formatBytes(instance.limitBytes)}
+          </span>{" "}
+          used, by all projects together.
+        </p>
+      )}
       {overview.releases.length === 0 ? (
         <>
           <p className="text-sm text-ink">No source maps are uploaded yet.</p>

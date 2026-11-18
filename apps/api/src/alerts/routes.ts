@@ -1,13 +1,20 @@
 import type { FastifyPluginCallback } from "fastify";
 import type { Kysely } from "kysely";
 
+import {
+  canUse,
+  FORBIDDEN,
+  type ProjectAccess,
+  requireProjectAccess,
+  type UserAccess,
+} from "../access/access.ts";
 import type { Auth } from "../auth/auth.ts";
 import { requireTrustedOrigin } from "../auth/origin.ts";
 import { requireSession } from "../auth/routes.ts";
 import type { ClickHouseClient } from "../clickhouse/clickhouse.ts";
 import type { Database } from "../db/schema.ts";
+import { listChannels } from "../notifications/channels.ts";
 import type { Problem } from "../outbound/url.ts";
-import { type ProjectAccess, requireProjectAccess } from "../projects/access.ts";
 import { DashboardQueryLimiter, dashboardReader } from "../telemetry/dashboard-limit.ts";
 import { RULE_HOURLY_CAP } from "./fire.ts";
 import {
@@ -15,7 +22,10 @@ import {
   MAX_RULE_NAME,
   MAX_RULES,
   RULE_KINDS,
+  isRuleKind,
+  type RuleKind,
   SETTINGS_SCHEMA,
+  sourceAreaOf,
 } from "./kinds.ts";
 import {
   createRule,
@@ -92,6 +102,22 @@ function accessOf(request: { projectAccess: ProjectAccess | null }): ProjectAcce
 }
 
 /**
+ * Whether the user may see rules of this kind: uptime and alerts (the
+ * route checks it), and the area the kind watches (docs/access.md).
+ */
+function canSeeKind(user: UserAccess, kind: RuleKind): boolean {
+  const area = sourceAreaOf(kind);
+  return area === null || canUse(user, area, "view");
+}
+
+/** Whether a kind sent in a request is one the user may use; the schema refuses unknown kinds first. */
+const mayUseKind = (user: UserAccess, kind: string | undefined) =>
+  isRuleKind(kind) && canSeeKind(user, kind);
+
+/** The kinds the user may see; never empty, as check rules need only uptime and alerts. */
+const visibleKinds = (user: UserAccess) => RULE_KINDS.filter((kind) => canSeeKind(user, kind));
+
+/**
  * GET    /api/projects/:id/alert-rules
  * POST   /api/projects/:id/alert-rules                 { "kind": "check_down", "channelIds": […], … }
  * GET    /api/projects/:id/alert-rules/:ruleId
@@ -100,6 +126,7 @@ function accessOf(request: { projectAccess: ProjectAccess | null }): ProjectAcce
  * GET    /api/projects/:id/alert-rules/:ruleId/history[?before=<alert ID>&limit=20]
  * GET    /api/projects/:id/alerts[?before=<alert ID>&limit=20]   the project's alerts
  * GET    /api/projects/:id/alerts/firing
+ * GET    /api/projects/:id/alert-channels                the instance's channels, by name only
  *
  * A project's alert rules (rules.ts; docs/uptime-alerts.md, "Alerts"):
  * at most 50, each sending to one or more of the instance's channels. A
@@ -133,35 +160,48 @@ export const alertRoutes: FastifyPluginCallback<{
   done,
 ) => {
   const signedIn = requireSession(auth);
-  const projectAccess = requireProjectAccess(db);
+  const canView = requireProjectAccess(db, { area: "uptime_alerts", level: "view" });
+  const canManage = requireProjectAccess(db, { area: "uptime_alerts", level: "manage" });
   const fromDashboard = requireTrustedOrigin(trustedOrigins);
 
-  /** The rule as answered, with why a telemetry rule may not fire yet, if it may not. */
+  /**
+   * The rule as answered, with why a telemetry rule may not fire yet, if it
+   * may not. The warning says whether a service, route, or metric reported,
+   * so only those who may read monitoring get it.
+   */
   const saved = async (
     rule: Rule,
-    projectId: string,
+    access: ProjectAccess,
     reply: Parameters<typeof dashboardReader>[2],
   ) => ({
     rule,
-    warning: await notSeenWarning(
-      dashboardReader(clickhouse, limiter, reply),
-      projectId,
-      rule.kind,
-      rule.settings,
-      now(),
-    ),
+    warning: canUse(access.user, "monitoring", "view")
+      ? await notSeenWarning(
+          dashboardReader(clickhouse, limiter, reply),
+          access.projectId,
+          rule.kind,
+          rule.settings,
+          now(),
+        )
+      : null,
   });
+
+  /** The rule, if it exists and the user may see its kind; otherwise null, as a missing rule. */
+  const visibleRule = async (access: ProjectAccess, ruleId: string) => {
+    const rule = await findRule(db, access.projectId, ruleId);
+    return rule === null || !canSeeKind(access.user, rule.kind) ? null : rule;
+  };
 
   app.get<{ Params: { id: string } }>(
     "/projects/:id/alert-rules",
-    { preHandler: [signedIn, projectAccess], schema: { params: PARAMS } },
+    { preHandler: [signedIn, canView], schema: { params: PARAMS } },
     async (request) => {
-      const { projectId, timeZone } = accessOf(request);
+      const { projectId, timeZone, user } = accessOf(request);
       return {
         timeZone,
         maxRules: MAX_RULES,
         hourlyCap: RULE_HOURLY_CAP,
-        rules: await listRules(db, projectId),
+        rules: (await listRules(db, projectId)).filter((rule) => canSeeKind(user, rule.kind)),
       };
     },
   );
@@ -169,7 +209,7 @@ export const alertRoutes: FastifyPluginCallback<{
   app.post<{ Params: { id: string }; Body: RuleInput }>(
     "/projects/:id/alert-rules",
     {
-      preHandler: [fromDashboard, signedIn, projectAccess],
+      preHandler: [fromDashboard, signedIn, canManage],
       bodyLimit: BODY_LIMIT,
       schema: {
         params: PARAMS,
@@ -182,7 +222,9 @@ export const alertRoutes: FastifyPluginCallback<{
       },
     },
     async (request, reply) => {
-      const { projectId } = accessOf(request);
+      const access = accessOf(request);
+      const { projectId } = access;
+      if (!mayUseKind(access.user, request.body.kind)) return reply.code(403).send(FORBIDDEN);
       const values = ruleValuesOf(request.body);
       if ("error" in values) return reply.code(400).send(values);
       const created = await createRule(db, projectId, values, now());
@@ -193,15 +235,15 @@ export const alertRoutes: FastifyPluginCallback<{
         });
       }
       if ("problem" in created) return reply.code(400).send(created.problem);
-      return reply.code(201).send(await saved(created.rule, projectId, reply));
+      return reply.code(201).send(await saved(created.rule, access, reply));
     },
   );
 
   app.get<{ Params: { id: string; ruleId: string } }>(
     "/projects/:id/alert-rules/:ruleId",
-    { preHandler: [signedIn, projectAccess], schema: { params: RULE_PARAMS } },
+    { preHandler: [signedIn, canView], schema: { params: RULE_PARAMS } },
     async (request, reply) => {
-      const rule = await findRule(db, accessOf(request).projectId, request.params.ruleId);
+      const rule = await visibleRule(accessOf(request), request.params.ruleId);
       return rule === null ? reply.code(404).send(NO_RULE) : { rule };
     },
   );
@@ -209,7 +251,7 @@ export const alertRoutes: FastifyPluginCallback<{
   app.patch<{ Params: { id: string; ruleId: string }; Body: RuleInput }>(
     "/projects/:id/alert-rules/:ruleId",
     {
-      preHandler: [fromDashboard, signedIn, projectAccess],
+      preHandler: [fromDashboard, signedIn, canManage],
       bodyLimit: BODY_LIMIT,
       schema: {
         params: RULE_PARAMS,
@@ -222,9 +264,14 @@ export const alertRoutes: FastifyPluginCallback<{
       },
     },
     async (request, reply) => {
-      const { projectId } = accessOf(request);
-      const current = await findRule(db, projectId, request.params.ruleId);
+      const access = accessOf(request);
+      const { projectId } = access;
+      const current = await visibleRule(access, request.params.ruleId);
       if (current === null) return reply.code(404).send(NO_RULE);
+      // Another kind needs its own area too.
+      if (request.body.kind !== undefined && !mayUseKind(access.user, request.body.kind)) {
+        return reply.code(403).send(FORBIDDEN);
+      }
       const values = ruleValuesOf(request.body, valuesOfRule(current));
       if ("error" in values) return reply.code(400).send(values);
       const updated = await updateRule(db, projectId, current.id, values, now(), {
@@ -235,15 +282,19 @@ export const alertRoutes: FastifyPluginCallback<{
       // Only a change of what it watches is looked for again.
       return request.body.kind === undefined && request.body.settings === undefined
         ? { rule: updated.rule, warning: null }
-        : saved(updated.rule, projectId, reply);
+        : saved(updated.rule, access, reply);
     },
   );
 
   app.delete<{ Params: { id: string; ruleId: string } }>(
     "/projects/:id/alert-rules/:ruleId",
-    { preHandler: [fromDashboard, signedIn, projectAccess], schema: { params: RULE_PARAMS } },
+    { preHandler: [fromDashboard, signedIn, canManage], schema: { params: RULE_PARAMS } },
     async (request, reply) => {
-      const deleted = await deleteRule(db, accessOf(request).projectId, request.params.ruleId);
+      const access = accessOf(request);
+      if ((await visibleRule(access, request.params.ruleId)) === null) {
+        return reply.code(404).send(NO_RULE);
+      }
+      const deleted = await deleteRule(db, access.projectId, request.params.ruleId);
       return deleted ? reply.code(204).send() : reply.code(404).send(NO_RULE);
     },
   );
@@ -254,15 +305,17 @@ export const alertRoutes: FastifyPluginCallback<{
   }>(
     "/projects/:id/alert-rules/:ruleId/history",
     {
-      preHandler: [signedIn, projectAccess],
+      preHandler: [signedIn, canView],
       schema: { params: RULE_PARAMS, querystring: PAGE_QUERY },
     },
     async (request, reply) => {
-      const { projectId, timeZone } = accessOf(request);
-      const rule = await findRule(db, projectId, request.params.ruleId);
+      const access = accessOf(request);
+      const { projectId, timeZone } = access;
+      const rule = await visibleRule(access, request.params.ruleId);
       if (rule === null) return reply.code(404).send(NO_RULE);
       const page = await listHistory(db, projectId, {
         ruleId: rule.id,
+        kinds: visibleKinds(access.user),
         before: request.query.before,
         limit: request.query.limit ?? DEFAULT_PAGE,
       });
@@ -272,10 +325,11 @@ export const alertRoutes: FastifyPluginCallback<{
 
   app.get<{ Params: { id: string }; Querystring: { before?: string; limit?: number } }>(
     "/projects/:id/alerts",
-    { preHandler: [signedIn, projectAccess], schema: { params: PARAMS, querystring: PAGE_QUERY } },
+    { preHandler: [signedIn, canView], schema: { params: PARAMS, querystring: PAGE_QUERY } },
     async (request) => {
-      const { projectId, timeZone } = accessOf(request);
+      const { projectId, timeZone, user } = accessOf(request);
       const page = await listHistory(db, projectId, {
+        kinds: visibleKinds(user),
         before: request.query.before,
         limit: request.query.limit ?? DEFAULT_PAGE,
       });
@@ -283,12 +337,25 @@ export const alertRoutes: FastifyPluginCallback<{
     },
   );
 
+  /**
+   * The instance's channels by name, for choosing a rule's: never their
+   * addresses, URLs, or secrets, which only the Settings page shows to
+   * those who manage channels (docs/access.md).
+   */
+  app.get<{ Params: { id: string } }>(
+    "/projects/:id/alert-channels",
+    { preHandler: [signedIn, canView], schema: { params: PARAMS } },
+    async () => ({
+      channels: (await listChannels(db)).map(({ id, name, kind }) => ({ id, name, kind })),
+    }),
+  );
+
   app.get<{ Params: { id: string } }>(
     "/projects/:id/alerts/firing",
-    { preHandler: [signedIn, projectAccess], schema: { params: PARAMS } },
+    { preHandler: [signedIn, canView], schema: { params: PARAMS } },
     async (request) => {
-      const { projectId, timeZone } = accessOf(request);
-      return { timeZone, alerts: await firingAlerts(db, projectId) };
+      const { projectId, timeZone, user } = accessOf(request);
+      return { timeZone, alerts: await firingAlerts(db, projectId, visibleKinds(user)) };
     },
   );
 

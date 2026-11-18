@@ -31,7 +31,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { useAccess } from "@/lib/access";
 import {
+  type ChannelName,
+  kindArea,
   type Aggregate,
   AGGREGATES,
   createRule,
@@ -64,7 +67,6 @@ import {
 } from "@/lib/alerts-api";
 import { DEFAULT_ENVIRONMENT, type PageRange } from "@/lib/analytics-api";
 import { ApiError } from "@/lib/api";
-import type { Channel } from "@/lib/channels-api";
 import { hostsQuery } from "@/lib/hosts-api";
 import { metricChartQuery, type MetricKind, METRIC_KINDS, metricsQuery } from "@/lib/metrics-api";
 import { recentRoutesQuery } from "@/lib/services-api";
@@ -166,7 +168,7 @@ const text = (value: number | undefined | null) => (value == null ? "" : String(
 function draftOf(
   rule: Rule | undefined,
   prefill: RulePrefill,
-  channels: readonly Channel[],
+  channels: readonly ChannelName[],
 ): Draft {
   const settings: RuleSettings = rule?.settings ?? {};
   const metricKind = settings.metricKind ?? prefill.metricKind ?? "";
@@ -557,7 +559,7 @@ function RuleForm({
   rule: Rule | undefined;
   prefill: RulePrefill;
   checks: readonly Pick<Check, "id" | "name">[];
-  channels: readonly Channel[];
+  channels: readonly ChannelName[];
   onSaved: (saved: SavedRule) => void;
 }) {
   const queryClient = useQueryClient();
@@ -647,6 +649,13 @@ function RuleForm({
       : []),
   ];
   const channelsError = errorOf("channels");
+  const { can, canUse } = useAccess();
+  const canAddChannels = can("channels");
+  // Only the kinds whose area the user has: the API refuses the others.
+  const kindItems = KIND_ITEMS.filter((item) => {
+    const area = kindArea(item.value);
+    return area === null || canUse(area);
+  });
   const metricKinds = suggestions.metrics.filter((metric) => metric.name === draft.metric.trim());
   const aggregates: readonly Aggregate[] =
     draft.metricKind === "" ? [] : AGGREGATES[draft.metricKind];
@@ -688,7 +697,7 @@ function RuleForm({
       <SelectField
         label="When"
         value={draft.kind}
-        items={KIND_ITEMS}
+        items={kindItems}
         onChange={(kind) => {
           const found = RULE_KINDS.find((item) => item === kind);
           if (found !== undefined) change({ kind: found });
@@ -852,10 +861,16 @@ function RuleForm({
         {channels.length === 0 ? (
           <p className="text-sm text-ink-subtle">
             This instance has no notification channels.{" "}
-            <Link to="/settings" className="text-link hover:underline">
-              Add one in Settings
-            </Link>
-            .
+            {canAddChannels ? (
+              <>
+                <Link to="/settings" className="text-link hover:underline">
+                  Add one in Settings
+                </Link>
+                .
+              </>
+            ) : (
+              "An admin adds them in Settings."
+            )}
           </p>
         ) : (
           <div className="flex flex-col gap-2">
@@ -928,7 +943,7 @@ export function RuleFormDialog({
   rule?: Rule | undefined;
   prefill?: RulePrefill;
   checks: readonly Pick<Check, "id" | "name">[];
-  channels: readonly Channel[];
+  channels: readonly ChannelName[];
   /** Why the rule just saved may not fire yet, for the page to show; null when nothing is wrong. */
   onWarning?: ((saved: { ruleName: string; warning: SaveWarning | null }) => void) | undefined;
 }) {

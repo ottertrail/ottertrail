@@ -1,4 +1,5 @@
 import { stepsOverlap } from "../../src/features/product/funnel-steps.ts";
+import type { Area, AreaLevel, Role } from "../../src/lib/access.ts";
 import {
   type FiringAlert,
   type HistoryEntry,
@@ -64,8 +65,10 @@ import type { Activity, User, UserActivity, UserList } from "../../src/lib/users
  */
 export interface FakeApi {
   signedIn: boolean;
-  /** The instance's settings; PATCH changes them (the owner's only: canEdit). */
+  /** The instance's settings; PATCH changes them (the owner's only). */
   settings: Settings;
+  /** Who is signed in and what they may reach (GET /api/me); the owner by default. */
+  access: FakeAccess;
   projects: Project[];
   /**
    * Answers GET /api/projects/:id/analytics. A Response stands for an error.
@@ -1882,8 +1885,72 @@ export function fakeList(query: URLSearchParams) {
 export const SETTINGS: Settings = {
   name: "Acme Inc",
   timeZone: "Asia/Singapore",
-  canEdit: true,
 };
+
+/** A dashboard user's role and grants, as GET /api/me answers them (docs/access.md). */
+export interface FakeAccess {
+  role: Role;
+  projects: "all" | string[];
+  areas: Record<Area, AreaLevel>;
+}
+
+const ALL_AREAS: Record<Area, AreaLevel> = {
+  web_analytics: "view",
+  product_analytics: "manage",
+  errors: "manage",
+  replays: "view",
+  users: "view",
+  monitoring: "view",
+  uptime_alerts: "manage",
+};
+
+export const OWNER_ACCESS: FakeAccess = { role: "owner", projects: "all", areas: ALL_AREAS };
+export const ADMIN_ACCESS: FakeAccess = { role: "admin", projects: "all", areas: ALL_AREAS };
+
+/** A member with `areas` (the rest none) on `projects`, every project by default. */
+export function memberAccess(
+  areas: Partial<Record<Area, AreaLevel>>,
+  projects: "all" | string[] = "all",
+): FakeAccess {
+  const none: Record<Area, AreaLevel> = {
+    web_analytics: "none",
+    product_analytics: "none",
+    errors: "none",
+    replays: "none",
+    users: "none",
+    monitoring: "none",
+    uptime_alerts: "none",
+  };
+  return { role: "member", projects, areas: { ...none, ...areas } };
+}
+
+function meOf(api: FakeApi) {
+  const { role, projects, areas } = api.access;
+  const admin = role !== "member";
+  return {
+    user: { ...SESSION.user, role },
+    instance: { name: api.settings.name, timeZone: api.settings.timeZone },
+    access: { projects, areas },
+    permissions: { settings: role === "owner", members: admin, channels: admin, projects: admin },
+  };
+}
+
+/** The projects as GET /api/projects answers this user: theirs, in full only for admins. */
+function projectsFor(api: FakeApi) {
+  const { role, projects } = api.access;
+  return api.projects
+    .filter((project) => projects === "all" || projects.includes(project.id))
+    .map((project) =>
+      role === "member"
+        ? {
+            id: project.id,
+            name: project.name,
+            createdAt: project.createdAt,
+            lastEventAt: project.lastEventAt,
+          }
+        : project,
+    );
+}
 
 export const PROJECT: Project = {
   id: "11111111-1111-4111-8111-111111111111",
@@ -3026,7 +3093,7 @@ async function answer(api: FakeApi, url: URL, init: RequestInit | undefined): Pr
     return json({ error: "unauthorized", message: "Sign in to continue." }, 401);
   }
   if (path === "/api/settings" && init?.method === "PATCH") {
-    if (!api.settings.canEdit) {
+    if (api.access.role !== "owner") {
       return json(
         { error: "forbidden", message: "Only the owner can change these settings." },
         403,
@@ -3037,7 +3104,17 @@ async function answer(api: FakeApi, url: URL, init: RequestInit | undefined): Pr
     return json({ settings: api.settings });
   }
   if (path === "/api/settings") {
-    return json({ settings: api.settings });
+    return api.access.role === "owner"
+      ? json({ settings: api.settings })
+      : json({ error: "forbidden", message: "You don't have access to this." }, 403);
+  }
+  if (path === "/api/me") {
+    return json(meOf(api));
+  }
+  if (/^\/api\/projects\/[^/]+\/alert-channels$/.test(path)) {
+    return json({
+      channels: api.channels.list.map(({ id, name, kind }) => ({ id, name, kind })),
+    });
   }
   const channels = answerChannels(api, url, init);
   if (channels !== null) return channels;
@@ -3045,7 +3122,7 @@ async function answer(api: FakeApi, url: URL, init: RequestInit | undefined): Pr
     return createProject(api, JSON.parse(typeof init.body === "string" ? init.body : "null"));
   }
   if (path === "/api/projects") {
-    return json({ projects: api.projects });
+    return json({ projects: projectsFor(api) });
   }
   if (/^\/api\/projects\/[^/]+\/users$/.test(path)) {
     const result = api.users(url.searchParams);
@@ -3304,7 +3381,11 @@ async function answer(api: FakeApi, url: URL, init: RequestInit | undefined): Pr
     return json({ project: updated });
   }
   if (found !== undefined) {
-    return json({ project: found });
+    // As GET /api/projects: a member's own projects only, without keys or settings.
+    const shown = projectsFor(api).find((item) => item.id === found.id);
+    return shown === undefined
+      ? json({ error: "not_found", message: "No project has this ID." }, 404)
+      : json({ project: shown });
   }
   return json({ error: "not_found", message: `No fake answer for ${path}` }, 404);
 }
@@ -3331,6 +3412,7 @@ export function installFakeApi(overrides: Partial<FakeApi> = {}): FakeApi {
   active = {
     signedIn: true,
     settings: SETTINGS,
+    access: OWNER_ACCESS,
     projects: [PROJECT],
     analytics: (_projectId, _period, _query, api) => analyticsFixture({ goals: api.goals }),
     goals: fakeGoals(),

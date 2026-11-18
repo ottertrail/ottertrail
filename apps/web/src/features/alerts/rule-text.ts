@@ -1,5 +1,4 @@
-import type { Aggregate, Rule } from "@/lib/alerts-api";
-import type { Channel } from "@/lib/channels-api";
+import type { Aggregate, ChannelName, Rule } from "@/lib/alerts-api";
 import type { Check } from "@/lib/uptime-api";
 
 const minutes = (count: number) => (count === 1 ? "1 minute" : `${count} minutes`);
@@ -73,7 +72,7 @@ export function watchesText(rule: Rule, checks: readonly Pick<Check, "id" | "nam
 }
 
 /** The channels' names, in the rule's order; a channel the instance no longer has says so. */
-export function channelsText(rule: Rule, channels: readonly Channel[]): string {
+export function channelsText(rule: Rule, channels: readonly ChannelName[]): string {
   if (rule.channelIds.length === 0) return "No channel";
   return rule.channelIds
     .map((id) => channels.find((channel) => channel.id === id)?.name ?? "A deleted channel")
