@@ -29,7 +29,7 @@ import { NoSuchProject } from "../projects/no-such-project";
 import { ChartCard } from "./chart-card";
 import { stepText } from "./chart-time";
 import { formatDuration } from "./format";
-import { formatNumber } from "./metric-format";
+import { durationFormat, formatNumber } from "./metric-format";
 import {
   addRuleSearch,
   routeTraceFilters,
@@ -41,20 +41,6 @@ import { SLOTS } from "./split-colors";
 import { StatusBar, StatusLegend } from "./status-classes";
 import { STATUS_COLORS, STATUS_LABELS } from "./status-format";
 import type { ChartLine } from "./time-chart";
-
-/**
- * Durations on one chart in one unit, so its single axis reads alike: ms,
- * or s when the slowest value reaches a second.
- */
-function durationFormat(values: (number | null)[]): {
-  unit: "ms" | "s";
-  format: (us: number) => string;
-} {
-  const slowest = Math.max(0, ...values.filter((value) => value !== null));
-  return slowest >= 1_000_000
-    ? { unit: "s", format: (us) => `${formatNumber(us / 1_000_000)} s` }
-    : { unit: "ms", format: (us) => `${formatNumber(us / 1000)} ms` };
-}
 
 const formatShare = (percent: number) => `${formatNumber(percent)}%`;
 

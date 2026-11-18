@@ -38,11 +38,13 @@ import { ProjectSettingsPage } from "@/features/projects/project-settings-page";
 import { ProjectsPage } from "@/features/projects/projects-page";
 import { SettingsPage } from "@/features/settings/settings-page";
 import { SpeedPage } from "@/features/speed/speed-page";
+import { DatabasesPage } from "@/features/telemetry/databases-page";
 import { HostPage } from "@/features/telemetry/host-page";
 import { HostsPage } from "@/features/telemetry/hosts-page";
 import { LogsPage } from "@/features/telemetry/logs-page";
 import { MetricPage } from "@/features/telemetry/metric-page";
 import { MetricsPage } from "@/features/telemetry/metrics-page";
+import { QueryShapePage } from "@/features/telemetry/query-shape-page";
 import {
   logFiltersFrom,
   metricChoicesFrom,
@@ -72,6 +74,7 @@ import {
 } from "@/lib/analytics-api";
 import { ApiError } from "@/lib/api";
 import { authClient } from "@/lib/auth-client";
+import { DEFAULT_DATABASE_SORT, isDatabaseSort } from "@/lib/databases-api";
 import { DEFAULT_STATUS_FILTER, isStatusFilter, type StatusFilter } from "@/lib/errors-api";
 import { lastProject } from "@/lib/last-project";
 import { isMetricKind, type MetricKind } from "@/lib/metrics-api";
@@ -612,6 +615,56 @@ const serviceRoute = createRoute({
   },
 });
 
+/** The database calls in traces: days, environment, and what the query shapes are sorted by. */
+const databasesRoute = createRoute({
+  getParentRoute: () => projectRoute,
+  path: "/databases",
+  staticData: { title: "Databases" },
+  validateSearch: (search: ErrorSearchInput & { sort?: unknown }) => ({
+    ...rangeSearch(search),
+    ...environmentSearch(search),
+    sort:
+      isDatabaseSort(search.sort) && search.sort !== DEFAULT_DATABASE_SORT
+        ? search.sort
+        : undefined,
+  }),
+  component: function DatabasesRouteComponent() {
+    const { projectId } = databasesRoute.useParams();
+    const { period, from, to, env, sort } = databasesRoute.useSearch();
+    return (
+      <DatabasesPage
+        projectId={projectId}
+        range={rangeFrom({ period, from, to })}
+        environment={env ?? DEFAULT_ENVIRONMENT}
+        sort={sort ?? DEFAULT_DATABASE_SORT}
+      />
+    );
+  },
+});
+
+/** One query shape: its ID in the path; days and environment. */
+const queryShapeRoute = createRoute({
+  getParentRoute: () => projectRoute,
+  path: "/databases/$shapeId",
+  staticData: { title: "Query shape" },
+  validateSearch: (search: ErrorSearchInput) => ({
+    ...rangeSearch(search),
+    ...environmentSearch(search),
+  }),
+  component: function QueryShapeRouteComponent() {
+    const { projectId, shapeId } = queryShapeRoute.useParams();
+    const { period, from, to, env } = queryShapeRoute.useSearch();
+    return (
+      <QueryShapePage
+        projectId={projectId}
+        shapeId={shapeId}
+        range={rangeFrom({ period, from, to })}
+        environment={env ?? DEFAULT_ENVIRONMENT}
+      />
+    );
+  },
+});
+
 /** The hosts that sent host metrics: days and environment. */
 const hostsRoute = createRoute({
   getParentRoute: () => projectRoute,
@@ -940,6 +993,8 @@ const routeTree = rootRoute.addChildren([
       metricRoute,
       servicesRoute,
       serviceRoute,
+      databasesRoute,
+      queryShapeRoute,
       hostsRoute,
       hostRoute,
       uptimeRoute,

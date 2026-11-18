@@ -9,6 +9,7 @@ import {
   ChartLineIcon,
   CheckIcon,
   ChevronsUpDownIcon,
+  DatabaseIcon,
   FolderIcon,
   GaugeIcon,
   HardDriveIcon,
@@ -298,6 +299,22 @@ function ProjectMenu({ projectId }: { projectId: string }) {
             >
               <ServerIcon />
               <span>Services</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              render={<Link to="/projects/$projectId/databases" params={{ projectId }} />}
+              isActive={
+                matchRoute({
+                  to: "/projects/$projectId/databases",
+                  params: { projectId },
+                  fuzzy: true,
+                }) !== false
+              }
+              tooltip="Databases"
+            >
+              <DatabaseIcon />
+              <span>Databases</span>
             </SidebarMenuButton>
           </SidebarMenuItem>
           <SidebarMenuItem>

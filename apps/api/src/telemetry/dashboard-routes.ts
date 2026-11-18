@@ -23,6 +23,7 @@ import {
   telemetryRange,
   TRACE_ID_PATTERN,
 } from "./dashboard-query.ts";
+import { DATABASE_SORTS, type DatabaseSort, listDatabases, shapeDetail } from "./databases.ts";
 import { HOST_KEY, hostCharts, listHosts } from "./hosts.ts";
 import {
   logDetail,
@@ -121,6 +122,12 @@ type HostQuery = RangeQuery & { host: string };
 
 type ServiceChartQuery = RangeQuery & { service: string; route?: string };
 
+type DatabasesQuery = RangeQuery & { sort?: DatabaseSort };
+
+/** A query shape's ID: a UInt64 hash, as decimal text. */
+const SHAPE_ID_PATTERN = "^[0-9]{1,20}$";
+const MAX_UINT64 = 18_446_744_073_709_551_615n;
+
 /** The range's parameters alone, for the lists that take nothing else. */
 const RANGE_QUERY = { type: "object", additionalProperties: false, properties: RANGE_PROPERTIES };
 
@@ -149,11 +156,15 @@ type LogsQuery = RangeQuery & {
  *     (one service's requests, or one route's, over the period, in time buckets)
  * GET /api/projects/:id/services/routes[?environment=…]
  *     (up to 200 distinct services and routes of the last 24 hours, for the alert form)
+ * GET /api/projects/:id/databases[?period=…&environment=…&sort=time|p95|calls|failures]
+ *     (each database's calls and its query shapes, the first 200 by the sort)
+ * GET /api/projects/:id/databases/shapes/:shapeId[?period=…&environment=…]
+ *     (one query shape over the period: charts, services, slowest calls, routes)
  * GET /api/projects/:id/hosts[?period=…&environment=…]
  * GET /api/projects/:id/hosts/charts?host=<host.name>[&period=…&environment=…]
  *
- * The Traces, Logs, Metrics, Services, and Hosts pages (traces.ts,
- * logs.ts, metrics.ts, services.ts, hosts.ts). Like every project
+ * The Traces, Logs, Metrics, Services, Databases, and Hosts pages
+ * (traces.ts, logs.ts, metrics.ts, services.ts, databases.ts, hosts.ts). Like every project
  * route, each runs requireProjectAccess first, and reads only the project
  * it found.
  */
@@ -522,6 +533,67 @@ export const telemetryDashboardRoutes: FastifyPluginCallback<{
         to: at,
       });
       return { environment, maxRoutes: MAX_RECENT_ROUTES, ...found };
+    },
+  );
+
+  app.get<{ Params: { id: string }; Querystring: DatabasesQuery }>(
+    "/projects/:id/databases",
+    {
+      preHandler: [signedIn, projectAccess],
+      schema: {
+        params: PARAMS,
+        querystring: {
+          type: "object",
+          additionalProperties: false,
+          properties: { ...RANGE_PROPERTIES, sort: { type: "string", enum: DATABASE_SORTS } },
+        },
+      },
+    },
+    async (request, reply) => {
+      const asked = await rangeOf(request);
+      if ("problem" in asked) return reply.code(400).send(asked.problem);
+      const { range } = asked;
+      const sort = request.query.sort ?? "time";
+      return {
+        ...answered(range),
+        sort,
+        ...(await listDatabases(readerOf(reply), range, sort, now())),
+      };
+    },
+  );
+
+  app.get<{ Params: { id: string; shapeId: string }; Querystring: RangeQuery }>(
+    "/projects/:id/databases/shapes/:shapeId",
+    {
+      preHandler: [signedIn, projectAccess],
+      schema: {
+        params: {
+          type: "object",
+          required: ["id", "shapeId"],
+          properties: {
+            id: { type: "string", pattern: UUID_PATTERN },
+            shapeId: { type: "string", pattern: SHAPE_ID_PATTERN },
+          },
+        },
+        querystring: RANGE_QUERY,
+      },
+    },
+    async (request, reply) => {
+      const shapeId = BigInt(request.params.shapeId);
+      if (shapeId > MAX_UINT64) {
+        return reply
+          .code(400)
+          .send({ error: "invalid_shape", message: "The shape's ID is out of range." });
+      }
+      const asked = await rangeOf(request);
+      if ("problem" in asked) return reply.code(400).send(asked.problem);
+      const { range } = asked;
+      const reader = readerOf(reply);
+      const [detail, labels] = await Promise.all([
+        shapeDetail(reader, range, shapeId.toString(), now()),
+        labelsInRange(reader, "spans", range, "AND kind = 'client'"),
+      ]);
+      return { ...answered(range), environments: labels.environments, ...detail };
     },
   );
 

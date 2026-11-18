@@ -4,6 +4,8 @@
  * caller. A migration that has run is recorded in its schema_migrations
  * table and never runs again, so never change one: add the next.
  */
+import { DATABASE_CALL_COLUMNS, databaseCallColumns } from "../telemetry/db-shape.ts";
+
 export interface ClickHouseMigration {
   name: string;
   statements: (database: string) => string[];
@@ -292,5 +294,26 @@ export const CLICKHOUSE_MIGRATIONS: ClickHouseMigration[] = [
              min_age_to_force_merge_seconds = ${FORCE_MERGE_SECONDS},
              min_age_to_force_merge_on_partition_only = 1`,
       ),
+  },
+  {
+    name: "0003_database_call_columns",
+    /**
+     * A database call's system, database, and query shape, worked out by
+     * ClickHouse when a span is written (telemetry/db-shape.ts), as a
+     * metric row's series is: the Databases pages normalized every
+     * statement of a period on each read, and a busy project's week took
+     * 7.8 seconds of the 15 a query may take; reading these columns takes
+     * a fraction of that (docs/telemetry.md, "Databases"). Rows already
+     * stored get them too (MATERIALIZE COLUMN), waited for.
+     */
+    statements: (database) => [
+      `ALTER TABLE ${database}.spans
+         ${databaseCallColumns()
+           .map((column) => `ADD COLUMN IF NOT EXISTS ${column}`)
+           .join(",\n         ")}`,
+      `ALTER TABLE ${database}.spans
+         ${DATABASE_CALL_COLUMNS.map((column) => `MATERIALIZE COLUMN ${column}`).join(", ")}
+       SETTINGS mutations_sync = 1`,
+    ],
   },
 ];

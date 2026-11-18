@@ -1,4 +1,5 @@
 import { DEFAULT_ENVIRONMENT, DEFAULT_PERIOD, type PageRange } from "@/lib/analytics-api";
+import { DEFAULT_DATABASE_SORT, type DatabaseSort } from "@/lib/databases-api";
 import { isSeverity, isTraceId, type LogFilters } from "@/lib/logs-api";
 import { isMetricKind, type MetricKind } from "@/lib/metrics-api";
 import { MIN_DURATIONS, type TraceFilters } from "@/lib/traces-api";
@@ -70,6 +71,31 @@ export const serviceSearchOf = ({ range, environment, route }: ServiceSearch) =>
   ...rangeSearch(range),
   ...environmentSearch(environment),
   ...(route === undefined ? {} : { route }),
+});
+
+/** The Databases page's address: the days, environment, and what the shapes are sorted by. */
+export interface DatabasesSearch {
+  range: PageRange;
+  environment: string;
+  sort?: DatabaseSort | undefined;
+}
+
+export const databasesSearchOf = ({ range, environment, sort }: DatabasesSearch) => ({
+  ...rangeSearch(range),
+  ...environmentSearch(environment),
+  ...(sort === undefined || sort === DEFAULT_DATABASE_SORT ? {} : { sort }),
+});
+
+/** A query shape's page's address, besides its ID: the days and environment. */
+export const shapeSearchOf = ({
+  range,
+  environment,
+}: {
+  range: PageRange;
+  environment: string;
+}) => ({
+  ...rangeSearch(range),
+  ...environmentSearch(environment),
 });
 
 /** The longest name the Traces page's filter takes. */

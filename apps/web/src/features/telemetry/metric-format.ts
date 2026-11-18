@@ -85,3 +85,17 @@ export function formatMetricValue(value: number, unit: string): string {
 export function formatRate(value: number, unit: string): string {
   return `${formatMetricValue(value, unit)}/s`;
 }
+
+/**
+ * Durations on one chart in one unit, so its single axis reads alike: ms,
+ * or s when the slowest value reaches a second.
+ */
+export function durationFormat(values: (number | null)[]): {
+  unit: "ms" | "s";
+  format: (us: number) => string;
+} {
+  const slowest = Math.max(0, ...values.filter((value) => value !== null));
+  return slowest >= 1_000_000
+    ? { unit: "s", format: (us) => `${formatNumber(us / 1_000_000)} s` }
+    : { unit: "ms", format: (us) => `${formatNumber(us / 1000)} ms` };
+}

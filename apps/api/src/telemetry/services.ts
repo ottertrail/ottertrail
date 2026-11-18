@@ -107,7 +107,7 @@ interface DurationRow {
 }
 
 /** A request's route: its `http.route` attribute, else its name. */
-const ROUTE = "if(attributes['http.route'] != '', attributes['http.route'], name)";
+export const ROUTE = "if(attributes['http.route'] != '', attributes['http.route'], name)";
 
 /** Which requests to read: a project's, in one environment, in [from, to), optionally one service's and route's. */
 export interface SpanScope {

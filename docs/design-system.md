@@ -85,7 +85,7 @@ Rules:
 - One y-axis per chart. Two measures of different scale get two charts.
 - Sequential (magnitude) data uses one hue in steps: `--seq-1` to `--seq-5` (`bg-seq-1` …), blue from `#172437` to `#2563ad`, each lighter than the one before, so on the dark canvas a larger value stands out more. Body text keeps at least 4.5:1 on every step (`tests/tokens.test.ts`), so a cell's number is always readable on it; the color is never the only way to read the value. First used by the retention table. Diverging data (two hues with a gray midpoint) has no ramp yet; add one with its first chart.
 - Values, labels, and legends use text tokens, not the series color.
-- On one page, a color means one thing. When a page's charts show different entities, such as status classes and percentiles, each takes slots no other on the page uses: a service's page gives the classes `chart-1` to `chart-4`, the failed share `chart-5`, and the percentiles `chart-6` to `chart-8`.
+- On one page, a color means one thing. When a page's charts show different entities, such as status classes and percentiles, each takes slots no other on the page uses: a service's page gives the classes `chart-1` to `chart-4`, the failed share `chart-5`, and the percentiles `chart-6` to `chart-8`; a query shape's page keeps the same slots, its calls taking `chart-1`.
 - A thin segmented bar shows one whole split into parts, such as a route's requests by status class (`status-classes.tsx`): 8px high, rounded ends, a part per category with a value, in proportion, 2px apart, no text, with a legend naming the parts and a table view. Hover, keyboard focus, and its accessible name give every part's count and share.
 
 ## Typography

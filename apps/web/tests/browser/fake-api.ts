@@ -9,6 +9,12 @@ import {
 } from "../../src/lib/alerts-api.ts";
 import type { Analytics, BreakdownRow, DayPoint } from "../../src/lib/analytics-api.ts";
 import type { Channel, Delivery } from "../../src/lib/channels-api.ts";
+import type {
+  DatabaseList,
+  DatabaseSummary,
+  ShapeDetail,
+  ShapeSummary,
+} from "../../src/lib/databases-api.ts";
 import {
   type ErrorDetail,
   type ErrorGroup,
@@ -124,6 +130,10 @@ export interface FakeApi {
   services: (query: URLSearchParams) => ServiceList | Response;
   /** Answers GET /api/projects/:id/services/chart; by default, fakeServiceChart. */
   serviceChart: (query: URLSearchParams) => ServiceChart | Response;
+  /** Answers GET /api/projects/:id/databases; by default, fakeDatabases. */
+  databases: (query: URLSearchParams) => DatabaseList | Response;
+  /** Answers GET /api/projects/:id/databases/shapes/:shapeId; by default, fakeShape. */
+  shape: (shapeId: string, query: URLSearchParams) => ShapeDetail | Response;
   /** Answers GET /api/projects/:id/hosts; by default, fakeHosts. */
   hosts: (query: URLSearchParams) => HostList | Response;
   /** Answers GET /api/projects/:id/hosts/charts; by default, fakeHostCharts. */
@@ -1047,6 +1057,205 @@ export function noServiceChart(query: URLSearchParams): ServiceChart {
 /** No span ever received. */
 export function noServices(query: URLSearchParams): ServiceList {
   return { ...fakeServices(query), services: [], received: false };
+}
+
+/** A shape's or database's numbers, with what differs. */
+const callStats = (stats: Partial<ShapeSummary> & { calls: number }) => ({
+  failed: 0,
+  totalUs: 0,
+  perSecond: stats.calls / 604_800,
+  p50Us: 0,
+  p95Us: 0,
+  p99Us: 0,
+  services: ["web"],
+  serviceCount: 1,
+  ...stats,
+});
+
+/** The orders lookup: most time spent, a fast median. */
+export const ORDERS_SHAPE: ShapeSummary = {
+  id: "1234567890123456789",
+  kind: "query",
+  shape:
+    "SELECT * FROM orders WHERE customer_id = ? AND status IN (?) ORDER BY created_at DESC LIMIT ?",
+  ...callStats({
+    calls: 60_480,
+    failed: 6,
+    totalUs: 1_512_000_000,
+    p50Us: 12_000,
+    p95Us: 80_000,
+    p99Us: 250_000,
+    services: ["api", "web"],
+    serviceCount: 2,
+  }),
+};
+
+/** The report: few calls, slow, two failed. */
+export const REPORT_SHAPE: ShapeSummary = {
+  id: "987654321",
+  kind: "summary",
+  shape: "SELECT invoices",
+  ...callStats({
+    calls: 120,
+    failed: 2,
+    totalUs: 300_000_000,
+    p50Us: 1_800_000,
+    p95Us: 4_200_000,
+    p99Us: 6_000_000,
+    services: ["billing"],
+  }),
+};
+
+/**
+ * Two databases: postgresql · shop, with two shapes in the order the sort
+ * asks for (and 240 in all, so the list is cut), and redis without a name.
+ */
+export function fakeDatabases(query: URLSearchParams): DatabaseList {
+  const sort = query.get("sort") ?? "time";
+  const byTime = [ORDERS_SHAPE, REPORT_SHAPE];
+  const shop: DatabaseSummary = {
+    system: "postgresql",
+    database: "shop",
+    ...callStats({
+      calls: 60_600,
+      failed: 8,
+      totalUs: 1_812_000_000,
+      p50Us: 12_500,
+      p95Us: 95_000,
+      p99Us: 1_900_000,
+      services: ["api", "billing", "web"],
+      serviceCount: 3,
+    }),
+    shapeCount: 240,
+    shapes: sort === "time" || sort === "calls" ? byTime : byTime.toReversed(),
+  };
+  const redis: DatabaseSummary = {
+    system: "redis",
+    database: "",
+    ...callStats({ calls: 9000, totalUs: 4_500_000, p50Us: 400, p95Us: 900, p99Us: 2000 }),
+    shapeCount: 1,
+    shapes: [
+      {
+        id: "42",
+        kind: "operation",
+        shape: "GET",
+        ...callStats({ calls: 9000, totalUs: 4_500_000, p50Us: 400, p95Us: 900, p99Us: 2000 }),
+      },
+    ],
+  };
+  return {
+    ...telemetryRange(query),
+    sort: sort === "p95" || sort === "calls" || sort === "failures" ? sort : "time",
+    databases: [shop, redis],
+    truncated: false,
+    received: true,
+    seconds: 604_800,
+  };
+}
+
+/** No span ever received. */
+export function noDatabases(query: URLSearchParams): DatabaseList {
+  return { ...fakeDatabases(query), databases: [], received: false };
+}
+
+/**
+ * The orders lookup over 12 hourly buckets from 16 Nov 00:00 UTC: nothing
+ * in the first two hours, then 3,600 calls an hour (1 a second), 7,200 at
+ * 03:00; 36 failed at 04:00. Every busy hour has a median of 12 ms, a 95th
+ * percentile of 80 ms, and a 99th of 250 ms.
+ */
+export function fakeShape(shapeId: string, query: URLSearchParams): ShapeDetail {
+  const buckets = 12;
+  const calls: number[] = Array.from({ length: buckets }, (_, index) =>
+    index < 2 ? 0 : index === 3 ? 7200 : 3600,
+  );
+  const failed = calls.map((_, index) => (index === 4 ? 36 : 0));
+  const whenBusy = (value: number) => calls.map((count) => (count === 0 ? null : value));
+  const total = calls.reduce((sum, value) => sum + value, 0);
+  return {
+    ...telemetryRange(query),
+    id: shapeId,
+    shape: { kind: "query", text: ORDERS_SHAPE.shape, system: "postgresql", database: "shop" },
+    start: "2026-11-16T00:00:00.000Z",
+    stepSeconds: 3600,
+    buckets,
+    totals: {
+      ...callStats({
+        calls: total,
+        failed: 36,
+        totalUs: 480_000_000,
+        p50Us: 12_000,
+        p95Us: 80_000,
+        p99Us: 250_000,
+        services: ["api", "web"],
+        serviceCount: 2,
+      }),
+    },
+    counts: { calls, failed },
+    perSecond: calls.map((count) => count / 3600),
+    failedShare: calls.map((count, index) => (count === 0 ? null : (failed[index] ?? 0) / count)),
+    durations: { p50Us: whenBusy(12_000), p95Us: whenBusy(80_000), p99Us: whenBusy(250_000) },
+    services: [
+      {
+        service: "web",
+        ...callStats({ calls: 30_000, failed: 36, totalUs: 300_000_000, p95Us: 90_000 }),
+      },
+      { service: "api", ...callStats({ calls: 9600, totalUs: 180_000_000, p95Us: 70_000 }) },
+    ].map((item) => ({
+      service: item.service,
+      calls: item.calls,
+      failed: item.failed,
+      totalUs: item.totalUs,
+      perSecond: item.perSecond,
+      p50Us: item.p50Us,
+      p95Us: item.p95Us,
+      p99Us: item.p99Us,
+    })),
+    servicesTruncated: false,
+    slowest: [
+      {
+        traceId: "4bf92f3577b34da6a3ce929d0e0e4736",
+        spanId: "00f067aa0ba902b7",
+        start: "2026-11-16T04:12:30.123Z",
+        durationUs: 2_400_000,
+        service: "web",
+        failed: true,
+      },
+      {
+        traceId: "5bf92f3577b34da6a3ce929d0e0e4737",
+        spanId: "10f067aa0ba902b8",
+        start: "2026-11-16T09:00:01.000Z",
+        durationUs: 900_000,
+        service: "api",
+        failed: false,
+      },
+    ],
+    callers: [
+      { service: "web", route: "/orders/{id}", calls: 700 },
+      { service: "api", route: null, calls: 300 },
+    ],
+    sampled: 1000,
+  };
+}
+
+/** No call of the shape in the period. */
+export function noShapeCalls(shapeId: string, query: URLSearchParams): ShapeDetail {
+  const shape = fakeShape(shapeId, query);
+  const zeros = Array.from({ length: shape.buckets }, () => 0);
+  const nulls = Array.from({ length: shape.buckets }, () => null);
+  return {
+    ...shape,
+    shape: null,
+    totals: callStats({ calls: 0, perSecond: 0, services: [], serviceCount: 0 }),
+    counts: { calls: zeros, failed: zeros },
+    perSecond: zeros,
+    failedShare: nulls,
+    durations: { p50Us: nulls, p95Us: nulls, p99Us: nulls },
+    services: [],
+    slowest: [],
+    callers: [],
+    sampled: 0,
+  };
 }
 
 /**
@@ -2830,6 +3039,15 @@ async function answer(api: FakeApi, url: URL, init: RequestInit | undefined): Pr
     const result = api.metrics(url.searchParams);
     return result instanceof Response ? result : json(result);
   }
+  if (/^\/api\/projects\/[^/]+\/databases$/.test(path)) {
+    const result = api.databases(url.searchParams);
+    return result instanceof Response ? result : json(result);
+  }
+  const shapePath = /^\/api\/projects\/[^/]+\/databases\/shapes\/([^/]+)$/.exec(path);
+  if (shapePath?.[1] !== undefined) {
+    const result = api.shape(decodeURIComponent(shapePath[1]), url.searchParams);
+    return result instanceof Response ? result : json(result);
+  }
   if (/^\/api\/projects\/[^/]+\/hosts\/charts$/.test(path)) {
     const result = api.hostCharts(url.searchParams);
     return result instanceof Response ? result : json(result);
@@ -3005,6 +3223,8 @@ export function installFakeApi(overrides: Partial<FakeApi> = {}): FakeApi {
     metricChart: fakeMetricChart,
     services: fakeServices,
     serviceChart: fakeServiceChart,
+    databases: fakeDatabases,
+    shape: fakeShape,
     hosts: fakeHosts,
     hostCharts: fakeHostCharts,
     checks: fakeChecks(),
