@@ -44,6 +44,12 @@
    * a field can be found without its label.
    */
   --field-edge: #746f75;
+  /*
+   * The chosen item of a toggle group (Unresolved, Resolved, All): a fill
+   * at least 3:1 on the surfaces, on the unchosen items (transparent) and
+   * on their hover wash (muted), with ink text 4.6:1 on it.
+   */
+  --toggle-on: var(--field-edge);
   --ink: #f9f7f9;
   --ink-muted: #dad3da;
   --ink-subtle: #938c93;
@@ -207,6 +213,7 @@
   --color-hairline-strong: var(--hairline-strong);
   --color-hairline-tertiary: var(--hairline-tertiary);
   --color-field-edge: var(--field-edge);
+  --color-toggle-on: var(--toggle-on);
   --color-ink: var(--ink);
   --color-ink-muted: var(--ink-muted);
   --color-ink-subtle: var(--ink-subtle);
@@ -320,6 +327,43 @@
   :where([data-slot="table-container"])
     :where(a[href], button, [tabindex]:not([tabindex="-1"])):not([data-slot]):focus-visible {
     outline-offset: -2px;
+  }
+
+  /*
+   * Every enabled control a click acts on shows the pointer: Tailwind 4's
+   * preflight leaves buttons at the default arrow. Toggle and tab items,
+   * switches, checkboxes and radios, select and combobox triggers, menu and
+   * list options, a <summary>, and a label around a checkbox, radio or
+   * switch. A combobox's text field keeps its text cursor. Disabled
+   * controls keep their own cursor (the default arrow, or not-allowed where
+   * a control sets it). A class on the control (cursor-default on a
+   * tooltip's bar) wins, as utilities come after the base layer.
+   */
+  :is(
+      button,
+      [role="button"],
+      [role="tab"],
+      [role="switch"],
+      [role="checkbox"],
+      [role="radio"],
+      [role="menuitem"],
+      [role="menuitemcheckbox"],
+      [role="menuitemradio"],
+      [role="option"],
+      [role="combobox"]:not(input),
+      select,
+      summary,
+      input:is([type="checkbox"], [type="radio"], [type="button"], [type="submit"], [type="reset"]),
+      label:has(
+        input:is([type="checkbox"], [type="radio"]),
+        [role="checkbox"],
+        [role="radio"],
+        [role="switch"]
+      )
+    ):not(:disabled, [aria-disabled="true"], [data-disabled]):not(
+      label:has(:disabled, [aria-disabled="true"], [data-disabled])
+    ) {
+    cursor: pointer;
   }
 
   html {

@@ -56,6 +56,7 @@ import {
 } from "@/components/ui/table";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Workbench, WorkbenchKeyHints } from "@/components/workbench";
+import { ROW_LINK, workbenchRow } from "@/components/workbench-rows";
 import { DayChart } from "@/features/analytics/day-chart";
 import { formatDay, formatWhole, pointsChange, relativeChange } from "@/features/analytics/format";
 import { useDirtyForm } from "@/hooks/use-dirty-form";
@@ -331,15 +332,11 @@ function ExampleList({
       </TableHeader>
       <TableBody>
         {items.map((item) => (
-          <TableRow
-            key={item.id}
-            data-workbench-id={item.id}
-            data-state={item.id === selected ? "selected" : undefined}
-            className="data-[state=selected]:shadow-[inset_2px_0_0_var(--brand)]"
-          >
+          <TableRow key={item.id} {...workbenchRow(item.id, item.id === selected)}>
             <TableCell className="max-w-0 pl-4 whitespace-normal">
               <button
                 type="button"
+                {...ROW_LINK}
                 aria-current={item.id === selected ? "true" : undefined}
                 title={`${item.name}: ${item.message}`}
                 onClick={() => select(item.id)}

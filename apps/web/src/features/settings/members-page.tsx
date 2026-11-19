@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import * as React from "react";
 
+import { clickableRow, ROW_LINK } from "@/components/clickable-row";
 import { CopyableCode } from "@/components/copyable-code";
 import { NoAccess } from "@/components/no-access";
 import { SettingsSection } from "@/components/settings-section";
@@ -693,6 +694,7 @@ function ChooseLink({
       to="/settings/members"
       search={search}
       data-person={search.member ?? search.invitation}
+      {...ROW_LINK}
       className="truncate font-medium text-link hover:underline"
     >
       {children}
@@ -751,7 +753,7 @@ function PeopleList({
                 <TableRow
                   key={member.id}
                   data-state={isChosen ? "selected" : undefined}
-                  className={SELECTED_ROW}
+                  {...clickableRow(SELECTED_ROW)}
                 >
                   <TableCell className={`${GUTTER_START} py-2.5 whitespace-normal`}>
                     <div className="flex min-w-0 items-center gap-2">
@@ -816,7 +818,7 @@ function PeopleList({
                   <TableRow
                     key={invitation.id}
                     data-state={isChosen ? "selected" : undefined}
-                    className={SELECTED_ROW}
+                    {...clickableRow(SELECTED_ROW)}
                   >
                     <TableCell className={`${GUTTER_START} py-2.5`}>
                       <div className="flex min-w-0">

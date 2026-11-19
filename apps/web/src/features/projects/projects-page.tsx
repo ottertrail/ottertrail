@@ -4,6 +4,7 @@ import { cn } from "cn";
 import { FolderIcon, OctagonAlertIcon } from "lucide-react";
 
 import { ButtonLink } from "@/components/button-link";
+import { clickableRow, ROW_LINK } from "@/components/clickable-row";
 import { PINNED, PINNED_END } from "@/components/pinned-column";
 import { ScrollHint } from "@/components/scroll-hint";
 import { StatusBadge } from "@/components/status-badge";
@@ -161,12 +162,13 @@ export function ProjectsPage() {
                 const full = isFullProject(project) ? project : null;
                 const noSites = full !== null && full.allowedHostnames.length === 0;
                 return (
-                  <TableRow key={project.id}>
+                  <TableRow key={project.id} {...clickableRow()}>
                     {/* The row's header, for reading the table by rows. */}
                     <TableHead scope="row" className={cn(GUTTER_START, PINNED, "h-auto py-2.5")}>
                       <Link
                         to="/projects/$projectId"
                         params={{ projectId: project.id }}
+                        {...ROW_LINK}
                         className="text-link hover:underline"
                       >
                         {project.name}

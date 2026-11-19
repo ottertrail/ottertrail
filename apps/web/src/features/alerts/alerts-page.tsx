@@ -42,8 +42,9 @@ import {
   GUTTER_END,
   GUTTER_START,
   LIST_HEAD,
-  SELECTED_ROW,
+  ROW_LINK,
   selectOnPlainClick,
+  workbenchRow,
 } from "@/components/workbench-rows";
 import { PHONE, useMediaQuery } from "@/hooks/use-media-query";
 import { useSearchParam } from "@/hooks/use-search-param";
@@ -131,17 +132,13 @@ function RuleTable({
         {rules.map((rule) => {
           const chosen = rule.id === selected;
           return (
-            <TableRow
-              key={rule.id}
-              data-workbench-id={rule.id}
-              data-state={chosen ? "selected" : undefined}
-              className={SELECTED_ROW}
-            >
+            <TableRow key={rule.id} {...workbenchRow(rule.id, chosen)}>
               <TableCell className={`${GUTTER_START} py-2.5 align-top whitespace-normal`}>
                 <Link
                   to="/projects/$projectId/alerts/$ruleId"
                   params={{ projectId, ruleId: rule.id }}
                   aria-current={chosen ? "true" : undefined}
+                  {...ROW_LINK}
                   onClick={selectOnPlainClick(select, rule.id)}
                   className="block truncate rounded-sm font-medium text-link hover:underline"
                   title={rule.name}

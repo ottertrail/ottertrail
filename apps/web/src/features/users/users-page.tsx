@@ -51,8 +51,9 @@ import {
   GUTTER_END,
   GUTTER_START,
   LIST_HEAD,
-  SELECTED_ROW,
+  ROW_LINK,
   selectOnPlainClick,
+  workbenchRow,
 } from "@/components/workbench-rows";
 import { NARROW_WORKBENCH, useMediaQuery } from "@/hooks/use-media-query";
 import { useSettled } from "@/hooks/use-settled";
@@ -144,18 +145,14 @@ function UserTable({
         {users.map((user) => {
           const chosen = user.userId === selected;
           return (
-            <TableRow
-              key={user.userId}
-              data-workbench-id={user.userId}
-              data-state={chosen ? "selected" : undefined}
-              className={SELECTED_ROW}
-            >
+            <TableRow key={user.userId} {...workbenchRow(user.userId, chosen)}>
               <TableCell className={`${GUTTER_START} py-2.5 font-mono`}>
                 <Link
                   to="/projects/$projectId/users/$userId"
                   params={{ projectId, userId: user.userId }}
                   search={environment === DEFAULT_ENVIRONMENT ? {} : { env: environment }}
                   aria-current={chosen ? "true" : undefined}
+                  {...ROW_LINK}
                   onClick={selectOnPlainClick(select, user.userId)}
                   className="block truncate rounded-sm text-link hover:underline"
                   title={user.userId}

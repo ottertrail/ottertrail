@@ -48,6 +48,8 @@ export function StatusBar({
     <Tooltip>
       <TooltipTrigger
         aria-label={text}
+        // It only shows a tooltip: in a clickable row (a service's routes), a click on it is the row's.
+        data-row-passthrough=""
         className={`flex h-2 w-full min-w-16 cursor-default gap-0.5 rounded-full outline-offset-2 focus-visible:outline-2 focus-visible:outline-ring ${className ?? ""}`}
       >
         {total === 0 ? (

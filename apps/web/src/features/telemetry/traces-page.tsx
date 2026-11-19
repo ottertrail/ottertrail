@@ -38,8 +38,9 @@ import {
   GUTTER_END,
   GUTTER_START,
   LIST_HEAD,
-  SELECTED_ROW,
+  ROW_LINK,
   selectOnPlainClick,
+  workbenchRow,
 } from "@/components/workbench-rows";
 import { NARROW_WORKBENCH, useMediaQuery } from "@/hooks/use-media-query";
 import { DEFAULT_ENVIRONMENT, type PageRange } from "@/lib/analytics-api";
@@ -120,9 +121,7 @@ function TraceTable({
           return (
             <TableRow
               key={`${trace.traceId}-${trace.spanId}-${trace.start}`}
-              data-workbench-id={trace.traceId}
-              data-state={chosen ? "selected" : undefined}
-              className={SELECTED_ROW}
+              {...workbenchRow(trace.traceId, chosen)}
             >
               <TableCell className={`${GUTTER_START} py-2.5 align-top whitespace-normal`}>
                 <Link
@@ -130,6 +129,7 @@ function TraceTable({
                   params={{ projectId, traceId: trace.traceId }}
                   search={{ at: trace.start }}
                   aria-current={chosen ? "true" : undefined}
+                  {...ROW_LINK}
                   onClick={selectOnPlainClick(select, trace.traceId)}
                   className="block truncate rounded-sm font-medium text-link hover:underline"
                   title={trace.name}

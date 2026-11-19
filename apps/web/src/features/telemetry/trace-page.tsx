@@ -3,6 +3,7 @@ import { Link, useNavigate } from "@tanstack/react-router";
 import { ArrowLeftIcon, InfoIcon, OctagonAlertIcon, SearchXIcon } from "lucide-react";
 import * as React from "react";
 
+import { clickableRow, ROW_LINK } from "@/components/clickable-row";
 import { PINNED } from "@/components/pinned-column";
 import { ScrollHint } from "@/components/scroll-hint";
 import { StatusBadge } from "@/components/status-badge";
@@ -94,7 +95,7 @@ function Waterfall({
               <TableRow
                 key={`${span.spanId}-${span.startNs}`}
                 data-state={isSelected ? "selected" : undefined}
-                className={cn({ "bg-surface-3": isSelected })}
+                {...clickableRow(cn({ "bg-surface-3": isSelected }))}
               >
                 <TableCell className={cn("py-1", PINNED, isSelected && "max-sm:bg-surface-3")}>
                   <div
@@ -104,6 +105,7 @@ function Waterfall({
                     <button
                       type="button"
                       aria-pressed={isSelected}
+                      {...ROW_LINK}
                       onClick={() => onSelect(span)}
                       className="min-w-0 truncate rounded-sm text-left text-link hover:underline focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
                       title={`${span.name} (${span.service})`}

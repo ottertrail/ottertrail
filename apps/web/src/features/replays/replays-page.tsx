@@ -44,8 +44,9 @@ import {
   GUTTER_END,
   GUTTER_START,
   LIST_HEAD,
-  SELECTED_ROW,
+  ROW_LINK,
   selectOnPlainClick,
+  workbenchRow,
 } from "@/components/workbench-rows";
 import { NARROW_WORKBENCH, useMediaQuery } from "@/hooks/use-media-query";
 import { DEFAULT_ENVIRONMENT, type PageRange } from "@/lib/analytics-api";
@@ -124,17 +125,13 @@ function ReplayTable({
           const error = errorText(replay);
           const pages = pagesText(replay.pages);
           return (
-            <TableRow
-              key={replay.id}
-              data-workbench-id={replay.id}
-              data-state={chosen ? "selected" : undefined}
-              className={SELECTED_ROW}
-            >
+            <TableRow key={replay.id} {...workbenchRow(replay.id, chosen)}>
               <TableCell className={`${GUTTER_START} py-2.5 align-top whitespace-normal`}>
                 <Link
                   to="/projects/$projectId/replays/$replayId"
                   params={{ projectId, replayId: replay.id }}
                   aria-current={chosen ? "true" : undefined}
+                  {...ROW_LINK}
                   onClick={selectOnPlainClick(select, replay.id)}
                   className="rounded-sm font-medium text-link hover:underline"
                   aria-label={`Replay at ${when}`}

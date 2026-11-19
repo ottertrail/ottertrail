@@ -44,8 +44,9 @@ import {
   GUTTER_END,
   GUTTER_START,
   LIST_HEAD,
-  SELECTED_ROW,
+  ROW_LINK,
   selectOnPlainClick,
+  workbenchRow,
 } from "@/components/workbench-rows";
 import { NARROW_WORKBENCH, useMediaQuery } from "@/hooks/use-media-query";
 import { useAccess } from "@/lib/access";
@@ -187,12 +188,7 @@ function ErrorTable({
         {list.groups.map((group) => {
           const chosen = group.fingerprint === selected;
           return (
-            <TableRow
-              key={group.fingerprint}
-              data-workbench-id={group.fingerprint}
-              data-state={chosen ? "selected" : undefined}
-              className={SELECTED_ROW}
-            >
+            <TableRow key={group.fingerprint} {...workbenchRow(group.fingerprint, chosen)}>
               <TableCell className={`${gutterStart} py-2.5 align-top whitespace-normal`}>
                 <Link
                   to="/projects/$projectId/errors/$fingerprint"
@@ -200,6 +196,7 @@ function ErrorTable({
                   search={detailSearch}
                   aria-current={chosen ? "true" : undefined}
                   // A new tab or window still opens the page; a plain click selects.
+                  {...ROW_LINK}
                   onClick={selectOnPlainClick(select, group.fingerprint)}
                   className="line-clamp-2 rounded-sm break-words text-link hover:underline"
                   title={`${group.type}: ${group.message}`}

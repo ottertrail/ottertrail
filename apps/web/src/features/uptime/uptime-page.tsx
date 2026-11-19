@@ -38,8 +38,9 @@ import {
   GUTTER_END,
   GUTTER_START,
   LIST_HEAD,
-  SELECTED_ROW,
+  ROW_LINK,
   selectOnPlainClick,
+  workbenchRow,
 } from "@/components/workbench-rows";
 import { PHONE, useMediaQuery } from "@/hooks/use-media-query";
 import { useSearchParam } from "@/hooks/use-search-param";
@@ -132,17 +133,13 @@ function CheckTable({
         {checks.map((check) => {
           const chosen = check.id === selected;
           return (
-            <TableRow
-              key={check.id}
-              data-workbench-id={check.id}
-              data-state={chosen ? "selected" : undefined}
-              className={SELECTED_ROW}
-            >
+            <TableRow key={check.id} {...workbenchRow(check.id, chosen)}>
               <TableCell className={`${GUTTER_START} py-2.5`}>
                 <Link
                   to="/projects/$projectId/uptime/$checkId"
                   params={{ projectId, checkId: check.id }}
                   aria-current={chosen ? "true" : undefined}
+                  {...ROW_LINK}
                   onClick={selectOnPlainClick(select, check.id)}
                   className="block truncate rounded-sm text-link hover:underline"
                   title={check.name}

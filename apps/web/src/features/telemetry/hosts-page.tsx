@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { OctagonAlertIcon, SearchXIcon } from "lucide-react";
 
+import { clickableRow, ROW_LINK } from "@/components/clickable-row";
 import { Missing } from "@/components/missing";
 import { PINNED } from "@/components/pinned-column";
 import { ScrollHint } from "@/components/scroll-hint";
@@ -207,12 +208,13 @@ export function HostsPage({
                     </TableHeader>
                     <TableBody>
                       {data.hosts.map((host) => (
-                        <TableRow key={host.host}>
+                        <TableRow key={host.host} {...clickableRow()}>
                           <TableCell className={`max-w-xs pl-0 max-sm:max-w-40 ${PINNED}`}>
                             <Link
                               to="/projects/$projectId/hosts/$host"
                               params={{ projectId, host: host.host }}
                               search={{ ...rangeSearch(range), ...environmentSearch(environment) }}
+                              {...ROW_LINK}
                               className="block truncate font-mono text-xs text-link hover:underline"
                               title={host.host}
                             >

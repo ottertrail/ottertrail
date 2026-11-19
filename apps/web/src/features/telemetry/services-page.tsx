@@ -3,6 +3,7 @@ import { Link, useNavigate } from "@tanstack/react-router";
 import { BellPlusIcon, OctagonAlertIcon, SearchXIcon, WaypointsIcon } from "lucide-react";
 import * as React from "react";
 
+import { clickableRow, ROW_LINK } from "@/components/clickable-row";
 import { PINNED, PINNED_END } from "@/components/pinned-column";
 import { ScrollHint } from "@/components/scroll-hint";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -190,7 +191,10 @@ function ServiceCard({
                 aria-current={
                   only === service.service && marked === route.route ? "true" : undefined
                 }
-                className="group/row aria-[current=true]:bg-muted"
+                {...clickableRow(
+                  "group/row aria-[current=true]:bg-muted",
+                  isNamedRoute(route.route) && isLinkableService(service.service),
+                )}
               >
                 <TableCell className={`max-w-md pl-0 ${PINNED} ${MARKED}`}>
                   {!isNamedRoute(route.route) || !isLinkableService(service.service) ? (
@@ -203,6 +207,7 @@ function ServiceCard({
                       to="/projects/$projectId/services/$service"
                       params={{ projectId, service: service.service }}
                       search={serviceSearchOf({ range, environment, route: route.route })}
+                      {...ROW_LINK}
                       className="block truncate font-mono text-xs text-link hover:underline"
                       title={route.route}
                     >

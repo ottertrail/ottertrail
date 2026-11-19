@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { OctagonAlertIcon, SearchXIcon } from "lucide-react";
 
+import { clickableRow, ROW_LINK } from "@/components/clickable-row";
 import { Missing } from "@/components/missing";
 import { PINNED } from "@/components/pinned-column";
 import { ScrollHint } from "@/components/scroll-hint";
@@ -145,7 +146,10 @@ export function MetricsPage({
                     </TableHeader>
                     <TableBody>
                       {data.metrics.map((metric) => (
-                        <TableRow key={`${metric.kind} ${metric.name}`}>
+                        <TableRow
+                          key={`${metric.kind} ${metric.name}`}
+                          {...clickableRow(undefined, metric.name !== "")}
+                        >
                           <TableCell className={`max-w-sm pl-0 max-sm:max-w-48 ${PINNED}`}>
                             {metric.name === "" ? (
                               <span className="text-ink-subtle">(no name)</span>
@@ -160,6 +164,7 @@ export function MetricsPage({
                                   split: undefined,
                                   stat: DEFAULT_STAT[metric.kind],
                                 })}
+                                {...ROW_LINK}
                                 className="block truncate font-mono text-xs text-link hover:underline"
                                 title={metric.name}
                               >

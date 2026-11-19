@@ -116,6 +116,19 @@ describe("design tokens", () => {
     }
   });
 
+  // A toggle group's chosen item (components/ui/toggle.tsx): a toggle-on fill with ink text,
+  // beside unchosen items that are transparent on the group's surface, or muted while hovered.
+  describe("a toggle group's chosen item stands out (WCAG 1.4.11)", () => {
+    for (const surface of [...contentSurfaces, "canvas", "muted"]) {
+      test(`its fill meets 3:1 against ${surface}`, () => {
+        expect(contrast(resolveHex("toggle-on"), resolveHex(surface))).toBeGreaterThanOrEqual(3);
+      });
+    }
+    test("its text meets 4.5:1 on its fill", () => {
+      expect(contrast(resolveHex("ink"), resolveHex("toggle-on"))).toBeGreaterThanOrEqual(4.5);
+    });
+  });
+
   // A field is drawn as its edge (input) around a wash of input-fill: 30% at rest, 50% on hover
   // (components/ui/input.tsx, select.tsx). Disabled fields (80%) are exempt, as WCAG allows.
   const fieldStates = [
