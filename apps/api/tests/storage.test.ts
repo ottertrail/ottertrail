@@ -15,7 +15,11 @@ import type { Disk, StorageSources } from "../src/storage/usage.ts";
 import { StorageWarningJob } from "../src/storage/warning-job.ts";
 import { PUBLIC_URL, signedInDashboard, signedInUser } from "./helpers/dashboard.ts";
 import { type FakeGarage, startFakeGarage } from "./helpers/fake-garage.ts";
-import { createTestDatabase, migrateTestDatabase } from "./helpers/test-database.ts";
+import {
+  createTestDatabase,
+  migrateTestDatabase,
+  MIGRATION_TEST_MS,
+} from "./helpers/test-database.ts";
 
 const GiB = 1024 ** 3;
 const TOKEN = "a-garage-admin-token-only-these-tests-use-0123";
@@ -686,7 +690,7 @@ describe("the worker's storage check", () => {
   });
 });
 
-test("the migration rolls back: no storage tables", async () => {
+test("the migration rolls back: no storage tables", { timeout: MIGRATION_TEST_MS }, async () => {
   const names = Object.keys(migrations).toSorted();
   const previous = names[names.indexOf("0010_storage_warnings") - 1];
   expect(previous).toBeDefined();

@@ -8,7 +8,11 @@ import { setUserAccess } from "../src/access/grants.ts";
 import { grantMember, PUBLIC_URL, signedInDashboard, signedInUser } from "./helpers/dashboard.ts";
 import { PROJECT_REQUESTS, type ProjectRequest, routeKey } from "./helpers/project-routes.ts";
 import { registeredRoutes } from "./helpers/routes.ts";
-import { createTestDatabase, migrateTestDatabase } from "./helpers/test-database.ts";
+import {
+  createTestDatabase,
+  migrateTestDatabase,
+  MIGRATION_TEST_MS,
+} from "./helpers/test-database.ts";
 
 const NOT_FOUND = { error: "not_found", message: "No project has this ID." };
 const FORBIDDEN = { error: "forbidden", message: "You don't have access to this." };
@@ -648,22 +652,26 @@ describe("members, admins, and the one access check", () => {
   });
 });
 
-test("rolling back 0006 deletes every user but the owner, who had full access before", async () => {
-  const testDb = await createTestDatabase();
-  try {
-    await testDb.db
-      .insertInto("dashboard_users")
-      .values([
-        { name: "Owner", email: "owner@example.com", role: "owner" },
-        { name: "Admin", email: "admin@example.com", role: "admin" },
-        { name: "Member", email: "member@example.com", role: "member" },
-      ])
-      .execute();
-    await migrateTestDatabase(testDb, "0005_replay_details");
-    const left = await testDb.db.selectFrom("dashboard_users").select("email").execute();
-    expect(left).toEqual([{ email: "owner@example.com" }]);
-    await migrateTestDatabase(testDb, "latest");
-  } finally {
-    await testDb.destroy();
-  }
-});
+test(
+  "rolling back 0006 deletes every user but the owner, who had full access before",
+  { timeout: MIGRATION_TEST_MS },
+  async () => {
+    const testDb = await createTestDatabase();
+    try {
+      await testDb.db
+        .insertInto("dashboard_users")
+        .values([
+          { name: "Owner", email: "owner@example.com", role: "owner" },
+          { name: "Admin", email: "admin@example.com", role: "admin" },
+          { name: "Member", email: "member@example.com", role: "member" },
+        ])
+        .execute();
+      await migrateTestDatabase(testDb, "0005_replay_details");
+      const left = await testDb.db.selectFrom("dashboard_users").select("email").execute();
+      expect(left).toEqual([{ email: "owner@example.com" }]);
+      await migrateTestDatabase(testDb, "latest");
+    } finally {
+      await testDb.destroy();
+    }
+  },
+);

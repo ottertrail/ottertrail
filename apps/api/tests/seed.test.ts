@@ -27,8 +27,16 @@ let dashboard: Awaited<ReturnType<typeof signedInDashboard>>;
 let result: SeedResult;
 let seconds = 0;
 
+/**
+ * One clock for every run here. The seed places its data relative to now, so
+ * two runs a minute apart (more on a busy machine) would differ at the edges
+ * of each window, by more than the comparison below allows.
+ */
+const SEED_NOW = new Date();
+
 const seed = () =>
   seedDemo({
+    now: SEED_NOW,
     db: dashboard.db,
     clickhouse: dashboard.reader.client,
     store,
@@ -256,7 +264,8 @@ describe("a second run", () => {
       .where("name", "=", DEMO_PROJECT_NAME)
       .execute();
     expect(named.map((project) => project.id)).toEqual([again.projectId]);
-    // The same data, but for anything that lands on the clock's other side.
+    // The same data: both runs use the same clock (SEED_NOW). What the API's own
+    // clock decides (a few events at the edge of its 24-hour limit) may still differ.
     expect(Math.abs(again.counts.events - first.counts.events)).toBeLessThan(
       first.counts.events * 0.01,
     );

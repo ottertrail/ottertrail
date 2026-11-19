@@ -10,7 +10,11 @@ import {
 } from "../src/settings/settings.ts";
 import { PUBLIC_URL, signedInDashboard, signedInUser } from "./helpers/dashboard.ts";
 import { PROJECT_REQUESTS } from "./helpers/project-routes.ts";
-import { createTestDatabase, migrateTestDatabase } from "./helpers/test-database.ts";
+import {
+  createTestDatabase,
+  migrateTestDatabase,
+  MIGRATION_TEST_MS,
+} from "./helpers/test-database.ts";
 
 const CHROME =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36";
@@ -199,26 +203,30 @@ describe("the access check and the instance's settings", () => {
 });
 
 describe("the settings module", () => {
-  test("starts with one row, which the migration made; running it again changes nothing", async () => {
-    const testDb = await createTestDatabase();
-    try {
-      expect(await readInstanceSettings(testDb.db)).toEqual({
-        name: "Ottertrail",
-        timeZone: "UTC",
-        updateLocationData: true,
-      });
-      expect(await migrateTestDatabase(testDb, "latest")).toEqual([]);
-      // A second row is refused: the instance has one set of settings.
-      await expect(
-        testDb.db
-          .insertInto("instance_settings")
-          .values({ name: "Two", time_zone: "UTC" })
-          .execute(),
-      ).rejects.toThrow(/instance_settings_pkey/);
-    } finally {
-      await testDb.destroy();
-    }
-  });
+  test(
+    "starts with one row, which the migration made; running it again changes nothing",
+    { timeout: MIGRATION_TEST_MS },
+    async () => {
+      const testDb = await createTestDatabase();
+      try {
+        expect(await readInstanceSettings(testDb.db)).toEqual({
+          name: "Ottertrail",
+          timeZone: "UTC",
+          updateLocationData: true,
+        });
+        expect(await migrateTestDatabase(testDb, "latest")).toEqual([]);
+        // A second row is refused: the instance has one set of settings.
+        await expect(
+          testDb.db
+            .insertInto("instance_settings")
+            .values({ name: "Two", time_zone: "UTC" })
+            .execute(),
+        ).rejects.toThrow(/instance_settings_pkey/);
+      } finally {
+        await testDb.destroy();
+      }
+    },
+  );
 
   test("a change to settings whose row is gone fails, rather than report a change not made", async () => {
     const testDb = await createTestDatabase();

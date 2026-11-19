@@ -43,6 +43,7 @@ import {
 import {
   createTestDatabase,
   migrateTestDatabase,
+  MIGRATION_TEST_MS,
   type TestDatabase,
 } from "./helpers/test-database.ts";
 
@@ -798,31 +799,35 @@ describe("updateLocationData", () => {
   });
 });
 
-test("the migration rolls back: no status table, no lease, no setting", async () => {
-  // The migration before this one, whichever it is once other branches add theirs.
-  const names = Object.keys(migrations).toSorted();
-  const previous = names[names.indexOf("0009_location_data_updates") - 1];
-  expect(previous).toBeDefined();
-  const testDb = await createTestDatabase();
-  try {
-    const columns = () =>
-      sql<{ name: string }>`
+test(
+  "the migration rolls back: no status table, no lease, no setting",
+  { timeout: MIGRATION_TEST_MS },
+  async () => {
+    // The migration before this one, whichever it is once other branches add theirs.
+    const names = Object.keys(migrations).toSorted();
+    const previous = names[names.indexOf("0009_location_data_updates") - 1];
+    expect(previous).toBeDefined();
+    const testDb = await createTestDatabase();
+    try {
+      const columns = () =>
+        sql<{ name: string }>`
         select table_name || '.' || column_name as name from information_schema.columns
         where table_schema = ${testDb.schema}
           and (table_name in ('location_data_updates', 'location_data_lease')
             or column_name = 'update_location_data')
       `
-        .execute(testDb.db)
-        .then(({ rows }) => rows.length);
-    expect(await columns()).toBe(14);
-    await migrateTestDatabase(testDb, previous!);
-    expect(await columns()).toBe(0);
-    await migrateTestDatabase(testDb, "latest");
-    expect(await columns()).toBe(14);
-  } finally {
-    await testDb.destroy();
-  }
-});
+          .execute(testDb.db)
+          .then(({ rows }) => rows.length);
+      expect(await columns()).toBe(14);
+      await migrateTestDatabase(testDb, previous!);
+      expect(await columns()).toBe(0);
+      await migrateTestDatabase(testDb, "latest");
+      expect(await columns()).toBe(14);
+    } finally {
+      await testDb.destroy();
+    }
+  },
+);
 
 /** A round that updated both files, and says when to look again. */
 const done = (nextCheckInMs: number) =>

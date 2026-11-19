@@ -17,6 +17,15 @@ import { testName } from "./test-names.ts";
  */
 const SCHEMA_LOCK = 4_281_708_001;
 
+/**
+ * The time limit for a test that makes a schema of its own and moves it
+ * back or forward (migrateTestDatabase). Moving waits for SCHEMA_LOCK, which
+ * every other file's migrations hold while they run, so under a full parallel
+ * run it can wait far longer than the default 15 seconds without anything
+ * being wrong.
+ */
+export const MIGRATION_TEST_MS = 90_000;
+
 export interface TestDatabase {
   db: Kysely<Database>;
   /** The schema the test's tables are in. */
