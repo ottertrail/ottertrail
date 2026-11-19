@@ -14,6 +14,13 @@ export const TRACE_DAYS = 14;
 export const METRIC_DAYS = 7;
 const APP_METRIC_STEP_MS = 10 * 60_000;
 const HOST_METRIC_STEP_MS = 15 * 60_000;
+/**
+ * The hosts' points from the last 15-minute tick to now, at most this far
+ * apart: the Hosts list takes CPU from the last two points within 15
+ * minutes of a host's last one (docs/telemetry.md, "Hosts"), which needs
+ * 7.5 minutes or less between points.
+ */
+export const HOST_RECENT_STEP_MS = 5 * 60_000;
 
 const SERVER = 2;
 const CLIENT = 3;
@@ -1272,6 +1279,24 @@ const SCRAPER = (name: string) => ({
 const GIB = 1024 ** 3;
 
 /**
+ * When the hosts send points: every 15 minutes over METRIC_DAYS, then every
+ * HOST_RECENT_STEP_MS up to the point just now, as a host scraped more
+ * often. 15 minutes up to the point just now would leave up to 15 minutes
+ * and 40 seconds between the last two, too far apart for the Hosts list's
+ * CPU, which then showed nothing.
+ */
+export function hostTicks(nowMs: number): number[] {
+  const ticks = times(nowMs, HOST_METRIC_STEP_MS);
+  const latest = ticks.pop() ?? nowMs;
+  const last = ticks.at(-1) ?? latest;
+  for (let at = last + HOST_RECENT_STEP_MS; at < latest; at += HOST_RECENT_STEP_MS) {
+    ticks.push(at);
+  }
+  ticks.push(latest);
+  return ticks;
+}
+
+/**
  * The hosts' metrics, as an OpenTelemetry Collector's host metrics
  * receiver sends them, under its scrapers' scope names (docs/telemetry.md,
  * "Hosts"): CPU time, memory, filesystems, network, disk, and load. Each
@@ -1280,7 +1305,7 @@ const GIB = 1024 ** 3;
  * full, so the Hosts page shows values from low to high.
  */
 function hostMetrics(rng: Random, nowMs: number, hosts: readonly string[]): object[] {
-  const ticks = times(nowMs, HOST_METRIC_STEP_MS);
+  const ticks = hostTicks(nowMs);
   const start = (ticks[0] ?? nowMs) - HOST_METRIC_STEP_MS;
   const requests: object[] = [];
   for (const host of hosts) {
@@ -1312,8 +1337,9 @@ function hostMetrics(rng: Random, nowMs: number, hosts: readonly string[]): obje
       const hour = new Date(tick).getUTCHours();
       const traffic = (HOURLY[hour] ?? 3) / 6.6;
       const share = Math.min(0.95, busy * (0.5 + traffic) + rng.normal(0, 0.02));
+      // The time since the previous point, as the counters grow by it.
+      const seconds = (tick - (ticks[index - 1] ?? start)) / 1000;
       for (const name of ["cpu0", "cpu1"]) {
-        const seconds = HOST_METRIC_STEP_MS / 1000;
         const states: Record<string, number> = {
           user: seconds * share * 0.7,
           system: seconds * share * 0.22,
@@ -1375,18 +1401,18 @@ function hostMetrics(rng: Random, nowMs: number, hosts: readonly string[]): obje
         }
       }
       received += Math.round(
-        (host === "app-1" ? 900_000 : 450_000) * traffic * 900 * rng.logNormal(1, 0.1),
+        (host === "app-1" ? 900_000 : 450_000) * traffic * seconds * rng.logNormal(1, 0.1),
       );
       transmitted += Math.round(
-        (host === "app-1" ? 2_400_000 : 800_000) * traffic * 900 * rng.logNormal(1, 0.1),
+        (host === "app-1" ? 2_400_000 : 800_000) * traffic * seconds * rng.logNormal(1, 0.1),
       );
       network.push(point(tick, start, { device: "eth0", direction: "receive" }, received));
       network.push(point(tick, start, { device: "eth0", direction: "transmit" }, transmitted));
       read += Math.round(
-        (host === "app-1" ? 150_000 : 900_000) * traffic * 900 * rng.logNormal(1, 0.15),
+        (host === "app-1" ? 150_000 : 900_000) * traffic * seconds * rng.logNormal(1, 0.15),
       );
       written += Math.round(
-        (host === "app-1" ? 220_000 : 1_600_000) * traffic * 900 * rng.logNormal(1, 0.15),
+        (host === "app-1" ? 220_000 : 1_600_000) * traffic * seconds * rng.logNormal(1, 0.15),
       );
       disk.push(point(tick, start, { device: "sda", direction: "read" }, read));
       disk.push(point(tick, start, { device: "sda", direction: "write" }, written));

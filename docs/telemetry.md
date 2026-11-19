@@ -342,7 +342,7 @@ Each chart reads its metrics as the Metrics page does ([above](#how-metrics-are-
 The list shows each host's latest values in the period:
 
 - a gauge's latest point per series (utilization, load), shares worked out as above;
-- `system.cpu.time`: each series' increase between its last two points when both are of one run and the value did not go down (a delta point's value is its increase); a scrape interval up to about 7 minutes leaves two points in the window;
+- `system.cpu.time`: each series' increase between its last two points when both are of one run and the value did not go down (a delta point's value is its increase); the window is the 15 minutes before the host's last point of any host metric, and that point may come from another scraper up to one interval later than the CPU's, so a scrape interval up to 7.5 minutes (half the window) leaves the CPU's last two points in it. Past that, the list shows no CPU for a host that sends only `system.cpu.time` (one `system.cpu.utilization` point is enough), and its page's charts still do. The demo seed's hosts send every 15 minutes, then every 5 for the last quarter hour, so its run at any minute shows CPU (`seed-telemetry.test.ts`);
 - per state, the latest value across the host's series of a metric (`argMax`), not their sum: after a Collector is upgraded, the old and new series (their scopes differ) both have recent points, and added up the memory share could pass 100%. A CPU's series stay apart, one per CPU, and are added up;
 - the fullest filesystem: the share per mount point, read-only ones left out, then the highest, with its mount point.
 

@@ -101,8 +101,9 @@ export const MAX_HOSTS = 500;
 export const STALE_MS = 5 * 60_000;
 /**
  * The list's latest values come from each host's points in this long
- * before its last one: a counter needs two points, so up to 7 minutes
- * between scrapes still gives a CPU share.
+ * before its last one: a counter needs two points, and the host's last
+ * point may be another scraper's, one interval after the CPU's, so up to
+ * 7.5 minutes between scrapes still gives a CPU share.
  */
 export const LATEST_WINDOW_MS = 15 * 60_000;
 
