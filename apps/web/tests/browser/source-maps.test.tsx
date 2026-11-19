@@ -160,7 +160,7 @@ describe("an error's stack", () => {
     renderApp(TYPE_ERROR);
 
     await expect
-      .element(page.getByText(/^No frame of this stack is in a file a source map could be for/))
+      .element(page.getByText(/^No stack frame refers to a file that can have a source map/))
       .toBeVisible();
     await expect
       .element(page.getByRole("link", { name: "Source maps settings" }))
@@ -173,7 +173,9 @@ describe("an error's stack", () => {
     renderApp(TYPE_ERROR);
 
     await expect
-      .element(page.getByText(/^Source maps are off on this install: it has no object store/))
+      .element(
+        page.getByText(/^Source maps are disabled on this instance because it has no object store/),
+      )
       .toBeVisible();
     await expect.element(page.getByText("OBJECT_STORE_URL")).toBeVisible();
     expect(document.querySelector("pre")?.textContent).toBe(FAKE_STACK);
@@ -186,7 +188,7 @@ describe("an error's stack", () => {
     await expect
       .element(
         page.getByText(
-          /^The source maps could not be read just now, so the stack is shown as the browser reported it/,
+          /^The source maps could not be read. The stack appears as the browser reported it/,
         ),
       )
       .toBeVisible();
@@ -293,9 +295,9 @@ describe("the project's Source maps card", () => {
       name: "Delete the source maps of release 1.4.2?",
     });
     await expect
-      .element(confirm.getByText(/^The maps of its 2 files are deleted for good/))
+      .element(confirm.getByText(/^The maps of its 2 files are permanently deleted/))
       .toBeVisible();
-    await expect.element(confirm.getByText(/Your errors are kept/)).toBeVisible();
+    await expect.element(confirm.getByText(/Your errors are retained/)).toBeVisible();
     await expect.element(confirm.getByText(/show minified code again/)).toBeVisible();
 
     // Cancelled: nothing sent, and focus back on the button, still there.
@@ -321,7 +323,9 @@ describe("the project's Source maps card", () => {
     renderApp(SETTINGS);
 
     await expect
-      .element(page.getByText(/^Source maps are off on this install: it has no object store/))
+      .element(
+        page.getByText(/^Source maps are disabled on this instance because it has no object store/),
+      )
       .toBeVisible();
     expect(card().textContent).toContain("OBJECT_STORE_URL");
     await expect.element(releasesTable()).not.toBeInTheDocument();
@@ -340,13 +344,13 @@ describe("the project's Source maps card", () => {
       `OTTERTRAIL_SECRET_KEY=sk_… npx @ottertrail/sourcemaps upload dist \\\n  --release 1.4.2 --url-prefix / --host ${window.location.origin}`,
     );
     expect(text).toContain(
-      "until it is published, run it from this repository's packages/sourcemaps",
+      "Until it is published, run it from this repository's packages/sourcemaps",
     );
     expect(text).toContain(
       `curl -X PUT "${window.location.origin}/api/source-maps?release=1.4.2&path=/assets/index-4f3a.js"`,
     );
     expect(text).toContain("Authorization: Bearer $OTTERTRAIL_SECRET_KEY");
-    expect(text).toContain("shown under “Your server” above");
+    expect(text).toContain("from “Your server” above");
     expect(text).toContain("must match the data-release on the tracker's script tag");
     expect(text).toContain('build.sourcemap: "hidden"');
     // Never the real key.

@@ -192,7 +192,9 @@ describe("the Replays page", () => {
       replayList: (query) => ({ ...emptyList(query), configured: false }),
     });
     renderApp(REPLAYS);
-    await expect.element(page.getByText("Session replay is off on this install")).toBeVisible();
+    await expect
+      .element(page.getByText("Session replay is disabled on this instance"))
+      .toBeVisible();
     await expect
       .element(page.getByRole("searchbox", { name: "Path contains" }))
       .not.toBeInTheDocument();
@@ -326,10 +328,10 @@ describe("a replay's page", () => {
 
   test("says which moments a long timeline leaves out", async () => {
     for (const [truncated, text] of [
-      ["scrolls", "Some early scrolls are left out: a timeline keeps 500 moments."],
+      ["scrolls", "Some earlier scrolls are omitted. A timeline keeps 500 moments."],
       [
         "earliest",
-        "Every scroll and the earliest moments are left out: a timeline keeps the latest 500.",
+        "All scrolls and the earliest moments are omitted. A timeline keeps the latest 500 moments.",
       ],
     ] as const) {
       installFakeApi({

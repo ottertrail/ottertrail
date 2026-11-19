@@ -322,8 +322,8 @@ function SummaryTiles({ analytics }: { analytics: Analytics }) {
           ))}
         </dl>
         <p className="text-xs text-ink-subtle">
-          {comparisonNote(analytics)} Without cookies, a visitor is recognized for one day only, so
-          a person who comes back on another day counts again. Durations are averages per visit.
+          {comparisonNote(analytics)} Without cookies, visitors are recognized for only one day. A
+          person who returns on another day counts again. Durations are averages per visit.
         </p>
       </CardContent>
     </Card>

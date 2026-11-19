@@ -187,7 +187,10 @@ export const replayCollectionRoutes: FastifyPluginCallback<{
         return reply
           .code(403)
           .send(
-            problem("replay_off", "This install has no object store, so session replays are off."),
+            problem(
+              "replay_off",
+              "This instance has no object store. Session replays are disabled.",
+            ),
           );
       }
       if (!Buffer.isBuffer(request.body) || request.body.byteLength === 0) {

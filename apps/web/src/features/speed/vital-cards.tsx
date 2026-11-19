@@ -97,11 +97,11 @@ export function SecondaryVitals({ speed }: { speed: Speed }) {
     <Card>
       <CardHeader>
         <CardTitle>
-          <h3>What leads up to LCP</h3>
+          <h3>Measurements before LCP</h3>
         </CardTitle>
         <CardDescription>
-          These two help explain LCP: the main content cannot show before the server answers and the
-          page starts to paint.
+          These two measurements help explain LCP. The main content cannot appear before the server
+          responds and the browser starts to display the page.
         </CardDescription>
       </CardHeader>
       <CardContent>

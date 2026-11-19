@@ -176,12 +176,12 @@ describe("the project's Session replay card", () => {
     await expect.element(off()).toBeChecked();
     await expect.element(aroundErrors()).not.toBeChecked();
     const text = card().textContent;
-    expect(text).toContain("Both switches are needed");
+    expect(text).toContain("Both are required");
     await expect
       .element(page.getByRole("button", { name: "Copy the replay attribute" }))
       .toBeVisible();
     expect(text).toContain('data-replay="errors"');
-    expect(text).toContain("masked in the visitor's browser");
+    expect(text).toContain("visitor's browser masks");
     expect(text).toContain("never reaches Ottertrail");
     for (const option of [
       'data-replay-text="show"',
@@ -194,7 +194,7 @@ describe("the project's Session replay card", () => {
     }
     expect(text).toContain("3 replays, 1.5 MB in this project.");
     expect(text).toContain("2 MB of 5 GB used, by all projects together.");
-    expect(text).toContain("Replays are kept 30 days");
+    expect(text).toContain("Replays are kept for 30 days");
   });
 
   test("turns replays on around errors, saving at once, and says so", async () => {
@@ -260,10 +260,10 @@ describe("the project's Session replay card", () => {
     await button.click();
     const confirm = page.getByRole("dialog", { name: "Delete all replays?" });
     await expect
-      .element(confirm.getByText(/^All 3 replays of the project are deleted for good/))
+      .element(confirm.getByText(/^All 3 replays of the project are permanently deleted/))
       .toBeVisible();
-    await expect.element(confirm.getByText(/this cannot be undone/)).toBeVisible();
-    await expect.element(confirm.getByText(/The errors stay/)).toBeVisible();
+    await expect.element(confirm.getByText(/This cannot be undone/)).toBeVisible();
+    await expect.element(confirm.getByText(/The errors are retained/)).toBeVisible();
 
     // Cancelled: nothing sent, and focus back on the button, still there.
     await confirm.getByRole("button", { name: "Cancel" }).click();
@@ -301,7 +301,11 @@ describe("the project's Session replay card", () => {
     renderApp(SETTINGS);
 
     await expect
-      .element(page.getByText(/^Session replay is off on this install: it has no object store/))
+      .element(
+        page.getByText(
+          /^Session replay is disabled on this instance because it has no object store/,
+        ),
+      )
       .toBeVisible();
     expect(card().textContent).toContain("OBJECT_STORE_URL");
     await expect.element(off()).not.toBeInTheDocument();

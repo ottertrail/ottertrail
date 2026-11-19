@@ -32,11 +32,11 @@ import { PLAYER_CSS } from "./styles.ts";
 import rrwebStyle from "@rrweb/replay/dist/style.css?inline";
 
 export const NOTE =
-  "Masked in the visitor's browser, as the site chose: what was hidden never reached Ottertrail.";
-export const NOT_AVAILABLE = "This replay is not available: it may have expired.";
-export const NOT_LOADED = "The replay could not be loaded. Close it and try again in a moment.";
+  "The visitor's browser masked content as the site specified. Hidden content never reached Ottertrail.";
+export const NOT_AVAILABLE = "This replay is unavailable. It may have expired.";
+export const NOT_LOADED = "The replay could not be loaded. Close it. Try again in a moment.";
 export const NOT_READABLE =
-  "This replay could not be read: it is not a recording this player knows.";
+  "This replay could not be read. The player does not support its recording format.";
 
 const SPEEDS = [1, 2, 4] as const;
 

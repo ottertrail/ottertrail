@@ -155,7 +155,7 @@ describe("loadConfig", () => {
       [`smtp://alerts:${password}@`, "SMTP_URL"],
       [
         `smtp://alerts@smtp.example.com`,
-        "SMTP_URL must hold both a user name and a password, or neither",
+        "SMTP_URL must contain both a user name and a password, or neither",
       ],
       [`smtps://alerts:${password}@smtp.example.com/mail`, "SMTP_URL must not have a path"],
       ...[
@@ -169,12 +169,12 @@ describe("loadConfig", () => {
         (suffix) =>
           [
             `smtp://alerts:${password}@smtp.example.com:587${suffix}`,
-            "SMTP_URL must not have a query string or fragment; percent-encode ? and # in the user name or password",
+            "SMTP_URL must not contain a query string or fragment. Percent-encode ? and # in the user name or password.",
           ] as const,
       ),
       [
         `smtp://alerts:${password}#x@smtp.example.com:587`,
-        "SMTP_URL must not have a query string or fragment",
+        "SMTP_URL must not contain a query string or fragment",
       ],
     ] as const) {
       let error: unknown;
@@ -192,7 +192,7 @@ describe("loadConfig", () => {
   test("refuses an uptime deny list entry that is not an address or CIDR range", () => {
     for (const entry of ["example.com", "10.0.0.0/33", "::1/129", "10.0.0.1/8/2", "10.0.0"]) {
       expect(() => loadConfig({ UPTIME_DENY_ADDRESSES: `203.0.113.10,${entry}` })).toThrow(
-        `UPTIME_DENY_ADDRESSES must be a comma-separated list of IP addresses and CIDR ranges; "${entry}" is not valid`,
+        `UPTIME_DENY_ADDRESSES must be a comma-separated list of IP addresses and CIDR ranges. "${entry}" is not valid`,
       );
     }
   });
@@ -313,7 +313,7 @@ describe("loadConfig", () => {
   describe("ClickHouse", () => {
     test.each([
       ["ftp://clickhouse:8123", /must be an http\(s\) URL/],
-      ["http://user:secret@clickhouse:8123", /must not hold a user or password/],
+      ["http://user:secret@clickhouse:8123", /must not contain a user name or password/],
     ])("refuses CLICKHOUSE_URL %s", (url, message) => {
       expect(() => loadConfig({ CLICKHOUSE_URL: url })).toThrow(message);
     });

@@ -82,11 +82,11 @@ function NoLoads({ environment, device }: { environment: string; device: Device 
         </EmptyMedia>
         <EmptyTitle>No page loads measured{where} in this period</EmptyTitle>
         <EmptyDescription>
-          The tracking snippet measures Web Vitals on its own: on each page load it adds a second
-          script, <code className="font-mono">v.js</code>, and sends the values once, when the
-          visitor first hides or leaves the page. In a single-page app, the values belong to the
-          page the visitor landed on: in-app navigations get none of their own. A snippet pinned
-          with <code className="font-mono">integrity</code> measures nothing. To turn it off, add{" "}
+          The tracking snippet measures Web Vitals automatically. On each page load, it adds a
+          second script, <code className="font-mono">v.js</code>, and sends values once, when the
+          visitor first hides or leaves the page. In a single-page app, values belong to the landing
+          page. Navigation within the app has no separate values. A snippet pinned with{" "}
+          <code className="font-mono">integrity</code> measures nothing. To disable Web Vitals, add{" "}
           <code className="font-mono">data-vitals=&quot;off&quot;</code> to the snippet.
         </EmptyDescription>
       </EmptyHeader>

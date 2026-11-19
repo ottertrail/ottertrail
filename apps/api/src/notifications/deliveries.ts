@@ -54,8 +54,8 @@ export const MAX_ERROR = 300;
 /** Deliveries a page of the list holds at most. */
 export const MAX_DELIVERY_PAGE = 100;
 
-const CAPPED_ERROR = `Not sent: this channel had ${CHANNEL_HOURLY_CAP} deliveries in the last hour, its limit.`;
-const INTERRUPTED_ERROR = "The last attempt did not finish: the worker stopped while sending.";
+const CAPPED_ERROR = `Not sent: this channel had ${CHANNEL_HOURLY_CAP} deliveries in the last hour, which is its limit.`;
+const INTERRUPTED_ERROR = "The last attempt did not finish. The worker stopped during delivery.";
 
 /** A sentence short enough to keep, on one line. */
 export function errorText(text: string): string {

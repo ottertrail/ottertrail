@@ -163,7 +163,7 @@ function ChannelForm({
           {channel === undefined ? "Add a notification channel" : `Edit “${channel.name}”`}
         </DialogTitle>
         <DialogDescription>
-          Alerts go to email addresses, or as a signed JSON request to a webhook of your own.
+          Alerts go to email addresses or to your webhook as signed JSON requests.
         </DialogDescription>
       </DialogHeader>
       {channel === undefined && (
@@ -204,7 +204,7 @@ function ChannelForm({
             <FieldDescription id={`${ids.addresses}-hint`}>
               One per line, at most {MAX_ADDRESSES}.
               {!emailConfigured &&
-                " Email is not set up on this instance yet: nothing is sent until it is."}
+                " Email is not configured on this instance yet. No email is sent until it is configured."}
             </FieldDescription>
           )}
         </Field>
@@ -221,8 +221,8 @@ function ChannelForm({
           />
           {errorText("url") ?? (
             <FieldDescription id={`${ids.url}-hint`}>
-              Each alert is a POST with a JSON body, signed with the webhook&apos;s secret. It must
-              answer 2xx within 10 seconds; redirects are not followed.
+              Each alert is a POST with a JSON body signed with the webhook's secret. The webhook
+              must return 2xx within 10 seconds. Redirects are not followed.
             </FieldDescription>
           )}
         </Field>
@@ -241,7 +241,7 @@ function ChannelForm({
       </Field>
       {checked && !valid && (
         <p role="alert" className="text-sm text-destructive">
-          The channel is not complete. Fix the fields marked above.
+          The channel is incomplete. Correct the marked fields above.
         </p>
       )}
       {save.error !== null && apiField === undefined && (

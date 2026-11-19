@@ -206,8 +206,8 @@ function SourceMapNote({
     case "no_files":
       return (
         <p className="text-sm text-ink-muted">
-          No frame of this stack is in a file a source map could be for, such as a script written
-          into the page or the browser&apos;s own code.
+          No stack frame refers to a file that can have a source map. Examples include inline
+          scripts and browser code.
         </p>
       );
     case "no_maps":
@@ -252,16 +252,16 @@ function SourceMapNote({
     case "not_configured":
       return (
         <p className="text-sm text-ink-muted">
-          Source maps are off on this install: it has no object store to keep them in. Its operator
-          turns them on by setting {code("OBJECT_STORE_URL")}.
+          Source maps are disabled on this instance because it has no object store for them. Its
+          operator can enable them by setting {code("OBJECT_STORE_URL")}.
         </p>
       );
   }
   // What is left: "unavailable".
   return (
     <p className="text-sm text-ink-muted">
-      The source maps could not be read just now, so the stack is shown as the browser reported it.
-      Reload the page to try again.
+      The source maps could not be read. The stack appears as the browser reported it. Reload the
+      page to try again.
     </p>
   );
 }
@@ -339,8 +339,8 @@ export function StackCard({
         ) : source === "server" ? (
           <>
             <p className="text-sm text-ink-muted">
-              As the server sent it: source maps are for browser code, so a server&apos;s stack is
-              not mapped.
+              The stack appears as the server sent it. Source maps apply to browser code. Server
+              stacks are not mapped.
             </p>
             <RawStack stack={stack} />
           </>

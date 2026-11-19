@@ -39,7 +39,7 @@ function withinDeadline(
 ): ClickHouseSettings | undefined {
   if (reader.deadline === undefined) return settings;
   const left = Math.floor((reader.deadline - Date.now()) / 1000);
-  if (left < 1) throw new DeadlineError("The time for this work ran out before the query.");
+  if (left < 1) throw new DeadlineError("The time limit expired before the query started.");
   const limit = settings?.max_execution_time ?? Number.POSITIVE_INFINITY;
   return { ...settings, max_execution_time: Math.min(limit, left) };
 }

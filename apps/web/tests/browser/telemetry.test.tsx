@@ -33,7 +33,8 @@ const tracesTable = () =>
   page.getByRole("table", { name: "Traces, newest first, by their root span" });
 const traceRows = () => tracesTable().element().querySelectorAll("tbody tr").length;
 
-const waterfall = () => page.getByRole("table", { name: /^Spans in tree order/ });
+const waterfall = () =>
+  page.getByRole("table", { name: /^Spans appear under their parents in start order/ });
 /** The waterfall's span buttons' accessible names, in order. */
 const waterfallButtons = () =>
   [...waterfall().element().querySelectorAll("tbody button")].map((button) =>

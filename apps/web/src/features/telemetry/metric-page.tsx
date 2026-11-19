@@ -156,12 +156,12 @@ function chartCards(chart: MetricChart, stat: MetricStat, colors: Map<string, nu
   return [
     {
       title: split ? `${MEASURE_LABELS[stat] ?? stat} by ${chart.split}` : "Percentiles",
-      description: `Worked out from the histogram's buckets per ${step}: within the bucket a percentile falls in, values are taken as spread evenly between its bounds, so a percentile is as close as the buckets are narrow.`,
+      description: `Worked out from the histogram's buckets per ${step}: values are assumed to be evenly distributed within the percentile's bucket. Narrower buckets give more precise percentiles.`,
       lines: linesOf(chart, split ? [stat] : METRIC_STATS.histogram, colors),
       format: values,
       missing: chart.percentiles
         ? undefined
-        : "This histogram's points carry no bucket counts, which percentiles are worked out from. Its count still gives the observations per second.",
+        : "This histogram's points have no bucket counts for calculating percentiles. Its count still gives the observations per second.",
     },
     {
       title: split ? `Observations per second by ${chart.split}` : "Observations per second",
@@ -323,7 +323,7 @@ export function MetricPage({
       {kind === undefined ? (
         <Alert variant="destructive">
           <OctagonAlertIcon />
-          <AlertTitle>This address does not say what kind of metric this is</AlertTitle>
+          <AlertTitle>This URL does not specify the metric kind</AlertTitle>
           <AlertDescription>Open the metric from the list of metrics.</AlertDescription>
         </Alert>
       ) : (
@@ -439,21 +439,21 @@ export function MetricPage({
                     attributes, and resource attributes is one.
                     {data.split !== null &&
                       data.series.some((series) => series.other) &&
-                      " Past eight values, those with the least volume are added up as “Other values”."}
+                      " After eight values, those with the least volume are combined as “Other values”."}
                   </p>
                   {data.seriesCapped && (
                     <p className="text-sm text-ink-subtle">
                       This metric has more than {formatNumber(data.seriesCount)} series in this
-                      period: the charts read the {formatNumber(data.seriesCount)} with the most
-                      points. Choose a shorter period to read them all.
+                      period. The charts use the {formatNumber(data.seriesCount)} with the most
+                      points. Choose a shorter period to include all series.
                     </p>
                   )}
                   {data.percentiles && data.skippedSeries > 0 && (
                     <p className="text-sm text-ink-subtle">
                       {formatNumber(data.skippedSeries)}{" "}
-                      {data.skippedSeries === 1 ? "series is" : "series are"} left out of the
-                      percentiles, which need one set of bucket bounds: other bounds than the rest,
-                      or no bucket counts. The observations per second count{" "}
+                      {data.skippedSeries === 1 ? "series is" : "series are"} excluded from
+                      percentiles because their bucket bounds differ or they have no bucket counts.
+                      Percentiles require matching bucket bounds. Observations per second include{" "}
                       {data.skippedSeries === 1 ? "it" : "them"}.
                     </p>
                   )}

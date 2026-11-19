@@ -51,8 +51,8 @@ export function AlertRulesCard({ projectId, watched }: { projectId: string; watc
         </CardTitle>
         <CardDescription>
           {"checkId" in watched
-            ? "The rules that tell your team when this check goes down or its certificate nears its end."
-            : "The rules that tell your team when this error comes back after being resolved, or spikes."}
+            ? "Rules that notify your team when this check goes down or its certificate nears expiry."
+            : "Rules that notify your team when this resolved error occurs again or its occurrences spike."}
         </CardDescription>
         {canAdd && (
           <CardAction>

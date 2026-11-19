@@ -339,7 +339,10 @@ function routeSettingsOf(
 ): LatencySettings | FailureSettings | Problem {
   const service = pick("service");
   if (service === undefined || service === "") {
-    return { error: "invalid_service", message: "Choose the service whose requests it watches." };
+    return {
+      error: "invalid_service",
+      message: "Choose the service whose requests the rule monitors.",
+    };
   }
   const route = optionalText(pick("route"));
   if (route !== null && route.length > MAX_FILTER_CHARS) {
@@ -407,12 +410,12 @@ function metricSettingsOf(pick: Picker, windowMinutes: number): MetricSettings |
   if (metric === undefined || metric === "" || !fits(metric, MAX_NAME_BYTES)) {
     return {
       error: "invalid_metric",
-      message: `Choose the metric it watches; a name holds at most ${MAX_NAME_BYTES} bytes.`,
+      message: `Choose the metric the rule monitors. A name contains at most ${MAX_NAME_BYTES} bytes.`,
     };
   }
   const metricKind = METRIC_KINDS.find((item) => item === pick("metricKind"));
   if (metricKind === undefined) {
-    return { error: "invalid_metric_kind", message: "Say what kind of metric it is." };
+    return { error: "invalid_metric_kind", message: "Select the metric kind." };
   }
   const offered: readonly string[] = AGGREGATES[metricKind];
   const aggregate = ALL_AGGREGATES.find((item) => item === (pick("aggregate") ?? offered[0]));
@@ -430,7 +433,8 @@ function metricSettingsOf(pick: Picker, windowMinutes: number): MetricSettings |
   if (value === undefined || !Number.isFinite(value) || Math.abs(value) > MAX_METRIC_VALUE) {
     return {
       error: "invalid_threshold",
-      message: "Enter the value to compare with, a number of at most 15 digits either side of 0.",
+      message:
+        "Enter the comparison value. Use a number with at most 15 digits. Negative values are allowed.",
     };
   }
   const host = optionalText(pick("host"));

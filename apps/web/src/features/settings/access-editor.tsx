@@ -95,7 +95,7 @@ export function AccessEditor({
             value="admin"
             checked={value.role === "admin"}
             onChange={() => onChange({ role: "admin" })}
-            description="Everything but the instance's settings and the owner: every project and area, projects' keys and settings, channels, and members."
+            description="Access to every project and area, project keys and settings, channels, and members. No access to instance settings or ownership."
           >
             Admin
           </Radio>
@@ -132,7 +132,7 @@ export function AccessEditor({
           <FieldSet>
             <FieldLegend variant="label">Areas</FieldLegend>
             <FieldDescription>
-              Replays and users show individual people, so they are areas of their own.
+              Replays and users show individual people. Each has a separate access area.
             </FieldDescription>
             <div className="flex flex-col gap-3">
               {AREAS.map((area) => (

@@ -218,7 +218,7 @@ describe("channels", () => {
     [
       { kind: "email", addresses: ["ops!alerts@example.com"] },
       "invalid_address",
-      `"ops!alerts@example.com" is not an address email can go to here. Use letters, digits, and . _ ' + - before the @, and a domain such as example.com.`,
+      `"ops!alerts@example.com" is not a supported email address. Use letters, digits, and . _ ' + - before the @. Use a domain such as example.com.`,
     ],
     [
       { kind: "email", addresses: ["a@example.com"], url: "https://x.example" },
@@ -239,7 +239,7 @@ describe("channels", () => {
     [
       { kind: "webhook", url: "https://user:pass@hooks.example/x" },
       "invalid_url",
-      "A webhook's URL holds no user name or password: they would be stored as plain text.",
+      "A webhook's URL must not contain a user name or password. They would be stored as plain text.",
     ],
     [
       { kind: "webhook", url: "https://hooks.example/x", addresses: ["a@example.com"] },
@@ -274,7 +274,7 @@ describe("channels", () => {
     expect(kind.statusCode).toBe(400);
     expect(kind.json()).toEqual({
       error: "invalid_kind",
-      message: "A channel's kind cannot change: add a new channel instead.",
+      message: "A channel's kind cannot change. Add a new channel instead.",
     });
     expect((await call("GET", "/channels/not-a-uuid")).statusCode).toBe(400);
   });
@@ -492,7 +492,7 @@ describe("test sends and deliveries", () => {
     expect(limited.statusCode).toBe(429);
     expect(limited.json()).toEqual({
       error: "too_many_tests",
-      message: `A channel takes at most ${TEST_SENDS_PER_MINUTE} test sends a minute. Wait a moment, then try again.`,
+      message: `A channel takes at most ${TEST_SENDS_PER_MINUTE} test sends a minute. Wait a moment. Then try again.`,
     });
     // Another channel has its own limit; a minute later, the first takes tests again.
     expect((await call("POST", `/channels/${two.channel.id}/test`)).statusCode).toBe(202);
@@ -525,7 +525,7 @@ describe("test sends and deliveries", () => {
           payload: JSON.stringify({ message: `Message ${index}` }),
           status: "failed" as const,
           attempts: 8,
-          last_error: "It answered 500; a webhook must answer 2xx.",
+          last_error: "It answered 500. A webhook must return 2xx.",
           created_at: new Date(Date.now() - (25 - index) * 60_000),
         })),
         {
@@ -568,7 +568,7 @@ describe("test sends and deliveries", () => {
       type: "check.down",
       status: "failed",
       attempts: 8,
-      lastError: "It answered 500; a webhook must answer 2xx.",
+      lastError: "It answered 500. A webhook must return 2xx.",
       nextAttemptAt: null,
       sentAt: null,
     });

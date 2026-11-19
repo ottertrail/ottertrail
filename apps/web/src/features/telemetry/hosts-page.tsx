@@ -201,10 +201,11 @@ export function HostsPage({
                 </TableBody>
               </Table>
               <p className="text-sm text-ink-subtle">
-                Each value is the host&apos;s latest in the period. Stale: nothing arrived from the
-                host in the last 5 minutes (shown while the period runs to now). A dash: the host
-                sent nothing to work the value out from. Read-only filesystems, such as snap
-                packages&apos; images, are always full and are left out of the fullest.
+                Each value is the host's latest in the period. Stale means no data arrived in the
+                last 5 minutes. This status appears when the period extends to now. A dash means the
+                host sent no data to calculate the value. Read-only filesystems, such as snap
+                package images, are always full. They are excluded from the fullest filesystem
+                value.
               </p>
               {data.truncated && (
                 <p className="text-sm text-ink-subtle">

@@ -43,11 +43,11 @@ function SettingsCard({ settings }: { settings: Settings }) {
     <Card>
       <CardHeader>
         <CardTitle>
-          <h3>Workspace</h3>
+          <h3>Instance</h3>
         </CardTitle>
         <CardDescription>
-          The name and timezone of this install, for all its projects. Only the owner sees and
-          changes them.
+          The instance name and timezone apply to all projects. Only the owner can view and change
+          them.
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -78,8 +78,8 @@ function SettingsCard({ settings }: { settings: Settings }) {
               />
               <FieldDescription id="settings-time-zone-hint">
                 {movesDays
-                  ? "Changing it moves where days start in every report, past days included. Visitors seen before the change count again after it, until midnight."
-                  : "Reports count days in this timezone. A name such as Europe/Berlin or Asia/Singapore."}
+                  ? "Changing the timezone changes day boundaries in all reports, including past reports. Visitors seen before the change count again after it until midnight."
+                  : "Reports count days in this timezone. Use a name such as Europe/Berlin or Asia/Singapore."}
               </FieldDescription>
             </Field>
             {save.error !== null && (

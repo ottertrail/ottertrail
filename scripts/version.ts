@@ -31,7 +31,7 @@ export function isSemver(version: string): boolean {
 export function versionProblem(version: string): string | null {
   if (!isSemver(version)) return `Not a semantic version (x.y.z, without a "v"): ${version}`;
   if (version.includes("+")) {
-    return `Build metadata ("+…") cannot be in a release version, because Docker tags cannot hold a "+": ${version}`;
+    return `Build metadata ("+…") is not allowed in a release version. Docker tags cannot contain "+": ${version}`;
   }
   return null;
 }
@@ -125,7 +125,7 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
     setVersion(root, version);
     for (const file of PLACES.map((place) => place.file)) console.log(`${file}: ${version}`);
     console.log(
-      `Next: commit "chore(release): ${version}", tag v${version}, and push the tag (docs/deployment.md, "Releasing").`,
+      `Next: commit "chore(release): ${version}". Create tag v${version}. Push the tag (docs/deployment.md, "Releasing").`,
     );
   } catch (error) {
     console.error(error instanceof Error ? error.message : error);

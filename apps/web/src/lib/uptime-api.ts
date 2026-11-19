@@ -316,7 +316,7 @@ export function urlProblem(text: string): string | null {
     return "Enter a full URL that starts with http:// or https://, such as https://example.com/health.";
   }
   if (url.username !== "" || url.password !== "") {
-    return "A check's URL holds no user name or password: they would be stored as plain text.";
+    return "A check's URL must not contain a user name or password. They would be stored as plain text.";
   }
   return null;
 }

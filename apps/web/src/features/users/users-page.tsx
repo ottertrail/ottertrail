@@ -142,13 +142,13 @@ export function UsersPage({
             </EmptyMedia>
             <EmptyTitle>No known users yet</EmptyTitle>
             <EmptyDescription>
-              Visitors are anonymous until your site says who is signed in: on every page while
-              someone is, add <code className="font-mono">data-user-id</code> to the tracking
-              snippet, with your own ID for them, such as their ID in your database, not an email
-              address. A single-page app that signs people in or out without a page load calls{" "}
+              Visitors are anonymous until your site identifies the signed-in user. On every page
+              while a user is signed in, add <code className="font-mono">data-user-id</code> to the
+              tracking snippet, with your own ID for them, such as their ID in your database, not an
+              email address. A single-page app that signs people in or out without a page load calls{" "}
               <code className="font-mono">identify()</code> and{" "}
-              <code className="font-mono">reset()</code>. Ottertrail keeps the ID in memory on the
-              page: nothing is stored on the visitor&apos;s device.
+              <code className="font-mono">reset()</code>. Ottertrail keeps the ID in the page's
+              memory. It stores nothing on the visitor's device.
             </EmptyDescription>
           </EmptyHeader>
           <EmptyContent className="max-w-2xl text-left">

@@ -55,7 +55,7 @@ export function InvitePage() {
     const form = new FormData(event.currentTarget);
     const password = formText(form, "password");
     if (password !== formText(form, "confirm-password")) {
-      setError("The two passwords differ. Type the same password twice.");
+      setError("The passwords do not match. Enter the same password in both fields.");
       return;
     }
     setPending(true);
@@ -88,7 +88,7 @@ export function InvitePage() {
     const gone =
       token === null || (preview.error instanceof ApiError && preview.error.status === 404);
     return (
-      <AuthLayout title="Invitation" description="Join an Ottertrail workspace.">
+      <AuthLayout title="Invitation" description="Join an Ottertrail instance.">
         <Alert variant={gone ? "default" : "destructive"}>
           <OctagonAlertIcon />
           <AlertDescription>{gone ? LINK_GONE : preview.error?.message}</AlertDescription>
@@ -98,7 +98,7 @@ export function InvitePage() {
   }
   if (preview.data === undefined || session.isPending) {
     return (
-      <AuthLayout title="Invitation" description="Join an Ottertrail workspace.">
+      <AuthLayout title="Invitation" description="Join an Ottertrail instance.">
         <p className="text-sm text-ink-subtle" aria-busy="true">
           Loading the invitation…
         </p>

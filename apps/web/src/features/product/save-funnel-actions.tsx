@@ -149,7 +149,7 @@ export function SaveFunnelActions({
         savedFocus={returnFocus}
         projectId={projectId}
         title={open === undefined ? "Save the funnel" : "Save as a new funnel"}
-        description="Saves the funnel shown under a name, to open again from Saved funnels."
+        description="Save the displayed funnel with a name. Open it again from Saved funnels."
         initialName=""
         submitLabel="Save funnel"
         save={(name) => createFunnel(projectId, name, shown)}

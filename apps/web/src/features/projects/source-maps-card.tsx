@@ -52,13 +52,13 @@ function UploadHelp() {
   return (
     <div className="flex flex-col gap-3 text-sm text-ink-muted">
       <p>
-        After each build, upload the source map of every minified file: one upload per release and
-        file. Uploads need the project&apos;s secret key, shown under &ldquo;Your server&rdquo;
-        above; keep it in your build&apos;s secrets, never in a page.
+        After each build, upload a source map for each minified file. Upload once per release and
+        file. Use the project's secret key from “Your server” above. Keep it in your build's
+        secrets. Never put it in a page.
       </p>
       <CopyableCode text={cliExample(origin)} copyLabel="Copy the upload command" />
       <p className="text-xs text-ink-subtle">
-        The command is not on npm yet: until it is published, run it from this repository&apos;s{" "}
+        The command is not on npm yet. Until it is published, run it from this repository's{" "}
         {code("packages/sourcemaps")}.
       </p>
       <p>Or upload one file at a time, with any HTTP client:</p>
@@ -69,13 +69,13 @@ function UploadHelp() {
           {code("/assets/index-4f3a.js")}, without the site&apos;s address.
         </li>
         <li>
-          {code("release")} must match the {code("data-release")} on the tracker&apos;s script tag,
-          so each error is mapped with the code it ran.
+          {code("release")} must match the {code("data-release")} on the tracker's script tag. This
+          maps each error to the code that ran.
         </li>
         <li>
-          Build the maps without publishing them, so visitors cannot read your source: in Vite,{" "}
-          {code('build.sourcemap: "hidden"')} writes them without the comment that points browsers
-          to them. Upload them, then leave them out of what you deploy.
+          Build the maps without publishing them so visitors cannot read your source. In Vite,{" "}
+          {code('build.sourcemap: "hidden"')} writes maps without the comment that directs browsers
+          to them. Upload the maps. Exclude them from your deployment.
         </li>
       </ul>
     </div>
@@ -100,7 +100,7 @@ function FilesDialog({ projectId, release }: { projectId: string; release: Sourc
         <DialogHeader>
           <DialogTitle>Release {release.release}</DialogTitle>
           <DialogDescription>
-            The minified files it has source maps for, by path, with each map&apos;s stored size.
+            Minified files with source maps, listed by path with each map's stored size.
           </DialogDescription>
         </DialogHeader>
         {files.isPending ? (
@@ -114,7 +114,7 @@ function FilesDialog({ projectId, release }: { projectId: string; release: Sourc
             <AlertDescription>{files.error.message}</AlertDescription>
           </Alert>
         ) : files.data.length === 0 ? (
-          <p className="text-sm text-ink-subtle">This release has no source maps any more.</p>
+          <p className="text-sm text-ink-subtle">This release no longer has source maps.</p>
         ) : (
           <div className="max-h-96 overflow-y-auto">
             <table className="w-full table-fixed text-sm">
@@ -231,8 +231,8 @@ function DeleteReleaseDialog({
         <DialogHeader>
           <DialogTitle>Delete the source maps of release {release.release}?</DialogTitle>
           <DialogDescription>
-            The maps of {files} are deleted for good. Your errors are kept, but the stacks of
-            release {release.release} show minified code again, until its maps are uploaded again.
+            The maps of {files} are permanently deleted. Your errors are retained. The stacks of
+            release {release.release} show minified code again until its maps are uploaded again.
           </DialogDescription>
         </DialogHeader>
         {remove.error !== null && (
@@ -392,8 +392,8 @@ function Overview({
   if (!overview.configured) {
     return (
       <p className="text-sm text-ink-muted">
-        Source maps are off on this install: it has no object store to keep them in. Its operator
-        turns them on by setting {code("OBJECT_STORE_URL")}.
+        Source maps are disabled on this instance because it has no object store for them. Its
+        operator can enable them by setting {code("OBJECT_STORE_URL")}.
       </p>
     );
   }
@@ -427,7 +427,7 @@ function Overview({
               {overview.releases.length.toLocaleString("en")} of{" "}
               {overview.totalReleases.toLocaleString("en")} releases are shown,{" "}
               {overview.order === "newest"
-                ? "the newest. Choose Oldest first to see the oldest, to delete for room."
+                ? "the newest. Select Oldest first to find and delete the oldest maps to free space."
                 : "the oldest."}
             </p>
           )}

@@ -106,8 +106,8 @@ function DeleteRuleDialog({
         <DialogHeader>
           <DialogTitle>Delete the rule “{rule.name}”?</DialogTitle>
           <DialogDescription>
-            It stops sending, and its alerts leave the history. To stop it for a while instead, turn
-            it off.
+            This stops notifications and removes the rule's alerts from history. To stop the rule
+            temporarily, disable it.
           </DialogDescription>
         </DialogHeader>
         {remove.error !== null && (
@@ -252,8 +252,8 @@ function FiringCard({ projectId }: { projectId: string }) {
           <h3>Firing now</h3>
         </CardTitle>
         <CardDescription>
-          Alerts that have not resolved: a check still down, a certificate still close to its end,
-          errors still above a spike&apos;s threshold, a route or a metric still past its threshold.
+          Unresolved alerts include checks still down and certificates still near expiry. They also
+          include error spikes, routes, and metrics still beyond their thresholds.
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -301,8 +301,9 @@ function HistoryCard({ projectId }: { projectId: string }) {
           <h3>Recent alerts</h3>
         </CardTitle>
         <CardDescription>
-          Every alert the rules fired, newest first, kept {first?.retentionDays ?? 90} days. One
-          held back by a rule&apos;s hourly limit is listed, marked, without a notification.
+          All alerts triggered by the rules, newest first, kept for {first?.retentionDays ?? 90}{" "}
+          days. Alerts suppressed by a rule's hourly limit are listed and marked. No notification is
+          sent for them.
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -458,7 +459,7 @@ export function AlertsPage({ projectId, prefill }: { projectId: string; prefill:
           <AlertTitle>
             {notice.warning.reason === "not_seen"
               ? `“${notice.ruleName}” is saved, and has nothing to watch yet`
-              : `“${notice.ruleName}” is saved; whether it has anything to watch could not be checked`}
+              : `“${notice.ruleName}” is saved. Its monitored data could not be checked`}
           </AlertTitle>
           <AlertDescription>{notice.warning.message}</AlertDescription>
           <AlertAction>
@@ -473,8 +474,8 @@ export function AlertsPage({ projectId, prefill }: { projectId: string; prefill:
           <BellOffIcon />
           <AlertTitle>No notification channels yet</AlertTitle>
           <AlertDescription>
-            Alerts need somewhere to go: an email list or a webhook, which belong to the instance
-            and every project can use.
+            Alerts need an email channel or webhook channel. Channels belong to the instance. Every
+            project can use them.
             {!can("channels") && " An admin adds them in Settings."}
           </AlertDescription>
           {can("channels") && (
@@ -501,11 +502,11 @@ export function AlertsPage({ projectId, prefill }: { projectId: string; prefill:
             </EmptyMedia>
             <EmptyTitle>No alert rules yet</EmptyTitle>
             <EmptyDescription>
-              A rule watches the project and tells your team when something breaks: a check that
-              goes down or a certificate about to expire, an error never seen before or back after
-              being resolved, a sudden rise in errors, a slow or failing route, a metric above or
-              below a value. It sends to the channels you choose, by email or webhook, and again
-              when it is over.
+              A rule monitors a project's checks, certificates, errors, routes, or metrics. It
+              notifies your team when a check goes down or a certificate nears expiry. It can report
+              new, regressed, or spiking errors, slow or failing routes, and metrics above or below
+              a value. It sends notifications through your selected email or webhook channels. It
+              sends another notification when the alert ends.
             </EmptyDescription>
           </EmptyHeader>
           {canManage && <EmptyContent>{addButton}</EmptyContent>}
@@ -515,8 +516,8 @@ export function AlertsPage({ projectId, prefill }: { projectId: string; prefill:
           <div className="flex flex-wrap items-center justify-between gap-3">
             <p className="text-sm text-ink-subtle">
               {data.rules.length} of at most {data.maxRules} rules. Each sends at most{" "}
-              {data.hourlyCap} notifications an hour; past that, one message says how many were held
-              back.
+              {data.hourlyCap} notifications an hour. After that limit, one message reports how many
+              notifications were suppressed.
               {can("channels") && (
                 <>
                   {" "}
@@ -559,7 +560,7 @@ export function AlertsPage({ projectId, prefill }: { projectId: string; prefill:
           </Table>
           {full && (
             <p className="text-sm text-ink-subtle">
-              The project has the most rules it may have. Delete one to add another.
+              The project reached its alert rule limit. Delete a rule to add another.
             </p>
           )}
           <FiringCard projectId={projectId} />

@@ -24,6 +24,6 @@ if (replayUrl !== undefined && replayUrl.startsWith("/") && !replayUrl.startsWit
 } else {
   const message = document.createElement("p");
   message.setAttribute("role", "alert");
-  message.textContent = "This page does not name a replay.";
+  message.textContent = "This page does not specify a replay.";
   document.body.append(message);
 }

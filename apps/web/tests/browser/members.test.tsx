@@ -5,7 +5,7 @@ import { ADMIN_ACCESS, ADMIN_PASSWORD, installFakeApi, memberAccess, PROJECT } f
 import { renderApp } from "./render.tsx";
 
 const MEMBERS = "/settings/members";
-const workspaceMenu = () => page.getByRole("navigation", { name: "Workspace" });
+const workspaceMenu = () => page.getByRole("navigation", { name: "Instance" });
 const dialog = (name: string) => page.getByRole("dialog", { name });
 const rowsOf = (caption: string) => {
   const table = [...document.querySelectorAll("table")].find(
@@ -153,7 +153,9 @@ describe("the Members page", () => {
     const hand = dialog("Make Ada Admin the owner?");
     await hand.getByLabelText("Your password").fill("not it");
     await hand.getByRole("button", { name: "Hand over ownership" }).click();
-    await expect.element(hand.getByText("That is not your password. Type it again.")).toBeVisible();
+    await expect
+      .element(hand.getByText("The password is incorrect. Enter it again."))
+      .toBeVisible();
     // The password does not stay in the form after a failure, or after closing.
     await expect.element(hand.getByLabelText("Your password")).toHaveValue("");
     await hand.getByLabelText("Your password").fill("typed, then cancelled");

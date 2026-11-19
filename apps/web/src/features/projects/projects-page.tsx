@@ -85,7 +85,7 @@ export function ProjectsPage() {
             <EmptyDescription>
               {canManage
                 ? "Create a project for your website or app to get its tracking snippet."
-                : "You have not been given any project yet. Ask an admin of this workspace."}
+                : "You have no assigned projects yet. Ask an admin of this instance."}
             </EmptyDescription>
           </EmptyHeader>
           {canManage && (

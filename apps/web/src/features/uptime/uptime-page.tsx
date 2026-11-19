@@ -104,8 +104,8 @@ export function UptimePage({ projectId }: { projectId: string }) {
             </EmptyMedia>
             <EmptyTitle>No uptime checks yet</EmptyTitle>
             <EmptyDescription>
-              A check requests a URL of your site or API on a schedule, from this instance, and
-              marks it down when it fails, so you see when it stopped answering and for how long.
+              This instance requests your site or API URL on a schedule. The check is marked down
+              when it fails. You can see when the URL stopped responding and for how long.
             </EmptyDescription>
           </EmptyHeader>
           {canManage && <EmptyContent>{addButton}</EmptyContent>}
@@ -184,7 +184,7 @@ export function UptimePage({ projectId }: { projectId: string }) {
           </Table>
           {full && (
             <p className="text-sm text-ink-subtle">
-              The project has the most checks it may have. Delete one to add another.
+              The project reached its check limit. Delete a check to add another.
             </p>
           )}
         </>

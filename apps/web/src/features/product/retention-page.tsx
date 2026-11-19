@@ -76,8 +76,8 @@ function CohortTable({ retention }: { retention: Retention }) {
           <h3>Weekly retention</h3>
         </CardTitle>
         <CardDescription>
-          Each row is the signed-in users first seen in that week; each column, the share of them
-          who came back that many weeks later.
+          Each row represents signed-in users first seen in that week. Each column shows the share
+          who returned that many weeks later.
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-3">
@@ -151,7 +151,7 @@ function CohortTable({ retention }: { retention: Retention }) {
         <Legend />
         {notOver && (
           <p className="text-xs text-ink-subtle">
-            <span className="italic">*</span> This week is not over: its share can still grow.
+            <span className="italic">*</span> This week is not over. Its share can still increase.
           </p>
         )}
       </CardContent>
@@ -168,23 +168,23 @@ function RetentionNotes({ timeZone }: { timeZone: string | undefined }) {
       </h3>
       <ul className="flex list-disc flex-col gap-1 pl-5 text-xs text-ink-subtle">
         <li>
-          Signed-in users only, by your site&apos;s user ID. Visitors cannot be followed: their IDs
-          change every day, so someone who comes back next week is a new visitor.
+          Only signed-in users count, identified by your site's user ID. Visitor IDs change daily.
+          Someone who returns next week counts as a new visitor.
         </li>
         <li>
-          A cohort is the users whose first event in this environment, over all the time the project
-          keeps, was in that week. The period picks the cohorts: the latest 13 whose week overlaps
-          it. Each cohort's weeks then run up to this week, whatever the period.
+          A cohort contains users whose first event in this environment occurred that week, across
+          the project's full retention period. The report selects the latest 13 cohorts whose first
+          week overlaps the selected period. Each cohort continues through the current week,
+          regardless of the selected period.
         </li>
         <li>
-          A user came back in week <em>n</em> if they did anything themselves (any event but time on
-          page and Web Vitals) in the <em>n</em>-th week after their first. Week 0 is everyone:
-          100%.
+          A user returned in week <em>n</em> if they triggered any event except time on page or Web
+          Vitals in the <em>n</em>-th week after their first week. Week 0 includes everyone: 100%.
         </li>
         <li>
           Weeks start on Monday in the timezone set in Settings
-          {timeZone === undefined ? "" : ` (${timeZone})`}. Events can arrive up to a day late, so a
-          week can still grow for a day after it ends.
+          {timeZone === undefined ? "" : ` (${timeZone})`}. Events can arrive up to a day late. A
+          week's counts can increase for a day after it ends.
         </li>
       </ul>
     </section>
@@ -201,11 +201,11 @@ function NoCohorts({ environment }: { environment: string }) {
         </EmptyMedia>
         <EmptyTitle>No signed-in users first seen{where} in this period</EmptyTitle>
         <EmptyDescription>
-          Retention follows signed-in users from week to week, so it needs your site to name them.
-          Add <code className="font-mono">data-user-id</code> with the signed-in user&apos;s ID to
-          the tracking snippet on every page load. In a single-page app, also call{" "}
+          Retention follows signed-in users across weeks. Your site must identify them. Add{" "}
+          <code className="font-mono">data-user-id</code> with the signed-in user&apos;s ID to the
+          tracking snippet on every page load. In a single-page app, also call{" "}
           <code className="font-mono">window.ottertrail.identify(id)</code> when someone signs in
-          without a page load, and <code className="font-mono">reset()</code> when they sign out.
+          without a page load. Call <code className="font-mono">reset()</code> when they sign out.
           Events sent from your server always carry a user ID.
         </EmptyDescription>
       </EmptyHeader>

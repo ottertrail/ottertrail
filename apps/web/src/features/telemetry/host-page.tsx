@@ -65,7 +65,7 @@ const CHARTS: Record<
   filesystem: {
     title: "Filesystem used by mount point (%)",
     description: (step, metrics) =>
-      `Each mount point's share used, per ${step}, from ${metrics}; read-only filesystems, always full, are left out. Past eight, the rest are added up as "Other mount points".`,
+      `Each mount point's share used, per ${step}, from ${metrics}. Read-only filesystems are always full and are excluded. After eight mount points, the rest are combined as "Other mount points".`,
     empty: "system.filesystem.utilization or system.filesystem.usage",
   },
   network: {
@@ -158,10 +158,10 @@ function HostChartCard({
       description={
         <>
           {chart.metrics.length === 0
-            ? `Worked out from ${about.empty}.`
+            ? `Calculated from ${about.empty}.`
             : about.description(step, chart.metrics.join(", "))}
           {chart.capped &&
-            " The host sent more series than a chart reads: it reads the 1,000 with the most points."}
+            " The host sent more series than the chart can display. The chart uses the 1,000 series with the most points."}
         </>
       }
       frame={data}
@@ -236,7 +236,9 @@ export function HostPage({
               </time>
             </span>
             <Freshness stale={data.stale} />
-            {data.stale === true && <span>Nothing arrived from it in the last 5 minutes.</span>}
+            {data.stale === true && (
+              <span>No data arrived from this host in the last 5 minutes.</span>
+            )}
           </p>
         )}
       </div>

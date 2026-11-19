@@ -66,7 +66,7 @@ describe("the Alerts page", () => {
       [
         "CertificatesThe certificate of any of the project's checks expires within 14 days",
         "No channel",
-        "OffTurned off: its last channel was deleted. Choose a channel to turn it on again.",
+        "OffDisabled because its last channel was deleted. Choose a channel to enable the rule again.",
       ],
     ]);
     // On or off is a switch named for its rule.
@@ -96,7 +96,11 @@ describe("the Alerts page", () => {
     renderApp(ALERTS);
     await expect.element(page.getByText("No alert rules yet")).toBeVisible();
     await expect
-      .element(page.getByText(/A rule watches the project and tells your team when something/))
+      .element(
+        page.getByText(
+          /A rule monitors a project's checks, certificates, errors, routes, or metrics/,
+        ),
+      )
       .toBeVisible();
     expect(page.getByRole("table").elements()).toEqual([]);
     await page.getByRole("button", { name: "Add rule" }).click();
@@ -122,7 +126,11 @@ describe("the Alerts page", () => {
 
     await choose(form, "When", "Error spike");
     await expect
-      .element(form.getByText(/Sends when the errors in the window reach the threshold/))
+      .element(
+        form.getByText(
+          /Sends a notification when the error count in the window reaches the threshold/,
+        ),
+      )
       .toBeVisible();
     await form.getByLabelText("Environment (optional)").fill("not an environment");
     await form.getByLabelText("Errors").fill("0");
@@ -137,7 +145,7 @@ describe("the Alerts page", () => {
       .toBeVisible();
     await expect.element(form.getByText("Choose at least one channel.")).toBeVisible();
     await expect
-      .element(form.getByText("The rule is not complete. Fix the fields marked above."))
+      .element(form.getByText("The rule is incomplete. Correct the marked fields above."))
       .toBeVisible();
     expect(api.bodies).toEqual([]);
 

@@ -23,7 +23,7 @@ export function watchesText(rule: Rule, checks: readonly Pick<Check, "id" | "nam
   const check =
     checkId === null
       ? null
-      : (checks.find((item) => item.id === checkId)?.name ?? "a check that was deleted");
+      : (checks.find((item) => item.id === checkId)?.name ?? "a deleted check");
   const where =
     (settings.environment ?? null) === null ? "any environment" : `${settings.environment}`;
   if (rule.kind === "check_down") {
@@ -38,7 +38,7 @@ export function watchesText(rule: Rule, checks: readonly Pick<Check, "id" | "nam
   }
   if (rule.kind === "error_new") return `An error group is seen for the first time, in ${where}`;
   if (rule.kind === "error_regressed") {
-    return "An error group resolved in the dashboard happens again";
+    return "An error group resolved in the dashboard occurs again";
   }
   const window = minutes(settings.windowMinutes ?? 10);
   const environment = settings.environment ?? "production";

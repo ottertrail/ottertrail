@@ -60,7 +60,7 @@ describe("the hosts page", () => {
     ]);
     // Stale is said in words, with the badge's icon, not by color alone.
     await expect
-      .element(page.getByText(/Stale: nothing arrived from the host in the last 5 minutes/))
+      .element(page.getByText(/Stale means no data arrived in the last 5 minutes/))
       .toBeVisible();
     // A value not sent is a dash with a name.
     await expect.element(page.getByLabelText("Not sent")).toBeVisible();
@@ -176,7 +176,7 @@ describe("a host's page", () => {
     await expect.element(page.getByRole("heading", { name: "db-1" })).toBeVisible();
     await expect.element(page.getByText("Stale", { exact: true })).toBeVisible();
     await expect
-      .element(page.getByText("Nothing arrived from it in the last 5 minutes."))
+      .element(page.getByText("No data arrived from this host in the last 5 minutes."))
       .toBeVisible();
   });
 

@@ -235,7 +235,7 @@ function parseClickHouse(env: NodeJS.ProcessEnv): ClickHouseConfig {
   if (parsed.username !== "" || parsed.password !== "") {
     // Error messages never repeat the URL: it would show the password.
     throw new ConfigError(
-      "CLICKHOUSE_URL must not hold a user or password; use CLICKHOUSE_USER and CLICKHOUSE_PASSWORD",
+      "CLICKHOUSE_URL must not contain a user name or password. Use CLICKHOUSE_USER and CLICKHOUSE_PASSWORD.",
     );
   }
   const password = env.CLICKHOUSE_PASSWORD;
@@ -273,7 +273,7 @@ function parseObjectStore(env: NodeJS.ProcessEnv): ObjectStoreConfig | null {
   if (parsed.username !== "" || parsed.password !== "") {
     // Error messages never repeat the URL: it would show the secret.
     throw new ConfigError(
-      "OBJECT_STORE_URL must not hold keys; use OBJECT_STORE_ACCESS_KEY_ID and OBJECT_STORE_SECRET_ACCESS_KEY",
+      "OBJECT_STORE_URL must not contain keys. Use OBJECT_STORE_ACCESS_KEY_ID and OBJECT_STORE_SECRET_ACCESS_KEY.",
     );
   }
   const accessKeyId = env.OBJECT_STORE_ACCESS_KEY_ID?.trim() ?? "";
@@ -344,7 +344,7 @@ function parseDenyAddresses(raw: string | undefined): string[] {
   for (const entry of entries) {
     if (parseAddressRange(entry) === null) {
       throw new ConfigError(
-        `UPTIME_DENY_ADDRESSES must be a comma-separated list of IP addresses and CIDR ranges; "${entry}" is not valid`,
+        `UPTIME_DENY_ADDRESSES must be a comma-separated list of IP addresses and CIDR ranges. "${entry}" is not valid`,
       );
     }
   }
@@ -371,7 +371,7 @@ function parseEmail(env: NodeJS.ProcessEnv): EmailConfig | null {
   // code sets (requireTLS, logging, certificate checks): none is taken.
   if (raw.includes("?") || raw.includes("#")) {
     throw new ConfigError(
-      "SMTP_URL must not have a query string or fragment; percent-encode ? and # in the user name or password",
+      "SMTP_URL must not contain a query string or fragment. Percent-encode ? and # in the user name or password.",
     );
   }
   const url = URL.parse(raw);
@@ -385,7 +385,7 @@ function parseEmail(env: NodeJS.ProcessEnv): EmailConfig | null {
     throw new ConfigError("SMTP_URL has an invalid port");
   }
   if ((url.username === "") !== (url.password === "")) {
-    throw new ConfigError("SMTP_URL must hold both a user name and a password, or neither");
+    throw new ConfigError("SMTP_URL must contain both a user name and a password, or neither");
   }
   if (url.pathname !== "" && url.pathname !== "/") {
     throw new ConfigError("SMTP_URL must not have a path");
@@ -421,7 +421,7 @@ function parseTrustProxy(raw: string | undefined): false | number | string[] {
       (/^\d+$/.test(prefix) && Number(prefix) <= (version === 6 ? 128 : 32));
     if (version === 0 || !validPrefix || extra !== undefined) {
       throw new ConfigError(
-        `TRUST_PROXY must be false, a number of hops, or a comma-separated list of IPs or CIDRs; "${entry}" is not valid`,
+        `TRUST_PROXY must be false, a number of hops, or a comma-separated list of IP addresses or CIDR ranges. "${entry}" is not valid`,
       );
     }
   }
@@ -467,7 +467,7 @@ function parseAuthSecret(env: NodeJS.ProcessEnv): string {
   if (raw === undefined || raw === "") {
     if (env.NODE_ENV === "production") {
       throw new ConfigError(
-        "AUTH_SECRET is required in production; generate one with `openssl rand -base64 32`",
+        "AUTH_SECRET is required in production. Generate one with `openssl rand -base64 32`.",
       );
     }
     return DEVELOPMENT_AUTH_SECRET;

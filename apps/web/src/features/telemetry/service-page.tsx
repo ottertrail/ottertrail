@@ -83,7 +83,7 @@ function Charts({ data, subject }: { data: ServiceChart; subject: string }) {
       <div className="grid gap-4 lg:grid-cols-2">
         <ChartCard
           title="Failed (%)"
-          description={`The share of requests with status Error, per ${step}; a gap where no request arrived.`}
+          description={`The share of requests with status Error, per ${step}. A gap means no request arrived.`}
           frame={data}
           subject={subject}
           lines={failedLines}

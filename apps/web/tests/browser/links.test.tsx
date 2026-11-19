@@ -42,7 +42,7 @@ describe("accepting an invitation", () => {
     await page.getByLabelText("Confirm password").fill(`${PASSWORD}!`);
     await page.getByRole("button", { name: "Create account" }).click();
     await expect
-      .element(page.getByText("The two passwords differ.", { exact: false }))
+      .element(page.getByText("The passwords do not match.", { exact: false }))
       .toBeVisible();
     expect(api.bodies.some((item) => item.path === "/api/invite/accept")).toBe(false);
 
@@ -114,7 +114,7 @@ describe("a reset link", () => {
     await page.getByLabelText("Confirm password").fill("something else");
     await page.getByRole("button", { name: "Set password" }).click();
     await expect
-      .element(page.getByText("The two passwords differ.", { exact: false }))
+      .element(page.getByText("The passwords do not match.", { exact: false }))
       .toBeVisible();
     await page.getByLabelText("Confirm password").fill(PASSWORD);
     await page.getByRole("button", { name: "Set password" }).click();
@@ -141,11 +141,11 @@ describe("the setup page", () => {
     open("/setup", "setup-token");
     const timeZone = page.getByRole("combobox", { name: "Timezone" });
     await expect.element(timeZone).toHaveValue(Intl.DateTimeFormat().resolvedOptions().timeZone);
-    await expect.element(page.getByText(/Email for alerts is not set up/)).toBeVisible();
+    await expect.element(page.getByText(/Email for alerts is not configured/)).toBeVisible();
 
     await page.getByRole("textbox", { name: "Name" }).fill("Ada");
     await page.getByRole("textbox", { name: "Email" }).fill("ada@example.com");
-    await page.getByRole("textbox", { name: "Workspace name" }).fill("Ada's company");
+    await page.getByRole("textbox", { name: "Instance name" }).fill("Ada's company");
     await page.getByLabelText("Password", { exact: true }).fill(PASSWORD);
     await page.getByLabelText("Confirm password").fill("not the same");
     await timeZone.fill("berlin");
@@ -153,7 +153,7 @@ describe("the setup page", () => {
     await expect.element(timeZone).toHaveValue("Europe/Berlin");
     await page.getByRole("button", { name: "Create account" }).click();
     await expect
-      .element(page.getByText("The two passwords differ.", { exact: false }))
+      .element(page.getByText("The passwords do not match.", { exact: false }))
       .toBeVisible();
     expect(api.bodies.some((item) => item.path === "/api/setup")).toBe(false);
 

@@ -708,7 +708,7 @@ describe("budgets", () => {
       const tooMany = await post("/v1/traces", spans(4), { key, app: limited.app });
       expect(tooMany.statusCode).toBe(413);
       expect(statusOf(tooMany.rawPayload).message).toBe(
-        "A request holds at most 3 records; this one holds 4. Send smaller batches.",
+        "A request holds at most 3 records. This request contains 4. Send smaller batches.",
       );
 
       expect((await post("/v1/traces", spans(1), { key, app: limited.app })).statusCode).toBe(200);
@@ -798,7 +798,7 @@ describe("budgets by size", () => {
     });
     expect(tooLarge.statusCode).toBe(413);
     expect(statusOf(tooLarge.rawPayload).message).toBe(
-      "A request may cost at most 10 (a record each, or more for many attributes or large ones); this one costs 16. Send smaller batches.",
+      "A request may cost at most 10 (one per record, or more for numerous or large attributes). This request costs 16. Send smaller batches.",
     );
 
     // One row: 8 units, so a second does not fit.
@@ -824,7 +824,7 @@ describe("budgets by size", () => {
       app: limited.app,
     });
     expect(many.statusCode).toBe(413);
-    expect(statusOf(many.rawPayload).message).toMatch(/this one costs 13\./);
+    expect(statusOf(many.rawPayload).message).toMatch(/This request costs 13\./);
     const few = await post("/v1/traces", spanWithAttributes(20), {
       key: project.secretKey,
       app: limited.app,
@@ -1152,7 +1152,7 @@ describe("exceptions join the error list", () => {
       // 12, over the 5 a project has.
       const tooMany = await post("/v1/traces", withExceptions(10), { key, app: limited.app });
       expect(tooMany.statusCode).toBe(413);
-      expect(statusOf(tooMany.rawPayload).message).toMatch(/this one costs 12\./);
+      expect(statusOf(tooMany.rawPayload).message).toMatch(/This request costs 12\./);
       expect(await countEvents(limited.reader.client, project.id)).toBe(0);
 
       // A span and its exception: 2 of the 5. Then a span and 3 exceptions,

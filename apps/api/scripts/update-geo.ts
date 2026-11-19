@@ -58,7 +58,7 @@ async function updateLocations(destination: string): Promise<boolean> {
   }
 
   if (!downloaded) {
-    console.error("No DB-IP City Lite file was found for this month or last month.");
+    console.error("No DB-IP City Lite file is available for this month or last month.");
     return false;
   }
   try {
@@ -78,7 +78,7 @@ async function updateLocations(destination: string): Promise<boolean> {
     return true;
   } catch (error) {
     await rm(partial, { force: true });
-    console.error("The download failed its check, so the old database was kept.", error);
+    console.error("The download failed validation. The old database was retained.", error);
     return false;
   }
 }
@@ -112,7 +112,7 @@ async function updateDataCenters(destination: string): Promise<boolean> {
   }
   for (const failure of failures) console.error(`  Failed: ${failure}`);
   if (loaded.providers.length === 0) {
-    console.error("No source could be downloaded, so nothing was saved.");
+    console.error("No source could be downloaded. Nothing was saved.");
     return false;
   }
 

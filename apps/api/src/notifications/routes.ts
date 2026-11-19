@@ -293,7 +293,7 @@ export const channelRoutes: FastifyPluginCallback<{
       if ("limited" in recorded) {
         return reply.code(429).send({
           error: "too_many_tests",
-          message: `A channel takes at most ${TEST_SENDS_PER_MINUTE} test sends a minute. Wait a moment, then try again.`,
+          message: `A channel takes at most ${TEST_SENDS_PER_MINUTE} test sends a minute. Wait a moment. Then try again.`,
         });
       }
       const [delivery] = recorded.deliveries;

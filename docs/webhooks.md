@@ -348,7 +348,7 @@ A request failed when its span's status is Error. `route.failures_resolved` has 
     "held": 35,
     "cap": 20
   },
-  "message": "Shop: the alert rule \"New errors\" held back 35 more notifications after sending 20 in an hour, its limit. The rule's alert history in the dashboard lists every alert.",
+  "message": "Shop: the alert rule \"New errors\" held back 35 more notifications after sending 20 in an hour, which is its limit. The rule's alert history in the dashboard lists every alert.",
   "url": "https://analytics.example.com/projects/0d6e5f80-0c4f-4b8e-9d3a-3f8f6a1c2b7e/alerts"
 }
 ```

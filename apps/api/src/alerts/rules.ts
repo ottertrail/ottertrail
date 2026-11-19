@@ -367,9 +367,9 @@ export async function deleteRule(
 }
 
 export const CHECK_DELETED_REASON =
-  "Turned off: the check it watched was deleted. Choose another check to turn it on again.";
+  "Disabled because the monitored check was deleted. Choose another check to enable the rule again.";
 export const CHANNELS_DELETED_REASON =
-  "Turned off: its last channel was deleted. Choose a channel to turn it on again.";
+  "Disabled because its last channel was deleted. Choose a channel to enable the rule again.";
 
 /**
  * A check is being deleted, in `trx`, before the check itself: rules that

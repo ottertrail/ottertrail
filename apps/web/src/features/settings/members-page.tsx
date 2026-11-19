@@ -232,8 +232,8 @@ function InviteDialog({
         <DialogHeader>
           <DialogTitle>Invite someone</DialogTitle>
           <DialogDescription>
-            You get a link to copy and send them yourself: this instance sends no email. It works
-            once, for {days} days.
+            Copy the invitation link. Send it to the person yourself. This instance sends no email.
+            The link works once, for {days} days.
           </DialogDescription>
         </DialogHeader>
         {invite.data === undefined ? (
@@ -284,7 +284,7 @@ function InviteDialog({
           <>
             <LinkToSend
               url={invite.data.url}
-              about={`Send this link to ${invite.data.invitation.email}. It is shown only now; "New link" on this page replaces it if it is lost.`}
+              about={`Send this link to ${invite.data.invitation.email}. The link appears only now. Use "New link" on this page to replace a lost link.`}
             />
             <DialogFooter>
               <DialogClose render={<Button type="button" />}>Done</DialogClose>
@@ -338,7 +338,7 @@ function MemberActions({
           label="Reset link"
           buttonLabel={`Make a reset link for ${member.name}`}
           title={`A reset link for ${member.name}`}
-          description="The link sets a new password, once, within 24 hours. Using it signs them out everywhere; their old password works until then. A new link replaces an earlier one."
+          description="The link works once, within 24 hours, to set a new password. Using it signs them out everywhere. Their old password works until then. A new link replaces the previous link."
           confirmLabel="Make the link"
           linkAbout={`Send this link to ${member.name}. It is shown only now.`}
           run={() => makeResetLink(member.id)}
@@ -349,7 +349,7 @@ function MemberActions({
           label="Make owner"
           buttonLabel={`Make ${member.name} the owner`}
           title={`Make ${member.name} the owner?`}
-          description="They get the instance's settings and everything else. You become an admin, and only they can make you the owner again."
+          description="They gain access to the instance settings and everything else. You become an admin. Only the new owner can make you the owner again."
           confirmLabel="Hand over ownership"
           destructive
           canConfirm={password !== ""}
@@ -377,7 +377,7 @@ function MemberActions({
           label="Remove"
           buttonLabel={`Remove ${member.name}`}
           title={`Remove ${member.name}?`}
-          description="Their account is deleted and they are signed out at once. What they did stays, such as errors they resolved. Their pending invitations are revoked."
+          description="This deletes their account and signs them out immediately. Their actions, such as resolving errors, remain recorded. This also revokes their pending invitations."
           confirmLabel="Remove"
           destructive
           run={async () => {
@@ -398,7 +398,7 @@ function InvitationActions({ invitation, actor }: { invitation: Invitation; acto
         label="New link"
         buttonLabel={`Make a new link for ${invitation.email}`}
         title={`A new link for ${invitation.email}`}
-        description="The old link stops working, and the new one works for 7 days. The link cannot be shown again, so this replaces a lost one."
+        description="The old link stops working. The new link works for 7 days. Use this to replace a lost link, which cannot be shown again."
         confirmLabel="Make a new link"
         linkAbout={`Send this link to ${invitation.email}. It is shown only now.`}
         run={() => renewInvitation(invitation.id)}
@@ -470,8 +470,8 @@ export function MembersPage() {
             <h3>Members</h3>
           </CardTitle>
           <CardDescription>
-            The owner and admins reach everything; a member reaches the areas and projects they were
-            given. Changes apply on the next click.
+            The owner and admins have access to everything. Members have access to their assigned
+            areas and projects. Changes apply on the next click.
           </CardDescription>
           <CardAction>
             <InviteDialog actor={actor} projects={projects.data} days={data.invitationDays} />

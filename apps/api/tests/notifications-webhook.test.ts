@@ -161,7 +161,7 @@ describe("a webhook's request", () => {
     expect(await send()).toEqual({
       ok: false,
       status: 302,
-      error: "It answered 302, a redirect, which webhooks do not follow: use the final URL.",
+      error: "It answered 302, a redirect. Webhooks do not follow redirects. Use the final URL.",
     });
     expect(receiver.requests.map((request) => request.path)).toEqual(["/hook"]);
   });
@@ -172,7 +172,7 @@ describe("a webhook's request", () => {
       expect(await send()).toEqual({
         ok: false,
         status,
-        error: `It answered ${status}; a webhook must answer 2xx.`,
+        error: `It answered ${status}. A webhook must return 2xx.`,
       });
     }
   });

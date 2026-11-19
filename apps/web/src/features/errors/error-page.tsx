@@ -131,8 +131,8 @@ function Stats({ detail }: { detail: ErrorDetail }) {
           ))}
         </dl>
         <p className="text-xs text-ink-subtle">
-          Occurrences, users (your site&apos;s user IDs), and visitors count this period. First and
-          last seen cover all the time the project keeps.
+          Occurrences, users (your site's user IDs), and visitors count within this period. First
+          and last seen cover the project's full retention period.
         </p>
       </CardContent>
     </Card>
@@ -284,8 +284,8 @@ function ServerCard({ projectId, occurrence }: { projectId: string; occurrence: 
           <h3>Server</h3>
         </CardTitle>
         <CardDescription>
-          The latest occurrence came from a server, over OpenTelemetry. Its trace shows the spans
-          and logs around it, while the trace is kept.
+          The latest occurrence came from a server over OpenTelemetry. Its trace shows nearby spans
+          and logs during the trace's retention period.
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -362,7 +362,7 @@ function OccurrencesCard({
                         variant="secondary"
                         title={
                           isServer(occurrence)
-                            ? "On a span that did not fail, or logged below the error level"
+                            ? "Reported on a span without failure status, or logged below the error level"
                             : "Reported with captureError()"
                         }
                       >

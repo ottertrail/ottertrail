@@ -22,8 +22,7 @@ export function clickHouseErrorHandler(
     request.log.warn("a dashboard query waited too long for a place");
     return reply.code(503).header("retry-after", "10").send({
       error: "reports_busy",
-      message:
-        "The dashboard's pages are already running as many queries as they may. Try again in a few seconds.",
+      message: "Dashboard pages reached the query limit. Try again in a few seconds.",
     });
   }
   if (request.raw.destroyed || (error instanceof Error && error.name === "AbortError")) {
@@ -37,7 +36,7 @@ export function clickHouseErrorHandler(
     return reply.code(503).header("retry-after", "60").send({
       error: "reports_busy",
       message:
-        "This needs more memory than a report may use now. Try a shorter range or narrower filters, or try again in a minute.",
+        "This report needs more memory than it can currently use. Try a shorter range or narrower filters. Alternatively, try again in a minute.",
     });
   }
   if (error instanceof ClickHouseError && error.type === "TIMEOUT_EXCEEDED") {
@@ -45,12 +44,12 @@ export function clickHouseErrorHandler(
     request.log.warn({ err: error }, "a report took too long");
     return reply.code(503).header("retry-after", "60").send({
       error: "reports_busy",
-      message: "This took too long to work out. Try a shorter range or narrower filters.",
+      message: "The calculation took too long. Try a shorter range or narrower filters.",
     });
   }
   request.log.error({ err: error }, "a report failed");
   return reply.code(500).send({
     error: "internal_error",
-    message: "The reports could not be worked out. Try again.",
+    message: "The reports could not be calculated. Try again.",
   });
 }

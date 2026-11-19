@@ -121,12 +121,12 @@ function landing(): Page {
     const environment = script?.dataset.environment;
     if (environment !== undefined && !ENVIRONMENT_PATTERN.test(environment)) {
       // Sending them as production's would mix them into the live numbers.
-      console.warn("Ottertrail: invalid data-environment, so nothing is sent.");
+      console.warn("Ottertrail: data-environment is invalid. No data is sent.");
       return;
     }
     let release = script?.dataset.release;
     if (release !== undefined && !RELEASE_PATTERN.test(release)) {
-      console.warn("Ottertrail: invalid data-release, so it is left out.");
+      console.warn("Ottertrail: data-release is invalid. The release is omitted.");
       release = undefined;
     }
 
@@ -150,11 +150,11 @@ function landing(): Page {
       const userId = id === undefined ? undefined : cleanUserId(id);
       if (id !== undefined && userId === undefined) {
         // Anonymous, never the user before: they may have signed out.
-        console.warn(`Ottertrail: invalid user ID in ${from}, so events go without one.`);
+        console.warn(`Ottertrail: invalid user ID in ${from}. Events are sent without a user ID.`);
       }
       const clean = cleanSignature(signature);
       if (signature !== undefined && clean === undefined) {
-        console.warn(`Ottertrail: invalid user signature in ${from}, so it is left out.`);
+        console.warn(`Ottertrail: invalid user signature in ${from}. The signature is omitted.`);
       }
       user = userId === undefined ? undefined : { userId, signature: clean };
       tracker.setUser(user);
@@ -303,7 +303,7 @@ function landing(): Page {
         // The tracker sends these itself; a page sending them would distort reports.
         if (name === "pageview" || name === ENGAGEMENT || name === ERROR || name === VITALS) {
           console.warn(
-            `Ottertrail: "${name}" is reserved for the tracker's own events, so it is not sent.`,
+            `Ottertrail: "${name}" is reserved for the tracker's own events. The event is not sent.`,
           );
           return;
         }

@@ -82,7 +82,7 @@ function NoErrors({ status, environment }: { status: StatusFilter; environment: 
         </EmptyTitle>
         <EmptyDescription>
           {status === "resolved"
-            ? "An error you mark resolved is listed here until it is seen again."
+            ? "Errors you mark resolved remain here until they occur again."
             : `No error arrived${where} in this period. Choose a longer one to see earlier errors.`}
         </EmptyDescription>
       </EmptyHeader>

@@ -140,7 +140,7 @@ export async function updateFunnel(
 /** Why a change to a saved funnel failed, for people. */
 export const changeFailure = (error: Error): string =>
   error instanceof ApiError && error.code === "funnel_changed"
-    ? "It was changed elsewhere after this page loaded it, such as in another tab. Its saved version is loaded again now: look at it, then save again."
+    ? "The funnel changed elsewhere after this page loaded it, such as in another tab. The saved version is now reloaded. Review it. Then save again."
     : error.message;
 
 /** DELETE /api/projects/:id/funnels/:funnelId */

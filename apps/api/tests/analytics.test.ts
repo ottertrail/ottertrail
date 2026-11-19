@@ -798,7 +798,7 @@ describe("when ClickHouse fails", () => {
     expect(response.statusCode).toBe(500);
     expect(response.json()).toEqual({
       error: "internal_error",
-      message: "The reports could not be worked out. Try again.",
+      message: "The reports could not be calculated. Try again.",
     });
   });
 

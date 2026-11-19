@@ -268,7 +268,7 @@ export const telemetryRoutes: FastifyPluginCallback<TelemetryOptions> = (app, op
       return fail(request, reply, 415, "Send the body as it is, or with Content-Encoding: gzip.");
     }
     if (inFlight.size >= maxInFlight) {
-      return fail(request, reply, 503, "Too many requests in progress. Retry shortly.", 1);
+      return fail(request, reply, 503, "Too many requests are in progress. Try again shortly.", 1);
     }
     // Taken before anything waits, so requests arriving together cannot
     // all pass the check; given back when the answer is sent.
@@ -289,7 +289,7 @@ export const telemetryRoutes: FastifyPluginCallback<TelemetryOptions> = (app, op
         request,
         reply,
         429,
-        "Too many of this project's requests in progress. Retry shortly.",
+        "Too many requests from this project are in progress. Try again shortly.",
         1,
       );
     }
@@ -351,7 +351,7 @@ export const telemetryRoutes: FastifyPluginCallback<TelemetryOptions> = (app, op
             request,
             reply,
             413,
-            `A request may cost at most ${budget.capacity} (a record each, or more for many attributes or large ones); this one costs ${cost}. Send smaller batches.`,
+            `A request may cost at most ${budget.capacity} (one per record, or more for numerous or large attributes). This request costs ${cost}. Send smaller batches.`,
           );
         const tooMuch = (retryAfterSeconds: number) =>
           fail(
@@ -388,7 +388,7 @@ export const telemetryRoutes: FastifyPluginCallback<TelemetryOptions> = (app, op
             request,
             reply,
             413,
-            `A request holds at most ${budget.capacity} records; this one holds ${outcome.records}. Send smaller batches.`,
+            `A request holds at most ${budget.capacity} records. This request contains ${outcome.records}. Send smaller batches.`,
           );
         }
         // Each error event is one more row, in the events table: so a

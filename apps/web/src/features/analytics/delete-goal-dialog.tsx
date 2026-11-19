@@ -63,8 +63,8 @@ export function DeleteGoalDialog({
         <DialogHeader>
           <DialogTitle>Delete the goal “{goal.name}”?</DialogTitle>
           <DialogDescription>
-            Only its definition goes. A goal&apos;s counts are not stored: they are worked out from
-            your events each time, so no data is lost, and adding the goal again brings them back.
+            This deletes only the goal's definition. Counts are calculated from your events each
+            time and are not stored. No data is lost. Adding the goal again restores its counts.
           </DialogDescription>
         </DialogHeader>
         {remove.error !== null && (

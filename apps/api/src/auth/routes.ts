@@ -112,7 +112,7 @@ export const newPasswordProperties = {
 /** The answer when the confirmation differs, checked by the API as well as the page. */
 export const PASSWORDS_DIFFER = problem(
   "passwords_differ",
-  "The two passwords differ. Type the same password twice.",
+  "The passwords do not match. Enter the same password in both fields.",
 );
 
 const setupBodySchema = {
@@ -195,7 +195,7 @@ export const setupRoutes: FastifyPluginCallback<{
           .send(
             problem(
               "invalid_email",
-              "Sign-in does not accept this email address. Use letters, digits, and . _ ' + - before the @, and a domain such as example.com.",
+              "Sign-in does not accept this email address. Use letters, digits, and . _ ' + - before the @. Use a domain such as example.com.",
             ),
           );
       }
@@ -219,7 +219,7 @@ export const setupRoutes: FastifyPluginCallback<{
           .send(
             problem(
               "invalid_link",
-              "This setup link is invalid, used, or expired. For a new one, run `docker compose exec api node dist/setup.mjs` on the server again (`vp run setup` in development).",
+              "This setup link is invalid, already used, or expired. To create a new link, run `docker compose exec api node dist/setup.mjs` on the server (`vp run setup` in development).",
             ),
           );
       }

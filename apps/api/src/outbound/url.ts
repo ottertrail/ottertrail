@@ -31,7 +31,7 @@ export function outboundUrlOf(
   if (url.username !== "" || url.password !== "") {
     return {
       error: "invalid_url",
-      message: `${label} holds no user name or password: they would be stored as plain text.`,
+      message: `${label} must not contain a user name or password. They would be stored as plain text.`,
     };
   }
   url.hash = "";

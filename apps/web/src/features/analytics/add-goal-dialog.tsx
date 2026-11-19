@@ -23,7 +23,7 @@ import { StepFields } from "../product/step-fields";
 
 const STEP_HELP = {
   event:
-    "Counts the visitors whose browser sent this event, with the property's value when you add a filter. Events your server sends have no visitor, so they do not count toward a goal.",
+    "Counts visitors whose browser sent this event. If you add a property filter, the value must match. Server events have no visitor and do not count toward goals.",
   page: "Counts the visitors who viewed exactly this path, without its query or fragment.",
 } as const;
 
@@ -74,7 +74,7 @@ function AddGoalForm({
       <DialogHeader>
         <DialogTitle>Add a goal</DialogTitle>
         <DialogDescription>
-          A page or an event that counts as a success. The analytics page shows how many of its
+          A goal is a page or event that counts as a success. The analytics page shows how many
           visitors reached it.
         </DialogDescription>
       </DialogHeader>
@@ -114,7 +114,7 @@ function AddGoalForm({
       </fieldset>
       {checked && !valid && (
         <p role="alert" className="text-sm text-destructive">
-          The goal is not complete. Fix the fields marked above.
+          The goal is incomplete. Correct the marked fields above.
         </p>
       )}
       {add.error !== null && !nameTaken && (

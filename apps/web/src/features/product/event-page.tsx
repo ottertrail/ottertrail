@@ -178,7 +178,7 @@ function NoMatch({ name, filtered }: { name: string; filtered: boolean }) {
         <EmptyDescription>
           {filtered
             ? "Remove a filter, or choose a longer period."
-            : "Choose a longer period, or check the event's name: names are compared exactly."}
+            : "Choose a longer period, or check the event name. Names must match exactly."}
         </EmptyDescription>
       </EmptyHeader>
     </Empty>
@@ -210,9 +210,9 @@ function Detail({
             Properties
           </h3>
           <p className="text-xs text-ink-subtle">
-            The 30 most common properties of these events, each with its 10 most frequent values.
-            Values compare as text: a number, true, false, or null as JSON writes it. Choose a value
-            to see only the events that have it
+            The 30 most common event properties, each with its 10 most frequent values. Values are
+            compared as text. Numbers, true, false, and null use their JSON representations. Select
+            a value to show only events with that value
             {search.filters.length >= MAX_FILTERS ? ` (at most ${MAX_FILTERS} filters)` : ""}.
           </p>
         </div>

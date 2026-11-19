@@ -107,7 +107,7 @@ describe("an uptime check's request", () => {
       up: false,
       statusCode: 302,
       cause: "redirects",
-      detail: "More than 5 redirects; the last answered 302.",
+      detail: "More than 5 redirects. The last response was 302.",
     });
     expect(await run(check(`${servers.http}/see-other`))).toMatchObject({ up: true });
     expect(await run(check(`${servers.http}/to-ftp`))).toMatchObject({

@@ -77,7 +77,7 @@ export function funnelRefusal(
     return {
       error: "invalid_window",
       message:
-        "Visitors can be followed for a day at most: their IDs change daily. Count users instead.",
+        "Visitors can be followed for at most one day. Their IDs change daily. Count users instead.",
     };
   }
   return null;

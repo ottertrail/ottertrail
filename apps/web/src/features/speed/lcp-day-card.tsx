@@ -46,8 +46,8 @@ export function LcpDayCard({ days }: { days: Speed["days"] }) {
           />
         ) : (
           <p className="py-10 text-center text-sm text-ink-subtle">
-            No page load in this period had an LCP: it is missing when a page was hidden before its
-            main content showed.
+            No page load in this period had an LCP value. LCP is missing if a page was hidden before
+            its main content appeared.
           </p>
         )}
         <div>

@@ -120,7 +120,7 @@ function FunnelSettings({
       </div>
       {count === "visitors" && (
         <p className="max-w-sm self-end pb-1.5 text-xs text-ink-subtle">
-          Windows over a day need Users: a visitor&apos;s ID changes every day.
+          Windows longer than a day require Users. A visitor's ID changes every day.
         </p>
       )}
     </div>
@@ -136,25 +136,26 @@ function FunnelNotes({ window }: { window: FunnelWindow }) {
       </h3>
       <ul className="flex list-disc flex-col gap-1 pl-5 text-xs text-ink-subtle">
         <li>
-          Someone reaches a step when they did every step before it, in order. Other events in
-          between are allowed.
+          Someone reaches a step after completing all previous steps in order. Other events between
+          steps are allowed.
         </li>
         <li>
           Every step must happen within the conversion window ({windowLabel(window)}), counted from
           their step 1.
         </li>
         <li>
-          Step 1 must happen in the chosen period; the later steps may happen after it ends, within
-          the window.
+          Step 1 must occur in the selected period. Later steps may occur after the period ends,
+          within the conversion window.
         </li>
         <li>
-          Visitors can be followed for a day at most: their IDs change every day, so a visitor who
-          comes back tomorrow is someone new. Users are your site&apos;s IDs for signed-in users,
-          followed for up to 30 days, but only events sent while someone was signed in count.
+          Visitors can be followed for at most one day. Their IDs change daily, so a returning
+          visitor counts as someone new tomorrow. Users are your site's IDs for signed-in users.
+          They can be followed for up to 30 days. Only events sent while the user was signed in
+          count.
         </li>
         <li>
-          A page step is a pageview of exactly that path. An event step&apos;s property filter
-          compares the value as text: a number, true, false, or null as JSON writes it.
+          A page step matches pageviews with exactly that path. An event step's property filter
+          compares values as text. Numbers, true, false, and null use their JSON representations.
         </li>
       </ul>
     </section>
@@ -171,8 +172,8 @@ function StartHere({ example, onUse }: { example: FunnelStep[]; onUse: () => voi
         </EmptyMedia>
         <EmptyTitle>Build a funnel</EmptyTitle>
         <EmptyDescription>
-          Set two to five steps above, each an event your site sends or a page, then choose Show
-          funnel to see how many people went from each step to the next. For example:{" "}
+          Set two to five steps above. Each step is a page or an event your site sends. Select Show
+          funnel to see how many people reached each successive step. For example:{" "}
           {example.map((step, index) => (
             <span key={index}>
               {index > 0 && " then "}

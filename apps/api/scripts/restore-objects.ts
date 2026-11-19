@@ -18,7 +18,7 @@ const args = process.argv.slice(2).filter((arg) => arg !== "--");
 const checkOnly = args.includes("--check");
 const dir = args.find((arg) => arg !== "--check");
 if (dir === undefined || dir === "") {
-  console.error("Name the folder to restore from: restore-objects [--check] <folder>");
+  console.error("Specify the folder to restore from: restore-objects [--check] <folder>");
   process.exit(1);
 }
 
@@ -35,7 +35,7 @@ try {
   } else {
     const { count, bytes, backupBucket } = await restoreObjects(store, dir);
     if (backupBucket === null) {
-      console.log("The backup was made without an object store: no objects to restore.");
+      console.log("The backup has no object store. There are no objects to restore.");
     } else if (store === null) {
       console.log(
         "The backup's bucket was empty, and no object store is set up: nothing to restore.",

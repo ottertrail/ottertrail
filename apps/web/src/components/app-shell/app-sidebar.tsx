@@ -55,7 +55,7 @@ function WorkspaceMenu() {
   const matchRoute = useMatchRoute();
   const { me, can } = useAccess();
   // A neutral label until it loads, or if it cannot.
-  const label = me?.instance.name ?? "Workspace";
+  const label = me?.instance.name ?? "Instance";
   // The Settings page holds the instance's settings (the owner) and the channels (admins too).
   const showSettings = can("settings") || can("channels");
   return (
@@ -489,7 +489,7 @@ export function AppSidebar() {
 
       <SidebarContent>
         <nav
-          aria-label={projectId === undefined ? "Workspace" : "Project"}
+          aria-label={projectId === undefined ? "Instance" : "Project"}
           className="flex flex-1 flex-col gap-2"
         >
           {projectId === undefined ? <WorkspaceMenu /> : <ProjectMenu projectId={projectId} />}

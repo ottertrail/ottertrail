@@ -172,12 +172,12 @@ describe("adding a check", () => {
     [
       { url: "https://admin:secret@example.com/" },
       "invalid_url",
-      "A check's URL holds no user name or password: they would be stored as plain text.",
+      "A check's URL must not contain a user name or password. They would be stored as plain text.",
     ],
     [
       { url: "https://example.com/", method: "HEAD", word: "ok" },
       "invalid_word",
-      "A HEAD request gets no body to look for the word in: use GET.",
+      "A HEAD request has no response body to search for the word. Use GET.",
     ],
     [
       { url: "https://example.com/", expectedStatuses: "2xx" },

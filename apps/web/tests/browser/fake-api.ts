@@ -1626,7 +1626,7 @@ function deleteRelease(api: FakeApi, release: string): Response {
       {
         error: "not_configured",
         message:
-          "This install has no object store, so source maps are off. Its operator sets OBJECT_STORE_URL.",
+          "This instance has no object store. Source maps are disabled. The instance's operator must set OBJECT_STORE_URL.",
       },
       503,
     );
@@ -1754,7 +1754,7 @@ function funnelInput(body: unknown): FunnelInput | Response {
       {
         error: "invalid_window",
         message:
-          "Visitors can be followed for a day at most: their IDs change daily. Count users instead.",
+          "Visitors can be followed for at most one day. Their IDs change daily. Count users instead.",
       },
       400,
     );
@@ -1805,7 +1805,7 @@ function changeFunnel(api: FakeApi, funnelId: string, body: unknown): Response {
       {
         error: "funnel_changed",
         message:
-          "The saved funnel was changed after it was read, such as in another tab. Read it again before changing it.",
+          "The saved funnel changed after it was read, such as in another tab. Read it again before changing it.",
       },
       409,
     );
@@ -2591,7 +2591,7 @@ export function fakeAlerts(): FakeAlerts {
         channelIds: [],
         enabled: false,
         disabledReason:
-          "Turned off: its last channel was deleted. Choose a channel to turn it on again.",
+          "Disabled because its last channel was deleted. Choose a channel to enable the rule again.",
         firing: 0,
       },
     ],
@@ -2718,14 +2718,14 @@ function notSeenWarning(rule: Rule): SaveWarning | null {
       return {
         reason: "not_checked",
         message:
-          "Whether what the rule watches has reported in the last 24 hours could not be checked. The rule is saved.",
+          "The rule is saved. Its monitored data could not be checked for reports in the last 24 hours.",
       };
     }
     return known
       ? null
       : {
           reason: "not_seen",
-          message: `No request of ${settings.service ?? ""} has arrived in ${environment} in the last 24 hours. The rule is saved: it starts watching once the service reports.`,
+          message: `No request from ${settings.service ?? ""} arrived in ${environment} in the last 24 hours. The rule is saved. Monitoring starts when the service reports.`,
         };
   }
   if (rule.kind === "metric_threshold") {
@@ -2736,7 +2736,7 @@ function notSeenWarning(rule: Rule): SaveWarning | null {
       ? null
       : {
           reason: "not_seen",
-          message: `No point of the ${settings.metricKind ?? ""} ${settings.metric ?? ""} has arrived in ${environment} in the last 24 hours. The rule is saved: it starts watching once the metric reports.`,
+          message: `No point from the ${settings.metricKind ?? ""} ${settings.metric ?? ""} arrived in ${environment} in the last 24 hours. The rule is saved. Monitoring starts when the metric reports.`,
         };
   }
   return null;
@@ -2852,7 +2852,7 @@ export function fakeChannels(): FakeChannels {
           status: "pending",
           attempts: 2,
           nextAttemptAt: "2026-11-16T02:12:00.000Z",
-          lastError: "It answered 503; a webhook must answer 2xx.",
+          lastError: "It answered 503. A webhook must return 2xx.",
           createdAt: "2026-11-16T02:10:00.000Z",
           sentAt: null,
         }),
@@ -2905,7 +2905,7 @@ function saveChannel(api: FakeApi, body: unknown, existing?: Channel): Response 
       return json(
         {
           error: "invalid_address",
-          message: `"${bad}" is not an address email can go to here. Use letters, digits, and . _ ' + - before the @, and a domain such as example.com.`,
+          message: `"${bad}" is not a supported email address. Use letters, digits, and . _ ' + - before the @. Use a domain such as example.com.`,
         },
         400,
       );
@@ -2990,7 +2990,7 @@ function answerChannels(api: FakeApi, url: URL, init: RequestInit | undefined): 
           {
             error: "too_many_tests",
             message:
-              "A channel takes at most 5 test sends a minute. Wait a moment, then try again.",
+              "A channel takes at most 5 test sends a minute. Wait a moment. Then try again.",
           },
           429,
         );
@@ -3610,7 +3610,7 @@ function answerMembers(api: FakeApi, url: URL, init: RequestInit | undefined): R
   if (member[2] === "ownership") {
     if (body().password !== ADMIN_PASSWORD) {
       return json(
-        { error: "wrong_password", message: "That is not your password. Type it again." },
+        { error: "wrong_password", message: "The password is incorrect. Enter it again." },
         403,
       );
     }

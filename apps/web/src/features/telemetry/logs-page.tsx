@@ -112,7 +112,8 @@ export function LogsPage({
         )}
         {first?.received !== false && (
           <p className="text-xs text-ink-subtle">
-            Each word must be in the message, in any case, whole or as part of a longer word.
+            The message must contain every word. Matching ignores letter case and includes parts of
+            longer words.
           </p>
         )}
       </div>

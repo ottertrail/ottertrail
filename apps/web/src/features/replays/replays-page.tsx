@@ -224,10 +224,10 @@ export function ReplaysPage({
             <EmptyMedia variant="icon">
               <FilmIcon />
             </EmptyMedia>
-            <EmptyTitle>Session replay is off on this install</EmptyTitle>
+            <EmptyTitle>Session replay is disabled on this instance</EmptyTitle>
             <EmptyDescription>
-              It has no object store to keep recordings in. The project&apos;s settings say how to
-              set one up.
+              This instance has no object store for recordings. The project's settings explain how
+              to configure one.
             </EmptyDescription>
           </EmptyHeader>
         </Empty>
@@ -252,7 +252,7 @@ export function ReplaysPage({
                   {filtered
                     ? "Change or clear a filter to see more."
                     : recordingOff
-                      ? "An admin turns them on in the project's settings, around errors: a page then sends the 30 to 60 seconds before an error, masked in the visitor's browser."
+                      ? "An admin can enable replays around errors in the project's settings. Pages then send recordings of the 30 to 60 seconds before an error. The visitor's browser masks the recordings."
                       : `No page sent a replay of an error${environment === DEFAULT_ENVIRONMENT ? "" : ` in ${environment}`} in this period. Replays are kept 30 days.`}
                 </EmptyDescription>
               </EmptyHeader>
@@ -304,7 +304,7 @@ export function ReplaysPage({
                         {replay.cut && (
                           <StatusBadge
                             tone="neutral"
-                            title="The recording stopped at its size limit, or the visitor left before it was all sent."
+                            title="The recording reached its size limit, or the visitor left before the entire recording was sent."
                           >
                             Cut
                           </StatusBadge>

@@ -9,11 +9,11 @@ describe("the instance's settings", () => {
     installFakeApi();
     renderApp("/projects");
 
-    const workspace = page.getByRole("navigation", { name: "Workspace" });
+    const workspace = page.getByRole("navigation", { name: "Instance" });
     await expect.element(page.getByText("Acme Inc", { exact: true })).toBeVisible();
     await workspace.getByRole("link", { name: "Settings" }).click();
 
-    await expect.element(page.getByRole("heading", { name: "Workspace" })).toBeVisible();
+    await expect.element(page.getByRole("heading", { name: "Instance" })).toBeVisible();
     await expect.element(page.getByRole("textbox", { name: "Name" })).toHaveValue("Acme Inc");
     await expect
       .element(page.getByRole("combobox", { name: "Timezone" }))
@@ -32,7 +32,7 @@ describe("the instance's settings", () => {
     await page.getByRole("option", { name: /^Europe\/Berlin/ }).click();
     await expect.element(timeZone).toHaveValue("Europe/Berlin");
     await expect
-      .element(page.getByText(/moves where days start in every report, past days included/))
+      .element(page.getByText(/changes day boundaries in all reports, including past reports/))
       .toBeVisible();
     await page.getByRole("button", { name: "Save changes" }).click();
 
@@ -118,7 +118,7 @@ describe("the instance's settings", () => {
     await expect
       .element(page.getByRole("heading", { name: "Notification channels" }))
       .toBeVisible();
-    await expect.element(page.getByRole("heading", { name: "Workspace" })).not.toBeInTheDocument();
+    await expect.element(page.getByRole("heading", { name: "Instance" })).not.toBeInTheDocument();
     await expect.element(page.getByRole("textbox", { name: "Name" })).not.toBeInTheDocument();
   });
 
@@ -127,7 +127,7 @@ describe("the instance's settings", () => {
     renderApp("/settings");
 
     await expect.element(page.getByText("You don't have access")).toBeVisible();
-    const workspace = page.getByRole("navigation", { name: "Workspace" });
+    const workspace = page.getByRole("navigation", { name: "Instance" });
     await expect.element(workspace.getByRole("link", { name: "Projects" })).toBeVisible();
     await expect.element(workspace.getByRole("link", { name: "Settings" })).not.toBeInTheDocument();
   });

@@ -68,8 +68,8 @@ function DeleteCheckDialog({
         <DialogHeader>
           <DialogTitle>Delete the check “{check.name}”?</DialogTitle>
           <DialogDescription>
-            It stops running, and its incidents go with it. Its results stay out of reach and leave
-            with the 90 days they are kept. To stop it for a while instead, pause it.
+            This stops the check and deletes its incidents. Its results become inaccessible and are
+            deleted after their 90-day retention period. To stop the check temporarily, pause it.
           </DialogDescription>
         </DialogHeader>
         {remove.error !== null && (

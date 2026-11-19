@@ -33,14 +33,14 @@ const KEYS = {
     button: "Replace public key",
     title: "Replace the public key?",
     description:
-      "Pages with the current snippet stop sending events at once. Put the new snippet on your site right after. The project's data stays.",
+      "Pages with the current snippet stop sending events immediately. Replace your site's snippet with the new snippet immediately afterward. The project's data is retained.",
     replace: replacePublicKey,
   },
   secret: {
     button: "Replace secret key",
     title: "Replace the secret key?",
     description:
-      "Your server's events with the current key are refused at once, and user IDs signed with it no longer count. Give your server the new key right after. The project's data stays.",
+      "The current key stops working immediately for server events and user ID signatures. Configure your server with the new key immediately afterward. The project's data is retained.",
     replace: replaceSecretKey,
   },
 } as const;
@@ -136,7 +136,7 @@ function DeleteProjectDialog({ project }: { project: Project }) {
           <DialogHeader>
             <DialogTitle>Delete {project.name}?</DialogTitle>
             <DialogDescription>
-              This deletes the project and every event it has received, for good. Its snippet stops
+              This permanently deletes the project and all events it received. Its snippet stops
               sending events.
             </DialogDescription>
           </DialogHeader>
@@ -163,7 +163,7 @@ function DeleteProjectDialog({ project }: { project: Project }) {
             <DialogClose render={<Button variant="outline" type="button" />}>Cancel</DialogClose>
             <Button type="submit" variant="destructive" disabled={!matches || remove.isPending}>
               {remove.isPending && <LoaderCircleIcon aria-hidden="true" className="animate-spin" />}
-              Delete for good
+              Delete permanently
             </Button>
           </DialogFooter>
         </form>
@@ -187,7 +187,7 @@ export function DangerZone({ project }: { project: Project }) {
           <div className="min-w-0 flex-1">
             <h4 className="text-sm font-medium text-ink">Replace the public key</h4>
             <p className="text-sm text-muted-foreground">
-              For a key that ended up where it should not. The current snippet stops working.
+              Replace an exposed key. The current snippet stops working.
             </p>
           </div>
           <ReplaceKeyDialog project={project} which="public" />
@@ -196,8 +196,7 @@ export function DangerZone({ project }: { project: Project }) {
           <div className="min-w-0 flex-1">
             <h4 className="text-sm font-medium text-ink">Replace the secret key</h4>
             <p className="text-sm text-muted-foreground">
-              For a key that ended up where it should not. Your server&apos;s current key stops
-              working.
+              Replace an exposed key. Your server's current key stops working.
             </p>
           </div>
           <ReplaceKeyDialog project={project} which="secret" />
@@ -205,7 +204,9 @@ export function DangerZone({ project }: { project: Project }) {
         <div className="flex flex-wrap items-center justify-between gap-3 pt-4">
           <div className="min-w-0 flex-1">
             <h4 className="text-sm font-medium text-ink">Delete the project</h4>
-            <p className="text-sm text-muted-foreground">With all its events, for good.</p>
+            <p className="text-sm text-muted-foreground">
+              Permanently delete the project and all its events.
+            </p>
           </div>
           <DeleteProjectDialog project={project} />
         </div>

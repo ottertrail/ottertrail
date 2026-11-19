@@ -217,5 +217,5 @@ try {
   await clickhouse.close();
   await clickhouseAdmin.command({ query: `DROP DATABASE IF EXISTS ${identifier(schema)}` });
   await clickhouseAdmin.close();
-  console.log("The temporary schema and ClickHouse database were dropped.");
+  console.log("The temporary schema and ClickHouse database were deleted.");
 }

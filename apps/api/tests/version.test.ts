@@ -116,7 +116,7 @@ describe("setVersion", () => {
     expect(() => setVersion(root, "1.0.0-rc.1+b1")).toThrow("Build metadata");
     expect(readVersions(root)).toEqual(before);
     expect(checkVersion(root, "1.0.0+b1")).toEqual([
-      'Build metadata ("+…") cannot be in a release version, because Docker tags cannot hold a "+": 1.0.0+b1',
+      'Build metadata ("+…") is not allowed in a release version. Docker tags cannot contain "+": 1.0.0+b1',
     ]);
   });
 

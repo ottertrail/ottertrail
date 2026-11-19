@@ -73,7 +73,7 @@ describe("the uptime page", () => {
     renderApp(UPTIME);
     await expect.element(page.getByText("No uptime checks yet")).toBeVisible();
     await expect
-      .element(page.getByText(/requests a URL of your site or API on a schedule/))
+      .element(page.getByText(/This instance requests your site or API URL on a schedule/))
       .toBeVisible();
     expect(page.getByRole("table").elements()).toEqual([]);
     await page.getByRole("button", { name: "Add check" }).click();
@@ -91,7 +91,7 @@ describe("the uptime page", () => {
     await form.getByRole("button", { name: "Add check" }).click();
     await expect.element(form.getByText("Enter the URL to check.")).toBeVisible();
     await expect
-      .element(form.getByText("The check is not complete. Fix the fields marked above."))
+      .element(form.getByText("The check is incomplete. Correct the marked fields above."))
       .toBeVisible();
     await expect.element(form.getByLabelText("URL")).toHaveAttribute("aria-invalid", "true");
 
@@ -111,7 +111,9 @@ describe("the uptime page", () => {
     await form.getByLabelText("Word (optional)").fill("healthy");
     await choose("Method", "HEAD");
     await expect
-      .element(form.getByText("A HEAD request gets no body to look for the word in: use GET."))
+      .element(
+        form.getByText("A HEAD request has no response body to search for the word. Use GET."),
+      )
       .toBeVisible();
     await choose("Method", "GET");
     expect(api.bodies).toEqual([]);

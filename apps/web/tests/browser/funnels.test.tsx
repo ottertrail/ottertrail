@@ -145,7 +145,7 @@ describe("saved funnels", () => {
     await expect.element(dialog.getByText("/ → purchase")).toBeVisible();
     await expect.element(dialog.getByText("Users, within 1 hour")).toBeVisible();
     await expect
-      .element(dialog.getByText(/The period and the environment are not saved/))
+      .element(dialog.getByText(/The period and environment are not saved/))
       .toBeVisible();
 
     await dialog.getByRole("textbox", { name: "Name" }).fill("  Home to purchase ");
@@ -293,7 +293,7 @@ describe("saved funnels", () => {
     await expect
       .element(page.getByRole("alert"))
       .toHaveTextContent(
-        "The changes could not be saved. It was changed elsewhere after this page loaded it, such as in another tab. Its saved version is loaded again now: look at it, then save again.",
+        "The changes could not be saved. The funnel changed elsewhere after this page loaded it, such as in another tab. The saved version is now reloaded. Review it. Then save again.",
       );
     await expect
       .element(status())
@@ -408,7 +408,7 @@ describe("saved funnels", () => {
 
     await page.getByRole("button", { name: "Delete the funnel Team trial" }).click();
     const confirm = page.getByRole("dialog", { name: "Delete the funnel “Team trial”?" });
-    await expect.element(confirm.getByText(/Your events stay/)).toBeVisible();
+    await expect.element(confirm.getByText(/Your events are retained/)).toBeVisible();
     await confirm.getByRole("button", { name: "Cancel" }).click();
     await expect.element(confirm).not.toBeInTheDocument();
     expect(api.requests.some((path) => path.startsWith(`${FUNNELS_PATH}/`))).toBe(false);

@@ -59,10 +59,10 @@ const KIND_TEXT: Record<ShapeKind, React.ReactNode> = {
   ),
   query: (
     <>
-      The calls&apos; query text (<code className="font-mono">db.query.text</code>, or the older{" "}
-      <code className="font-mono">db.statement</code>), normalized: string and number literals and
-      IN lists as <code className="font-mono">?</code>, comments taken out, white space collapsed,
-      cut to 1,000 characters.
+      The calls' query text (<code className="font-mono">db.query.text</code>, or the older{" "}
+      <code className="font-mono">db.statement</code>), normalized with string literals, number
+      literals, and IN lists replaced by <code className="font-mono">?</code>. Comments are removed.
+      Whitespace is collapsed. Text is limited to 1,000 characters.
     </>
   ),
   operation: (
@@ -103,7 +103,7 @@ function Charts({ data, subject }: { data: ShapeDetail; subject: string }) {
       <div className="grid gap-4 lg:grid-cols-2">
         <ChartCard
           title="Failed (%)"
-          description={`The share of calls with status Error, per ${step}; a gap where no call was made.`}
+          description={`The share of calls with status Error, per ${step}. A gap means no call was made.`}
           frame={data}
           subject={subject}
           lines={[
@@ -321,7 +321,7 @@ export function QueryShapePage({
             <EmptyDescription>
               No database call of this shape was made
               {environment === DEFAULT_ENVIRONMENT ? "" : ` in ${environment}`} in this period.
-              Another period may have some; traces are kept {data.retentionDays} days.
+              Another period may have calls. Traces are kept for {data.retentionDays} days.
             </EmptyDescription>
           </EmptyHeader>
         </Empty>

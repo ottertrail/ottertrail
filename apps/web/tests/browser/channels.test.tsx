@@ -39,7 +39,9 @@ describe("notification channels on the Settings page", () => {
       .element(item("On call").getByText("ops@example.com, dev@example.com"))
       .toBeVisible();
     await expect
-      .element(item("On call").getByText("Nothing is sent until email is set up on this instance."))
+      .element(
+        item("On call").getByText("No email is sent until email is configured on this instance."),
+      )
       .toBeVisible();
     await expect
       .element(item("Ops relay").getByText("https://hooks.example.com/ottertrail"))
@@ -57,7 +59,7 @@ describe("notification channels on the Settings page", () => {
       .element(page.getByText("Email is not set up on this instance", { exact: true }))
       .not.toBeInTheDocument();
     await expect
-      .element(page.getByText("Nothing is sent until email is set up on this instance."))
+      .element(page.getByText("No email is sent until email is configured on this instance."))
       .not.toBeInTheDocument();
   });
 
@@ -135,7 +137,7 @@ describe("notification channels on the Settings page", () => {
     await addresses.fill("ops!pager@example.com");
     await form.getByRole("button", { name: "Save changes" }).click();
     await expect
-      .element(form.getByText(/"ops!pager@example.com" is not an address email can go to here/))
+      .element(form.getByText(/"ops!pager@example.com" is not a supported email address/))
       .toBeVisible();
     await addresses.fill("pager@example.com");
     await form.getByRole("button", { name: "Save changes" }).click();
@@ -180,7 +182,9 @@ describe("notification channels on the Settings page", () => {
 
     await relay.getByRole("button", { name: "Replace secret of Ops relay" }).click();
     const confirm = dialog("Replace the secret of “Ops relay”?");
-    await expect.element(confirm.getByText(/refuses them until it has the new one/)).toBeVisible();
+    await expect
+      .element(confirm.getByText(/rejects them until it has the new secret/))
+      .toBeVisible();
     await confirm.getByRole("button", { name: "Replace secret" }).click();
     await expect.element(confirm).not.toBeInTheDocument();
     await expect.element(relay.getByText(ROTATED_SECRET)).toBeVisible();
@@ -193,7 +197,9 @@ describe("notification channels on the Settings page", () => {
     const onCall = item("On call");
 
     await onCall.getByRole("button", { name: "Send test to On call" }).click();
-    await expect.element(onCall.getByText(/Test queued: it goes out within seconds/)).toBeVisible();
+    await expect
+      .element(onCall.getByText(/Test queued. It will be sent within seconds/))
+      .toBeVisible();
     expect(api.requests).toContain(`/api/channels/${EMAIL.id}/test`);
     // The deliveries open with the test in them, queued.
     await expect
@@ -206,7 +212,7 @@ describe("notification channels on the Settings page", () => {
     await expect
       .element(
         onCall.getByText(
-          "A channel takes at most 5 test sends a minute. Wait a moment, then try again.",
+          "A channel takes at most 5 test sends a minute. Wait a moment. Then try again.",
         ),
       )
       .toBeVisible();
@@ -242,7 +248,7 @@ describe("notification channels on the Settings page", () => {
       "Check up",
       "Retrying",
       "2",
-      "It answered 503; a webhook must answer 2xx. Next try 16 Nov 2026, 10:12.",
+      "It answered 503. A webhook must return 2xx. Next try 16 Nov 2026, 10:12.",
     ]);
     expect(failed).toEqual([
       "16 Nov 2026, 09:50",

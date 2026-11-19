@@ -60,8 +60,8 @@ function InstallCard({ project }: { project: Project }) {
             <TriangleAlertIcon />
             <AlertTitle>No allowed sites yet</AlertTitle>
             <AlertDescription>
-              Add your site&apos;s hostname under Settings first: events from sites that are not
-              listed are refused.
+              First, add your site's hostname under Settings. Events from unlisted sites are
+              rejected.
             </AlertDescription>
           </Alert>
         )}
@@ -76,7 +76,7 @@ function InstallCard({ project }: { project: Project }) {
                 Waiting for the first event
               </StatusBadge>
               <span className="text-ink-muted">
-                Open your site in a browser after installing; this updates on its own.
+                Open your site in a browser after installation. This status updates automatically.
               </span>
             </>
           ) : (
@@ -107,8 +107,8 @@ function InstallCard({ project }: { project: Project }) {
           <h4 className="text-sm font-medium text-ink">Public key</h4>
           <CopyableCode text={project.publicKey} copyLabel="Copy the public key" />
           <p className="text-sm text-muted-foreground">
-            Already part of the snippet. It only lets pages on the allowed sites send events; it
-            cannot read anything.
+            The snippet already includes this key. It only lets pages on allowed sites send events.
+            It cannot read data.
           </p>
         </div>
       </CardContent>
@@ -213,8 +213,8 @@ function SettingsCard({ project }: { project: Project }) {
                 aria-describedby="settings-hostnames-hint"
               />
               <FieldDescription id="settings-hostnames-hint">
-                One hostname per line. Each subdomain is separate: list www.example.com as well as
-                example.com if both serve pages. Changes apply within a minute.
+                Enter one hostname per line. Each subdomain is separate. List both www.example.com
+                and example.com if both serve pages. Changes apply within a minute.
               </FieldDescription>
             </Field>
             <Field>
@@ -243,8 +243,8 @@ function SettingsCard({ project }: { project: Project }) {
               </Select>
               <FieldDescription id="settings-retention-hint">
                 {deletes
-                  ? `Events older than ${choices.find((choice) => choice.value === retention)?.label.toLowerCase()} will be deleted for good within a few hours of saving, a whole day at a time.`
-                  : "Older events are deleted for good, a whole day at a time. Forever keeps everything."}
+                  ? `Events older than ${choices.find((choice) => choice.value === retention)?.label.toLowerCase()} will be permanently deleted within a few hours of saving, one whole day at a time.`
+                  : "Older events are permanently deleted, one whole day at a time. Forever keeps all events."}
               </FieldDescription>
             </Field>
             <Field orientation="horizontal">
@@ -259,10 +259,10 @@ function SettingsCard({ project }: { project: Project }) {
                   Ignore visits from data centers
                 </FieldLabel>
                 <FieldDescription id="settings-data-centers-hint">
-                  A browser at a cloud provider&apos;s address, such as Amazon&apos;s or
-                  Hetzner&apos;s, is nearly always a program: a scraper, a test run. People who
-                  browse through a remote desktop or some VPNs in a cloud are ignored too; turn this
-                  off if your visitors do.
+                  Browsers at cloud provider addresses, such as Amazon's or Hetzner's, are nearly
+                  always programs, such as scrapers or tests. This also ignores people who use cloud
+                  remote desktops or some cloud VPNs. Disable this setting if your visitors use
+                  them.
                 </FieldDescription>
               </FieldContent>
             </Field>

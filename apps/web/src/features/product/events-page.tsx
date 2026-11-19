@@ -36,10 +36,10 @@ const TRACK_EXAMPLE = `window.ottertrail?.track("signup", { plan: "team" });`;
 export function WhoNote() {
   return (
     <>
-      <strong className="font-medium text-ink-muted">Visitors</strong> are daily visitor IDs: one
-      browser on one day, counted again the next day; server-side events have none.{" "}
-      <strong className="font-medium text-ink-muted">Users</strong> are your site&apos;s IDs for
-      signed-in users, and only count events sent while someone was signed in.
+      <strong className="font-medium text-ink-muted">Visitors</strong> are daily visitor IDs. One
+      browser counts once per day and again the next day. Server-side events have no visitor ID.{" "}
+      <strong className="font-medium text-ink-muted">Users</strong> are your site's IDs for
+      signed-in users. Only events sent while someone was signed in count.
     </>
   );
 }
@@ -54,8 +54,8 @@ function NoEvents({ environment }: { environment: string }) {
         </EmptyMedia>
         <EmptyTitle>No product events{where} in this period</EmptyTitle>
         <EmptyDescription>
-          Product events are the ones your site sends itself, such as a signup or a purchase, each
-          with up to 30 properties. In the browser, call{" "}
+          Product events are events your site sends, such as signups or purchases. Each has up to 30
+          properties. In the browser, call{" "}
           <code className="font-mono">window.ottertrail.track(name, properties)</code> once the
           tracking snippet is on the page. From your server, send them to{" "}
           <code className="font-mono">POST /api/server-events</code> with the project&apos;s secret

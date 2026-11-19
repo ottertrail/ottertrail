@@ -925,7 +925,7 @@ describe("the worker", () => {
       .executeTakeFirstOrThrow();
     expect(rule).toEqual({
       evaluation_error:
-        "The project's rules took longer than their time this minute, before this one could be read.",
+        "The project's rules reached their time limit for this minute before this rule could be read.",
       evaluation_failing_since: AT,
     });
   });
@@ -1047,7 +1047,7 @@ describe("the rule routes", () => {
       warning: {
         reason: "not_seen",
         message:
-          "No request of checkout on the route GET /cart has arrived in production in the last 24 hours. The rule is saved: it starts watching once the service reports.",
+          "No request from checkout on the route GET /cart arrived in production in the last 24 hours. The rule is saved. Monitoring starts when the service reports.",
       },
     });
     await sendRequests("checkout", after(-3), times(1, { route: "GET /cart", durationMs: 10 }));
@@ -1083,7 +1083,7 @@ describe("the rule routes", () => {
       warning: {
         reason: "not_seen",
         message:
-          "No point of the gauge queue.depth on host web-9 has arrived in staging in the last 24 hours. The rule is saved: it starts watching once the metric reports.",
+          "No point from the gauge queue.depth on host web-9 arrived in staging in the last 24 hours. The rule is saved. Monitoring starts when the metric reports.",
       },
     });
     // Turning it off is not a change of what it watches: nothing is looked for.

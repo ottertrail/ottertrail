@@ -71,7 +71,7 @@ function TimelineList({
       )}
       {items.length === 0 ? (
         <p className="px-1 text-sm text-ink-subtle">
-          Nothing to list: the recording has no page, click, or typing the timeline shows.
+          The recording has no page changes, clicks, or typing to display in the timeline.
         </p>
       ) : (
         <ol aria-label="Timeline of the replay" className="flex min-h-0 flex-col overflow-y-auto">
@@ -111,8 +111,8 @@ function TimelineList({
       {answer.timeline.truncated !== false && (
         <p className="px-1 text-xs text-ink-subtle">
           {answer.timeline.truncated === "scrolls"
-            ? "Some early scrolls are left out: a timeline keeps 500 moments."
-            : "Every scroll and the earliest moments are left out: a timeline keeps the latest 500."}
+            ? "Some earlier scrolls are omitted. A timeline keeps 500 moments."
+            : "All scrolls and the earliest moments are omitted. A timeline keeps the latest 500 moments."}
         </p>
       )}
     </div>

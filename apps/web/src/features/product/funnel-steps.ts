@@ -67,7 +67,8 @@ export function stepProblems(step: DraftStep): StepProblems {
   else if (TRACKER_EVENTS.includes(name)) {
     problems.name = `"${name}" is the tracker's own event: use a page step for a page, and the Errors page for errors.`;
   } else if (CONTROL.test(name) || characters(name) > 200) {
-    problems.name = "An event name has at most 200 characters, and no control characters.";
+    problems.name =
+      "An event name can contain at most 200 characters. Control characters are not allowed.";
   }
   if (step.filter !== null) {
     const { key } = step.filter;
@@ -99,7 +100,7 @@ export function stepsOverlap(first: FunnelStep, second: FunnelStep): boolean {
 }
 
 const OVERLAP =
-  "One event could be this step and the one before, and would count for both. Put another step between, or filter both by different values of one property.";
+  "One event could match both this step and the previous step. It would count for both. Insert another step between them. Alternatively, filter both steps by different values of the same property.";
 
 /** Each step's problems, and, for a step one event could share with the step before, that. */
 export function allStepProblems(drafts: readonly DraftStep[]): StepProblems[] {

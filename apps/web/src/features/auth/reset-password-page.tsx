@@ -51,7 +51,7 @@ export function ResetPasswordPage() {
     const form = new FormData(event.currentTarget);
     const password = formText(form, "password");
     if (password !== formText(form, "confirm-password")) {
-      setError("The two passwords differ. Type the same password twice.");
+      setError("The passwords do not match. Enter the same password in both fields.");
       return;
     }
     setPending(true);

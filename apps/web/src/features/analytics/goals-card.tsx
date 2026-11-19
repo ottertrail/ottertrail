@@ -168,9 +168,8 @@ export function GoalsCard({
               </EmptyMedia>
               <EmptyTitle>No goals yet</EmptyTitle>
               <EmptyDescription>
-                A goal is a page or an event that counts as a success, such as viewing /pricing or
-                signing up. Each shows how many of the visitors reached it, and what share of all of
-                them that is.
+                A goal is a page or event that counts as a success, such as viewing /pricing or
+                signing up. Each goal shows the number and share of visitors who reached it.
               </EmptyDescription>
             </EmptyHeader>
             {canManage && (
@@ -188,9 +187,8 @@ export function GoalsCard({
               canManage={canManage}
             />
             <p className="text-xs text-ink-subtle">
-              Of this page&apos;s visitors, in its period, environment, and filters: how many
-              reached each goal, and their share. Visitors are counted per day, as in the summary;
-              events count every time.
+              Visitor counts and shares for each goal use this page's period, environment, and
+              filters. Visitors count per day, as in the summary. Events count every time.
             </p>
           </>
         )}

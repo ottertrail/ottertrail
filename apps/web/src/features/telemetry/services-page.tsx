@@ -409,13 +409,13 @@ export function ServicesPage({
           ) : (
             <>
               <p className="text-sm text-ink-subtle">
-                A request is a span of kind SERVER; its route is its{" "}
-                <code className="font-mono">http.route</code> attribute, or its name. Failed: its
-                status is Error. The median, 95th, and 99th percentile are of the requests&apos;
-                durations. A status class is from{" "}
+                A request is a span of kind SERVER. Its route is its{" "}
+                <code className="font-mono">http.route</code> attribute, or its name if the
+                attribute is absent. Failed means its status is Error. The median, 95th, and 99th
+                percentile measure request durations. A status class comes from{" "}
                 <code className="font-mono">http.response.status_code</code>, else{" "}
-                <code className="font-mono">http.status_code</code>. A service or route opens its
-                charts over the period.
+                <code className="font-mono">http.status_code</code>. Select a service or route to
+                open its charts for the period.
               </p>
               <StatusLegend />
               {shown.map((service) => (

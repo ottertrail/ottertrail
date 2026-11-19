@@ -672,7 +672,7 @@ describe("a rule's hourly cap", () => {
     expect(notifications.at(-1)).toMatchObject({
       type: "alert.held_back",
       subject: { type: "rule", id: ruleId, name: "Rule error_new", held: 5, cap: RULE_HOURLY_CAP },
-      message: `Shop: the alert rule "Rule error_new" held back 5 more notifications after sending ${RULE_HOURLY_CAP} in an hour, its limit. The rule's alert history in the dashboard lists every alert.`,
+      message: `Shop: the alert rule "Rule error_new" held back 5 more notifications after sending ${RULE_HOURLY_CAP} in an hour, which is its limit. The rule's alert history in the dashboard lists every alert.`,
       url: `${PUBLIC}/projects/${projectId}/alerts`,
     });
 

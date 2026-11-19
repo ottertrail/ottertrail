@@ -84,8 +84,8 @@ export function NewProjectDialog({ variant = "default" }: { variant?: "default" 
                 aria-describedby="project-hostnames-hint"
               />
               <FieldDescription id="project-hostnames-hint">
-                Hostnames whose pages may send events, one per line. Events from other sites are
-                refused. You can add them later.
+                Enter allowed hostnames, one per line. Only pages on these sites may send events.
+                You can add hostnames later.
               </FieldDescription>
             </Field>
             {create.error !== null && (

@@ -35,7 +35,7 @@ const problem = (error: string, message: string) => ({ error, message });
 
 const NOT_CONFIGURED = problem(
   "not_configured",
-  "This install has no object store, so source maps are off. Its operator sets OBJECT_STORE_URL.",
+  "This instance has no object store. Source maps are disabled. The instance's operator must set OBJECT_STORE_URL.",
 );
 
 function storageUnavailable(reply: FastifyReply) {

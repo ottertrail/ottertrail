@@ -17,7 +17,7 @@ export function NoAccess() {
           <LockIcon />
         </EmptyMedia>
         <EmptyTitle>You don't have access</EmptyTitle>
-        <EmptyDescription>Ask an admin of this workspace if you need it.</EmptyDescription>
+        <EmptyDescription>Ask an admin of this instance if you need access.</EmptyDescription>
       </EmptyHeader>
     </Empty>
   );

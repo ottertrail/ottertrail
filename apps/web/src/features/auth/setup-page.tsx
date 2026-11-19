@@ -38,7 +38,7 @@ export function SetupPage() {
     const email = formText(form, "email");
     const password = formText(form, "password");
     if (password !== formText(form, "confirm-password")) {
-      setError("The two passwords differ. Type the same password twice.");
+      setError("The passwords do not match. Enter the same password in both fields.");
       return;
     }
     setPending(true);
@@ -86,7 +86,7 @@ export function SetupPage() {
   }
 
   return (
-    <AuthLayout title="Create the owner account" description="The owner manages this install.">
+    <AuthLayout title="Create the owner account" description="The owner manages this instance.">
       <form onSubmit={(event) => void createAccount(event)}>
         <FieldGroup>
           <Field>
@@ -98,7 +98,7 @@ export function SetupPage() {
             <Input id="email" name="email" type="email" autoComplete="email" required />
           </Field>
           <Field>
-            <FieldLabel htmlFor="workspace">Workspace name</FieldLabel>
+            <FieldLabel htmlFor="workspace">Instance name</FieldLabel>
             <Input
               id="workspace"
               name="workspace"
@@ -108,8 +108,8 @@ export function SetupPage() {
               aria-describedby="workspace-hint"
             />
             <FieldDescription id="workspace-hint">
-              Shown at the top of the sidebar, such as your company&apos;s or team&apos;s name. You
-              can change it later in Settings.
+              This name appears at the top of the sidebar. Use your company or team name, for
+              example. You can change it later in Settings.
             </FieldDescription>
           </Field>
           <Field>
@@ -150,8 +150,8 @@ export function SetupPage() {
               aria-describedby="time-zone-hint"
             />
             <FieldDescription id="time-zone-hint">
-              Reports count days in it. Your browser&apos;s is chosen; the owner can change it later
-              in Settings.
+              Reports count days in this timezone. Your browser's timezone is selected. The owner
+              can change it later in Settings.
             </FieldDescription>
           </Field>
           {status.data !== undefined && (
@@ -160,8 +160,8 @@ export function SetupPage() {
                 "Email for alerts is set up on this server."
               ) : (
                 <>
-                  Email for alerts is not set up. Alerts can still go to webhooks; to send email,
-                  set <code className="font-mono">SMTP_URL</code> and{" "}
+                  Email for alerts is not configured. Alerts can still go to webhooks. To send
+                  email, set <code className="font-mono">SMTP_URL</code> and{" "}
                   <code className="font-mono">EMAIL_FROM</code> on the server and restart it.
                 </>
               )}

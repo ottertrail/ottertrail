@@ -20,7 +20,7 @@ export const EMAIL_TIMEOUT_MS = 20_000;
 const MAX_SUBJECT = 200;
 
 export const NOT_SET_UP_ERROR =
-  "Email is not set up on this instance: its operator sets SMTP_URL and EMAIL_FROM.";
+  "Email is not configured on this instance. The instance's operator must set SMTP_URL and EMAIL_FROM.";
 
 export interface MailMessage {
   to: string[];
@@ -146,11 +146,11 @@ export function mailError(error: unknown, signal?: AbortSignal): string {
       return "The SMTP server's host could not be resolved.";
     case "ECONNECTION":
     case "ESOCKET":
-      return "Could not connect to the SMTP server, or it closed the connection.";
+      return "The connection to the SMTP server failed, or the server closed it.";
     case "ETIMEDOUT":
       return "The SMTP server did not answer in time.";
     case "ETLS":
-      return "TLS with the SMTP server failed: it may not offer STARTTLS, or its certificate is not trusted.";
+      return "TLS with the SMTP server failed. The server may not support STARTTLS, or its certificate may not be trusted.";
     case "EENVELOPE":
       return `The SMTP server refused the recipients${status}${said}`;
     default:

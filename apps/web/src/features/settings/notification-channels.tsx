@@ -242,8 +242,8 @@ function RotateSecretDialog({
         <DialogHeader>
           <DialogTitle>Replace the secret of “{channel.name}”?</DialogTitle>
           <DialogDescription>
-            Requests are signed with the new secret from now on. A receiver that checks signatures
-            refuses them until it has the new one.
+            New requests use the new signing secret. A receiver that checks signatures rejects them
+            until it has the new secret.
           </DialogDescription>
         </DialogHeader>
         {rotate.error !== null && (
@@ -301,7 +301,7 @@ function DeleteChannelDialog({
         <DialogHeader>
           <DialogTitle>Delete the channel “{channel.name}”?</DialogTitle>
           <DialogDescription>
-            Nothing more is sent to it, and its deliveries go with it.
+            This stops notifications to the channel and deletes its deliveries.
           </DialogDescription>
         </DialogHeader>
         {remove.error !== null && (
@@ -426,7 +426,7 @@ function ChannelItem({
           {channel.kind === "email" && !emailConfigured && (
             <p className="flex items-center gap-1 text-xs text-warning">
               <TriangleAlertIcon aria-hidden="true" className="size-3" />
-              Nothing is sent until email is set up on this instance.
+              No email is sent until email is configured on this instance.
             </p>
           )}
         </div>
@@ -465,7 +465,7 @@ function ChannelItem({
       </div>
       {test.isSuccess && (
         <output className="text-sm text-ink-muted" aria-live="polite">
-          Test queued: it goes out within seconds, and its outcome shows in the deliveries.
+          Test queued. It will be sent within seconds. Its result appears in the deliveries.
         </output>
       )}
       {test.error !== null && (
@@ -523,8 +523,8 @@ export function NotificationChannelsCard({ timeZone }: { timeZone: string }) {
           <h3>Notification channels</h3>
         </CardTitle>
         <CardDescription>
-          Where alerts go: email addresses, or a webhook of your own. Every project can use them: a
-          project's alert rules choose which channels they send to.
+          Channels send alerts to email addresses or your webhook. Every project can use them. Each
+          project's alert rules select their channels.
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
@@ -551,15 +551,15 @@ export function NotificationChannelsCard({ timeZone }: { timeZone: string }) {
             {list.data.email.configured ? (
               <p className="flex items-center gap-2 text-sm text-muted-foreground">
                 <StatusBadge tone="good">Email set up</StatusBadge>
-                Email goes out through this instance&apos;s SMTP server.
+                Email uses this instance's SMTP server.
               </p>
             ) : (
               <Alert>
                 <TriangleAlertIcon />
                 <AlertTitle>Email is not set up on this instance</AlertTitle>
                 <AlertDescription>
-                  Email channels can be added, but nothing is sent to them until the instance&apos;s
-                  operator sets SMTP_URL and EMAIL_FROM. Webhooks work without it.
+                  You can add email channels. No email is sent until the instance's operator sets
+                  SMTP_URL and EMAIL_FROM. Webhooks work without email configuration.
                 </AlertDescription>
               </Alert>
             )}
@@ -571,7 +571,8 @@ export function NotificationChannelsCard({ timeZone }: { timeZone: string }) {
                   </EmptyMedia>
                   <EmptyTitle>No channels yet</EmptyTitle>
                   <EmptyDescription>
-                    Add an email list or a webhook, then send it a test to see that it works.
+                    Add email addresses or a webhook. Send a test notification to check that the
+                    channel works.
                   </EmptyDescription>
                 </EmptyHeader>
                 <EmptyContent>

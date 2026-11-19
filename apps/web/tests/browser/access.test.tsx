@@ -5,7 +5,7 @@ import { ERROR_FINGERPRINTS, installFakeApi, memberAccess, PROJECT } from "./fak
 import { currentPath, renderApp } from "./render.tsx";
 
 const projectMenu = () => page.getByRole("navigation", { name: "Project" });
-const workspaceMenu = () => page.getByRole("navigation", { name: "Workspace" });
+const workspaceMenu = () => page.getByRole("navigation", { name: "Instance" });
 const ERROR_PAGE = `/projects/${PROJECT.id}/errors/${ERROR_FINGERPRINTS.typeError}`;
 
 describe("a member's dashboard shows only what they may use", () => {
@@ -74,7 +74,7 @@ describe("a member's dashboard shows only what they may use", () => {
   test("a member without projects is told to ask an admin", async () => {
     installFakeApi({ access: memberAccess({ web_analytics: "view" }, []) });
     renderApp("/projects");
-    await expect.element(page.getByText(/Ask an admin of this workspace/)).toBeVisible();
+    await expect.element(page.getByText(/Ask an admin of this instance/)).toBeVisible();
   });
 
   test("an error's page has no links into areas the member lacks, and no Resolve for a viewer", async () => {

@@ -42,8 +42,8 @@ export function DefinitionSummary({ definition }: { definition: FunnelDefinition
         </div>
       </dl>
       <p className="text-xs text-ink-subtle">
-        The period and the environment are not saved: the funnel opens with the ones chosen at the
-        time.
+        The period and environment are not saved. The funnel opens with the period and environment
+        currently selected.
       </p>
     </div>
   );

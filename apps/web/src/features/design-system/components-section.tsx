@@ -118,7 +118,7 @@ function ButtonSpecimens() {
 function FormSpecimens() {
   return (
     <Specimen
-      title="Form fields: labels are always visible; errors name the problem and the fix"
+      title="Form fields: always show labels. Errors state the problem and correction."
       className="block"
     >
       <FieldGroup className="grid max-w-3xl gap-6 md:grid-cols-2">
@@ -219,7 +219,9 @@ function OverlaySpecimens() {
         >
           <InfoIcon />
         </TooltipTrigger>
-        <TooltipContent>Tooltips add detail; they never hold required information.</TooltipContent>
+        <TooltipContent>
+          Tooltips add detail. They must not contain required information.
+        </TooltipContent>
       </Tooltip>
 
       <KbdGroup>

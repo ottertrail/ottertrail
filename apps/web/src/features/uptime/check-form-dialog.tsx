@@ -89,7 +89,7 @@ function problemsOf(draft: Draft): Partial<Record<FieldName, string>> {
   } else if (draft.word.length > MAX_WORD) {
     problems.word = `The word has at most ${MAX_WORD} characters.`;
   } else if (draft.word !== "" && draft.method === "HEAD") {
-    problems.word = "A HEAD request gets no body to look for the word in: use GET.";
+    problems.word = "A HEAD request has no response body to search for the word. Use GET.";
   }
   return problems;
 }
@@ -245,8 +245,8 @@ function CheckForm({
       <DialogHeader>
         <DialogTitle>{check === undefined ? "Add a check" : `Edit “${check.name}”`}</DialogTitle>
         <DialogDescription>
-          This instance requests the URL on a schedule, from its own server, and marks the check
-          down after the set number of failures in a row.
+          This instance's server requests the URL on a schedule. The check is marked down after the
+          specified number of consecutive failures.
         </DialogDescription>
       </DialogHeader>
       <Field data-invalid={errorOf("url") !== null || undefined}>
@@ -311,7 +311,7 @@ function CheckForm({
         />
         {errorText("statuses") ?? (
           <FieldDescription>
-            Codes and ranges, separated by commas. Redirects are followed, at most 5.
+            Enter codes and ranges separated by commas. The check follows at most 5 redirects.
           </FieldDescription>
         )}
       </Field>
@@ -326,7 +326,7 @@ function CheckForm({
           />
           {errorText("word") ?? (
             <FieldDescription>
-              Looked for in the body&apos;s first megabyte, as typed.
+              The check searches the body's first megabyte for the exact text.
             </FieldDescription>
           )}
         </Field>
@@ -339,7 +339,7 @@ function CheckForm({
       </div>
       {checked && !valid && (
         <p role="alert" className="text-sm text-destructive">
-          The check is not complete. Fix the fields marked above.
+          The check is incomplete. Correct the marked fields above.
         </p>
       )}
       {save.error !== null && apiField === undefined && (

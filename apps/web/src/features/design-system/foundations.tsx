@@ -77,7 +77,7 @@ export function ColorSection() {
       id="color"
       eyebrow="Foundations"
       title="Color"
-      description="Dark only. A near-black canvas, a four-step surface ladder, hairline borders, and a single orchid accent used for the brand mark, the primary action, focus rings, and links."
+      description="Dark theme only. The canvas is near-black, with four surface levels and hairline borders. An orchid accent marks the brand, primary action, focus rings, and links."
     >
       <div className="space-y-4">
         {colorGroups.map((group) => (
@@ -89,7 +89,7 @@ export function ColorSection() {
         ))}
 
         <Specimen
-          title="Chart series: assign in this order, never cycle; more than 8 series fold into Other"
+          title="Chart series: assign in this order. Do not cycle colors. Combine more than 8 series into Other."
           className={swatchGrid}
         >
           {chartSeries.map((token, index) => (
@@ -97,7 +97,7 @@ export function ColorSection() {
           ))}
         </Specimen>
 
-        <Specimen title="Status: reserved for state; always icon + label, never color alone">
+        <Specimen title="Status: use only for state. Always use an icon and label with color.">
           {statuses.map((status) => (
             <StatusBadge key={status.tone} tone={status.tone}>
               {status.label}
@@ -130,7 +130,7 @@ export function TypographySection() {
       id="typography"
       eyebrow="Foundations"
       title="Typography"
-      description="Inter Variable with optical sizing, and JetBrains Mono for code. Display sizes use strong negative tracking; dense dashboard UI uses 14px and 12px text."
+      description="Inter Variable uses optical sizing. JetBrains Mono is for code. Display sizes use strong negative tracking. Dense dashboard UI uses 14px and 12px text."
     >
       <div className="overflow-hidden rounded-xl bg-card ring-1 ring-border">
         <Table>

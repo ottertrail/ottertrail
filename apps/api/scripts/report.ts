@@ -99,7 +99,9 @@ try {
       "Visit duration": duration(total.avgDurationMs),
       "Time engaged": duration(total.avgEngagedMs),
     });
-    console.log("Visitors count each day separately: someone who came on 3 days counts 3 times.\n");
+    console.log(
+      "Visitors are counted separately each day. Someone who visited on 3 days counts 3 times.\n",
+    );
 
     const days = await timeseries(reader, range);
     const busiest = Math.max(...days.map((d) => d.visitors));

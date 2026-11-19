@@ -94,7 +94,7 @@ export function addressesOf(list: readonly string[]): string[] | Problem {
     if (address.length > MAX_ADDRESS || !canSignInWith(address)) {
       return {
         error: "invalid_address",
-        message: `"${address.slice(0, 100)}" is not an address email can go to here. Use letters, digits, and . _ ' + - before the @, and a domain such as example.com.`,
+        message: `"${address.slice(0, 100)}" is not a supported email address. Use letters, digits, and . _ ' + - before the @. Use a domain such as example.com.`,
       };
     }
     if (seen.has(address.toLowerCase())) continue;
@@ -127,7 +127,7 @@ export function channelValuesOf(
   if (base !== undefined && input.kind !== undefined && input.kind !== base.kind) {
     return {
       error: "invalid_kind",
-      message: "A channel's kind cannot change: add a new channel instead.",
+      message: "A channel's kind cannot change. Add a new channel instead.",
     };
   }
   if (kind === "email" && input.url !== undefined) {

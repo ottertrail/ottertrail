@@ -66,7 +66,7 @@ function Waterfall({
   return (
     <Table className="table-fixed">
       <caption className="sr-only">
-        Spans in tree order: each under its parent, by start. Choose a span to see its detail.
+        Spans appear under their parents in start order. Select a span to see its details.
       </caption>
       <TableHeader>
         <TableRow>
@@ -236,9 +236,8 @@ function Detail({
                 <h3>Waterfall</h3>
               </CardTitle>
               <CardDescription>
-                Each span under the span that started it, with a bar for when it ran in the trace.
-                Spans whose parent was not received stand at the top level. Times in{" "}
-                {trace.timeZone}.
+                Each span appears under its parent. Its bar shows when it ran within the trace.
+                Spans with missing parents appear at the top level. Times in {trace.timeZone}.
               </CardDescription>
             </CardHeader>
             <CardContent>

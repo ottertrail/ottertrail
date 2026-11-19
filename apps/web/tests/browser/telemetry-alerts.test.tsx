@@ -50,7 +50,9 @@ describe("the rule form's telemetry kinds", () => {
     const form = dialog("Add an alert rule");
     await choose(form, "When", "Route latency");
     await expect
-      .element(form.getByText(/Sends when the requests' 95th or 99th percentile duration/))
+      .element(
+        form.getByText(/Sends a notification when the requests' 95th or 99th percentile duration/),
+      )
       .toBeVisible();
 
     await form.getByLabelText("Above (milliseconds)").fill("0");
@@ -59,7 +61,7 @@ describe("the rule form's telemetry kinds", () => {
     await form.getByLabelText("In the last (minutes)").fill("31");
     await form.getByRole("button", { name: "Add rule" }).click();
     await expect
-      .element(form.getByText("Choose or enter the service, as its spans name it (service.name)."))
+      .element(form.getByText("Choose or enter the service name from its spans (service.name)."))
       .toBeVisible();
     await expect
       .element(form.getByText("Enter a duration above 0 and at most 3,600,000 milliseconds."))
@@ -153,7 +155,7 @@ describe("the rule form's telemetry kinds", () => {
     await expect
       .element(
         page.getByText(
-          "No request of checkout has arrived in staging in the last 24 hours. The rule is saved: it starts watching once the service reports.",
+          "No request from checkout arrived in staging in the last 24 hours. The rule is saved. Monitoring starts when the service reports.",
         ),
       )
       .toBeVisible();
@@ -171,7 +173,7 @@ describe("the rule form's telemetry kinds", () => {
     await choose(form, "When", "Metric");
     await form.getByRole("button", { name: "Add rule" }).click();
     await expect.element(form.getByText("Choose or enter the metric's name.")).toBeVisible();
-    await expect.element(form.getByText("Say what kind of metric it is.")).toBeVisible();
+    await expect.element(form.getByText("Select the metric kind.")).toBeVisible();
     await expect
       .element(form.getByText("Enter a number to compare with, such as 100 or 0.5."))
       .toBeVisible();
@@ -412,11 +414,7 @@ describe("a rule's evaluation on the Alerts page", () => {
     await form.getByRole("button", { name: "Add rule" }).click();
     await expect.element(form).not.toBeInTheDocument();
     await expect
-      .element(
-        page.getByText(
-          "“Route failures” is saved; whether it has anything to watch could not be checked",
-        ),
-      )
+      .element(page.getByText("“Route failures” is saved. Its monitored data could not be checked"))
       .toBeVisible();
     expect(page.getByText(/has nothing to watch yet/).elements()).toEqual([]);
   });

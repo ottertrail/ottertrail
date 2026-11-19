@@ -307,7 +307,7 @@ export const telemetryDashboardRoutes: FastifyPluginCallback<{
         // Not "not_found", which the access check answers for an unknown project.
         return reply.code(404).send({
           error: "no_span",
-          message: "No span with this ID is kept: it may be past the retention.",
+          message: "No span with this ID is stored. It may be past its retention period.",
         });
       }
       return { timeZone, span };
@@ -375,7 +375,7 @@ export const telemetryDashboardRoutes: FastifyPluginCallback<{
         // Not "not_found", which the access check answers for an unknown project.
         return reply.code(404).send({
           error: "no_log",
-          message: "No log record with this ID is kept: it may be past the retention.",
+          message: "No log record with this ID is stored. It may be past its retention period.",
         });
       }
       return { timeZone, log };

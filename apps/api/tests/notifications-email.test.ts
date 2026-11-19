@@ -176,7 +176,7 @@ describe("an alert email", () => {
     try {
       expect(await sendEmail(mailer, ["ops@example.com"], payload, instance)).toEqual({
         ok: false,
-        error: "Could not connect to the SMTP server, or it closed the connection.",
+        error: "The connection to the SMTP server failed, or the server closed it.",
       });
     } finally {
       mailer.close();
@@ -276,7 +276,7 @@ describe("email deliveries", () => {
       { status: "failed", attempts: 1, next_attempt_at: null, last_error: NOT_SET_UP_ERROR },
     ]);
     expect(NOT_SET_UP_ERROR).toBe(
-      "Email is not set up on this instance: its operator sets SMTP_URL and EMAIL_FROM.",
+      "Email is not configured on this instance. The instance's operator must set SMTP_URL and EMAIL_FROM.",
     );
   });
 });

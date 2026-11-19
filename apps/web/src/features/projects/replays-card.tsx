@@ -33,11 +33,11 @@ export const REPLAY_ATTRIBUTE = 'data-replay="errors"';
 const code = (text: string) => <code className="font-mono">{text}</code>;
 
 const MODES: { value: ReplayMode; label: string; hint: string }[] = [
-  { value: "off", label: "Off", hint: "Nothing is recorded; recordings sent anyway are refused." },
+  { value: "off", label: "Off", hint: "Nothing is recorded. Any recordings sent are rejected." },
   {
     value: "errors",
     label: "Around errors",
-    hint: "Each page keeps its last 30 to 60 seconds in memory, and sends them only when an error happens.",
+    hint: "Each page keeps its last 30 to 60 seconds in memory. It sends the recording only when an error occurs.",
   },
 ];
 
@@ -112,16 +112,16 @@ function SiteHelp() {
     <div className="flex flex-col gap-3 border-t pt-4 text-sm text-ink-muted">
       <h4 className="text-sm font-medium text-ink">On your site</h4>
       <p>
-        Both switches are needed: this setting, and this attribute on the tracker&apos;s script tag
-        (under Install, above). Leave the attribute off until a visitor agrees to be recorded, if
-        your site asks.
+        Enable this setting. Add this attribute to the tracker's script tag under Install above.
+        Both are required. If your site requests consent, add the attribute only after the visitor
+        agrees to recording.
       </p>
       <CopyableCode text={REPLAY_ATTRIBUTE} copyLabel="Copy the replay attribute" />
       <h4 className="pt-1 text-sm font-medium text-ink">Private by default</h4>
       <p>
-        The page&apos;s text, what visitors type, and images and media are masked in the
-        visitor&apos;s browser, before anything is sent. What is masked never reaches Ottertrail, so
-        nobody can unmask it later. Your site can show more, in its own HTML:
+        The visitor's browser masks page text, typed text, images, and media before sending the
+        recording. Masked content never reaches Ottertrail. Nobody can recover it later. Your site's
+        HTML can allow more content:
       </p>
       <ul className="flex list-disc flex-col gap-1 pl-5">
         <li>
@@ -212,8 +212,8 @@ function DeleteAllDialog({
         <DialogHeader>
           <DialogTitle>Delete all replays?</DialogTitle>
           <DialogDescription>
-            {replays} deleted for good: this cannot be undone. The errors stay, without their
-            replays.
+            {replays} permanently deleted. This cannot be undone. The errors are retained without
+            their replays.
           </DialogDescription>
         </DialogHeader>
         {remove.error !== null && (
@@ -265,7 +265,7 @@ function Usage({
           </>
         )}
       </p>
-      <p>Replays are kept 30 days, then deleted.</p>
+      <p>Replays are kept for 30 days, then deleted.</p>
       {count > 0 && (
         <DeleteAllDialog projectId={projectId} count={count} returnFocus={returnFocus} />
       )}
@@ -291,8 +291,8 @@ export function ReplaysCard({ projectId }: { projectId: string }) {
           </h3>
         </CardTitle>
         <CardDescription>
-          A recording of what a visitor saw and did in the minute before an error, to play from the
-          error&apos;s page.
+          Record what a visitor saw and did in the minute before an error. Play the replay from the
+          error's page.
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
@@ -314,8 +314,8 @@ export function ReplaysCard({ projectId }: { projectId: string }) {
           </Alert>
         ) : !query.data.configured ? (
           <p className="text-sm text-ink-muted">
-            Session replay is off on this install: it has no object store to keep recordings in. Its
-            operator turns it on by setting {code("OBJECT_STORE_URL")}.
+            Session replay is disabled on this instance because it has no object store for
+            recordings. Its operator can enable it by setting {code("OBJECT_STORE_URL")}.
           </p>
         ) : (
           <>

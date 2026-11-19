@@ -106,7 +106,7 @@ async function sendSummary(trx: Transaction<Database>, rule: LockedRule, at: Dat
     project: { id: rule.project_id, name: rule.project_name },
     subject: { type: "rule", id: rule.id, name: rule.name, held, cap: RULE_HOURLY_CAP },
     message: cut(
-      `${rule.project_name}: the alert rule "${rule.name}" held back ${held} more ${held === 1 ? "notification" : "notifications"} after sending ${RULE_HOURLY_CAP} in an hour, its limit. The rule's alert history in the dashboard lists every alert.`,
+      `${rule.project_name}: the alert rule "${rule.name}" held back ${held} more ${held === 1 ? "notification" : "notifications"} after sending ${RULE_HOURLY_CAP} in an hour, which is its limit. The rule's alert history in the dashboard lists every alert.`,
       MAX_MESSAGE,
     ),
     url,

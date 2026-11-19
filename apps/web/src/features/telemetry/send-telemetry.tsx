@@ -49,10 +49,9 @@ export function SendTelemetry({
         </EmptyMedia>
         <EmptyTitle>{TITLES[signal]}</EmptyTitle>
         <EmptyDescription>
-          Your servers send {signal} with OpenTelemetry: any of its SDKs, or a Collector, over
-          OTLP/HTTP to this instance. Requests need the project&apos;s secret key, under &ldquo;Your
-          server&rdquo; in the project&apos;s settings; keep it on your server. They are kept{" "}
-          {retentionDays} days.
+          Your servers send {signal} with any OpenTelemetry SDK or a Collector. Use OTLP/HTTP to
+          send data to this instance. Requests need the project's secret key from “Your server” in
+          the project's settings. Keep it on your server. Data is kept for {retentionDays} days.
         </EmptyDescription>
       </EmptyHeader>
       <EmptyContent className="max-w-2xl text-left">

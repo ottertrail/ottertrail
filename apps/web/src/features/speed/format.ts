@@ -7,12 +7,12 @@ export const VITALS: Record<VitalName, { name: string; short: string; explanatio
   lcp: {
     name: "Largest Contentful Paint",
     short: "LCP",
-    explanation: "When the main content showed.",
+    explanation: "When the main content appeared.",
   },
   inp: {
     name: "Interaction to Next Paint",
     short: "INP",
-    explanation: "How quickly the page answered clicks, taps, and keys.",
+    explanation: "How quickly the page responded to clicks, taps, and key presses.",
   },
   cls: {
     name: "Cumulative Layout Shift",
@@ -22,12 +22,12 @@ export const VITALS: Record<VitalName, { name: string; short: string; explanatio
   fcp: {
     name: "First Contentful Paint",
     short: "FCP",
-    explanation: "When the first text or image showed.",
+    explanation: "When the first text or image appeared.",
   },
   ttfb: {
     name: "Time to First Byte",
     short: "TTFB",
-    explanation: "When the server's answer started to arrive.",
+    explanation: "When the server's response started to arrive.",
   },
 };
 

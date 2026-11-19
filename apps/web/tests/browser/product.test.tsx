@@ -324,7 +324,7 @@ describe("the funnel", () => {
 
     await page.getByRole("button", { name: "Show funnel" }).click();
 
-    await expect.element(page.getByRole("alert")).toMatchTextContent(/Some steps are not complete/);
+    await expect.element(page.getByRole("alert")).toMatchTextContent(/Some steps are incomplete/);
     await expect
       .element(step(2).getByRole("combobox", { name: "Event name" }))
       .toHaveAttribute("aria-invalid", "true");
@@ -341,7 +341,7 @@ describe("the funnel", () => {
     await page.getByRole("button", { name: "Show funnel" }).click();
 
     await expect
-      .element(step(2).getByText(/One event could be this step and the one before/))
+      .element(step(2).getByText(/One event could match both this step and the previous step/))
       .toBeVisible();
     expect(funnelRequests(api)).toEqual([]);
   });
@@ -351,7 +351,7 @@ describe("the funnel", () => {
     const steps = '[{"type":"event","name":"signup"},{"type":"event","name":"purchase"}]';
     const router = renderApp(`${FUNNEL}?steps=${encodeURIComponent(steps)}`);
     await expect.poll(() => lastQuery(api, "/funnel").count).toBe("visitors");
-    await expect.element(page.getByText(/Windows over a day need Users/)).toBeVisible();
+    await expect.element(page.getByText(/Windows longer than a day require Users/)).toBeVisible();
 
     await page.getByRole("combobox", { name: "Conversion window" }).click();
     await expect
@@ -415,9 +415,9 @@ describe("the funnel", () => {
       .element(page.getByRole("combobox", { name: "Conversion window" }))
       .toMatchTextContent(/1 hour/);
     // The definitions it counts by.
-    await expect.element(page.getByText(/Other events in between are allowed/)).toBeVisible();
-    await expect.element(page.getByText(/Step 1 must happen in the chosen period/)).toBeVisible();
-    await expect.element(page.getByText(/their IDs change every day/)).toBeVisible();
+    await expect.element(page.getByText(/Other events between steps are allowed/)).toBeVisible();
+    await expect.element(page.getByText(/Step 1 must occur in the selected period/)).toBeVisible();
+    await expect.element(page.getByText(/Their IDs change daily/)).toBeVisible();
   });
 
   test("drops a window visitors cannot have from the address", async () => {
@@ -471,9 +471,11 @@ describe("retention", () => {
     expect(cell("50%")?.className).toMatch(/\bbg-seq-3\b/);
     expect(cell(`0%${notOver}`)?.className).not.toMatch(/bg-seq/);
     await expect
-      .element(page.getByText("This week is not over: its share can still grow.", { exact: false }))
+      .element(
+        page.getByText("This week is not over. Its share can still increase.", { exact: false }),
+      )
       .toBeVisible();
-    await expect.element(page.getByText(/Signed-in users only/)).toBeVisible();
+    await expect.element(page.getByText(/Only signed-in users count/)).toBeVisible();
     await expect
       .element(page.getByText(/Weeks start on Monday/))
       .toMatchTextContent(/Asia\/Singapore/);

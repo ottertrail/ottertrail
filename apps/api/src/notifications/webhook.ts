@@ -100,10 +100,10 @@ export async function sendWebhook(
       return {
         ok: false,
         status,
-        error: `It answered ${status}, a redirect, which webhooks do not follow: use the final URL.`,
+        error: `It answered ${status}, a redirect. Webhooks do not follow redirects. Use the final URL.`,
       };
     }
-    return { ok: false, status, error: `It answered ${status}; a webhook must answer 2xx.` };
+    return { ok: false, status, error: `It answered ${status}. A webhook must return 2xx.` };
   } catch (error) {
     if (signal.aborted && signal.reason instanceof TimeoutError) {
       return { ok: false, error: `No answer within ${timeoutMs / 1000} seconds.` };

@@ -86,7 +86,7 @@ function changeOf(body: RoleBody): AccessChange | null {
   return body.access === undefined ? null : { role: "member", ...body.access };
 }
 
-const ACCESS_REQUIRED = problem("access_required", "A member needs their projects and areas.");
+const ACCESS_REQUIRED = problem("access_required", "Specify the member's projects and areas.");
 
 const userParams = {
   type: "object",
@@ -262,7 +262,7 @@ export const memberRoutes: FastifyPluginCallback<{
       if (result === "wrong_password") {
         return reply
           .code(403)
-          .send(problem("wrong_password", "That is not your password. Type it again."));
+          .send(problem("wrong_password", "The password is incorrect. Enter it again."));
       }
       return result === "not_found" ? reply.code(404).send(NO_MEMBER) : reply.code(204).send();
     },
@@ -293,7 +293,7 @@ export const memberRoutes: FastifyPluginCallback<{
           .send(
             problem(
               "invalid_email",
-              "Sign-in does not accept this email address. Use letters, digits, and . _ ' + - before the @, and a domain such as example.com.",
+              "Sign-in does not accept this email address. Use letters, digits, and . _ ' + - before the @. Use a domain such as example.com.",
             ),
           );
       }

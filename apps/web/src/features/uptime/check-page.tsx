@@ -141,8 +141,8 @@ function IncidentsCard({
           <h3>Incidents</h3>
         </CardTitle>
         <CardDescription>
-          Each time the check was down in this period, from the first failure of the run that took
-          it down to the success that brought it back, newest first.
+          Periods when the check was down in this period, newest first. Each starts at the first
+          failure in the sequence that caused the incident. It ends at the first successful check.
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -323,7 +323,7 @@ export function CheckPage({
               </EmptyMedia>
               <EmptyTitle>No such check</EmptyTitle>
               <EmptyDescription>
-                The project has no check with this ID: it may have been deleted.
+                The project has no check with this ID. It may have been deleted.
               </EmptyDescription>
             </EmptyHeader>
           </Empty>
@@ -426,7 +426,7 @@ export function CheckPage({
         >
           <ChartCard
             title="Response time"
-            description={`The average time to the answer's headers, redirects included, of the runs that got an answer, per ${stepText(data.stepSeconds)}. Runs that got no answer are left out; they are among the failures below.`}
+            description={`Average time to response headers for runs with a response, including redirects, per ${stepText(data.stepSeconds)}. Runs without a response are excluded. They are listed among the failures below.`}
             frame={{
               start: data.start,
               stepSeconds: data.stepSeconds,

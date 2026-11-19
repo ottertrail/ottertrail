@@ -183,7 +183,7 @@ describe("a metric's page", () => {
       ["/cart", "var(--chart-2)"],
       ["Other values", "var(--ink-tertiary)"],
     ]);
-    await expect.element(page.getByText(/those with the least volume are added up/)).toBeVisible();
+    await expect.element(page.getByText(/those with the least volume are combined/)).toBeVisible();
 
     await page.getByRole("combobox", { name: "Measure" }).click();
     await page.getByRole("option", { name: "Median (p50)" }).click();
@@ -263,7 +263,7 @@ describe("a metric's page", () => {
     });
     renderApp(metricPath("http.server.request.duration", "histogram"));
     await expect
-      .element(page.getByText(/This histogram's points carry no bucket counts/))
+      .element(page.getByText(/This histogram's points have no bucket counts/))
       .toBeVisible();
     await expect
       .element(page.getByRole("heading", { name: "Observations per second" }))
@@ -287,9 +287,7 @@ describe("a metric's page", () => {
 
     const api = installFakeApi();
     renderApp(`${METRICS}/http.server.requests`);
-    await expect
-      .element(page.getByText("This address does not say what kind of metric this is"))
-      .toBeVisible();
+    await expect.element(page.getByText("This URL does not specify the metric kind")).toBeVisible();
     expect(api.requests.some((request) => request.includes("/metrics/chart"))).toBe(false);
   });
 

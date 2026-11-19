@@ -209,7 +209,7 @@ export function FunnelEditor({
         <Button type="submit">Show funnel</Button>
         {checked && !valid && (
           <p role="alert" className="text-sm text-destructive">
-            Some steps are not complete. Fix the fields marked above.
+            Some steps are incomplete. Correct the marked fields above.
           </p>
         )}
         {applied.length >= MIN_STEPS && changed && !(checked && !valid) && (

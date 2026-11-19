@@ -53,8 +53,8 @@ export function ServerCard({ project }: { project: Project }) {
           <h3>Your server</h3>
         </CardTitle>
         <CardDescription>
-          Events your own server sends, such as a payment, cannot be blocked or faked by a browser.
-          They need the secret key: keep it on your server, never in a page.
+          A browser cannot block or fake events from your server, such as payments. These events
+          need the secret key. Keep it on your server. Never put it in a page.
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
@@ -82,8 +82,8 @@ export function ServerCard({ project }: { project: Project }) {
         <div className="flex flex-col gap-2 border-t pt-4">
           <h4 className="text-sm font-medium text-ink">Send events from your server</h4>
           <p className="text-sm text-muted-foreground">
-            Each event belongs to a user and shows in their activity under Users. Up to 50 events
-            per request, each with a new ID: a retry with the same ID is stored once.
+            Each event belongs to a user and appears in their activity under Users. Send up to 50
+            events per request. Give each event a new ID. Retries with the same ID are stored once.
           </p>
           <CopyableCode
             text={serverEventExample(window.location.origin, shown ? project.secretKey : "sk_…")}
@@ -96,9 +96,9 @@ export function ServerCard({ project }: { project: Project }) {
             <div className="flex flex-col gap-1">
               <Label htmlFor={switchId}>Only accept user IDs signed by your server</Label>
               <p id={descriptionId} className="text-sm text-muted-foreground">
-                Anyone can copy the snippet and send events that claim to be any user. With this on,
-                a browser&apos;s user ID counts only with your server&apos;s signature for it;
-                without one, the event is kept, without the user.
+                Anyone can copy the snippet and send events with any user ID. When enabled, browser
+                events need your server's signature for the user ID to count. Events without a
+                signature are retained without the user ID.
               </p>
             </div>
             <Switch

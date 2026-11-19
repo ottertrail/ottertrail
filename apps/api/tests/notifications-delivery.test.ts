@@ -163,7 +163,7 @@ describe("notify", () => {
       attempts: 0,
       refused: 1,
       next_attempt_at: null,
-      last_error: `Not sent: this channel had ${CHANNEL_HOURLY_CAP} deliveries in the last hour, its limit.`,
+      last_error: `Not sent: this channel had ${CHANNEL_HOURLY_CAP} deliveries in the last hour, which is its limit.`,
     });
 
     // Later refusals in the hour only count on that one row.
@@ -181,7 +181,7 @@ describe("notify", () => {
       {
         id: capped.id,
         refused: 6,
-        last_error: `Not sent: this channel had ${CHANNEL_HOURLY_CAP} deliveries in the last hour, its limit. 6 notifications refused so far.`,
+        last_error: `Not sent: this channel had ${CHANNEL_HOURLY_CAP} deliveries in the last hour, which is its limit. 6 notifications refused so far.`,
       },
     ]);
 
@@ -308,7 +308,7 @@ describe("the worker", () => {
       Array.from({ length: MAX_ATTEMPTS }, (_, index) => ({
         status: index + 1 < MAX_ATTEMPTS ? "pending" : "failed",
         attempts: index + 1,
-        error: `It answered ${index + 1 >= 4 ? 404 : 503}; a webhook must answer 2xx.`,
+        error: `It answered ${index + 1 >= 4 ? 404 : 503}. A webhook must return 2xx.`,
       })),
     );
     expect((await rows())[0]?.next_attempt_at).toBeNull();
@@ -364,7 +364,7 @@ describe("the worker", () => {
         status: "failed",
         attempts: MAX_ATTEMPTS,
         next_attempt_at: null,
-        last_error: "The last attempt did not finish: the worker stopped while sending.",
+        last_error: "The last attempt did not finish. The worker stopped during delivery.",
       },
     ]);
   });

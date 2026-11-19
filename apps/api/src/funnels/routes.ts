@@ -205,7 +205,7 @@ export const savedFunnelRoutes: FastifyPluginCallback<{
               ? NAME_TAKEN
               : problem(
                   "funnel_changed",
-                  "The saved funnel was changed after it was read, such as in another tab. Read it again before changing it.",
+                  "The saved funnel changed after it was read, such as in another tab. Read it again before changing it.",
                 ),
           );
       }

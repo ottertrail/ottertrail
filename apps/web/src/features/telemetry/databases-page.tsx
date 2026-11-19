@@ -180,12 +180,12 @@ function DatabaseCard({
 function WhatIsRead() {
   return (
     <>
-      A database call is a span of kind CLIENT with a database system attribute (
+      A database call is a CLIENT span from a trace with a database system attribute (
       <code className="font-mono">db.system.name</code>, or the older{" "}
-      <code className="font-mono">db.system</code>), from a trace. Calls are grouped by system,
-      database, and query shape: the <code className="font-mono">db.query.summary</code> sent, else
-      the query&apos;s text with its literals, IN lists, and comments taken out, else its operation
-      and collection.
+      <code className="font-mono">db.system</code>). Calls are grouped by system, database, and
+      query shape. The query shape uses <code className="font-mono">db.query.summary</code> if sent.
+      Otherwise, it uses query text without literals, IN lists, or comments. If query text is
+      absent, it uses the operation and collection.
     </>
   );
 }
@@ -278,10 +278,10 @@ export function DatabasesPage({
               <span>
                 No such span arrived
                 {environment === DEFAULT_ENVIRONMENT ? "" : ` in ${environment}`} in this period.
-                Most OpenTelemetry instrumentations of database clients record one per query: turn
-                on your SDK&apos;s instrumentation for the database client the app uses (its
-                automatic instrumentations, or the package for that client), and the calls appear
-                here with the traces they belong to. Traces are kept {data.retentionDays} days.
+                Most OpenTelemetry database client instrumentations record one span per query.
+                Enable your SDK's instrumentation for your app's database client. Use automatic
+                instrumentation or the package for that client. Calls then appear here with their
+                traces. Traces are kept for {data.retentionDays} days.
               </span>
             </EmptyDescription>
           </EmptyHeader>
@@ -293,9 +293,9 @@ export function DatabasesPage({
           aria-busy={list.isPlaceholderData}
         >
           <p className="text-sm text-ink-subtle">
-            <WhatIsRead /> Failed: its status is Error. Durations are the calls&apos;; total time is
-            all of them added up. A column with an arrow sorts the shapes; a shape opens its charts
-            over the period.
+            <WhatIsRead /> Failed means the call's status is Error. Durations measure the calls.
+            Total time is the sum of all call durations. Select a column with an arrow to sort query
+            shapes. Select a shape to open its charts for the period.
           </p>
           {data.databases.map((database) => (
             <DatabaseCard

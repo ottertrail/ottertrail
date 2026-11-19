@@ -9,7 +9,7 @@ const ANALYTICS = `/projects/${PROJECT.id}/web-analytics`;
 const SETTINGS = `/projects/${PROJECT.id}/settings`;
 const LAST_PROJECT_KEY = "ottertrail.project";
 
-const workspaceMenu = () => page.getByRole("navigation", { name: "Workspace" });
+const workspaceMenu = () => page.getByRole("navigation", { name: "Instance" });
 const projectMenu = () => page.getByRole("navigation", { name: "Project" });
 const switcher = (name: string) =>
   page.getByRole("button", { name: `Project: ${name}. Switch project` });

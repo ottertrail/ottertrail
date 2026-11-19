@@ -15,7 +15,7 @@ import { backupObjects } from "../src/storage/object-backup.ts";
 
 const dir = process.argv.slice(2).find((arg) => arg !== "--");
 if (dir === undefined || dir === "") {
-  console.error("Name the folder to back up into: backup-objects <folder>");
+  console.error("Specify the backup folder: backup-objects <folder>");
   process.exit(1);
 }
 

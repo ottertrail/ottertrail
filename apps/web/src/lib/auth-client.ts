@@ -13,7 +13,7 @@ export function signInErrorMessage(error: { status: number; message?: string | u
     return "Wrong email or password.";
   }
   if (error.status === 429) {
-    return "Too many attempts. Wait a minute, then try again.";
+    return "Too many attempts. Wait a minute. Then try again.";
   }
   return error.message ?? "Could not sign in. Try again.";
 }

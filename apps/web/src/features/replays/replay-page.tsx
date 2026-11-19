@@ -61,8 +61,8 @@ export function ReplayPage({ projectId, replayId }: { projectId: string; replayI
               </EmptyMedia>
               <EmptyTitle>No such replay</EmptyTitle>
               <EmptyDescription>
-                The project has no replay with this ID: it may have expired after its 30 days, or
-                been deleted.
+                The project has no replay with this ID. It may have expired after 30 days or been
+                deleted.
               </EmptyDescription>
             </EmptyHeader>
           </Empty>
@@ -156,7 +156,7 @@ export function ReplayPage({ projectId, replayId }: { projectId: string; replayI
         <p className="text-sm text-ink-subtle">
           Times in {timeZone}.
           {replay.cut &&
-            " The recording is cut: it stopped at its size limit, or the visitor left before all of it was sent."}
+            " The recording is incomplete. It reached its size limit, or the visitor left before the entire recording was sent."}
         </p>
       </div>
       <ReplayViewer

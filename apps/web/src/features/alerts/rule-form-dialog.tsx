@@ -246,7 +246,7 @@ function problemsOf(draft: Draft): Partial<Record<FieldName, string>> {
   }
   if (isRoute(draft.kind)) {
     if (!SERVICE.test(draft.service.trim())) {
-      problems.service = "Choose or enter the service, as its spans name it (service.name).";
+      problems.service = "Choose or enter the service name from its spans (service.name).";
     }
     if (draft.route.trim().length > MAX_FILTER_CHARS) {
       problems.route = `A route has at most ${chars} characters.`;
@@ -272,7 +272,7 @@ function problemsOf(draft: Draft): Partial<Record<FieldName, string>> {
     if (metric === "" || metric.length > MAX_METRIC_NAME) {
       problems.metric = "Choose or enter the metric's name.";
     }
-    if (draft.metricKind === "") problems.metricKind = "Say what kind of metric it is.";
+    if (draft.metricKind === "") problems.metricKind = "Select the metric kind.";
     const value = numberOf(draft.value);
     if (value === null || Math.abs(value) > MAX_METRIC_VALUE) {
       problems.value = "Enter a number to compare with, such as 100 or 0.5.";
@@ -386,21 +386,21 @@ const fieldsOf = (draft: Draft): RuleFields => ({
 
 /** What each kind does, under its choice. */
 const KIND_HELP: Record<RuleKind, string> = {
-  check_down: "Sends when a check goes down, and again when it is up.",
+  check_down: "Sends a notification when a check goes down. Sends another when it is up again.",
   certificate_expiring:
-    "Sends once for each certificate that comes within the days of its expiry, and again when it is renewed.",
+    "Sends one notification per certificate within the specified days before expiry. Sends another when the certificate is renewed.",
   error_new:
-    "Sends once for each error group seen for the first time after the rule is added. Groups seen before are not new.",
+    "Sends one notification per error group first seen after the rule is added. Previously seen groups do not count as new.",
   error_regressed:
-    "Sends once each time an error group resolved in the dashboard happens again, in any environment.",
+    "Sends one notification each time an error group resolved in the dashboard occurs again in any environment.",
   error_spike:
-    "Sends when the errors in the window reach the threshold, and again once they stay below it for a whole window.",
+    "Sends a notification when the error count in the window reaches the threshold. Sends another after it stays below the threshold for a full window.",
   route_latency:
-    "Sends when the requests' 95th or 99th percentile duration over the window is above the threshold, counted as the Services page counts them, and again once it stays at or below it for a whole window. A window with fewer requests than the minimum, or none, does neither.",
+    "Sends a notification when the requests' 95th or 99th percentile duration exceeds the threshold over the window. Requests count as on the Services page. Sends another after the duration stays at or below the threshold for a full window. Windows with fewer requests than the minimum, including none, neither trigger nor resolve alerts.",
   route_failures:
-    "Sends when the share of requests that failed over the window is above the threshold, and again once it stays at or below it for a whole window. A window with fewer requests than the minimum, or none, does neither.",
+    "Sends a notification when the failed request share exceeds the threshold over the window. Sends another after the share stays at or below the threshold for a full window. Windows with fewer requests than the minimum, including none, neither trigger nor resolve alerts.",
   metric_threshold:
-    "Sends when the metric, read as its chart reads it, is above or below the value over the window, and again once it stays on the right side for a whole window. A window without points does neither.",
+    "Sends a notification when the metric is above or below the value over the window. The metric is calculated as on its chart. Sends another after the metric stays on the non-alerting side for a full window. Windows without points neither trigger nor resolve alerts.",
 };
 
 /** What a metric rule can read of each measure, as the metric's page calls it. */
@@ -645,7 +645,7 @@ function RuleForm({
     ...checks.map((check) => ({ value: check.id, label: check.name })),
     // A check the rule names that the project no longer has, so the select still shows it.
     ...(draft.checkId !== ALL_CHECKS && !checks.some((check) => check.id === draft.checkId)
-      ? [{ value: draft.checkId, label: "A check that was deleted" }]
+      ? [{ value: draft.checkId, label: "A deleted check" }]
       : []),
   ];
   const channelsError = errorOf("channels");
@@ -690,8 +690,8 @@ function RuleForm({
           {rule === undefined ? "Add an alert rule" : `Edit “${rule.name}”`}
         </DialogTitle>
         <DialogDescription>
-          A rule watches the project and sends a notification to its channels when something
-          happens, and again when it is over.
+          A rule monitors the project. It notifies its channels when an alert starts and again when
+          the alert ends.
         </DialogDescription>
       </DialogHeader>
       <SelectField
@@ -727,7 +727,8 @@ function RuleForm({
         <>
           {textField("fingerprint", "Error group (optional)", {
             placeholder: "All errors",
-            description: "Leave empty to count every error; an error's page fills this in.",
+            description:
+              "Leave empty to count all errors. This field is filled automatically from an error's page.",
           })}
           <div className="grid gap-4 sm:grid-cols-2">
             {textField("threshold", "Errors", {
@@ -749,7 +750,7 @@ function RuleForm({
             placeholder: "All the service's requests",
             options: suggestions.routes,
             description:
-              "Its http.route, or the span's name without one. Leave empty to watch the whole service.",
+              "Use http.route, or the span name if http.route is absent. Leave empty to monitor the whole service.",
           })}
           <div className="grid gap-4 sm:grid-cols-2">
             {draft.kind === "route_latency" ? (
@@ -775,7 +776,7 @@ function RuleForm({
             {windowField}
             {textField("minRequests", "At least (requests)", {
               numeric: "numeric",
-              description: "Fewer in the window: it neither sends nor resolves.",
+              description: "Windows with fewer requests neither trigger nor resolve alerts.",
             })}
           </div>
         </>
@@ -801,7 +802,7 @@ function RuleForm({
               error={errorOf("metricKind")}
               description={
                 metricKinds.length > 1
-                  ? "This name is sent as more than one kind: choose one."
+                  ? "This metric name has multiple kinds. Select one."
                   : undefined
               }
             />
@@ -820,7 +821,7 @@ function RuleForm({
                   if (found !== undefined) change({ aggregate: found });
                 }}
                 error={errorOf("aggregate")}
-                description="As the metric's chart reads it, over the whole window."
+                description="Calculated as on the metric's chart, over the full window."
               />
               <SelectField
                 label="Sends when it is"
@@ -841,7 +842,7 @@ function RuleForm({
           {textField("host", "Host (optional)", {
             placeholder: "All hosts",
             options: suggestions.hosts,
-            description: "Only the series of one host: its resource's host.name.",
+            description: "Include only one host's series. Use its resource's host.name.",
           })}
           <div className="grid gap-4 sm:grid-cols-2">
             {textField("attributeKey", "Attribute (optional)", {
@@ -905,7 +906,7 @@ function RuleForm({
       </FieldSet>
       {checked && !valid && (
         <p role="alert" className="text-sm text-destructive">
-          The rule is not complete. Fix the fields marked above.
+          The rule is incomplete. Correct the marked fields above.
         </p>
       )}
       {save.error !== null && apiField === undefined && (

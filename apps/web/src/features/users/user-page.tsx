@@ -138,7 +138,7 @@ function UserReplays({
       {replays.length === 0 ? (
         <p className="text-sm text-ink-subtle">
           No session replay of this user&apos;s errors in {environment}. Replays are recorded around
-          errors, when the project has them on, and kept 30 days.
+          errors when enabled for the project. They are kept for 30 days.
         </p>
       ) : (
         <Card className="py-0">
@@ -329,8 +329,8 @@ export function UserPage({
         )}
         {timeZone !== undefined && (
           <p className="text-sm text-ink-subtle">
-            Times in {timeZone}. Only events your site sent with this user ID: browsing before
-            signing in is not counted, as on a shared device it may be someone else&apos;s.
+            Times in {timeZone}. Only events sent with this user ID count. Browsing before sign-in
+            does not count because someone else may have used the device.
           </p>
         )}
       </div>

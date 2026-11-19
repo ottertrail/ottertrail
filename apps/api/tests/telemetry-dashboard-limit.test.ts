@@ -207,6 +207,6 @@ describe("a dashboard query whose request is gone", () => {
         "SELECT 1",
         new QueryParams(),
       ),
-    ).rejects.toThrow("The time for this work ran out before the query.");
+    ).rejects.toThrow("The time limit expired before the query started.");
   });
 });

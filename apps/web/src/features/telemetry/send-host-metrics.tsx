@@ -98,10 +98,10 @@ export function SendHostMetrics({
         </EmptyMedia>
         <EmptyTitle>No hosts yet</EmptyTitle>
         <EmptyDescription>
-          Run an OpenTelemetry Collector on each server, with its host metrics receiver, and send
-          what it measures to this instance over OTLP/HTTP. Each server is listed by its host name.
-          Requests need the project&apos;s secret key, under &ldquo;Your server&rdquo; in the
-          project&apos;s settings; keep it on your server. Metrics are kept {retentionDays} days.
+          Run an OpenTelemetry Collector with a host metrics receiver on each server. Send its
+          measurements to this instance over OTLP/HTTP. Servers are listed by host name. Requests
+          need the project's secret key from “Your server” in the project's settings. Keep it on
+          your server. Metrics are kept for {retentionDays} days.
         </EmptyDescription>
       </EmptyHeader>
       <EmptyContent className="max-w-2xl text-left">
@@ -110,11 +110,12 @@ export function SendHostMetrics({
           copyLabel="Copy the configuration"
         />
         <p className="text-sm text-ink-subtle">
-          Replace <code className="font-mono">sk_…</code> with the secret key. The exclusions keep
-          snap packages&apos; read-only images, loopback and container interfaces, and disk
-          partitions and virtual devices out of the numbers, so nothing is full by design or counted
-          twice. The exporter adds <code className="font-mono">/v1/metrics</code> to the endpoint.
-          Collector releases from before the components were renamed call them{" "}
+          Replace <code className="font-mono">sk_…</code> with the secret key. The exclusions remove
+          read-only snap images, loopback and container interfaces, disk partitions, and virtual
+          devices from the measurements. This excludes filesystems that are full by design and
+          prevents duplicate counts. The exporter adds{" "}
+          <code className="font-mono">/v1/metrics</code> to the endpoint. Collector releases from
+          before the components were renamed call them{" "}
           <code className="font-mono">hostmetrics</code>,{" "}
           <code className="font-mono">resourcedetection</code>, and{" "}
           <code className="font-mono">otlphttp</code>.

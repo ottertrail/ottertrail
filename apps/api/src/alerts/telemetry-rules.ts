@@ -216,7 +216,7 @@ const MAX_REASON = 300;
 /** Why an evaluation failed, in words the Alerts page shows. */
 export function reasonOf(error: unknown): string {
   if (error instanceof DeadlineError) {
-    return "The project's rules took longer than their time this minute, before this one could be read.";
+    return "The project's rules reached their time limit for this minute before this rule could be read.";
   }
   const text = error instanceof Error ? error.message : String(error);
   return cut(text === "" ? "The evaluation failed." : text, MAX_REASON);
@@ -874,7 +874,7 @@ export async function notSeenWarning(
       return seen
         ? null
         : notSeen(
-            `No point of the ${settings.metricKind} ${settings.metric}${filtersText(settings)} has arrived ${where}. The rule is saved: it starts watching once the metric reports.`,
+            `No point from the ${settings.metricKind} ${settings.metric}${filtersText(settings)} arrived ${where}. The rule is saved. Monitoring starts when the metric reports.`,
           );
     }
     const seen = await requestsSeen(reader, {
@@ -887,13 +887,13 @@ export async function notSeenWarning(
     return seen
       ? null
       : notSeen(
-          `No request of ${settings.service}${settings.route === null ? "" : ` on the route ${cut(settings.route, QUOTE_CHARS)}`} has arrived ${where}. The rule is saved: it starts watching once the service reports.`,
+          `No request from ${settings.service}${settings.route === null ? "" : ` on the route ${cut(settings.route, QUOTE_CHARS)}`} arrived ${where}. The rule is saved. Monitoring starts when the service reports.`,
         );
   } catch {
     return {
       reason: "not_checked",
       message:
-        "Whether what the rule watches has reported in the last 24 hours could not be checked. The rule is saved.",
+        "The rule is saved. Its monitored data could not be checked for reports in the last 24 hours.",
     };
   }
 }

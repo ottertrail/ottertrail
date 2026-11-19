@@ -156,7 +156,7 @@ describe("the danger zone", () => {
     const router = renderApp(SETTINGS);
 
     await page.getByRole("button", { name: "Delete project" }).click();
-    const confirm = page.getByRole("button", { name: "Delete for good" });
+    const confirm = page.getByRole("button", { name: "Delete permanently" });
     await expect.element(confirm).toBeDisabled();
     await page.getByLabelText("Type the project's name to confirm").fill("main site");
     await expect.element(confirm).toBeDisabled();
@@ -187,7 +187,7 @@ describe("the danger zone", () => {
 
     await page.getByRole("button", { name: "Delete project" }).click();
     await page.getByLabelText("Type the project's name to confirm").fill("Main site");
-    await page.getByRole("button", { name: "Delete for good" }).click();
+    await page.getByRole("button", { name: "Delete permanently" }).click();
 
     await expect
       .element(page.getByRole("alert"))
@@ -205,7 +205,7 @@ describe("keeping events", () => {
     await expect
       .element(
         page.getByText(
-          "Older events are deleted for good, a whole day at a time. Forever keeps everything.",
+          "Older events are permanently deleted, one whole day at a time. Forever keeps all events.",
         ),
       )
       .toBeVisible();
@@ -215,7 +215,7 @@ describe("keeping events", () => {
     await expect
       .element(
         page.getByText(
-          "Events older than 1 year will be deleted for good within a few hours of saving, a whole day at a time.",
+          "Events older than 1 year will be permanently deleted within a few hours of saving, one whole day at a time.",
         ),
       )
       .toBeVisible();
@@ -239,7 +239,7 @@ describe("keeping events", () => {
     await page.getByRole("option", { name: "2 years" }).click();
 
     await expect
-      .element(page.getByText(/will be deleted for good within a few hours/))
+      .element(page.getByText(/will be permanently deleted within a few hours/))
       .not.toBeInTheDocument();
   });
 

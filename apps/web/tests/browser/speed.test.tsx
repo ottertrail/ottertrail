@@ -92,12 +92,12 @@ describe("the speed page", () => {
       measured: "Measured on 400 page loads.",
     });
     await expect
-      .element(card("Largest Contentful Paint (LCP)").getByText("When the main content showed."))
+      .element(card("Largest Contentful Paint (LCP)").getByText("When the main content appeared."))
       .toBeVisible();
     await expect
       .element(
         card("Interaction to Next Paint (INP)").getByText(
-          "How quickly the page answered clicks, taps, and keys.",
+          "How quickly the page responded to clicks, taps, and key presses.",
         ),
       )
       .toBeVisible();
@@ -114,7 +114,9 @@ describe("the speed page", () => {
     installFakeApi();
     renderApp(SPEED);
 
-    await expect.element(page.getByRole("heading", { name: "What leads up to LCP" })).toBeVisible();
+    await expect
+      .element(page.getByRole("heading", { name: "Measurements before LCP" }))
+      .toBeVisible();
     expect(secondary("First Contentful Paint (FCP)")).toBe("1.2 sGood");
     expect(secondary("Time to First Byte (TTFB)")).toBe("950 msNeeds improvement");
   });
@@ -234,7 +236,9 @@ describe("the speed page", () => {
 
     await expect.element(page.getByText("No page loads measured in this period")).toBeVisible();
     await expect.element(page.getByText("v.js", { exact: true })).toBeVisible();
-    await expect.element(page.getByText(/in-app navigations/)).toBeVisible();
+    await expect
+      .element(page.getByText(/Navigation within the app has no separate values/))
+      .toBeVisible();
     await expect.element(page.getByText('data-vitals="off"', { exact: true })).toBeVisible();
     await expect.element(card("Largest Contentful Paint (LCP)")).not.toBeInTheDocument();
   });

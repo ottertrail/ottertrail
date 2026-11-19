@@ -19,7 +19,7 @@ const email = process.argv
   ?.trim()
   .toLowerCase();
 if (email === undefined || email === "") {
-  console.error("Name the account: vp run reset-password -- <email>");
+  console.error("Specify the account: vp run reset-password -- <email>");
   process.exit(1);
 }
 
@@ -53,8 +53,8 @@ try {
         ...(config.publicUrl === DEVELOPMENT_PUBLIC_URL
           ? [
               "",
-              "In development, if the dashboard dev server printed another address (it picks the",
-              "next free port when 5173 is taken), use that address with the same /reset-password#token=… part.",
+              "In development, the dashboard dev server selects the next free port if 5173 is in use.",
+              "If it printed a different address, use that address with the same /reset-password#token=… part.",
             ]
           : []),
       ].join("\n"),

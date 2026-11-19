@@ -147,7 +147,7 @@ describe("the databases page", () => {
       .element(page.getByText(/No such span arrived in staging in this period\./))
       .toBeVisible();
     await expect
-      .element(page.getByText(/turn on your SDK's instrumentation for the database client/))
+      .element(page.getByText(/Enable your SDK's instrumentation for your app's database client/))
       .toBeVisible();
   });
 
@@ -185,7 +185,9 @@ describe("a query shape's page", () => {
       .toBeVisible();
     // The shape in full, and what it is made from.
     expect(document.querySelector("pre")?.textContent).toBe(ORDERS_SHAPE.shape);
-    await expect.element(page.getByText(/normalized: string and number literals/)).toBeVisible();
+    await expect
+      .element(page.getByText(/normalized with string literals, number literals/))
+      .toBeVisible();
 
     await expect.element(page.getByRole("heading", { name: "In this period" })).toBeVisible();
     expect(

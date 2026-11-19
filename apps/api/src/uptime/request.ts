@@ -151,7 +151,7 @@ export async function runRequest(
         if (redirects >= MAX_REDIRECTS) {
           throw new CheckFailure(
             "redirects",
-            `More than ${MAX_REDIRECTS} redirects; the last answered ${status}.`,
+            `More than ${MAX_REDIRECTS} redirects. The last response was ${status}.`,
             status,
           );
         }
