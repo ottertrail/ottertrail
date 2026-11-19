@@ -379,7 +379,9 @@ export function OverviewPage({
         <div className="@container">
           <div
             ref={widgetsRef}
-            className="grid grid-cols-1 gap-x-10 gap-y-8 px-gutter pt-2 pb-8 @5xl:grid-cols-2"
+            // Each widget draws a line above it, except the first row: the filter bar's
+            // (or the edit bar's) line is already there.
+            className="grid grid-cols-1 gap-x-10 gap-y-8 px-gutter pt-2 pb-8 @5xl:grid-cols-2 [&>*:first-child]:border-t-0 @5xl:[&>*:nth-child(2)]:border-t-0"
           >
             {shown.map((widget) => {
               const Widget = WIDGET_COMPONENTS[widget.id];

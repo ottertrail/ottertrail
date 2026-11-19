@@ -197,6 +197,10 @@ describe("opening a project", () => {
   });
 });
 
+/** Whether each widget draws a line above it. */
+const topLines = (sections: HTMLElement[]) =>
+  sections.map((section) => getComputedStyle(section).borderTopWidth !== "0px");
+
 describe("on a phone", () => {
   test("the widgets stack in one column, and nothing scrolls the page sideways", async () => {
     await page.viewport(390, 844);
@@ -209,6 +213,8 @@ describe("on a phone", () => {
         sections.map((section) => Math.round(section.getBoundingClientRect().left)),
       );
       expect(lefts.size).toBe(1);
+      // The filter bar draws the line above the first widget; each later one draws its own.
+      expect(topLines(sections)).toEqual(sections.map((_, index) => index > 0));
       expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(390);
       // A table cut off at the edge shows a fade there: more columns to scroll to.
       await expect
@@ -233,6 +239,8 @@ describe("at 1440 wide", () => {
         sections.map((section) => Math.round(section.getBoundingClientRect().left)),
       );
       expect(lefts.size).toBe(2);
+      // No second line under the filter bar: the first row of two draws none.
+      expect(topLines(sections)).toEqual(sections.map((_, index) => index > 1));
       const overflowing = sections.flatMap((section) => {
         const width = section.getBoundingClientRect().width;
         return [...section.querySelectorAll("table")]
