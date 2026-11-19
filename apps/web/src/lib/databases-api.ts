@@ -146,6 +146,65 @@ export const databasesQuery = (
     placeholderData: keepPreviousData,
   });
 
+/** GET /api/projects/:id/databases/trend: every database call together, over the period. */
+export interface DatabasesTrend {
+  timeZone: string;
+  environment: string;
+  firstDay: string;
+  lastDay: string;
+  retentionDays: number;
+  /** The first bucket's start, ISO. */
+  start: string;
+  stepSeconds: number;
+  buckets: number;
+  totals: { calls: number; failed: number; totalUs: number; perSecond: number | null };
+  /** Per bucket; the time is the calls' durations added up, in microseconds. */
+  counts: { calls: number[]; failed: number[]; totalUs: number[] };
+  perSecond: (number | null)[];
+}
+
+const isDatabasesTrend = (value: unknown): value is DatabasesTrend =>
+  isRecord(value) &&
+  isText(value.timeZone) &&
+  isText(value.environment) &&
+  isText(value.firstDay) &&
+  isText(value.lastDay) &&
+  isNumber(value.retentionDays) &&
+  isText(value.start) &&
+  isNumber(value.stepSeconds) &&
+  isNumber(value.buckets) &&
+  isRecord(value.totals) &&
+  isNumber(value.totals.calls) &&
+  isNumber(value.totals.failed) &&
+  isNumber(value.totals.totalUs) &&
+  isNumberOrNull(value.totals.perSecond) &&
+  isRecord(value.counts) &&
+  isNumbers(value.counts.calls) &&
+  isNumbers(value.counts.failed) &&
+  isNumbers(value.counts.totalUs) &&
+  isNumbersOrNulls(value.perSecond);
+
+/** Every database call over the period, in time buckets: the charts above the Databases list. */
+export const databasesTrendQuery = (projectId: string, range: PageRange, environment: string) =>
+  queryOptions({
+    queryKey: ["databases", projectId, "trend", range, environment],
+    retry: telemetryRetry,
+    queryFn: async ({ signal }) => {
+      const query = new URLSearchParams({
+        ...rangeParams(range),
+        ...(environment === DEFAULT_ENVIRONMENT ? {} : { environment }),
+      });
+      return expectShape(
+        await apiRequest(
+          `/api/projects/${encodeURIComponent(projectId)}/databases/trend?${query.toString()}`,
+          { signal },
+        ),
+        isDatabasesTrend,
+      );
+    },
+    placeholderData: keepPreviousData,
+  });
+
 /** One of a shape's slowest calls. */
 export interface SlowCall {
   traceId: string;

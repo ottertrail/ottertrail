@@ -11,7 +11,7 @@ import { clickHouseErrorHandler } from "../clickhouse/route-errors.ts";
 import { ENVIRONMENT_PATTERN, environmentOf } from "../collection/environment.ts";
 import type { Database } from "../db/schema.ts";
 import { RANGE_PROPERTIES, type RangeQuery } from "../reports/routes.ts";
-import { DashboardQueryLimiter, dashboardReader } from "./dashboard-limit.ts";
+import { DashboardQueryLimiter, dashboardReader, SPARKLINE_PLACES } from "./dashboard-limit.ts";
 import {
   CURSOR_PATTERN,
   cursorOf,
@@ -23,7 +23,13 @@ import {
   telemetryRange,
   TRACE_ID_PATTERN,
 } from "./dashboard-query.ts";
-import { DATABASE_SORTS, type DatabaseSort, listDatabases, shapeDetail } from "./databases.ts";
+import {
+  DATABASE_SORTS,
+  type DatabaseSort,
+  databasesTrend,
+  listDatabases,
+  shapeDetail,
+} from "./databases.ts";
 import { HOST_KEY, hostCharts, listHosts } from "./hosts.ts";
 import {
   logDetail,
@@ -34,9 +40,22 @@ import {
   SEVERITIES,
   type Severity,
 } from "./logs.ts";
-import { listMetrics, METRIC_KINDS, type MetricKind, metricChart } from "./metrics.ts";
+import {
+  listMetrics,
+  METRIC_KINDS,
+  type MetricKind,
+  metricChart,
+  metricSparkline,
+  SPARKLINE_MAX_DAYS,
+} from "./metrics.ts";
 import { MAX_KEY_CHARS, MAX_NAME_BYTES, MAX_VALUE_BYTES } from "./normalize.ts";
-import { listServices, MAX_RECENT_ROUTES, recentRoutes, serviceChart } from "./services.ts";
+import {
+  listServices,
+  MAX_RECENT_ROUTES,
+  recentRoutes,
+  serviceChart,
+  servicesTrend,
+} from "./services.ts";
 import { listTraces, spanDetail, traceDetail, traceWindow } from "./traces.ts";
 
 const UUID_PATTERN =
@@ -118,6 +137,8 @@ type ChartQuery = RangeQuery & {
   attrValue?: string;
 };
 
+type SparklineQuery = RangeQuery & { name: string; kind: MetricKind };
+
 type HostQuery = RangeQuery & { host: string };
 
 type ServiceChartQuery = RangeQuery & { service: string; route?: string };
@@ -151,13 +172,19 @@ type LogsQuery = RangeQuery & {
  * GET /api/projects/:id/metrics[?period=…&environment=…]
  * GET /api/projects/:id/metrics/chart?name=…&kind=gauge|counter|updown|histogram[&split=<attribute key>&host=<host.name>&attr=<key>&attrValue=<value>&period=…&environment=…]
  *     (host: one host's series only; attr and attrValue: one attribute value's points only)
+ * GET /api/projects/:id/metrics/sparkline?name=…&kind=gauge|counter|updown|histogram[&period=…&environment=…]
+ *     (one listed metric in at most 30 buckets: its chart's default line; periods of up to 7 days)
  * GET /api/projects/:id/services[?period=…&environment=…]
+ * GET /api/projects/:id/services/trend[?period=…&environment=…]
+ *     (every service's requests together, in time buckets)
  * GET /api/projects/:id/services/chart?service=<name>[&route=<route>&period=…&environment=…]
  *     (one service's requests, or one route's, over the period, in time buckets)
  * GET /api/projects/:id/services/routes[?environment=…]
  *     (up to 200 distinct services and routes of the last 24 hours, for the alert form)
  * GET /api/projects/:id/databases[?period=…&environment=…&sort=time|p95|calls|failures]
  *     (each database's calls and its query shapes, the first 200 by the sort)
+ * GET /api/projects/:id/databases/trend[?period=…&environment=…]
+ *     (every database call together, in time buckets)
  * GET /api/projects/:id/databases/shapes/:shapeId[?period=…&environment=…]
  *     (one query shape over the period: charts, services, slowest calls, routes)
  * GET /api/projects/:id/hosts[?period=…&environment=…]
@@ -177,6 +204,8 @@ export const telemetryDashboardRoutes: FastifyPluginCallback<{
   now?: () => Date;
   /** Queries in flight on this process (dashboard-limit.ts); tests pass a smaller one. */
   limiter?: DashboardQueryLimiter;
+  /** Of those, the places the Metrics list's sparklines may hold (SPARKLINE_PLACES). */
+  sparklineLimiter?: DashboardQueryLimiter;
 }> = (
   app,
   {
@@ -186,6 +215,7 @@ export const telemetryDashboardRoutes: FastifyPluginCallback<{
     retentionDays,
     now = () => new Date(),
     limiter = new DashboardQueryLimiter(),
+    sparklineLimiter = new DashboardQueryLimiter({ max: SPARKLINE_PLACES }),
   },
   done,
 ) => {
@@ -460,6 +490,52 @@ export const telemetryDashboardRoutes: FastifyPluginCallback<{
     },
   );
 
+  app.get<{ Params: { id: string }; Querystring: SparklineQuery }>(
+    "/projects/:id/metrics/sparkline",
+    {
+      preHandler: [signedIn, canView],
+      schema: {
+        params: PARAMS,
+        querystring: {
+          type: "object",
+          required: ["name", "kind"],
+          additionalProperties: false,
+          properties: {
+            ...RANGE_PROPERTIES,
+            name: { type: "string", maxLength: MAX_NAME_BYTES },
+            kind: { type: "string", enum: METRIC_KINDS },
+          },
+        },
+      },
+    },
+    async (request, reply) => {
+      const { name, kind } = request.query;
+      if (Buffer.byteLength(name) > MAX_NAME_BYTES) {
+        return reply.code(400).send({
+          error: "invalid_name",
+          message: `A metric's name holds at most ${MAX_NAME_BYTES} bytes.`,
+        });
+      }
+      const asked = await rangeOf(request);
+      if ("problem" in asked) return reply.code(400).send(asked.problem);
+      const { range } = asked;
+      const days = (Date.parse(range.lastDay) - Date.parse(range.firstDay)) / 86_400_000 + 1;
+      if (days > SPARKLINE_MAX_DAYS) {
+        return reply.code(400).send({
+          error: "range_too_long",
+          message: `Sparklines are drawn for periods of up to ${SPARKLINE_MAX_DAYS} days.`,
+        });
+      }
+      const sparkline = await metricSparkline(
+        dashboardReader(clickhouse, limiter, reply, sparklineLimiter),
+        range,
+        { name, kind },
+        now(),
+      );
+      return { ...answered(range), ...sparkline };
+    },
+  );
+
   app.get<{ Params: { id: string }; Querystring: RangeQuery }>(
     "/projects/:id/services",
     { preHandler: [signedIn, canView], schema: { params: PARAMS, querystring: RANGE_QUERY } },
@@ -468,6 +544,17 @@ export const telemetryDashboardRoutes: FastifyPluginCallback<{
       if ("problem" in asked) return reply.code(400).send(asked.problem);
       const { range } = asked;
       return { ...answered(range), ...(await listServices(readerOf(reply), range)) };
+    },
+  );
+
+  app.get<{ Params: { id: string }; Querystring: RangeQuery }>(
+    "/projects/:id/services/trend",
+    { preHandler: [signedIn, canView], schema: { params: PARAMS, querystring: RANGE_QUERY } },
+    async (request, reply) => {
+      const asked = await rangeOf(request);
+      if ("problem" in asked) return reply.code(400).send(asked.problem);
+      const { range } = asked;
+      return { ...answered(range), ...(await servicesTrend(readerOf(reply), range, now())) };
     },
   );
 
@@ -559,6 +646,17 @@ export const telemetryDashboardRoutes: FastifyPluginCallback<{
         sort,
         ...(await listDatabases(readerOf(reply), range, sort, now())),
       };
+    },
+  );
+
+  app.get<{ Params: { id: string }; Querystring: RangeQuery }>(
+    "/projects/:id/databases/trend",
+    { preHandler: [signedIn, canView], schema: { params: PARAMS, querystring: RANGE_QUERY } },
+    async (request, reply) => {
+      const asked = await rangeOf(request);
+      if ("problem" in asked) return reply.code(400).send(asked.problem);
+      const { range } = asked;
+      return { ...answered(range), ...(await databasesTrend(readerOf(reply), range, now())) };
     },
   );
 

@@ -16,6 +16,12 @@ export const QUERIES_AT_ONCE = 4;
  * such as a host's, leaves room for the other pages open.
  */
 export const QUERIES_PER_REQUEST = 2;
+/**
+ * Of QUERIES_AT_ONCE, the places the Metrics list's sparklines may hold at
+ * once, all requests together: the lists, charts, and the Overview never
+ * wait behind a page of sparklines for more than this.
+ */
+export const SPARKLINE_PLACES = 1;
 /** How long a query waits for a place before it is refused. */
 export const QUEUE_WAIT_MS = 10_000;
 
@@ -156,15 +162,25 @@ export function dashboardReader(
   reply: {
     raw: { writableFinished: boolean; once: (event: "close", listener: () => void) => unknown };
   },
+  /**
+   * A smaller pool the request's queries take a place of first, before
+   * one of `limiter`'s, one at a time: a kind of request (the sparklines)
+   * then holds at most that pool's size of `limiter`'s places.
+   */
+  share?: DashboardQueryLimiter,
 ): Reader {
   const controller = new AbortController();
   // Once the answer is sent or the request is gone, nothing more is
   // needed: a failed query's 503 also ends the request's other queries,
   // running or waiting, so they free their places.
   reply.raw.once("close", () => controller.abort());
+  const gate = limiter.gate(controller.signal, share === undefined ? QUERIES_PER_REQUEST : 1);
   return {
     client: clickhouse,
     signal: controller.signal,
-    gate: limiter.gate(controller.signal),
+    gate:
+      share === undefined
+        ? gate
+        : <T>(work: () => Promise<T>) => share.run(() => gate(work), controller.signal),
   };
 }

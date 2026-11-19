@@ -3,7 +3,12 @@ import { afterAll, beforeAll, describe, expect, test } from "vite-plus/test";
 
 import { QueryParams, queryRows } from "../src/clickhouse/query.ts";
 import { clickHouseErrorHandler } from "../src/clickhouse/route-errors.ts";
-import { DashboardBusyError, DashboardQueryLimiter } from "../src/telemetry/dashboard-limit.ts";
+import {
+  DashboardBusyError,
+  DashboardQueryLimiter,
+  dashboardReader,
+  SPARKLINE_PLACES,
+} from "../src/telemetry/dashboard-limit.ts";
 import { DASHBOARD_SETTINGS } from "../src/telemetry/dashboard-query.ts";
 import { createTestClickHouse, type TestClickHouse } from "./helpers/test-clickhouse.ts";
 
@@ -124,6 +129,46 @@ describe("the dashboard's queries in flight", () => {
     held[2]?.settle();
     await Promise.all(queries);
     expect(limiter.running).toBe(0);
+  });
+
+  test("the sparklines hold at most their share of the places, whatever their requests", async () => {
+    const limiter = new DashboardQueryLimiter({ max: 4, waitMs: 5000 });
+    const sparklines = new DashboardQueryLimiter({ max: SPARKLINE_PLACES, waitMs: 5000 });
+    // Three sparkline requests, as three rows of the Metrics list ask at once.
+    const reply = { raw: { writableFinished: false, once: () => undefined } };
+    const readers = [1, 2, 3].map(() =>
+      dashboardReader(clickhouse.client, limiter, reply, sparklines),
+    );
+    const held = [later(), later(), later()];
+    const started: number[] = [];
+    const queries = readers.map((reader, index) => {
+      const { gate } = reader;
+      if (gate === undefined) throw new Error("A dashboard reader has a gate");
+      return gate(async () => {
+        started.push(index);
+        await held[index]?.promise;
+      });
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    // One runs, holding one of the four places; the others wait in the sparklines' pool.
+    expect(SPARKLINE_PLACES).toBe(1);
+    expect(started).toEqual([0]);
+    expect(limiter.running).toBe(1);
+    // A list or a chart takes the places left at once.
+    expect(await Promise.all([1, 2, 3].map(() => limiter.run(async () => "another page")))).toEqual(
+      ["another page", "another page", "another page"],
+    );
+    held[0]?.settle();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(started).toEqual([0, 1]);
+    expect(limiter.running).toBe(1);
+    held[1]?.settle();
+    held[2]?.settle();
+    await Promise.all(queries);
+    expect({ running: limiter.running, sparklines: sparklines.running }).toEqual({
+      running: 0,
+      sparklines: 0,
+    });
   });
 
   test("a request's waiting queries leave when it is closed", async () => {

@@ -49,6 +49,51 @@ export function Freshness({ stale }: { stale: boolean | null }) {
   );
 }
 
+/** A share at or above this is high: its bar turns the warning color, with a "High" badge. */
+export const HIGH_PERCENT = 90;
+
+/**
+ * A share of 100%, as its figure with a small bar beside it: the bar is
+ * decoration (the figure says the value), a meter on the blue ramp, its
+ * track the ramp's darkest step. At HIGH_PERCENT and above the fill is the
+ * warning color and a "High" badge (an icon and the word) follows the
+ * figure, so the state is never color alone. Nothing sent is a dash.
+ */
+function ShareCell({ percent, detail }: { percent: number | null; detail?: string | null }) {
+  if (percent === null) {
+    return (
+      <TableCell className="text-right">
+        <Missing label="Not sent" />
+      </TableCell>
+    );
+  }
+  // As shown: 89.96 reads "90%", so it is high too.
+  const high = Math.round(percent * 10) / 10 >= HIGH_PERCENT;
+  const width = Math.min(100, Math.max(0, percent));
+  return (
+    <TableCell className="text-right tabular-nums">
+      <span className="inline-flex items-center justify-end gap-2 whitespace-nowrap">
+        <span
+          aria-hidden="true"
+          data-slot="share-bar"
+          data-high={high}
+          className="relative h-1.5 w-12 shrink-0 overflow-hidden rounded-full bg-seq-1"
+        >
+          <span
+            className={`absolute inset-y-0 left-0 rounded-full ${high ? "bg-status-warning" : "bg-chart-1"}`}
+            style={{ width: `${width}%` }}
+          />
+        </span>
+        <span>
+          {formatPercent(percent)}
+          {detail === undefined || detail === null || detail === "" ? "" : ` (${detail})`}
+        </span>
+        {high && <StatusBadge tone="warning">High</StatusBadge>}
+      </span>
+    </TableCell>
+  );
+}
+
 /** A value, or a dash that says nothing was sent to work it out from. */
 function ValueCell({ text }: { text: string | null }) {
   return (
@@ -148,7 +193,7 @@ export function HostsPage({
             ) : (
               <>
                 <ScrollHint>
-                  <Table className="max-sm:min-w-[44rem]">
+                  <Table className="max-sm:min-w-[56rem]">
                     <caption className="sr-only">Hosts, by name</caption>
                     <TableHeader className="[&_th]:h-8 [&_th]:text-xs [&_th]:font-normal [&_th]:text-ink-subtle">
                       <TableRow>
@@ -182,18 +227,11 @@ export function HostsPage({
                               <Freshness stale={host.stale} />
                             </span>
                           </TableCell>
-                          <ValueCell text={formatPercent(host.cpuPercent)} />
-                          <ValueCell text={formatPercent(host.memoryPercent)} />
-                          <ValueCell
-                            text={
-                              host.filesystemPercent === null
-                                ? null
-                                : `${formatPercent(host.filesystemPercent)}${
-                                    host.filesystemMount === null || host.filesystemMount === ""
-                                      ? ""
-                                      : ` (${host.filesystemMount})`
-                                  }`
-                            }
+                          <ShareCell percent={host.cpuPercent} />
+                          <ShareCell percent={host.memoryPercent} />
+                          <ShareCell
+                            percent={host.filesystemPercent}
+                            detail={host.filesystemMount}
                           />
                           <ValueCell text={formatLoad(host.load1m)} />
                         </TableRow>
@@ -202,11 +240,12 @@ export function HostsPage({
                   </Table>
                 </ScrollHint>
                 <p className="max-w-4xl text-xs text-pretty text-ink-subtle">
-                  Each value is the host's latest in the period. Stale means no data arrived in the
-                  last 5 minutes. This status appears when the period extends to now. A dash means
-                  the host sent no data to calculate the value. Read-only filesystems, such as snap
-                  package images, are always full. They are excluded from the fullest filesystem
-                  value.
+                  Each value is the host's latest in the period. The bar beside a share shows it out
+                  of 100%; at {HIGH_PERCENT}% or more it is marked High. Stale means no data arrived
+                  in the last 5 minutes. This status appears when the period extends to now. A dash
+                  means the host sent no data to calculate the value. Read-only filesystems, such as
+                  snap package images, are always full. They are excluded from the fullest
+                  filesystem value.
                 </p>
                 {data.truncated && (
                   <p className="text-sm text-ink-subtle">

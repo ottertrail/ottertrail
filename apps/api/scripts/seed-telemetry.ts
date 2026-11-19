@@ -2,7 +2,7 @@ import type { Random } from "./seed-random.ts";
 /**
  * The demo shop's servers, for the development seed (seed-data.ts): what
  * three services (web, billing, worker) and an OpenTelemetry Collector on
- * two hosts would export over OTLP, as OTLP/JSON requests. seed-data.ts
+ * three hosts would export over OTLP, as OTLP/JSON requests. seed-data.ts
  * hands each to the API's own normalizers (telemetry/normalize.ts), as the
  * OTLP routes do, so spans, logs, metrics, and the exceptions that become
  * error events are the rows real exporters make.
@@ -233,6 +233,23 @@ const HOURLY = [
 ];
 const HOURLY_TOTAL = HOURLY.reduce((sum, weight) => sum + weight, 0);
 
+/**
+ * The search incident: two days before today, 13:00 to 15:30 UTC, the
+ * full-text search runs two and a half times slower and a third of the
+ * searches time out, so the Services and Databases charts show a spike in
+ * the failed share, the 95th percentile, and the time spent.
+ */
+export const INCIDENT_DAYS_AGO = 2;
+const INCIDENT_HOURS = [13, 15.5] as const;
+
+/** A database call, for the database client's duration histogram. */
+interface DatabaseCall {
+  at: number;
+  database: string;
+  operation: string;
+  durationMs: number;
+}
+
 /** A server request the web service handled, for its duration histogram. */
 interface Request {
   at: number;
@@ -260,6 +277,9 @@ export function buildTelemetry(rng: Random, now: Date, userIds: readonly string[
   const releaseAt = today - RELEASE_DAYS_AGO * DAY_MS + 10 * 3_600_000;
   const webVersion = (at: number) => (at < releaseAt ? RELEASES.previous : RELEASES.current);
   const hosts = ["app-1", "app-2"];
+  const incidentFrom = today - INCIDENT_DAYS_AGO * DAY_MS + (INCIDENT_HOURS[0] ?? 0) * 3_600_000;
+  const incidentTo = today - INCIDENT_DAYS_AGO * DAY_MS + (INCIDENT_HOURS[1] ?? 0) * 3_600_000;
+  const inIncident = (at: number) => at >= incidentFrom && at < incidentTo;
   const web = (at: number, host: string) => service("web", webVersion(at), host, "nodejs");
   const billing = service("billing", "1.8.0", "app-2", "python");
   const worker = (at: number) => service("worker", webVersion(at), "app-2", "nodejs");
@@ -267,6 +287,7 @@ export function buildTelemetry(rng: Random, now: Date, userIds: readonly string[
   const traces: object[] = [];
   const logs: object[] = [];
   const requests: Request[] = [];
+  const calls: DatabaseCall[] = [];
   const orders: number[] = [];
   const jobs: { at: number; job: string }[] = [];
 
@@ -309,6 +330,12 @@ export function buildTelemetry(rng: Random, now: Date, userIds: readonly string[
       scope: Scope = SCOPES.pg,
       older = false,
     ): number {
+      calls.push({
+        at: start,
+        database: resource === billing ? "billing" : "shop",
+        operation: query.operation,
+        durationMs,
+      });
       trace.span(resource, scope, {
         name: `${query.operation} ${query.table}`,
         kind: CLIENT,
@@ -569,8 +596,11 @@ export function buildTelemetry(rng: Random, now: Date, userIds: readonly string[
           // The slow route: a full-text search without an index.
           const query = rng.pick(SEARCHES);
           const start = cursor;
-          const timedOut = rng.chance(0.015);
-          const duration = timedOut ? 3000 : Math.min(2900, rng.logNormal(750, 0.55));
+          const incident = inIncident(cursor);
+          const timedOut = rng.chance(incident ? 0.35 : 0.015);
+          const duration = timedOut
+            ? 3000
+            : Math.min(2900, rng.logNormal(750, 0.55) * (incident ? 2.5 : 1));
           later(() =>
             db(trace, resource, parent, start, duration, {
               operation: "SELECT",
@@ -973,8 +1003,8 @@ export function buildTelemetry(rng: Random, now: Date, userIds: readonly string[
   }
 
   const metrics = [
-    ...appMetrics(rng, nowMs, requests, orders, jobs, web, worker),
-    ...hostMetrics(rng, nowMs, hosts),
+    ...appMetrics(rng, nowMs, requests, calls, orders, jobs, web, worker),
+    ...hostMetrics(rng, nowMs, [...hosts, "db-1"]),
   ];
   return { traces, logs, metrics };
 }
@@ -998,17 +1028,68 @@ const point = (at: number, start: number, values: Record<string, Value>, value: 
 
 /** OpenTelemetry's default bounds for HTTP durations, in seconds. */
 const DURATION_BOUNDS = [0.005, 0.01, 0.025, 0.05, 0.075, 0.1, 0.25, 0.5, 0.75, 1, 2.5, 5, 7.5, 10];
+/** The semantic conventions' advised bounds for database client durations, in seconds. */
+const DATABASE_BOUNDS = [0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1, 5, 10];
 
 /**
- * The services' own metrics, from the requests and jobs above: the web
- * service's request durations (a histogram per route), orders placed (a
- * counter), its database pool (an up-down counter), and the worker's jobs
- * (a counter) and queue (a gauge). Cumulative, as SDKs export by default.
+ * A cumulative duration histogram's points at each tick, one series per
+ * entry: every sample (in milliseconds) up to the tick, in `bounds` (seconds).
+ */
+function durationPoints(
+  series: { attributes: Record<string, Value>; samples: { at: number; durationMs: number }[] }[],
+  bounds: readonly number[],
+  ticks: readonly number[],
+  start: number,
+): object[] {
+  const points: object[] = [];
+  for (const { attributes: values, samples } of series) {
+    const mine = samples.filter((sample) => sample.at >= start).toSorted((a, b) => a.at - b.at);
+    const buckets = Array.from({ length: bounds.length + 1 }, () => 0);
+    let count = 0;
+    let sum = 0;
+    let min = Number.POSITIVE_INFINITY;
+    let max = 0;
+    let next = 0;
+    for (const tick of ticks) {
+      while (next < mine.length && (mine[next]?.at ?? Infinity) <= tick) {
+        const seconds = (mine[next]?.durationMs ?? 0) / 1000;
+        const index = bounds.findIndex((bound) => seconds <= bound);
+        const bucket = index === -1 ? bounds.length : index;
+        buckets[bucket] = (buckets[bucket] ?? 0) + 1;
+        count += 1;
+        sum += seconds;
+        min = Math.min(min, seconds);
+        max = Math.max(max, seconds);
+        next += 1;
+      }
+      points.push({
+        timeUnixNano: nanos(tick),
+        startTimeUnixNano: nanos(start),
+        attributes: attributes(values),
+        count: String(count),
+        sum,
+        ...(count === 0 ? {} : { min, max }),
+        bucketCounts: buckets.map(String),
+        explicitBounds: bounds,
+      });
+    }
+  }
+  return points;
+}
+
+/**
+ * The services' own metrics, from the requests, calls, and jobs above:
+ * the web service's request durations (a histogram per route) and the
+ * shop database's calls' durations (a histogram per operation),
+ * orders placed (a counter), its database pool (an up-down counter), and
+ * the worker's jobs (a counter) and queue (a gauge). Cumulative, as SDKs
+ * export by default.
  */
 function appMetrics(
   rng: Random,
   nowMs: number,
   requests: readonly Request[],
+  calls: readonly DatabaseCall[],
   orders: readonly number[],
   jobs: readonly { at: number; job: string }[],
   web: (at: number, host: string) => Resource,
@@ -1022,49 +1103,45 @@ function appMetrics(
 
   // Request durations, per route, from the requests themselves.
   const routes = ["/", "/products/:slug", "/api/cart", "/api/search"];
-  const histogramPoints: object[] = [];
-  for (const route of routes) {
-    const mine = requests
-      .filter((request) => request.route === route && request.at >= start)
-      .toSorted((a, b) => a.at - b.at);
-    const buckets = Array.from({ length: DURATION_BOUNDS.length + 1 }, () => 0);
-    let count = 0;
-    let sum = 0;
-    let min = Number.POSITIVE_INFINITY;
-    let max = 0;
-    let next = 0;
-    for (const tick of ticks) {
-      while (next < mine.length && (mine[next]?.at ?? Infinity) <= tick) {
-        const seconds = (mine[next]?.durationMs ?? 0) / 1000;
-        const index = DURATION_BOUNDS.findIndex((bound) => seconds <= bound);
-        const bucket = index === -1 ? DURATION_BOUNDS.length : index;
-        buckets[bucket] = (buckets[bucket] ?? 0) + 1;
-        count += 1;
-        sum += seconds;
-        min = Math.min(min, seconds);
-        max = Math.max(max, seconds);
-        next += 1;
-      }
-      histogramPoints.push({
-        timeUnixNano: nanos(tick),
-        startTimeUnixNano: nanos(start),
-        attributes: attributes({
-          "http.request.method": "GET",
-          "http.route": route,
-        }),
-        count: String(count),
-        sum,
-        ...(count === 0 ? {} : { min, max }),
-        bucketCounts: buckets.map(String),
-        explicitBounds: DURATION_BOUNDS,
-      });
-    }
-  }
+  const histogramPoints = durationPoints(
+    routes.map((route) => ({
+      attributes: { "http.request.method": "GET", "http.route": route },
+      samples: requests.filter((request) => request.route === route),
+    })),
+    DURATION_BOUNDS,
+    ticks,
+    start,
+  );
   batch.add(webResource, SCOPES.webMetrics, {
     name: "http.server.request.duration",
     unit: "s",
     description: "Duration of HTTP server requests.",
     histogram: { aggregationTemporality: CUMULATIVE, dataPoints: histogramPoints },
+  });
+
+  // The shop database's calls' durations, per operation, from the calls themselves.
+  const shopCalls = calls.filter((call) => call.database === "shop");
+  const operations = [...new Set(shopCalls.map((call) => call.operation))].toSorted();
+  batch.add(webResource, SCOPES.webMetrics, {
+    name: "db.client.operation.duration",
+    unit: "s",
+    description: "Duration of database client operations.",
+    histogram: {
+      aggregationTemporality: CUMULATIVE,
+      dataPoints: durationPoints(
+        operations.map((operation) => ({
+          attributes: {
+            "db.system.name": "postgresql",
+            "db.namespace": "shop",
+            "db.operation.name": operation,
+          },
+          samples: shopCalls.filter((call) => call.operation === operation),
+        })),
+        DATABASE_BOUNDS,
+        ticks,
+        start,
+      ),
+    },
   });
 
   // Orders placed, counted as they happen.
@@ -1171,17 +1248,20 @@ const SCRAPER = (name: string) => ({
 const GIB = 1024 ** 3;
 
 /**
- * Two hosts' metrics, as an OpenTelemetry Collector's host metrics
+ * The hosts' metrics, as an OpenTelemetry Collector's host metrics
  * receiver sends them, under its scrapers' scope names (docs/telemetry.md,
- * "Hosts"): CPU time, memory, filesystems, network, disk, and load.
+ * "Hosts"): CPU time, memory, filesystems, network, disk, and load. Each
+ * host has its own load: app-1 is quiet, app-2 busier, and db-1, the
+ * database server, runs its CPU hard with its memory and data disk near
+ * full, so the Hosts page shows values from low to high.
  */
 function hostMetrics(rng: Random, nowMs: number, hosts: readonly string[]): object[] {
   const ticks = times(nowMs, HOST_METRIC_STEP_MS);
   const start = (ticks[0] ?? nowMs) - HOST_METRIC_STEP_MS;
   const requests: object[] = [];
   for (const host of hosts) {
-    const busy = host === "app-1" ? 0.18 : 0.3;
-    const memoryTotal = host === "app-1" ? 4 * GIB : 8 * GIB;
+    const busy = { "app-1": 0.18, "app-2": 0.3 }[host] ?? 0.58;
+    const memoryTotal = host === "app-1" ? 4 * GIB : host === "app-2" ? 8 * GIB : 16 * GIB;
     const resource: Resource = {
       key: host,
       attributes: {
@@ -1225,7 +1305,10 @@ function hostMetrics(rng: Random, nowMs: number, hosts: readonly string[]): obje
       }
       const usedMemory =
         memoryTotal *
-        Math.min(0.92, (host === "app-1" ? 0.48 : 0.62) + traffic * 0.08 + rng.normal(0, 0.01));
+        Math.min(
+          0.92,
+          ({ "app-1": 0.48, "app-2": 0.62 }[host] ?? 0.8) + traffic * 0.08 + rng.normal(0, 0.01),
+        );
       const cached = memoryTotal * 0.18;
       const buffered = memoryTotal * 0.04;
       for (const [state, value] of Object.entries({
@@ -1239,10 +1322,15 @@ function hostMetrics(rng: Random, nowMs: number, hosts: readonly string[]): obje
       const mounts: [string, string, number, number][] =
         host === "app-1"
           ? [["/", "/dev/sda1", 80 * GIB, 0.42]]
-          : [
-              ["/", "/dev/sda1", 80 * GIB, 0.38],
-              ["/var/lib/postgresql", "/dev/sdb1", 200 * GIB, 0.78],
-            ];
+          : host === "app-2"
+            ? [
+                ["/", "/dev/sda1", 80 * GIB, 0.38],
+                ["/var/lib/postgresql", "/dev/sdb1", 200 * GIB, 0.78],
+              ]
+            : [
+                ["/", "/dev/sda1", 40 * GIB, 0.55],
+                ["/var/lib/postgresql", "/dev/nvme1n1", 500 * GIB, 0.89],
+              ];
       for (const [mountpoint, device, size, base] of mounts) {
         const usedShare = base + (0.04 * index) / ticks.length;
         const reserved = size * 0.05;

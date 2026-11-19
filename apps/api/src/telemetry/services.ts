@@ -466,6 +466,40 @@ export async function serviceChart(
   now: Date,
   { final = SERVICES_FINAL }: { final?: boolean } = {},
 ): Promise<ServiceChart> {
+  return {
+    service: target.service,
+    route: target.route,
+    ...(await requestChart(reader, range, target, now, final)),
+  };
+}
+
+/** Every service's requests together over the range: the Services page's charts above its list. */
+export type ServicesTrend = Omit<ServiceChart, "service" | "route">;
+
+/**
+ * Every server span of the project's environment over the range, in the
+ * buckets of a service's chart (bucketsOf), in one read, counted as the
+ * Services page counts them: the totals are the sum of the page's
+ * services, copies of a retried span included until its day is merged
+ * (SERVICES_FINAL), so the charts and the list agree.
+ */
+export async function servicesTrend(
+  reader: Reader,
+  range: TelemetryRange,
+  now: Date,
+  { final = SERVICES_FINAL }: { final?: boolean } = {},
+): Promise<ServicesTrend> {
+  return requestChart(reader, range, null, now, final);
+}
+
+/** The requests of one service or route (or of all services, for null) over the range, in buckets. */
+async function requestChart(
+  reader: Reader,
+  range: TelemetryRange,
+  target: RouteTarget | null,
+  now: Date,
+  final: boolean,
+): Promise<ServicesTrend> {
   const buckets = bucketsOf(range, now);
   const params = new QueryParams();
   const rows =
@@ -484,7 +518,7 @@ export async function serviceChart(
                     status_code, status_class, duration_ns
              FROM (${serverSpans(
                params,
-               { ...range, service: target.service, route: target.route },
+               target === null ? range : { ...range, service: target.service, route: target.route },
                { final },
              )})
            )
@@ -553,8 +587,6 @@ export async function serviceChart(
       return length > 0 ? value / length : null;
     });
   return {
-    service: target.service,
-    route: target.route,
     start: new Date(buckets.firstMs),
     stepSeconds: buckets.stepMs / 1000,
     buckets: buckets.count,

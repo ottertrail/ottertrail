@@ -37,6 +37,7 @@ import { ReportFilterBar } from "../errors/range-controls";
 import { NoSuchProject } from "../projects/no-such-project";
 import { databaseLabel, formatFailed, formatPerSecond, servicesText } from "./database-format";
 import { formatDuration } from "./format";
+import { DatabasesTrend } from "./report-trends";
 import { databasesSearchOf, shapeSearchOf } from "./search";
 import { SendTelemetry } from "./send-telemetry";
 
@@ -257,6 +258,9 @@ export function DatabasesPage({
               </Button>
             </AlertAction>
           </Alert>
+        )}
+        {data?.received !== false && data?.databases.length !== 0 && (
+          <DatabasesTrend projectId={projectId} range={range} environment={environment} />
         )}
         {data === undefined ? (
           !list.isError && (

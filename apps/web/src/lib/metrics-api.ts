@@ -215,3 +215,105 @@ export const metricChartQuery = (
     },
     placeholderData: keepPreviousData,
   });
+
+/** GET /api/projects/:id/metrics/sparkline: one listed metric's default line, in at most 30 buckets. */
+export interface MetricSparkline {
+  timeZone: string;
+  name: string;
+  kind: MetricKind;
+  /** avg (gauge), sum (up-down counter), rate (counter), p95 (histogram). */
+  measure: string;
+  /** The first bucket's start, ISO. */
+  start: string;
+  stepSeconds: number;
+  buckets: number;
+  /** null where nothing arrived. */
+  values: (number | null)[];
+  /** False for a histogram without bucket counts: no percentile to draw. */
+  percentiles: boolean;
+  /** Series read: at most 100, those with the most points. */
+  seriesCount: number;
+  /** More series than that: the line leaves out those with the fewest points. */
+  seriesCapped: boolean;
+}
+
+const isMetricSparkline = (value: unknown): value is MetricSparkline =>
+  isRecord(value) &&
+  isText(value.timeZone) &&
+  isText(value.name) &&
+  isMetricKind(value.kind) &&
+  isText(value.measure) &&
+  isText(value.start) &&
+  isNumber(value.stepSeconds) &&
+  isNumber(value.buckets) &&
+  isListOf(value.values, isValueOrNull) &&
+  value.values.length === value.buckets &&
+  typeof value.percentiles === "boolean" &&
+  isNumber(value.seriesCount) &&
+  typeof value.seriesCapped === "boolean";
+
+/** Sparkline requests a page has in flight at most; the rest wait their turn. */
+export const SPARKLINES_AT_ONCE = 2;
+let sparklinesRunning = 0;
+const sparklineTurns: (() => void)[] = [];
+
+/**
+ * Runs `work` once fewer than SPARKLINES_AT_ONCE sparklines load, so a
+ * page of rows asks the API two at a time. One that is no longer wanted
+ * (its row's query cancelled) leaves the queue without asking.
+ */
+async function inSparklineTurn<T>(work: () => Promise<T>, signal: AbortSignal): Promise<T> {
+  if (sparklinesRunning >= SPARKLINES_AT_ONCE) {
+    await new Promise<void>((resolve, reject) => {
+      const start = () => {
+        signal.removeEventListener("abort", leave);
+        resolve();
+      };
+      const leave = () => {
+        const at = sparklineTurns.indexOf(start);
+        if (at !== -1) sparklineTurns.splice(at, 1);
+        reject(signal.reason);
+      };
+      signal.addEventListener("abort", leave, { once: true });
+      sparklineTurns.push(start);
+    });
+  } else {
+    sparklinesRunning += 1;
+  }
+  try {
+    return await work();
+  } finally {
+    // The turn passes straight to the next waiting line, if one waits.
+    const next = sparklineTurns.shift();
+    if (next === undefined) sparklinesRunning -= 1;
+    else next();
+  }
+}
+
+/** One metric of the list over the range, as its sparkline draws it. */
+export const metricSparklineQuery = (
+  projectId: string,
+  range: PageRange,
+  environment: string,
+  metric: { name: string; kind: MetricKind },
+) =>
+  queryOptions({
+    queryKey: ["metric", projectId, "sparkline", range, environment, metric.name, metric.kind],
+    retry: telemetryRetry,
+    queryFn: ({ signal }) =>
+      inSparklineTurn(async () => {
+        const query = new URLSearchParams({
+          ...rangeQuery(range, environment),
+          name: metric.name,
+          kind: metric.kind,
+        });
+        return expectShape(
+          await apiRequest(`${projectPath(projectId)}/metrics/sparkline?${query.toString()}`, {
+            signal,
+          }),
+          isMetricSparkline,
+        );
+      }, signal),
+    // A row's line is never another period's: a new period shows the skeleton.
+    staleTime: 60_000,
+  });

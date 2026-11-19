@@ -102,14 +102,20 @@ function Chart({ plotHeight, ...props }: ChartProps & { plotHeight?: number }) {
  */
 export function ChartSection({
   headingLevel = 3,
+  actions,
   ...props
-}: ChartProps & { headingLevel?: 2 | 3 }) {
+}: ChartProps & {
+  headingLevel?: 2 | 3;
+  /** Controls beside the title, such as a toggle for what the chart draws. */
+  actions?: React.ReactNode;
+}) {
   const { title, description, missing } = props;
   return (
     <ReportChart
       title={title}
       headingLevel={headingLevel}
       description={description}
+      actions={actions}
       table={missing === undefined ? <ChartTable {...props} /> : undefined}
     >
       {missing === undefined ? (

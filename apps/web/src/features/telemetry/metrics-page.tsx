@@ -31,6 +31,7 @@ import { ReportFilterBar } from "../errors/range-controls";
 import { NoSuchProject } from "../projects/no-such-project";
 import { formatPreciseMoment } from "./format";
 import { KIND_LABELS, unitText } from "./metric-format";
+import { MetricSparkline, SPARKLINE_MAX_DAYS } from "./metric-sparkline";
 import { DEFAULT_STAT, environmentSearch, metricSearchOf, rangeSearch } from "./search";
 import { SendTelemetry } from "./send-telemetry";
 
@@ -60,6 +61,11 @@ export function MetricsPage({
     return <NoSuchProject />;
   }
   const data = list.data;
+  // The period's days, both included.
+  const days =
+    data === undefined
+      ? 0
+      : (Date.parse(data.lastDay) - Date.parse(data.firstDay)) / 86_400_000 + 1;
 
   return (
     <div className="flex flex-col">
@@ -125,11 +131,12 @@ export function MetricsPage({
             ) : (
               <>
                 <ScrollHint>
-                  <Table className="max-sm:min-w-[44rem]">
+                  <Table className="max-sm:min-w-[52rem]">
                     <caption className="sr-only">Metrics, by name</caption>
                     <TableHeader className="[&_th]:h-8 [&_th]:text-xs [&_th]:font-normal [&_th]:text-ink-subtle">
                       <TableRow>
                         <TableHead className={`pl-0 ${PINNED}`}>Metric</TableHead>
+                        <TableHead>Over the period</TableHead>
                         <TableHead>Kind</TableHead>
                         <TableHead>Unit</TableHead>
                         <TableHead>Services</TableHead>
@@ -160,6 +167,15 @@ export function MetricsPage({
                               </Link>
                             )}
                           </TableCell>
+                          <TableCell className="w-28">
+                            <MetricSparkline
+                              projectId={projectId}
+                              range={range}
+                              environment={environment}
+                              metric={metric}
+                              days={list.isPlaceholderData ? undefined : days}
+                            />
+                          </TableCell>
                           <TableCell>{KIND_LABELS[metric.kind]}</TableCell>
                           <TableCell className="max-w-32 truncate">
                             {unitText(metric.unit) === "" ? (
@@ -186,6 +202,13 @@ export function MetricsPage({
                     </TableBody>
                   </Table>
                 </ScrollHint>
+                <p className="max-w-4xl text-xs text-pretty text-ink-subtle">
+                  Each line shows the metric over the period, as its chart opens: a gauge&apos;s
+                  average, an up-down counter&apos;s total, a counter&apos;s rate per second, and a
+                  histogram&apos;s 95th percentile. Each line has its own scale, from its lowest to
+                  its highest value, and the dot is the latest. A dash means nothing to draw. Lines
+                  are drawn for periods of up to {SPARKLINE_MAX_DAYS} days.
+                </p>
                 {data.truncated && (
                   <p className="text-sm text-ink-subtle">
                     The project sent more than {data.metrics.length.toLocaleString("en-US")} metrics

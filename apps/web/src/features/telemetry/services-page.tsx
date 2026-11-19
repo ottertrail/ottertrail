@@ -38,6 +38,7 @@ import { formatConversion, formatWhole } from "../analytics/format";
 import { ReportFilterBar } from "../errors/range-controls";
 import { NoSuchProject } from "../projects/no-such-project";
 import { formatDuration } from "./format";
+import { ServicesTrend } from "./report-trends";
 import {
   addRuleSearch,
   isLinkableService,
@@ -356,6 +357,9 @@ export function ServicesPage({
               </Button>
             </AlertAction>
           </Alert>
+        )}
+        {data?.received !== false && only === undefined && data?.services.length !== 0 && (
+          <ServicesTrend projectId={projectId} range={range} environment={environment} />
         )}
         {data === undefined ? (
           !list.isError && (

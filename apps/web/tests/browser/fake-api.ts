@@ -12,6 +12,7 @@ import type { Analytics, BreakdownRow, DayPoint } from "../../src/lib/analytics-
 import type { Channel, Delivery } from "../../src/lib/channels-api.ts";
 import type {
   DatabaseList,
+  DatabasesTrend,
   DatabaseSummary,
   ShapeDetail,
   ShapeSummary,
@@ -34,6 +35,7 @@ import {
   type MetricChart,
   type MetricList,
   type MetricSeries,
+  type MetricSparkline,
 } from "../../src/lib/metrics-api.ts";
 import { WIDGETS, type WidgetId } from "../../src/lib/overview-api.ts";
 import {
@@ -52,7 +54,12 @@ import type {
   ReplayTimeline,
   TimelineItem,
 } from "../../src/lib/replays-api.ts";
-import type { ServiceChart, ServiceList, StatusCounts } from "../../src/lib/services-api.ts";
+import type {
+  ServiceChart,
+  ServiceList,
+  ServicesTrend,
+  StatusCounts,
+} from "../../src/lib/services-api.ts";
 import type { LocationDataStatus, Settings } from "../../src/lib/settings-api.ts";
 import type { SourceMapFile, SourceMapRelease } from "../../src/lib/source-maps-api.ts";
 import type { Speed } from "../../src/lib/speed-api.ts";
@@ -169,6 +176,18 @@ export interface FakeApi {
   metrics: (query: URLSearchParams) => MetricList | Response;
   /** Answers GET /api/projects/:id/metrics/chart; by default, fakeMetricChart. */
   metricChart: (query: URLSearchParams) => MetricChart | Response;
+  /** Answers GET /api/projects/:id/metrics/sparkline (a promise holds it); by default, fakeMetricSparkline. */
+  metricSparkline: (
+    query: URLSearchParams,
+  ) => MetricSparkline | Response | Promise<MetricSparkline | Response>;
+  /** Answers GET /api/projects/:id/services/trend (a promise holds it); by default, fakeServicesTrend. */
+  servicesTrend: (
+    query: URLSearchParams,
+  ) => ServicesTrend | Response | Promise<ServicesTrend | Response>;
+  /** Answers GET /api/projects/:id/databases/trend (a promise holds it); by default, fakeDatabasesTrend. */
+  databasesTrend: (
+    query: URLSearchParams,
+  ) => DatabasesTrend | Response | Promise<DatabasesTrend | Response>;
   /** Answers GET /api/projects/:id/services; by default, fakeServices. */
   services: (query: URLSearchParams) => ServiceList | Response;
   /** Answers GET /api/projects/:id/services/chart; by default, fakeServiceChart. */
@@ -920,6 +939,41 @@ export function fakeMetrics(query: URLSearchParams): MetricList {
   };
 }
 
+/** 12 values from `base`, `step` apart, the one at `gap` missing. */
+const ramp = (base: number, step: number, gap = -1) =>
+  Array.from({ length: 12 }, (_, i): number | null => (i === gap ? null : base + i * step));
+
+/**
+ * A listed metric's sparkline over 12 hourly buckets from 16 Nov 00:00
+ * UTC: the histogram's 95th percentile 100 to 210 ms with the 4th hour
+ * missing; the counter's rate 1 to 12 a second; the gauge 64 to 75 MiB.
+ * Any other name has no data.
+ */
+export function fakeMetricSparkline(query: URLSearchParams): MetricSparkline {
+  const name = query.get("name") ?? "";
+  const asked = query.get("kind");
+  const kind = isMetricKind(asked) ? asked : "gauge";
+  const measure = { gauge: "avg", updown: "sum", counter: "rate", histogram: "p95" }[kind];
+  const values: Record<string, (number | null)[]> = {
+    "http.server.request.duration": ramp(100, 10, 3),
+    "http.server.requests": ramp(1, 1),
+    "process.memory.usage": ramp(64 * 1024 ** 2, 1024 ** 2),
+  };
+  return {
+    timeZone: "Asia/Singapore",
+    name,
+    kind,
+    measure,
+    start: "2026-11-16T00:00:00.000Z",
+    stepSeconds: 3600,
+    buckets: 12,
+    values: values[name] ?? Array.from({ length: 12 }, () => null),
+    percentiles: true,
+    seriesCount: 1,
+    seriesCapped: false,
+  };
+}
+
 /** No metric ever received. */
 export function noMetrics(query: URLSearchParams): MetricList {
   return { ...fakeMetrics(query), metrics: [], received: false };
@@ -1101,6 +1155,55 @@ export function fakeServiceChart(query: URLSearchParams): ServiceChart {
       p95Us: whenBusy(150_000),
       p99Us: whenBusy(1_500_000),
     },
+  };
+}
+
+/** Every service's requests together: the service chart's numbers, for the whole project. */
+export function fakeServicesTrend(query: URLSearchParams): ServicesTrend {
+  const {
+    environments: _environments,
+    service: _service,
+    route: _route,
+    ...trend
+  } = fakeServiceChart(query);
+  return trend;
+}
+
+/** No request in the period. */
+export function noServicesTrend(query: URLSearchParams): ServicesTrend {
+  const {
+    environments: _environments,
+    service: _service,
+    route: _route,
+    ...trend
+  } = noServiceChart(query);
+  return trend;
+}
+
+/**
+ * Every database call together, 12 hourly buckets from 16 Nov 00:00 UTC:
+ * nothing in the first two hours, then 1,800 calls an hour (0.5 a second)
+ * taking 90 s in all, and at 05:00, 7,200 calls (2 a second) taking 540 s.
+ */
+export function fakeDatabasesTrend(query: URLSearchParams): DatabasesTrend {
+  const { environments: _environments, ...range } = telemetryRange(query);
+  const calls = Array.from({ length: 12 }, (_, i) => (i < 2 ? 0 : i === 5 ? 7200 : 1800));
+  const totalUs = calls.map((count) =>
+    count === 7200 ? 540_000_000 : count === 0 ? 0 : 90_000_000,
+  );
+  return {
+    ...range,
+    start: "2026-11-16T00:00:00.000Z",
+    stepSeconds: 3600,
+    buckets: 12,
+    totals: {
+      calls: sumOf(calls),
+      failed: 0,
+      totalUs: sumOf(totalUs),
+      perSecond: sumOf(calls) / 43_200,
+    },
+    counts: { calls, failed: calls.map(() => 0), totalUs },
+    perSecond: calls.map((count) => count / 3600),
   };
 }
 
@@ -3437,6 +3540,18 @@ async function answer(api: FakeApi, url: URL, init: RequestInit | undefined): Pr
     const result = api.metricChart(url.searchParams);
     return result instanceof Response ? result : json(result);
   }
+  if (/^\/api\/projects\/[^/]+\/metrics\/sparkline$/.test(path)) {
+    const result = await api.metricSparkline(url.searchParams);
+    return result instanceof Response ? result : json(result);
+  }
+  if (/^\/api\/projects\/[^/]+\/databases\/trend$/.test(path)) {
+    const result = await api.databasesTrend(url.searchParams);
+    return result instanceof Response ? result : json(result);
+  }
+  if (/^\/api\/projects\/[^/]+\/services\/trend$/.test(path)) {
+    const result = await api.servicesTrend(url.searchParams);
+    return result instanceof Response ? result : json(result);
+  }
   if (/^\/api\/projects\/[^/]+\/metrics$/.test(path)) {
     const result = api.metrics(url.searchParams);
     return result instanceof Response ? result : json(result);
@@ -3662,6 +3777,9 @@ export function installFakeApi(overrides: Partial<FakeApi> = {}): FakeApi {
     log: fakeLog,
     metrics: fakeMetrics,
     metricChart: fakeMetricChart,
+    metricSparkline: fakeMetricSparkline,
+    servicesTrend: fakeServicesTrend,
+    databasesTrend: fakeDatabasesTrend,
     services: fakeServices,
     serviceChart: fakeServiceChart,
     databases: fakeDatabases,

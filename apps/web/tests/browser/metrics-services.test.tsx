@@ -51,7 +51,8 @@ describe("the metrics page", () => {
     expect(lastQuery(api, "/metrics")).toEqual({ period: "7d" });
     await expect.element(sidebarLink("Metrics")).toHaveAttribute("data-active");
     const rows = [...table.element().querySelectorAll("tbody tr")];
-    expect(rows.map(cellsOf)).toEqual([
+    // The second column holds each row's sparkline (report-charts.test.tsx).
+    expect(rows.map((row) => cellsOf(row).toSpliced(1, 1))).toEqual([
       ["http.server.request.duration", "Histogram", "ms", "api, web", "16 Nov 2026, 16:00:00.000"],
       ["http.server.requests", "Counter", "request", "web", "16 Nov 2026, 16:01:00.000"],
       [

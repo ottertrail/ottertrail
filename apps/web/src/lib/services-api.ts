@@ -219,3 +219,30 @@ export const serviceChartQuery = (
     },
     placeholderData: keepPreviousData,
   });
+
+/** GET /api/projects/:id/services/trend: every service's requests together, over the period. */
+export type ServicesTrend = Omit<ServiceChart, "environments" | "service" | "route">;
+
+const isServicesTrend = (value: unknown): value is ServicesTrend =>
+  isRecord(value) && isServiceChart({ ...value, environments: [], service: "", route: null });
+
+/** Every service's requests over the period, in time buckets: the charts above the Services list. */
+export const servicesTrendQuery = (projectId: string, range: PageRange, environment: string) =>
+  queryOptions({
+    queryKey: ["services", projectId, "trend", range, environment],
+    retry: telemetryRetry,
+    queryFn: async ({ signal }) => {
+      const query = new URLSearchParams({
+        ...rangeParams(range),
+        ...(environment === DEFAULT_ENVIRONMENT ? {} : { environment }),
+      });
+      return expectShape(
+        await apiRequest(
+          `/api/projects/${encodeURIComponent(projectId)}/services/trend?${query.toString()}`,
+          { signal },
+        ),
+        isServicesTrend,
+      );
+    },
+    placeholderData: keepPreviousData,
+  });

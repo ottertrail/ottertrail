@@ -259,6 +259,107 @@ export async function listDatabases(
   };
 }
 
+/** Every database call of the range together, in time buckets: the Databases page's charts. */
+export interface DatabasesTrend {
+  /** The first bucket's start. */
+  start: Date;
+  stepSeconds: number;
+  buckets: number;
+  /** The whole range, counted as the Databases page counts it: the buckets add up to these. */
+  totals: { calls: number; failed: number; totalUs: number; perSecond: number | null };
+  /** Per bucket: the calls, the failed ones, and the time they took, added up, in microseconds. */
+  counts: { calls: number[]; failed: number[]; totalUs: number[] };
+  /** Calls per second, over the bucket's seconds within the range and before now. */
+  perSecond: (number | null)[];
+}
+
+interface TrendRow {
+  /** "1" for the row of the whole range. */
+  whole: string | number;
+  bucket: string | number;
+  calls: string;
+  failed: string;
+  total_ns: string;
+}
+
+/**
+ * Every database call of the project's environment over the range, in
+ * the buckets a metric's chart would have (bucketsOf), and over the whole
+ * range, in one read (GROUPING SETS ((), (bucket))): the calls, failed
+ * calls, and time spent. Only counts and sums, so the read keeps one row
+ * per bucket, not each call's duration. A call later than the last
+ * bucket counts in the last, so the buckets add up to the totals, which
+ * are the Databases page's databases added up. Read without FINAL, as the
+ * list is (SERVICES_FINAL).
+ */
+export async function databasesTrend(
+  reader: Reader,
+  range: TelemetryRange,
+  now: Date,
+  { final = SERVICES_FINAL }: { final?: boolean } = {},
+): Promise<DatabasesTrend> {
+  const buckets = bucketsOf(range, now);
+  const params = new QueryParams();
+  const rows =
+    buckets.count === 0
+      ? []
+      : await queryRows<TrendRow>(
+          reader,
+          `SELECT grouping(bucket) AS whole, bucket,
+                  count() AS calls, countIf(status_code = 'error') AS failed,
+                  sum(duration_ns) AS total_ns
+           FROM (
+             SELECT least(greatest(intDiv(toUnixTimestamp64Milli(timestamp) - ${params.add(buckets.firstMs, "Int64")},
+                                          ${params.add(buckets.stepMs, "Int64")}), 0),
+                          ${params.add(buckets.count - 1, "Int64")}) AS bucket,
+                    status_code, duration_ns
+             FROM (${databaseCalls(params, range, { final })})
+           )
+           GROUP BY GROUPING SETS ((), (bucket))
+           ORDER BY whole DESC, bucket
+           LIMIT ${buckets.count + 1}`,
+          params,
+          DASHBOARD_SETTINGS,
+        );
+  const blank = () => Array.from({ length: buckets.count }, () => 0);
+  const counts = { calls: blank(), failed: blank(), totalUs: blank() };
+  const seconds = secondsOf(range, now);
+  let totals: DatabasesTrend["totals"] = {
+    calls: 0,
+    failed: 0,
+    totalUs: 0,
+    perSecond: seconds > 0 ? 0 : null,
+  };
+  for (const row of rows) {
+    const calls = Number(row.calls);
+    if (String(row.whole) === "1") {
+      totals = {
+        calls,
+        failed: Number(row.failed),
+        totalUs: Number(row.total_ns) / 1000,
+        perSecond: seconds > 0 ? calls / seconds : null,
+      };
+      continue;
+    }
+    const index = Number(row.bucket);
+    if (index < 0 || index >= buckets.count) continue;
+    counts.calls[index] = calls;
+    counts.failed[index] = Number(row.failed);
+    counts.totalUs[index] = Number(row.total_ns) / 1000;
+  }
+  return {
+    start: new Date(buckets.firstMs),
+    stepSeconds: buckets.stepMs / 1000,
+    buckets: buckets.count,
+    totals,
+    counts,
+    perSecond: counts.calls.map((calls, index) => {
+      const length = bucketSeconds(buckets, index);
+      return length > 0 ? calls / length : null;
+    }),
+  };
+}
+
 /** One of a shape's slowest calls: where it is on the trace page. */
 export interface SlowCall {
   traceId: string;

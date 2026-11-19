@@ -161,13 +161,14 @@ export interface Buckets {
 
 /**
  * The buckets of a range: the shortest step that keeps them within
- * MAX_BUCKETS, counted from the start of the range's first day so they
+ * `maxBuckets` (MAX_BUCKETS for a chart), counted from the start of the range's first day so they
  * fall on whole minutes and hours of the instance's time, from the
  * range's start (or the retention's) to its end or now, whichever is sooner.
  */
 export function bucketsOf(
   range: Pick<TelemetryRange, "dayStart" | "from" | "to">,
   now: Date,
+  maxBuckets = MAX_BUCKETS,
 ): Buckets {
   const anchor = range.dayStart.getTime();
   const fromMs = range.from.getTime();
@@ -176,8 +177,8 @@ export function bucketsOf(
     const stepMs = step * 1000;
     const firstMs = anchor + Math.floor((fromMs - anchor) / stepMs) * stepMs;
     const count = endMs > fromMs ? Math.ceil((endMs - firstMs) / stepMs) : 0;
-    if (count <= MAX_BUCKETS || step === STEPS_SECONDS.at(-1)) {
-      return { firstMs, stepMs, count: Math.min(count, MAX_BUCKETS), fromMs, endMs };
+    if (count <= maxBuckets || step === STEPS_SECONDS.at(-1)) {
+      return { firstMs, stepMs, count: Math.min(count, maxBuckets), fromMs, endMs };
     }
   }
   throw new Error("unreachable: the last step always returns");
@@ -261,6 +262,10 @@ export interface ChartOptions {
    * charts, such as a host's (hosts.ts). Not for histograms.
    */
   single?: boolean | undefined;
+  /** Series read at most, those with the most points: MAX_SERIES unless given (a sparkline reads fewer). */
+  maxSeries?: number | undefined;
+  /** Histograms only: the percentiles alone, without the observations per second (a sparkline draws none). */
+  percentilesOnly?: boolean | undefined;
 }
 
 /**
@@ -462,6 +467,7 @@ async function chartIn(
   const splitKeys = options.splitAny ?? (options.split === undefined ? [] : [options.split]);
   const { names } = options;
   const single = options.single === true;
+  const maxSeries = options.maxSeries ?? MAX_SERIES;
   if (single && histogram) throw new Error("a single-query chart takes no histogram");
   const empty: MetricChart = {
     name: options.name,
@@ -499,11 +505,11 @@ async function chartIn(
      WHERE ${metricRows(selectParams, range.from)}
      GROUP BY series
      ORDER BY points DESC, series_key
-     LIMIT ${MAX_SERIES + 1}`,
+     LIMIT ${maxSeries + 1}`,
         selectParams,
         DASHBOARD_SETTINGS,
       );
-  const listed = found.slice(0, MAX_SERIES);
+  const listed = found.slice(0, maxSeries);
   const keys = [...new Set(listed.flatMap((row) => row.keys))]
     .toSorted((a, b) => a.localeCompare(b))
     .slice(0, MAX_SPLIT_KEYS);
@@ -534,7 +540,7 @@ async function chartIn(
     unit: listed[0]?.series_unit ?? "",
     keys,
     seriesCount: listed.length,
-    seriesCapped: found.length > MAX_SERIES,
+    seriesCapped: found.length > maxSeries,
     skippedSeries: histogram ? listed.length - withBuckets.length : 0,
     bounds,
     percentiles: withBuckets.length > 0,
@@ -662,7 +668,10 @@ async function chartIn(
       SELECT label, bucket, sumForEach(step_counts) AS step_counts, sum(part) AS increase,
              sum(part) AS vol, min(low) AS low, max(high) AS high
       FROM (
-        SELECT label, toInt64(bucket) AS bucket, part,
+        ${
+          options.percentilesOnly === true
+            ? ""
+            : `SELECT label, toInt64(bucket) AS bucket, part,
                CAST([], 'Array(Int64)') AS step_counts,
                CAST(NULL, 'Nullable(Float64)') AS low, CAST(NULL, 'Nullable(Float64)') AS high
         FROM (
@@ -672,7 +681,8 @@ async function chartIn(
             "if(is_delta OR restarted OR n < prev_n, n, n - prev_n)",
           )})
         )
-        UNION ALL
+        UNION ALL`
+        }
         SELECT label, toInt64(bucket) AS bucket, toFloat64(0) AS part,
                if(delta OR restarted
                     OR arrayExists((a, b) -> a < b, last_counts, ${previous}),
@@ -811,6 +821,95 @@ function seriesOf(
   return [...lines.values()].toSorted(
     (a, b) => Number(a.other) - Number(b.other) || b.volume - a.volume,
   );
+}
+
+/** Time buckets a sparkline has at most: a day is hours, 7 days 6 hours. */
+export const SPARKLINE_BUCKETS = 30;
+/**
+ * The longest period a sparkline is drawn for, in days: its two reads take
+ * the metric's rows of the whole period, and a list asks for one per row.
+ */
+export const SPARKLINE_MAX_DAYS = 7;
+/**
+ * Series a sparkline reads at most, those with the most points: a line of
+ * a list is a glance, and a metric's own chart reads up to MAX_SERIES.
+ */
+export const SPARKLINE_SERIES = 100;
+
+/**
+ * What a sparkline draws of each kind: the line a metric's chart opens on
+ * (the dashboard's default measure). A gauge's average, an up-down
+ * counter's total, a counter's rate per second, a histogram's 95th
+ * percentile.
+ */
+export const SPARKLINE_MEASURES: Record<MetricKind, string> = {
+  gauge: "avg",
+  updown: "sum",
+  counter: "rate",
+  histogram: "p95",
+};
+
+export interface MetricSparkline {
+  name: string;
+  kind: MetricKind;
+  /** SPARKLINE_MEASURES' measure of the kind. */
+  measure: string;
+  start: Date;
+  stepSeconds: number;
+  buckets: number;
+  /** One per bucket; null where nothing arrived (or, for a histogram, no bucket counts). */
+  values: (number | null)[];
+  /** A histogram's series have bucket counts to work its percentiles out from. */
+  percentiles: boolean;
+  /** Series read: at most SPARKLINE_SERIES. */
+  seriesCount: number;
+  /** More series than SPARKLINE_SERIES: the line leaves out those with the fewest points. */
+  seriesCapped: boolean;
+}
+
+/**
+ * One metric of the Metrics page's list, as its chart reads it (chartIn,
+ * without a split), in at most SPARKLINE_BUCKETS buckets and of at most
+ * SPARKLINE_SERIES series: the measure of SPARKLINE_MEASURES. Two queries,
+ * as a chart's: the first ranks the series (without FINAL), the second
+ * reads theirs, FINAL, from the lookback before the range. A histogram's
+ * reads only its bucket counts, not its observations per second, which a
+ * sparkline does not draw. Each reads only its metric's rows (the sort
+ * key's project and name).
+ */
+export async function metricSparkline(
+  reader: Reader,
+  range: TelemetryRange,
+  options: Pick<ChartOptions, "name" | "kind">,
+  now: Date,
+): Promise<MetricSparkline> {
+  const buckets = bucketsOf(range, now, SPARKLINE_BUCKETS);
+  const chart = await chartIn(
+    reader,
+    range,
+    {
+      name: options.name,
+      kind: options.kind,
+      maxSeries: SPARKLINE_SERIES,
+      percentilesOnly: true,
+    },
+    buckets,
+    { untilMs: buckets.endMs, lookbackMs: Math.max(buckets.stepMs, MIN_LOOKBACK_MS) },
+  );
+  const measure = SPARKLINE_MEASURES[options.kind];
+  const [line] = chart.series;
+  return {
+    name: options.name,
+    kind: options.kind,
+    measure,
+    start: chart.start,
+    stepSeconds: chart.stepSeconds,
+    buckets: chart.buckets,
+    values: line?.values[measure] ?? Array.from({ length: buckets.count }, () => null),
+    percentiles: options.kind !== "histogram" || chart.percentiles,
+    seriesCount: chart.seriesCount,
+    seriesCapped: chart.seriesCapped,
+  };
 }
 
 /**

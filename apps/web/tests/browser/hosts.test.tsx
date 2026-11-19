@@ -57,7 +57,15 @@ describe("the hosts page", () => {
     expect(rows.map(cellsOf)).toEqual([
       ["db-1", "16 Nov 2026, 16:10:00.000Stale", "25%", "80%", "42% (/)", "2"],
       // Not sent: the dash for the eye, the words for a screen reader.
-      ["web-1", "16 Nov 2026, 16:19:00.000Reporting", "22.5%", "50%", "90% (/data)", "–Not sent"],
+      // A share of 90% or more is marked High, in words with the badge's icon.
+      [
+        "web-1",
+        "16 Nov 2026, 16:19:00.000Reporting",
+        "22.5%",
+        "50%",
+        "90% (/data)High",
+        "–Not sent",
+      ],
     ]);
     // Stale is said in words, with the badge's icon, not by color alone.
     await expect
@@ -212,7 +220,12 @@ describe("a host's page", () => {
     expect(cellsOf(table.element().querySelector("tbody tr") ?? undefined)[1]).toBe(
       "16 Nov 2026, 16:10:00.000",
     );
-    expect(table.element().querySelector("[data-slot=status-badge]")).toBeNull();
+    // No freshness badge in the last seen column; only the full filesystem's High remains.
+    expect(
+      [...table.element().querySelectorAll("[data-slot=status-badge]")].map(
+        (badge) => badge.textContent,
+      ),
+    ).toEqual(["High"]);
   });
 
   test("never shows another host's charts while a host loads", async () => {

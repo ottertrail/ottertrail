@@ -4,6 +4,7 @@ import { DEMO_PROJECT_NAME, removeDemo, seedDemo, type SeedResult } from "../scr
 import { seededRandom } from "../scripts/seed-random.ts";
 import { refusalOf } from "../scripts/seed-safety.ts";
 import { buildSite } from "../scripts/seed-site.ts";
+import { INCIDENT_DAYS_AGO } from "../scripts/seed-telemetry.ts";
 import {
   DEVELOPMENT_PUBLIC_URL,
   LOCAL_CLICKHOUSE,
@@ -202,9 +203,66 @@ describe("every page has something to show", () => {
     expect(databases.length).toBeGreaterThan(1);
     expect(databases[0].shapes.length).toBeGreaterThan(3);
     const { hosts }: Json = await get("/hosts?period=7d");
-    expect(hosts.map((host: Json) => host.host).toSorted()).toEqual(["app-1", "app-2"]);
+    expect(hosts.map((host: Json) => host.host).toSorted()).toEqual(["app-1", "app-2", "db-1"]);
     const charts: Json = await get("/hosts/charts?host=app-2&period=7d");
     expect(charts.charts.some((chart: Json) => chart.lines.length > 0)).toBe(true);
+  });
+
+  test("the report charts: several metrics of each kind, a search incident, hosts from low to high", async () => {
+    // Every kind has more than one metric, and every listed metric a sparkline with a line.
+    const { metrics }: Json = await get("/metrics?period=7d");
+    for (const kind of ["gauge", "counter", "updown", "histogram"]) {
+      expect({
+        kind,
+        several: metrics.filter((metric: Json) => metric.kind === kind).length > 1,
+      }).toEqual({ kind, several: true });
+    }
+    for (const metric of metrics) {
+      const spark: Json = await get(
+        `/metrics/sparkline?period=7d&name=${encodeURIComponent(metric.name)}&kind=${metric.kind}`,
+      );
+      const drawn = spark.values.filter((value: number | null) => value !== null).length;
+      expect({ name: metric.name, drawn: drawn > spark.buckets / 2 }).toEqual({
+        name: metric.name,
+        drawn: true,
+      });
+    }
+    // Requests every hour, and the incident's hours (two days ago, 13:00 to
+    // 15:30) fail far more than the rest of the week.
+    const services: Json = await get("/services/trend?period=7d");
+    expect(services.stepSeconds).toBe(3600);
+    const busyHours = services.counts.requests.filter((count: number) => count > 0).length;
+    expect(busyHours).toBeGreaterThan(services.buckets * 0.9);
+    // The incident's 14:00 to 15:00, as an hourly bucket (the instance is in UTC).
+    const today = new Date();
+    const incident =
+      (Date.UTC(
+        today.getUTCFullYear(),
+        today.getUTCMonth(),
+        today.getUTCDate() - INCIDENT_DAYS_AGO,
+        14,
+      ) -
+        Date.parse(services.start)) /
+      3_600_000;
+    const share = (index: number) =>
+      services.counts.failed[index] / services.counts.requests[index];
+    expect(share(incident)).toBeGreaterThan(
+      (3 * services.totals.failed) / services.totals.requests,
+    );
+    // Database calls every hour, with more time spent in the incident.
+    const databases: Json = await get("/databases/trend?period=7d");
+    expect(databases.counts.calls.filter((count: number) => count > 0).length).toBeGreaterThan(
+      databases.buckets * 0.9,
+    );
+    const hourly = databases.totals.totalUs / databases.buckets;
+    expect(databases.counts.totalUs[incident]).toBeGreaterThan(2 * hourly);
+    // The hosts' latest values differ, and one filesystem is past 90%.
+    const { hosts }: Json = await get("/hosts?period=7d");
+    const cpu = hosts.map((host: Json) => host.cpuPercent);
+    expect(Math.max(...cpu) - Math.min(...cpu)).toBeGreaterThan(10);
+    const memory = hosts.map((host: Json) => host.memoryPercent);
+    expect(Math.max(...memory) - Math.min(...memory)).toBeGreaterThan(10);
+    expect(Math.max(...hosts.map((host: Json) => host.filesystemPercent))).toBeGreaterThan(90);
   });
 
   test("uptime: three checks, a past incident, one down now, certificates", async () => {
