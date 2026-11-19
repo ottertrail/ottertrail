@@ -1127,7 +1127,7 @@ export const REPORT_SHAPE: ShapeSummary = {
 };
 
 /**
- * Two databases: postgresql · shop, with two shapes in the order the sort
+ * Two databases: shop on postgresql, with two shapes in the order the sort
  * asks for (and 240 in all, so the list is cut), and redis without a name.
  */
 export function fakeDatabases(query: URLSearchParams): DatabaseList {

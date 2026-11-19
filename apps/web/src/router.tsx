@@ -207,6 +207,9 @@ const projectsRoute = createRoute({
 const projectRoute = createRoute({
   getParentRoute: () => appRoute,
   path: "/projects/$projectId",
+  // Another project is another page: its forms, edits and local state start
+  // afresh, never carried over from the project before.
+  remountDeps: ({ params }) => params.projectId,
   component: function ProjectRouteComponent() {
     const { projectId } = projectRoute.useParams();
     return <ProjectLayout projectId={projectId} />;

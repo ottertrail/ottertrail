@@ -263,7 +263,7 @@ export function MetricPage({
           <div className="flex flex-wrap items-center justify-between gap-2">
             <p className="text-sm text-ink-subtle">
               {KIND_LABELS[kind]}
-              {data !== undefined && unitText(data.unit) !== "" && ` · ${unitText(data.unit)}`}
+              {data !== undefined && unitText(data.unit) !== "" && `, in ${unitText(data.unit)}`}
             </p>
             <WhenAllowed area="uptime_alerts" level="manage">
               <Link

@@ -40,7 +40,8 @@ describe("the analytics page", () => {
 
     await expect.element(page.getByRole("heading", { name: "Visitors per day" })).toBeVisible();
     expect(analyticsRequests(api)).toEqual([`/api/projects/${PROJECT.id}/analytics?period=7d`]);
-    await expect.element(page.getByText("10–16 Nov 2026 · Asia/Singapore")).toBeVisible();
+    await expect.element(page.getByText("10 to 16 Nov 2026", { exact: true })).toBeVisible();
+    await expect.element(page.getByText("Asia/Singapore", { exact: true })).toBeVisible();
     await expect
       .element(page.getByRole("combobox", { name: "Period" }))
       .toMatchTextContent(/^Last 7 days/);
@@ -109,7 +110,8 @@ describe("the analytics page", () => {
       }),
     );
     await expect.poll(() => summaryValue("Visitors")).toBe("3,210");
-    await expect.element(page.getByText("18 Oct – 16 Nov 2026 · Asia/Singapore")).toBeVisible();
+    await expect.element(page.getByText("18 Oct to 16 Nov 2026", { exact: true })).toBeVisible();
+    await expect.element(page.getByText("Asia/Singapore", { exact: true })).toBeVisible();
     expect(document.querySelector("[data-refreshing]")?.getAttribute("data-refreshing")).toBe(
       "false",
     );
@@ -160,7 +162,7 @@ describe("comparison with the previous period", () => {
     // Nothing to compare with before.
     expect(changeOf("Time engaged")).toBeNull();
     // The days compared, up to the same time of day, in the instance's timezone.
-    expect(note()).toContain("Changes compare with 3–9 Nov 2026, up to 15:00 on 9 Nov.");
+    expect(note()).toContain("Changes compare with 3 to 9 Nov 2026, up to 15:00 on 9 Nov.");
   });
 
   test("compares whole days without a time", async () => {
@@ -168,7 +170,7 @@ describe("comparison with the previous period", () => {
     installFakeApi({ analytics: () => ({ ...week, previous: { ...week.previous, until: null } }) });
     renderApp(ANALYTICS);
 
-    await expect.poll(note).toContain("Changes compare with 3–9 Nov 2026.");
+    await expect.poll(note).toContain("Changes compare with 3 to 9 Nov 2026.");
   });
 
   test("shows no changes when nothing came before", async () => {
@@ -182,7 +184,7 @@ describe("comparison with the previous period", () => {
     for (const label of ["Visitors", "Pageviews", "Bounce rate", "Visit duration"]) {
       expect({ label, change: changeOf(label) }).toEqual({ label, change: null });
     }
-    expect(note()).toContain("No visits in 3–9 Nov 2026 to compare with.");
+    expect(note()).toContain("No visits in 3 to 9 Nov 2026 to compare with.");
   });
 });
 

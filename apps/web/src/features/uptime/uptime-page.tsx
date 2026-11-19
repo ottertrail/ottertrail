@@ -147,7 +147,7 @@ export function UptimePage({ projectId }: { projectId: string }) {
                       {check.name}
                     </Link>
                     <span className="block truncate text-xs text-ink-subtle" title={check.url}>
-                      {check.method} {check.url} ·{" "}
+                      {check.method} {check.url},{" "}
                       {intervalText(check.intervalSeconds).toLowerCase()}
                     </span>
                   </TableCell>

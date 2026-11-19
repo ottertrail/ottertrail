@@ -206,14 +206,19 @@ function ActivityTitle({ activity }: { activity: Activity }) {
   );
 }
 
-/** Where and on what: "Firefox · Linux · Munich, Germany · 1.4.2". */
+/** Where and on what, each part apart: "Firefox, Linux; Munich, Germany; release 1.4.2". */
 function activityDetails(activity: Activity): string {
   const place = [activity.city, activity.country === null ? null : countryName(activity.country)]
-    .filter((part) => part !== null)
-    .join(", ");
-  return [activity.browser, activity.os, place === "" ? null : place, activity.release]
     .filter((part) => part !== null && part !== "")
-    .join(" · ");
+    .join(", ");
+  const client = [activity.browser, activity.os].filter((part) => part !== null && part !== "");
+  return [
+    client.join(", "),
+    place,
+    activity.release === null || activity.release === "" ? "" : `release ${activity.release}`,
+  ]
+    .filter((part) => part !== "")
+    .join("; ");
 }
 
 /** A custom event's properties as "plan: free", one each. */

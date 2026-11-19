@@ -29,9 +29,8 @@ function Swatch({ token, label }: SwatchProps) {
       />
       <div className="space-y-0.5">
         <p className="text-sm font-medium text-ink">{label ?? token}</p>
-        <p className="truncate font-mono text-code text-ink-subtle">
-          --{token} · {readToken(token)}
-        </p>
+        <p className="truncate font-mono text-code text-ink-subtle">--{token}</p>
+        <p className="truncate font-mono text-code text-ink-subtle">{readToken(token)}</p>
       </div>
     </div>
   );
@@ -45,6 +44,10 @@ const colorGroups = [
     tokens: ["canvas", "surface-1", "surface-2", "surface-3", "surface-4"],
   },
   { title: "Hairlines", tokens: ["hairline", "hairline-strong", "hairline-tertiary"] },
+  {
+    title: "Field edges: inputs, selects, checkboxes and radios, at least 3:1 on every surface",
+    tokens: ["field-edge"],
+  },
   { title: "Ink", tokens: ["ink", "ink-muted", "ink-subtle", "ink-tertiary"] },
   {
     title: "Accent: brand mark, primary action, focus ring, links",
@@ -75,7 +78,6 @@ export function ColorSection() {
   return (
     <Section
       id="color"
-      eyebrow="Foundations"
       title="Color"
       description="Dark theme only. The canvas is near-black, with four surface levels and hairline borders. An orchid accent marks the brand, primary action, focus rings, and links."
     >
@@ -120,7 +122,6 @@ const typeScale = [
   { token: "body", className: "text-body", spec: "16 / 1.50 / -0.05px / 400" },
   { token: "body-sm", className: "text-body-sm", spec: "14 / 1.50 / 0 / 400" },
   { token: "caption", className: "text-caption", spec: "12 / 1.40 / 0 / 400" },
-  { token: "eyebrow", className: "text-eyebrow", spec: "13 / 1.30 / +0.4px / 500" },
   { token: "code", className: "font-mono text-code", spec: "13 / 1.50 / 0 / 400, mono" },
 ];
 
@@ -128,7 +129,6 @@ export function TypographySection() {
   return (
     <Section
       id="typography"
-      eyebrow="Foundations"
       title="Typography"
       description="Inter Variable uses optical sizing. JetBrains Mono is for code. Display sizes use strong negative tracking. Dense dashboard UI uses 14px and 12px text."
     >
@@ -200,7 +200,6 @@ export function ShapeSection() {
   return (
     <Section
       id="shape"
-      eyebrow="Foundations"
       title="Shape and spacing"
       description="Spacing uses Tailwind's 4px scale. The radius scale is set so shadcn's component classes produce these values without local edits."
     >
@@ -212,9 +211,8 @@ export function ShapeSection() {
             />
             <div className="space-y-0.5">
               <p className="font-mono text-code text-ink">{radius.utility}</p>
-              <p className="text-caption text-ink-subtle">
-                {radius.px} · {radius.use}
-              </p>
+              <p className="font-mono text-caption text-ink-subtle">{radius.px}</p>
+              <p className="text-caption text-ink-subtle">{radius.use}</p>
             </div>
           </div>
         ))}

@@ -52,7 +52,8 @@ describe("a custom range", () => {
   test("is chosen in a dialog that starts from the page's days, and keeps the filters", async () => {
     const api = installFakeApi();
     const router = renderApp(`${ANALYTICS}?country=DE`);
-    await expect.element(page.getByText("10–16 Nov 2026 · Asia/Singapore")).toBeVisible();
+    await expect.element(page.getByText("10 to 16 Nov 2026", { exact: true })).toBeVisible();
+    await expect.element(page.getByText("Asia/Singapore", { exact: true })).toBeVisible();
 
     await openDialog();
 

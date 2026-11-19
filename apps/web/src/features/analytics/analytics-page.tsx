@@ -12,6 +12,7 @@ import {
 import * as React from "react";
 
 import { ButtonLink } from "@/components/button-link";
+import { FilterBarRange } from "@/components/filter-bar";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardAction, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -245,7 +246,7 @@ function ChangeLine({ change, before }: { change: Change; before: string }) {
   );
 }
 
-/** "Changes compare with 3–9 Nov 2026, up to 15:00 on 9 Nov." */
+/** "Changes compare with 3 to 9 Nov 2026, up to 15:00 on 9 Nov." */
 function comparisonNote({ previous, timeZone }: Analytics): string {
   const days = formatDayRange(previous.firstDay, previous.lastDay);
   const before = previous.summary;
@@ -785,9 +786,11 @@ export function AnalyticsPage({
             </Select>
           )}
         {data !== undefined && (
-          <p className="text-sm text-ink-subtle">
-            {formatDayRange(data.firstDay, data.lastDay)} · {data.timeZone}
-          </p>
+          <FilterBarRange
+            firstDay={data.firstDay}
+            lastDay={data.lastDay}
+            timeZone={data.timeZone}
+          />
         )}
       </div>
       <FilterBar projectId={projectId} search={search} />

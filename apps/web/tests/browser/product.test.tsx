@@ -406,7 +406,7 @@ describe("the funnel", () => {
       .element(page.getByText("overall: 126 of 1,000 users who did step 1 went on to step 3."))
       .toBeVisible();
     await expect
-      .element(page.getByText("10–16 Nov 2026 · counted by users · within 1 hour of step 1"))
+      .element(page.getByText("10 to 16 Nov 2026, counted by users, within 1 hour of step 1"))
       .toBeVisible();
     await expect
       .element(page.getByRole("combobox", { name: "Count by" }))

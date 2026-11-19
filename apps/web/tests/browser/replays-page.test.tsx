@@ -62,7 +62,7 @@ describe("the Replays page", () => {
       "ada",
       "/cart → /checkout",
       "production",
-      "Firefox · Linux · desktop",
+      "Firefox, Linux, desktop",
     ]);
     // Cut, anonymous; an error never found; one still looked for.
     expect(cells(rows()[1]).slice(0, 4)).toEqual([
@@ -240,7 +240,7 @@ describe("a replay's page", () => {
       .element(page.getByRole("link", { name: "TypeError: cart is undefined" }))
       .toBeVisible();
     await expect.element(page.getByText("/cart → /checkout")).toBeVisible();
-    await expect.element(page.getByText("Firefox · Linux · desktop")).toBeVisible();
+    await expect.element(page.getByText("Firefox, Linux, desktop")).toBeVisible();
     const frame = document.querySelector("iframe");
     // The recording's own clock: its start, and the error 35 seconds in.
     expect(frame?.getAttribute("src")).toBe(

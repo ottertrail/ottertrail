@@ -30,7 +30,7 @@ export function FunnelResults({ funnel }: { funnel: Funnel }) {
           <h3>Conversion</h3>
         </CardTitle>
         <CardDescription>
-          {formatDayRange(funnel.firstDay, funnel.lastDay)} · counted by {who} · within{" "}
+          {formatDayRange(funnel.firstDay, funnel.lastDay)}, counted by {who}, within{" "}
           {windowLabel(funnel.window)} of step 1
         </CardDescription>
       </CardHeader>

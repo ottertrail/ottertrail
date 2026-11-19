@@ -42,7 +42,7 @@ const strokeOf = (title: string) =>
     .find((path) => path.closest("[data-slot=card]")?.querySelector("h3")?.textContent === title)
     ?.getAttribute("stroke");
 
-const SHOP_TABLE = "Query shapes of postgresql · shop, those with the most time spent first";
+const SHOP_TABLE = "Query shapes of shop on postgresql, those with the most time spent first";
 
 describe("the databases page", () => {
   test("opens from the sidebar after Services, with each database and its query shapes", async () => {
@@ -51,7 +51,7 @@ describe("the databases page", () => {
     await sidebarLink("Databases").click();
 
     await expect.poll(() => router.state.location.pathname).toBe(DATABASES);
-    await expect.element(page.getByRole("heading", { name: "postgresql · shop" })).toBeVisible();
+    await expect.element(page.getByRole("heading", { name: "shop on postgresql" })).toBeVisible();
     expect(lastQuery(api, "/databases")).toEqual({ period: "7d" });
     await expect.element(sidebarLink("Databases")).toHaveAttribute("data-active");
     // A database without a name is its system alone.
@@ -94,7 +94,7 @@ describe("the databases page", () => {
     await expect.poll(() => router.state.location.search).toEqual({ period: "30d", sort: "p95" });
     await expect.poll(() => lastQuery(api, "/databases")).toEqual({ period: "30d", sort: "p95" });
     const table = page.getByRole("table", {
-      name: "Query shapes of postgresql · shop, those with the slowest 95th percentile first",
+      name: "Query shapes of shop on postgresql, those with the slowest 95th percentile first",
     });
     await expect.element(table).toBeVisible();
     expect([...table.element().querySelectorAll("tbody tr")].map((row) => cellsOf(row)[0])).toEqual(
@@ -181,7 +181,7 @@ describe("a query shape's page", () => {
       .poll(() => lastQuery(api, `/databases/shapes/${ORDERS_SHAPE.id}`))
       .toEqual({ period: "7d", environment: "staging" });
     await expect
-      .element(page.getByRole("heading", { name: "Query shape in postgresql · shop" }))
+      .element(page.getByRole("heading", { name: "Query shape in shop on postgresql" }))
       .toBeVisible();
     // The shape in full, and what it is made from.
     expect(document.querySelector("pre")?.textContent).toBe(ORDERS_SHAPE.shape);
@@ -229,17 +229,17 @@ describe("a query shape's page", () => {
 
     // The keyboard readouts, and the 0 to 100 failed share: 36 of 3,600 at 12:00 in Singapore.
     const calls = page.getByRole("slider", {
-      name: "Calls per second, postgresql · shop, per hour",
+      name: "Calls per second, shop on postgresql, per hour",
     });
     await expect
       .element(calls)
-      .toHaveAttribute("aria-valuetext", "Mon 16 Nov 2026, 19:00–20:00: Calls 1/s");
-    const failed = page.getByRole("slider", { name: "Failed (%), postgresql · shop, per hour" });
+      .toHaveAttribute("aria-valuetext", "Mon 16 Nov 2026, 19:00 to 20:00: Calls 1/s");
+    const failed = page.getByRole("slider", { name: "Failed (%), shop on postgresql, per hour" });
     failed.element().focus();
     await userEvent.keyboard("{Home}{ArrowRight}{ArrowRight}{ArrowRight}{ArrowRight}");
     await expect
       .element(failed)
-      .toHaveAttribute("aria-valuetext", "Mon 16 Nov 2026, 12:00–13:00: Failed 1%");
+      .toHaveAttribute("aria-valuetext", "Mon 16 Nov 2026, 12:00 to 13:00: Failed 1%");
 
     // The table view of the calls per second: every hour, 0 where no call was made.
     await page.getByRole("button", { name: "Show the numbers" }).first().click();

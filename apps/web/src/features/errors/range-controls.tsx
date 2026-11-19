@@ -1,5 +1,6 @@
 import * as React from "react";
 
+import { FilterBarRange } from "@/components/filter-bar";
 import {
   Select,
   SelectContent,
@@ -8,8 +9,6 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { DEFAULT_ENVIRONMENT, isPeriod, PERIODS, type PageRange } from "@/lib/analytics-api";
-
-import { formatDayRange } from "../analytics/format";
 
 /**
  * Loaded when "Custom range…" is first chosen, as on the analytics page:
@@ -104,9 +103,11 @@ export function RangeControls({
       )}
       {children}
       {answered !== undefined && (
-        <p className="text-sm text-ink-subtle">
-          {formatDayRange(answered.firstDay, answered.lastDay)} · {answered.timeZone}
-        </p>
+        <FilterBarRange
+          firstDay={answered.firstDay}
+          lastDay={answered.lastDay}
+          timeZone={answered.timeZone}
+        />
       )}
       {choosingDays && (
         // Nothing while its code loads: a moment, from the same server.

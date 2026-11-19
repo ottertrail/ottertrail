@@ -126,7 +126,10 @@ function formatCalendarDay(day: string, parts: Intl.DateTimeFormatOptions): stri
   );
 }
 
-/** "12–18 Nov 2026", "28 Nov – 4 Dec 2026", or "16 Nov 2026" for one day. */
+/**
+ * "12 to 18 Nov 2026", "28 Nov to 4 Dec 2026", or "16 Nov 2026" for one
+ * day: written with "to", never a dash (docs/design-system.md#dates).
+ */
 export function formatDayRange(firstDay: string, lastDay: string): string {
   const format = formatCalendarDay;
   const full = { day: "numeric", month: "short", year: "numeric" } as const;
@@ -134,12 +137,12 @@ export function formatDayRange(firstDay: string, lastDay: string): string {
     return format(lastDay, full);
   }
   if (firstDay.slice(0, 4) !== lastDay.slice(0, 4)) {
-    return `${format(firstDay, full)} – ${format(lastDay, full)}`;
+    return `${format(firstDay, full)} to ${format(lastDay, full)}`;
   }
   if (firstDay.slice(0, 7) === lastDay.slice(0, 7)) {
-    return `${format(firstDay, { day: "numeric" })}–${format(lastDay, full)}`;
+    return `${format(firstDay, { day: "numeric" })} to ${format(lastDay, full)}`;
   }
-  return `${format(firstDay, { day: "numeric", month: "short" })} – ${format(lastDay, full)}`;
+  return `${format(firstDay, { day: "numeric", month: "short" })} to ${format(lastDay, full)}`;
 }
 
 /** A country code as its name ("DE" becomes "Germany"); other values unchanged. */

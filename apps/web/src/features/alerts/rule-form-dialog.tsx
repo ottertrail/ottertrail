@@ -894,7 +894,7 @@ function RuleForm({
                   <FieldLabel htmlFor={id} className="font-normal">
                     {channel.name}
                     <span className="text-ink-subtle">
-                      {channel.kind === "email" ? " · email" : " · webhook"}
+                      {channel.kind === "email" ? " (email)" : " (webhook)"}
                     </span>
                   </FieldLabel>
                 </Field>

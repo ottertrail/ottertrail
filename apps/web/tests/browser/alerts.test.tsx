@@ -78,6 +78,10 @@ describe("the Alerts page", () => {
     const firing = page.getByRole("list", { name: "Firing now" });
     await expect.element(firing.getByText("API health", { exact: true })).toBeVisible();
     await expect.element(firing.getByText(/since 16 Nov 2026, 09:41/)).toBeVisible();
+    // The subject, the rule and the time read apart, with words between them.
+    expect(firing.element().querySelector("li")?.textContent).toMatch(
+      /^FiringAPI health, rule API down, since 16 Nov 2026, 09:41/,
+    );
 
     await expect.element(page.getByRole("table", { name: /Recent alerts/ })).toBeVisible();
     const history = rowsOf("Recent alerts, newest first");

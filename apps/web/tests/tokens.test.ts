@@ -116,6 +116,45 @@ describe("design tokens", () => {
     }
   });
 
+  // A field is drawn as its edge (input) around a wash of input-fill: 30% at rest, 50% on hover
+  // (components/ui/input.tsx, select.tsx). Disabled fields (80%) are exempt, as WCAG allows.
+  const fieldStates = [
+    ["at rest", 0.3],
+    ["on hover", 0.5],
+  ] as const;
+
+  describe("field edges meet 3:1 (WCAG 1.4.11)", () => {
+    for (const surface of contentSurfaces) {
+      test(`against ${surface}`, () => {
+        expect(contrast(resolveHex("input"), resolveHex(surface))).toBeGreaterThanOrEqual(3);
+      });
+      for (const [state, alpha] of fieldStates) {
+        test(`against the field's own fill ${state}, on ${surface}`, () => {
+          const fill = tint(resolveHex(surface), resolveHex("input-fill"), alpha);
+          expect(contrast(resolveHex("input"), fill)).toBeGreaterThanOrEqual(3);
+        });
+      }
+    }
+  });
+
+  test("the wash inside a field stays a quiet step off its surface, not a second edge", () => {
+    for (const surface of contentSurfaces) {
+      for (const [, alpha] of fieldStates) {
+        const fill = tint(resolveHex(surface), resolveHex("input-fill"), alpha);
+        // Visible as a fill, but far below the edge, so the edge carries the boundary.
+        expect(contrast(fill, resolveHex(surface))).toBeGreaterThan(1.03);
+        expect(contrast(fill, resolveHex(surface))).toBeLessThan(1.5);
+      }
+    }
+  });
+
+  test("a switch's unchecked track (input) and its thumb (foreground) meet 3:1", () => {
+    for (const surface of contentSurfaces) {
+      expect(contrast(resolveHex("input"), resolveHex(surface))).toBeGreaterThanOrEqual(3);
+    }
+    expect(contrast(resolveHex("foreground"), resolveHex("input"))).toBeGreaterThanOrEqual(3);
+  });
+
   test("chart series and status marks meet 3:1 on cards", () => {
     const marks = [
       ...Array.from({ length: 8 }, (_, index) => `chart-${index + 1}`),

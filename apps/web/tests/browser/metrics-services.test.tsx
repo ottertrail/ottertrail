@@ -122,7 +122,7 @@ describe("a metric's page", () => {
       .element(slider)
       .toHaveAttribute(
         "aria-valuetext",
-        "Mon 16 Nov 2026, 19:00–20:00: Average 111 B, Minimum 121 B, Maximum 131 B",
+        "Mon 16 Nov 2026, 19:00 to 20:00: Average 111 B, Minimum 121 B, Maximum 131 B",
       );
     slider.element().focus();
     await userEvent.keyboard("{Home}");
@@ -130,7 +130,7 @@ describe("a metric's page", () => {
       .element(slider)
       .toHaveAttribute(
         "aria-valuetext",
-        "Mon 16 Nov 2026, 08:00–09:00: Average 100 B, Minimum 110 B, Maximum 120 B",
+        "Mon 16 Nov 2026, 08:00 to 09:00: Average 100 B, Minimum 110 B, Maximum 120 B",
       );
   });
 
@@ -154,7 +154,7 @@ describe("a metric's page", () => {
     expect(rows).toHaveLength(11);
     expect(
       [...(rows[0]?.querySelectorAll("th, td") ?? [])].map((cell) => cell.textContent),
-    ).toEqual(["Mon 16 Nov 2026, 08:00–09:00", "100 ms", "110 ms", "120 ms"]);
+    ).toEqual(["Mon 16 Nov 2026, 08:00 to 09:00", "100 ms", "110 ms", "120 ms"]);
   });
 
   test("splits by an attribute: a line per value, other in gray", async () => {
@@ -277,7 +277,7 @@ describe("a metric's page", () => {
     await expect.element(page.getByRole("heading", { name: "Total" })).toBeVisible();
     await expect
       .element(page.getByRole("slider", { name: /^Total, db.connections, per hour$/ }))
-      .toHaveAttribute("aria-valuetext", "Mon 16 Nov 2026, 19:00–20:00: Total 111 ms");
+      .toHaveAttribute("aria-valuetext", "Mon 16 Nov 2026, 19:00 to 20:00: Total 111 ms");
   });
 
   test("says when the metric has nothing in the period, and when the address names no kind", async () => {
@@ -559,14 +559,17 @@ describe("a service's and a route's page", () => {
     const requests = page.getByRole("slider", { name: "Requests per second, web, per hour" });
     await expect
       .element(requests)
-      .toHaveAttribute("aria-valuetext", "Mon 16 Nov 2026, 19:00–20:00: 2xx 1/s, 4xx 0/s, 5xx 0/s");
+      .toHaveAttribute(
+        "aria-valuetext",
+        "Mon 16 Nov 2026, 19:00 to 20:00: 2xx 1/s, 4xx 0/s, 5xx 0/s",
+      );
     requests.element().focus();
     await userEvent.keyboard("{Home}{ArrowRight}{ArrowRight}{ArrowRight}");
     await expect
       .element(requests)
       .toHaveAttribute(
         "aria-valuetext",
-        "Mon 16 Nov 2026, 11:00–12:00: 2xx 2/s, 4xx 0.1/s, 5xx 0/s",
+        "Mon 16 Nov 2026, 11:00 to 12:00: 2xx 2/s, 4xx 0.1/s, 5xx 0/s",
       );
     // 36 of 3,636 failed at 12:00: 0.99%; nothing arrived at 08:00.
     const failed = page.getByRole("slider", { name: "Failed (%), web, per hour" });
@@ -574,16 +577,16 @@ describe("a service's and a route's page", () => {
     await userEvent.keyboard("{Home}");
     await expect
       .element(failed)
-      .toHaveAttribute("aria-valuetext", "Mon 16 Nov 2026, 08:00–09:00: Failed no data");
+      .toHaveAttribute("aria-valuetext", "Mon 16 Nov 2026, 08:00 to 09:00: Failed no data");
     await userEvent.keyboard("{ArrowRight}{ArrowRight}{ArrowRight}{ArrowRight}");
     await expect
       .element(failed)
-      .toHaveAttribute("aria-valuetext", "Mon 16 Nov 2026, 12:00–13:00: Failed 0.99%");
+      .toHaveAttribute("aria-valuetext", "Mon 16 Nov 2026, 12:00 to 13:00: Failed 0.99%");
     await expect
       .element(page.getByRole("slider", { name: "Duration (s), web, per hour" }))
       .toHaveAttribute(
         "aria-valuetext",
-        "Mon 16 Nov 2026, 19:00–20:00: Median 0.02 s, 95th percentile 0.15 s, 99th percentile 1.5 s",
+        "Mon 16 Nov 2026, 19:00 to 20:00: Median 0.02 s, 95th percentile 0.15 s, 99th percentile 1.5 s",
       );
 
     // The table view of the durations: the buckets with a value.
@@ -594,7 +597,7 @@ describe("a service's and a route's page", () => {
     expect(rows).toHaveLength(10);
     expect(
       [...(rows[0]?.querySelectorAll("th, td") ?? [])].map((cell) => cell.textContent),
-    ).toEqual(["Mon 16 Nov 2026, 10:00–11:00", "0.02 s", "0.15 s", "1.5 s"]);
+    ).toEqual(["Mon 16 Nov 2026, 10:00 to 11:00", "0.02 s", "0.15 s", "1.5 s"]);
   });
 
   test("a route's page links to its traces, its alert rule, and its service", async () => {

@@ -146,7 +146,7 @@ describe("a host's page", () => {
       .element(page.getByRole("slider", { name: "Network (bytes per second), web-1, per hour" }))
       .toHaveAttribute(
         "aria-valuetext",
-        "Mon 16 Nov 2026, 19:00–20:00: Sent 2.01 KiB/s, Received 1.01 KiB/s",
+        "Mon 16 Nov 2026, 19:00 to 20:00: Sent 2.01 KiB/s, Received 1.01 KiB/s",
       );
   });
 
@@ -167,7 +167,7 @@ describe("a host's page", () => {
     const rows = [...table.element().querySelectorAll("tbody tr")];
     // 11 buckets with a value: the 4th has none.
     expect(rows).toHaveLength(11);
-    expect(rows[0]?.textContent).toBe("Mon 16 Nov 2026, 08:00–09:004 GiB");
+    expect(rows[0]?.textContent).toBe("Mon 16 Nov 2026, 08:00 to 09:004 GiB");
   });
 
   test("says when the host is stale", async () => {

@@ -32,7 +32,7 @@ export function ProductLayout({ projectId }: { projectId: string }) {
             to={tab.to}
             params={{ projectId }}
             search={kept}
-            className="inline-flex h-full items-center rounded-md border border-transparent px-3 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-1 focus-visible:outline-ring data-[status=active]:border-input data-[status=active]:bg-input/30 data-[status=active]:text-foreground"
+            className="inline-flex h-full items-center rounded-md border border-transparent px-3 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-1 focus-visible:outline-ring data-[status=active]:border-hairline-strong data-[status=active]:bg-input-fill/30 data-[status=active]:text-foreground"
           >
             {tab.label}
           </Link>

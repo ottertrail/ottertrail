@@ -104,7 +104,7 @@ describe("the speed page", () => {
     await expect
       .element(
         page.getByText(
-          /^Values are the 75th percentile \(p75\) of 10–16 Nov 2026 \(Asia\/Singapore\): 75% of page loads were at least this fast\. Thresholds are Google's\.$/,
+          /^Values are the 75th percentile \(p75\) of 10 to 16 Nov 2026 \(Asia\/Singapore\): 75% of page loads were at least this fast\. Thresholds are Google's\.$/,
         ),
       )
       .toBeVisible();

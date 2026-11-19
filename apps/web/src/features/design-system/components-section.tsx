@@ -54,6 +54,15 @@ import { Input } from "@/components/ui/input";
 import { Kbd, KbdGroup } from "@/components/ui/kbd";
 import { Label } from "@/components/ui/label";
 import {
+  Popover,
+  PopoverContent,
+  PopoverDescription,
+  PopoverHeader,
+  PopoverTitle,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -64,6 +73,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 import { Section, Specimen } from "./section";
@@ -166,6 +176,31 @@ function FormSpecimens() {
           <Switch id="ds-mask-inputs" defaultChecked />
           <Label htmlFor="ds-mask-inputs">Mask form inputs</Label>
         </Field>
+        <fieldset className="flex flex-col gap-3">
+          <legend className="mb-3 text-sm font-medium text-ink">Record replays</legend>
+          <RadioGroup defaultValue="off">
+            <Field orientation="horizontal">
+              <RadioGroupItem value="off" id="ds-record-off" />
+              <Label htmlFor="ds-record-off">Off</Label>
+            </Field>
+            <Field orientation="horizontal">
+              <RadioGroupItem value="errors" id="ds-record-errors" />
+              <Label htmlFor="ds-record-errors">Around errors</Label>
+            </Field>
+          </RadioGroup>
+        </fieldset>
+        <Field>
+          <Label id="ds-order-label">Order</Label>
+          <ToggleGroup
+            defaultValue={["newest"]}
+            aria-labelledby="ds-order-label"
+            variant="outline"
+            spacing={0}
+          >
+            <ToggleGroupItem value="newest">Newest first</ToggleGroupItem>
+            <ToggleGroupItem value="oldest">Oldest first</ToggleGroupItem>
+          </ToggleGroup>
+        </Field>
       </FieldGroup>
     </Specimen>
   );
@@ -223,6 +258,18 @@ function OverlaySpecimens() {
           Tooltips add detail. They must not contain required information.
         </TooltipContent>
       </Tooltip>
+
+      <Popover>
+        <PopoverTrigger render={<Button variant="outline" />}>Popover</PopoverTrigger>
+        <PopoverContent align="start">
+          <PopoverHeader>
+            <PopoverTitle>Example popover</PopoverTitle>
+            <PopoverDescription>
+              Extra detail or a short form beside its trigger. Escape or a click outside closes it.
+            </PopoverDescription>
+          </PopoverHeader>
+        </PopoverContent>
+      </Popover>
 
       <KbdGroup>
         <Kbd>⌘</Kbd>
@@ -312,7 +359,6 @@ export function ComponentsSection() {
   return (
     <Section
       id="components"
-      eyebrow="Components"
       title="Components"
       description="shadcn/ui components on Base UI primitives, themed through the tokens above. The examples on this page are static specimens, not product features."
     >

@@ -106,7 +106,7 @@ export function TimezoneCombobox({
                 <span className="min-w-0 truncate">
                   {zone}
                   {offset !== null && offset !== undefined && (
-                    <span className="text-muted-foreground"> · {offset}</span>
+                    <span className="text-muted-foreground"> ({offset})</span>
                   )}
                 </span>
               </ComboboxItem>

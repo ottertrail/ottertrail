@@ -94,8 +94,8 @@ export function currentIndex(items: readonly TimelineItem[], currentMs: number |
   return found;
 }
 
-/** "Firefox · Linux · desktop" */
+/** "Firefox, Linux, desktop" */
 export const clientText = (replay: Pick<ReplaySummary, "browser" | "os" | "deviceType">) =>
   [replay.browser, replay.os, replay.deviceType]
     .filter((part) => part !== null && part !== "")
-    .join(" · ");
+    .join(", ");

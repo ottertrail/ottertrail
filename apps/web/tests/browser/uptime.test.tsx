@@ -40,7 +40,7 @@ describe("the uptime page", () => {
     const rows = rowsOf("Uptime checks").map((cells) => cells.slice(0, 7));
     expect(rows).toEqual([
       [
-        "Shop homeGET https://shop.example/ · every minute",
+        "Shop homeGET https://shop.example/, every minute",
         "Up",
         "100%",
         // Cut, not rounded: 99.951% reads 99.95%.
@@ -50,7 +50,7 @@ describe("the uptime page", () => {
         "16 Nov 2026, 16:59",
       ],
       [
-        "API healthGET https://api.shop.example/health · every 5 minutes",
+        "API healthGET https://api.shop.example/health, every 5 minutes",
         "Down",
         "70.00%",
         "95.00%",
@@ -224,7 +224,10 @@ describe("a check's page", () => {
     // The keyboard reads the latest bucket: 23:00 in Singapore, 100 + 23 × 10 ms.
     await expect
       .element(page.getByRole("slider", { name: "Response time, API health, per hour" }))
-      .toHaveAttribute("aria-valuetext", "Mon 16 Nov 2026, 23:00–00:00: Response time 330 ms");
+      .toHaveAttribute(
+        "aria-valuetext",
+        "Mon 16 Nov 2026, 23:00 to Tue 17 Nov 2026, 00:00: Response time 330 ms",
+      );
 
     await expect
       .element(page.getByRole("table", { name: "Incidents, newest first" }))

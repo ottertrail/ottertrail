@@ -54,7 +54,7 @@ describe("the instance's settings", () => {
     await expect.element(timeZone).toHaveValue("Asia/Singapore");
 
     await timeZone.fill("new york");
-    await expect.element(page.getByRole("option", { name: /^America\/New_York ·/ })).toBeVisible();
+    await expect.element(page.getByRole("option", { name: /^America\/New_York \(/ })).toBeVisible();
     await expect
       .element(page.getByRole("option", { name: /^Asia\/Singapore/ }))
       .not.toBeInTheDocument();
@@ -62,7 +62,7 @@ describe("the instance's settings", () => {
     // Case does not matter, and each option shows its offset from UTC (Singapore has no summer time).
     await timeZone.fill("SINGAPORE");
     await expect
-      .element(page.getByRole("option", { name: "Asia/Singapore · UTC+8" }))
+      .element(page.getByRole("option", { name: "Asia/Singapore (UTC+8)" }))
       .toBeVisible();
     await expect.element(page.getByRole("option", { name: /^America\// })).not.toBeInTheDocument();
   });
@@ -86,10 +86,10 @@ describe("the instance's settings", () => {
 
     await timeZone.fill("north dakota");
     // The first match is highlighted as soon as one types; ArrowDown moves to the next.
-    const first = page.getByRole("option", { name: /^America\/North_Dakota\/Beulah ·/ });
+    const first = page.getByRole("option", { name: /^America\/North_Dakota\/Beulah \(/ });
     await expect.element(first).toHaveAttribute("data-highlighted");
     await userEvent.keyboard("{ArrowDown}");
-    const second = page.getByRole("option", { name: /^America\/North_Dakota\/Center ·/ });
+    const second = page.getByRole("option", { name: /^America\/North_Dakota\/Center \(/ });
     await expect.element(second).toHaveAttribute("data-highlighted");
     await expect.element(first).not.toHaveAttribute("data-highlighted");
     await userEvent.keyboard("{Enter}");

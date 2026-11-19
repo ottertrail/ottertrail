@@ -359,11 +359,11 @@ export function CheckPage({
             <div className="flex min-w-0 flex-col gap-1">
               <h2 className="text-lg font-medium break-all text-ink">{answer.check.name}</h2>
               <p className="text-sm break-all text-ink-subtle">
-                {answer.check.method} {answer.check.url} ·{" "}
-                {intervalText(answer.check.intervalSeconds)}
+                {answer.check.method} {answer.check.url},{" "}
+                {intervalText(answer.check.intervalSeconds).toLowerCase()}
                 {answer.check.word === null
                   ? ""
-                  : ` · "${answer.check.word}" ${answer.check.wordMode === "present" ? "must" : "must not"} be in the body`}
+                  : `; "${answer.check.word}" ${answer.check.wordMode === "present" ? "must" : "must not"} be in the body`}
               </p>
               <p className="flex flex-wrap items-center gap-2 text-sm text-ink-muted">
                 <CheckStateBadge check={answer.check} />

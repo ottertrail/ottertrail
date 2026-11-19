@@ -272,10 +272,12 @@ function FiringCard({ projectId }: { projectId: string }) {
               <li key={`${alert.ruleId}:${alert.subject}`} className="flex flex-col gap-0.5">
                 <span className="flex flex-wrap items-center gap-2 text-sm">
                   <StatusBadge tone="critical">Firing</StatusBadge>
-                  <span className="font-medium text-ink">{alert.subjectName}</span>
-                  <span className="text-ink-subtle">
-                    · {alert.ruleName} · since{" "}
-                    <time dateTime={alert.since}>{formatMoment(alert.since, data.timeZone)}</time>
+                  <span>
+                    <span className="font-medium text-ink">{alert.subjectName}</span>
+                    <span className="text-ink-subtle">
+                      , rule {alert.ruleName}, since{" "}
+                      <time dateTime={alert.since}>{formatMoment(alert.since, data.timeZone)}</time>
+                    </span>
                   </span>
                 </span>
                 <span className="text-xs break-words text-ink-subtle">{alert.message}</span>

@@ -183,7 +183,7 @@ describe("the setup page", () => {
     // The whole list shows, not only the names that contain the chosen one.
     await expect.element(page.getByRole("option", { name: /^UTC/ })).toBeVisible();
     await expect
-      .element(page.getByRole("option", { name: new RegExp(`^${escapeRegExp(browserZone)} ·`) }))
+      .element(page.getByRole("option", { name: new RegExp(`^${escapeRegExp(browserZone)} \\(`) }))
       .toHaveAttribute("aria-selected", "true");
   });
 

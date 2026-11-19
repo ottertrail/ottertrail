@@ -5,9 +5,9 @@ import { formatNumber } from "./metric-format";
 
 /** How the Databases pages write their numbers and names. */
 
-/** "postgresql · shop", or "redis" alone when the calls name no database. */
+/** "shop on postgresql", or "redis" alone when the calls name no database. */
 export const databaseLabel = (system: string, database: string) =>
-  database === "" ? system : `${system} · ${database}`;
+  database === "" ? system : `${database} on ${system}`;
 
 /** Calls per second: "0.25/s", "<0.01/s" for a few calls over a long period. */
 export function formatPerSecond(perSecond: number | null): string {

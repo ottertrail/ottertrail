@@ -46,7 +46,11 @@ export function tickLabel(
   return `${part("day")} ${part("month")} ${time}`;
 }
 
-/** "Tue 17 Nov 2026, 10:00–10:05": a bucket, in the timezone set in Settings. */
+/**
+ * "Tue 17 Nov 2026, 10:00 to 10:05": a bucket, in the timezone set in
+ * Settings; one that ends on the next day names it, "Mon 16 Nov 2026,
+ * 23:00 to Tue 17 Nov 2026, 00:00".
+ */
 export function bucketLabel(start: Date, stepSeconds: number, timeZone: string): string {
   const options: Intl.DateTimeFormatOptions = {
     weekday: "short",
@@ -58,9 +62,12 @@ export function bucketLabel(start: Date, stepSeconds: number, timeZone: string):
   };
   const from = parts(start, timeZone, options);
   const to = parts(new Date(start.getTime() + stepSeconds * 1000), timeZone, options);
-  const day = `${from("weekday")} ${from("day")} ${from("month")} ${from("year")}`;
+  const dayOf = (part: typeof from) =>
+    `${part("weekday")} ${part("day")} ${part("month")} ${part("year")}`;
+  const day = dayOf(from);
   if (stepSeconds >= 86_400) return day;
-  return `${day}, ${from("hour")}:${from("minute")}–${to("hour")}:${to("minute")}`;
+  const end = `${to("hour")}:${to("minute")}`;
+  return `${day}, ${from("hour")}:${from("minute")} to ${dayOf(to) === day ? end : `${dayOf(to)}, ${end}`}`;
 }
 
 /** "5 minutes", "hour", "3 hours", "day": the length of a bucket. */

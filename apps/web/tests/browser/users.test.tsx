@@ -115,7 +115,7 @@ describe("a user's page", () => {
     expect(items[0]?.textContent).toContain("Viewed /page-0");
     expect(items[1]?.textContent).toContain("signup on /signup");
     expect(items[1]?.textContent).toContain("plan: free");
-    expect(items[1]?.textContent).toContain("Firefox · Linux · Munich, Germany · 1.4.2");
+    expect(items[1]?.textContent).toContain("Firefox, Linux; Munich, Germany; release 1.4.2");
   });
 
   test("loads older activity from where the page ends", async () => {
