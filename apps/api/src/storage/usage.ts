@@ -1,6 +1,7 @@
 import { type Kysely, sql } from "kysely";
 
 import type { ClickHouseClient } from "../clickhouse/clickhouse.ts";
+import { HEATMAP_RETENTION_DAYS } from "../clickhouse/migrations.ts";
 import { QueryParams, queryRows } from "../clickhouse/query.ts";
 import type { Config } from "../config.ts";
 import type { Database } from "../db/schema.ts";
@@ -183,6 +184,7 @@ function retentionOf(name: string, telemetryDays: number, keptForever: number | 
   if (TELEMETRY_TABLES.has(name)) return { kind: "days", days: telemetryDays };
   if (name === "check_results") return { kind: "days", days: RESULT_RETENTION_DAYS };
   if (name === "user_first_seen") return { kind: "with_events" };
+  if (name === "heatmaps") return { kind: "days", days: HEATMAP_RETENTION_DAYS };
   return { kind: "none" };
 }
 

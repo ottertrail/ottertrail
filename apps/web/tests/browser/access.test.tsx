@@ -19,6 +19,7 @@ describe("a member's dashboard shows only what they may use", () => {
     for (const name of [
       "Web analytics",
       "Speed",
+      "Heatmaps",
       "Users",
       "Replays",
       "Uptime",

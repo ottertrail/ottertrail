@@ -451,6 +451,7 @@ describe("tracker script", () => {
     directory = await mkdtemp(join(tmpdir(), "ottertrail-tracker-"));
     await writeFile(join(directory, "tracker.js"), "console.log('tracker');\n");
     await writeFile(join(directory, "v.js"), "console.log('vitals');\n");
+    await writeFile(join(directory, "h.js"), "console.log('heatmaps');\n");
     app = buildApp({ db: testDb.db, trackerScriptPath: join(directory, "tracker.js") });
     missing = buildApp({
       db: testDb.db,
@@ -485,8 +486,16 @@ describe("tracker script", () => {
     expect(response.body).toBe("console.log('vitals');\n");
   });
 
+  test("serves the heatmap script it loads, h.js, from beside it", async () => {
+    const response = await app.inject({ url: "/h.js" });
+    expect(response.statusCode).toBe(200);
+    expect(response.headers["content-type"]).toBe("text/javascript; charset=utf-8");
+    expect(response.headers["cache-control"]).toBe("public, max-age=3600");
+    expect(response.body).toBe("console.log('heatmaps');\n");
+  });
+
   test("says so when the tracker has not been built", async () => {
-    for (const url of ["/t.js", "/v.js"]) {
+    for (const url of ["/t.js", "/v.js", "/h.js"]) {
       const response = await missing.inject({ url });
       expect({ url, status: response.statusCode }).toEqual({ url, status: 503 });
       expect(response.headers["cache-control"]).toBe("no-store");

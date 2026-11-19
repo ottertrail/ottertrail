@@ -29,6 +29,8 @@ export interface Project extends ProjectSummary {
   ignoreDataCenters: boolean;
   /** Session replays: off, or recorded around errors (docs/session-replay.md). */
   replayMode: "off" | "errors";
+  /** Heatmaps: the tracker sends clicks and scroll depth (with data-heatmaps="on"); off by default. */
+  heatmaps: boolean;
   /** The goal the overview's business figures start with; null for none. */
   mainGoalId: string | null;
   /** IP addresses and CIDR ranges whose browser events are ignored. */
@@ -72,6 +74,8 @@ export function isFullProject(value: unknown): value is Project {
     typeof value.ignoreDataCenters === "boolean" &&
     "replayMode" in value &&
     (value.replayMode === "off" || value.replayMode === "errors") &&
+    "heatmaps" in value &&
+    typeof value.heatmaps === "boolean" &&
     "mainGoalId" in value &&
     (value.mainGoalId === null || typeof value.mainGoalId === "string") &&
     "blockedAddresses" in value &&
@@ -126,6 +130,7 @@ export async function updateProject(
     requireSignedUserIds?: boolean;
     ignoreDataCenters?: boolean;
     replayMode?: "off" | "errors";
+    heatmaps?: boolean;
     mainGoalId?: string | null;
     blockedAddresses?: string[];
     blockedReferrers?: string[];

@@ -21,6 +21,13 @@ export const VITALS_SCRIPT_URL_PATH = "/v.js";
 export const REPLAY_SCRIPT_URL_PATH = "/r.js";
 
 /**
+ * Heatmap capture, which the tracker loads from beside itself when a page
+ * asks for it (packages/tracker/src/heatmaps.ts; docs/web-analytics.md,
+ * "Heatmaps"): h.js in the tracker's folder.
+ */
+export const HEATMAP_SCRIPT_URL_PATH = "/h.js";
+
+/**
  * Scripts found missing, logged once each: every page of every site asks
  * for them, and a missing v.js breaks nothing visible that would get it
  * noticed and fixed.
@@ -60,8 +67,8 @@ async function sendScript(request: FastifyRequest, reply: FastifyReply, path: st
 }
 
 /**
- * Serves the built browser tracker, and the Web Vitals and session replay
- * scripts it loads, so each site loads them from the instance it reports to. The paths are
+ * Serves the built browser tracker, and the Web Vitals, session replay,
+ * and heatmap scripts it loads, so each site loads them from the instance it reports to. The paths are
  * short and neutral: ad-block lists often match file names such as
  * "tracker.js" or "analytics.js".
  *
@@ -80,6 +87,9 @@ export const trackerScriptRoutes: FastifyPluginCallback<{ scriptPath: string }> 
   );
   app.get(REPLAY_SCRIPT_URL_PATH, (request, reply) =>
     sendScript(request, reply, join(dirname(scriptPath), "r.js")),
+  );
+  app.get(HEATMAP_SCRIPT_URL_PATH, (request, reply) =>
+    sendScript(request, reply, join(dirname(scriptPath), "h.js")),
   );
   done();
 };

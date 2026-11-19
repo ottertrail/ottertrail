@@ -31,6 +31,7 @@ import type { Database } from "../src/db/schema.ts";
 import { fingerprint } from "../src/errors/fingerprint.ts";
 import { createSavedFunnel } from "../src/funnels/saved-funnels.ts";
 import { createGoal } from "../src/goals/goals.ts";
+import { storeHeatmapRecords } from "../src/heatmaps/store.ts";
 import { channelValuesOf, createChannel, listChannels } from "../src/notifications/channels.ts";
 import { funnelStepsOf } from "../src/product/funnel.ts";
 import { createProject, deleteProject, updateProject } from "../src/projects/projects.ts";
@@ -41,6 +42,7 @@ import { checkSourceMap, storeSourceMap } from "../src/source-maps/source-maps.t
 import type { ObjectStore } from "../src/storage/object-store.ts";
 import { normalizeLogs, normalizeMetrics, normalizeTraces } from "../src/telemetry/normalize.ts";
 import { insertTelemetry } from "../src/telemetry/store.ts";
+import { buildHeatmaps } from "./seed-heatmaps.ts";
 import { seedMonitoring, type MonitoringCounts } from "./seed-monitoring.ts";
 import { seededRandom } from "./seed-random.ts";
 import {
@@ -63,6 +65,8 @@ export const DEMO_CHANNEL_NAME = "Demo shop alerts (sends nothing)";
 const DEMO_CHANNEL_ADDRESS = "alerts@demo-shop.example";
 /** The randomness's seed: the same data on every run. */
 const SEED = 20_261_119;
+/** The heatmaps' own seed, so adding them left the rest of the data as it was. */
+const HEATMAP_SEED = 20_261_120;
 /** Rows per ClickHouse insert. */
 const BATCH = 10_000;
 /** Checkout errors that recorded a session replay: the latest. */
@@ -95,6 +99,7 @@ export interface SeedResult {
     serverErrors: number;
     replays: number;
     sourceMaps: number;
+    heatmapRecords: number;
   } & MonitoringCounts;
 }
 
@@ -265,7 +270,10 @@ export async function seedDemo(options: SeedOptions): Promise<SeedResult> {
     allowedHostnames: [SITE_HOST, `www.${SITE_HOST}`, STAGING_HOST],
   });
   const projectId = project.id;
-  await updateProject(db, projectId, { replayMode: store === null ? "off" : "errors" });
+  await updateProject(db, projectId, {
+    replayMode: store === null ? "off" : "errors",
+    heatmaps: true,
+  });
 
   // Goals and saved funnels: the signup flow and the shop's.
   const mainGoal = await createGoal(db, projectId, "Signed up", {
@@ -317,6 +325,15 @@ export async function seedDemo(options: SeedOptions): Promise<SeedResult> {
   }
   await storeArrived(clickhouse, projectId, site.events);
   log(`Stored ${site.events.length.toLocaleString("en")} browser events.`);
+
+  // Heatmaps of the shop's main pages, from those pageviews (seed-heatmaps.ts).
+  const heatmaps = buildHeatmaps(seededRandom(HEATMAP_SEED), site.events, now);
+  for (let start = 0; start < heatmaps.length; start += BATCH) {
+    await storeHeatmapRecords(clickhouse, projectId, heatmaps.slice(start, start + BATCH), {
+      receivedAt: now,
+    });
+  }
+  log(`Stored ${heatmaps.length.toLocaleString("en")} heatmap clicks and scroll depths.`);
 
   // The servers' traces, logs, and metrics, through the OTLP normalizers.
   const userIds = [...new Set(site.events.flatMap(({ event }) => event.userId ?? []))];
@@ -484,6 +501,7 @@ export async function seedDemo(options: SeedOptions): Promise<SeedResult> {
       serverErrors: serverErrors.length,
       replays,
       sourceMaps,
+      heatmapRecords: heatmaps.length,
       ...monitoring,
     },
   };

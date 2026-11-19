@@ -86,7 +86,7 @@ Fastify checks a route's parameters and body before the access check runs, so a 
 | `/api/channels…` (all eight)                                                                                                                                 | `channels`                 |
 | `GET /api/projects/:id`                                                                                                                                      | The project                |
 | `PATCH`, `DELETE /api/projects/:id`, `POST …/public-key`, `POST …/secret-key`, `DELETE …/replays`, `POST …/spam-visits/preview`, `POST …/spam-visits/delete` | `projects`                 |
-| `…/analytics`, `…/analytics/list`, `…/speed`                                                                                                                 | `web_analytics` view       |
+| `…/analytics`, `…/analytics/list`, `…/speed`, `…/heatmaps`, `…/heatmaps/pages`                                                                               | `web_analytics` view       |
 | `…/events`, `…/events/:name`, `…/funnel`, `…/retention`, `GET …/goals`, `GET …/funnels`                                                                      | `product_analytics` view   |
 | `POST`, `DELETE …/goals`, `POST`, `PUT`, `DELETE …/funnels`                                                                                                  | `product_analytics` manage |
 | `GET …/errors`, `GET …/errors/:fingerprint`, `GET …/source-maps`, `…/source-maps/files`                                                                      | `errors` view              |
@@ -130,7 +130,7 @@ Some answers show less to a user without another area:
 
 ### Public routes
 
-These need no session, and declare nothing: health, collection with a project's key (`/api/events`, `/api/server-events`, `/api/replays`, `PUT /api/source-maps`, `/v1/traces`, `/v1/logs`, `/v1/metrics`), the scripts (`/t.js`, `/v.js`, `/r.js`, `/replay-player.js`), the dashboard's files, sign-in (`/api/auth/*`), setup (`/api/setup`), accepting an invitation (`POST /api/invite/preview`, `POST /api/invite/accept`), and a reset link (`POST /api/reset-password/preview`, `POST /api/reset-password`). The last four take the token in the body and are limited per client address, an IPv6 address by its /64: 10 at once, then one a minute, as setup is.
+These need no session, and declare nothing: health, collection with a project's key (`/api/events`, `/api/server-events`, `/api/replays`, `/api/heatmaps`, `PUT /api/source-maps`, `/v1/traces`, `/v1/logs`, `/v1/metrics`), the scripts (`/t.js`, `/v.js`, `/r.js`, `/h.js`, `/replay-player.js`), the dashboard's files, sign-in (`/api/auth/*`), setup (`/api/setup`), accepting an invitation (`POST /api/invite/preview`, `POST /api/invite/accept`), and a reset link (`POST /api/reset-password/preview`, `POST /api/reset-password`). The last four take the token in the body and are limited per client address, an IPv6 address by its /64: 10 at once, then one a minute, as setup is.
 
 ### Tests
 

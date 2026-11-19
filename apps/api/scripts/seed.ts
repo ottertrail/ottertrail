@@ -58,6 +58,7 @@ try {
       `  ${counts.events.toLocaleString("en")} events (${counts.serverErrors} of them server exceptions), from ${counts.knownUsers} signed-in users and anonymous visitors`,
       `  ${counts.spans.toLocaleString("en")} spans, ${counts.logs.toLocaleString("en")} log records, ${counts.metricPoints.toLocaleString("en")} metric points`,
       `  ${counts.replays} session replays, ${counts.sourceMaps} source maps`,
+      `  ${counts.heatmapRecords.toLocaleString("en")} heatmap clicks and scroll depths`,
       `  ${counts.checks} uptime checks with ${counts.checkResults.toLocaleString("en")} results and ${counts.incidents} incidents`,
       `  ${counts.rules} alert rules, ${counts.alerts} alerts in their history, ${counts.firing} firing now`,
       "",

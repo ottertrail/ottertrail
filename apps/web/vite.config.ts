@@ -20,7 +20,7 @@ const INITIAL_JS_BUDGET = { raw: 780, gzip: 255 };
 const apiOrigin = process.env.OTTERTRAIL_API_ORIGIN ?? "http://127.0.0.1:3000";
 
 /** The paths the API serves on the instance's own origin. */
-const API_PATHS = ["/api", "/t.js", "/v.js", "/r.js", "/replay-player.js"];
+const API_PATHS = ["/api", "/t.js", "/v.js", "/r.js", "/h.js", "/replay-player.js"];
 
 /**
  * Under Vitest, the browser tests fake the API through fetch. A request the

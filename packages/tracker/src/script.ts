@@ -56,6 +56,14 @@
  * This script makes the last call queued in q once it runs, and points the
  * stand-in's methods at its own, so a reference kept to it still works.
  *
+ * Heatmaps: data-heatmaps="on" loads h.js from beside it (not with an
+ * integrity attribute), which records the pageview's clicks, by element,
+ * and how far down the page the visitor scrolled; never any text, value,
+ * ID, class, or address of the page (docs/web-analytics.md, "Heatmaps").
+ * The project's settings must allow heatmaps too. Each pageview is sampled
+ * on its own: data-heatmaps-sample="0.25" records a quarter of them (1,
+ * all, by default); nothing about it is stored.
+ *
  * Loaded twice on one page (in a tag manager and in the page's template),
  * the second copy warns and does nothing: two copies would count every
  * pageview twice, and replay(false) would reach only one recorder.
@@ -67,6 +75,12 @@ import {
   MIN_REPORTED_MS,
 } from "./engagement.ts";
 import { createErrorCapture, ERROR } from "./errors.ts";
+import {
+  type HeatmapCapture,
+  type HeatmapConfig,
+  type HeatmapPage,
+  HEATMAP_PROPERTY,
+} from "./heatmap-names.ts";
 import { watchNavigation } from "./navigation.ts";
 import { randomId } from "./random-id.ts";
 import { type Recorder, REPLAY_PROPERTY, type ReplayConfig } from "./replay-names.ts";
@@ -237,6 +251,15 @@ const REAL = Symbol.for("ottertrail.tracker");
       viewedBy = user;
       landedOn ??= { page: current, user };
       tracker.track("pageview", current);
+      // Heatmaps: this pageview is in the sample or not, decided now, kept nowhere.
+      if (heatmapsDeclared) {
+        heatmapPage =
+          Math.random() < heatmapSample
+            ? { url: current.url, referrer: current.referrer, at: Date.now() }
+            : null;
+        if (heatmapPage !== null) loadHeatmaps();
+        heatmaps?.navigated();
+      }
     };
 
     if (script?.dataset.userId !== undefined) {
@@ -325,6 +348,41 @@ const REAL = Symbol.for("ottertrail.tracker");
       load("r.js", REPLAY_PROPERTY, config);
     };
     if (replayWanted) loadRecorder();
+
+    // Heatmaps (h.js), loaded with the first pageview in the sample.
+    const heatmapsAsked = script?.dataset.heatmaps === "on";
+    if (heatmapsAsked && !beside) {
+      warnOnce(
+        "data-heatmaps cannot load h.js for a script tag with integrity. No heatmaps are recorded.",
+      );
+    }
+    const heatmapsDeclared = beside && heatmapsAsked;
+    const sampleText = script?.dataset.heatmapsSample;
+    // Number("") is 0: an empty value is a mistake, not "record nothing".
+    const sample =
+      sampleText === undefined ? 1 : sampleText.trim() === "" ? -1 : Number(sampleText);
+    let heatmapSample = 1;
+    if (sample >= 0 && sample <= 1) heatmapSample = sample;
+    else if (heatmapsDeclared)
+      warnOnce("data-heatmaps-sample must be from 0 to 1. All pageviews are sampled.");
+    let heatmapPage: HeatmapPage | null = null;
+    let heatmaps: HeatmapCapture | undefined;
+    let heatmapsLoaded = false;
+    const loadHeatmaps = () => {
+      if (heatmapsLoaded) return;
+      heatmapsLoaded = true;
+      const config: HeatmapConfig = {
+        endpoint: new URL("/api/heatmaps", host).href,
+        key,
+        environment,
+        release,
+        page: () => heatmapPage,
+        register: (capture) => {
+          heatmaps = capture;
+        },
+      };
+      load("h.js", HEATMAP_PROPERTY, config);
+    };
 
     // The page's stand-in from before this script ran, with its queued calls.
     const early: unknown = window.ottertrail;

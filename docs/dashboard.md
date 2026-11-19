@@ -94,7 +94,7 @@ Code: `apps/api/src/projects/`, `apps/api/src/tracker-script/`, and `apps/web/sr
 
 A project is one website or app. The Projects page lists them, each with what an owner checks first: when its last event arrived ("No events yet" before the first), and, for the owner and admins, its allowed sites ("None: events are refused" without one), how long it keeps events, when it was made, and a link into its settings ("Add a site", to the General tab, when it has no allowed site). Members see the name, the last event, and when it was made. On a phone the table scrolls inside itself, the name and the link pinned, with the scroll hint. It uses only what `GET /api/projects` answers. `projects-page.test.tsx` covers its states. A project's Settings page (`/projects/<id>/settings`) has seven tabs ([settings tabs and the Save bar](design-system.md#settings-tabs-and-the-save-bar)), the chosen one in the address (`?tab=general`; Install, the first, leaves it out); a new project opens on Install:
 
-- **Install**: the install snippet and public key to copy, "Copy setup prompt" (below), and whether events are arriving.
+- **Install**: the install snippet and public key to copy, "Copy setup prompt" (below), whether events are arriving, and a form for [heatmaps](#heatmaps) (off by default). Heatmaps are set here because the setting's visible effect is the snippet above it (`data-heatmaps="on"` once saved), and there is no Web analytics tab.
 - **General**: a form for the name, allowed sites, how long events are kept, and the main goal.
 - **Your server**: the secret key, and a form for signed user IDs.
 - **Spam and bots** (`?tab=spam`): a form for data centers, blocked addresses, and blocked referrers, and "Delete spam" ([below](#spam-and-bots)).
@@ -104,7 +104,7 @@ Each form has its own Save bar and follows [the save rule](design-system.md#the-
 
 ### Copy setup prompt
 
-Beside the snippet, "Copy setup prompt" copies a prompt for a coding agent: read the instructions for agents at `https://docs.ottertrail.app/llms.txt` (`AGENT_DOCS_URL` in `features/projects/format.ts`, the one place it is written), then add the tracker, name signed-in users with a server-made signature, report caught errors, upload source maps, and send the server's telemetry over OpenTelemetry. It names this instance's address and the project's public key, and tells the agent to read the secret key from `OTTERTRAIL_SECRET_KEY`: the secret key itself is never in it. `project-settings-tabs.test.tsx` checks the copied text.
+Beside the snippet, "Copy setup prompt" copies a prompt for a coding agent: read the instructions for agents at `https://docs.ottertrail.app/llms.txt` (`AGENT_DOCS_URL` in `features/projects/format.ts`, the one place it is written), then add the tracker, name signed-in users with a server-made signature, report caught errors, upload source maps, and send the server's telemetry over OpenTelemetry. It names this instance's address and the project's public key, and tells the agent to read the secret key from `OTTERTRAIL_SECRET_KEY`: the secret key itself is never in it. With the project's heatmaps on, it also says to add `data-heatmaps="on"` to the tracker's tag, and that `data-ottertrail-name` gives clicked elements readable names, never with personal data in them. `project-settings-tabs.test.tsx` checks the copied text, and `tests/projects.test.ts` the heatmaps part.
 
 ### The workspace and a project
 
@@ -457,6 +457,33 @@ It answers the thresholds with the report, so the page rates values as the API d
 - A comparison with the period before, as the analytics page has.
 - FCP and TTFB per device and page, and whether the 20 pages were all of them.
 - Values of their own for in-app navigations of single-page apps (see [Web Vitals](web-analytics.md#web-vitals)).
+
+## Heatmaps
+
+Code: `apps/web/src/features/heatmaps/`, `apps/web/src/lib/heatmaps-api.ts`; the capture, the storage, and what is and is not sent are in [web analytics](web-analytics.md#heatmaps). `/projects/<id>/heatmaps` shows where visitors click on one page and how far they scroll, for a period, an environment, and a device class: Desktop, Tablet, Mobile, or All devices (`?path=/pricing&device=mobile`, `device=all`). Without `device` in the address, the page shows the device with the most pageviews for the page and period, since a page's layout differs by device: its first answer, for all devices, names that device, and the address is replaced once with it and the page shown. "All devices" stays a choice, kept in the address as `device=all`. It needs the web analytics area, like Speed, and sits right after Speed in the project's menu.
+
+The page is a report ([Report (Console)](design-system.md#report-console)): the filter bar (period, environment once there is a choice, the page, the device, and the days with their timezone), then the page's path as its second heading, and:
+
+- **The page picker**, a combobox over `GET /api/projects/:id/heatmaps/pages` (the pages with heatmap data, most pageviews and clicks first, so a page whose clicks arrived before any scroll depth is listed; at most 100). Typing filters the list at once; once typing pauses (a quarter of a second) the API searches every page by part of its path. Without `path` in the address, the first page with any pageviews or clicks is shown, never one without data while another has some.
+- **A strip of four figures**: pageviews with heatmap data (sampled pageviews that sent a scroll depth), clicks, rage clicks, and the median scroll depth, with the share that reached the bottom under it. No change from a period before: the API gives none. When a pageview passed 100 clicks, the clicks past it are not recorded, and a line under the strip says how many ("1,234 clicks not recorded (over 100 on one pageview).").
+- **"How far visitors scrolled"**: a horizontal bar per depth, in steps of 10% of the page's height, from the top of the page (10%) down to its bottom, each as long as the share of pageviews that reached it, in `chart-1` from one baseline, with the average fold (how much of the page showed without scrolling) as a solid hairline across the rows, named in a gutter beside it so it never covers a bar. Hovering a row, or the arrow keys on the chart's range input, read one depth out; "Show the numbers" gives every depth's pageviews and share. Drawn in HTML (`scroll-reach-chart.tsx`), without a chart library. Until a pageview has sent how far it was scrolled (it does when the visitor leaves the page), the chart says so in place of bars.
+- **Most-clicked elements and rage-click hotspots**, side by side from 64rem of content (`BreakdownTable`): clicks, share (of all the page's clicks in the period, not of the table's rows), and rage clicks; and the elements with the most rage clicks, with the spot inside them clicked on average ("48%, 30%", read out as "48% across, 30% down"). An element with rage clicks carries a "Rage clicks" badge with an icon. On a phone, each row stacks.
+- **"Open on your site"**, disabled and marked "Planned": phase 2 draws the clicks over the live page.
+
+**Element names.** A site names an element with `data-ottertrail-name="hero-cta"` on it or on an ancestor: the tables then show that name, and the full path on hover. Without one, a row shows the last three steps of the element's structural path (`… > section:2 > div > button`; `:2` is the second of its tag among its siblings), the whole path on hover. Name the elements worth reading (calls to action, menus, forms), not every element; a name is the only attribute the tracker reads ([web analytics](web-analytics.md#heatmaps)).
+
+**States.** Skeletons while loading; a failed load says so with Retry, and a failed refresh keeps the last report, dimmed. With the setting off and nothing collected, the page says heatmaps are off: those who manage projects get "Turn on heatmaps", a link to the Install tab (`?tab=install`), and the attribute to add; others are told to ask an owner or admin. Off with data from before, the report shows with a note that no new data arrives. A page with clicks but no scroll depth yet (today, or just turned on) shows its report: only a page with neither pageviews nor clicks counts as empty. On, without data in the period, it says to add `data-heatmaps="on"` to the snippet, that data arrives as pages are viewed, and that it is kept 90 days; for a period wholly before those 90 days (which the API answers as clipped and empty), that nothing from it is left. A chosen page, or a page on a chosen device, without data offers the devices and pages that have some. A range that includes today carries a "Today still arriving" warning badge: scroll depth arrives as visitors leave a page. A range that began before the 90 days kept says the report starts at the first kept day.
+
+**From the Pages lists.** Each row of the analytics page's Pages breakdown (Top pages, Entry, Exit) has an icon link after its path, "Heatmap of /pricing", that opens this page for that path with the analytics page's period and environment (`BreakdownRow`'s `action`). The path itself still filters the analytics page.
+
+**The setting** is on the project's Install tab ([projects](#82-projects)), under the snippet: its visible effect is the snippet right above it, which gains `data-heatmaps="on"` once it is saved, and the project has no Web analytics tab of its own.
+
+`heatmaps.test.tsx` covers the sidebar entry, the figures, the chart's bars, fold, readouts, and table, both tables with rage clicks marked in words, the planned button, the device and page pickers (and the search) changing the requests, the top device by default and All devices as a choice, a page with clicks but no scroll depth, the default page skipping one without data, dropped clicks, the address, loading, failures with Retry, each empty state, the delayed and 90-day notes, 390 and 1440 wide, who may open it, and the setting's save rule and the snippet's attribute. `analytics-page.test.tsx` covers the Pages lists' links; `report-screens.test.tsx` lists the page with the other reports.
+
+### Not done yet
+
+- Phase 2: the clicks drawn over the page on the live site.
+- A comparison with the period before.
 
 ## 8.8 Product analytics
 

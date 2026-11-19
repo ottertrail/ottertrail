@@ -33,6 +33,7 @@ export async function signedInDashboard({
   objectStore,
   sourceMaps,
   replays,
+  heatmaps,
   replayPlayerPath,
   telemetry,
   uptime,
@@ -47,6 +48,8 @@ export async function signedInDashboard({
   objectStore?: AppOptions["objectStore"];
   sourceMaps?: AppOptions["sourceMaps"];
   replays?: AppOptions["replays"];
+  /** Heatmaps' collection limits (tests/heatmaps.test.ts). */
+  heatmaps?: AppOptions["heatmaps"];
   /** The built replay player, served at /replay-player.js; not served when omitted. */
   replayPlayerPath?: string;
   /** OTLP's limits (tests/telemetry.test.ts); the test's ClickHouse unless it names another. */
@@ -87,6 +90,7 @@ export async function signedInDashboard({
     ...(objectStore === undefined ? {} : { objectStore }),
     ...(sourceMaps === undefined ? {} : { sourceMaps }),
     ...(replays === undefined ? {} : { replays }),
+    ...(heatmaps === undefined ? {} : { heatmaps }),
     ...(replayPlayerPath === undefined ? {} : { replayPlayerPath }),
     ...(telemetry === undefined ? {} : { telemetry }),
     ...(uptime === undefined ? {} : { uptime }),

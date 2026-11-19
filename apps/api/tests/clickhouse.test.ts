@@ -68,7 +68,7 @@ describe("ClickHouse migrations", () => {
     expect(table?.create_table_query).toMatch(/fsync_part_directory = 1/);
   });
 
-  test("create the telemetry tables with their order and TTL, uptime's results, and first-seen times", async () => {
+  test("create the telemetry tables with their order and TTL, uptime's results, first-seen times, and heatmaps", async () => {
     const result = await ch().client.query({
       query: `SELECT name, sorting_key FROM system.tables
               WHERE database = {database:String} AND name != 'schema_migrations'
@@ -79,6 +79,11 @@ describe("ClickHouse migrations", () => {
     expect(await result.json()).toEqual([
       { name: "check_results", sorting_key: "project_id, check_id, timestamp" },
       { name: "events", sorting_key: "project_id, toDate(occurred_at), event_id" },
+      // By project, day, page, then device (0006).
+      {
+        name: "heatmaps",
+        sorting_key: "project_id, toDate(occurred_at), path, device, kind, record_id",
+      },
       { name: "logs", sorting_key: "project_id, timestamp, id" },
       { name: "metric_histograms", sorting_key: "project_id, name, timestamp, id" },
       { name: "metric_points", sorting_key: "project_id, name, timestamp, id" },

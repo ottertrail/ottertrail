@@ -38,6 +38,30 @@ function figures(name: string): string[] {
 }
 
 describe("the Storage tab", () => {
+  test("names the heatmaps table in words", async () => {
+    const clickhouse = STORAGE.clickhouse;
+    if (!clickhouse.ok) throw new Error("The fixture measures ClickHouse");
+    const heatmaps = {
+      name: "heatmaps",
+      bytes: 50 * 1024 ** 2,
+      rows: 120_000,
+      retention: { kind: "days", days: 90 },
+    } as const;
+    installFakeApi({
+      storage: {
+        ...STORAGE,
+        clickhouse: { ...clickhouse, tables: [...clickhouse.tables, heatmaps] },
+      },
+    });
+    renderApp(STORAGE_TAB);
+    await expect.element(row("ClickHouse").getByText(/^Heatmaps:/)).toBeVisible();
+    expect(
+      row("ClickHouse")
+        .getByText(/^heatmaps:/)
+        .elements(),
+    ).toEqual([]);
+  });
+
   test("full: each store's figures, the disk's bars, and no warnings", async () => {
     installFakeApi();
     renderApp(STORAGE_TAB);

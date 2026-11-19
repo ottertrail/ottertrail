@@ -125,7 +125,8 @@ describe("the settings tabs", () => {
   test("tabs without fields have no Save bar", async () => {
     installFakeApi();
     renderApp(SETTINGS);
-    for (const tab of ["Install", "Source maps", "Danger zone"]) {
+    // Install has the Heatmaps form under its snippet (heatmaps.test.tsx).
+    for (const tab of ["Source maps", "Danger zone"]) {
       await page.getByRole("tab", { name: tab }).click();
       await expect.element(panel().getByRole("heading", { name: tab })).toBeVisible();
       expect(panel().getByRole("button", { name: "Save changes" }).elements()).toEqual([]);

@@ -33,6 +33,7 @@ import { isFullProject, type Project, projectQuery, updateProject } from "@/lib/
 
 import { DangerZone } from "./danger-zone";
 import { hostnamesFromText, installSnippet, setupPrompt, timeAgo } from "./format";
+import { HeatmapsSettings } from "./heatmaps-card";
 import { NoSuchProject } from "./no-such-project";
 import { ReplaysSettings } from "./replays-card";
 import { ServerSettings } from "./server-card";
@@ -55,7 +56,9 @@ function CopySetupPrompt({ project }: { project: Project }) {
   const timer = React.useRef<number | undefined>(undefined);
   React.useEffect(() => () => window.clearTimeout(timer.current), []);
   const hintId = React.useId();
-  const prompt = setupPrompt(window.location.origin, project.publicKey);
+  const prompt = setupPrompt(window.location.origin, project.publicKey, {
+    heatmaps: project.heatmaps,
+  });
   async function copy() {
     window.clearTimeout(timer.current);
     try {
@@ -98,7 +101,10 @@ function CopySetupPrompt({ project }: { project: Project }) {
 }
 
 function InstallSection({ project }: { project: Project }) {
-  const snippet = installSnippet(window.location.origin, project.publicKey);
+  // The saved setting, not the form's: the snippet shows what the site should have now.
+  const snippet = installSnippet(window.location.origin, project.publicKey, {
+    heatmaps: project.heatmaps,
+  });
   return (
     <SettingsSection
       title="Install"
@@ -370,11 +376,26 @@ function SettingsTabsFor({ project }: { project: Project }) {
   const [serverDirty, setServerDirty] = React.useState(false);
   const [replayDirty, setReplayDirty] = React.useState(false);
   const [spamDirty, setSpamDirty] = React.useState(false);
+  const [heatmapsDirty, setHeatmapsDirty] = React.useState(false);
   return (
     <SettingsTabs
       label="Project settings"
       tabs={[
-        { value: "install", label: "Install", content: <InstallSection project={project} /> },
+        {
+          value: "install",
+          label: "Install",
+          dirty: heatmapsDirty,
+          content: (
+            <>
+              <InstallSection project={project} />
+              {/*
+               * Heatmaps belong here: their visible effect is the snippet right
+               * above (data-heatmaps="on"), and there is no Web analytics tab.
+               */}
+              <HeatmapsSettings project={project} onDirty={setHeatmapsDirty} />
+            </>
+          ),
+        },
         {
           value: "general",
           label: "General",
@@ -412,9 +433,9 @@ function SettingsTabsFor({ project }: { project: Project }) {
 
 /**
  * A project's settings: /projects/<id>/settings, as tabs (the chosen one in
- * `?tab=`). Install, Source maps, and Danger zone hold no fields; General,
- * Your server, Spam and bots, and Session replay are forms with a Save bar
- * each.
+ * `?tab=`). Source maps and Danger zone hold no fields; Install has the
+ * Heatmaps form under its snippet, and General, Your server, Spam and bots,
+ * and Session replay are forms, each with a Save bar.
  */
 export function ProjectSettingsPage({ projectId }: { projectId: string }) {
   const project = useQuery({

@@ -41,7 +41,7 @@ A site can mark elements in its own HTML:
 - `data-ottertrail-block`: this element is not recorded at all, only a box of its size. For a payment form, a chat window, a document preview.
 - `data-ottertrail-unmask`: this element's text is shown, even in a private recording. For a site that keeps text masked but wants its menu and headings readable. Never applies to typed values or to anything inside a `data-ottertrail-mask` or `-block`.
 
-A marker applies to the element and everything inside it, and the stricter one wins: block, then mask, then unmask.
+A marker applies to the element and everything inside it, and the stricter one wins: block, then mask, then unmask. `data-ottertrail-block` and `data-ottertrail-mask` also keep [heatmaps](web-analytics.md#heatmaps) out: a click inside either is not recorded at all.
 
 ### Never recorded
 

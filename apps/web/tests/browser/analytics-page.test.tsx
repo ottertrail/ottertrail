@@ -42,6 +42,12 @@ function tableRows(caption: string): string[][] {
   );
 }
 
+/** The heatmap links shown, by their names. */
+const links = () =>
+  [...document.querySelectorAll<HTMLAnchorElement>('a[aria-label^="Heatmap of "]')].map((link) =>
+    link.getAttribute("aria-label"),
+  );
+
 const analyticsRequests = (api: { requests: string[] }) =>
   api.requests.filter((path) => path.includes("/analytics"));
 
@@ -98,6 +104,41 @@ describe("the analytics page", () => {
     ]);
     await page.getByRole("button", { name: "Campaigns" }).click();
     expect(tableRows("Campaigns, most visitors first")[0]).toEqual(["No campaign", "700", "760"]);
+  });
+
+  test("links each page of the Pages lists to its heatmap, keeping the period and environment", async () => {
+    installFakeApi();
+    const router = renderApp(`${ANALYTICS}?period=30d&env=staging`);
+    const pages = page.getByRole("table", { name: "Top pages, most visitors first" });
+    await expect.element(pages).toBeVisible();
+
+    // Only the Pages table has them, one per row, after the path (which still filters).
+    expect(links()).toEqual(["Heatmap of /", "Heatmap of /pricing"]);
+    const link = pages.getByRole("link", { name: "Heatmap of /pricing" });
+    const row = link.element().closest("tr");
+    expect(row?.querySelector("a")?.textContent).toBe("/pricing");
+    expect(row?.cells[0]?.contains(link.element())).toBe(true);
+
+    await page
+      .getByRole("group", { name: "Which pages to list" })
+      .getByRole("button", { name: "Exit" })
+      .click();
+    await expect.poll(links).toEqual(["Heatmap of /signup"]);
+    await page
+      .getByRole("group", { name: "Which pages to list" })
+      .getByRole("button", { name: "Top pages" })
+      .click();
+
+    await page.getByRole("link", { name: "Heatmap of /pricing" }).click();
+    await expect
+      .poll(() => router.state.location.pathname)
+      .toBe(`/projects/${PROJECT.id}/heatmaps`);
+    // The heatmap then adds the page's top device.
+    expect(router.state.location.search).toMatchObject({
+      period: "30d",
+      env: "staging",
+      path: "/pricing",
+    });
   });
 
   test("changes the period, keeping the old numbers dimmed until the new ones arrive", async () => {

@@ -87,6 +87,8 @@ describe("the demo data", () => {
     expect(counts.replays).toBeGreaterThan(0);
     expect(counts.sourceMaps).toBe(2);
     expect(counts.firing).toBeGreaterThan(0);
+    expect(counts.heatmapRecords).toBeGreaterThan(2_000);
+    expect(counts.heatmapRecords).toBeLessThan(60_000);
   });
 });
 
@@ -139,6 +141,27 @@ describe("every page has something to show", () => {
     expect(users.length).toBeGreaterThan(20);
     const activity: Json = await get(`/users/${encodeURIComponent(users[0].userId)}?period=30d`);
     expect(JSON.stringify(activity)).toContain("pageview");
+  });
+
+  test("heatmaps: the main pages, clicks on the calls to action and the menu, rage clicks on checkout", async () => {
+    const { pages, heatmaps }: Json = await get("/heatmaps/pages?period=30d");
+    expect(heatmaps).toBe(true);
+    expect(pages.map((page: Json) => page.path)).toEqual(
+      expect.arrayContaining(["/", "/pricing", "/cart", "/checkout"]),
+    );
+    const home: Json = await get("/heatmaps?period=30d&path=%2F&device=desktop");
+    expect(home.totals.pageviews).toBeGreaterThan(50);
+    expect(home.elements[0]).toMatchObject({ label: "hero-cta", element: "section>a" });
+    expect(home.elements.map((element: Json) => element.label)).toContain("main-nav");
+    const shares = home.scroll.reach.map((step: Json) => step.share);
+    expect(shares).toEqual(shares.toSorted((a: number, b: number) => b - a));
+    expect(home.totals.medianDepth).toBeGreaterThan(0.3);
+    expect(home.totals.medianDepth).toBeLessThan(0.9);
+    const checkout: Json = await get("/heatmaps?period=30d&path=%2Fcheckout");
+    expect(checkout.hotspots[0]).toMatchObject({ label: "checkout-continue" });
+    expect(checkout.totals.rageClicks).toBeGreaterThan(10);
+    const pricing: Json = await get("/heatmaps?period=30d&path=%2Fpricing");
+    expect(pricing.totals.rageClicks).toBe(0);
   });
 
   test("speed: mobile noticeably slower than desktop", async () => {

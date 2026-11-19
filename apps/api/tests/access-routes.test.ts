@@ -14,6 +14,7 @@ const PUBLIC_ROUTES = new Set([
   "POST /api/events",
   "POST /api/server-events",
   "POST /api/replays",
+  "POST /api/heatmaps",
   "PUT /api/source-maps",
   "POST /v1/traces",
   "POST /v1/logs",
@@ -22,6 +23,7 @@ const PUBLIC_ROUTES = new Set([
   "GET /t.js",
   "GET /v.js",
   "GET /r.js",
+  "GET /h.js",
   "GET /replay-player.js",
   "GET /*",
   // Sign-in (Better Auth), setup, accepting an invitation, and a reset link.
@@ -77,6 +79,8 @@ const EXPECTED: Record<string, string> = {
   "GET /api/projects/:id/analytics": "web_analytics:view",
   "GET /api/projects/:id/analytics/list": "web_analytics:view",
   "GET /api/projects/:id/speed": "web_analytics:view",
+  "GET /api/projects/:id/heatmaps": "web_analytics:view",
+  "GET /api/projects/:id/heatmaps/pages": "web_analytics:view",
 
   "GET /api/projects/:id/events": "product_analytics:view",
   "GET /api/projects/:id/events/:name": "product_analytics:view",

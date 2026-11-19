@@ -19,6 +19,11 @@ export interface BreakdownRow {
   label: React.ReactNode;
   /** Full text when the label is cut short, such as a long path. */
   title?: string;
+  /**
+   * After the label, in the name cell, never cut short with it: a small
+   * link for the row (a page's heatmap) or a mark in words (rage clicks).
+   */
+  action?: React.ReactNode;
   /** Sets the bar's length, against the largest in the table. */
   bar: number;
   /** The figures, as shown, one for each of `figureHeadings`. */
@@ -177,9 +182,18 @@ export function BreakdownTable({
                         stack ? "max-sm:col-span-2 max-sm:p-0" : "max-sm:sticky max-sm:left-0",
                       )}
                     >
-                      <div className="truncate text-ink" title={row.title}>
-                        {row.label}
-                      </div>
+                      {row.action === undefined ? (
+                        <div className="truncate text-ink" title={row.title}>
+                          {row.label}
+                        </div>
+                      ) : (
+                        <div className="flex min-w-0 items-center gap-1.5">
+                          <div className="min-w-0 truncate text-ink" title={row.title}>
+                            {row.label}
+                          </div>
+                          <div className="flex shrink-0 items-center">{row.action}</div>
+                        </div>
+                      )}
                     </TableCell>
                     <TableCell
                       className={cn("py-1.5", stack && "max-sm:col-span-2 max-sm:px-0 max-sm:py-1")}

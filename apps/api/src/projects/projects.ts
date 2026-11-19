@@ -33,6 +33,8 @@ export interface Project {
   ignoreDataCenters: boolean;
   /** Session replays: "off", or "errors", recorded around errors (docs/session-replay.md). */
   replayMode: "off" | "errors";
+  /** Heatmaps: clicks and scroll depth from pages whose snippet asks (docs/web-analytics.md, "Heatmaps"). */
+  heatmaps: boolean;
   /** The goal the overview's business figures start with, or null (docs/dashboard.md, "Overview"). */
   mainGoalId: string | null;
   /**
@@ -109,6 +111,7 @@ function baseQuery(db: Kysely<Database>) {
       "projects.require_signed_user_ids",
       "projects.ignore_data_centers",
       "projects.replay_mode",
+      "projects.heatmaps",
       "projects.main_goal_id",
       "projects.blocked_addresses",
       "projects.blocked_referrers",
@@ -130,6 +133,7 @@ function toProject(row: ProjectRow): Project {
     requireSignedUserIds: row.require_signed_user_ids,
     ignoreDataCenters: row.ignore_data_centers,
     replayMode: row.replay_mode,
+    heatmaps: row.heatmaps,
     mainGoalId: row.main_goal_id,
     blockedAddresses: row.blocked_addresses,
     blockedReferrers: row.blocked_referrers,
@@ -189,6 +193,7 @@ export async function updateProject(
     requireSignedUserIds?: boolean;
     ignoreDataCenters?: boolean;
     replayMode?: "off" | "errors";
+    heatmaps?: boolean;
     mainGoalId?: string | null;
     /** Already checked and normalised (parseBlockedAddresses). */
     blockedAddresses?: string[];
@@ -209,6 +214,7 @@ export async function updateProject(
       ? {}
       : { ignore_data_centers: changes.ignoreDataCenters }),
     ...(changes.replayMode === undefined ? {} : { replay_mode: changes.replayMode }),
+    ...(changes.heatmaps === undefined ? {} : { heatmaps: changes.heatmaps }),
     ...(changes.mainGoalId === undefined ? {} : { main_goal_id: changes.mainGoalId }),
     ...(changes.blockedAddresses === undefined
       ? {}

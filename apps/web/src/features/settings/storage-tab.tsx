@@ -61,6 +61,7 @@ const TABLE_NAMES: Record<string, string> = {
   metric_points: "Metrics",
   metric_histograms: "Metric histograms",
   check_results: "Uptime check results",
+  heatmaps: "Heatmaps",
   user_first_seen: "First seen per user",
   schema_migrations: "Schema versions",
 };

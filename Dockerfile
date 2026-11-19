@@ -34,9 +34,9 @@ WORKDIR /app
 # output carries THIRD_PARTY_LICENSES.txt for the code it bundles.
 COPY --from=build /src/apps/api/dist ./dist
 COPY --from=build /src/apps/web/dist ./dashboard
-# The tracker, and beside it what it loads: v.js to measure Web Vitals, and
-# r.js to record session replays around errors.
-COPY --from=build /src/packages/tracker/dist/tracker.js /src/packages/tracker/dist/v.js /src/packages/tracker/dist/r.js ./tracker/
+# The tracker, and beside it what it loads: v.js to measure Web Vitals,
+# r.js to record session replays around errors, and h.js for heatmaps.
+COPY --from=build /src/packages/tracker/dist/tracker.js /src/packages/tracker/dist/v.js /src/packages/tracker/dist/r.js /src/packages/tracker/dist/h.js ./tracker/
 # The session replay player, which the dashboard's player page loads.
 COPY --from=build /src/packages/replay-player/dist/player.js /src/packages/replay-player/dist/THIRD_PARTY_LICENSES.txt ./replay-player/
 COPY LICENSE THIRD_PARTY_NOTICES.md ./

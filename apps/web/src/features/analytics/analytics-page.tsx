@@ -1,6 +1,12 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { ChartLineIcon, FilterXIcon, OctagonAlertIcon, XIcon } from "lucide-react";
+import {
+  ChartLineIcon,
+  FilterXIcon,
+  MousePointerClickIcon,
+  OctagonAlertIcon,
+  XIcon,
+} from "lucide-react";
 import * as React from "react";
 
 import { BreakdownTable } from "@/components/breakdown-table";
@@ -37,6 +43,7 @@ import { MISSING } from "@/lib/missing";
 import { projectQuery, type ProjectSummary } from "@/lib/projects-api";
 
 import { EnvironmentSelect, PeriodSelect } from "../errors/range-controls";
+import { heatmapsSearchOf } from "../heatmaps/search";
 import { MIN_LOADS_FOR_CHANGE } from "../overview/format";
 import { NoSuchProject } from "../projects/no-such-project";
 import { DayChart } from "./day-chart";
@@ -108,6 +115,35 @@ function visitsTab(
   };
 }
 
+/** A page's heatmap, after its path in the Pages lists: the page's days and environment. */
+function HeatmapLink({
+  projectId,
+  search,
+  path,
+}: {
+  projectId: string;
+  search: PageSearch;
+  path: string;
+}) {
+  return (
+    <Link
+      to="/projects/$projectId/heatmaps"
+      params={{ projectId }}
+      search={heatmapsSearchOf({
+        range: search.range,
+        environment: search.environment,
+        path,
+        device: undefined,
+      })}
+      aria-label={`Heatmap of ${path}`}
+      title={`Heatmap of ${path}`}
+      className="flex size-6 items-center justify-center rounded-md text-ink-subtle transition-colors hover:bg-accent hover:text-ink max-sm:size-8"
+    >
+      <MousePointerClickIcon aria-hidden="true" className="size-3.5" />
+    </Link>
+  );
+}
+
 /**
  * One breakdown as a compact table; with more than one list of the kind, a
  * toggle group switches between them. A list that shows its full
@@ -118,11 +154,14 @@ function BreakdownSection({
   tabs,
   projectId,
   search,
+  heatmapLinks = false,
 }: {
   title: string;
   tabs: ListTab[];
   projectId: string;
   search: PageSearch;
+  /** Each row with a path links to its page's heatmap, after its name. */
+  heatmapLinks?: boolean;
 }) {
   const [first] = tabs;
   const [shownValue, setShownValue] = React.useState(first?.value ?? "");
@@ -141,6 +180,11 @@ function BreakdownSection({
           key: row.key,
           label: row.label,
           title: row.title,
+          // A row without a path ("Unknown") has no page to show.
+          action:
+            heatmapLinks && row.key.startsWith("/") ? (
+              <HeatmapLink projectId={projectId} search={search} path={row.key} />
+            ) : undefined,
           bar: row.primary,
           figures: [
             formatWhole(row.primary),
@@ -410,6 +454,7 @@ function Reports({
           <BreakdownSection
             {...card}
             title="Pages"
+            heatmapLinks
             tabs={[
               {
                 value: "top",

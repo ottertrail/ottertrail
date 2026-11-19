@@ -21,11 +21,13 @@ const scripts = {
       "/*! rrweb, Copyright (c) 2018 Contributors (https://github.com/rrweb-io/rrweb/graphs/contributors), MIT License: https://github.com/rrweb-io/rrweb/blob/master/LICENSE */\n" +
       "/*! base64-arraybuffer, Copyright (c) 2012 Niklas von Hertzen, MIT License: https://github.com/niklasvh/base64-arraybuffer/blob/master/LICENSE-MIT */",
   },
+  // Heatmap capture, loaded by the tracker with data-heatmaps="on".
+  h: { entry: "src/heatmaps.ts" },
 };
 
 export default defineConfig({
-  // `vp pack` builds three minified scripts: dist/tracker.js for a <script>
-  // tag, and dist/v.js and dist/r.js, which it loads from beside itself.
+  // `vp pack` builds four minified scripts: dist/tracker.js for a <script>
+  // tag, and dist/v.js, dist/r.js, and dist/h.js, which it loads from beside itself.
   pack: Object.entries(scripts).map(([name, script]) => ({
     entry: { [name]: script.entry },
     format: "iife" as const,

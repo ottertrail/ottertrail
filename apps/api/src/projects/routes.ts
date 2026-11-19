@@ -89,7 +89,7 @@ function shownTo(access: UserAccess, project: Project) {
  * Changes to allowed hostnames reach the collection endpoint within a
  * minute, the lifetime of its project cache (collection/project-keys.ts);
  * changes to the collection rules (signed user IDs, data centers, replay
- * mode, blocked addresses and referrers) at once in this process.
+ * mode, heatmaps, blocked addresses and referrers) at once in this process.
  * A replaced key or a deleted project's key stops working at once: the
  * routes tell the cache to forget it.
  */
@@ -162,6 +162,7 @@ export const projectRoutes: FastifyPluginCallback<{
       requireSignedUserIds?: boolean;
       ignoreDataCenters?: boolean;
       replayMode?: "off" | "errors";
+      heatmaps?: boolean;
       mainGoalId?: string | null;
       blockedAddresses?: string[];
       blockedReferrers?: string[];
@@ -189,6 +190,8 @@ export const projectRoutes: FastifyPluginCallback<{
             ignoreDataCenters: { type: "boolean" },
             // Session replays around errors (docs/session-replay.md); off by default.
             replayMode: { type: "string", enum: ["off", "errors"] },
+            // Heatmaps: clicks and scroll depth (docs/web-analytics.md, "Heatmaps"); off by default.
+            heatmaps: { type: "boolean" },
             // The overview's main goal: one of the project's goals, or null for none.
             mainGoalId: { type: ["string", "null"], pattern: UUID_PATTERN },
             // Addresses and ranges whose browser events are ignored (blocked-addresses.ts).
@@ -207,6 +210,7 @@ export const projectRoutes: FastifyPluginCallback<{
         requireSignedUserIds,
         ignoreDataCenters,
         replayMode,
+        heatmaps,
         mainGoalId,
         blockedAddresses,
         blockedReferrers,
@@ -245,6 +249,7 @@ export const projectRoutes: FastifyPluginCallback<{
         ...(requireSignedUserIds === undefined ? {} : { requireSignedUserIds }),
         ...(ignoreDataCenters === undefined ? {} : { ignoreDataCenters }),
         ...(replayMode === undefined ? {} : { replayMode }),
+        ...(heatmaps === undefined ? {} : { heatmaps }),
         ...(mainGoalId === undefined ? {} : { mainGoalId }),
         ...(blocked === undefined ? {} : { blockedAddresses: blocked }),
         ...(referrers === undefined ? {} : { blockedReferrers: referrers }),
@@ -259,6 +264,7 @@ export const projectRoutes: FastifyPluginCallback<{
         requireSignedUserIds !== undefined ||
         ignoreDataCenters !== undefined ||
         replayMode !== undefined ||
+        heatmaps !== undefined ||
         blocked !== undefined ||
         referrers !== undefined
       ) {

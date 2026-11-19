@@ -16,6 +16,7 @@ import {
   HardDriveIcon,
   HeartPulseIcon,
   LayoutDashboardIcon,
+  MousePointerClickIcon,
   PaletteIcon,
   ScrollTextIcon,
   ServerIcon,
@@ -247,6 +248,21 @@ function ProjectMenu({ projectId }: { projectId: string }) {
               >
                 <GaugeIcon />
                 <span>Speed</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          )}
+          {canOpen(me, "web_analytics") && (
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                render={<Link to="/projects/$projectId/heatmaps" params={{ projectId }} />}
+                isActive={
+                  matchRoute({ to: "/projects/$projectId/heatmaps", params: { projectId } }) !==
+                  false
+                }
+                tooltip="Heatmaps"
+              >
+                <MousePointerClickIcon />
+                <span>Heatmaps</span>
               </SidebarMenuButton>
             </SidebarMenuItem>
           )}

@@ -207,7 +207,7 @@ The endpoint is public, so anyone can send it anything. Checks run cheapest firs
 9. Visitor IDs, then the [daily cap per visitor](#a-daily-cap-per-visitor) (`capped`). It needs the visitor ID, so it comes after the budget; capped events get their budget back.
 10. One insert into ClickHouse for the whole batch.
 
-Replay uploads (`POST /api/replays`, [session replay](session-replay.md)) run steps 1, 2, 4, 5, then blocked addresses with bots and data centers (202, `{ "stored": 0 }`), then their own budgets in bytes. The event checks of steps 3 and 9 and referrer spam do not apply to them: a chunk carries no events or referrer. Server-side events and OTLP telemetry run none of the spam checks.
+Replay uploads (`POST /api/replays`, [session replay](session-replay.md)) run steps 1, 2, 4, 5, then blocked addresses with bots and data centers (202, `{ "stored": 0 }`), then their own budgets in bytes. The event checks of steps 3 and 9 and referrer spam do not apply to them: a chunk carries no events or referrer. Heatmap batches (`POST /api/heatmaps`, [Heatmaps](#heatmaps)) run steps 1 to 6 in the same order, with records in place of events and the project's heatmaps setting after step 5, then their own budgets; they have no visitor ID, so no daily cap. Server-side events and OTLP telemetry run none of the spam checks.
 
 ### Keys and allowed hostnames
 
@@ -350,7 +350,7 @@ A delete takes at most 10,000 visits; past that it refuses, deleting nothing (40
 
 ## 3. The tracker
 
-`packages/tracker` builds `dist/tracker.js`, the script a site adds to its pages: about 10.3 KB, 4.4 KB gzipped. It loads `dist/v.js` (3.7 KB gzipped) from beside itself to measure [Web Vitals](#web-vitals), and `dist/r.js` (29 KB gzipped) to record [session replays](session-replay.md) when the page asks for them.
+`packages/tracker` builds `dist/tracker.js`, the script a site adds to its pages: about 10.9 KB, 4.6 KB gzipped. It loads `dist/v.js` (3.7 KB gzipped) from beside itself to measure [Web Vitals](#web-vitals), `dist/r.js` (29 KB gzipped) to record [session replays](session-replay.md) when the page asks for them, and `dist/h.js` (3.4 KB gzipped) for [heatmaps](#heatmaps) when the page asks for them.
 
 ```html
 <script
@@ -860,3 +860,136 @@ Reports that only count events (top pages, custom events) read the range's event
 ### Not done yet
 
 - Goals and funnels; a filter for custom events (visits that signed up); comparison for the chart and the lists (only the summary is compared).
+
+## Heatmaps
+
+Where visitors click on a page, and how far down they read: click maps, scroll depth, and rage clicks, for one page, period, environment, and device class at a time. Phase 1 (built): capture in the browser, storage, and the Heatmaps screen, which shows the figures without a picture of the page ([dashboard](dashboard.md)). Phase 2 (planned): the same data drawn over the owner's live page. Mouse movement is not recorded: the cursor follows the eyes too loosely to say what people look at, and touch screens have none. Code: `packages/tracker/src/heatmaps.ts` and `heatmap-capture.ts` (h.js), `apps/api/src/heatmaps/`.
+
+### Turning it on
+
+Two switches, both needed, as for session replay:
+
+- **The project's setting**, "Heatmaps" on its Install tab: off by default. While it is off, the API refuses heatmap batches (403 `heatmaps_off`), and h.js stops sending for the rest of the page load.
+- **The snippet**: `data-heatmaps="on"` on the tracker's tag makes the tracker load `h.js` from beside itself, with the tag's `nonce`, as it loads `v.js`. Not with an `integrity` attribute: `h.js` could not be pinned with it. The dashboard's snippet gains the attribute once the setting is on.
+
+```html
+<script
+  defer
+  src="https://analytics.example.com/t.js"
+  data-key="pk_…"
+  data-host="https://analytics.example.com"
+  data-heatmaps="on"
+></script>
+```
+
+### Sampling
+
+Every pageview is recorded by default. `data-heatmaps-sample="0.25"` records a quarter of them: the tracker draws a random number for each pageview, an in-app navigation included, and records it when the number is under the sample. Nothing about the choice is kept; a reload draws again. A value outside 0 to 1 warns in the console and records every pageview. `h.js` is downloaded with the first pageview in the sample, so a page outside it costs nothing.
+
+### What is recorded
+
+For each sampled pageview:
+
+- **Each click** (trusted, primary button, with a position; a key's "click" has none), at most **100 per pageview** (`MAX_CLICKS_PER_PAGEVIEW`; later ones are only counted, below), except inside an element marked `data-ottertrail-block` or `data-ottertrail-mask`, session replay's markers ([session replay](session-replay.md#markers-in-the-sites-html)): a click there is not recorded at all, so a PIN keypad's keys or a signature pad never show where they were touched:
+  - **the element**, as a structural path: tag names, and each one's place among its siblings of the same tag after the first (`body>main>section:2>div>a`). Only standard HTML and SVG tag names are written (`HEATMAP_TAGS`); any other element, a custom element or a made-up tag such as `<user-card>`, is `x`, since a site's own tag names can carry words. A click in a shadow root counts for its host. A click inside a link, a button, a form control, a label, a summary, or an element with a button, link, tab, menu item, checkbox, radio, switch, or option role goes to that element, so a click on a button's icon counts for the button. The path starts at the nearest element named with `data-ottertrail-name` (below), or at `body`; it keeps the nearest 24 steps and at most 512 characters, marked `*>` when cut;
+  - **the name**, the nearest `data-ottertrail-name` on the element or above it, when it is 1 to 64 letters, digits, spaces, `.`, `_`, `:`, `/`, or `-`, starting with a letter or digit; another value is ignored;
+  - **where in the element** the click fell, as fractions of its width and height (0 to 1, three decimals);
+  - **the viewport's width and height and the page's height**, in CSS pixels, and **the device class** from the viewport's width: mobile under 768, tablet under 1024, desktop from 1024;
+  - **rage**: the click is the third or later of 3 or more within 1 second and 30 pixels of each other (`RAGE_CLICKS`, `RAGE_WINDOW_MS`, `RAGE_DISTANCE_PX`);
+  - **its minute**: click times are sent and stored to the minute, so the order of a visitor's clicks within a minute cannot be read back. Reports need only the day. A retry is still the same row: its day and record ID do not change.
+- **One scroll depth**: the deepest point reached, the bottom of the viewport as a share of the page's height at that moment, with the viewport and page height then; the **fold**, the share of the page visible without scrolling when it first showed (the viewport against the page's first height, so a page that grows as it loads keeps its fold); and **the clicks past the 100** of the pageview, counted (`dropped`). It is measured on the frame after each scroll. After an in-app navigation the new page starts at 0 and is first measured two frames later, once it has rendered (or at its first scroll); the page left keeps the depth it last measured, so a framework that renders the next page before its `pushState` cannot deepen it. It is sent when the page is hidden or left (as time on page is), and when an in-app navigation leaves the page. Hidden again after scrolling further, or after more clicks past the 100, the pageview sends it again with the same ID, which replaces the first; hidden again without, it sends nothing. Its time is the pageview's start, so the row stays on its day. Pages that scroll inside an element report the document's scroll only.
+- **The page's address**, cleaned exactly as pageviews' are (origin, path, and UTM tags; the API keeps the path), and the environment and release of the tag. A single-page app's clicks and scroll depth belong to the path they happened on: the tracker tells `h.js` of each new pageview it records.
+
+**Never sent:** text of any element, typed values, `id`, `class`, `href`, `src`, `title`, `alt`, `aria-*`, any other attribute (only `data-ottertrail-name` is read), query strings other than UTM tags, fragments, a visitor ID, or a session ID. Of the page's referrer, only its origin (`https://news.example`) is sent, for the referrer spam check, and it is never stored. A browser test (`packages/tracker/tests/browser/heatmaps.test.ts`, "privacy") runs the tracker and `h.js` on a page full of planted values (a name, an email, a card number, tokens in a link's and an image's addresses and in the page's query string and fragment, an ID, classes, `title`, `alt`, `aria-label`, `data-*`, `placeholder`, `name`, a value, a form's `action`, typed text, a text area, a chosen option, a made-up tag, a custom element, text in a shadow root, an SVG element's attribute, and an email as an invalid `data-ottertrail-name`), clicks every element, a keypad inside `data-ottertrail-block`, and a signature pad inside `data-ottertrail-mask`, types, chooses, scrolls, and hides the page, then checks that none of the values is in anything sent, that no click in the marked elements was recorded, that other tags are `x`, that every time is a whole minute, that the records hold only the fields above, and that nothing was written to cookies or storage. A second case checks that a referrer's path never leaves.
+
+### Naming elements: `data-ottertrail-name`
+
+Structural paths are exact but hard to read, and they change when the page's structure does. A site that wants readable, stable names adds its own to the elements that matter:
+
+```html
+<a href="/signup" data-ottertrail-name="hero-cta">Start free</a>
+<nav data-ottertrail-name="main-nav">…</nav>
+```
+
+The Heatmaps screen lists clicks under the name, with the path from the named element (`main-nav` with `nav>ul>li:3>a`). Name a container to group what is inside it. The name is sent as it is written, so it must never hold personal data: use names of parts of the page, not of people.
+
+### Privacy and consent
+
+Heatmaps follow page analytics: they have no consent switch of their own. Nothing is stored on the visitor's device (no cookies, no storage), and a record carries less than a pageview: no visitor ID, no page text, no address beyond the path. Session replay is different, because it records what was on the screen ([session replay](session-replay.md#waiting-for-consent)). The planned analytics opt-out will cover heatmaps too. This is not legal advice: a site's privacy notice should say it measures clicks and scrolling.
+
+### Sending
+
+`h.js` batches its records: they wait up to 5 seconds, or until 50 are waiting, and go in one request of at most 50 records and 60,000 bytes (`MAX_BATCH_BYTES`, under the API's 64 KiB), each page's URL and referrer once per request. When the page is hidden or left, what is waiting goes by `sendBeacon`, as the tracker's events do, at most 16,000 bytes in all (`MAX_EXIT_BYTES`): a browser lets a page's beacons and keepalive requests carry 64 KiB at once, and the tracker's own exit beacon needs its share. Beyond it the oldest clicks are dropped first. Retries follow the tracker's rules: 429, 5xx, and no answer are retried with the same records and IDs, after `Retry-After` or the tracker's backoff (a batching timer set meanwhile does not cut the wait short), 8 attempts at most; other answers drop the batch; a 403 (heatmaps off, an unknown key, a site not allowed) stops `h.js` for the page load. At most 200 records wait.
+
+### The API
+
+`POST /api/heatmaps`, as `text/plain` JSON:
+
+```json
+{
+  "v": 1,
+  "key": "pk_…",
+  "sentAt": 1794823396705,
+  "environment": "staging",
+  "release": "1.4.2",
+  "pages": [{ "url": "https://example.com/pricing", "referrer": "https://news.example" }],
+  "records": [
+    {
+      "id": "<UUID>",
+      "type": "click",
+      "at": 1794823380000,
+      "page": 0,
+      "label": "hero-cta",
+      "element": "section>a",
+      "x": 0.25,
+      "y": 0.5,
+      "rage": true,
+      "vw": 1440,
+      "vh": 860,
+      "ph": 4200,
+      "device": "desktop"
+    },
+    {
+      "id": "<UUID>",
+      "type": "scroll",
+      "at": 1794823380000,
+      "page": 0,
+      "depth": 0.62,
+      "fold": 0.2,
+      "dropped": 0,
+      "vw": 1440,
+      "vh": 860,
+      "ph": 4200,
+      "device": "desktop"
+    }
+  ]
+}
+```
+
+- **Limits** (Fastify's schema, then the route): 64 KB body; 1 to 50 pages and 1 to 50 records, each record's `page` one of the batch's pages; a UUID ID; `at` and `sentAt` times; URL and referrer at most 8,192 characters, the path at most 2,048, http or https on an allowed hostname; `element` the path's grammar above (only the standard tag names and `x`, `:n` places, `>`, at most 24 steps and 512 characters, so no class, ID, text, or site's own tag fits); `label` the name's rule; `x`, `y`, `depth`, and `fold` 0 to 1; `dropped` 0 to 65,535; viewport sides 1 to 16,384 and page height 1 to 1,000,000 pixels; `device` one of the three, and the one the viewport's width gives. A click needs `element`, `x`, and `y` and has no `depth`, `fold`, or `dropped`; a scroll record needs `depth` and `fold` and has no click fields. Times are stored to the minute. Unknown fields are removed. A batch that breaks a rule stores nothing (400; 413 over 64 KB).
+- **Checks, in order**: requests per client IP (120, then 2 a second), the schema, records per client address (400, then 40 a second), the key, the `Origin`, the project's setting (403 `heatmaps_off`), then accepted and not stored (202, counted): blocked addresses (`blocked`), bots and data centers (`bots`), referrer spam (`spam`); then the budgets; then each record's rules and clock correction (more than a day old: `tooOld`).
+- **Budgets of their own**, apart from events', so heatmaps never crowd them out: 2,000 records, then 100 a second, per project; 6,000, then 300 a second, for the instance. Provisional, until measured on real sites.
+- **Acknowledged after ClickHouse has written** the batch, in one asynchronous insert waited for, as events are; 503 `storage_unavailable` while it cannot, with the budget given back. 202 answers `{ "stored", "tooOld", "bots", "blocked", "spam" }`.
+- **Retries are the same rows:** the table keeps one row per project, day, and record ID (with the page, device, and kind, which a retry shares), as events do; reports read with `FINAL`. A scroll depth sent again deeper, or with more dropped clicks, replaces the earlier ([ClickHouse](clickhouse.md#heatmaps)).
+
+### Kept 90 days
+
+Heatmap rows are kept a fixed 90 days, whatever the project's event retention: ClickHouse drops each day past it (TTL), and the reports read at most the last 90 days. Older clicks describe an older layout. Deleting a project deletes its heatmaps with its other ClickHouse rows; the orphan sweep covers them too. Deleting spam visits does not reach heatmap rows, which have no visitor ID; they leave with the 90 days.
+
+### Reports
+
+Two routes in the Web analytics area at view ([access](access.md)): `GET /api/projects/:id/heatmaps/pages` lists the pages with heatmap data in a period (most records first, sampled pageviews and clicks together, so a page whose scroll depths have not arrived yet is listed; 100 at most, searchable by part of the path), and `GET /api/projects/:id/heatmaps?path=…` gives one page's report for a period, environment, and device class (or all):
+
+- **totals:** sampled pageviews (those that sent a scroll depth), clicks, rage clicks, the median scroll depth (interpolated between the two middle pageviews), the share that reached the bottom, and the clicks not recorded past 100 on one pageview;
+- **scroll reach:** in steps of 10% of the page's height (10%, 20% … 100%), the share of pageviews whose deepest point reached it, and the average fold: the share of the page visible without scrolling, as each pageview first showed;
+- **the most-clicked elements** (100 at most): name or path, clicks, their share of all the page's clicks in the period (not of its pageviews), rage clicks, and the average place in the element;
+- **rage-click hotspots** (20 at most): the elements with the most rage clicks, and where in them;
+- the page's pageviews on each device class.
+
+A range wholly before the 90 days kept answers empty, with `clipped`; a range reaching into them is cut to their first day. Every query filters by project first, then the range, the environment, and the page, passes every value as a parameter, and has a `LIMIT` or returns one row. One page's report reads with `FINAL`; the page list, which reads every page of the project over up to 90 days, reads without it, so a retried record not merged yet adds one to its page's count until it is. They run with the dashboard's limits (15 seconds, 300 MB) within its shared limit of queries at once.
+
+### Not done yet
+
+- Phase 2: drawing the map over the owner's live page, opened from the dashboard with a short-lived read-only token.
+- Dead clicks, clicks followed by an error, and paths grouped by template (`/products/*`).
+- The budgets measured on a real site.

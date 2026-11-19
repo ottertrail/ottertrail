@@ -16,6 +16,7 @@ import { AppLayout } from "@/app";
 import { NoAccess } from "@/components/no-access";
 import { AuthPending, PagePending, RouteError } from "@/components/route-states";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { type DeviceChoice, isDeviceChoice, pathFrom } from "@/features/heatmaps/search";
 import { ProductLayout } from "@/features/product/product-layout";
 import {
   type FilterSearch,
@@ -89,6 +90,7 @@ const ErrorsPage = lazyPage(() => import("@/features/errors/errors-page"), "Erro
 const EventPage = lazyPage(() => import("@/features/product/event-page"), "EventPage");
 const EventsPage = lazyPage(() => import("@/features/product/events-page"), "EventsPage");
 const FunnelPage = lazyPage(() => import("@/features/product/funnel-page"), "FunnelPage");
+const HeatmapsPage = lazyPage(() => import("@/features/heatmaps/heatmaps-page"), "HeatmapsPage");
 const HostPage = lazyPage(() => import("@/features/telemetry/host-page"), "HostPage");
 const HostsPage = lazyPage(() => import("@/features/telemetry/hosts-page"), "HostsPage");
 const InvitePage = lazyPage(() => import("@/features/auth/invite-page"), "InvitePage");
@@ -553,6 +555,37 @@ const speedRoute = createRoute({
         projectId={projectId}
         range={rangeFrom({ period, from, to })}
         environment={env ?? DEFAULT_ENVIRONMENT}
+        device={device}
+      />
+    );
+  }),
+});
+
+/** Clicks and scroll depth of one page: days and environment as on Speed, a page, and a device. */
+const heatmapsRoute = createRoute({
+  getParentRoute: () => projectRoute,
+  path: "/heatmaps",
+  staticData: { title: "Heatmaps", access: "web_analytics" },
+  validateSearch: (
+    search: ErrorSearchInput & { path?: unknown; device?: unknown },
+  ): ReturnType<typeof rangeSearch> & { env: string | undefined } & {
+    path: string | undefined;
+    device: DeviceChoice | undefined;
+  } => ({
+    ...rangeSearch(search),
+    ...environmentSearch(search),
+    path: pathFrom(search.path),
+    device: isDeviceChoice(search.device) ? search.device : undefined,
+  }),
+  component: withPage(HeatmapsPage, function HeatmapsRouteComponent() {
+    const { projectId } = heatmapsRoute.useParams();
+    const { period, from, to, env, path, device } = heatmapsRoute.useSearch();
+    return (
+      <HeatmapsPage
+        projectId={projectId}
+        range={rangeFrom({ period, from, to })}
+        environment={env ?? DEFAULT_ENVIRONMENT}
+        path={path}
         device={device}
       />
     );
@@ -1237,6 +1270,7 @@ const routeTree = rootRoute.addChildren([
       overviewRoute,
       webAnalyticsRoute,
       speedRoute,
+      heatmapsRoute,
       usersRoute,
       userRoute,
       errorsRoute,

@@ -36,6 +36,9 @@ export function firstSeenSelect(database: string | null, where = "1"): string {
           GROUP BY project_id, environment, user_id`;
 }
 
+/** How long heatmap rows are kept (0006): a fixed 90 days, whatever the project's event retention. */
+export const HEATMAP_RETENTION_DAYS = 90;
+
 /** How old every part of a telemetry table's day must be before it is merged into one (0002). */
 export const FORCE_MERGE_SECONDS = 3600;
 
@@ -397,6 +400,70 @@ export const CLICKHOUSE_MIGRATIONS: ClickHouseMigration[] = [
          ADD INDEX IF NOT EXISTS received_at_index received_at TYPE minmax GRANULARITY 1`,
       `ALTER TABLE ${database}.logs
          MATERIALIZE INDEX received_at_index SETTINGS mutations_sync = 1`,
+    ],
+  },
+  {
+    name: "0006_heatmaps",
+    /**
+     * Heatmaps (docs/web-analytics.md, "Heatmaps"; heatmaps/store.ts): one
+     * row per click, and one per pageview for how far down the page the
+     * visitor scrolled. No visitor ID, no text of the page.
+     *
+     * - Ordered by project, then day, then page, then device class: a
+     *   report reads one page of one project, so a period is one short
+     *   range per day.
+     * - ReplacingMergeTree keeps one row per key, and reports read with
+     *   FINAL: a retried batch is the same rows (project, day, record ID,
+     *   as for events), so it counts once. The key holds the day, not the
+     *   exact time, which clock correction moves a little on each attempt.
+     *   A pageview's scroll row is sent again, with the same ID, when the
+     *   visitor scrolls further and hides the page again: `version` is its
+     *   depth, then its dropped clicks (depth × 65,536 + dropped; both only
+     *   grow), so the latest is the one kept. A click's version is 0.
+     * - Partitioned by day and kept 90 days: ClickHouse drops a whole day
+     *   past it (ttl_only_drop_parts), as uptime results. Older clicks
+     *   describe an old layout; the project's event retention does not apply.
+     * - x, y, depth, and fold in thousandths (0 to 1000): x and y are where
+     *   the click fell inside its element, depth the deepest share of the
+     *   page reached, fold the share visible without scrolling when the page
+     *   first showed. dropped: a pageview's clicks past the 100 sent. The
+     *   page's height and the viewport go with each row.
+     * - A click's time is to the minute: the order of a visitor's taps (on a
+     *   keypad, say) is not kept.
+     * - label: the site's own `data-ottertrail-name`; element: the click's
+     *   element as a structural path of tag names and positions.
+     * - An insert returns once its data is on disk, as events' do.
+     */
+    statements: (database) => [
+      `CREATE TABLE IF NOT EXISTS ${database}.heatmaps (
+        project_id UUID,
+        record_id UUID,
+        kind Enum8('click' = 1, 'scroll' = 2),
+        occurred_at DateTime64(3, 'UTC'),
+        received_at DateTime64(3, 'UTC'),
+        environment LowCardinality(String),
+        release String,
+        path String,
+        device Enum8('mobile' = 1, 'tablet' = 2, 'desktop' = 3),
+        label String,
+        element String,
+        x UInt16,
+        y UInt16,
+        viewport_width UInt16,
+        viewport_height UInt16,
+        page_height UInt32,
+        rage Bool,
+        depth UInt16,
+        fold UInt16,
+        dropped UInt16,
+        version UInt32
+      )
+      ENGINE = ReplacingMergeTree(version)
+      PARTITION BY toDate(occurred_at)
+      ORDER BY (project_id, toDate(occurred_at), path, device, kind, record_id)
+      TTL toDateTime(occurred_at) + INTERVAL ${HEATMAP_RETENTION_DAYS} DAY
+      SETTINGS ttl_only_drop_parts = 1, non_replicated_deduplication_window = 1000,
+        fsync_after_insert = 1, fsync_part_directory = 1`,
     ],
   },
 ];

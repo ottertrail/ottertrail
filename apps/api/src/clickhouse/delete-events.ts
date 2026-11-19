@@ -26,9 +26,15 @@ function chunks<T>(items: readonly T[]): T[][] {
 
 /**
  * Every table that holds a project's rows: events, traces, logs, metrics,
- * check results, and its signed-in users' first-seen times.
+ * check results, its signed-in users' first-seen times, and its heatmaps.
  */
-const PROJECT_TABLES = ["events", ...TELEMETRY_TABLES, "check_results", USER_FIRST_SEEN] as const;
+const PROJECT_TABLES = [
+  "events",
+  ...TELEMETRY_TABLES,
+  "check_results",
+  USER_FIRST_SEEN,
+  "heatmaps",
+] as const;
 
 /**
  * Deletes the rows of `table` that match `where` (SQL over that table, its
@@ -263,7 +269,7 @@ async function removeDeletedRowsOf(
 }
 
 /**
- * Deletes the events, traces, logs, metrics, and check results of every deleted project
+ * Deletes the events, traces, logs, metrics, check results, and heatmaps of every deleted project
  * (project_deletions) from ClickHouse, and its files from the object store (its source maps and
  * session replays), then
  * forgets the deletions. A deletion stays until both have confirmed, so an
@@ -320,7 +326,7 @@ export interface OrphanSweep {
 
 /**
  * Finds projects that ClickHouse holds rows of (events, traces, logs,
- * metrics, check results) but PostgreSQL no longer
+ * metrics, check results, heatmaps) but PostgreSQL no longer
  * knows, and asks purgeDeletedProjects() to delete them (project_deletions).
  * A deletion can miss ClickHouse's copy: a restore puts back a ClickHouse
  * backup made before the project was deleted, or an insert that timed out

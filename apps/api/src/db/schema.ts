@@ -55,6 +55,8 @@ export interface ProjectsTable {
   ignore_data_centers: ColumnType<boolean, boolean | undefined, boolean>;
   /** Session replays: "off", or "errors", around errors. */
   replay_mode: ColumnType<"off" | "errors", "off" | "errors" | undefined, "off" | "errors">;
+  /** Heatmaps: whether collection takes clicks and scroll depth (docs/web-analytics.md, "Heatmaps"). */
+  heatmaps: ColumnType<boolean, boolean | undefined, boolean>;
   /**
    * When the project's latest event happened; null before the first. The
    * API records it as it stores events (collection/last-event.ts).

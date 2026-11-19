@@ -38,7 +38,7 @@ export const AREA_LEVELS: Record<Area, readonly AreaLevel[]> = {
 
 /** Each area's name, and the pages it covers, as the Members page shows them. */
 export const AREA_LABELS: Record<Area, { name: string; pages: string }> = {
-  web_analytics: { name: "Web analytics", pages: "Analytics and Speed" },
+  web_analytics: { name: "Web analytics", pages: "Analytics, Speed, and Heatmaps" },
   product_analytics: { name: "Product analytics", pages: "Events, funnels, goals, retention" },
   errors: { name: "Errors", pages: "Errors and occurrences" },
   replays: { name: "Replays", pages: "Session replays, which show individual people" },

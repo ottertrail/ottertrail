@@ -26,6 +26,7 @@ import {
 } from "../../src/lib/errors-api.ts";
 import type { SavedFunnel } from "../../src/lib/funnels-api.ts";
 import type { GoalResult } from "../../src/lib/goals-api.ts";
+import type { Heatmap, HeatmapPages } from "../../src/lib/heatmaps-api.ts";
 import type { HostCharts, HostList } from "../../src/lib/hosts-api.ts";
 import type {
   LiveLogs,
@@ -155,6 +156,10 @@ export interface FakeApi {
   resolutions: Record<string, { resolvedAt: string; resolvedBy: string | null }>;
   /** Answers GET /api/projects/:id/speed; by default, fakeSpeed. */
   speed: (query: URLSearchParams) => Speed | Response;
+  /** Answers GET /api/projects/:id/heatmaps/pages; by default, fakeHeatmapPages. */
+  heatmapPages: (query: URLSearchParams) => HeatmapPages | Response;
+  /** Answers GET /api/projects/:id/heatmaps; by default, fakeHeatmap. A promise holds it. */
+  heatmap: (query: URLSearchParams) => Heatmap | Response | Promise<Heatmap | Response>;
   /** Answers GET /api/projects/:id/events; by default, fakeProductEvents. */
   productEvents: (query: URLSearchParams) => ProductEvents | Response;
   /** Answers GET /api/projects/:id/events/:name; by default, fakeProductEvent. */
@@ -2295,6 +2300,7 @@ export const PROJECT: Project = {
   requireSignedUserIds: false,
   ignoreDataCenters: true,
   replayMode: "off",
+  heatmaps: false,
   mainGoalId: null,
   blockedAddresses: [],
   blockedReferrers: [],
@@ -2510,6 +2516,132 @@ export function emptySpeed(): Speed {
     pages: [],
     days: fixture.days.map((day) => ({ day: day.day, loads: 0, lcp: null, inp: null, cls: null })),
   };
+}
+
+/** A week of heatmaps with the setting on: three pages with data, most pageviews first. */
+export function heatmapPagesFixture(overrides: Partial<HeatmapPages> = {}): HeatmapPages {
+  return {
+    timeZone: "Asia/Singapore",
+    environment: "production",
+    environments: ["production"],
+    firstDay: "2026-11-10",
+    lastDay: "2026-11-16",
+    heatmaps: true,
+    retentionDays: 90,
+    clipped: false,
+    pages: [
+      { path: "/", pageviews: 420, clicks: 900 },
+      { path: "/pricing", pageviews: 180, clicks: 310 },
+      { path: "/docs/install", pageviews: 40, clicks: 25 },
+    ],
+    ...overrides,
+  };
+}
+
+/** heatmapPagesFixture, answering for the environment and search asked for. */
+export function fakeHeatmapPages(query: URLSearchParams): HeatmapPages {
+  const fixture = heatmapPagesFixture({ environment: query.get("environment") ?? "production" });
+  const search = (query.get("search") ?? "").toLowerCase();
+  return {
+    ...fixture,
+    pages: fixture.pages.filter((page) => page.path.toLowerCase().includes(search)),
+  };
+}
+
+/** The scroll reach of 400 pageviews: everyone sees the top, a third the bottom. */
+const REACH = [100, 96, 90, 81, 70, 62, 55, 47, 40, 33].map((percent, index) => ({
+  depth: (index + 1) * 10,
+  pageviews: percent * 4,
+  share: percent / 100,
+}));
+
+/** One page's week of clicks and scroll depth; change parts with `overrides`. */
+export function heatmapFixture(overrides: Partial<Heatmap> = {}): Heatmap {
+  return {
+    ...heatmapPagesFixture(),
+    path: "/",
+    device: null,
+    devices: [
+      { device: "desktop", pageviews: 260 },
+      { device: "mobile", pageviews: 130 },
+      { device: "tablet", pageviews: 10 },
+    ],
+    totals: {
+      pageviews: 400,
+      clicks: 1_250,
+      rageClicks: 18,
+      droppedClicks: 0,
+      medianDepth: 0.64,
+      reachedBottom: 0.33,
+    },
+    scroll: { reach: REACH, averageFold: 0.38 },
+    elements: [
+      {
+        label: "hero-cta",
+        element: "section:1>div>a",
+        clicks: 500,
+        share: 0.4,
+        rageClicks: 0,
+        x: 0.5,
+        y: 0.5,
+      },
+      {
+        label: null,
+        element: "body>main>section:2>div>button",
+        clicks: 250,
+        share: 0.2,
+        rageClicks: 15,
+        x: 0.48,
+        y: 0.3,
+      },
+      {
+        label: null,
+        element: "*>div>ul>li:3>a",
+        clicks: 5,
+        share: 0.004,
+        rageClicks: 3,
+        x: 0.1,
+        y: 0.9,
+      },
+    ],
+    hotspots: [
+      { label: null, element: "body>main>section:2>div>button", rageClicks: 15, x: 0.48, y: 0.3 },
+      { label: null, element: "*>div>ul>li:3>a", rageClicks: 3, x: 0.1, y: 0.9 },
+    ],
+    ...overrides,
+  };
+}
+
+/** The same page with nothing in the period: no pageview sent heatmap data. */
+export function emptyHeatmap(overrides: Partial<Heatmap> = {}): Heatmap {
+  return heatmapFixture({
+    devices: [],
+    totals: {
+      pageviews: 0,
+      clicks: 0,
+      rageClicks: 0,
+      droppedClicks: 0,
+      medianDepth: null,
+      reachedBottom: null,
+    },
+    scroll: {
+      reach: REACH.map((depth) => ({ ...depth, pageviews: 0, share: 0 })),
+      averageFold: null,
+    },
+    elements: [],
+    hotspots: [],
+    ...overrides,
+  });
+}
+
+/** heatmapFixture, answering for the path, environment, and device asked for. */
+export function fakeHeatmap(query: URLSearchParams): Heatmap {
+  const device = query.get("device");
+  return heatmapFixture({
+    path: query.get("path") ?? "/",
+    environment: query.get("environment") ?? "production",
+    device: device === "desktop" || device === "tablet" || device === "mobile" ? device : null,
+  });
 }
 
 /** speedFixture, answering for the environment and device asked for. */
@@ -3632,6 +3764,14 @@ async function answer(api: FakeApi, url: URL, init: RequestInit | undefined): Pr
     }
     return json(replayOverview(api, replaysFor[1]));
   }
+  if (/^\/api\/projects\/[^/]+\/heatmaps\/pages$/.test(path)) {
+    const result = api.heatmapPages(url.searchParams);
+    return result instanceof Response ? result : json(result);
+  }
+  if (/^\/api\/projects\/[^/]+\/heatmaps$/.test(path)) {
+    const result = await api.heatmap(url.searchParams);
+    return result instanceof Response ? result : json(result);
+  }
   if (/^\/api\/projects\/[^/]+\/speed$/.test(path)) {
     const result = api.speed(url.searchParams);
     return result instanceof Response ? result : json(result);
@@ -3896,6 +4036,8 @@ export function installFakeApi(overrides: Partial<FakeApi> = {}): FakeApi {
     error: fakeError,
     setErrorStatus: changeErrorStatus,
     speed: fakeSpeed,
+    heatmapPages: fakeHeatmapPages,
+    heatmap: fakeHeatmap,
     productEvents: fakeProductEvents,
     productEvent: fakeProductEvent,
     funnel: fakeFunnel,

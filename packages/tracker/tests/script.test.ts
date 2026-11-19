@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vite-plus/test";
 
 import { MAX_ENGAGED_MS } from "../src/engagement.ts";
+import { HEATMAP_PROPERTY, type HeatmapConfig } from "../src/heatmap-names.ts";
 import { type Recorder, REPLAY_PROPERTY, type ReplayConfig } from "../src/replay-names.ts";
 import type { QueuedEvent } from "../src/tracker.ts";
 import { RECORD_PROPERTY } from "../src/vital-names.ts";
@@ -1285,5 +1286,115 @@ describe("session replay after consent", () => {
     page.hide();
     await page.settle();
     expect(writes).toEqual([]);
+  });
+});
+
+/** The configuration h.js reads, from the script the tracker added for it. */
+const heatmapConfig = (page: ReturnType<typeof fakePage>) => {
+  const script = page.added.find((element) => String(element.src).endsWith("/h.js"));
+  return script?.[HEATMAP_PROPERTY] as HeatmapConfig | undefined;
+};
+
+describe("heatmaps", () => {
+  test('loads h.js beside the tracker, with its nonce, only with data-heatmaps="on"', async () => {
+    const page = fakePage("https://example.com/pricing?utm_source=x&token=secret", "", {
+      nonce: "abc123",
+      attributes: { heatmaps: "on", vitals: "off", environment: "staging", release: "1.4.2" },
+    });
+    await runScript();
+    expect(page.added).toMatchObject([
+      { src: "https://analytics.example.com/h.js", async: true, nonce: "abc123" },
+    ]);
+    expect(heatmapConfig(page)).toMatchObject({
+      endpoint: "https://analytics.example.com/api/heatmaps",
+      key: "pk_test",
+      environment: "staging",
+      release: "1.4.2",
+    });
+    // The pageview as pageviews send it: cleaned of all but its UTM tags.
+    expect(heatmapConfig(page)?.page()).toEqual({
+      url: "https://example.com/pricing?utm_source=x",
+      referrer: undefined,
+      at: start,
+    });
+
+    const others: Record<string, string>[] = [{}, { heatmaps: "yes" }, { heatmaps: "" }];
+    for (const attributes of others) {
+      const other = fakePage("https://example.com/", "", {
+        attributes: { vitals: "off", ...attributes },
+      });
+      await runScript();
+      expect(other.added).toEqual([]);
+    }
+  });
+
+  test("never with an integrity attribute: h.js could not be pinned with it, and it says so once", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const pinned = fakePage("https://example.com/", "", {
+      attributes: { heatmaps: "on", vitals: "off" },
+    });
+    Object.assign(pinned.document.currentScript, {
+      hasAttribute: (name: string) => name === "integrity",
+    });
+    await runScript();
+    pinned.window.location.href = "https://example.com/next";
+    pinned.window.history.pushState();
+    expect(pinned.added).toEqual([]);
+    const said = warn.mock.calls.filter(([message]) => String(message).includes("data-heatmaps"));
+    expect(said).toHaveLength(1);
+    expect(String(said[0]?.[0])).toContain("integrity");
+  });
+
+  test("an empty data-heatmaps-sample warns and samples every pageview", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    vi.spyOn(Math, "random").mockReturnValue(0.99);
+    const page = fakePage("https://example.com/", "", {
+      attributes: { heatmaps: "on", heatmapsSample: "", vitals: "off" },
+    });
+    await runScript();
+    expect(heatmapConfig(page)?.page()).not.toBeNull();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("data-heatmaps-sample"));
+  });
+
+  test("samples each pageview on its own, as data-heatmaps-sample says, and tells h.js of each", async () => {
+    const random = vi.spyOn(Math, "random").mockReturnValue(0.5);
+    const page = fakePage("https://example.com/", "", {
+      attributes: { heatmaps: "on", heatmapsSample: "0.25", vitals: "off" },
+    });
+    await runScript();
+    // Outside the sample: h.js is not even loaded.
+    expect(page.added).toEqual([]);
+
+    random.mockReturnValue(0.1);
+    vi.setSystemTime(start + 1000);
+    page.window.location.href = "https://example.com/pricing";
+    page.window.history.pushState();
+    const config = heatmapConfig(page);
+    expect(config?.page()).toMatchObject({ url: "https://example.com/pricing", at: start + 1000 });
+    const navigated = vi.fn<() => void>();
+    config?.register({ navigated });
+
+    random.mockReturnValue(0.9);
+    page.window.location.href = "https://example.com/about";
+    page.window.history.pushState();
+    expect(config?.page()).toBeNull();
+    expect(navigated).toHaveBeenCalledTimes(1);
+    // A change of the query string only is the same pageview.
+    page.window.location.href = "https://example.com/about?tab=2";
+    page.window.history.pushState();
+    expect(navigated).toHaveBeenCalledTimes(1);
+    // Loaded once.
+    expect(page.added).toHaveLength(1);
+  });
+
+  test("a sample outside 0 to 1 warns and samples every pageview", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    vi.spyOn(Math, "random").mockReturnValue(0.99);
+    const page = fakePage("https://example.com/", "", {
+      attributes: { heatmaps: "on", heatmapsSample: "25%", vitals: "off" },
+    });
+    await runScript();
+    expect(heatmapConfig(page)?.page()).not.toBeNull();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("data-heatmaps-sample"));
   });
 });

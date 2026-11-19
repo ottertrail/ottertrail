@@ -21,6 +21,8 @@ import type { LoadedLocationData } from "./enrichment/reload.ts";
 import { errorRoutes } from "./errors/routes.ts";
 import { savedFunnelRoutes } from "./funnels/routes.ts";
 import { goalRoutes } from "./goals/routes.ts";
+import { heatmapRoutes } from "./heatmaps/dashboard-routes.ts";
+import { heatmapCollectionRoutes } from "./heatmaps/routes.ts";
 import { userRoutes } from "./identities/routes.ts";
 import { channelRoutes } from "./notifications/routes.ts";
 import { addressPolicy, type Lookup } from "./outbound/addresses.ts";
@@ -102,6 +104,16 @@ export interface AppOptions extends Omit<FastifyServerOptions, "logger"> {
     instanceLimit?: RateLimit;
   };
   /**
+   * Heatmaps' collection limits (heatmaps/routes.ts), which tests lower.
+   * Collected with the events' ClickHouse client.
+   */
+  heatmaps?: {
+    ipLimit?: RateLimit;
+    ipRecordLimit?: RateLimit;
+    projectLimit?: RateLimit;
+    instanceLimit?: RateLimit;
+  };
+  /**
    * OTLP traces, logs, and metrics (docs/telemetry.md), stored in
    * ClickHouse: the dashboard's client unless `clickhouse` names another.
    * Not served without a ClickHouse client.
@@ -160,6 +172,7 @@ export function buildApp({
   locationData,
   sourceMaps = { limitBytes: DEFAULT_SOURCE_MAP_STORAGE_BYTES },
   replays = { limitBytes: DEFAULT_REPLAY_STORAGE_BYTES },
+  heatmaps = {},
   telemetry = {},
   uptime = {},
   notifications = {},
@@ -197,6 +210,14 @@ export function buildApp({
       projectKeys,
       ...collection,
       clickhouse: collectionClickHouse,
+    });
+    app.register(heatmapCollectionRoutes, {
+      prefix: "/api",
+      clickhouse: collectionClickHouse,
+      projects: projectKeys,
+      ...heatmaps,
+      ...(collection.isDataCenter === undefined ? {} : { isDataCenter: collection.isDataCenter }),
+      ...(collection.now === undefined ? {} : { now: collection.now }),
     });
   }
   app.register(replayCollectionRoutes, {
@@ -353,6 +374,14 @@ export function buildApp({
       limiter,
       auth: dashboard.auth,
       trustedOrigins: dashboard.trustedOrigins,
+      ...(dashboard.now === undefined ? {} : { now: dashboard.now }),
+    });
+    app.register(heatmapRoutes, {
+      prefix: "/api",
+      db,
+      clickhouse: dashboard.clickhouse,
+      auth: dashboard.auth,
+      limiter,
       ...(dashboard.now === undefined ? {} : { now: dashboard.now }),
     });
     app.register(overviewRoutes, {

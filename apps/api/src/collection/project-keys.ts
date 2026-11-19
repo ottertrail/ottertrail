@@ -19,6 +19,8 @@ export interface CollectingProject {
   ignoreDataCenters: boolean;
   /** Session replays: "off", or "errors", recorded around errors (docs/session-replay.md). */
   replayMode: "off" | "errors";
+  /** Heatmaps: whether heatmap batches are taken (docs/web-analytics.md, "Heatmaps"). */
+  heatmaps: boolean;
   /**
    * The project's blocked addresses (projects/blocked-addresses.ts), built
    * once as the project is loaded here, never per request; null for none.
@@ -98,6 +100,7 @@ export class ProjectKeyCache {
         "projects.require_signed_user_ids",
         "projects.ignore_data_centers",
         "projects.replay_mode",
+        "projects.heatmaps",
         "projects.blocked_addresses",
         "projects.blocked_referrers",
       ])
@@ -113,6 +116,7 @@ export class ProjectKeyCache {
             requireSignedUserIds: row.require_signed_user_ids,
             ignoreDataCenters: row.ignore_data_centers,
             replayMode: row.replay_mode,
+            heatmaps: row.heatmaps,
             blocked: blockListOf(row.blocked_addresses),
             blockedReferrers:
               row.blocked_referrers.length === 0 ? null : new Set(row.blocked_referrers),
