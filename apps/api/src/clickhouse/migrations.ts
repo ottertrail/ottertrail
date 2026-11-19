@@ -5,6 +5,7 @@
  * table and never runs again, so never change one: add the next.
  */
 import { DATABASE_CALL_COLUMNS, databaseCallColumns } from "../telemetry/db-shape.ts";
+import { ENGAGEMENT, VITALS } from "../visits/visits.ts";
 
 export interface ClickHouseMigration {
   name: string;
@@ -13,6 +14,27 @@ export interface ClickHouseMigration {
 
 /** The tables of traces, logs, and metrics (docs/telemetry.md). */
 export const TELEMETRY_TABLES = ["spans", "logs", "metric_points", "metric_histograms"] as const;
+
+/** Each signed-in user's first event per project and environment (0004). */
+export const USER_FIRST_SEEN = "user_first_seen";
+
+/**
+ * Each user's earliest event in the events of `database` (optionally only
+ * `where`, SQL over events), as user_first_seen's rows: the materialized
+ * view, the backfill, and a project's rebuild after its old events are
+ * deleted (clickhouse/delete-events.ts) all use it.
+ */
+export function firstSeenSelect(database: string | null, where = "1"): string {
+  // The ID is renamed inside: an alias named user_id would stand for the
+  // column in the WHERE too, and let events without a user through.
+  return `SELECT project_id, environment, id AS user_id, minState(occurred_at) AS first_seen
+          FROM (
+            SELECT project_id, environment, assumeNotNull(user_id) AS id, occurred_at
+            FROM ${database === null ? "" : `${database}.`}events
+            WHERE user_id IS NOT NULL AND name NOT IN ('${ENGAGEMENT}', '${VITALS}') AND (${where})
+          )
+          GROUP BY project_id, environment, user_id`;
+}
 
 /** How old every part of a telemetry table's day must be before it is merged into one (0002). */
 export const FORCE_MERGE_SECONDS = 3600;
@@ -314,6 +336,35 @@ export const CLICKHOUSE_MIGRATIONS: ClickHouseMigration[] = [
       `ALTER TABLE ${database}.spans
          ${DATABASE_CALL_COLUMNS.map((column) => `MATERIALIZE COLUMN ${column}`).join(", ")}
        SETTINGS mutations_sync = 1`,
+    ],
+  },
+  {
+    name: "0004_user_first_seen",
+    /**
+     * When each signed-in user was first seen, per project and environment
+     * (docs/clickhouse.md, "First-seen times"): the overview's new users and
+     * weekly cohorts read it instead of every signed-in event the project
+     * keeps. A materialized view keeps it as events are stored: each insert
+     * adds the min of its batch, and AggregatingMergeTree merges them. A
+     * retried event adds its time again, which a min ignores. Events that
+     * are not something the user did (time-on-page reports, Web Vitals)
+     * do not count, as on the Users and Retention pages. The events already
+     * stored are copied in once; a run that failed halfway can copy them
+     * again harmlessly, for the same reason.
+     */
+    statements: (database) => [
+      `CREATE TABLE IF NOT EXISTS ${database}.${USER_FIRST_SEEN} (
+        project_id UUID,
+        environment LowCardinality(String),
+        user_id String,
+        first_seen AggregateFunction(min, DateTime64(3, 'UTC'))
+      )
+      ENGINE = AggregatingMergeTree
+      ORDER BY (project_id, environment, user_id)`,
+      `CREATE MATERIALIZED VIEW IF NOT EXISTS ${database}.user_first_seen_mv
+       TO ${database}.${USER_FIRST_SEEN}
+       AS ${firstSeenSelect(database)}`,
+      `INSERT INTO ${database}.${USER_FIRST_SEEN} ${firstSeenSelect(database)}`,
     ],
   },
 ];

@@ -28,6 +28,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { ApiError } from "@/lib/api";
 import { formText } from "@/lib/form";
+import { goalsQuery } from "@/lib/goals-api";
 import { isFullProject, type Project, projectQuery, updateProject } from "@/lib/projects-api";
 
 import { DangerZone } from "./danger-zone";
@@ -125,6 +126,9 @@ const RETENTION_CHOICES = [
   { value: "1825", label: "5 years" },
 ];
 
+/** The main goal's choice for none. */
+const NO_GOAL = "none";
+
 const retentionValue = (days: number | null) => (days === null ? "forever" : String(days));
 const retentionDays = (value: string) => (value === "forever" ? null : Number(value));
 
@@ -136,14 +140,30 @@ function SettingsCard({ project }: { project: Project }) {
     : [...RETENTION_CHOICES, { value: saved, label: `${saved} days` }];
   const [retention, setRetention] = React.useState(saved);
   const [ignoreDataCenters, setIgnoreDataCenters] = React.useState(project.ignoreDataCenters);
+  const savedGoal = project.mainGoalId ?? NO_GOAL;
+  const [mainGoal, setMainGoal] = React.useState(savedGoal);
+  const goals = useQuery(goalsQuery(project.id));
   // When the saved values change, as after a save or a change from another
   // tab, the form shows them, not what it held before.
-  const [shown, setShown] = React.useState({ retention: saved, ignore: project.ignoreDataCenters });
-  if (shown.retention !== saved || shown.ignore !== project.ignoreDataCenters) {
-    setShown({ retention: saved, ignore: project.ignoreDataCenters });
+  const [shown, setShown] = React.useState({
+    retention: saved,
+    ignore: project.ignoreDataCenters,
+    goal: savedGoal,
+  });
+  if (
+    shown.retention !== saved ||
+    shown.ignore !== project.ignoreDataCenters ||
+    shown.goal !== savedGoal
+  ) {
+    setShown({ retention: saved, ignore: project.ignoreDataCenters, goal: savedGoal });
     setRetention(saved);
     setIgnoreDataCenters(project.ignoreDataCenters);
+    setMainGoal(savedGoal);
   }
+  const goalChoices = [
+    { value: NO_GOAL, label: "None: new signed-in users" },
+    ...(goals.data ?? []).map((goal) => ({ value: goal.id, label: goal.name })),
+  ];
   const chosenDays = retentionDays(retention);
   // A stricter limit than now deletes events: say so before saving.
   const deletes =
@@ -154,10 +174,13 @@ function SettingsCard({ project }: { project: Project }) {
       allowedHostnames: string[];
       retentionDays: number | null;
       ignoreDataCenters: boolean;
+      mainGoalId?: string | null;
     }) => updateProject(project.id, changes),
     onSuccess: (updated) => {
       queryClient.setQueryData(projectQuery(project.id).queryKey, updated);
       void queryClient.invalidateQueries({ queryKey: ["projects"], exact: true });
+      // The overview's business figures start with the main goal.
+      void queryClient.invalidateQueries({ queryKey: ["overview", project.id] });
     },
   });
 
@@ -169,6 +192,8 @@ function SettingsCard({ project }: { project: Project }) {
       allowedHostnames: hostnamesFromText(formText(form, "hostnames")),
       retentionDays: retentionDays(retention),
       ignoreDataCenters,
+      // Sent only once the goals have loaded, so a choice is never made blind.
+      ...(goals.isSuccess ? { mainGoalId: mainGoal === NO_GOAL ? null : mainGoal } : {}),
     });
   }
 
@@ -187,6 +212,7 @@ function SettingsCard({ project }: { project: Project }) {
             project.allowedHostnames,
             project.retentionDays,
             project.ignoreDataCenters,
+            project.mainGoalId,
           ])}
           onSubmit={submit}
         >
@@ -265,6 +291,42 @@ function SettingsCard({ project }: { project: Project }) {
                   them.
                 </FieldDescription>
               </FieldContent>
+            </Field>
+            <Field>
+              <FieldLabel htmlFor="settings-main-goal">Main goal</FieldLabel>
+              {goals.isError ? (
+                <p className="text-sm text-ink-muted">
+                  The goals could not load: {goals.error.message}
+                </p>
+              ) : (
+                <Select
+                  items={goalChoices}
+                  value={mainGoal}
+                  disabled={!goals.isSuccess}
+                  onValueChange={(value) => {
+                    if (typeof value === "string") setMainGoal(value);
+                  }}
+                >
+                  <SelectTrigger
+                    id="settings-main-goal"
+                    className="w-64 max-w-full"
+                    aria-describedby="settings-main-goal-hint"
+                  >
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {goalChoices.map((choice) => (
+                      <SelectItem key={choice.value} value={choice.value}>
+                        {choice.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+              <FieldDescription id="settings-main-goal-hint">
+                The overview's business figures start with this goal. Without one, they start with
+                new signed-in users. Goals are added on the analytics page.
+              </FieldDescription>
             </Field>
             {save.error !== null && (
               <Alert variant="destructive" role="alert">

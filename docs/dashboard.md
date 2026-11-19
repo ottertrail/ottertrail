@@ -97,13 +97,13 @@ A project is one website or app. The Projects page lists them with their allowed
 The dashboard has two levels, the way hosting dashboards treat each site:
 
 - **The workspace** (the sidebar's first group, under the instance's name): the project list (`/projects`), the design-system reference, and the instance's settings (`/settings`).
-- **Inside a project** (`/projects/<id>/…`): the sidebar becomes the project's own menu, with a switcher to the other projects and a link back to all of them. It lists the project's modules (web analytics, speed, product analytics, users, errors), then the project's settings. The header shows the project's name before the page title.
+- **Inside a project** (`/projects/<id>/…`): the sidebar becomes the project's own menu, with a switcher to the other projects and a link back to all of them. It lists the project's overview first, then its modules (web analytics, speed, users, errors, and the rest), then the project's settings. The header shows the project's name before the page title.
 
 Every module belongs to one project (its records carry `project_id`), so a module's pages sit under the project instead of at the top with a project picker. The switcher keeps the current page: from one project's web analytics for the last 90 days, it opens the other project's web analytics for the last 90 days.
 
 The sidebar is expanded on every screen. Ctrl B (⌘ B on a Mac) or the header's button collapses it to icons, and the browser remembers the choice (`ottertrail.sidebar` in `localStorage`). Under 60rem it is a menu in a sheet, opened by the header's menu button and closed when a link in it is chosen ([screen patterns](design-system.md#the-shell)).
 
-`/projects/<id>` opens the project's web analytics until projects have an overview page. The home page (`/`) opens the project this browser showed last (kept in `localStorage`), or else the first project; with no projects, it opens the project list.
+`/projects/<id>` opens the project's [overview](#overview) when the user has one of its areas, and otherwise the first page in the menu they may open. The home page (`/`) opens the project this browser showed last (kept in `localStorage`), or else the first project; with no projects, it opens the project list.
 
 ### The install snippet
 
@@ -536,6 +536,92 @@ Loading, failure with Retry, and an unknown project work as on the Uptime page. 
 
 - A page per rule with its whole history (the route exists: `GET /api/projects/:id/alert-rules/:ruleId/history`).
 - Muting a rule for a while.
+
+## Overview
+
+Code: `apps/api/src/overview/`, `apps/web/src/features/overview/`, `apps/web/src/lib/overview-api.ts`.
+
+`/projects/<id>/overview` is the first item in a project's menu and the page a project opens on. It sums up the project on one screen, so a small team can see in a minute whether something is broken and whether the business is moving. Every figure links to the page that explains it.
+
+### The widgets
+
+In their default order. The first four ask whether the product is healthy, the next five whether the business is moving, and the last explains the traffic.
+
+| Widget                            | Shows                                                                                                                                                                                                                                                                                    | Area                |
+| --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------- |
+| Needs attention now               | Alerts firing now (only the kinds the user may see), checks that are down, and certificates that expire within 14 days, or have expired, with no alert yet. With nothing wrong, the number of checks up; with no checks and no rules (those on, of kinds the user may see), how to start | `uptime_alerts`     |
+| New and returning errors          | Occurrences against the period before, groups first seen in the period, regressed groups, and the unresolved groups with the most users. Occurrences and new groups are counted in full; regressed groups among the 1,000 most recent, with a "+" after the count when there were more   | `errors`            |
+| Uptime and response time          | Each check's state, uptime over the period, incidents, and last response time                                                                                                                                                                                                            | `uptime_alerts`     |
+| Server requests, failures and p95 | The five busiest services: requests, failed share, and 95th-percentile duration, each against the period before                                                                                                                                                                          | `monitoring`        |
+| Page speed                        | LCP, INP, and CLS at the 75th percentile on each kind of device, rated by Google's thresholds                                                                                                                                                                                            | `web_analytics`     |
+| Main goal                         | The project's main goal: visitors, conversion, and times reached. Without a main goal, new signed-in users                                                                                                                                                                               | `product_analytics` |
+| Traffic                           | Visitors, visits, and pageviews against the period before, and visitors per day                                                                                                                                                                                                          | `web_analytics`     |
+| Goals and conversion              | Each goal's visitors, times reached, and conversion, against the period before                                                                                                                                                                                                           | `product_analytics` |
+| Signed-in users                   | Active and new signed-in users against the period before, and the week-1 and week-4 retention of the last six weekly cohorts. A week still running reads "This week, not over" and stays out of the comparison under the table                                                           | `product_analytics` |
+| Top sources and pages             | The five sources and pages with the most visitors                                                                                                                                                                                                                                        | `web_analytics`     |
+
+The widgets sit in two columns when the content area is at least 64rem wide, whatever the window: the sidebar takes its share. On a phone a wide table scrolls inside its widget, its first column pinned and a fade at the edge where more columns wait; the attention list stacks.
+
+Rules that apply to all of them:
+
+- **Period.** The last 7 days by default, compared with the 7 days before; Today and the last 30 days are the other choices (`?period=` in the address). A period that is still running is compared up to the same moment of the one before, as on the analytics page. The filter bar shows both ranges and the timezone.
+- **Small numbers.** Each change rests on its own figure's counts in both periods (for a share such as a conversion, the counts it is taken of). It shows only when the larger of the two reaches the minimum: 10 for errors, 20 for page loads, requests, visitors, and users. A few events make any percentage look large. When the period before had none, a figure that reaches the minimum reads "New" instead of a percentage.
+- **No colour for direction.** A change is an arrow and a size. Colour marks only what a rule or a threshold calls bad: a firing alert, a check that is down, a poor Web Vitals rating, a regressed error. Server changes are not judged; alert rules do that.
+- **Uptime** reports incidents only. There is no target.
+- **Speed** rates a device only from 20 page loads; below that it says "Too few page loads to rate". A device's rating is the worst of its three metrics.
+- **Visitors** count a person once for each day they visited, as everywhere in web analytics. The traffic widget says so.
+- Bounce rate and visit duration stay on the analytics page.
+
+### Four states
+
+Each widget loads and fails on its own: its data comes from a route of its own, and one that fails shows an error with Retry while the others stay. Each has a skeleton while it loads, and an empty state that says what is missing: nothing set up yet (no errors ever, no traces, no checks or rules, no goals, no signed-in users), with the page that explains how, or nothing in the period.
+
+### Access
+
+A widget is shown only to users with its area, and its route refuses the others (403), so a widget a user may not see is neither fetched nor shown as locked. The layout route needs only the project. A member with none of the overview's areas finds "Nothing on your overview", with buttons to the pages they can open, and the project opens on their first page instead. Inside a widget, the usual rules hold: the newest signed-in users are named only to users with the `users` area, and no widget links to a replay.
+
+### Your own layout
+
+"Edit overview" gives each widget Move up, Move down, and Hide or Show buttons. Each change shows at once, is saved after any save still running (one at a time, in order; an older answer never replaces a newer change), and is read out ("Traffic moved to 6 of 10."), and focus stays on the button pressed. "Reset to default" brings the default order back, and Done leaves edit mode. A hidden widget's data is not fetched.
+
+The layout belongs to one user and one project (`overview_layouts`), so it follows the user to any browser, and goes when the user or the project is deleted. It holds widget IDs in order, and those hidden. A widget the user could not see when saving keeps its place, and a widget added later, or one whose area the user gains later, appears in its default place.
+
+### The main goal
+
+A project setting (`projects.main_goal_id`), chosen on the project's Settings page by those who manage projects. The business figures start with it. It must be one of the project's goals: a foreign key names the goal and the project together, and deleting the goal clears the setting. Without one, the Main goal widget shows new signed-in users: those whose first event, of all the project keeps, fell in the period.
+
+### What the queries cost
+
+The widgets reuse the reports' own queries where they exist: firing alerts and checks (PostgreSQL), the error list, the Speed page's per-device query, the analytics summary and per-day counts, goal counts, and the source breakdown and top pages. Three queries are new and lighter than the pages they summarise:
+
+- **Services:** one read of both periods' server spans, grouped by service only, so a span's attributes are never read (no routes).
+- **Signed-in users:** when each user was first seen comes from `user_first_seen`, a row per user ([ClickHouse](clickhouse.md#first-seen-times)), so new users and cohort membership never read the whole history. Activity is read only from the earlier of the period before and the first cohort's Monday, grouped by user, without `FINAL` (a retried event changes neither a user's first event nor the weeks they were active). The Main goal widget's fallback reads the first-seen table alone.
+- **Goals:** the visitor count each conversion is divided by, read from the events without working out visits.
+- **Errors:** the period's occurrences and its groups, new ones among them, counted in full rather than from the 1,000-group list.
+
+Before the first-seen table, the signed-in users query read all 1.2 million events: 131 ms and 134 ms, and the default overview ran it twice.
+
+Every query runs with the dashboard's ClickHouse limits (15 s and 300 MB a query) and within its shared limit of queries at once (`DASHBOARD_SETTINGS`, `DashboardQueryLimiter`).
+
+Measured on 19 November 2026 in the development VM (signed-in users again after the first-seen table), median of three runs after a warm-up, on fake data made with the report benchmark's helpers (`apps/api/scripts/bench-data.ts`):
+
+| Query                                        | Data                                             | 7 days |  30 days |
+| -------------------------------------------- | ------------------------------------------------ | -----: | -------: |
+| Services (overview)                          | 6 million spans over 14 days, 5 services         | 256 ms |   180 ms |
+| Services page, for comparison                | the same                                         | 773 ms | 1,778 ms |
+| Signed-in users (overview)                   | 1.2 million signed-in events over 180 days       |  40 ms |    58 ms |
+| New users only (Main goal without a goal)    | the same                                         |   5 ms |     4 ms |
+| Retention page, for comparison               | the same                                         | 126 ms |   132 ms |
+| Sources and pages                            | 200,000 visits over 30 days (1.2 million events) | 171 ms |   913 ms |
+| Traffic (two summaries and the per-day line) | the same                                         | 177 ms |   630 ms |
+
+The 30-day services figure reads less than the 7-day one because the spans covered only 14 days.
+
+### Not done yet
+
+- Widget settings (which goal, services, or checks), pinning charts from other pages, a default layout for a whole project set by its admins, an overview across projects, and a digest by email.
+- Sources and pages are not compared with the period before.
+- A choice of environment: the overview shows the one in the address (`?env=`), production by default, and offers no picker yet.
 
 ## Settings
 

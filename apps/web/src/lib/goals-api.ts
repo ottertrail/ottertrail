@@ -1,3 +1,5 @@
+import { queryOptions } from "@tanstack/react-query";
+
 import { apiRequest, expectShape } from "./api";
 import { nameProblem } from "./text";
 
@@ -66,6 +68,18 @@ export const isGoalResult = (value: unknown): value is GoalResult =>
 export const goalNameProblem = (name: string) => nameProblem(name, "goal", MAX_GOAL_NAME);
 
 const goalsPath = (projectId: string) => `/api/projects/${encodeURIComponent(projectId)}/goals`;
+
+/** GET /api/projects/:id/goals: the project's goals, in the order added. */
+export const goalsQuery = (projectId: string) =>
+  queryOptions({
+    queryKey: ["goals", projectId],
+    queryFn: async ({ signal }) =>
+      expectShape(
+        await apiRequest(goalsPath(projectId), { signal }),
+        (value): value is { goals: Goal[] } =>
+          isRecord(value) && Array.isArray(value.goals) && value.goals.every(isGoal),
+      ).goals,
+  });
 
 /** POST /api/projects/:id/goals: the new goal, or an ApiError (invalid_name, goal_name_taken …). */
 export async function createGoal(projectId: string, name: string, step: GoalStep): Promise<Goal> {

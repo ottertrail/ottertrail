@@ -35,6 +35,7 @@ import {
   type MetricList,
   type MetricSeries,
 } from "../../src/lib/metrics-api.ts";
+import { WIDGETS, type WidgetId } from "../../src/lib/overview-api.ts";
 import {
   type Funnel,
   isFunnelCount,
@@ -177,6 +178,23 @@ export interface FakeApi {
    * change, and delete rules. By default, fakeAlerts.
    */
   alerts: FakeAlerts;
+  /**
+   * The signed-in user's overview layout of the project: null for the
+   * default. PUT saves it, DELETE resets it.
+   */
+  layout: { order: WidgetId[]; hidden: WidgetId[] } | null;
+  /**
+   * While set, PUT /api/projects/:id/overview/layout waits for it before
+   * it saves: a test holds one save back to send another meanwhile.
+   */
+  holdLayout: Promise<void> | null;
+  /** Widget IDs the dashboard does not know, added to every layout answer (an API newer than the page). */
+  unknownWidgets: string[];
+  /**
+   * Answers GET /api/projects/:id/overview/<widget> for a user with the
+   * widget's area (403 without); by default, fakeWidget.
+   */
+  widget: (id: WidgetId, query: URLSearchParams, api: FakeApi) => unknown;
   /** Answers DELETE /api/projects/:id; by default, removes the project (204). */
   deleteProject: (api: FakeApi, id: string) => Response;
   /** Every path the page asked for, with its query, in order. */
@@ -1694,6 +1712,10 @@ function removeGoal(api: FakeApi, goalId: string): Response {
     return json({ error: "goal_not_found", message: "The project has no goal with this ID." }, 404);
   }
   api.goals = api.goals.filter((goal) => goal.id !== goalId);
+  // As the API's foreign key: the main goal goes with its goal.
+  api.projects = api.projects.map((project) =>
+    project.mainGoalId === goalId ? { ...project, mainGoalId: null } : project,
+  );
   return new Response(null, { status: 204 });
 }
 
@@ -1975,6 +1997,7 @@ export const PROJECT: Project = {
   requireSignedUserIds: false,
   ignoreDataCenters: true,
   replayMode: "off",
+  mainGoalId: null,
 };
 
 export const OTHER_PROJECT: Project = {
@@ -3283,6 +3306,8 @@ async function answer(api: FakeApi, url: URL, init: RequestInit | undefined): Pr
     const result = api.hosts(url.searchParams);
     return result instanceof Response ? result : json(result);
   }
+  const overview = await answerOverview(api, url, init);
+  if (overview !== null) return overview;
   const alerts = answerAlerts(api, path, init);
   if (alerts !== null) return alerts;
   const checkSubPath = /^\/api\/projects\/[^/]+\/checks\/([^/]+)\/(results|incidents)$/.exec(path);
@@ -3469,6 +3494,10 @@ export function installFakeApi(overrides: Partial<FakeApi> = {}): FakeApi {
     channels: fakeChannels(),
     alerts: fakeAlerts(),
     deleteProject: removeProject,
+    layout: null,
+    holdLayout: null,
+    unknownWidgets: [],
+    widget: fakeWidget,
     requests: [],
     bodies: [],
     ...overrides,
@@ -3686,4 +3715,266 @@ function answerLinks(api: FakeApi, url: URL, init: RequestInit | undefined): Res
     return token !== GOOD_RESET ? resetGone : json({ email: "mia@example.com" });
   }
   return null;
+}
+
+/** The days every overview widget counts in the fixtures: the week to 16 Nov, and the one before. */
+const OVERVIEW_DAYS = {
+  timeZone: "Asia/Singapore",
+  firstDay: "2026-11-10",
+  lastDay: "2026-11-16",
+  previous: { firstDay: "2026-11-03", lastDay: "2026-11-09" },
+};
+
+const canSee = (api: FakeApi, area: Area) => api.access.areas[area] !== "none";
+/** A cohort's later week, over or still running. */
+const done = (users: number) => ({ users, current: false });
+const running = (users: number) => ({ users, current: true });
+
+/** Each widget's numbers in the fixtures: the same project, week, and counts as the other pages. */
+export function fakeWidget(id: WidgetId, query: URLSearchParams, api: FakeApi): unknown {
+  const header = { ...OVERVIEW_DAYS, environment: query.get("environment") ?? "production" };
+  const analytics = analyticsFixture({ goals: api.goals });
+  const goalsOf = () =>
+    api.goals.map((goal) => ({
+      id: goal.id,
+      name: goal.name,
+      step: goal.step,
+      visitors: goal.visitors,
+      events: goal.events,
+      conversionRate: goal.conversionRate,
+      previous: {
+        visitors: Math.round(goal.visitors * 0.9),
+        events: Math.round(goal.events * 0.9),
+        conversionRate: (goal.visitors * 0.9) / 683,
+      },
+    }));
+  switch (id) {
+    case "attention": {
+      const errorKinds = ["error_new", "error_regressed", "error_spike"];
+      const telemetryKinds = ["route_latency", "route_failures", "metric_threshold"];
+      return {
+        ...header,
+        alerts: api.alerts.firing
+          .filter(
+            (alert) =>
+              (!errorKinds.includes(alert.kind) || canSee(api, "errors")) &&
+              (!telemetryKinds.includes(alert.kind) || canSee(api, "monitoring")),
+          )
+          .map(({ ruleId, ruleName, kind, subjectName, since, message }) => ({
+            ruleId,
+            ruleName,
+            kind,
+            subjectName,
+            since,
+            message,
+          })),
+        down: api.checks
+          .filter((check) => check.state === "down" && !check.paused)
+          .map((check) => ({
+            checkId: check.id,
+            name: check.name,
+            url: check.url,
+            since: check.failingSince,
+            cause: check.failingCause,
+            statusCode: check.lastStatusCode,
+          })),
+        certificates: [],
+        checks: {
+          total: api.checks.length,
+          up: api.checks.filter((check) => check.state === "up" && !check.paused).length,
+          paused: api.checks.filter((check) => check.paused).length,
+        },
+        rules: api.alerts.rules.length,
+      };
+    }
+    case "errors": {
+      const groups = errorGroups(api);
+      const unresolved = groups.filter((group) => group.status !== "resolved");
+      return {
+        ...header,
+        received: true,
+        occurrences: groups.reduce((total, group) => total + group.occurrences, 0),
+        previousOccurrences: 1100,
+        newGroups: groups.filter((group) => group.firstSeen >= "2026-11-10").length,
+        regressedGroups: groups.filter((group) => group.status === "regressed").length,
+        unresolvedGroups: unresolved.length,
+        top: unresolved
+          .toSorted((a, b) => b.users - a.users || b.visitors - a.visitors)
+          .map((group) => ({
+            fingerprint: group.fingerprint,
+            type: group.type,
+            message: group.message,
+            occurrences: group.occurrences,
+            users: group.users,
+            visitors: group.visitors,
+            status: group.status,
+            isNew: group.firstSeen >= "2026-11-10",
+          })),
+        truncated: false,
+      };
+    }
+    case "uptime":
+      return {
+        ...header,
+        checks: api.checks.map((check) => ({
+          id: check.id,
+          name: check.name,
+          url: check.url,
+          state: check.state,
+          paused: check.paused,
+          uptime: check.uptime.week,
+          previousUptime: 1,
+          incidents: check.state === "down" ? 1 : 0,
+          lastResponseMs: check.lastResponseMs,
+        })),
+      };
+    case "services":
+      return {
+        ...header,
+        received: true,
+        more: false,
+        services: [
+          {
+            service: "web",
+            requests: 1200,
+            failed: 30,
+            p95Us: 182_400,
+            previous: { requests: 1100, failed: 22, p95Us: 170_000 },
+          },
+          {
+            service: "billing",
+            requests: 40,
+            failed: 0,
+            p95Us: 2_000_000,
+            previous: { requests: 35, failed: 0, p95Us: 1_900_000 },
+          },
+        ],
+      };
+    case "speed":
+      return {
+        ...header,
+        received: true,
+        thresholds: { lcp: [2500, 4000], inp: [200, 500], cls: [0.1, 0.25] },
+        devices: [
+          { deviceType: "desktop", loads: 250, lcp: 1800, inp: 120, cls: 0.05 },
+          { deviceType: "mobile", loads: 140, lcp: 4600, inp: 520, cls: 0.3 },
+          { deviceType: null, loads: 10, lcp: 2100, inp: null, cls: 0.02 },
+        ],
+      };
+    case "main-goal": {
+      const mainGoalId = api.projects[0]?.mainGoalId ?? null;
+      const goal = goalsOf().find((item) => item.id === mainGoalId);
+      return goal === undefined
+        ? { ...header, kind: "new_users", newUsers: 12, previousNewUsers: 9, received: true }
+        : { ...header, kind: "goal", visitors: 765, previousVisitors: 683, goal };
+    }
+    case "traffic":
+      return {
+        ...header,
+        received: true,
+        summary: { visitors: 765, visits: 824, pageviews: 1820 },
+        previousSummary: { visitors: 683, visits: 824, pageviews: 2000 },
+        days: analytics.days.map(({ day, visitors }) => ({ day, visitors })),
+      };
+    case "goals":
+      return {
+        ...header,
+        mainGoalId: api.projects[0]?.mainGoalId ?? null,
+        visitors: 765,
+        previousVisitors: 683,
+        goals: goalsOf(),
+      };
+    case "users":
+      return {
+        ...header,
+        active: 48,
+        new: 12,
+        previousActive: 41,
+        previousNew: 9,
+        currentWeek: "2026-11-16",
+        received: true,
+        cohorts: [
+          // A later week that has begun but is not over is `current`.
+          { week: "2026-10-12", users: 30, week1: done(15), week4: done(9) },
+          { week: "2026-10-19", users: 35, week1: done(14), week4: running(10) },
+          { week: "2026-10-26", users: 40, week1: done(20), week4: null },
+          { week: "2026-11-02", users: 25, week1: done(10), week4: null },
+          { week: "2026-11-09", users: 10, week1: running(4), week4: null },
+          { week: "2026-11-16", users: 8, week1: null, week4: null },
+        ],
+        // User IDs only for those who may see users (docs/access.md).
+        newest: canSee(api, "users")
+          ? [
+              { userId: "user-1", firstSeenAt: "2026-11-16T08:00:00.000Z" },
+              { userId: "user-2", firstSeenAt: "2026-11-15T08:00:00.000Z" },
+            ]
+          : null,
+      };
+    case "sources":
+      return {
+        ...header,
+        sources: analytics.breakdowns.source.map(({ value, visitors }) => ({ value, visitors })),
+        pages: analytics.pages.map(({ path, visitors }) => ({ path, visitors })),
+      };
+    default:
+      return json({ error: "not_found", message: `No fake widget ${String(id)}` }, 404);
+  }
+}
+
+/** The overview's routes, as the API answers them; null for another path. */
+async function answerOverview(
+  api: FakeApi,
+  url: URL,
+  init: RequestInit | undefined,
+): Promise<Response | null> {
+  const match = /^\/api\/projects\/[^/]+\/overview\/([^/]+)$/.exec(url.pathname);
+  if (match?.[1] === undefined) return null;
+  const name = match[1];
+  if (name === "layout") {
+    if (init?.method === "PUT") {
+      const hold = api.holdLayout;
+      if (hold !== null) {
+        // Only this save waits: the next one is not held.
+        api.holdLayout = null;
+        await hold;
+      }
+      const body: unknown = JSON.parse(typeof init.body === "string" ? init.body : "{}");
+      const record: Record<string, unknown> =
+        typeof body === "object" && body !== null ? { ...body } : {};
+      const ids = (key: "order" | "hidden"): WidgetId[] => {
+        const list: unknown = record[key];
+        return Array.isArray(list)
+          ? // In the order sent: the order is the point.
+            list.flatMap((id) => WIDGETS.filter((item) => item.id === id).map((item) => item.id))
+          : [];
+      };
+      api.layout = { order: ids("order"), hidden: ids("hidden") };
+    } else if (init?.method === "DELETE") {
+      api.layout = null;
+    }
+    const order = [
+      ...(api.layout?.order ?? []),
+      ...WIDGETS.map((widget) => widget.id).filter((id) => !(api.layout?.order ?? []).includes(id)),
+    ];
+    return json({
+      widgets: order
+        .filter((id) => {
+          const widget = WIDGETS.find((item) => item.id === id);
+          return widget !== undefined && canSee(api, widget.area);
+        })
+        .map((id): { id: string; hidden: boolean } => ({
+          id,
+          hidden: api.layout?.hidden.includes(id) ?? false,
+        }))
+        .concat(api.unknownWidgets.map((id) => ({ id, hidden: false }))),
+      isDefault: api.layout === null,
+    });
+  }
+  const widget = WIDGETS.find((item) => item.id === name);
+  if (widget === undefined) return null;
+  if (!canSee(api, widget.area)) {
+    return json({ error: "forbidden", message: "You don't have access to this." }, 403);
+  }
+  const result = api.widget(widget.id, url.searchParams, api);
+  return result instanceof Response ? result : json(result);
 }

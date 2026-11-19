@@ -5,7 +5,7 @@ import { replayPrefix } from "../replays/replays.ts";
 import { projectPrefix } from "../source-maps/source-maps.ts";
 import type { ObjectStore } from "../storage/object-store.ts";
 import { type ClickHouseClient, identifier } from "./clickhouse.ts";
-import { TELEMETRY_TABLES } from "./migrations.ts";
+import { firstSeenSelect, TELEMETRY_TABLES, USER_FIRST_SEEN } from "./migrations.ts";
 import { clickHouseTime, QueryParams, queryRows, type Reader, runCommand } from "./query.ts";
 
 /**
@@ -22,8 +22,11 @@ function chunks<T>(items: readonly T[]): T[][] {
   return result;
 }
 
-/** Every table that holds a project's rows: events, traces, logs, metrics, and check results. */
-const PROJECT_TABLES = ["events", ...TELEMETRY_TABLES, "check_results"] as const;
+/**
+ * Every table that holds a project's rows: events, traces, logs, metrics,
+ * check results, and its signed-in users' first-seen times.
+ */
+const PROJECT_TABLES = ["events", ...TELEMETRY_TABLES, "check_results", USER_FIRST_SEEN] as const;
 
 /**
  * Deletes the rows of `table` that match `where` (SQL over that table, its
@@ -84,8 +87,34 @@ export async function deleteEventsBefore(
       params,
     );
     for (const [projectId, count] of deleted) counts.set(projectId, count);
+    await rebuildFirstSeen(clickhouse, [...deleted.keys()]);
   }
   return counts;
+}
+
+/**
+ * Works the projects' first-seen times out again from the events they
+ * still have, after old events were deleted: a user whose early events are
+ * gone is first seen at their earliest event kept, and a user with none
+ * left is forgotten (docs/clickhouse.md, "First-seen times"). An event
+ * stored meanwhile is counted by both the view and the copy, which a min
+ * ignores.
+ */
+async function rebuildFirstSeen(clickhouse: ClickHouseClient, projectIds: string[]) {
+  if (projectIds.length === 0) return;
+  const reader: Reader = { client: clickhouse };
+  const params = new QueryParams();
+  const ids = params.add(projectIds, "Array(UUID)");
+  await runCommand(
+    reader,
+    `DELETE FROM ${identifier(USER_FIRST_SEEN)} WHERE project_id IN ${ids}`,
+    params,
+  );
+  await runCommand(
+    reader,
+    `INSERT INTO ${identifier(USER_FIRST_SEEN)} ${firstSeenSelect(null, `project_id IN ${ids}`)}`,
+    params,
+  );
 }
 
 /** What removeDeletedRows() did. */

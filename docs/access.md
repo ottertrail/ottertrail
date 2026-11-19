@@ -94,6 +94,12 @@ Fastify checks a route's parameters and body before the access check runs, so a 
 | `…/traces…`, `…/logs…`, `…/metrics…`, `…/services…`, `…/databases…`, `…/hosts…`                   | `monitoring` view          |
 | `GET …/checks…`, `GET …/alert-rules…`, `…/alerts`, `…/alerts/firing`, `…/alert-channels`          | `uptime_alerts` view       |
 | `POST`, `PATCH`, `DELETE …/checks…` and `…/alert-rules…`                                          | `uptime_alerts` manage     |
+| `GET`, `PUT`, `DELETE …/overview/layout` (the user's own layout)                                  | The project                |
+| `…/overview/attention`, `…/overview/uptime`                                                       | `uptime_alerts` view       |
+| `…/overview/errors`                                                                               | `errors` view              |
+| `…/overview/services`                                                                             | `monitoring` view          |
+| `…/overview/speed`, `…/overview/traffic`, `…/overview/sources`                                    | `web_analytics` view       |
+| `…/overview/main-goal`, `…/overview/goals`, `…/overview/users`                                    | `product_analytics` view   |
 
 `GET /api/projects/:id/alert-channels` lists the instance's channels by ID, name, and kind only, for the rule form. A rule may name any of the instance's channels.
 
@@ -116,6 +122,7 @@ Some answers show less to a user without another area:
 
 - `GET /api/projects` and `GET /api/projects/:id` answer only the ID, name, creation time, and last event to users without the `projects` permission. The list holds only the projects the user may reach.
 - The analytics page's answer has no goals without `product_analytics`.
+- The overview's signed-in users widget names the newest users only to users with `users` (`newest` is null otherwise). Its firing alerts hold only the kinds the user may see, as the Alerts page's do.
 - An error's occurrences and a user's events carry no replay, and a user's page no replays, without `replays`.
 - The replay and source map overviews (`GET …/replays`, `GET …/source-maps`) leave out `instance`, what all projects store together against the instance's limit, for users without the `projects` permission.
 
@@ -136,7 +143,7 @@ These need no session, and declare nothing: health, collection with a project's 
 
 - The project menu lists only the areas the user has, and the project's Settings only for the owner and admins. The workspace menu shows Settings only to the owner and admins.
 - A page the user cannot open shows "You don't have access" (`NoAccess`). Each project route names what it needs (`staticData.access` in `router.tsx`), and `ProjectLayout` checks it.
-- Opening a project, or the home page, goes to the first area the user has, in the menu's order.
+- Opening a project, or the home page, goes to the project's overview when the user has one of its areas (uptime and alerts, errors, monitoring, web analytics, product analytics), and otherwise to the first area the user has, in the menu's order. The overview shows only the widgets of the user's areas ([dashboard](dashboard.md#overview)).
 - The project list hides "New project" and allowed sites from members.
 - The Settings page shows the instance's name and timezone to the owner, and the channels to the owner and admins. A member gets "You don't have access". The workspace menu's Members link, to `/settings/members`, shows to the owner and admins.
 - Where one area's page links into another, the link shows only when the user has that area: an error's user, trace, and replay; a user's errors and replays; a replay's error and user; the alert rules on an error's page; "Add an alert rule" on the monitoring pages; links to the project's settings.

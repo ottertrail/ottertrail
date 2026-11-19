@@ -155,6 +155,46 @@ function eachDay(firstDay: string, lastDay: string): string[] {
   return days;
 }
 
+/**
+ * Page loads and the p75 of LCP, INP, and CLS on each kind of device, most
+ * loads first: for the Speed page and the overview, which rates each device.
+ */
+export async function speedByDevice(reader: Reader, range: SpeedRange): Promise<Speed["devices"]> {
+  const params = new QueryParams();
+  const rows = await queryRows<Record<string, unknown>>(
+    reader,
+    `SELECT device_type, count() AS loads, ${CORE_P75}
+     FROM events FINAL
+     WHERE ${scope(params, range)}
+     GROUP BY device_type
+     ORDER BY loads DESC, device_type`,
+    params,
+  );
+  return rows.map((device) => ({ deviceType: textOrNull(device.device_type), ...row(device) }));
+}
+
+/**
+ * Whether the project has ever had a measured page load in the environment:
+ * whether its pages send Web Vitals at all, within what the project keeps.
+ */
+export async function hasVitals(
+  reader: Reader,
+  projectId: string,
+  environment: string,
+): Promise<boolean> {
+  const params = new QueryParams();
+  const rows = await queryRows<{ found: number }>(
+    reader,
+    `SELECT 1 AS found FROM events
+     WHERE project_id = ${params.add(projectId, "UUID")}
+       AND environment = ${params.add(environment, "String")}
+       AND name = '${VITALS}'
+     LIMIT 1`,
+    params,
+  );
+  return rows.length > 0;
+}
+
 /** The Speed report of a range: four queries, run side by side. */
 export async function speedReport(reader: Reader, range: SpeedRange): Promise<Speed> {
   const summaryParams = new QueryParams();
@@ -168,7 +208,6 @@ export async function speedReport(reader: Reader, range: SpeedRange): Promise<Sp
             countIf(${v} > ${good} AND ${v} <= ${poor}) AS ${name}_needs,
             countIf(${v} > ${poor}) AS ${name}_poor`;
   }).join(",\n");
-  const deviceParams = new QueryParams();
   const pageParams = new QueryParams();
   const dayParams = new QueryParams();
   const timeZone = dayParams.add(range.timeZone, "String");
@@ -181,15 +220,7 @@ export async function speedReport(reader: Reader, range: SpeedRange): Promise<Sp
        WHERE ${scope(summaryParams, range)}`,
       summaryParams,
     ),
-    queryRows<Record<string, unknown>>(
-      reader,
-      `SELECT device_type, count() AS loads, ${CORE_P75}
-       FROM events FINAL
-       WHERE ${scope(deviceParams, range)}
-       GROUP BY device_type
-       ORDER BY loads DESC, device_type`,
-      deviceParams,
-    ),
+    speedByDevice(reader, range),
     queryRows<Record<string, unknown>>(
       reader,
       `SELECT path, count() AS loads, ${CORE_P75}
@@ -228,10 +259,7 @@ export async function speedReport(reader: Reader, range: SpeedRange): Promise<Sp
   return {
     loads: count(summary?.loads ?? 0),
     metrics,
-    devices: devices.map((device) => ({
-      deviceType: textOrNull(device.device_type),
-      ...row(device),
-    })),
+    devices,
     pages: pages.map((page) => ({ path: textOrNull(page.path) ?? "", ...row(page) })),
     days: eachDay(range.firstDay, range.lastDay).map((day) => ({
       day,

@@ -24,6 +24,7 @@ import { SignInPage } from "@/features/auth/sign-in-page";
 import { DesignSystemPage } from "@/features/design-system/design-system-page";
 import { ErrorPage } from "@/features/errors/error-page";
 import { ErrorsPage } from "@/features/errors/errors-page";
+import { OverviewPage } from "@/features/overview/overview-page";
 import { EventPage } from "@/features/product/event-page";
 import { EventsPage } from "@/features/product/events-page";
 import { FunnelPage } from "@/features/product/funnel-page";
@@ -86,6 +87,7 @@ import { DEFAULT_DATABASE_SORT, isDatabaseSort } from "@/lib/databases-api";
 import { DEFAULT_STATUS_FILTER, isStatusFilter, type StatusFilter } from "@/lib/errors-api";
 import { lastProject } from "@/lib/last-project";
 import { isMetricKind, type MetricKind } from "@/lib/metrics-api";
+import { DEFAULT_OVERVIEW_PERIOD, isOverviewPeriod, type OverviewPeriod } from "@/lib/overview-api";
 import {
   DEFAULT_FUNNEL_WINDOW,
   type FunnelStep,
@@ -217,9 +219,9 @@ const projectRoute = createRoute({
 });
 
 /**
- * A project opens on its web analytics until it has an overview page; a
- * member without web analytics, on the first area they have. With none,
- * the page says they have no access.
+ * A project opens on its overview when the user has one of the overview's
+ * areas; otherwise on the first area they have. With none, the page says
+ * they have no access.
  */
 const projectIndexRoute = createRoute({
   getParentRoute: () => projectRoute,
@@ -232,6 +234,38 @@ const projectIndexRoute = createRoute({
     }
   },
   component: NoAccess,
+});
+
+/**
+ * The project's overview: its widgets, for the period in the address
+ * (left out for the last 7 days) and the environment (left out for
+ * production). Every user of the project may open it; a user with none of
+ * its areas finds it empty, with the pages they can open.
+ */
+const overviewRoute = createRoute({
+  getParentRoute: () => projectRoute,
+  path: "/overview",
+  staticData: { title: "Overview" },
+  validateSearch: (
+    search: { period?: unknown; env?: unknown } & SearchSchemaInput,
+  ): { period: OverviewPeriod | undefined; env: string | undefined } => ({
+    period:
+      isOverviewPeriod(search.period) && search.period !== DEFAULT_OVERVIEW_PERIOD
+        ? search.period
+        : undefined,
+    ...environmentSearch(search),
+  }),
+  component: function OverviewRouteComponent() {
+    const { projectId } = overviewRoute.useParams();
+    const { period, env } = overviewRoute.useSearch();
+    return (
+      <OverviewPage
+        projectId={projectId}
+        period={period ?? DEFAULT_OVERVIEW_PERIOD}
+        environment={env ?? DEFAULT_ENVIRONMENT}
+      />
+    );
+  },
 });
 
 const webAnalyticsRoute = createRoute({
@@ -1072,6 +1106,7 @@ const routeTree = rootRoute.addChildren([
     projectsRoute,
     projectRoute.addChildren([
       projectIndexRoute,
+      overviewRoute,
       webAnalyticsRoute,
       speedRoute,
       usersRoute,

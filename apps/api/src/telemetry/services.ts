@@ -573,3 +573,96 @@ export async function serviceChart(
     durations,
   };
 }
+
+/** Nanoseconds as microseconds; null without a request. */
+const durationOf = (requests: number, ns: number) => (requests === 0 ? null : ns / 1000);
+
+/** Services the overview lists: the busiest. */
+export const OVERVIEW_SERVICES = 5;
+
+/** One service's requests over a period and the period before, for the overview. */
+export interface ServiceTotals {
+  service: string;
+  requests: number;
+  failed: number;
+  /** null without a request. Interpolated, as the Services page's. */
+  p95Us: number | null;
+  previous: { requests: number; failed: number; p95Us: number | null };
+}
+
+/**
+ * The busiest services' requests, failed requests, and 95th-percentile
+ * duration in [from, to), each with the same for [previousFrom,
+ * previousTo), counted as the Services page counts them (a SERVER span,
+ * read without FINAL), in one read of both periods. Lighter than the
+ * Services page: no routes, so a span's attributes are never read, and
+ * only the columns the figures need. At most OVERVIEW_SERVICES, those with
+ * the most requests in the period; `more` says whether others had any.
+ */
+export async function serviceTotals(
+  reader: Reader,
+  scope: {
+    projectId: string;
+    environment: string;
+    from: Date;
+    to: Date;
+    previousFrom: Date;
+    previousTo: Date;
+  },
+): Promise<{ services: ServiceTotals[]; more: boolean }> {
+  const params = new QueryParams();
+  const from = params.time(scope.from);
+  const previousTo = params.time(scope.previousTo);
+  const rows = await queryRows<{
+    service: string;
+    requests: string;
+    failed: string;
+    p95: number;
+    previous_requests: string;
+    previous_failed: string;
+    previous_p95: number;
+  }>(
+    reader,
+    `SELECT service,
+            countIf(current) AS requests,
+            countIf(current AND status_code = 'error') AS failed,
+            quantileExactInclusiveIf(0.95)(duration_ns, current) AS p95,
+            countIf(NOT current) AS previous_requests,
+            countIf(NOT current AND status_code = 'error') AS previous_failed,
+            quantileExactInclusiveIf(0.95)(duration_ns, NOT current) AS previous_p95
+     FROM (
+       SELECT service, status_code, duration_ns, timestamp >= ${from} AS current
+       FROM spans
+       PREWHERE project_id = ${params.add(scope.projectId, "UUID")}
+         AND timestamp >= ${params.time(scope.previousFrom)}
+         AND timestamp < ${params.time(scope.to)}
+       WHERE environment = ${params.add(scope.environment, "String")}
+         AND kind = 'server'
+         AND (timestamp >= ${from} OR timestamp < ${previousTo})
+     )
+     GROUP BY service
+     HAVING requests > 0
+     ORDER BY requests DESC, service
+     LIMIT ${OVERVIEW_SERVICES + 1}`,
+    params,
+    DASHBOARD_SETTINGS,
+  );
+  return {
+    services: rows.slice(0, OVERVIEW_SERVICES).map((row) => {
+      const requests = Number(row.requests);
+      const previousRequests = Number(row.previous_requests);
+      return {
+        service: row.service,
+        requests,
+        failed: Number(row.failed),
+        p95Us: durationOf(requests, row.p95),
+        previous: {
+          requests: previousRequests,
+          failed: Number(row.previous_failed),
+          p95Us: durationOf(previousRequests, row.previous_p95),
+        },
+      };
+    }),
+    more: rows.length > OVERVIEW_SERVICES,
+  };
+}

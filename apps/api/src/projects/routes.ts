@@ -146,6 +146,7 @@ export const projectRoutes: FastifyPluginCallback<{
       requireSignedUserIds?: boolean;
       ignoreDataCenters?: boolean;
       replayMode?: "off" | "errors";
+      mainGoalId?: string | null;
     };
   }>(
     "/projects/:id",
@@ -170,6 +171,8 @@ export const projectRoutes: FastifyPluginCallback<{
             ignoreDataCenters: { type: "boolean" },
             // Session replays around errors (docs/session-replay.md); off by default.
             replayMode: { type: "string", enum: ["off", "errors"] },
+            // The overview's main goal: one of the project's goals, or null for none.
+            mainGoalId: { type: ["string", "null"], pattern: UUID_PATTERN },
           },
         },
       },
@@ -182,6 +185,7 @@ export const projectRoutes: FastifyPluginCallback<{
         requireSignedUserIds,
         ignoreDataCenters,
         replayMode,
+        mainGoalId,
       } = request.body;
       let hostnames: string[] | undefined;
       if (allowedHostnames !== undefined) {
@@ -198,7 +202,13 @@ export const projectRoutes: FastifyPluginCallback<{
         ...(requireSignedUserIds === undefined ? {} : { requireSignedUserIds }),
         ...(ignoreDataCenters === undefined ? {} : { ignoreDataCenters }),
         ...(replayMode === undefined ? {} : { replayMode }),
+        ...(mainGoalId === undefined ? {} : { mainGoalId }),
       });
+      if (project === "no_such_goal") {
+        return reply
+          .code(400)
+          .send(problem("goal_not_found", "The project has no goal with this ID."));
+      }
       // Collection reads these rules from its cache: a change applies at once.
       if (
         requireSignedUserIds !== undefined ||

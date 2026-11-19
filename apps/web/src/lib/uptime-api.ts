@@ -136,10 +136,10 @@ export interface CheckFields {
   failuresBeforeDown: number;
 }
 
-const isCause = (value: unknown): value is CheckCause =>
+export const isCheckCause = (value: unknown): value is CheckCause =>
   CHECK_CAUSES.some((cause) => cause === value);
 const isCauseOrNull = (value: unknown): value is CheckCause | null =>
-  value === null || isCause(value);
+  value === null || isCheckCause(value);
 const isNumberOrNull = (value: unknown): value is number | null =>
   value === null || isNumber(value);
 const isState = (value: unknown): value is CheckState =>
@@ -185,7 +185,7 @@ const isFailure = (value: unknown): value is CheckFailure =>
   isText(value.at) &&
   isNumberOrNull(value.statusCode) &&
   isNumber(value.responseMs) &&
-  isCause(value.cause) &&
+  isCheckCause(value.cause) &&
   isText(value.detail);
 
 const isCheckResults = (value: unknown): value is CheckResults =>
@@ -209,7 +209,7 @@ const isIncident = (value: unknown): value is Incident =>
   isText(value.id) &&
   isText(value.startedAt) &&
   isTextOrNull(value.endedAt) &&
-  isCause(value.cause) &&
+  isCheckCause(value.cause) &&
   isText(value.detail);
 
 const isIncidentList = (value: unknown): value is IncidentList =>

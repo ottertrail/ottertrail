@@ -503,3 +503,68 @@ export async function setResolution(
     .executeTakeFirstOrThrow();
   return { resolvedAt: row.resolved_at };
 }
+
+/**
+ * Occurrences of every error group in [from, to) of one environment, each
+ * once (FINAL): what the overview compares the period with.
+ */
+export async function countOccurrences(
+  reader: Reader,
+  scope: { projectId: string; environment: string; from: Date; to: Date },
+): Promise<number> {
+  const params = new QueryParams();
+  const [row] = await queryRows<{ occurrences: string }>(
+    reader,
+    `SELECT count() AS occurrences
+     FROM events FINAL
+     WHERE ${errorScope(params, scope.projectId, scope.environment)}
+       AND occurred_at >= ${params.time(scope.from)} AND occurred_at < ${params.time(scope.to)}`,
+    params,
+  );
+  return count(row?.occurrences ?? 0);
+}
+
+/** Whether the project has ever had an error in the environment, within what it keeps. */
+export async function hasErrors(
+  reader: Reader,
+  projectId: string,
+  environment: string,
+): Promise<boolean> {
+  const params = new QueryParams();
+  const rows = await queryRows<{ found: number }>(
+    reader,
+    `SELECT 1 AS found FROM events
+     WHERE ${errorScope(params, projectId, environment)}
+     LIMIT 1`,
+    params,
+  );
+  return rows.length > 0;
+}
+
+/**
+ * Error groups seen in [from, to) of one environment, and those of them
+ * first seen there (their first occurrence in the environment, of all the
+ * project keeps, is in the range): real counts, not cut at MAX_GROUPS.
+ * It reads the environment's errors up to `to`, one row per group.
+ */
+export async function countGroups(
+  reader: Reader,
+  scope: { projectId: string; environment: string; from: Date; to: Date },
+): Promise<{ seen: number; new: number }> {
+  const params = new QueryParams();
+  const from = params.time(scope.from);
+  const [row] = await queryRows<{ seen: string; first_seen_in_range: string }>(
+    reader,
+    `SELECT count() AS seen, countIf(first >= ${from}) AS first_seen_in_range
+     FROM (
+       SELECT error_fingerprint, min(occurred_at) AS first, max(occurred_at) AS last
+       FROM events
+       WHERE ${errorScope(params, scope.projectId, scope.environment)}
+         AND occurred_at < ${params.time(scope.to)}
+       GROUP BY error_fingerprint
+       HAVING last >= ${from}
+     )`,
+    params,
+  );
+  return { seen: count(row?.seen ?? 0), new: count(row?.first_seen_in_range ?? 0) };
+}

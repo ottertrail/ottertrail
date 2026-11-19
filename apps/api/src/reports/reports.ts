@@ -321,6 +321,22 @@ export async function summary(
   };
 }
 
+/**
+ * Distinct visitors in the range's activity (pageviews and custom events):
+ * the summary's visitors, without working out visits when the range has
+ * no filters. What the overview divides goals by.
+ */
+export async function visitorCount(reader: Reader, range: ReportRange): Promise<number> {
+  const params = new QueryParams();
+  const visits = countedVisits(range, undefined, params, { firstEventColumns: false });
+  const [row] = await queryRows<{ visitors: string }>(
+    reader,
+    `SELECT uniqExact(visitor_id) AS visitors FROM (${activity(range, visits, params)})`,
+    params,
+  );
+  return count(row?.visitors);
+}
+
 export interface DayPoint {
   /** "YYYY-MM-DD" in the report's timezone. Days without data are included with zeros. */
   day: string;

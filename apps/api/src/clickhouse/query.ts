@@ -25,6 +25,11 @@ export interface Reader {
    * time left, and a query that would start past it is refused.
    */
   deadline?: number | undefined;
+  /**
+   * Settings for every query the reader runs, such as the dashboard's
+   * limits (DASHBOARD_SETTINGS); a query's own settings win over them.
+   */
+  settings?: ClickHouseSettings | undefined;
 }
 
 /** A query refused because the reader's deadline had passed. */
@@ -86,7 +91,10 @@ export async function queryRows<Row>(
   settings?: ClickHouseSettings,
 ): Promise<Row[]> {
   const run = async () => {
-    const limited = withinDeadline(reader, settings);
+    const limited = withinDeadline(
+      reader,
+      reader.settings === undefined ? settings : { ...reader.settings, ...settings },
+    );
     const result = await reader.client.query({
       query,
       query_params: params.values,

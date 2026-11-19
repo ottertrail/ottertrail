@@ -725,3 +725,22 @@ export async function uptimes(
   }
   return result;
 }
+
+/** How many incidents of each of the project's checks overlap [from, to), by check ID. */
+export async function incidentCounts(
+  db: Kysely<Database>,
+  projectId: string,
+  from: Date,
+  to: Date,
+): Promise<Map<string, number>> {
+  const rows = await db
+    .selectFrom("uptime_incidents")
+    .select("check_id")
+    .select((eb) => eb.fn.countAll<string>().as("count"))
+    .where("project_id", "=", projectId)
+    .where("started_at", "<", to)
+    .where((eb) => eb.or([eb("ended_at", "is", null), eb("ended_at", ">", from)]))
+    .groupBy("check_id")
+    .execute();
+  return new Map(rows.map((row) => [row.check_id, Number(row.count)]));
+}

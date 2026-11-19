@@ -130,6 +130,20 @@ const EXPECTED: Record<string, string> = {
   "GET /api/projects/:id/alerts": "uptime_alerts:view",
   "GET /api/projects/:id/alerts/firing": "uptime_alerts:view",
   "GET /api/projects/:id/alert-channels": "uptime_alerts:view",
+
+  "GET /api/projects/:id/overview/layout": "project",
+  "PUT /api/projects/:id/overview/layout": "project",
+  "DELETE /api/projects/:id/overview/layout": "project",
+  "GET /api/projects/:id/overview/attention": "uptime_alerts:view",
+  "GET /api/projects/:id/overview/errors": "errors:view",
+  "GET /api/projects/:id/overview/uptime": "uptime_alerts:view",
+  "GET /api/projects/:id/overview/services": "monitoring:view",
+  "GET /api/projects/:id/overview/speed": "web_analytics:view",
+  "GET /api/projects/:id/overview/main-goal": "product_analytics:view",
+  "GET /api/projects/:id/overview/traffic": "web_analytics:view",
+  "GET /api/projects/:id/overview/goals": "product_analytics:view",
+  "GET /api/projects/:id/overview/users": "product_analytics:view",
+  "GET /api/projects/:id/overview/sources": "web_analytics:view",
 };
 
 test("every dashboard route declares the area or permission it needs; public routes are listed", async () => {

@@ -46,7 +46,26 @@ function request(
   };
 }
 
+const OVERVIEW_WIDGETS = [
+  "attention",
+  "errors",
+  "uptime",
+  "services",
+  "speed",
+  "main-goal",
+  "traffic",
+  "goals",
+  "users",
+  "sources",
+];
+
 export const PROJECT_REQUESTS: readonly ProjectRequest[] = [
+  request("GET", "/overview/layout", "/overview/layout"),
+  request("PUT", "/overview/layout", "/overview/layout", { order: ["traffic"], hidden: [] }),
+  request("DELETE", "/overview/layout", "/overview/layout"),
+  ...OVERVIEW_WIDGETS.map((widget) =>
+    request("GET", `/overview/${widget}`, `/overview/${widget}?period=7d`),
+  ),
   request("GET", "", ""),
   request("PATCH", "", "", { name: "Renamed" }),
   request("DELETE", "", "", { confirmName: "Some site" }),

@@ -7,6 +7,7 @@ import { currentPath, renderApp } from "./render.tsx";
 
 const ANALYTICS = `/projects/${PROJECT.id}/web-analytics`;
 const SETTINGS = `/projects/${PROJECT.id}/settings`;
+const OVERVIEW = `/projects/${PROJECT.id}/overview`;
 const LAST_PROJECT_KEY = "ottertrail.project";
 
 const workspaceMenu = () => page.getByRole("navigation", { name: "Instance" });
@@ -58,8 +59,8 @@ describe("the workspace", () => {
 
     await page.getByRole("link", { name: "Main site" }).click();
 
-    await expect.poll(() => currentPath(router)).toBe(ANALYTICS);
-    await expect.element(page.getByRole("heading", { name: "Visitors per day" })).toBeVisible();
+    await expect.poll(() => currentPath(router)).toBe(OVERVIEW);
+    await expect.element(page.getByRole("heading", { name: "Traffic" })).toBeVisible();
   });
 });
 
@@ -89,6 +90,7 @@ describe("inside a project", () => {
     const items = document.querySelectorAll("nav[aria-label=Project] [data-sidebar=menu-button]");
     expect([...items].map((item) => item.textContent)).toEqual([
       "All projects",
+      "Overview",
       "Web analytics",
       "Speed",
       "Users",
@@ -132,11 +134,11 @@ describe("inside a project", () => {
     }
   });
 
-  test("the project's address alone opens its web analytics", async () => {
+  test("the project's address alone opens its overview", async () => {
     installFakeApi();
     const router = renderApp(`/projects/${PROJECT.id}`);
 
-    await expect.poll(() => currentPath(router)).toBe(ANALYTICS);
+    await expect.poll(() => currentPath(router)).toBe(OVERVIEW);
   });
 
   test("Settings shows the install snippet and the project's settings", async () => {
@@ -219,7 +221,7 @@ describe("the home page", () => {
     installFakeApi({ projects: [PROJECT, OTHER_PROJECT] });
     const router = renderApp("/");
 
-    await expect.poll(() => currentPath(router)).toBe(ANALYTICS);
+    await expect.poll(() => currentPath(router)).toBe(OVERVIEW);
   });
 
   test("opens the project this browser showed last", async () => {
@@ -230,9 +232,7 @@ describe("the home page", () => {
 
     const router = renderApp("/");
 
-    await expect
-      .poll(() => currentPath(router))
-      .toBe(`/projects/${OTHER_PROJECT.id}/web-analytics`);
+    await expect.poll(() => currentPath(router)).toBe(`/projects/${OTHER_PROJECT.id}/overview`);
   });
 
   test("opens the project list when there are no projects", async () => {

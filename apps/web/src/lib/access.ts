@@ -172,7 +172,26 @@ export const AREA_PAGES = [
   ["product_analytics", "/projects/$projectId/product/events"],
 ] as const;
 
-/** The first page of a project this user may open, or null when they have no area. */
+/**
+ * The areas the overview's widgets need (apps/web/src/lib/overview-api.ts,
+ * WIDGETS): a user with none of them has nothing on the overview.
+ */
+export const OVERVIEW_AREAS: readonly Area[] = [
+  "uptime_alerts",
+  "errors",
+  "monitoring",
+  "web_analytics",
+  "product_analytics",
+];
+
+/** Whether the overview has anything for this user. */
+export const hasOverview = (me: Me | undefined) => OVERVIEW_AREAS.some((area) => canUse(me, area));
+
+/**
+ * The page a project opens on: its overview when the user has one of its
+ * areas, otherwise the first page they may open; null when they have no area.
+ */
 export function firstPage(me: Me) {
+  if (hasOverview(me)) return "/projects/$projectId/overview" as const;
   return AREA_PAGES.find(([area]) => canUse(me, area))?.[1] ?? null;
 }

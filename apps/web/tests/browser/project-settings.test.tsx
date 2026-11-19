@@ -231,6 +231,27 @@ describe("keeping events", () => {
     await expect.element(page.getByText("Saved.")).toBeVisible();
   });
 
+  test("the main goal is chosen from the project's goals, and saved", async () => {
+    const api = installFakeApi();
+    renderApp(SETTINGS);
+
+    const field = page.getByRole("combobox", { name: "Main goal" });
+    await expect.poll(() => field.element().textContent).toContain("None: new signed-in users");
+    await field.click();
+    await page.getByRole("option", { name: "Saw pricing" }).click();
+    await page.getByRole("button", { name: "Save changes" }).click();
+
+    await expect
+      .poll(() => api.bodies.at(-1))
+      .toMatchObject({
+        method: "PATCH",
+        path: `/api/projects/${PROJECT.id}`,
+        body: { mainGoalId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1" },
+      });
+    await expect.element(page.getByText("Saved.")).toBeVisible();
+    await expect.poll(() => field.element().textContent).toContain("Saw pricing");
+  });
+
   test("a longer limit than now does not warn", async () => {
     installFakeApi({ projects: [{ ...PROJECT, retentionDays: 365 }] });
     renderApp(SETTINGS);

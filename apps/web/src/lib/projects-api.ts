@@ -29,6 +29,8 @@ export interface Project extends ProjectSummary {
   ignoreDataCenters: boolean;
   /** Session replays: off, or recorded around errors (docs/session-replay.md). */
   replayMode: "off" | "errors";
+  /** The goal the overview's business figures start with; null for none. */
+  mainGoalId: string | null;
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -62,7 +64,9 @@ export function isFullProject(value: unknown): value is Project {
     "ignoreDataCenters" in value &&
     typeof value.ignoreDataCenters === "boolean" &&
     "replayMode" in value &&
-    (value.replayMode === "off" || value.replayMode === "errors")
+    (value.replayMode === "off" || value.replayMode === "errors") &&
+    "mainGoalId" in value &&
+    (value.mainGoalId === null || typeof value.mainGoalId === "string")
   );
 }
 
@@ -111,6 +115,7 @@ export async function updateProject(
     requireSignedUserIds?: boolean;
     ignoreDataCenters?: boolean;
     replayMode?: "off" | "errors";
+    mainGoalId?: string | null;
   },
 ) {
   const body = await apiRequest(`/api/projects/${encodeURIComponent(id)}`, {

@@ -68,30 +68,48 @@ const STATS: Stat[] = [
     value: "765",
     change: relativeChange(765, 683),
     before: "683",
-    count: 683,
+    counts: { current: 765, previous: 683 },
   },
-  { label: "Visits", value: "824", change: relativeChange(824, 824), before: "824", count: 824 },
+  {
+    label: "Visits",
+    value: "824",
+    change: relativeChange(824, 824),
+    before: "824",
+    counts: { current: 824, previous: 824 },
+  },
   {
     label: "Pageviews",
     value: "1,820",
     change: relativeChange(1820, 2000),
     before: "2,000",
-    count: 2000,
+    counts: { current: 1820, previous: 2000 },
   },
   {
     label: "Bounce rate",
     value: "24%",
     change: pointsChange(0.24, 0.3),
     before: "30%",
-    count: 824,
+    counts: { current: 824, previous: 824 },
   },
   { label: "Visit duration", value: "4m 23s" },
 ];
 
 const FEW_STATS: Stat[] = [
-  { label: "Visitors", value: "6", change: relativeChange(6, 2), before: "2", count: 2 },
-  { label: "Visits", value: "7", change: relativeChange(7, 2), before: "2", count: 2 },
-  // No count: with a minimum set, its change is left out too.
+  {
+    label: "Visitors",
+    value: "6",
+    change: relativeChange(6, 2),
+    before: "2",
+    counts: { current: 6, previous: 2 },
+  },
+  {
+    label: "Visits",
+    value: "7",
+    change: relativeChange(7, 2),
+    before: "2",
+    counts: { current: 7, previous: 2 },
+  },
+  // No counts: with a minimum set, its change is left out too.
   { label: "Pageviews", value: "9", change: relativeChange(9, 3), before: "3" },
 ];
 
@@ -195,7 +213,7 @@ function StatStripSpecimens() {
       </Specimen>
       <div className="grid gap-4 lg:grid-cols-2">
         <Specimen
-          title="Too few to compare: minCount 20 hides a change that rests on 2 visits"
+          title="Too few to compare: minCount 20 hides a change when neither period reaches 20 visits"
           className="block"
         >
           <StatStrip stats={FEW_STATS} minCount={20} label="Summary with few visits" />

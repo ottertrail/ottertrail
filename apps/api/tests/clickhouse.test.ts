@@ -67,7 +67,7 @@ describe("ClickHouse migrations", () => {
     expect(table?.create_table_query).toMatch(/fsync_part_directory = 1/);
   });
 
-  test("create the telemetry tables with their order and TTL, and uptime's results", async () => {
+  test("create the telemetry tables with their order and TTL, uptime's results, and first-seen times", async () => {
     const result = await ch().client.query({
       query: `SELECT name, sorting_key FROM system.tables
               WHERE database = {database:String} AND name != 'schema_migrations'
@@ -82,6 +82,9 @@ describe("ClickHouse migrations", () => {
       { name: "metric_histograms", sorting_key: "project_id, name, timestamp, id" },
       { name: "metric_points", sorting_key: "project_id, name, timestamp, id" },
       { name: "spans", sorting_key: "project_id, timestamp, id" },
+      { name: "user_first_seen", sorting_key: "project_id, environment, user_id" },
+      // The materialized view that fills user_first_seen as events are stored.
+      { name: "user_first_seen_mv", sorting_key: "" },
     ]);
   });
 

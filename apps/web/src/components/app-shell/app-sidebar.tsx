@@ -15,6 +15,7 @@ import {
   GaugeIcon,
   HardDriveIcon,
   HeartPulseIcon,
+  LayoutDashboardIcon,
   PaletteIcon,
   ScrollTextIcon,
   ServerIcon,
@@ -47,7 +48,7 @@ import {
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
 import { Skeleton } from "@/components/ui/skeleton";
-import { canOpen, meQuery, useAccess } from "@/lib/access";
+import { canOpen, hasOverview, meQuery, useAccess } from "@/lib/access";
 import { projectsQuery } from "@/lib/projects-api";
 
 /** The workspace level: things above any one project, under the instance's name. */
@@ -203,6 +204,21 @@ function ProjectMenu({ projectId }: { projectId: string }) {
       <SidebarGroup>
         <SidebarGroupLabel>Project</SidebarGroupLabel>
         <SidebarMenu>
+          {hasOverview(me) && (
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                render={<Link to="/projects/$projectId/overview" params={{ projectId }} />}
+                isActive={
+                  matchRoute({ to: "/projects/$projectId/overview", params: { projectId } }) !==
+                  false
+                }
+                tooltip="Overview"
+              >
+                <LayoutDashboardIcon />
+                <span>Overview</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          )}
           {canOpen(me, "web_analytics") && (
             <SidebarMenuItem>
               <SidebarMenuButton

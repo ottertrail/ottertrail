@@ -58,6 +58,8 @@ export interface ProjectsTable {
    * API records it as it stores events (collection/last-event.ts).
    */
   last_event_at: ColumnType<Date | null, never, Date | null>;
+  /** The goal the overview's business figures start with; null for none. One of the project's goals. */
+  main_goal_id: ColumnType<string | null, string | null | undefined, string | null>;
 }
 
 /**
@@ -469,6 +471,17 @@ export interface OwnerSetupTokensTable {
   created_at: DatabaseDefault<Date>;
 }
 
+/** One dashboard user's layout of one project's overview (overview/layout.ts). */
+export interface OverviewLayoutsTable {
+  user_id: string;
+  project_id: string;
+  /** Widget IDs in order. */
+  widgets: string[];
+  /** Widget IDs the user hid. */
+  hidden: ColumnType<string[], string[] | undefined, string[]>;
+  updated_at: ColumnType<Date, Date | undefined, Date>;
+}
+
 export interface Database {
   instance_settings: InstanceSettingsTable;
   projects: ProjectsTable;
@@ -497,4 +510,5 @@ export interface Database {
   dashboard_member_projects: DashboardMemberProjectsTable;
   dashboard_invitations: DashboardInvitationsTable;
   dashboard_password_resets: DashboardPasswordResetsTable;
+  overview_layouts: OverviewLayoutsTable;
 }

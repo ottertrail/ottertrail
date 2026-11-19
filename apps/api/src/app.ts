@@ -23,6 +23,7 @@ import { goalRoutes } from "./goals/routes.ts";
 import { userRoutes } from "./identities/routes.ts";
 import { channelRoutes } from "./notifications/routes.ts";
 import { addressPolicy, type Lookup } from "./outbound/addresses.ts";
+import { overviewRoutes } from "./overview/routes.ts";
 import { productRoutes } from "./product/routes.ts";
 import { projectRoutes } from "./projects/routes.ts";
 import { replayPlayerScriptRoute, replayRoutes } from "./replays/dashboard-routes.ts";
@@ -330,6 +331,15 @@ export function buildApp({
       limiter,
       auth: dashboard.auth,
       trustedOrigins: dashboard.trustedOrigins,
+      ...(dashboard.now === undefined ? {} : { now: dashboard.now }),
+    });
+    app.register(overviewRoutes, {
+      prefix: "/api",
+      db,
+      clickhouse: dashboard.clickhouse,
+      auth: dashboard.auth,
+      trustedOrigins: dashboard.trustedOrigins,
+      limiter,
       ...(dashboard.now === undefined ? {} : { now: dashboard.now }),
     });
     app.register(channelRoutes, {

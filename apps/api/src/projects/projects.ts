@@ -33,6 +33,8 @@ export interface Project {
   ignoreDataCenters: boolean;
   /** Session replays: "off", or "errors", recorded around errors (docs/session-replay.md). */
   replayMode: "off" | "errors";
+  /** The goal the overview's business figures start with, or null (docs/dashboard.md, "Overview"). */
+  mainGoalId: string | null;
 }
 
 /** The fewest and most days a project may keep its events; the database checks the same. */
@@ -99,6 +101,7 @@ function baseQuery(db: Kysely<Database>) {
       "projects.require_signed_user_ids",
       "projects.ignore_data_centers",
       "projects.replay_mode",
+      "projects.main_goal_id",
     ]);
 }
 
@@ -117,6 +120,7 @@ function toProject(row: ProjectRow): Project {
     requireSignedUserIds: row.require_signed_user_ids,
     ignoreDataCenters: row.ignore_data_centers,
     replayMode: row.replay_mode,
+    mainGoalId: row.main_goal_id,
   };
 }
 
@@ -155,7 +159,14 @@ export async function createProject(
   return project;
 }
 
-/** Changes a project's settings; null when no project has this ID. */
+/** PostgreSQL's foreign_key_violation. */
+const isForeignKeyViolation = (error: unknown) =>
+  typeof error === "object" && error !== null && "code" in error && error.code === "23503";
+
+/**
+ * Changes a project's settings; null when no project has this ID, and
+ * "no_such_goal" when the main goal is not one of the project's goals.
+ */
 export async function updateProject(
   db: Kysely<Database>,
   id: string,
@@ -166,8 +177,9 @@ export async function updateProject(
     requireSignedUserIds?: boolean;
     ignoreDataCenters?: boolean;
     replayMode?: "off" | "errors";
+    mainGoalId?: string | null;
   },
-): Promise<Project | null> {
+): Promise<Project | null | "no_such_goal"> {
   const values = {
     ...(changes.name === undefined ? {} : { name: changes.name }),
     ...(changes.allowedHostnames === undefined
@@ -181,15 +193,22 @@ export async function updateProject(
       ? {}
       : { ignore_data_centers: changes.ignoreDataCenters }),
     ...(changes.replayMode === undefined ? {} : { replay_mode: changes.replayMode }),
+    ...(changes.mainGoalId === undefined ? {} : { main_goal_id: changes.mainGoalId }),
   };
   if (Object.keys(values).length > 0) {
-    const result = await db
-      .updateTable("projects")
-      .set(values)
-      .where("id", "=", id)
-      .executeTakeFirst();
-    if (result.numUpdatedRows === 0n) {
-      return null;
+    try {
+      const result = await db
+        .updateTable("projects")
+        .set(values)
+        .where("id", "=", id)
+        .executeTakeFirst();
+      if (result.numUpdatedRows === 0n) {
+        return null;
+      }
+    } catch (error) {
+      // The main goal's foreign key: not one of this project's goals.
+      if (isForeignKeyViolation(error)) return "no_such_goal";
+      throw error;
     }
   }
   return findProject(db, id);

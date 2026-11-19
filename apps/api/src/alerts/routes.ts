@@ -115,7 +115,8 @@ const mayUseKind = (user: UserAccess, kind: string | undefined) =>
   isRuleKind(kind) && canSeeKind(user, kind);
 
 /** The kinds the user may see; never empty, as check rules need only uptime and alerts. */
-const visibleKinds = (user: UserAccess) => RULE_KINDS.filter((kind) => canSeeKind(user, kind));
+export const visibleKinds = (user: UserAccess) =>
+  RULE_KINDS.filter((kind) => canSeeKind(user, kind));
 
 /**
  * GET    /api/projects/:id/alert-rules

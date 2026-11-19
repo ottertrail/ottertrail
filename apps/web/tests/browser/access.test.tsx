@@ -30,7 +30,7 @@ describe("a member's dashboard shows only what they may use", () => {
     }
   });
 
-  test("a page outside the member's areas says so, and the project opens on the first area", async () => {
+  test("a page outside the member's areas says so, and the project opens on its overview", async () => {
     installFakeApi({ access: memberAccess({ errors: "view" }) });
     const router = renderApp(`/projects/${PROJECT.id}/web-analytics`);
     await expect.element(page.getByText("You don't have access")).toBeVisible();
@@ -39,15 +39,17 @@ describe("a member's dashboard shows only what they may use", () => {
     await expect.poll(() => router.state.location.pathname).toBe(`/projects/${PROJECT.id}/errors`);
 
     const opened = renderApp(`/projects/${PROJECT.id}`);
-    await expect.poll(() => opened.state.location.pathname).toBe(`/projects/${PROJECT.id}/errors`);
+    await expect
+      .poll(() => opened.state.location.pathname)
+      .toBe(`/projects/${PROJECT.id}/overview`);
   });
 
-  test("the home page opens the first area of the member's first project", async () => {
-    installFakeApi({ access: memberAccess({ product_analytics: "view" }) });
+  test("the home page opens the first area of the member's first project, without the overview's", async () => {
+    installFakeApi({ access: memberAccess({ users: "view", replays: "view" }) });
     const router = renderApp("/");
     await expect
       .poll(() => currentPath(router))
-      .toMatch(new RegExp(`^/projects/${PROJECT.id}/product/events`));
+      .toMatch(new RegExp(`^/projects/${PROJECT.id}/users`));
   });
 
   test("a project's settings say the member has no access", async () => {
