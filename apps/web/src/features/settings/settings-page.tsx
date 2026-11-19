@@ -1,32 +1,89 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { LoaderCircleIcon, OctagonAlertIcon } from "lucide-react";
 import * as React from "react";
 
 import { NoAccess } from "@/components/no-access";
+import { SettingsSection } from "@/components/settings-section";
+import { type SettingsTab, SettingsTabs } from "@/components/settings-tabs";
 import { TimezoneCombobox } from "@/components/timezone-combobox";
-import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
-import { UnsavedChangesGuard } from "@/components/unsaved-changes-guard";
-import { meQuery } from "@/lib/access";
-import { formText } from "@/lib/form";
+import { useDirtyForm } from "@/hooks/use-dirty-form";
+import { meQuery, type Permission } from "@/lib/access";
 import { type Settings, settingsQuery, updateSettings } from "@/lib/settings-api";
 
-import { LocationDataCard } from "./location-data-card";
-import { NotificationChannelsCard } from "./notification-channels";
+import { LocationDataTab } from "./location-data-card";
+import { NotificationChannels } from "./notification-channels";
+import { type InstanceTabProps, SectionFailed, SectionSkeleton } from "./section-states";
 
-function SettingsCard({ settings }: { settings: Settings }) {
+interface InstanceTab {
+  /** In the address: `?tab=<value>`. The first tab the user may see is the default. */
+  value: string;
+  label: string;
+  /** Shown only to users with this permission (docs/access.md). */
+  permission: Permission;
+  render: (props: InstanceTabProps) => React.ReactNode;
+}
+
+/**
+ * The instance's settings tabs, in order. Adding a tab is one entry here:
+ * the tab row, the address, the "Unsaved" mark, the leave guard and who
+ * sees it follow from it.
+ */
+const INSTANCE_TABS: readonly InstanceTab[] = [
+  {
+    value: "general",
+    label: "General",
+    permission: "settings",
+    render: (props) => <GeneralTab {...props} />,
+  },
+  {
+    value: "location-data",
+    label: "Location data",
+    permission: "settings",
+    render: (props) => <LocationDataTab {...props} />,
+  },
+  // The Storage tab (storage-tab.tsx) goes here, between the location data and the channels.
+  {
+    value: "channels",
+    label: "Notification channels",
+    permission: "channels",
+    render: ({ timeZone }) => <NotificationChannels timeZone={timeZone} />,
+  },
+];
+
+interface GeneralValues {
+  name: string;
+  timeZone: string;
+}
+
+/**
+ * The instance's name and timezone: one form with its Save bar
+ * (docs/design-system.md, "The save rule"). Saving a new timezone moves
+ * where days start in every report, so every query but the settings'
+ * own is read again.
+ */
+function GeneralForm({
+  settings,
+  onDirty,
+}: {
+  settings: Settings;
+  onDirty: (dirty: boolean) => void;
+}) {
   const queryClient = useQueryClient();
-  const [timeZone, setTimeZone] = React.useState(settings.timeZone);
-  const movesDays = timeZone.trim() !== "" && timeZone.trim() !== settings.timeZone;
+  const form = useDirtyForm<GeneralValues>(
+    { name: settings.name, timeZone: settings.timeZone },
+    { normalize: { name: (name) => name.trim(), timeZone: (zone) => zone.trim() } },
+  );
+  React.useEffect(() => onDirty(form.dirty), [onDirty, form.dirty]);
+  const chosen = form.values.timeZone.trim();
+  const movesDays = chosen !== "" && chosen !== form.initial.timeZone;
   const save = useMutation({
-    mutationFn: (changes: { name: string; timeZone: string }) => updateSettings(changes),
-    onSuccess: (updated) => {
+    mutationFn: (values: GeneralValues) =>
+      updateSettings({ name: values.name, timeZone: values.timeZone.trim() }),
+    onSuccess: (updated, values) => {
+      form.saved(values);
       queryClient.setQueryData(settingsQuery().queryKey, updated);
-      setTimeZone(updated.timeZone);
       // Every page counts days in the timezone: everything shown but the
       // settings themselves may change.
       void queryClient.invalidateQueries({
@@ -35,151 +92,133 @@ function SettingsCard({ settings }: { settings: Settings }) {
     },
   });
 
-  function submit(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const form = new FormData(event.currentTarget);
-    save.mutate({ name: formText(form, "name"), timeZone: timeZone.trim() });
-  }
-
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>
-          <h3>Instance</h3>
-        </CardTitle>
-        <CardDescription>
-          The instance name and timezone apply to all projects. Only the owner can view and change
-          them.
-        </CardDescription>
-      </CardHeader>
-      <CardContent>
-        {/* Remounts with the saved values, so the form shows what the API stored. */}
-        <form
-          key={JSON.stringify([settings.name, settings.timeZone])}
-          aria-label="Instance"
-          onSubmit={submit}
-        >
-          <FieldGroup>
-            <Field>
-              <FieldLabel htmlFor="settings-name">Name</FieldLabel>
-              <Input
-                id="settings-name"
-                name="name"
-                defaultValue={settings.name}
-                required
-                maxLength={100}
-                autoComplete="off"
-              />
-            </Field>
-            <Field>
-              <FieldLabel htmlFor="settings-time-zone">Timezone</FieldLabel>
-              <TimezoneCombobox
-                id="settings-time-zone"
-                name="timeZone"
-                value={timeZone}
-                onValueChange={setTimeZone}
-                required
-                className="w-72"
-                aria-describedby="settings-time-zone-hint"
-              />
-              <FieldDescription id="settings-time-zone-hint">
-                {movesDays
-                  ? "Changing the timezone changes day boundaries in all reports, including past reports. Visitors seen before the change count again after it until midnight."
-                  : "Reports count days in this timezone. Use a name such as Europe/Berlin or Asia/Singapore."}
-              </FieldDescription>
-            </Field>
-            {save.error !== null && (
-              <Alert variant="destructive" role="alert">
-                <OctagonAlertIcon />
-                <AlertDescription>{save.error.message}</AlertDescription>
-              </Alert>
-            )}
-            <div className="flex items-center gap-3">
-              <Button type="submit" disabled={save.isPending}>
-                {save.isPending && <LoaderCircleIcon aria-hidden="true" className="animate-spin" />}
-                Save instance settings
-              </Button>
-              {save.isSuccess && (
-                <output className="text-sm text-ink-muted" aria-live="polite">
-                  Saved.
-                </output>
-              )}
-            </div>
-          </FieldGroup>
-        </form>
-      </CardContent>
-    </Card>
+    <SettingsSection
+      title="Instance"
+      description="The instance name and timezone apply to all projects. Only the owner can view and change them."
+      form={form}
+      onSave={(values) => save.mutate(values)}
+      saving={save.isPending}
+      error={save.error?.message}
+      saveLabel="Save instance settings"
+    >
+      <FieldGroup>
+        <Field>
+          <FieldLabel htmlFor="settings-name">Name</FieldLabel>
+          <Input
+            id="settings-name"
+            name="name"
+            value={form.values.name}
+            onChange={(event) => form.set("name", event.target.value)}
+            required
+            maxLength={100}
+            autoComplete="off"
+          />
+        </Field>
+        <Field>
+          <FieldLabel htmlFor="settings-time-zone">Timezone</FieldLabel>
+          <TimezoneCombobox
+            id="settings-time-zone"
+            name="timeZone"
+            value={form.values.timeZone}
+            onValueChange={(zone) => form.set("timeZone", zone)}
+            required
+            className="w-72 max-w-full"
+            aria-describedby="settings-time-zone-hint"
+          />
+          <FieldDescription id="settings-time-zone-hint">
+            {movesDays
+              ? "Changing the timezone changes day boundaries in all reports, including past reports. Visitors seen before the change count again after it until midnight."
+              : "Reports count days in this timezone. Use a name such as Europe/Berlin or Asia/Singapore."}
+          </FieldDescription>
+        </Field>
+      </FieldGroup>
+    </SettingsSection>
   );
 }
 
-/** The instance's name and timezone, for the owner. */
-function InstanceSettings() {
+/** The General tab, for the owner: the settings load here, as the location data's do. */
+function GeneralTab({ onDirty }: InstanceTabProps) {
   const settings = useQuery(settingsQuery());
-
-  if (settings.isPending) {
-    return <Skeleton className="h-64 w-full" />;
-  }
+  if (settings.isPending) return <SectionSkeleton />;
   if (settings.isError) {
     return (
-      <Alert variant="destructive">
-        <OctagonAlertIcon />
-        <AlertTitle>The settings could not load</AlertTitle>
-        <AlertDescription>{settings.error.message}</AlertDescription>
-        <AlertAction>
-          <Button variant="outline" size="sm" onClick={() => void settings.refetch()}>
-            Retry
-          </Button>
-        </AlertAction>
-      </Alert>
+      <SectionFailed
+        title="The settings could not load"
+        message={settings.error.message}
+        retry={() => void settings.refetch()}
+      />
     );
   }
-  return <SettingsCard settings={settings.data} />;
+  return <GeneralForm settings={settings.data} onDirty={onDirty} />;
+}
+
+/** The tab row and a section, while who the user is still loads. */
+function PageSkeleton() {
+  return (
+    <div className="flex flex-col" aria-busy="true">
+      <div className="flex h-10 items-center gap-6 border-b px-gutter">
+        <Skeleton className="h-4 w-16" />
+        <Skeleton className="h-4 w-24" />
+        <Skeleton className="h-4 w-36" />
+      </div>
+      <div className="px-gutter">
+        <SectionSkeleton />
+      </div>
+    </div>
+  );
 }
 
 /**
- * The instance's settings: /settings (docs/access.md). The owner changes
- * the name and timezone, and whether location data updates on its own;
- * the owner and admins manage the notification channels. Members do not
- * see the page.
+ * The instance's settings: /settings (docs/access.md), as tabs, the chosen
+ * one in `?tab=`. The owner has General (the name and timezone) and
+ * Location data; the owner and admins have the notification channels.
+ * Members do not see the page.
  */
 export function SettingsPage() {
   const me = useQuery(meQuery());
+  const [dirty, setDirty] = React.useState<Record<string, boolean>>({});
+  // One stable callback per tab, so a form's effect does not run on every render.
+  const onDirty = React.useMemo(
+    () =>
+      Object.fromEntries(
+        INSTANCE_TABS.map((tab) => [
+          tab.value,
+          (next: boolean) =>
+            setDirty((previous) =>
+              previous[tab.value] === next ? previous : { ...previous, [tab.value]: next },
+            ),
+        ]),
+      ),
+    [],
+  );
 
-  if (me.isPending) {
-    return (
-      <div className="mx-auto flex max-w-3xl flex-col gap-4 p-6" aria-busy="true">
-        <Skeleton className="h-64 w-full" />
-      </div>
-    );
-  }
+  if (me.isPending) return <PageSkeleton />;
   if (me.isError) {
     return (
-      <div className="mx-auto max-w-3xl p-6">
-        <Alert variant="destructive">
-          <OctagonAlertIcon />
-          <AlertTitle>The settings could not load</AlertTitle>
-          <AlertDescription>{me.error.message}</AlertDescription>
-          <AlertAction>
-            <Button variant="outline" size="sm" onClick={() => void me.refetch()}>
-              Retry
-            </Button>
-          </AlertAction>
-        </Alert>
+      <div className="px-gutter">
+        <SectionFailed
+          title="The settings could not load"
+          message={me.error.message}
+          retry={() => void me.refetch()}
+        />
       </div>
     );
   }
   const { permissions, instance } = me.data;
-  if (!permissions.settings && !permissions.channels) {
+  const tabs: SettingsTab[] = INSTANCE_TABS.filter((tab) => permissions[tab.permission]).map(
+    (tab) => ({
+      value: tab.value,
+      label: tab.label,
+      dirty: dirty[tab.value],
+      content: tab.render({
+        onDirty: onDirty[tab.value] ?? (() => undefined),
+        timeZone: instance.timeZone,
+      }),
+    }),
+  );
+  if (tabs.length === 0) {
     return <NoAccess />;
   }
-  return (
-    // Leaving with the location data switch changed but not saved asks first.
-    <UnsavedChangesGuard>
-      <div className="mx-auto flex max-w-3xl flex-col gap-6 p-6">
-        {permissions.settings && <InstanceSettings />}
-        {permissions.settings && <LocationDataCard timeZone={instance.timeZone} />}
-        {permissions.channels && <NotificationChannelsCard timeZone={instance.timeZone} />}
-      </div>
-    </UnsavedChangesGuard>
-  );
+  return <SettingsTabs label="Instance settings" tabs={tabs} />;
 }

@@ -2,10 +2,10 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { OctagonAlertIcon } from "lucide-react";
 import * as React from "react";
 
+import { SettingsSection } from "@/components/settings-section";
 import { StatusBadge, type StatusTone } from "@/components/status-badge";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
@@ -20,6 +20,7 @@ import {
 } from "@/lib/settings-api";
 
 import { formatMoment } from "../uptime/format";
+import { type InstanceTabProps, SectionFailed, SectionSkeleton } from "./section-states";
 
 /** "1 Nov 2026": a file's build or download date, in the instance's timezone. */
 function formatDay(iso: string, timeZone: string): string {
@@ -147,7 +148,7 @@ function FileStatus({
   return (
     <section className="flex flex-col gap-2 border-t pt-4" aria-label={title}>
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h4 className="text-sm font-medium text-ink">{title}</h4>
+        <h3 className="text-sm font-medium text-ink">{title}</h3>
         <StatusBadge tone={tone}>{state}</StatusBadge>
       </div>
       {file.loaded !== null && (
@@ -207,7 +208,7 @@ function LocationsStatus({
     return (
       <section className="flex flex-col gap-2 border-t pt-4" aria-label="Location database">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <h4 className="text-sm font-medium text-ink">Location database</h4>
+          <h3 className="text-sm font-medium text-ink">Location database</h3>
           <StatusBadge tone="neutral">Not needed</StatusBadge>
         </div>
         <p className="text-sm text-muted-foreground">
@@ -281,14 +282,22 @@ function DataCentersStatus({
 }
 
 /**
- * The location data section of the instance's Settings, for the owner:
- * whether the worker keeps the files current, and each file's state. The
- * switch saves with the section's Save (docs/design-system.md, "The save
- * rule").
+ * The Location data tab of the instance's Settings, for the owner: whether
+ * the worker keeps the files current, and each file's state. The switch
+ * saves with the section's Save (docs/design-system.md, "The save rule").
  */
-function LocationDataForm({ settings, timeZone }: { settings: Settings; timeZone: string }) {
+function LocationDataForm({
+  settings,
+  timeZone,
+  onDirty,
+}: {
+  settings: Settings;
+  timeZone: string;
+  onDirty: (dirty: boolean) => void;
+}) {
   const queryClient = useQueryClient();
   const form = useDirtyForm({ updateLocationData: settings.updateLocationData });
+  React.useEffect(() => onDirty(form.dirty), [onDirty, form.dirty]);
   const status = useQuery(locationDataQuery());
   const save = useMutation({
     mutationFn: (values: { updateLocationData: boolean }) => updateSettings(values),
@@ -297,24 +306,19 @@ function LocationDataForm({ settings, timeZone }: { settings: Settings; timeZone
       queryClient.setQueryData(settingsQuery().queryKey, updated);
     },
   });
-  const saveRef = React.useRef<HTMLButtonElement>(null);
   const switchId = React.useId();
   const descriptionId = React.useId();
   const automatic = settings.updateLocationData;
 
   return (
-    <form
-      aria-label="Location data"
-      className="flex flex-col gap-4"
-      onSubmit={(event) => {
-        event.preventDefault();
-        if (form.dirty && !save.isPending) save.mutate(form.values);
-      }}
-      onReset={(event) => {
-        event.preventDefault();
-        form.discard();
-        requestAnimationFrame(() => saveRef.current?.focus());
-      }}
+    <SettingsSection
+      title="Location data"
+      description="Where visitors are, and which visits come from cloud servers, come from two files the instance downloads. Only the owner can view and change this."
+      form={form}
+      onSave={(values) => save.mutate(values)}
+      saving={save.isPending}
+      error={save.error?.message}
+      saveLabel="Save location data settings"
     >
       <div className="flex items-start justify-between gap-4">
         <div className="flex flex-col gap-1">
@@ -339,34 +343,14 @@ function LocationDataForm({ settings, timeZone }: { settings: Settings; timeZone
           Automatic updates are off. The files stay as they are until someone runs update-geo.mjs.
         </p>
       )}
-      {save.error !== null && (
-        <Alert variant="destructive">
-          <OctagonAlertIcon />
-          <AlertTitle>The changes were not saved</AlertTitle>
-          <AlertDescription>{save.error.message}</AlertDescription>
-        </Alert>
+      {status.isPending && (
+        <div className="flex flex-col gap-3 border-t pt-4" aria-busy="true">
+          <Skeleton className="h-4 w-40" />
+          <Skeleton className="h-4 w-full" />
+          <Skeleton className="h-4 w-40" />
+          <Skeleton className="h-4 w-full" />
+        </div>
       )}
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-        <output aria-live="polite" className="mr-auto text-sm text-ink-subtle">
-          {save.isPending ? "Saving…" : form.dirty ? "Unsaved changes" : "No unsaved changes"}
-        </output>
-        {form.dirty && (
-          <Button type="reset" variant="ghost" disabled={save.isPending}>
-            Discard
-          </Button>
-        )}
-        <Button
-          ref={saveRef}
-          type="submit"
-          disabled={!form.dirty || save.isPending}
-          focusableWhenDisabled
-          aria-busy={save.isPending || undefined}
-          className="aria-disabled:cursor-not-allowed aria-disabled:opacity-50"
-        >
-          {save.isPending ? "Saving…" : "Save location data settings"}
-        </Button>
-      </div>
-      {status.isPending && <Skeleton className="h-32 w-full" />}
       {status.isError && (
         <Alert variant="destructive">
           <OctagonAlertIcon />
@@ -395,31 +379,22 @@ function LocationDataForm({ settings, timeZone }: { settings: Settings; timeZone
           />
         </>
       )}
-    </form>
+    </SettingsSection>
   );
 }
 
-/** The card, once the settings have loaded (settings-page.tsx loads them for the Instance card too). */
-export function LocationDataCard({ timeZone }: { timeZone: string }) {
+/** The tab, once the settings have loaded (the General tab loads the same query). */
+export function LocationDataTab({ timeZone, onDirty }: InstanceTabProps) {
   const settings = useQuery(settingsQuery());
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle>
-          <h3>Location data</h3>
-        </CardTitle>
-        <CardDescription>
-          Where visitors are, and which visits come from cloud servers, come from two files the
-          instance downloads. Only the owner can view and change this.
-        </CardDescription>
-      </CardHeader>
-      <CardContent>
-        {settings.isSuccess ? (
-          <LocationDataForm settings={settings.data} timeZone={timeZone} />
-        ) : (
-          <Skeleton className="h-40 w-full" />
-        )}
-      </CardContent>
-    </Card>
-  );
+  if (settings.isPending) return <SectionSkeleton />;
+  if (settings.isError) {
+    return (
+      <SectionFailed
+        title="The settings could not load"
+        message={settings.error.message}
+        retry={() => void settings.refetch()}
+      />
+    );
+  }
+  return <LocationDataForm settings={settings.data} timeZone={timeZone} onDirty={onDirty} />;
 }

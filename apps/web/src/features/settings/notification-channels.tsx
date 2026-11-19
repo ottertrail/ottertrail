@@ -1,4 +1,5 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { cn } from "cn";
 import {
   BellIcon,
   ChevronDownIcon,
@@ -16,11 +17,13 @@ import {
 import * as React from "react";
 
 import { CopyableCode } from "@/components/copyable-code";
+import { PINNED } from "@/components/pinned-column";
+import { ScrollHint } from "@/components/scroll-hint";
+import { SettingsSection } from "@/components/settings-section";
 import { StatusBadge } from "@/components/status-badge";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Dialog,
   DialogClose,
@@ -137,53 +140,55 @@ function DeliveryList({ channel, timeZone }: { channel: Channel; timeZone: strin
   }
   return (
     <div className="flex flex-col gap-2">
-      <Table>
-        <caption className="sr-only">
-          Deliveries to {channel.name} in the last {retentionDays} days, newest first
-        </caption>
-        <TableHeader>
-          <TableRow>
-            <TableHead>When</TableHead>
-            <TableHead>Event</TableHead>
-            <TableHead>Status</TableHead>
-            <TableHead className="text-right">Attempts</TableHead>
-            <TableHead>What happened</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {deliveries.map((delivery) => (
-            <TableRow key={delivery.id}>
-              <TableCell className="whitespace-nowrap tabular-nums">
-                {formatMoment(delivery.createdAt, timeZone)}
-              </TableCell>
-              <TableCell className="whitespace-nowrap">
-                {EVENT_TEXT[delivery.type] ?? delivery.type}
-              </TableCell>
-              <TableCell>
-                <DeliveryStatusBadge delivery={delivery} />
-              </TableCell>
-              <TableCell className="text-right tabular-nums">{delivery.attempts}</TableCell>
-              <TableCell className="max-w-md text-sm whitespace-normal">
-                {delivery.status === "sent" && delivery.sentAt !== null ? (
-                  <span className="text-muted-foreground">
-                    Sent {formatMoment(delivery.sentAt, timeZone)}.
-                  </span>
-                ) : (
-                  <span>
-                    {delivery.lastError ?? "Waiting to be sent."}
-                    {delivery.status === "pending" && delivery.nextAttemptAt !== null && (
-                      <span className="text-muted-foreground">
-                        {" "}
-                        Next try {formatMoment(delivery.nextAttemptAt, timeZone)}.
-                      </span>
-                    )}
-                  </span>
-                )}
-              </TableCell>
+      <ScrollHint>
+        <Table>
+          <caption className="sr-only">
+            Deliveries to {channel.name} in the last {retentionDays} days, newest first
+          </caption>
+          <TableHeader>
+            <TableRow>
+              <TableHead className={PINNED}>When</TableHead>
+              <TableHead>Event</TableHead>
+              <TableHead>Status</TableHead>
+              <TableHead className="text-right">Attempts</TableHead>
+              <TableHead>What happened</TableHead>
             </TableRow>
-          ))}
-        </TableBody>
-      </Table>
+          </TableHeader>
+          <TableBody>
+            {deliveries.map((delivery) => (
+              <TableRow key={delivery.id}>
+                <TableCell className={cn("whitespace-nowrap tabular-nums", PINNED)}>
+                  {formatMoment(delivery.createdAt, timeZone)}
+                </TableCell>
+                <TableCell className="whitespace-nowrap">
+                  {EVENT_TEXT[delivery.type] ?? delivery.type}
+                </TableCell>
+                <TableCell>
+                  <DeliveryStatusBadge delivery={delivery} />
+                </TableCell>
+                <TableCell className="text-right tabular-nums">{delivery.attempts}</TableCell>
+                <TableCell className="max-w-md min-w-56 text-sm whitespace-normal">
+                  {delivery.status === "sent" && delivery.sentAt !== null ? (
+                    <span className="text-muted-foreground">
+                      Sent {formatMoment(delivery.sentAt, timeZone)}.
+                    </span>
+                  ) : (
+                    <span>
+                      {delivery.lastError ?? "Waiting to be sent."}
+                      {delivery.status === "pending" && delivery.nextAttemptAt !== null && (
+                        <span className="text-muted-foreground">
+                          {" "}
+                          Next try {formatMoment(delivery.nextAttemptAt, timeZone)}.
+                        </span>
+                      )}
+                    </span>
+                  )}
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </ScrollHint>
       {query.hasNextPage && (
         <Button
           variant="outline"
@@ -348,7 +353,7 @@ function WebhookSecret({ channel }: { channel: Channel }) {
   return (
     <div className="flex flex-col gap-2">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h5 className="text-sm font-medium text-ink">Signing secret</h5>
+        <h4 className="text-sm font-medium text-ink">Signing secret</h4>
         <div className="flex items-center gap-1">
           <Button
             variant="ghost"
@@ -417,7 +422,7 @@ function ChannelItem({
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="flex min-w-0 flex-col gap-1">
           <div className="flex items-center gap-2">
-            <h4 className="font-medium text-ink">{channel.name}</h4>
+            <h3 className="font-medium text-ink">{channel.name}</h3>
             <Badge variant="secondary">{channel.kind === "email" ? "Email" : "Webhook"}</Badge>
           </div>
           <p className="font-mono text-xs [overflow-wrap:anywhere] text-muted-foreground">
@@ -507,118 +512,112 @@ function ChannelItem({
 }
 
 /**
- * The instance's notification channels, on the Settings page: email lists
- * and webhooks, with whether email is set up, a test send, a webhook's
- * secret, and each channel's recent deliveries. Every signed-in user
- * manages them.
+ * The Notification channels tab of the instance's Settings, for the owner
+ * and admins: email lists and webhooks, with whether email is set up, a
+ * test send, a webhook's secret, and each channel's recent deliveries.
+ * Adding, editing, deleting and sending a test are dialogs and actions on
+ * the list, not a form with a Save bar.
  */
-export function NotificationChannelsCard({ timeZone }: { timeZone: string }) {
+export function NotificationChannels({ timeZone }: { timeZone: string }) {
   const list = useQuery(channelsQuery());
   const [adding, setAdding] = React.useState(false);
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>
-          <h3>Notification channels</h3>
-        </CardTitle>
-        <CardDescription>
-          Channels send alerts to email addresses or your webhook. Every project can use them. Each
-          project's alert rules select their channels.
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="flex flex-col gap-4">
-        {list.isPending && (
-          <div className="flex flex-col gap-2" aria-busy="true">
-            <Skeleton className="h-24 w-full" />
-            <Skeleton className="h-24 w-full" />
-          </div>
-        )}
-        {list.isError && (
-          <Alert variant="destructive">
-            <OctagonAlertIcon />
-            <AlertTitle>The channels could not load</AlertTitle>
-            <AlertDescription>{list.error.message}</AlertDescription>
-            <AlertAction>
-              <Button variant="outline" size="sm" onClick={() => void list.refetch()}>
-                Retry
-              </Button>
-            </AlertAction>
-          </Alert>
-        )}
-        {list.isSuccess && (
-          <>
-            {list.data.email.configured ? (
-              <p className="flex items-center gap-2 text-sm text-muted-foreground">
-                <StatusBadge tone="good">Email set up</StatusBadge>
-                Email uses this instance's SMTP server.
-              </p>
-            ) : (
-              <Alert>
-                <TriangleAlertIcon />
-                <AlertTitle>Email is not set up on this instance</AlertTitle>
-                <AlertDescription>
-                  You can add email channels. No email is sent until the instance's operator sets
-                  SMTP_URL and EMAIL_FROM. Webhooks work without email configuration.
-                </AlertDescription>
-              </Alert>
-            )}
-            {list.data.channels.length === 0 ? (
-              <Empty className="border border-dashed">
-                <EmptyHeader>
-                  <EmptyMedia variant="icon">
-                    <BellIcon />
-                  </EmptyMedia>
-                  <EmptyTitle>No channels yet</EmptyTitle>
-                  <EmptyDescription>
-                    Add email addresses or a webhook. Send a test notification to check that the
-                    channel works.
-                  </EmptyDescription>
-                </EmptyHeader>
-                <EmptyContent>
-                  <Button onClick={() => setAdding(true)}>
-                    <PlusIcon aria-hidden="true" />
-                    Add channel
-                  </Button>
-                </EmptyContent>
-              </Empty>
-            ) : (
-              <>
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <p className="text-sm text-muted-foreground">
-                    {list.data.channels.length} of {list.data.maxChannels} channels
-                    {list.data.channels.length >= list.data.maxChannels &&
-                      ": delete one to add another"}
-                  </p>
-                  <Button
-                    size="sm"
-                    onClick={() => setAdding(true)}
-                    disabled={list.data.channels.length >= list.data.maxChannels}
-                  >
-                    <PlusIcon aria-hidden="true" />
-                    Add channel
-                  </Button>
-                </div>
-                <ul className="flex flex-col gap-3" aria-label="Notification channels">
-                  {list.data.channels.map((channel) => (
-                    <ChannelItem
-                      key={channel.id}
-                      channel={channel}
-                      timeZone={timeZone}
-                      emailConfigured={list.data.email.configured}
-                    />
-                  ))}
-                </ul>
-              </>
-            )}
-            <ChannelFormDialog
-              open={adding}
-              onOpenChange={setAdding}
-              emailConfigured={list.data.email.configured}
-            />
-          </>
-        )}
-      </CardContent>
-    </Card>
+    <SettingsSection
+      title="Notification channels"
+      wide
+      description="Channels send alerts to email addresses or your webhook. Every project can use them. Each project's alert rules select their channels."
+    >
+      {list.isPending && (
+        <div className="flex flex-col gap-2" aria-busy="true">
+          <Skeleton className="h-24 w-full" />
+          <Skeleton className="h-24 w-full" />
+        </div>
+      )}
+      {list.isError && (
+        <Alert variant="destructive">
+          <OctagonAlertIcon />
+          <AlertTitle>The channels could not load</AlertTitle>
+          <AlertDescription>{list.error.message}</AlertDescription>
+          <AlertAction>
+            <Button variant="outline" size="sm" onClick={() => void list.refetch()}>
+              Retry
+            </Button>
+          </AlertAction>
+        </Alert>
+      )}
+      {list.isSuccess && (
+        <>
+          {list.data.email.configured ? (
+            <p className="flex items-center gap-2 text-sm text-muted-foreground">
+              <StatusBadge tone="good">Email set up</StatusBadge>
+              Email uses this instance's SMTP server.
+            </p>
+          ) : (
+            <Alert>
+              <TriangleAlertIcon />
+              <AlertTitle>Email is not set up on this instance</AlertTitle>
+              <AlertDescription>
+                You can add email channels. No email is sent until the instance's operator sets
+                SMTP_URL and EMAIL_FROM. Webhooks work without email configuration.
+              </AlertDescription>
+            </Alert>
+          )}
+          {list.data.channels.length === 0 ? (
+            <Empty className="border border-dashed">
+              <EmptyHeader>
+                <EmptyMedia variant="icon">
+                  <BellIcon />
+                </EmptyMedia>
+                <EmptyTitle>No channels yet</EmptyTitle>
+                <EmptyDescription>
+                  Add email addresses or a webhook. Send a test notification to check that the
+                  channel works.
+                </EmptyDescription>
+              </EmptyHeader>
+              <EmptyContent>
+                <Button onClick={() => setAdding(true)}>
+                  <PlusIcon aria-hidden="true" />
+                  Add channel
+                </Button>
+              </EmptyContent>
+            </Empty>
+          ) : (
+            <>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-sm text-muted-foreground">
+                  {list.data.channels.length} of {list.data.maxChannels} channels
+                  {list.data.channels.length >= list.data.maxChannels &&
+                    ": delete one to add another"}
+                </p>
+                <Button
+                  size="sm"
+                  onClick={() => setAdding(true)}
+                  disabled={list.data.channels.length >= list.data.maxChannels}
+                >
+                  <PlusIcon aria-hidden="true" />
+                  Add channel
+                </Button>
+              </div>
+              <ul className="flex flex-col gap-3" aria-label="Notification channels">
+                {list.data.channels.map((channel) => (
+                  <ChannelItem
+                    key={channel.id}
+                    channel={channel}
+                    timeZone={timeZone}
+                    emailConfigured={list.data.email.configured}
+                  />
+                ))}
+              </ul>
+            </>
+          )}
+          <ChannelFormDialog
+            open={adding}
+            onOpenChange={setAdding}
+            emailConfigured={list.data.email.configured}
+          />
+        </>
+      )}
+    </SettingsSection>
   );
 }

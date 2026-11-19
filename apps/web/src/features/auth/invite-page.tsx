@@ -7,6 +7,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import { Skeleton } from "@/components/ui/skeleton";
 import { ApiError } from "@/lib/api";
 import { authClient, signInErrorMessage } from "@/lib/auth-client";
 import { formText } from "@/lib/form";
@@ -99,9 +100,11 @@ export function InvitePage() {
   if (preview.data === undefined || session.isPending) {
     return (
       <AuthLayout title="Invitation" description="Join an Ottertrail instance.">
-        <p className="text-sm text-ink-subtle" aria-busy="true">
-          Loading the invitation…
-        </p>
+        <div className="flex flex-col gap-3" aria-busy="true">
+          <span className="sr-only">Loading the invitation…</span>
+          <Skeleton className="h-4 w-full" />
+          <Skeleton className="h-9 w-full" />
+        </div>
       </AuthLayout>
     );
   }
@@ -175,7 +178,12 @@ export function InvitePage() {
                 </Alert>
               )}
               <Button type="submit" disabled={pending}>
-                {pending && <LoaderCircleIcon aria-hidden="true" className="animate-spin" />}
+                {pending && (
+                  <LoaderCircleIcon
+                    aria-hidden="true"
+                    className="animate-spin motion-reduce:animate-none"
+                  />
+                )}
                 Create account
               </Button>
             </FieldGroup>

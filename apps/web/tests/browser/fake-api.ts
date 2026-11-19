@@ -67,6 +67,12 @@ import type { Activity, User, UserActivity, UserList } from "../../src/lib/users
  */
 export interface FakeApi {
   signedIn: boolean;
+  /**
+   * How sign-in answers instead of succeeding, such as 401 for a wrong
+   * password; null signs in. (The sign-in client keeps the fetch it started
+   * with, so a test cannot swap fetch to refuse it.)
+   */
+  signInRefusal: { status: number; message: string } | null;
   /** The instance's settings; PATCH changes them (the owner's only). */
   settings: Settings;
   /** GET /api/settings/location-data: the files loaded and their last updates (the owner's only). */
@@ -75,6 +81,8 @@ export interface FakeApi {
   access: FakeAccess;
   /** The Members page's users and pending invitations (GET /api/members). */
   members: { members: Member[]; invitations: Invitation[] };
+  /** Which of the members is signed in, as GET /api/members answers `you`; the owner's row by default. */
+  membersYou: string;
   /** Whether the server has SMTP_URL, as GET /api/setup says. */
   emailConfigured: boolean;
   projects: Project[];
@@ -3177,7 +3185,8 @@ const SESSION = {
   },
 };
 
-function requestUrl(input: RequestInfo | URL): URL {
+/** The address a request goes to, whatever form fetch was given it in. */
+export function requestUrl(input: RequestInfo | URL): URL {
   const href = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
   return new URL(href, window.location.origin);
 }
@@ -3208,6 +3217,12 @@ async function answer(api: FakeApi, url: URL, init: RequestInit | undefined): Pr
     return json({ success: true });
   }
   if (path === "/api/auth/sign-in/email") {
+    if (api.signInRefusal !== null) {
+      return json(
+        { code: "REFUSED", message: api.signInRefusal.message },
+        api.signInRefusal.status,
+      );
+    }
     api.signedIn = true;
     return json({ redirect: false, token: "fake", user: SESSION.user });
   }
@@ -3570,10 +3585,12 @@ export async function fakeFetch(input: RequestInfo | URL, init?: RequestInit): P
 export function installFakeApi(overrides: Partial<FakeApi> = {}): FakeApi {
   active = {
     signedIn: true,
+    signInRefusal: null,
     settings: SETTINGS,
     locationData: LOCATION_DATA,
     access: OWNER_ACCESS,
     members: fakeMembers(),
+    membersYou: "user-1",
     emailConfigured: false,
     projects: [PROJECT],
     analytics: (_projectId, _period, _query, api) => analyticsFixture({ goals: api.goals }),
@@ -3711,7 +3728,7 @@ function answerMembers(api: FakeApi, url: URL, init: RequestInit | undefined): R
   const state = api.members;
   if (path === "/api/members") {
     return json({
-      you: { id: "user-1", role: api.access.role },
+      you: { id: api.membersYou, role: api.access.role },
       invitationDays: 7,
       members: state.members,
       invitations: state.invitations,

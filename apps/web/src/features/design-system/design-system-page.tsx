@@ -19,6 +19,11 @@ export function DesignSystemPage() {
           A dense, dark interface for analytics, debugging, and monitoring work: restrained
           surfaces, hairline borders, and one accent color used with intent.
         </p>
+        <p className="text-sm text-ink-muted">
+          The examples use the app&apos;s real components with made-up content. Every name, figure,
+          and address in an example marked &ldquo;Sample data&rdquo; is invented, and nothing on
+          this page is sent anywhere.
+        </p>
         <nav aria-label="On this page">
           <ul className="flex flex-wrap gap-x-4 gap-y-1 text-sm">
             {contents.map((item) => (

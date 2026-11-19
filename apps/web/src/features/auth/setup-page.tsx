@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { LoaderCircleIcon, OctagonAlertIcon } from "lucide-react";
+import { LoaderCircleIcon, MailCheckIcon, MailXIcon, OctagonAlertIcon } from "lucide-react";
 import * as React from "react";
 
 import { TimezoneCombobox } from "@/components/timezone-combobox";
@@ -155,16 +155,26 @@ export function SetupPage() {
             </FieldDescription>
           </Field>
           {status.data !== undefined && (
-            <p className="text-sm text-ink-muted" aria-label="Alert email">
+            <p
+              className="flex items-start gap-2 border-t pt-4 text-sm text-ink-muted"
+              aria-label="Alert email"
+            >
               {status.data.emailConfigured ? (
-                "Email for alerts is set up on this server."
+                <MailCheckIcon aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-success" />
               ) : (
-                <>
-                  Email for alerts is not configured. Alerts can still go to webhooks. To send
-                  email, set <code className="font-mono">SMTP_URL</code> and{" "}
-                  <code className="font-mono">EMAIL_FROM</code> on the server and restart it.
-                </>
+                <MailXIcon aria-hidden="true" className="mt-0.5 size-4 shrink-0" />
               )}
+              <span>
+                {status.data.emailConfigured ? (
+                  "Email for alerts is set up on this server."
+                ) : (
+                  <>
+                    Email for alerts is not configured. Alerts can still go to webhooks. To send
+                    email, set <code className="font-mono">SMTP_URL</code> and{" "}
+                    <code className="font-mono">EMAIL_FROM</code> on the server and restart it.
+                  </>
+                )}
+              </span>
             </p>
           )}
           {error !== null && (
@@ -174,7 +184,12 @@ export function SetupPage() {
             </Alert>
           )}
           <Button type="submit" disabled={pending}>
-            {pending && <LoaderCircleIcon aria-hidden="true" className="animate-spin" />}
+            {pending && (
+              <LoaderCircleIcon
+                aria-hidden="true"
+                className="animate-spin motion-reduce:animate-none"
+              />
+            )}
             Create account
           </Button>
         </FieldGroup>

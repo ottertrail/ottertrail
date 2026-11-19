@@ -13,6 +13,9 @@ const save = () => page.getByRole("button", { name: "Save location data settings
 
 const NOTHING = { loaded: null, loadError: null, lastUpdate: null };
 
+/** The Settings page's Location data tab (the General tab opens first). */
+const LOCATION_TAB = "/settings?tab=location-data";
+
 /**
  * The location database downloaded by the worker `minutesAgo` by the
  * server's clock, newer than the one the API loaded. The browser's own
@@ -39,7 +42,7 @@ function newerDownload(minutesAgo: number, loadError: string | null = null): Loc
 describe("the location data on the instance's Settings page", () => {
   test("current: both files loaded, with their dates and last updates in the instance's timezone", async () => {
     installFakeApi();
-    renderApp("/settings");
+    renderApp(LOCATION_TAB);
 
     await expect.element(page.getByRole("heading", { name: "Location data" })).toBeVisible();
     await expect.element(toggle()).toBeChecked();
@@ -65,7 +68,7 @@ describe("the location data on the instance's Settings page", () => {
     installFakeApi({
       locationData: { ...LOCATION_DATA, locations: NOTHING, dataCenters: NOTHING },
     });
-    renderApp("/settings");
+    renderApp(LOCATION_TAB);
 
     await expect.element(locations().getByText("Missing")).toBeVisible();
     await expect
@@ -107,7 +110,7 @@ describe("the location data on the instance's Settings page", () => {
         },
       },
     });
-    renderApp("/settings");
+    renderApp(LOCATION_TAB);
 
     await expect.element(locations().getByText("Update failed")).toBeVisible();
     await expect
@@ -127,7 +130,7 @@ describe("the location data on the instance's Settings page", () => {
     // The browser's clock is days ahead of the server's answer.
     expect(Date.now() - Date.parse(newerDownload(2).now)).toBeGreaterThan(86_400_000);
     installFakeApi({ locationData: newerDownload(2) });
-    renderApp("/settings");
+    renderApp(LOCATION_TAB);
     await expect
       .element(
         locations().getByText(
@@ -140,7 +143,7 @@ describe("the location data on the instance's Settings page", () => {
 
   test("a new file the API did not load within 15 minutes: the API's own error", async () => {
     installFakeApi({ locationData: newerDownload(30, "not a database") });
-    renderApp("/settings");
+    renderApp(LOCATION_TAB);
     await expect.element(locations().getByText("Not loaded")).toBeVisible();
     await expect
       .element(
@@ -153,7 +156,7 @@ describe("the location data on the instance's Settings page", () => {
 
   test("a new file the API did not load, without an error: the shared folder to check", async () => {
     installFakeApi({ locationData: newerDownload(30) });
-    renderApp("/settings");
+    renderApp(LOCATION_TAB);
     await expect.element(locations().getByText("Not loaded")).toBeVisible();
     await expect
       .element(locations().getByText(/share the location data folder \(the geo-data volume\)\.$/))
@@ -165,7 +168,7 @@ describe("the location data on the instance's Settings page", () => {
       settings: { ...SETTINGS, updateLocationData: false },
       locationData: { ...LOCATION_DATA, locations: NOTHING },
     });
-    renderApp("/settings");
+    renderApp(LOCATION_TAB);
 
     await expect.element(toggle()).not.toBeChecked();
     await expect
@@ -184,15 +187,17 @@ describe("the location data on the instance's Settings page", () => {
 
   test("the switch saves with the section's Save, and Discard undoes it", async () => {
     const api = installFakeApi();
-    renderApp("/settings");
+    renderApp(LOCATION_TAB);
 
     await expect.element(toggle()).toBeChecked();
     await expect.element(section().getByText("No unsaved changes")).toBeVisible();
     await expect.element(save()).toHaveAttribute("aria-disabled", "true");
-    // The Instance card's button has a name of its own.
+    // The General tab's button has a name of its own.
+    await page.getByRole("tab", { name: "General" }).click();
     await expect
       .element(page.getByRole("button", { name: "Save instance settings" }))
       .toBeVisible();
+    await page.getByRole("tab", { name: "Location data" }).click();
 
     await toggle().click();
     await expect.element(section().getByText("Unsaved changes", { exact: true })).toBeVisible();
@@ -214,7 +219,7 @@ describe("the location data on the instance's Settings page", () => {
 
   test("leaving with the switch changed asks first; unchanged, it does not", async () => {
     installFakeApi();
-    const router = renderApp("/settings");
+    const router = renderApp(LOCATION_TAB);
     const projects = page
       .getByRole("navigation", { name: "Instance" })
       .getByRole("link", { name: "Projects" });
@@ -238,7 +243,7 @@ describe("the location data on the instance's Settings page", () => {
     installFakeApi({
       locationData: { ...LOCATION_DATA, geoSource: "cloudflare", locations: NOTHING },
     });
-    renderApp("/settings");
+    renderApp(LOCATION_TAB);
 
     await expect.element(locations().getByText("Not needed")).toBeVisible();
     await expect

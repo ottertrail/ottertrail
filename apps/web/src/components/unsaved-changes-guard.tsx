@@ -17,9 +17,18 @@ import { type Registry, RegistryContext } from "@/hooks/unsaved-changes";
  * (`useDirtyForm`): a dialog for a link or the Back button, and the
  * browser's own question for closing or reloading the tab. Moving between
  * tabs on the same page changes only the address's search, keeps every
- * form's edits, and is not asked about.
+ * form's edits, and is not asked about. A search value named in
+ * `searchKeys` is different: it chooses what a form edits (the Members
+ * page's `?member=`), so changing it asks too.
  */
-export function UnsavedChangesGuard({ children }: { children: React.ReactNode }) {
+export function UnsavedChangesGuard({
+  children,
+  searchKeys = [],
+}: {
+  children: React.ReactNode;
+  /** Search values whose change unmounts a form, and so asks as leaving does. */
+  searchKeys?: readonly string[];
+}) {
   // Read when leaving, in the same tick as a save or a discard that just ran.
   const dirtyForms = React.useRef(new Set<string>());
   const discards = React.useRef(new Map<string, () => void>());
@@ -41,9 +50,18 @@ export function UnsavedChangesGuard({ children }: { children: React.ReactNode })
     }),
     [],
   );
+  const keys = React.useRef(searchKeys);
+  React.useLayoutEffect(() => {
+    keys.current = searchKeys;
+  });
   const blocker = useBlocker({
-    shouldBlockFn: ({ current, next }) =>
-      dirtyForms.current.size > 0 && current.pathname !== next.pathname,
+    shouldBlockFn: ({ current, next }) => {
+      if (dirtyForms.current.size === 0) return false;
+      if (current.pathname !== next.pathname) return true;
+      const before: Record<string, unknown> = current.search;
+      const after: Record<string, unknown> = next.search;
+      return keys.current.some((key) => before[key] !== after[key]);
+    },
     disabled: !dirty,
     // The guard's own listener below asks on close or reload, whatever the history.
     enableBeforeUnload: false,

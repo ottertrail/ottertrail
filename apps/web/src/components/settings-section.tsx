@@ -26,6 +26,8 @@ export function SettingsSection<T>({
   error,
   saveLabel = "Save changes",
   headingRef,
+  headingLevel = 2,
+  wide = false,
   children,
   className,
 }: {
@@ -42,21 +44,27 @@ export function SettingsSection<T>({
    * control that had it goes away (a deleted row's buttons).
    */
   headingRef?: React.Ref<HTMLHeadingElement>;
+  /** The title's level in the page's outline: 3 under a heading of the page's own (a member's name). */
+  headingLevel?: 2 | 3;
+  /** Content as wide as a table needs (a list, deliveries), rather than a form's measure. */
+  wide?: boolean;
   children: React.ReactNode;
   className?: string;
 }) {
   const headingId = React.useId();
   const saveRef = React.useRef<HTMLButtonElement>(null);
+  const Heading = `h${headingLevel}` as const;
+  const content = cn("flex flex-col gap-6", wide ? "max-w-5xl" : "max-w-2xl");
   const head = (
     <header className="flex max-w-2xl flex-col gap-1">
-      <h2
+      <Heading
         id={headingId}
         ref={headingRef}
         tabIndex={headingRef === undefined ? undefined : -1}
         className="text-base font-medium text-ink outline-none"
       >
         {title}
-      </h2>
+      </Heading>
       {description !== undefined && (
         <div className="text-sm text-pretty text-ink-subtle">{description}</div>
       )}
@@ -70,7 +78,7 @@ export function SettingsSection<T>({
         className={cn("flex flex-col gap-6 py-6", className)}
       >
         {head}
-        <div className="flex max-w-2xl flex-col gap-6">{children}</div>
+        <div className={content}>{children}</div>
       </section>
     );
   }
@@ -93,7 +101,7 @@ export function SettingsSection<T>({
       }}
     >
       {head}
-      <div className="flex max-w-2xl flex-col gap-6">{children}</div>
+      <div className={content}>{children}</div>
       {error !== undefined && (
         <Alert variant="destructive" className="max-w-2xl">
           <OctagonAlertIcon />

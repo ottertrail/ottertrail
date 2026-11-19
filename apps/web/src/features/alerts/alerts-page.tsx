@@ -252,7 +252,11 @@ function Summary({
           {can("channels") && (
             <>
               {" "}
-              <Link to="/settings" className="text-link hover:underline">
+              <Link
+                to="/settings"
+                search={{ tab: "channels" }}
+                className="text-link hover:underline"
+              >
                 Channels are in Settings
               </Link>
               .
@@ -368,7 +372,7 @@ export function AlertsPage({ projectId, prefill }: { projectId: string; prefill:
           </AlertDescription>
           {can("channels") && (
             <AlertAction>
-              <ButtonLink variant="outline" size="sm" to="/settings">
+              <ButtonLink variant="outline" size="sm" to="/settings" search={{ tab: "channels" }}>
                 Go to Settings
               </ButtonLink>
             </AlertAction>

@@ -1144,6 +1144,10 @@ const settingsRoute = createRoute({
   getParentRoute: () => appRoute,
   path: "/settings",
   staticData: { title: "Settings" },
+  // The chosen tab (SettingsTabs), left out for the first the user may see.
+  validateSearch: (search: { tab?: unknown } & SearchSchemaInput): { tab: string | undefined } => ({
+    tab: typeof search.tab === "string" && search.tab !== "" ? search.tab : undefined,
+  }),
   component: SettingsPage,
 });
 
@@ -1152,7 +1156,20 @@ const membersRoute = createRoute({
   getParentRoute: () => appRoute,
   path: "/settings/members",
   staticData: { title: "Members" },
-  component: MembersPage,
+  // The person shown beside the list: a member, or a pending invitation.
+  validateSearch: (
+    search: { member?: unknown; invitation?: unknown } & SearchSchemaInput,
+  ): { member: string | undefined; invitation: string | undefined } => ({
+    member: typeof search.member === "string" && search.member !== "" ? search.member : undefined,
+    invitation:
+      typeof search.invitation === "string" && search.invitation !== ""
+        ? search.invitation
+        : undefined,
+  }),
+  component: function MembersRouteComponent() {
+    const { member, invitation } = membersRoute.useSearch();
+    return <MembersPage chosen={{ member, invitation }} />;
+  },
 });
 
 const designSystemRoute = createRoute({

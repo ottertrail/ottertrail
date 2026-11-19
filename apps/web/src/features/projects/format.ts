@@ -54,3 +54,15 @@ export function timeAgo(date: Date, now = new Date()): string {
   }
   return "just now";
 }
+
+/** How long a project keeps its events, as its settings name the choice: "Forever", "1 year", "90 days". */
+export function keepText(retentionDays: number | null): string {
+  if (retentionDays === null) return "Forever";
+  const named: Record<number, string> = {
+    180: "6 months",
+    365: "1 year",
+    730: "2 years",
+    1825: "5 years",
+  };
+  return named[retentionDays] ?? `${retentionDays} days`;
+}

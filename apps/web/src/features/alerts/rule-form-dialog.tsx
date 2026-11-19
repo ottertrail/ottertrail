@@ -864,7 +864,11 @@ function RuleForm({
             This instance has no notification channels.{" "}
             {canAddChannels ? (
               <>
-                <Link to="/settings" className="text-link hover:underline">
+                <Link
+                  to="/settings"
+                  search={{ tab: "channels" }}
+                  className="text-link hover:underline"
+                >
                   Add one in Settings
                 </Link>
                 .

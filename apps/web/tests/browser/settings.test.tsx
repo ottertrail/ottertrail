@@ -36,7 +36,10 @@ describe("the instance's settings", () => {
       .toBeVisible();
     await page.getByRole("button", { name: "Save instance settings" }).click();
 
-    await expect.element(page.getByText("Saved.")).toBeVisible();
+    // The Save bar says the change is saved (it said "Saved." before the save rule).
+    await expect
+      .element(page.getByRole("form", { name: "Instance" }).getByRole("status"))
+      .toHaveTextContent("No unsaved changes");
     expect(api.bodies).toContainEqual({
       method: "PATCH",
       path: "/api/settings",
@@ -103,7 +106,9 @@ describe("the instance's settings", () => {
     await expect.element(timeZone).toHaveValue("America/North_Dakota/Center");
 
     await page.getByRole("button", { name: "Save instance settings" }).click();
-    await expect.element(page.getByText("Saved.")).toBeVisible();
+    await expect
+      .element(page.getByRole("form", { name: "Instance" }).getByRole("status"))
+      .toHaveTextContent("No unsaved changes");
     expect(api.bodies).toContainEqual({
       method: "PATCH",
       path: "/api/settings",

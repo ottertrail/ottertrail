@@ -23,7 +23,7 @@ const rowsOf = (caption: string) => {
 describe("notification channels on the Settings page", () => {
   test("lists the channels, and says email is not set up", async () => {
     installFakeApi();
-    renderApp("/settings");
+    renderApp("/settings?tab=channels");
 
     await expect
       .element(page.getByRole("heading", { name: "Notification channels" }))
@@ -52,7 +52,7 @@ describe("notification channels on the Settings page", () => {
   test("says when email is set up", async () => {
     const api = installFakeApi();
     api.channels.emailConfigured = true;
-    renderApp("/settings");
+    renderApp("/settings?tab=channels");
 
     await expect.element(page.getByText("Email set up")).toBeVisible();
     await expect
@@ -66,7 +66,7 @@ describe("notification channels on the Settings page", () => {
   test("with no channels, explains them and offers to add one", async () => {
     const api = installFakeApi();
     api.channels.list = [];
-    renderApp("/settings");
+    renderApp("/settings?tab=channels");
 
     await expect.element(page.getByText("No channels yet")).toBeVisible();
     await page.getByRole("button", { name: "Add channel" }).click();
@@ -75,7 +75,7 @@ describe("notification channels on the Settings page", () => {
 
   test("adds an email channel, checking the addresses first", async () => {
     const api = installFakeApi();
-    renderApp("/settings");
+    renderApp("/settings?tab=channels");
     await page.getByRole("button", { name: "Add channel" }).click();
     const form = dialog("Add a notification channel");
 
@@ -100,7 +100,7 @@ describe("notification channels on the Settings page", () => {
 
   test("adds a webhook, showing the API's refusal under the URL", async () => {
     const api = installFakeApi();
-    renderApp("/settings");
+    renderApp("/settings?tab=channels");
     await page.getByRole("button", { name: "Add channel" }).click();
     const form = dialog("Add a notification channel");
 
@@ -127,7 +127,7 @@ describe("notification channels on the Settings page", () => {
 
   test("edits and deletes a channel, asking first", async () => {
     const api = installFakeApi();
-    renderApp("/settings");
+    renderApp("/settings?tab=channels");
 
     await page.getByRole("button", { name: "Edit On call" }).click();
     const form = dialog("Edit “On call”");
@@ -159,7 +159,7 @@ describe("notification channels on the Settings page", () => {
 
   test("shows a webhook's secret on request, copies it, and replaces it after asking", async () => {
     const api = installFakeApi();
-    renderApp("/settings");
+    renderApp("/settings?tab=channels");
     const relay = item("Ops relay");
     const secretPath = `/api/channels/${WEBHOOK.id}/secret`;
 
@@ -193,7 +193,7 @@ describe("notification channels on the Settings page", () => {
   test("sends a test, which shows in the channel's deliveries, and says when there were too many", async () => {
     const api = installFakeApi();
     api.channels.testsLeft = 1;
-    renderApp("/settings");
+    renderApp("/settings?tab=channels");
     const onCall = item("On call");
 
     await onCall.getByRole("button", { name: "Send test to On call" }).click();
@@ -226,7 +226,7 @@ describe("notification channels on the Settings page", () => {
       { ...first, attempts: 1, lastError: null },
       { ...first, id: "eeeeeeee-eeee-4eee-8eee-000000000099", attempts: 0, lastError: null },
     ];
-    renderApp("/settings");
+    renderApp("/settings?tab=channels");
     const relay = item("Ops relay");
     await relay.getByRole("button", { name: "Deliveries to Ops relay" }).click();
     await expect.element(relay.getByText("Sending")).toBeVisible();
@@ -236,7 +236,7 @@ describe("notification channels on the Settings page", () => {
 
   test("lists a channel's deliveries with their status and error, page by page", async () => {
     installFakeApi();
-    renderApp("/settings");
+    renderApp("/settings?tab=channels");
     const relay = item("Ops relay");
 
     await relay.getByRole("button", { name: "Deliveries to Ops relay" }).click();
@@ -285,7 +285,7 @@ describe("notification channels on the Settings page", () => {
       id: `cccccccc-cccc-4ccc-8ccc-${String(100 + index).padStart(12, "0")}`,
       name: `List ${index + 1}`,
     }));
-    renderApp("/settings");
+    renderApp("/settings?tab=channels");
 
     await expect
       .element(page.getByText("20 of 20 channels: delete one to add another"))
@@ -311,7 +311,7 @@ describe("notification channels on the Settings page", () => {
       return original(input, init);
     };
     try {
-      renderApp("/settings");
+      renderApp("/settings?tab=channels");
       await expect.element(page.getByText("The channels could not load")).toBeVisible();
       await page.getByRole("button", { name: "Retry" }).click();
       await expect.element(page.getByText("2 of 20 channels")).toBeVisible();

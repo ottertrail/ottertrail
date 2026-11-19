@@ -63,7 +63,7 @@ describe("a member's dashboard shows only what they may use", () => {
     installFakeApi({ access: memberAccess({ web_analytics: "view" }) });
     renderApp("/projects");
 
-    await expect.element(page.getByRole("link", { name: "Main site" })).toBeVisible();
+    await expect.element(page.getByRole("link", { name: "Main site", exact: true })).toBeVisible();
     await expect.element(page.getByRole("button", { name: "New project" })).not.toBeInTheDocument();
     await expect
       .element(page.getByRole("columnheader", { name: "Allowed sites" }))

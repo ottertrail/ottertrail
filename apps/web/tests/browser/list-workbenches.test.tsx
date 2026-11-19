@@ -804,7 +804,7 @@ describe("at 390, what the old pages showed is still reachable", () => {
       .toBeVisible();
     await expect
       .element(overview.getByRole("link", { name: "Channels are in Settings" }))
-      .toHaveAttribute("href", "/settings");
+      .toHaveAttribute("href", "/settings?tab=channels");
     // Each alert stacks, what happened at full width, the held-back badge kept.
     const recent = overview.getByRole("table", { name: "Recent alerts, newest first" });
     expectStacked(recent.element());

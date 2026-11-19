@@ -184,7 +184,9 @@ describe("the danger zone", () => {
       body: { confirmName: "Main site" },
     });
     await expect.element(page.getByRole("link", { name: "Docs" })).toBeVisible();
-    await expect.element(page.getByRole("link", { name: "Main site" })).not.toBeInTheDocument();
+    await expect
+      .element(page.getByRole("link", { name: "Main site", exact: true }))
+      .not.toBeInTheDocument();
     // The home page no longer tries to open it.
     expect(window.localStorage.getItem("ottertrail.project")).toBeNull();
   });

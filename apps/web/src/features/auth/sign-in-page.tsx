@@ -51,7 +51,7 @@ export function SignInPage() {
   return (
     <AuthLayout title="Sign in" description="Sign in to this Ottertrail instance.">
       {ownerExists === false && (
-        <Alert className="mb-4">
+        <Alert>
           <InfoIcon />
           <AlertTitle>No account exists yet</AlertTitle>
           <AlertDescription>
@@ -85,7 +85,12 @@ export function SignInPage() {
             </Alert>
           )}
           <Button type="submit" disabled={pending}>
-            {pending && <LoaderCircleIcon aria-hidden="true" className="animate-spin" />}
+            {pending && (
+              <LoaderCircleIcon
+                aria-hidden="true"
+                className="animate-spin motion-reduce:animate-none"
+              />
+            )}
             Sign in
           </Button>
         </FieldGroup>

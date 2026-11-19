@@ -4,7 +4,7 @@ Status: initial foundation. The name treatment and mascot are undecided; the mar
 
 A dark interface for a dense dashboard: a near-black canvas, a ladder of surfaces instead of shadows, hairline borders, and a single orchid accent used sparingly. This document records the tokens, the reasons behind them, and the remaining gaps.
 
-The live reference page is `/design-system`, "Design system" in the sidebar (`vp run dev`, then open the web URL).
+The live reference page is `/design-system`, "Design system" in the sidebar (`vp run dev`, then open the web URL). It renders the real components with made-up content; every example with names, figures or addresses is labelled "Sample data" (`Specimen`'s `sample`). Under "Screen patterns" it shows the filter bar, the stat strip, the report chart with a toggle group and its numbers, the breakdown table, pinned columns with the scroll hint and a missing value, the workbench, key hints and toggle groups, and the settings tabs with the save rule. `design-system-page.test.tsx` and `screen-patterns.test.tsx` walk them.
 
 ## Where things live
 
@@ -172,7 +172,7 @@ Every screen takes one of three patterns, by what it is for. The blocks live in 
 | ---------------- | ----------------- | -------------------------------------------------------------------------------------- |
 | Report           | Console           | Overview, Web analytics, Speed, Product analytics, Services, Databases, Hosts, Metrics |
 | List with detail | Workbench         | Errors, Replays, Traces, Logs, Users, Uptime, Alerts                                   |
-| Settings         | Tabs and Save bar | Project settings, instance Settings, Members                                           |
+| Settings         | Tabs and Save bar | Project settings, instance Settings; Members as a list with its chosen person          |
 
 ### The shell
 
@@ -203,7 +203,7 @@ A list on the left and the selected item on the right (`workbench.tsx`), on shad
 - **Keys:** `j` and `k` select the next and previous item (`j` with nothing selected takes the first), `Esc` clears the selection, and one `action` key acts on the selected item (`e` resolves or reopens an error). They do nothing while focus is in a text field, an open list, a menu or a dialog (`lib/keys.ts`); a closed Select is a button, and the keys work after choosing in it. `WorkbenchKeyHints` lists them in the filter bar, from 64rem.
 - **Focus** follows `j` and `k` to the chosen row, and moves to it when an item is chosen from inside the detail pane (a name in the summary), whose content then goes. When an action takes the selected item out of the list (resolving an error under Unresolved), `j` and `k` carry on from its last place. When the selection clears (`Esc`, Back) with focus in the detail, focus returns to the row that was chosen, or the list.
 - **Rows** carry `data-workbench-id`, so the selection scrolls into view, and mark the chosen row with `aria-current` on its link or button and `data-state="selected"` (a 2px `brand` rule at its start). Row controls stay on one line and truncate, with the whole text in `title`.
-- **Under 64rem** the list fills the screen and choosing an item calls `onOpenPage`, which goes to the item's own page. An address with a selection, opened on a narrow screen, does the same once: the list's entry loses the selection first, so Back returns to the list. A window that narrows during a session (a zoom) leaves the list where it is. Every item keeps its full page.
+- **Under 64rem** the list fills the screen and choosing an item calls `onOpenPage`, which goes to the item's own page. The two layouts are separate trees: a window that crosses 64rem (a tablet turned) unmounts the detail pane, and closes a dialog opened from it, such as a check's edit form or a rule's delete confirmation, losing what was typed there. This is a known limit; the Members page avoids it by switching its panes with CSS. An address with a selection, opened on a narrow screen, does the same once: the list's entry loses the selection first, so Back returns to the list. A window that narrows during a session (a zoom) leaves the list where it is. Every item keeps its full page.
 - A list's quick actions (an alert rule's on or off, a check's pause) stay instant, on the row. Deleting the selected item selects the one after it (the one before, at the end), with focus on its row.
 - **Rows' parts** are in `workbench-rows.ts`: `selectOnPlainClick` (a plain click on a row's link selects the row; one that opens a new tab follows the link), the list table's classes (`LIST_HEAD`, `GUTTER_START`, `GUTTER_END`, `SELECTED_ROW`), and `atLeast`, which writes a count from a list the API pages or caps as "50+" while more wait. `WorkbenchStartHint` (`workbench.tsx`) is the summary's last line, "Select a …, or press j to start at the top."
 - **A summary counts only what it can.** A figure taken from the items loaded reads "at least" while more wait, and says so; a figure the API counts whole (a period's services, an error's replays) says what it covers. A filter that cannot list a kind (warnings under "Error and above") drops its figure rather than showing 0.
@@ -215,13 +215,13 @@ A list on the left and the selected item on the right (`workbench.tsx`), on shad
 ### Settings tabs and the Save bar
 
 - **`SettingsTabs`** (`settings-tabs.tsx`): the page's sections as line tabs, the chosen one in the address (`?tab=<value>`; the first tab is the default and leaves it out). Every panel stays mounted, so edits in one tab survive a visit to another, and a tab with unsaved changes shows an "Unsaved" badge after its label, read as "Settings, unsaved changes". The tab row scrolls sideways on a phone rather than wrapping.
-- **`SettingsSection`** (`settings-section.tsx`): one titled section. With a `form` (from `useDirtyForm`) it is a `<form>` with its own **Save bar**, sticky at the foot of the screen while the form is in view: an `<output>` that says "No unsaved changes" or "Unsaved changes", Discard while there is a change, and Save. Save stays focusable while disabled (`aria-disabled`, Base UI's `focusableWhenDisabled`), so focus never drops to the page during or after a save; it still looks disabled (50% and the not-allowed cursor, styled on `aria-disabled`). Without a `form` (an install snippet, a key, a danger zone) it has no Save bar.
+- **`SettingsSection`** (`settings-section.tsx`): one titled section. With a `form` (from `useDirtyForm`) it is a `<form>` with its own **Save bar**, sticky at the foot of the screen while the form is in view: an `<output>` that says "No unsaved changes" or "Unsaved changes", Discard while there is a change, and Save. Save stays focusable while disabled (`aria-disabled`, Base UI's `focusableWhenDisabled`), so focus never drops to the page during or after a save; it still looks disabled (50% and the not-allowed cursor, styled on `aria-disabled`). Without a `form` (an install snippet, a key, a danger zone) it has no Save bar. `headingLevel={3}` puts it under a heading of the page's own (a member's name); `wide` lets its content run to a table's width (the notification channels).
 - **`useDirtyForm(initial, { key, normalize })`** (`hooks/use-dirty-form.ts`) compares the edits with the saved values by content (a missing key and `undefined` are the same).
   - `initial` is always the server's latest values. When it changes, fields the user has not edited take the new values, and Discard restores the latest. When the server changed a field the user also edited, the user's value stays and the Save bar says "This section changed on the server while you edited it.", with "Load the new values".
   - `saved(submitted)` marks the values the request sent as saved; anything typed while it ran stays, and keeps the form dirty.
   - `key` (the project's ID) starts the form again from `initial` when it changes. The project routes also remount when the project changes (`remountDeps` in `router.tsx`), so no page carries one project's state into another.
   - `normalize` compares a field by something else: `Number` for a number typed as text, `ignoreOrder` for a set-like list.
-- **`UnsavedChangesGuard`** (`unsaved-changes-guard.tsx`, built into `SettingsTabs`): while any form inside has unsaved changes, leaving the page asks first. A link or the Back button opens "Leave without saving?" (Stay on this page, or Leave and discard, which discards every form's edits), through TanStack Router's `useBlocker`; closing or reloading the tab gets the browser's own question (`beforeunload`). Forms report a save or a discard at once, so a handler that saves and then navigates is not asked. Moving between tabs on the page is not asked about.
+- **`UnsavedChangesGuard`** (`unsaved-changes-guard.tsx`, built into `SettingsTabs`): while any form inside has unsaved changes, leaving the page asks first. A link or the Back button opens "Leave without saving?" (Stay on this page, or Leave and discard, which discards every form's edits), through TanStack Router's `useBlocker`; closing or reloading the tab gets the browser's own question (`beforeunload`). Forms report a save or a discard at once, so a handler that saves and then navigates is not asked. Moving between tabs on the page is not asked about. A search value that chooses what a form edits is named in `searchKeys` (the Members page's `member`), and changing it asks as leaving does.
 
 ### The save rule
 
@@ -231,6 +231,10 @@ A list on the left and the selected item on the right (`workbench.tsx`), on shad
 - Controls that used to save at once (the signed user IDs switch, the replay mode) are fields of their section's form.
 - Quick actions on a list item (an alert rule's on or off) stay instant.
 - Destructive actions confirm in a Dialog; deleting a project needs its name typed.
+
+### Before signing in
+
+The sign-in, setup, invitation and reset pages share `AuthLayout` (`features/auth/auth-layout.tsx`): the canvas, the brand mark, and one panel, 26rem at most, on `background` with a hairline ring, holding the page's `h1`, one line on what it does, and its form. Under 40rem the panel drops its frame and the form takes the width. No illustration, no marketing copy.
 
 ### Responsive rules
 

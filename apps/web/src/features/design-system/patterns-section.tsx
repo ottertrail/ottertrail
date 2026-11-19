@@ -1,8 +1,13 @@
+import { cn } from "cn";
 import { InboxIcon, OctagonAlertIcon, RefreshCwIcon } from "lucide-react";
 import * as React from "react";
 
 import { BreakdownTable, type BreakdownRow } from "@/components/breakdown-table";
 import { FilterBar, FilterBarRange } from "@/components/filter-bar";
+import { Missing } from "@/components/missing";
+import { PINNED, PINNED_END } from "@/components/pinned-column";
+import { ReportChart } from "@/components/report-chart";
+import { ScrollHint } from "@/components/scroll-hint";
 import { SettingsSection } from "@/components/settings-section";
 import { SettingsTabs } from "@/components/settings-tabs";
 import { type Stat, StatStrip } from "@/components/stat-strip";
@@ -29,6 +34,7 @@ import {
 } from "@/components/ui/empty";
 import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import { Kbd, KbdGroup } from "@/components/ui/kbd";
 import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import {
@@ -50,12 +56,13 @@ import {
 } from "@/components/ui/table";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Workbench, WorkbenchKeyHints } from "@/components/workbench";
-import { relativeChange, pointsChange, formatWhole } from "@/features/analytics/format";
+import { DayChart } from "@/features/analytics/day-chart";
+import { formatDay, formatWhole, pointsChange, relativeChange } from "@/features/analytics/format";
 import { useDirtyForm } from "@/hooks/use-dirty-form";
 
 import { Section, Specimen } from "./section";
 
-// Example figures, from the browser tests' fixtures (tests/browser/fake-api.ts).
+// Sample figures, made up for the examples (some match the browser tests' fixtures).
 const PERIODS = [
   { value: "today", label: "Today" },
   { value: "7d", label: "Last 7 days" },
@@ -153,6 +160,7 @@ function FilterBarSpecimens() {
   return (
     <Specimen
       title="Filter bar: pinned under the header from 40rem, wrapping on narrow screens"
+      sample
       className="block p-0"
     >
       <FilterBar
@@ -207,6 +215,7 @@ function StatStripSpecimens() {
     <div className="space-y-4">
       <Specimen
         title="Stat strip: figures in tabular numerals, the change from the period before"
+        sample
         className="block"
       >
         <StatStrip stats={STATS} label="Summary" />
@@ -214,6 +223,7 @@ function StatStripSpecimens() {
       <div className="grid gap-4 lg:grid-cols-2">
         <Specimen
           title="Too few to compare: minCount 20 hides a change when neither period reaches 20 visits"
+          sample
           className="block"
         >
           <StatStrip stats={FEW_STATS} minCount={20} label="Summary with few visits" />
@@ -238,7 +248,8 @@ function BreakdownSpecimens() {
   return (
     <div className="grid gap-4 lg:grid-cols-2">
       <Specimen
-        title="Breakdown table: tabs in its header, bars in proportion, show all"
+        title="Breakdown table: a toggle group in its header, bars in proportion, show all"
+        sample
         className="block"
       >
         <BreakdownTable
@@ -263,7 +274,7 @@ function BreakdownSpecimens() {
           empty="No visits in this period."
         />
       </Specimen>
-      <Specimen title="Stacked rows on phones (layout stack)" className="block">
+      <Specimen title="Stacked rows on phones (layout stack)" sample className="block">
         <BreakdownTable
           title="Locations"
           caption="Countries, the most visitors first"
@@ -369,6 +380,7 @@ function WorkbenchSpecimens() {
     <div className="space-y-4">
       <Specimen
         title="Workbench: the list, the selection in the address (?ds-item=), the detail beside it"
+        sample
         className="block p-0"
       >
         <div className="flex flex-wrap items-center justify-between gap-2 border-b px-4 py-2">
@@ -607,6 +619,7 @@ function SettingsSpecimens() {
   return (
     <Specimen
       title="Settings tabs (?ds-tab=) and the Save bar: Save waits for a change, undoing it disables Save again"
+      sample
       className="block p-0"
     >
       <SettingsTabs
@@ -631,18 +644,295 @@ function SettingsSpecimens() {
   );
 }
 
+const CHART_DAYS = [
+  "2026-11-10",
+  "2026-11-11",
+  "2026-11-12",
+  "2026-11-13",
+  "2026-11-14",
+  "2026-11-15",
+  "2026-11-16",
+];
+const CHART_METRICS = [
+  { value: "visitors", label: "Visitors", values: [96, 120, 104, 131, 88, 72, 154] },
+  { value: "pageviews", label: "Pageviews", values: [230, 286, 241, 312, 205, 160, 386] },
+];
+
+function ReportChartSpecimens() {
+  const [metric, setMetric] = React.useState("visitors");
+  const chosen = CHART_METRICS.find((item) => item.value === metric) ?? CHART_METRICS[0];
+  const values = chosen?.values ?? [];
+  const points = CHART_DAYS.map((day, index) => ({ day, value: values[index] ?? null }));
+  return (
+    <Specimen
+      title="Report chart: a short chart with its title, a toggle group, and Show the numbers"
+      sample
+      className="block"
+    >
+      <ReportChart
+        title={`${chosen?.label ?? ""} per day`}
+        description="One series a chart, so no legend. The numbers are a table under it once asked for."
+        actions={
+          <ToggleGroup
+            value={[metric]}
+            onValueChange={(next: string[]) => {
+              const [value] = next;
+              if (value !== undefined) setMetric(value);
+            }}
+            aria-label="Which figure to chart"
+            variant="outline"
+            size="sm"
+            spacing={0}
+          >
+            {CHART_METRICS.map((item) => (
+              <ToggleGroupItem key={item.value} value={item.value}>
+                {item.label}
+              </ToggleGroupItem>
+            ))}
+          </ToggleGroup>
+        }
+        table={
+          <Table>
+            <caption className="sr-only">{chosen?.label} per day, sample data</caption>
+            <TableHeader>
+              <TableRow>
+                <TableHead scope="col" className="text-xs font-normal text-ink-subtle">
+                  Day
+                </TableHead>
+                <TableHead scope="col" className="text-right text-xs font-normal text-ink-subtle">
+                  {chosen?.label}
+                </TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {points.map((point) => (
+                <TableRow key={point.day}>
+                  <TableCell>{formatDay(point.day)}</TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {point.value === null ? <Missing label="No data" /> : formatWhole(point.value)}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        }
+      >
+        <DayChart
+          points={points}
+          label={`${chosen?.label ?? ""} per day, sample data`}
+          tooltipRows={(index) => [
+            {
+              label: chosen?.label ?? "",
+              value: formatWhole(points[index]?.value ?? 0),
+              plotted: true,
+            },
+          ]}
+          plotHeight={140}
+        />
+      </ReportChart>
+    </Specimen>
+  );
+}
+
+interface SampleHost {
+  name: string;
+  cpu: string;
+  memory: string;
+  disk: string | null;
+  load: string;
+  seen: string;
+}
+
+const SAMPLE_HOSTS: SampleHost[] = [
+  {
+    name: "web-1",
+    cpu: "42%",
+    memory: "61%",
+    disk: "48%",
+    load: "1.20",
+    seen: "16 Nov 2026, 10:05",
+  },
+  {
+    name: "web-2",
+    cpu: "38%",
+    memory: "57%",
+    disk: null,
+    load: "0.96",
+    seen: "16 Nov 2026, 10:04",
+  },
+  {
+    name: "worker-1",
+    cpu: "71%",
+    memory: "80%",
+    disk: "63%",
+    load: "2.41",
+    seen: "16 Nov 2026, 10:05",
+  },
+];
+
+function PinnedSpecimens() {
+  const head = "text-xs font-normal whitespace-nowrap text-ink-subtle";
+  return (
+    <div className="grid gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+      <Specimen
+        title="Pinned columns: on a phone the table scrolls inside itself, the name and the actions stay, and a fade says more waits"
+        sample
+        className="block p-0"
+      >
+        <ScrollHint>
+          <Table>
+            <caption className="sr-only">Sample hosts, with a scroll hint on a phone</caption>
+            <TableHeader>
+              <TableRow className="hover:bg-transparent">
+                <TableHead scope="col" className={cn(head, "pl-4", PINNED)}>
+                  Host
+                </TableHead>
+                <TableHead scope="col" className={cn(head, "text-right")}>
+                  CPU
+                </TableHead>
+                <TableHead scope="col" className={cn(head, "text-right")}>
+                  Memory
+                </TableHead>
+                <TableHead scope="col" className={cn(head, "text-right")}>
+                  Disk
+                </TableHead>
+                <TableHead scope="col" className={cn(head, "text-right")}>
+                  Load
+                </TableHead>
+                <TableHead scope="col" className={head}>
+                  Last seen
+                </TableHead>
+                <TableHead scope="col" className={cn(head, "pr-4", PINNED_END)}>
+                  <span className="sr-only">Actions</span>
+                </TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {SAMPLE_HOSTS.map((host) => (
+                <TableRow key={host.name}>
+                  <TableCell className={cn("pl-4 font-mono", PINNED)}>{host.name}</TableCell>
+                  <TableCell className="text-right tabular-nums">{host.cpu}</TableCell>
+                  <TableCell className="text-right tabular-nums">{host.memory}</TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {host.disk ?? <Missing label="Not sent" />}
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums">{host.load}</TableCell>
+                  <TableCell className="whitespace-nowrap text-ink-muted tabular-nums">
+                    {host.seen}
+                  </TableCell>
+                  <TableCell className={cn("pr-4 text-right", PINNED_END)}>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      aria-label={`Add an alert rule for ${host.name}`}
+                    >
+                      Add rule
+                    </Button>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </ScrollHint>
+      </Specimen>
+      <Specimen
+        title="A missing value: the dash for the eye, the words for a screen reader"
+        className="block"
+      >
+        <dl className="grid grid-cols-[auto_1fr] gap-x-6 gap-y-2 text-sm">
+          <dt className="text-ink-subtle">Disk</dt>
+          <dd>
+            <Missing label="Not sent" />
+          </dd>
+          <dt className="text-ink-subtle">Release</dt>
+          <dd>
+            <Missing label="No release" />
+          </dd>
+        </dl>
+        <p className="mt-3 text-xs text-ink-subtle">
+          The en dash is the only dash in the interface. A screen reader hears &ldquo;Not
+          sent&rdquo; instead.
+        </p>
+      </Specimen>
+    </div>
+  );
+}
+
+const KEY_HINTS: { keys: string[]; text: string }[] = [
+  { keys: ["j", "k"], text: "move through a list" },
+  { keys: ["e"], text: "act on the chosen item" },
+  { keys: ["Esc"], text: "clear the choice" },
+  { keys: ["Ctrl", "B"], text: "collapse the sidebar" },
+];
+
+function KeyHintSpecimens() {
+  const [filter, setFilter] = React.useState("unresolved");
+  return (
+    <div className="grid gap-4 lg:grid-cols-2">
+      <Specimen
+        title="Key hints: each key in a Kbd, then what it does in plain words"
+        className="block"
+      >
+        <ul aria-label="Key hints" className="flex flex-col gap-2 text-sm text-ink-subtle">
+          {KEY_HINTS.map((hint) => (
+            <li key={hint.text} className="flex items-center gap-2">
+              <KbdGroup>
+                {hint.keys.map((key) => (
+                  <Kbd key={key}>{key}</Kbd>
+                ))}
+              </KbdGroup>
+              {hint.text}
+            </li>
+          ))}
+        </ul>
+      </Specimen>
+      <Specimen
+        title="Toggle groups: one list of one kind at a time, the chosen one pressed"
+        className="block"
+      >
+        <div className="flex flex-col gap-3">
+          <ToggleGroup
+            value={[filter]}
+            onValueChange={(next: string[]) => {
+              const [value] = next;
+              if (value !== undefined) setFilter(value);
+            }}
+            aria-label="Which errors to list"
+            variant="outline"
+            spacing={0}
+          >
+            <ToggleGroupItem value="unresolved">Unresolved</ToggleGroupItem>
+            <ToggleGroupItem value="resolved">Resolved</ToggleGroupItem>
+            <ToggleGroupItem value="all">All</ToggleGroupItem>
+          </ToggleGroup>
+          <output className="text-sm text-ink-subtle">
+            {filter === "all" ? "Every error is listed." : `Only ${filter} errors are listed.`}
+          </output>
+          <p className="text-xs text-ink-subtle">
+            Not tabs: the lists share one table, so there is no panel per choice. Each button says
+            whether it is pressed.
+          </p>
+        </div>
+      </Specimen>
+    </div>
+  );
+}
+
 export function PatternsSection() {
   return (
     <Section
       id="patterns"
       title="Screen patterns"
-      description="The blocks every screen is built from: reports (Console), lists with detail (Workbench), and settings tabs with a Save bar. docs/design-system.md has the rules for each."
+      description="The blocks every screen is built from: reports (Console), lists with detail (Workbench), and settings tabs with a Save bar, each with made-up sample content. docs/design-system.md has the rules for each."
     >
       <div className="space-y-4">
         <FilterBarSpecimens />
         <StatStripSpecimens />
+        <ReportChartSpecimens />
         <BreakdownSpecimens />
+        <PinnedSpecimens />
         <WorkbenchSpecimens />
+        <KeyHintSpecimens />
         <SettingsSpecimens />
       </div>
     </Section>

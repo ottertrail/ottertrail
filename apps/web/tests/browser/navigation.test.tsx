@@ -26,7 +26,7 @@ describe("the workspace", () => {
     installFakeApi();
     renderApp("/projects");
 
-    await expect.element(page.getByRole("link", { name: "Main site" })).toBeVisible();
+    await expect.element(page.getByRole("link", { name: "Main site", exact: true })).toBeVisible();
     await expect.element(workspaceMenu().getByRole("link", { name: "Projects" })).toBeVisible();
     await expect
       .element(workspaceMenu().getByRole("link", { name: "Design system" }))
@@ -57,7 +57,7 @@ describe("the workspace", () => {
     installFakeApi();
     const router = renderApp("/projects");
 
-    await page.getByRole("link", { name: "Main site" }).click();
+    await page.getByRole("link", { name: "Main site", exact: true }).click();
 
     await expect.poll(() => currentPath(router)).toBe(OVERVIEW);
     await expect.element(page.getByRole("heading", { name: "Traffic" })).toBeVisible();
