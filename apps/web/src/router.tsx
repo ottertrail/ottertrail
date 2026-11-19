@@ -374,9 +374,10 @@ const errorsRoute = createRoute({
   path: "/errors",
   staticData: { title: "Errors", access: "errors" },
   validateSearch: (
-    search: ErrorSearchInput & { status?: unknown },
+    search: ErrorSearchInput & { status?: unknown; error?: unknown },
   ): ReturnType<typeof rangeSearch> & { env: string | undefined } & {
     status: StatusFilter | undefined;
+    error: string | undefined;
   } => ({
     ...rangeSearch(search),
     ...environmentSearch(search),
@@ -384,6 +385,8 @@ const errorsRoute = createRoute({
       isStatusFilter(search.status) && search.status !== DEFAULT_STATUS_FILTER
         ? search.status
         : undefined,
+    // The workbench's selected group (docs/design-system.md, "Workbench").
+    error: typeof search.error === "string" && search.error !== "" ? search.error : undefined,
   }),
   component: function ErrorsRouteComponent() {
     const { projectId } = errorsRoute.useParams();
@@ -1067,6 +1070,10 @@ const projectSettingsRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: "/settings",
   staticData: { title: "Settings", access: "project_settings" },
+  // The chosen tab (SettingsTabs), left out for the first.
+  validateSearch: (search: { tab?: unknown } & SearchSchemaInput): { tab: string | undefined } => ({
+    tab: typeof search.tab === "string" && search.tab !== "" ? search.tab : undefined,
+  }),
   component: function ProjectSettingsRouteComponent() {
     const { projectId } = projectSettingsRoute.useParams();
     return <ProjectSettingsPage projectId={projectId} />;

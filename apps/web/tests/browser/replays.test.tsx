@@ -16,7 +16,8 @@ import {
 import { renderApp } from "./render.tsx";
 
 const TYPE_ERROR = `/projects/${PROJECT.id}/errors/${ERROR_FINGERPRINTS.typeError}`;
-const SETTINGS = `/projects/${PROJECT.id}/settings`;
+/** The project's settings, on the Session replay tab. */
+const SETTINGS = `/projects/${PROJECT.id}/settings?tab=replay`;
 const REPLAYS_PATH = `/api/projects/${PROJECT.id}/replays`;
 const REPLAY_ID = "aaaaaaaa-0000-4000-8000-000000000001";
 
@@ -63,7 +64,7 @@ describe("an occurrence's replay", () => {
     expect(replayCells()).toEqual([
       "Play replay",
       "Arriving… The page sends its replay about 10 seconds after the error.",
-      "—No replay",
+      "No replay",
     ]);
     const arriving = occurrences().getByText("Arriving…", { exact: false });
     await expect
@@ -157,11 +158,11 @@ describe("the error marked in the player", () => {
   });
 });
 
-/** The Session replay card on the project's settings page. */
+/** The Session replay tab on the project's settings page. */
 const card = () => {
   const heading = page.getByRole("heading", { name: "Session replay" }).element();
-  const found = heading.closest("[data-slot=card]");
-  if (!(found instanceof HTMLElement)) throw new Error("The Session replay card is missing");
+  const found = heading.closest("[role=tabpanel]");
+  if (!(found instanceof HTMLElement)) throw new Error("The Session replay tab is missing");
   return found;
 };
 
@@ -197,7 +198,7 @@ describe("the project's Session replay card", () => {
     expect(text).toContain("Replays are kept for 30 days");
   });
 
-  test("turns replays on around errors, saving at once, and says so", async () => {
+  test("turns replays on around errors with the tab's Save, and says so", async () => {
     const api = installFakeApi();
     const answer = deferred<void>();
     renderApp(SETTINGS);
@@ -211,13 +212,16 @@ describe("the project's Session replay card", () => {
     };
     try {
       await aroundErrors().click();
-      await expect.element(page.getByText("Saving…")).toBeVisible();
+      // A field of the form: nothing is sent until Save.
+      await expect.element(aroundErrors()).toBeChecked();
+      expect(api.bodies).toEqual([]);
+      await page.getByRole("button", { name: "Save changes" }).click();
+      const status = page.getByRole("tabpanel").getByRole("status");
+      await expect.element(status).toHaveTextContent("Saving…");
       await expect.element(aroundErrors()).toBeChecked();
       await expect.element(aroundErrors()).toBeDisabled();
       answer.resolve();
-      await expect
-        .element(card().querySelector("output") ?? document.body)
-        .toHaveTextContent("Saved.");
+      await expect.element(status).toHaveTextContent("No unsaved changes");
     } finally {
       globalThis.fetch = realFetch;
     }
@@ -230,7 +234,7 @@ describe("the project's Session replay card", () => {
     await expect.element(aroundErrors()).toBeChecked();
   });
 
-  test("shows the saved choice again when saving fails", async () => {
+  test("says why a save failed, and keeps the choice to try again", async () => {
     const api = installFakeApi();
     renderApp(SETTINGS);
     await expect.element(off()).toBeChecked();
@@ -242,13 +246,18 @@ describe("the project's Session replay card", () => {
         : realFetch(input, init);
     try {
       await aroundErrors().click();
+      await page.getByRole("button", { name: "Save changes" }).click();
       await expect
         .element(page.getByRole("alert"))
-        .toHaveTextContent("The change was not saved: The database is unavailable.");
+        .toMatchTextContent(/^The changes were not saved\s*The database is unavailable\.$/);
     } finally {
       globalThis.fetch = realFetch;
     }
-    await expect.element(off()).toBeChecked();
+    // The save rule: a failed save keeps the edit, still unsaved.
+    await expect.element(aroundErrors()).toBeChecked();
+    await expect
+      .element(page.getByRole("tabpanel").getByRole("status"))
+      .toHaveTextContent("Unsaved changes");
     expect(api.projects[0]?.replayMode).toBe("off");
   });
 

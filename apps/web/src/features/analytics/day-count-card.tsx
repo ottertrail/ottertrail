@@ -13,10 +13,13 @@ import { formatDay, formatWhole } from "./format";
 export function DayCountCard({
   days,
   noun,
+  className,
 }: {
   days: { day: string; count: number }[];
   /** What is counted, capitalized: "Occurrences", "Events". */
   noun: string;
+  /** Such as a flat section's look inside a workbench. */
+  className?: string;
 }) {
   const [showTable, setShowTable] = React.useState(false);
   const tableId = React.useId();
@@ -25,7 +28,7 @@ export function DayCountCard({
     { label: noun, value: formatWhole(days[index]?.count ?? 0), plotted: true },
   ];
   return (
-    <Card>
+    <Card className={className}>
       <CardHeader>
         <CardTitle>
           <h3>{title}</h3>
@@ -58,7 +61,7 @@ export function DayCountCard({
           {showTable && (
             <table className="w-full text-sm">
               <caption className="sr-only">{title}</caption>
-              <thead className="sticky top-0 bg-card">
+              <thead className="sticky top-0 bg-[var(--block-surface,var(--card))]">
                 <tr className="text-xs text-ink-subtle">
                   <th scope="col" className="pb-2 text-left font-normal">
                     Day

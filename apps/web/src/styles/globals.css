@@ -3,8 +3,9 @@
  * states: loading, empty, error, full · axes: dark/sans/orchid · contrast: pass · v2.0.0 */
 /* Hallmark · pre-emit critique: P4 H4 E4 S4 R5 V3 · weakest: V, the approved mockups set the blocks */
 /* Hallmark · dismissed F18 · data-slot is shadcn's hook here, not an image slot */
-/* Hallmark · dismissed F1 · the straight quote is no-access.tsx's copy, for its own phase */
+/* Hallmark · dismissed F1 · the straight apostrophes are the app's copy, kept as found by the redesign */
 /* Hallmark · dismissed 54 · BreakdownTable's heading level comes from a prop */
+/* Hallmark · dismissed 70 · add-goal-dialog.tsx's "signup" is an example event name, not a success message */
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";

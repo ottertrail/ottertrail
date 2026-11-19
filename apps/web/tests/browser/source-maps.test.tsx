@@ -61,8 +61,9 @@ describe("an error's stack", () => {
     // Line 42, marked by more than color: a marker, and words for screen readers.
     const marked = figure.element().querySelectorAll("mark");
     expect(marked).toHaveLength(1);
+    expect(marked[0]?.querySelector("svg")).not.toBeNull();
     expect(marked[0]?.textContent).toBe(
-      "The error happened on this line: ▶42  const id = cart.address.id;",
+      "The error happened on this line: 42  const id = cart.address.id;",
     );
     await expect
       .element(frames.getByText("https://example.com/assets/app.js:1:2345"))
@@ -140,7 +141,8 @@ describe("an error's stack", () => {
     await page.getByRole("link", { name: "Source maps settings" }).click();
 
     await expect.poll(() => router.state.location.pathname).toBe(SETTINGS);
-    expect(router.state.location.hash).toBe("source-maps");
+    // Its tab of the settings.
+    expect(router.state.location.search).toEqual({ tab: "source-maps" });
     await expect.element(page.getByRole("heading", { name: "Source maps" })).toBeVisible();
   });
 
@@ -207,11 +209,14 @@ describe("an error's stack", () => {
   });
 });
 
-/** The Source maps card on the project's settings page. */
+/** The project's settings, on the Source maps tab. */
+const SOURCE_MAPS_TAB = `${SETTINGS}?tab=source-maps`;
+
+/** The Source maps tab on the project's settings page. */
 const card = () => {
   const heading = page.getByRole("heading", { name: "Source maps" }).element();
-  const found = heading.closest("[data-slot=card]");
-  if (!(found instanceof HTMLElement)) throw new Error("The Source maps card is missing");
+  const found = heading.closest("[role=tabpanel]");
+  if (!(found instanceof HTMLElement)) throw new Error("The Source maps tab is missing");
   return found;
 };
 
@@ -227,7 +232,7 @@ const releaseRows = (order: "newest" | "oldest" = "newest") =>
 describe("the project's Source maps card", () => {
   test("lists the releases, latest upload first, and the use of all projects together", async () => {
     installFakeApi();
-    renderApp(SETTINGS);
+    renderApp(SOURCE_MAPS_TAB);
 
     await expect.element(releasesTable()).toBeVisible();
     expect(releaseRows()).toEqual([
@@ -244,7 +249,7 @@ describe("the project's Source maps card", () => {
 
   test("lists the oldest releases first on request, the ones to delete for room", async () => {
     const api = installFakeApi();
-    renderApp(SETTINGS);
+    renderApp(SOURCE_MAPS_TAB);
     await expect.element(releasesTable()).toBeVisible();
 
     const oldest = page.getByRole("button", { name: "Oldest first" });
@@ -262,7 +267,7 @@ describe("the project's Source maps card", () => {
 
   test("shows a release's files in a dialog", async () => {
     const api = installFakeApi();
-    renderApp(SETTINGS);
+    renderApp(SOURCE_MAPS_TAB);
 
     const button = page.getByRole("button", { name: "Show the files of release 1.4.2" });
     await button.click();
@@ -287,7 +292,7 @@ describe("the project's Source maps card", () => {
 
   test("deletes a release's maps after a confirmation that says the errors stay", async () => {
     const api = installFakeApi();
-    renderApp(SETTINGS);
+    renderApp(SOURCE_MAPS_TAB);
 
     const button = page.getByRole("button", { name: "Delete the source maps of release 1.4.2" });
     await button.click();
@@ -320,7 +325,7 @@ describe("the project's Source maps card", () => {
 
   test("on an install without an object store, says source maps are off, and nothing else", async () => {
     installFakeApi({ sourceMaps: { ...fakeSourceMaps(), configured: false } });
-    renderApp(SETTINGS);
+    renderApp(SOURCE_MAPS_TAB);
 
     await expect
       .element(
@@ -335,7 +340,7 @@ describe("the project's Source maps card", () => {
 
   test("without maps, says how to upload them, the secret key as a placeholder", async () => {
     installFakeApi({ sourceMaps: { ...fakeSourceMaps(), files: [] } });
-    renderApp(SETTINGS);
+    renderApp(SOURCE_MAPS_TAB);
 
     await expect.element(page.getByText("No source maps are uploaded yet.")).toBeVisible();
     await expect.element(releasesTable()).not.toBeInTheDocument();
@@ -350,7 +355,7 @@ describe("the project's Source maps card", () => {
       `curl -X PUT "${window.location.origin}/api/source-maps?release=1.4.2&path=/assets/index-4f3a.js"`,
     );
     expect(text).toContain("Authorization: Bearer $OTTERTRAIL_SECRET_KEY");
-    expect(text).toContain("from “Your server” above");
+    expect(text).toContain("from the “Your server” tab");
     expect(text).toContain("must match the data-release on the tracker's script tag");
     expect(text).toContain('build.sourcemap: "hidden"');
     // Never the real key.

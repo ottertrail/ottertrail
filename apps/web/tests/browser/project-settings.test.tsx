@@ -5,6 +5,11 @@ import { installFakeApi, json, OTHER_PROJECT, PROJECT } from "./fake-api.ts";
 import { renderApp } from "./render.tsx";
 
 const SETTINGS = `/projects/${PROJECT.id}/settings`;
+/** The settings page opened on one tab (Install, the first, has none). */
+const tab = (name: string) => `${SETTINGS}?tab=${name}`;
+
+/** The shown tab's Save bar status: "No unsaved changes", "Unsaved changes", "Saving…". */
+const saveStatus = () => page.getByRole("tabpanel").getByRole("status");
 
 /** Stands in for the clipboard, which a headless browser may refuse. */
 function fakeClipboard() {
@@ -40,15 +45,15 @@ describe("a project's settings", () => {
     await expect.element(copy).toBeVisible();
 
     const box = copy.element().parentElement;
-    const content = box?.closest("[data-slot=card-content]");
+    // The section's column, which its text and code fill.
+    const content = box?.closest("[data-slot=settings-section] > div");
     const pre = box?.querySelector("pre");
     if (!box || !content || !pre) {
       throw new Error("The snippet box is missing");
     }
     const boxRect = box.getBoundingClientRect();
     const contentRect = content.getBoundingClientRect();
-    const padding = Number.parseFloat(getComputedStyle(content).paddingLeft) * 2;
-    expect(Math.abs(boxRect.width - (contentRect.width - padding))).toBeLessThan(1);
+    expect(Math.abs(boxRect.width - contentRect.width)).toBeLessThan(1);
     const copyRect = copy.element().getBoundingClientRect();
     expect(copyRect.right).toBeLessThanOrEqual(boxRect.right);
     expect(copyRect.top).toBeGreaterThanOrEqual(boxRect.top);
@@ -76,7 +81,7 @@ describe("a project's settings", () => {
 describe("your server", () => {
   test("hides the secret key until asked, then offers to copy it", async () => {
     installFakeApi();
-    renderApp(SETTINGS);
+    renderApp(tab("server"));
     await expect.element(page.getByRole("heading", { name: "Your server" })).toBeVisible();
     expect(document.body.textContent).not.toContain(PROJECT.secretKey);
 
@@ -88,15 +93,20 @@ describe("your server", () => {
     expect(document.body.textContent).not.toContain(PROJECT.secretKey);
   });
 
-  test("turns on signed user IDs", async () => {
+  test("turns on signed user IDs with the tab's Save", async () => {
     const api = installFakeApi();
-    renderApp(SETTINGS);
+    renderApp(tab("server"));
     const toggle = page.getByRole("switch", { name: "Only accept user IDs signed by your server" });
     await expect.element(toggle).not.toBeChecked();
 
     await toggle.click();
 
+    // A field of the form now: nothing is sent until Save.
     await expect.element(toggle).toBeChecked();
+    await expect.element(saveStatus()).toHaveTextContent("Unsaved changes");
+    expect(api.bodies).toEqual([]);
+    await page.getByRole("button", { name: "Save changes" }).click();
+    await expect.element(saveStatus()).toHaveTextContent("No unsaved changes");
     expect(api.bodies).toContainEqual({
       method: "PATCH",
       path: `/api/projects/${PROJECT.id}`,
@@ -106,7 +116,7 @@ describe("your server", () => {
 
   test("replaces the secret key from the danger zone", async () => {
     const api = installFakeApi();
-    renderApp(SETTINGS);
+    renderApp(tab("danger"));
 
     await page.getByRole("button", { name: "Replace secret key" }).click();
     await expect
@@ -116,6 +126,7 @@ describe("your server", () => {
     await expect.element(page.getByRole("dialog")).not.toBeInTheDocument();
     expect(api.requests).toContain(`/api/projects/${PROJECT.id}/secret-key`);
 
+    await page.getByRole("tab", { name: "Your server" }).click();
     await page.getByRole("button", { name: "Show" }).click();
     await expect.element(page.getByText("sk_replaced", { exact: true })).toBeVisible();
   });
@@ -127,6 +138,7 @@ describe("the danger zone", () => {
     renderApp(SETTINGS);
     await expect.element(page.getByText("pk_test", { exact: true })).toBeVisible();
 
+    await page.getByRole("tab", { name: "Danger zone" }).click();
     await page.getByRole("button", { name: "Replace public key" }).click();
     await expect
       .element(page.getByRole("dialog", { name: "Replace the public key?" }))
@@ -134,26 +146,28 @@ describe("the danger zone", () => {
     await page.getByRole("button", { name: "Replace key" }).click();
 
     await expect.element(page.getByRole("dialog")).not.toBeInTheDocument();
+    await page.getByRole("tab", { name: "Install" }).click();
     await expect.element(page.getByText("pk_replaced", { exact: true })).toBeVisible();
     expect(api.requests).toContain(`/api/projects/${PROJECT.id}/public-key`);
   });
 
   test("Cancel replaces nothing", async () => {
     const api = installFakeApi();
-    renderApp(SETTINGS);
+    renderApp(tab("danger"));
 
     await page.getByRole("button", { name: "Replace public key" }).click();
     await page.getByRole("button", { name: "Cancel" }).click();
 
     await expect.element(page.getByRole("dialog")).not.toBeInTheDocument();
     expect(api.requests).not.toContain(`/api/projects/${PROJECT.id}/public-key`);
+    await page.getByRole("tab", { name: "Install" }).click();
     await expect.element(page.getByText("pk_test", { exact: true })).toBeVisible();
   });
 
   test("deleting asks for the project's name, then opens the project list without it", async () => {
     const api = installFakeApi({ projects: [PROJECT, OTHER_PROJECT] });
     window.localStorage.setItem("ottertrail.project", PROJECT.id);
-    const router = renderApp(SETTINGS);
+    const router = renderApp(tab("danger"));
 
     await page.getByRole("button", { name: "Delete project" }).click();
     const confirm = page.getByRole("button", { name: "Delete permanently" });
@@ -183,7 +197,7 @@ describe("the danger zone", () => {
           400,
         ),
     });
-    const router = renderApp(SETTINGS);
+    const router = renderApp(tab("danger"));
 
     await page.getByRole("button", { name: "Delete project" }).click();
     await page.getByLabelText("Type the project's name to confirm").fill("Main site");
@@ -199,7 +213,7 @@ describe("the danger zone", () => {
 describe("keeping events", () => {
   test("keeps them forever by default; a limit warns before saving, then is saved", async () => {
     const api = installFakeApi();
-    renderApp(SETTINGS);
+    renderApp(tab("general"));
     const keep = page.getByRole("combobox", { name: "Keep events" });
     await expect.element(keep).toMatchTextContent(/^Forever/);
     await expect
@@ -228,12 +242,12 @@ describe("keeping events", () => {
         path: `/api/projects/${PROJECT.id}`,
         body: { retentionDays: 365 },
       });
-    await expect.element(page.getByText("Saved.")).toBeVisible();
+    await expect.element(saveStatus()).toHaveTextContent("No unsaved changes");
   });
 
   test("the main goal is chosen from the project's goals, and saved", async () => {
     const api = installFakeApi();
-    renderApp(SETTINGS);
+    renderApp(tab("general"));
 
     const field = page.getByRole("combobox", { name: "Main goal" });
     await expect.poll(() => field.element().textContent).toContain("None: new signed-in users");
@@ -248,13 +262,13 @@ describe("keeping events", () => {
         path: `/api/projects/${PROJECT.id}`,
         body: { mainGoalId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1" },
       });
-    await expect.element(page.getByText("Saved.")).toBeVisible();
+    await expect.element(saveStatus()).toHaveTextContent("No unsaved changes");
     await expect.poll(() => field.element().textContent).toContain("Saw pricing");
   });
 
   test("a longer limit than now does not warn", async () => {
     installFakeApi({ projects: [{ ...PROJECT, retentionDays: 365 }] });
-    renderApp(SETTINGS);
+    renderApp(tab("general"));
 
     await page.getByRole("combobox", { name: "Keep events" }).click();
     await page.getByRole("option", { name: "2 years" }).click();
@@ -266,7 +280,7 @@ describe("keeping events", () => {
 
   test("visits from data centers are ignored until turned off, which is saved", async () => {
     const api = installFakeApi();
-    renderApp(SETTINGS);
+    renderApp(tab("general"));
     const ignore = page.getByRole("checkbox", { name: "Ignore visits from data centers" });
     await expect.element(ignore).toBeChecked();
 
@@ -279,7 +293,7 @@ describe("keeping events", () => {
         path: `/api/projects/${PROJECT.id}`,
         body: { ignoreDataCenters: false },
       });
-    await expect.element(page.getByText("Saved.")).toBeVisible();
+    await expect.element(saveStatus()).toHaveTextContent("No unsaved changes");
     await expect.element(ignore).not.toBeChecked();
   });
 
@@ -287,11 +301,12 @@ describe("keeping events", () => {
     // Both projects keep events forever and ignore data centers, and the
     // other one is cached: the page switches without loading.
     installFakeApi({ projects: [PROJECT, OTHER_PROJECT] });
-    const router = renderApp(`/projects/${OTHER_PROJECT.id}/settings`);
+    const router = renderApp(`/projects/${OTHER_PROJECT.id}/settings?tab=general`);
     await expect.element(page.getByRole("textbox", { name: "Name" })).toHaveValue("Docs");
     await router.navigate({
       to: "/projects/$projectId/settings",
       params: { projectId: PROJECT.id },
+      search: { tab: "general" },
     });
     await expect.element(page.getByRole("textbox", { name: "Name" })).toHaveValue("Main site");
     const ignore = page.getByRole("checkbox", { name: "Ignore visits from data centers" });
@@ -301,10 +316,13 @@ describe("keeping events", () => {
     await page.getByRole("option", { name: "1 year" }).click();
     await expect.element(ignore).not.toBeChecked();
 
-    await router.navigate({
+    // Leaving with the edits asks first (the leave guard); leaving anyway drops them.
+    void router.navigate({
       to: "/projects/$projectId/settings",
       params: { projectId: OTHER_PROJECT.id },
+      search: { tab: "general" },
     });
+    await page.getByRole("button", { name: "Leave and discard" }).click();
     await expect.element(page.getByRole("textbox", { name: "Name" })).toHaveValue("Docs");
     await expect.element(ignore).toBeChecked();
     await expect.element(keep).toMatchTextContent(/^Forever/);
@@ -312,7 +330,7 @@ describe("keeping events", () => {
 
   test("a limit set some other way shows in days", async () => {
     installFakeApi({ projects: [{ ...PROJECT, retentionDays: 90 }] });
-    renderApp(SETTINGS);
+    renderApp(tab("general"));
 
     await expect
       .element(page.getByRole("combobox", { name: "Keep events" }))

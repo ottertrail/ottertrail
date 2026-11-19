@@ -831,6 +831,7 @@ export function MainGoalWidget(props: WidgetProps) {
     <Link
       to="/projects/$projectId/settings"
       params={{ projectId }}
+      search={{ tab: "general" }}
       className="text-link hover:underline"
     >
       Choose the main goal

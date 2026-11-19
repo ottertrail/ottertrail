@@ -25,6 +25,7 @@ export function SettingsSection<T>({
   saving = false,
   error,
   saveLabel = "Save changes",
+  headingRef,
   children,
   className,
 }: {
@@ -36,6 +37,11 @@ export function SettingsSection<T>({
   /** Why the last save failed, from the server's answer. */
   error?: string | undefined;
   saveLabel?: string;
+  /**
+   * Makes the heading focusable from script, for focus to land on when the
+   * control that had it goes away (a deleted row's buttons).
+   */
+  headingRef?: React.Ref<HTMLHeadingElement>;
   children: React.ReactNode;
   className?: string;
 }) {
@@ -43,7 +49,12 @@ export function SettingsSection<T>({
   const saveRef = React.useRef<HTMLButtonElement>(null);
   const head = (
     <header className="flex max-w-2xl flex-col gap-1">
-      <h2 id={headingId} className="text-base font-medium text-ink">
+      <h2
+        id={headingId}
+        ref={headingRef}
+        tabIndex={headingRef === undefined ? undefined : -1}
+        className="text-base font-medium text-ink outline-none"
+      >
         {title}
       </h2>
       {description !== undefined && (
@@ -128,6 +139,8 @@ export function SettingsSection<T>({
           disabled={!form.dirty || saving}
           focusableWhenDisabled
           aria-busy={saving || undefined}
+          // Base UI marks a focusable disabled button with aria-disabled, not `disabled`.
+          className="aria-disabled:cursor-not-allowed aria-disabled:opacity-50"
         >
           {saving ? "Saving…" : saveLabel}
         </Button>

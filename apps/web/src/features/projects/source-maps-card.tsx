@@ -3,9 +3,9 @@ import { FileCode2Icon, LoaderCircleIcon, OctagonAlertIcon, Trash2Icon } from "l
 import * as React from "react";
 
 import { CopyableCode } from "@/components/copyable-code";
+import { SettingsSection } from "@/components/settings-section";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Dialog,
   DialogClose,
@@ -16,6 +16,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { ApiError } from "@/lib/api";
 import {
   deleteSourceMaps,
@@ -53,7 +54,7 @@ function UploadHelp() {
     <div className="flex flex-col gap-3 text-sm text-ink-muted">
       <p>
         After each build, upload a source map for each minified file. Upload once per release and
-        file. Use the project's secret key from “Your server” above. Keep it in your build's
+        file. Use the project's secret key from the “Your server” tab. Keep it in your build's
         secrets. Never put it in a page.
       </p>
       <CopyableCode text={cliExample(origin)} copyLabel="Copy the upload command" />
@@ -361,20 +362,22 @@ function OrderChoice({
   onOrder: (order: ReleaseOrder) => void;
 }) {
   return (
-    <fieldset className="flex gap-1">
-      <legend className="sr-only">Order of releases</legend>
-      {(["newest", "oldest"] as const).map((choice) => (
-        <Button
-          key={choice}
-          variant={order === choice ? "secondary" : "ghost"}
-          size="sm"
-          aria-pressed={order === choice}
-          onClick={() => onOrder(choice)}
-        >
-          {choice === "newest" ? "Newest first" : "Oldest first"}
-        </Button>
-      ))}
-    </fieldset>
+    <ToggleGroup
+      value={[order]}
+      onValueChange={(value) => {
+        // Pressing the shown order again keeps it; one is always shown.
+        const [next] = value;
+        if (next === "newest" || next === "oldest") onOrder(next);
+      }}
+      aria-label="Order of releases"
+      variant="outline"
+      size="sm"
+      spacing={0}
+      className="self-start"
+    >
+      <ToggleGroupItem value="newest">Newest first</ToggleGroupItem>
+      <ToggleGroupItem value="oldest">Oldest first</ToggleGroupItem>
+    </ToggleGroup>
   );
 }
 
@@ -452,19 +455,12 @@ export function SourceMapsCard({ projectId }: { projectId: string }) {
   // Where focus goes when a delete dialog closes: the deleted row's buttons are gone.
   const headingRef = React.useRef<HTMLHeadingElement>(null);
   return (
-    <Card id="source-maps" className="scroll-mt-6">
-      <CardHeader>
-        <CardTitle>
-          <h3 ref={headingRef} tabIndex={-1} className="outline-none">
-            Source maps
-          </h3>
-        </CardTitle>
-        <CardDescription>
-          With your build&apos;s source maps, error stacks show your original files and lines
-          instead of minified code.
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="flex flex-col gap-4">
+    <SettingsSection
+      title="Source maps"
+      description="With your build's source maps, error stacks show your original files and lines instead of minified code."
+      headingRef={headingRef}
+    >
+      <div id="source-maps" className="flex flex-col gap-4">
         {query.isPending ? (
           <div className="flex flex-col gap-2" aria-busy="true" aria-label="Loading">
             <Skeleton className="h-5 w-1/2" />
@@ -489,7 +485,7 @@ export function SourceMapsCard({ projectId }: { projectId: string }) {
             returnFocus={headingRef}
           />
         )}
-      </CardContent>
-    </Card>
+      </div>
+    </SettingsSection>
   );
 }

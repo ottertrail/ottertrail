@@ -174,7 +174,7 @@ describe("the Replays page", () => {
     await expect.element(page.getByText("Replays are off for this project")).toBeVisible();
     await expect
       .element(page.getByRole("link", { name: "Open the project's settings" }))
-      .toHaveAttribute("href", `/projects/${PROJECT.id}/settings`);
+      .toHaveAttribute("href", `/projects/${PROJECT.id}/settings?tab=replay`);
   });
 
   test("says when the period has none, with replays on", async () => {

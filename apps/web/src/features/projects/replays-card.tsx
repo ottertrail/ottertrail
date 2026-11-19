@@ -3,9 +3,9 @@ import { LoaderCircleIcon, OctagonAlertIcon, Trash2Icon } from "lucide-react";
 import * as React from "react";
 
 import { CopyableCode } from "@/components/copyable-code";
+import { SettingsSection } from "@/components/settings-section";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Dialog,
   DialogClose,
@@ -15,7 +15,10 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Field, FieldContent, FieldDescription, FieldLabel } from "@/components/ui/field";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Skeleton } from "@/components/ui/skeleton";
+import { type DirtyForm, useDirtyForm } from "@/hooks/use-dirty-form";
 import { projectQuery } from "@/lib/projects-api";
 import {
   deleteReplays,
@@ -41,83 +44,63 @@ const MODES: { value: ReplayMode; label: string; hint: string }[] = [
   },
 ];
 
-/** Off or around errors, saved as soon as it is chosen. */
-function ModeChoice({ projectId, mode }: { projectId: string; mode: ReplayMode }) {
-  const queryClient = useQueryClient();
+/** The Session replay tab's form: off, or recorded around errors. */
+interface ReplayValues {
+  mode: ReplayMode;
+}
+
+const isMode = (value: unknown): value is ReplayMode =>
+  MODES.some((choice) => choice.value === value);
+
+/** Off or around errors, a field of the tab's form: saved with its Save. */
+function ModeChoice({ form, disabled }: { form: DirtyForm<ReplayValues>; disabled: boolean }) {
   const name = React.useId();
-  const save = useMutation({
-    mutationFn: (next: ReplayMode) => setReplayMode(projectId, next),
-    onSuccess: (project) => {
-      queryClient.setQueryData(projectQuery(projectId).queryKey, project);
-      queryClient.setQueryData<ReplayOverview>(replaysKey(projectId), (overview) =>
-        overview === undefined ? undefined : { ...overview, mode: project.replayMode },
-      );
-      void queryClient.invalidateQueries({ queryKey: ["projects"], exact: true });
-    },
-  });
-  // While saving, the choice made; after a failure, what is saved.
-  const shown = save.isPending ? save.variables : mode;
+  const legendId = React.useId();
   return (
-    <div className="flex flex-col gap-3">
-      <fieldset className="flex flex-col gap-2" disabled={save.isPending}>
-        <legend className="mb-2 text-sm font-medium text-ink">Record replays</legend>
+    <fieldset className="flex flex-col gap-3">
+      <legend id={legendId} className="mb-3 text-sm font-medium text-ink">
+        Record replays
+      </legend>
+      <RadioGroup
+        name="replayMode"
+        aria-labelledby={legendId}
+        value={form.values.mode}
+        disabled={disabled}
+        onValueChange={(value) => {
+          if (isMode(value)) form.set("mode", value);
+        }}
+        className="gap-3"
+      >
         {MODES.map((choice) => (
-          <div key={choice.value} className="flex items-start gap-2.5 text-sm">
-            <input
-              type="radio"
-              id={`${name}-${choice.value}`}
-              name={name}
+          <Field key={choice.value} orientation="horizontal" className="items-start">
+            <RadioGroupItem
               value={choice.value}
-              checked={shown === choice.value}
-              onChange={() => save.mutate(choice.value)}
+              id={`${name}-${choice.value}`}
               aria-describedby={`${name}-${choice.value}-hint`}
-              className="mt-0.5 size-4 accent-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+              className="mt-0.5"
             />
-            <div className="flex flex-col">
-              <label htmlFor={`${name}-${choice.value}`} className="text-ink">
-                {choice.label}
-              </label>
-              <span id={`${name}-${choice.value}-hint`} className="text-ink-subtle">
-                {choice.hint}
-              </span>
-            </div>
-          </div>
+            <FieldContent>
+              <FieldLabel htmlFor={`${name}-${choice.value}`}>{choice.label}</FieldLabel>
+              <FieldDescription id={`${name}-${choice.value}-hint`}>{choice.hint}</FieldDescription>
+            </FieldContent>
+          </Field>
         ))}
-      </fieldset>
-      <output aria-live="polite" className="text-sm text-ink-muted">
-        {save.isPending ? (
-          <span className="inline-flex items-center gap-1.5">
-            <LoaderCircleIcon aria-hidden="true" className="size-4 animate-spin" />
-            Saving…
-          </span>
-        ) : save.isSuccess ? (
-          "Saved."
-        ) : (
-          ""
-        )}
-      </output>
-      {save.error !== null && (
-        <Alert variant="destructive" role="alert">
-          <OctagonAlertIcon />
-          <AlertDescription>The change was not saved: {save.error.message}</AlertDescription>
-        </Alert>
-      )}
-    </div>
+      </RadioGroup>
+    </fieldset>
   );
 }
 
 /** What a site adds to its tag, and what stays private. */
 function SiteHelp() {
   return (
-    <div className="flex flex-col gap-3 border-t pt-4 text-sm text-ink-muted">
-      <h4 className="text-sm font-medium text-ink">On your site</h4>
+    <div className="flex flex-col gap-3 text-sm text-ink-muted">
       <p>
-        Enable this setting. Add this attribute to the tracker's script tag under Install above.
-        Both are required. If your site requests consent, add the attribute only after the visitor
-        agrees to recording.
+        Enable this setting. Add this attribute to the tracker's script tag on the Install tab. Both
+        are required. If your site requests consent, add the attribute only after the visitor agrees
+        to recording.
       </p>
       <CopyableCode text={REPLAY_ATTRIBUTE} copyLabel="Copy the replay attribute" />
-      <h4 className="pt-1 text-sm font-medium text-ink">Private by default</h4>
+      <h3 className="pt-1 text-sm font-medium text-ink">Private by default</h3>
       <p>
         The visitor's browser masks page text, typed text, images, and media before sending the
         recording. Masked content never reaches Ottertrail. Nobody can recover it later. Your site's
@@ -246,8 +229,7 @@ function Usage({
   const { count, bytes } = overview.replays;
   const { instance } = overview;
   return (
-    <div className="flex flex-col gap-3 border-t pt-4 text-sm text-ink-muted">
-      <h4 className="text-sm font-medium text-ink">Stored</h4>
+    <div className="flex flex-col gap-3 text-sm text-ink-muted">
       <p>
         <span className="text-ink tabular-nums">
           {count === 0
@@ -275,27 +257,41 @@ function Usage({
 
 /**
  * The project's session replays (docs/session-replay.md): off or around
- * errors, what the site adds to its tag, what stays private, and what is
- * stored. On an install without an object store, only that they are off.
+ * errors (a form, saved with its Save), what the site adds to its tag, what
+ * stays private, and what is stored. On an install without an object store,
+ * only that they are off.
  */
-export function ReplaysCard({ projectId }: { projectId: string }) {
+export function ReplaysSettings({
+  projectId,
+  onDirty,
+}: {
+  projectId: string;
+  /** Says whether the form holds unsaved changes, for the tab's mark. */
+  onDirty: (dirty: boolean) => void;
+}) {
   const query = useQuery(replaysQuery(projectId));
+  const form = useDirtyForm<ReplayValues>({ mode: query.data?.mode ?? "off" }, { key: projectId });
+  React.useEffect(() => onDirty(form.dirty), [onDirty, form.dirty]);
+  const queryClient = useQueryClient();
   // Where focus goes when the delete dialog closes: its button is gone.
   const headingRef = React.useRef<HTMLHeadingElement>(null);
-  return (
-    <Card id="session-replay" className="scroll-mt-6">
-      <CardHeader>
-        <CardTitle>
-          <h3 ref={headingRef} tabIndex={-1} className="outline-none">
-            Session replay
-          </h3>
-        </CardTitle>
-        <CardDescription>
-          Record what a visitor saw and did in the minute before an error. Play the replay from the
-          error's page.
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="flex flex-col gap-4">
+  const save = useMutation({
+    mutationFn: (values: ReplayValues) => setReplayMode(projectId, values.mode),
+    onSuccess: (project, values) => {
+      form.saved(values);
+      queryClient.setQueryData(projectQuery(projectId).queryKey, project);
+      queryClient.setQueryData<ReplayOverview>(replaysKey(projectId), (overview) =>
+        overview === undefined ? undefined : { ...overview, mode: project.replayMode },
+      );
+      void queryClient.invalidateQueries({ queryKey: ["projects"], exact: true });
+    },
+  });
+  const title = "Session replay";
+  const description =
+    "Record what a visitor saw and did in the minute before an error. Play the replay from the error's page.";
+  if (query.isPending || query.isError || !query.data.configured) {
+    return (
+      <SettingsSection title={title} description={description} headingRef={headingRef}>
         {query.isPending ? (
           <div className="flex flex-col gap-2" aria-busy="true" aria-label="Loading">
             <Skeleton className="h-5 w-1/2" />
@@ -312,19 +308,34 @@ export function ReplaysCard({ projectId }: { projectId: string }) {
               </Button>
             </AlertAction>
           </Alert>
-        ) : !query.data.configured ? (
+        ) : (
           <p className="text-sm text-ink-muted">
             Session replay is disabled on this instance because it has no object store for
             recordings. Its operator can enable it by setting {code("OBJECT_STORE_URL")}.
           </p>
-        ) : (
-          <>
-            <ModeChoice projectId={projectId} mode={query.data.mode} />
-            <SiteHelp />
-            <Usage projectId={projectId} overview={query.data} returnFocus={headingRef} />
-          </>
         )}
-      </CardContent>
-    </Card>
+      </SettingsSection>
+    );
+  }
+  return (
+    <>
+      <SettingsSection
+        title={title}
+        description={description}
+        headingRef={headingRef}
+        form={form}
+        onSave={(values) => save.mutate(values)}
+        saving={save.isPending}
+        error={save.error?.message}
+      >
+        <ModeChoice form={form} disabled={save.isPending} />
+      </SettingsSection>
+      <SettingsSection title="On your site" className="border-t">
+        <SiteHelp />
+      </SettingsSection>
+      <SettingsSection title="Stored" className="border-t">
+        <Usage projectId={projectId} overview={query.data} returnFocus={headingRef} />
+      </SettingsSection>
+    </>
   );
 }

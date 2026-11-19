@@ -2,7 +2,6 @@ import { PlusIcon, TargetIcon } from "lucide-react";
 import * as React from "react";
 
 import { Button } from "@/components/ui/button";
-import { Card, CardAction, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Empty,
   EmptyContent,
@@ -11,6 +10,14 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "@/components/ui/empty";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { useAccess } from "@/lib/access";
 import { type GoalResult, goalStepText, MAX_GOALS } from "@/lib/goals-api";
 
@@ -42,6 +49,15 @@ function AddGoalButton({ atLimit, onClick }: { atLimit: boolean; onClick: () => 
   );
 }
 
+const headClass = "h-8 text-xs font-normal text-ink-subtle";
+/**
+ * On a phone each goal stacks into a block: its name, then each figure after
+ * its column's name, which CSS draws from `data-label` so the cell's text
+ * stays the figure.
+ */
+const stackCell =
+  "max-sm:flex max-sm:justify-between max-sm:px-0 max-sm:py-0.5 max-sm:before:text-ink-subtle max-sm:before:content-[attr(data-label)]";
+
 /**
  * The goals in the order added: name, what reaches it, visitors who did, their
  * share of the page's visitors, and how often it happened. The bar shows the
@@ -60,66 +76,82 @@ function GoalTable({
   canManage: boolean;
 }) {
   return (
-    <table className="w-full table-fixed text-sm">
+    <Table className="table-fixed max-sm:block">
       <caption className="sr-only">Goals, in the order added</caption>
-      <thead>
-        <tr className="text-xs text-ink-subtle">
-          <th scope="col" className="pb-2 text-left font-normal">
+      <TableHeader className="max-sm:sr-only">
+        <TableRow className="hover:bg-transparent">
+          <TableHead scope="col" className={`${headClass} pl-0`}>
             Goal
-          </th>
-          <th scope="col" className="w-18 pb-2 text-right font-normal">
+          </TableHead>
+          <TableHead scope="col" className={`${headClass} w-20 text-right`}>
             Visitors
-          </th>
-          <th scope="col" className="w-22 pb-2 text-right font-normal">
+          </TableHead>
+          <TableHead scope="col" className={`${headClass} w-24 text-right`}>
             Conversion
-          </th>
-          <th scope="col" className="w-16 pb-2 text-right font-normal">
+          </TableHead>
+          <TableHead scope="col" className={`${headClass} w-20 text-right`}>
             Events
-          </th>
+          </TableHead>
           {canManage && (
-            <th scope="col" className="w-10 pb-2">
+            <TableHead scope="col" className={`${headClass} w-12 pr-0`}>
               <span className="sr-only">Actions</span>
-            </th>
+            </TableHead>
           )}
-        </tr>
-      </thead>
-      <tbody>
+        </TableRow>
+      </TableHeader>
+      <TableBody className="max-sm:block">
         {goals.map((goal) => {
           const reached = goalStepText(goal.step);
           return (
-            <tr key={goal.id}>
-              <th scope="row" className="py-1.5 pr-3 text-left align-top font-normal">
+            <TableRow
+              key={goal.id}
+              className="hover:bg-transparent max-sm:flex max-sm:flex-col max-sm:py-2"
+            >
+              <th
+                scope="row"
+                className="py-1.5 pr-3 pl-0 text-left align-top font-normal max-sm:block max-sm:pr-0"
+              >
                 <div className="truncate text-ink" title={goal.name}>
                   {goal.name}
                 </div>
                 <div className="truncate text-xs text-ink-subtle" title={reached}>
                   {reached}
                 </div>
-                <div
-                  aria-hidden="true"
-                  className="mt-1 h-1.5 rounded-r bg-chart-1"
-                  style={{ width: `${Math.min(1, Math.max(0, goal.conversionRate)) * 100}%` }}
-                />
+                <div aria-hidden="true" className="mt-1 h-1.5 max-w-xs">
+                  <div
+                    className="h-full rounded-r bg-chart-1"
+                    style={{ width: `${Math.min(1, Math.max(0, goal.conversionRate)) * 100}%` }}
+                  />
+                </div>
               </th>
-              <td className="py-1.5 text-right align-top text-ink tabular-nums">
+              <TableCell
+                data-label="Visitors"
+                className={`py-1.5 text-right align-top text-ink tabular-nums ${stackCell}`}
+              >
                 {formatWhole(goal.visitors)}
-              </td>
-              <td className="py-1.5 text-right align-top text-ink tabular-nums">
+              </TableCell>
+              <TableCell
+                data-label="Conversion"
+                className={`py-1.5 text-right align-top text-ink tabular-nums ${stackCell}`}
+              >
                 {formatConversion(goal.conversionRate)}
-              </td>
-              <td className="py-1.5 text-right align-top text-ink-subtle tabular-nums">
+              </TableCell>
+              <TableCell
+                data-label="Events"
+                className={`py-1.5 text-right align-top text-ink-subtle tabular-nums ${stackCell}`}
+              >
                 {formatWhole(goal.events)}
-              </td>
+              </TableCell>
               {canManage && (
-                <td className="py-0.5 text-right align-top">
+                <TableCell className="py-0.5 pr-0 text-right align-top max-sm:flex max-sm:justify-end max-sm:px-0">
                   <DeleteGoalDialog projectId={projectId} goal={goal} returnFocus={returnFocus} />
-                </td>
+                </TableCell>
               )}
-            </tr>
+            </TableRow>
           );
         })}
-      </tbody>
-    </table>
+      </TableBody>
+    </Table>
   );
 }
 
@@ -145,54 +177,52 @@ export function GoalsCard({
   const headingRef = React.useRef<HTMLHeadingElement>(null);
   const atLimit = goals.length >= MAX_GOALS;
   const add = () => setAdding(true);
+  const headingId = React.useId();
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>
-          <h3 ref={headingRef} tabIndex={-1} className="outline-none">
-            Goals
-          </h3>
-        </CardTitle>
-        {goals.length > 0 && canManage && (
-          <CardAction>
-            <AddGoalButton atLimit={atLimit} onClick={add} />
-          </CardAction>
-        )}
-      </CardHeader>
-      <CardContent className="flex flex-col gap-3">
-        {goals.length === 0 ? (
-          <Empty className="p-6">
-            <EmptyHeader>
-              <EmptyMedia variant="icon">
-                <TargetIcon />
-              </EmptyMedia>
-              <EmptyTitle>No goals yet</EmptyTitle>
-              <EmptyDescription>
-                A goal is a page or event that counts as a success, such as viewing /pricing or
-                signing up. Each goal shows the number and share of visitors who reached it.
-              </EmptyDescription>
-            </EmptyHeader>
-            {canManage && (
-              <EmptyContent>
-                <AddGoalButton atLimit={false} onClick={add} />
-              </EmptyContent>
-            )}
-          </Empty>
-        ) : (
-          <>
-            <GoalTable
-              goals={goals}
-              projectId={projectId}
-              returnFocus={headingRef}
-              canManage={canManage}
-            />
-            <p className="text-xs text-ink-subtle">
-              Visitor counts and shares for each goal use this page's period, environment, and
-              filters. Visitors count per day, as in the summary. Events count every time.
-            </p>
-          </>
-        )}
-      </CardContent>
+    <section aria-labelledby={headingId} className="flex flex-col gap-2 border-t pt-5">
+      <div className="flex min-h-8 flex-wrap items-center justify-between gap-x-3 gap-y-2">
+        <h2
+          id={headingId}
+          ref={headingRef}
+          tabIndex={-1}
+          className="text-sm font-medium text-ink outline-none"
+        >
+          Goals
+        </h2>
+        {goals.length > 0 && canManage && <AddGoalButton atLimit={atLimit} onClick={add} />}
+      </div>
+      {goals.length === 0 ? (
+        <Empty className="border border-dashed p-6">
+          <EmptyHeader>
+            <EmptyMedia variant="icon">
+              <TargetIcon />
+            </EmptyMedia>
+            <EmptyTitle>No goals yet</EmptyTitle>
+            <EmptyDescription>
+              A goal is a page or event that counts as a success, such as viewing /pricing or
+              signing up. Each goal shows the number and share of visitors who reached it.
+            </EmptyDescription>
+          </EmptyHeader>
+          {canManage && (
+            <EmptyContent>
+              <AddGoalButton atLimit={false} onClick={add} />
+            </EmptyContent>
+          )}
+        </Empty>
+      ) : (
+        <>
+          <GoalTable
+            goals={goals}
+            projectId={projectId}
+            returnFocus={headingRef}
+            canManage={canManage}
+          />
+          <p className="text-xs text-ink-subtle">
+            Visitor counts and shares for each goal use this page's period, environment, and
+            filters. Visitors count per day, as in the summary. Events count every time.
+          </p>
+        </>
+      )}
       <AddGoalDialog
         open={adding}
         onOpenChange={setAdding}
@@ -200,6 +230,6 @@ export function GoalsCard({
         eventNames={eventNames}
         returnFocus={headingRef}
       />
-    </Card>
+    </section>
   );
 }

@@ -3,9 +3,9 @@ import { useNavigate } from "@tanstack/react-router";
 import { LoaderCircleIcon, OctagonAlertIcon } from "lucide-react";
 import * as React from "react";
 
+import { SettingsSection } from "@/components/settings-section";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Dialog,
   DialogClose,
@@ -104,10 +104,15 @@ function DeleteProjectDialog({ project }: { project: Project }) {
     onSuccess: async () => {
       forgetProject(project.id);
       setOpen(false);
-      await navigate({ to: "/projects" });
-      queryClient.removeQueries({ queryKey: projectQuery(project.id).queryKey });
-      queryClient.removeQueries({ queryKey: ["analytics", project.id] });
-      await queryClient.invalidateQueries({ queryKey: projectsQuery().queryKey, exact: true });
+      try {
+        // The project is gone: unsaved edits in another tab have nothing to be saved to,
+        // so leaving does not ask (the leave guard).
+        await navigate({ to: "/projects", ignoreBlocker: true });
+      } finally {
+        queryClient.removeQueries({ queryKey: projectQuery(project.id).queryKey });
+        queryClient.removeQueries({ queryKey: ["analytics", project.id] });
+        await queryClient.invalidateQueries({ queryKey: projectsQuery().queryKey, exact: true });
+      }
     },
   });
   const matches = typed.trim() === project.name;
@@ -175,17 +180,11 @@ function DeleteProjectDialog({ project }: { project: Project }) {
 /** Changes that cannot be undone, each behind its own confirmation. */
 export function DangerZone({ project }: { project: Project }) {
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>
-          <h3>Danger zone</h3>
-        </CardTitle>
-        <CardDescription>Changes here cannot be undone.</CardDescription>
-      </CardHeader>
-      <CardContent className="flex flex-col divide-y">
+    <SettingsSection title="Danger zone" description="Changes here cannot be undone.">
+      <div className="flex flex-col divide-y">
         <div className="flex flex-wrap items-center justify-between gap-3 pb-4">
           <div className="min-w-0 flex-1">
-            <h4 className="text-sm font-medium text-ink">Replace the public key</h4>
+            <h3 className="text-sm font-medium text-ink">Replace the public key</h3>
             <p className="text-sm text-muted-foreground">
               Replace an exposed key. The current snippet stops working.
             </p>
@@ -194,7 +193,7 @@ export function DangerZone({ project }: { project: Project }) {
         </div>
         <div className="flex flex-wrap items-center justify-between gap-3 py-4">
           <div className="min-w-0 flex-1">
-            <h4 className="text-sm font-medium text-ink">Replace the secret key</h4>
+            <h3 className="text-sm font-medium text-ink">Replace the secret key</h3>
             <p className="text-sm text-muted-foreground">
               Replace an exposed key. Your server's current key stops working.
             </p>
@@ -203,14 +202,14 @@ export function DangerZone({ project }: { project: Project }) {
         </div>
         <div className="flex flex-wrap items-center justify-between gap-3 pt-4">
           <div className="min-w-0 flex-1">
-            <h4 className="text-sm font-medium text-ink">Delete the project</h4>
+            <h3 className="text-sm font-medium text-ink">Delete the project</h3>
             <p className="text-sm text-muted-foreground">
               Permanently delete the project and all its events.
             </p>
           </div>
           <DeleteProjectDialog project={project} />
         </div>
-      </CardContent>
-    </Card>
+      </div>
+    </SettingsSection>
   );
 }

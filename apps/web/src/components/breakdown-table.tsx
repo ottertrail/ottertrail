@@ -179,7 +179,9 @@ export function BreakdownTable({
                       )}
                     >
                       {stack && (
-                        <span className="text-ink-subtle sm:hidden">{figureHeadings[index]}</span>
+                        <span data-slot="breakdown-label" className="text-ink-subtle sm:hidden">
+                          {figureHeadings[index]}
+                        </span>
                       )}
                       {figure}
                     </TableCell>

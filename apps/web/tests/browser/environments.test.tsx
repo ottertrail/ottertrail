@@ -20,13 +20,23 @@ function lastQuery(api: FakeApi, path = "/analytics?"): Record<string, string> {
 
 const addressQuery = (router: ReturnType<typeof renderApp>) => router.state.location.search;
 
+/** A cell's text, without the label a stacked breakdown row shows on a phone. */
+function cellText(cell: HTMLTableCellElement): string {
+  const label = cell.querySelector("[data-slot=breakdown-label]")?.textContent ?? "";
+  const text = cell.textContent ?? "";
+  return text.startsWith(label) ? text.slice(label.length) : text;
+}
+
 /** Each body row of a table as its cells' text. */
 function tableRows(caption: string): string[][] {
   const table = [...document.querySelectorAll("table")].find(
     (item) => item.caption?.textContent === caption,
   );
   return [...(table?.tBodies[0]?.rows ?? [])].map((row) =>
-    [...row.cells].map((cell) => cell.textContent ?? ""),
+    [...row.cells]
+      // The cell that only holds the row's bar.
+      .filter((cell) => cell.querySelector("[data-slot=breakdown-bar]") === null)
+      .map(cellText),
   );
 }
 

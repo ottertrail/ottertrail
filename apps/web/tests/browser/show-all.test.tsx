@@ -37,7 +37,7 @@ describe("show all", () => {
     renderApp(ANALYTICS);
 
     await expect.element(page.getByRole("button", { name: "Show all top pages" })).toBeVisible();
-    await page.getByRole("tab", { name: "Countries" }).click();
+    await page.getByRole("button", { name: "Countries" }).click();
     await expect
       .element(page.getByRole("button", { name: "Show all countries" }))
       .not.toBeInTheDocument();

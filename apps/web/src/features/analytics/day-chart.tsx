@@ -17,9 +17,8 @@ export interface TooltipRow {
 }
 
 /** Plot height; the x-axis labels get their own band below it, inside the container. */
-const PLOT_HEIGHT = 220;
+const DEFAULT_PLOT_HEIGHT = 220;
 const AXIS_BAND = 28;
-const HEIGHT = 12 + PLOT_HEIGHT + AXIS_BAND;
 const MARGIN = { top: 12, right: 16, left: 48 };
 /** Space each x-axis label needs, so labels never collide. */
 const LABEL_SPACING = 72;
@@ -56,6 +55,7 @@ export function DayChart({
   label,
   tooltipRows,
   formatValue = formatCount,
+  plotHeight = DEFAULT_PLOT_HEIGHT,
 }: {
   points: DayValue[];
   /** What the line is, such as "Visitors per day"; the chart's accessible name. */
@@ -63,7 +63,10 @@ export function DayChart({
   tooltipRows: (index: number) => TooltipRow[];
   /** The y-axis labels; counts by default. */
   formatValue?: (value: number) => string;
+  /** The plot's height in pixels, without the axis labels: lower for a report's short chart. */
+  plotHeight?: number;
 }) {
+  const height = 12 + plotHeight + AXIS_BAND;
   const containerRef = React.useRef<HTMLDivElement>(null);
   const [width, setWidth] = React.useState(0);
   const [active, setActive] = React.useState<number | null>(null);
@@ -90,7 +93,7 @@ export function DayChart({
   const plotWidth = Math.max(0, width - MARGIN.left - MARGIN.right);
   const x = (index: number) =>
     MARGIN.left + (count <= 1 ? plotWidth / 2 : (index / last) * plotWidth);
-  const y = (value: number) => MARGIN.top + PLOT_HEIGHT - (value / top) * PLOT_HEIGHT;
+  const y = (value: number) => MARGIN.top + plotHeight - (value / top) * plotHeight;
 
   const valueAt = (index: number) => points[index]?.value ?? 0;
   // Days without a value break the line; a day alone between gaps is a dot.
@@ -139,7 +142,7 @@ export function DayChart({
     <div
       ref={containerRef}
       className="relative w-full rounded-md has-[input:focus-visible]:ring-2 has-[input:focus-visible]:ring-ring"
-      style={{ height: HEIGHT }}
+      style={{ height }}
       onPointerMove={(event) => setActive(dayAt(event.clientX))}
       onPointerLeave={() => setActive(null)}
     >
@@ -159,7 +162,7 @@ export function DayChart({
         />
       )}
       {width > 0 && (
-        <svg width={width} height={HEIGHT} aria-hidden="true" className="block">
+        <svg width={width} height={height} aria-hidden="true" className="block">
           {ticks.map((tick) => (
             <g key={tick}>
               <line
@@ -187,7 +190,7 @@ export function DayChart({
               <text
                 key={point.day}
                 x={x(index)}
-                y={MARGIN.top + PLOT_HEIGHT + 18}
+                y={MARGIN.top + plotHeight + 18}
                 textAnchor={
                   count > 1 && index === 0
                     ? "start"
@@ -223,7 +226,7 @@ export function DayChart({
                 x1={x(active)}
                 x2={x(active)}
                 y1={MARGIN.top}
-                y2={MARGIN.top + PLOT_HEIGHT}
+                y2={MARGIN.top + plotHeight}
                 stroke="var(--hairline-tertiary)"
                 strokeWidth={1}
                 shapeRendering="crispEdges"

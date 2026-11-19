@@ -6,6 +6,18 @@ export function installSnippet(instanceOrigin: string, publicKey: string): strin
   return `<script defer src="${instanceOrigin}/t.js" data-key="${publicKey}" data-host="${instanceOrigin}"></script>`;
 }
 
+/** Where coding agents read how to add Ottertrail to an app: the one place this address is kept. */
+export const AGENT_DOCS_URL = "https://docs.ottertrail.app/llms.txt";
+
+/**
+ * What "Copy setup prompt" copies, for a coding agent: the instance's
+ * address and the project's public key. Never the secret key: the agent is
+ * told to read it from the environment.
+ */
+export function setupPrompt(instanceOrigin: string, publicKey: string): string {
+  return `Add Ottertrail to this app. Read the instructions for agents at ${AGENT_DOCS_URL} before you change anything. This project's Ottertrail instance is ${instanceOrigin} and its public key is ${publicKey}. Add the tracker to every page. Name signed-in users, with the signature made on the server. Report the errors the app catches. Upload source maps when the app builds. Send the server's traces, logs and errors over OpenTelemetry. Read the secret key from the OTTERTRAIL_SECRET_KEY environment variable. Never put it in client code or in a commit.`;
+}
+
 /**
  * The allowed-sites box as a list: one hostname per line, or separated by
  * commas. A pasted address (https://example.com/pricing) keeps only its

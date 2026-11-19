@@ -32,31 +32,22 @@ export interface Answered {
 }
 
 /**
- * The period (or chosen days) and the environment, as on the analytics
- * page. The environment picker shows once there is a choice, and always
- * while another environment than the default is shown, so there is a way
- * back.
+ * The period picker: a period that ends today, or "Custom range…", which
+ * opens a dialog to choose the days. `answered` gives the dialog the days
+ * shown now.
  */
-export function RangeControls({
+export function PeriodSelect({
   range,
-  environment,
   answered,
   onRange,
-  onEnvironment,
-  children,
 }: {
   range: PageRange;
-  environment: string;
   answered: Answered | undefined;
   onRange: (range: PageRange) => void;
-  onEnvironment: (environment: string) => void;
-  /** More controls in the same row, after these. */
-  children?: React.ReactNode;
 }) {
   const [choosingDays, setChoosingDays] = React.useState(false);
-  const environments = answered?.environments ?? [environment];
   return (
-    <div className="flex flex-wrap items-center gap-2">
+    <>
       <Select
         items={PERIOD_ITEMS}
         value={"period" in range ? range.period : CUSTOM}
@@ -79,36 +70,6 @@ export function RangeControls({
           ))}
         </SelectContent>
       </Select>
-      {(environments.length > 1 || environment !== DEFAULT_ENVIRONMENT) && (
-        <Select
-          items={environments.map((name) => ({ value: name, label: name }))}
-          value={environment}
-          onValueChange={(value) => {
-            if (typeof value === "string") {
-              onEnvironment(value);
-            }
-          }}
-        >
-          <SelectTrigger aria-label="Environment" className="w-40">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {environments.map((name) => (
-              <SelectItem key={name} value={name}>
-                {name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      )}
-      {children}
-      {answered !== undefined && (
-        <FilterBarRange
-          firstDay={answered.firstDay}
-          lastDay={answered.lastDay}
-          timeZone={answered.timeZone}
-        />
-      )}
       {choosingDays && (
         // Nothing while its code loads: a moment, from the same server.
         <React.Suspense fallback={null}>
@@ -124,6 +85,86 @@ export function RangeControls({
             }}
           />
         </React.Suspense>
+      )}
+    </>
+  );
+}
+
+/**
+ * The environment picker, shown once there is a choice, and always while
+ * another environment than the default is shown, so there is a way back.
+ * Renders nothing otherwise.
+ */
+export function EnvironmentSelect({
+  environment,
+  answered,
+  onEnvironment,
+}: {
+  environment: string;
+  answered: Answered | undefined;
+  onEnvironment: (environment: string) => void;
+}) {
+  const environments = answered?.environments ?? [environment];
+  if (environments.length <= 1 && environment === DEFAULT_ENVIRONMENT) return null;
+  return (
+    <Select
+      items={environments.map((name) => ({ value: name, label: name }))}
+      value={environment}
+      onValueChange={(value) => {
+        if (typeof value === "string") {
+          onEnvironment(value);
+        }
+      }}
+    >
+      <SelectTrigger aria-label="Environment" className="w-40">
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        {environments.map((name) => (
+          <SelectItem key={name} value={name}>
+            {name}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
+}
+
+/**
+ * The period (or chosen days) and the environment, as on the analytics
+ * page, in one row.
+ */
+export function RangeControls({
+  range,
+  environment,
+  answered,
+  onRange,
+  onEnvironment,
+  children,
+}: {
+  range: PageRange;
+  environment: string;
+  answered: Answered | undefined;
+  onRange: (range: PageRange) => void;
+  onEnvironment: (environment: string) => void;
+  /** More controls in the same row, after these. */
+  children?: React.ReactNode;
+}) {
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <PeriodSelect range={range} answered={answered} onRange={onRange} />
+      <EnvironmentSelect
+        environment={environment}
+        answered={answered}
+        onEnvironment={onEnvironment}
+      />
+      {children}
+      {answered !== undefined && (
+        <FilterBarRange
+          firstDay={answered.firstDay}
+          lastDay={answered.lastDay}
+          timeZone={answered.timeZone}
+        />
       )}
     </div>
   );

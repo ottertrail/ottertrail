@@ -125,22 +125,47 @@ export function Workbench({
     ) {
       focusRow(before);
     } else if (selected !== undefined) {
-      listRef.current
-        ?.querySelector(`[data-workbench-id="${CSS.escape(selected)}"]`)
-        ?.scrollIntoView?.({ block: "nearest" });
+      // Chosen from inside the detail pane (a name in the summary), whose content is
+      // gone: focus moves to the chosen row rather than dropping to the page.
+      if (
+        before !== selected &&
+        (active === null ||
+          active === document.body ||
+          detailRef.current?.contains(active) === true)
+      ) {
+        focusRow(selected);
+      } else {
+        listRef.current
+          ?.querySelector(`[data-workbench-id="${CSS.escape(selected)}"]`)
+          ?.scrollIntoView?.({ block: "nearest" });
+      }
     }
   }, [selected, focusRow]);
+
+  // Where the selection last was in the list: when an action takes it out of the list
+  // (resolving an error under Unresolved), j and k carry on from there, not the top.
+  const lastIndex = React.useRef(-1);
+  React.useEffect(() => {
+    const index = selected === undefined ? -1 : ids.indexOf(selected);
+    if (index !== -1) lastIndex.current = index;
+  }, [ids, selected]);
 
   React.useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (narrow || typingOrOverlay(event)) return;
       const index = selected === undefined ? -1 : ids.indexOf(selected);
+      // A selection the list no longer holds sat at `lastIndex`: the item now there is
+      // the next one, and the one before it the previous.
+      const gone = selected !== undefined && index === -1 && lastIndex.current !== -1;
       const pressed = event.key;
       if (pressed === "j" || pressed === "k") {
         if (ids.length === 0) return;
         event.preventDefault();
-        const next =
-          pressed === "j"
+        const next = gone
+          ? pressed === "j"
+            ? Math.min(lastIndex.current, ids.length - 1)
+            : Math.max(Math.min(lastIndex.current, ids.length) - 1, 0)
+          : pressed === "j"
             ? Math.min(index + 1, ids.length - 1)
             : index === -1
               ? 0

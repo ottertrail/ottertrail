@@ -15,13 +15,23 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAccess } from "@/lib/access";
 import { type Rule, type RuleKind, rulesQuery, watchesCheck, watchesError } from "@/lib/alerts-api";
+import type { ErrorStatus } from "@/lib/errors-api";
 import { checksQuery } from "@/lib/uptime-api";
 
 import { RuleStateBadge } from "./rule-state-badge";
 import { watchesText } from "./rule-text";
 
 /** What the card is on: a check's page, or an error group's in an environment. */
-export type Watched = { checkId: string } | { fingerprint: string; environment: string };
+export type Watched =
+  | { checkId: string }
+  | { fingerprint: string; environment: string; status: ErrorStatus };
+
+/** What the rules on an error watch for, by where the error stands. */
+function errorRulesText(status: ErrorStatus): string {
+  return status === "resolved"
+    ? "Rules that notify your team when this resolved error occurs again or its occurrences spike."
+    : "Rules that notify your team when this error's occurrences spike, or when it occurs again after it is resolved.";
+}
 
 /**
  * The alert rules that watch a check or an error group, with a link that
@@ -29,7 +39,16 @@ export type Watched = { checkId: string } | { fingerprint: string; environment: 
  * of this group in this environment for an error. Shown to those with
  * uptime and alerts; the link to those who manage it (docs/access.md).
  */
-export function AlertRulesCard({ projectId, watched }: { projectId: string; watched: Watched }) {
+export function AlertRulesCard({
+  projectId,
+  watched,
+  className,
+}: {
+  projectId: string;
+  watched: Watched;
+  /** Such as a flat section's look inside a workbench. */
+  className?: string;
+}) {
   const rules = useQuery(rulesQuery(projectId));
   const checks = useQuery(checksQuery(projectId));
   const canAdd = useAccess().canUse("uptime_alerts", "manage");
@@ -44,7 +63,7 @@ export function AlertRulesCard({ projectId, watched }: { projectId: string; watc
       ? { add, check: watched.checkId }
       : { add, fingerprint: watched.fingerprint, env: watched.environment };
   return (
-    <Card>
+    <Card className={className}>
       <CardHeader>
         <CardTitle>
           <h3>Alert rules</h3>
@@ -52,7 +71,7 @@ export function AlertRulesCard({ projectId, watched }: { projectId: string; watc
         <CardDescription>
           {"checkId" in watched
             ? "Rules that notify your team when this check goes down or its certificate nears expiry."
-            : "Rules that notify your team when this resolved error occurs again or its occurrences spike."}
+            : errorRulesText(watched.status)}
         </CardDescription>
         {canAdd && (
           <CardAction>

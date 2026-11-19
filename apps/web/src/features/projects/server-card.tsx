@@ -1,13 +1,13 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { EyeIcon, EyeOffIcon, OctagonAlertIcon } from "lucide-react";
+import { EyeIcon, EyeOffIcon } from "lucide-react";
 import * as React from "react";
 
 import { CopyableCode } from "@/components/copyable-code";
-import { Alert, AlertDescription } from "@/components/ui/alert";
+import { SettingsSection } from "@/components/settings-section";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import { useDirtyForm } from "@/hooks/use-dirty-form";
 import { type Project, projectQuery, projectsQuery, updateProject } from "@/lib/projects-api";
 
 /** A server-side event, as a site's server sends it. */
@@ -27,18 +27,36 @@ const signature = createHmac("sha256", process.env.OTTERTRAIL_SECRET_KEY)
   .update(userId).digest("hex");
 // In the page: <script … data-user-id="42" data-user-signature="<signature>"></script>`;
 
+/** The Your server tab's form: whether browser events need a signed user ID. */
+interface SigningValues {
+  requireSignedUserIds: boolean;
+}
+
+const signingValues = (project: Project): SigningValues => ({
+  requireSignedUserIds: project.requireSignedUserIds,
+});
+
 /**
  * The project's secret key and what it is for: events from the site's own
- * server, and signed user IDs. Hidden until asked for: it must never go in
- * a page.
+ * server, and signed user IDs. The key is hidden until asked for: it must
+ * never go in a page. The signed-IDs switch saves with its form's Save.
  */
-export function ServerCard({ project }: { project: Project }) {
+export function ServerSettings({
+  project,
+  onDirty,
+}: {
+  project: Project;
+  /** Says whether the form holds unsaved changes, for the tab's mark. */
+  onDirty: (dirty: boolean) => void;
+}) {
+  const form = useDirtyForm(signingValues(project), { key: project.id });
+  React.useEffect(() => onDirty(form.dirty), [onDirty, form.dirty]);
   const [shown, setShown] = React.useState(false);
   const queryClient = useQueryClient();
-  const setSigning = useMutation({
-    mutationFn: (requireSignedUserIds: boolean) =>
-      updateProject(project.id, { requireSignedUserIds }),
-    onSuccess: (updated) => {
+  const save = useMutation({
+    mutationFn: (values: SigningValues) => updateProject(project.id, values),
+    onSuccess: (updated, values) => {
+      form.saved(values);
       queryClient.setQueryData(projectQuery(project.id).queryKey, updated);
       void queryClient.invalidateQueries({ queryKey: projectsQuery().queryKey, exact: true });
     },
@@ -47,20 +65,14 @@ export function ServerCard({ project }: { project: Project }) {
   const descriptionId = React.useId();
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>
-          <h3>Your server</h3>
-        </CardTitle>
-        <CardDescription>
-          A browser cannot block or fake events from your server, such as payments. These events
-          need the secret key. Keep it on your server. Never put it in a page.
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="flex flex-col gap-4">
+    <>
+      <SettingsSection
+        title="Your server"
+        description="A browser cannot block or fake events from your server, such as payments. These events need the secret key. Keep it on your server. Never put it in a page."
+      >
         <div className="flex flex-col gap-2">
           <div className="flex items-center justify-between gap-2">
-            <h4 className="text-sm font-medium text-ink">Secret key</h4>
+            <h3 className="text-sm font-medium text-ink">Secret key</h3>
             <Button variant="ghost" size="sm" onClick={() => setShown((value) => !value)}>
               {shown ? (
                 <EyeOffIcon aria-hidden="true" className="size-4" />
@@ -73,14 +85,13 @@ export function ServerCard({ project }: { project: Project }) {
           {shown ? (
             <CopyableCode text={project.secretKey} copyLabel="Copy the secret key" />
           ) : (
-            <p className="rounded-lg bg-muted px-3 py-2 font-mono text-sm text-ink-subtle">
+            <p className="rounded-lg bg-muted px-3 py-2 text-sm text-ink-subtle">
               sk_••••••••••••••••••••••••••••••••
             </p>
           )}
         </div>
-
         <div className="flex flex-col gap-2 border-t pt-4">
-          <h4 className="text-sm font-medium text-ink">Send events from your server</h4>
+          <h3 className="text-sm font-medium text-ink">Send events from your server</h3>
           <p className="text-sm text-muted-foreground">
             Each event belongs to a user and appears in their activity under Users. Send up to 50
             events per request. Give each event a new ID. Retries with the same ID are stored once.
@@ -90,34 +101,43 @@ export function ServerCard({ project }: { project: Project }) {
             copyLabel="Copy the example"
           />
         </div>
+      </SettingsSection>
 
-        <div className="flex flex-col gap-3 border-t pt-4">
-          <div className="flex items-start justify-between gap-4">
-            <div className="flex flex-col gap-1">
-              <Label htmlFor={switchId}>Only accept user IDs signed by your server</Label>
-              <p id={descriptionId} className="text-sm text-muted-foreground">
-                Anyone can copy the snippet and send events with any user ID. When enabled, browser
-                events need your server's signature for the user ID to count. Events without a
-                signature are retained without the user ID.
-              </p>
-            </div>
-            <Switch
-              id={switchId}
-              aria-describedby={descriptionId}
-              checked={project.requireSignedUserIds}
-              disabled={setSigning.isPending}
-              onCheckedChange={(checked) => setSigning.mutate(checked)}
-            />
+      <SettingsSection
+        title="Signed user IDs"
+        form={form}
+        onSave={(values) => save.mutate(values)}
+        saving={save.isPending}
+        error={save.error?.message}
+        className="border-t"
+      >
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex flex-col gap-1">
+            <Label htmlFor={switchId}>Only accept user IDs signed by your server</Label>
+            <p id={descriptionId} className="text-sm text-muted-foreground">
+              Anyone can copy the snippet and send events with any user ID. When enabled, browser
+              events need your server's signature for the user ID to count. Events without a
+              signature are retained without the user ID.
+            </p>
           </div>
-          {setSigning.error !== null && (
-            <Alert variant="destructive" role="alert">
-              <OctagonAlertIcon />
-              <AlertDescription>{setSigning.error.message}</AlertDescription>
-            </Alert>
-          )}
-          <CopyableCode text={SIGNING_EXAMPLE} copyLabel="Copy the signing example" />
+          <Switch
+            id={switchId}
+            name="requireSignedUserIds"
+            aria-describedby={descriptionId}
+            checked={form.values.requireSignedUserIds}
+            disabled={save.isPending}
+            onCheckedChange={(checked) => form.set("requireSignedUserIds", checked)}
+          />
         </div>
-      </CardContent>
-    </Card>
+      </SettingsSection>
+
+      <SettingsSection
+        title="Sign a user ID"
+        description="Your server signs the signed-in user's ID with the secret key, and the page passes the signature to the tracker."
+        className="border-t"
+      >
+        <CopyableCode text={SIGNING_EXAMPLE} copyLabel="Copy the signing example" />
+      </SettingsSection>
+    </>
   );
 }

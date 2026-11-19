@@ -106,7 +106,7 @@ describe("the traces page", () => {
     await expect.element(page.getByRole("button", { name: "Copy the settings" })).toBeVisible();
     await expect
       .element(page.getByRole("link", { name: "Project settings" }))
-      .toHaveAttribute("href", `/projects/${PROJECT.id}/settings`);
+      .toHaveAttribute("href", `/projects/${PROJECT.id}/settings?tab=server`);
     // Nothing to filter yet.
     expect(page.getByRole("combobox", { name: "Service" }).elements()).toEqual([]);
   });

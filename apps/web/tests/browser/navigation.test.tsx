@@ -149,6 +149,8 @@ describe("inside a project", () => {
 
     await expect.poll(() => currentPath(router)).toBe(SETTINGS);
     await expect.element(page.getByRole("heading", { name: "Install" })).toBeVisible();
+    // The name is on the General tab.
+    await page.getByRole("tab", { name: "General" }).click();
     await expect.element(page.getByRole("textbox", { name: "Name" })).toHaveValue("Main site");
     await expect.poll(breadcrumb).toBe("Main site / Settings");
   });
@@ -189,6 +191,7 @@ describe("inside a project", () => {
     await page.getByRole("menuitem", { name: "Docs" }).click();
 
     await expect.poll(() => currentPath(router)).toBe(`/projects/${OTHER_PROJECT.id}/settings`);
+    await page.getByRole("tab", { name: "General" }).click();
     await expect.element(page.getByRole("textbox", { name: "Name" })).toHaveValue("Docs");
   });
 

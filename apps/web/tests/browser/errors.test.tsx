@@ -22,11 +22,29 @@ function lastQuery(api: FakeApi, path: string): Record<string, string> {
   return at === -1 ? {} : Object.fromEntries(new URLSearchParams(request.slice(at + 1)));
 }
 
-/** The rows of the errors table, as their cells' text. */
-const listedRows = () =>
-  [...document.querySelectorAll("tbody tr")].map((row) =>
-    [...row.querySelectorAll("td")].map((cell) => cell.textContent),
+/**
+ * The rows of the errors list, as their cells' text; the first cell as the
+ * error's name and its status badge, without the times under them.
+ */
+const listedRows = () => {
+  const list = [...document.querySelectorAll("table")].find(
+    (table) => table.caption?.textContent === "Errors, most recently seen first",
   );
+  return [...(list?.querySelectorAll("tbody tr") ?? [])].map((row) =>
+    [...row.querySelectorAll("td")].map((cell, index) =>
+      index === 0
+        ? `${cell.querySelector("a")?.textContent ?? ""}${cell.querySelector("[data-slot=status-badge]")?.textContent ?? ""}`
+        : cell.textContent,
+    ),
+  );
+};
+
+/** The errors list, beside the selected error. */
+const errorList = () => page.getByRole("region", { name: "Errors, list" });
+
+/** A status in the filter bar's toggle group. */
+const statusButton = (name: string) =>
+  page.getByRole("group", { name: "Status" }).getByRole("button", { name, exact: true });
 
 /** The link to the user in the occurrences table. */
 const occurrenceUserLink = () =>
@@ -54,13 +72,12 @@ describe("the errors page", () => {
       "1,234",
       "3",
       "17",
-      expect.stringMatching(/ago|yesterday|just now/),
-      "20 Oct 2026",
     ]);
+    // When it was last and first seen sit under its name.
+    const meta = document.querySelector("tbody tr td p")?.textContent ?? "";
+    expect(meta).toMatch(/^Last seen (.+ ago|yesterday|just now)First seen 20 Oct 2026$/);
     expect(regressed?.[0]).toBe("ReferenceError: process is not definedRegressed");
-    await expect
-      .element(page.getByRole("tab", { name: "Unresolved" }))
-      .toHaveAttribute("aria-selected", "true");
+    await expect.element(statusButton("Unresolved")).toHaveAttribute("aria-pressed", "true");
     await expect.element(sidebarErrors()).toHaveAttribute("data-active");
   });
 
@@ -69,7 +86,7 @@ describe("the errors page", () => {
     const router = renderApp(ERRORS);
     await expect.poll(() => listedRows().length).toBe(2);
 
-    await page.getByRole("tab", { name: "Resolved" }).click();
+    await statusButton("Resolved").click();
     await expect.poll(() => router.state.location.search).toEqual({ status: "resolved" });
     await expect
       .poll(() => lastQuery(api, "/errors"))
@@ -78,11 +95,11 @@ describe("the errors page", () => {
       .poll(() => listedRows().map((row) => row[0]))
       .toEqual(["Error: Network request failedResolved"]);
 
-    await page.getByRole("tab", { name: "All" }).click();
+    await statusButton("All").click();
     await expect.poll(() => listedRows().length).toBe(3);
     expect(lastQuery(api, "/errors")).toEqual({ period: "7d", status: "all" });
 
-    await page.getByRole("tab", { name: "Unresolved" }).click();
+    await statusButton("Unresolved").click();
     await expect.poll(() => router.state.location.search).toEqual({});
   });
 
@@ -105,12 +122,23 @@ describe("the errors page", () => {
     await expect
       .poll(() => lastQuery(api, "/errors"))
       .toEqual({ period: "30d", environment: "staging" });
-    await page.getByRole("link", { name: /^TypeError/ }).click();
-    await expect.poll(() => router.state.location.pathname).toBe(TYPE_ERROR);
-    expect(router.state.location.search).toEqual({ period: "30d", env: "staging" });
+    // The row's link is the error's own page, with the period and environment.
+    await expect
+      .element(errorList().getByRole("link", { name: /^TypeError/ }))
+      .toHaveAttribute("href", `${TYPE_ERROR}?period=30d&env=staging`);
+    // A click selects it beside the list, for the same days and environment.
+    await errorList()
+      .getByRole("link", { name: /^TypeError/ })
+      .click();
+    await expect
+      .poll(() => router.state.location.search)
+      .toEqual({ period: "30d", env: "staging", error: ERROR_FINGERPRINTS.typeError });
     await expect
       .poll(() => lastQuery(api, `/errors/${ERROR_FINGERPRINTS.typeError}`))
       .toEqual({ period: "30d", environment: "staging" });
+    await page.getByRole("link", { name: "Open the error's page" }).click();
+    await expect.poll(() => router.state.location.pathname).toBe(TYPE_ERROR);
+    expect(router.state.location.search).toEqual({ period: "30d", env: "staging" });
   });
 
   test("says how errors are reported while there are none", async () => {
@@ -123,9 +151,9 @@ describe("the errors page", () => {
       .element(page.getByText("window.ottertrail.captureError(error)", { exact: true }))
       .toBeVisible();
 
-    await page.getByRole("tab", { name: "Resolved" }).click();
+    await statusButton("Resolved").click();
     await expect.element(page.getByText("No resolved errors in this period")).toBeVisible();
-    await page.getByRole("tab", { name: "All" }).click();
+    await statusButton("All").click();
     await expect.element(page.getByText("No errors in this period")).toBeVisible();
   });
 
@@ -185,10 +213,13 @@ describe("an error's page", () => {
       .toMatchTextContent(/Sun 15 Nov400/);
 
     const pages = page.getByRole("table", { name: "Pages, most occurrences first" });
-    await expect.element(pages).toMatchTextContent(/\/checkout900\(unknown\)334/);
+    // A row that stacks on a phone carries its figure's label, "Occurrences", before it.
+    await expect
+      .element(pages)
+      .toMatchTextContent(/\/checkout(Occurrences)?900\(unknown\)(Occurrences)?334/);
     await expect
       .element(page.getByRole("table", { name: "Releases, most occurrences first" }))
-      .toMatchTextContent(/1\.4\.21,200\(unknown\)34/);
+      .toMatchTextContent(/1\.4\.2(Occurrences)?1,200\(unknown\)(Occurrences)?34/);
     await expect
       .element(page.getByRole("table", { name: "Browsers, most occurrences first" }))
       .toBeVisible();
@@ -207,7 +238,7 @@ describe("an error's page", () => {
       [...row.querySelectorAll("td")].map((cell) => cell.textContent),
     );
     expect(rows).toEqual([
-      ["16 Nov 2026, 16:00", "ada", "/checkout", "Chrome 131.0", "Windows", "1.4.2", "—No replay"],
+      ["16 Nov 2026, 16:00", "ada", "/checkout", "Chrome 131.0", "Windows", "1.4.2", "No replay"],
       [
         "16 Nov 2026, 15:00Caught",
         "Anonymous",
@@ -215,7 +246,7 @@ describe("an error's page", () => {
         "Firefox 132.0",
         "Linux",
         "(unknown)",
-        "—No replay",
+        "No replay",
       ],
     ]);
   });
@@ -246,10 +277,10 @@ describe("an error's page", () => {
     // Where it happens: routes and services, not browsers.
     await expect
       .element(page.getByRole("table", { name: "Routes, most occurrences first" }))
-      .toMatchTextContent(/\/orders\/\{id\}\/charge1,234/);
+      .toMatchTextContent(/\/orders\/\{id\}\/charge(Occurrences)?1,234/);
     await expect
       .element(page.getByRole("table", { name: "Services, most occurrences first" }))
-      .toMatchTextContent(/payments1,234/);
+      .toMatchTextContent(/payments(Occurrences)?1,234/);
     expect(
       page.getByRole("table", { name: "Browsers, most occurrences first" }).elements(),
     ).toEqual([]);
@@ -274,7 +305,7 @@ describe("an error's page", () => {
       "payments",
       "4bf92f3577b34da6a3ce929d0e0e4736",
       "1.4.2",
-      "—No replay",
+      "No replay",
     ]);
   });
 

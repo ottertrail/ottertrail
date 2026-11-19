@@ -20,13 +20,25 @@ function summaryValue(label: string): string | null | undefined {
   return term?.nextElementSibling?.textContent;
 }
 
-/** Each body row of a table as its cells' text, such as ["Germany", "155", "160"]. */
+/** A cell's text, without the label a stacked breakdown row shows on a phone. */
+function cellText(cell: HTMLTableCellElement): string {
+  const label = cell.querySelector("[data-slot=breakdown-label]")?.textContent ?? "";
+  const text = cell.textContent ?? "";
+  return text.startsWith(label) ? text.slice(label.length) : text;
+}
+
+/**
+ * Each body row of a table as its cells' text, such as ["Germany", "155",
+ * "160"], leaving out the cell that only holds a row's bar.
+ */
 function tableRows(caption: string): string[][] {
   const table = [...document.querySelectorAll("table")].find(
     (item) => item.caption?.textContent === caption,
   );
   return [...(table?.tBodies[0]?.rows ?? [])].map((row) =>
-    [...row.cells].map((cell) => cell.textContent ?? ""),
+    [...row.cells]
+      .filter((cell) => cell.querySelector("[data-slot=breakdown-bar]") === null)
+      .map(cellText),
   );
 }
 
@@ -70,16 +82,21 @@ describe("the analytics page", () => {
     expect(tableRows("Custom events, most visitors first")).toEqual([["signup", "127", "140"]]);
   });
 
-  test("switches between the lists of a card", async () => {
+  test("switches between the lists of a breakdown", async () => {
     installFakeApi();
     renderApp(ANALYTICS);
 
-    await page.getByRole("tab", { name: "Entry" }).click();
+    // One table whose rows change: toggle buttons, not tabs.
+    const entry = page
+      .getByRole("group", { name: "Which pages to list" })
+      .getByRole("button", { name: "Entry" });
+    await entry.click();
+    await expect.element(entry).toHaveAttribute("aria-pressed", "true");
     expect(tableRows("Entry, most visitors first")).toEqual([
       ["/pricing", "210", "220"],
       ["/", "190", "200"],
     ]);
-    await page.getByRole("tab", { name: "Campaigns" }).click();
+    await page.getByRole("button", { name: "Campaigns" }).click();
     expect(tableRows("Campaigns, most visitors first")[0]).toEqual(["No campaign", "700", "760"]);
   });
 
@@ -173,7 +190,7 @@ describe("comparison with the previous period", () => {
     await expect.poll(note).toContain("Changes compare with 3 to 9 Nov 2026.");
   });
 
-  test("shows no changes when nothing came before", async () => {
+  test("shows each figure as new when nothing came before", async () => {
     const week = analyticsFixture();
     installFakeApi({
       analytics: () => ({ ...week, previous: { ...emptyAnalytics().previous } }),
@@ -181,8 +198,12 @@ describe("comparison with the previous period", () => {
     renderApp(ANALYTICS);
     await expect.poll(() => summaryValue("Visitors")).toBe("765");
 
+    // No percentage from nothing: the change rule (lib/change.ts) says "New".
     for (const label of ["Visitors", "Pageviews", "Bounce rate", "Visit duration"]) {
-      expect({ label, change: changeOf(label) }).toEqual({ label, change: null });
+      expect({ label, change: changeOf(label) }).toEqual({
+        label,
+        change: { shown: "New", heard: "New: none in the period before" },
+      });
     }
     expect(note()).toContain("No visits in 3 to 9 Nov 2026 to compare with.");
   });

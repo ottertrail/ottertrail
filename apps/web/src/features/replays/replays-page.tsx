@@ -263,6 +263,7 @@ export function ReplaysPage({
                       variant="outline"
                       to="/projects/$projectId/settings"
                       params={{ projectId }}
+                      search={{ tab: "replay" }}
                     >
                       Open the project&apos;s settings
                     </ButtonLink>

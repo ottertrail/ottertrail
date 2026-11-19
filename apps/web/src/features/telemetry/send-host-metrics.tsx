@@ -126,6 +126,7 @@ export function SendHostMetrics({
             className="self-center"
             to="/projects/$projectId/settings"
             params={{ projectId }}
+            search={{ tab: "server" }}
           >
             Project settings
           </ButtonLink>

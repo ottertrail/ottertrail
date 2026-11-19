@@ -1,4 +1,5 @@
 import { Link } from "@tanstack/react-router";
+import { PlayIcon } from "lucide-react";
 import * as React from "react";
 
 import { Button } from "@/components/ui/button";
@@ -54,8 +55,11 @@ function ContextLines({
             const here = number === original.line;
             const cells = (
               <>
-                <span aria-hidden="true" className="w-5 text-center text-warning select-none">
-                  {here ? "▶" : ""}
+                <span
+                  aria-hidden="true"
+                  className="flex w-5 items-center justify-center text-warning select-none"
+                >
+                  {here && <PlayIcon className="size-2.5 fill-current" />}
                 </span>
                 <span className="w-10 pr-3 text-right text-ink-subtle tabular-nums select-none">
                   {number}
@@ -240,7 +244,7 @@ function SourceMapNote({
               <Link
                 to="/projects/$projectId/settings"
                 params={{ projectId }}
-                hash="source-maps"
+                search={{ tab: "source-maps" }}
                 className="text-link hover:underline"
               >
                 Source maps settings
@@ -315,16 +319,19 @@ export function StackCard({
   stack,
   frames,
   sourceMaps,
+  className,
 }: {
   projectId: string;
   source: ErrorSource;
   stack: string | null;
   frames: ResolvedFrame[] | null;
   sourceMaps: StackSourceMaps | null;
+  /** Such as a flat section's look inside a workbench. */
+  className?: string;
 }) {
   const mapped = frames?.some((frame) => frame.original !== null) === true ? frames : null;
   return (
-    <Card>
+    <Card className={className}>
       <CardHeader>
         <CardTitle>
           <h3>Stack trace</h3>

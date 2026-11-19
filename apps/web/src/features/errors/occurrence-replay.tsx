@@ -122,12 +122,5 @@ export function OccurrenceReplayCell({
       </span>
     );
   }
-  return (
-    <>
-      <span aria-hidden="true" className="text-ink-subtle">
-        —
-      </span>
-      <span className="sr-only">No replay</span>
-    </>
-  );
+  return <span className="text-ink-subtle">No replay</span>;
 }

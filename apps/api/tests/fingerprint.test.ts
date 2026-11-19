@@ -9,6 +9,21 @@ import {
   parseStack,
 } from "../src/errors/fingerprint.ts";
 
+/**
+ * The fastest of a few timed runs of work, in milliseconds. A busy machine
+ * (the full test suite runs files in parallel) can slow any one run, but not
+ * every run; slow parsing is slow on every run.
+ */
+function fastestMs(work: () => void, runs = 5): number {
+  let fastest = Number.POSITIVE_INFINITY;
+  for (let run = 0; run < runs; run += 1) {
+    const started = performance.now();
+    work();
+    fastest = Math.min(fastest, performance.now() - started);
+  }
+  return fastest;
+}
+
 const CHROME = `TypeError: Cannot read properties of undefined (reading 'total')
     at renderCart (https://shop.example/assets/index-BfK3x9A2.js:1:2345)
     at async loadCart (https://shop.example/assets/index-BfK3x9A2.js:1:999)
@@ -92,9 +107,7 @@ describe("parseStack", () => {
     ["at https://a.example/x" + ":1".repeat(7990), "endless line numbers"],
     [("at f (https://a.example/" + "a".repeat(990) + ")\n").repeat(16), "long frames"],
   ])("reads a hostile 16,000-character stack quickly: %#, %s", (stack, _label) => {
-    const started = performance.now();
-    fingerprint({ type: "Error", message: "x", stack });
-    expect(performance.now() - started).toBeLessThan(20);
+    expect(fastestMs(() => fingerprint({ type: "Error", message: "x", stack }))).toBeLessThan(20);
   });
 
   test.each([
@@ -107,11 +120,12 @@ describe("parseStack", () => {
   ])("reads a hostile server stack in linear time: %#, %s", (stack, _label) => {
     // A hundred in a row: work that grows with the square of a line's
     // length takes the better part of a second, linear work milliseconds.
-    const started = performance.now();
-    for (let i = 0; i < 100; i += 1) {
-      fingerprint({ type: "Error", message: "x", stack }, { server: i % 2 === 0 });
-    }
-    expect(performance.now() - started).toBeLessThan(200);
+    const hundred = () => {
+      for (let i = 0; i < 100; i += 1) {
+        fingerprint({ type: "Error", message: "x", stack }, { server: i % 2 === 0 });
+      }
+    };
+    expect(fastestMs(hundred)).toBeLessThan(200);
   });
 
   test("a server's stack is read in the server formats first", () => {
