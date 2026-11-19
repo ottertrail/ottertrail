@@ -282,7 +282,7 @@ Behind a proxy (Cloudflare, Caddy), every request seems to come from the proxy's
 
 ### Spam
 
-Anyone can copy a page's public key and send events, so some arrive that no person caused: runaway trackers, scripts, and referrer spam (visits that only exist to put a site's name in a report's referrers). Five things keep them out or take them away again. Each answers 202, so a sender never learns it was caught and has no reason to retry, and counts what it caught in the answer. None of them stores anything about the sender. Code: `apps/api/src/collection/`, `apps/api/src/projects/blocked-addresses.ts` and `blocked-referrers.ts`, `apps/api/src/enrichment/referrer-spam.ts`, `apps/api/src/spam/`.
+Anyone can copy a page's public key and send events, so some arrive that no person caused: runaway trackers, scripts, and referrer spam (visits that only exist to put a site's name in a report's referrers). Five things keep them out or take them away again. Those that turn events away at collection answer 202, so a sender never learns it was caught and has no reason to retry, and count what they caught in the answer. The limit on events per client address is the exception: it answers 429 with `Retry-After`, as the other rate limits do, and the tracker sends the events again then. None of them stores anything about the sender. Code: `apps/api/src/collection/`, `apps/api/src/projects/blocked-addresses.ts` and `blocked-referrers.ts`, `apps/api/src/enrichment/referrer-spam.ts`, `apps/api/src/spam/`.
 
 #### Events per client address
 
