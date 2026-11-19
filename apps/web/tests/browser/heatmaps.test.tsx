@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "vite-plus/test";
+import { afterEach, describe, expect, test, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser/context";
 
 import type { Heatmap } from "../../src/lib/heatmaps-api.ts";
@@ -12,6 +12,7 @@ import {
   installFakeApi,
   json,
   memberAccess,
+  OVERLAY_TOKEN,
   PROJECT,
 } from "./fake-api.ts";
 import { renderApp } from "./render.tsx";
@@ -291,16 +292,6 @@ describe("the heatmaps page", () => {
     await expect
       .element(page.getByText("No rage clicks on this page in this period."))
       .toBeVisible();
-  });
-
-  test("offers the overlay on the live site as planned, disabled", async () => {
-    installFakeApi();
-    renderApp(HEATMAPS);
-    const open = page.getByRole("button", { name: "Open on your site" });
-    await expect.element(open).toBeVisible();
-    await expect.element(open).toHaveAttribute("aria-disabled", "true");
-    await expect.element(open).toHaveAccessibleDescription(/^Planned/);
-    await expect.element(page.getByText(/^Planned/)).toBeVisible();
   });
 
   test("filters by device, in the address and both requests", async () => {
@@ -897,5 +888,159 @@ describe("the Heatmaps setting on the Install tab", () => {
     await expect
       .element(settingsPanel().getByText('data-ottertrail-name="hero-cta"', { exact: true }))
       .toBeVisible();
+  });
+});
+
+/** The page's heatmap for a project without allowed hostnames. */
+const noHostnames = (query: URLSearchParams) => ({ ...fakeHeatmap(query), siteHostnames: [] });
+
+/** A window the dashboard opened, as window.open returns it: where it was sent, and whether closed. */
+function fakePopup() {
+  const popup = {
+    opener: {} as unknown,
+    location: { href: "" },
+    closed: false,
+    close: () => undefined,
+  };
+  popup.close = () => {
+    popup.closed = true;
+  };
+  return popup;
+}
+
+/** window.open stubbed: each call's features, and the window it returns (null when blocked). */
+function stubOpen(popup: ReturnType<typeof fakePopup> | null = fakePopup()) {
+  const open = vi.spyOn(window, "open").mockImplementation(() => popup as unknown as Window);
+  return { open, popup };
+}
+
+const overlayLinkRequests = (api: FakeApi) =>
+  api.requests.filter((item) => item.endsWith("/heatmaps/overlay-link"));
+
+describe("open on your site", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  test("makes a link only when pressed, and opens the page with it in a window of the device's width", async () => {
+    const api = installFakeApi();
+    const { open, popup } = stubOpen();
+    renderApp(`${HEATMAPS}?path=%2Fpricing&device=mobile`);
+    await expect.element(ready()).toBeVisible();
+    await expect
+      .element(page.getByText(/only you can see\. The link works once, within 5 minutes\./))
+      .toBeVisible();
+    await expect.element(page.getByText(/Browsers may ignore the window size/)).toBeVisible();
+    // The width follows the device shown.
+    await expect
+      .element(
+        page.getByRole("group", { name: "Window width" }).getByRole("button", { name: "Phone" }),
+      )
+      .toHaveAttribute("aria-pressed", "true");
+    expect(overlayLinkRequests(api)).toEqual([]);
+
+    await page.getByRole("button", { name: "Open on your site" }).click();
+    await expect
+      .poll(() => popup?.location.href)
+      .toBe(`https://example.com/pricing#ottertrail-heatmap=${OVERLAY_TOKEN}`);
+    expect(open).toHaveBeenCalledTimes(1);
+    expect(open.mock.calls[0]?.[2]).toMatch(/^popup=yes,width=390,height=\d+$/);
+    // The site's page cannot reach back to the dashboard.
+    expect(popup?.opener).toBeNull();
+    expect(overlayLinkRequests(api)).toHaveLength(1);
+
+    // Another width, chosen: the next window has it, with a new link.
+    await page.getByRole("button", { name: "Desktop" }).click();
+    await page.getByRole("button", { name: "Open on your site" }).click();
+    await expect.poll(() => overlayLinkRequests(api)).toHaveLength(2);
+    expect(open.mock.calls[1]?.[2]).toMatch(/^popup=yes,width=1280,/);
+  });
+
+  test("with several hostnames, the reader chooses one; on localhost, plain http and a port", async () => {
+    installFakeApi({
+      heatmap: (query) => ({
+        ...fakeHeatmap(query),
+        siteHostnames: ["www.example.com", "shop.example.com", "localhost"],
+      }),
+    });
+    const { popup } = stubOpen();
+    renderApp(`${HEATMAPS}?path=%2Fpricing`);
+    await expect.element(ready()).toBeVisible();
+    const site = page.getByRole("combobox", { name: "Site" });
+    await expect.element(site).toMatchTextContent(/www\.example\.com/);
+    await site.click();
+    expect(
+      page
+        .getByRole("option")
+        .elements()
+        .map((item) => item.textContent),
+    ).toEqual(["www.example.com", "shop.example.com", "localhost"]);
+    await page.getByRole("option", { name: "shop.example.com" }).click();
+    await page.getByRole("button", { name: "Open on your site" }).click();
+    await expect
+      .poll(() => popup?.location.href)
+      .toBe(`https://shop.example.com/pricing#ottertrail-heatmap=${OVERLAY_TOKEN}`);
+
+    await site.click();
+    await page.getByRole("option", { name: "localhost" }).click();
+    const port = page.getByRole("textbox", { name: "Port" });
+    await port.fill("99999");
+    await expect.element(page.getByRole("button", { name: "Open on your site" })).toBeDisabled();
+    await port.fill("3000");
+    await expect.element(page.getByText(/^Opens localhost:3000\/pricing with/)).toBeVisible();
+    await page.getByRole("button", { name: "Open on your site" }).click();
+    await expect
+      .poll(() => popup?.location.href)
+      .toBe(`http://localhost:3000/pricing#ottertrail-heatmap=${OVERLAY_TOKEN}`);
+  });
+
+  test("without a hostname, says what to add and where; only those who may change settings get the link", async () => {
+    installFakeApi({ heatmap: noHostnames });
+    renderApp(HEATMAPS);
+    await expect.element(ready()).toBeVisible();
+    await expect
+      .element(page.getByRole("button", { name: "Open on your site" }))
+      .not.toBeInTheDocument();
+    await expect.element(page.getByText(/the project needs your site's hostname/)).toBeVisible();
+    const add = page.getByRole("link", { name: "Add your site's hostname" });
+    await expect.element(add).toHaveAttribute("href", `${SETTINGS}?tab=general`);
+  });
+
+  test("without a hostname, a member is told who adds it", async () => {
+    installFakeApi({ heatmap: noHostnames, access: memberAccess({ web_analytics: "view" }) });
+    renderApp(HEATMAPS);
+    await expect.element(ready()).toBeVisible();
+    await expect
+      .element(page.getByText(/An owner or admin adds it in the project's settings\./))
+      .toBeVisible();
+    await expect
+      .element(page.getByRole("link", { name: "Add your site's hostname" }))
+      .not.toBeInTheDocument();
+  });
+
+  test("a blocked window makes no link; a link that fails closes the window and says why", async () => {
+    const api = installFakeApi();
+    stubOpen(null);
+    renderApp(HEATMAPS);
+    await expect.element(ready()).toBeVisible();
+    await page.getByRole("button", { name: "Open on your site" }).click();
+    await expect.element(page.getByText(/blocked the new window/)).toHaveAttribute("role", "alert");
+    expect(overlayLinkRequests(api)).toEqual([]);
+
+    vi.restoreAllMocks();
+    api.overlayLink = () =>
+      new Response(
+        JSON.stringify({ error: "forbidden", message: "You don't have access to this." }),
+        {
+          status: 403,
+        },
+      );
+    const { popup } = stubOpen();
+    await page.getByRole("button", { name: "Open on your site" }).click();
+    await expect
+      .element(page.getByText("You don't have access to this."))
+      .toHaveAttribute("role", "alert");
+    expect(popup?.closed).toBe(true);
+    expect(popup?.location.href).toBe("");
   });
 });

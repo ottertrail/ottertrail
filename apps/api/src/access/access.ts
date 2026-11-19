@@ -13,6 +13,7 @@ import {
   reaches,
   type Role,
 } from "./areas.ts";
+import { isOverlayToken, overlaySessionUser } from "./overlay-tokens.ts";
 
 /** What one dashboard user may reach, read from the database on each request. */
 export interface UserAccess {
@@ -59,7 +60,9 @@ export type InstanceNeed = Permission | "signed_in";
 /** What a route declares, read by the test that walks every route (tests/access-routes.test.ts). */
 export type AccessDeclaration =
   | { scope: "project"; need: ProjectNeed }
-  | { scope: "instance"; need: InstanceNeed };
+  | { scope: "instance"; need: InstanceNeed }
+  /** A heatmap overlay read: an overlay session token in place of the cookie, for one project. */
+  | { scope: "overlay"; need: ProjectNeed };
 
 type Guard = (request: FastifyRequest, reply: FastifyReply) => Promise<unknown>;
 
@@ -148,16 +151,58 @@ function declare(guard: Guard, declaration: AccessDeclaration): Guard {
   return guard;
 }
 
+/** The outcome of checking a user against one project: their access, or the answer that refuses it. */
+export type ProjectCheck =
+  | { ok: true; access: ProjectAccess }
+  | {
+      ok: false;
+      status: 401 | 403 | 404;
+      body: typeof UNAUTHORIZED | typeof NOT_FOUND | typeof FORBIDDEN;
+    };
+
+/**
+ * What `userId` may do with `projectId` for `need`, read from the database
+ * now: the one decision behind requireProjectAccess and
+ * requireOverlayAccess, and the overlay's exchange.
+ *
+ * - The user no longer exists: 401.
+ * - The project does not exist, or is not one the user may reach: 404,
+ *   the same answer for both, so a member cannot tell the two apart.
+ * - The project is reachable but the need is an area or permission the
+ *   user lacks: 403.
+ */
+export async function checkProjectAccess(
+  db: Kysely<Database>,
+  userId: string,
+  projectId: string,
+  need: ProjectNeed,
+): Promise<ProjectCheck> {
+  const access = await readUserAccess(db, userId);
+  if (access === null) {
+    return { ok: false, status: 401, body: UNAUTHORIZED };
+  }
+  const project = await db
+    .selectFrom("projects")
+    .select("id")
+    .where("id", "=", projectId)
+    .executeTakeFirst();
+  if (project === undefined || !canReachProject(access, project.id)) {
+    return { ok: false, status: 404, body: NOT_FOUND };
+  }
+  if (!meets(access, need)) {
+    return { ok: false, status: 403, body: FORBIDDEN };
+  }
+  const { timeZone } = await readInstanceSettings(db);
+  return { ok: true, access: { projectId: project.id, timeZone, user: access } };
+}
+
 /**
  * The one check every route under /projects/:id runs, after requireSession.
  * Each route says what it needs. The user's role and grants are read from
  * the database on every request, so a change applies on the next one.
  *
  * - Not signed in: 401.
- * - The project does not exist, or is not one the user may reach: 404,
- *   the same answer for both, so a member cannot tell the two apart.
- * - The project is reachable but the route needs an area or permission
- *   the user lacks: 403.
+ * - Otherwise as checkProjectAccess answers.
  *
  * Fastify validates the route's params before this runs, so `id` is a UUID.
  */
@@ -172,29 +217,80 @@ export function requireProjectAccess(db: Kysely<Database>, need: ProjectNeed): G
         // A route registered without requireSession first: refuse rather than guess.
         return reply.code(401).send(UNAUTHORIZED);
       }
-      const access = await readUserAccess(db, user.id);
-      if (access === null) {
-        return reply.code(401).send(UNAUTHORIZED);
+      const checked = await checkProjectAccess(db, user.id, projectId, need);
+      if (!checked.ok) {
+        return reply.code(checked.status).send(checked.body);
       }
-      const project = await db
-        .selectFrom("projects")
-        .select("id")
-        .where("id", "=", projectId)
-        .executeTakeFirst();
-      if (project === undefined || !canReachProject(access, project.id)) {
-        return reply.code(404).send(NOT_FOUND);
-      }
-      if (!meets(access, need)) {
-        return reply.code(403).send(FORBIDDEN);
-      }
-      const { timeZone } = await readInstanceSettings(db);
-      request.userAccess = access;
-      request.projectAccess = { projectId: project.id, timeZone, user: access };
+      request.userAccess = checked.access.user;
+      request.projectAccess = checked.access;
       // Nothing sent: Fastify goes on to the route handler.
       return undefined;
     },
     { scope: "project", need },
   );
+}
+
+/** The answer to a heatmap overlay read without a live session. */
+export const OVERLAY_SESSION_ENDED = {
+  error: "session_expired",
+  message: "This heatmap session has ended. Open it again from the dashboard.",
+} as const;
+
+/**
+ * The check on routes the heatmap overlay reads from a customer's site
+ * (heatmaps/overlay-routes.ts), which take no cookie: an overlay session
+ * token as `Authorization: Bearer <token>`, for the project in the route's
+ * `projectId`. The token only names a user (access/overlay-tokens.ts); what
+ * that user may do is decided as for the dashboard, by checkProjectAccess,
+ * on every request, so a removed member, a revoked grant, or a deleted
+ * project fails on the next read.
+ *
+ * - No session, a session for another project, or one that has ended: 401
+ *   `session_expired`.
+ * - Otherwise as checkProjectAccess answers.
+ *
+ * The header's shape is checked before this runs (the routes refuse a
+ * malformed one before any database work).
+ */
+export function requireOverlayAccess(
+  db: Kysely<Database>,
+  need: ProjectNeed,
+  { now = () => new Date() }: { now?: () => Date } = {},
+): Guard {
+  return declare(
+    async (request, reply) => {
+      const { params } = request;
+      const projectId =
+        typeof params === "object" && params !== null && "projectId" in params
+          ? params.projectId
+          : undefined;
+      const token = bearerToken(request.headers.authorization);
+      if (token === null || typeof projectId !== "string") {
+        return reply.code(401).send(OVERLAY_SESSION_ENDED);
+      }
+      const userId = await overlaySessionUser(db, token, projectId, now());
+      if (userId === null) {
+        return reply.code(401).send(OVERLAY_SESSION_ENDED);
+      }
+      const checked = await checkProjectAccess(db, userId, projectId, need);
+      if (!checked.ok) {
+        return reply
+          .code(checked.status)
+          .send(checked.status === 401 ? OVERLAY_SESSION_ENDED : checked.body);
+      }
+      request.userAccess = checked.access.user;
+      request.projectAccess = checked.access;
+      return undefined;
+    },
+    { scope: "overlay", need },
+  );
+}
+
+/** The token of an `Authorization: Bearer <token>` header with an overlay token's shape, or null. */
+export function bearerToken(header: string | undefined): string | null {
+  if (header === undefined || !header.startsWith("Bearer ")) return null;
+  const token = header.slice("Bearer ".length);
+  return isOverlayToken(token) ? token : null;
 }
 
 /**

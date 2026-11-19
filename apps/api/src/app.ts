@@ -22,6 +22,7 @@ import { errorRoutes } from "./errors/routes.ts";
 import { savedFunnelRoutes } from "./funnels/routes.ts";
 import { goalRoutes } from "./goals/routes.ts";
 import { heatmapRoutes } from "./heatmaps/dashboard-routes.ts";
+import { heatmapOverlayRoutes } from "./heatmaps/overlay-routes.ts";
 import { heatmapCollectionRoutes } from "./heatmaps/routes.ts";
 import { userRoutes } from "./identities/routes.ts";
 import { channelRoutes } from "./notifications/routes.ts";
@@ -105,13 +106,16 @@ export interface AppOptions extends Omit<FastifyServerOptions, "logger"> {
   };
   /**
    * Heatmaps' collection limits (heatmaps/routes.ts), which tests lower.
-   * Collected with the events' ClickHouse client.
+   * Collected with the events' ClickHouse client. And the overlay's limits
+   * per client address (heatmaps/overlay-routes.ts).
    */
   heatmaps?: {
     ipLimit?: RateLimit;
     ipRecordLimit?: RateLimit;
     projectLimit?: RateLimit;
     instanceLimit?: RateLimit;
+    overlayExchangeLimit?: RateLimit;
+    overlayReadLimit?: RateLimit;
   };
   /**
    * OTLP traces, logs, and metrics (docs/telemetry.md), stored in
@@ -161,6 +165,15 @@ export function requestLogFields(request: { method: string; url: string }) {
     .replace(/(\/users\/)[^/?#]+/, "$1…")
     .replace(/([?&]search=)[^&#]*/, "$1…");
   return { method: request.method, url };
+}
+
+/** Heatmaps' collection limits, without the overlay's. */
+function collectionLimitsOf({
+  overlayExchangeLimit: _exchange,
+  overlayReadLimit: _read,
+  ...limits
+}: NonNullable<AppOptions["heatmaps"]>) {
+  return limits;
 }
 
 export function buildApp({
@@ -215,7 +228,7 @@ export function buildApp({
       prefix: "/api",
       clickhouse: collectionClickHouse,
       projects: projectKeys,
-      ...heatmaps,
+      ...collectionLimitsOf(heatmaps),
       ...(collection.isDataCenter === undefined ? {} : { isDataCenter: collection.isDataCenter }),
       ...(collection.now === undefined ? {} : { now: collection.now }),
     });
@@ -382,6 +395,18 @@ export function buildApp({
       clickhouse: dashboard.clickhouse,
       auth: dashboard.auth,
       limiter,
+      trustedOrigins: dashboard.trustedOrigins,
+      ...(dashboard.now === undefined ? {} : { now: dashboard.now }),
+    });
+    app.register(heatmapOverlayRoutes, {
+      prefix: "/api",
+      db,
+      clickhouse: dashboard.clickhouse,
+      limiter,
+      ...(heatmaps.overlayExchangeLimit === undefined
+        ? {}
+        : { exchangeLimit: heatmaps.overlayExchangeLimit }),
+      ...(heatmaps.overlayReadLimit === undefined ? {} : { readLimit: heatmaps.overlayReadLimit }),
       ...(dashboard.now === undefined ? {} : { now: dashboard.now }),
     });
     app.register(overviewRoutes, {

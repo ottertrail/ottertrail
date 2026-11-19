@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
-import { ExternalLinkIcon, MousePointerClickIcon, OctagonAlertIcon } from "lucide-react";
+import { MousePointerClickIcon, OctagonAlertIcon } from "lucide-react";
 import * as React from "react";
 
 import { BreakdownTable } from "@/components/breakdown-table";
@@ -54,6 +54,7 @@ import { ReportFilterBar } from "../errors/range-controls";
 import { dayIn } from "../overview/format";
 import { NoSuchProject } from "../projects/no-such-project";
 import { elementName, elementTitle, formatPosition, formatShare } from "./format";
+import { OpenOnSite } from "./open-on-site";
 import { ScrollReachChart, ScrollReachTable } from "./scroll-reach-chart";
 import { type DeviceChoice, type HeatmapsSearch, heatmapsSearchOf } from "./search";
 
@@ -355,25 +356,6 @@ function NoPageData({
   );
 }
 
-/** The live-site overlay, phase 2: shown, disabled, and said to be planned. */
-function OpenOnSite() {
-  const noteId = React.useId();
-  return (
-    <div className="flex items-center gap-2">
-      <Button variant="outline" size="sm" disabled focusableWhenDisabled aria-describedby={noteId}>
-        <ExternalLinkIcon aria-hidden="true" />
-        Open on your site
-      </Button>
-      <StatusBadge tone="neutral" id={noteId}>
-        Planned
-        <span className="sr-only">
-          : a later version shows these clicks over the page on your live site.
-        </span>
-      </StatusBadge>
-    </div>
-  );
-}
-
 /** Shaped like the report: the strip, the chart, and two tables side by side. */
 function Loading() {
   return (
@@ -423,11 +405,16 @@ function Report({ heatmap, projectId }: { heatmap: Heatmap; projectId: string })
   ];
   return (
     <>
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <h2 className="min-w-0 truncate font-mono text-sm text-ink" title={heatmap.path}>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <h2 className="min-w-0 truncate pt-1 font-mono text-sm text-ink" title={heatmap.path}>
           {heatmap.path}
         </h2>
-        <OpenOnSite />
+        <OpenOnSite
+          projectId={projectId}
+          path={heatmap.path}
+          hostnames={heatmap.siteHostnames}
+          device={heatmap.device ?? undefined}
+        />
       </div>
       {!heatmap.heatmaps && (
         <Alert>
@@ -575,9 +562,9 @@ function Report({ heatmap, projectId }: { heatmap: Heatmap; projectId: string })
 
 /**
  * Where visitors click on a page and how far they scroll, for a period, an
- * environment, a page, and a class of device. Heatmaps phase 1: figures,
- * the scroll reach, and the most-clicked elements; drawing them over the
- * live page is planned.
+ * environment, a page, and a class of device: figures, the scroll reach,
+ * and the most-clicked elements, and "Open on your site", which draws them
+ * over the live page.
  */
 export function HeatmapsPage({
   projectId,

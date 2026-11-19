@@ -350,7 +350,7 @@ A delete takes at most 10,000 visits; past that it refuses, deleting nothing (40
 
 ## 3. The tracker
 
-`packages/tracker` builds `dist/tracker.js`, the script a site adds to its pages: about 10.9 KB, 4.6 KB gzipped. It loads `dist/v.js` (3.7 KB gzipped) from beside itself to measure [Web Vitals](#web-vitals), `dist/r.js` (29 KB gzipped) to record [session replays](session-replay.md) when the page asks for them, and `dist/h.js` (3.4 KB gzipped) for [heatmaps](#heatmaps) when the page asks for them.
+`packages/tracker` builds `dist/tracker.js`, the script a site adds to its pages: about 11.4 KB, 4.8 KB gzipped. It loads `dist/v.js` (3.7 KB gzipped) from beside itself to measure [Web Vitals](#web-vitals), `dist/r.js` (29 KB gzipped) to record [session replays](session-replay.md) when the page asks for them, `dist/h.js` (3.4 KB gzipped) for [heatmaps](#heatmaps) when the page asks for them, and `dist/o.js` (6.2 KB gzipped) on a page opened from the dashboard to show its [heatmap overlay](#the-overlay-on-your-site).
 
 ```html
 <script
@@ -863,7 +863,7 @@ Reports that only count events (top pages, custom events) read the range's event
 
 ## Heatmaps
 
-Where visitors click on a page, and how far down they read: click maps, scroll depth, and rage clicks, for one page, period, environment, and device class at a time. Phase 1 (built): capture in the browser, storage, and the Heatmaps screen, which shows the figures without a picture of the page ([dashboard](dashboard.md)). Phase 2 (planned): the same data drawn over the owner's live page. Mouse movement is not recorded: the cursor follows the eyes too loosely to say what people look at, and touch screens have none. Code: `packages/tracker/src/heatmaps.ts` and `heatmap-capture.ts` (h.js), `apps/api/src/heatmaps/`.
+Where visitors click on a page, and how far down they read: click maps, scroll depth, and rage clicks, for one page, period, environment, and device class at a time. Built: capture in the browser, storage, the Heatmaps screen, which shows the figures without a picture of the page ([dashboard](dashboard.md)), and [the overlay on your site](#the-overlay-on-your-site), which draws the same data over the owner's live page. Mouse movement is not recorded: the cursor follows the eyes too loosely to say what people look at, and touch screens have none. Code: `packages/tracker/src/heatmaps.ts` and `heatmap-capture.ts` (h.js), `apps/api/src/heatmaps/`.
 
 ### Turning it on
 
@@ -986,10 +986,53 @@ Two routes in the Web analytics area at view ([access](access.md)): `GET /api/pr
 - **rage-click hotspots** (20 at most): the elements with the most rage clicks, and where in them;
 - the page's pageviews on each device class.
 
+Both also answer `siteHostnames`, the project's allowed hostnames, where "Open on your site" can open the page: a member with Web analytics sees them here, though not in the project's settings.
+
 A range wholly before the 90 days kept answers empty, with `clipped`; a range reaching into them is cut to their first day. Every query filters by project first, then the range, the environment, and the page, passes every value as a parameter, and has a `LIMIT` or returns one row. One page's report reads with `FINAL`; the page list, which reads every page of the project over up to 90 days, reads without it, and counts distinct record IDs, so a scroll row sent again or a retried record counts once; each day's parts merge once they are an hour old. They run with the dashboard's limits (15 seconds, 300 MB) within its shared limit of queries at once.
+
+### The overlay on your site
+
+"Open on your site" on the Heatmaps screen opens the page on the site itself, in a new window, with the heatmap drawn over it for the person who pressed it ([dashboard](dashboard.md#heatmaps)). Nothing is stored about how the page looks: the overlay draws on the page as it is now, with its real text, in the owner's own signed-in view. Code: `packages/tracker/src/overlay.ts` and `overlay-view.ts` (o.js), `heatmap-path.ts` (element keys, shared with capture), `apps/api/src/heatmaps/overlay-routes.ts`, `apps/api/src/access/overlay-tokens.ts`.
+
+**How it opens:**
+
+1. The dashboard asks for a link token (`POST /api/projects/:id/heatmaps/overlay-link`, Web analytics at view, from the dashboard's own origin), only when the button is pressed, and opens `https://<hostname>/<path>#ottertrail-heatmap=<token>`.
+2. The tracker on the page sees the fragment as it starts. It removes it with `history.replaceState` (the rest of the address stays), sends nothing at all for this page load (no pageviews, custom events, errors, Web Vitals, replays, or heatmap clicks: the owner's look is not counted), makes `window.ottertrail`'s methods do nothing, and loads `o.js` from beside itself with its `nonce`, as it loads `v.js`. A second copy of the tracker on the page does nothing either.
+3. `o.js` exchanges the link for a session token (`POST /api/heatmap-overlay/session`), kept in memory only, and reads the page's heatmap with it (`GET /api/heatmap-overlay/:projectId/heatmap?path=…&device=…&period=…`, the session as `Authorization: Bearer`). It reads the environment of the tracker's tag (`data-environment`), production without one.
+4. It draws on a canvas in a fixed layer over the whole window, inside a closed shadow root, so the page's styles and scripts cannot reach it. The layer lets every click and scroll through (`pointer-events: none`); only the panel takes clicks.
+
+**What it draws:**
+
+- **Clicks**: each element the API names is found on the page by its key (its structural path and name, as capture wrote it; `resolve()` in `heatmap-path.ts` accepts an element only when `describe()`, the function capture uses, gives it the same key, so capture and lookup cannot drift). Over each element found, a thin outline, its clicks (and rage clicks) as a label, and a blob for each cell of an 8 by 8 grid of the element's box that had clicks: larger and hotter for more. The positions are the grid's cells, not single clicks.
+- **Scroll reach**: a band down the right edge of the window, each 5% of the page's height shaded by the share of pageviews that reached it, with the share written every 25%.
+- **The panel** (keyboard reachable, with a visible focus ring; × closes it and removes the overlay, as Escape does inside the panel): the page's path, the period (7, 30, or 90 days), Desktop / Tablet / Mobile (at first the class of the window's width: under 768 pixels mobile, under 1024 tablet, else desktop), the totals (pageviews, clicks, rage clicks), and "Not on this page": the elements the page does not have, with their clicks. A note says that only you see the overlay and the visit is not counted.
+
+It draws again, at most once a frame, when anything scrolls or the window or page resizes, and finds the elements again, at most every 300 ms, when the page's DOM changes. After an in-app navigation to another path it draws nothing and says which page the heatmap is for. Motion: nothing animates; the panel's fade is only for those who have not asked for reduced motion.
+
+**Its states:** loading; the link expired or was already used ("Open it again from the dashboard"); no access (the account cannot view this project's heatmaps, or lost the right); the session ended after 30 minutes; nothing recorded for this page on this device and period; and a failure, with Retry. Retry after a failed exchange sends the link again only when no answer came at all.
+
+**Security:**
+
+- **Tokens.** The link and the session are each 32 random bytes, kept only as their SHA-256 hash, as invitations are, bound to the user, the project, and the scope `heatmap:read` ([access](access.md#heatmap-overlay-tokens)). The link works once and for 5 minutes; the session lasts 30 minutes from the exchange. Every read checks the user's role and grants again, as the dashboard's routes do, so a removed member, a revoked grant, or a deleted project fails on the next read.
+- **The fragment** is never sent to a server, and browsers strip it from `Referer`. The tracker removes it from the address and the history entry as it starts. A script of the page that runs before the tracker (which is deferred) can read it: single use limits that, since a stolen link either fails because the owner used it first, or makes the owner's overlay fail visibly.
+- **CORS.** The exchange and the reads answer, and their preflight allows, only pages on the project's allowed hostnames, the same rule collection uses (any port); never with credentials, and no cookie is read or set. Every answer is `Cache-Control: no-store`. The `Origin` check is a browser's rule: a script outside a browser can claim any origin.
+- **What a leaked link exposes**, at worst: one project's heatmap aggregates (clicks per element in the grid, scroll reach, totals) for 30 minutes, for as long as the user who made it may view them. Nothing about any one visitor, no keys, settings, events, or replays.
+- **The public key** plays no part: it never allows a read. The overlay's routes take no key, and refuse any field they do not use (a key or a token in the address answers 400).
+- **Limits.** Exchanges per client address: 10, then one every 30 seconds; reads and preflights: 60, then one a second. A malformed body, query, `Origin`, or `Authorization` is refused before any database work.
+- **Drawing.** Everything from the API is drawn as shapes or set as text (`textContent`, the canvas's `fillText`), never parsed as HTML, and the answer is checked and capped (200 elements, 64 cells each) before use. Styles go in a constructed stylesheet, or, where a browser has none, a `<style>` with `o.js`'s nonce.
+- **No overlay** where the tracker's tag has an `integrity` attribute (`o.js` cannot be pinned with it; the tracker warns in the console and still sends nothing for that page load), or where the page requires Trusted Types for scripts. The Heatmaps screen works there.
+
+**The API's answer** for one page, device, and period (7, 30, or 90 days, cut to the 90 kept), every query project first and with `FINAL`: `totals` (pageviews, clicks, rage clicks), `devices` (pageviews per device), `reach` (the share reaching each 5%), and `elements` (200 at most, most clicks first: name, path, clicks, rage clicks, and `cells`, `[column, row, clicks]` of the 8 by 8 grid, 3,000 cells at most in all, the busiest first). A link used or expired is kept, as a hash, for a day after it expires, so its page can be told why it no longer works; rows a day past expiry are deleted whenever a token is made.
+
+**Limits of the overlay:**
+
+- Only the project's allowed hostnames, which have no port: for `localhost` and `127.0.0.1`, the dashboard asks for the port and uses plain http; every other site opens with https.
+- Browsers may ignore the window size the dashboard asks for (390, 820, or 1280 pixels wide). Devtools' device mode gives exact widths.
+- An element the page does not have (a redesign, an A/B test, a block only some visitors see) is listed as not on this page: phase 1 keeps no page positions, so there are no fallback dots for it. Two elements with the same `data-ottertrail-name` and path: the first is drawn.
+- Scroll reach is for the document; a page that scrolls inside a box shows the document's.
+- Other analytics tools on the page still count the owner's visit.
 
 ### Not done yet
 
-- Phase 2: drawing the map over the owner's live page, opened from the dashboard with a short-lived read-only token.
 - Dead clicks, clicks followed by an error, and paths grouped by template (`/products/*`).
 - The budgets measured on a real site.

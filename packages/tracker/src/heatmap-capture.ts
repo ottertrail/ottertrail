@@ -13,7 +13,7 @@
  * data-ottertrail-mask) are not recorded at all.
  */
 import type { HeatmapConfig, HeatmapPage } from "./heatmap-names.ts";
-import { HEATMAP_TAGS } from "./heatmap-tags.ts";
+import { describe, deviceOf, type Device } from "./heatmap-path.ts";
 import { randomId } from "./random-id.ts";
 import { backoffMs, MAX_ATTEMPTS } from "./tracker.ts";
 import { outcomeForStatus } from "./transport.ts";
@@ -37,27 +37,28 @@ export const MAX_QUEUE = 200;
 export const FLUSH_DELAY_MS = 5000;
 /** Click times are sent to the minute: their order within it never leaves the page. */
 export const TIME_STEP_MS = 60_000;
-/** A structural path's most steps and characters (the API's limits). */
-export const MAX_STEPS = 24;
-export const MAX_PATH_LENGTH = 512;
 /** Rage click: this many clicks or more … */
 export const RAGE_CLICKS = 3;
 /** … within this long … */
 export const RAGE_WINDOW_MS = 1000;
 /** … and this close together, in CSS pixels. */
 export const RAGE_DISTANCE_PX = 30;
-/** Device classes by viewport width: mobile under 768, tablet under 1024, desktop from it. */
-export const TABLET_FROM_PX = 768;
-export const DESKTOP_FROM_PX = 1024;
 /** The API's largest viewport side, page height, and dropped-click count. */
 const MAX_VIEWPORT_PX = 16_384;
 const MAX_PAGE_PX = 1_000_000;
 const MAX_DROPPED = 65_535;
 
-/** The site's own name for an element, as the API takes it. */
-export const NAME_ATTRIBUTE = "data-ottertrail-name";
-const NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9 ._:/-]{0,63}$/;
-const TAGS: ReadonlySet<string> = new Set(HEATMAP_TAGS);
+export {
+  DESKTOP_FROM_PX,
+  describe,
+  type Device,
+  deviceOf,
+  MAX_PATH_LENGTH,
+  MAX_STEPS,
+  NAME_ATTRIBUTE,
+  TABLET_FROM_PX,
+} from "./heatmap-path.ts";
+
 /** Session replay's markers, which keep heatmaps out too. */
 const PRIVATE = "[data-ottertrail-block],[data-ottertrail-mask]";
 
@@ -68,56 +69,6 @@ const PRIVATE = "[data-ottertrail-block],[data-ottertrail-mask]";
  */
 const INTERACTIVE =
   "a,button,input,select,textarea,label,summary,[role=button],[role=link],[role=tab],[role=menuitem],[role=checkbox],[role=radio],[role=switch],[role=option]";
-
-export type Device = "mobile" | "tablet" | "desktop";
-
-export function deviceOf(viewportWidth: number): Device {
-  if (viewportWidth < TABLET_FROM_PX) return "mobile";
-  return viewportWidth < DESKTOP_FROM_PX ? "tablet" : "desktop";
-}
-
-/** The element's own name from the site, if it is one the API takes. */
-function nameOf(element: Element): string | undefined {
-  const name = element.getAttribute(NAME_ATTRIBUTE)?.trim();
-  return name !== undefined && NAME_PATTERN.test(name) ? name : undefined;
-}
-
-/** "div", or "div:3" for the third div among its siblings; "x" for a tag not in HEATMAP_TAGS. */
-function stepOf(element: Element): string {
-  const tag = element.tagName.toLowerCase();
-  let place = 1;
-  for (
-    let sibling = element.previousElementSibling;
-    sibling;
-    sibling = sibling.previousElementSibling
-  ) {
-    if (sibling.tagName === element.tagName) place += 1;
-  }
-  return `${TAGS.has(tag) ? tag : "x"}${place > 1 ? `:${Math.min(place, 9999)}` : ""}`;
-}
-
-/**
- * Where a click went: the element's structural path from the nearest
- * element the site named (data-ottertrail-name), or from body, and that
- * name. At most 24 steps, the nearest kept, "*>" first when cut.
- */
-export function describe(element: Element): { element: string; label?: string } {
-  const steps: string[] = [];
-  let label: string | undefined;
-  for (let node: Element | null = element; node !== null; node = node.parentElement) {
-    steps.unshift(stepOf(node));
-    label = nameOf(node);
-    if (label !== undefined || node.tagName === "BODY") break;
-  }
-  let cut = steps.length > MAX_STEPS;
-  let kept = steps.slice(-MAX_STEPS);
-  while (kept.join(">").length > MAX_PATH_LENGTH - 2) {
-    kept = kept.slice(1);
-    cut = true;
-  }
-  const path = `${cut ? "*>" : ""}${kept.join(">")}`;
-  return label === undefined ? { element: path } : { element: path, label };
-}
 
 /**
  * Whether a click happened inside an element the site blocks or masks,

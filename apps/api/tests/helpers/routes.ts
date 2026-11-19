@@ -9,15 +9,16 @@ import { createClickHouse } from "../../src/clickhouse/clickhouse.ts";
 import { createDatabase } from "../../src/db/database.ts";
 import { routeKey } from "./project-routes.ts";
 
-/** A declaration as text: "errors:manage", "permission:channels", "project" … */
+/** A declaration as text: "errors:manage", "permission:channels", "project", "overlay:web_analytics:view" … */
 export function describeDeclaration(declaration: AccessDeclaration): string {
   if (declaration.scope === "instance") {
     return declaration.need === "signed_in" ? "signed_in" : `permission:${declaration.need}`;
   }
   const { need } = declaration;
-  if (need === "project") return "project";
-  if ("permission" in need) return `project:permission:${need.permission}`;
-  return `${need.area}:${need.level}`;
+  const prefix = declaration.scope === "overlay" ? "overlay:" : "";
+  if (need === "project") return `${prefix}project`;
+  if ("permission" in need) return `${prefix}project:permission:${need.permission}`;
+  return `${prefix}${need.area}:${need.level}`;
 }
 
 function declarationsOf(route: RouteOptions): AccessDeclaration[] {

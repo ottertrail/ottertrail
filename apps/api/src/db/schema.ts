@@ -482,6 +482,22 @@ export interface OwnerSetupTokensTable {
   created_at: DatabaseDefault<Date>;
 }
 
+/**
+ * Heatmap overlay links and sessions (access/overlay-tokens.ts). Only a
+ * SHA-256 hash of each token is kept.
+ */
+export interface HeatmapOverlayTokensTable {
+  token_hash: ColumnType<Buffer, Buffer, never>;
+  kind: ColumnType<"link" | "session", "link" | "session", never>;
+  user_id: ColumnType<string, string, never>;
+  project_id: ColumnType<string, string, never>;
+  scope: ColumnType<"heatmap:read", "heatmap:read", never>;
+  expires_at: ColumnType<Date, Date, never>;
+  /** When a link was exchanged; null until then, and always for a session. */
+  used_at: ColumnType<Date | null, never, Date>;
+  created_at: DatabaseDefault<Date>;
+}
+
 /** One dashboard user's layout of one project's overview (overview/layout.ts). */
 export interface OverviewLayoutsTable {
   user_id: string;
@@ -566,6 +582,7 @@ export interface Database {
   dashboard_sessions: DashboardSessionsTable;
   dashboard_accounts: DashboardAccountsTable;
   owner_setup_tokens: OwnerSetupTokensTable;
+  heatmap_overlay_tokens: HeatmapOverlayTokensTable;
   dashboard_member_access: DashboardMemberAccessTable;
   dashboard_member_projects: DashboardMemberProjectsTable;
   dashboard_invitations: DashboardInvitationsTable;

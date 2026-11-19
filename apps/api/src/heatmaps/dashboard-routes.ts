@@ -2,7 +2,9 @@ import type { FastifyPluginCallback, FastifyReply } from "fastify";
 import type { Kysely } from "kysely";
 
 import { type ProjectAccess, requireProjectAccess } from "../access/access.ts";
+import { mintOverlayLink } from "../access/overlay-tokens.ts";
 import type { Auth } from "../auth/auth.ts";
+import { requireTrustedOrigin } from "../auth/origin.ts";
 import { requireSession } from "../auth/routes.ts";
 import type { ClickHouseClient } from "../clickhouse/clickhouse.ts";
 import { HEATMAP_RETENTION_DAYS } from "../clickhouse/migrations.ts";
@@ -34,7 +36,7 @@ const PARAMS_SCHEMA = {
 /** A page path as collection stores it: a "/" and at most 2,048 characters. */
 const PATH_SCHEMA = { type: "string", minLength: 1, maxLength: 2048, pattern: "^/" } as const;
 
-type Query = RangeQuery & { device?: HeatmapDevice };
+export type Query = RangeQuery & { device?: HeatmapDevice };
 
 /** The access requireProjectAccess set: these routes always run it. */
 function accessOf(request: { projectAccess: ProjectAccess | null }): ProjectAccess {
@@ -48,26 +50,104 @@ function accessOf(request: { projectAccess: ProjectAccess | null }): ProjectAcce
 const addDays = (day: string, days: number) =>
   new Date(Date.parse(`${day}T00:00:00Z`) + days * 86_400_000).toISOString().slice(0, 10);
 
+/** A range asked for, cut to the days kept, with what the answers say of it. */
+export type AskedRange =
+  | { problem: { error: string; message: string } }
+  | {
+      range: HeatmapRange;
+      /** The range is wholly before the 90 days kept: nothing to read. */
+      before: boolean;
+      answer: {
+        timeZone: string;
+        environment: string;
+        firstDay: string;
+        lastDay: string;
+        heatmaps: boolean;
+        retentionDays: number;
+        clipped: boolean;
+        device: HeatmapDevice | null;
+        /**
+         * The project's allowed hostnames, where its site runs: the
+         * dashboard opens the overlay on one of them.
+         */
+        siteHostnames: string[];
+      };
+    };
+
+/**
+ * The range asked for, cut to the 90 days kept, and the project's setting:
+ * for the dashboard's reports and the overlay's (overlay-routes.ts).
+ */
+export async function heatmapRangeOf(
+  db: Kysely<Database>,
+  { projectId, timeZone }: ProjectAccess,
+  query: Query,
+  now: Date,
+): Promise<AskedRange> {
+  const today = dayIn(timeZone)(now);
+  const days = requestDays(query, today);
+  if ("problem" in days) return days;
+  const firstKept = addDays(today, -(HEATMAP_RETENTION_DAYS - 1));
+  const clipped = days.from < firstKept;
+  // A range wholly before the kept days has nothing to read: it stays as
+  // asked, and the routes answer empty.
+  const before = days.to < firstKept;
+  const firstDay = clipped && !before ? firstKept : days.from;
+  const lastDay = days.to;
+  const [{ from, to }, project] = await Promise.all([
+    localDays(db, firstDay, lastDay, timeZone),
+    db
+      .selectFrom("projects")
+      .select(["heatmaps", "allowed_hostnames"])
+      .where("id", "=", projectId)
+      .executeTakeFirst(),
+  ]);
+  const environment = environmentOf(query.environment);
+  return {
+    range: { projectId, environment, from, to, device: query.device },
+    before,
+    answer: {
+      timeZone,
+      environment,
+      firstDay,
+      lastDay,
+      heatmaps: project?.heatmaps ?? false,
+      retentionDays: HEATMAP_RETENTION_DAYS,
+      clipped,
+      device: query.device ?? null,
+      siteHostnames: project?.allowed_hostnames ?? [],
+    },
+  };
+}
+
 /**
  * The heatmap reports (docs/web-analytics.md, "Heatmaps"), in the Web
  * analytics area at view:
  *
  *   GET /api/projects/:id/heatmaps/pages?period=7d|from=…&to=…&environment=…&device=…&search=…
  *   GET /api/projects/:id/heatmaps?path=/pricing&period=…&environment=…&device=…
+ *   POST /api/projects/:id/heatmaps/overlay-link
  *
  * The range is cut to the 90 days heatmap rows are kept (`clipped`). Both
  * say whether the project takes heatmaps, so the screen can say how to
  * start. Queries run with the dashboard's limits, within its shared limit
  * of queries at once, and end with the request (telemetry/dashboard-limit.ts).
+ *
+ * The overlay link is a one-time token that opens the project's heatmap
+ * over its live site (access/overlay-tokens.ts; docs/web-analytics.md,
+ * "The overlay on your site"): made only when asked, from the dashboard's
+ * own origin, and answered once.
  */
 export const heatmapRoutes: FastifyPluginCallback<{
   db: Kysely<Database>;
   clickhouse: ClickHouseClient;
   auth: Auth;
   limiter: DashboardQueryLimiter;
+  trustedOrigins: readonly string[];
   now?: () => Date;
-}> = (app, { db, clickhouse, auth, limiter, now = () => new Date() }, done) => {
+}> = (app, { db, clickhouse, auth, limiter, trustedOrigins, now = () => new Date() }, done) => {
   const signedIn = requireSession(auth);
+  const fromDashboard = requireTrustedOrigin(trustedOrigins);
   const canView = requireProjectAccess(db, { area: "web_analytics", level: "view" });
   app.setErrorHandler(clickHouseErrorHandler);
 
@@ -76,56 +156,8 @@ export const heatmapRoutes: FastifyPluginCallback<{
     settings: DASHBOARD_SETTINGS,
   });
 
-  /** The range asked for, cut to what is kept, and the project's setting. */
-  async function rangeOf(request: { projectAccess: ProjectAccess | null; query: Query }): Promise<
-    | { problem: { error: string; message: string } }
-    | {
-        range: HeatmapRange;
-        /** The range is wholly before the 90 days kept: nothing to read. */
-        before: boolean;
-        answer: {
-          timeZone: string;
-          environment: string;
-          firstDay: string;
-          lastDay: string;
-          heatmaps: boolean;
-          retentionDays: number;
-          clipped: boolean;
-          device: HeatmapDevice | null;
-        };
-      }
-  > {
-    const { projectId, timeZone } = accessOf(request);
-    const today = dayIn(timeZone)(now());
-    const days = requestDays(request.query, today);
-    if ("problem" in days) return days;
-    const firstKept = addDays(today, -(HEATMAP_RETENTION_DAYS - 1));
-    const clipped = days.from < firstKept;
-    // A range wholly before the kept days has nothing to read: it stays as
-    // asked, and the routes answer empty.
-    const before = days.to < firstKept;
-    const firstDay = clipped && !before ? firstKept : days.from;
-    const lastDay = days.to;
-    const [{ from, to }, project] = await Promise.all([
-      localDays(db, firstDay, lastDay, timeZone),
-      db.selectFrom("projects").select("heatmaps").where("id", "=", projectId).executeTakeFirst(),
-    ]);
-    const environment = environmentOf(request.query.environment);
-    return {
-      range: { projectId, environment, from, to, device: request.query.device },
-      before,
-      answer: {
-        timeZone,
-        environment,
-        firstDay,
-        lastDay,
-        heatmaps: project?.heatmaps ?? false,
-        retentionDays: HEATMAP_RETENTION_DAYS,
-        clipped,
-        device: request.query.device ?? null,
-      },
-    };
-  }
+  const rangeOf = (request: { projectAccess: ProjectAccess | null; query: Query }) =>
+    heatmapRangeOf(db, accessOf(request), request.query, now());
 
   const queryProperties = {
     ...RANGE_PROPERTIES,
@@ -191,6 +223,19 @@ export const heatmapRoutes: FastifyPluginCallback<{
         heatmapReport(reader, asked.range, request.query.path),
       ]);
       return { ...asked.answer, environments, path: request.query.path, ...report };
+    },
+  );
+
+  app.post<{ Params: { id: string } }>(
+    "/projects/:id/heatmaps/overlay-link",
+    { preHandler: [fromDashboard, signedIn, canView], schema: { params: PARAMS_SCHEMA } },
+    async (request, reply) => {
+      const { projectId, user } = accessOf(request);
+      // The real clock, as the exchange uses: never the reports' fixed one.
+      const link = await mintOverlayLink(db, user.userId, projectId, new Date());
+      return reply
+        .header("cache-control", "no-store")
+        .send({ token: link.token, expiresAt: link.expiresAt.toISOString() });
     },
   );
 

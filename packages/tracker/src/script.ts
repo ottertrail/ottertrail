@@ -64,6 +64,12 @@
  * on its own: data-heatmaps-sample="0.25" records a quarter of them (1,
  * all, by default); nothing about it is stored.
  *
+ * Heatmap overlay: a page opened from the dashboard's "Open on your site"
+ * has #ottertrail-heatmap=<token> in its address. The tracker removes it
+ * from the address, sends nothing for that page load, and loads o.js from
+ * beside it (not with an integrity attribute), which draws the project's
+ * heatmap over the page for the signed-in owner only.
+ *
  * Loaded twice on one page (in a tag manager and in the page's template),
  * the second copy warns and does nothing: two copies would count every
  * pageview twice, and replay(false) would reach only one recorder.
@@ -82,6 +88,7 @@ import {
   HEATMAP_PROPERTY,
 } from "./heatmap-names.ts";
 import { watchNavigation } from "./navigation.ts";
+import { type OverlayConfig, OVERLAY_PROPERTY } from "./overlay-names.ts";
 import { randomId } from "./random-id.ts";
 import { type Recorder, REPLAY_PROPERTY, type ReplayConfig } from "./replay-names.ts";
 import { cleanSignature, cleanUserId } from "./sanitize.ts";
@@ -139,6 +146,9 @@ function landing(): Page {
   return { url: cleanPageUrl(location.href), ...(referrer === undefined ? {} : { referrer }) };
 }
 
+/** window.ottertrail's methods on a page opened for the heatmap overlay. */
+const none = () => undefined;
+
 /** Marks the real window.ottertrail, as no stand-in is: Symbol.for, so any copy sees it. */
 const REAL = Symbol.for("ottertrail.tracker");
 
@@ -165,6 +175,55 @@ const REAL = Symbol.for("ottertrail.tracker");
     if (release !== undefined && !RELEASE_PATTERN.test(release)) {
       console.warn("Ottertrail: data-release is invalid. The release is omitted.");
       release = undefined;
+    }
+
+    // Web Vitals (v.js), session replay (r.js), heatmaps (h.js), and the
+    // heatmap overlay (o.js) come from beside this script, unless the page
+    // pins this script with integrity: they could not be pinned with it.
+    // Each carries a nonce if this one did, for sites with a strict Content
+    // Security Policy, and gets what it needs through a property of its
+    // script element.
+    const src =
+      script !== null && "src" in script && typeof script.src === "string" ? script.src : "";
+    const beside = src !== "" && !script?.hasAttribute?.("integrity");
+    const load = (file: string, property: string, value: unknown) => {
+      try {
+        const added = document.createElement("script");
+        added.src = new URL(file, src).href;
+        added.async = true;
+        if (script?.nonce) added.nonce = script.nonce;
+        Object.assign(added, { [property]: value });
+        document.head.append(added);
+      } catch {
+        // Without it, the rest still works.
+      }
+    };
+
+    // The owner opened this page from the dashboard to see its heatmap
+    // (docs/web-analytics.md, "The overlay on your site"): the link's token
+    // leaves the address at once, o.js draws the heatmap, and nothing at
+    // all is sent for this page load, so the owner's look is not counted.
+    const overlay = /^#ottertrail-heatmap=([\w-]{43})$/.exec(location.hash);
+    if (overlay) {
+      history.replaceState(history.state, "", location.pathname + location.search);
+      const inert: OttertrailApi = {
+        track: none,
+        identify: none,
+        reset: none,
+        captureError: none,
+        replay: none,
+      };
+      Object.defineProperty(inert, REAL, { value: true });
+      window.ottertrail = inert;
+      if (beside) {
+        const config: OverlayConfig = { host, token: overlay[1] ?? "", environment };
+        load("o.js", OVERLAY_PROPERTY, config);
+      } else {
+        console.warn(
+          "Ottertrail: the heatmap overlay cannot load for a script tag with integrity.",
+        );
+      }
+      return;
     }
 
     const tracker = createTracker({
@@ -295,26 +354,6 @@ const REAL = Symbol.for("ottertrail.tracker");
       window.addEventListener("unhandledrejection", (event) => errors.rejected(event.reason));
     }
 
-    // Web Vitals (v.js) and session replay (r.js) come from beside this
-    // script, unless the page pins this script with integrity: they could
-    // not be pinned with it. Each carries a nonce if this one did, for sites
-    // with a strict Content Security Policy, and gets what it needs through
-    // a property of its script element.
-    const src =
-      script !== null && "src" in script && typeof script.src === "string" ? script.src : "";
-    const beside = src !== "" && !script?.hasAttribute?.("integrity");
-    const load = (file: string, property: string, value: unknown) => {
-      try {
-        const added = document.createElement("script");
-        added.src = new URL(file, src).href;
-        added.async = true;
-        if (script?.nonce) added.nonce = script.nonce;
-        Object.assign(added, { [property]: value });
-        document.head.append(added);
-      } catch {
-        // Without it, the rest still works.
-      }
-    };
     if (beside && script?.dataset.vitals !== "off") {
       // A page restored from the back/forward cache is a new page load. In
       // the capture phase, and added before v.js runs, this goes first: the

@@ -1,0 +1,18 @@
+/**
+ * What the tracker (script.ts) and the heatmap overlay (overlay.ts, built
+ * to o.js) share, without the overlay's code: importing it here would put
+ * it in the tracker.
+ */
+
+/** The property the tracker sets on o.js's script element: an OverlayConfig. */
+export const OVERLAY_PROPERTY = "ottertrailOverlay";
+
+/** What the tracker hands o.js. */
+export interface OverlayConfig {
+  /** The instance's origin (the tag's data-host). */
+  host: string;
+  /** The one-time link token from the page's address, already removed from it. */
+  token: string;
+  /** The tag's environment, whose data the overlay shows. */
+  environment?: string | undefined;
+}

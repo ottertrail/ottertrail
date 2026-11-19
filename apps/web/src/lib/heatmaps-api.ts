@@ -29,6 +29,8 @@ interface HeatmapRange {
   retentionDays: number;
   /** The range asked for began before the days kept; `firstDay` is then the first kept day. */
   clipped: boolean;
+  /** The project's allowed hostnames: where "Open on your site" can open the page. */
+  siteHostnames: string[];
 }
 
 /** GET /api/projects/:id/heatmaps/pages */
@@ -101,7 +103,8 @@ const isRange = (value: unknown): value is HeatmapRange =>
   isText(value.lastDay) &&
   typeof value.heatmaps === "boolean" &&
   isNumber(value.retentionDays) &&
-  typeof value.clipped === "boolean";
+  typeof value.clipped === "boolean" &&
+  isListOf(value.siteHostnames, isText);
 
 const isPageRow = (value: unknown): value is HeatmapPages["pages"][number] =>
   isRecord(value) && isText(value.path) && isNumber(value.pageviews) && isNumber(value.clicks);
@@ -209,3 +212,18 @@ export const heatmapQuery = (
     },
     placeholderData: keepPreviousData,
   });
+
+/**
+ * POST /api/projects/:id/heatmaps/overlay-link: a one-time link token that
+ * opens the page with its heatmap over it, working once within 5 minutes
+ * (docs/web-analytics.md, "The overlay on your site"). Made only when the
+ * reader asks to open it.
+ */
+export async function mintOverlayLink(projectId: string): Promise<{ token: string }> {
+  return expectShape(
+    await apiRequest(`/api/projects/${encodeURIComponent(projectId)}/heatmaps/overlay-link`, {
+      method: "POST",
+    }),
+    (value): value is { token: string } => isRecord(value) && isText(value.token),
+  );
+}

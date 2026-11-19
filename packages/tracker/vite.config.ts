@@ -23,11 +23,14 @@ const scripts = {
   },
   // Heatmap capture, loaded by the tracker with data-heatmaps="on".
   h: { entry: "src/heatmaps.ts" },
+  // The heatmap overlay, loaded by the tracker on a page opened from the dashboard.
+  o: { entry: "src/overlay.ts" },
 };
 
 export default defineConfig({
-  // `vp pack` builds four minified scripts: dist/tracker.js for a <script>
-  // tag, and dist/v.js, dist/r.js, and dist/h.js, which it loads from beside itself.
+  // `vp pack` builds five minified scripts: dist/tracker.js for a <script>
+  // tag, and dist/v.js, dist/r.js, dist/h.js, and dist/o.js, which it loads
+  // from beside itself.
   pack: Object.entries(scripts).map(([name, script]) => ({
     entry: { [name]: script.entry },
     format: "iife" as const,

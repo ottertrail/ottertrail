@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vite-plus/tes
 
 import { MAX_ENGAGED_MS } from "../src/engagement.ts";
 import { HEATMAP_PROPERTY, type HeatmapConfig } from "../src/heatmap-names.ts";
+import { type OverlayConfig, OVERLAY_PROPERTY } from "../src/overlay-names.ts";
 import { type Recorder, REPLAY_PROPERTY, type ReplayConfig } from "../src/replay-names.ts";
 import type { QueuedEvent } from "../src/tracker.ts";
 import { RECORD_PROPERTY } from "../src/vital-names.ts";
@@ -58,6 +59,12 @@ function fakePage(
     get pathname() {
       return new URL(this.href).pathname;
     },
+    get search() {
+      return new URL(this.href).search;
+    },
+    get hash() {
+      return new URL(this.href).hash;
+    },
   };
   /** Scripts the tracker added to the page: v.js. */
   const added: Record<string, unknown>[] = [];
@@ -79,7 +86,13 @@ function fakePage(
   };
   const window = {
     location,
-    history: { pushState: () => {}, replaceState: () => {} },
+    history: {
+      state: null as unknown,
+      pushState: () => {},
+      replaceState: (_state?: unknown, _title?: string, url?: string) => {
+        if (url !== undefined) location.href = new URL(url, location.href).href;
+      },
+    },
     addEventListener: on,
     ottertrail: undefined as
       | {
@@ -109,6 +122,7 @@ function fakePage(
   vi.stubGlobal("document", document);
   vi.stubGlobal("location", location);
   vi.stubGlobal("window", window);
+  vi.stubGlobal("history", window.history);
   vi.stubGlobal("navigator", {
     maxTouchPoints,
     sendBeacon: (_url: string, blob: Blob) => {
@@ -1408,5 +1422,105 @@ describe("heatmaps", () => {
     await runScript();
     expect(heatmapConfig(page)?.page()).not.toBeNull();
     expect(warn).toHaveBeenCalledWith(expect.stringContaining("data-heatmaps-sample"));
+  });
+});
+
+describe("the heatmap overlay", () => {
+  const TOKEN = "Ab-_0123456789abcdefghijklmnopqrstuvwxyzABC";
+
+  test("a link's fragment leaves the address, nothing at all is sent, and o.js is loaded with the nonce", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const page = fakePage(`https://example.com/pricing?plan=team#ottertrail-heatmap=${TOKEN}`, "", {
+      nonce: "abc123",
+      attributes: {
+        heatmaps: "on",
+        replay: "errors",
+        environment: "staging",
+      },
+    });
+    await runScript();
+    // The rest of the address stays.
+    expect(page.window.location.href).toBe("https://example.com/pricing?plan=team");
+    // Only o.js: no v.js, r.js, or h.js.
+    expect(page.added).toEqual([
+      expect.objectContaining({
+        src: "https://analytics.example.com/o.js",
+        async: true,
+        nonce: "abc123",
+      }),
+    ]);
+    const config = page.added[0]?.[OVERLAY_PROPERTY] as OverlayConfig;
+    expect(config).toEqual({
+      host: "https://analytics.example.com",
+      token: TOKEN,
+      environment: "staging",
+    });
+    // Whatever the page does, and however it is left, nothing is sent.
+    page.window.ottertrail?.track("signup", { plan: "team" });
+    page.window.ottertrail?.captureError(new Error("boom"));
+    page.window.ottertrail?.identify("42");
+    page.window.ottertrail?.replay(true);
+    page.fire("error", new FakeErrorEvent({ message: "boom", error: new Error("boom") }));
+    page.window.location.href = "https://example.com/next";
+    page.window.history.pushState();
+    await vi.advanceTimersByTimeAsync(60_000);
+    page.hide();
+    page.fire("pagehide");
+    await page.settle();
+    expect(page.events).toEqual([]);
+    expect(page.batches).toEqual([]);
+    expect(page.added).toHaveLength(1);
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  test("a second copy of the tracker on the page does nothing either", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const page = fakePage(`https://example.com/#ottertrail-heatmap=${TOKEN}`, "", {
+      attributes: { vitals: "off" },
+    });
+    await runScript();
+    expect(page.window.location.href).toBe("https://example.com/");
+    await runScript();
+    await vi.advanceTimersByTimeAsync(10_000);
+    page.hide();
+    await page.settle();
+    expect(page.events).toEqual([]);
+    expect(page.added).toHaveLength(1);
+  });
+
+  test("with an integrity attribute, o.js cannot load: it says so, and still sends nothing", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const page = fakePage(`https://example.com/#ottertrail-heatmap=${TOKEN}`, "", {
+      attributes: { vitals: "off" },
+    });
+    Object.assign(page.document.currentScript, {
+      hasAttribute: (name: string) => name === "integrity",
+    });
+    await runScript();
+    expect(page.window.location.href).toBe("https://example.com/");
+    expect(page.added).toEqual([]);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("integrity"));
+    page.hide();
+    await page.settle();
+    expect(page.events).toEqual([]);
+  });
+
+  test("other fragments are the page's own: counted as usual, and kept", async () => {
+    for (const fragment of [
+      "#pricing",
+      "#ottertrail-heatmap=short",
+      `#ottertrail-heatmap=${TOKEN}&more`,
+      `#x-ottertrail-heatmap=${TOKEN}`,
+    ]) {
+      const page = fakePage(`https://example.com/${fragment}`, "", {
+        attributes: { vitals: "off" },
+      });
+      await runScript();
+      expect(page.window.location.href).toBe(`https://example.com/${fragment}`);
+      expect(page.added).toEqual([]);
+      page.hide();
+      await page.settle();
+      expect(page.events.map((event) => event.name)).toContain("pageview");
+    }
   });
 });

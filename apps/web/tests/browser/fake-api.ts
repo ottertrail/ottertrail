@@ -160,6 +160,8 @@ export interface FakeApi {
   heatmapPages: (query: URLSearchParams) => HeatmapPages | Response;
   /** Answers GET /api/projects/:id/heatmaps; by default, fakeHeatmap. A promise holds it. */
   heatmap: (query: URLSearchParams) => Heatmap | Response | Promise<Heatmap | Response>;
+  /** Answers POST /api/projects/:id/heatmaps/overlay-link; by default, OVERLAY_TOKEN. */
+  overlayLink: () => { token: string; expiresAt: string } | Response;
   /** Answers GET /api/projects/:id/events; by default, fakeProductEvents. */
   productEvents: (query: URLSearchParams) => ProductEvents | Response;
   /** Answers GET /api/projects/:id/events/:name; by default, fakeProductEvent. */
@@ -2518,6 +2520,9 @@ export function emptySpeed(): Speed {
   };
 }
 
+/** The overlay link token the fake API makes. */
+export const OVERLAY_TOKEN = "T0k3n_-abcdefghijklmnopqrstuvwxyzABCDEFGHI";
+
 /** A week of heatmaps with the setting on: three pages with data, most pageviews first. */
 export function heatmapPagesFixture(overrides: Partial<HeatmapPages> = {}): HeatmapPages {
   return {
@@ -2529,6 +2534,7 @@ export function heatmapPagesFixture(overrides: Partial<HeatmapPages> = {}): Heat
     heatmaps: true,
     retentionDays: 90,
     clipped: false,
+    siteHostnames: ["example.com"],
     pages: [
       { path: "/", pageviews: 420, clicks: 900 },
       { path: "/pricing", pageviews: 180, clicks: 310 },
@@ -3764,6 +3770,10 @@ async function answer(api: FakeApi, url: URL, init: RequestInit | undefined): Pr
     }
     return json(replayOverview(api, replaysFor[1]));
   }
+  if (/^\/api\/projects\/[^/]+\/heatmaps\/overlay-link$/.test(path) && init?.method === "POST") {
+    const result = api.overlayLink();
+    return result instanceof Response ? result : json(result);
+  }
   if (/^\/api\/projects\/[^/]+\/heatmaps\/pages$/.test(path)) {
     const result = api.heatmapPages(url.searchParams);
     return result instanceof Response ? result : json(result);
@@ -4038,6 +4048,7 @@ export function installFakeApi(overrides: Partial<FakeApi> = {}): FakeApi {
     speed: fakeSpeed,
     heatmapPages: fakeHeatmapPages,
     heatmap: fakeHeatmap,
+    overlayLink: () => ({ token: OVERLAY_TOKEN, expiresAt: "2026-11-16T10:05:00.000Z" }),
     productEvents: fakeProductEvents,
     productEvent: fakeProductEvent,
     funnel: fakeFunnel,

@@ -28,6 +28,14 @@ export const REPLAY_SCRIPT_URL_PATH = "/r.js";
 export const HEATMAP_SCRIPT_URL_PATH = "/h.js";
 
 /**
+ * The heatmap overlay, which the tracker loads from beside itself when the
+ * page's address carries an overlay link (packages/tracker/src/overlay.ts;
+ * docs/web-analytics.md, "The overlay on your site"): o.js in the
+ * tracker's folder.
+ */
+export const OVERLAY_SCRIPT_URL_PATH = "/o.js";
+
+/**
  * Scripts found missing, logged once each: every page of every site asks
  * for them, and a missing v.js breaks nothing visible that would get it
  * noticed and fixed.
@@ -68,7 +76,7 @@ async function sendScript(request: FastifyRequest, reply: FastifyReply, path: st
 
 /**
  * Serves the built browser tracker, and the Web Vitals, session replay,
- * and heatmap scripts it loads, so each site loads them from the instance it reports to. The paths are
+ * heatmap, and heatmap overlay scripts it loads, so each site loads them from the instance it reports to. The paths are
  * short and neutral: ad-block lists often match file names such as
  * "tracker.js" or "analytics.js".
  *
@@ -90,6 +98,9 @@ export const trackerScriptRoutes: FastifyPluginCallback<{ scriptPath: string }> 
   );
   app.get(HEATMAP_SCRIPT_URL_PATH, (request, reply) =>
     sendScript(request, reply, join(dirname(scriptPath), "h.js")),
+  );
+  app.get(OVERLAY_SCRIPT_URL_PATH, (request, reply) =>
+    sendScript(request, reply, join(dirname(scriptPath), "o.js")),
   );
   done();
 };

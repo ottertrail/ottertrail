@@ -5,7 +5,8 @@ import { describeDeclaration, registeredRoutes } from "./helpers/routes.ts";
 
 /**
  * The routes anyone may call: health, collection with a project's key,
- * the scripts and the dashboard's files, sign-in, and setup. Every other
+ * the scripts and the dashboard's files, sign-in, setup, and the heatmap
+ * overlay's exchange and preflight. Every other
  * route must declare what it needs (docs/access.md).
  */
 const PUBLIC_ROUTES = new Set([
@@ -24,6 +25,7 @@ const PUBLIC_ROUTES = new Set([
   "GET /v.js",
   "GET /r.js",
   "GET /h.js",
+  "GET /o.js",
   "GET /replay-player.js",
   "GET /*",
   // Sign-in (Better Auth), setup, accepting an invitation, and a reset link.
@@ -35,6 +37,12 @@ const PUBLIC_ROUTES = new Set([
   "POST /api/invite/accept",
   "POST /api/reset-password/preview",
   "POST /api/reset-password",
+  // The heatmap overlay on a customer's site: exchanging a one-time link
+  // token (in the body) for an overlay session, and the browser's
+  // preflight for the read. They take no cookie; the read itself declares
+  // the overlay token's access below (access.ts, requireOverlayAccess).
+  "POST /api/heatmap-overlay/session",
+  "OPTIONS /api/heatmap-overlay/:projectId/heatmap",
 ]);
 
 /** What each dashboard route declares, as text: "errors:manage", "permission:channels" … */
@@ -81,6 +89,9 @@ const EXPECTED: Record<string, string> = {
   "GET /api/projects/:id/speed": "web_analytics:view",
   "GET /api/projects/:id/heatmaps": "web_analytics:view",
   "GET /api/projects/:id/heatmaps/pages": "web_analytics:view",
+  "POST /api/projects/:id/heatmaps/overlay-link": "web_analytics:view",
+  // An overlay session token in place of the cookie, checked by the same rules.
+  "GET /api/heatmap-overlay/:projectId/heatmap": "overlay:web_analytics:view",
 
   "GET /api/projects/:id/events": "product_analytics:view",
   "GET /api/projects/:id/events/:name": "product_analytics:view",
@@ -180,7 +191,13 @@ test("every dashboard route declares the area or permission it needs; public rou
       key,
       scopes: PUBLIC_ROUTES.has(key)
         ? []
-        : [key.includes("/api/projects/:id") ? "project" : "instance"],
+        : [
+            key.includes("/api/projects/:id")
+              ? "project"
+              : key.includes("/api/heatmap-overlay/")
+                ? "overlay"
+                : "instance",
+          ],
     })),
   );
 

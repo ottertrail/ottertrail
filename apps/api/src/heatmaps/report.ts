@@ -279,3 +279,144 @@ export function emptyReport(): HeatmapReport {
     hotspots: [],
   };
 }
+
+/** Elements the overlay draws, most clicks first. */
+export const OVERLAY_ELEMENTS = 200;
+/** The grid each element's clicks are counted in: 8 by 8 cells. */
+export const OVERLAY_GRID = 8;
+/** Cells the overlay gets in all, the busiest first: at most 64 per element. */
+export const OVERLAY_CELLS = 3000;
+/** The overlay's scroll reach is counted at every twentieth of the page: 5%, 10% … 100%. */
+export const OVERLAY_REACH_STEPS = Array.from({ length: 20 }, (_, index) => (index + 1) * 5);
+
+/**
+ * What the overlay on the live site draws (heatmaps/overlay-routes.ts):
+ * aggregates of one page, device, and range, and nothing about any one
+ * pageview. Clicks per element (its label and structural path), with
+ * where in the element they fell counted in a coarse 8 by 8 grid of
+ * cells; the share of pageviews that reached each 5% of the page.
+ */
+export interface HeatmapOverlay {
+  totals: { pageviews: number; clicks: number; rageClicks: number };
+  devices: { device: HeatmapDevice; pageviews: number }[];
+  /** For each twentieth of the page, the share of pageviews that reached it, 0 to 1. */
+  reach: { depth: number; share: number }[];
+  elements: {
+    label: string | null;
+    element: string;
+    clicks: number;
+    rageClicks: number;
+    /** [column, row, clicks]: columns and rows 0 to 7, from the element's top left. */
+    cells: [number, number, number][];
+  }[];
+}
+
+/** One page's overlay: four queries, run side by side, each project first and with FINAL. */
+export async function heatmapOverlay(
+  reader: Reader,
+  range: HeatmapRange & { device: HeatmapDevice },
+  path: string,
+): Promise<HeatmapOverlay> {
+  const onPage = (params: QueryParams, options?: { allDevices?: boolean }) =>
+    `${scope(params, range, options)} AND path = ${params.add(path, "String")}`;
+  const summaryParams = new QueryParams();
+  const deviceParams = new QueryParams();
+  const elementParams = new QueryParams();
+  const cellParams = new QueryParams();
+  const reach = OVERLAY_REACH_STEPS.map(
+    (step) => `countIf(kind = 'scroll' AND depth >= ${(step * UNITS) / 100}) AS reach_${step}`,
+  ).join(",\n");
+  const cellSize = UNITS / OVERLAY_GRID;
+  const topElements = (params: QueryParams) =>
+    `SELECT label, element FROM heatmaps FINAL
+     WHERE ${onPage(params)} AND kind = 'click'
+     GROUP BY label, element
+     ORDER BY count() DESC, label, element
+     LIMIT ${OVERLAY_ELEMENTS}`;
+
+  const [[summary], devices, elements, cells] = await Promise.all([
+    queryRows<Record<string, unknown>>(
+      reader,
+      `SELECT countIf(kind = 'scroll') AS pageviews,
+              countIf(kind = 'click') AS clicks,
+              countIf(kind = 'click' AND rage) AS rage_clicks,
+              ${reach}
+       FROM heatmaps FINAL
+       WHERE ${onPage(summaryParams)}`,
+      summaryParams,
+    ),
+    queryRows<{ device: HeatmapDevice; pageviews: string }>(
+      reader,
+      `SELECT device, countIf(kind = 'scroll') AS pageviews
+       FROM heatmaps FINAL
+       WHERE ${onPage(deviceParams, { allDevices: true })}
+       GROUP BY device
+       ORDER BY pageviews DESC, device`,
+      deviceParams,
+    ),
+    queryRows<Record<string, unknown>>(
+      reader,
+      `SELECT label, element, count() AS clicks, countIf(rage) AS rage_clicks
+       FROM heatmaps FINAL
+       WHERE ${onPage(elementParams)} AND kind = 'click'
+       GROUP BY label, element
+       ORDER BY clicks DESC, label, element
+       LIMIT ${OVERLAY_ELEMENTS}`,
+      elementParams,
+    ),
+    queryRows<Record<string, unknown>>(
+      reader,
+      `SELECT label, element,
+              least(intDiv(x, ${cellSize}), ${OVERLAY_GRID - 1}) AS cx,
+              least(intDiv(y, ${cellSize}), ${OVERLAY_GRID - 1}) AS cy,
+              count() AS clicks
+       FROM heatmaps FINAL
+       WHERE ${onPage(cellParams)} AND kind = 'click'
+         AND (label, element) IN (${topElements(cellParams)})
+       GROUP BY label, element, cx, cy
+       ORDER BY clicks DESC, label, element, cx, cy
+       LIMIT ${OVERLAY_CELLS}`,
+      cellParams,
+    ),
+  ]);
+
+  const pageviews = count(summary?.pageviews);
+  const cellsOf = new Map<string, [number, number, number][]>();
+  for (const row of cells) {
+    const key = `${String(row.label)}\u0000${String(row.element)}`;
+    const list = cellsOf.get(key) ?? [];
+    list.push([count(row.cx), count(row.cy), count(row.clicks)]);
+    cellsOf.set(key, list);
+  }
+  return {
+    totals: {
+      pageviews,
+      clicks: count(summary?.clicks),
+      rageClicks: count(summary?.rage_clicks),
+    },
+    devices: devices
+      .filter((row) => DEVICES.includes(row.device))
+      .map((row) => ({ device: row.device, pageviews: count(row.pageviews) })),
+    reach: OVERLAY_REACH_STEPS.map((depth) => ({
+      depth,
+      share: round(share(count(summary?.[`reach_${depth}`]), pageviews)),
+    })),
+    elements: elements.map((row) => ({
+      label: labelOf(row.label),
+      element: String(row.element),
+      clicks: count(row.clicks),
+      rageClicks: count(row.rage_clicks),
+      cells: cellsOf.get(`${String(row.label)}\u0000${String(row.element)}`) ?? [],
+    })),
+  };
+}
+
+/** An overlay with nothing in it: for a range wholly before the 90 days kept. */
+export function emptyOverlay(): HeatmapOverlay {
+  return {
+    totals: { pageviews: 0, clicks: 0, rageClicks: 0 },
+    devices: [],
+    reach: OVERLAY_REACH_STEPS.map((depth) => ({ depth, share: 0 })),
+    elements: [],
+  };
+}
