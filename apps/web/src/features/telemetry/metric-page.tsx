@@ -30,9 +30,9 @@ import {
   type MetricSeries,
 } from "@/lib/metrics-api";
 
-import { RangeControls } from "../errors/range-controls";
+import { ReportFilterBar } from "../errors/range-controls";
 import { NoSuchProject } from "../projects/no-such-project";
-import { ChartCard } from "./chart-card";
+import { ChartSection } from "./chart-card";
 import { stepText } from "./chart-time";
 import { ChoiceFilter } from "./filters";
 import {
@@ -246,223 +246,234 @@ export function MetricPage({
   const data = chart.data;
   const stats = METRIC_STATS[chosenKind];
 
-  return (
-    <div className="mx-auto flex max-w-6xl flex-col gap-6 p-6">
-      <div className="flex flex-col gap-2">
-        <Link
-          to="/projects/$projectId/metrics"
-          params={{ projectId }}
-          search={{ ...rangeSearch(range), ...environmentSearch(environment) }}
-          className="flex items-center gap-1 self-start text-sm text-link hover:underline"
-        >
-          <ArrowLeftIcon aria-hidden="true" className="size-4" />
-          All metrics
-        </Link>
-        <h2 className="font-mono text-lg font-medium break-all text-ink">{name}</h2>
-        {kind !== undefined && (
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <p className="text-sm text-ink-subtle">
-              {KIND_LABELS[kind]}
-              {data !== undefined && unitText(data.unit) !== "" && `, in ${unitText(data.unit)}`}
-            </p>
-            <WhenAllowed area="uptime_alerts" level="manage">
-              <Link
-                to="/projects/$projectId/alerts"
-                params={{ projectId }}
-                search={{
-                  add: "metric_threshold",
-                  metric: name,
-                  metricKind: kind,
-                  ...(environment === DEFAULT_ENVIRONMENT ? {} : { env: environment }),
-                  ...(host === undefined ? {} : { host }),
-                  ...(attr === undefined ? {} : { attr: attr.key, attrValue: attr.value }),
-                }}
-                className="flex items-center gap-1 text-sm text-link hover:underline"
+  const filterControls = kind !== undefined && (
+    <>
+      {(host !== undefined || attr !== undefined) && (
+        <ul aria-label="Narrowed to" className="flex flex-wrap items-center gap-2 text-sm">
+          {host !== undefined && (
+            <li className="flex items-center gap-1 rounded-md border border-border px-2 py-0.5">
+              <span className="text-ink-subtle">Host</span>
+              <span className="font-mono break-all">{host}</span>
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                aria-label="Show every host"
+                onClick={() => show({ host: undefined })}
               >
-                <BellPlusIcon aria-hidden="true" className="size-4" />
-                Add an alert rule
-              </Link>
-            </WhenAllowed>
-          </div>
-        )}
-        {(host !== undefined || attr !== undefined) && (
-          <ul aria-label="Narrowed to" className="flex flex-wrap items-center gap-2 text-sm">
-            {host !== undefined && (
-              <li className="flex items-center gap-1 rounded-md border border-border px-2 py-0.5">
-                <span className="text-ink-subtle">Host</span>
-                <span className="font-mono break-all">{host}</span>
-                <Button
-                  variant="ghost"
-                  size="icon-xs"
-                  aria-label="Show every host"
-                  onClick={() => show({ host: undefined })}
-                >
-                  <XIcon aria-hidden="true" />
-                </Button>
-              </li>
-            )}
-            {attr !== undefined && (
-              <li className="flex items-center gap-1 rounded-md border border-border px-2 py-0.5">
-                <span className="font-mono break-all">
-                  {attr.key} = {attr.value}
-                </span>
-                <Button
-                  variant="ghost"
-                  size="icon-xs"
-                  aria-label={`Show every ${attr.key}`}
-                  onClick={() => show({ attr: undefined })}
-                >
-                  <XIcon aria-hidden="true" />
-                </Button>
-              </li>
-            )}
-          </ul>
-        )}
-      </div>
-
-      {kind === undefined ? (
-        <Alert variant="destructive">
-          <OctagonAlertIcon />
-          <AlertTitle>This URL does not specify the metric kind</AlertTitle>
-          <AlertDescription>Open the metric from the list of metrics.</AlertDescription>
-        </Alert>
-      ) : (
-        <>
-          <RangeControls
-            range={range}
-            environment={environment}
-            answered={data}
-            onRange={(next) => show({ range: next })}
-            onEnvironment={(next) => show({ environment: next })}
-          >
-            {data !== undefined && (data.keys.length > 0 || split !== undefined) && (
-              <ChoiceFilter
-                label="Split by"
-                anyLabel="No split"
-                choices={data.keys.map((key) => ({ value: key, label: `Split by ${key}` }))}
-                value={split}
-                // Without a split, every measure shows: the one chosen goes.
-                onChange={(next) =>
-                  show({
-                    split: next,
-                    stat: next === undefined ? DEFAULT_STAT[chosenKind] : shownStat,
-                  })
-                }
-                className="w-56"
-              />
-            )}
-            {split !== undefined && stats.length > 1 && (
-              <Select
-                items={stats.map((measure) => ({
-                  value: measure,
-                  label: MEASURE_LABELS[measure] ?? measure,
-                }))}
-                value={shownStat}
-                onValueChange={(next) => {
-                  const chosen = stats.find((measure) => measure === next);
-                  if (chosen !== undefined) show({ stat: chosen });
-                }}
-              >
-                <SelectTrigger aria-label="Measure" className="w-44">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {stats.map((measure) => (
-                    <SelectItem key={measure} value={measure}>
-                      {MEASURE_LABELS[measure] ?? measure}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            )}
-          </RangeControls>
-
-          {chart.isError && (
-            <Alert variant="destructive">
-              <OctagonAlertIcon />
-              <AlertTitle>
-                {data === undefined ? "The metric could not load" : "The metric could not refresh"}
-              </AlertTitle>
-              <AlertDescription>
-                {chart.error.message}
-                {data !== undefined && " The charts below are from the last successful load."}
-              </AlertDescription>
-              <AlertAction>
-                <Button variant="outline" size="sm" onClick={() => void chart.refetch()}>
-                  Retry
-                </Button>
-              </AlertAction>
-            </Alert>
+                <XIcon aria-hidden="true" />
+              </Button>
+            </li>
           )}
-          {data === undefined ? (
-            !chart.isError && (
-              <div className="flex flex-col gap-2" aria-busy="true" aria-label="Loading">
-                <Skeleton className="h-72 w-full" />
-              </div>
-            )
-          ) : (
-            <div
-              className="flex flex-col gap-4 transition-opacity data-[stale=true]:opacity-60"
-              data-stale={chart.isPlaceholderData}
-              aria-busy={chart.isPlaceholderData}
-            >
-              {data.series.length === 0 ? (
-                <Empty className="border border-dashed p-10">
-                  <EmptyHeader>
-                    <EmptyMedia variant="icon">
-                      <SearchXIcon />
-                    </EmptyMedia>
-                    <EmptyTitle>No points of this metric in this period</EmptyTitle>
-                    <EmptyDescription>
-                      Nothing arrived for it
-                      {environment === DEFAULT_ENVIRONMENT ? "" : ` in ${environment}`} in this
-                      period. Metrics are kept {data.retentionDays} days.
-                    </EmptyDescription>
-                  </EmptyHeader>
-                </Empty>
-              ) : (
-                <>
-                  {chartCards(data, shownStat, colorsOf(data.split)).map((card) => (
-                    <ChartCard
-                      key={card.title}
-                      title={card.title}
-                      description={card.description}
-                      frame={data}
-                      subject={data.name}
-                      lines={card.lines}
-                      formatValue={card.format}
-                      missing={"missing" in card ? card.missing : undefined}
-                    />
-                  ))}
-                  <p className="text-sm text-ink-subtle">
-                    {formatNumber(data.seriesCount)} series: each combination of service, scope,
-                    attributes, and resource attributes is one.
-                    {data.split !== null &&
-                      data.series.some((series) => series.other) &&
-                      " After eight values, those with the least volume are combined as “Other values”."}
-                  </p>
-                  {data.seriesCapped && (
-                    <p className="text-sm text-ink-subtle">
-                      This metric has more than {formatNumber(data.seriesCount)} series in this
-                      period. The charts use the {formatNumber(data.seriesCount)} with the most
-                      points. Choose a shorter period to include all series.
-                    </p>
-                  )}
-                  {data.percentiles && data.skippedSeries > 0 && (
-                    <p className="text-sm text-ink-subtle">
-                      {formatNumber(data.skippedSeries)}{" "}
-                      {data.skippedSeries === 1 ? "series is" : "series are"} excluded from
-                      percentiles because their bucket bounds differ or they have no bucket counts.
-                      Percentiles require matching bucket bounds. Observations per second include{" "}
-                      {data.skippedSeries === 1 ? "it" : "them"}.
-                    </p>
-                  )}
-                </>
-              )}
+          {attr !== undefined && (
+            <li className="flex items-center gap-1 rounded-md border border-border px-2 py-0.5">
+              <span className="font-mono break-all">
+                {attr.key} = {attr.value}
+              </span>
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                aria-label={`Show every ${attr.key}`}
+                onClick={() => show({ attr: undefined })}
+              >
+                <XIcon aria-hidden="true" />
+              </Button>
+            </li>
+          )}
+        </ul>
+      )}
+      {data !== undefined && (data.keys.length > 0 || split !== undefined) && (
+        <ChoiceFilter
+          label="Split by"
+          anyLabel="No split"
+          choices={data.keys.map((key) => ({ value: key, label: `Split by ${key}` }))}
+          value={split}
+          // Without a split, every measure shows: the one chosen goes.
+          onChange={(next) =>
+            show({
+              split: next,
+              stat: next === undefined ? DEFAULT_STAT[chosenKind] : shownStat,
+            })
+          }
+          className="w-56"
+        />
+      )}
+      {split !== undefined && stats.length > 1 && (
+        <Select
+          items={stats.map((measure) => ({
+            value: measure,
+            label: MEASURE_LABELS[measure] ?? measure,
+          }))}
+          value={shownStat}
+          onValueChange={(next) => {
+            const chosen = stats.find((measure) => measure === next);
+            if (chosen !== undefined) show({ stat: chosen });
+          }}
+        >
+          <SelectTrigger aria-label="Measure" className="w-44">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {stats.map((measure) => (
+              <SelectItem key={measure} value={measure}>
+                {MEASURE_LABELS[measure] ?? measure}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      )}
+    </>
+  );
+
+  return (
+    <div className="flex flex-col">
+      {kind !== undefined && (
+        <ReportFilterBar
+          label="Period, environment, and split"
+          range={range}
+          environment={environment}
+          answered={data}
+          onRange={(next) => show({ range: next })}
+          onEnvironment={(next) => show({ environment: next })}
+          filters={filterControls}
+        />
+      )}
+      <div className="flex flex-col gap-6 px-gutter py-5">
+        <div className="flex flex-col gap-2">
+          <Link
+            to="/projects/$projectId/metrics"
+            params={{ projectId }}
+            search={{ ...rangeSearch(range), ...environmentSearch(environment) }}
+            className="flex items-center gap-1 self-start text-sm text-link hover:underline"
+          >
+            <ArrowLeftIcon aria-hidden="true" className="size-4" />
+            All metrics
+          </Link>
+          <h2 className="font-mono text-lg font-medium break-all text-ink">{name}</h2>
+          {kind !== undefined && (
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-sm text-ink-subtle">
+                {KIND_LABELS[kind]}
+                {data !== undefined && unitText(data.unit) !== "" && `, in ${unitText(data.unit)}`}
+              </p>
+              <WhenAllowed area="uptime_alerts" level="manage">
+                <Link
+                  to="/projects/$projectId/alerts"
+                  params={{ projectId }}
+                  search={{
+                    add: "metric_threshold",
+                    metric: name,
+                    metricKind: kind,
+                    ...(environment === DEFAULT_ENVIRONMENT ? {} : { env: environment }),
+                    ...(host === undefined ? {} : { host }),
+                    ...(attr === undefined ? {} : { attr: attr.key, attrValue: attr.value }),
+                  }}
+                  className="flex items-center gap-1 text-sm text-link hover:underline"
+                >
+                  <BellPlusIcon aria-hidden="true" className="size-4" />
+                  Add an alert rule
+                </Link>
+              </WhenAllowed>
             </div>
           )}
-        </>
-      )}
+        </div>
+
+        {kind === undefined ? (
+          <Alert variant="destructive">
+            <OctagonAlertIcon />
+            <AlertTitle>This URL does not specify the metric kind</AlertTitle>
+            <AlertDescription>Open the metric from the list of metrics.</AlertDescription>
+          </Alert>
+        ) : (
+          <>
+            {chart.isError && (
+              <Alert variant="destructive">
+                <OctagonAlertIcon />
+                <AlertTitle>
+                  {data === undefined
+                    ? "The metric could not load"
+                    : "The metric could not refresh"}
+                </AlertTitle>
+                <AlertDescription>
+                  {chart.error.message}
+                  {data !== undefined && " The charts below are from the last successful load."}
+                </AlertDescription>
+                <AlertAction>
+                  <Button variant="outline" size="sm" onClick={() => void chart.refetch()}>
+                    Retry
+                  </Button>
+                </AlertAction>
+              </Alert>
+            )}
+            {data === undefined ? (
+              !chart.isError && (
+                <div className="flex flex-col gap-6" aria-busy="true" aria-label="Loading">
+                  <Skeleton className="h-44 w-full" />
+                </div>
+              )
+            ) : (
+              <div
+                className="flex flex-col gap-6 transition-opacity data-[stale=true]:opacity-60"
+                data-stale={chart.isPlaceholderData}
+                aria-busy={chart.isPlaceholderData}
+              >
+                {data.series.length === 0 ? (
+                  <Empty className="border border-dashed p-10">
+                    <EmptyHeader>
+                      <EmptyMedia variant="icon">
+                        <SearchXIcon />
+                      </EmptyMedia>
+                      <EmptyTitle>No points of this metric in this period</EmptyTitle>
+                      <EmptyDescription>
+                        Nothing arrived for it
+                        {environment === DEFAULT_ENVIRONMENT ? "" : ` in ${environment}`} in this
+                        period. Metrics are kept {data.retentionDays} days.
+                      </EmptyDescription>
+                    </EmptyHeader>
+                  </Empty>
+                ) : (
+                  <>
+                    {chartCards(data, shownStat, colorsOf(data.split)).map((card) => (
+                      <ChartSection
+                        key={card.title}
+                        title={card.title}
+                        description={card.description}
+                        frame={data}
+                        subject={data.name}
+                        lines={card.lines}
+                        formatValue={card.format}
+                        missing={"missing" in card ? card.missing : undefined}
+                      />
+                    ))}
+                    <p className="text-sm text-ink-subtle">
+                      {formatNumber(data.seriesCount)} series: each combination of service, scope,
+                      attributes, and resource attributes is one.
+                      {data.split !== null &&
+                        data.series.some((series) => series.other) &&
+                        " After eight values, those with the least volume are combined as “Other values”."}
+                    </p>
+                    {data.seriesCapped && (
+                      <p className="text-sm text-ink-subtle">
+                        This metric has more than {formatNumber(data.seriesCount)} series in this
+                        period. The charts use the {formatNumber(data.seriesCount)} with the most
+                        points. Choose a shorter period to include all series.
+                      </p>
+                    )}
+                    {data.percentiles && data.skippedSeries > 0 && (
+                      <p className="text-sm text-ink-subtle">
+                        {formatNumber(data.skippedSeries)}{" "}
+                        {data.skippedSeries === 1 ? "series is" : "series are"} excluded from
+                        percentiles because their bucket bounds differ or they have no bucket
+                        counts. Percentiles require matching bucket bounds. Observations per second
+                        include {data.skippedSeries === 1 ? "it" : "them"}.
+                      </p>
+                    )}
+                  </>
+                )}
+              </div>
+            )}
+          </>
+        )}
+      </div>
     </div>
   );
 }

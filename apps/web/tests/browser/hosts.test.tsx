@@ -26,17 +26,17 @@ const sidebarLink = (name: string) =>
 const cellsOf = (row: Element | undefined) =>
   [...(row?.querySelectorAll("td") ?? [])].map((cell) => cell.textContent);
 
-/** The legend entries of the card titled `title`. */
+/** The legend entries of the chart titled `title`. */
 const legendOf = (title: string) => {
-  const card = page.getByRole("heading", { name: title }).element().closest("[data-slot=card]");
+  const card = page.getByRole("heading", { name: title }).element().closest("[data-slot=chart]");
   return [...(card?.querySelectorAll("ul[aria-label=Legend] li") ?? [])].map(
     (item) => item.textContent,
   );
 };
 
-/** The y-axis labels of the card titled `title`: right-aligned, left of the plot. */
+/** The y-axis labels of the chart titled `title`: right-aligned, left of the plot. */
 const axisOf = (title: string) => {
-  const card = page.getByRole("heading", { name: title }).element().closest("[data-slot=card]");
+  const card = page.getByRole("heading", { name: title }).element().closest("[data-slot=chart]");
   return [...(card?.querySelectorAll("svg text[text-anchor=end]") ?? [])]
     .filter((text) => Number(text.getAttribute("x")) < 100)
     .map((text) => text.textContent);
@@ -56,14 +56,18 @@ describe("the hosts page", () => {
     const rows = [...table.element().querySelectorAll("tbody tr")];
     expect(rows.map(cellsOf)).toEqual([
       ["db-1", "16 Nov 2026, 16:10:00.000Stale", "25%", "80%", "42% (/)", "2"],
-      ["web-1", "16 Nov 2026, 16:19:00.000Reporting", "22.5%", "50%", "90% (/data)", "–"],
+      // Not sent: the dash for the eye, the words for a screen reader.
+      ["web-1", "16 Nov 2026, 16:19:00.000Reporting", "22.5%", "50%", "90% (/data)", "–Not sent"],
     ]);
     // Stale is said in words, with the badge's icon, not by color alone.
     await expect
       .element(page.getByText(/Stale means no data arrived in the last 5 minutes/))
       .toBeVisible();
-    // A value not sent is a dash with a name.
-    await expect.element(page.getByLabelText("Not sent")).toBeVisible();
+    // A value not sent is a dash for the eye (hidden from screen readers) and a name for them.
+    const missing = page.getByTitle("Not sent");
+    await expect.element(missing).toBeVisible();
+    expect(missing.element().querySelector("[aria-hidden=true]")?.textContent).toBe("–");
+    expect(missing.element().querySelector(".sr-only")?.textContent).toBe("Not sent");
   });
 
   test("shows a Collector's configuration while the project has sent no host metrics, without the secret key", async () => {
@@ -115,7 +119,7 @@ describe("a host's page", () => {
     await expect.element(sidebarLink("Hosts")).toHaveAttribute("data-active");
     await expect.element(page.getByText("Reporting")).toBeVisible();
 
-    const titles = [...document.querySelectorAll("[data-slot=card] h3")].map((h) => h.textContent);
+    const titles = [...document.querySelectorAll("[data-slot=chart] h3")].map((h) => h.textContent);
     expect(titles).toEqual([
       "CPU busy (%)",
       "CPU time by state (%)",
@@ -157,7 +161,7 @@ describe("a host's page", () => {
     const card = page
       .getByRole("heading", { name: "Memory used (bytes)" })
       .element()
-      .closest("[data-slot=card]");
+      .closest("[data-slot=chart]");
     const button = [...(card?.querySelectorAll("button") ?? [])].find(
       (item) => item.textContent === "Show the numbers",
     );

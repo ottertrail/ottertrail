@@ -33,6 +33,7 @@ import {
   type PageRange,
 } from "@/lib/analytics-api";
 import { ApiError } from "@/lib/api";
+import { MISSING } from "@/lib/missing";
 import { projectQuery, type ProjectSummary } from "@/lib/projects-api";
 
 import { EnvironmentSelect, PeriodSelect } from "../errors/range-controls";
@@ -143,7 +144,7 @@ function BreakdownSection({
           bar: row.primary,
           figures: [
             formatWhole(row.primary),
-            row.secondary === undefined ? "–" : formatWhole(row.secondary),
+            row.secondary === undefined ? MISSING : formatWhole(row.secondary),
           ],
         }))}
         views={
@@ -288,7 +289,7 @@ function Trend({ days }: { days: DayPoint[] }) {
     const day = days[index];
     return METRICS.map((item) => ({
       label: item.label,
-      value: day === undefined ? "–" : formatWhole(day[item.key]),
+      value: day === undefined ? MISSING : formatWhole(day[item.key]),
       plotted: item.key === plotted,
     }));
   };

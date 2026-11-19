@@ -898,8 +898,11 @@ describe("the worker", () => {
         }),
       );
     }
-    // Each of the busy project's queries waits 700 ms (a metric with no series makes one), so
-    // its third starts 2.1 s in, with less than a second of its 2.5 s left: refused.
+    // Each of the busy project's queries waits 1 s before it starts (a metric with no series
+    // makes one), and a query starts only with a whole second of the budget left. Of 3.9 s, the
+    // second starts 2 s in, plus the time the first rule's other work took: up to 0.9 s of that
+    // still leaves it its second, on a busy machine too. The third starts 3 s in, at the
+    // earliest, with less than a second left: refused.
     const counting = countingReader(() => false, 0);
     const slow = (project: string, deadline: number): Reader => {
       const reader = counting.readerOf(project, deadline);
@@ -908,7 +911,7 @@ describe("the worker", () => {
         ...reader,
         gate: async (work) => {
           await new Promise((done) => {
-            setTimeout(done, 700);
+            setTimeout(done, 1000);
           });
           return work();
         },
@@ -916,10 +919,11 @@ describe("the worker", () => {
     };
     const started = Date.now();
     const results = await evaluatorWith(
-      { readerOf: slow, budgetMs: 2500 },
+      { readerOf: slow, budgetMs: 3900 },
       () => AT,
     ).telemetryTick();
-    expect(Date.now() - started).toBeLessThan(4000);
+    // The budget bounds the pass: no query starts after it.
+    expect(Date.now() - started).toBeLessThan(5500);
     expect(results.find((item) => item.rule.id === quick.ruleId)).toMatchObject({
       result: { outcome: "sent" },
     });

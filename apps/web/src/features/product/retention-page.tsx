@@ -3,7 +3,8 @@ import { useNavigate } from "@tanstack/react-router";
 import { UserRoundCheckIcon } from "lucide-react";
 
 import { CopyableCode } from "@/components/copyable-code";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { PINNED } from "@/components/pinned-column";
+import { ScrollHint } from "@/components/scroll-hint";
 import {
   Empty,
   EmptyContent,
@@ -17,7 +18,7 @@ import { ApiError } from "@/lib/api";
 import { type Cohort, type Retention, retentionQuery } from "@/lib/product-api";
 
 import { formatDayRange, formatWhole } from "../analytics/format";
-import { RangeControls } from "../errors/range-controls";
+import { ReportFilterBar } from "../errors/range-controls";
 import { NoSuchProject } from "../projects/no-such-project";
 import { formatShare } from "./format";
 import { LoadFailed, LoadingRows, Refreshing } from "./report-state";
@@ -70,25 +71,28 @@ function CohortTable({ retention }: { retention: Retention }) {
   const weeks = Math.max(0, ...retention.cohorts.map((cohort) => cohort.retained.length));
   const notOver = retention.cohorts.some((cohort) => endsThisWeek(cohort, retention.currentWeek));
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>
-          <h3>Weekly retention</h3>
-        </CardTitle>
-        <CardDescription>
+    <section aria-labelledby="weekly-retention" className="flex flex-col gap-3">
+      <div className="flex flex-col gap-1">
+        <h2 id="weekly-retention" className="text-sm font-medium text-ink">
+          Weekly retention
+        </h2>
+        <p className="max-w-4xl text-xs text-pretty text-ink-subtle">
           Each row represents signed-in users first seen in that week. Each column shows the share
           who returned that many weeks later.
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="flex flex-col gap-3">
-        <div className="overflow-x-auto">
+        </p>
+      </div>
+      <ScrollHint>
+        <div data-slot="table-container" className="relative overflow-x-auto">
           <table className="w-full border-separate border-spacing-0.5 text-sm">
             <caption className="sr-only">
               Weekly retention of signed-in users, by the week of their first event
             </caption>
             <thead>
               <tr className="text-xs text-ink-subtle">
-                <th scope="col" className="pr-3 pb-2 text-left font-normal whitespace-nowrap">
+                <th
+                  scope="col"
+                  className={`pr-3 pb-2 text-left font-normal whitespace-nowrap ${PINNED}`}
+                >
                   First week
                 </th>
                 <th scope="col" className="pr-3 pb-2 text-right font-normal">
@@ -108,7 +112,7 @@ function CohortTable({ retention }: { retention: Retention }) {
                   <tr key={cohort.week}>
                     <th
                       scope="row"
-                      className="py-1 pr-3 text-left font-normal whitespace-nowrap text-ink"
+                      className={`py-1 pr-3 text-left font-normal whitespace-nowrap text-ink ${PINNED}`}
                     >
                       {formatDayRange(cohort.week, cohort.week)}
                     </th>
@@ -148,25 +152,25 @@ function CohortTable({ retention }: { retention: Retention }) {
             </tbody>
           </table>
         </div>
-        <Legend />
-        {notOver && (
-          <p className="text-xs text-ink-subtle">
-            <span className="italic">*</span> This week is not over. Its share can still increase.
-          </p>
-        )}
-      </CardContent>
-    </Card>
+      </ScrollHint>
+      <Legend />
+      {notOver && (
+        <p className="text-xs text-ink-subtle">
+          <span className="italic">*</span> This week is not over. Its share can still increase.
+        </p>
+      )}
+    </section>
   );
 }
 
 /** The definitions the report counts by (docs/product-analytics.md, "Retention"). */
 function RetentionNotes({ timeZone }: { timeZone: string | undefined }) {
   return (
-    <section aria-labelledby="retention-notes" className="flex flex-col gap-2">
-      <h3 id="retention-notes" className="text-sm font-medium text-ink">
+    <section aria-labelledby="retention-notes" className="flex flex-col gap-2 border-t pt-5">
+      <h2 id="retention-notes" className="text-sm font-medium text-ink">
         How retention counts
-      </h3>
-      <ul className="flex list-disc flex-col gap-1 pl-5 text-xs text-ink-subtle">
+      </h2>
+      <ul className="flex max-w-4xl list-disc flex-col gap-1 pl-5 text-xs text-pretty text-ink-subtle">
         <li>
           Only signed-in users count, identified by your site's user ID. Visitor IDs change daily.
           Someone who returns next week counts as a new visitor.
@@ -245,34 +249,36 @@ export function RetentionPage({
   const data = query.data;
 
   return (
-    <div className="flex flex-col gap-4">
-      <RangeControls
+    <div className="flex flex-col">
+      <ReportFilterBar
         range={range}
         environment={environment}
         answered={data}
         onRange={(next) => show({ range: next })}
         onEnvironment={(next) => show({ environment: next })}
       />
-      {query.isError && (
-        <LoadFailed
-          what="The retention report"
-          message={query.error.message}
-          hasData={data !== undefined}
-          onRetry={() => void query.refetch()}
-        />
-      )}
-      {data === undefined ? (
-        !query.isError && <LoadingRows rows={6} />
-      ) : (
-        <Refreshing stale={query.isPlaceholderData}>
-          {data.cohorts.length === 0 ? (
-            <NoCohorts environment={environment} />
-          ) : (
-            <CohortTable retention={data} />
-          )}
-        </Refreshing>
-      )}
-      <RetentionNotes timeZone={data?.timeZone} />
+      <div className="flex flex-col gap-6 px-gutter py-5">
+        {query.isError && (
+          <LoadFailed
+            what="The retention report"
+            message={query.error.message}
+            hasData={data !== undefined}
+            onRetry={() => void query.refetch()}
+          />
+        )}
+        {data === undefined ? (
+          !query.isError && <LoadingRows rows={6} />
+        ) : (
+          <Refreshing stale={query.isPlaceholderData}>
+            {data.cohorts.length === 0 ? (
+              <NoCohorts environment={environment} />
+            ) : (
+              <CohortTable retention={data} />
+            )}
+          </Refreshing>
+        )}
+        <RetentionNotes timeZone={data?.timeZone} />
+      </div>
     </div>
   );
 }

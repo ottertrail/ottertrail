@@ -18,15 +18,23 @@ import {
 import { DefinitionSummary, FunnelNameDialog } from "./funnel-name-dialog";
 import { isShownFunnel } from "./search";
 
-/** A button that saves a new funnel, or, at the limit, the same button disabled with the reason. */
+/** The look of a Save that has nothing to save: it stays focusable, as the Save bar's does. */
+const RESTING = "aria-disabled:cursor-not-allowed aria-disabled:opacity-50";
+
+/**
+ * A button that saves a new funnel. Disabled with nothing to save (no
+ * funnel shown), and at the limit, with the reason.
+ */
 function SaveNewButton({
   label,
   atLimit,
+  nothingToSave = false,
   icon = false,
   onClick,
 }: {
   label: string;
   atLimit: boolean;
+  nothingToSave?: boolean;
   icon?: boolean;
   onClick: () => void;
 }) {
@@ -41,7 +49,10 @@ function SaveNewButton({
       <Button
         variant="outline"
         size="sm"
-        disabled={atLimit}
+        disabled={atLimit || nothingToSave}
+        // With nothing to save it stays focusable; at the limit it is plainly disabled.
+        focusableWhenDisabled={!atLimit}
+        className={RESTING}
         aria-describedby={atLimit ? reasonId : undefined}
         onClick={onClick}
       >
@@ -55,7 +66,9 @@ function SaveNewButton({
 /**
  * Saving the funnel shown (the address's steps, count, and window, not an
  * unshown draft in the editor): as a new saved funnel, or over the saved
- * funnel open in the address when it has changed since.
+ * funnel open in the address when it has changed since. By the save rule,
+ * Save is disabled while there is nothing new to save: before a funnel is
+ * shown, and while the open saved funnel is shown as it was saved.
  */
 export function SaveFunnelActions({
   projectId,
@@ -67,14 +80,18 @@ export function SaveFunnelActions({
   onSaved,
 }: {
   projectId: string;
-  shown: FunnelDefinition;
+  /** The funnel shown; null until one is (fewer than two steps in the address). */
+  shown: FunnelDefinition | null;
   /** The saved funnels; undefined while they load, or when they could not load. */
   funnels: SavedFunnel[] | undefined;
   /** Whether they are still loading. */
   loading: boolean;
   /** The saved funnel open in the address, if any. */
   openId: string | undefined;
-  /** Where focus goes once saved: the buttons that did it are replaced by the status. */
+  /**
+   * Where focus goes once a new funnel is saved from the dialog: the Steps
+   * heading, since Save funnel gives way to Save changes.
+   */
   returnFocus: React.RefObject<HTMLElement | null>;
   /** After a new funnel is saved: open it. */
   onSaved: (funnel: SavedFunnel) => void;
@@ -85,9 +102,9 @@ export function SaveFunnelActions({
     mutationFn: ({ funnel, definition }: { funnel: SavedFunnel; definition: FunnelDefinition }) =>
       updateFunnel(projectId, funnel, funnel.name, definition),
     onSuccess: (funnel) => {
-      // Shown as saved at once, so the button that did it goes with no second click.
+      // Shown as saved at once, so Save changes is disabled again with no second click.
+      // Focus stays on it: disabled, it stays focusable, beside the status that says so.
       rememberSavedFunnel(queryClient, projectId, funnel);
-      returnFocus.current?.focus();
     },
     // Changed or deleted elsewhere: the list as it is now, to look at before trying again.
     onError: () => void queryClient.invalidateQueries({ queryKey: savedFunnelsKey(projectId) }),
@@ -100,49 +117,61 @@ export function SaveFunnelActions({
       : JSON.stringify([saveChanges.variables.funnel.id, saveChanges.variables.definition]);
   const open = funnels?.find((funnel) => funnel.id === openId);
   const atLimit = (funnels?.length ?? 0) >= MAX_SAVED_FUNNELS;
-  const unchanged = open !== undefined && isShownFunnel(open, shown);
+  const unchanged = open !== undefined && shown !== null && isShownFunnel(open, shown);
   const saveNew = () => setNaming(true);
   // Until the list loads, whether the open funnel has changed is not known.
   const known = !(openId !== undefined && loading);
+  // A saved funnel open with no funnel shown (its steps gone from the address) is not compared.
+  const compared = shown === null ? undefined : open;
 
   return (
     <div className="flex max-w-md flex-col items-end gap-2">
       <div className={known ? "flex flex-wrap items-center justify-end gap-2" : "hidden"}>
         <output aria-live="polite" className="text-sm text-ink-subtle empty:hidden">
-          {open === undefined
+          {compared === undefined
             ? ""
             : unchanged
-              ? `Saved as “${open.name}”.`
-              : `Changed from the saved funnel “${open.name}”.`}
+              ? `Saved as “${compared.name}”.`
+              : `Changed from the saved funnel “${compared.name}”.`}
         </output>
-        {open !== undefined && !unchanged && (
-          <Button
-            size="sm"
-            disabled={saveChanges.isPending}
-            onClick={() => saveChanges.mutate({ funnel: open, definition: shown })}
-          >
-            {saveChanges.isPending && (
-              <LoaderCircleIcon aria-hidden="true" className="animate-spin" />
-            )}
-            Save changes
-          </Button>
-        )}
-        {open === undefined ? (
-          <SaveNewButton label="Save funnel" icon atLimit={atLimit} onClick={saveNew} />
+        {compared === undefined || shown === null ? (
+          <SaveNewButton
+            label="Save funnel"
+            icon
+            atLimit={atLimit}
+            nothingToSave={shown === null}
+            onClick={saveNew}
+          />
         ) : (
-          !unchanged && (
-            <SaveNewButton label="Save as new funnel" atLimit={atLimit} onClick={saveNew} />
-          )
+          <>
+            <Button
+              size="sm"
+              disabled={unchanged || saveChanges.isPending}
+              focusableWhenDisabled
+              className={RESTING}
+              onClick={() => saveChanges.mutate({ funnel: compared, definition: shown })}
+            >
+              {saveChanges.isPending && (
+                <LoaderCircleIcon aria-hidden="true" className="animate-spin" />
+              )}
+              Save changes
+            </Button>
+            {!unchanged && (
+              <SaveNewButton label="Save as new funnel" atLimit={atLimit} onClick={saveNew} />
+            )}
+          </>
         )}
       </div>
-      {saveChanges.error !== null && failedFor === JSON.stringify([openId, shown]) && (
-        <Alert variant="destructive" role="alert">
-          <OctagonAlertIcon />
-          <AlertDescription>
-            The changes could not be saved. {changeFailure(saveChanges.error)}
-          </AlertDescription>
-        </Alert>
-      )}
+      {saveChanges.error !== null &&
+        shown !== null &&
+        failedFor === JSON.stringify([openId, shown]) && (
+          <Alert variant="destructive" role="alert">
+            <OctagonAlertIcon />
+            <AlertDescription>
+              The changes could not be saved. {changeFailure(saveChanges.error)}
+            </AlertDescription>
+          </Alert>
+        )}
       <FunnelNameDialog
         open={naming}
         onOpenChange={setNaming}
@@ -152,13 +181,17 @@ export function SaveFunnelActions({
         description="Save the displayed funnel with a name. Open it again from Saved funnels."
         initialName=""
         submitLabel="Save funnel"
-        save={(name) => createFunnel(projectId, name, shown)}
+        save={(name) =>
+          shown === null
+            ? Promise.reject(new Error("Show a funnel before saving it."))
+            : createFunnel(projectId, name, shown)
+        }
         onSaved={(funnel) => {
           setNaming(false);
           onSaved(funnel);
         }}
       >
-        <DefinitionSummary definition={shown} />
+        {shown !== null && <DefinitionSummary definition={shown} />}
       </FunnelNameDialog>
     </div>
   );

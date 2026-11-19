@@ -11,6 +11,8 @@ import {
 } from "@/components/ui/table";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 
+import { ScrollHint } from "./scroll-hint";
+
 export interface BreakdownRow {
   key: string;
   /** Names the row: a path, a country, a source. */
@@ -45,6 +47,7 @@ export interface BreakdownViews {
 export function BreakdownTable({
   title,
   headingLevel = 3,
+  description,
   caption,
   nameHeading,
   figureHeadings,
@@ -58,6 +61,8 @@ export function BreakdownTable({
   title: string;
   /** The title's heading level in the page's outline. */
   headingLevel?: 2 | 3 | 4;
+  /** A line under the title, such as how many events a property is on. */
+  description?: React.ReactNode;
   /** Says what the rows are and how they are ordered, for screen readers. */
   caption: string;
   nameHeading: string;
@@ -75,6 +80,9 @@ export function BreakdownTable({
   const Heading = `h${headingLevel}` as const;
   const max = Math.max(0, ...rows.map((row) => row.bar));
   const stack = layout === "stack";
+  // More than two figures: the name takes what the fixed figure columns leave,
+  // so a half-width table still fits (four figures at 5rem each).
+  const wide = figureHeadings.length > 2;
   const headingId = React.useId();
   return (
     <section
@@ -83,7 +91,11 @@ export function BreakdownTable({
       className={cn("flex min-w-0 flex-col gap-2", className)}
     >
       <div className="flex min-h-8 flex-wrap items-center justify-between gap-x-3 gap-y-2">
-        <Heading id={headingId} className="text-sm font-medium text-ink">
+        <Heading
+          id={headingId}
+          className="min-w-0 truncate text-sm font-medium text-ink"
+          title={title}
+        >
           {title}
         </Heading>
         {views !== undefined && (
@@ -108,89 +120,103 @@ export function BreakdownTable({
           </ToggleGroup>
         )}
       </div>
+      {description !== undefined && <p className="-mt-1 text-xs text-ink-subtle">{description}</p>}
       {rows.length === 0 ? (
         <div className="border-t py-6 text-center text-sm text-ink-subtle">{empty}</div>
       ) : (
-        <Table className={cn("table-fixed", stack ? "max-sm:block" : "max-sm:min-w-[28rem]")}>
-          <caption className="sr-only">{caption}</caption>
-          <TableHeader className={cn(stack && "max-sm:sr-only")}>
-            <TableRow className="hover:bg-transparent">
-              <TableHead
-                scope="col"
-                className="h-8 w-[45%] pl-0 text-xs font-normal text-ink-subtle max-sm:sticky max-sm:left-0 max-sm:z-10 max-sm:bg-[var(--block-surface,var(--background))]"
-              >
-                {nameHeading}
-              </TableHead>
-              <TableHead scope="col" className="h-8 w-[20%]">
-                <span className="sr-only">Share</span>
-              </TableHead>
-              {figureHeadings.map((heading) => (
+        <ScrollHint disabled={stack}>
+          <Table
+            className={cn(
+              "table-fixed",
+              stack ? "max-sm:block" : wide ? "max-sm:min-w-[32rem]" : "max-sm:min-w-[28rem]",
+            )}
+          >
+            <caption className="sr-only">{caption}</caption>
+            <TableHeader className={cn(stack && "max-sm:sr-only")}>
+              <TableRow className="hover:bg-transparent">
                 <TableHead
-                  key={heading}
                   scope="col"
-                  className="h-8 w-24 pr-0 text-right text-xs font-normal text-ink-subtle last:pr-0"
-                >
-                  {heading}
-                </TableHead>
-              ))}
-            </TableRow>
-          </TableHeader>
-          <TableBody className={cn(stack && "max-sm:block")}>
-            {rows.map((row) => {
-              const share = max === 0 ? 0 : (row.bar / max) * 100;
-              return (
-                <TableRow
-                  key={row.key}
                   className={cn(
-                    "hover:bg-transparent",
-                    stack && "max-sm:grid max-sm:grid-cols-[minmax(0,1fr)_auto] max-sm:py-2",
+                    "h-8 pl-0 text-xs font-normal text-ink-subtle max-sm:sticky max-sm:left-0 max-sm:z-10 max-sm:bg-[var(--block-surface,var(--background))]",
+                    wide ? "w-auto" : "w-[45%]",
                   )}
                 >
-                  <TableCell
+                  {nameHeading}
+                </TableHead>
+                <TableHead scope="col" className={cn("h-8", wide ? "w-12" : "w-[20%]")}>
+                  <span className="sr-only">Share</span>
+                </TableHead>
+                {figureHeadings.map((heading) => (
+                  <TableHead
+                    key={heading}
+                    scope="col"
                     className={cn(
-                      "py-1.5 pl-0 max-sm:bg-[var(--block-surface,var(--background))]",
-                      stack ? "max-sm:col-span-2 max-sm:p-0" : "max-sm:sticky max-sm:left-0",
+                      "h-8 pr-0 text-right text-xs font-normal text-ink-subtle last:pr-0",
+                      wide ? "w-20" : "w-24",
                     )}
                   >
-                    <div className="truncate text-ink" title={row.title}>
-                      {row.label}
-                    </div>
-                  </TableCell>
-                  <TableCell
-                    className={cn("py-1.5", stack && "max-sm:col-span-2 max-sm:px-0 max-sm:py-1")}
+                    {heading}
+                  </TableHead>
+                ))}
+              </TableRow>
+            </TableHeader>
+            <TableBody className={cn(stack && "max-sm:block")}>
+              {rows.map((row) => {
+                const share = max === 0 ? 0 : (row.bar / max) * 100;
+                return (
+                  <TableRow
+                    key={row.key}
+                    className={cn(
+                      "hover:bg-transparent",
+                      stack && "max-sm:grid max-sm:grid-cols-[minmax(0,1fr)_auto] max-sm:py-2",
+                    )}
                   >
-                    <div
-                      aria-hidden="true"
-                      data-slot="breakdown-bar"
-                      className="h-1.5 rounded-r bg-chart-1"
-                      style={{ width: `${share}%` }}
-                    />
-                  </TableCell>
-                  {row.figures.map((figure, index) => (
                     <TableCell
-                      // Figures have a fixed order, one per heading.
-                      // oxlint-disable-next-line react/no-array-index-key
-                      key={index}
                       className={cn(
-                        "py-1.5 pr-0 text-right tabular-nums",
-                        index === 0 ? "text-ink" : "text-ink-subtle",
-                        stack &&
-                          "max-sm:col-span-2 max-sm:flex max-sm:justify-between max-sm:px-0 max-sm:py-0.5",
+                        "py-1.5 pl-0 max-sm:bg-[var(--block-surface,var(--background))]",
+                        stack ? "max-sm:col-span-2 max-sm:p-0" : "max-sm:sticky max-sm:left-0",
                       )}
                     >
-                      {stack && (
-                        <span data-slot="breakdown-label" className="text-ink-subtle sm:hidden">
-                          {figureHeadings[index]}
-                        </span>
-                      )}
-                      {figure}
+                      <div className="truncate text-ink" title={row.title}>
+                        {row.label}
+                      </div>
                     </TableCell>
-                  ))}
-                </TableRow>
-              );
-            })}
-          </TableBody>
-        </Table>
+                    <TableCell
+                      className={cn("py-1.5", stack && "max-sm:col-span-2 max-sm:px-0 max-sm:py-1")}
+                    >
+                      <div
+                        aria-hidden="true"
+                        data-slot="breakdown-bar"
+                        className="h-1.5 rounded-r bg-chart-1"
+                        style={{ width: `${share}%` }}
+                      />
+                    </TableCell>
+                    {row.figures.map((figure, index) => (
+                      <TableCell
+                        // Figures have a fixed order, one per heading.
+                        // oxlint-disable-next-line react/no-array-index-key
+                        key={index}
+                        className={cn(
+                          "py-1.5 pr-0 text-right tabular-nums",
+                          index === 0 ? "text-ink" : "text-ink-subtle",
+                          stack &&
+                            "max-sm:col-span-2 max-sm:flex max-sm:justify-between max-sm:px-0 max-sm:py-0.5",
+                        )}
+                      >
+                        {stack && (
+                          <span data-slot="breakdown-label" className="text-ink-subtle sm:hidden">
+                            {figureHeadings[index]}
+                          </span>
+                        )}
+                        {figure}
+                      </TableCell>
+                    ))}
+                  </TableRow>
+                );
+              })}
+            </TableBody>
+          </Table>
+        </ScrollHint>
       )}
       {showAll !== undefined && rows.length > 0 && <div className="flex">{showAll}</div>}
     </section>

@@ -86,8 +86,9 @@ describe("the Alerts page", () => {
     await expect.element(page.getByRole("table", { name: /Recent alerts/ })).toBeVisible();
     const history = rowsOf("Recent alerts, newest first");
     expect(history.map((cells) => [cells[0], cells[1], cells[3]])).toEqual([
-      ["16 Nov 2026, 09:41", "API down", "–"],
-      ["16 Nov 2026, 06:10", "New errors", "–"],
+      // Not resolved: the dash for the eye, the words for a screen reader.
+      ["16 Nov 2026, 09:41", "API down", "–Not resolved"],
+      ["16 Nov 2026, 06:10", "New errors", "–Not resolved"],
       ["16 Nov 2026, 03:06", "API down", "16 Nov 2026, 03:31"],
     ]);
     expect(history[1]?.[2]).toBe(

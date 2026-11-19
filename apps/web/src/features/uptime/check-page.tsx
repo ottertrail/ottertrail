@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { ArrowLeftIcon, OctagonAlertIcon, SearchXIcon } from "lucide-react";
 
+import { Missing } from "@/components/missing";
 import { StatusBadge } from "@/components/status-badge";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -24,6 +25,7 @@ import {
 } from "@/components/ui/table";
 import { DEFAULT_ENVIRONMENT, type PageRange } from "@/lib/analytics-api";
 import { ApiError } from "@/lib/api";
+import { MISSING } from "@/lib/missing";
 import {
   type Check,
   checkQuery,
@@ -114,8 +116,8 @@ function Stats({
         label="Certificate expires"
         value={
           check.tlsExpiresAt === null
-            ? "–"
-            : (formatMoment(check.tlsExpiresAt, timeZone).split(",")[0] ?? "–")
+            ? MISSING
+            : (formatMoment(check.tlsExpiresAt, timeZone).split(",")[0] ?? MISSING)
         }
         note={check.tlsExpiresAt === null ? "Seen on HTTPS answers" : undefined}
       />
@@ -255,11 +257,7 @@ function FailuresCard({ results }: { results: CheckResults }) {
                   </TableCell>
                   <TableCell>{CAUSE_TEXT[failure.cause]}</TableCell>
                   <TableCell className="text-right tabular-nums">
-                    {failure.statusCode ?? (
-                      <span title="No answer" aria-label="No answer">
-                        –
-                      </span>
-                    )}
+                    {failure.statusCode ?? <Missing label="No answer" />}
                   </TableCell>
                   <TableCell className="text-right tabular-nums">
                     {formatMs(failure.responseMs)}

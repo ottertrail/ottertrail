@@ -4,7 +4,6 @@ import { FilterIcon } from "lucide-react";
 import * as React from "react";
 
 import { Button } from "@/components/ui/button";
-import { Card, CardAction, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Empty,
   EmptyContent,
@@ -40,7 +39,7 @@ import {
   windowAllowed,
 } from "@/lib/product-api";
 
-import { RangeControls } from "../errors/range-controls";
+import { ReportFilterBar } from "../errors/range-controls";
 import { NoSuchProject } from "../projects/no-such-project";
 import { windowLabel } from "./format";
 import { FunnelEditor } from "./funnel-editor";
@@ -130,11 +129,11 @@ function FunnelSettings({
 /** The definitions the funnel counts by (docs/product-analytics.md, "Funnel"). */
 function FunnelNotes({ window }: { window: FunnelWindow }) {
   return (
-    <section aria-labelledby="funnel-notes" className="flex flex-col gap-2">
-      <h3 id="funnel-notes" className="text-sm font-medium text-ink">
+    <section aria-labelledby="funnel-notes" className="flex flex-col gap-2 border-t pt-5">
+      <h2 id="funnel-notes" className="text-sm font-medium text-ink">
         How the funnel counts
-      </h3>
-      <ul className="flex list-disc flex-col gap-1 pl-5 text-xs text-ink-subtle">
+      </h2>
+      <ul className="flex max-w-4xl list-disc flex-col gap-1 pl-5 text-xs text-pretty text-ink-subtle">
         <li>
           Someone reaches a step after completing all previous steps in order. Other events between
           steps are allowed.
@@ -252,50 +251,49 @@ export function FunnelPage({
   ];
 
   return (
-    <div className="flex flex-col gap-4">
-      <RangeControls
+    <div className="flex flex-col">
+      <ReportFilterBar
         range={range}
         environment={environment}
         answered={data ?? events.data}
         onRange={(next) => show({ range: next })}
         onEnvironment={(next) => show({ environment: next })}
       />
-      <SavedFunnelsCard
-        projectId={projectId}
-        funnels={saved.data}
-        failure={saved.isError ? saved.error.message : null}
-        onRetry={() => void saved.refetch()}
-        search={search}
-        openId={funnel}
-        onDeleted={(deleted) => {
-          // The shown steps stay; they are just no longer saved.
-          if (deleted.id === funnel) show({ funnel: undefined });
-        }}
-      />
-      <Card>
-        <CardHeader>
-          <CardTitle>
-            <h3 ref={stepsHeadingRef} tabIndex={-1} className="outline-none">
+      <div className="flex flex-col gap-6 px-gutter py-5">
+        <SavedFunnelsCard
+          projectId={projectId}
+          funnels={saved.data}
+          failure={saved.isError ? saved.error.message : null}
+          onRetry={() => void saved.refetch()}
+          search={search}
+          openId={funnel}
+          onDeleted={(deleted) => {
+            // The shown steps stay; they are just no longer saved.
+            if (deleted.id === funnel) show({ funnel: undefined });
+          }}
+        />
+        <section aria-labelledby="funnel-steps" className="flex flex-col gap-4 border-t pt-5">
+          <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
+            <h2
+              id="funnel-steps"
+              ref={stepsHeadingRef}
+              tabIndex={-1}
+              className="py-1.5 text-sm font-medium text-ink outline-none"
+            >
               Steps
-            </h3>
-          </CardTitle>
-          {ready && (
+            </h2>
             <WhenAllowed area="product_analytics" level="manage">
-              <CardAction>
-                <SaveFunnelActions
-                  projectId={projectId}
-                  shown={{ steps, count, window }}
-                  funnels={saved.data}
-                  loading={saved.isPending}
-                  openId={funnel}
-                  returnFocus={stepsHeadingRef}
-                  onSaved={(created) => show({ funnel: created.id })}
-                />
-              </CardAction>
+              <SaveFunnelActions
+                projectId={projectId}
+                shown={ready ? { steps, count, window } : null}
+                funnels={saved.data}
+                loading={saved.isPending}
+                openId={funnel}
+                returnFocus={stepsHeadingRef}
+                onSaved={(created) => show({ funnel: created.id })}
+              />
             </WhenAllowed>
-          )}
-        </CardHeader>
-        <CardContent>
+          </div>
           <FunnelEditor
             applied={steps}
             eventNames={eventNames}
@@ -303,32 +301,42 @@ export function FunnelPage({
           >
             <FunnelSettings count={count} window={window} onChange={(next) => show({ ...next })} />
           </FunnelEditor>
-        </CardContent>
-      </Card>
-      {!ready ? (
-        <StartHere example={example} onUse={() => show({ steps: example })} />
-      ) : (
-        <>
-          {query.isError && (
-            <LoadFailed
-              what="The funnel"
-              message={query.error.message}
-              hasData={data !== undefined}
-              onRetry={() => void query.refetch()}
-            />
-          )}
-          {data === undefined ? (
-            !query.isError && (
-              <Skeleton className="h-72 w-full rounded-xl" aria-busy="true" aria-label="Loading" />
-            )
-          ) : (
-            <Refreshing stale={query.isPlaceholderData}>
-              <FunnelResults funnel={data} />
-            </Refreshing>
-          )}
-        </>
-      )}
-      <FunnelNotes window={window} />
+        </section>
+        {!ready ? (
+          <StartHere example={example} onUse={() => show({ steps: example })} />
+        ) : (
+          <>
+            {query.isError && (
+              <LoadFailed
+                what="The funnel"
+                message={query.error.message}
+                hasData={data !== undefined}
+                onRetry={() => void query.refetch()}
+              />
+            )}
+            {data === undefined ? (
+              !query.isError && (
+                <div className="flex flex-col gap-4" aria-busy="true" aria-label="Loading">
+                  <div className="grid max-w-2xl grid-cols-3 gap-4">
+                    {["conversion", "first", "last"].map((item) => (
+                      <div key={item} className="flex flex-col gap-2">
+                        <Skeleton className="h-3 w-20" />
+                        <Skeleton className="h-7 w-16" />
+                      </div>
+                    ))}
+                  </div>
+                  <Skeleton className="h-40 w-full" />
+                </div>
+              )
+            ) : (
+              <Refreshing stale={query.isPlaceholderData}>
+                <FunnelResults funnel={data} />
+              </Refreshing>
+            )}
+          </>
+        )}
+        <FunnelNotes window={window} />
+      </div>
     </div>
   );
 }

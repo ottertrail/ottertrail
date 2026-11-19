@@ -1,7 +1,6 @@
-import * as React from "react";
-
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import type { CoreVital, MetricSummary, Speed, VitalName } from "@/lib/speed-api";
+import { type Stat, StatStrip } from "@/components/stat-strip";
+import type { MetricSummary, Speed, VitalName } from "@/lib/speed-api";
+import { CORE_VITALS } from "@/lib/speed-api";
 
 import { formatWhole } from "../analytics/format";
 import { formatVital, rate, RATINGS, shares, VITALS } from "./format";
@@ -26,7 +25,7 @@ function ShareBar({ summary }: { summary: MetricSummary }) {
   }
   return (
     <div className="flex flex-col gap-2">
-      <div aria-hidden="true" className="flex h-2 gap-0.5 overflow-hidden rounded-full">
+      <div aria-hidden="true" className="flex h-2 max-w-72 gap-0.5 overflow-hidden rounded-full">
         {RATINGS.map((item) => {
           const part = summary[item.value];
           return part === 0 ? null : (
@@ -38,11 +37,11 @@ function ShareBar({ summary }: { summary: MetricSummary }) {
           );
         })}
       </div>
-      <ul aria-label="Share of page loads" className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
+      <ul aria-label="Share of page loads" className="flex flex-wrap gap-x-3 gap-y-1">
         {RATINGS.map((item) => (
-          <li key={item.value} className="flex items-center gap-1.5">
+          <li key={item.value} className="flex items-center gap-1.5 whitespace-nowrap">
             <RatingIcon rating={item.value} named={false} />
-            <span className="text-ink-subtle">{item.label}</span>
+            <span>{item.label}</span>
             <span className="font-medium text-ink tabular-nums">{percents[item.value]}%</span>
           </li>
         ))}
@@ -51,41 +50,46 @@ function ShareBar({ summary }: { summary: MetricSummary }) {
   );
 }
 
-/** One Core Web Vital: its p75 and rating, what it means, and how the loads were spread. */
-export function CoreVitalCard({ name, speed }: { name: CoreVital; speed: Speed }) {
-  const titleId = React.useId();
-  const vital = VITALS[name];
+/** "Largest Contentful Paint (LCP), p75": a vital's name, its abbreviation, and the percentile shown. */
+const vitalLabel = (name: VitalName) => `${VITALS[name].name} (${VITALS[name].short}), p75`;
+
+function ratingOf(name: VitalName, speed: Speed) {
   const summary = speed.metrics[name];
-  const rating = summary.p75 === null ? null : rate(name, summary.p75, speed.thresholds[name]);
-  return (
-    <article aria-labelledby={titleId} className="flex flex-col">
-      <Card className="flex-1">
-        <CardHeader>
-          <CardTitle>
-            <h3 id={titleId}>
-              {vital.name} <span className="text-ink-subtle">({vital.short})</span>
-            </h3>
-          </CardTitle>
-          <CardDescription>{vital.explanation}</CardDescription>
-        </CardHeader>
-        <CardContent className="flex flex-1 flex-col gap-4">
-          <div className="flex flex-wrap items-center gap-3">
-            <p className="flex items-baseline gap-1.5">
-              <span className="text-3xl font-semibold tracking-tight text-ink tabular-nums">
-                {formatVital(name, summary.p75)}
-              </span>
-              <span className="text-xs text-ink-subtle">p75</span>
-            </p>
-            <RatingBadge rating={rating} />
-          </div>
+  return summary.p75 === null ? null : rate(name, summary.p75, speed.thresholds[name]);
+}
+
+/**
+ * The Core Web Vitals in one strip: each p75, its rating in words (a badge
+ * with an icon, never color alone), what it means, how the loads were
+ * spread, and how many were measured.
+ */
+export function CoreVitals({ speed }: { speed: Speed }) {
+  const stats: Stat[] = CORE_VITALS.map((name) => {
+    const summary = speed.metrics[name];
+    return {
+      label: vitalLabel(name),
+      value: formatVital(name, summary.p75),
+      detail: (
+        <>
+          <span className="flex">
+            <RatingBadge rating={ratingOf(name, speed)} />
+          </span>
+          <span>{VITALS[name].explanation}</span>
           <ShareBar summary={summary} />
-          <p className="mt-auto text-xs text-ink-subtle">
+          <span data-slot="stat-measured">
             Measured on {loadsText(summary.count)}.
             {name === "inp" && " INP only counts loads with an interaction."}
-          </p>
-        </CardContent>
-      </Card>
-    </article>
+          </span>
+        </>
+      ),
+    };
+  });
+  return (
+    <StatStrip
+      label="Core Web Vitals"
+      stats={stats}
+      className="max-sm:grid-cols-1 sm:grid-cols-3 max-sm:[&>div]:border-l-0 max-sm:[&>div]:pl-0"
+    />
   );
 }
 
@@ -93,43 +97,36 @@ const SECONDARY: VitalName[] = ["fcp", "ttfb"];
 
 /** FCP and TTFB: not Core Web Vitals, but a slow first paint or server answer delays LCP too. */
 export function SecondaryVitals({ speed }: { speed: Speed }) {
+  const stats: Stat[] = SECONDARY.map((name) => ({
+    label: vitalLabel(name),
+    value: formatVital(name, speed.metrics[name].p75),
+    detail: (
+      <>
+        <span className="flex">
+          <RatingBadge rating={ratingOf(name, speed)} />
+        </span>
+        <span>
+          {VITALS[name].explanation} p75 of {loadsText(speed.metrics[name].count)}.
+        </span>
+      </>
+    ),
+  }));
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>
-          <h3>Measurements before LCP</h3>
-        </CardTitle>
-        <CardDescription>
+    <section aria-labelledby="speed-before-lcp" className="flex flex-col gap-3 border-t pt-5">
+      <div className="flex flex-col gap-1">
+        <h2 id="speed-before-lcp" className="text-sm font-medium text-ink">
+          Measurements before LCP
+        </h2>
+        <p className="max-w-4xl text-xs text-pretty text-ink-subtle">
           These two measurements help explain LCP. The main content cannot appear before the server
           responds and the browser starts to display the page.
-        </CardDescription>
-      </CardHeader>
-      <CardContent>
-        <dl className="grid gap-4 sm:grid-cols-2">
-          {SECONDARY.map((name) => {
-            const vital = VITALS[name];
-            const summary = speed.metrics[name];
-            const rating =
-              summary.p75 === null ? null : rate(name, summary.p75, speed.thresholds[name]);
-            return (
-              <div key={name} className="flex flex-col gap-1">
-                <dt className="text-sm text-ink">
-                  {vital.name} <span className="text-ink-subtle">({vital.short})</span>
-                </dt>
-                <dd className="flex flex-wrap items-center gap-2">
-                  <span className="text-xl font-semibold tracking-tight text-ink tabular-nums">
-                    {formatVital(name, summary.p75)}
-                  </span>
-                  <RatingBadge rating={rating} />
-                </dd>
-                <dd className="text-xs text-ink-subtle">
-                  {vital.explanation} p75 of {loadsText(summary.count)}.
-                </dd>
-              </div>
-            );
-          })}
-        </dl>
-      </CardContent>
-    </Card>
+        </p>
+      </div>
+      <StatStrip
+        label="Measurements before LCP"
+        stats={stats}
+        className="sm:grid-cols-2 lg:max-w-3xl"
+      />
+    </section>
   );
 }

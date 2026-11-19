@@ -24,12 +24,12 @@ import { ApiError } from "@/lib/api";
 import { CORE_VITALS, DEVICES, type Device, isDevice, speedQuery } from "@/lib/speed-api";
 
 import { formatDayRange } from "../analytics/format";
-import { RangeControls } from "../errors/range-controls";
+import { ReportFilterBar } from "../errors/range-controls";
 import { NoSuchProject } from "../projects/no-such-project";
 import { LcpDayCard } from "./lcp-day-card";
 import { type SpeedSearch, speedSearchOf } from "./search";
-import { DeviceTable, PageTable } from "./speed-tables";
-import { CoreVitalCard, SecondaryVitals } from "./vital-cards";
+import { DeviceTable, PageTable, SpeedTablesNote } from "./speed-tables";
+import { CoreVitals, SecondaryVitals } from "./vital-cards";
 
 /** The device picker's choice for every kind of device. */
 const ALL_DEVICES = "all";
@@ -94,16 +94,27 @@ function NoLoads({ environment, device }: { environment: string; device: Device 
   );
 }
 
+/** Shaped like the report: the vitals' strip, the chart, and two tables side by side. */
 function Loading() {
   return (
-    <div className="flex flex-col gap-4" aria-busy="true" aria-label="Loading">
-      <div className="grid gap-4 lg:grid-cols-3">
+    <div className="flex flex-col gap-6" aria-busy="true" aria-label="Loading">
+      <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
         {CORE_VITALS.map((name) => (
-          <Skeleton key={name} className="h-56 w-full rounded-xl" />
+          <div key={name} className="flex flex-col gap-2">
+            <Skeleton className="h-3 w-40" />
+            <Skeleton className="h-7 w-20" />
+            <Skeleton className="h-16 w-full max-w-72" />
+          </div>
         ))}
       </div>
-      <Skeleton className="h-32 w-full rounded-xl" />
-      <Skeleton className="h-72 w-full rounded-xl" />
+      <Skeleton className="h-20 w-full" />
+      <Skeleton className="h-44 w-full" />
+      <div className="@container">
+        <div className="grid gap-8 @3xl:grid-cols-2">
+          <Skeleton className="h-32 w-full" />
+          <Skeleton className="h-32 w-full" />
+        </div>
+      </div>
     </div>
   );
 }
@@ -140,68 +151,74 @@ export function SpeedPage({
   const data = query.data;
 
   return (
-    <div className="mx-auto flex max-w-6xl flex-col gap-6 p-6">
-      <RangeControls
+    <div className="flex flex-col">
+      <ReportFilterBar
+        label="Period, environment, and device"
         range={range}
         environment={environment}
         answered={data}
         onRange={(next) => show({ range: next })}
         onEnvironment={(next) => show({ environment: next })}
-      >
-        <DevicePicker device={device} onDevice={(next) => show({ device: next })} />
-      </RangeControls>
-
-      {query.isError && (
-        <Alert variant="destructive">
-          <OctagonAlertIcon />
-          <AlertTitle>
-            {data === undefined
-              ? "The speed report could not load"
-              : "The speed report could not refresh"}
-          </AlertTitle>
-          <AlertDescription>
-            {query.error.message}
-            {data !== undefined && " The report below is from the last successful load."}
-          </AlertDescription>
-          <AlertAction>
-            <Button variant="outline" size="sm" onClick={() => void query.refetch()}>
-              Retry
-            </Button>
-          </AlertAction>
-        </Alert>
-      )}
-      {data === undefined ? (
-        !query.isError && <Loading />
-      ) : (
-        <div
-          className="flex flex-col gap-4 transition-opacity data-[stale=true]:opacity-60"
-          data-stale={query.isPlaceholderData}
-          aria-busy={query.isPlaceholderData}
-        >
-          {data.loads === 0 ? (
-            <NoLoads environment={environment} device={device} />
-          ) : (
-            <>
-              <section aria-label="Core Web Vitals" className="flex flex-col gap-2">
-                <div className="grid gap-4 lg:grid-cols-3">
-                  {CORE_VITALS.map((name) => (
-                    <CoreVitalCard key={name} name={name} speed={data} />
-                  ))}
-                </div>
-                <p className="text-xs text-ink-subtle">
-                  Values are the 75th percentile (p75) of{" "}
-                  {formatDayRange(data.firstDay, data.lastDay)} ({data.timeZone}): 75% of page loads
-                  were at least this fast. Thresholds are Google&apos;s.
-                </p>
-              </section>
-              <SecondaryVitals speed={data} />
-              <LcpDayCard days={data.days} />
-              <DeviceTable speed={data} />
-              <PageTable speed={data} />
-            </>
-          )}
-        </div>
-      )}
+        filters={<DevicePicker device={device} onDevice={(next) => show({ device: next })} />}
+      />
+      <div className="flex flex-col gap-6 px-gutter py-5">
+        {query.isError && (
+          <Alert variant="destructive">
+            <OctagonAlertIcon />
+            <AlertTitle>
+              {data === undefined
+                ? "The speed report could not load"
+                : "The speed report could not refresh"}
+            </AlertTitle>
+            <AlertDescription>
+              {query.error.message}
+              {data !== undefined && " The report below is from the last successful load."}
+            </AlertDescription>
+            <AlertAction>
+              <Button variant="outline" size="sm" onClick={() => void query.refetch()}>
+                Retry
+              </Button>
+            </AlertAction>
+          </Alert>
+        )}
+        {data === undefined ? (
+          !query.isError && <Loading />
+        ) : (
+          <div
+            className="flex flex-col gap-6 transition-opacity data-[stale=true]:opacity-60"
+            data-stale={query.isPlaceholderData}
+            aria-busy={query.isPlaceholderData}
+          >
+            {data.loads === 0 ? (
+              <NoLoads environment={environment} device={device} />
+            ) : (
+              <>
+                <section aria-label="Core Web Vitals" className="flex flex-col gap-3">
+                  <CoreVitals speed={data} />
+                  <p className="max-w-4xl text-xs text-pretty text-ink-subtle">
+                    Values are the 75th percentile (p75) of{" "}
+                    {formatDayRange(data.firstDay, data.lastDay)} ({data.timeZone}): 75% of page
+                    loads were at least this fast. Thresholds are Google&apos;s.
+                  </p>
+                </section>
+                <SecondaryVitals speed={data} />
+                <LcpDayCard days={data.days} />
+                {/* Side by side by the content's width, not the window's. */}
+                <section
+                  aria-label="By device and page"
+                  className="@container flex flex-col gap-3 border-t pt-5"
+                >
+                  <div className="grid gap-x-8 gap-y-8 @5xl:grid-cols-2">
+                    <DeviceTable speed={data} />
+                    <PageTable speed={data} />
+                  </div>
+                  <SpeedTablesNote speed={data} />
+                </section>
+              </>
+            )}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

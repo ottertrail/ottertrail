@@ -8,9 +8,9 @@ import {
   WaypointsIcon,
 } from "lucide-react";
 
+import { StatStrip } from "@/components/stat-strip";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Empty,
   EmptyDescription,
@@ -19,15 +19,23 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { WhenAllowed } from "@/components/when-allowed";
 import { DEFAULT_ENVIRONMENT, type PageRange } from "@/lib/analytics-api";
 import { ApiError } from "@/lib/api";
 import { type ServiceChart, serviceChartQuery, STATUS_CLASSES } from "@/lib/services-api";
 
 import { formatConversion, formatWhole } from "../analytics/format";
-import { RangeControls } from "../errors/range-controls";
+import { ReportFilterBar } from "../errors/range-controls";
 import { NoSuchProject } from "../projects/no-such-project";
-import { ChartCard } from "./chart-card";
+import { ChartSection } from "./chart-card";
 import { stepText } from "./chart-time";
 import { formatDuration } from "./format";
 import { durationFormat, formatNumber } from "./metric-format";
@@ -71,8 +79,8 @@ function Charts({ data, subject }: { data: ServiceChart; subject: string }) {
     { key: "p99", label: "99th percentile", values: data.durations.p99Us },
   ].map((line, index) => ({ ...line, color: SLOTS[index + 5] ?? "" }));
   return (
-    <div className="grid gap-4">
-      <ChartCard
+    <>
+      <ChartSection
         title="Requests per second"
         description={`Per ${step}, by status class: ${classes.map((name) => STATUS_LABELS[name]).join(", ")}.`}
         frame={data}
@@ -80,26 +88,24 @@ function Charts({ data, subject }: { data: ServiceChart; subject: string }) {
         lines={requestLines}
         formatValue={(value) => `${formatNumber(value)}/s`}
       />
-      <div className="grid gap-4 lg:grid-cols-2">
-        <ChartCard
-          title="Failed (%)"
-          description={`The share of requests with status Error, per ${step}. A gap means no request arrived.`}
-          frame={data}
-          subject={subject}
-          lines={failedLines}
-          formatValue={formatShare}
-          domain={{ min: 0, max: 100 }}
-        />
-        <ChartCard
-          title={`Duration (${duration.unit})`}
-          description={`The median, 95th, and 99th percentile of the requests' durations, per ${step}.`}
-          frame={data}
-          subject={subject}
-          lines={durationLines}
-          formatValue={duration.format}
-        />
-      </div>
-    </div>
+      <ChartSection
+        title="Failed (%)"
+        description={`The share of requests with status Error, per ${step}. A gap means no request arrived.`}
+        frame={data}
+        subject={subject}
+        lines={failedLines}
+        formatValue={formatShare}
+        domain={{ min: 0, max: 100 }}
+      />
+      <ChartSection
+        title={`Duration (${duration.unit})`}
+        description={`The median, 95th, and 99th percentile of the requests' durations, per ${step}.`}
+        frame={data}
+        subject={subject}
+        lines={durationLines}
+        formatValue={duration.format}
+      />
+    </>
   );
 }
 
@@ -114,58 +120,61 @@ function Totals({ data, subject }: { data: ServiceChart; subject: string }) {
     ["99th percentile", formatDuration(totals.p99Us)],
   ] as const;
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>
-          <h3>In this period</h3>
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="flex flex-col gap-4">
-        <dl className="grid grid-cols-2 gap-4 sm:grid-cols-5">
-          {figures.map(([name, value]) => (
-            <div key={name} className="flex flex-col gap-1">
-              <dt className="text-xs text-ink-subtle">{name}</dt>
-              <dd className="text-lg font-medium text-ink">{value}</dd>
-            </div>
-          ))}
-        </dl>
-        <div className="flex flex-col gap-2">
+    <>
+      <section aria-labelledby="service-totals" className="flex flex-col gap-3">
+        <h3 id="service-totals" className="text-sm font-medium text-ink">
+          In this period
+        </h3>
+        <StatStrip
+          label="Totals"
+          stats={figures.map(([label, value]) => ({ label, value }))}
+          className="lg:max-w-5xl"
+        />
+      </section>
+      <section aria-labelledby="service-classes" className="flex flex-col gap-3 border-t pt-5">
+        <h3 id="service-classes" className="text-sm font-medium text-ink">
+          Status classes
+        </h3>
+        <div className="flex max-w-xl flex-col gap-2">
           <StatusLegend />
           <StatusBar statuses={totals.statuses} label={`Status classes of ${subject}`} />
         </div>
-        <table className="w-full max-w-md text-sm">
+        <Table className="max-w-xl">
           <caption className="sr-only">Requests by status class</caption>
-          <thead>
-            <tr className="text-xs text-ink-subtle">
-              <th scope="col" className="pb-2 text-left font-normal">
+          <TableHeader>
+            <TableRow className="hover:bg-transparent">
+              <TableHead scope="col" className="h-8 pl-0 text-xs font-normal text-ink-subtle">
                 Status class
-              </th>
-              <th scope="col" className="pb-2 text-right font-normal">
+              </TableHead>
+              <TableHead scope="col" className="h-8 text-right text-xs font-normal text-ink-subtle">
                 Requests
-              </th>
-              <th scope="col" className="pb-2 text-right font-normal">
+              </TableHead>
+              <TableHead
+                scope="col"
+                className="h-8 pr-0 text-right text-xs font-normal text-ink-subtle"
+              >
                 Share
-              </th>
-            </tr>
-          </thead>
-          <tbody>
+              </TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
             {STATUS_CLASSES.map((name) => (
-              <tr key={name} className="border-t border-hairline">
-                <th scope="row" className="py-1.5 text-left font-normal text-ink">
+              <TableRow key={name} className="hover:bg-transparent">
+                <th scope="row" className="py-1.5 pl-0 text-left font-normal text-ink">
                   {STATUS_LABELS[name]}
                 </th>
-                <td className="py-1.5 text-right text-ink tabular-nums">
+                <TableCell className="py-1.5 text-right text-ink tabular-nums">
                   {formatWhole(totals.statuses[name])}
-                </td>
-                <td className="py-1.5 text-right text-ink tabular-nums">
+                </TableCell>
+                <TableCell className="py-1.5 pr-0 text-right text-ink tabular-nums">
                   {formatConversion(totals.statuses[name] / totals.requests)}
-                </td>
-              </tr>
+                </TableCell>
+              </TableRow>
             ))}
-          </tbody>
-        </table>
-      </CardContent>
-    </Card>
+          </TableBody>
+        </Table>
+      </section>
+    </>
   );
 }
 
@@ -210,130 +219,136 @@ export function ServicePage({
   const linkClass = "flex items-center gap-1 text-sm text-link hover:underline";
 
   return (
-    <div className="mx-auto flex max-w-6xl flex-col gap-6 p-6">
-      <div className="flex flex-col gap-2">
-        <nav aria-label="Breadcrumb" className="flex flex-wrap items-center gap-x-3 gap-y-1">
-          <Link
-            to="/projects/$projectId/services"
-            params={{ projectId }}
-            search={servicesSearchOf({ range, environment })}
-            className={linkClass}
-          >
-            <ArrowLeftIcon aria-hidden="true" className="size-4" />
-            All services
-          </Link>
-          {route !== undefined && (
-            <Link
-              to="/projects/$projectId/services/$service"
-              params={{ projectId, service }}
-              search={serviceSearchOf({ range, environment })}
-              className={`${linkClass} break-all`}
-            >
-              Every route of {service}
-            </Link>
-          )}
-        </nav>
-        <div className="flex flex-wrap items-start justify-between gap-2">
-          <div className="flex min-w-0 flex-col gap-1">
-            <h2 className="font-mono text-lg font-medium break-all text-ink">{route ?? service}</h2>
-            <p className="text-sm text-ink-subtle">
-              {route === undefined ? (
-                "A service: every route of its server spans."
-              ) : (
-                <>
-                  A route of <span className="font-mono break-all">{service}</span>: its{" "}
-                  <code className="font-mono">http.route</code> attribute, or its span&apos;s name.
-                </>
-              )}
-            </p>
-          </div>
-          <div className="flex flex-wrap items-center gap-4">
-            <Link
-              to="/projects/$projectId/traces"
-              params={{ projectId }}
-              search={tracesSearchOf({
-                range,
-                environment,
-                filters: routeTraceFilters(service, route),
-              })}
-              className={linkClass}
-            >
-              <WaypointsIcon aria-hidden="true" className="size-4" />
-              Traces
-              <span className="sr-only"> of {subject}</span>
-            </Link>
-            <WhenAllowed area="uptime_alerts" level="manage">
-              <Link
-                to="/projects/$projectId/alerts"
-                params={{ projectId }}
-                search={addRuleSearch(environment, service, route)}
-                className={linkClass}
-              >
-                <BellPlusIcon aria-hidden="true" className="size-4" />
-                Add an alert rule
-                <span className="sr-only"> for {subject}</span>
-              </Link>
-            </WhenAllowed>
-          </div>
-        </div>
-      </div>
-
-      <RangeControls
+    <div className="flex flex-col">
+      <ReportFilterBar
         range={range}
         environment={environment}
         answered={data}
         onRange={(next) => show({ range: next })}
         onEnvironment={(next) => show({ environment: next })}
       />
-
-      {chart.isError && (
-        <Alert variant="destructive">
-          <OctagonAlertIcon />
-          <AlertTitle>
-            {data === undefined ? "The charts could not load" : "The charts could not refresh"}
-          </AlertTitle>
-          <AlertDescription>
-            {chart.error.message}
-            {data !== undefined && " The charts below are from the last successful load."}
-          </AlertDescription>
-          <AlertAction>
-            <Button variant="outline" size="sm" onClick={() => void chart.refetch()}>
-              Retry
-            </Button>
-          </AlertAction>
-        </Alert>
-      )}
-      {data === undefined ? (
-        !chart.isError && (
-          <div className="flex flex-col gap-2" aria-busy="true" aria-label="Loading">
-            <Skeleton className="h-40 w-full" />
-            <Skeleton className="h-72 w-full" />
+      <div className="flex flex-col gap-6 px-gutter py-5">
+        <div className="flex flex-col gap-2">
+          <nav aria-label="Breadcrumb" className="flex flex-wrap items-center gap-x-3 gap-y-1">
+            <Link
+              to="/projects/$projectId/services"
+              params={{ projectId }}
+              search={servicesSearchOf({ range, environment })}
+              className={linkClass}
+            >
+              <ArrowLeftIcon aria-hidden="true" className="size-4" />
+              All services
+            </Link>
+            {route !== undefined && (
+              <Link
+                to="/projects/$projectId/services/$service"
+                params={{ projectId, service }}
+                search={serviceSearchOf({ range, environment })}
+                className={`${linkClass} break-all`}
+              >
+                Every route of {service}
+              </Link>
+            )}
+          </nav>
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <div className="flex min-w-0 flex-col gap-1">
+              <h2 className="font-mono text-lg font-medium break-all text-ink">
+                {route ?? service}
+              </h2>
+              <p className="text-sm text-ink-subtle">
+                {route === undefined ? (
+                  "A service: every route of its server spans."
+                ) : (
+                  <>
+                    A route of <span className="font-mono break-all">{service}</span>: its{" "}
+                    <code className="font-mono">http.route</code> attribute, or its span&apos;s
+                    name.
+                  </>
+                )}
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-4">
+              <Link
+                to="/projects/$projectId/traces"
+                params={{ projectId }}
+                search={tracesSearchOf({
+                  range,
+                  environment,
+                  filters: routeTraceFilters(service, route),
+                })}
+                className={linkClass}
+              >
+                <WaypointsIcon aria-hidden="true" className="size-4" />
+                Traces
+                <span className="sr-only"> of {subject}</span>
+              </Link>
+              <WhenAllowed area="uptime_alerts" level="manage">
+                <Link
+                  to="/projects/$projectId/alerts"
+                  params={{ projectId }}
+                  search={addRuleSearch(environment, service, route)}
+                  className={linkClass}
+                >
+                  <BellPlusIcon aria-hidden="true" className="size-4" />
+                  Add an alert rule
+                  <span className="sr-only"> for {subject}</span>
+                </Link>
+              </WhenAllowed>
+            </div>
           </div>
-        )
-      ) : data.totals.requests === 0 ? (
-        <Empty className="border border-dashed p-10">
-          <EmptyHeader>
-            <EmptyMedia variant="icon">
-              <SearchXIcon />
-            </EmptyMedia>
-            <EmptyTitle>No requests in this period</EmptyTitle>
-            <EmptyDescription>
-              No server span of {subject} arrived
-              {environment === DEFAULT_ENVIRONMENT ? "" : ` in ${environment}`} in this period.
-              Traces are kept {data.retentionDays} days.
-            </EmptyDescription>
-          </EmptyHeader>
-        </Empty>
-      ) : (
-        <div
-          className="flex flex-col gap-4 transition-opacity data-[stale=true]:opacity-60"
-          data-stale={chart.isPlaceholderData}
-          aria-busy={chart.isPlaceholderData}
-        >
-          <Totals data={data} subject={subject} />
-          <Charts data={data} subject={subject} />
         </div>
-      )}
+
+        {chart.isError && (
+          <Alert variant="destructive">
+            <OctagonAlertIcon />
+            <AlertTitle>
+              {data === undefined ? "The charts could not load" : "The charts could not refresh"}
+            </AlertTitle>
+            <AlertDescription>
+              {chart.error.message}
+              {data !== undefined && " The charts below are from the last successful load."}
+            </AlertDescription>
+            <AlertAction>
+              <Button variant="outline" size="sm" onClick={() => void chart.refetch()}>
+                Retry
+              </Button>
+            </AlertAction>
+          </Alert>
+        )}
+        {data === undefined ? (
+          !chart.isError && (
+            <div className="flex flex-col gap-6" aria-busy="true" aria-label="Loading">
+              <Skeleton className="h-16 w-full max-w-5xl" />
+              <Skeleton className="h-24 w-full max-w-xl" />
+              <Skeleton className="h-44 w-full" />
+              <Skeleton className="h-44 w-full" />
+            </div>
+          )
+        ) : data.totals.requests === 0 ? (
+          <Empty className="border border-dashed p-10">
+            <EmptyHeader>
+              <EmptyMedia variant="icon">
+                <SearchXIcon />
+              </EmptyMedia>
+              <EmptyTitle>No requests in this period</EmptyTitle>
+              <EmptyDescription>
+                No server span of {subject} arrived
+                {environment === DEFAULT_ENVIRONMENT ? "" : ` in ${environment}`} in this period.
+                Traces are kept {data.retentionDays} days.
+              </EmptyDescription>
+            </EmptyHeader>
+          </Empty>
+        ) : (
+          <div
+            className="flex flex-col gap-6 transition-opacity data-[stale=true]:opacity-60"
+            data-stale={chart.isPlaceholderData}
+            aria-busy={chart.isPlaceholderData}
+          >
+            <Totals data={data} subject={subject} />
+            <Charts data={data} subject={subject} />
+          </div>
+        )}
+      </div>
     </div>
   );
 }

@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { MousePointerClickIcon } from "lucide-react";
 
+import { BreakdownTable } from "@/components/breakdown-table";
 import { CopyableCode } from "@/components/copyable-code";
 import {
   Empty,
@@ -11,20 +12,12 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "@/components/ui/empty";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
 import { DEFAULT_ENVIRONMENT, type PageRange } from "@/lib/analytics-api";
 import { ApiError } from "@/lib/api";
 import { type ProductEvents, productEventsQuery } from "@/lib/product-api";
 
 import { formatWhole } from "../analytics/format";
-import { RangeControls } from "../errors/range-controls";
+import { ReportFilterBar } from "../errors/range-controls";
 import { NoSuchProject } from "../projects/no-such-project";
 import { LoadFailed, LoadingRows, Refreshing } from "./report-state";
 import { type ProductSearch, productSearchOf } from "./search";
@@ -80,37 +73,31 @@ function EventTable({
   search: ProductSearch;
 }) {
   return (
-    <Table>
-      <caption className="sr-only">Product events, most frequent first</caption>
-      <TableHeader>
-        <TableRow>
-          <TableHead>Event</TableHead>
-          <TableHead className="text-right">Events</TableHead>
-          <TableHead className="text-right">Visitors</TableHead>
-          <TableHead className="text-right">Users</TableHead>
-        </TableRow>
-      </TableHeader>
-      <TableBody>
-        {data.events.map((event) => (
-          <TableRow key={event.name}>
-            <TableCell className="max-w-md">
-              <Link
-                to="/projects/$projectId/product/events/$name"
-                params={{ projectId, name: event.name }}
-                search={productSearchOf(search)}
-                className="block truncate font-mono text-link hover:underline"
-                title={event.name}
-              >
-                {event.name}
-              </Link>
-            </TableCell>
-            <TableCell className="text-right tabular-nums">{formatWhole(event.events)}</TableCell>
-            <TableCell className="text-right tabular-nums">{formatWhole(event.visitors)}</TableCell>
-            <TableCell className="text-right tabular-nums">{formatWhole(event.users)}</TableCell>
-          </TableRow>
-        ))}
-      </TableBody>
-    </Table>
+    <BreakdownTable
+      title="Events"
+      headingLevel={2}
+      caption="Product events, most frequent first"
+      nameHeading="Event"
+      figureHeadings={["Events", "Visitors", "Users"]}
+      rows={data.events.map((event) => ({
+        key: event.name,
+        title: event.name,
+        bar: event.events,
+        label: (
+          <Link
+            to="/projects/$projectId/product/events/$name"
+            params={{ projectId, name: event.name }}
+            search={productSearchOf(search)}
+            className="font-mono text-link hover:underline"
+          >
+            {event.name}
+          </Link>
+        ),
+        figures: [formatWhole(event.events), formatWhole(event.visitors), formatWhole(event.users)],
+      }))}
+      empty="No product events in this period."
+      className="max-w-5xl"
+    />
   );
 }
 
@@ -140,41 +127,43 @@ export function EventsPage({
   const data = query.data;
 
   return (
-    <div className="flex flex-col gap-4">
-      <RangeControls
+    <div className="flex flex-col">
+      <ReportFilterBar
         range={range}
         environment={environment}
         answered={data}
         onRange={(next) => show({ range: next })}
         onEnvironment={(next) => show({ environment: next })}
       />
-      {query.isError && (
-        <LoadFailed
-          what="The events"
-          message={query.error.message}
-          hasData={data !== undefined}
-          onRetry={() => void query.refetch()}
-        />
-      )}
-      {data === undefined ? (
-        !query.isError && <LoadingRows rows={4} />
-      ) : (
-        <Refreshing stale={query.isPlaceholderData}>
-          {data.events.length === 0 ? (
-            <NoEvents environment={environment} />
-          ) : (
-            <>
-              <EventTable data={data} projectId={projectId} search={search} />
-              <p className="text-xs text-ink-subtle">
-                The events your site sends with <code className="font-mono">track()</code> or from
-                its server, most frequent first
-                {data.events.length === 100 ? " (the top 100)" : ""}. <WhoNote /> Open an event to
-                see its properties.
-              </p>
-            </>
-          )}
-        </Refreshing>
-      )}
+      <div className="flex flex-col gap-6 px-gutter py-5">
+        {query.isError && (
+          <LoadFailed
+            what="The events"
+            message={query.error.message}
+            hasData={data !== undefined}
+            onRetry={() => void query.refetch()}
+          />
+        )}
+        {data === undefined ? (
+          !query.isError && <LoadingRows rows={4} />
+        ) : (
+          <Refreshing stale={query.isPlaceholderData}>
+            {data.events.length === 0 ? (
+              <NoEvents environment={environment} />
+            ) : (
+              <>
+                <EventTable data={data} projectId={projectId} search={search} />
+                <p className="max-w-4xl text-xs text-pretty text-ink-subtle">
+                  The events your site sends with <code className="font-mono">track()</code> or from
+                  its server, most frequent first
+                  {data.events.length === 100 ? " (the top 100)" : ""}. <WhoNote /> Open an event to
+                  see its properties.
+                </p>
+              </>
+            )}
+          </Refreshing>
+        )}
+      </div>
     </div>
   );
 }

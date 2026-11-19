@@ -1,10 +1,12 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { ArrowDownIcon, DatabaseIcon, OctagonAlertIcon } from "lucide-react";
+import * as React from "react";
 
+import { PINNED } from "@/components/pinned-column";
+import { ScrollHint } from "@/components/scroll-hint";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Empty,
   EmptyDescription,
@@ -31,7 +33,7 @@ import {
 } from "@/lib/databases-api";
 
 import { formatWhole } from "../analytics/format";
-import { RangeControls } from "../errors/range-controls";
+import { ReportFilterBar } from "../errors/range-controls";
 import { NoSuchProject } from "../projects/no-such-project";
 import { databaseLabel, formatFailed, formatPerSecond, servicesText } from "./database-format";
 import { formatDuration } from "./format";
@@ -93,28 +95,29 @@ function DatabaseCard({
   onSort: (sort: DatabaseSort) => void;
 }) {
   const label = databaseLabel(database.system, database.database);
+  const headingId = React.useId();
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>
-          <h3 className="break-all">{label}</h3>
-        </CardTitle>
-        <CardDescription>
+    <section aria-labelledby={headingId} className="flex min-w-0 flex-col gap-3 border-t pt-5">
+      <div className="flex flex-col gap-1">
+        <h3 id={headingId} className="text-base font-medium break-all text-ink">
+          {label}
+        </h3>
+        <p className="text-sm text-ink-subtle">
           {formatWhole(database.calls)} {database.calls === 1 ? "call" : "calls"} (
           {formatPerSecond(database.perSecond)}), {formatDuration(database.totalUs)} in all,{" "}
           {formatFailed(database)} failed; median {formatDuration(database.p50Us)}, 95th percentile{" "}
           {formatDuration(database.p95Us)}, 99th percentile {formatDuration(database.p99Us)}. From{" "}
           {servicesText(database)}.
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="flex flex-col gap-3">
-        <Table>
+        </p>
+      </div>
+      <ScrollHint>
+        <Table className="max-sm:min-w-[52rem]">
           <caption className="sr-only">
             Query shapes of {label}, those {SORT_COLUMNS[sort].phrase} first
           </caption>
-          <TableHeader>
+          <TableHeader className="[&_th]:h-8 [&_th]:text-xs [&_th]:font-normal [&_th]:text-ink-subtle">
             <TableRow>
-              <TableHead>Query shape</TableHead>
+              <TableHead className={`pl-0 ${PINNED}`}>Query shape</TableHead>
               <SortHeader sort="calls" current={sort} onSort={onSort} />
               <TableHead className="text-right">Per second</TableHead>
               <SortHeader sort="time" current={sort} onSort={onSort} />
@@ -128,7 +131,7 @@ function DatabaseCard({
           <TableBody>
             {database.shapes.map((shape) => (
               <TableRow key={shape.id}>
-                <TableCell className="max-w-md min-w-48">
+                <TableCell className={`max-w-md min-w-48 pl-0 max-sm:max-w-48 ${PINNED}`}>
                   <Link
                     to="/projects/$projectId/databases/$shapeId"
                     params={{ projectId, shapeId: shape.id }}
@@ -165,14 +168,14 @@ function DatabaseCard({
             ))}
           </TableBody>
         </Table>
-        {database.shapeCount > database.shapes.length && (
-          <p className="text-sm text-ink-subtle">
-            The {formatWhole(database.shapes.length)} query shapes {SORT_COLUMNS[sort].phrase}, of{" "}
-            {formatWhole(database.shapeCount)}.
-          </p>
-        )}
-      </CardContent>
-    </Card>
+      </ScrollHint>
+      {database.shapeCount > database.shapes.length && (
+        <p className="text-sm text-ink-subtle">
+          The {formatWhole(database.shapes.length)} query shapes {SORT_COLUMNS[sort].phrase}, of{" "}
+          {formatWhole(database.shapeCount)}.
+        </p>
+      )}
+    </section>
   );
 }
 
@@ -227,100 +230,101 @@ export function DatabasesPage({
   const data = list.data;
 
   return (
-    <div className="mx-auto flex max-w-6xl flex-col gap-6 p-6">
-      <RangeControls
+    <div className="flex flex-col">
+      <ReportFilterBar
         range={range}
         environment={environment}
         answered={data}
         onRange={(next) => show({ range: next })}
         onEnvironment={(next) => show({ environment: next })}
       />
-
-      {list.isError && (
-        <Alert variant="destructive">
-          <OctagonAlertIcon />
-          <AlertTitle>
-            {data === undefined
-              ? "The databases could not load"
-              : "The databases could not refresh"}
-          </AlertTitle>
-          <AlertDescription>
-            {list.error.message}
-            {data !== undefined && " The list below is from the last successful load."}
-          </AlertDescription>
-          <AlertAction>
-            <Button variant="outline" size="sm" onClick={() => void list.refetch()}>
-              Retry
-            </Button>
-          </AlertAction>
-        </Alert>
-      )}
-      {data === undefined ? (
-        !list.isError && (
-          <div className="flex flex-col gap-2" aria-busy="true" aria-label="Loading">
-            <Skeleton className="h-40 w-full" />
-            <Skeleton className="h-40 w-full" />
-          </div>
-        )
-      ) : !data.received ? (
-        <SendTelemetry projectId={projectId} signal="traces" retentionDays={data.retentionDays} />
-      ) : data.databases.length === 0 ? (
-        <Empty className="border border-dashed p-10">
-          <EmptyHeader>
-            <EmptyMedia variant="icon">
-              <DatabaseIcon />
-            </EmptyMedia>
-            <EmptyTitle>No database calls in this period</EmptyTitle>
-            <EmptyDescription className="flex flex-col gap-2">
-              <span>
-                <WhatIsRead />
-              </span>
-              <span>
-                No such span arrived
-                {environment === DEFAULT_ENVIRONMENT ? "" : ` in ${environment}`} in this period.
-                Most OpenTelemetry database client instrumentations record one span per query.
-                Enable your SDK's instrumentation for your app's database client. Use automatic
-                instrumentation or the package for that client. Calls then appear here with their
-                traces. Traces are kept for {data.retentionDays} days.
-              </span>
-            </EmptyDescription>
-          </EmptyHeader>
-        </Empty>
-      ) : (
-        <div
-          className="flex flex-col gap-4 transition-opacity data-[stale=true]:opacity-60"
-          data-stale={list.isPlaceholderData}
-          aria-busy={list.isPlaceholderData}
-        >
-          <p className="text-sm text-ink-subtle">
-            <WhatIsRead /> Failed means the call's status is Error. Durations measure the calls.
-            Total time is the sum of all call durations. Select a column with an arrow to sort query
-            shapes. Select a shape to open its charts for the period.
-          </p>
-          {data.databases.map((database) => (
-            <DatabaseCard
-              key={`${database.system}\u0000${database.database}`}
-              projectId={projectId}
-              range={range}
-              environment={environment}
-              database={database}
-              sort={data.sort}
-              onSort={(next) => show({ sort: next })}
-            />
-          ))}
-          {data.truncated && (
-            <p className="text-sm text-ink-subtle">
-              More than {formatWhole(data.databases.length)} databases were called: these are the{" "}
-              {formatWhole(data.databases.length)} with the most time spent.
+      <div className="flex flex-col gap-6 px-gutter py-5">
+        {list.isError && (
+          <Alert variant="destructive">
+            <OctagonAlertIcon />
+            <AlertTitle>
+              {data === undefined
+                ? "The databases could not load"
+                : "The databases could not refresh"}
+            </AlertTitle>
+            <AlertDescription>
+              {list.error.message}
+              {data !== undefined && " The list below is from the last successful load."}
+            </AlertDescription>
+            <AlertAction>
+              <Button variant="outline" size="sm" onClick={() => void list.refetch()}>
+                Retry
+              </Button>
+            </AlertAction>
+          </Alert>
+        )}
+        {data === undefined ? (
+          !list.isError && (
+            <div className="flex flex-col gap-2" aria-busy="true" aria-label="Loading">
+              <Skeleton className="h-40 w-full" />
+              <Skeleton className="h-40 w-full" />
+            </div>
+          )
+        ) : !data.received ? (
+          <SendTelemetry projectId={projectId} signal="traces" retentionDays={data.retentionDays} />
+        ) : data.databases.length === 0 ? (
+          <Empty className="border border-dashed p-10">
+            <EmptyHeader>
+              <EmptyMedia variant="icon">
+                <DatabaseIcon />
+              </EmptyMedia>
+              <EmptyTitle>No database calls in this period</EmptyTitle>
+              <EmptyDescription className="flex flex-col gap-2">
+                <span>
+                  <WhatIsRead />
+                </span>
+                <span>
+                  No such span arrived
+                  {environment === DEFAULT_ENVIRONMENT ? "" : ` in ${environment}`} in this period.
+                  Most OpenTelemetry database client instrumentations record one span per query.
+                  Enable your SDK's instrumentation for your app's database client. Use automatic
+                  instrumentation or the package for that client. Calls then appear here with their
+                  traces. Traces are kept for {data.retentionDays} days.
+                </span>
+              </EmptyDescription>
+            </EmptyHeader>
+          </Empty>
+        ) : (
+          <div
+            className="flex flex-col gap-4 transition-opacity data-[stale=true]:opacity-60"
+            data-stale={list.isPlaceholderData}
+            aria-busy={list.isPlaceholderData}
+          >
+            <p className="max-w-4xl text-xs text-pretty text-ink-subtle">
+              <WhatIsRead /> Failed means the call's status is Error. Durations measure the calls.
+              Total time is the sum of all call durations. Select a column with an arrow to sort
+              query shapes. Select a shape to open its charts for the period.
             </p>
-          )}
-        </div>
-      )}
-      {data !== undefined && !data.received && (
-        <p className="text-sm text-ink-subtle">
-          This page shows the database calls in those traces. <WhatIsRead />
-        </p>
-      )}
+            {data.databases.map((database) => (
+              <DatabaseCard
+                key={`${database.system}\u0000${database.database}`}
+                projectId={projectId}
+                range={range}
+                environment={environment}
+                database={database}
+                sort={data.sort}
+                onSort={(next) => show({ sort: next })}
+              />
+            ))}
+            {data.truncated && (
+              <p className="text-sm text-ink-subtle">
+                More than {formatWhole(data.databases.length)} databases were called: these are the{" "}
+                {formatWhole(data.databases.length)} with the most time spent.
+              </p>
+            )}
+          </div>
+        )}
+        {data !== undefined && !data.received && (
+          <p className="text-sm text-ink-subtle">
+            This page shows the database calls in those traces. <WhatIsRead />
+          </p>
+        )}
+      </div>
     </div>
   );
 }

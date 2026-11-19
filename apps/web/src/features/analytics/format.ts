@@ -1,3 +1,5 @@
+import { MISSING } from "@/lib/missing";
+
 const whole = new Intl.NumberFormat("en-US");
 const compact = new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 });
 const oneDecimal = new Intl.NumberFormat("en-US", { maximumFractionDigits: 1 });
@@ -15,7 +17,7 @@ export function formatWhole(value: number): string {
 
 /** An average such as views per visit, to one decimal place at most: 2, 1.5; "–" when there is no data. */
 export function formatRatio(value: number | null): string {
-  return value === null ? "–" : oneDecimal.format(value);
+  return value === null ? MISSING : oneDecimal.format(value);
 }
 
 export interface Change {
@@ -78,7 +80,7 @@ export function formatTimeOfDay(iso: string, timeZone: string): string {
 
 /** A share from 0 to 1 as a whole percentage, or "–" when there is no data. */
 export function formatPercent(value: number | null): string {
-  return value === null ? "–" : `${Math.round(value * 100)}%`;
+  return value === null ? MISSING : `${Math.round(value * 100)}%`;
 }
 
 /**
@@ -96,7 +98,7 @@ export function formatConversion(value: number): string {
 /** 45s, 3m 12s, 1h 05m; "–" when there is no data. */
 export function formatDuration(ms: number | null): string {
   if (ms === null) {
-    return "–";
+    return MISSING;
   }
   const seconds = Math.round(ms / 1000);
   if (seconds < 60) {

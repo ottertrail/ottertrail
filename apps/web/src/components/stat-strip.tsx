@@ -21,6 +21,11 @@ export interface Stat {
    * period before had none (lib/change.ts).
    */
   counts?: ChangeCounts;
+  /**
+   * More about the figure, under it: a rating, its spread, what it was
+   * measured on. Kept short; the strip stays a row of figures.
+   */
+  detail?: React.ReactNode;
 }
 
 const CHANGE_ICONS = { up: ArrowUpIcon, down: ArrowDownIcon, same: MinusIcon } as const;
@@ -90,11 +95,19 @@ export function StatStrip({
             data-slot="stat"
             className="flex min-w-0 flex-col gap-1 border-l px-4 first:border-l-0 first:pl-0 max-sm:odd:border-l-0 max-sm:odd:pl-0 sm:max-lg:[&:nth-child(4n+1)]:border-l-0 sm:max-lg:[&:nth-child(4n+1)]:pl-0"
           >
-            <dt className="truncate text-xs text-ink-subtle">{stat.label}</dt>
+            <dt className="text-xs text-pretty text-ink-subtle">{stat.label}</dt>
             <dd className="text-2xl font-semibold tracking-tight whitespace-nowrap text-ink tabular-nums">
               {stat.value}
             </dd>
             {change !== null && <StatChange change={change} before={stat.before} />}
+            {stat.detail !== undefined && (
+              <dd
+                data-slot="stat-detail"
+                className="flex flex-col gap-2 pt-1 text-xs text-ink-subtle"
+              >
+                {stat.detail}
+              </dd>
+            )}
           </div>
         );
       })}

@@ -550,7 +550,8 @@ describe("a service's and a route's page", () => {
       ],
     ]);
     const failedPath = [...document.querySelectorAll("svg path")].find(
-      (path) => path.closest("[data-slot=card]")?.querySelector("h3")?.textContent === "Failed (%)",
+      (path) =>
+        path.closest("[data-slot=chart]")?.querySelector("h3")?.textContent === "Failed (%)",
     );
     expect(failedPath?.getAttribute("stroke")).toBe("var(--chart-5)");
     await expect.element(page.getByRole("heading", { name: "Duration (s)" })).toBeVisible();

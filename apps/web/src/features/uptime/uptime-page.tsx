@@ -3,6 +3,7 @@ import { Link } from "@tanstack/react-router";
 import { ActivityIcon, OctagonAlertIcon, PlusIcon } from "lucide-react";
 import * as React from "react";
 
+import { Missing } from "@/components/missing";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
@@ -168,7 +169,7 @@ export function UptimePage({ projectId }: { projectId: string }) {
                   </TableCell>
                   <TableCell className="whitespace-nowrap">
                     {check.lastCheckedAt === null ? (
-                      <span className="text-ink-subtle">–</span>
+                      <Missing label="Not checked yet" className="text-ink-subtle" />
                     ) : (
                       <time dateTime={check.lastCheckedAt}>
                         {formatMoment(check.lastCheckedAt, data.timeZone)}

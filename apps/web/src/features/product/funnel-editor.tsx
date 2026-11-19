@@ -37,7 +37,7 @@ function StepEditor({
   const number = index + 1;
   return (
     <li>
-      <fieldset className="flex flex-col gap-3 rounded-lg border border-hairline p-3">
+      <fieldset className="flex min-w-0 flex-col gap-3 border-t border-hairline py-3">
         <legend className="sr-only">Step {number}</legend>
         <div className="flex items-center gap-2">
           <span aria-hidden="true" className="text-sm font-medium text-ink">
@@ -152,7 +152,7 @@ export function FunnelEditor({
     <form
       noValidate
       aria-label="Funnel steps"
-      className="flex flex-col gap-4"
+      className="flex max-w-4xl flex-col gap-4"
       onSubmit={(event) => {
         event.preventDefault();
         if (valid) {
@@ -170,7 +170,7 @@ export function FunnelEditor({
           </option>
         ))}
       </datalist>
-      <ol className="flex flex-col gap-3">
+      <ol className="flex flex-col border-b border-hairline">
         {drafts.map((step, index) => (
           <StepEditor
             key={step.id}

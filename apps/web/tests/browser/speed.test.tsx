@@ -23,26 +23,46 @@ function lastQuery(api: FakeApi): Record<string, string> {
   return at === -1 ? {} : Object.fromEntries(new URLSearchParams(request.slice(at + 1)));
 }
 
-/** A Core Web Vital's card, found by its full name. */
-const card = (name: string) => page.getByRole("article", { name });
+/** A Core Web Vital's label in the strip of figures, found by its full name. */
+const card = (name: string) => page.getByText(name, { exact: true });
 
-/** What a card shows: its p75, its rating, the shares, and the loads measured. */
+/** A vital's figure in the strip (`StatStrip`): its label, value, and details. */
+function statOf(name: string): Element {
+  const stat = card(name).element().closest("[data-slot=stat]");
+  if (stat === null) throw new Error(`No figure for ${name}`);
+  return stat;
+}
+
+/** What a vital shows: its p75, its rating, the shares, and the loads measured. */
 function cardFigures(name: string) {
-  const element = card(name).element();
+  const element = statOf(name);
   return {
-    value: element.querySelector("p > span")?.textContent,
+    value: element.querySelector("dd")?.textContent,
     rating: element.querySelector("[data-slot=status-badge]")?.textContent,
     shares: [...element.querySelectorAll("ul[aria-label='Share of page loads'] li")].map(
       (item) => item.textContent,
     ),
-    measured: element.querySelector("p.mt-auto")?.textContent,
+    measured: element.querySelector("[data-slot=stat-measured]")?.textContent,
   };
 }
 
-/** The rows of a table, as their cells' text (a rating icon reads as its name). */
+/** A cell's text, without the labels a stacked row shows on a phone. */
+function cellText(cell: Element): string | null {
+  const copy = cell.cloneNode(true);
+  if (!(copy instanceof Element)) return cell.textContent;
+  for (const label of copy.querySelectorAll("[data-slot=breakdown-label]")) label.remove();
+  return copy.textContent;
+}
+
+/**
+ * The rows of a table, as their cells' text (a rating icon reads as its
+ * name). A breakdown's bar cell has no text and is left out.
+ */
 function tableRows(name: string) {
   return [...page.getByRole("table", { name }).element().querySelectorAll("tbody tr")].map((row) =>
-    [...row.querySelectorAll("td")].map((cell) => cell.textContent),
+    [...row.querySelectorAll("td")]
+      .filter((cell) => cell.querySelector("[data-slot=breakdown-bar]") === null)
+      .map(cellText),
   );
 }
 
@@ -51,7 +71,9 @@ function secondary(name: string) {
   const item = [...document.querySelectorAll("dl > div")].find((element) =>
     element.querySelector("dt")?.textContent?.startsWith(name),
   );
-  return item?.querySelector("dd")?.textContent;
+  return `${item?.querySelector("dd")?.textContent ?? ""}${
+    item?.querySelector("[data-slot=status-badge]")?.textContent ?? ""
+  }`;
 }
 
 describe("the speed page", () => {
@@ -65,7 +87,7 @@ describe("the speed page", () => {
       .click();
 
     await expect.poll(() => router.state.location.pathname).toBe(SPEED);
-    await expect.element(card("Largest Contentful Paint (LCP)")).toBeVisible();
+    await expect.element(card("Largest Contentful Paint (LCP), p75")).toBeVisible();
     expect(lastQuery(api)).toEqual({ period: "7d" });
     await expect
       .element(
@@ -73,34 +95,35 @@ describe("the speed page", () => {
       )
       .toHaveAttribute("data-active");
 
-    expect(cardFigures("Largest Contentful Paint (LCP)")).toEqual({
+    expect(cardFigures("Largest Contentful Paint (LCP), p75")).toEqual({
       value: "2.3 s",
       rating: "Good",
       shares: ["Good80%", "Needs improvement15%", "Poor5%"],
       measured: "Measured on 380 page loads.",
     });
-    expect(cardFigures("Interaction to Next Paint (INP)")).toEqual({
+    expect(cardFigures("Interaction to Next Paint (INP), p75")).toEqual({
       value: "240 ms",
       rating: "Needs improvement",
       shares: ["Good60%", "Needs improvement30%", "Poor10%"],
       measured: "Measured on 150 page loads. INP only counts loads with an interaction.",
     });
-    expect(cardFigures("Cumulative Layout Shift (CLS)")).toEqual({
+    expect(cardFigures("Cumulative Layout Shift (CLS), p75")).toEqual({
       value: "0.31",
       rating: "Poor",
       shares: ["Good50%", "Needs improvement25%", "Poor25%"],
       measured: "Measured on 400 page loads.",
     });
+    await expect.element(page.getByText("When the main content appeared.")).toBeVisible();
     await expect
-      .element(card("Largest Contentful Paint (LCP)").getByText("When the main content appeared."))
+      .element(page.getByText("How quickly the page responded to clicks, taps, and key presses."))
       .toBeVisible();
-    await expect
-      .element(
-        card("Interaction to Next Paint (INP)").getByText(
-          "How quickly the page responded to clicks, taps, and key presses.",
-        ),
-      )
-      .toBeVisible();
+    // Each explanation sits with its own figure.
+    expect(statOf("Largest Contentful Paint (LCP), p75").textContent).toContain(
+      "When the main content appeared.",
+    );
+    expect(statOf("Interaction to Next Paint (INP), p75").textContent).toContain(
+      "How quickly the page responded to clicks, taps, and key presses.",
+    );
     await expect
       .element(
         page.getByText(
@@ -117,8 +140,8 @@ describe("the speed page", () => {
     await expect
       .element(page.getByRole("heading", { name: "Measurements before LCP" }))
       .toBeVisible();
-    expect(secondary("First Contentful Paint (FCP)")).toBe("1.2 sGood");
-    expect(secondary("Time to First Byte (TTFB)")).toBe("950 msNeeds improvement");
+    expect(secondary("First Contentful Paint (FCP), p75")).toBe("1.2 sGood");
+    expect(secondary("Time to First Byte (TTFB), p75")).toBe("950 msNeeds improvement");
   });
 
   test("formats milliseconds as ms below a second and s from one, and CLS with two decimals", async () => {
@@ -137,24 +160,24 @@ describe("the speed page", () => {
     });
     renderApp(SPEED);
 
-    await expect.element(card("Largest Contentful Paint (LCP)")).toBeVisible();
-    expect(cardFigures("Largest Contentful Paint (LCP)").value).toBe("999 ms");
-    expect(cardFigures("Interaction to Next Paint (INP)")).toMatchObject({
+    await expect.element(card("Largest Contentful Paint (LCP), p75")).toBeVisible();
+    expect(cardFigures("Largest Contentful Paint (LCP), p75").value).toBe("999 ms");
+    expect(cardFigures("Interaction to Next Paint (INP), p75")).toMatchObject({
       value: "1.0 s",
       rating: "Poor",
     });
     // At the threshold is still good.
-    expect(cardFigures("Cumulative Layout Shift (CLS)")).toMatchObject({
+    expect(cardFigures("Cumulative Layout Shift (CLS), p75")).toMatchObject({
       value: "0.10",
       rating: "Good",
     });
-    expect(secondary("Time to First Byte (TTFB)")).toBe("12.3 sPoor");
+    expect(secondary("Time to First Byte (TTFB), p75")).toBe("12.3 sPoor");
   });
 
   test("filters by device, in the address and the request", async () => {
     const api = installFakeApi();
     const router = renderApp(`${SPEED}?period=30d`);
-    await expect.element(card("Largest Contentful Paint (LCP)")).toBeVisible();
+    await expect.element(card("Largest Contentful Paint (LCP), p75")).toBeVisible();
 
     await page.getByRole("combobox", { name: "Device" }).click();
     await page.getByRole("option", { name: "Mobile" }).click();
@@ -194,7 +217,7 @@ describe("the speed page", () => {
       speed: (query) => ({ ...fakeSpeed(query), environments: ["production", "staging"] }),
     });
     const router = renderApp(SPEED);
-    await expect.element(card("Largest Contentful Paint (LCP)")).toBeVisible();
+    await expect.element(card("Largest Contentful Paint (LCP), p75")).toBeVisible();
 
     await page.getByRole("combobox", { name: "Environment" }).click();
     await page.getByRole("option", { name: "staging" }).click();
@@ -240,7 +263,7 @@ describe("the speed page", () => {
       .element(page.getByText(/Navigation within the app has no separate values/))
       .toBeVisible();
     await expect.element(page.getByText('data-vitals="off"', { exact: true })).toBeVisible();
-    await expect.element(card("Largest Contentful Paint (LCP)")).not.toBeInTheDocument();
+    await expect.element(card("Largest Contentful Paint (LCP), p75")).not.toBeInTheDocument();
   });
 
   test("shows a failed load with a retry", async () => {
@@ -257,7 +280,7 @@ describe("the speed page", () => {
     failing = false;
     await page.getByRole("button", { name: "Retry", exact: true }).click();
 
-    await expect.element(card("Largest Contentful Paint (LCP)")).toBeVisible();
+    await expect.element(card("Largest Contentful Paint (LCP), p75")).toBeVisible();
     await expect.element(page.getByText("The speed report could not load")).not.toBeInTheDocument();
   });
 

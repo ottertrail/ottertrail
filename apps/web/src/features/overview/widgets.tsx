@@ -5,6 +5,8 @@ import type * as React from "react";
 
 import { BreakdownTable } from "@/components/breakdown-table";
 import { ButtonLink } from "@/components/button-link";
+import { PINNED } from "@/components/pinned-column";
+import { ScrollHint } from "@/components/scroll-hint";
 import { type Stat, StatStrip } from "@/components/stat-strip";
 import { StatusBadge } from "@/components/status-badge";
 import { Badge } from "@/components/ui/badge";
@@ -33,6 +35,7 @@ import { CAUSE_TEXT, formatMoment, formatMs, formatUptime } from "@/features/upt
 import { useAccess } from "@/lib/access";
 import { type ChangeCounts, shownChange } from "@/lib/change";
 import { goalStepText } from "@/lib/goals-api";
+import { MISSING } from "@/lib/missing";
 import {
   type OverviewGoal,
   type Retained,
@@ -49,7 +52,6 @@ import {
   periodPhrase,
   shortUrl,
 } from "./format";
-import { ScrollHint } from "./scroll-hint";
 import { type Arrange, WidgetEmpty, WidgetFrame, WidgetNote, WidgetState } from "./widget-frame";
 
 export interface WidgetProps {
@@ -114,9 +116,6 @@ function Changed({
 const headClass = "h-8 text-xs font-normal text-ink-subtle";
 const numHeadClass = `${headClass} text-right`;
 const numClass = "text-right tabular-nums";
-/** On a phone a table scrolls inside itself, and its first column, which names the row, stays. */
-const pinCell =
-  "max-sm:sticky max-sm:left-0 max-sm:z-10 max-sm:bg-[var(--block-surface,var(--background))]";
 
 /** The widget's numbers, fetched only while it is shown. */
 function useWidget<K extends WidgetId>(id: K, props: WidgetProps) {
@@ -178,9 +177,9 @@ export function AttentionWidget(props: WidgetProps) {
                 check.cause === "status" && check.statusCode !== null
                   ? `Answered ${check.statusCode}`
                   : check.cause === null
-                    ? "–"
+                    ? MISSING
                     : CAUSE_TEXT[check.cause],
-              since: check.since === null ? "–" : formatSince(check.since, data.timeZone),
+              since: check.since === null ? MISSING : formatSince(check.since, data.timeZone),
             })),
             ...data.certificates.map((check) => ({
               key: `certificate-${check.checkId}`,
@@ -192,7 +191,7 @@ export function AttentionWidget(props: WidgetProps) {
               what: check.name,
               detail: shortUrl(check.url),
               cause: `Its certificate ${check.expired ? "expired" : "expires"} on ${formatMoment(check.expiresAt, data.timeZone)}`,
-              since: "–",
+              since: MISSING,
             })),
           ];
           const active = data.checks.total - data.checks.paused;
@@ -363,7 +362,7 @@ export function ErrorsWidget(props: WidgetProps) {
                     <caption className="sr-only">Unresolved errors, most users first</caption>
                     <TableHeader>
                       <TableRow className="hover:bg-transparent">
-                        <TableHead scope="col" className={`${headClass} ${pinCell} w-1/2 pl-0`}>
+                        <TableHead scope="col" className={`${headClass} ${PINNED} w-1/2 pl-0`}>
                           Unresolved, most users first
                         </TableHead>
                         <TableHead scope="col" className={numHeadClass}>
@@ -380,7 +379,7 @@ export function ErrorsWidget(props: WidgetProps) {
                     <TableBody>
                       {data.top.map((group) => (
                         <TableRow key={group.fingerprint} className="hover:bg-transparent">
-                          <TableCell className={`${pinCell} py-1.5 pl-0`}>
+                          <TableCell className={`${PINNED} py-1.5 pl-0`}>
                             <div className="flex min-w-0 items-center gap-2">
                               {group.status === "regressed" && (
                                 <StatusBadge tone="critical">Regressed</StatusBadge>
@@ -470,7 +469,7 @@ export function UptimeWidget(props: WidgetProps) {
                   <caption className="sr-only">Each uptime check</caption>
                   <TableHeader>
                     <TableRow className="hover:bg-transparent">
-                      <TableHead scope="col" className={`${headClass} ${pinCell} pl-0`}>
+                      <TableHead scope="col" className={`${headClass} ${PINNED} pl-0`}>
                         Check
                       </TableHead>
                       <TableHead scope="col" className={`${headClass} w-20`}>
@@ -490,7 +489,7 @@ export function UptimeWidget(props: WidgetProps) {
                   <TableBody>
                     {data.checks.map((check) => (
                       <TableRow key={check.id} className="hover:bg-transparent">
-                        <TableCell className={`${pinCell} py-1.5 pl-0`}>
+                        <TableCell className={`${PINNED} py-1.5 pl-0`}>
                           <Link
                             to="/projects/$projectId/uptime/$checkId"
                             params={{ projectId, checkId: check.id }}
@@ -524,7 +523,7 @@ export function UptimeWidget(props: WidgetProps) {
                           {formatWhole(check.incidents)}
                         </TableCell>
                         <TableCell className={`py-1.5 pr-0 ${numClass}`}>
-                          {check.lastResponseMs === null ? "–" : formatMs(check.lastResponseMs)}
+                          {check.lastResponseMs === null ? MISSING : formatMs(check.lastResponseMs)}
                         </TableCell>
                       </TableRow>
                     ))}
@@ -597,7 +596,7 @@ export function ServicesWidget(props: WidgetProps) {
                   <caption className="sr-only">Each service's requests, busiest first</caption>
                   <TableHeader>
                     <TableRow className="hover:bg-transparent">
-                      <TableHead scope="col" className={`${headClass} ${pinCell} pl-0`}>
+                      <TableHead scope="col" className={`${headClass} ${PINNED} pl-0`}>
                         Service, busiest first
                       </TableHead>
                       <TableHead scope="col" className={numHeadClass}>
@@ -616,7 +615,7 @@ export function ServicesWidget(props: WidgetProps) {
                       const counts = { current: item.requests, previous: item.previous.requests };
                       return (
                         <TableRow key={item.service} className="align-top hover:bg-transparent">
-                          <TableCell className={`${pinCell} py-1.5 pl-0`}>
+                          <TableCell className={`${PINNED} py-1.5 pl-0`}>
                             <Link
                               to="/projects/$projectId/services/$service"
                               params={{ projectId, service: item.service }}
@@ -646,7 +645,7 @@ export function ServicesWidget(props: WidgetProps) {
                           </TableCell>
                           <TableCell className={`py-1.5 pr-0 ${numClass}`}>
                             <Changed
-                              value={item.p95Us === null ? "–" : formatDuration(item.p95Us)}
+                              value={item.p95Us === null ? MISSING : formatDuration(item.p95Us)}
                               change={relativeChange(item.p95Us, item.previous.p95Us)}
                               counts={counts}
                               min={MIN_LOADS_FOR_CHANGE}
@@ -721,7 +720,7 @@ export function SpeedWidget(props: WidgetProps) {
                   </caption>
                   <TableHeader>
                     <TableRow className="hover:bg-transparent">
-                      <TableHead scope="col" className={`${headClass} ${pinCell} pl-0`}>
+                      <TableHead scope="col" className={`${headClass} ${PINNED} pl-0`}>
                         Device
                       </TableHead>
                       <TableHead scope="col" className={numHeadClass}>
@@ -757,7 +756,7 @@ export function SpeedWidget(props: WidgetProps) {
                           key={device.deviceType ?? "unknown"}
                           className="hover:bg-transparent"
                         >
-                          <TableCell className={`${pinCell} py-1.5 pl-0 text-ink`}>
+                          <TableCell className={`${PINNED} py-1.5 pl-0 text-ink`}>
                             {deviceLabel(device.deviceType)}
                           </TableCell>
                           {rated ? (
@@ -1082,7 +1081,7 @@ export function GoalsWidget(props: WidgetProps) {
                 </caption>
                 <TableHeader>
                   <TableRow className="hover:bg-transparent">
-                    <TableHead scope="col" className={`${headClass} ${pinCell} pl-0`}>
+                    <TableHead scope="col" className={`${headClass} ${PINNED} pl-0`}>
                       Goal
                     </TableHead>
                     <TableHead scope="col" className={numHeadClass}>
@@ -1099,7 +1098,7 @@ export function GoalsWidget(props: WidgetProps) {
                 <TableBody>
                   {data.goals.map((goal) => (
                     <TableRow key={goal.id} className="align-top hover:bg-transparent">
-                      <TableCell className={`${pinCell} py-1.5 pl-0 whitespace-normal text-ink`}>
+                      <TableCell className={`${PINNED} py-1.5 pl-0 whitespace-normal text-ink`}>
                         {goal.name}{" "}
                         <span className="text-xs text-ink-subtle">{goalStepText(goal.step)}</span>
                         {goal.id === data.mainGoalId && (
@@ -1150,7 +1149,7 @@ const retained = (later: Retained | null, users: number) =>
     : later.current
       ? "This week, not over"
       : users === 0
-        ? "–"
+        ? MISSING
         : formatPercent(later.users / users);
 
 /** A cohort's share active in its second week, once that week is over. */
@@ -1227,7 +1226,7 @@ export function UsersWidget(props: WidgetProps) {
                   </caption>
                   <TableHeader>
                     <TableRow className="hover:bg-transparent">
-                      <TableHead scope="col" className={`${headClass} ${pinCell} pl-0`}>
+                      <TableHead scope="col" className={`${headClass} ${PINNED} pl-0`}>
                         Cohort, week of
                       </TableHead>
                       <TableHead scope="col" className={numHeadClass}>
@@ -1244,7 +1243,7 @@ export function UsersWidget(props: WidgetProps) {
                   <TableBody>
                     {data.cohorts.toReversed().map((cohort) => (
                       <TableRow key={cohort.week} className="hover:bg-transparent">
-                        <TableCell className={`${pinCell} py-1.5 pl-0 text-ink`}>
+                        <TableCell className={`${PINNED} py-1.5 pl-0 text-ink`}>
                           {formatDay(cohort.week)}
                         </TableCell>
                         <TableCell className={`py-1.5 ${numClass}`}>

@@ -29,10 +29,15 @@ function lastQuery(api: FakeApi, path: string): Record<string, string> {
 const funnelRequests = (api: FakeApi) =>
   api.requests.filter((request) => request.split("?")[0]?.endsWith("/funnel"));
 
-/** The rows of a table, as their cells' text (header cells included). */
+/**
+ * The rows of a table, as their cells' text (header cells included). A
+ * breakdown's bar cell has no text and is left out.
+ */
 const tableRows = (name: string) =>
   [...page.getByRole("table", { name }).element().querySelectorAll("tbody tr")].map((row) =>
-    [...row.querySelectorAll("th, td")].map((cell) => cell.textContent),
+    [...row.querySelectorAll("th, td")]
+      .filter((cell) => cell.querySelector("[data-slot=breakdown-bar]") === null)
+      .map((cell) => cell.textContent),
   );
 
 /** A figure of the event's stats, by its label. */
@@ -403,7 +408,9 @@ describe("the funnel", () => {
       ["3.Event purchase", "126", "13%", "30%"],
     ]);
     await expect
-      .element(page.getByText("overall: 126 of 1,000 users who did step 1 went on to step 3."))
+      .element(
+        page.getByText("126 of 1,000 users who did step 1 went on to step 3.", { exact: true }),
+      )
       .toBeVisible();
     await expect
       .element(page.getByText("10 to 16 Nov 2026, counted by users, within 1 hour of step 1"))

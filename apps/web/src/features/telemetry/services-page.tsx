@@ -3,9 +3,10 @@ import { Link, useNavigate } from "@tanstack/react-router";
 import { BellPlusIcon, OctagonAlertIcon, SearchXIcon, WaypointsIcon } from "lucide-react";
 import * as React from "react";
 
+import { PINNED, PINNED_END } from "@/components/pinned-column";
+import { ScrollHint } from "@/components/scroll-hint";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Empty,
   EmptyDescription,
@@ -25,6 +26,7 @@ import {
 import { WhenAllowed } from "@/components/when-allowed";
 import { DEFAULT_ENVIRONMENT, type PageRange } from "@/lib/analytics-api";
 import { ApiError } from "@/lib/api";
+import { MISSING } from "@/lib/missing";
 import {
   type RouteStats,
   STATUS_CLASSES,
@@ -33,7 +35,7 @@ import {
 } from "@/lib/services-api";
 
 import { formatConversion, formatWhole } from "../analytics/format";
-import { RangeControls } from "../errors/range-controls";
+import { ReportFilterBar } from "../errors/range-controls";
 import { NoSuchProject } from "../projects/no-such-project";
 import { formatDuration } from "./format";
 import {
@@ -48,6 +50,9 @@ import {
 import { SendTelemetry } from "./send-telemetry";
 import { StatusBar, StatusLegend } from "./status-classes";
 import { STATUS_LABELS } from "./status-format";
+
+/** A pinned cell of the marked row keeps the row's highlight, over its own opaque surface. */
+const MARKED = "max-sm:group-aria-[current=true]/row:bg-muted";
 
 /**
  * Requests, the share failed, the durations, and the requests by status
@@ -67,7 +72,7 @@ function StatCells({
     <>
       <TableCell className="text-right tabular-nums">{formatWhole(stats.requests)}</TableCell>
       <TableCell className="text-right tabular-nums">
-        {stats.requests === 0 ? "–" : formatConversion(stats.failed / stats.requests)}
+        {stats.requests === 0 ? MISSING : formatConversion(stats.failed / stats.requests)}
       </TableCell>
       <TableCell className="text-right tabular-nums">{formatDuration(stats.p50Us)}</TableCell>
       <TableCell className="text-right tabular-nums">{formatDuration(stats.p95Us)}</TableCell>
@@ -105,11 +110,12 @@ function ServiceCard({
 }) {
   const [numbers, setNumbers] = React.useState(false);
   const tableId = React.useId();
+  const headingId = React.useId();
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex flex-wrap items-center justify-between gap-2">
-          <h3 className="break-all">
+    <section aria-labelledby={headingId} className="flex min-w-0 flex-col gap-3 border-t pt-5">
+      <div className="flex flex-col gap-2">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h3 id={headingId} className="text-base font-medium break-all text-ink">
             {isLinkableService(service.service) ? (
               <Link
                 to="/projects/$projectId/services/$service"
@@ -136,8 +142,8 @@ function ServiceCard({
               <span className="sr-only"> for {service.service}</span>
             </Link>
           </WhenAllowed>
-        </CardTitle>
-        <CardDescription className="flex flex-col gap-2">
+        </div>
+        <div className="flex flex-col gap-2 text-sm text-ink-subtle">
           <span>
             {formatWhole(service.requests)} {service.requests === 1 ? "request" : "requests"},{" "}
             {formatConversion(service.failed / service.requests)} failed, median{" "}
@@ -149,14 +155,14 @@ function ServiceCard({
             label={`Status classes of ${service.service}`}
             className="max-w-sm"
           />
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="flex flex-col gap-3">
-        <Table id={tableId}>
+        </div>
+      </div>
+      <ScrollHint>
+        <Table id={tableId} className="max-sm:min-w-[40rem]">
           <caption className="sr-only">Routes of {service.service}, busiest first</caption>
-          <TableHeader>
+          <TableHeader className="[&_th]:h-8 [&_th]:text-xs [&_th]:font-normal [&_th]:text-ink-subtle">
             <TableRow>
-              <TableHead>Route</TableHead>
+              <TableHead className={`pl-0 ${PINNED}`}>Route</TableHead>
               <TableHead className="text-right">Requests</TableHead>
               <TableHead className="text-right">Failed</TableHead>
               <TableHead className="text-right">Median</TableHead>
@@ -171,7 +177,7 @@ function ServiceCard({
               ) : (
                 <TableHead>Status classes</TableHead>
               )}
-              <TableHead>
+              <TableHead className={PINNED_END}>
                 <span className="sr-only">Traces and alert rule</span>
               </TableHead>
             </TableRow>
@@ -183,9 +189,9 @@ function ServiceCard({
                 aria-current={
                   only === service.service && marked === route.route ? "true" : undefined
                 }
-                className="aria-[current=true]:bg-muted"
+                className="group/row aria-[current=true]:bg-muted"
               >
-                <TableCell className="max-w-md">
+                <TableCell className={`max-w-md pl-0 ${PINNED} ${MARKED}`}>
                   {!isNamedRoute(route.route) || !isLinkableService(service.service) ? (
                     // A route without a name (or only spaces) has no page: its address could not name it.
                     <span className="block truncate font-mono text-xs text-ink-subtle">
@@ -208,7 +214,7 @@ function ServiceCard({
                   label={isNamedRoute(route.route) ? route.route : "(no name)"}
                   numbers={numbers}
                 />
-                <TableCell>
+                <TableCell className={`${PINNED_END} ${MARKED}`}>
                   <span className="flex items-center gap-1">
                     <Link
                       to="/projects/$projectId/traces"
@@ -245,34 +251,35 @@ function ServiceCard({
             ))}
           </TableBody>
         </Table>
-        <div>
-          <Button
-            variant="ghost"
-            size="sm"
-            aria-expanded={numbers}
-            aria-controls={tableId}
-            onClick={() => setNumbers((shown) => !shown)}
-          >
-            {numbers ? "Show status classes as bars" : "Show status classes as numbers"}
-          </Button>
-        </div>
-        {only === service.service &&
-          marked !== undefined &&
-          !service.routes.some((route) => route.route === marked) && (
-            <p className="text-sm text-ink-subtle">
-              {service.routeCount > service.routes.length
-                ? `The route ${marked} is not among the ${formatWhole(service.routes.length)} busiest listed here.`
-                : `No request of the route ${marked} arrived in this period.`}
-            </p>
-          )}
-        {service.routeCount > service.routes.length && (
+      </ScrollHint>
+      <div>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="-ml-2.5"
+          aria-expanded={numbers}
+          aria-controls={tableId}
+          onClick={() => setNumbers((shown) => !shown)}
+        >
+          {numbers ? "Show status classes as bars" : "Show status classes as numbers"}
+        </Button>
+      </div>
+      {only === service.service &&
+        marked !== undefined &&
+        !service.routes.some((route) => route.route === marked) && (
           <p className="text-sm text-ink-subtle">
-            The {formatWhole(service.routes.length)} busiest of {formatWhole(service.routeCount)}{" "}
-            routes.
+            {service.routeCount > service.routes.length
+              ? `The route ${marked} is not among the ${formatWhole(service.routes.length)} busiest listed here.`
+              : `No request of the route ${marked} arrived in this period.`}
           </p>
         )}
-      </CardContent>
-    </Card>
+      {service.routeCount > service.routes.length && (
+        <p className="text-sm text-ink-subtle">
+          The {formatWhole(service.routes.length)} busiest of {formatWhole(service.routeCount)}{" "}
+          routes.
+        </p>
+      )}
+    </section>
   );
 }
 
@@ -322,123 +329,127 @@ export function ServicesPage({
       : (data?.services ?? []).filter((item) => item.service === only);
 
   return (
-    <div className="mx-auto flex max-w-6xl flex-col gap-6 p-6">
-      <RangeControls
+    <div className="flex flex-col">
+      <ReportFilterBar
         range={range}
         environment={environment}
         answered={data}
         onRange={(next) => show({ range: next })}
         onEnvironment={(next) => show({ environment: next })}
       />
-
-      {list.isError && (
-        <Alert variant="destructive">
-          <OctagonAlertIcon />
-          <AlertTitle>
-            {data === undefined ? "The services could not load" : "The services could not refresh"}
-          </AlertTitle>
-          <AlertDescription>
-            {list.error.message}
-            {data !== undefined && " The list below is from the last successful load."}
-          </AlertDescription>
-          <AlertAction>
-            <Button variant="outline" size="sm" onClick={() => void list.refetch()}>
-              Retry
-            </Button>
-          </AlertAction>
-        </Alert>
-      )}
-      {data === undefined ? (
-        !list.isError && (
-          <div className="flex flex-col gap-2" aria-busy="true" aria-label="Loading">
-            <Skeleton className="h-40 w-full" />
-            <Skeleton className="h-40 w-full" />
-          </div>
-        )
-      ) : !data.received ? (
-        <SendTelemetry projectId={projectId} signal="traces" retentionDays={data.retentionDays} />
-      ) : (
-        <div
-          className="flex flex-col gap-4 transition-opacity data-[stale=true]:opacity-60"
-          data-stale={list.isPlaceholderData}
-          aria-busy={list.isPlaceholderData}
-        >
-          {only !== undefined && (
-            <p className="text-sm text-ink-subtle">
-              Only <span className="font-mono">{only}</span>
-              {marked === undefined ? "" : ", its route marked"}.{" "}
-              <Link
-                to="/projects/$projectId/services"
-                params={{ projectId }}
-                search={servicesSearchOf({ range, environment })}
-                className="text-link hover:underline"
-              >
-                Show all services
-              </Link>
-            </p>
-          )}
-          {shown.length === 0 && only !== undefined && data.truncated ? (
-            <Empty className="border border-dashed p-10">
-              <EmptyHeader>
-                <EmptyMedia variant="icon">
-                  <SearchXIcon />
-                </EmptyMedia>
-                <EmptyTitle>{only} is not in the list</EmptyTitle>
-                <EmptyDescription>
-                  More than {formatWhole(data.services.length)} services sent requests in this
-                  period, and the list holds the first by name: {only} may be among the rest. Its
-                  requests are on the Traces page.
-                </EmptyDescription>
-              </EmptyHeader>
-            </Empty>
-          ) : shown.length === 0 ? (
-            <Empty className="border border-dashed p-10">
-              <EmptyHeader>
-                <EmptyMedia variant="icon">
-                  <SearchXIcon />
-                </EmptyMedia>
-                <EmptyTitle>No requests in this period</EmptyTitle>
-                <EmptyDescription>
-                  No server span
-                  {only === undefined ? "" : ` of ${only}`} arrived
-                  {environment === DEFAULT_ENVIRONMENT ? "" : ` in ${environment}`} in this period.
-                  A request is a span of kind SERVER. Traces are kept {data.retentionDays} days.
-                </EmptyDescription>
-              </EmptyHeader>
-            </Empty>
-          ) : (
-            <>
+      <div className="flex flex-col gap-6 px-gutter py-5">
+        {list.isError && (
+          <Alert variant="destructive">
+            <OctagonAlertIcon />
+            <AlertTitle>
+              {data === undefined
+                ? "The services could not load"
+                : "The services could not refresh"}
+            </AlertTitle>
+            <AlertDescription>
+              {list.error.message}
+              {data !== undefined && " The list below is from the last successful load."}
+            </AlertDescription>
+            <AlertAction>
+              <Button variant="outline" size="sm" onClick={() => void list.refetch()}>
+                Retry
+              </Button>
+            </AlertAction>
+          </Alert>
+        )}
+        {data === undefined ? (
+          !list.isError && (
+            <div className="flex flex-col gap-2" aria-busy="true" aria-label="Loading">
+              <Skeleton className="h-40 w-full" />
+              <Skeleton className="h-40 w-full" />
+            </div>
+          )
+        ) : !data.received ? (
+          <SendTelemetry projectId={projectId} signal="traces" retentionDays={data.retentionDays} />
+        ) : (
+          <div
+            className="flex flex-col gap-4 transition-opacity data-[stale=true]:opacity-60"
+            data-stale={list.isPlaceholderData}
+            aria-busy={list.isPlaceholderData}
+          >
+            {only !== undefined && (
               <p className="text-sm text-ink-subtle">
-                A request is a span of kind SERVER. Its route is its{" "}
-                <code className="font-mono">http.route</code> attribute, or its name if the
-                attribute is absent. Failed means its status is Error. The median, 95th, and 99th
-                percentile measure request durations. A status class comes from{" "}
-                <code className="font-mono">http.response.status_code</code>, else{" "}
-                <code className="font-mono">http.status_code</code>. Select a service or route to
-                open its charts for the period.
+                Only <span className="font-mono">{only}</span>
+                {marked === undefined ? "" : ", its route marked"}.{" "}
+                <Link
+                  to="/projects/$projectId/services"
+                  params={{ projectId }}
+                  search={servicesSearchOf({ range, environment })}
+                  className="text-link hover:underline"
+                >
+                  Show all services
+                </Link>
               </p>
-              <StatusLegend />
-              {shown.map((service) => (
-                <ServiceCard
-                  key={service.service}
-                  projectId={projectId}
-                  range={range}
-                  environment={environment}
-                  service={service}
-                  only={only}
-                  marked={marked}
-                />
-              ))}
-              {data.truncated && (
-                <p className="text-sm text-ink-subtle">
-                  More than {formatWhole(data.services.length)} services sent requests: these are
-                  the first by name.
+            )}
+            {shown.length === 0 && only !== undefined && data.truncated ? (
+              <Empty className="border border-dashed p-10">
+                <EmptyHeader>
+                  <EmptyMedia variant="icon">
+                    <SearchXIcon />
+                  </EmptyMedia>
+                  <EmptyTitle>{only} is not in the list</EmptyTitle>
+                  <EmptyDescription>
+                    More than {formatWhole(data.services.length)} services sent requests in this
+                    period, and the list holds the first by name: {only} may be among the rest. Its
+                    requests are on the Traces page.
+                  </EmptyDescription>
+                </EmptyHeader>
+              </Empty>
+            ) : shown.length === 0 ? (
+              <Empty className="border border-dashed p-10">
+                <EmptyHeader>
+                  <EmptyMedia variant="icon">
+                    <SearchXIcon />
+                  </EmptyMedia>
+                  <EmptyTitle>No requests in this period</EmptyTitle>
+                  <EmptyDescription>
+                    No server span
+                    {only === undefined ? "" : ` of ${only}`} arrived
+                    {environment === DEFAULT_ENVIRONMENT ? "" : ` in ${environment}`} in this
+                    period. A request is a span of kind SERVER. Traces are kept {data.retentionDays}{" "}
+                    days.
+                  </EmptyDescription>
+                </EmptyHeader>
+              </Empty>
+            ) : (
+              <>
+                <p className="max-w-4xl text-xs text-pretty text-ink-subtle">
+                  A request is a span of kind SERVER. Its route is its{" "}
+                  <code className="font-mono">http.route</code> attribute, or its name if the
+                  attribute is absent. Failed means its status is Error. The median, 95th, and 99th
+                  percentile measure request durations. A status class comes from{" "}
+                  <code className="font-mono">http.response.status_code</code>, else{" "}
+                  <code className="font-mono">http.status_code</code>. Select a service or route to
+                  open its charts for the period.
                 </p>
-              )}
-            </>
-          )}
-        </div>
-      )}
+                <StatusLegend />
+                {shown.map((service) => (
+                  <ServiceCard
+                    key={service.service}
+                    projectId={projectId}
+                    range={range}
+                    environment={environment}
+                    service={service}
+                    only={only}
+                    marked={marked}
+                  />
+                ))}
+                {data.truncated && (
+                  <p className="text-sm text-ink-subtle">
+                    More than {formatWhole(data.services.length)} services sent requests: these are
+                    the first by name.
+                  </p>
+                )}
+              </>
+            )}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

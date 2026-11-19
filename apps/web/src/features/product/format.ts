@@ -1,3 +1,4 @@
+import { MISSING } from "@/lib/missing";
 import {
   FUNNEL_COUNTS,
   FUNNEL_WINDOWS,
@@ -11,7 +12,7 @@ import { stepText } from "./funnel-steps";
 
 /** A share as a whole percentage; "<1%" when above 0 but too small to round to 1%; "–" of nothing. */
 export function formatShare(part: number, whole: number): string {
-  if (whole === 0) return "–";
+  if (whole === 0) return MISSING;
   const percent = Math.round((part / whole) * 100);
   return percent === 0 && part > 0 ? "<1%" : `${percent}%`;
 }

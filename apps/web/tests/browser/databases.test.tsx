@@ -36,10 +36,10 @@ const rowsOf = (name: string) =>
 const sortedBy = () =>
   [...document.querySelectorAll("th[aria-sort=descending]")].map((header) => header.textContent);
 
-/** The stroke of the line in the chart card titled `title`. */
+/** The stroke of the line in the chart titled `title`. */
 const strokeOf = (title: string) =>
   [...document.querySelectorAll("svg path")]
-    .find((path) => path.closest("[data-slot=card]")?.querySelector("h3")?.textContent === title)
+    .find((path) => path.closest("[data-slot=chart]")?.querySelector("h3")?.textContent === title)
     ?.getAttribute("stroke");
 
 const SHOP_TABLE = "Query shapes of shop on postgresql, those with the most time spent first";

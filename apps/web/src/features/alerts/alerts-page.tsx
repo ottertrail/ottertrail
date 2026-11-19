@@ -14,6 +14,7 @@ import {
 import * as React from "react";
 
 import { ButtonLink } from "@/components/button-link";
+import { Missing } from "@/components/missing";
 import { StatusBadge } from "@/components/status-badge";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -353,7 +354,7 @@ function HistoryCard({ projectId }: { projectId: string }) {
                     </TableCell>
                     <TableCell className="whitespace-nowrap">
                       {alert.resolvedAt === null ? (
-                        <span className="text-ink-subtle">–</span>
+                        <Missing label="Not resolved" className="text-ink-subtle" />
                       ) : (
                         <time dateTime={alert.resolvedAt}>
                           {formatMoment(alert.resolvedAt, first.timeZone)}

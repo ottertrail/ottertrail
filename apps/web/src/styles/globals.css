@@ -5,6 +5,8 @@
 /* Hallmark · dismissed F18 · data-slot is shadcn's hook here, not an image slot */
 /* Hallmark · dismissed F1 · the straight apostrophes are the app's copy, kept as found by the redesign */
 /* Hallmark · dismissed 54 · BreakdownTable's heading level comes from a prop */
+/* Hallmark · waive 49b · the Databases page's query shape links (a.line-clamp-2) · a shape shows its first two lines by design, the whole in its title and on its page */
+/* Hallmark · dismissed F25 · a report table that scrolls on a phone pins its first column and its actions column (pinned-column.ts), with the scroll hint at the edge */
 /* Hallmark · dismissed 70 · add-goal-dialog.tsx's "signup" is an example event name, not a success message */
 @import "tailwindcss";
 @import "tw-animate-css";
@@ -288,6 +290,23 @@
 @layer base {
   * {
     @apply border-border outline-ring/50;
+  }
+
+  /*
+   * Links and other controls without a ring of their own (a report's text
+   * links, a table's sort buttons) get the focus ring at once, in full
+   * strength. shadcn's parts (with a data-slot) draw their own and are left
+   * out, so their ring never gets a second outline.
+   */
+  :where(a[href], button, [tabindex]:not([tabindex="-1"])):not([data-slot]):focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+
+  /* Inside a table that scrolls, the ring is drawn inward, so the scroller never clips it. */
+  :where([data-slot="table-container"])
+    :where(a[href], button, [tabindex]:not([tabindex="-1"])):not([data-slot]):focus-visible {
+    outline-offset: -2px;
   }
 
   html {

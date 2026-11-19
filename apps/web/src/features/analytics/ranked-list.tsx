@@ -1,5 +1,7 @@
 import type * as React from "react";
 
+import { MISSING } from "@/lib/missing";
+
 import { formatWhole } from "./format";
 
 export interface RankedRow {
@@ -74,7 +76,7 @@ export function RankedList({
             </td>
             {secondaryHeading !== undefined && (
               <td className="py-1.5 text-right align-top text-ink-subtle tabular-nums">
-                {row.secondary === undefined ? "–" : formatWhole(row.secondary)}
+                {row.secondary === undefined ? MISSING : formatWhole(row.secondary)}
               </td>
             )}
           </tr>

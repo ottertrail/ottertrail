@@ -1,6 +1,6 @@
 import * as React from "react";
 
-import { FilterBarRange } from "@/components/filter-bar";
+import { FilterBar, FilterBarRange } from "@/components/filter-bar";
 import {
   Select,
   SelectContent,
@@ -127,6 +127,58 @@ export function EnvironmentSelect({
         ))}
       </SelectContent>
     </Select>
+  );
+}
+
+/**
+ * A report's pinned filter bar (`FilterBar`): the period, the environment
+ * once there is a choice, the report's own filters, and the days shown
+ * with their timezone once the API has answered.
+ */
+export function ReportFilterBar({
+  label = "Period and environment",
+  range,
+  environment,
+  answered,
+  onRange,
+  onEnvironment,
+  filters,
+  actions,
+}: {
+  /** Names the bar for screen readers. */
+  label?: string;
+  range: PageRange;
+  environment: string;
+  answered: Answered | undefined;
+  onRange: (range: PageRange) => void;
+  onEnvironment: (environment: string) => void;
+  /** The report's own controls, such as a device picker. */
+  filters?: React.ReactNode;
+  actions?: React.ReactNode;
+}) {
+  return (
+    <FilterBar
+      label={label}
+      period={<PeriodSelect range={range} answered={answered} onRange={onRange} />}
+      environment={
+        <EnvironmentSelect
+          environment={environment}
+          answered={answered}
+          onEnvironment={onEnvironment}
+        />
+      }
+      filters={filters}
+      range={
+        answered !== undefined && (
+          <FilterBarRange
+            firstDay={answered.firstDay}
+            lastDay={answered.lastDay}
+            timeZone={answered.timeZone}
+          />
+        )
+      }
+      actions={actions}
+    />
   );
 }
 

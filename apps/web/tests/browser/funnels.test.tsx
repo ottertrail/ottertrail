@@ -77,8 +77,10 @@ describe("saved funnels", () => {
       ["Team trial", "signup where plan = team → purchase", "Users, within 7 days"],
     ]);
     await expect.element(page.getByText("2 of 50 saved")).toBeVisible();
-    // No funnel is shown yet, so there is nothing to save.
-    await expect.element(page.getByRole("button", { name: "Save funnel" })).not.toBeInTheDocument();
+    // No funnel is shown yet, so there is nothing to save: Save is disabled, and stays focusable.
+    await expect
+      .element(page.getByRole("button", { name: "Save funnel" }))
+      .toHaveAttribute("aria-disabled", "true");
   });
 
   test("opens one from its link, keeping the period and the environment", async () => {
@@ -113,9 +115,10 @@ describe("saved funnels", () => {
       .element(page.getByRole("link", { name: "pricing to signup" }))
       .not.toHaveAttribute("aria-current");
     await expect.element(status()).toHaveTextContent("Saved as “Team trial”.");
+    // Shown as it was saved: nothing new to save.
     await expect
       .element(page.getByRole("button", { name: "Save changes" }))
-      .not.toBeInTheDocument();
+      .toHaveAttribute("aria-disabled", "true");
     await expect.element(page.getByRole("button", { name: "Save funnel" })).not.toBeInTheDocument();
   });
 
@@ -225,7 +228,11 @@ describe("saved funnels", () => {
         "signup where plan = team → purchase",
         "Users, within 1 hour",
       ]);
-    await expect.element(stepsHeading()).toHaveFocus();
+    // Focus stays on Save changes, now disabled and still focusable.
+    await expect.element(page.getByRole("button", { name: "Save changes" })).toHaveFocus();
+    await expect
+      .element(page.getByRole("button", { name: "Save changes" }))
+      .toHaveAttribute("aria-disabled", "true");
     expect(router.state.location.search).toMatchObject({ funnel: TEAM_TRIAL });
 
     // Another window, saved as a new funnel instead.

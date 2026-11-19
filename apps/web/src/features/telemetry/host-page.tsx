@@ -23,9 +23,9 @@ import {
   type HostLine,
 } from "@/lib/hosts-api";
 
-import { RangeControls } from "../errors/range-controls";
+import { ReportFilterBar } from "../errors/range-controls";
 import { NoSuchProject } from "../projects/no-such-project";
-import { ChartCard } from "./chart-card";
+import { ChartSection } from "./chart-card";
 import { stepText } from "./chart-time";
 import { formatPreciseMoment } from "./format";
 import { formatPercent } from "./host-format";
@@ -153,7 +153,7 @@ function HostChartCard({
   const about = CHARTS[chart.id];
   const step = stepText(data.stepSeconds);
   return (
-    <ChartCard
+    <ChartSection
       title={about.title}
       description={
         <>
@@ -215,91 +215,93 @@ export function HostPage({
   const data = charts.data;
 
   return (
-    <div className="mx-auto flex max-w-6xl flex-col gap-6 p-6">
-      <div className="flex flex-col gap-2">
-        <Link
-          to="/projects/$projectId/hosts"
-          params={{ projectId }}
-          search={{ ...rangeSearch(range), ...environmentSearch(environment) }}
-          className="flex items-center gap-1 self-start text-sm text-link hover:underline"
-        >
-          <ArrowLeftIcon aria-hidden="true" className="size-4" />
-          All hosts
-        </Link>
-        <h2 className="font-mono text-lg font-medium break-all text-ink">{host}</h2>
-        {data !== undefined && data.lastSeen !== null && (
-          <p className="flex flex-wrap items-center gap-2 text-sm text-ink-subtle">
-            <span>
-              Last seen{" "}
-              <time dateTime={data.lastSeen}>
-                {formatPreciseMoment(data.lastSeen, data.timeZone)}
-              </time>
-            </span>
-            <Freshness stale={data.stale} />
-            {data.stale === true && (
-              <span>No data arrived from this host in the last 5 minutes.</span>
-            )}
-          </p>
-        )}
-      </div>
-
-      <RangeControls
+    <div className="flex flex-col">
+      <ReportFilterBar
         range={range}
         environment={environment}
         answered={data}
         onRange={(next) => show({ range: next })}
         onEnvironment={(next) => show({ environment: next })}
       />
-
-      {charts.isError && (
-        <Alert variant="destructive">
-          <OctagonAlertIcon />
-          <AlertTitle>
-            {data === undefined ? "The host could not load" : "The host could not refresh"}
-          </AlertTitle>
-          <AlertDescription>
-            {charts.error.message}
-            {data !== undefined && " The charts below are from the last successful load."}
-          </AlertDescription>
-          <AlertAction>
-            <Button variant="outline" size="sm" onClick={() => void charts.refetch()}>
-              Retry
-            </Button>
-          </AlertAction>
-        </Alert>
-      )}
-      {data === undefined ? (
-        !charts.isError && (
-          <div className="flex flex-col gap-2" aria-busy="true" aria-label="Loading">
-            <Skeleton className="h-72 w-full" />
-            <Skeleton className="h-72 w-full" />
-          </div>
-        )
-      ) : data.lastSeen === null ? (
-        <Empty className="border border-dashed p-10">
-          <EmptyHeader>
-            <EmptyMedia variant="icon">
-              <SearchXIcon />
-            </EmptyMedia>
-            <EmptyTitle>No host metrics from this host in this period</EmptyTitle>
-            <EmptyDescription>
-              Nothing arrived from it
-              {environment === DEFAULT_ENVIRONMENT ? "" : ` in ${environment}`} in this period.
-              Metrics are kept {data.retentionDays} days.
-            </EmptyDescription>
-          </EmptyHeader>
-        </Empty>
-      ) : (
-        <div
-          className="grid gap-4 transition-opacity data-[stale=true]:opacity-60 lg:grid-cols-2"
-          data-stale={charts.isPlaceholderData}
-          aria-busy={charts.isPlaceholderData}
-        >
-          {data.charts.map((chart) => (
-            <HostChartCard key={chart.id} data={data} chart={chart} colors={colorsOf(chart.id)} />
-          ))}
+      <div className="flex flex-col gap-6 px-gutter py-5">
+        <div className="flex flex-col gap-2">
+          <Link
+            to="/projects/$projectId/hosts"
+            params={{ projectId }}
+            search={{ ...rangeSearch(range), ...environmentSearch(environment) }}
+            className="flex items-center gap-1 self-start text-sm text-link hover:underline"
+          >
+            <ArrowLeftIcon aria-hidden="true" className="size-4" />
+            All hosts
+          </Link>
+          <h2 className="font-mono text-lg font-medium break-all text-ink">{host}</h2>
+          {data !== undefined && data.lastSeen !== null && (
+            <p className="flex flex-wrap items-center gap-2 text-sm text-ink-subtle">
+              <span>
+                Last seen{" "}
+                <time dateTime={data.lastSeen}>
+                  {formatPreciseMoment(data.lastSeen, data.timeZone)}
+                </time>
+              </span>
+              <Freshness stale={data.stale} />
+              {data.stale === true && (
+                <span>No data arrived from this host in the last 5 minutes.</span>
+              )}
+            </p>
+          )}
         </div>
-      )}
+
+        {charts.isError && (
+          <Alert variant="destructive">
+            <OctagonAlertIcon />
+            <AlertTitle>
+              {data === undefined ? "The host could not load" : "The host could not refresh"}
+            </AlertTitle>
+            <AlertDescription>
+              {charts.error.message}
+              {data !== undefined && " The charts below are from the last successful load."}
+            </AlertDescription>
+            <AlertAction>
+              <Button variant="outline" size="sm" onClick={() => void charts.refetch()}>
+                Retry
+              </Button>
+            </AlertAction>
+          </Alert>
+        )}
+        {data === undefined ? (
+          !charts.isError && (
+            <div className="flex flex-col gap-6" aria-busy="true" aria-label="Loading">
+              <Skeleton className="h-44 w-full" />
+              <Skeleton className="h-44 w-full" />
+              <Skeleton className="h-44 w-full" />
+            </div>
+          )
+        ) : data.lastSeen === null ? (
+          <Empty className="border border-dashed p-10">
+            <EmptyHeader>
+              <EmptyMedia variant="icon">
+                <SearchXIcon />
+              </EmptyMedia>
+              <EmptyTitle>No host metrics from this host in this period</EmptyTitle>
+              <EmptyDescription>
+                Nothing arrived from it
+                {environment === DEFAULT_ENVIRONMENT ? "" : ` in ${environment}`} in this period.
+                Metrics are kept {data.retentionDays} days.
+              </EmptyDescription>
+            </EmptyHeader>
+          </Empty>
+        ) : (
+          <div
+            className="flex flex-col gap-6 transition-opacity data-[stale=true]:opacity-60"
+            data-stale={charts.isPlaceholderData}
+            aria-busy={charts.isPlaceholderData}
+          >
+            {data.charts.map((chart) => (
+              <HostChartCard key={chart.id} data={data} chart={chart} colors={colorsOf(chart.id)} />
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

@@ -1,5 +1,7 @@
 import * as React from "react";
 
+import { MISSING } from "@/lib/missing";
+
 import { bucketLabel, tickLabel, ticksFor } from "./chart-time";
 
 /**
@@ -19,9 +21,8 @@ export interface ChartLine {
   values: (number | null)[];
 }
 
-const PLOT_HEIGHT = 220;
+const DEFAULT_PLOT_HEIGHT = 220;
 const AXIS_BAND = 28;
-const HEIGHT = 12 + PLOT_HEIGHT + AXIS_BAND;
 const MARGIN = { top: 12, right: 16, left: 64 };
 
 /** Each run of buckets with a value, as indexes: a null breaks the line. */
@@ -49,6 +50,7 @@ export function TimeChart({
   label,
   formatValue,
   domain,
+  plotHeight = DEFAULT_PLOT_HEIGHT,
 }: {
   /** The first bucket's start, ISO. */
   start: string;
@@ -62,7 +64,10 @@ export function TimeChart({
   formatValue: (value: number) => string;
   /** A fixed y-axis range, such as 0 to 100 for percentages; values past it widen it. */
   domain?: { min: number; max: number } | undefined;
+  /** The plot's height in pixels, without the axis labels: lower for a report's short chart. */
+  plotHeight?: number;
 }) {
+  const chartHeight = 12 + plotHeight + AXIS_BAND;
   const containerRef = React.useRef<HTMLDivElement>(null);
   const [width, setWidth] = React.useState(0);
   const [active, setActive] = React.useState<number | null>(null);
@@ -89,7 +94,7 @@ export function TimeChart({
   const x = (index: number) =>
     MARGIN.left + (buckets <= 1 ? plotWidth / 2 : (index / last) * plotWidth);
   const y = (value: number) =>
-    MARGIN.top + PLOT_HEIGHT - ((value - bottom) / (top - bottom)) * PLOT_HEIGHT;
+    MARGIN.top + plotHeight - ((value - bottom) / (top - bottom)) * plotHeight;
 
   const spanSeconds = buckets * stepSeconds;
   const labelSpacing = spanSeconds <= 36 * 3600 ? 56 : stepSeconds >= 86_400 ? 64 : 104;
@@ -140,7 +145,7 @@ export function TimeChart({
       <div
         ref={containerRef}
         className="relative w-full rounded-md has-[input:focus-visible]:ring-2 has-[input:focus-visible]:ring-ring"
-        style={{ height: HEIGHT }}
+        style={{ height: chartHeight }}
         onPointerMove={(event) => setActive(bucketAt(event.clientX))}
         onPointerLeave={() => setActive(null)}
       >
@@ -160,7 +165,7 @@ export function TimeChart({
           />
         )}
         {width > 0 && (
-          <svg width={width} height={HEIGHT} aria-hidden="true" className="block">
+          <svg width={width} height={chartHeight} aria-hidden="true" className="block">
             {ticks.map((tick) => (
               <g key={tick}>
                 <line
@@ -189,7 +194,7 @@ export function TimeChart({
                 <text
                   key={index}
                   x={x(index)}
-                  y={MARGIN.top + PLOT_HEIGHT + 18}
+                  y={MARGIN.top + plotHeight + 18}
                   textAnchor={index === 0 ? "start" : index === last ? "end" : "middle"}
                   className="fill-ink-subtle text-[11px]"
                 >
@@ -236,7 +241,7 @@ export function TimeChart({
                   x1={x(active)}
                   x2={x(active)}
                   y1={MARGIN.top}
-                  y2={MARGIN.top + PLOT_HEIGHT}
+                  y2={MARGIN.top + plotHeight}
                   stroke="var(--hairline-tertiary)"
                   strokeWidth={1}
                   shapeRendering="crispEdges"
@@ -250,7 +255,7 @@ export function TimeChart({
                       cy={y(value)}
                       r={4}
                       fill={line.color}
-                      stroke="var(--card)"
+                      stroke="var(--block-surface, var(--background))"
                       strokeWidth={2}
                     />
                   );
@@ -277,7 +282,7 @@ export function TimeChart({
                   />
                   <span className="font-semibold whitespace-nowrap text-ink tabular-nums">
                     {line.values[active] === null || line.values[active] === undefined
-                      ? "–"
+                      ? MISSING
                       : formatValue(line.values[active])}
                   </span>
                   <span className="truncate text-ink-subtle">{line.label}</span>

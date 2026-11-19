@@ -1,3 +1,4 @@
+import { MISSING } from "@/lib/missing";
 import type { MetricSummary, VitalName } from "@/lib/speed-api";
 
 const whole = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
@@ -51,7 +52,7 @@ export function formatMs(ms: number): string {
 /** A metric's value: milliseconds as time, CLS as a score with two decimals; "–" for none. */
 export function formatVital(name: VitalName, value: number | null): string {
   if (value === null) {
-    return "–";
+    return MISSING;
   }
   return name === "cls" ? value.toFixed(2) : formatMs(shownValue(name, value));
 }

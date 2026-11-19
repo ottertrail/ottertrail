@@ -1,3 +1,4 @@
+import { MISSING } from "@/lib/missing";
 import type { CheckCause } from "@/lib/uptime-api";
 
 /** What each cause of a failure is called. */
@@ -25,7 +26,7 @@ export function intervalText(seconds: number): string {
  * down at all never reads 100%; "–" before the check existed.
  */
 export function formatUptime(share: number | null): string {
-  if (share === null) return "–";
+  if (share === null) return MISSING;
   if (share >= 1) return "100%";
   return `${(Math.floor(share * 10_000) / 100).toFixed(2)}%`;
 }

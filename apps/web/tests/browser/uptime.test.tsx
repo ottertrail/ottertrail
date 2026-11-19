@@ -155,7 +155,8 @@ describe("the uptime page", () => {
       "–",
       "–",
       "Not run yet",
-      "–",
+      // The dash for the eye, the words for a screen reader.
+      "–Not checked yet",
     ]);
   });
 
@@ -247,7 +248,13 @@ describe("a check's page", () => {
         "48 ms",
         "It answered 503, which does not count as up.",
       ],
-      ["16 Nov 2026, 03:10", "Timeout", "–", "10 s", "No complete answer within 10 seconds."],
+      [
+        "16 Nov 2026, 03:10",
+        "Timeout",
+        "–No answer",
+        "10 s",
+        "No complete answer within 10 seconds.",
+      ],
     ]);
   });
 
