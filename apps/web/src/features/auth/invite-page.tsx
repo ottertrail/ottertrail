@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { LoaderCircleIcon, OctagonAlertIcon } from "lucide-react";
 import * as React from "react";
@@ -9,7 +9,7 @@ import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ApiError } from "@/lib/api";
-import { authClient, signInErrorMessage } from "@/lib/auth-client";
+import { authClient, sessionQuery, signInErrorMessage } from "@/lib/auth-client";
 import { formText } from "@/lib/form";
 import { acceptInvitation, previewInvitation } from "@/lib/links-api";
 
@@ -26,6 +26,7 @@ export const LINK_GONE = "This invitation link no longer works. Ask for a new on
  * the page leaves the invitation pending. A signed-in visitor signs out first.
  */
 export function InvitePage() {
+  const queryClient = useQueryClient();
   const navigate = useNavigate();
   const token = useLinkToken();
   // Asked afresh each time the page opens: a session cached since may have ended.
@@ -125,7 +126,13 @@ export function InvitePage() {
                 variant="outline"
                 size="sm"
                 className="mt-2"
-                onClick={() => void authClient.signOut().then(() => session.refetch())}
+                onClick={() =>
+                  void authClient.signOut().then(() => {
+                    // The router's cached "signed in" goes too.
+                    queryClient.removeQueries({ queryKey: sessionQuery().queryKey });
+                    return session.refetch();
+                  })
+                }
               >
                 Sign out
               </Button>

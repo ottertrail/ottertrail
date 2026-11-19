@@ -75,6 +75,12 @@ export interface FakeApi {
    * with, so a test cannot swap fetch to refuse it.)
    */
   signInRefusal: { status: number; message: string } | null;
+  /**
+   * The status GET /api/auth/get-session answers with instead of the
+   * session, such as 429 when Better Auth's rate limit is reached; null
+   * answers as usual.
+   */
+  sessionRefusal: number | null;
   /** The instance's settings; PATCH changes them (the owner's only). */
   settings: Settings;
   /** GET /api/settings/location-data: the files loaded and their last updates (the owner's only). */
@@ -3218,6 +3224,9 @@ function createProject(api: FakeApi, body: unknown): Response {
 async function answer(api: FakeApi, url: URL, init: RequestInit | undefined): Promise<Response> {
   const path = url.pathname;
   if (path === "/api/auth/get-session") {
+    if (api.sessionRefusal !== null) {
+      return json({ message: "Refused" }, api.sessionRefusal);
+    }
     return json(api.signedIn ? SESSION : null);
   }
   if (path === "/api/auth/sign-out") {
@@ -3617,6 +3626,7 @@ export function installFakeApi(overrides: Partial<FakeApi> = {}): FakeApi {
   active = {
     signedIn: true,
     signInRefusal: null,
+    sessionRefusal: null,
     settings: SETTINGS,
     locationData: LOCATION_DATA,
     storage: STORAGE,

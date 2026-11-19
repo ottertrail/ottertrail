@@ -5,7 +5,17 @@ import react from "@vitejs/plugin-react";
 import { defineConfig, lazyPlugins, type Plugin } from "vite-plus";
 import { playwright } from "vite-plus/test/browser-playwright";
 
+import { chunkBudget } from "../../scripts/chunk-budget.ts";
 import { thirdPartyLicenses } from "../../scripts/third-party-licenses.ts";
+
+/**
+ * The most JavaScript, in kB, a first visit may load before any page's own
+ * chunk: the entry and what it imports statically (the shell, the router,
+ * React, the shared UI). Set with a margin of about 12% over the size when
+ * pages were split out; the build fails past it, giving the current size
+ * (docs/dashboard.md, "Code splitting").
+ */
+const INITIAL_JS_BUDGET = { raw: 780, gzip: 255 };
 
 const apiOrigin = process.env.OTTERTRAIL_API_ORIGIN ?? "http://127.0.0.1:3000";
 
@@ -44,6 +54,7 @@ export default defineConfig({
     thirdPartyLicenses({
       stylesheets: [fileURLToPath(new URL("./src/styles/globals.css", import.meta.url))],
     }),
+    chunkBudget(INITIAL_JS_BUDGET),
     ...(process.env.VITEST ? [noApiInTests()] : []),
   ]),
   resolve: {

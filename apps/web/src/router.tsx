@@ -14,23 +14,9 @@ import type * as React from "react";
 
 import { AppLayout } from "@/app";
 import { NoAccess } from "@/components/no-access";
+import { AuthPending, PagePending, RouteError } from "@/components/route-states";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { AlertsPage } from "@/features/alerts/alerts-page";
-import { RulePage } from "@/features/alerts/rule-view";
-import { AnalyticsPage } from "@/features/analytics/analytics-page";
-import { InvitePage } from "@/features/auth/invite-page";
-import { ResetPasswordPage } from "@/features/auth/reset-password-page";
-import { SetupPage } from "@/features/auth/setup-page";
-import { SignInPage } from "@/features/auth/sign-in-page";
-import { DesignSystemPage } from "@/features/design-system/design-system-page";
-import { ErrorPage } from "@/features/errors/error-page";
-import { ErrorsPage } from "@/features/errors/errors-page";
-import { OverviewPage } from "@/features/overview/overview-page";
-import { EventPage } from "@/features/product/event-page";
-import { EventsPage } from "@/features/product/events-page";
-import { FunnelPage } from "@/features/product/funnel-page";
 import { ProductLayout } from "@/features/product/product-layout";
-import { RetentionPage } from "@/features/product/retention-page";
 import {
   type FilterSearch,
   filterSearchOf,
@@ -39,21 +25,7 @@ import {
   stepsFrom,
 } from "@/features/product/search";
 import { ProjectLayout } from "@/features/projects/project-layout";
-import { ProjectSettingsPage } from "@/features/projects/project-settings-page";
-import { ProjectsPage } from "@/features/projects/projects-page";
-import { ReplayPage } from "@/features/replays/replay-page";
-import { ReplaysPage } from "@/features/replays/replays-page";
 import { replayFiltersFrom } from "@/features/replays/search";
-import { MembersPage } from "@/features/settings/members-page";
-import { SettingsPage } from "@/features/settings/settings-page";
-import { SpeedPage } from "@/features/speed/speed-page";
-import { DatabasesPage } from "@/features/telemetry/databases-page";
-import { HostPage } from "@/features/telemetry/host-page";
-import { HostsPage } from "@/features/telemetry/hosts-page";
-import { LogsPage } from "@/features/telemetry/logs-page";
-import { MetricPage } from "@/features/telemetry/metric-page";
-import { MetricsPage } from "@/features/telemetry/metrics-page";
-import { QueryShapePage } from "@/features/telemetry/query-shape-page";
 import {
   logFiltersFrom,
   metricChoicesFrom,
@@ -63,14 +35,6 @@ import {
   serviceChoiceFrom,
   traceFiltersFrom,
 } from "@/features/telemetry/search";
-import { ServicePage } from "@/features/telemetry/service-page";
-import { ServicesPage } from "@/features/telemetry/services-page";
-import { TracePage } from "@/features/telemetry/trace-page";
-import { TracesPage } from "@/features/telemetry/traces-page";
-import { CheckPage } from "@/features/uptime/check-page";
-import { UptimePage } from "@/features/uptime/uptime-page";
-import { UserPage } from "@/features/users/user-page";
-import { UsersPage } from "@/features/users/users-page";
 import { firstPage, meQuery, type PageAccess } from "@/lib/access";
 import { isRuleKind, type RuleKind } from "@/lib/alerts-api";
 import {
@@ -83,10 +47,11 @@ import {
   rangeFrom,
 } from "@/lib/analytics-api";
 import { ApiError } from "@/lib/api";
-import { authClient } from "@/lib/auth-client";
+import { sessionQuery } from "@/lib/auth-client";
 import { DEFAULT_DATABASE_SORT, isDatabaseSort } from "@/lib/databases-api";
 import { DEFAULT_STATUS_FILTER, isStatusFilter, type StatusFilter } from "@/lib/errors-api";
 import { lastProject } from "@/lib/last-project";
+import { lazyPage, withPage } from "@/lib/lazy-page";
 import { isTraceId } from "@/lib/logs-api";
 import { isMetricKind, type MetricKind } from "@/lib/metrics-api";
 import { DEFAULT_OVERVIEW_PERIOD, isOverviewPeriod, type OverviewPeriod } from "@/lib/overview-api";
@@ -100,10 +65,69 @@ import {
 import { projectsQuery } from "@/lib/projects-api";
 import { type Device, isDevice } from "@/lib/speed-api";
 
-async function signedIn(): Promise<boolean> {
-  const { data } = await authClient.getSession();
-  return data !== null;
-}
+/**
+ * Every page loads in a chunk of its own on first use (docs/dashboard.md,
+ * "Code splitting"); the shell, the router, the session check, and the
+ * layouts above the pages stay in the main chunk.
+ */
+const AlertsPage = lazyPage(() => import("@/features/alerts/alerts-page"), "AlertsPage");
+const AnalyticsPage = lazyPage(
+  () => import("@/features/analytics/analytics-page"),
+  "AnalyticsPage",
+);
+const CheckPage = lazyPage(() => import("@/features/uptime/check-page"), "CheckPage");
+const DatabasesPage = lazyPage(
+  () => import("@/features/telemetry/databases-page"),
+  "DatabasesPage",
+);
+const DesignSystemPage = lazyPage(
+  () => import("@/features/design-system/design-system-page"),
+  "DesignSystemPage",
+);
+const ErrorPage = lazyPage(() => import("@/features/errors/error-page"), "ErrorPage");
+const ErrorsPage = lazyPage(() => import("@/features/errors/errors-page"), "ErrorsPage");
+const EventPage = lazyPage(() => import("@/features/product/event-page"), "EventPage");
+const EventsPage = lazyPage(() => import("@/features/product/events-page"), "EventsPage");
+const FunnelPage = lazyPage(() => import("@/features/product/funnel-page"), "FunnelPage");
+const HostPage = lazyPage(() => import("@/features/telemetry/host-page"), "HostPage");
+const HostsPage = lazyPage(() => import("@/features/telemetry/hosts-page"), "HostsPage");
+const InvitePage = lazyPage(() => import("@/features/auth/invite-page"), "InvitePage");
+const LogsPage = lazyPage(() => import("@/features/telemetry/logs-page"), "LogsPage");
+const MembersPage = lazyPage(() => import("@/features/settings/members-page"), "MembersPage");
+const MetricPage = lazyPage(() => import("@/features/telemetry/metric-page"), "MetricPage");
+const MetricsPage = lazyPage(() => import("@/features/telemetry/metrics-page"), "MetricsPage");
+const OverviewPage = lazyPage(() => import("@/features/overview/overview-page"), "OverviewPage");
+const ProjectSettingsPage = lazyPage(
+  () => import("@/features/projects/project-settings-page"),
+  "ProjectSettingsPage",
+);
+const ProjectsPage = lazyPage(() => import("@/features/projects/projects-page"), "ProjectsPage");
+const QueryShapePage = lazyPage(
+  () => import("@/features/telemetry/query-shape-page"),
+  "QueryShapePage",
+);
+const ReplayPage = lazyPage(() => import("@/features/replays/replay-page"), "ReplayPage");
+const ReplaysPage = lazyPage(() => import("@/features/replays/replays-page"), "ReplaysPage");
+const ResetPasswordPage = lazyPage(
+  () => import("@/features/auth/reset-password-page"),
+  "ResetPasswordPage",
+);
+const RetentionPage = lazyPage(() => import("@/features/product/retention-page"), "RetentionPage");
+const RulePage = lazyPage(() => import("@/features/alerts/rule-view"), "RulePage");
+const ServicePage = lazyPage(() => import("@/features/telemetry/service-page"), "ServicePage");
+const ServicesPage = lazyPage(() => import("@/features/telemetry/services-page"), "ServicesPage");
+const SettingsPage = lazyPage(() => import("@/features/settings/settings-page"), "SettingsPage");
+const SetupPage = lazyPage(() => import("@/features/auth/setup-page"), "SetupPage");
+const SignInPage = lazyPage(() => import("@/features/auth/sign-in-page"), "SignInPage");
+const SpeedPage = lazyPage(() => import("@/features/speed/speed-page"), "SpeedPage");
+const TracePage = lazyPage(() => import("@/features/telemetry/trace-page"), "TracePage");
+const TracesPage = lazyPage(() => import("@/features/telemetry/traces-page"), "TracesPage");
+const UptimePage = lazyPage(() => import("@/features/uptime/uptime-page"), "UptimePage");
+const UserPage = lazyPage(() => import("@/features/users/user-page"), "UserPage");
+const UsersPage = lazyPage(() => import("@/features/users/users-page"), "UsersPage");
+
+/** Whether someone is signed in, from the cache while a recent check said so (sessionQuery). */
+const signedIn = (queryClient: QueryClient) => queryClient.fetchQuery(sessionQuery());
 
 /**
  * Reads a query value as JSON only when writing that JSON back gives the
@@ -135,18 +159,22 @@ const rootRoute = createRootRouteWithContext<RouterContext>()({
 const signInRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/sign-in",
-  beforeLoad: async () => {
-    if (await signedIn()) {
+  // A check that fails (a rate limit, the API down) shows the form: signing
+  // in works without knowing, and its own errors say what went wrong.
+  beforeLoad: async ({ context }) => {
+    if (await signedIn(context.queryClient).catch(() => false)) {
       throw redirect({ to: "/" });
     }
   },
   component: SignInPage,
+  pendingComponent: AuthPending,
 });
 
 const setupRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/setup",
   component: SetupPage,
+  pendingComponent: AuthPending,
 });
 
 /** Accepting an invitation: public, the token in the fragment (docs/access.md). */
@@ -154,6 +182,7 @@ const inviteRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/invite",
   component: InvitePage,
+  pendingComponent: AuthPending,
 });
 
 /** Setting a password from a reset link: public, the token in the fragment. */
@@ -161,17 +190,29 @@ const resetPasswordRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/reset-password",
   component: ResetPasswordPage,
+  pendingComponent: AuthPending,
 });
 
-/** Every page inside needs a session; without one, the visitor goes to sign-in. */
+/**
+ * Every page inside needs a session; without one (no session, or a 401),
+ * the visitor goes to sign-in. A check that fails otherwise (a 429, a 5xx)
+ * shows the error with Reload instead of signing them out (RouteError).
+ */
 const appRoute = createRoute({
   getParentRoute: () => rootRoute,
   id: "app",
-  beforeLoad: async () => {
-    if (!(await signedIn())) {
+  beforeLoad: async ({ context, preload }) => {
+    // Hovering a link preloads its route: that is no reason to ask the API
+    // again (Better Auth rate-limits get-session), and the click checks.
+    if (preload) {
+      return;
+    }
+    if (!(await signedIn(context.queryClient))) {
       throw redirect({ to: "/sign-in" });
     }
   },
+  // Nothing while the session is checked: the shell, or sign-in, follows.
+  pendingComponent: () => null,
   component: AppLayout,
 });
 
@@ -257,7 +298,7 @@ const overviewRoute = createRoute({
         : undefined,
     ...environmentSearch(search),
   }),
-  component: function OverviewRouteComponent() {
+  component: withPage(OverviewPage, function OverviewRouteComponent() {
     const { projectId } = overviewRoute.useParams();
     const { period, env } = overviewRoute.useSearch();
     return (
@@ -267,7 +308,7 @@ const overviewRoute = createRoute({
         environment={env ?? DEFAULT_ENVIRONMENT}
       />
     );
-  },
+  }),
 });
 
 const webAnalyticsRoute = createRoute({
@@ -303,7 +344,7 @@ const webAnalyticsRoute = createRoute({
       ...filtersFrom(search),
     };
   },
-  component: function WebAnalyticsRouteComponent() {
+  component: withPage(AnalyticsPage, function WebAnalyticsRouteComponent() {
     const { projectId } = webAnalyticsRoute.useParams();
     const { period, from, to, env, ...filters } = webAnalyticsRoute.useSearch();
     return (
@@ -314,7 +355,7 @@ const webAnalyticsRoute = createRoute({
         environment={env ?? DEFAULT_ENVIRONMENT}
       />
     );
-  },
+  }),
 });
 
 /** A workbench's selected item from an address: any short text, none when absent or empty. */
@@ -338,11 +379,11 @@ const usersRoute = createRoute({
     // The workbench's selected user (docs/design-system.md, "Workbench").
     user: selectionFrom(search.user),
   }),
-  component: function UsersRouteComponent() {
+  component: withPage(UsersPage, function UsersRouteComponent() {
     const { projectId } = usersRoute.useParams();
     const { env } = usersRoute.useSearch();
     return <UsersPage projectId={projectId} environment={env ?? DEFAULT_ENVIRONMENT} key={env} />;
-  },
+  }),
 });
 
 const userRoute = createRoute({
@@ -350,13 +391,13 @@ const userRoute = createRoute({
   path: "/users/$userId",
   staticData: { title: "User", access: "users" },
   validateSearch: (search: { env?: unknown } & SearchSchemaInput) => environmentSearch(search),
-  component: function UserRouteComponent() {
+  component: withPage(UserPage, function UserRouteComponent() {
     const { projectId, userId } = userRoute.useParams();
     const { env } = userRoute.useSearch();
     return (
       <UserPage projectId={projectId} userId={userId} environment={env ?? DEFAULT_ENVIRONMENT} />
     );
-  },
+  }),
 });
 
 /** The days from a page's address: chosen days, or a period, left out for the default. */
@@ -400,7 +441,7 @@ const errorsRoute = createRoute({
     // The workbench's selected group (docs/design-system.md, "Workbench").
     error: typeof search.error === "string" && search.error !== "" ? search.error : undefined,
   }),
-  component: function ErrorsRouteComponent() {
+  component: withPage(ErrorsPage, function ErrorsRouteComponent() {
     const { projectId } = errorsRoute.useParams();
     const { period, from, to, env, status } = errorsRoute.useSearch();
     return (
@@ -411,7 +452,7 @@ const errorsRoute = createRoute({
         status={status ?? DEFAULT_STATUS_FILTER}
       />
     );
-  },
+  }),
 });
 
 const errorRoute = createRoute({
@@ -422,7 +463,7 @@ const errorRoute = createRoute({
     ...rangeSearch(search),
     ...environmentSearch(search),
   }),
-  component: function ErrorRouteComponent() {
+  component: withPage(ErrorPage, function ErrorRouteComponent() {
     const { projectId, fingerprint } = errorRoute.useParams();
     const { period, from, to, env } = errorRoute.useSearch();
     return (
@@ -433,7 +474,7 @@ const errorRoute = createRoute({
         environment={env ?? DEFAULT_ENVIRONMENT}
       />
     );
-  },
+  }),
 });
 
 /**
@@ -466,7 +507,7 @@ const replaysRoute = createRoute({
       replay: selectionFrom(search.replay),
     };
   },
-  component: function ReplaysRouteComponent() {
+  component: withPage(ReplaysPage, function ReplaysRouteComponent() {
     const { projectId } = replaysRoute.useParams();
     const { period, from, to, env, path, user, error, min } = replaysRoute.useSearch();
     return (
@@ -477,17 +518,17 @@ const replaysRoute = createRoute({
         filters={{ path, userId: user, fingerprint: error, minDuration: min }}
       />
     );
-  },
+  }),
 });
 
 const replayRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: "/replays/$replayId",
   staticData: { title: "Replay", access: "replays" },
-  component: function ReplayRouteComponent() {
+  component: withPage(ReplayPage, function ReplayRouteComponent() {
     const { projectId, replayId } = replayRoute.useParams();
     return <ReplayPage projectId={projectId} replayId={replayId} key={replayId} />;
-  },
+  }),
 });
 
 /** Web Vitals: days and environment as on errors, and a kind of device (left out for all). */
@@ -504,7 +545,7 @@ const speedRoute = createRoute({
     ...environmentSearch(search),
     device: isDevice(search.device) ? search.device : undefined,
   }),
-  component: function SpeedRouteComponent() {
+  component: withPage(SpeedPage, function SpeedRouteComponent() {
     const { projectId } = speedRoute.useParams();
     const { period, from, to, env, device } = speedRoute.useSearch();
     return (
@@ -515,7 +556,7 @@ const speedRoute = createRoute({
         device={device}
       />
     );
-  },
+  }),
 });
 
 /**
@@ -550,7 +591,7 @@ const tracesRoute = createRoute({
       ...traceSpanSearch(search),
     };
   },
-  component: function TracesRouteComponent() {
+  component: withPage(TracesPage, function TracesRouteComponent() {
     const { projectId } = tracesRoute.useParams();
     const { period, from, to, env, service, name, errors, min } = tracesRoute.useSearch();
     return (
@@ -561,7 +602,7 @@ const tracesRoute = createRoute({
         filters={{ service, name, errors, minDuration: min }}
       />
     );
-  },
+  }),
 });
 
 /** An ISO time in UTC, as the API takes it: when the trace is known to have run. */
@@ -594,11 +635,11 @@ const traceRoute = createRoute({
   staticData: { title: "Trace", access: "monitoring" },
   validateSearch: (search: { at?: unknown; span?: unknown } & SearchSchemaInput) =>
     traceSpanSearch(search),
-  component: function TraceRouteComponent() {
+  component: withPage(TracePage, function TraceRouteComponent() {
     const { projectId, traceId } = traceRoute.useParams();
     const { at, span } = traceRoute.useSearch();
     return <TracePage projectId={projectId} traceId={traceId} at={at} spanId={span} />;
-  },
+  }),
 });
 
 /** A server's log records: days and environment, and filters (service, severity, words, trace). */
@@ -627,7 +668,7 @@ const logsRoute = createRoute({
       log: selectionFrom(search.log),
     };
   },
-  component: function LogsRouteComponent() {
+  component: withPage(LogsPage, function LogsRouteComponent() {
     const { projectId } = logsRoute.useParams();
     const { period, from, to, env, service, severity, q, trace } = logsRoute.useSearch();
     return (
@@ -638,7 +679,7 @@ const logsRoute = createRoute({
         filters={{ service, severity, search: q, traceId: trace }}
       />
     );
-  },
+  }),
 });
 
 /** A server's metrics: days and environment, as on the other telemetry pages. */
@@ -650,7 +691,7 @@ const metricsRoute = createRoute({
     ...rangeSearch(search),
     ...environmentSearch(search),
   }),
-  component: function MetricsRouteComponent() {
+  component: withPage(MetricsPage, function MetricsRouteComponent() {
     const { projectId } = metricsRoute.useParams();
     const { period, from, to, env } = metricsRoute.useSearch();
     return (
@@ -660,7 +701,7 @@ const metricsRoute = createRoute({
         environment={env ?? DEFAULT_ENVIRONMENT}
       />
     );
-  },
+  }),
 });
 
 /**
@@ -692,7 +733,7 @@ const metricRoute = createRoute({
       attrValue: attr?.value,
     };
   },
-  component: function MetricRouteComponent() {
+  component: withPage(MetricPage, function MetricRouteComponent() {
     const { projectId, name } = metricRoute.useParams();
     const { period, from, to, env, kind, split, stat, host, attr, attrValue } =
       metricRoute.useSearch();
@@ -713,7 +754,7 @@ const metricRoute = createRoute({
         }
       />
     );
-  },
+  }),
 });
 
 /** Each service's requests by route: days and environment; optionally one service, a route of it marked. */
@@ -726,7 +767,7 @@ const servicesRoute = createRoute({
     ...environmentSearch(search),
     ...serviceChoiceFrom(search),
   }),
-  component: function ServicesRouteComponent() {
+  component: withPage(ServicesPage, function ServicesRouteComponent() {
     const { projectId } = servicesRoute.useParams();
     const { period, from, to, env, service, route } = servicesRoute.useSearch();
     return (
@@ -738,7 +779,7 @@ const servicesRoute = createRoute({
         route={route}
       />
     );
-  },
+  }),
 });
 
 /** One service's charts: its name in the path; days, environment, and optionally one of its routes. */
@@ -755,7 +796,7 @@ const serviceRoute = createRoute({
       route: route !== undefined && isNamedRoute(route) ? route : undefined,
     };
   },
-  component: function ServiceRouteComponent() {
+  component: withPage(ServicePage, function ServiceRouteComponent() {
     const { projectId, service } = serviceRoute.useParams();
     const { period, from, to, env, route } = serviceRoute.useSearch();
     return (
@@ -767,7 +808,7 @@ const serviceRoute = createRoute({
         environment={env ?? DEFAULT_ENVIRONMENT}
       />
     );
-  },
+  }),
 });
 
 /** The database calls in traces: days, environment, and what the query shapes are sorted by. */
@@ -783,7 +824,7 @@ const databasesRoute = createRoute({
         ? search.sort
         : undefined,
   }),
-  component: function DatabasesRouteComponent() {
+  component: withPage(DatabasesPage, function DatabasesRouteComponent() {
     const { projectId } = databasesRoute.useParams();
     const { period, from, to, env, sort } = databasesRoute.useSearch();
     return (
@@ -794,7 +835,7 @@ const databasesRoute = createRoute({
         sort={sort ?? DEFAULT_DATABASE_SORT}
       />
     );
-  },
+  }),
 });
 
 /** One query shape: its ID in the path; days and environment. */
@@ -806,7 +847,7 @@ const queryShapeRoute = createRoute({
     ...rangeSearch(search),
     ...environmentSearch(search),
   }),
-  component: function QueryShapeRouteComponent() {
+  component: withPage(QueryShapePage, function QueryShapeRouteComponent() {
     const { projectId, shapeId } = queryShapeRoute.useParams();
     const { period, from, to, env } = queryShapeRoute.useSearch();
     return (
@@ -817,7 +858,7 @@ const queryShapeRoute = createRoute({
         environment={env ?? DEFAULT_ENVIRONMENT}
       />
     );
-  },
+  }),
 });
 
 /** The hosts that sent host metrics: days and environment. */
@@ -829,7 +870,7 @@ const hostsRoute = createRoute({
     ...rangeSearch(search),
     ...environmentSearch(search),
   }),
-  component: function HostsRouteComponent() {
+  component: withPage(HostsPage, function HostsRouteComponent() {
     const { projectId } = hostsRoute.useParams();
     const { period, from, to, env } = hostsRoute.useSearch();
     return (
@@ -839,7 +880,7 @@ const hostsRoute = createRoute({
         environment={env ?? DEFAULT_ENVIRONMENT}
       />
     );
-  },
+  }),
 });
 
 /** One host's charts: its host.name in the path. */
@@ -851,7 +892,7 @@ const hostRoute = createRoute({
     ...rangeSearch(search),
     ...environmentSearch(search),
   }),
-  component: function HostRouteComponent() {
+  component: withPage(HostPage, function HostRouteComponent() {
     const { projectId, host } = hostRoute.useParams();
     const { period, from, to, env } = hostRoute.useSearch();
     return (
@@ -862,7 +903,7 @@ const hostRoute = createRoute({
         environment={env ?? DEFAULT_ENVIRONMENT}
       />
     );
-  },
+  }),
 });
 
 /** The project's uptime checks, and the days the selected one's detail covers. */
@@ -877,11 +918,11 @@ const uptimeRoute = createRoute({
     // The workbench's selected check, whose detail shows these days.
     check: selectionFrom(search.check),
   }),
-  component: function UptimeRouteComponent() {
+  component: withPage(UptimePage, function UptimeRouteComponent() {
     const { projectId } = uptimeRoute.useParams();
     const { period, from, to } = uptimeRoute.useSearch();
     return <UptimePage projectId={projectId} range={rangeFrom({ period, from, to })} />;
-  },
+  }),
 });
 
 /** One check: its ID in the path, and the days its chart, failures, and incidents cover. */
@@ -892,13 +933,13 @@ const checkRoute = createRoute({
   validateSearch: (
     search: { period?: unknown; from?: unknown; to?: unknown } & SearchSchemaInput,
   ) => rangeSearch(search),
-  component: function CheckRouteComponent() {
+  component: withPage(CheckPage, function CheckRouteComponent() {
     const { projectId, checkId } = checkRoute.useParams();
     const { period, from, to } = checkRoute.useSearch();
     return (
       <CheckPage projectId={projectId} checkId={checkId} range={rangeFrom({ period, from, to })} />
     );
-  },
+  }),
 });
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -963,11 +1004,11 @@ const alertsRoute = createRoute({
       return { host, attr: attr?.key, attrValue: attr?.value };
     })(),
   }),
-  component: function AlertsRouteComponent() {
+  component: withPage(AlertsPage, function AlertsRouteComponent() {
     const { projectId } = alertsRoute.useParams();
     const search = alertsRoute.useSearch();
     return <AlertsPage projectId={projectId} prefill={search} />;
-  },
+  }),
 });
 
 /** One alert rule, for deep links and narrow screens. */
@@ -975,10 +1016,10 @@ const ruleRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: "/alerts/$ruleId",
   staticData: { title: "Rule", access: "uptime_alerts" },
-  component: function RuleRouteComponent() {
+  component: withPage(RulePage, function RuleRouteComponent() {
     const { projectId, ruleId } = ruleRoute.useParams();
     return <RulePage projectId={projectId} ruleId={ruleId} key={ruleId} />;
-  },
+  }),
 });
 
 /** Product analytics: its reports (events, funnel, retention) as tabs, each its own page. */
@@ -1011,7 +1052,7 @@ const productEventsRoute = createRoute({
   getParentRoute: () => productRoute,
   path: "/events",
   validateSearch: productRangeSearch,
-  component: function ProductEventsRouteComponent() {
+  component: withPage(EventsPage, function ProductEventsRouteComponent() {
     const { projectId } = productEventsRoute.useParams();
     const { period, from, to, env } = productEventsRoute.useSearch();
     return (
@@ -1021,7 +1062,7 @@ const productEventsRoute = createRoute({
         environment={env ?? DEFAULT_ENVIRONMENT}
       />
     );
-  },
+  }),
 });
 
 /**
@@ -1037,7 +1078,7 @@ const productEventRoute = createRoute({
     ...productRangeSearch(search),
     ...filterSearchOf(propertyFiltersFrom(search)),
   }),
-  component: function ProductEventRouteComponent() {
+  component: withPage(EventPage, function ProductEventRouteComponent() {
     const { projectId, name } = productEventRoute.useParams();
     const { period, from, to, env, ...rest } = productEventRoute.useSearch();
     return (
@@ -1049,7 +1090,7 @@ const productEventRoute = createRoute({
         filters={propertyFiltersFrom(rest)}
       />
     );
-  },
+  }),
 });
 
 /**
@@ -1091,7 +1132,7 @@ const productFunnelRoute = createRoute({
       window,
     };
   },
-  component: function ProductFunnelRouteComponent() {
+  component: withPage(FunnelPage, function ProductFunnelRouteComponent() {
     const { projectId } = productFunnelRoute.useParams();
     const { period, from, to, env, funnel, steps, count, window } = productFunnelRoute.useSearch();
     return (
@@ -1105,14 +1146,14 @@ const productFunnelRoute = createRoute({
         window={window ?? DEFAULT_FUNNEL_WINDOW}
       />
     );
-  },
+  }),
 });
 
 const productRetentionRoute = createRoute({
   getParentRoute: () => productRoute,
   path: "/retention",
   validateSearch: productRangeSearch,
-  component: function ProductRetentionRouteComponent() {
+  component: withPage(RetentionPage, function ProductRetentionRouteComponent() {
     const { projectId } = productRetentionRoute.useParams();
     const { period, from, to, env } = productRetentionRoute.useSearch();
     return (
@@ -1122,7 +1163,7 @@ const productRetentionRoute = createRoute({
         environment={env ?? DEFAULT_ENVIRONMENT}
       />
     );
-  },
+  }),
 });
 
 const projectSettingsRoute = createRoute({
@@ -1133,10 +1174,10 @@ const projectSettingsRoute = createRoute({
   validateSearch: (search: { tab?: unknown } & SearchSchemaInput): { tab: string | undefined } => ({
     tab: typeof search.tab === "string" && search.tab !== "" ? search.tab : undefined,
   }),
-  component: function ProjectSettingsRouteComponent() {
+  component: withPage(ProjectSettingsPage, function ProjectSettingsRouteComponent() {
     const { projectId } = projectSettingsRoute.useParams();
     return <ProjectSettingsPage projectId={projectId} />;
-  },
+  }),
 });
 
 /** The instance's settings: the workspace level, above any one project. */
@@ -1166,10 +1207,10 @@ const membersRoute = createRoute({
         ? search.invitation
         : undefined,
   }),
-  component: function MembersRouteComponent() {
+  component: withPage(MembersPage, function MembersRouteComponent() {
     const { member, invitation } = membersRoute.useSearch();
     return <MembersPage chosen={{ member, invitation }} />;
-  },
+  }),
 });
 
 const designSystemRoute = createRoute({
@@ -1266,6 +1307,13 @@ export function createAppRouter({
     routeTree,
     ...(history === undefined ? {} : { history }),
     context: { queryClient },
+    // Hovering or focusing a link loads its page's chunk (and runs its
+    // routes' checks) 50ms later, so a click rarely waits for the download.
+    defaultPreload: "intent",
+    // A page still downloading after pendingMs (1s) shows a skeleton, for at
+    // least pendingMinMs (0.5s), so a quick load never flashes one.
+    defaultPendingComponent: PagePending,
+    defaultErrorComponent: RouteError,
     parseSearch: parseSearchWith(parseExactJson),
     stringifySearch: stringifySearchWith(JSON.stringify, parseExactJson),
     Wrap: ({ children }: { children: React.ReactNode }) => (

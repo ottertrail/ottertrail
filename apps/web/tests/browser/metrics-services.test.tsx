@@ -323,7 +323,8 @@ describe("the services page", () => {
     await sidebarLink("Services").click();
 
     await expect.poll(() => router.state.location.pathname).toBe(SERVICES);
-    expect(lastQuery(api, "/services")).toEqual({ period: "7d" });
+    // The page asks once its chunk has loaded (docs/dashboard.md, "Code splitting").
+    await expect.poll(() => lastQuery(api, "/services")).toEqual({ period: "7d" });
     await expect.element(page.getByRole("heading", { name: "web" })).toBeVisible();
     await expect
       .element(

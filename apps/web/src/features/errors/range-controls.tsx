@@ -1,6 +1,15 @@
 import * as React from "react";
 
 import { FilterBar, FilterBarRange } from "@/components/filter-bar";
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   Select,
   SelectContent,
@@ -9,14 +18,52 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { DEFAULT_ENVIRONMENT, isPeriod, PERIODS, type PageRange } from "@/lib/analytics-api";
+import { loadChunk, PageLoadError } from "@/lib/lazy-page";
+import { reloadPage } from "@/lib/reload";
 
 /**
  * Loaded when "Custom range…" is first chosen, as on the analytics page:
- * its calendar is large.
+ * its calendar is large. When its file cannot be downloaded (a tab left
+ * open across a deploy), the dialog says so instead, and the page stays.
  */
-const CustomRangeDialog = React.lazy(async () => ({
-  default: (await import("../analytics/custom-range-dialog")).CustomRangeDialog,
-}));
+const CustomRangeDialog = React.lazy(async () => {
+  try {
+    const loaded = await loadChunk(() => import("../analytics/custom-range-dialog"));
+    return { default: loaded.CustomRangeDialog };
+  } catch (error) {
+    if (error instanceof PageLoadError) {
+      return { default: CalendarUnavailable };
+    }
+    throw error;
+  }
+});
+
+/** In place of the custom range dialog when its code could not be downloaded. */
+function CalendarUnavailable({
+  open,
+  onOpenChange,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-sm">
+        <DialogHeader>
+          <DialogTitle>The calendar could not load</DialogTitle>
+          <DialogDescription>
+            Its code could not be downloaded. Ottertrail may have been updated since this tab was
+            opened, or the connection dropped. Reload to get the current version, or choose a period
+            instead.
+          </DialogDescription>
+        </DialogHeader>
+        <DialogFooter>
+          <Button onClick={reloadPage}>Reload</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
 
 /** The period picker's choice for chosen days. */
 const CUSTOM = "custom";
