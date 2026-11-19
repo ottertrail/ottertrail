@@ -1,3 +1,5 @@
+import type { Kysely } from "kysely";
+
 import type { ClickHouseClient } from "../clickhouse/clickhouse.ts";
 import { rebuildFirstSeen } from "../clickhouse/delete-events.ts";
 import {
@@ -8,6 +10,7 @@ import {
   type Reader,
   runCommand,
 } from "../clickhouse/query.ts";
+import type { Database } from "../db/schema.ts";
 import { DASHBOARD_SETTINGS } from "../telemetry/dashboard-query.ts";
 import {
   ENGAGEMENT,
@@ -273,6 +276,7 @@ export function visitsWhere(
  * events that arrive after it is found.
  */
 export async function deleteSpamVisits(
+  db: Kysely<Database>,
   clickhouse: ClickHouseClient,
   filters: SpamFilters,
   expectedVisits: number,
@@ -320,7 +324,7 @@ export async function deleteSpamVisits(
     const gone = visits.slice(0, deleted);
     try {
       if (gone.some((visit) => Number(visit.with_user) > 0)) {
-        await rebuildFirstSeen(clickhouse, [filters.projectId]);
+        await rebuildFirstSeen(db, clickhouse, [filters.projectId]);
       }
       const goneReplays = [...new Set(gone.flatMap((visit) => visit.replays))];
       if (options.deleteReplays !== undefined && goneReplays.length > 0) {

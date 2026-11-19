@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import type { Kysely } from "kysely";
+import { type Kysely, sql } from "kysely";
 
 import type { Database } from "../db/schema.ts";
 import { replayPrefix } from "../replays/replays.ts";
@@ -65,8 +65,10 @@ async function deleteWhere(
  * thousand projects per statement, and returns how many rows each had.
  */
 export async function deleteEventsBefore(
+  db: Kysely<Database>,
   clickhouse: ClickHouseClient,
   cutOffs: readonly { projectId: string; before: Date }[],
+  room: RoomCheck = {},
 ): Promise<Map<string, number>> {
   const counts = new Map<string, number>();
   for (const chunk of chunks(cutOffs)) {
@@ -89,7 +91,7 @@ export async function deleteEventsBefore(
       params,
     );
     for (const [projectId, count] of deleted) counts.set(projectId, count);
-    await rebuildFirstSeen(clickhouse, [...deleted.keys()]);
+    await rebuildFirstSeen(db, clickhouse, [...deleted.keys()], room);
   }
   return counts;
 }
@@ -108,12 +110,32 @@ export async function deleteEventsBefore(
  * are the old rows deleted and the new ones copied in, a copy of a few
  * rows. The table cannot be swapped in one step (it has no partition per
  * project), so if that last copy fails, the projects have no first-seen
- * times until the next rebuild: the next retention run that deletes their
- * events, or the next spam delete, works them out again whole, and the
- * view adds every user seen meanwhile.
+ * times until the next rebuild, and the view adds every user seen meanwhile.
+ *
+ * ClickHouse refuses inserts while less than 5% of its disk is free
+ * (deploy/clickhouse/config.d/ottertrail.xml), which would refuse that
+ * last copy after the old rows are gone. So each project is first marked
+ * in PostgreSQL (first_seen_rebuilds), then the rebuild runs only with
+ * REBUILD_FREE_RATIO of the disk free, and the mark goes once it is done.
+ * Without the room, nothing is removed ("deferred"): the old first-seen
+ * times stay, and the worker tries the marked projects again
+ * (retryFirstSeenRebuilds) once there is room. A rebuild that fails part
+ * way keeps its mark too.
  */
-export async function rebuildFirstSeen(clickhouse: ClickHouseClient, projectIds: string[]) {
-  if (projectIds.length === 0) return;
+export async function rebuildFirstSeen(
+  db: Kysely<Database>,
+  clickhouse: ClickHouseClient,
+  projectIds: string[],
+  { freeRatio = () => clickHouseFreeRatio(clickhouse) }: RoomCheck = {},
+): Promise<"rebuilt" | "deferred"> {
+  if (projectIds.length === 0) return "rebuilt";
+  // Only projects PostgreSQL still knows: a deleted one's rows go with its purge.
+  await sql`
+    insert into first_seen_rebuilds (project_id)
+    select id from projects where id = any(${projectIds}::uuid[])
+    on conflict (project_id) do nothing
+  `.execute(db);
+  if ((await freeRatio()) < REBUILD_FREE_RATIO) return "deferred";
   const reader: Reader = { client: clickhouse, sessionId: randomUUID() };
   const params = new QueryParams();
   const ids = params.add(projectIds, "Array(UUID)");
@@ -126,6 +148,48 @@ export async function rebuildFirstSeen(clickhouse: ClickHouseClient, projectIds:
   );
   await runCommand(reader, `DELETE FROM ${table} WHERE project_id IN ${ids}`, params);
   await runCommand(reader, `INSERT INTO ${table} SELECT * FROM rebuilt`);
+  await db.deleteFrom("first_seen_rebuilds").where("project_id", "in", projectIds).execute();
+  return "rebuilt";
+}
+
+/**
+ * The share of ClickHouse's disk a first-seen rebuild needs free: the 5%
+ * under which ClickHouse refuses inserts, plus 2% for what is written
+ * meanwhile.
+ */
+export const REBUILD_FREE_RATIO = 0.07;
+
+/** How rebuildFirstSeen learns the disk's free share; tests replace it. */
+export interface RoomCheck {
+  freeRatio?: () => Promise<number>;
+}
+
+/** The free share of ClickHouse's disk, from system.disks (0 when it reports none). */
+export async function clickHouseFreeRatio(clickhouse: ClickHouseClient): Promise<number> {
+  const [disk] = await queryRows<{ free_space: string; total_space: string }>(
+    { client: clickhouse },
+    "SELECT free_space, total_space FROM system.disks WHERE name = 'default'",
+    new QueryParams(),
+  );
+  const total = Number(disk?.total_space ?? 0);
+  return total > 0 ? Number(disk?.free_space ?? 0) / total : 0;
+}
+
+/** Rebuilds the first-seen times a skipped or failed rebuild left marked, a thousand projects at a time. */
+export async function retryFirstSeenRebuilds(
+  db: Kysely<Database>,
+  clickhouse: ClickHouseClient,
+  room: RoomCheck = {},
+): Promise<{ projects: number; outcome: "rebuilt" | "deferred" | "none" }> {
+  const rows = await db
+    .selectFrom("first_seen_rebuilds")
+    .select("project_id")
+    .orderBy("requested_at")
+    .limit(PROJECTS_PER_DELETE)
+    .execute();
+  if (rows.length === 0) return { projects: 0, outcome: "none" };
+  const ids = rows.map((row) => row.project_id);
+  return { projects: ids.length, outcome: await rebuildFirstSeen(db, clickhouse, ids, room) };
 }
 
 /** What removeDeletedRows() did. */

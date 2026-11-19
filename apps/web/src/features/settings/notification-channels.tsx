@@ -61,6 +61,7 @@ import {
   rotateSecret,
   sendTest,
 } from "@/lib/channels-api";
+import { storageQuery } from "@/lib/storage-api";
 
 import { formatMoment } from "../uptime/format";
 import { ChannelFormDialog } from "./channel-form-dialog";
@@ -82,6 +83,8 @@ const EVENT_TEXT: Record<string, string> = {
   "metric.threshold": "Metric",
   "metric.threshold_resolved": "Metric back",
   "alert.held_back": "Alerts held back",
+  "storage.low": "Storage low",
+  "storage.recovered": "Storage recovered",
   test: "Test",
 };
 
@@ -292,6 +295,8 @@ function DeleteChannelDialog({
     onSuccess: () => {
       onOpenChange(false);
       void queryClient.invalidateQueries({ queryKey: channelsQuery().queryKey, exact: true });
+      // The Storage tab lists the channels too (storage-tab.tsx).
+      void queryClient.invalidateQueries({ queryKey: storageQuery().queryKey, exact: true });
     },
   });
   return (

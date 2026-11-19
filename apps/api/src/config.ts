@@ -100,6 +100,13 @@ export interface Config {
    * "Source maps"); null when the install has none, and source maps are off.
    */
   objectStore: ObjectStoreConfig | null;
+  /**
+   * The stack's own Garage, when the object store is it (docs/deployment.md,
+   * "Storage"): its admin API, for the bucket's real size, the disk it
+   * writes to, and the bucket's quota. Null when the store is another one,
+   * or there is none.
+   */
+  garage: GarageConfig | null;
   /** Bytes of source maps, compressed, the instance may store, all its projects together. */
   sourceMapStorageBytes: number;
   /** Bytes of session replays, compressed, the instance may keep (docs/session-replay.md). */
@@ -145,6 +152,25 @@ export interface ObjectStoreConfig {
   accessKeyId: string;
   secretAccessKey: string;
 }
+
+export interface GarageConfig {
+  /** Its admin API, such as "http://garage:3903". */
+  adminUrl: string;
+  /**
+   * GARAGE_ADMIN_TOKEN, which the admin API asks for; null when unset, and
+   * then Garage's own figures are not read. Never logged, never returned.
+   */
+  adminToken: string | null;
+}
+
+/** The port of Garage's admin API in both stacks (deploy/garage/garage.toml). */
+export const GARAGE_ADMIN_PORT = 3903;
+
+/**
+ * The development Garage's admin token (compose.yaml at the repository
+ * root). Its port listens on 127.0.0.1 only; production never uses it.
+ */
+export const DEVELOPMENT_GARAGE_ADMIN_TOKEN = "ottertrail-local-development-garage-admin-token";
 
 /** The local development Garage from compose.yaml (127.0.0.1 only). */
 export const LOCAL_OBJECT_STORE: ObjectStoreConfig = {
@@ -295,6 +321,31 @@ function parseObjectStore(env: NodeJS.ProcessEnv): ObjectStoreConfig | null {
     accessKeyId,
     secretAccessKey,
   };
+}
+
+/**
+ * The stack's own Garage, when the object store is it: the Compose
+ * service `garage` (deploy/compose.yaml), or in development the local one
+ * (compose.yaml). Its admin API is on the same host, port 3903. Another
+ * store (R2, S3) has no Garage to ask: null, and GARAGE_ADMIN_TOKEN is
+ * not used.
+ */
+function parseGarage(env: NodeJS.ProcessEnv, store: ObjectStoreConfig | null): GarageConfig | null {
+  if (store === null) return null;
+  const production = env.NODE_ENV === "production";
+  const url = new URL(store.url);
+  const local = !production && store.url === LOCAL_OBJECT_STORE.url;
+  if (url.hostname !== "garage" && !local) return null;
+  const raw = env.GARAGE_ADMIN_TOKEN ?? "";
+  let adminToken: string | null = raw === "" ? null : raw;
+  if (adminToken === null && !production) adminToken = DEVELOPMENT_GARAGE_ADMIN_TOKEN;
+  // Error messages never repeat the value.
+  if (adminToken !== null && !/^[\x21-\x7E]{32,256}$/.test(adminToken)) {
+    throw new ConfigError(
+      "GARAGE_ADMIN_TOKEN must be 32 to 256 visible characters without spaces. Generate one with `openssl rand -hex 32`.",
+    );
+  }
+  return { adminUrl: `${url.protocol}//${url.hostname}:${GARAGE_ADMIN_PORT}`, adminToken };
 }
 
 /** The default: 1 GiB of compressed source maps. */
@@ -501,7 +552,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     trackerScriptPath: env.TRACKER_SCRIPT_PATH?.trim() || DEFAULT_TRACKER_SCRIPT_PATH,
     dashboardPath: env.DASHBOARD_PATH?.trim() || DEFAULT_DASHBOARD_PATH,
     replayPlayerPath: env.REPLAY_PLAYER_PATH?.trim() || DEFAULT_REPLAY_PLAYER_PATH,
-    objectStore: parseObjectStore(env),
+    ...objectStoreAndGarage(env),
     sourceMapStorageBytes: parseBytes(
       "SOURCE_MAP_STORAGE_BYTES",
       env.SOURCE_MAP_STORAGE_BYTES,
@@ -520,6 +571,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     uptimeDenyAddresses: parseDenyAddresses(env.UPTIME_DENY_ADDRESSES),
     email: parseEmail(env),
   };
+}
+
+function objectStoreAndGarage(env: NodeJS.ProcessEnv): Pick<Config, "objectStore" | "garage"> {
+  const objectStore = parseObjectStore(env);
+  return { objectStore, garage: parseGarage(env, objectStore) };
 }
 
 function publicUrlAndOrigins(env: NodeJS.ProcessEnv): Pick<Config, "publicUrl" | "trustedOrigins"> {

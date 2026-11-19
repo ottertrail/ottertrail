@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, test } from "vite-plus/test";
 
 import { ALL_AREAS, type Areas } from "../src/access/areas.ts";
-import { purgeDeletedProjects } from "../src/clickhouse/delete-events.ts";
+import { purgeDeletedProjects, retryFirstSeenRebuilds } from "../src/clickhouse/delete-events.ts";
 import { insertRows } from "../src/clickhouse/insert.ts";
 import type { NewEvent } from "../src/collection/event-store.ts";
 import { completeOrder, WIDGET_IDS } from "../src/overview/layout.ts";
@@ -741,6 +741,9 @@ test("the owner's areas reach every widget", () => {
   expect(Object.values(WIDGET_AREAS).every((area) => ALL_AREAS[area] !== "none")).toBe(true);
 });
 
+/** A moment as ClickHouse writes a DateTime64(3) in UTC. */
+const time = (moment: Date) => moment.toISOString().replace("T", " ").replace("Z", "");
+
 describe("first-seen times", () => {
   test("follow the events: kept as they arrive, gone with old events and with the project", async () => {
     const project = await createProject("First seen");
@@ -790,6 +793,62 @@ describe("first-seen times", () => {
     await send("DELETE", `/api/projects/${project.id}`, { payload: { confirmName: "First seen" } });
     await purgeDeletedProjects(dashboard.db, dashboard.reader.client);
     expect(await firstSeen()).toEqual([]);
+  });
+
+  test("short of disk, a rebuild removes nothing, is marked, and runs once there is room", async () => {
+    const project = await createProject("First seen, full disk");
+    await dashboard.store(project.id, [
+      event("pageview", at(40, "09:00"), { path: "/", visitorId: "1", userId: "early" }),
+      event("pageview", at(1, "09:00"), { path: "/", visitorId: "2", userId: "early" }),
+    ]);
+    const firstSeenOf = async () => {
+      const result = await dashboard.reader.client.query({
+        query: `SELECT user_id, minMerge(first_seen) AS first_seen FROM user_first_seen
+                WHERE project_id = {project:UUID} GROUP BY user_id ORDER BY user_id`,
+        query_params: { project: project.id },
+        format: "JSONEachRow",
+      });
+      return result.json<{ user_id: string; first_seen: string }>();
+    };
+    const marks = () =>
+      dashboard.db
+        .selectFrom("first_seen_rebuilds")
+        .select("project_id")
+        .where("project_id", "=", project.id)
+        .execute();
+    await dashboard.db
+      .updateTable("projects")
+      .set({ retention_days: 30 })
+      .where("id", "=", project.id)
+      .execute();
+
+    // 6% free: under the 7% a rebuild needs. The old events go; the first-seen times stay.
+    const full = { freeRatio: async () => 0.06 };
+    await deleteExpiredEvents(dashboard.db, dashboard.reader.client, { now: NOW, room: full });
+    expect(await firstSeenOf()).toEqual([{ user_id: "early", first_seen: time(at(40, "09:00")) }]);
+    expect(await marks()).toEqual([{ project_id: project.id }]);
+    // Still no room: the worker's retry waits too.
+    expect(await retryFirstSeenRebuilds(dashboard.db, dashboard.reader.client, full)).toMatchObject(
+      {
+        outcome: "deferred",
+      },
+    );
+    expect(await marks()).toHaveLength(1);
+
+    // Room again: the worker's retry works them out, and the mark goes.
+    const roomy = { freeRatio: async () => 0.5 };
+    expect(
+      await retryFirstSeenRebuilds(dashboard.db, dashboard.reader.client, roomy),
+    ).toMatchObject({
+      outcome: "rebuilt",
+    });
+    expect(await firstSeenOf()).toEqual([{ user_id: "early", first_seen: time(at(1, "09:00")) }]);
+    expect(await marks()).toEqual([]);
+    // The real disk (the development server has room): nothing left to do.
+    expect(await retryFirstSeenRebuilds(dashboard.db, dashboard.reader.client)).toEqual({
+      projects: 0,
+      outcome: "none",
+    });
   });
 });
 

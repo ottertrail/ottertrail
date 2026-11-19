@@ -55,6 +55,11 @@ x-app: &app
     OBJECT_STORE_SECRET_ACCESS_KEY: ${OBJECT_STORE_SECRET_ACCESS_KEY:-}
     SOURCE_MAP_STORAGE_BYTES: ${SOURCE_MAP_STORAGE_BYTES:-}
     REPLAY_STORAGE_BYTES: ${REPLAY_STORAGE_BYTES:-}
+    # The stack's Garage's admin token (docs/deployment.md, "Storage"):
+    # with it, the Settings page shows the bucket's real size and Garage's
+    # disk, and the worker keeps a quota on the bucket. Optional: without
+    # it, the page says how to turn it on. Never logged or shown.
+    GARAGE_ADMIN_TOKEN: ${GARAGE_ADMIN_TOKEN:-}
     # Traces, logs, and metrics over OTLP (docs/telemetry.md): days kept,
     # 30 by default. The migrate service applies it to ClickHouse's tables.
     TELEMETRY_RETENTION_DAYS: ${TELEMETRY_RETENTION_DAYS:-}
@@ -106,7 +111,7 @@ services:
     volumes:
       - clickhouse-data:/var/lib/clickhouse
     labels:
-      ottertrail.config.clickhouse-config: "464daecd354a"
+      ottertrail.config.clickhouse-config: "b210455d7e4a"
       ottertrail.config.clickhouse-users: "59ff9fd82108"
     configs:
       - source: clickhouse-config
@@ -138,10 +143,14 @@ services:
       GARAGE_DEFAULT_ACCESS_KEY: ${OBJECT_STORE_ACCESS_KEY_ID:-}
       GARAGE_DEFAULT_SECRET_KEY: ${OBJECT_STORE_SECRET_ACCESS_KEY:-}
       GARAGE_DEFAULT_BUCKET: ${OBJECT_STORE_BUCKET:-ottertrail}
+      # The admin API's token (port 3903, inside the Compose network only).
+      # Empty when unset: Garage then takes no admin request, since a
+      # request cannot send an empty bearer token.
+      GARAGE_ADMIN_TOKEN: ${GARAGE_ADMIN_TOKEN:-}
     volumes:
       - garage-data:/var/lib/garage
     labels:
-      ottertrail.config.garage: "f4a5d83f52a5"
+      ottertrail.config.garage: "75102946e710"
     configs:
       - source: garage
         target: /etc/garage.toml
@@ -293,6 +302,18 @@ configs:
           <backups>
               <allowed_path>/var/lib/clickhouse/backups/</allowed_path>
           </backups>
+
+          <!-- Refuse inserts while less than 5% of the disk is free, rather than
+               fill it: PostgreSQL, Garage, and backups share the disk, and
+               PostgreSQL stops when its write-ahead log cannot grow. Collection
+               then answers 503 and the tracker retries. A MergeTree setting, here
+               the default of every table; the system database is never refused.
+               Docs: https://clickhouse.com/docs/operations/settings/merge-tree-settings;
+               the check: src/Storages/MergeTree/MergeTreeDataWriter.cpp#L866-L900
+               at tag v26.8.38.9-lts. -->
+          <merge_tree>
+              <min_free_disk_ratio_to_perform_insert>0.05</min_free_disk_ratio_to_perform_insert>
+          </merge_tree>
       </clickhouse>
 
   clickhouse-users:
@@ -332,3 +353,13 @@ configs:
       [s3_api]
       s3_region = "garage"
       api_bind_addr = "[::]:3900"
+
+      # The admin API, for the instance's Storage page and the bucket's quota
+      # (docs/deployment.md, "Storage"). Its token comes from the environment
+      # (GARAGE_ADMIN_TOKEN), not from here; without one, Garage refuses every
+      # admin request, and the worker checks that it does at start. Only the API
+      # and the worker reach this port, inside the Compose network. /metrics
+      # needs a metrics token, and none is set: Garage refuses it to everyone.
+      [admin]
+      api_bind_addr = "[::]:3903"
+      metrics_require_token = true

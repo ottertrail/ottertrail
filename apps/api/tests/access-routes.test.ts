@@ -41,6 +41,8 @@ const EXPECTED: Record<string, string> = {
   "GET /api/settings": "permission:settings",
   "PATCH /api/settings": "permission:settings",
   "GET /api/settings/location-data": "permission:settings",
+  "GET /api/settings/storage": "permission:projects",
+  "PATCH /api/settings/storage": "permission:channels",
   "GET /api/projects": "signed_in",
   "GET /api/members": "permission:members",
   "PATCH /api/members/:userId": "permission:members",

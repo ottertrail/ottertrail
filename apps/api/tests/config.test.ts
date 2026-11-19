@@ -11,6 +11,7 @@ import {
   DEFAULT_TELEMETRY_RETENTION_DAYS,
   DEFAULT_SOURCE_MAP_STORAGE_BYTES,
   DEVELOPMENT_AUTH_SECRET,
+  DEVELOPMENT_GARAGE_ADMIN_TOKEN,
   DEFAULT_TRACKER_SCRIPT_PATH,
   DEVELOPMENT_PUBLIC_URL,
   LOCAL_CLICKHOUSE,
@@ -52,6 +53,7 @@ describe("loadConfig", () => {
       dashboardPath: DEFAULT_DASHBOARD_PATH,
       replayPlayerPath: DEFAULT_REPLAY_PLAYER_PATH,
       objectStore: LOCAL_OBJECT_STORE,
+      garage: { adminUrl: "http://127.0.0.1:3903", adminToken: DEVELOPMENT_GARAGE_ADMIN_TOKEN },
       sourceMapStorageBytes: DEFAULT_SOURCE_MAP_STORAGE_BYTES,
       replayStorageBytes: DEFAULT_REPLAY_STORAGE_BYTES,
       telemetryRetentionDays: DEFAULT_TELEMETRY_RETENTION_DAYS,
@@ -124,6 +126,7 @@ describe("loadConfig", () => {
         accessKeyId: "id-123",
         secretAccessKey: "o".repeat(40),
       },
+      garage: null,
       sourceMapStorageBytes: 5 * 1024 ** 3,
       replayStorageBytes: 10 * 1024 ** 3,
       telemetryRetentionDays: 90,
@@ -354,6 +357,51 @@ describe("loadConfig", () => {
       expect(() => loadConfig({ OBJECT_STORE_URL: "http://id:hunter2@garage:3900" })).toThrow(
         expect.objectContaining({ message: expect.not.stringContaining("hunter2") }),
       );
+    });
+
+    test("the stack's Garage: its admin API beside it, and GARAGE_ADMIN_TOKEN when set", () => {
+      const keys = {
+        OBJECT_STORE_ACCESS_KEY_ID: "GK1",
+        OBJECT_STORE_SECRET_ACCESS_KEY: "s".repeat(64),
+      };
+      const garage = { ...PRODUCTION, ...keys, OBJECT_STORE_URL: "http://garage:3900" };
+      const token = "t".repeat(64);
+      expect(loadConfig({ ...garage, GARAGE_ADMIN_TOKEN: token }).garage).toEqual({
+        adminUrl: "http://garage:3903",
+        adminToken: token,
+      });
+      // Unset or empty, as Compose passes it: no token, and nothing fails.
+      expect(loadConfig(garage).garage).toEqual({
+        adminUrl: "http://garage:3903",
+        adminToken: null,
+      });
+      expect(loadConfig({ ...garage, GARAGE_ADMIN_TOKEN: "" }).garage?.adminToken).toBeNull();
+      // Another store has no Garage to ask; the token is not used.
+      expect(
+        loadConfig({
+          ...PRODUCTION,
+          ...keys,
+          OBJECT_STORE_URL: "https://account.r2.cloudflarestorage.com",
+          GARAGE_ADMIN_TOKEN: token,
+        }).garage,
+      ).toBeNull();
+      expect(loadConfig(PRODUCTION).garage).toBeNull();
+      expect(loadConfig({ OBJECT_STORE_URL: "off" }).garage).toBeNull();
+    });
+
+    test("refuses a short or spaced GARAGE_ADMIN_TOKEN, and never repeats it", () => {
+      for (const token of ["short-token", `${"t".repeat(40)} with spaces`]) {
+        expect(() => loadConfig({ GARAGE_ADMIN_TOKEN: token })).toThrow(
+          expect.objectContaining({
+            message: expect.stringMatching(
+              /^GARAGE_ADMIN_TOKEN must be 32 to 256 visible characters/,
+            ),
+          }),
+        );
+        expect(() => loadConfig({ GARAGE_ADMIN_TOKEN: token })).toThrow(
+          expect.objectContaining({ message: expect.not.stringContaining(token) }),
+        );
+      }
     });
 
     test.each([

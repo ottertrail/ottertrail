@@ -15,6 +15,7 @@ import { type Settings, settingsQuery, updateSettings } from "@/lib/settings-api
 import { LocationDataTab } from "./location-data-card";
 import { NotificationChannels } from "./notification-channels";
 import { type InstanceTabProps, SectionFailed, SectionSkeleton } from "./section-states";
+import { StorageTab } from "./storage-tab";
 
 interface InstanceTab {
   /** In the address: `?tab=<value>`. The first tab the user may see is the default. */
@@ -43,7 +44,12 @@ const INSTANCE_TABS: readonly InstanceTab[] = [
     permission: "settings",
     render: (props) => <LocationDataTab {...props} />,
   },
-  // The Storage tab (storage-tab.tsx) goes here, between the location data and the channels.
+  {
+    value: "storage",
+    label: "Storage",
+    permission: "projects",
+    render: (props) => <StorageTab {...props} />,
+  },
   {
     value: "channels",
     label: "Notification channels",
@@ -172,7 +178,8 @@ function PageSkeleton() {
 /**
  * The instance's settings: /settings (docs/access.md), as tabs, the chosen
  * one in `?tab=`. The owner has General (the name and timezone) and
- * Location data; the owner and admins have the notification channels.
+ * Location data; the owner and admins have Storage (what fills the disk)
+ * and the notification channels.
  * Members do not see the page.
  */
 export function SettingsPage() {

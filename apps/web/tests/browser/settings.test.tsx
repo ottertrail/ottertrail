@@ -118,7 +118,8 @@ describe("the instance's settings", () => {
 
   test("an admin sees the channels, but not the instance's name and timezone", async () => {
     installFakeApi({ access: ADMIN_ACCESS });
-    renderApp("/settings");
+    // An admin's Settings opens on Storage; the channels are their other tab.
+    renderApp("/settings?tab=channels");
 
     await expect
       .element(page.getByRole("heading", { name: "Notification channels" }))

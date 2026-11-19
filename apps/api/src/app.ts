@@ -37,6 +37,8 @@ import { sourceMapRoutes, sourceMapUploadRoutes } from "./source-maps/routes.ts"
 import { spamRoutes } from "./spam/routes.ts";
 import { speedRoutes } from "./speed/routes.ts";
 import type { ObjectStore } from "./storage/object-store.ts";
+import { storageRoutes } from "./storage/routes.ts";
+import type { StorageSources } from "./storage/usage.ts";
 import { DashboardQueryLimiter } from "./telemetry/dashboard-limit.ts";
 import { telemetryDashboardRoutes } from "./telemetry/dashboard-routes.ts";
 import { type TelemetryOptions, telemetryRoutes } from "./telemetry/routes.ts";
@@ -118,6 +120,15 @@ export interface AppOptions extends Omit<FastifyServerOptions, "logger"> {
    * channels. Webhook URLs follow `uptime`'s address rules and resolver.
    */
   notifications?: { emailConfigured?: boolean };
+  /**
+   * The Storage section's sources (storage/usage.ts) beyond the app's own:
+   * whether the object store is the stack's Garage and its bucket, Garage's
+   * admin API, and, in tests, the disk's figures. Omitted, an object store
+   * counts as another S3-compatible store, without Garage's figures.
+   */
+  storage?: Partial<
+    Pick<StorageSources, "objectStore" | "garage" | "readDisk" | "telemetryRetentionDays">
+  >;
   /** The built tracker, served at /t.js. Not served when omitted. */
   trackerScriptPath?: string;
   /** The built dashboard's directory, served at /. Not served when omitted. */
@@ -152,6 +163,7 @@ export function buildApp({
   telemetry = {},
   uptime = {},
   notifications = {},
+  storage = {},
   trackerScriptPath,
   dashboardPath,
   replayPlayerPath,
@@ -392,6 +404,29 @@ export function buildApp({
       auth: dashboard.auth,
       trustedOrigins: dashboard.trustedOrigins,
       limitBytes: sourceMaps.limitBytes,
+    });
+    app.register(storageRoutes, {
+      prefix: "/api",
+      db,
+      auth: dashboard.auth,
+      trustedOrigins: dashboard.trustedOrigins,
+      sources: {
+        db,
+        clickhouse: dashboard.clickhouse,
+        objectStore:
+          storage.objectStore !== undefined
+            ? storage.objectStore
+            : objectStore === null
+              ? null
+              : { kind: "other", bucket: "" },
+        budgets: { replayBytes: replays.limitBytes, sourceMapBytes: sourceMaps.limitBytes },
+        telemetryRetentionDays:
+          storage.telemetryRetentionDays ??
+          telemetry.retentionDays ??
+          DEFAULT_TELEMETRY_RETENTION_DAYS,
+        garage: storage.garage ?? null,
+        readDisk: storage.readDisk,
+      },
     });
     app.register(reportRoutes, {
       prefix: "/api",

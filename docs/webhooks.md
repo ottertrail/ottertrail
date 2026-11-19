@@ -82,9 +82,11 @@ The body, version 1:
 | `metric.threshold`          | A metric, read as its chart reads it, is above (or below) the rule's value over the window    |
 | `metric.threshold_resolved` | It is back on the right side for the same window                                              |
 | `alert.held_back`           | A rule held notifications back after sending 20 in an hour; says how many, once the hour ends |
+| `storage.low`               | A storage warning starts, or becomes critical                                                 |
+| `storage.recovered`         | A storage warning ends                                                                        |
 | `test`                      | Someone sends a test from the Settings page                                                   |
 
-Alert rules ([step 3](uptime-alerts.md#step-3-alert-rules-as-built), and [step 4](uptime-alerts.md#step-4-alerts-on-telemetry-as-built) for the route and metric types) send all but `test`. A receiver should ignore a type it does not know.
+Alert rules ([step 3](uptime-alerts.md#step-3-alert-rules-as-built), and [step 4](uptime-alerts.md#step-4-alerts-on-telemetry-as-built) for the route and metric types) send all but `test` and the storage types. The worker's storage check sends `storage.low` and `storage.recovered` to the channels chosen under "Storage warnings" in the instance's Settings ([deployment](deployment.md#storage-warnings)). A receiver should ignore a type it does not know.
 
 ### Example bodies
 
@@ -352,6 +354,32 @@ A request failed when its span's status is Error. `route.failures_resolved` has 
   "url": "https://analytics.example.com/projects/0d6e5f80-0c4f-4b8e-9d3a-3f8f6a1c2b7e/alerts"
 }
 ```
+
+#### `storage.low` and `storage.recovered`
+
+About the instance, not a project: `project` is `null`.
+
+```json
+{
+  "version": 1,
+  "id": "3f2a1c9e-8b7d-4e6f-9a0b-1c2d3e4f5a6b",
+  "type": "storage.low",
+  "time": "2026-11-19T10:05:00.000Z",
+  "project": null,
+  "subject": {
+    "type": "storage",
+    "warning": "disk_used",
+    "level": "warning",
+    "usedPercent": 81,
+    "totalBytes": 107374182400,
+    "freeBytes": 20401094656
+  },
+  "message": "The disk is 81% full. 19.0 GiB of 100 GiB is free. PostgreSQL, ClickHouse, Garage, and backups share this disk. Free space now: copy old backups off the server and delete them, shorten retention, lower the replay and source map budgets, or move to a larger disk.",
+  "url": "https://analytics.example.com/settings?tab=storage"
+}
+```
+
+`warning` is one of `merge_headroom`, `backup_space`, `disk_used`, `replay_budget`, `source_map_budget`, and `budgets_exceed_disk`; `level` is `warning` or `critical`. A warning that rises to critical sends `storage.low` again with `level` `critical`; one that falls back to `warning` sends nothing. The other fields are the warning's figures, in bytes or percent: `freeBytes` and `neededBytes` with the largest partition's `table`, `partition`, and `partitionBytes` (merge headroom); `freeBytes`, `neededBytes`, `clickhouseBytes`, and `objectBytes` (the next backup); `usedBytes`, `limitBytes`, and `usedPercent` (a budget); `roomBytes` and `freeBytes` (budgets larger than the free disk); `usedPercent`, `totalBytes`, and `freeBytes` (the disk), or only `totalBytes` and `freeBytes`, without `usedPercent`, when the disk is read-only or broken (`level` `critical`). `storage.recovered` has `type` and `warning` and the figures now, without `level`, and a message such as `The disk is 77% full, under 80% again: 23.0 GiB of 100 GiB is free.`
 
 ## The answer
 

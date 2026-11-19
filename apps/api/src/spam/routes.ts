@@ -198,6 +198,7 @@ export const spamRoutes: FastifyPluginCallback<{
       let result;
       try {
         result = await deleteSpamVisits(
+          db,
           clickhouse,
           filters,
           request.body.confirmVisits,

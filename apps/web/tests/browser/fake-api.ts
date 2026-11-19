@@ -56,9 +56,11 @@ import type { ServiceChart, ServiceList, StatusCounts } from "../../src/lib/serv
 import type { LocationDataStatus, Settings } from "../../src/lib/settings-api.ts";
 import type { SourceMapFile, SourceMapRelease } from "../../src/lib/source-maps-api.ts";
 import type { Speed } from "../../src/lib/speed-api.ts";
+import type { StorageReport } from "../../src/lib/storage-api.ts";
 import type { SpanDetail, TraceDetail, TraceList, TraceSummary } from "../../src/lib/traces-api.ts";
 import type { Check, CheckResults, IncidentList } from "../../src/lib/uptime-api.ts";
 import type { Activity, User, UserActivity, UserList } from "../../src/lib/users-api.ts";
+import { STORAGE } from "./storage-fixtures.ts";
 
 /**
  * Stands in for the Ottertrail API: browser tests check the pages, and the
@@ -77,6 +79,12 @@ export interface FakeApi {
   settings: Settings;
   /** GET /api/settings/location-data: the files loaded and their last updates (the owner's only). */
   locationData: LocationDataStatus;
+  /**
+   * GET /api/settings/storage (the owner's and admins'); a Response stands
+   * for an error. PATCH sets its channels. Both wait for `holdStorage` while it is set.
+   */
+  storage: StorageReport | Response;
+  holdStorage: Promise<void> | null;
   /** Who is signed in and what they may reach (GET /api/me); the owner by default. */
   access: FakeAccess;
   /** The Members page's users and pending invitations (GET /api/members). */
@@ -3251,6 +3259,29 @@ async function answer(api: FakeApi, url: URL, init: RequestInit | undefined): Pr
       ? json(api.locationData)
       : json({ error: "forbidden", message: "You don't have access to this." }, 403);
   }
+  if (path === "/api/settings/storage") {
+    if (api.access.role === "member") {
+      return json({ error: "forbidden", message: "You don't have access to this." }, 403);
+    }
+    await api.holdStorage;
+    if (init?.method === "PATCH") {
+      const body: unknown = JSON.parse(typeof init.body === "string" ? init.body : "{}");
+      if (api.storage instanceof Response) return api.storage.clone();
+      const ids =
+        typeof body === "object" && body !== null && "warningChannelIds" in body
+          ? body.warningChannelIds
+          : [];
+      api.storage = {
+        ...api.storage,
+        warningChannels: {
+          ...api.storage.warningChannels,
+          channelIds: Array.isArray(ids) ? ids.filter((id) => typeof id === "string") : [],
+        },
+      };
+      return json({ warningChannels: api.storage.warningChannels });
+    }
+    return api.storage instanceof Response ? api.storage.clone() : json(api.storage);
+  }
   if (path === "/api/settings") {
     return api.access.role === "owner"
       ? json({ settings: api.settings })
@@ -3588,6 +3619,8 @@ export function installFakeApi(overrides: Partial<FakeApi> = {}): FakeApi {
     signInRefusal: null,
     settings: SETTINGS,
     locationData: LOCATION_DATA,
+    storage: STORAGE,
+    holdStorage: null,
     access: OWNER_ACCESS,
     members: fakeMembers(),
     membersYou: "user-1",

@@ -35,6 +35,7 @@ import {
   MAX_CHANNEL_NAME,
   updateChannel,
 } from "@/lib/channels-api";
+import { storageQuery } from "@/lib/storage-api";
 
 type FieldName = "name" | "addresses" | "url";
 
@@ -118,6 +119,8 @@ function ChannelForm({
         : updateChannel(channel.id, fieldsOf(draft, false)),
     onSuccess: (saved) => {
       void queryClient.invalidateQueries({ queryKey: channelsQuery().queryKey, exact: true });
+      // The Storage tab lists the channels' names too (storage-tab.tsx).
+      void queryClient.invalidateQueries({ queryKey: storageQuery().queryKey, exact: true });
       onSaved(saved);
     },
   });

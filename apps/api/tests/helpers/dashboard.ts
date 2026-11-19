@@ -38,6 +38,7 @@ export async function signedInDashboard({
   uptime,
   notifications,
   locationData,
+  storage,
   linkLimit = { capacity: 1000, refillPerSecond: 1000 },
 }: {
   timeZone?: string;
@@ -56,6 +57,8 @@ export async function signedInDashboard({
   notifications?: AppOptions["notifications"];
   /** The location data the API has loaded, for the Settings page (tests/location-data.test.ts). */
   locationData?: AppOptions["locationData"];
+  /** The Storage section's sources: Garage's admin API, the disk's figures (tests/storage.test.ts). */
+  storage?: AppOptions["storage"];
   /** Accepting invitations and using reset links, per client address; no limit by default. */
   linkLimit?: RateLimit;
 } = {}) {
@@ -89,6 +92,7 @@ export async function signedInDashboard({
     ...(uptime === undefined ? {} : { uptime }),
     ...(notifications === undefined ? {} : { notifications }),
     ...(locationData === undefined ? {} : { locationData }),
+    ...(storage === undefined ? {} : { storage }),
   });
   const link = await createSetupToken(testDb.db);
   await app.inject({

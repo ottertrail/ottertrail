@@ -208,6 +208,10 @@ function checkRecording(text: string): { text: string; events: RecordedEvent[] }
  * progress, then deletes what it wrote, and a join after a deletion finds
  * no chunks. Without it, a join that had read the chunks could write the
  * object and its row back after the user deleted them.
+ *
+ * A replay whose object the store refuses (Garage's bucket quota, a store
+ * that is down) keeps its chunks and is tried again on the next run; the
+ * others of the batch go on. `failed` counts them, with the first error.
  */
 export async function joinReplays(
   db: Kysely<Database>,
@@ -222,7 +226,7 @@ export async function joinReplays(
     /** One project's replays only (the development seed); every project's when left out. */
     onlyProjectId?: string;
   } = {},
-): Promise<{ joined: number; dropped: number }> {
+): Promise<{ joined: number; dropped: number; failed: number; firstError?: unknown }> {
   const idleSince = new Date(now.getTime() - REPLAY_IDLE_MS);
   let query = db.selectFrom("replay_chunks as c");
   if (onlyProjectId !== undefined) query = query.where("c.project_id", "=", onlyProjectId);
@@ -251,6 +255,8 @@ export async function joinReplays(
 
   let joined = 0;
   let dropped = 0;
+  let failed = 0;
+  let firstError: unknown;
   for (const { project_id: projectId, replay_id: replayId } of candidates) {
     const outcome = await db.transaction().execute(async (trx) => {
       const project = await trx
@@ -303,7 +309,13 @@ export async function joinReplays(
       );
       const details = deriveReplay(recording.events, firstReceivedAt);
       const objectKey = replayKeyOf(projectId, replayId);
-      await store.put(objectKey, compressed, "application/gzip");
+      try {
+        await store.put(objectKey, compressed, "application/gzip");
+      } catch (error) {
+        // Nothing written: the chunks stay for the next run.
+        if (failed === 0) firstError = error;
+        return "failed";
+      }
       await trx
         .insertInto("replays")
         .values({
@@ -326,8 +338,9 @@ export async function joinReplays(
     });
     if (outcome === "joined") joined += 1;
     if (outcome === "dropped") dropped += 1;
+    if (outcome === "failed") failed += 1;
   }
-  return { joined, dropped };
+  return failed === 0 ? { joined, dropped, failed } : { joined, dropped, failed, firstError };
 }
 
 /** Deletes the chunks of replays joined more than CHUNK_KEEP_MS ago: past any retry. */

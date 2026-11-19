@@ -34,4 +34,16 @@
     <backups>
         <allowed_path>/var/lib/clickhouse/backups/</allowed_path>
     </backups>
+
+    <!-- Refuse inserts while less than 5% of the disk is free, rather than
+         fill it: PostgreSQL, Garage, and backups share the disk, and
+         PostgreSQL stops when its write-ahead log cannot grow. Collection
+         then answers 503 and the tracker retries. A MergeTree setting, here
+         the default of every table; the system database is never refused.
+         Docs: https://clickhouse.com/docs/operations/settings/merge-tree-settings;
+         the check: src/Storages/MergeTree/MergeTreeDataWriter.cpp#L866-L900
+         at tag v26.8.38.9-lts. -->
+    <merge_tree>
+        <min_free_disk_ratio_to_perform_insert>0.05</min_free_disk_ratio_to_perform_insert>
+    </merge_tree>
 </clickhouse>

@@ -50,6 +50,37 @@ trap cleanup EXIT
 # Ctrl-C ends the script: exit instead, which runs it.
 trap 'exit 1' INT TERM HUP
 
+# Free space first. ClickHouse writes its backup into its own volume and
+# the script copies it out, and the objects are written twice (files, then
+# the tar): the backup needs about twice ClickHouse's data and twice the
+# objects, the estimate the Settings page's "next backup would fail"
+# warning uses (docs/deployment.md, "Storage"). The objects' size is what
+# Ottertrail recorded in PostgreSQL. Below it, the script warns and goes on:
+# the disk may have room after all, and a failed run keeps no file.
+gib() { awk -v b="$1" 'BEGIN { printf "%.1f GiB", b / 1073741824 }'; }
+disk_free=$($compose exec -T clickhouse clickhouse-client --user ottertrail \
+  --query "SELECT free_space FROM system.disks WHERE name = 'default'" 2> /dev/null) || disk_free=
+data_bytes=$($compose exec -T clickhouse clickhouse-client --user ottertrail \
+  --query "SELECT sum(bytes_on_disk) FROM system.parts WHERE database = 'ottertrail' AND active" 2> /dev/null) || data_bytes=
+object_bytes=$($compose exec -T postgres psql -U ottertrail -d ottertrail -Atc \
+  "select (select coalesce(sum(bytes), 0) from replays) + (select coalesce(sum(octet_length(data)), 0) from replay_chunks) + (select coalesce(sum(bytes), 0) from source_maps)" 2> /dev/null) || object_bytes=
+folder_free=$(df -Pk backups 2> /dev/null | awk 'NR == 2 { printf "%.0f", $4 * 1024 }') || folder_free=
+# A whole number of bytes, or empty: each figure is checked on its own.
+bytes() { case "$1" in '' | *[!0-9]*) ;; *) echo "$1" ;; esac; }
+disk_free=$(bytes "$disk_free")
+data_bytes=$(bytes "$data_bytes")
+object_bytes=$(bytes "$object_bytes")
+folder_free=$(bytes "$folder_free")
+if [ -z "$disk_free" ] || [ -z "$data_bytes" ] || [ -z "$object_bytes" ]; then
+  echo "Could not measure the free space; the backup goes on. It needs about twice ClickHouse's data and twice the objects." >&2
+else
+  need=$((2 * data_bytes + 2 * object_bytes))
+  echo "Free space: $(gib "$disk_free") on ClickHouse's disk${folder_free:+, $(gib "$folder_free") for backups/}. This backup needs about $(gib "$need")."
+  if [ "$disk_free" -lt "$need" ] || { [ -n "$folder_free" ] && [ "$folder_free" -lt "$need" ]; }; then
+    echo "Warning: less free space than the backup needs. It may fail part way, and then keeps no file. Copy old backups off the server and delete them first." >&2
+  fi
+fi
+
 # PostgreSQL first, so every project in its dump has its events in
 # ClickHouse's backup, taken after. Events of a project created in between
 # belong to no restored project; the worker's orphan sweep deletes them

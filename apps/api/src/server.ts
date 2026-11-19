@@ -7,6 +7,7 @@ import { DEVELOPMENT_AUTH_SECRET, loadConfig } from "./config.ts";
 import { createDatabase } from "./db/database.ts";
 import { LiveLocationData } from "./enrichment/reload.ts";
 import { s3ObjectStore } from "./storage/object-store.ts";
+import { storageSourcesOf } from "./storage/usage.ts";
 
 const config = loadConfig();
 const db = createDatabase({
@@ -61,6 +62,8 @@ const app = buildApp({
     denyAddresses: config.uptimeDenyAddresses,
   },
   notifications: { emailConfigured: config.email !== null },
+  // Garage's admin token goes only to its client: never logged or returned.
+  storage: storageSourcesOf(config, db, clickhouse),
   trackerScriptPath: config.trackerScriptPath,
   dashboardPath: resolve(config.dashboardPath),
   replayPlayerPath: resolve(config.replayPlayerPath),

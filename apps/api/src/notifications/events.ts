@@ -8,8 +8,10 @@
  * The event types, as webhooks name them. Alert rules (step 3 of
  * docs/uptime-alerts.md, alerts/) send the check, certificate, and error
  * ones, and `alert.held_back` when a rule's hourly cap held notifications
- * back; telemetry alerts (step 4) send the route and metric ones.
- * `test` is the dashboard's test send.
+ * back; telemetry alerts (step 4) send the route and metric ones. The
+ * worker's storage check sends the storage ones, about the instance
+ * rather than a project (storage/warning-job.ts). `test` is the
+ * dashboard's test send.
  */
 export const EVENT_TYPES = [
   "check.down",
@@ -27,6 +29,8 @@ export const EVENT_TYPES = [
   "metric.threshold",
   "metric.threshold_resolved",
   "alert.held_back",
+  "storage.low",
+  "storage.recovered",
   "test",
 ] as const;
 

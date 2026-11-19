@@ -30,13 +30,13 @@ afterEach(async () => {
 });
 
 describe("the tabs each role sees", () => {
-  test("the owner has General, Location data and Notification channels, General first", async () => {
+  test("the owner has General, Location data, Storage and Notification channels, General first", async () => {
     installFakeApi();
     const router = renderApp("/projects");
     await workspaceMenu().getByRole("link", { name: "Settings" }).click();
 
     await expect.element(page.getByRole("tablist", { name: "Instance settings" })).toBeVisible();
-    expect(tabNames()).toEqual(["General", "Location data", "Notification channels"]);
+    expect(tabNames()).toEqual(["General", "Location data", "Storage", "Notification channels"]);
     await expect.element(panel().getByRole("heading", { name: "Instance" })).toBeVisible();
     expect(currentPath(router)).toBe("/settings");
 
@@ -47,27 +47,54 @@ describe("the tabs each role sees", () => {
     await expect.poll(() => currentPath(router)).toBe("/settings");
   });
 
-  test("an admin has only the channels, as the first tab", async () => {
+  test("an admin has Storage and the channels, Storage first", async () => {
     installFakeApi({ access: ADMIN_ACCESS });
     renderApp("/settings");
 
     await expect.element(page.getByRole("tablist", { name: "Instance settings" })).toBeVisible();
-    expect(tabNames()).toEqual(["Notification channels"]);
+    expect(tabNames()).toEqual(["Storage", "Notification channels"]);
+    await expect
+      .element(panel().getByRole("heading", { name: "What fills the disk" }))
+      .toBeVisible();
+    await page.getByRole("tab", { name: "Notification channels" }).click();
     await expect
       .element(panel().getByRole("heading", { name: "Notification channels" }))
       .toBeVisible();
   });
 
-  test("an admin who opens an owner's tab by its address gets the channels", async () => {
+  test("an admin who opens an owner's tab by its address gets Storage", async () => {
     const api = installFakeApi({ access: ADMIN_ACCESS });
     renderApp("/settings?tab=general");
 
+    await expect.element(page.getByRole("tab", { name: "Storage", selected: true })).toBeVisible();
     await expect
-      .element(panel().getByRole("heading", { name: "Notification channels" }))
+      .element(panel().getByRole("heading", { name: "What fills the disk" }))
       .toBeVisible();
     await settle();
-    // The owner's settings are never asked for.
-    expect(api.requests.filter((path) => path.startsWith("/api/settings"))).toEqual([]);
+    // The owner's settings are never asked for; the storage, which admins may read, is.
+    expect(api.requests.filter((path) => path.startsWith("/api/settings"))).toEqual([
+      "/api/settings/storage",
+    ]);
+  });
+
+  test("a storage notification's link opens the Storage tab", async () => {
+    installFakeApi();
+    // The URL storage.low and storage.recovered carry (apps/api/src/storage/warning-job.ts).
+    const router = renderApp("/settings?tab=storage");
+    await expect.element(page.getByRole("tab", { name: "Storage", selected: true })).toBeVisible();
+    await expect
+      .element(panel().getByRole("heading", { name: "What fills the disk" }))
+      .toBeVisible();
+    expect(currentPath(router)).toBe("/settings?tab=storage");
+  });
+
+  test("every tab stays mounted: the storage is measured when the page opens, on any tab", async () => {
+    const api = installFakeApi();
+    renderApp("/settings");
+    await expect.element(panel().getByRole("heading", { name: "Instance" })).toBeVisible();
+    await expect
+      .poll(() => api.requests.filter((path) => path === "/api/settings/storage"))
+      .toEqual(["/api/settings/storage"]);
   });
 
   test("a member has no tabs", async () => {
@@ -158,6 +185,20 @@ describe("the save rule on General", () => {
     await expect.poll(() => router.state.location.pathname).toBe("/projects");
   });
 
+  test("the Storage tab's unsaved channel choice marks the tab, and leaving asks first", async () => {
+    installFakeApi();
+    const router = renderApp("/settings?tab=storage");
+    await panel().getByRole("checkbox", { name: "Pager webhook (webhook)" }).click();
+    await expect
+      .element(page.getByRole("tab", { name: /^Storage\s*, unsaved changes$/ }))
+      .toBeVisible();
+    await workspaceMenu().getByRole("link", { name: "Projects" }).click();
+    const ask = page.getByRole("dialog", { name: "Leave without saving?" });
+    await expect.element(ask).toBeVisible();
+    await ask.getByRole("button", { name: "Leave and discard" }).click();
+    await expect.poll(() => router.state.location.pathname).toBe("/projects");
+  });
+
   test("the channels tab has no Save bar: its changes are dialogs and actions", async () => {
     installFakeApi();
     renderApp("/settings?tab=channels");
@@ -210,7 +251,7 @@ describe("the Settings page fits", () => {
     [390, 844],
     [1440, 900],
   ] as const) {
-    for (const tab of ["general", "location-data", "channels"]) {
+    for (const tab of ["general", "location-data", "storage", "channels"]) {
       test(`at ${width} wide, the ${tab} tab: the tab row scrolls inside itself, nothing else sideways`, async () => {
         await page.viewport(width, height);
         installFakeApi();

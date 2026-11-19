@@ -1088,5 +1088,30 @@ describe("POST /api/events", () => {
         await unreachable.close();
       }
     });
+
+    // deploy/clickhouse/config.d/ottertrail.xml refuses inserts under 5% free
+    // disk. Here the table asks for more free space than any disk has, so
+    // ClickHouse refuses as it would on a full one (NOT_ENOUGH_SPACE).
+    test("answers 503 and stores nothing while ClickHouse refuses inserts for lack of disk", async () => {
+      const setting = (ratio: number) =>
+        clickhouse().command({
+          query: `ALTER TABLE events MODIFY SETTING min_free_disk_ratio_to_perform_insert = ${ratio}`,
+        });
+      const instance = appWith({ collection: { now: () => NOW } });
+      const project = await createProject();
+      await setting(0.99999);
+      try {
+        const response = await send(batch(project.public_key), { instance });
+        expect(response.statusCode).toBe(503);
+        expect(response.headers["retry-after"]).toBe("5");
+        expect(response.json()).toMatchObject({ error: "storage_unavailable" });
+        expect(await countEvents(clickhouse(), project.id)).toBe(0);
+      } finally {
+        await setting(0);
+      }
+      // With room again, the retry is stored.
+      expect((await send(batch(project.public_key), { instance })).statusCode).toBe(202);
+      expect(await countEvents(clickhouse(), project.id)).toBe(1);
+    });
   });
 });

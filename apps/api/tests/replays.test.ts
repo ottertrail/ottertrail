@@ -295,6 +295,52 @@ describe("collecting a replay's chunks", () => {
 });
 
 describe("joining a replay's chunks", () => {
+  test("a replay the store refuses waits for the next run; the rest of the batch is joined", async () => {
+    const project = await newProject("Refused");
+    const refusedReplay = randomUUID();
+    const otherReplay = randomUUID();
+    await sendRecording(project.public_key, refusedReplay);
+    await sendRecording(project.public_key, otherReplay);
+    // As Garage refuses a write past the bucket's quota.
+    const refusing: ObjectStore = {
+      put: async (objectKey, body, contentType) => {
+        if (objectKey.includes(refusedReplay)) throw new Error("Bucket size quota is reached");
+        await store.put(objectKey, body, contentType);
+      },
+      get: (objectKey) => store.get(objectKey),
+      delete: (keys) => store.delete(keys),
+      deletePrefix: (prefix) => store.deletePrefix(prefix),
+      close: () => undefined,
+    };
+    const joinedOf = () =>
+      dashboard.db
+        .selectFrom("replays")
+        .select("replay_id")
+        .where("project_id", "=", project.id)
+        .execute()
+        .then((rows) => rows.map((row) => row.replay_id));
+
+    const first = await joinReplays(dashboard.db, refusing, { onlyProjectId: project.id });
+    expect(first).toMatchObject({ joined: 1, failed: 1 });
+    expect(String(first.firstError)).toContain("Bucket size quota is reached");
+    expect(await joinedOf()).toEqual([otherReplay]);
+    // Its chunks wait.
+    const waiting = await dashboard.db
+      .selectFrom("replay_chunks")
+      .select("seq")
+      .where("replay_id", "=", refusedReplay)
+      .execute();
+    expect(waiting.length).toBeGreaterThan(0);
+
+    // Once the store takes it again.
+    expect(await joinReplays(dashboard.db, store, { onlyProjectId: project.id })).toEqual({
+      joined: 1,
+      dropped: 0,
+      failed: 0,
+    });
+    expect((await joinedOf()).toSorted()).toEqual([refusedReplay, otherReplay].toSorted());
+  });
+
   test("joins a complete replay into one object, and deletes its chunks later", async () => {
     const project = await newProject("Joined");
     const replay = randomUUID();

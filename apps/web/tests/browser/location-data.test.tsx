@@ -253,7 +253,8 @@ describe("the location data on the instance's Settings page", () => {
 
   test("an admin does not see it", async () => {
     installFakeApi({ access: ADMIN_ACCESS });
-    renderApp("/settings");
+    // An admin's Settings opens on Storage; the channels are their other tab.
+    renderApp("/settings?tab=channels");
 
     await expect
       .element(page.getByRole("heading", { name: "Notification channels" }))

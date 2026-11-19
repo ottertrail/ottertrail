@@ -9,6 +9,7 @@ import * as access from "./0006_access.ts";
 import * as overview from "./0007_overview.ts";
 import * as spamRules from "./0008_spam_rules.ts";
 import * as locationDataUpdates from "./0009_location_data_updates.ts";
+import * as storageWarnings from "./0010_storage_warnings.ts";
 
 /**
  * Every migration, in order. Kysely runs them by name, alphabetically, and
@@ -27,4 +28,5 @@ export const migrations: Record<string, Migration> = {
   "0007_overview": overview,
   "0008_spam_rules": spamRules,
   "0009_location_data_updates": locationDataUpdates,
+  "0010_storage_warnings": storageWarnings,
 };

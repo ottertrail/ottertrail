@@ -1,8 +1,14 @@
+import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
+import { chmod, copyFile, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { promisify } from "node:util";
 
 import { describe, expect, test } from "vite-plus/test";
+
+import { DEVELOPMENT_GARAGE_ADMIN_TOKEN, GARAGE_ADMIN_PORT } from "../src/config.ts";
 
 const deploy = join(import.meta.dirname, "../../../deploy");
 const compose = readFileSync(join(deploy, "compose.yaml"), "utf8");
@@ -92,5 +98,148 @@ describe("each service that reads a config carries the config's hash", () => {
     const hash = createHash("sha256").update(inlineConfig(name)).digest("hex").slice(0, 12);
     const labels = compose.match(new RegExp(`^ {6}ottertrail\\.config\\.${name}: .*$`, "gm")) ?? [];
     expect(labels).toEqual([`      ottertrail.config.${name}: "${hash}"`]);
+  });
+});
+
+/** A service's block in a compose file: from its name to the next blank line. */
+function serviceBlock(file: string, service: string): string {
+  const start = file.indexOf(`\n  ${service}:\n`);
+  expect(start, `the compose file has the ${service} service`).toBeGreaterThan(-1);
+  const end = file.indexOf("\n\n", start + 1);
+  return file.slice(start, end === -1 ? undefined : end);
+}
+
+/**
+ * Runs backup.sh with a stand-in for `docker compose` that answers the
+ * free-space queries, then fails the dump: the script stops there.
+ */
+async function run(figures: { free: string; data: string; objects: string }) {
+  const folder = await mkdtemp(join(tmpdir(), "ottertrail-backup-"));
+  try {
+    await copyFile(join(deploy, "backup.sh"), join(folder, "backup.sh"));
+    const fake = join(folder, "fake-compose");
+    await writeFile(
+      fake,
+      `#!/bin/sh
+case "$*" in
+  *"system.disks"*) echo "${figures.free}" ;;
+  *"system.parts"*) echo "${figures.data}" ;;
+  *"from replays"*) echo "${figures.objects}" ;;
+  *pg_dump*) exit 1 ;;
+  *) exit 0 ;;
+esac
+`,
+    );
+    await chmod(fake, 0o755);
+    try {
+      await promisify(execFile)("sh", [join(folder, "backup.sh")], {
+        env: { ...process.env, COMPOSE: fake },
+      });
+      throw new Error("backup.sh went past the failed dump");
+    } catch (error) {
+      const { stdout, stderr } = error as { stdout: string; stderr: string };
+      return { stdout, stderr };
+    }
+  } finally {
+    await rm(folder, { recursive: true, force: true });
+  }
+}
+
+describe("storage: Garage's admin API, the free-disk floor, and backup.sh", () => {
+  const exampleSettings = readFileSync(join(deploy, "example.env"), "utf8");
+  const development = readFileSync(join(deploy, "../compose.yaml"), "utf8");
+
+  test("Garage serves its admin API on 3903, inside the Compose network only", () => {
+    const toml = readFileSync(join(deploy, "garage/garage.toml"), "utf8");
+    expect(toml).toMatch(/^\[admin\]\napi_bind_addr = "\[::\]:3903"$/m);
+    // /metrics needs a metrics token, and none is set: refused to everyone.
+    expect(toml).toMatch(/^metrics_require_token = true$/m);
+    expect(toml).not.toMatch(/metrics_token\s*=/);
+    expect(GARAGE_ADMIN_PORT).toBe(3903);
+    // No token in the file: it comes from the environment.
+    expect(toml).not.toMatch(/admin_token/);
+    const garage = serviceBlock(compose, "garage");
+    expect(garage).not.toMatch(/^ {4}ports:/m);
+    expect(garage).toContain("      GARAGE_ADMIN_TOKEN: ${GARAGE_ADMIN_TOKEN:-}\n");
+  });
+
+  test("the API, the worker, and migrate get the same optional token", () => {
+    const app = compose.slice(compose.indexOf("x-app: &app"), compose.indexOf("\nservices:"));
+    expect(app).toContain("    GARAGE_ADMIN_TOKEN: ${GARAGE_ADMIN_TOKEN:-}\n");
+    // Optional: Compose does not require it.
+    expect(compose).not.toContain("GARAGE_ADMIN_TOKEN:?");
+  });
+
+  test("example settings list the token, empty, with how to generate it", () => {
+    expect(exampleSettings).toMatch(/^GARAGE_ADMIN_TOKEN=$/m);
+    expect(exampleSettings).toMatch(/^# {3}GARAGE_ADMIN_TOKEN: +openssl rand -hex 32$/m);
+  });
+
+  test("the development Garage has the token the API's development default sends, on 127.0.0.1", () => {
+    const garage = serviceBlock(development, "garage");
+    expect(garage).toContain(`      GARAGE_ADMIN_TOKEN: ${DEVELOPMENT_GARAGE_ADMIN_TOKEN}\n`);
+    expect(garage).toContain(`      - "127.0.0.1:3903:3903"\n`);
+  });
+
+  test("ClickHouse refuses inserts under 5% free disk, in both stacks", () => {
+    // The development stack mounts this file; installs hold the same inline (above).
+    const config = readFileSync(join(deploy, "clickhouse/config.d/ottertrail.xml"), "utf8");
+    expect(config).toMatch(
+      /<merge_tree>\s*<min_free_disk_ratio_to_perform_insert>0\.05<\/min_free_disk_ratio_to_perform_insert>\s*<\/merge_tree>/,
+    );
+    expect(development).toContain(
+      "./deploy/clickhouse/config.d/ottertrail.xml:/etc/clickhouse-server/config.d/ottertrail.xml:ro",
+    );
+  });
+
+  describe("backup.sh says how much free space it has and needs", () => {
+    const GiB = 1024 ** 3;
+
+    test("enough: prints the free space and the need, and warns of nothing", async () => {
+      const { stdout, stderr } = await run({
+        free: String(1000 * GiB),
+        data: String(1 * GiB),
+        objects: String(GiB / 2),
+      });
+      expect(stdout).toMatch(
+        /^Free space: 1000\.0 GiB on ClickHouse's disk, [\d.]+ GiB for backups\/\. This backup needs about 3\.0 GiB\.$/m,
+      );
+      expect(stderr).not.toContain("Warning");
+      expect(stderr).toContain("The backup failed while dumping PostgreSQL.");
+    });
+
+    test("too little: warns, and goes on to the backup", async () => {
+      const { stdout, stderr } = await run({
+        free: String(2 * GiB),
+        data: String(1 * GiB),
+        objects: String(GiB / 2),
+      });
+      expect(stdout).toContain("Free space: 2.0 GiB on ClickHouse's disk");
+      expect(stderr).toContain(
+        "Warning: less free space than the backup needs. It may fail part way, and then keeps no file.",
+      );
+      // It went on: the dump was tried.
+      expect(stderr).toContain("The backup failed while dumping PostgreSQL.");
+    });
+
+    test("one figure unmeasured: says so, skips the comparison, and goes on", async () => {
+      for (const figures of [
+        { free: String(1000 * GiB), data: "", objects: String(GiB) },
+        { free: "", data: String(GiB), objects: String(GiB) },
+        { free: String(1000 * GiB), data: String(GiB), objects: "ERROR: relation missing" },
+      ]) {
+        const { stdout, stderr } = await run(figures);
+        expect(stderr).toContain("Could not measure the free space; the backup goes on.");
+        expect(stdout).not.toContain("Free space:");
+        expect(stderr).not.toContain("Warning");
+        expect(stderr).toContain("The backup failed while dumping PostgreSQL.");
+      }
+    });
+
+    test("unmeasured: says so, and goes on", async () => {
+      const { stderr } = await run({ free: "", data: "", objects: "" });
+      expect(stderr).toContain("Could not measure the free space; the backup goes on.");
+      expect(stderr).toContain("The backup failed while dumping PostgreSQL.");
+    });
   });
 });

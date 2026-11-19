@@ -521,6 +521,25 @@ export interface LocationDataLeaseTable {
   expires_at: Date;
 }
 
+/** A channel that gets storage warnings (storage/warning-state.ts). */
+export interface StorageWarningChannelsTable {
+  channel_id: string;
+}
+
+/** A storage warning that is on (storage/warning-job.ts); no row when it is off. */
+export interface StorageWarningsTable {
+  warning: string;
+  level: "warning" | "critical";
+  started_at: Date;
+  updated_at: Date;
+}
+
+/** A project whose first-seen times must be worked out again (clickhouse/delete-events.ts). */
+export interface FirstSeenRebuildsTable {
+  project_id: string;
+  requested_at: ColumnType<Date, Date | undefined, Date>;
+}
+
 export interface Database {
   instance_settings: InstanceSettingsTable;
   projects: ProjectsTable;
@@ -552,4 +571,7 @@ export interface Database {
   overview_layouts: OverviewLayoutsTable;
   location_data_updates: LocationDataUpdatesTable;
   location_data_lease: LocationDataLeaseTable;
+  storage_warning_channels: StorageWarningChannelsTable;
+  storage_warnings: StorageWarningsTable;
+  first_seen_rebuilds: FirstSeenRebuildsTable;
 }

@@ -26,6 +26,10 @@
  *   data automatically" setting is on, one updater at a time
  *   (enrichment/updates.ts). The API loads them within minutes
  *   (enrichment/reload.ts).
+ * - At start and every 5 minutes: measuring what fills the disk, setting
+ *   the stack's Garage bucket quota to the budgets plus 10% when it
+ *   differs, and notifying the channels the "Storage warnings" setting
+ *   names when a storage warning starts or ends (storage/warning-job.ts).
  * - At start and every few hours: finding projects ClickHouse still holds
  *   events of but PostgreSQL no longer knows, deleting events older than
  *   each project's retention (retention/retention.ts),
@@ -57,7 +61,10 @@ import { addressPolicy } from "./outbound/addresses.ts";
 import { linkReplays } from "./replays/link.ts";
 import { deleteExpiredReplays, deleteJoinedChunks, joinReplays } from "./replays/replays.ts";
 import { deleteExpiredEvents } from "./retention/retention.ts";
+import { probeOpenAdminApi } from "./storage/garage-admin.ts";
 import { s3ObjectStore } from "./storage/object-store.ts";
+import { storageSourcesOf } from "./storage/usage.ts";
+import { STORAGE_CHECK_INTERVAL_MS, StorageWarningJob } from "./storage/warning-job.ts";
 import { CHECK_TICK_MS, CheckScheduler } from "./uptime/scheduler.ts";
 
 /**
@@ -128,10 +135,21 @@ let replaysFailing = false;
 const stopReplays = every(REPLAY_INTERVAL_MS, async () => {
   if (objectStore === null) return;
   try {
-    const result = await joinReplays(db, objectStore);
+    const { firstError, ...result } = await joinReplays(db, objectStore);
     const chunksDeleted = await deleteJoinedChunks(db);
     if (result.joined + result.dropped + chunksDeleted > 0) {
       log("info", "session replays joined", { ...result, chunksDeleted });
+    }
+    // Replays the store refused wait for the next run; the others went on.
+    if (result.failed > 0) {
+      if (!replaysFailing) {
+        log("error", "the object store refused some session replays; they wait for the next run", {
+          failed: result.failed,
+          err: String(firstError),
+        });
+      }
+      replaysFailing = true;
+      return;
     }
     if (replaysFailing) log("info", "joining session replays works again");
     replaysFailing = false;
@@ -288,6 +306,31 @@ const locationData = new LocationDataJob({
 });
 const stopLocationData = every(SETTING_POLL_MS, () => locationData.tick());
 
+/** What fills the disk, the Garage quota, and storage warnings to the channels. */
+const storage = new StorageWarningJob({
+  db,
+  // Garage's admin token goes only to its client: never logged.
+  sources: storageSourcesOf(config, db, clickhouse),
+  publicUrl: config.publicUrl,
+  log,
+});
+const stopStorage = every(STORAGE_CHECK_INTERVAL_MS, () => storage.tick());
+
+// Without the token, Garage's admin API must refuse everyone (garage-admin.ts).
+if (config.garage !== null && config.garage.adminToken === null) {
+  void probeOpenAdminApi(config.garage.adminUrl).then((result) => {
+    if (result === "accepted") {
+      log(
+        "error",
+        "Garage's admin API answers without a token: set GARAGE_ADMIN_TOKEN, or stop Garage",
+        {
+          adminUrl: config.garage?.adminUrl,
+        },
+      );
+    }
+  });
+}
+
 async function shutdown(signal: NodeJS.Signals) {
   log("info", "shutting down", { signal });
   stopping = true;
@@ -308,6 +351,7 @@ async function shutdown(signal: NodeJS.Signals) {
     stopPruning(),
     stopRetention(),
     stopLocationData(),
+    stopStorage(),
   ]);
   // Requests under way finish and are recorded: each is at most 30 seconds.
   await Promise.all([checks.drain(), deliveries.drain()]);
@@ -328,4 +372,7 @@ log("info", "worker started", {
   uptimeDenyAddresses: config.uptimeDenyAddresses,
   emailConfigured: config.email !== null,
   locationDataCheckIntervalMs: UPDATE_CHECK_INTERVAL_MS,
+  storageCheckIntervalMs: STORAGE_CHECK_INTERVAL_MS,
+  garageAdmin:
+    config.garage === null ? "not the stack's Garage" : config.garage.adminToken !== null,
 });

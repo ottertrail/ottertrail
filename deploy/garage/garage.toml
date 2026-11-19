@@ -14,3 +14,13 @@ rpc_public_addr = "127.0.0.1:3901"
 [s3_api]
 s3_region = "garage"
 api_bind_addr = "[::]:3900"
+
+# The admin API, for the instance's Storage page and the bucket's quota
+# (docs/deployment.md, "Storage"). Its token comes from the environment
+# (GARAGE_ADMIN_TOKEN), not from here; without one, Garage refuses every
+# admin request, and the worker checks that it does at start. Only the API
+# and the worker reach this port, inside the Compose network. /metrics
+# needs a metrics token, and none is set: Garage refuses it to everyone.
+[admin]
+api_bind_addr = "[::]:3903"
+metrics_require_token = true
