@@ -151,7 +151,7 @@ export function buildApp({
 }: AppOptions) {
   const app = Fastify({
     // A user ID in a path may be 200 characters, 400 UTF-16 units; Fastify allows 100.
-    maxParamLength: 512,
+    routerOptions: { maxParamLength: 512 },
     ...fastifyOptions,
     logger:
       log === undefined
