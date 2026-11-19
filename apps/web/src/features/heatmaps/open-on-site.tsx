@@ -11,7 +11,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { useAccess } from "@/lib/access";
 import { ApiError } from "@/lib/api";
 import { type HeatmapDevice, mintOverlayLink } from "@/lib/heatmaps-api";
@@ -24,8 +23,6 @@ import {
   popupFeatures,
   siteOrigin,
 } from "./overlay-link";
-
-type Width = (typeof OVERLAY_WIDTHS)[number]["value"];
 
 /** The project has no hostname to open: what to add, and where. */
 function NoHostname({ projectId }: { projectId: string }) {
@@ -54,7 +51,7 @@ function NoHostname({ projectId }: { projectId: string }) {
 
 /**
  * "Open on your site": opens the page on the project's site, in a window
- * of the chosen width, with a one-time link that makes the tracker there
+ * as wide as the device the report shows (desktop for all devices), with a one-time link that makes the tracker there
  * draw this heatmap over the page for this user only (docs/web-analytics.md,
  * "The overlay on your site"). The link is made when the button is pressed.
  */
@@ -68,11 +65,10 @@ export function OpenOnSite({
   path: string;
   /** The project's allowed hostnames. */
   hostnames: readonly string[];
-  /** The device shown: the window's width follows it until the reader picks one. */
+  /** The device the report shows: the window opens at its width (desktop for all devices). */
   device: HeatmapDevice | undefined;
 }) {
   const [chosenHost, setChosenHost] = React.useState<string | undefined>(undefined);
-  const [chosenWidth, setChosenWidth] = React.useState<Width | undefined>(undefined);
   const [port, setPort] = React.useState("");
   const [opening, setOpening] = React.useState(false);
   const [problem, setProblem] = React.useState<string | null>(null);
@@ -81,13 +77,13 @@ export function OpenOnSite({
   if (hostnames.length === 0) return <NoHostname projectId={projectId} />;
   const hostname =
     chosenHost !== undefined && hostnames.includes(chosenHost) ? chosenHost : (hostnames[0] ?? "");
-  const width = chosenWidth ?? device ?? "desktop";
+  // The device filtered on; all devices open at desktop width.
+  const size = OVERLAY_WIDTHS.find((item) => item.value === device) ?? OVERLAY_WIDTHS[2];
   const local = isLocalHostname(hostname);
   const portValid = !local || isPort(port.trim());
 
   const open = async () => {
     setProblem(null);
-    const size = OVERLAY_WIDTHS.find((item) => item.value === width) ?? OVERLAY_WIDTHS[2];
     // Opened now, while the click still counts: a window opened after the
     // request would be blocked as a pop-up.
     const popup = window.open("", "_blank", popupFeatures(size, window.screen));
@@ -148,27 +144,6 @@ export function OpenOnSite({
             onChange={(event) => setPort(event.target.value)}
           />
         )}
-        <ToggleGroup
-          value={[width]}
-          onValueChange={(next: string[]) => {
-            const value = OVERLAY_WIDTHS.find((item) => item.value === next[0])?.value;
-            if (value !== undefined) setChosenWidth(value);
-          }}
-          aria-label="Window width"
-          variant="outline"
-          size="sm"
-          spacing={0}
-        >
-          {OVERLAY_WIDTHS.map((item) => (
-            <ToggleGroupItem
-              key={item.value}
-              value={item.value}
-              title={`${item.width} pixels wide`}
-            >
-              {item.label}
-            </ToggleGroupItem>
-          ))}
-        </ToggleGroup>
         <Button
           variant="outline"
           size="sm"
@@ -182,8 +157,8 @@ export function OpenOnSite({
       </div>
       <p id={noteId} className="max-w-xl text-right text-xs text-pretty text-ink-subtle">
         Opens {siteOrigin(hostname, local ? port.trim() : "").replace(/^https?:\/\//, "")}
-        {path} with a heatmap overlay only you can see. The link works once, within 5 minutes.
-        Browsers may ignore the window size.
+        {path} at {size.label.toLowerCase()} width ({size.width} px) with a heatmap overlay only you
+        can see. The link works once, within 5 minutes. Browsers may ignore the window size.
       </p>
       {problem !== null && (
         <p role="alert" className="max-w-xl text-right text-xs text-destructive">

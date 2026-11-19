@@ -116,6 +116,7 @@ export interface AppOptions extends Omit<FastifyServerOptions, "logger"> {
     instanceLimit?: RateLimit;
     overlayExchangeLimit?: RateLimit;
     overlayReadLimit?: RateLimit;
+    overlayMintLimit?: RateLimit;
   };
   /**
    * OTLP traces, logs, and metrics (docs/telemetry.md), stored in
@@ -171,6 +172,7 @@ export function requestLogFields(request: { method: string; url: string }) {
 function collectionLimitsOf({
   overlayExchangeLimit: _exchange,
   overlayReadLimit: _read,
+  overlayMintLimit: _mint,
   ...limits
 }: NonNullable<AppOptions["heatmaps"]>) {
   return limits;
@@ -396,6 +398,7 @@ export function buildApp({
       auth: dashboard.auth,
       limiter,
       trustedOrigins: dashboard.trustedOrigins,
+      ...(heatmaps.overlayMintLimit === undefined ? {} : { mintLimit: heatmaps.overlayMintLimit }),
       ...(dashboard.now === undefined ? {} : { now: dashboard.now }),
     });
     app.register(heatmapOverlayRoutes, {

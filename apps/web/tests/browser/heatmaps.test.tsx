@@ -922,7 +922,7 @@ describe("open on your site", () => {
     vi.restoreAllMocks();
   });
 
-  test("makes a link only when pressed, and opens the page with it in a window of the device's width", async () => {
+  test("makes a link only when pressed, and opens the page with it in a window as wide as the device filtered on", async () => {
     const api = installFakeApi();
     const { open, popup } = stubOpen();
     renderApp(`${HEATMAPS}?path=%2Fpricing&device=mobile`);
@@ -931,12 +931,11 @@ describe("open on your site", () => {
       .element(page.getByText(/only you can see\. The link works once, within 5 minutes\./))
       .toBeVisible();
     await expect.element(page.getByText(/Browsers may ignore the window size/)).toBeVisible();
-    // The width follows the device shown.
+    // The width follows the device filter: one device choice on the screen, the address in full.
     await expect
-      .element(
-        page.getByRole("group", { name: "Window width" }).getByRole("button", { name: "Phone" }),
-      )
-      .toHaveAttribute("aria-pressed", "true");
+      .element(page.getByText(/^Opens example\.com\/pricing at phone width \(390 px\) with/))
+      .toBeVisible();
+    expect(document.querySelector("[aria-label='Window width']")).toBeNull();
     expect(overlayLinkRequests(api)).toEqual([]);
 
     await page.getByRole("button", { name: "Open on your site" }).click();
@@ -949,11 +948,22 @@ describe("open on your site", () => {
     expect(popup?.opener).toBeNull();
     expect(overlayLinkRequests(api)).toHaveLength(1);
 
-    // Another width, chosen: the next window has it, with a new link.
-    await page.getByRole("button", { name: "Desktop" }).click();
-    await page.getByRole("button", { name: "Open on your site" }).click();
-    await expect.poll(() => overlayLinkRequests(api)).toHaveLength(2);
-    expect(open.mock.calls[1]?.[2]).toMatch(/^popup=yes,width=1280,/);
+    // Another device in the filter: the next window has its width, with a new link.
+    for (const [device, label, width] of [
+      ["Tablet", "tablet", 820],
+      ["All devices", "desktop", 1280],
+    ] as const) {
+      await page.getByRole("combobox", { name: "Device" }).click();
+      await page.getByRole("option", { name: device }).click();
+      await expect
+        .element(page.getByText(new RegExp(`at ${label} width \\(${width} px\\)`)))
+        .toBeVisible();
+      await page.getByRole("button", { name: "Open on your site" }).click();
+      await expect
+        .poll(() => open.mock.calls.at(-1)?.[2])
+        .toMatch(new RegExp(`^popup=yes,width=${width},`));
+    }
+    await expect.poll(() => overlayLinkRequests(api)).toHaveLength(3);
   });
 
   test("with several hostnames, the reader chooses one; on localhost, plain http and a port", async () => {
@@ -987,7 +997,7 @@ describe("open on your site", () => {
     await port.fill("99999");
     await expect.element(page.getByRole("button", { name: "Open on your site" })).toBeDisabled();
     await port.fill("3000");
-    await expect.element(page.getByText(/^Opens localhost:3000\/pricing with/)).toBeVisible();
+    await expect.element(page.getByText(/^Opens localhost:3000\/pricing at /)).toBeVisible();
     await page.getByRole("button", { name: "Open on your site" }).click();
     await expect
       .poll(() => popup?.location.href)

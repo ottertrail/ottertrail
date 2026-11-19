@@ -5,12 +5,13 @@ import { type ProjectAccess, requireProjectAccess } from "../access/access.ts";
 import { mintOverlayLink } from "../access/overlay-tokens.ts";
 import type { Auth } from "../auth/auth.ts";
 import { requireTrustedOrigin } from "../auth/origin.ts";
-import { requireSession } from "../auth/routes.ts";
+import { requireSession, signedInUser } from "../auth/routes.ts";
 import type { ClickHouseClient } from "../clickhouse/clickhouse.ts";
 import { HEATMAP_RETENTION_DAYS } from "../clickhouse/migrations.ts";
 import type { Reader } from "../clickhouse/query.ts";
 import { clickHouseErrorHandler } from "../clickhouse/route-errors.ts";
 import { environmentOf } from "../collection/environment.ts";
+import { type RateLimit, TokenBucketLimiter } from "../collection/rate-limiter.ts";
 import type { Database } from "../db/schema.ts";
 import { localDays } from "../reports/reports.ts";
 import { RANGE_PROPERTIES, type RangeQuery, requestDays } from "../reports/routes.ts";
@@ -49,6 +50,9 @@ function accessOf(request: { projectAccess: ProjectAccess | null }): ProjectAcce
 /** A "YYYY-MM-DD" moved by whole days. */
 const addDays = (day: string, days: number) =>
   new Date(Date.parse(`${day}T00:00:00Z`) + days * 86_400_000).toISOString().slice(0, 10);
+
+/** Overlay links each user may make: 20 at once, then 20 a minute. */
+export const DEFAULT_OVERLAY_MINT_LIMIT: RateLimit = { capacity: 20, refillPerSecond: 20 / 60 };
 
 /** A range asked for, cut to the days kept, with what the answers say of it. */
 export type AskedRange =
@@ -136,7 +140,7 @@ export async function heatmapRangeOf(
  * The overlay link is a one-time token that opens the project's heatmap
  * over its live site (access/overlay-tokens.ts; docs/web-analytics.md,
  * "The overlay on your site"): made only when asked, from the dashboard's
- * own origin, and answered once.
+ * own origin, 20 a minute per user at most, and answered once.
  */
 export const heatmapRoutes: FastifyPluginCallback<{
   db: Kysely<Database>;
@@ -144,8 +148,23 @@ export const heatmapRoutes: FastifyPluginCallback<{
   auth: Auth;
   limiter: DashboardQueryLimiter;
   trustedOrigins: readonly string[];
+  /** Overlay links per user. */
+  mintLimit?: RateLimit;
   now?: () => Date;
-}> = (app, { db, clickhouse, auth, limiter, trustedOrigins, now = () => new Date() }, done) => {
+}> = (
+  app,
+  {
+    db,
+    clickhouse,
+    auth,
+    limiter,
+    trustedOrigins,
+    mintLimit = DEFAULT_OVERLAY_MINT_LIMIT,
+    now = () => new Date(),
+  },
+  done,
+) => {
+  const mintLimiter = new TokenBucketLimiter(mintLimit);
   const signedIn = requireSession(auth);
   const fromDashboard = requireTrustedOrigin(trustedOrigins);
   const canView = requireProjectAccess(db, { area: "web_analytics", level: "view" });
@@ -231,8 +250,23 @@ export const heatmapRoutes: FastifyPluginCallback<{
     { preHandler: [fromDashboard, signedIn, canView], schema: { params: PARAMS_SCHEMA } },
     async (request, reply) => {
       const { projectId, user } = accessOf(request);
+      const limited = mintLimiter.take(user.userId);
+      if (!limited.allowed) {
+        return reply
+          .code(429)
+          .header("retry-after", String(limited.retryAfterSeconds))
+          .send({
+            error: "rate_limited",
+            message: `Too many links. Try again in ${limited.retryAfterSeconds} seconds.`,
+          });
+      }
       // The real clock, as the exchange uses: never the reports' fixed one.
-      const link = await mintOverlayLink(db, user.userId, projectId, new Date());
+      const link = await mintOverlayLink(
+        db,
+        { userId: user.userId, sessionId: signedInUser(request).sessionId },
+        projectId,
+        new Date(),
+      );
       return reply
         .header("cache-control", "no-store")
         .send({ token: link.token, expiresAt: link.expiresAt.toISOString() });

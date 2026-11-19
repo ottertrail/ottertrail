@@ -28,6 +28,8 @@ export interface DashboardUser {
    * user's grants (access/access.ts), so use theirs.
    */
   role: Role;
+  /** The dashboard session the request came with (dashboard_sessions.id). */
+  sessionId: string;
 }
 
 declare module "fastify" {
@@ -250,6 +252,7 @@ export function requireSession(auth: Auth) {
       name,
       email,
       role: role === "owner" || role === "admin" ? role : "member",
+      sessionId: session.session.id,
     };
     // Nothing sent: Fastify goes on to the route handler.
     return undefined;

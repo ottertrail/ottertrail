@@ -17,7 +17,7 @@
  * Everything from the API is drawn as shapes or set as text
  * (textContent, fillText), never parsed as HTML.
  */
-import { type Device, deviceOf, resolve } from "./heatmap-path.ts";
+import { type Device, deviceOf, NAME_ATTRIBUTE, resolveKeys } from "./heatmap-path.ts";
 import type { OverlayConfig } from "./overlay-names.ts";
 
 export const PERIODS = [
@@ -38,8 +38,11 @@ const MAX_ELEMENTS = 200;
 const MAX_CELLS = 64;
 /** Not-found elements listed at most; the rest are counted. */
 const MAX_LISTED = 50;
-/** DOM changes are looked at no more often than this. */
-const RESOLVE_EVERY_MS = 300;
+/**
+ * Elements are looked for again at most this often while the page's
+ * elements change (scrolling and resizing only redraw).
+ */
+const RESOLVE_EVERY_MS = 1000;
 
 /** The overlay's states (docs/web-analytics.md, "The overlay on your site"). */
 export type OverlayState =
@@ -175,10 +178,17 @@ export interface OverlayOptions {
   onState?: (state: OverlayState) => void;
 }
 
-/** What a finished request said, for the states. */
-type Answer =
-  | { ok: true; body: unknown }
-  | { ok: false; state: Exclude<OverlayState, "ready" | "empty" | "loading"> };
+/** What a request got: its status (0 without a readable answer), error code, and a success's body. */
+interface Answer {
+  status: number;
+  error: string;
+  body?: unknown;
+}
+
+/** What the exchange came to; a failure says its state, and whether it is worth a panel. */
+type Exchanged =
+  | { ok: true }
+  | { ok: false; state: Exclude<OverlayState, "ready" | "empty" | "loading">; show: boolean };
 
 /** Starts the overlay on this page. Returns its controls, for o.js and tests. */
 export function startOverlay(config: OverlayConfig, options: OverlayOptions) {
@@ -186,6 +196,17 @@ export function startOverlay(config: OverlayConfig, options: OverlayOptions) {
   const api = new URL("/api/heatmap-overlay/", config.host).href;
   const pagePath = win.location.pathname;
   let link: string | null = config.token;
+  let told = false;
+  /** Tells the tracker, once, whether the overlay is shown. */
+  const settled = (shown: boolean) => {
+    if (told) return;
+    told = true;
+    try {
+      config.settled(shown);
+    } catch {
+      // The tracker's own business.
+    }
+  };
   let session: { token: string; projectId: string } | null = null;
   let device: Device = deviceOf(win.innerWidth);
   let period: Period = "30d";
@@ -198,6 +219,8 @@ export function startOverlay(config: OverlayConfig, options: OverlayOptions) {
   let lastResolve = 0;
   /** Each read: an answer for an earlier choice is dropped. */
   let asked = 0;
+  /** The exchange in flight, which every read waits for. */
+  let exchanging: Promise<Exchanged> | undefined;
 
   // The host: a custom element, fixed over the page, letting every pointer event through.
   const host = doc.createElement("ottertrail-heatmap");
@@ -279,7 +302,7 @@ export function startOverlay(config: OverlayConfig, options: OverlayOptions) {
   const missing = make("details", {}, panel);
   const missingSummary = make("summary", {}, missing);
   const missingList = make("ol", {}, missing);
-  make(
+  const note = make(
     "p",
     {
       className: "note",
@@ -332,76 +355,94 @@ export function startOverlay(config: OverlayConfig, options: OverlayOptions) {
         mode: "cors",
       });
     } catch {
-      // Offline, or an answer the page may not read (a site not allowed).
-      return { ok: false, state: "failed" };
+      // Offline, or an answer the page may not read (a site that is not the project's).
+      return { status: 0, error: "" };
     }
-    if (response.ok) {
-      try {
-        return { ok: true, body: await response.json() };
-      } catch {
-        return { ok: false, state: "failed" };
-      }
+    let body: unknown = null;
+    try {
+      body = await response.json();
+    } catch {
+      body = null;
     }
-    if (response.status === 410) return { ok: false, state: "link_expired" };
-    if (response.status === 401) return { ok: false, state: "session_expired" };
-    if (response.status === 403 || response.status === 404)
-      return { ok: false, state: "no_access" };
-    return { ok: false, state: "failed" };
+    const error = isRecord(body) && typeof body.error === "string" ? body.error : "";
+    return response.ok
+      ? { status: response.status, error, body }
+      : { status: response.status, error };
   };
 
-  /** The link, once, for a session; null when that failed (the state says why). */
-  const exchange = async (): Promise<boolean> => {
-    if (session !== null) return true;
-    if (link === null) {
-      setState("link_expired");
-      return false;
-    }
-    const token = link;
-    const answer = await request(`${api}session`, {
-      method: "POST",
-      headers: { "content-type": "text/plain" },
-      body: JSON.stringify({ token }),
+  /**
+   * The link for a session, once: one request at a time, shared by every
+   * read that needs it. What the answer means, and whether it is worth a
+   * panel: only a link the server knows (used, expired, or of an account
+   * without access) and a server that could not answer (Retry sends the
+   * link again) are; a token the server never made, a refusal of this
+   * site, and no readable answer show nothing.
+   */
+  const exchange = (): Promise<Exchanged> => {
+    if (session !== null) return Promise.resolve({ ok: true });
+    exchanging ??= (async (): Promise<Exchanged> => {
+      if (link === null) return { ok: false, state: "link_expired", show: true };
+      const answer = await request(`${api}session`, {
+        method: "POST",
+        headers: { "content-type": "text/plain" },
+        body: JSON.stringify({ token: link }),
+      });
+      // A session from another request meanwhile stands: a failure is not news.
+      if (session !== null) return { ok: true };
+      const { status: code, error } = answer;
+      if (code === 429 || code >= 500) return { ok: false, state: "failed", show: true };
+      // Anything else was the link's one use, or never will be.
+      link = null;
+      const body = answer.body;
+      if (
+        code === 200 &&
+        isRecord(body) &&
+        typeof body.token === "string" &&
+        typeof body.projectId === "string" &&
+        /^[0-9a-f-]{36}$/i.test(body.projectId)
+      ) {
+        session = { token: body.token, projectId: body.projectId };
+        return { ok: true };
+      }
+      if (code === 200) return { ok: false, state: "failed", show: true };
+      if (code === 410 && error === "link_expired") {
+        return { ok: false, state: "link_expired", show: true };
+      }
+      if (code === 403 && error === "no_access") {
+        return { ok: false, state: "no_access", show: true };
+      }
+      return { ok: false, state: "failed", show: false };
+    })().finally(() => {
+      exchanging = undefined;
     });
-    if (closed) return false;
-    if (!answer.ok) {
-      // Asked once: whatever the answer, the link is not sent again, unless
-      // the request never got an answer (Retry sends it again).
-      if (answer.state !== "failed") link = null;
-      setState(answer.state);
-      return false;
-    }
-    link = null;
-    const body = answer.body;
-    if (
-      !isRecord(body) ||
-      typeof body.token !== "string" ||
-      typeof body.projectId !== "string" ||
-      !/^[0-9a-f-]{36}$/i.test(body.projectId)
-    ) {
-      setState("failed");
-      return false;
-    }
-    session = { token: body.token, projectId: body.projectId };
-    return true;
+    return exchanging;
   };
 
   const load = async () => {
     const mine = (asked += 1);
+    const current = () => !closed && mine === asked;
     data = null;
     found = [];
     draw();
     setState("loading");
-    if (!(await exchange()) || session === null || mine !== asked) return;
+    const exchanged = await exchange();
+    if (!current()) return;
+    if (!exchanged.ok || session === null) {
+      setState(exchanged.ok ? "failed" : exchanged.state);
+      return;
+    }
     const query = new URLSearchParams({ path: pagePath, device, period });
     if (config.environment !== undefined) query.set("environment", config.environment);
     const answer = await request(
       `${api}${encodeURIComponent(session.projectId)}/heatmap?${query.toString()}`,
       { method: "GET", headers: { authorization: `Bearer ${session.token}` } },
     );
-    if (closed || mine !== asked) return;
-    if (!answer.ok) {
-      if (answer.state === "session_expired" || answer.state === "no_access") session = null;
-      setState(answer.state);
+    if (!current()) return;
+    if (answer.body === undefined) {
+      const ended = answer.status === 401;
+      const denied = answer.status === 403 || answer.status === 404;
+      if (ended || denied) session = null;
+      setState(ended ? "session_expired" : denied ? "no_access" : "failed");
       return;
     }
     const parsed = parseOverlay(answer.body);
@@ -447,13 +488,14 @@ export function startOverlay(config: OverlayConfig, options: OverlayOptions) {
     status.hidden = true;
     found = [];
     const absent: OverlayElement[] = [];
-    for (const item of data.elements) {
-      let node: Element | null = null;
-      try {
-        node = resolve(doc, item.label, item.element);
-      } catch {
-        node = null;
-      }
+    let nodes: (Element | null)[] = [];
+    try {
+      nodes = resolveKeys(doc, data.elements);
+    } catch {
+      nodes = [];
+    }
+    for (const [index, item] of data.elements.entries()) {
+      const node = nodes[index] ?? null;
       if (node === null || host.contains(node)) absent.push(item);
       else found.push({ item, node });
     }
@@ -635,13 +677,45 @@ export function startOverlay(config: OverlayConfig, options: OverlayOptions) {
     });
   }
 
-  doc.documentElement.append(host);
-  // Scrolling anywhere, a scrolling box inside the page too, moves elements.
-  win.addEventListener("scroll", scheduleDraw, { capture: true, passive: true });
-  win.addEventListener("resize", scheduleDraw, { passive: true });
-  observer?.observe(doc.documentElement, { childList: true, subtree: true, attributes: true });
-  if (doc.body !== null) resized?.observe(doc.body);
-  void load();
+  const reveal = () => {
+    doc.documentElement.append(host);
+    // Scrolling anywhere, a scrolling box inside the page too, moves elements.
+    win.addEventListener("scroll", scheduleDraw, { capture: true, passive: true });
+    win.addEventListener("resize", scheduleDraw, { passive: true });
+    // Elements come and go, or are named: keys may find others. Layout
+    // alone only moves them, which the redraw follows.
+    observer?.observe(doc.documentElement, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: [NAME_ATTRIBUTE],
+    });
+    if (doc.body !== null) resized?.observe(doc.body);
+  };
+
+  // Nothing shows until the server has answered about the link: a made-up
+  // token shows nothing, and the tracker records the page load.
+  void (async () => {
+    let shown = false;
+    try {
+      const exchanged = await exchange();
+      shown = exchanged.ok;
+      if (closed) return;
+      if (exchanged.ok) {
+        reveal();
+        void load();
+      } else if (exchanged.show) {
+        // A link refused: the tracker records this visit.
+        note.hidden = true;
+        setState(exchanged.state);
+        reveal();
+      } else {
+        stop();
+      }
+    } finally {
+      settled(shown);
+    }
+  })();
 
   return {
     /** Removes the overlay and forgets its tokens. */

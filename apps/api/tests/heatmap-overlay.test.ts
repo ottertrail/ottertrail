@@ -220,10 +220,11 @@ describe("minting a link", () => {
     // A row long expired, as an old link would be.
     const ancient = new Date(Date.now() - OVERLAY_TOKEN_KEEP_MS - 60_000);
     const recent = new Date(Date.now() - 60_000);
-    const { userId } = await dashboard.db
-      .selectFrom("dashboard_users")
-      .select("id as userId")
-      .where("role", "=", "owner")
+    const { userId, sessionId } = await dashboard.db
+      .selectFrom("dashboard_sessions as s")
+      .innerJoin("dashboard_users as u", "u.id", "s.user_id")
+      .select(["u.id as userId", "s.id as sessionId"])
+      .where("u.role", "=", "owner")
       .executeTakeFirstOrThrow();
     await dashboard.db
       .insertInto("heatmap_overlay_tokens")
@@ -232,6 +233,7 @@ describe("minting a link", () => {
           token_hash: sha256("ancient"),
           kind: "link",
           user_id: userId,
+          session_id: sessionId,
           project_id: project.id,
           scope: "heatmap:read",
           expires_at: ancient,
@@ -240,6 +242,7 @@ describe("minting a link", () => {
           token_hash: sha256("recent"),
           kind: "session",
           user_id: userId,
+          session_id: sessionId,
           project_id: project.id,
           scope: "heatmap:read",
           expires_at: recent,
@@ -313,7 +316,7 @@ describe("exchanging a link", () => {
     expect(await useOverlayLink(dashboard.db, other, later)).toBe(false);
   });
 
-  test("an expired link is refused; one never made is too, without CORS", async () => {
+  test("an expired link is refused as such; one never made as unknown, readable only by the instance's sites", async () => {
     const project = await newProject();
     const link = await linkFor(project.id);
     await dashboard.db
@@ -326,10 +329,14 @@ describe("exchanging a link", () => {
     expect(expired.json()).toMatchObject({ error: "link_expired" });
     const unknown = await exchange("A".repeat(43));
     expect(unknown.statusCode).toBe(410);
-    expect(unknown.headers["access-control-allow-origin"]).toBeUndefined();
+    expect(unknown.json()).toMatchObject({ error: "link_unknown" });
+    // o.js on a project's site can tell it apart, and shows nothing.
+    expect(unknown.headers["access-control-allow-origin"]).toBe(SITE);
+    const elsewhere = await exchange("A".repeat(43), { origin: OTHER_SITE });
+    expect(elsewhere.headers["access-control-allow-origin"]).toBeUndefined();
     // A session token is not a link.
     const session = await sessionFor(project.id);
-    expect((await exchange(session)).statusCode).toBe(410);
+    expect((await exchange(session)).json()).toMatchObject({ error: "link_unknown" });
   });
 
   test("only from the project's allowed hostnames: another site gets no CORS and does not use up the link", async () => {
@@ -538,7 +545,7 @@ describe("reading the overlay", () => {
     await dashboard.db.deleteFrom("projects").where("id", "=", own.id).execute();
     const deleted = await read(own.id, `Bearer ${ownerSession}`);
     expect(deleted.statusCode).toBe(403);
-    expect(deleted.headers["access-control-allow-origin"]).toBeUndefined();
+    expect(deleted.json()).toMatchObject({ error: "origin_not_allowed" });
   });
 
   test("a session for one project cannot read another's, even on the same site", async () => {
@@ -724,5 +731,122 @@ describe("o.js", () => {
     const response = await app.inject({ url: "/o.js" });
     expect(response.statusCode).toBe(503);
     expect(response.body).toContain("has not been built");
+  });
+});
+
+describe("the dashboard session that made them", () => {
+  test("signing out ends its overlay links and sessions", async () => {
+    const project = await newProject();
+    const viewer = await signedInUser(dashboard, {
+      name: "Viewer",
+      email: `signout-${randomUUID()}@example.com`,
+      grants: { projects: [project.id], areas: { web_analytics: "view" } },
+    });
+    const session = await sessionFor(project.id, viewer.cookie);
+    const link = await linkFor(project.id, viewer.cookie);
+    expect((await read(project.id, `Bearer ${session}`)).statusCode).toBe(200);
+    const out = await dashboard.app.inject({
+      method: "POST",
+      url: "/api/auth/sign-out",
+      headers: { origin: PUBLIC_URL, cookie: viewer.cookie },
+    });
+    expect(out.statusCode).toBe(200);
+    expect((await read(project.id, `Bearer ${session}`)).json()).toMatchObject({
+      error: "session_expired",
+    });
+    expect((await exchange(link)).json()).toMatchObject({ error: "link_unknown" });
+    // Gone with the session, not only refused.
+    const left = await dashboard.db
+      .selectFrom("heatmap_overlay_tokens")
+      .select("kind")
+      .where("user_id", "=", viewer.userId)
+      .execute();
+    expect(left).toEqual([]);
+  });
+
+  test("a password reset ends them; the dashboard session's own end does too", async () => {
+    const project = await newProject();
+    const viewer = await signedInUser(dashboard, {
+      name: "Viewer",
+      email: `reset-${randomUUID()}@example.com`,
+      grants: { projects: [project.id], areas: { web_analytics: "view" } },
+    });
+    const session = await sessionFor(project.id, viewer.cookie);
+    const reset = await dashboard.app.inject({
+      method: "POST",
+      url: `/api/members/${viewer.userId}/reset-link`,
+      headers: { origin: PUBLIC_URL, cookie: dashboard.cookie },
+    });
+    const made: { url: string } = reset.json();
+    const token = new URL(made.url).hash.replace(/^#token=/, "");
+    const used = await dashboard.app.inject({
+      method: "POST",
+      url: "/api/reset-password",
+      headers: { "content-type": "application/json" },
+      payload: JSON.stringify({
+        token,
+        password: "a brand new password",
+        confirmPassword: "a brand new password",
+      }),
+    });
+    expect(used.statusCode).toBeLessThan(300);
+    expect((await read(project.id, `Bearer ${session}`)).json()).toMatchObject({
+      error: "session_expired",
+    });
+
+    // A dashboard session past its end, not yet deleted: its overlay session ends with it.
+    const other = await signedInUser(dashboard, {
+      name: "Other",
+      email: `expiry-${randomUUID()}@example.com`,
+      grants: { projects: [project.id], areas: { web_analytics: "view" } },
+    });
+    const otherSession = await sessionFor(project.id, other.cookie);
+    const otherLink = await linkFor(project.id, other.cookie);
+    await dashboard.db
+      .updateTable("dashboard_sessions")
+      .set({ expires_at: new Date(Date.now() - 1000) })
+      .where("user_id", "=", other.userId)
+      .execute();
+    expect((await read(project.id, `Bearer ${otherSession}`)).json()).toMatchObject({
+      error: "session_expired",
+    });
+    expect((await exchange(otherLink)).json()).toMatchObject({ error: "link_expired" });
+  });
+});
+
+describe("answers without data", () => {
+  test("a limit or a malformed token is readable by the instance's sites, so o.js can tell why", async () => {
+    const app = appWith({
+      overlayExchangeLimit: { capacity: 1, refillPerSecond: 0.001 },
+      overlayReadLimit: { capacity: 1, refillPerSecond: 0.001 },
+    });
+    const project = await newProject();
+    await exchange("A".repeat(43), { app });
+    const limited = await exchange("A".repeat(43), { app });
+    expect(limited.statusCode).toBe(429);
+    expect(limited.headers["access-control-allow-origin"]).toBe(SITE);
+    const invalid = await read(project.id, "Bearer nope", { app });
+    expect(invalid.json()).toMatchObject({ error: "invalid_token" });
+    expect(invalid.headers["access-control-allow-origin"]).toBe(SITE);
+    expect((await read(project.id, "Bearer nope", { app })).statusCode).toBe(429);
+    const otherSite = await read(project.id, "Bearer nope", { app, origin: OTHER_SITE });
+    expect(otherSite.headers["access-control-allow-origin"]).toBeUndefined();
+  });
+
+  test("links are limited per user (429)", async () => {
+    const app = appWith({ overlayMintLimit: { capacity: 2, refillPerSecond: 0.001 } });
+    const project = await newProject();
+    const mintOn = () =>
+      app.inject({
+        method: "POST",
+        url: `/api/projects/${project.id}/heatmaps/overlay-link`,
+        headers: { cookie: dashboard.cookie, origin: PUBLIC_URL },
+      });
+    expect((await mintOn()).statusCode).toBe(200);
+    expect((await mintOn()).statusCode).toBe(200);
+    const limited = await mintOn();
+    expect(limited.statusCode).toBe(429);
+    expect(limited.json()).toMatchObject({ error: "rate_limited" });
+    expect(Number(limited.headers["retry-after"])).toBeGreaterThan(0);
   });
 });

@@ -54,16 +54,15 @@ function stepOf(element: Element): string {
   return `${TAGS.has(tag) ? tag : "x"}${place > 1 ? `:${Math.min(place, 9999)}` : ""}`;
 }
 
-/**
- * Where a click went: the element's structural path from the nearest
- * element the site named (data-ottertrail-name), or from body, and that
- * name. At most 24 steps, the nearest kept, "*>" first when cut.
- */
-export function describe(element: Element): { element: string; label?: string } {
+/** describe(), with the step of each element from `step`. */
+function keyWith(
+  element: Element,
+  step: (element: Element) => string,
+): { element: string; label?: string } {
   const steps: string[] = [];
   let label: string | undefined;
   for (let node: Element | null = element; node !== null; node = node.parentElement) {
-    steps.unshift(stepOf(node));
+    steps.unshift(step(node));
     label = nameOf(node);
     if (label !== undefined || node.tagName === "BODY") break;
   }
@@ -78,46 +77,125 @@ export function describe(element: Element): { element: string; label?: string } 
 }
 
 /**
- * The element of this page whose key is `label` (or none) and `path`, or
- * null when there is none. Walks down from the named elements, from body,
- * or, for a cut path, from every element of its first step's tag, taking
- * at each level the children whose step is the next one; the first element
- * whose own key is exactly the one asked for is the answer.
+ * Where a click went: the element's structural path from the nearest
+ * element the site named (data-ottertrail-name), or from body, and that
+ * name. At most 24 steps, the nearest kept, "*>" first when cut.
  */
-export function resolve(doc: Document, label: string | null, path: string): Element | null {
-  const cut = path.startsWith(CUT);
-  const steps = (cut ? path.slice(CUT.length) : path).split(">");
-  const first = steps[0] ?? "";
-  const tag = first.split(":")[0] ?? "";
-  let starts: Iterable<Element>;
-  if (label !== null) {
-    starts = [...doc.querySelectorAll(`[${NAME_ATTRIBUTE}]`)].filter(
-      (element) => nameOf(element) === label,
-    );
-  } else if (cut) {
-    starts = doc.querySelectorAll(tag === "x" || !TAGS.has(tag) ? "*" : tag);
-  } else {
-    starts = doc.body === null ? [] : [doc.body];
-  }
-  const matches = (element: Element) => {
-    const key = describe(element);
-    return key.element === path && (key.label ?? null) === label;
+export function describe(element: Element): { element: string; label?: string } {
+  return keyWith(element, stepOf);
+}
+
+/** The most elements resolveKeys() looks at in one pass, for every key together. */
+export const RESOLVE_BUDGET = 50_000;
+
+/** A key as the API names an element. */
+export interface ElementKey {
+  label: string | null;
+  element: string;
+}
+
+/**
+ * The elements of this page whose keys are `keys`, in order, or null for
+ * each one not found. Keys come from visitors' pages, so a pass is
+ * bounded: it looks at RESOLVE_BUDGET elements at most, and keys past that
+ * count as not found. Each element's step is worked out once per pass,
+ * with its siblings'. A key is matched from the named elements or body
+ * downward; a cut key ("*>…") from the elements of its last step upward.
+ * An element is accepted only when its own key, written as describe()
+ * writes it, is the one asked for.
+ */
+export function resolveKeys(
+  doc: Document,
+  keys: readonly ElementKey[],
+  budget = RESOLVE_BUDGET,
+): (Element | null)[] {
+  let left = budget;
+  const steps = new Map<Element, string>();
+  const step = (element: Element): string => {
+    const known = steps.get(element);
+    if (known !== undefined) return known;
+    // Every sibling's step in one walk over them.
+    const siblings = element.parentElement?.children ?? [element];
+    const seen = new Map<string, number>();
+    for (const sibling of siblings) {
+      left -= 1;
+      const place = (seen.get(sibling.tagName) ?? 0) + 1;
+      seen.set(sibling.tagName, place);
+      const tag = sibling.tagName.toLowerCase();
+      steps.set(
+        sibling,
+        `${TAGS.has(tag) ? tag : "x"}${place > 1 ? `:${Math.min(place, 9999)}` : ""}`,
+      );
+    }
+    return steps.get(element) ?? "";
   };
-  const walk = (node: Element, index: number): Element | null => {
-    if (index === steps.length) return matches(node) ? node : null;
-    for (const child of node.children) {
-      if (stepOf(child) === steps[index]) {
-        const found = walk(child, index + 1);
+  const lists = new Map<string, Element[]>();
+  const all = (selector: string): Element[] => {
+    let list = lists.get(selector);
+    if (list === undefined) {
+      list = [...doc.querySelectorAll(selector)];
+      left -= list.length;
+      lists.set(selector, list);
+    }
+    return list;
+  };
+  const accepts = (element: Element, key: ElementKey) => {
+    const written = keyWith(element, step);
+    left -= MAX_STEPS;
+    return written.element === key.element && (written.label ?? null) === key.label;
+  };
+
+  const one = (key: ElementKey): Element | null => {
+    const cut = key.element.startsWith(CUT);
+    const parts = (cut ? key.element.slice(CUT.length) : key.element).split(">");
+    if (cut) {
+      // From the last step upward: the elements of its tag, then their ancestors.
+      const last = parts[parts.length - 1] ?? "";
+      const tag = last.split(":")[0] ?? "";
+      for (const candidate of all(tag === "x" || !TAGS.has(tag) ? "*" : tag)) {
+        if (left <= 0) return null;
+        if (step(candidate) !== last) continue;
+        let node = candidate.parentElement;
+        let index = parts.length - 2;
+        while (index >= 0 && node !== null && step(node) === parts[index]) {
+          node = node.parentElement;
+          index -= 1;
+        }
+        if (index < 0 && accepts(candidate, key)) return candidate;
+      }
+      return null;
+    }
+    const starts =
+      key.label === null
+        ? doc.body === null
+          ? []
+          : [doc.body]
+        : all(`[${NAME_ATTRIBUTE}]`).filter((element) => nameOf(element) === key.label);
+    const walk = (node: Element, index: number): Element | null => {
+      if (index === parts.length) return accepts(node, key) ? node : null;
+      for (const child of node.children) {
+        if (left <= 0) return null;
+        if (step(child) === parts[index]) {
+          const found = walk(child, index + 1);
+          if (found !== null) return found;
+        }
+      }
+      return null;
+    };
+    for (const start of starts) {
+      if (left <= 0) return null;
+      if (step(start) === parts[0]) {
+        const found = walk(start, 1);
         if (found !== null) return found;
       }
     }
     return null;
   };
-  for (const start of starts) {
-    if (stepOf(start) === first) {
-      const found = walk(start, 1);
-      if (found !== null) return found;
-    }
-  }
-  return null;
+
+  return keys.map((key) => (left <= 0 ? null : one(key)));
+}
+
+/** The element of this page whose key is `label` (or none) and `path`, or null (resolveKeys). */
+export function resolve(doc: Document, label: string | null, path: string): Element | null {
+  return resolveKeys(doc, [{ label, element: path }])[0] ?? null;
 }

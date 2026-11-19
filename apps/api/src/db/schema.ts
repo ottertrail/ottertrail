@@ -490,6 +490,8 @@ export interface HeatmapOverlayTokensTable {
   token_hash: ColumnType<Buffer, Buffer, never>;
   kind: ColumnType<"link" | "session", "link" | "session", never>;
   user_id: ColumnType<string, string, never>;
+  /** The dashboard session that made it: it ends with that session. */
+  session_id: ColumnType<string, string, never>;
   project_id: ColumnType<string, string, never>;
   scope: ColumnType<"heatmap:read", "heatmap:read", never>;
   expires_at: ColumnType<Date, Date, never>;

@@ -12,7 +12,10 @@ import type { Database } from "../db/schema.ts";
  * fragment. The overlay script (o.js) exchanges it, once, for a session
  * token, which it keeps in memory and sends as `Authorization: Bearer` with
  * each read. Both are 32 random bytes, kept only as their SHA-256 hash, and
- * bound to the user, the project, and the scope `heatmap:read`. A token is
+ * bound to the user, the project, the scope `heatmap:read`, and the
+ * dashboard session that made it: signing out, a password reset, or that
+ * session's end ends them too (a foreign key, and a check of the session's
+ * expiry on each use). A token is
  * found by its hash, never compared as text, so the lookup leaks nothing
  * about a guess through its timing.
  *
@@ -51,7 +54,7 @@ export async function purgeOverlayTokens(db: Kysely<Database>, now: Date): Promi
 /** A new link for this user and project. Returns the token once; only its hash is kept. */
 export async function mintOverlayLink(
   db: Kysely<Database>,
-  userId: string,
+  { userId, sessionId }: { userId: string; sessionId: string },
   projectId: string,
   now: Date,
 ): Promise<{ token: string; expiresAt: Date }> {
@@ -64,6 +67,7 @@ export async function mintOverlayLink(
       token_hash: hash,
       kind: "link",
       user_id: userId,
+      session_id: sessionId,
       project_id: projectId,
       scope: OVERLAY_SCOPE,
       expires_at: expiresAt,
@@ -75,6 +79,7 @@ export async function mintOverlayLink(
 /** A link as found by its hash: what it is for, with its project's allowed hostnames. */
 export interface OverlayLink {
   userId: string;
+  sessionId: string;
   projectId: string;
   allowedHostnames: string[];
   /** Used already, or past its 5 minutes. */
@@ -90,7 +95,16 @@ export async function findOverlayLink(
   const row = await db
     .selectFrom("heatmap_overlay_tokens as t")
     .innerJoin("projects as p", "p.id", "t.project_id")
-    .select(["t.user_id", "t.project_id", "t.used_at", "t.expires_at", "p.allowed_hostnames"])
+    .innerJoin("dashboard_sessions as s", "s.id", "t.session_id")
+    .select([
+      "t.user_id",
+      "t.session_id",
+      "t.project_id",
+      "t.used_at",
+      "t.expires_at",
+      "p.allowed_hostnames",
+      "s.expires_at as session_expires_at",
+    ])
     .where("t.token_hash", "=", hashToken(token))
     .where("t.kind", "=", "link")
     .where("t.scope", "=", OVERLAY_SCOPE)
@@ -98,9 +112,10 @@ export async function findOverlayLink(
   if (row === undefined) return null;
   return {
     userId: row.user_id,
+    sessionId: row.session_id,
     projectId: row.project_id,
     allowedHostnames: row.allowed_hostnames,
-    spent: row.used_at !== null || row.expires_at <= now,
+    spent: row.used_at !== null || row.expires_at <= now || row.session_expires_at <= now,
   };
 }
 
@@ -128,7 +143,7 @@ export async function useOverlayLink(
 /** A session for the link's user and project. Returns the token once; only its hash is kept. */
 export async function startOverlaySession(
   db: Kysely<Database>,
-  userId: string,
+  { userId, sessionId }: { userId: string; sessionId: string },
   projectId: string,
   now: Date,
 ): Promise<{ token: string; expiresAt: Date }> {
@@ -141,6 +156,7 @@ export async function startOverlaySession(
       token_hash: hash,
       kind: "session",
       user_id: userId,
+      session_id: sessionId,
       project_id: projectId,
       scope: OVERLAY_SCOPE,
       expires_at: expiresAt,
@@ -149,7 +165,10 @@ export async function startOverlaySession(
   return { token, expiresAt };
 }
 
-/** The user of a session for this project that has not expired, or null. */
+/**
+ * The user of a session for this project that has not expired, nor the
+ * dashboard session that made it, or null.
+ */
 export async function overlaySessionUser(
   db: Kysely<Database>,
   token: string,
@@ -157,13 +176,15 @@ export async function overlaySessionUser(
   now: Date,
 ): Promise<string | null> {
   const row = await db
-    .selectFrom("heatmap_overlay_tokens")
-    .select("user_id")
-    .where("token_hash", "=", hashToken(token))
-    .where("kind", "=", "session")
-    .where("scope", "=", OVERLAY_SCOPE)
-    .where("project_id", "=", projectId)
-    .where("expires_at", ">", now)
+    .selectFrom("heatmap_overlay_tokens as t")
+    .innerJoin("dashboard_sessions as s", "s.id", "t.session_id")
+    .select("t.user_id")
+    .where("t.token_hash", "=", hashToken(token))
+    .where("t.kind", "=", "session")
+    .where("t.scope", "=", OVERLAY_SCOPE)
+    .where("t.project_id", "=", projectId)
+    .where("t.expires_at", ">", now)
+    .where("s.expires_at", ">", now)
     .executeTakeFirst();
   return row?.user_id ?? null;
 }
