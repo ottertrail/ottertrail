@@ -260,7 +260,7 @@ const rules = () => `/projects/${projectId}/alert-rules`;
 const refused = async (sentBody: object) => {
   const response = await call("POST", rules(), { channelIds: [channelId], ...sentBody });
   expect(response.statusCode).toBe(400);
-  const body = response.json() as { error: string; code?: string };
+  const body = response.json<{ error: string; code?: string }>();
   return body.code ?? body.error;
 };
 
@@ -1221,7 +1221,7 @@ describe("the rule routes", () => {
         `/projects/${projectId}/metrics/chart?name=queue.depth&kind=gauge&period=today${query}`,
       );
       expect(response.statusCode).toBe(200);
-      const body = response.json() as { series: { values: { max: (number | null)[] } }[] };
+      const body = response.json<{ series: { values: { max: (number | null)[] } }[] }>();
       return Math.max(...(body.series[0]?.values.max ?? []).map((value) => value ?? 0));
     };
     expect(await chart("")).toBe(40);
