@@ -195,6 +195,8 @@ async function recordPage(
     return new Response(null, { status: 202 });
   };
   let registered: unknown;
+  // Every event's time falls between these (leaked).
+  const from = Date.now();
   const recorder = startReplay(
     {
       endpoint: "https://analytics.example.com/api/replays",
@@ -243,9 +245,10 @@ async function recordPage(
     .toBe(true);
   // Errors after it was sent get none: one replay per page load.
   expect(recorder.error()).toBeUndefined();
+  const to = Date.now();
   // Not sorted: they must arrive in order (expectWellFormed).
   const text = await gunzip(chunks);
-  return { chunks, text, replayId };
+  return { chunks, text, replayId, from, to };
 }
 
 /** What every upload must be, whatever the settings. */
@@ -285,11 +288,53 @@ const noise = (length: number) => {
 
 const present = (text: string, values: string[]) => values.filter((value) => text.includes(value));
 
+/** An event's time in the recording's JSON: a key, as quotes inside a string are escaped. */
+const EVENT_TIME = /"timestamp":(\d+)(?=[,}])/g;
+
+/**
+ * The values found in a recording, searched as it was sent except for its
+ * events' times. A time has 13 digits, so it now and then holds a planted
+ * number ("4111", "9931") by chance; each must be a time while the page was
+ * recorded, which no page text can be, and only then is left out.
+ */
+function leaked(recording: { text: string; from: number; to: number }, values: string[]) {
+  const rest = recording.text.replace(EVENT_TIME, (_, time: string) => {
+    const ms = Number(time);
+    if (ms < recording.from || ms > recording.to) {
+      throw new Error(`"timestamp":${time} is not a time while the page was recorded`);
+    }
+    return '"timestamp":0';
+  });
+  return present(rest, values);
+}
+
 describe("the privacy test", () => {
+  test("the search skips only events' times, and only times while it recorded", () => {
+    const from = 1_795_054_111_000;
+    const to = from + 2_000;
+    const recording = (event: string) => ({ text: `{"v":1,"events":[${event}]}`, from, to });
+    // The failure this guards against: an error event at 1795054111000 matched "4111".
+    expect(leaked(recording(`{"type":5,"timestamp":${from}}`), PLANTED)).toEqual([]);
+    expect(
+      leaked(recording(`{"type":3,"data":{"text":"4111"},"timestamp":${from}}`), PLANTED),
+    ).toEqual(["4111"]);
+    expect(
+      leaked(recording(`{"type":3,"data":{"text":"\\"timestamp\\":4111"},"timestamp":${from}}`), [
+        "4111",
+      ]),
+    ).toEqual(["4111"]);
+    expect(leaked(recording(`{"type":3,"data":{"x":9931},"timestamp":${from}}`), NEVER)).toEqual([
+      "9931",
+    ]);
+    expect(() => leaked(recording(`{"type":3,"timestamp":4111}`), PLANTED)).toThrow(
+      "is not a time while the page was recorded",
+    );
+  });
+
   test("with the defaults, nothing planted is in the recording", async () => {
     const result = await recordPage();
     const recording = expectWellFormed(result);
-    expect(present(result.text, PLANTED)).toEqual([]);
+    expect(leaked(result, PLANTED)).toEqual([]);
     // It still recorded the page: masked text keeps its length, the error is marked.
     expect(result.text).toContain("********** ************");
     expect(recording.events.some((event) => event.type === 5)).toBe(true);
@@ -315,7 +360,7 @@ describe("the privacy test", () => {
       },
     );
     expectWellFormed(result);
-    expect(present(result.text, PLANTED)).toEqual([]);
+    expect(leaked(result, PLANTED)).toEqual([]);
     // What rrweb gave the filter had them: the filter took them out.
     const unfiltered = raw.join("\n");
     expect(
@@ -339,7 +384,7 @@ describe("the privacy test", () => {
   test('data-replay-text="show" shows page text, never typed values, marked text, or tokens', async () => {
     const result = await recordPage({ text: true });
     expectWellFormed(result);
-    expect(present(result.text, NEVER)).toEqual([]);
+    expect(leaked(result, NEVER)).toEqual([]);
     expect(
       present(result.text, [
         "Wilhelmina Quarterfield",
@@ -358,7 +403,7 @@ describe("the privacy test", () => {
       { record: (emit) => record({ emit, checkoutEveryNms: 30_000, slimDOMOptions: "all" }) },
     );
     expectWellFormed(result);
-    expect(present(result.text, NEVER)).toEqual([]);
+    expect(leaked(result, NEVER)).toEqual([]);
     expect(result.text).toContain("Wilhelmina Quarterfield");
   });
 
@@ -375,8 +420,8 @@ describe("the privacy test", () => {
     expect(result.text).toContain('"https://cdn.example.com/photo.png"');
     expect(result.text).toContain("https://cdn.example.com/photo-2x.png 2x");
     expect(result.text).toContain(`${location.origin}/photo-3x.png 3x`);
-    expect(present(result.text, NEVER)).toEqual([]);
-    expect(present(result.text, PLANTED)).toEqual([]);
+    expect(leaked(result, NEVER)).toEqual([]);
+    expect(leaked(result, PLANTED)).toEqual([]);
   });
 
   test("a recording past 2 MB is cut at an event's end, and still parses", async () => {
