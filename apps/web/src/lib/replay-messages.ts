@@ -9,6 +9,7 @@
  */
 export const SEEK_MESSAGE = "ottertrail:replay-seek";
 export const TIME_MESSAGE = "ottertrail:replay-time";
+export const PAUSE_MESSAGE = "ottertrail:replay-pause";
 /** Offsets past this are no moment of any replay: a day. */
 const MAX_OFFSET_MS = 86_400_000;
 
@@ -17,6 +18,9 @@ export const seekMessage = (offsetMs: number) => ({
   type: SEEK_MESSAGE,
   offsetMs: Math.min(MAX_OFFSET_MS, Math.max(0, Math.round(offsetMs))),
 });
+
+/** Asks the player to pause, as when its pane is hidden. */
+export const pauseMessage = () => ({ type: PAUSE_MESSAGE });
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);

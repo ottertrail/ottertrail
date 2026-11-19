@@ -26,6 +26,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { usePanePolling } from "@/components/workbench-pane";
 import { DEFAULT_ENVIRONMENT, type PageRange } from "@/lib/analytics-api";
 import { ApiError } from "@/lib/api";
 import { MISSING } from "@/lib/missing";
@@ -304,7 +305,8 @@ export function CheckView({
   actions?: React.ReactNode;
   inWorkbench?: boolean;
 }) {
-  const checkAnswer = useQuery(checkQuery(projectId, checkId));
+  // Beside the list, polling stops while the pane is hidden.
+  const checkAnswer = useQuery({ ...checkQuery(projectId, checkId), ...usePanePolling() });
   const results = useQuery(checkResultsQuery(projectId, checkId, range));
 
   const error = checkAnswer.error;

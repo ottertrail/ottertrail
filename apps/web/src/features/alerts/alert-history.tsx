@@ -16,6 +16,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { usePanePolling } from "@/components/workbench-pane";
 import { firingQuery, historyQuery, ruleHistoryQuery } from "@/lib/alerts-api";
 
 import { formatMoment } from "../uptime/format";
@@ -53,7 +54,7 @@ export function PaneSection({
  * (`ruleId`), whose list then leaves out the rule's name.
  */
 export function FiringSection({ projectId, ruleId }: { projectId: string; ruleId?: string }) {
-  const firing = useQuery(firingQuery(projectId));
+  const firing = useQuery({ ...firingQuery(projectId), ...usePanePolling() });
   const data = firing.data;
   const alerts = (data?.alerts ?? []).filter(
     (alert) => ruleId === undefined || alert.ruleId === ruleId,
@@ -109,9 +110,11 @@ export function FiringSection({ projectId, ruleId }: { projectId: string; ruleId
  * rule's (`ruleId`, without the rule's column), 20 at a time.
  */
 export function HistorySection({ projectId, ruleId }: { projectId: string; ruleId?: string }) {
-  const history = useInfiniteQuery(
-    ruleId === undefined ? historyQuery(projectId) : ruleHistoryQuery(projectId, ruleId),
-  );
+  const polling = usePanePolling();
+  const history = useInfiniteQuery({
+    ...(ruleId === undefined ? historyQuery(projectId) : ruleHistoryQuery(projectId, ruleId)),
+    ...polling,
+  });
   const pages = history.data?.pages;
   const alerts = pages?.flatMap((page) => page.alerts) ?? [];
   const first = pages?.[0];

@@ -5,6 +5,7 @@ import {
   fitScale,
   formatClock,
   fromPeer,
+  isPauseMessage,
   markerPercent,
   type MessagePeer,
   readRecording,
@@ -124,8 +125,8 @@ export interface PlayerOptions {
   fetch?: Fetch;
   /**
    * The dashboard that shows the player in a frame: its window and origin.
-   * It may ask the player to move to a moment (readSeekMessage), and hears
-   * where it is (timeMessage). Without one, no message is taken or sent.
+   * It may ask the player to move to a moment (readSeekMessage) or to pause
+   * (isPauseMessage), and hears where it is (timeMessage). Without one, no message is taken or sent.
    */
   peer?: MessagePeer | null;
 }
@@ -206,12 +207,19 @@ export function startPlayer(root: HTMLElement, options: PlayerOptions): Player {
   let pendingSeek: number | null = null;
   /** Moves to a moment the dashboard asked for; set once the recording plays. */
   let seekTo: ((offset: number) => void) | null = null;
+  /** Pauses, as the dashboard asks when it hides the player; set once the recording plays. */
+  let pause: (() => void) | null = null;
 
   const win = doc.defaultView;
   if (peer !== null && win !== null) {
     const onMessage = (event: MessageEvent) => {
       // Only the dashboard that framed this page, from its own origin, in the one shape.
       if (!fromPeer(event, peer)) return;
+      // Before the recording is ready it is paused already.
+      if (isPauseMessage(event.data)) {
+        pause?.();
+        return;
+      }
       const offset = readSeekMessage(event.data);
       if (offset === null) return;
       if (seekTo === null) pendingSeek = offset;
@@ -380,6 +388,7 @@ export function startPlayer(root: HTMLElement, options: PlayerOptions): Player {
     player.pause(current);
     show();
     seekTo = seek;
+    pause = () => setPlaying(false);
     if (pendingSeek !== null) seek(pendingSeek);
     pendingSeek = null;
   })();

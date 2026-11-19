@@ -3,6 +3,7 @@ import * as React from "react";
 
 import { Kbd } from "@/components/ui/kbd";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
+import { type WorkbenchPane, WorkbenchPaneContext } from "@/components/workbench-pane";
 import { NARROW_WORKBENCH, useMediaQuery } from "@/hooks/use-media-query";
 import { useSearchParam } from "@/hooks/use-search-param";
 import { typingOrOverlay } from "@/lib/keys";
@@ -21,6 +22,11 @@ export interface WorkbenchListProps {
   select: (id: string) => void;
 }
 
+/** Whether the screen is under 64rem now: read at the moment of a click or a key. */
+function narrowNow(): boolean {
+  return window.matchMedia(NARROW_WORKBENCH).matches;
+}
+
 /**
  * A list and the selected item's detail beside it, resizable (Errors,
  * Replays, Traces, Logs, Users, Uptime, Alerts).
@@ -31,10 +37,16 @@ export interface WorkbenchListProps {
  *   and previous item and `Esc` clears the selection, replacing the entry,
  *   with focus on the chosen row; `action` acts on the selected item. Keys
  *   typed in a field, a menu or a dialog are left alone.
- * - Under 64rem there is no room for two panes: the list fills the screen
- *   and choosing an item calls `onOpenPage`, which goes to its own page. An
- *   address with a selection opened on a narrow screen does the same, once,
- *   after removing the selection from the list's entry.
+ * - Under 64rem there is no room for two panes: the list fills the screen,
+ *   `narrowFooter` follows it, and choosing an item calls `onOpenPage`, which
+ *   goes to its own page. A selection that appears while the screen is
+ *   narrow (an address opened there) does the same, once, after removing
+ *   the selection from the list's entry.
+ * - The list, the pane, and what they open stay mounted across 64rem: CSS
+ *   switches the layout. A window that narrows with an item selected keeps
+ *   the selection in the address and its pane, hidden; widening shows the
+ *   pane again as it was. The summary, which holds no dialog, shows once:
+ *   in the pane from 64rem, as `narrowFooter` under it.
  *
  * Rows mark themselves with `data-workbench-id={id}`, so the selection
  * scrolls into view as the keys move it.
@@ -92,42 +104,73 @@ export function Workbench({
   const narrow = useMediaQuery(NARROW_WORKBENCH);
   const listRef = React.useRef<HTMLElement>(null);
   const detailRef = React.useRef<HTMLElement>(null);
-  // The latest callback, so a page may pass it inline without re-running the effects.
+  // The latest callback, so a page may pass it inline without re-running the effects, and
+  // the latest selection, for the effect that runs as the width changes.
   const openPageRef = React.useRef(onOpenPage);
+  const selectedRef = React.useRef(selected);
   React.useLayoutEffect(() => {
     openPageRef.current = onOpenPage;
+    selectedRef.current = selected;
   });
 
-  // A click selects with a new history entry, so Back returns to the list as it was.
+  // The pane renders from the first moment the screen is wide, and stays mounted after:
+  // CSS hides it under 64rem, so crossing 64rem unmounts nothing open in it. A phone that
+  // never widens renders no hidden pane.
+  const [wideReached, setWideReached] = React.useState(!narrow);
+  if (!narrow && !wideReached) setWideReached(true);
+
+  // A click selects with a new history entry, so Back returns to the list as it was. Under
+  // 64rem, at the moment of the click, it opens the item's own page instead, after taking a
+  // hidden selection out of the list's entry: Back then lands on the list, not on a
+  // selection that would open its own page as it appeared.
   const select = React.useCallback(
-    (id: string) => (narrow ? onOpenPage(id) : setSelected(id)),
-    [narrow, onOpenPage, setSelected],
+    (id: string) => {
+      if (!narrowNow()) {
+        setSelected(id);
+        return;
+      }
+      if (selected !== undefined) setSelected(undefined, { replace: true });
+      onOpenPage(id);
+    },
+    [selected, onOpenPage, setSelected],
   );
 
-  // An address with a selection, opened on a narrow screen, shows the item's own page,
-  // once: the list's entry loses the selection first, so Back returns to the list
-  // rather than opening the page again. A window that narrows later leaves the list alone.
-  const narrowOnArrival = React.useRef(narrow);
-  const opened = React.useRef<string | undefined>(undefined);
+  // A selection that appears while the screen is narrow (an address opened there, a link)
+  // shows the item's own page, once: the list's entry loses the selection first, so Back
+  // returns to the list rather than opening the page again. A selection made on a wider
+  // screen stays in the address, its pane hidden, when the window narrows; so does the one
+  // that replaces it (a deleted check's neighbour).
+  const lastSelected = React.useRef<string | undefined>(undefined);
   React.useEffect(() => {
-    if (!narrowOnArrival.current || selected === undefined || opened.current === selected) return;
-    opened.current = selected;
+    const before = lastSelected.current;
+    lastSelected.current = selected;
+    if (selected === undefined || before !== undefined || !narrowNow()) return;
     setSelected(undefined, { replace: true });
     openPageRef.current(selected);
   }, [selected, setSelected]);
 
   // Keys move the selection, focus follows it, and the list's rows scroll to it.
-  const focusRow = React.useCallback((id: string | undefined) => {
+  const rowOf = React.useCallback((id: string | undefined) => {
     const list = listRef.current;
-    if (list === null) return;
+    if (list === null) return null;
     const row =
       id === undefined
         ? null
         : list.querySelector<HTMLElement>(`[data-workbench-id="${CSS.escape(id)}"]`);
-    const target = row?.querySelector<HTMLElement>("a[href], button, [tabindex]") ?? row ?? list;
-    target.focus({ preventScroll: true });
-    (row ?? target).scrollIntoView?.({ block: "nearest" });
+    return {
+      row,
+      target: row?.querySelector<HTMLElement>("a[href], button, [tabindex]") ?? row ?? list,
+    };
   }, []);
+  const focusRow = React.useCallback(
+    (id: string | undefined) => {
+      const found = rowOf(id);
+      if (found === null) return;
+      found.target.focus({ preventScroll: true });
+      (found.row ?? found.target).scrollIntoView?.({ block: "nearest" });
+    },
+    [rowOf],
+  );
   const moved = React.useRef(false);
   const previous = React.useRef(selected);
   React.useEffect(() => {
@@ -165,6 +208,81 @@ export function Workbench({
     }
   }, [selected, focusRow]);
 
+  // The window narrowed while focus was in the pane, which CSS now hides: focus moves to
+  // the list, at the selected row, rather than dropping to the page. Focus in a dialog
+  // opened from the pane stays there. Whether focus was in the pane is tracked as it moves:
+  // hiding the pane drops focus to the page before the narrowing renders. Focus that
+  // leaves the pane while it shows (a click on blank space) no longer counts.
+  const focusInDetail = React.useRef(false);
+  React.useEffect(() => {
+    const onFocusIn = (event: FocusEvent) => {
+      focusInDetail.current =
+        event.target instanceof Node && detailRef.current?.contains(event.target) === true;
+    };
+    const onFocusOut = (event: FocusEvent) => {
+      if (narrowNow()) return;
+      const next = event.relatedTarget;
+      if (!(next instanceof Node) || detailRef.current?.contains(next) !== true) {
+        focusInDetail.current = false;
+      }
+    };
+    document.addEventListener("focusin", onFocusIn);
+    document.addEventListener("focusout", onFocusOut);
+    return () => {
+      document.removeEventListener("focusin", onFocusIn);
+      document.removeEventListener("focusout", onFocusOut);
+    };
+  }, []);
+  React.useEffect(() => {
+    if (!narrow) return undefined;
+    const pane = detailRef.current;
+    if (pane === null) return undefined;
+    const lost = () => {
+      const active = document.activeElement;
+      return active === null || active === document.body || pane.contains(active);
+    };
+    // A list of choices, a menu or a popover opened from the pane would float at the
+    // screen's corner, its anchor hidden: Escape closes it, as the reader would. A dialog
+    // opened from the pane is centred, and stays open.
+    const anchor = pane.querySelector(
+      '[aria-expanded="true"][aria-haspopup]:not([aria-haspopup="dialog"])',
+    );
+    if (anchor === null) {
+      if (pane.contains(document.activeElement) || (lost() && focusInDetail.current)) {
+        focusInDetail.current = false;
+        focusRow(selectedRef.current);
+      }
+      return undefined;
+    }
+    (document.activeElement ?? document.body).dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }),
+    );
+    // Focus leaves the popup as it closes, for its hidden anchor: then it goes to the row.
+    let timer = 0;
+    let tries = 60;
+    const settle = () => {
+      if (anchor.getAttribute("aria-expanded") !== "true" && lost()) {
+        focusInDetail.current = false;
+        focusRow(selectedRef.current);
+      } else if (tries-- > 0) {
+        timer = window.setTimeout(settle, 16);
+      }
+    };
+    settle();
+    return () => window.clearTimeout(timer);
+  }, [narrow, focusRow]);
+
+  // What the pane's content reads: whether it shows, and where a dialog opened from it
+  // returns focus while it is hidden.
+  const finalFocus = React.useCallback(
+    () => (narrowNow() ? (rowOf(selectedRef.current)?.target ?? true) : true),
+    [rowOf],
+  );
+  const pane = React.useMemo<WorkbenchPane>(
+    () => ({ shown: !narrow, finalFocus }),
+    [narrow, finalFocus],
+  );
+
   // Where the selection last was in the list: when an action takes it out of the list
   // (resolving an error under Unresolved), j and k carry on from there, not the top.
   // New filters make a new list, which j starts at its top.
@@ -189,7 +307,8 @@ export function Workbench({
 
   React.useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (narrow || typingOrOverlay(event)) return;
+      // Under 64rem, at the moment of the key, the list stands alone: the keys are not its.
+      if (narrowNow() || typingOrOverlay(event)) return;
       const index = selected === undefined ? -1 : ids.indexOf(selected);
       // A selection the list no longer holds sat at `lastIndex`: the item now there is
       // the next one, and the one before it the previous.
@@ -224,7 +343,7 @@ export function Workbench({
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [narrow, ids, selected, setSelected, action]);
+  }, [ids, selected, setSelected, action]);
 
   const listPane = (
     <section
@@ -238,44 +357,54 @@ export function Workbench({
     </section>
   );
 
-  if (narrow) {
-    return (
-      <div data-slot="workbench" className={cn("min-h-0", className)}>
-        {listPane}
-        {narrowFooter !== undefined && (
-          <section
-            aria-label={`${label}, overview`}
-            data-slot="workbench-footer"
-            className="border-t"
-          >
-            {narrowFooter}
-          </section>
-        )}
-      </div>
-    );
-  }
-
+  // One tree at every width, so crossing 64rem (a tablet turned) keeps what is open in the
+  // pane, its dialogs and their text, and the panels' sizes. From 64rem the panels sit side
+  // by side; under it CSS hides the handle and the pane, the list takes the whole row, and
+  // the footer follows it.
   return (
-    <ResizablePanelGroup
-      orientation="horizontal"
-      data-slot="workbench"
-      className={cn("min-h-0", className)}
-    >
-      <ResizablePanel defaultSize="40%" minSize="25%" maxSize="65%">
-        {listPane}
-      </ResizablePanel>
-      <ResizableHandle withHandle aria-label={`Resize the ${label.toLowerCase()} list`} />
-      <ResizablePanel defaultSize="60%" minSize="35%">
+    <div data-slot="workbench" className={cn("flex min-h-0 flex-col", className)}>
+      <ResizablePanelGroup
+        orientation="horizontal"
+        // Under 64rem the hidden handle would still take pointer presses at the corner.
+        disabled={narrow}
+        className="min-h-0 min-[64rem]:flex-1 max-[64rem]:[&>[data-workbench-pane=detail]]:hidden! max-[64rem]:[&>[data-workbench-pane=list]]:grow!"
+      >
+        <ResizablePanel data-workbench-pane="list" defaultSize="40%" minSize="25%" maxSize="65%">
+          {listPane}
+        </ResizablePanel>
+        <ResizableHandle
+          withHandle
+          aria-label={`Resize the ${label.toLowerCase()} list`}
+          className="max-[64rem]:hidden!"
+        />
+        <ResizablePanel data-workbench-pane="detail" defaultSize="60%" minSize="35%">
+          <section
+            ref={detailRef}
+            aria-label={`${label}, ${selected === undefined ? "summary" : "selected"}`}
+            data-slot="workbench-detail"
+            className="h-full min-h-0 overflow-y-auto"
+          >
+            <WorkbenchPaneContext value={pane}>
+              {wideReached &&
+                (selected !== undefined
+                  ? renderDetail(selected)
+                  : // The footer already sums the list up under 64rem: one summary at a time.
+                    (narrowFooter === undefined || !narrow) && summary)}
+            </WorkbenchPaneContext>
+          </section>
+        </ResizablePanel>
+      </ResizablePanelGroup>
+      {/* Only under 64rem, as the pane's summary only from it: one summary at a time. */}
+      {narrowFooter !== undefined && narrow && (
         <section
-          ref={detailRef}
-          aria-label={`${label}, ${selected === undefined ? "summary" : "selected"}`}
-          data-slot="workbench-detail"
-          className="h-full min-h-0 overflow-y-auto"
+          aria-label={`${label}, overview`}
+          data-slot="workbench-footer"
+          className="border-t min-[64rem]:hidden"
         >
-          {selected === undefined ? summary : renderDetail(selected)}
+          {narrowFooter}
         </section>
-      </ResizablePanel>
-    </ResizablePanelGroup>
+      )}
+    </div>
   );
 }
 

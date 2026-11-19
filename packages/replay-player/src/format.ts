@@ -130,6 +130,7 @@ export function readRecording(value: unknown): Recording | null {
  */
 export const SEEK_MESSAGE = "ottertrail:replay-seek";
 export const TIME_MESSAGE = "ottertrail:replay-time";
+export const PAUSE_MESSAGE = "ottertrail:replay-pause";
 /** Offsets past this are no moment of any replay: a day. */
 export const MAX_MESSAGE_OFFSET_MS = 86_400_000;
 
@@ -150,6 +151,11 @@ export function readSeekMessage(data: unknown): number | null {
   if (!isRecord(data) || !hasExactly(data, ["type", "offsetMs"])) return null;
   if (data.type !== SEEK_MESSAGE || !isOffset(data.offsetMs)) return null;
   return data.offsetMs;
+}
+
+/** Whether a message asks the player to pause (its pane hidden): exactly `{ type }`. */
+export function isPauseMessage(data: unknown): boolean {
+  return isRecord(data) && hasExactly(data, ["type"]) && data.type === PAUSE_MESSAGE;
 }
 
 /** Where the player is, for the dashboard: ms from the recording's start, and its length. */

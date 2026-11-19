@@ -263,6 +263,7 @@ Beside the player, on a replay's own page (`/projects/<id>/replays/<replay ID>`)
 The player stays on its own page, under the same Content Security Policy, in a frame where no script of the recording runs. The dashboard and the player talk with `postMessage` (`apps/web/src/lib/replay-messages.ts`, `packages/replay-player/src/format.ts`):
 
 - The dashboard sends `{"type":"ottertrail:replay-seek","offsetMs":…}` only to the player's frame, with its own origin as the target.
+- The dashboard sends `{"type":"ottertrail:replay-pause"}` the same way when CSS hides the replays workbench's pane (the window narrowed under 64rem). The player takes it only from its parent window, from its own origin, with exactly that one key, and pauses; a player that is paused, or still loading, stays as it is.
 - The player takes a message only from its parent window, from its own origin (the dashboard's: `frame-ancestors 'self'`), with exactly those two keys and an offset from 0 to a day; a seek that comes while the recording loads is made once it is ready. It answers with `{"type":"ottertrail:replay-time","offsetMs":…,"totalMs":…}`, to its parent and its own origin only, a few times a second while it plays.
 - The dashboard takes a message only from the player's frame, from its own origin, in exactly that shape.
 

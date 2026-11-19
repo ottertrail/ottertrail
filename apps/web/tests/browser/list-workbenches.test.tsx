@@ -943,3 +943,304 @@ test("the sidebar marks Alerts on a rule's own page", async () => {
     )
     .toHaveAttribute("data-active");
 });
+
+const WIDE = 1100;
+const NARROW = 900;
+/** Whether CSS hides the pane beside the list: checked by style, as an open dialog hides the page. */
+function paneHidden() {
+  const pane = document.querySelector("[data-workbench-pane=detail]");
+  return pane === null ? null : getComputedStyle(pane).display === "none";
+}
+/** The list panel's share of the row, as the resizable group sets it. */
+function listShare() {
+  return document.querySelector<HTMLElement>("[data-workbench-pane=list]")?.style.flexGrow;
+}
+/** Turns the screen to `width`, and waits for the page to answer it. */
+async function turn(width: number) {
+  await page.viewport(width, 900);
+  await expect.poll(() => window.matchMedia("(width < 64rem)").matches).toBe(width < 1024);
+  await settle();
+}
+
+function dialog(name: string) {
+  return page.getByRole("dialog", { name });
+}
+
+/** How many copies of the Alerts summary the page holds, shown or hidden. */
+function alertSummaries() {
+  return [...document.querySelectorAll("h2")].filter(
+    (heading) => heading.textContent === "Alerts now",
+  ).length;
+}
+
+describe("turning a tablet across 64rem", () => {
+  test("uptime: a check's edit dialog opened from its pane keeps what was typed", async () => {
+    await page.viewport(WIDE, 900);
+    installFakeApi();
+    const checkId = "cccccccc-cccc-4ccc-8ccc-000000000002";
+    const router = renderApp(`${P}/uptime?check=${checkId}`);
+    await region("Uptime", "selected").getByRole("button", { name: "Edit" }).click();
+    const form = dialog("Edit “API health”");
+    await form.getByLabelText("Name").fill("API half typed");
+
+    await turn(NARROW);
+    await expect.element(form.getByLabelText("Name")).toHaveValue("API half typed");
+    // The pane behind it is hidden, not gone, and the address keeps the check.
+    expect(paneHidden()).toBe(true);
+    expect(param(router, "check")).toBe(checkId);
+    expect(router.state.location.pathname).toBe(`${P}/uptime`);
+
+    await turn(WIDE);
+    await expect.element(form.getByLabelText("Name")).toHaveValue("API half typed");
+    expect(paneHidden()).toBe(false);
+    await form.getByRole("button", { name: "Cancel" }).click();
+    await expect
+      .element(region("Uptime", "selected").getByText("API health").first())
+      .toBeVisible();
+  });
+
+  test("alerts: a rule's delete confirmation and edit dialog opened from its pane stay open", async () => {
+    await page.viewport(WIDE, 900);
+    installFakeApi();
+    const router = renderApp(`${P}/alerts?rule=${ALERT_RULE_IDS.newErrors}`);
+    await region("Alerts", "selected").getByRole("button", { name: "Delete" }).click();
+    const ask = dialog("Delete the rule “New errors”?");
+    await expect.element(ask).toBeVisible();
+
+    await turn(NARROW);
+    await expect.element(ask).toBeVisible();
+    await turn(WIDE);
+    await expect.element(ask).toBeVisible();
+    await ask.getByRole("button", { name: "Cancel" }).click();
+    await expect.element(ask).not.toBeInTheDocument();
+
+    await region("Alerts", "selected").getByRole("button", { name: "Edit" }).click();
+    const form = dialog("Edit “New errors”");
+    await form.getByLabelText("Name (optional)").fill("New errors, half typed");
+    await turn(NARROW);
+    await expect
+      .element(form.getByLabelText("Name (optional)"))
+      .toHaveValue("New errors, half typed");
+    await turn(WIDE);
+    await expect
+      .element(form.getByLabelText("Name (optional)"))
+      .toHaveValue("New errors, half typed");
+    expect(param(router, "rule")).toBe(ALERT_RULE_IDS.newErrors);
+  });
+
+  test("a selection made wide stays in the address while narrow, and shows again on widening", async () => {
+    await page.viewport(WIDE, 900);
+    installFakeApi({ checks: [...fakeChecks(), DOCS_CHECK] });
+    const [first, second] = fakeChecks().map((check) => check.id);
+    if (first === undefined || second === undefined) throw new Error("the fixtures changed");
+    const router = renderApp(`${P}/uptime`);
+    await expect.element(region("Uptime", "summary")).toBeVisible();
+    rowOf(second)?.querySelector<HTMLElement>("a")?.click();
+    await expect
+      .element(region("Uptime", "selected").getByText("API health").first())
+      .toBeVisible();
+
+    // The list's share, changed with the keyboard on the handle, survives both ways.
+    const handle = page.getByRole("separator", { name: "Resize the uptime list" });
+    await handle.click();
+    await userEvent.keyboard("{ArrowRight}{ArrowRight}");
+    await expect.poll(listShare).not.toBe("40");
+    const share = listShare();
+
+    // Focus in the pane when it hides moves to the selected row.
+    region("Uptime", "selected")
+      .getByRole("link", { name: "Open the check's page" })
+      .element()
+      .focus();
+    await page.viewport(NARROW, 900);
+    await expect.poll(paneHidden).toBe(true);
+    await expect.poll(focusedRow).toBe(second);
+    expect(param(router, "check")).toBe(second);
+    expect(router.state.location.pathname).toBe(`${P}/uptime`);
+    expect(region("Uptime", "selected").elements()).toEqual([]);
+    expect(handle.elements()).toEqual([]);
+    // The footer follows the list, the list takes the whole width, and no row is marked.
+    await expect.element(region("Uptime", "overview")).toBeVisible();
+    const panel = document.querySelector("[data-slot=app-content]")?.getBoundingClientRect();
+    expect(region("Uptime", "list").element().getBoundingClientRect().width).toBeGreaterThan(
+      (panel?.width ?? 0) - 2,
+    );
+    expect(rowOf(second)?.getAttribute("data-state")).toBeNull();
+    // j and k are off while narrow.
+    await userEvent.keyboard("j");
+    await settle();
+    expect(param(router, "check")).toBe(second);
+
+    await page.viewport(WIDE, 900);
+    await expect.poll(paneHidden).toBe(false);
+    await expect
+      .element(region("Uptime", "selected").getByText("API health").first())
+      .toBeVisible();
+    expect(rowOf(second)?.getAttribute("data-state")).toBe("selected");
+    expect(region("Uptime", "overview").elements()).toEqual([]);
+    await expect.poll(listShare).toBe(share);
+
+    // Narrow again, a click on a row opens its page, decided as it is clicked.
+    await page.viewport(NARROW, 900);
+    await expect.poll(paneHidden).toBe(true);
+    rowOf(first)?.querySelector<HTMLElement>("a")?.click();
+    await expect.poll(() => router.state.location.pathname).toBe(`${P}/uptime/${first}`);
+  });
+
+  const [CHECK_1, CHECK_2] = [
+    "cccccccc-cccc-4ccc-8ccc-000000000001",
+    "cccccccc-cccc-4ccc-8ccc-000000000002",
+  ];
+
+  test("Back from a page opened while narrow lands on the list, not on the hidden selection", async () => {
+    await page.viewport(WIDE, 900);
+    installFakeApi();
+    const router = renderApp(`${P}/uptime`);
+    await expect.element(region("Uptime", "summary")).toBeVisible();
+    rowOf(CHECK_2)?.querySelector<HTMLElement>("a")?.click();
+    await expect.poll(() => param(router, "check")).toBe(CHECK_2);
+
+    await turn(NARROW);
+    rowOf(CHECK_1)?.querySelector<HTMLElement>("a")?.click();
+    await expect.poll(() => router.state.location.pathname).toBe(`${P}/uptime/${CHECK_1}`);
+    router.history.back();
+    await expect.poll(() => router.state.location.pathname).toBe(`${P}/uptime`);
+    await settle();
+    expect(router.state.location.pathname).toBe(`${P}/uptime`);
+    expect(param(router, "check")).toBeUndefined();
+    // Forward still goes to the page that was opened.
+    router.history.forward();
+    await expect.poll(() => router.state.location.pathname).toBe(`${P}/uptime/${CHECK_1}`);
+  });
+
+  test("focus that left the pane before narrowing stays where it is", async () => {
+    await page.viewport(WIDE, 900);
+    installFakeApi();
+    renderApp(`${P}/uptime?check=${CHECK_2}`);
+    const link = region("Uptime", "selected").getByRole("link", { name: "Open the check's page" });
+    await expect.element(link).toBeVisible();
+    link.element().focus();
+    // As a click on blank space does: focus goes to the page.
+    (link.element() as HTMLElement).blur();
+    expect(document.activeElement).toBe(document.body);
+
+    await turn(NARROW);
+    expect(document.activeElement).toBe(document.body);
+    expect(focusedRow()).toBeUndefined();
+  });
+
+  test("a hidden pane stops polling, and starts again as it shows", async () => {
+    await page.viewport(WIDE, 900);
+    installFakeApi();
+    const router = renderApp(`${P}/uptime?check=${CHECK_2}`);
+    await expect
+      .element(region("Uptime", "selected").getByText("API health").first())
+      .toBeVisible();
+    const intervals = () =>
+      router.options.context.queryClient
+        .getQueryCache()
+        .find({ queryKey: ["checks", PROJECT.id, CHECK_2], exact: true })
+        ?.observers.map((observer) => observer.options.refetchInterval);
+    expect(intervals()).toEqual([30_000]);
+    await turn(NARROW);
+    await expect.poll(intervals).toEqual([false]);
+    await turn(WIDE);
+    await expect.poll(intervals).toEqual([30_000]);
+  });
+
+  test("one summary at a time: in the pane wide, under the list narrow", async () => {
+    await page.viewport(WIDE, 900);
+    installFakeApi();
+    renderApp(`${P}/alerts`);
+    await expect.element(region("Alerts", "summary")).toBeVisible();
+    expect(alertSummaries()).toBe(1);
+    await turn(NARROW);
+    await expect.element(region("Alerts", "overview")).toBeVisible();
+    expect(alertSummaries()).toBe(1);
+    await turn(WIDE);
+    await expect.element(region("Alerts", "summary")).toBeVisible();
+    expect(alertSummaries()).toBe(1);
+  });
+
+  test("a list of choices opened from the pane closes as it hides, focus on the row", async () => {
+    await page.viewport(WIDE, 900);
+    installFakeApi();
+    const router = renderApp(`${P}/uptime?check=${CHECK_2}`);
+    await region("Uptime", "selected").getByRole("combobox", { name: "Period" }).click();
+    await expect.element(page.getByRole("listbox")).toBeVisible();
+
+    await turn(NARROW);
+    await expect.element(page.getByRole("listbox")).not.toBeInTheDocument();
+    await expect.poll(focusedRow).toBe(CHECK_2);
+    expect(param(router, "check")).toBe(CHECK_2);
+  });
+
+  test("a dialog from the hidden pane, closed while narrow, returns focus to the row", async () => {
+    await page.viewport(WIDE, 900);
+    installFakeApi();
+    renderApp(`${P}/alerts?rule=${ALERT_RULE_IDS.newErrors}`);
+    await region("Alerts", "selected").getByRole("button", { name: "Delete" }).click();
+    const ask = dialog("Delete the rule “New errors”?");
+    await expect.element(ask).toBeVisible();
+    await turn(NARROW);
+    await ask.getByRole("button", { name: "Cancel" }).click();
+    await expect.element(ask).not.toBeInTheDocument();
+    await expect.poll(focusedRow).toBe(ALERT_RULE_IDS.newErrors);
+
+    // Wide, the dialog returns focus to its trigger in the pane, as before.
+    await turn(WIDE);
+    const remove = region("Alerts", "selected").getByRole("button", { name: "Delete" });
+    await remove.click();
+    await ask.getByRole("button", { name: "Cancel" }).click();
+    await expect.element(remove).toHaveFocus();
+  });
+
+  test("a replay playing in the pane pauses as the pane hides", async () => {
+    await page.viewport(WIDE, 900);
+    installFakeApi();
+    renderApp(`${P}/replays?replay=${fakeReplayId(0)}`);
+    await expect
+      .poll(() => document.querySelector("iframe[title^='Session replay']"))
+      .not.toBeNull();
+    const frame = document.querySelector<HTMLIFrameElement>("iframe[title^='Session replay']");
+    if (frame === null) throw new Error("No player frame");
+    // A fake player: a window of its own whose messages are kept.
+    const stand = document.createElement("iframe");
+    document.body.append(stand);
+    const player = stand.contentWindow;
+    if (player === null) throw new Error("No window for the fake player");
+    const posted: unknown[] = [];
+    player.postMessage = (message: unknown) => {
+      posted.push(message);
+    };
+    Object.defineProperty(frame, "contentWindow", { value: player });
+
+    await turn(NARROW);
+    await expect.poll(() => posted).toContainEqual({ type: "ottertrail:replay-pause" });
+    stand.remove();
+  });
+
+  test("opened narrow, the pane appears on widening, and the keys work again", async () => {
+    await page.viewport(NARROW, 900);
+    installFakeApi({ checks: [...fakeChecks(), DOCS_CHECK] });
+    const router = renderApp(`${P}/uptime`);
+    await expect.element(region("Uptime", "overview")).toBeVisible();
+    // Nothing renders in the hidden pane on a screen that has not been wide.
+    expect(document.querySelector("[data-slot=workbench-detail]")?.childElementCount).toBe(0);
+
+    await turn(WIDE);
+    await expect
+      .element(region("Uptime", "summary").getByRole("heading", { name: "Checks now" }))
+      .toBeVisible();
+    await userEvent.keyboard("j");
+    await expect.poll(() => param(router, "check")).toBe(CHECK_1);
+    await expect.poll(focusedRow).toBe(CHECK_1);
+    await userEvent.keyboard("j");
+    await expect.poll(() => param(router, "check")).toBe(CHECK_2);
+    await userEvent.keyboard("k");
+    await expect.poll(() => param(router, "check")).toBe(CHECK_1);
+    await userEvent.keyboard("{Escape}");
+    await expect.poll(() => param(router, "check")).toBeUndefined();
+    await expect.element(region("Uptime", "summary")).toBeVisible();
+  });
+});

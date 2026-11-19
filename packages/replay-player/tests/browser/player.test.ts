@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser/context";
 
-import { SEEK_MESSAGE, TIME_MESSAGE } from "../../src/format.ts";
+import { PAUSE_MESSAGE, SEEK_MESSAGE, TIME_MESSAGE } from "../../src/format.ts";
 import {
   NOT_AVAILABLE,
   NOT_LOADED,
@@ -327,6 +327,25 @@ describe("messages with the dashboard", () => {
     // A real message after them shows they were read, and ignored.
     deliver({ type: SEEK_MESSAGE, offsetMs: 10_000 }, location.origin, dashboard);
     await expect.element(slider()).toHaveAttribute("aria-valuetext", "0:10 of 2:00");
+  });
+
+  test("pauses when the dashboard asks, as when it hides the player", async () => {
+    const { dashboard, peer } = fakeDashboard();
+    await start(() => json(recording()), ERROR_AT, peer);
+    await page.getByRole("button", { name: "Play the replay" }).click();
+    await expect.element(page.getByRole("button", { name: "Pause the replay" })).toBeVisible();
+
+    // Other shapes and windows are ignored.
+    deliver({ type: PAUSE_MESSAGE, extra: 1 }, location.origin, dashboard);
+    deliver({ type: PAUSE_MESSAGE }, location.origin, window);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    await expect.element(page.getByRole("button", { name: "Pause the replay" })).toBeVisible();
+
+    deliver({ type: PAUSE_MESSAGE }, location.origin, dashboard);
+    await expect.element(page.getByRole("button", { name: "Play the replay" })).toBeVisible();
+    // Paused already, it stays paused.
+    deliver({ type: PAUSE_MESSAGE }, location.origin, dashboard);
+    await expect.element(page.getByRole("button", { name: "Play the replay" })).toBeVisible();
   });
 
   test("a seek asked for while the recording loads is made once it is ready", async () => {

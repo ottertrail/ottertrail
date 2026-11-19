@@ -393,7 +393,7 @@ describe("a workbench whose items have their own pages", () => {
     await expect.poll(() => pathOf(router)).toBe("/start");
   });
 
-  test("a window that narrows during a session leaves the list where it is", async () => {
+  test("a window that narrows during a session leaves the list where it is, the item hidden", async () => {
     const router = renderHarness("/list?item=b");
     await expect.element(page.getByRole("heading", { name: "Item b" })).toBeVisible();
 
@@ -401,6 +401,10 @@ describe("a workbench whose items have their own pages", () => {
     await expect.element(page.getByRole("heading", { name: "Item b" })).not.toBeInTheDocument();
     await new Promise((resolve) => setTimeout(resolve, 200));
     expect(pathOf(router)).toBe("/list?item=b");
+    // Hidden by CSS, not unmounted: widening shows it again as it was.
+    const pane = document.querySelector("[data-workbench-pane=detail]");
+    expect(pane === null ? null : getComputedStyle(pane).display).toBe("none");
+    expect(pane?.textContent).toContain("Item b");
 
     // A choice made while narrow opens the page.
     await page.getByRole("button", { name: "Item c" }).click();

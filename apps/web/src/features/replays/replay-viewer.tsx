@@ -7,7 +7,8 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
-import { readTimeMessage, seekMessage } from "@/lib/replay-messages";
+import { useWorkbenchPane } from "@/components/workbench-pane";
+import { pauseMessage, readTimeMessage, seekMessage } from "@/lib/replay-messages";
 import { type ReplayTimeline, replayTimelineQuery } from "@/lib/replays-api";
 import { cn } from "@/lib/utils";
 
@@ -172,6 +173,14 @@ export function ReplayViewer({
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
   }, []);
+
+  // Beside the replays list, a pane that CSS hides (the window narrowed) pauses the player.
+  const { shown } = useWorkbenchPane();
+  React.useEffect(() => {
+    if (!shown) {
+      frameRef.current?.contentWindow?.postMessage(pauseMessage(), window.location.origin);
+    }
+  }, [shown]);
 
   const seek = (offsetMs: number) => {
     asked.current = offsetMs;

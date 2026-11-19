@@ -21,6 +21,7 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty";
 import { Skeleton } from "@/components/ui/skeleton";
+import { usePanePolling } from "@/components/workbench-pane";
 import { useAccess } from "@/lib/access";
 import { alertChannelsQuery, KIND_LABEL, rulesQuery } from "@/lib/alerts-api";
 import { ApiError } from "@/lib/api";
@@ -87,9 +88,11 @@ export function RuleView({
   actions?: React.ReactNode;
   inWorkbench?: boolean;
 }) {
-  const list = useQuery(rulesQuery(projectId));
+  // Beside the list, polling stops while the pane is hidden.
+  const polling = usePanePolling();
+  const list = useQuery({ ...rulesQuery(projectId), ...polling });
   const channels = useQuery(alertChannelsQuery(projectId));
-  const checks = useQuery(checksQuery(projectId));
+  const checks = useQuery({ ...checksQuery(projectId), ...polling });
   const canManage = useAccess().canUse("uptime_alerts", "manage");
 
   if (list.error instanceof ApiError && list.error.status === 404) {
