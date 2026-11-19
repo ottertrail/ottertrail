@@ -254,7 +254,8 @@ const REAL = Symbol.for("ottertrail.tracker");
       // Heatmaps: this pageview is in the sample or not, decided now, kept nowhere.
       if (heatmapsDeclared) {
         heatmapPage =
-          Math.random() < heatmapSample
+          // A page whose URL is too long to send ("") has none.
+          current.url !== "" && Math.random() < heatmapSample
             ? { url: current.url, referrer: current.referrer, at: Date.now() }
             : null;
         if (heatmapPage !== null) loadHeatmaps();

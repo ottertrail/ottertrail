@@ -433,6 +433,8 @@ export const CLICKHOUSE_MIGRATIONS: ClickHouseMigration[] = [
      * - label: the site's own `data-ottertrail-name`; element: the click's
      *   element as a structural path of tag names and positions.
      * - An insert returns once its data is on disk, as events' do.
+     * - A day's parts are merged into one once all are an hour old, as the
+     *   telemetry tables' are (0002): copies of a record go then.
      */
     statements: (database) => [
       `CREATE TABLE IF NOT EXISTS ${database}.heatmaps (
@@ -463,7 +465,9 @@ export const CLICKHOUSE_MIGRATIONS: ClickHouseMigration[] = [
       ORDER BY (project_id, toDate(occurred_at), path, device, kind, record_id)
       TTL toDateTime(occurred_at) + INTERVAL ${HEATMAP_RETENTION_DAYS} DAY
       SETTINGS ttl_only_drop_parts = 1, non_replicated_deduplication_window = 1000,
-        fsync_after_insert = 1, fsync_part_directory = 1`,
+        fsync_after_insert = 1, fsync_part_directory = 1,
+        min_age_to_force_merge_seconds = ${FORCE_MERGE_SECONDS},
+        min_age_to_force_merge_on_partition_only = 1`,
     ],
   },
 ];

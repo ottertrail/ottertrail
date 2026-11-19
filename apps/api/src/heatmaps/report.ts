@@ -10,8 +10,10 @@ import { DEVICES, type HeatmapDevice, UNITS } from "./store.ts";
  * a second copy until its parts merge, and FINAL counts it once, as reports
  * of events do; one page's rows are few, so it costs little. The page
  * picker reads every page of the project over up to 90 days, so it reads
- * without FINAL, as the telemetry lists do: a copy not merged yet adds one
- * to a page's count until it is.
+ * without FINAL and counts distinct record IDs instead: a scroll row is
+ * sent again as the visitor scrolls further, and a retry is a copy, and
+ * each counts once. The table merges each day's parts once they are an
+ * hour old (migration 0006), so copies do not pile up.
  */
 
 /** Pages the picker lists, most pageviews first. */
@@ -135,7 +137,8 @@ export async function heatmapPages(
   const params = new QueryParams();
   const rows = await queryRows<Record<string, unknown>>(
     reader,
-    `SELECT path, countIf(kind = 'scroll') AS pageviews, countIf(kind = 'click') AS clicks
+    `SELECT path, uniqExactIf(record_id, kind = 'scroll') AS pageviews,
+            uniqExactIf(record_id, kind = 'click') AS clicks
      FROM heatmaps
      WHERE ${scope(params, range)}
        ${search === undefined || search === "" ? "" : `AND positionCaseInsensitiveUTF8(path, ${params.add(search, "String")}) > 0`}

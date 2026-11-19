@@ -51,7 +51,13 @@ export interface NewHeatmapRecord {
 }
 
 /** A moment to the minute, as heatmap rows keep times. */
-export const toMinute = (moment: Date) => new Date(Math.floor(moment.getTime() / 60_000) * 60_000);
+/**
+ * A moment to the nearest minute, as heatmap rows keep times. The browser
+ * sends its times floored to the minute, and clock correction moves them by
+ * a few seconds either way: rounding, not flooring again, keeps a copy in
+ * its minute, and so on its day, even in the minute after midnight UTC.
+ */
+export const toMinute = (moment: Date) => new Date(Math.round(moment.getTime() / 60_000) * 60_000);
 
 const thousandths = (fraction: number) => Math.round(Math.min(1, Math.max(0, fraction)) * UNITS);
 

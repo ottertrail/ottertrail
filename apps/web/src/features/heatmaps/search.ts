@@ -10,8 +10,9 @@ export interface HeatmapsSearch {
   /** The page shown; left out for the page with the most pageviews. */
   path: string | undefined;
   /**
-   * A device class, or "all" for every device. Left out, the page shows the
-   * device with the most pageviews for the page and period, as layouts differ.
+   * The reader's choice: a device class, or "all" for every device. Left
+   * out, the page shows the device with the most pageviews for the page and
+   * period, worked out each time and never written here.
    */
   device: DeviceChoice | undefined;
 }

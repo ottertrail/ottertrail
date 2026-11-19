@@ -120,6 +120,17 @@ export function describe(element: Element): { element: string; label?: string } 
 }
 
 /**
+ * Whether a click happened inside an element the site blocks or masks,
+ * anywhere on its way: the event's composed path reaches into open shadow
+ * roots, where the target seen at the window (the outermost host) does not.
+ * A closed shadow root hides its nodes from the path: markers inside one
+ * cannot be seen, so a site marks its host instead.
+ */
+export function isPrivate(event: Event): boolean {
+  return event.composedPath().some((node) => node instanceof Element && node.matches(PRIVATE));
+}
+
+/**
  * The element a click counts for: its interactive ancestor, or itself;
  * null inside an element the site blocks or masks.
  */
@@ -256,6 +267,8 @@ export function startCapture(config: HeatmapConfig, options: CaptureOptions) {
   let deepest = 0;
   let deepestAt = { vh: 1, ph: 1 };
   let fold: number | undefined;
+  /** Whether this pageview has been measured at all: one that was not sends no depth. */
+  let measured = false;
   let sent = { depth: -1, dropped: -1 };
   let rage = createRageDetector();
   /** A measurement waiting for the next frame: a navigation that comes first cancels it. */
@@ -271,6 +284,7 @@ export function startCapture(config: HeatmapConfig, options: CaptureOptions) {
     if (page === null) return;
     const ph = pageHeight();
     const vh = clampPx(win.innerHeight, MAX_VIEWPORT_PX);
+    measured = true;
     // The fold of the page as it first showed, before content grows below it.
     fold ??= round3(vh / ph);
     const depth = round3((win.scrollY + win.innerHeight) / ph);
@@ -310,13 +324,17 @@ export function startCapture(config: HeatmapConfig, options: CaptureOptions) {
     // Fixed for the pageview: its scroll row keeps one device class when sent again.
     device = deviceOf(viewportWidth);
     deepest = 0;
+    deepestAt = { vh: 1, ph: 1 };
     fold = undefined;
+    measured = false;
     sent = { depth: -1, dropped: -1 };
     rage = createRageDetector();
-    // After an in-app navigation, the new page has not rendered yet: its
-    // first measurement waits two frames, or its first scroll.
-    if (navigated) measureLater(true);
-    else measure();
+    // The page may not have drawn yet: after an in-app navigation it has
+    // not rendered, and on the first load a deferred script can run before
+    // a client-rendered app draws. The first measurement waits two frames
+    // (after the load event, on a first load), or the first scroll.
+    if (navigated || doc.readyState === "complete") measureLater(true);
+    else win.addEventListener("load", () => measureLater(true), { once: true });
   };
 
   /** The request's body for these records. */
@@ -349,28 +367,77 @@ export function startCapture(config: HeatmapConfig, options: CaptureOptions) {
     return JSON.stringify(batch);
   };
 
-  /** The oldest records that fit one request: 50 and MAX_BATCH_BYTES at most (one always). */
-  const nextBatch = (from: Queued[]): Queued[] => {
-    const batch: Queued[] = [];
-    for (const record of from) {
-      if (batch.length === MAX_RECORDS_PER_BATCH) break;
-      if (batch.length > 0 && byteLength(bodyOf([...batch, record])) > MAX_BATCH_BYTES) break;
-      batch.push(record);
+  /**
+   * Sizes in bytes, each measured once, so that a body's size is worked out
+   * by adding, never by writing it again: a record's JSON as sent with page
+   * index 0 (an index of more digits adds them), a page's JSON, and the
+   * envelope with no pages and no records. Exact: bodyOf writes the same.
+   */
+  const recordBytes = new WeakMap<Queued, number>();
+  const pageBytes = new Map<string, number>();
+  const pageKey = (record: Queued) => `${record.pageOf.url}\n${record.pageOf.referrer ?? ""}`;
+  const sizeOfRecord = (record: Queued) => {
+    let size = recordBytes.get(record);
+    if (size === undefined) {
+      const { pageOf: _page, ...rest } = record;
+      size = byteLength(JSON.stringify({ ...rest, page: 0 }));
+      recordBytes.set(record, size);
     }
-    return batch;
+    return size;
+  };
+  const sizeOfPage = (record: Queued) => {
+    const key = pageKey(record);
+    let size = pageBytes.get(key);
+    if (size === undefined) {
+      const { url, referrer } = record.pageOf;
+      size = byteLength(JSON.stringify(referrer === undefined ? { url } : { url, referrer }));
+      pageBytes.set(key, size);
+    }
+    return size;
+  };
+  const envelopeBytes = () => byteLength(bodyOf([]));
+
+  /** Batches of these records, in order: 50 and MAX_BATCH_BYTES at most each (one record always), with their sizes. */
+  const plan = (records: Queued[]): { records: Queued[]; bytes: number }[] => {
+    const envelope = envelopeBytes();
+    const batches: { records: Queued[]; bytes: number }[] = [];
+    let current: Queued[] = [];
+    let pages = new Map<string, number>();
+    let bytes = envelope;
+    for (const record of records) {
+      const key = pageKey(record);
+      const known = pages.get(key);
+      const index = known ?? pages.size;
+      const added =
+        (known === undefined ? sizeOfPage(record) + (pages.size > 0 ? 1 : 0) : 0) +
+        sizeOfRecord(record) +
+        String(index).length -
+        1 +
+        (current.length > 0 ? 1 : 0);
+      if (
+        current.length > 0 &&
+        (current.length === MAX_RECORDS_PER_BATCH || bytes + added > MAX_BATCH_BYTES)
+      ) {
+        batches.push({ records: current, bytes });
+        current = [];
+        pages = new Map();
+        bytes = envelope;
+        // Again, as the first record of a new batch.
+        bytes += sizeOfPage(record) + sizeOfRecord(record);
+        pages.set(key, 0);
+        current.push(record);
+        continue;
+      }
+      if (known === undefined) pages.set(key, index);
+      bytes += added;
+      current.push(record);
+    }
+    if (current.length > 0) batches.push({ records: current, bytes });
+    return batches;
   };
 
-  /** The request bodies these records take, in order. */
-  const split = (records: Queued[]): string[] => {
-    const bodies: string[] = [];
-    let left = records;
-    while (left.length > 0) {
-      const batch = nextBatch(left);
-      bodies.push(bodyOf(batch));
-      left = left.slice(batch.length);
-    }
-    return bodies;
-  };
+  /** The oldest records that fit one request. */
+  const nextBatch = (from: Queued[]): Queued[] => plan(from)[0]?.records ?? [];
 
   const remove = (records: Queued[]) => {
     const gone = new Set(records);
@@ -419,7 +486,9 @@ export function startCapture(config: HeatmapConfig, options: CaptureOptions) {
         method: "POST",
         body: bodyOf(batch),
         headers: { "content-type": "text/plain" },
-        keepalive: true,
+        // Not keepalive while the page is shown: a browser lets a page's
+        // keepalive requests and beacons carry 64 KiB at once, which the
+        // sends as it closes need (exit()).
         credentials: "omit",
       });
       status = response.status;
@@ -461,6 +530,8 @@ export function startCapture(config: HeatmapConfig, options: CaptureOptions) {
       cancelFrame();
       measure();
     }
+    // Left before it was ever measured (an in-app navigation at once): no depth to say.
+    if (!measured) return;
     const droppedNow = Math.min(dropped, MAX_DROPPED);
     if (deepest <= sent.depth && droppedNow <= sent.dropped) return;
     sent = { depth: deepest, dropped: droppedNow };
@@ -470,7 +541,7 @@ export function startCapture(config: HeatmapConfig, options: CaptureOptions) {
       at: toMinute(page.at),
       pageOf: sentPage(page),
       depth: deepest,
-      fold: fold ?? round3(deepestAt.vh / deepestAt.ph),
+      fold: fold ?? 1,
       dropped: droppedNow,
       vw: viewportWidth,
       vh: deepestAt.vh,
@@ -479,25 +550,42 @@ export function startCapture(config: HeatmapConfig, options: CaptureOptions) {
     });
   };
 
-  /** The page is hidden or left: what is queued goes by beacon, within MAX_EXIT_BYTES. */
+  /**
+   * The page is hidden or left: what is queued goes by beacon, within
+   * MAX_EXIT_BYTES. Not while the server's Retry-After wait runs: hidden,
+   * the queue stays for the send after it; left, it is lost.
+   */
   const exit = () => {
     try {
       queueScroll({ remeasure: true });
-      if (stopped) return;
+      if (stopped || now() < retryAt) return;
       cancelTimer();
       // Over the budget, the oldest clicks go first, then the oldest records.
+      const total = (records: Queued[]) =>
+        plan(records).reduce((sum, batch) => sum + batch.bytes, 0);
       let leaving = [...queue];
-      let bodies = split(leaving);
-      while (
-        leaving.length > 1 &&
-        bodies.reduce((sum, text) => sum + byteLength(text), 0) > MAX_EXIT_BYTES
-      ) {
-        const oldestClick = leaving.findIndex((record) => record.type === "click");
-        leaving.splice(oldestClick === -1 ? 0 : oldestClick, 1);
-        bodies = split(leaving);
+      if (total(leaving) > MAX_EXIT_BYTES) {
+        // The fewest records to leave out, oldest clicks first, found by
+        // halving: the total only falls as more are left out.
+        const order = [
+          ...leaving.filter((record) => record.type === "click"),
+          ...leaving.filter((record) => record.type !== "click"),
+        ];
+        const without = (count: number) => {
+          const gone = new Set(order.slice(0, count));
+          return leaving.filter((record) => !gone.has(record));
+        };
+        let low = 1;
+        let high = leaving.length - 1;
+        while (low < high) {
+          const middle = Math.floor((low + high) / 2);
+          if (total(without(middle)) <= MAX_EXIT_BYTES) high = middle;
+          else low = middle + 1;
+        }
+        leaving = without(low);
       }
       queue = [];
-      for (const text of bodies) {
+      for (const text of plan(leaving).map((batch) => bodyOf(batch.records))) {
         if (!options.beacon(config.endpoint, new Blob([text], { type: "text/plain" }))) {
           void options
             .fetch(config.endpoint, {
@@ -522,6 +610,7 @@ export function startCapture(config: HeatmapConfig, options: CaptureOptions) {
       if (page === null || stopped || !trusted(event) || event.button !== 0 || event.detail === 0) {
         return;
       }
+      if (isPrivate(event)) return;
       const element = targetOf(event.target);
       if (element === null) return;
       const box = element.getBoundingClientRect();

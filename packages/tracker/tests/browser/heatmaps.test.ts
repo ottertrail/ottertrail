@@ -63,10 +63,13 @@ function capture({
   status = 202,
   trusted = true,
   respond,
+  beacons = true,
 }: {
   page?: HeatmapPage | null;
   status?: number;
   trusted?: boolean;
+  /** Whether the browser takes beacons; refused, h.js falls back to a keepalive fetch. */
+  beacons?: boolean;
   /** The API's answer to each fetch, in place of `status`. */
   respond?: () => Promise<{ status: number; headers: Headers }>;
 } = {}) {
@@ -100,7 +103,7 @@ function capture({
           }),
         ),
       );
-      return true;
+      return beacons;
     },
     now: () => clock,
     ...(trusted ? { trusted: () => true } : {}),
@@ -141,6 +144,8 @@ function click(element: Element, at = { x: 0.5, y: 0.5 }, options: MouseEventIni
       cancelable: true,
       detail: 1,
       button: 0,
+      // Out of a shadow root too, as the browser's own clicks are.
+      composed: true,
       clientX: box.left + box.width * at.x,
       clientY: box.top + box.height * at.y,
       ...options,
@@ -316,6 +321,8 @@ describe("scroll depth", () => {
     document.body.innerHTML = LAYOUT;
     document.body.style.height = "4000px";
     const heat = capture();
+    // The page as h.js first measures it, once drawn.
+    await frames();
     scrollTo(1000);
     await frames(1);
     scrollTo(500); // Back up: the deepest point counts.
@@ -352,6 +359,8 @@ describe("scroll depth", () => {
     document.body.innerHTML = LAYOUT;
     document.body.style.height = "4000px";
     const heat = capture();
+    // The page as h.js first measures it, once drawn.
+    await frames();
     scrollTo(2000);
     heat.setPage({ url: "https://example.com/next", at: 20_000 });
     heat.started.navigated();
@@ -415,6 +424,8 @@ describe("scroll depth in a single-page app", () => {
     document.body.innerHTML = LAYOUT;
     document.body.style.height = "4000px";
     const heat = capture();
+    // The page as h.js first measures it, once drawn.
+    await frames();
     const vh = window.innerHeight;
     // /pricing read to the bottom.
     scrollTo(4000);
@@ -441,6 +452,8 @@ describe("scroll depth in a single-page app", () => {
     document.body.innerHTML = LAYOUT;
     document.body.style.height = "4000px";
     const heat = capture();
+    // The page as h.js first measures it, once drawn.
+    await frames();
     const vh = window.innerHeight;
     scrollTo(1000);
     await frames(1);
@@ -463,6 +476,8 @@ describe("scroll depth in a single-page app", () => {
     const vh = window.innerHeight;
     const first = document.documentElement.scrollHeight;
     const heat = capture();
+    // The page as h.js first measures it, once drawn.
+    await frames();
     // Lazy content below.
     document.body.style.height = "8000px";
     scrollTo(8000);
@@ -472,6 +487,129 @@ describe("scroll depth in a single-page app", () => {
     const [row] = heat.records().filter((record) => record.type === "scroll");
     expect(row?.type === "scroll" && row.fold).toBeCloseTo(vh / first, 2);
     expect(row?.ph).toBe(document.documentElement.scrollHeight);
+  });
+});
+
+describe("review fixes", () => {
+  test("a marker inside an open shadow root, or on the clicked element itself, keeps the click out", async () => {
+    document.body.innerHTML = `${LAYOUT}<div id="host"></div><button id="self" data-ottertrail-mask style="width:50px;height:20px">Pay</button>`;
+    const root = element("#host").attachShadow({ mode: "open" });
+    root.innerHTML =
+      '<div data-ottertrail-block><button id="pin" style="width:30px;height:30px">7</button></div><button id="open" style="width:30px;height:30px">Ok</button>';
+    const heat = capture();
+    const inShadow = (id: string) => {
+      const found = root.querySelector(`#${id}`);
+      if (found === null) throw new Error(id);
+      return found;
+    };
+    click(inShadow("pin"));
+    click(element("#self"));
+    click(inShadow("open")); // Outside the marker: recorded, for its host.
+    hide();
+    await heat.settle();
+    const clicks = heat.records().filter((record) => record.type === "click");
+    expect(clicks.map((record) => record.type === "click" && record.element)).toEqual(["body>div"]);
+  });
+
+  test("the first load is measured once the app has drawn, not before", async () => {
+    // A client-rendered app: nothing drawn yet when h.js starts, the document still loading.
+    document.body.innerHTML = "<div id='root'></div>";
+    Object.defineProperty(document, "readyState", { configurable: true, get: () => "loading" });
+    cleanups.push(() => Reflect.deleteProperty(document, "readyState"));
+    const heat = capture();
+    // It draws, then the page loads.
+    document.body.style.height = "5000px";
+    Reflect.deleteProperty(document, "readyState");
+    window.dispatchEvent(new Event("load"));
+    await frames();
+    hide();
+    await heat.settle();
+    const [row] = heat.records().filter((record) => record.type === "scroll");
+    const height = document.documentElement.scrollHeight;
+    expect(row?.type === "scroll" && row.fold).toBeCloseTo(window.innerHeight / height, 2);
+    expect(row?.type === "scroll" && row.depth).toBeLessThan(1);
+  });
+
+  test("a pageview left before it was ever measured sends no depth, nor the page before's sizes", async () => {
+    document.body.innerHTML = LAYOUT;
+    document.body.style.height = "4000px";
+    const heat = capture();
+    await frames();
+    heat.setPage({ url: "https://example.com/passing", at: 20_000 });
+    heat.started.navigated();
+    // Redirected on at once, before /passing was drawn.
+    heat.setPage({ url: "https://example.com/final", at: 21_000 });
+    heat.started.navigated();
+    await frames();
+    hide();
+    await heat.settle();
+    const scrolls = heat.records().filter((record) => record.type === "scroll");
+    expect(scrolls.map((record) => record.url)).toEqual([PAGE.url, "https://example.com/final"]);
+  });
+
+  test("sends while the page is shown are not keepalive; a refused beacon falls back to a keepalive fetch", async () => {
+    document.body.innerHTML = LAYOUT;
+    vi.useFakeTimers();
+    cleanups.push(() => vi.useRealTimers());
+    const heat = capture({ beacons: false });
+    click(element("#go"));
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(heat.fetch.mock.calls[0]?.[1].keepalive).not.toBe(true);
+    click(element("#go"));
+    hide();
+    expect(heat.fetch).toHaveBeenCalledTimes(2);
+    expect(heat.fetch.mock.calls[1]?.[1].keepalive).toBe(true);
+  });
+
+  test("hidden during a Retry-After wait, the queue waits for it; left during it, nothing is sent", async () => {
+    document.body.innerHTML = LAYOUT;
+    vi.useFakeTimers();
+    cleanups.push(() => vi.useRealTimers());
+    let calls = 0;
+    const heat = capture({
+      respond: async () => {
+        calls += 1;
+        return calls === 1
+          ? { status: 429, headers: new Headers({ "retry-after": "30" }) }
+          : { status: 202, headers: new Headers() };
+      },
+    });
+    click(element("#go"));
+    await vi.advanceTimersByTimeAsync(5000);
+    hide();
+    window.dispatchEvent(new Event("pagehide"));
+    await heat.settle();
+    expect(heat.sent.filter((batch) => batch.via === "beacon")).toEqual([]);
+    // After the wait, the kept records go.
+    heat.tick(30_000);
+    await vi.advanceTimersByTimeAsync(30_000);
+    const fetched = heat.sent.filter((batch) => batch.via === "fetch");
+    expect(fetched).toHaveLength(2);
+    expect(received(fetched.slice(1)).map((record) => record.type)).toEqual(["click", "scroll"]);
+  });
+
+  test("sizing a full queue on exit writes each record's JSON once, not once per try", async () => {
+    document.body.innerHTML = LAYOUT;
+    vi.useFakeTimers();
+    cleanups.push(() => vi.useRealTimers());
+    const heat = capture({ respond: () => new Promise(() => undefined) });
+    heat.setPage({ url: `https://example.com/long?utm_campaign=${"c".repeat(3000)}`, at: 1000 });
+    heat.started.navigated();
+    for (let index = 0; index < 200; index += 1) {
+      click(index % 2 === 0 ? element("#go") : element("#cta"));
+      heat.tick(2000);
+    }
+    const stringify = vi.spyOn(JSON, "stringify");
+    hide();
+    const writes = stringify.mock.calls.length;
+    stringify.mockRestore();
+    await heat.settle();
+    // About one per record and a few envelopes; it was thousands.
+    expect(writes).toBeLessThan(400);
+    const beacons = heat.sent.filter((batch) => batch.via === "beacon");
+    expect(beacons.reduce((sum, batch) => sum + batch.bytes, 0)).toBeLessThanOrEqual(
+      MAX_EXIT_BYTES,
+    );
   });
 });
 
@@ -500,6 +638,15 @@ describe("limits", () => {
     vi.useFakeTimers();
     cleanups.push(() => vi.useRealTimers());
     const heat = capture();
+    // How much JSON h.js writes: each record's once to size it, then the bodies sent.
+    const realStringify = JSON.stringify.bind(JSON);
+    let written = 0;
+    const stringify = vi.spyOn(JSON, "stringify").mockImplementation((...args) => {
+      const text = realStringify(...args);
+      written += text.length;
+      return text;
+    });
+    cleanups.push(() => stringify.mockRestore());
     for (let index = 0; index < 40; index += 1) {
       heat.setPage({ url: longUrl(index), referrer: "https://news.example/", at: 1000 });
       heat.started.navigated();
@@ -509,8 +656,15 @@ describe("limits", () => {
     }
     await vi.advanceTimersByTimeAsync(10_000);
     await vi.advanceTimersByTimeAsync(10_000);
+    stringify.mockRestore();
     expect(heat.sent.length).toBeGreaterThan(1);
+    // Never a body written again for each record that might join it.
+    const sentBytes = heat.sent.reduce((sum, batch) => sum + batch.bytes, 0);
+    expect(written).toBeLessThan(sentBytes * 3);
     expect(heat.sent.every((batch) => batch.bytes <= MAX_BATCH_BYTES)).toBe(true);
+    // Filled close to the limit: the sizes are added up exactly, not guessed high.
+    for (const batch of heat.sent.slice(0, -1))
+      expect(batch.bytes).toBeGreaterThan(MAX_BATCH_BYTES - 6000);
     expect(heat.sent.every((batch) => batch.body.records.length <= MAX_RECORDS_PER_BATCH)).toBe(
       true,
     );

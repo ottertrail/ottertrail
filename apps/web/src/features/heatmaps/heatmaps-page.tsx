@@ -264,15 +264,17 @@ function NoPageData({
   heatmap,
   pages,
   search,
+  device,
   projectId,
 }: {
   heatmap: Heatmap;
   pages: HeatmapPages | undefined;
   search: HeatmapsSearch;
+  /** The device shown: chosen, or the page's top device; none for all devices. */
+  device: HeatmapDevice | undefined;
   projectId: string;
 }) {
   const { environment } = search;
-  const device = search.device === "all" ? undefined : search.device;
   const devices = heatmap.devices.filter(
     (item) => item.pageviews > 0 && isHeatmapDevice(item.device) && item.device !== device,
   );
@@ -299,6 +301,13 @@ function NoPageData({
             <>
               No visitor sent heatmap data from this page in the period. Data arrives as pages are
               viewed, once the tracking snippet has {ATTRIBUTE}.
+            </>
+          )}
+          {heatmap.clipped && (
+            <>
+              {" "}
+              Heatmaps keep {heatmap.retentionDays} days of data, so nothing from before{" "}
+              {formatDay(heatmap.firstDay)} is left.
             </>
           )}
         </EmptyDescription>
@@ -591,52 +600,54 @@ export function HeatmapsPage({
       params: { projectId },
       search: heatmapsSearchOf({ ...search, ...next }),
     });
-  // Left out or "all", the requests name no device.
-  const queryDevice = device === "all" ? undefined : device;
-  const pages = useQuery(heatmapPagesQuery(projectId, range, environment, queryDevice));
+  // Only the reader's own choice is in the address: a device, or "all".
+  const chosenDevice = device === "all" ? undefined : device;
+  const pages = useQuery(heatmapPagesQuery(projectId, range, environment, chosenDevice));
   // Without a page in the address, the first with data (the API lists most pageviews and clicks first).
   const shownPath =
     path ??
     (pages.data?.pages.find((item) => item.pageviews + item.clicks > 0) ?? pages.data?.pages[0])
       ?.path;
+  // Without a choice, the page's answer for all devices names the device
+  // with the most pageviews for this page and period, as each device's
+  // layout differs. Worked out on every render, never written to the
+  // address, so another page or period finds its own.
+  const allDevices = useQuery({
+    ...heatmapQuery(projectId, range, environment, undefined, shownPath ?? ""),
+    enabled: shownPath !== undefined && device === undefined,
+  });
+  const derived =
+    device === undefined && allDevices.data !== undefined && !allDevices.isPlaceholderData
+      ? topDeviceOf(allDevices.data)
+      : undefined;
+  // Until the answer for all devices is in, the default device is unknown.
+  const deriving = device === undefined && (allDevices.isPending || allDevices.isPlaceholderData);
+  const queryDevice = chosenDevice ?? derived;
   const heatmap = useQuery({
     ...heatmapQuery(projectId, range, environment, queryDevice, shownPath ?? ""),
-    enabled: shownPath !== undefined,
+    // Not while the answer for all devices failed: Retry asks it again.
+    enabled: shownPath !== undefined && !deriving && !(device === undefined && allDevices.isError),
   });
-  // Without a device in the address, the page's own answer for all devices
-  // names the device with the most pageviews: the address is replaced once
-  // with it (and the page), as each device's layout differs.
-  const topDevice =
-    device === undefined &&
-    heatmap.data !== undefined &&
-    !heatmap.isPlaceholderData &&
-    heatmap.data.device === null
-      ? topDeviceOf(heatmap.data)
-      : undefined;
-  React.useEffect(() => {
-    if (topDevice === undefined || shownPath === undefined) return;
-    void navigate({
-      to: "/projects/$projectId/heatmaps",
-      params: { projectId },
-      search: heatmapsSearchOf({ range, environment, path: shownPath, device: topDevice }),
-      replace: true,
-    });
-  }, [topDevice, shownPath, navigate, projectId, range, environment]);
 
-  const notFound = [pages.error, heatmap.error].some(
+  const notFound = [pages.error, allDevices.error, heatmap.error].some(
     (error) => error instanceof ApiError && error.status === 404,
   );
   if (notFound) {
     return <NoSuchProject />;
   }
-  const failed = pages.isError ? pages : heatmap.isError ? heatmap : undefined;
+  const failed = pages.isError
+    ? pages
+    : allDevices.isError
+      ? allDevices
+      : heatmap.isError
+        ? heatmap
+        : undefined;
   const data = shownPath === undefined ? undefined : heatmap.data;
   const answered = data ?? pages.data;
   // Nothing to show yet: the list of pages, or the page's heatmap, still loading.
   const waiting =
     pages.data === undefined ||
-    (shownPath !== undefined && heatmap.data === undefined) ||
-    topDevice !== undefined;
+    (shownPath !== undefined && (deriving || heatmap.data === undefined));
 
   let body: React.ReactNode;
   if (waiting) {
@@ -654,7 +665,13 @@ export function HeatmapsPage({
           clipped={pages.data?.clipped ?? false}
         />
       ) : (
-        <NoPageData heatmap={data} pages={pages.data} search={search} projectId={projectId} />
+        <NoPageData
+          heatmap={data}
+          pages={pages.data}
+          search={search}
+          device={queryDevice}
+          projectId={projectId}
+        />
       );
   } else {
     body = <Report heatmap={data} projectId={projectId} />;
@@ -675,11 +692,11 @@ export function HeatmapsPage({
               projectId={projectId}
               range={range}
               environment={environment}
-              device={queryDevice}
+              device={chosenDevice}
               path={shownPath}
               onPath={(next) => show({ path: next })}
             />
-            <DevicePicker device={device} onDevice={(next) => show({ device: next })} />
+            <DevicePicker device={device ?? derived} onDevice={(next) => show({ device: next })} />
           </>
         }
       />

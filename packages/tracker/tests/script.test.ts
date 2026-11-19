@@ -1387,6 +1387,18 @@ describe("heatmaps", () => {
     expect(page.added).toHaveLength(1);
   });
 
+  test("a pageview whose URL is too long to send has no heatmap page", async () => {
+    const page = fakePage(`https://example.com/${"a".repeat(2048)}`, "", {
+      attributes: { heatmaps: "on", vitals: "off" },
+    });
+    await runScript();
+    // h.js is not even loaded for it.
+    expect(page.added).toEqual([]);
+    page.window.location.href = "https://example.com/next";
+    page.window.history.pushState();
+    expect(heatmapConfig(page)?.page()).toMatchObject({ url: "https://example.com/next" });
+  });
+
   test("a sample outside 0 to 1 warns and samples every pageview", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     vi.spyOn(Math, "random").mockReturnValue(0.99);

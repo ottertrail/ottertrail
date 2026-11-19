@@ -199,6 +199,39 @@ describe("POST /api/heatmaps", () => {
     expect(report.json()).toMatchObject({ totals: { pageviews: 1, clicks: 1 } });
   });
 
+  test("a copy sent in the minute after midnight by a clock a little ahead stays on its day, counted once", async () => {
+    const project = await newProject();
+    const midnight = Date.parse(`${new Date().toISOString().slice(0, 10)}T00:00:00.000Z`);
+    // The browser's clock is 5 seconds ahead; it floored the click's time to 00:00.
+    const record = click({ at: midnight });
+    const at = (received: number, sentBy: number) =>
+      send(project.public_key, [record], {
+        app: appWith({ collection: { clickhouse: dashboard.reader.client, now: () => received } }),
+        sentAt: sentBy,
+      });
+    expect((await at(midnight + 26_000, midnight + 31_000)).statusCode).toBe(202);
+    // The retry, 4 seconds longer on the way.
+    expect((await at(midnight + 35_000, midnight + 36_000)).statusCode).toBe(202);
+    const params = new QueryParams();
+    const rows = await queryRows<{ day: string; n: string }>(
+      dashboard.reader,
+      `SELECT toString(toDate(occurred_at)) AS day, count() AS n FROM heatmaps FINAL
+       WHERE project_id = ${params.add(project.id, "UUID")} GROUP BY day`,
+      params,
+    );
+    expect(rows).toEqual([{ day: new Date(midnight).toISOString().slice(0, 10), n: "1" }]);
+  });
+
+  test("the page list counts a scroll record sent again once, before its parts merge", async () => {
+    const project = await newProject();
+    const first = scroll({ depth: 0.2 });
+    for (const depth of [0.2, 0.5, 0.9]) {
+      await send(project.public_key, [{ ...first, depth }, click()]);
+    }
+    const pages = (await get(project.id, "/pages?period=7d")).json();
+    expect(pages.pages).toEqual([{ path: "/pricing", pageviews: 1, clicks: 3 }]);
+  });
+
   test("times are kept to the minute: the order of a visitor's taps is not", async () => {
     const project = await newProject();
     await send(project.public_key, [click({ at: NOON - 2000 }), click({ at: NOON - 1000 })], {
@@ -211,7 +244,8 @@ describe("POST /api/heatmaps", () => {
        WHERE project_id = ${params.add(project.id, "UUID")}`,
       params,
     );
-    const minute = new Date(Math.floor((NOON - 2000) / 60_000) * 60_000)
+    // To the nearest minute: 11:59:58 and 11:59:59 are both 12:00.
+    const minute = new Date(Math.round((NOON - 2000) / 60_000) * 60_000)
       .toISOString()
       .replace("T", " ")
       .replace("Z", "");
@@ -479,6 +513,9 @@ describe("storage", () => {
     );
     expect(table?.statement).toContain("TTL toDateTime(occurred_at) + toIntervalDay(90)");
     expect(table?.statement).toContain("ReplacingMergeTree(version)");
+    // A day's parts merge once all are an hour old, so copies do not stay.
+    expect(table?.statement).toContain("min_age_to_force_merge_seconds = 3600");
+    expect(table?.statement).toContain("min_age_to_force_merge_on_partition_only = 1");
     expect(table?.statement).toContain(
       "ORDER BY (project_id, toDate(occurred_at), path, device, kind, record_id)",
     );

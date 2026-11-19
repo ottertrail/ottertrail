@@ -76,6 +76,14 @@ function tableRows(name: string): string[][] {
 const section = (name: string) =>
   page.getByRole("table", { name }).element().closest("[data-slot=breakdown-table]");
 
+/** A page's top device in the fake: "/" desktops, "/pricing" phones; over 30 days, "/" tablets. */
+const topDeviceFor = (query: URLSearchParams) =>
+  query.get("path") === "/pricing"
+    ? "mobile"
+    : query.get("period") === "30d"
+      ? "tablet"
+      : "desktop";
+
 const ready = () => page.getByRole("table", { name: "Elements of the page, most clicks first" });
 
 /** Nothing in the content panel or the page scrolls sideways. */
@@ -107,14 +115,15 @@ describe("the heatmaps page", () => {
       { path: "/", period: "7d" },
       { path: "/", period: "7d", device: "desktop" },
     ]);
-    expect(lastQuery(api, "pages")).toEqual({ period: "7d", device: "desktop" });
+    // The list of pages is for all devices: no device was chosen.
+    expect(lastQuery(api, "pages")).toEqual({ period: "7d" });
     await expect.element(page.getByRole("combobox", { name: "Page" })).toHaveValue("/");
     await expect
       .element(page.getByRole("combobox", { name: "Device" }))
       .toMatchTextContent(/^Desktop/);
     await expect.element(page.getByRole("heading", { name: "/", exact: true })).toBeVisible();
-    // The address was replaced once with the page and device shown.
-    expect(router.state.location.search).toEqual({ path: "/", device: "desktop" });
+    // The default page and device are worked out, never written to the address.
+    expect(router.state.location.search).toEqual({});
   });
 
   test("shows the figures, without changes from a period before", async () => {
@@ -310,7 +319,7 @@ describe("the heatmaps page", () => {
 
     await expect
       .poll(() => router.state.location.search)
-      .toEqual({ period: "30d", path: "/", device: "mobile" });
+      .toEqual({ period: "30d", device: "mobile" });
     await expect
       .poll(() => lastQuery(api, "heatmaps"))
       .toEqual({ path: "/", period: "30d", device: "mobile" });
@@ -331,7 +340,7 @@ describe("the heatmaps page", () => {
     const router = renderApp(`${HEATMAPS}?path=${encodeURIComponent("/pricing")}`);
     await expect.element(ready()).toBeVisible();
 
-    expect(router.state.location.search).toEqual({ path: "/pricing", device: "mobile" });
+    expect(router.state.location.search).toEqual({ path: "/pricing" });
     await expect
       .element(page.getByRole("combobox", { name: "Device" }))
       .toMatchTextContent(/^Mobile/);
@@ -341,6 +350,81 @@ describe("the heatmaps page", () => {
       { path: "/pricing", period: "7d" },
       { path: "/pricing", period: "7d", device: "mobile" },
     ]);
+  });
+
+  test("another page or period without a chosen device finds its own top device", async () => {
+    const api = installFakeApi({
+      heatmap: (query) => ({
+        ...fakeHeatmap(query),
+        devices: [
+          { device: topDeviceFor(query), pageviews: 300 },
+          { device: "desktop", pageviews: 1 },
+        ],
+      }),
+    });
+    const router = renderApp(HEATMAPS);
+    await expect.element(ready()).toBeVisible();
+    expect(lastQuery(api, "heatmaps")).toEqual({ path: "/", period: "7d", device: "desktop" });
+
+    await page.getByRole("button", { name: "Show pages" }).click();
+    await page.getByRole("option", { name: "/pricing" }).click();
+    await expect
+      .poll(() => lastQuery(api, "heatmaps"))
+      .toEqual({ path: "/pricing", period: "7d", device: "mobile" });
+    await expect
+      .element(page.getByRole("combobox", { name: "Device" }))
+      .toMatchTextContent(/^Mobile/);
+    expect(router.state.location.search).toEqual({ path: "/pricing" });
+
+    await page.getByRole("button", { name: "Show pages" }).click();
+    await page.getByRole("option", { name: "/", exact: true }).click();
+    await page.getByRole("combobox", { name: "Period" }).click();
+    await page.getByRole("option", { name: "Last 30 days" }).click();
+    await expect
+      .poll(() => lastQuery(api, "heatmaps"))
+      .toEqual({ path: "/", period: "30d", device: "tablet" });
+    expect(router.state.location.search).toEqual({ path: "/", period: "30d" });
+  });
+
+  test("a chosen device stays across pages and periods", async () => {
+    const api = installFakeApi();
+    const router = renderApp(HEATMAPS);
+    await expect.element(ready()).toBeVisible();
+    await page.getByRole("combobox", { name: "Device" }).click();
+    await page.getByRole("option", { name: "Tablet" }).click();
+    await expect.poll(() => router.state.location.search).toEqual({ device: "tablet" });
+
+    await page.getByRole("button", { name: "Show pages" }).click();
+    await page.getByRole("option", { name: "/pricing" }).click();
+    await page.getByRole("combobox", { name: "Period" }).click();
+    await page.getByRole("option", { name: "Last 30 days" }).click();
+    await expect
+      .poll(() => router.state.location.search)
+      .toEqual({ device: "tablet", path: "/pricing", period: "30d" });
+    await expect
+      .poll(() => lastQuery(api, "heatmaps"))
+      .toEqual({ path: "/pricing", period: "30d", device: "tablet" });
+    // A chosen device asks no answer for all devices first.
+    expect(heatmapQueries(api).filter((query) => query.period === "30d")).toEqual([
+      { path: "/pricing", period: "30d", device: "tablet" },
+    ]);
+  });
+
+  test("a chosen page without data in a period before the 90 days says nothing from then is left", async () => {
+    installFakeApi({
+      heatmapPages: () => heatmapPagesFixture({ pages: [], clipped: true, firstDay: "2026-08-23" }),
+      heatmap: (query) =>
+        emptyHeatmap({ path: query.get("path") ?? "/", clipped: true, firstDay: "2026-08-23" }),
+    });
+    renderApp(`${HEATMAPS}?path=${encodeURIComponent("/pricing")}&from=2025-01-01&to=2025-01-31`);
+    await expect
+      .element(page.getByText("No heatmap data for /pricing in this period"))
+      .toBeVisible();
+    await expect
+      .element(
+        page.getByText(/Heatmaps keep 90 days of data, so nothing from before 23 Aug is left\./),
+      )
+      .toBeVisible();
   });
 
   test("All devices stays a choice: the address says so and the requests name no device", async () => {
@@ -355,18 +439,18 @@ describe("the heatmaps page", () => {
     });
     const router = renderApp(HEATMAPS);
     await expect.element(ready()).toBeVisible();
-    await expect.poll(() => router.state.location.search).toEqual({ path: "/", device: "desktop" });
+    expect(router.state.location.search).toEqual({});
     await expect.poll(() => figures()[1]).toEqual(["Clicks", "100"]);
     const asked = api.requests.length;
 
     await page.getByRole("combobox", { name: "Device" }).click();
     await page.getByRole("option", { name: "All devices" }).click();
-    await expect.poll(() => router.state.location.search).toEqual({ path: "/", device: "all" });
+    await expect.poll(() => router.state.location.search).toEqual({ device: "all" });
     await expect.poll(() => figures()[1]).toEqual(["Clicks", "1,250"]);
     await new Promise((resolve) => setTimeout(resolve, 300));
-    // Anything asked since names no device, and the address is not replaced again.
+    // Anything asked since names no device, and the choice stays.
     for (const request of api.requests.slice(asked)) expect(request).not.toContain("device=");
-    expect(router.state.location.search).toEqual({ path: "/", device: "all" });
+    expect(router.state.location.search).toEqual({ device: "all" });
     await expect
       .element(page.getByRole("combobox", { name: "Device" }))
       .toMatchTextContent(/^All devices/);
@@ -445,8 +529,9 @@ describe("the heatmaps page", () => {
     const router = renderApp(`${HEATMAPS}?device=watch`);
     await expect.element(ready()).toBeVisible();
     expect(heatmapQueries(api)[0]).toEqual({ path: "/", period: "7d" });
-    // As with no device: the top one.
-    expect(router.state.location.search).toEqual({ path: "/", device: "desktop" });
+    // As with no device: the top one, worked out.
+    expect(lastQuery(api, "heatmaps")).toEqual({ path: "/", period: "7d", device: "desktop" });
+    expect(router.state.location.search).toEqual({});
   });
 
   test("chooses another page from the list, and searches it", async () => {
@@ -462,9 +547,7 @@ describe("the heatmaps page", () => {
         .map((item) => item.textContent),
     ).toEqual(["/", "/pricing", "/docs/install"]);
     await page.getByRole("option", { name: "/pricing" }).click();
-    await expect
-      .poll(() => router.state.location.search)
-      .toEqual({ path: "/pricing", device: "desktop" });
+    await expect.poll(() => router.state.location.search).toEqual({ path: "/pricing" });
     await expect
       .poll(() => lastQuery(api, "heatmaps"))
       .toEqual({ path: "/pricing", period: "7d", device: "desktop" });
@@ -475,9 +558,7 @@ describe("the heatmaps page", () => {
     const field = page.getByRole("combobox", { name: "Page" });
     await field.fill("inst");
     // Once typing pauses, the API searches past the first 100 pages.
-    await expect
-      .poll(() => lastQuery(api, "pages"))
-      .toEqual({ period: "7d", device: "desktop", search: "inst" });
+    await expect.poll(() => lastQuery(api, "pages")).toEqual({ period: "7d", search: "inst" });
     await expect
       .poll(() =>
         page
@@ -487,9 +568,7 @@ describe("the heatmaps page", () => {
       )
       .toEqual(["/docs/install"]);
     await page.getByRole("option", { name: "/docs/install" }).click();
-    await expect
-      .poll(() => router.state.location.search)
-      .toEqual({ path: "/docs/install", device: "desktop" });
+    await expect.poll(() => router.state.location.search).toEqual({ path: "/docs/install" });
   });
 
   test("reads the page from the address", async () => {
