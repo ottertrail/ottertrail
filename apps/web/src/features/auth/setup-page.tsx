@@ -3,6 +3,7 @@ import { Link, useNavigate } from "@tanstack/react-router";
 import { LoaderCircleIcon, OctagonAlertIcon } from "lucide-react";
 import * as React from "react";
 
+import { TimezoneCombobox } from "@/components/timezone-combobox";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field";
@@ -14,13 +15,7 @@ import { createOwner, fetchSetupStatus } from "@/lib/setup-api";
 import { AuthLayout } from "./auth-layout";
 import { MIN_PASSWORD_LENGTH, useLinkToken } from "./link-token";
 
-/**
- * Timezone names to suggest while typing, as the settings page does. The
- * browser's list leaves out "UTC", which is added.
- */
-const TIME_ZONES = ["UTC", ...Intl.supportedValuesOf("timeZone")];
-
-/** The browser's own timezone, chosen until another is typed. */
+/** The browser's own timezone, chosen until another is picked. */
 const browserTimeZone = () => Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
 
 export function SetupPage() {
@@ -80,8 +75,10 @@ export function SetupPage() {
           <OctagonAlertIcon />
           <AlertTitle>No setup link</AlertTitle>
           <AlertDescription>
-            On the server, run <code className="font-mono">vp run setup</code> and open the link it
-            prints. If the owner account already exists, <Link to="/sign-in">sign in</Link> instead.
+            On the server, in the instance&apos;s folder, run{" "}
+            <code className="font-mono">docker compose exec api node dist/setup.mjs</code> and open
+            the link it prints (in development: <code className="font-mono">vp run setup</code>). If
+            the owner account already exists, <Link to="/sign-in">sign in</Link> instead.
           </AlertDescription>
         </Alert>
       </AuthLayout>
@@ -144,25 +141,14 @@ export function SetupPage() {
           </Field>
           <Field>
             <FieldLabel htmlFor="time-zone">Timezone</FieldLabel>
-            <Input
+            <TimezoneCombobox
               id="time-zone"
               name="time-zone"
               value={timeZone}
-              onChange={(event) => setTimeZone(event.target.value)}
-              list="setup-time-zones"
+              onValueChange={setTimeZone}
               required
-              maxLength={100}
-              autoComplete="off"
-              spellCheck={false}
               aria-describedby="time-zone-hint"
             />
-            <datalist id="setup-time-zones">
-              {TIME_ZONES.map((zone) => (
-                <option key={zone} value={zone}>
-                  {zone}
-                </option>
-              ))}
-            </datalist>
             <FieldDescription id="time-zone-hint">
               Reports count days in it. Your browser&apos;s is chosen; the owner can change it later
               in Settings.

@@ -8,14 +8,14 @@ The live reference page is the app's home screen (`vp run dev`, then open the we
 
 ## Where things live
 
-| What                                                          | Where                                  |
-| ------------------------------------------------------------- | -------------------------------------- |
-| Tokens (CSS variables, Tailwind theme, type scale, radius)    | `apps/web/src/styles/globals.css`      |
-| shadcn/ui components (Base UI primitives, `base-nova` style)  | `apps/web/src/components/ui/`          |
-| Ottertrail components (`StatusBadge`, `ApiStatus`, app shell) | `apps/web/src/components/`             |
-| Reference page                                                | `apps/web/src/features/design-system/` |
-| Contrast tests for the tokens                                 | `apps/web/tests/tokens.test.ts`        |
-| shadcn configuration                                          | `apps/web/components.json`             |
+| What                                                                              | Where                                  |
+| --------------------------------------------------------------------------------- | -------------------------------------- |
+| Tokens (CSS variables, Tailwind theme, type scale, radius)                        | `apps/web/src/styles/globals.css`      |
+| shadcn/ui components (Base UI primitives, `base-nova` style)                      | `apps/web/src/components/ui/`          |
+| Ottertrail components (`StatusBadge`, `ApiStatus`, `TimezoneCombobox`, app shell) | `apps/web/src/components/`             |
+| Reference page                                                                    | `apps/web/src/features/design-system/` |
+| Contrast tests for the tokens                                                     | `apps/web/tests/tokens.test.ts`        |
+| shadcn configuration                                                              | `apps/web/components.json`             |
 
 Use tokens through Tailwind utilities (`bg-card`, `text-ink-subtle`, `ring-border`, `text-headline`), not raw hex values in components.
 
@@ -134,6 +134,7 @@ No drop shadows for hierarchy; use the surface ladder and `ring-1 ring-border`.
 - Local changes to generated files: the `text-link` substitutions above, and `hooks/use-mobile.ts` rewritten with `useSyncExternalStore` (the generated version set state inside an effect). Keep these when updating components.
 - The root lint config relaxes five rules for `components/ui/*.tsx` only, so upstream updates stay reviewable.
 - A link that looks like a button is `ButtonLink` (`components/button-link.ts`), which takes the router's link props. Do not render a `Button` as a link (`render={<Link />}`): Base UI gives the rendered element the button role, so screen readers announce the link as a button.
+- A text field that filters a long list of choices is `Combobox` (`components/ui/combobox.tsx`, written by hand in the generated files' style, on Base UI's Combobox, which gives it the `combobox`, `listbox`, and `option` roles and the keyboard: arrows, Enter, Escape). `ComboboxInput` is the field, styled like `Input`, with a button that opens the list; its other props go to the `<input>`, so a `<label htmlFor>` names it. `ComboboxContent` is the floating list on `popover`, as wide as the field and at most 18rem high, scrolling inside; `ComboboxItem` marks the chosen option with a check; `ComboboxEmpty` says when nothing matches and stays mounted as a live region. Use it instead of an `<input list>` with a `<datalist>`, which browsers show as an unstyled native list. The timezone fields use it through `TimezoneCombobox` (`components/timezone-combobox.tsx`). A `datalist` stays only where any value may be typed past the suggestions, such as the alert rules' and the funnel editor's fields.
 - Text to copy, such as an install snippet or a key, is `CopyableCode` (`components/copyable-code.tsx`): code that wraps, with its copy button inside the box. Never a read-only input, which looks editable, and never inside a form whose Save button would not store it.
 
 ### Data states

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vite-plus/test";
-import { page } from "vite-plus/test/browser/context";
+import { page, userEvent } from "vite-plus/test/browser/context";
 
 import { ADMIN_ACCESS, installFakeApi, memberAccess, SETTINGS } from "./fake-api.ts";
 import { renderApp } from "./render.tsx";
@@ -28,7 +28,9 @@ describe("the instance's settings", () => {
     await expect.element(page.getByText(/Reports count days in this timezone/)).toBeVisible();
 
     await page.getByRole("textbox", { name: "Name" }).fill("Acme Labs");
-    await timeZone.fill("Europe/Berlin");
+    await timeZone.fill("berlin");
+    await page.getByRole("option", { name: /^Europe\/Berlin/ }).click();
+    await expect.element(timeZone).toHaveValue("Europe/Berlin");
     await expect
       .element(page.getByText(/moves where days start in every report, past days included/))
       .toBeVisible();
@@ -43,6 +45,70 @@ describe("the instance's settings", () => {
     // The menu shows the new name, and the warning is gone with the change saved.
     await expect.element(page.getByText("Acme Labs", { exact: true }).first()).toBeVisible();
     await expect.element(page.getByText(/Reports count days in this timezone/)).toBeVisible();
+  });
+
+  test("the timezone list filters by any part of the name, spaces matching underscores", async () => {
+    installFakeApi();
+    renderApp("/settings");
+    const timeZone = page.getByRole("combobox", { name: "Timezone" });
+    await expect.element(timeZone).toHaveValue("Asia/Singapore");
+
+    await timeZone.fill("new york");
+    await expect.element(page.getByRole("option", { name: /^America\/New_York ·/ })).toBeVisible();
+    await expect
+      .element(page.getByRole("option", { name: /^Asia\/Singapore/ }))
+      .not.toBeInTheDocument();
+
+    // Case does not matter, and each option shows its offset from UTC (Singapore has no summer time).
+    await timeZone.fill("SINGAPORE");
+    await expect
+      .element(page.getByRole("option", { name: "Asia/Singapore · UTC+8" }))
+      .toBeVisible();
+    await expect.element(page.getByRole("option", { name: /^America\// })).not.toBeInTheDocument();
+  });
+
+  test("the timezone list says when nothing matches", async () => {
+    installFakeApi();
+    renderApp("/settings");
+    const timeZone = page.getByRole("combobox", { name: "Timezone" });
+    await expect.element(timeZone).toHaveValue("Asia/Singapore");
+
+    await timeZone.fill("atlantis");
+    await expect.element(page.getByText("No matching timezone")).toBeVisible();
+    await expect.element(page.getByRole("option").first()).not.toBeInTheDocument();
+  });
+
+  test("a timezone is chosen with the arrow keys and Enter, and Escape closes the list", async () => {
+    const api = installFakeApi();
+    renderApp("/settings");
+    const timeZone = page.getByRole("combobox", { name: "Timezone" });
+    await expect.element(timeZone).toHaveValue("Asia/Singapore");
+
+    await timeZone.fill("north dakota");
+    // The first match is highlighted as soon as one types; ArrowDown moves to the next.
+    const first = page.getByRole("option", { name: /^America\/North_Dakota\/Beulah ·/ });
+    await expect.element(first).toHaveAttribute("data-highlighted");
+    await userEvent.keyboard("{ArrowDown}");
+    const second = page.getByRole("option", { name: /^America\/North_Dakota\/Center ·/ });
+    await expect.element(second).toHaveAttribute("data-highlighted");
+    await expect.element(first).not.toHaveAttribute("data-highlighted");
+    await userEvent.keyboard("{Enter}");
+    await expect.element(timeZone).toHaveValue("America/North_Dakota/Center");
+    await expect.element(page.getByRole("listbox")).not.toBeInTheDocument();
+
+    await userEvent.keyboard("{ArrowDown}");
+    await expect.element(page.getByRole("listbox")).toBeVisible();
+    await userEvent.keyboard("{Escape}");
+    await expect.element(page.getByRole("listbox")).not.toBeInTheDocument();
+    await expect.element(timeZone).toHaveValue("America/North_Dakota/Center");
+
+    await page.getByRole("button", { name: "Save changes" }).click();
+    await expect.element(page.getByText("Saved.")).toBeVisible();
+    expect(api.bodies).toContainEqual({
+      method: "PATCH",
+      path: "/api/settings",
+      body: { name: "Acme Inc", timeZone: "America/North_Dakota/Center" },
+    });
   });
 
   test("an admin sees the channels, but not the instance's name and timezone", async () => {

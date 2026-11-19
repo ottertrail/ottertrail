@@ -7,6 +7,8 @@ import { renderApp } from "./render.tsx";
 
 const PASSWORD = "a long new password";
 
+const escapeRegExp = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
 /**
  * Opens a link with its token in the fragment, as a copied link arrives:
  * the page reads the fragment from the browser's address, the router's
@@ -148,7 +150,9 @@ describe("the setup page", () => {
     await page.getByRole("textbox", { name: "Workspace name" }).fill("Ada's company");
     await page.getByLabelText("Password", { exact: true }).fill(PASSWORD);
     await page.getByLabelText("Confirm password").fill("not the same");
-    await timeZone.fill("Europe/Berlin");
+    await timeZone.fill("berlin");
+    await page.getByRole("option", { name: /^Europe\/Berlin/ }).click();
+    await expect.element(timeZone).toHaveValue("Europe/Berlin");
     await page.getByRole("button", { name: "Create account" }).click();
     await expect
       .element(page.getByText("The two passwords differ.", { exact: false }))
@@ -170,11 +174,40 @@ describe("the setup page", () => {
       });
   });
 
+  test("marks the browser's timezone as chosen in the list", async () => {
+    installFakeApi({ signedIn: false });
+    open("/setup", "setup-token");
+    const browserZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const timeZone = page.getByRole("combobox", { name: "Timezone" });
+    await expect.element(timeZone).toHaveValue(browserZone);
+
+    await page.getByRole("button", { name: "Show timezones" }).click();
+    // The whole list shows, not only the names that contain the chosen one.
+    await expect.element(page.getByRole("option", { name: /^UTC/ })).toBeVisible();
+    await expect
+      .element(page.getByRole("option", { name: new RegExp(`^${escapeRegExp(browserZone)} ·`) }))
+      .toHaveAttribute("aria-selected", "true");
+  });
+
   test("says when alert email is set up", async () => {
     installFakeApi({ signedIn: false, emailConfigured: true });
     open("/setup", "setup-token");
     await expect
       .element(page.getByText("Email for alerts is set up on this server."))
       .toBeVisible();
+  });
+});
+
+describe("the sign-in page", () => {
+  test("before the owner exists, says how to run setup on a real install", async () => {
+    installFakeApi({ signedIn: false });
+    renderApp("/sign-in");
+    await expect.element(page.getByText("No account exists yet")).toBeVisible();
+    await expect
+      .element(page.getByText("docker compose exec api node dist/setup.mjs"))
+      .toBeVisible();
+    await expect.element(page.getByText(/in the instance's folder/)).toBeVisible();
+    await expect.element(page.getByText("vp run setup")).toBeVisible();
+    await expect.element(page.getByText(/In development, run/)).toBeVisible();
   });
 });

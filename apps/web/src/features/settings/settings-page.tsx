@@ -3,6 +3,7 @@ import { LoaderCircleIcon, OctagonAlertIcon } from "lucide-react";
 import * as React from "react";
 
 import { NoAccess } from "@/components/no-access";
+import { TimezoneCombobox } from "@/components/timezone-combobox";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -14,13 +15,6 @@ import { formText } from "@/lib/form";
 import { type Settings, settingsQuery, updateSettings } from "@/lib/settings-api";
 
 import { NotificationChannelsCard } from "./notification-channels";
-
-/**
- * Timezone names to suggest while typing. The browser's list leaves out
- * "UTC", which most installs start with, so it is added. The API
- * checks whatever is typed and stores its official name.
- */
-const TIME_ZONES = ["UTC", ...Intl.supportedValuesOf("timeZone")];
 
 function SettingsCard({ settings }: { settings: Settings }) {
   const queryClient = useQueryClient();
@@ -73,26 +67,15 @@ function SettingsCard({ settings }: { settings: Settings }) {
             </Field>
             <Field>
               <FieldLabel htmlFor="settings-time-zone">Timezone</FieldLabel>
-              <Input
+              <TimezoneCombobox
                 id="settings-time-zone"
                 name="timeZone"
                 value={timeZone}
-                onChange={(event) => setTimeZone(event.target.value)}
-                list="settings-time-zones"
+                onValueChange={setTimeZone}
                 required
-                maxLength={100}
-                autoComplete="off"
-                spellCheck={false}
                 className="w-72"
                 aria-describedby="settings-time-zone-hint"
               />
-              <datalist id="settings-time-zones">
-                {TIME_ZONES.map((zone) => (
-                  <option key={zone} value={zone}>
-                    {zone}
-                  </option>
-                ))}
-              </datalist>
               <FieldDescription id="settings-time-zone-hint">
                 {movesDays
                   ? "Changing it moves where days start in every report, past days included. Visitors seen before the change count again after it, until midnight."

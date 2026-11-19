@@ -219,7 +219,7 @@ export const setupRoutes: FastifyPluginCallback<{
           .send(
             problem(
               "invalid_link",
-              "This setup link is invalid, used, or expired. Run `vp run setup` again for a new one.",
+              "This setup link is invalid, used, or expired. For a new one, run `docker compose exec api node dist/setup.mjs` on the server again (`vp run setup` in development).",
             ),
           );
       }

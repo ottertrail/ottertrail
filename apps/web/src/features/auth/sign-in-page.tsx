@@ -55,8 +55,10 @@ export function SignInPage() {
           <InfoIcon />
           <AlertTitle>No account exists yet</AlertTitle>
           <AlertDescription>
-            On the server, run <code className="font-mono">vp run setup</code> and open the link it
-            prints to create the owner account.
+            On the server, in the instance&apos;s folder, run{" "}
+            <code className="font-mono">docker compose exec api node dist/setup.mjs</code> and open
+            the link it prints to create the owner account. In development, run{" "}
+            <code className="font-mono">vp run setup</code> instead.
           </AlertDescription>
         </Alert>
       )}

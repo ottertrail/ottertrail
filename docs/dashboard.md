@@ -19,11 +19,13 @@ The install's first account is its **owner**, created with the setup link ([belo
 
 ### Creating the owner
 
-There is no default password. Whoever runs the install creates the owner:
+There is no default password. Whoever runs the install creates the owner, on the server, in the instance's folder ([deployment](deployment.md)):
 
 ```sh
-vp run setup
+docker compose exec api node dist/setup.mjs
 ```
+
+In development, the same command is `vp run setup`. The sign-in page, while no owner exists, and the setup page, opened without a link, say to run it, in both forms.
 
 The command prints a link such as `https://analytics.example.com/setup#token=…`. Opening it shows a form for the owner's name, email, password and its confirmation, the workspace name (the instance's name in the sidebar), and the timezone reports count days in, the browser's chosen at first; all are saved with the account. The API checks the confirmation and the timezone too, as the settings page checks a timezone. A line says whether alert email (`SMTP_URL`) is set up on the server, and how to set it when not. The link:
 
@@ -550,7 +552,7 @@ PostgreSQL's `instance_settings` table has one row:
 - `name`: the display name at the top of the sidebar. The setup form sets it (the field "Workspace name").
 - `time_zone`: an IANA timezone, UTC until the setup page sets the one chosen there.
 
-`/settings` shows both (`GET /api/settings`) to the install's owner (`dashboard_users.role = 'owner'`), who alone can change them (`PATCH /api/settings`). Admins see only the notification channels there; members do not see the page ([access](access.md)). The timezone field suggests IANA names as you type. The API stores the name Node.js resolves it to (`US/Pacific` becomes `America/Los_Angeles`, and a few newer names come back as older ones: `Europe/Kyiv` as `Europe/Kiev`). It refuses fixed offsets such as `+08:00`, and names PostgreSQL does not know: Node.js and PostgreSQL carry separate timezone databases, and reports and retention use PostgreSQL's to work out where days start. (ClickHouse, which puts events on their days, knows every name Node.js does.)
+`/settings` shows both (`GET /api/settings`) to the install's owner (`dashboard_users.role = 'owner'`), who alone can change them (`PATCH /api/settings`). Admins see only the notification channels there; members do not see the page ([access](access.md)). The timezone field, here and on the setup page, is a combobox (`components/timezone-combobox.tsx`): typing filters the browser's IANA names, plus `UTC`, by any part of the name, ignoring case and treating spaces as underscores ("new york" finds `America/New_York`), and each option shows its current offset from UTC. A name is picked from the list, so it cannot be mistyped; the saved name is listed even when the browser's list leaves it out. The API stores the name Node.js resolves it to (`US/Pacific` becomes `America/Los_Angeles`, and a few newer names come back as older ones: `Europe/Kyiv` as `Europe/Kiev`). It refuses fixed offsets such as `+08:00`, and names PostgreSQL does not know: Node.js and PostgreSQL carry separate timezone databases, and reports and retention use PostgreSQL's to work out where days start. (ClickHouse, which puts events on their days, knows every name Node.js does.)
 
 Reports count days in the instance's timezone, and visitor IDs change at its midnight ([web analytics](web-analytics.md#one-salt-per-timezone-and-day)). Changing it therefore moves where days start in every report, past days included, and counts visitors afresh from the change until midnight; the page says so before saving.
 
