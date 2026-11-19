@@ -1,0 +1,14 @@
+Referrer spam list (spammers.txt), from https://github.com/matomo-org/referrer-spam-list,
+a community-contributed list maintained by Matomo.
+
+The list's README says, under "License":
+
+    Public Domain (no copyright).
+
+Its composer.json declares the licence "CC0-1.0" (Creative Commons Zero v1.0
+Universal, https://creativecommons.org/publicdomain/zero/1.0/).
+
+Its README also says: "This list of Referrer spammers is contributed by the
+community and is provided as is. Use at your own discretion: it may be
+incomplete (although we aim to keep it up to date) and it may contain outdated
+entries (let us know if a hostname was added but is not actually a spammer)."

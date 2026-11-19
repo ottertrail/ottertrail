@@ -33,6 +33,7 @@ import { healthRoutes } from "./routes/health.ts";
 import { settingsRoutes } from "./settings/routes.ts";
 import { SourceMapCache } from "./source-maps/resolve.ts";
 import { sourceMapRoutes, sourceMapUploadRoutes } from "./source-maps/routes.ts";
+import { spamRoutes } from "./spam/routes.ts";
 import { speedRoutes } from "./speed/routes.ts";
 import type { ObjectStore } from "./storage/object-store.ts";
 import { DashboardQueryLimiter } from "./telemetry/dashboard-limit.ts";
@@ -351,6 +352,15 @@ export function buildApp({
       emailConfigured: notifications.emailConfigured ?? false,
       policy,
       ...(uptime.lookup === undefined ? {} : { lookup: uptime.lookup }),
+      ...(dashboard.now === undefined ? {} : { now: dashboard.now }),
+    });
+    app.register(spamRoutes, {
+      prefix: "/api",
+      db,
+      clickhouse: dashboard.clickhouse,
+      store: objectStore,
+      auth: dashboard.auth,
+      trustedOrigins: dashboard.trustedOrigins,
       ...(dashboard.now === undefined ? {} : { now: dashboard.now }),
     });
     app.register(replayRoutes, {

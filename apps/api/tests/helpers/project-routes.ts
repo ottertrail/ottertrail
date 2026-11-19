@@ -71,6 +71,15 @@ export const PROJECT_REQUESTS: readonly ProjectRequest[] = [
   request("DELETE", "", "", { confirmName: "Some site" }),
   request("POST", "/public-key", "/public-key"),
   request("POST", "/secret-key", "/secret-key"),
+  request("POST", "/spam-visits/preview", "/spam-visits/preview", {
+    from: "2026-11-15",
+    to: "2026-11-15",
+  }),
+  request("POST", "/spam-visits/delete", "/spam-visits/delete", {
+    from: "2026-11-15",
+    to: "2026-11-15",
+    confirmVisits: 1,
+  }),
   request("GET", "/analytics", "/analytics?period=7d"),
   request("GET", "/analytics/list", "/analytics/list?report=pages&period=7d"),
   request("GET", "/speed", "/speed?period=7d"),

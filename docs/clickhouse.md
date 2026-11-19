@@ -66,6 +66,10 @@ The overview reads it for new signed-in users and weekly cohorts ([dashboard](da
 It follows the events:
 
 - **Retention.** When the worker deletes a project's old events, it deletes the project's rows here and works them out again from the events kept. A user whose early events are gone is first seen at their earliest event kept; a user with none left is gone. An event stored meanwhile is counted twice, which a min ignores.
+- **Deleted spam visits.** The same, when a deleted visit had a signed-in user ([below](#deleting-spam-visits)).
+
+A rebuild works the new rows out first, into a temporary table of a ClickHouse session of its own: the read of every signed-in event, the step that can time out or run out of memory, happens before anything is removed. Then it deletes the project's rows and copies the new ones in, a copy of a few rows. The table cannot be swapped in one step, since it has no partition per project, so if that last copy fails, the project has no first-seen times until its next rebuild (the next retention run that deletes its events, or the next spam delete with a signed-in user), and the view adds every user seen meanwhile.
+
 - **A deleted project.** Its rows are deleted with its events.
 
 ## Retention and deleting a project
@@ -84,6 +88,30 @@ Both cost more than they seem:
 
 - ClickHouse carries out a `DELETE` in the background, part by part. On the development stack, one took 1 to 9 seconds, however few rows it deleted. So the worker deletes for a thousand projects per statement (query values travel in the URL, which ClickHouse limits to 1 MiB), and sends none when nothing is due, as on most runs.
 - A part holds every project's events of its month, so taking one project's rows off the disk rewrites whole months (telemetry's partitions are days, so only those days): those the deleted project had events in, and, for retention, the oldest month kept, about once a day. That is why it runs every 6 hours, not after each deletion. On a large instance this rewriting is real disk work; partitions per project, or dropping whole months, would avoid it, and are not done.
+
+## Deleting spam visits
+
+A project's owner or admin can delete whole visits that match filters (the routes and filters: [web analytics](web-analytics.md#deleting-spam-that-got-in); code: `apps/api/src/spam/delete-visits.ts`). Visits are not stored, so a delete works them out first, then deletes their events:
+
+1. **Find the visits.** One read of the project's events with `FINAL`, filtered by `project_id` first, over the period and 25 hours either side, works out visits as reports do (window functions over each visitor's events, a new visit after 30 minutes without one, per environment) and keeps those with an event in the period that matches every filter. The preview runs the same query and only counts. Both read with the dashboard's limits (15 seconds, 300 MB): a period too large answers 503 and asks for a shorter one.
+2. **Delete them.** A lightweight `DELETE`, as retention uses, names each visit by environment, visitor ID, and its first and last event, 2,000 visits per statement (query values travel in the URL, which ClickHouse limits to 1 MiB): `WHERE project_id = … AND occurred_at` between the chunk's earliest and latest time `AND` the visitor is one of the chunk's `AND` the event lies within its visit's times. Each statement waits until ClickHouse has applied it, which takes seconds, so one delete takes at most 10,000 visits (5 statements); past that it refuses before deleting anything, and the dashboard asks to delete in parts.
+3. **A failure partway.** Each statement is applied whole or not at all, but a failure between statements leaves the earlier ones done. Whatever happens, the visits of the statements that ran then take their replays and first-seen times with them (in a `finally`), and the route answers 500 `delete_failed` ("some visits may have been deleted"): the user counts again and deletes the rest.
+4. **Retries.** A retried event not merged yet is a second row, a few seconds from the one `FINAL` showed. Each visit's times are widened by 10 minutes either side, less than the 30 minutes that part two visits of a visitor, so such a copy goes too and `FINAL` cannot bring it back. The window is tested on fixed rows, not a table ClickHouse merges (`visitsWhere` against a `values()` table): the visit's event and a copy 3 seconds out are taken, the same visitor 31 minutes later, another environment, visitor, or project are not. A second test stores retries of a visit's first and last events and a neighbour 31 minutes on, and records how many copies were still unmerged before the delete, which depends on ClickHouse's merge timing.
+5. **After it.** Reads with `FINAL` stop seeing the rows at once. They leave the disk when the worker next rewrites the parts that hold them (`APPLY DELETED MASK`, with retention, every 6 hours, [above](#retention-and-deleting-a-project)).
+
+What a delete reaches, and what it does not:
+
+| Derived from events                                                                            | Reached?                                                                                                                                                                                                                                        |
+| ---------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Reports, visits, the overview, funnels, retention, Speed, Users, Errors                        | Yes: all are worked out from `events` when asked                                                                                                                                                                                                |
+| `user_first_seen` (ClickHouse, filled by `user_first_seen_mv`)                                 | Yes: when a deleted visit had a signed-in user, the project's rows are worked out again from the events kept, as after retention ([First-seen times](#first-seen-times))                                                                        |
+| Session replays of the visits' errors (object store, `replays`, `replay_chunks`)               | Yes: the replays named by the deleted errors (`replay_id`) are deleted, objects and rows, holding the project's row as deleting all replays does. If the object store fails, the events stay deleted and the replays expire after their 30 days |
+| `projects.last_event_at` (PostgreSQL)                                                          | No: it may name the time of a deleted event until the next event arrives                                                                                                                                                                        |
+| `alert_error_groups` (PostgreSQL: when each error group first arrived, for "new error" alerts) | No: an error group first seen in a deleted visit keeps its first arrival, so the same error later counts as known, not new. Alerts already sent, and `alert_history`, stay as they were                                                         |
+| Error resolutions (`error_resolutions`)                                                        | Not derived: a resolution stays, and applies if the error comes back                                                                                                                                                                            |
+| Backups                                                                                        | No: deleted events stay in backups taken before                                                                                                                                                                                                 |
+
+Every other ClickHouse table (`spans`, `logs`, `metric_points`, `metric_histograms`, `check_results`) holds telemetry, not events, and no other materialized view reads `events`.
 
 ## Backups
 

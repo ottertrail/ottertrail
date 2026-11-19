@@ -15,14 +15,7 @@ import { SettingsTabs } from "@/components/settings-tabs";
 import { StatusBadge } from "@/components/status-badge";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
-import {
-  Field,
-  FieldContent,
-  FieldDescription,
-  FieldGroup,
-  FieldLabel,
-} from "@/components/ui/field";
+import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -44,6 +37,7 @@ import { NoSuchProject } from "./no-such-project";
 import { ReplaysSettings } from "./replays-card";
 import { ServerSettings } from "./server-card";
 import { SourceMapsCard } from "./source-maps-card";
+import { SpamTab } from "./spam-tab";
 
 /** While waiting for the first event, check every few seconds. */
 const STATUS_REFRESH_MS = 10_000;
@@ -198,7 +192,6 @@ interface GeneralValues {
   /** The allowed sites, one per line, as typed. */
   hostnames: string;
   retention: string;
-  ignoreDataCenters: boolean;
   mainGoal: string;
 }
 
@@ -206,13 +199,12 @@ const generalValues = (project: Project): GeneralValues => ({
   name: project.name,
   hostnames: project.allowedHostnames.join("\n"),
   retention: retentionValue(project.retentionDays),
-  ignoreDataCenters: project.ignoreDataCenters,
   mainGoal: project.mainGoalId ?? NO_GOAL,
 });
 
 /**
- * The project's name, allowed sites, how long it keeps events, data centers,
- * and main goal: one form, saved with its Save bar. Sites compare as a set,
+ * The project's name, allowed sites, how long it keeps events, and main
+ * goal: one form, saved with its Save bar. Sites compare as a set,
  * so reordering them is no change.
  */
 function GeneralSettings({
@@ -250,7 +242,6 @@ function GeneralSettings({
         name: values.name,
         allowedHostnames: hostnamesFromText(values.hostnames),
         retentionDays: retentionDays(values.retention),
-        ignoreDataCenters: values.ignoreDataCenters,
         // Sent only once the goals have loaded, so a choice is never made blind.
         ...(goals.isSuccess
           ? { mainGoalId: values.mainGoal === NO_GOAL ? null : values.mainGoal }
@@ -332,23 +323,6 @@ function GeneralSettings({
               : "Older events are permanently deleted, one whole day at a time. Forever keeps all events."}
           </FieldDescription>
         </Field>
-        <Field orientation="horizontal">
-          <Checkbox
-            id="settings-data-centers"
-            name="ignoreDataCenters"
-            checked={form.values.ignoreDataCenters}
-            onCheckedChange={(checked) => form.set("ignoreDataCenters", checked)}
-            aria-describedby="settings-data-centers-hint"
-          />
-          <FieldContent>
-            <FieldLabel htmlFor="settings-data-centers">Ignore visits from data centers</FieldLabel>
-            <FieldDescription id="settings-data-centers-hint">
-              Browsers at cloud provider addresses, such as Amazon's or Hetzner's, are nearly always
-              programs, such as scrapers or tests. This also ignores people who use cloud remote
-              desktops or some cloud VPNs. Disable this setting if your visitors use them.
-            </FieldDescription>
-          </FieldContent>
-        </Field>
         <Field>
           <FieldLabel htmlFor="settings-main-goal">Main goal</FieldLabel>
           {goals.isError ? (
@@ -395,6 +369,7 @@ function SettingsTabsFor({ project }: { project: Project }) {
   const [generalDirty, setGeneralDirty] = React.useState(false);
   const [serverDirty, setServerDirty] = React.useState(false);
   const [replayDirty, setReplayDirty] = React.useState(false);
+  const [spamDirty, setSpamDirty] = React.useState(false);
   return (
     <SettingsTabs
       label="Project settings"
@@ -411,6 +386,12 @@ function SettingsTabsFor({ project }: { project: Project }) {
           label: "Your server",
           dirty: serverDirty,
           content: <ServerSettings project={project} onDirty={setServerDirty} />,
+        },
+        {
+          value: "spam",
+          label: "Spam and bots",
+          dirty: spamDirty,
+          content: <SpamTab project={project} onDirty={setSpamDirty} />,
         },
         {
           value: "source-maps",
@@ -432,7 +413,8 @@ function SettingsTabsFor({ project }: { project: Project }) {
 /**
  * A project's settings: /projects/<id>/settings, as tabs (the chosen one in
  * `?tab=`). Install, Source maps, and Danger zone hold no fields; General,
- * Your server, and Session replay are forms with a Save bar each.
+ * Your server, Spam and bots, and Session replay are forms with a Save bar
+ * each.
  */
 export function ProjectSettingsPage({ projectId }: { projectId: string }) {
   const project = useQuery({
@@ -445,7 +427,7 @@ export function ProjectSettingsPage({ projectId }: { projectId: string }) {
     return (
       <div className="flex flex-col" aria-busy="true">
         <div className="flex h-10 items-center gap-6 border-b px-gutter">
-          {Array.from({ length: 6 }, (_, index) => (
+          {Array.from({ length: 7 }, (_, index) => (
             // oxlint-disable-next-line react/no-array-index-key
             <Skeleton key={index} className="h-4 w-20" />
           ))}

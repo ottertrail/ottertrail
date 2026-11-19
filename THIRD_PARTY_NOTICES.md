@@ -38,6 +38,10 @@ SOFTWARE.
 
 The files in `apps/api/src/telemetry/proto/` other than `definitions.ts` and `status.ts` hold, unchanged, the message definitions of [opentelemetry-proto](https://github.com/open-telemetry/opentelemetry-proto) at release v1.11.1 (commit `b3f75588eb23c5fca62264edd05d382de49beb1a`): `common`, `resource`, `trace`, `logs`, `metrics`, and the collector's trace, logs, and metrics services. Each is kept as the text of the `.proto` file, with its own copyright header, so the API can decode OTLP requests. Copyright The OpenTelemetry Authors, licensed under the [Apache License 2.0](https://www.apache.org/licenses/LICENSE-2.0); the project ships no NOTICE file. `status.ts` is Ottertrail's own: the fields of `google.rpc.Status` that an OTLP error answer uses.
 
+### Referrer spam list
+
+`apps/api/src/enrichment/referrer-spam/list.ts` holds the domains of `spammers.txt` from Matomo's community-contributed [referrer spam list](https://github.com/matomo-org/referrer-spam-list), at commit `6cd0b655c740da5bb39d98cd1bea88e2e0660e80`, as data: lower case, sorted, without repeats. The list's README puts it in the public domain ("Public Domain (no copyright)"), and its `composer.json` declares [CC0-1.0](https://creativecommons.org/publicdomain/zero/1.0/); `apps/api/src/enrichment/referrer-spam/LICENSE` quotes both. `vp run referrer-spam:update` downloads a newer commit (`apps/api/scripts/update-referrer-spam.ts`). Thanks to Matomo and the list's contributors.
+
 ## Used by what this repository builds
 
 These are not stored in the repository: they are downloaded when installing dependencies or by a command.

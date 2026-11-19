@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 import type { Kysely } from "kysely";
 
 import type { Database } from "../db/schema.ts";
@@ -98,23 +100,32 @@ export async function deleteEventsBefore(
  * gone is first seen at their earliest event kept, and a user with none
  * left is forgotten (docs/clickhouse.md, "First-seen times"). An event
  * stored meanwhile is counted by both the view and the copy, which a min
- * ignores.
+ * ignores. Also after a project's spam visits are deleted (spam/delete-visits.ts).
+ *
+ * The new rows are worked out first, into a temporary table of a session
+ * of its own: the read of every signed-in event, the step that can time
+ * out or run out of memory, happens before anything is removed. Only then
+ * are the old rows deleted and the new ones copied in, a copy of a few
+ * rows. The table cannot be swapped in one step (it has no partition per
+ * project), so if that last copy fails, the projects have no first-seen
+ * times until the next rebuild: the next retention run that deletes their
+ * events, or the next spam delete, works them out again whole, and the
+ * view adds every user seen meanwhile.
  */
-async function rebuildFirstSeen(clickhouse: ClickHouseClient, projectIds: string[]) {
+export async function rebuildFirstSeen(clickhouse: ClickHouseClient, projectIds: string[]) {
   if (projectIds.length === 0) return;
-  const reader: Reader = { client: clickhouse };
+  const reader: Reader = { client: clickhouse, sessionId: randomUUID() };
   const params = new QueryParams();
   const ids = params.add(projectIds, "Array(UUID)");
+  const table = identifier(USER_FIRST_SEEN);
+  await runCommand(reader, `CREATE TEMPORARY TABLE rebuilt AS ${table} ENGINE = Memory`);
   await runCommand(
     reader,
-    `DELETE FROM ${identifier(USER_FIRST_SEEN)} WHERE project_id IN ${ids}`,
+    `INSERT INTO rebuilt ${firstSeenSelect(null, `project_id IN ${ids}`)}`,
     params,
   );
-  await runCommand(
-    reader,
-    `INSERT INTO ${identifier(USER_FIRST_SEEN)} ${firstSeenSelect(null, `project_id IN ${ids}`)}`,
-    params,
-  );
+  await runCommand(reader, `DELETE FROM ${table} WHERE project_id IN ${ids}`, params);
+  await runCommand(reader, `INSERT INTO ${table} SELECT * FROM rebuilt`);
 }
 
 /** What removeDeletedRows() did. */

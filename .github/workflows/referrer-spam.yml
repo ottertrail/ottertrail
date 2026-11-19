@@ -1,0 +1,119 @@
+# Refreshes the referrer spam list shipped in the repository
+# (apps/api/src/enrichment/referrer-spam/list.ts) from Matomo's community
+# list, weekly, through a pull request for a person to review.
+#
+# 1. Runs apps/api/scripts/update-referrer-spam.ts with plain Node.js (it
+#    needs no installed packages). Its exit code says what happened: 0 the
+#    list changed, 2 nothing changed, anything else failed (its checks:
+#    hostnames only, at least 1,000, the guard lists). It gets the
+#    workflow's token for GitHub's API.
+# 2. When the list changed, installs the packages and runs the checks that
+#    need no database (vp check, the referrer spam tests): the pull request
+#    starts no other workflow, so these are the checks it gets.
+# 3. Then commits it on the bot branch
+#    bot/referrer-spam-list (force-updated: the bot owns it, nobody else
+#    pushes there), and opens a pull request to main, or updates the one
+#    already open.
+#
+# Nothing changed ends the job cleanly; a failed check fails it, and no
+# pull request is opened. Ottertrail's own additions (additions.ts) are
+# never touched. A pull request opened with GITHUB_TOKEN starts no other
+# workflow. It needs Settings, Actions, General, "Allow GitHub Actions to
+# create and approve pull requests" (README.md, "Maintenance").
+#
+# The actions are pinned to exact commits, as in release.yml; the comment
+# names the release.
+name: Referrer spam list
+
+on:
+  schedule:
+    # Mondays, 06:00 UTC.
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: referrer-spam
+  cancel-in-progress: false
+
+jobs:
+  update:
+    # Forks do not run it.
+    if: github.repository == 'ottertrail/ottertrail'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      pull-requests: write
+    env:
+      BRANCH: bot/referrer-spam-list
+      LIST: apps/api/src/enrichment/referrer-spam/list.ts
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
+
+      - name: Download and check the list
+        id: update
+        env:
+          # More GitHub API requests than an address gets without a token.
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set +e
+          node apps/api/scripts/update-referrer-spam.ts | tee "$RUNNER_TEMP/update.txt"
+          status=${PIPESTATUS[0]}
+          set -e
+          case "$status" in
+            0) echo "changed=true" >> "$GITHUB_OUTPUT" ;;
+            2) echo "changed=false" >> "$GITHUB_OUTPUT" ;;
+            *) echo "::error::The referrer spam list was not updated (exit $status). See the log above."
+               exit 1 ;;
+          esac
+
+      # The pull request starts no other workflow (GITHUB_TOKEN), so the
+      # checks that need no database run here, before anything is pushed:
+      # the format, lint, and type checks of the whole workspace (vp check),
+      # and the referrer spam tests (spam-rules.test.ts, which reads the new
+      # list). The packages install as the Dockerfile installs them.
+      - name: Install dependencies
+        if: steps.update.outputs.changed == 'true'
+        run: |
+          npm install --global pnpm@12.21.0
+          pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Check the new list
+        if: steps.update.outputs.changed == 'true'
+        run: |
+          pnpm exec vp check
+          pnpm --filter @ottertrail/api exec vp test run tests/spam-rules.test.ts
+
+      - name: Open or update the pull request
+        if: steps.update.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch --create "$BRANCH"
+          git add -- "$LIST"
+          git commit --message "chore: update the referrer spam list"
+          git push --force origin "$BRANCH"
+
+          {
+            echo "Updates the referrer spam list shipped in the repository from Matomo's community list (\`vp run referrer-spam:update\`)."
+            echo
+            grep -E '^(Matomo commit|Added|Removed)' "$RUNNER_TEMP/update.txt" | cut -c1-3000 | sed 's/^/- /'
+            echo
+            echo "Review the added domains before merging: a listed domain drops every visit it refers, so make sure none is a real site."
+          } > "$RUNNER_TEMP/body.md"
+
+          open=$(gh pr list --head "$BRANCH" --base main --state open --json number --jq '.[0].number')
+          if [ -n "$open" ]; then
+            gh pr edit "$open" --title "chore: update the referrer spam list" --body-file "$RUNNER_TEMP/body.md"
+          else
+            gh pr create --base main --head "$BRANCH" \
+              --title "chore: update the referrer spam list" --body-file "$RUNNER_TEMP/body.md"
+          fi

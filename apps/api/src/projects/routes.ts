@@ -13,6 +13,8 @@ import type { Auth } from "../auth/auth.ts";
 import { requireTrustedOrigin } from "../auth/origin.ts";
 import { requireSession } from "../auth/routes.ts";
 import type { Database } from "../db/schema.ts";
+import { MAX_BLOCKED_ADDRESSES, ownAddress, parseBlockedAddresses } from "./blocked-addresses.ts";
+import { MAX_BLOCKED_REFERRERS, parseBlockedReferrers } from "./blocked-referrers.ts";
 import {
   createProject,
   deleteProject,
@@ -44,6 +46,18 @@ const hostnamesSchema = {
   maxItems: MAX_ALLOWED_HOSTNAMES * 2,
   items: { type: "string", maxLength: 300 },
 } as const;
+const blockedAddressesSchema = {
+  type: "array",
+  // Generous here; parseBlockedAddresses enforces the real limit after removing duplicates.
+  maxItems: MAX_BLOCKED_ADDRESSES * 2,
+  items: { type: "string", maxLength: 100 },
+} as const;
+const blockedReferrersSchema = {
+  type: "array",
+  // Generous here; parseBlockedReferrers enforces the real limit after removing duplicates.
+  maxItems: MAX_BLOCKED_REFERRERS * 2,
+  items: { type: "string", maxLength: 300 },
+} as const;
 const idParamsSchema = {
   type: "object",
   required: ["id"],
@@ -73,7 +87,9 @@ function shownTo(access: UserAccess, project: Project) {
  * runs requireProjectAccess first.
  *
  * Changes to allowed hostnames reach the collection endpoint within a
- * minute, the lifetime of its project cache (collection/project-keys.ts).
+ * minute, the lifetime of its project cache (collection/project-keys.ts);
+ * changes to the collection rules (signed user IDs, data centers, replay
+ * mode, blocked addresses and referrers) at once in this process.
  * A replaced key or a deleted project's key stops working at once: the
  * routes tell the cache to forget it.
  */
@@ -147,6 +163,8 @@ export const projectRoutes: FastifyPluginCallback<{
       ignoreDataCenters?: boolean;
       replayMode?: "off" | "errors";
       mainGoalId?: string | null;
+      blockedAddresses?: string[];
+      blockedReferrers?: string[];
     };
   }>(
     "/projects/:id",
@@ -173,6 +191,10 @@ export const projectRoutes: FastifyPluginCallback<{
             replayMode: { type: "string", enum: ["off", "errors"] },
             // The overview's main goal: one of the project's goals, or null for none.
             mainGoalId: { type: ["string", "null"], pattern: UUID_PATTERN },
+            // Addresses and ranges whose browser events are ignored (blocked-addresses.ts).
+            blockedAddresses: blockedAddressesSchema,
+            // Referrer domains ignored, with their subdomains (blocked-referrers.ts).
+            blockedReferrers: blockedReferrersSchema,
           },
         },
       },
@@ -186,6 +208,8 @@ export const projectRoutes: FastifyPluginCallback<{
         ignoreDataCenters,
         replayMode,
         mainGoalId,
+        blockedAddresses,
+        blockedReferrers,
       } = request.body;
       let hostnames: string[] | undefined;
       if (allowedHostnames !== undefined) {
@@ -195,6 +219,25 @@ export const projectRoutes: FastifyPluginCallback<{
         }
         hostnames = parsed.hostnames;
       }
+      let blocked: string[] | undefined;
+      if (blockedAddresses !== undefined) {
+        const parsed = parseBlockedAddresses(blockedAddresses);
+        if (!parsed.ok) {
+          return reply.code(400).send(problem("invalid_address", parsed.message));
+        }
+        blocked = parsed.addresses;
+      }
+      let referrers: string[] | undefined;
+      if (blockedReferrers !== undefined) {
+        // Against the allowed hostnames as they will be after this change.
+        const allowed =
+          hostnames ?? (await findProject(db, request.params.id))?.allowedHostnames ?? [];
+        const parsed = parseBlockedReferrers(blockedReferrers, allowed);
+        if (!parsed.ok) {
+          return reply.code(400).send(problem("invalid_referrer", parsed.message));
+        }
+        referrers = parsed.domains;
+      }
       const project = await updateProject(db, request.params.id, {
         ...(name === undefined ? {} : { name: name.trim() }),
         ...(hostnames === undefined ? {} : { allowedHostnames: hostnames }),
@@ -203,6 +246,8 @@ export const projectRoutes: FastifyPluginCallback<{
         ...(ignoreDataCenters === undefined ? {} : { ignoreDataCenters }),
         ...(replayMode === undefined ? {} : { replayMode }),
         ...(mainGoalId === undefined ? {} : { mainGoalId }),
+        ...(blocked === undefined ? {} : { blockedAddresses: blocked }),
+        ...(referrers === undefined ? {} : { blockedReferrers: referrers }),
       });
       if (project === "no_such_goal") {
         return reply
@@ -213,7 +258,9 @@ export const projectRoutes: FastifyPluginCallback<{
       if (
         requireSignedUserIds !== undefined ||
         ignoreDataCenters !== undefined ||
-        replayMode !== undefined
+        replayMode !== undefined ||
+        blocked !== undefined ||
+        referrers !== undefined
       ) {
         projectKeys?.forgetProject(request.params.id);
       }
@@ -258,6 +305,16 @@ export const projectRoutes: FastifyPluginCallback<{
       }
       return reply.code(204).send();
     },
+  );
+
+  /**
+   * The requester's own address, as the API sees it (TRUST_PROXY applies),
+   * for "Add my address" in a project's blocked addresses. Not logged: the
+   * request log holds only the method and URL (app.ts), and the answer is
+   * not logged.
+   */
+  app.get("/client-address", { preHandler: [signedIn, manageProjects] }, async (request) =>
+    ownAddress(request.ip),
   );
 
   /** Replaces a project's public key: pages with the old snippet stop sending events. */

@@ -45,7 +45,7 @@ import {
   type ProductEvents,
   type Retention,
 } from "../../src/lib/product-api.ts";
-import type { Project } from "../../src/lib/projects-api.ts";
+import type { ClientAddress, Project, SpamCounts } from "../../src/lib/projects-api.ts";
 import type {
   ReplayList,
   ReplaySummary,
@@ -195,6 +195,13 @@ export interface FakeApi {
    * widget's area (403 without); by default, fakeWidget.
    */
   widget: (id: WidgetId, query: URLSearchParams, api: FakeApi) => unknown;
+  /** Answers GET /api/client-address: the requester's address as the API sees it. */
+  clientAddress: ClientAddress | Response;
+  /**
+   * What POST /api/projects/:id/spam-visits/preview counts, whatever the
+   * filters; a delete with the same visits typed answers it and counts none after.
+   */
+  spamCounts: SpamCounts | Response;
   /** Answers DELETE /api/projects/:id; by default, removes the project (204). */
   deleteProject: (api: FakeApi, id: string) => Response;
   /** Every path the page asked for, with its query, in order. */
@@ -1998,6 +2005,19 @@ export const PROJECT: Project = {
   ignoreDataCenters: true,
   replayMode: "off",
   mainGoalId: null,
+  blockedAddresses: [],
+  blockedReferrers: [],
+};
+
+/** What the fake counts for "Delete spam" by default. */
+export const SPAM_COUNTS: SpamCounts = {
+  visits: 12,
+  events: 40,
+  pageviews: 20,
+  customEvents: 3,
+  errors: 2,
+  other: 15,
+  replays: 1,
 };
 
 export const OTHER_PROJECT: Project = {
@@ -3409,6 +3429,28 @@ async function answer(api: FakeApi, url: URL, init: RequestInit | undefined): Pr
     api.projects = api.projects.map((item) => (item.id === keyed.id ? replaced : item));
     return json({ project: replaced });
   }
+  if (path === "/api/client-address") {
+    return api.clientAddress instanceof Response ? api.clientAddress : json(api.clientAddress);
+  }
+  const spam = /^\/api\/projects\/([^/]+)\/spam-visits\/(preview|delete)$/.exec(path);
+  if (spam !== null && init?.method === "POST") {
+    if (api.spamCounts instanceof Response) return api.spamCounts;
+    const counts = api.spamCounts;
+    if (spam[2] === "preview") return json({ ...counts, limit: 10_000 });
+    const input: unknown = JSON.parse(typeof init.body === "string" ? init.body : "{}");
+    const typed =
+      typeof input === "object" && input !== null && "confirmVisits" in input
+        ? input.confirmVisits
+        : undefined;
+    if (typed !== counts.visits) {
+      return json(
+        { error: "visits_changed", message: `${counts.visits} visits match now. Count again.` },
+        409,
+      );
+    }
+    api.spamCounts = { ...counts, ...Object.fromEntries(Object.keys(counts).map((k) => [k, 0])) };
+    return json(counts);
+  }
   const project = /^\/api\/projects\/([^/]+)$/.exec(path);
   const found = api.projects.find((item) => item.id === project?.[1]);
   if (found !== undefined && init?.method === "DELETE") {
@@ -3494,6 +3536,8 @@ export function installFakeApi(overrides: Partial<FakeApi> = {}): FakeApi {
     channels: fakeChannels(),
     alerts: fakeAlerts(),
     deleteProject: removeProject,
+    clientAddress: { address: "203.0.113.7", network: null },
+    spamCounts: SPAM_COUNTS,
     layout: null,
     holdLayout: null,
     unknownWidgets: [],

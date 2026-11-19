@@ -8,6 +8,7 @@
     "dev": "vp run -r --parallel dev",
     "migrate": "vp run -r migrate",
     "geo:update": "vp run -r geo:update",
+    "referrer-spam:update": "vp -C apps/api run referrer-spam:update",
     "visits": "vp -C apps/api run visits",
     "setup": "vp -C apps/api run setup",
     "seed": "vp -C apps/api run seed",

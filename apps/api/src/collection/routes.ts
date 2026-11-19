@@ -7,8 +7,10 @@ import type { ClickHouseClient } from "../clickhouse/clickhouse.ts";
 import type { Database } from "../db/schema.ts";
 import { type IsDataCenter, noDataCenters } from "../enrichment/data-centers.ts";
 import { type Locate, noLocation } from "../enrichment/geo.ts";
+import { isReferrerSpam } from "../enrichment/referrer-spam.ts";
 import { isBot, parseUserAgent } from "../enrichment/user-agent.ts";
 import { fingerprint } from "../errors/fingerprint.ts";
+import { isBlockedAddress } from "../projects/blocked-addresses.ts";
 import { readInstanceSettings } from "../settings/settings.ts";
 import { VisitorIds } from "../visitors/visitor-ids.ts";
 import { ENGAGEMENT, ERROR, VITALS } from "../visits/visits.ts";
@@ -25,8 +27,9 @@ import {
   parsePageUrl,
 } from "./normalize.ts";
 import { type CollectingProject, ProjectKeyCache, PUBLIC_KEY_PATTERN } from "./project-keys.ts";
-import { EventBudget, type RateLimit, TokenBucketLimiter } from "./rate-limiter.ts";
+import { clientKey, EventBudget, type RateLimit, TokenBucketLimiter } from "./rate-limiter.ts";
 import { DEFAULT_SERVER_IP_LIMIT, serverEventsRoute } from "./server-events.ts";
+import { VisitorCap } from "./visitor-cap.ts";
 import { keepValidVitals } from "./vitals.ts";
 
 export const MAX_EVENTS_PER_BATCH = 50;
@@ -42,6 +45,12 @@ export const MAX_ENGAGED_MS = 24 * 60 * 60 * 1000;
 
 /** Requests per client IP address: bursts of 120, then 2 per second. */
 export const DEFAULT_IP_LIMIT: RateLimit = { capacity: 120, refillPerSecond: 2 };
+/**
+ * Events per client (clientKey: an IPv4 address, or an IPv6 /64): bursts
+ * of 200, then 20 per second. The request limit above lets a client send
+ * 50 events in each of its requests; this one counts the events.
+ */
+export const DEFAULT_IP_EVENT_LIMIT: RateLimit = { capacity: 200, refillPerSecond: 20 };
 /** Events per project: bursts of 2,000, then 200 per second. */
 export const DEFAULT_PROJECT_LIMIT: RateLimit = { capacity: 2_000, refillPerSecond: 200 };
 /**
@@ -57,6 +66,8 @@ export interface CollectionOptions {
   /** Where events are stored (docs/clickhouse.md). */
   clickhouse: ClickHouseClient;
   ipLimit?: RateLimit;
+  /** Events per client address (DEFAULT_IP_EVENT_LIMIT). */
+  ipEventLimit?: RateLimit;
   projectLimit?: RateLimit;
   instanceLimit?: RateLimit;
   /** Finds the visitor's location from the request. Default: no location. */
@@ -71,6 +82,8 @@ export interface CollectionOptions {
   projectKeys?: ProjectKeyCache;
   /** Requests per IP address to /server-events (server-events.ts). */
   serverIpLimit?: RateLimit;
+  /** Events one visitor ID may store per day (visitor-cap.ts); replaceable in tests. */
+  visitorCap?: number;
 }
 
 type PropertyValue = string | number | boolean | null;
@@ -216,6 +229,12 @@ const storedResponseSchema = {
     bots: { type: "integer" },
     // Events whose user ID lacked a valid signature, stored without it.
     unverifiedUsers: { type: "integer" },
+    // Not stored: from one of the project's blocked addresses.
+    blocked: { type: "integer" },
+    // Not stored: referred by a referrer spam domain (the shared lists or the project's own).
+    spam: { type: "integer" },
+    // Not stored: the visitor had already stored its daily cap (visitor-cap.ts).
+    capped: { type: "integer" },
   },
 } as const;
 
@@ -245,12 +264,18 @@ function storageUnavailable(reply: FastifyReply) {
  *
  * 1. Rate limit per client IP (before the body is even read).
  * 2. Body size, content type, and JSON schema.
- * 3. Project key (cached).
- * 4. Origin header and page hostnames against the project's allowed hostnames.
- * 5. Event budget per project.
- * 6. URL cleanup and clock correction.
- * 7. One insert into ClickHouse. 202 is sent only after ClickHouse has
- *    written it; 503 while it cannot, which the tracker retries.
+ * 3. Events per client address, now that their number is known.
+ * 4. Project key (cached).
+ * 5. Origin header against the project's allowed hostnames.
+ * 6. Accepted and not stored (202): the project's blocked addresses, bots
+ *    and data centers, referrer spam. Before the budget, so they cannot
+ *    use it up.
+ * 7. Event budget per project.
+ * 8. Each event's rules, page hostname, URL cleanup, and clock correction.
+ * 9. Visitor IDs, and the daily cap per visitor.
+ * 10. One insert into ClickHouse. 202 is sent only after ClickHouse has
+ *     written it; 503 while it cannot, which the tracker retries.
+ * (docs/web-analytics.md, "Checks, in order".)
  */
 export const collectionRoutes: FastifyPluginCallback<CollectionOptions> = (app, options, done) => {
   const {
@@ -284,6 +309,11 @@ export const collectionRoutes: FastifyPluginCallback<CollectionOptions> = (app, 
     stopSaltCleanup();
   });
   const ipLimiter = new TokenBucketLimiter(options.ipLimit ?? DEFAULT_IP_LIMIT, { now });
+  const ipEventLimit = options.ipEventLimit ?? DEFAULT_IP_EVENT_LIMIT;
+  const ipEventLimiter = new TokenBucketLimiter(ipEventLimit, { now });
+  const visitorCap = new VisitorCap(
+    options.visitorCap === undefined ? {} : { cap: options.visitorCap },
+  );
   const budget = new EventBudget(
     new TokenBucketLimiter(projectLimit, { now }),
     new TokenBucketLimiter(instanceLimit, { now }),
@@ -364,6 +394,17 @@ export const collectionRoutes: FastifyPluginCallback<CollectionOptions> = (app, 
       const receivedAt = now();
       const { key, sentAt, events } = request.body;
 
+      // Events per client, as soon as their number is known and before the
+      // key costs a lookup: a client's requests may each carry 50 events.
+      // Shared by everyone behind one address (an office, a carrier's NAT).
+      const perClient = ipEventLimiter.take(
+        clientKey(request.ip),
+        Math.min(events.length, ipEventLimit.capacity),
+      );
+      if (!perClient.allowed) {
+        return tooManyRequests(reply, perClient.retryAfterSeconds);
+      }
+
       let project: CollectingProject | null;
       try {
         project = await projects.find(key);
@@ -402,6 +443,21 @@ export const collectionRoutes: FastifyPluginCallback<CollectionOptions> = (app, 
           );
       }
 
+      // Accepted and ignored, as bots below: the project's owner chose to
+      // ignore this address. The address is checked here and never stored.
+      const noneStored = {
+        stored: 0,
+        tooOld: 0,
+        bots: 0,
+        unverifiedUsers: 0,
+        blocked: 0,
+        spam: 0,
+        capped: 0,
+      };
+      if (isBlockedAddress(project.blocked, request.ip)) {
+        return reply.code(202).send({ ...noneStored, blocked: events.length });
+      }
+
       // Bots are accepted and ignored: an error would only invite retries.
       // They are checked before the budget, so they cannot use it up. A
       // "browser" at a cloud provider's address is nearly always a program
@@ -417,7 +473,26 @@ export const collectionRoutes: FastifyPluginCallback<CollectionOptions> = (app, 
         );
       }
       if (bot || dataCenter) {
-        return reply.code(202).send({ stored: 0, tooOld: 0, bots: events.length });
+        return reply.code(202).send({ ...noneStored, bots: events.length });
+      }
+
+      // Referrer spam: a batch with one event from a spam referrer is a spam
+      // visit's page, and its other events (time on the page, its vitals)
+      // are the same visit's, so none is stored.
+      // A referrer on one of the project's own hostnames is its previous
+      // page: never spam, so a list that holds the site's domain cannot
+      // drop its visitors' later pages.
+      if (
+        events.some((event) =>
+          isReferrerSpam(
+            event.referrer,
+            project.blockedReferrers,
+            undefined,
+            project.allowedHostnames,
+          ),
+        )
+      ) {
+        return reply.code(202).send({ ...noneStored, spam: events.length });
       }
 
       const spent = budget.take(project.id, events.length);
@@ -602,6 +677,10 @@ export const collectionRoutes: FastifyPluginCallback<CollectionOptions> = (app, 
         });
       }
 
+      // Events past their visitor's daily cap, and the days they were counted on.
+      let capped = 0;
+      const counted: { day: string; visitorId: string }[] = [];
+      let toStore = accepted;
       try {
         // Each event gets the visitor ID of the day it happened, so a late
         // event from just before midnight joins the rest of that day's visit.
@@ -615,23 +694,41 @@ export const collectionRoutes: FastifyPluginCallback<CollectionOptions> = (app, 
             occurredAt: event.occurredAt,
           });
         }
-        await storeEvents(clickhouse, project.id, accepted, { receivedAt: new Date(receivedAt) });
+        // The daily cap per visitor, counted in memory, nothing looked up.
+        toStore = accepted.filter((event) => {
+          const day = visitors.dayOf(timeZone, event.occurredAt);
+          const visitorId = event.visitorId ?? "";
+          if (visitorCap.take(project.id, day, visitorId)) {
+            counted.push({ day, visitorId });
+            return true;
+          }
+          capped += 1;
+          return false;
+        });
+        // Capped events spend no budget: they are not stored.
+        if (capped > 0) budget.refund(project.id, capped);
+        if (toStore.length > 0) {
+          await storeEvents(clickhouse, project.id, toStore, { receivedAt: new Date(receivedAt) });
+        }
       } catch (error) {
-        // Not the sender's doing: the budget back, so its retries are not refused for it.
-        budget.refund(project.id, events.length);
+        // Not the sender's doing: the budget back, so its retries are not
+        // refused for it, and its visitors' counts, so they are not counted twice.
+        budget.refund(project.id, events.length - capped);
+        for (const { day, visitorId } of counted) visitorCap.untake(project.id, day, visitorId);
         request.log.error({ err: error }, "could not store events");
         return storageUnavailable(reply);
       }
       // Not waited for: the events are stored, and a slow PostgreSQL must
       // not hold the answer up, nor fail it.
-      lastEvents.record(project.id, accepted).catch((error: unknown) => {
+      lastEvents.record(project.id, toStore).catch((error: unknown) => {
         request.log.warn({ err: error }, "could not record the project's latest event");
       });
       return reply.code(202).send({
-        stored: accepted.length,
+        ...noneStored,
+        stored: toStore.length,
         tooOld,
-        bots: 0,
         unverifiedUsers,
+        capped,
       });
     },
   );

@@ -12,6 +12,7 @@
     "start:migrate": "node dist/migrate.mjs",
     "test": "vp test",
     "geo:update": "vpx scripts/update-geo.ts",
+    "referrer-spam:update": "vpx scripts/update-referrer-spam.ts",
     "visits": "vpx scripts/visits.ts",
     "setup": "vpx scripts/setup.ts",
     "seed": "vpx scripts/seed.ts",

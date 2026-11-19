@@ -280,7 +280,7 @@ describe("keeping events", () => {
 
   test("visits from data centers are ignored until turned off, which is saved", async () => {
     const api = installFakeApi();
-    renderApp(tab("general"));
+    renderApp(tab("spam"));
     const ignore = page.getByRole("checkbox", { name: "Ignore visits from data centers" });
     await expect.element(ignore).toBeChecked();
 
@@ -293,13 +293,13 @@ describe("keeping events", () => {
         path: `/api/projects/${PROJECT.id}`,
         body: { ignoreDataCenters: false },
       });
-    await expect.element(saveStatus()).toHaveTextContent("No unsaved changes");
+    await expect.element(page.getByRole("tabpanel").getByText("No unsaved changes")).toBeVisible();
     await expect.element(ignore).not.toBeChecked();
   });
 
   test("a choice not saved on one project never carries over to another", async () => {
-    // Both projects keep events forever and ignore data centers, and the
-    // other one is cached: the page switches without loading.
+    // Both projects keep events forever, and the other one is cached: the
+    // page switches without loading.
     installFakeApi({ projects: [PROJECT, OTHER_PROJECT] });
     const router = renderApp(`/projects/${OTHER_PROJECT.id}/settings?tab=general`);
     await expect.element(page.getByRole("textbox", { name: "Name" })).toHaveValue("Docs");
@@ -309,12 +309,10 @@ describe("keeping events", () => {
       search: { tab: "general" },
     });
     await expect.element(page.getByRole("textbox", { name: "Name" })).toHaveValue("Main site");
-    const ignore = page.getByRole("checkbox", { name: "Ignore visits from data centers" });
     const keep = page.getByRole("combobox", { name: "Keep events" });
-    await ignore.click();
     await keep.click();
     await page.getByRole("option", { name: "1 year" }).click();
-    await expect.element(ignore).not.toBeChecked();
+    await expect.element(keep).toMatchTextContent(/^1 year/);
 
     // Leaving with the edits asks first (the leave guard); leaving anyway drops them.
     void router.navigate({
@@ -324,7 +322,6 @@ describe("keeping events", () => {
     });
     await page.getByRole("button", { name: "Leave and discard" }).click();
     await expect.element(page.getByRole("textbox", { name: "Name" })).toHaveValue("Docs");
-    await expect.element(ignore).toBeChecked();
     await expect.element(keep).toMatchTextContent(/^Forever/);
   });
 

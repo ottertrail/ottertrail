@@ -17,7 +17,7 @@ Each dashboard user has one role (`dashboard_users.role`):
 - **Admin.** Everything except the instance's settings and anything that touches the owner:
   - every project and area;
   - creating, changing, and deleting projects;
-  - project keys and settings (allowed sites, retention, replay mode, and the rest);
+  - project keys and settings (allowed sites, retention, replay mode, blocked addresses and referrers, and the rest), and deleting spam visits;
   - notification channels;
   - the Members page: inviting members, changing a member's access, removing a member, and making a member's reset link.
 
@@ -74,32 +74,32 @@ Fastify checks a route's parameters and body before the access check runs, so a 
 
 ### Each route's need
 
-| Route                                                                                             | Needs                      |
-| ------------------------------------------------------------------------------------------------- | -------------------------- |
-| `GET /api/me`, `GET /api/projects`                                                                | Signed in                  |
-| `GET`, `PATCH /api/settings`                                                                      | `settings` (the owner)     |
-| `/api/members…`, `/api/invitations…` (seven routes)                                               | `members`                  |
-| `POST /api/members/:userId/ownership`                                                             | `ownership` (the owner)    |
-| `POST /api/projects`                                                                              | `projects`                 |
-| `/api/channels…` (all eight)                                                                      | `channels`                 |
-| `GET /api/projects/:id`                                                                           | The project                |
-| `PATCH`, `DELETE /api/projects/:id`, `POST …/public-key`, `POST …/secret-key`, `DELETE …/replays` | `projects`                 |
-| `…/analytics`, `…/analytics/list`, `…/speed`                                                      | `web_analytics` view       |
-| `…/events`, `…/events/:name`, `…/funnel`, `…/retention`, `GET …/goals`, `GET …/funnels`           | `product_analytics` view   |
-| `POST`, `DELETE …/goals`, `POST`, `PUT`, `DELETE …/funnels`                                       | `product_analytics` manage |
-| `GET …/errors`, `GET …/errors/:fingerprint`, `GET …/source-maps`, `…/source-maps/files`           | `errors` view              |
-| `PATCH …/errors/:fingerprint`, `DELETE …/source-maps`                                             | `errors` manage            |
-| `GET …/replays`, `…/replays/list`, `…/replays/:replayId`, `…/timeline`, `…/player`                | `replays` view             |
-| `…/users`, `…/users/:userId`                                                                      | `users` view               |
-| `…/traces…`, `…/logs…`, `…/metrics…`, `…/services…`, `…/databases…`, `…/hosts…`                   | `monitoring` view          |
-| `GET …/checks…`, `GET …/alert-rules…`, `…/alerts`, `…/alerts/firing`, `…/alert-channels`          | `uptime_alerts` view       |
-| `POST`, `PATCH`, `DELETE …/checks…` and `…/alert-rules…`                                          | `uptime_alerts` manage     |
-| `GET`, `PUT`, `DELETE …/overview/layout` (the user's own layout)                                  | The project                |
-| `…/overview/attention`, `…/overview/uptime`                                                       | `uptime_alerts` view       |
-| `…/overview/errors`                                                                               | `errors` view              |
-| `…/overview/services`                                                                             | `monitoring` view          |
-| `…/overview/speed`, `…/overview/traffic`, `…/overview/sources`                                    | `web_analytics` view       |
-| `…/overview/main-goal`, `…/overview/goals`, `…/overview/users`                                    | `product_analytics` view   |
+| Route                                                                                                                                                        | Needs                      |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------- |
+| `GET /api/me`, `GET /api/projects`                                                                                                                           | Signed in                  |
+| `GET`, `PATCH /api/settings`                                                                                                                                 | `settings` (the owner)     |
+| `/api/members…`, `/api/invitations…` (seven routes)                                                                                                          | `members`                  |
+| `POST /api/members/:userId/ownership`                                                                                                                        | `ownership` (the owner)    |
+| `POST /api/projects`, `GET /api/client-address` (the requester's own address, for blocked addresses)                                                         | `projects`                 |
+| `/api/channels…` (all eight)                                                                                                                                 | `channels`                 |
+| `GET /api/projects/:id`                                                                                                                                      | The project                |
+| `PATCH`, `DELETE /api/projects/:id`, `POST …/public-key`, `POST …/secret-key`, `DELETE …/replays`, `POST …/spam-visits/preview`, `POST …/spam-visits/delete` | `projects`                 |
+| `…/analytics`, `…/analytics/list`, `…/speed`                                                                                                                 | `web_analytics` view       |
+| `…/events`, `…/events/:name`, `…/funnel`, `…/retention`, `GET …/goals`, `GET …/funnels`                                                                      | `product_analytics` view   |
+| `POST`, `DELETE …/goals`, `POST`, `PUT`, `DELETE …/funnels`                                                                                                  | `product_analytics` manage |
+| `GET …/errors`, `GET …/errors/:fingerprint`, `GET …/source-maps`, `…/source-maps/files`                                                                      | `errors` view              |
+| `PATCH …/errors/:fingerprint`, `DELETE …/source-maps`                                                                                                        | `errors` manage            |
+| `GET …/replays`, `…/replays/list`, `…/replays/:replayId`, `…/timeline`, `…/player`                                                                           | `replays` view             |
+| `…/users`, `…/users/:userId`                                                                                                                                 | `users` view               |
+| `…/traces…`, `…/logs…`, `…/metrics…`, `…/services…`, `…/databases…`, `…/hosts…`                                                                              | `monitoring` view          |
+| `GET …/checks…`, `GET …/alert-rules…`, `…/alerts`, `…/alerts/firing`, `…/alert-channels`                                                                     | `uptime_alerts` view       |
+| `POST`, `PATCH`, `DELETE …/checks…` and `…/alert-rules…`                                                                                                     | `uptime_alerts` manage     |
+| `GET`, `PUT`, `DELETE …/overview/layout` (the user's own layout)                                                                                             | The project                |
+| `…/overview/attention`, `…/overview/uptime`                                                                                                                  | `uptime_alerts` view       |
+| `…/overview/errors`                                                                                                                                          | `errors` view              |
+| `…/overview/services`                                                                                                                                        | `monitoring` view          |
+| `…/overview/speed`, `…/overview/traffic`, `…/overview/sources`                                                                                               | `web_analytics` view       |
+| `…/overview/main-goal`, `…/overview/goals`, `…/overview/users`                                                                                               | `product_analytics` view   |
 
 `GET /api/projects/:id/alert-channels` lists the instance's channels by ID, name, and kind only, for the rule form. A rule may name any of the instance's channels.
 
@@ -120,7 +120,7 @@ A rule shows what it watches: an error rule shows error groups and messages, a t
 
 Some answers show less to a user without another area:
 
-- `GET /api/projects` and `GET /api/projects/:id` answer only the ID, name, creation time, and last event to users without the `projects` permission. The list holds only the projects the user may reach.
+- `GET /api/projects` and `GET /api/projects/:id` answer only the ID, name, creation time, and last event to users without the `projects` permission: no keys and no settings, among them the blocked addresses and blocked referrers ([web analytics](web-analytics.md#blocked-addresses)). The list holds only the projects the user may reach.
 - The analytics page's answer has no goals without `product_analytics`.
 - The overview's signed-in users widget names the newest users only to users with `users` (`newest` is null otherwise). Its firing alerts hold only the kinds the user may see, as the Alerts page's do.
 - An error's occurrences and a user's events carry no replay, and a user's page no replays, without `replays`.

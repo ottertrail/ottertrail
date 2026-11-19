@@ -9,6 +9,7 @@ import { EventBudget, type RateLimit, TokenBucketLimiter } from "../collection/r
 import type { Database } from "../db/schema.ts";
 import { type IsDataCenter, noDataCenters } from "../enrichment/data-centers.ts";
 import { isBot } from "../enrichment/user-agent.ts";
+import { isBlockedAddress } from "../projects/blocked-addresses.ts";
 import { MAX_CHUNK_BYTES, MAX_CHUNK_UNPACKED_BYTES, MAX_CHUNKS, storeChunk } from "./replays.ts";
 
 const UUID_PATTERN =
@@ -61,7 +62,8 @@ interface ChunkQuery {
  * as text/plain, so a page sends it without a preflight, and with a beacon
  * when it is closing. Checked as events are, cheapest first: the address's
  * rate, the body's size, the public key, the page's origin against the
- * project's allowed hostnames, the project's replay setting, bots, and its
+ * project's allowed hostnames, the project's replay setting, its blocked
+ * addresses, bots, and its
  * own budgets in bytes. 202 once PostgreSQL has it; the worker joins a
  * replay's chunks (replays.ts).
  */
@@ -203,8 +205,11 @@ export const replayCollectionRoutes: FastifyPluginCallback<{
           ? reply.code(413).send(problem("payload_too_large", "A chunk unpacks to at most 1 MiB."))
           : reply.code(400).send(problem("invalid_request", "The chunk is not gzip."));
       }
-      // Accepted and ignored, as their events are (collection/routes.ts).
+      // Accepted and ignored, as their events are (collection/routes.ts):
+      // the project's blocked addresses, bots, and data centers. Before the
+      // budget, so they cannot use it up.
       if (
+        isBlockedAddress(project.blocked, request.ip) ||
         isBot(request.headers["user-agent"]) ||
         (project.ignoreDataCenters && isDataCenter(request.ip))
       ) {

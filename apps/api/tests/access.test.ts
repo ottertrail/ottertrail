@@ -170,6 +170,8 @@ describe("members, admins, and the one access check", () => {
       "PATCH /api/projects/:id",
       "POST /api/projects/:id/public-key",
       "POST /api/projects/:id/secret-key",
+      "POST /api/projects/:id/spam-visits/delete",
+      "POST /api/projects/:id/spam-visits/preview",
     ]);
     expect(await answers(cookie, site.id, settings)).toEqual(
       settings.map(({ method, route }) => ({
@@ -180,6 +182,7 @@ describe("members, admins, and the one access check", () => {
     );
     for (const [method, url, payload] of [
       ["POST", "/api/projects", { name: "Mine" }],
+      ["GET", "/api/client-address"],
       ["GET", "/api/channels"],
       ["GET", "/api/settings"],
       ["PATCH", "/api/settings", { name: "Mine" }],

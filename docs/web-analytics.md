@@ -176,33 +176,38 @@ Content-Type: application/json
 - **Checked before the body is read:** a missing or malformed key gets 401, and requests per IP address are limited (bursts of 600, then 50 a second) only to bound made-up keys, each of which costs a lookup. An unknown key gets 401 after the lookup.
 - **Every event belongs to a user** (`userId`, required, the same rule as in browsers) and to no visitor: it shows in the user's activity (Users), not in web analytics, which counts what browsers send. `path` is optional; the user's page shows an event without one by its name only. `pageview` and `engagement` are the tracker's and are refused.
 - **The server's clock is trusted:** `occurredAt` more than 5 minutes ahead is refused (400), more than 24 hours old is counted as too old, as for browsers. No location, browser, or device is recorded: the request comes from the site's server, not the user's.
-- **The rest is as for browsers:** at most 50 events, 64 KB, the same name and property limits, the project's event budget (shared with its browsers), a retried event counted once, as long as the retry sends the same `id` and the same `occurredAt` (a sender that stamps the time again on each attempt stores its retries twice), 202 only after ClickHouse has written the events. The answers are those in the table below, with 401 (`unauthorized`, `unknown_key`) for a missing, malformed, or unknown key in place of 403, and without `bots` or `unverifiedUsers`: retry only on 429 and 503.
+- **The rest is as for browsers:** at most 50 events, 64 KB, the same name and property limits, the project's event budget (shared with its browsers), a retried event counted once, as long as the retry sends the same `id` and the same `occurredAt` (a sender that stamps the time again on each attempt stores its retries twice), 202 only after ClickHouse has written the events. The answers are those in the table below, with 401 (`unauthorized`, `unknown_key`) for a missing, malformed, or unknown key in place of 403, and without `bots`, `unverifiedUsers`, `blocked`, `spam`, or `capped`: retry only on 429 and 503. None of the [spam checks](#spam) applies: not the per-client event limit, the daily cap per visitor, blocked addresses, or referrer spam.
 
 ### The responses
 
-| Status | Body `error`                                                | Meaning                                                                           | Should the sender retry? |
-| ------ | ----------------------------------------------------------- | --------------------------------------------------------------------------------- | ------------------------ |
-| 202    | none: `{ "stored", "tooOld", "bots", "unverifiedUsers" }`   | Written to ClickHouse. `stored` counts the events written, a retry's included     | No                       |
-| 400    | `invalid_request`                                           | The batch breaks a rule below                                                     | No: it will fail again   |
-| 403    | `unknown_key`, `origin_not_allowed`, `hostname_not_allowed` | Wrong key, or a site the project does not allow                                   | No                       |
-| 413    | `payload_too_large`                                         | Body over 64 KB                                                                   | No: send smaller batches |
-| 415    | `unsupported_media_type`                                    | Not `text/plain` or `application/json`                                            | No                       |
-| 429    | `rate_limited`                                              | Too many requests or events                                                       | Yes, after `Retry-After` |
-| 503    | `storage_unavailable`                                       | The key could not be looked up, or ClickHouse could not write; nothing was stored | Yes, after `Retry-After` |
+| Status | Body `error`                                                                           | Meaning                                                                                                                                        | Should the sender retry? |
+| ------ | -------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------ |
+| 202    | none: `{ "stored", "tooOld", "bots", "unverifiedUsers", "blocked", "spam", "capped" }` | Written to ClickHouse. `stored` counts the events written, a retry's included. The others count events accepted and not stored ([Spam](#spam)) | No                       |
+| 400    | `invalid_request`                                                                      | The batch breaks a rule below                                                                                                                  | No: it will fail again   |
+| 403    | `unknown_key`, `origin_not_allowed`, `hostname_not_allowed`                            | Wrong key, or a site the project does not allow                                                                                                | No                       |
+| 413    | `payload_too_large`                                                                    | Body over 64 KB                                                                                                                                | No: send smaller batches |
+| 415    | `unsupported_media_type`                                                               | Not `text/plain` or `application/json`                                                                                                         | No                       |
+| 429    | `rate_limited`                                                                         | Too many requests or events                                                                                                                    | Yes, after `Retry-After` |
+| 503    | `storage_unavailable`                                                                  | The key could not be looked up, or ClickHouse could not write; nothing was stored                                                              | Yes, after `Retry-After` |
 
 Ottertrail answers 202 only after ClickHouse has written the events ([clickhouse.md](clickhouse.md#how-events-get-there)). A batch is saved completely or not at all: if one event breaks a rule, nothing from the batch is stored.
 
-### Cheapest checks first
+### Checks, in order
 
-The endpoint is public, so anyone can send it anything. Each check costs more than the one before it, so floods and garbage are turned away before they cost a database query:
+The endpoint is public, so anyone can send it anything. Checks run cheapest first, so floods and garbage are turned away before they cost a database query:
 
-1. Rate limit per client IP address, before the body is even read.
+1. Requests per client IP address, before the body is even read.
 2. Body size, content type, and the JSON schema (Fastify validates before the handler runs).
-3. Project key, from a 60-second in-memory cache. Unknown keys are cached too, so repeating a made-up key costs one query a minute, not one per request. A stream of different made-up keys still costs a query each; the IP rate limit in step 1 bounds it.
-4. The `Origin` header and every event's page hostname against the project's allowed hostnames.
-5. Event budget per project.
-6. URL cleanup and clock correction.
-7. One insert into ClickHouse for the whole batch.
+3. Events per client address ([Rate limits](#rate-limits)), as soon as the batch's size is known, before the key costs a lookup.
+4. Project key, from a 60-second in-memory cache. Unknown keys are cached too, so repeating a made-up key costs one query a minute, not one per request. A stream of different made-up keys still costs a query each; steps 1 and 3 bound it.
+5. The `Origin` header against the project's allowed hostnames, and the release's text.
+6. Accepted and not stored, answered 202 with the count: the project's [blocked addresses](#blocked-addresses) (`blocked`), then bots and [data centers](#data-centers) (`bots`), then [referrer spam](#referrer-spam) (`spam`). These cost nothing more than the cache, and come before the budget, so they cannot use it up.
+7. Event budget per project and instance.
+8. Each event's rules and page hostname, URL cleanup, and clock correction.
+9. Visitor IDs, then the [daily cap per visitor](#a-daily-cap-per-visitor) (`capped`). It needs the visitor ID, so it comes after the budget; capped events get their budget back.
+10. One insert into ClickHouse for the whole batch.
+
+Replay uploads (`POST /api/replays`, [session replay](session-replay.md)) run steps 1, 2, 4, 5, then blocked addresses with bots and data centers (202, `{ "stored": 0 }`), then their own budgets in bytes. The event checks of steps 3 and 9 and referrer spam do not apply to them: a chunk carries no events or referrer. Server-side events and OTLP telemetry run none of the spam checks.
 
 ### Keys and allowed hostnames
 
@@ -258,22 +263,90 @@ The time the request spent on the way is not seen, so an event is placed that mu
 
 ### Rate limits
 
-Both limits use a token bucket: each key has a bucket of tokens that refills at a steady rate. A request (or each event in it) spends tokens; a full bucket allows a short burst, and the refill rate is the sustained limit. An empty bucket answers 429 with `Retry-After`, the seconds until enough tokens return.
+Every limit uses a token bucket: each key has a bucket of tokens that refills at a steady rate. A request (or each event in it) spends tokens; a full bucket allows a short burst, and the refill rate is the sustained limit. An empty bucket answers 429 with `Retry-After`, the seconds until enough tokens return.
 
 | Limit                      | Burst        | Sustained                                        | Checked                 |
 | -------------------------- | ------------ | ------------------------------------------------ | ----------------------- |
 | Per client IP              | 120 requests | 2 requests/second                                | Before the body is read |
+| Events per client address  | 200 events   | 20 events/second                                 | Before the key lookup   |
 | Per project                | 2,000 events | 200 events/second                                | After the key is known  |
 | Per instance, all projects | 6,000 events | 600 events/second (`INSTANCE_EVENTS_PER_SECOND`) | With the project's      |
 
 A batch spends from its project's bucket and the instance's, or from neither: the first keeps one project from crowding out the others, and the second keeps the instance's total bounded however many projects it has (`EventBudget` in `rate-limiter.ts`). Server-side events spend from the same buckets, so a flood of browser events with a project's public key, which anyone can copy, can hold its servers' events back too (429, to retry). An instance that needs more may raise its limit. A refusal's `Retry-After` waits for both buckets. The buckets live in the API process's memory: each process enforces its own limits, and a restart resets them. Ottertrail runs one API process per instance for now.
 
+The request limit lets one client send 50 events in each of its requests, 100 a second; the events limit counts the events themselves (`DEFAULT_IP_EVENT_LIMIT` in `collection/routes.ts`). Its key is `clientKey`: an IPv4 address as it is, and an IPv6 address by its /64, the block one household or office usually holds, so a client cannot dodge it by rotating through its addresses. A person sends a handful of events a minute; 20 a second sustained, after a burst of 200, leaves room for dozens of people behind one address.
+
+That is also its cost: everyone behind one address shares one bucket. An office, a school, or a mobile carrier's shared address (carrier-grade NAT, where thousands of phones leave through a few addresses) can reach it on a busy site, and then their events wait and are retried (429, `Retry-After`): the tracker keeps up to 200 events and tries again, so a short peak loses nothing, but a long one can. A site whose visitors mostly arrive through one address would need a higher limit; it is a constant for now, not a setting.
+
 Behind a proxy (Cloudflare, Caddy), every request seems to come from the proxy's address. Set `TRUST_PROXY` (see the README) so the API reads the client's address from `X-Forwarded-For`. Leave it unset without a proxy: otherwise any client could claim any address.
+
+### Spam
+
+Anyone can copy a page's public key and send events, so some arrive that no person caused: runaway trackers, scripts, and referrer spam (visits that only exist to put a site's name in a report's referrers). Five things keep them out or take them away again. Each answers 202, so a sender never learns it was caught and has no reason to retry, and counts what it caught in the answer. None of them stores anything about the sender. Code: `apps/api/src/collection/`, `apps/api/src/projects/blocked-addresses.ts` and `blocked-referrers.ts`, `apps/api/src/enrichment/referrer-spam.ts`, `apps/api/src/spam/`.
+
+#### Events per client address
+
+The per-client event limit above: a script that sends full batches as fast as it can is held at 20 events a second, however many visitor IDs it makes up.
+
+#### A daily cap per visitor
+
+After a visitor ID has sent 5,000 events in its day, its further events are answered 202, counted in `capped`, and not stored (`VISITOR_DAILY_EVENT_CAP` in `collection/visitor-cap.ts`, the one constant). A person reading a site sends a few dozen to a few hundred events a day; 5,000 is reached only by a page stuck in a loop or a script.
+
+- The counts are kept in the API process's memory, keyed by project, the visitor's day (in the instance's timezone, the day its visitor ID belongs to), and visitor ID. Nothing is stored, and nothing is looked up before an insert.
+- Memory is bounded: 100,000 visitors at most (`VISITOR_CAP_MAX_KEYS`), about 15 MB. Past that, the visitor counted least recently is forgotten, and starts again from zero if it sends again: it may store another 5,000 that day. A restart forgets every count too, and each API process counts its own.
+- A retried event counts again toward the cap, as it does in `stored`. A batch ClickHouse could not write gives its counts back.
+- Server-side events have no visitor and are not capped.
+
+What it stops: runaway trackers and naive scripts that keep one browser and address. What it does not stop: a sender that changes its User-Agent on every request gets a new visitor ID each time, since the ID hashes the User-Agent ([section 5](#5-visitors)). The per-client event limit and blocked addresses handle that case.
+
+#### Blocked addresses
+
+A project can ignore the browser events of up to 100 IPv4 and IPv6 addresses and CIDR ranges, such as its own office's (`projects.blocked_addresses`; "Blocked addresses" on the [Spam and bots](dashboard.md#spam-and-bots) tab). Their events are answered 202, counted in `blocked`, and not stored, before the project's event budget, so they do not use it up. Their replay uploads are accepted and dropped the same way. Server-side events are never blocked: they come from the site's own server.
+
+- **The rules**, checked by the API on save (and by the dashboard as it is typed): an address or a range (`203.0.113.0/24`, `2001:db8::/48`), at most a /8 of IPv4 or a /16 of IPv6, since a wider range blocks a large part of the internet by one mistyped prefix, and silently. No zones (`fe80::1%eth0`) and no `start-end` ranges. A bad entry is refused (400 `invalid_address`) and named.
+- **Normal forms:** an IPv4-mapped IPv6 address (`::ffff:203.0.113.7`) is stored as its IPv4 address, as `clientKey` counts it; a range as its network address (`10.1.2.3/8` is `10.0.0.0/8`); a range of one address as the address; IPv6 in its shortest form, lower case. Repeats are dropped, and the 100 counts after that.
+- **Matching** uses Node's `net.BlockList`, built once when the collection endpoint loads the project into its key cache, never per request. A client address that is IPv4-mapped (as a dual-stack server sees IPv4 clients) is checked as IPv4.
+- **When a change applies:** saving the list makes the API process forget the project's cache entry, so the next request uses the new list. A second API process would keep its cached list for up to the cache's 60 seconds.
+- **"Add my address"** asks `GET /api/client-address`, which answers the address the API sees the request come from (`TRUST_PROXY` applies), and for IPv6 its /64; the dashboard adds the IPv4 address, or the IPv6 /64, since the same browser may use another address of its /64 tomorrow. The route needs the `projects` permission and the address is not logged.
+
+#### Referrer spam
+
+A browser batch with an event whose referrer's hostname is a listed domain, or a subdomain of one, is answered 202, counted in `spam`, and not stored, before the budget. `semalt.com` catches `www.semalt.com` but not `notsemalt.com` or `semalt.com.example.org`. The whole batch goes: its other events (time on the page, its Web Vitals) belong to the same spam visit. A referrer on one of the project's own allowed hostnames is never spam, whatever a list holds: the tracker sends the previous page as each later page's referrer, so a site whose own domain is listed would otherwise lose every page after its visitors' first. Three sources, combined:
+
+1. **Matomo's community list** (`spammers.txt` of [matomo-org/referrer-spam-list](https://github.com/matomo-org/referrer-spam-list)), in the public domain (its README; CC0-1.0 in its `composer.json`). A copy ships in the repository, pinned to a commit (`apps/api/src/enrichment/referrer-spam/list.ts`; 2,355 domains at commit `6cd0b655c740da5bb39d98cd1bea88e2e0660e80` of 10 November 2026), and reaches instances with each release: instances never download it. Maintainers refresh it with `vp run referrer-spam:update`, which checks the download first: hostnames only, at least 1,000, and two guard lists (`referrer-spam-check.ts`). Real referrers (google.com, bing.com, facebook.com, t.co, reddit.com, wikipedia.org, news.ycombinator.com, and the rest) may not be listed, nor a parent or any subdomain of one, since `www.google.com` and `l.facebook.com` are how they refer visitors. Hosting platforms (blogspot.com, github.io, netlify.app, vercel.app, and the rest) may not be listed themselves, or by a parent, while their users' subdomains may (`eoriseome.netlify.app` is a spam site). An upstream entry that trips a guard wrongly is left out on purpose, with its reason, in the script's `IGNORED_UPSTREAM`, which the script drops and prints. A weekly workflow opens a pull request when it changed ([README](../README.md#the-referrer-spam-list)). Only the domains are taken, as data: no code or text of Matomo's or any other analytics product.
+2. **Ottertrail's own additions** (`apps/api/src/enrichment/referrer-spam/additions.ts`): one domain per line, `#` for comments, edited by hand, matched like Matomo's, and never touched by the refresh. A domain added here should also go to Matomo's list as a pull request (one per domain), so every user of that list gets it; once it is there, it leaves this file. It holds one entry under `.invalid`, which never resolves, so the tests can check the file is loaded.
+3. **The project's own blocked referrers** (`projects.blocked_referrers`; "Blocked referrers" on the Spam and bots tab): up to 100 domains, each with its subdomains. Stored lower case, without a scheme, path, or port, internationalized names in their ASCII form (`bücher.example` is `xn--bcher-kva.example`), repeats dropped (400 `invalid_referrer` otherwise):
+   - at least two labels, and not a common public suffix of two (`co.uk`, `com.au`, `co.jp`, `com.br`, and about fifty more in `PUBLIC_SUFFIXES`), since either would block every site under it. No dependency provides the whole Public Suffix List, so rarer suffixes pass;
+   - not one of the project's allowed hostnames, nor a parent of one ("would block your own site"), checked against the allowed hostnames as they will be after the change;
+   - no IP addresses.
+
+   Loaded with the project into the key cache, so a change applies from the next request in this process, as blocked addresses do. Their matches count in `spam` too.
+
+Limits: a spam visit's later pages carry the site's own pages as referrers, so a bot that browses on after its first page leaves those pages behind (delete them below). A list only knows the domains someone reported.
+
+#### Deleting spam that got in
+
+Spam caught by nothing above, or that came before a rule was added, can be deleted afterwards: whole visits, matched by filters ("Delete spam" on the Spam and bots tab). The routes need the `projects` permission ([access](access.md)):
+
+- `POST /api/projects/:id/spam-visits/preview` counts what a delete would take: visits, their events, and of those pageviews, custom events, errors, and the rest (time-on-page reports and Web Vitals), and the session replays of their errors.
+- `POST /api/projects/:id/spam-visits/delete` deletes them, given the same filters and the number of visits the user confirmed (`confirmVisits`). When the visits found are not that number any more, it deletes nothing (409 `visits_changed`).
+
+The filters, checked by Fastify's schemas and then the route (400 otherwise):
+
+- **A period**, required: the first and last day (`from`, `to`, `YYYY-MM-DD`) in the instance's timezone, at most 92 days, ending today at the latest, and not before the project's retention keeps events.
+- **At least one of:** a referrer domain (it and its subdomains), a page path (exact), and a country (a two-letter code). Each one given must match. Without any, every visit of the period would go, so the request is refused.
+- **No page hostname:** events store their page's path, not its hostname, and every stored event's hostname was an allowed one anyway ([Keys and allowed hostnames](#keys-and-allowed-hostnames)).
+
+What goes: every event of each visit with at least one event in the period that matches every filter. A visit here is a visitor's run of events of any kind (errors and Web Vitals included, so they go with their visit) with no gap over 30 minutes, per environment, as reports count them ([section 6](#6-visits)); events outside the period that belong to such a visit go too. Server-side events belong to no visitor and are never deleted here. A visit still going on while it is deleted keeps the events that arrive after the visits are found: a period that ends today can leave the end of such a visit, which a second delete takes. The dashboard says so when the period ends today.
+
+A delete takes at most 10,000 visits; past that it refuses, deleting nothing (409 `too_many_visits`), and the dashboard asks for a shorter period or narrower filters, to delete in parts. A delete can also stop partway, when ClickHouse fails between its statements: the visits of the statements that ran are gone, with their replays and first-seen times, the rest are not, and the answer is 500 `delete_failed`, "some visits may have been deleted", so the user counts again and deletes what is left. How it deletes, what it reaches, and what it does not: [clickhouse.md](clickhouse.md#deleting-spam-visits). Each delete is logged at info level: the user, the project, the filters, and the counts, never an IP address.
 
 ### Not done yet
 
 - Project management in the dashboard, key rotation, and wildcard hostnames such as `*.example.com`.
 - Compressed request bodies.
+- Limits per client address set per project, for sites whose visitors share an address.
+- Counting caught spam per project over time, so a site can see how much there was.
 
 ## 3. The tracker
 
@@ -411,7 +484,9 @@ Every event in a request shares these values: one request comes from one browser
 
 ### The IP address is never stored or logged
 
-The address is used in memory for the location lookup and then dropped. No column holds it, and request logs record only the method and URL: Fastify's default request log includes the client's address and port, so the API replaces it (`requestLogFields` in `apps/api/src/app.ts`). A test sends requests and checks that no log line contains the address.
+The address is used in memory for the location lookup, the data-center check, the per-client limits, and the project's blocked addresses, and then dropped. No column of an event holds it, and request logs record only the method and URL: Fastify's default request log includes the client's address and port, so the API replaces it (`requestLogFields` in `apps/api/src/app.ts`). A test sends requests and checks that no log line contains the address.
+
+The only IP addresses Ottertrail stores are those an owner or admin types into a project's [blocked addresses](#blocked-addresses), by their own choice: their office's, a scraper's. Only the owner and admins see them (members get the project without its settings, [access](access.md)), they are never stored with events, and they are deleted with the project. `GET /api/client-address` answers the requester's own address to them and logs nothing.
 
 Under GDPR an IP address is personal data. Not keeping it also means locations can never be recomputed later: whatever was known when an event arrived is all there will ever be.
 
@@ -487,7 +562,7 @@ On 17 November 2026 the file held 20,426 ranges from 14 providers, about 4.7% of
 
 What it costs:
 
-- **People in a cloud are ignored too:** remote desktops (Amazon WorkSpaces, Windows 365), some VPNs, and corporate proxies that run on these providers. A project whose visitors browse that way can turn the check off ("Ignore visits from data centers" in its settings, `ignore_data_centers`, on by default). Server-side events are never checked: they come from the site's own server by design.
+- **People in a cloud are ignored too:** remote desktops (Amazon WorkSpaces, Windows 365), some VPNs, and corporate proxies that run on these providers. A project whose visitors browse that way can turn the check off ("Ignore visits from data centers" on its settings' Spam and bots tab, `ignore_data_centers`, on by default). Server-side events are never checked: they come from the site's own server by design.
 - **Not people behind privacy relays:** none of Apple's iCloud Private Relay exit ranges (`mask-api.icloud.com/egress-ip-ranges.csv`, 285,194 ranges) was in the file, and CDNs such as Cloudflare, Akamai's edge, and Fastly, which carry such relays, are not in it on purpose.
 - **Test runs in CI are ignored:** GitHub Actions runners, for example, run in Azure. Tests that should count need a project with the check off.
 - **Behind a proxy without `TRUST_PROXY`,** every request seems to come from the proxy's address, which may be a cloud's: then every event would be ignored. Set `TRUST_PROXY` (see "Rate limits" below).

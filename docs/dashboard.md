@@ -90,11 +90,12 @@ Settings that differ from Better Auth's defaults, and why:
 
 Code: `apps/api/src/projects/`, `apps/api/src/tracker-script/`, and `apps/web/src/features/projects/`.
 
-A project is one website or app. The Projects page lists them with their allowed sites and when their last event happened. A project's Settings page (`/projects/<id>/settings`) has six tabs ([settings tabs and the Save bar](design-system.md#settings-tabs-and-the-save-bar)), the chosen one in the address (`?tab=general`; Install, the first, leaves it out); a new project opens on Install:
+A project is one website or app. The Projects page lists them with their allowed sites and when their last event happened. A project's Settings page (`/projects/<id>/settings`) has seven tabs ([settings tabs and the Save bar](design-system.md#settings-tabs-and-the-save-bar)), the chosen one in the address (`?tab=general`; Install, the first, leaves it out); a new project opens on Install:
 
 - **Install**: the install snippet and public key to copy, "Copy setup prompt" (below), and whether events are arriving.
-- **General**: a form for the name, allowed sites, how long events are kept, data centers, and the main goal.
+- **General**: a form for the name, allowed sites, how long events are kept, and the main goal.
 - **Your server**: the secret key, and a form for signed user IDs.
+- **Spam and bots** (`?tab=spam`): a form for data centers, blocked addresses, and blocked referrers, and "Delete spam" ([below](#spam-and-bots)).
 - **Source maps**, **Session replay** (a form for the mode), and the **Danger zone**.
 
 Each form has its own Save bar and follows [the save rule](design-system.md#the-save-rule): Save waits for a change, Discard undoes the edits, a tab with unsaved edits says so, and leaving the page with them asks first. Links into the settings open the right tab: the stack trace's "Source maps settings", the replays page's and the telemetry pages' settings links, and the overview's "Choose the main goal".
@@ -144,13 +145,26 @@ The session cookie is `SameSite=Lax`, which keeps it off other sites' form posts
 
 ### Keeping events
 
-The General tab's "Ignore visits from data centers", on by default, makes collection ignore browser events from cloud and hosting providers' addresses, as bots ([web analytics](web-analytics.md#data-centers)); a project whose visitors use remote desktops in a cloud turns it off. It applies from the next event: the route makes the key cache forget the project.
+The Spam and bots tab's "Ignore visits from data centers", on by default, makes collection ignore browser events from cloud and hosting providers' addresses, as bots ([web analytics](web-analytics.md#data-centers)); a project whose visitors use remote desktops in a cloud turns it off. It applies from the next event: the route makes the key cache forget the project.
 
 The General tab's "Keep events" sets how long the project keeps its events: forever (the default), 6 months, 1 year, 2 years, or 5 years ([web analytics](web-analytics.md#how-long-events-are-kept), section 1). Choosing a stricter limit than the current one says, before saving, that older events will be deleted for good within a few hours. The worker deletes them.
 
 ### Your server
 
 The "Your server" tab holds the project's secret key, hidden until "Show" and then copyable, with an example of a server-side event, and the switch "Only accept user IDs signed by your server", with an example of signing in Node.js ([web analytics](web-analytics.md#signed-user-ids)). The switch is a field of the tab's form: its Save sends it (`PATCH /api/projects/:id` with `requireSignedUserIds`), and collection uses the new rule from the next event: the route makes the key cache forget the project.
+
+### Spam and bots
+
+The "Spam and bots" tab (`apps/web/src/features/projects/spam-tab.tsx`, after "Your server") holds what keeps spam out of a project's numbers, and deleting what got in ([web analytics](web-analytics.md#spam)).
+
+- **A form**, under [the save rule](design-system.md#the-save-rule), whose Save sends all three (`PATCH /api/projects/:id` with `ignoreDataCenters`, `blockedAddresses`, `blockedReferrers`):
+  - "Ignore visits from data centers", moved here from General, with the same `name` (`ignoreDataCenters`).
+  - "Blocked addresses": one IPv4 or IPv6 address or CIDR range per line, at most 100. "Add my address" asks the API for the address it sees (`GET /api/client-address`) and adds it, an IPv6 address as its /64, or says it is already listed; it waits for Save like any edit. The hint says who sees the list and that it goes with the project.
+  - "Blocked referrers": one domain per line, at most 100, each also blocking its subdomains. A domain that is the project's own site, or a parent of it, is refused ("would block your own site"), as is a public suffix such as `co.uk`.
+  - Both lists are checked as the API checks them (`spam-rules.ts`), once a field has been left or a save tried: the field is marked invalid and the error, naming the bad line, replaces its hint. Save sends nothing while one is wrong. Lists compare as the API will store them, so the same entries in another order or form (`203.0.113.7/32` for `203.0.113.7`) are no change.
+- **"Delete spam"**, an action outside the save rule: the first and last day (the last week by default, in the instance's timezone), a referrer domain, page path, and country, at least one of them: "Count visits" stays disabled, saying why, until one is set, as the API refuses a delete without a filter. They are checked as typed once counted. When the period ends today, a line says that visits still going on keep the events that arrive after the delete. "Count visits" asks the preview and says what would go, by kind ("12 visits match, with 40 events: 20 pageviews, 3 custom events, 2 errors, and 15 other events (time on page, Web Vitals). 1 session replay goes with them."), or that none match, or that too many do. "Delete visits" stays disabled, saying why, until a count of the filters as they are now exists: changing a filter asks for a new count. It opens a confirmation that names the counts and asks for the number of visits typed; the delete sends that number, and the API deletes nothing when it no longer matches. Afterwards the page says what went, and every query of the project but its settings is fetched again, so reports drop the deleted visits. A delete that stopped partway shows the API's message in the dialog: count again, then delete what is left.
+
+`spam-tab.test.tsx` covers the switch's move, the save rule with Discard, the tab's mark, and the leave guard, the three fields saved together, the checks as typed (the project's own site and a public suffix refused), "Add my address" (once, and an IPv6 /64), Count waiting for a filter, the note on visits still going on, the count, Delete waiting for a current count, the typed confirmation and its request, bad filters, no matches, a failed count, and the tab at 390 and 1440 wide.
 
 ### Source maps
 

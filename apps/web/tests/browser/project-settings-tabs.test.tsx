@@ -39,6 +39,7 @@ describe("the settings tabs", () => {
       "Install",
       "General",
       "Your server",
+      "Spam and bots",
       "Source maps",
       "Session replay",
       "Danger zone",
@@ -269,7 +270,6 @@ describe("the settings, after review", () => {
         : realFetch(input, init);
     try {
       await name.fill("Shop");
-      await page.getByRole("checkbox", { name: "Ignore visits from data centers" }).click();
       await save().click();
       await expect
         .element(panel().getByRole("alert"))
@@ -278,9 +278,6 @@ describe("the settings, after review", () => {
       globalThis.fetch = realFetch;
     }
     await expect.element(name).toHaveValue("Shop");
-    await expect
-      .element(page.getByRole("checkbox", { name: "Ignore visits from data centers" }))
-      .not.toBeChecked();
     await expect.element(status()).toHaveTextContent("Unsaved changes");
   });
 

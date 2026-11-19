@@ -457,3 +457,44 @@ export async function deleteProjectReplays(
     return deleted;
   });
 }
+
+/**
+ * Deletes some of a project's replays by ID, with their chunks still
+ * waiting: those of deleted spam visits (spam/delete-visits.ts). Holds the
+ * project's row as deleteProjectReplays() does, so a join in progress
+ * finishes first and cannot write one back. Returns how many were stored.
+ */
+export async function deleteReplays(
+  db: Kysely<Database>,
+  store: ObjectStore,
+  projectId: string,
+  replayIds: readonly string[],
+): Promise<number> {
+  if (replayIds.length === 0) return 0;
+  return db.transaction().execute(async (trx) => {
+    await trx
+      .selectFrom("projects")
+      .select("id")
+      .where("id", "=", projectId)
+      .forNoKeyUpdate()
+      .execute();
+    const rows = await trx
+      .selectFrom("replays")
+      .select("object_key")
+      .where("project_id", "=", projectId)
+      .where("replay_id", "in", replayIds)
+      .execute();
+    if (rows.length > 0) await store.delete(rows.map((row) => row.object_key));
+    await trx
+      .deleteFrom("replays")
+      .where("project_id", "=", projectId)
+      .where("replay_id", "in", replayIds)
+      .execute();
+    await trx
+      .deleteFrom("replay_chunks")
+      .where("project_id", "=", projectId)
+      .where("replay_id", "in", replayIds)
+      .execute();
+    return rows.length;
+  });
+}

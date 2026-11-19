@@ -60,6 +60,13 @@ export interface ProjectsTable {
   last_event_at: ColumnType<Date | null, never, Date | null>;
   /** The goal the overview's business figures start with; null for none. One of the project's goals. */
   main_goal_id: ColumnType<string | null, string | null | undefined, string | null>;
+  /**
+   * Addresses and CIDR ranges whose browser events are ignored, normalised
+   * (projects/blocked-addresses.ts), at most 100. Typed in by an owner or admin.
+   */
+  blocked_addresses: ColumnType<string[], string[] | undefined, string[]>;
+  /** Domains whose referrals are ignored, with their subdomains, normalised (projects/blocked-referrers.ts), at most 100. */
+  blocked_referrers: ColumnType<string[], string[] | undefined, string[]>;
 }
 
 /**

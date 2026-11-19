@@ -31,10 +31,17 @@ export interface Project extends ProjectSummary {
   replayMode: "off" | "errors";
   /** The goal the overview's business figures start with; null for none. */
   mainGoalId: string | null;
+  /** IP addresses and CIDR ranges whose browser events are ignored. */
+  blockedAddresses: string[];
+  /** Referrer domains whose visits are ignored, with their subdomains. */
+  blockedReferrers: string[];
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null;
+
+const isStringList = (value: unknown): value is string[] =>
+  Array.isArray(value) && value.every((item) => typeof item === "string");
 
 function isProjectSummary(value: unknown): value is ProjectSummary {
   return (
@@ -66,7 +73,11 @@ export function isFullProject(value: unknown): value is Project {
     "replayMode" in value &&
     (value.replayMode === "off" || value.replayMode === "errors") &&
     "mainGoalId" in value &&
-    (value.mainGoalId === null || typeof value.mainGoalId === "string")
+    (value.mainGoalId === null || typeof value.mainGoalId === "string") &&
+    "blockedAddresses" in value &&
+    isStringList(value.blockedAddresses) &&
+    "blockedReferrers" in value &&
+    isStringList(value.blockedReferrers)
   );
 }
 
@@ -116,6 +127,8 @@ export async function updateProject(
     ignoreDataCenters?: boolean;
     replayMode?: "off" | "errors";
     mainGoalId?: string | null;
+    blockedAddresses?: string[];
+    blockedReferrers?: string[];
   },
 ) {
   const body = await apiRequest(`/api/projects/${encodeURIComponent(id)}`, {
@@ -147,4 +160,78 @@ export async function replaceSecretKey(id: string) {
     method: "POST",
   });
   return expectShape(body, isFullOne).project;
+}
+
+/** The requester's own address as the API sees it, and for IPv6 its /64, for "Add my address". */
+export interface ClientAddress {
+  address: string;
+  network: string | null;
+}
+
+const isClientAddress = (value: unknown): value is ClientAddress =>
+  isRecord(value) &&
+  typeof value.address === "string" &&
+  (value.network === null || typeof value.network === "string");
+
+export async function clientAddress(): Promise<ClientAddress> {
+  return expectShape(await apiRequest("/api/client-address"), isClientAddress);
+}
+
+/** What picks the visits "Delete spam" deletes: a period of days, and optional filters. */
+export interface SpamFilters {
+  /** "YYYY-MM-DD", in the instance's timezone. */
+  from: string;
+  to: string;
+  referrer?: string;
+  path?: string;
+  country?: string;
+}
+
+/** Visits, and their events by kind. */
+export interface SpamCounts {
+  visits: number;
+  events: number;
+  pageviews: number;
+  customEvents: number;
+  errors: number;
+  other: number;
+  replays: number;
+}
+
+const COUNT_FIELDS = [
+  "visits",
+  "events",
+  "pageviews",
+  "customEvents",
+  "errors",
+  "other",
+  "replays",
+] as const;
+
+const isSpamCounts = (value: unknown): value is SpamCounts =>
+  isRecord(value) && COUNT_FIELDS.every((field) => typeof value[field] === "number");
+
+const isPreview = (value: unknown): value is SpamCounts & { limit: number } =>
+  isSpamCounts(value) && "limit" in value && typeof value.limit === "number";
+
+/** What deleting with these filters would take. */
+export async function previewSpamVisits(projectId: string, filters: SpamFilters) {
+  const body = await apiRequest(
+    `/api/projects/${encodeURIComponent(projectId)}/spam-visits/preview`,
+    { method: "POST", body: filters },
+  );
+  return expectShape(body, isPreview);
+}
+
+/** Deletes those visits, whole; the API wants the number of visits repeated. */
+export async function deleteSpamVisits(
+  projectId: string,
+  filters: SpamFilters,
+  confirmVisits: number,
+) {
+  const body = await apiRequest(
+    `/api/projects/${encodeURIComponent(projectId)}/spam-visits/delete`,
+    { method: "POST", body: { ...filters, confirmVisits } },
+  );
+  return expectShape(body, isSpamCounts);
 }

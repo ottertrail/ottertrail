@@ -163,6 +163,9 @@ describe("POST /api/events", () => {
       tooOld: 0,
       bots: 0,
       unverifiedUsers: 0,
+      blocked: 0,
+      spam: 0,
+      capped: 0,
     });
     const [first, second] = await storedEvents(project.id);
     expect(first).toMatchObject({
@@ -214,7 +217,15 @@ describe("POST /api/events", () => {
 
     expect(first.json()).toMatchObject({ stored: 2 });
     // Each answer counts what it was sent: the server looks nothing up.
-    expect(retry.json()).toEqual({ stored: 2, tooOld: 0, bots: 0, unverifiedUsers: 0 });
+    expect(retry.json()).toEqual({
+      stored: 2,
+      tooOld: 0,
+      bots: 0,
+      unverifiedUsers: 0,
+      blocked: 0,
+      spam: 0,
+      capped: 0,
+    });
     // The retry's times are later by the extra time on the way, about 4
     // seconds, but on the same day: ClickHouse keeps each event once.
     expect(await countEvents(clickhouse(), project.id)).toBe(2);
@@ -237,6 +248,9 @@ describe("POST /api/events", () => {
       tooOld: 1,
       bots: 0,
       unverifiedUsers: 0,
+      blocked: 0,
+      spam: 0,
+      capped: 0,
     });
   });
 
@@ -560,7 +574,15 @@ describe("POST /api/events", () => {
         headers: { "user-agent": userAgent },
       });
       expect(response.statusCode).toBe(202);
-      expect(response.json()).toEqual({ stored: 0, tooOld: 0, bots: 2 });
+      expect(response.json()).toEqual({
+        stored: 0,
+        tooOld: 0,
+        bots: 2,
+        unverifiedUsers: 0,
+        blocked: 0,
+        spam: 0,
+        capped: 0,
+      });
       expect(await storedEvents(project.id)).toHaveLength(0);
     });
 
@@ -592,7 +614,15 @@ describe("POST /api/events", () => {
           remoteAddress: CLOUD,
         });
         expect(response.statusCode).toBe(202);
-        expect(response.json()).toEqual({ stored: 0, tooOld: 0, bots: 2 });
+        expect(response.json()).toEqual({
+          stored: 0,
+          tooOld: 0,
+          bots: 2,
+          unverifiedUsers: 0,
+          blocked: 0,
+          spam: 0,
+          capped: 0,
+        });
         expect(await storedEvents(project.id)).toHaveLength(0);
 
         // The same browser from anywhere else counts.

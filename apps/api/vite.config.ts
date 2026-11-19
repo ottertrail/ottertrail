@@ -1,6 +1,7 @@
 import { defineConfig } from "vite-plus";
 
 import { thirdPartyLicenses } from "../../scripts/third-party-licenses.ts";
+import { REFERRER_SPAM_COMMIT } from "./src/enrichment/referrer-spam/list.ts";
 
 export default defineConfig({
   pack: {
@@ -29,6 +30,13 @@ export default defineConfig({
             version: "1.11.1",
             license: "Apache-2.0",
             licenseFile: `${import.meta.dirname}/src/telemetry/proto/LICENSE`,
+          },
+          // Matomo's referrer spam list, as data (src/enrichment/referrer-spam/list.ts).
+          {
+            name: "matomo-referrer-spam-list",
+            version: REFERRER_SPAM_COMMIT,
+            license: "CC0-1.0",
+            licenseFile: `${import.meta.dirname}/src/enrichment/referrer-spam/LICENSE`,
           },
         ],
       }),

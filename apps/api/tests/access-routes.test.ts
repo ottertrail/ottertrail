@@ -50,6 +50,7 @@ const EXPECTED: Record<string, string> = {
   "POST /api/invitations/:invitationId/link": "permission:members",
   "DELETE /api/invitations/:invitationId": "permission:members",
   "POST /api/projects": "permission:projects",
+  "GET /api/client-address": "permission:projects",
   "GET /api/channels": "permission:channels",
   "POST /api/channels": "permission:channels",
   "GET /api/channels/:channelId": "permission:channels",
@@ -67,6 +68,8 @@ const EXPECTED: Record<string, string> = {
   "POST /api/projects/:id/secret-key": "project:permission:projects",
   "GET /api/projects/:id/replays": "replays:view",
   "DELETE /api/projects/:id/replays": "project:permission:projects",
+  "POST /api/projects/:id/spam-visits/preview": "project:permission:projects",
+  "POST /api/projects/:id/spam-visits/delete": "project:permission:projects",
 
   "GET /api/projects/:id/analytics": "web_analytics:view",
   "GET /api/projects/:id/analytics/list": "web_analytics:view",

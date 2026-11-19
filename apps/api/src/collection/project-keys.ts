@@ -1,6 +1,9 @@
+import type { BlockList } from "node:net";
+
 import type { Kysely } from "kysely";
 
 import type { Database } from "../db/schema.ts";
+import { blockListOf } from "../projects/blocked-addresses.ts";
 
 export const PUBLIC_KEY_PATTERN = "^pk_[0-9a-f]{32}$";
 export const SECRET_KEY_PATTERN = "^sk_[0-9a-f]{32}$";
@@ -16,6 +19,13 @@ export interface CollectingProject {
   ignoreDataCenters: boolean;
   /** Session replays: "off", or "errors", recorded around errors (docs/session-replay.md). */
   replayMode: "off" | "errors";
+  /**
+   * The project's blocked addresses (projects/blocked-addresses.ts), built
+   * once as the project is loaded here, never per request; null for none.
+   */
+  blocked: BlockList | null;
+  /** The project's blocked referrer domains (projects/blocked-referrers.ts), as a set; null for none. */
+  blockedReferrers: ReadonlySet<string> | null;
 }
 
 interface CacheEntry {
@@ -88,6 +98,8 @@ export class ProjectKeyCache {
         "projects.require_signed_user_ids",
         "projects.ignore_data_centers",
         "projects.replay_mode",
+        "projects.blocked_addresses",
+        "projects.blocked_referrers",
       ])
       .where(`projects.${column}`, "=", key)
       .executeTakeFirst();
@@ -101,6 +113,9 @@ export class ProjectKeyCache {
             requireSignedUserIds: row.require_signed_user_ids,
             ignoreDataCenters: row.ignore_data_centers,
             replayMode: row.replay_mode,
+            blocked: blockListOf(row.blocked_addresses),
+            blockedReferrers:
+              row.blocked_referrers.length === 0 ? null : new Set(row.blocked_referrers),
           };
 
     if (forgotten !== this.#forgotten) return project;

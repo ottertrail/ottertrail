@@ -126,6 +126,11 @@ export class VisitorIds {
     return visitorId(salt, input.projectId, input.ip, input.userAgent);
   }
 
+  /** The day ("YYYY-MM-DD") a moment falls on in a timezone: the day whose salt its visitor ID uses. */
+  dayOf(timeZone: string, moment: Date): string {
+    return this.#day(timeZone)(moment);
+  }
+
   /**
    * The oldest day whose salt is still kept in a timezone. Events arrive up
    * to 24 hours late, so a day's salt is needed until 24 hours after the

@@ -35,6 +35,14 @@ export interface Project {
   replayMode: "off" | "errors";
   /** The goal the overview's business figures start with, or null (docs/dashboard.md, "Overview"). */
   mainGoalId: string | null;
+  /**
+   * IP addresses and CIDR ranges whose browser events are ignored
+   * (blocked-addresses.ts), as an owner or admin entered them. Only those
+   * who manage projects see them.
+   */
+  blockedAddresses: string[];
+  /** Domains whose referrals are ignored, with their subdomains (blocked-referrers.ts). Only those who manage projects see them. */
+  blockedReferrers: string[];
 }
 
 /** The fewest and most days a project may keep its events; the database checks the same. */
@@ -102,6 +110,8 @@ function baseQuery(db: Kysely<Database>) {
       "projects.ignore_data_centers",
       "projects.replay_mode",
       "projects.main_goal_id",
+      "projects.blocked_addresses",
+      "projects.blocked_referrers",
     ]);
 }
 
@@ -121,6 +131,8 @@ function toProject(row: ProjectRow): Project {
     ignoreDataCenters: row.ignore_data_centers,
     replayMode: row.replay_mode,
     mainGoalId: row.main_goal_id,
+    blockedAddresses: row.blocked_addresses,
+    blockedReferrers: row.blocked_referrers,
   };
 }
 
@@ -178,6 +190,10 @@ export async function updateProject(
     ignoreDataCenters?: boolean;
     replayMode?: "off" | "errors";
     mainGoalId?: string | null;
+    /** Already checked and normalised (parseBlockedAddresses). */
+    blockedAddresses?: string[];
+    /** Already checked and normalised (parseBlockedReferrers). */
+    blockedReferrers?: string[];
   },
 ): Promise<Project | null | "no_such_goal"> {
   const values = {
@@ -194,6 +210,12 @@ export async function updateProject(
       : { ignore_data_centers: changes.ignoreDataCenters }),
     ...(changes.replayMode === undefined ? {} : { replay_mode: changes.replayMode }),
     ...(changes.mainGoalId === undefined ? {} : { main_goal_id: changes.mainGoalId }),
+    ...(changes.blockedAddresses === undefined
+      ? {}
+      : { blocked_addresses: changes.blockedAddresses }),
+    ...(changes.blockedReferrers === undefined
+      ? {}
+      : { blocked_referrers: changes.blockedReferrers }),
   };
   if (Object.keys(values).length > 0) {
     try {
