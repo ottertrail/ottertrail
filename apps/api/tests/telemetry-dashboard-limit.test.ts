@@ -7,6 +7,11 @@ import {
   DashboardBusyError,
   DashboardQueryLimiter,
   dashboardReader,
+  LIST_PLACES,
+  LIVE_QUERIES_AT_ONCE,
+  LIVE_QUEUE_WAIT_MS,
+  liveReader,
+  QUERIES_AT_ONCE,
   SPARKLINE_PLACES,
 } from "../src/telemetry/dashboard-limit.ts";
 import { DASHBOARD_SETTINGS } from "../src/telemetry/dashboard-query.ts";
@@ -213,6 +218,47 @@ async function runningWith(marker: string): Promise<number> {
   const [row] = await result.json<{ n: string }>();
   return Number(row?.n ?? 0);
 }
+
+/** A request's reply that stays open, for a reader's signal. */
+const reply = () => ({ raw: { writableFinished: false, once: () => undefined } });
+
+describe("the split of the dashboard's places", () => {
+  test("sparklines and live polls take at most one each, and leave at least two for the rest", () => {
+    expect({
+      all: QUERIES_AT_ONCE,
+      sparklines: SPARKLINE_PLACES,
+      live: LIVE_QUERIES_AT_ONCE,
+      rest: LIST_PLACES,
+    }).toEqual({ all: 4, sparklines: 1, live: 1, rest: 2 });
+  });
+});
+
+describe("the live view's polls", () => {
+  test("hold at most one of the dashboard's places, and give up after a short wait", async () => {
+    expect({ places: LIVE_QUERIES_AT_ONCE, waitMs: LIVE_QUEUE_WAIT_MS }).toEqual({
+      places: 1,
+      waitMs: 2000,
+    });
+    const limiter = new DashboardQueryLimiter({ max: 4 });
+    const live = new DashboardQueryLimiter({ max: LIVE_QUERIES_AT_ONCE, waitMs: 50 });
+    const first = liveReader(clickhouse.client, limiter, live, reply());
+    const second = liveReader(clickhouse.client, limiter, live, reply());
+    const held = later();
+    const running = first.gate?.(() => held.promise);
+    await expect.poll(() => limiter.running).toBe(1);
+    // A second poll waits for the live place, not one of the dashboard's, then is refused.
+    await expect(second.gate?.(() => Promise.resolve("ran"))).rejects.toBeInstanceOf(
+      DashboardBusyError,
+    );
+    expect(limiter.running).toBe(1);
+    // The other pages still have their places.
+    const page = dashboardReader(clickhouse.client, limiter, reply());
+    expect(await page.gate?.(async () => limiter.running)).toBe(2);
+    held.settle();
+    await running;
+    expect(await second.gate?.(() => Promise.resolve("ran"))).toBe("ran");
+  });
+});
 
 describe("a dashboard query whose request is gone", () => {
   test("is stopped by ClickHouse within about a second of the abort", async () => {

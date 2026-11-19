@@ -4,6 +4,7 @@ import { afterAll, beforeAll, describe, expect, test } from "vite-plus/test";
 
 import { createClickHouse } from "../src/clickhouse/clickhouse.ts";
 import { migrateClickHouse } from "../src/clickhouse/migrate.ts";
+import { CLICKHOUSE_MIGRATIONS } from "../src/clickhouse/migrations.ts";
 import { loadConfig } from "../src/config.ts";
 import { createTestClickHouse, type TestClickHouse } from "./helpers/test-clickhouse.ts";
 
@@ -111,6 +112,100 @@ function row(eventId: string) {
     visitor_id: "42",
   };
 }
+
+describe("log records' arrival (migration 0005)", () => {
+  test("a record written without one gets ClickHouse's time; the migration run again changes no arrival", async () => {
+    const { client, database } = ch();
+    const project = randomUUID();
+    const record = (id: string, received?: string) => ({
+      project_id: project,
+      timestamp: "2026-11-16 12:00:00.000000000",
+      observed_timestamp: "2026-11-16 12:00:01.000000000",
+      id,
+      body: id,
+      ...(received === undefined ? {} : { received_at: received }),
+    });
+    await client.insert({
+      table: "logs",
+      values: [record("a".repeat(32)), record("b".repeat(32), "2026-11-16 12:00:05.000000000")],
+      format: "JSONEachRow",
+    });
+    const arrivals = async () => {
+      const result = await client.query({
+        query: `SELECT id, toString(received_at) AS received FROM logs
+                WHERE project_id = {project:UUID} ORDER BY id`,
+        query_params: { project },
+        format: "JSONEachRow",
+      });
+      return result.json<{ id: string; received: string }>();
+    };
+    const before = await arrivals();
+    // The default: ClickHouse's clock as it wrote the record, not its time or observed time.
+    expect(before[0]?.received.startsWith("2026-11-16")).toBe(false);
+    expect(before[1]?.received).toBe("2026-11-16 12:00:05.000000000");
+
+    const migration = CLICKHOUSE_MIGRATIONS.find((item) => item.name === "0005_log_received_at");
+    for (const statement of migration?.statements(database) ?? []) {
+      await client.command({ query: statement });
+    }
+    expect(await arrivals()).toEqual(before);
+    const columns = await client.query({
+      query: `SELECT default_expression FROM system.columns
+              WHERE database = {database:String} AND table = 'logs' AND name = 'received_at'`,
+      query_params: { database },
+      format: "JSONEachRow",
+    });
+    expect(await columns.json()).toEqual([{ default_expression: "now64(9)" }]);
+  });
+});
+
+describe("migration 0005 after a failure part way", () => {
+  test("run again, it writes the observed time, not the rerun's, into records stored before it", async () => {
+    const admin = createClickHouse(loadConfig().clickhouse, { database: "default" });
+    const scratch = `${ch().database}_r5`;
+    try {
+      await migrateClickHouse(
+        admin,
+        scratch,
+        CLICKHOUSE_MIGRATIONS.filter((migration) => migration.name < "0005"),
+      );
+      // A record stored before the migration: its part has no arrival column.
+      await admin.insert({
+        table: `${scratch}.logs`,
+        values: [
+          {
+            project_id: randomUUID(),
+            timestamp: "2026-11-16 12:00:00.000000000",
+            observed_timestamp: "2026-11-16 12:00:01.000000000",
+            id: "c".repeat(32),
+            body: "stored before",
+          },
+        ],
+        format: "JSONEachRow",
+      });
+      // A first run stopped with the column added and the default already now64, its
+      // MATERIALIZE never finished: the part still has no column of its own.
+      await admin.command({
+        query: `ALTER TABLE ${scratch}.logs ADD COLUMN received_at DateTime64(9, 'UTC') DEFAULT observed_timestamp`,
+      });
+      await admin.command({
+        query: `ALTER TABLE ${scratch}.logs MODIFY COLUMN received_at DEFAULT now64(9)`,
+      });
+      const migration = CLICKHOUSE_MIGRATIONS.find((item) => item.name === "0005_log_received_at");
+      for (const statement of migration?.statements(scratch) ?? []) {
+        await admin.command({ query: statement });
+      }
+      const result = await admin.query({
+        query: `SELECT toString(received_at) AS received FROM ${scratch}.logs`,
+        format: "JSONEachRow",
+      });
+      expect(await result.json()).toEqual([{ received: "2026-11-16 12:00:01.000000000" }]);
+    } finally {
+      await admin.command({ query: `DROP DATABASE IF EXISTS ${scratch}` });
+      await admin.close();
+    }
+  });
+});
 
 describe("events in ClickHouse", () => {
   test("a batch sent twice with the same token is stored once", async () => {

@@ -60,6 +60,7 @@ import { formatDuration, formatPreciseMoment } from "./format";
 import { type TracesSearch, tracesSearchOf } from "./search";
 import { SendTelemetry } from "./send-telemetry";
 import { TraceView } from "./trace-page";
+import { TracesChart } from "./traces-chart";
 
 const DURATION_CHOICES = MIN_DURATIONS.map((ms) => ({
   value: String(ms),
@@ -482,44 +483,53 @@ export function TracesPage({
         filterKey={JSON.stringify([range, environment, filters])}
         onOpenPage={openPage}
         renderList={(props) => (
-          <div
-            className="flex flex-col transition-opacity data-[stale=true]:opacity-60"
-            data-stale={list.isPlaceholderData}
-            aria-busy={list.isPlaceholderData}
-          >
-            {list.isError && <div className="px-gutter pt-4">{failure}</div>}
-            {empty ? (
-              narrow ? (
-                <div className="px-gutter py-5">{guidance}</div>
+          <div className="flex flex-col">
+            <TracesChart
+              projectId={projectId}
+              range={range}
+              environment={environment}
+              filters={filters}
+              onRange={(next) => show({ range: next })}
+            />
+            <div
+              className="flex flex-col transition-opacity data-[stale=true]:opacity-60"
+              data-stale={list.isPlaceholderData}
+              aria-busy={list.isPlaceholderData}
+            >
+              {list.isError && <div className="px-gutter pt-4">{failure}</div>}
+              {empty ? (
+                narrow ? (
+                  <div className="px-gutter py-5">{guidance}</div>
+                ) : (
+                  <p className="px-gutter py-6 text-sm text-ink-subtle">
+                    {filtered ? "No trace matches these filters." : "No traces in this period."}
+                  </p>
+                )
               ) : (
-                <p className="px-gutter py-6 text-sm text-ink-subtle">
-                  {filtered ? "No trace matches these filters." : "No traces in this period."}
-                </p>
-              )
-            ) : (
-              <TraceTable
-                traces={traces}
-                projectId={projectId}
-                timeZone={first.timeZone}
-                {...props}
-              />
-            )}
-            {list.hasNextPage && (
-              <Button
-                variant="outline"
-                className="my-4 self-center"
-                onClick={() => void list.fetchNextPage()}
-                disabled={list.isFetchingNextPage}
-              >
-                {list.isFetchingNextPage && (
-                  <LoaderCircleIcon
-                    aria-hidden="true"
-                    className="animate-spin motion-reduce:animate-none"
-                  />
-                )}
-                Load older traces
-              </Button>
-            )}
+                <TraceTable
+                  traces={traces}
+                  projectId={projectId}
+                  timeZone={first.timeZone}
+                  {...props}
+                />
+              )}
+              {list.hasNextPage && (
+                <Button
+                  variant="outline"
+                  className="my-4 self-center"
+                  onClick={() => void list.fetchNextPage()}
+                  disabled={list.isFetchingNextPage}
+                >
+                  {list.isFetchingNextPage && (
+                    <LoaderCircleIcon
+                      aria-hidden="true"
+                      className="animate-spin motion-reduce:animate-none"
+                    />
+                  )}
+                  Load older traces
+                </Button>
+              )}
+            </div>
           </div>
         )}
         summary={

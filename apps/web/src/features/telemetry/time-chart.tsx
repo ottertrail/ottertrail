@@ -51,9 +51,15 @@ export function TimeChart({
   formatValue,
   domain,
   plotHeight = DEFAULT_PLOT_HEIGHT,
+  starts,
 }: {
   /** The first bucket's start, ISO. */
   start: string;
+  /**
+   * Each bucket's start, ISO, when the buckets follow a clock with daylight
+   * saving changes (the lists' charts); without it, a bucket starts `stepSeconds` after the one before.
+   */
+  starts?: string[] | undefined;
   stepSeconds: number;
   buckets: number;
   timeZone: string;
@@ -84,7 +90,10 @@ export function TimeChart({
   }, []);
 
   const startMs = Date.parse(start);
-  const timeOf = (index: number) => new Date(startMs + index * stepSeconds * 1000);
+  const timeOf = (index: number) => {
+    const known = starts?.[index];
+    return known === undefined ? new Date(startMs + index * stepSeconds * 1000) : new Date(known);
+  };
   const last = buckets - 1;
   const all = lines.flatMap((line) => line.values.filter((value) => value !== null));
   const ticks = ticksFor(Math.min(domain?.min ?? 0, ...all), Math.max(domain?.max ?? 0, ...all));

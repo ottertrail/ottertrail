@@ -367,4 +367,36 @@ export const CLICKHOUSE_MIGRATIONS: ClickHouseMigration[] = [
       `INSERT INTO ${database}.${USER_FIRST_SEEN} ${firstSeenSelect(database)}`,
     ],
   },
+  {
+    name: "0005_log_received_at",
+    /**
+     * When each log record arrived: ClickHouse's clock as it writes the
+     * record (DEFAULT now64), which the Logs page's live view reads
+     * records by (telemetry/logs.ts, liveLogs), so a record sent late with
+     * an old time still shows. A retry is written again with a later
+     * time. A minmax index on it skips the granules written before the
+     * last few minutes. Records already stored take their observed time,
+     * written once (MATERIALIZE COLUMN) before the default becomes now64:
+     * a default left to reads would make every old record look new.
+     *
+     * Safe to run again after a failure part way: the default is set to the
+     * observed time again before MATERIALIZE, and becomes now64 only last.
+     * On ClickHouse 26.8, MATERIALIZE COLUMN writes the column only into
+     * parts that lack it and leaves values already stored as they are, so a
+     * rerun changes no arrival already written; without the reset, a rerun
+     * after the switch to now64 would write the rerun's time into the parts
+     * still without the column.
+     */
+    statements: (database) => [
+      `ALTER TABLE ${database}.logs
+         ADD COLUMN IF NOT EXISTS received_at DateTime64(9, 'UTC') DEFAULT observed_timestamp`,
+      `ALTER TABLE ${database}.logs MODIFY COLUMN received_at DEFAULT observed_timestamp`,
+      `ALTER TABLE ${database}.logs MATERIALIZE COLUMN received_at SETTINGS mutations_sync = 1`,
+      `ALTER TABLE ${database}.logs MODIFY COLUMN received_at DEFAULT now64(9)`,
+      `ALTER TABLE ${database}.logs
+         ADD INDEX IF NOT EXISTS received_at_index received_at TYPE minmax GRANULARITY 1`,
+      `ALTER TABLE ${database}.logs
+         MATERIALIZE INDEX received_at_index SETTINGS mutations_sync = 1`,
+    ],
+  },
 ];

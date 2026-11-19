@@ -1,6 +1,13 @@
 import { useInfiniteQuery } from "@tanstack/react-query";
-import { useNavigate } from "@tanstack/react-router";
-import { InfoIcon, LoaderCircleIcon, OctagonAlertIcon, SearchXIcon } from "lucide-react";
+import { useNavigate, useSearch } from "@tanstack/react-router";
+import {
+  InfoIcon,
+  LoaderCircleIcon,
+  OctagonAlertIcon,
+  PauseIcon,
+  PlayIcon,
+  SearchXIcon,
+} from "lucide-react";
 import * as React from "react";
 
 import { ButtonLink } from "@/components/button-link";
@@ -16,7 +23,9 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "@/components/ui/empty";
+import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Switch } from "@/components/ui/switch";
 import {
   Workbench,
   WorkbenchKeyHints,
@@ -43,7 +52,9 @@ import { ReportFilterBar } from "../errors/range-controls";
 import { NoSuchProject } from "../projects/no-such-project";
 import { ChoiceFilter, TextFilter } from "./filters";
 import { formatPreciseMoment } from "./format";
-import { LogList, LogRecordView, SeverityBadge } from "./log-list";
+import { LIVE_TIMING, type LiveNote, useAtTop, useLiveLogs } from "./live-logs";
+import { LiveNoteItem, LogList, LogRecordView, SeverityBadge } from "./log-list";
+import { LogsVolumeChart } from "./logs-volume-chart";
 import { type LogsSearch, logsSearchOf } from "./search";
 import { SendTelemetry } from "./send-telemetry";
 
@@ -57,57 +68,70 @@ const WARN = SEVERITIES.find((item) => item.value === "warn")?.from ?? 13;
 const ERROR = SEVERITIES.find((item) => item.value === "error")?.from ?? 17;
 
 /**
- * The listed records, newest first, each a button that selects it: its
- * time, severity, service, and the start of its body. A record has no page
- * of its own; under 64rem the list is `LogList`, whose rows open in place.
+ * The listed records, each a button that selects it, on one line: its
+ * time, severity, service, and the start of its body, cut with an
+ * ellipsis. A record has no page of its own; under 64rem the list is
+ * `LogList`, whose rows open in place.
  */
 function LogRows({
   logs,
   timeZone,
   selected,
   select,
+  label = "Log records, newest first",
+  notes = [],
 }: {
   logs: readonly LogSummary[];
   timeZone: string;
+  label?: string;
+  /** The live view's lines where records were left out, each before its record. */
+  notes?: readonly LiveNote[];
 } & WorkbenchListProps) {
+  const notesBefore = (id: string) =>
+    notes
+      .filter((note) => note.before === id)
+      .map((note) => <LiveNoteItem key={note.id} text={note.text} className="px-gutter" />);
   return (
-    <ul aria-label="Log records, newest first" className="flex flex-col">
+    <ul aria-label={label} className="flex flex-col">
       {logs.map((log) => {
         const chosen = log.id === selected;
         return (
-          <li
-            key={log.id}
-            data-workbench-id={log.id}
-            data-state={chosen ? "selected" : undefined}
-            className={cn("border-b", SELECTED_ROW, chosen && "bg-muted")}
-          >
-            <button
-              type="button"
-              aria-current={chosen ? "true" : undefined}
-              onClick={() => select(log.id)}
-              className="flex w-full flex-col gap-1 px-gutter py-2 text-left hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none focus-visible:ring-inset"
+          <React.Fragment key={log.id}>
+            {notesBefore(log.id)}
+            <li
+              data-workbench-id={log.id}
+              data-state={chosen ? "selected" : undefined}
+              className={cn("border-b", SELECTED_ROW, chosen && "bg-muted")}
             >
-              <span className="flex min-w-0 items-center gap-2">
+              <button
+                type="button"
+                aria-current={chosen ? "true" : undefined}
+                onClick={() => select(log.id)}
+                className="flex w-full min-w-0 items-center gap-2 px-gutter py-1.5 text-left hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none focus-visible:ring-inset"
+              >
                 <time dateTime={log.time} className="shrink-0 font-mono text-xs text-ink-muted">
                   {formatPreciseMoment(log.time, timeZone)}
                 </time>
                 <SeverityBadge log={log} />
                 {log.service !== "" && (
-                  <span className="min-w-0 truncate text-xs text-ink-subtle">{log.service}</span>
+                  <span className="max-w-32 shrink-0 truncate text-xs text-ink-subtle">
+                    {log.service}
+                  </span>
                 )}
-              </span>
-              <span className="line-clamp-2 font-mono text-xs break-words text-ink">
-                {log.body === "" ? (
-                  <span className="font-sans text-ink-subtle">(empty)</span>
-                ) : (
-                  log.body
-                )}
-                {log.bodyTruncated && "…"}
-              </span>
-            </button>
-          </li>
+                <span className="min-w-0 flex-1 truncate font-mono text-xs text-ink">
+                  {log.body === "" ? (
+                    <span className="font-sans text-ink-subtle">(empty)</span>
+                  ) : (
+                    log.body
+                  )}
+                  {log.bodyTruncated && "…"}
+                </span>
+              </button>
+            </li>
+          </React.Fragment>
         );
       })}
+      {notesBefore("")}
     </ul>
   );
 }
@@ -179,40 +203,321 @@ function Summary({
   );
 }
 
+/** In the detail pane: the selected record, or why it is not there. */
+function RecordDetail({
+  id,
+  log,
+  timeZone,
+  projectId,
+  live = false,
+}: {
+  id: string;
+  log: LogSummary | undefined;
+  timeZone: string;
+  projectId: string;
+  /** In the live view, whose list keeps only the newest arrivals. */
+  live?: boolean;
+}) {
+  if (log === undefined) {
+    return (
+      <div className="px-gutter py-5">
+        <Empty className="border border-dashed p-10">
+          <EmptyHeader>
+            <EmptyMedia variant="icon">
+              <SearchXIcon />
+            </EmptyMedia>
+            <EmptyTitle>
+              {live ? "This record is not in the live list" : "This record is not in the list"}
+            </EmptyTitle>
+            <EmptyDescription>
+              {live
+                ? `Live shows the records that arrived since it started, the newest ${formatWhole(LIVE_TIMING.maxRecords)} of them. Turn Live off and search the period to find this one.`
+                : "The list holds the newest records loaded for these filters. Load older logs, or change the filters, to find it."}
+            </EmptyDescription>
+          </EmptyHeader>
+          <EmptyContent>
+            <ButtonLink
+              variant="outline"
+              to="/projects/$projectId/logs"
+              params={{ projectId }}
+              search={(previous) => ({ ...previous, log: undefined })}
+            >
+              All logs
+            </ButtonLink>
+          </EmptyContent>
+        </Empty>
+      </div>
+    );
+  }
+  return (
+    <div className="flex flex-col gap-4 px-gutter py-5">
+      <div className="flex flex-col gap-2">
+        <h2 className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xl font-semibold text-ink">
+          <time dateTime={log.time} className="tabular-nums">
+            {formatPreciseMoment(log.time, timeZone)}
+          </time>
+          <SeverityBadge log={log} />
+        </h2>
+        <p className="text-sm text-ink-subtle">
+          {log.service === "" ? "No service named" : log.service}, in {log.environment}. Times in{" "}
+          {timeZone}.
+        </p>
+      </div>
+      <LogRecordView
+        key={id}
+        summary={log}
+        timeZone={timeZone}
+        projectId={projectId}
+        onSpan={undefined}
+        spanName={undefined}
+        inWorkbench
+      />
+    </div>
+  );
+}
+
+const LIVE_HELP = `Records appear a few seconds after they are sent, since senders send them in batches. Live keeps the newest ${formatWhole(LIVE_TIMING.maxRecords)} records and stops after ${Math.round(LIVE_TIMING.stopAfterMs / 60_000)} minutes.`;
+
+/** "1 new record", "12 new records". */
+const newRecords = (count: number) =>
+  `${formatWhole(count)} new ${count === 1 ? "record" : "records"}`;
+
+/**
+ * The live view's workbench (docs/dashboard.md, "Live"): the records that
+ * arrived since it started, newest first, polled while the tab shows. New
+ * ones wait under "N new records" while it is paused, while the list is
+ * scrolled away from its top, or while a record is selected, so the list
+ * does not move under the reader. Rendered anew for other filters.
+ */
+function LiveLogsView({
+  projectId,
+  environment,
+  filters,
+  searchHint,
+  onServices,
+}: {
+  projectId: string;
+  environment: string;
+  filters: LogFilters;
+  searchHint: React.ReactNode;
+  /** The services of the records seen, for the service filter. */
+  onServices: (services: string[]) => void;
+}) {
+  const narrow = useMediaQuery(NARROW_WORKBENCH);
+  const selected = useSearch({
+    strict: false,
+    select: (search: Record<string, unknown>) =>
+      typeof search.log === "string" ? search.log : undefined,
+  });
+  const [paused, setPaused] = React.useState(false);
+  const [listElement, setListElement] = React.useState<HTMLDivElement | null>(null);
+  const atTop = useAtTop(listElement);
+  const live = useLiveLogs({
+    projectId,
+    environment,
+    filters,
+    paused,
+    away: !atTop,
+    // Under 64rem a record opens in place: no selection holds the list.
+    selected: narrow ? undefined : selected,
+  });
+  const [openOnArrival, setOpenOnArrival] = React.useState<string | undefined>(undefined);
+  const all = [...live.held, ...live.shown];
+  const timeZone = live.timeZone ?? "UTC";
+  React.useEffect(() => onServices(live.services), [live.services, onServices]);
+  const waiting = live.heldOverflow
+    ? `${formatWhole(LIVE_TIMING.maxRecords)}+ new records`
+    : newRecords(live.held.length);
+
+  const status = live.stopped
+    ? "Live stopped."
+    : live.error !== null
+      ? "Live updates stopped."
+      : paused
+        ? "Paused. New records wait above the list."
+        : "Live. New records appear at the top.";
+  return (
+    <Workbench
+      label="Logs"
+      className="min-[64rem]:min-h-0 min-[64rem]:flex-1"
+      ids={live.shown.map((log) => log.id)}
+      param="log"
+      filterKey={JSON.stringify(["live", environment, filters])}
+      onOpenPage={setOpenOnArrival}
+      renderList={(props) => (
+        <div ref={setListElement} className="flex flex-col">
+          <div className="flex flex-col gap-2 border-b px-gutter py-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <output className="text-sm text-ink">{status}</output>
+              {!live.stopped && live.error === null && (
+                <Button variant="outline" size="sm" onClick={() => setPaused((value) => !value)}>
+                  {paused ? <PlayIcon aria-hidden="true" /> : <PauseIcon aria-hidden="true" />}
+                  {paused ? "Resume" : "Pause"}
+                </Button>
+              )}
+            </div>
+            <p className="text-xs text-pretty text-ink-subtle">{LIVE_HELP}</p>
+          </div>
+          {searchHint}
+          {live.stopped && (
+            <div className="px-gutter pt-4">
+              <Alert>
+                <InfoIcon />
+                <AlertTitle>
+                  Live stopped after {Math.round(LIVE_TIMING.stopAfterMs / 60_000)} minutes
+                </AlertTitle>
+                <AlertDescription>
+                  Resume to keep watching for new records, or turn Live off to search a period.
+                </AlertDescription>
+                <AlertAction>
+                  <Button variant="outline" size="sm" onClick={live.resume}>
+                    Resume
+                  </Button>
+                </AlertAction>
+              </Alert>
+            </div>
+          )}
+          {live.error !== null && (
+            <div className="px-gutter pt-4">
+              <Alert variant="destructive">
+                <OctagonAlertIcon />
+                <AlertTitle>New records could not load</AlertTitle>
+                <AlertDescription>
+                  {live.error.message} The records below stay as they were.
+                </AlertDescription>
+                <AlertAction>
+                  <Button variant="outline" size="sm" onClick={live.resume}>
+                    Retry
+                  </Button>
+                </AlertAction>
+              </Alert>
+            </div>
+          )}
+          {live.held.length > 0 && (
+            <div className="sticky top-2 z-30 flex justify-center px-gutter pt-3">
+              <Button
+                size="sm"
+                className="shadow-md"
+                onClick={() => {
+                  live.showHeld();
+                  listElement?.scrollIntoView({ block: "start" });
+                }}
+              >
+                {waiting}
+              </Button>
+            </div>
+          )}
+          {!live.started && live.error === null ? (
+            <div
+              className="flex flex-col gap-2 px-gutter py-3"
+              aria-busy="true"
+              aria-label="Loading new records"
+            >
+              <Skeleton className="h-8 w-full" />
+              <Skeleton className="h-8 w-full" />
+            </div>
+          ) : live.shown.length === 0 ? (
+            <p className="px-gutter py-6 text-sm text-ink-subtle">
+              {live.held.length > 0
+                ? "New records are waiting above."
+                : "No record has arrived since Live started. New ones appear here."}
+            </p>
+          ) : narrow ? (
+            <div className="flex flex-col gap-3 px-gutter py-3">
+              <LogList
+                logs={live.shown}
+                timeZone={timeZone}
+                projectId={projectId}
+                label="Log records, newest arrival first"
+                openId={openOnArrival}
+                notes={live.notes}
+              />
+            </div>
+          ) : (
+            <LogRows
+              logs={live.shown}
+              timeZone={timeZone}
+              label="Log records, newest arrival first"
+              notes={live.notes}
+              {...props}
+            />
+          )}
+        </div>
+      )}
+      summary={
+        <div className="flex flex-col gap-6 px-gutter py-5">
+          <div className="flex flex-col gap-1">
+            <h2 className="text-xl font-semibold text-ink">Live</h2>
+            <p className="text-sm text-ink-subtle">
+              {formatWhole(live.shown.length)} records shown, newest arrival first
+              {live.held.length > 0 ? `, and ${waiting} waiting` : ""}. Times in {timeZone}.
+            </p>
+          </div>
+          <p className="text-xs text-pretty text-ink-subtle">{LIVE_HELP}</p>
+          <WorkbenchStartHint noun="a record" />
+        </div>
+      }
+      renderDetail={(id) => (
+        <RecordDetail
+          id={id}
+          log={all.find((item) => item.id === id)}
+          timeZone={timeZone}
+          projectId={projectId}
+          live
+        />
+      )}
+    />
+  );
+}
+
 /**
  * A project's log records as a workbench (docs/design-system.md,
  * "Workbench"), newest first, for a period and an environment, filtered by
  * service, minimum severity, words in the body, and trace; fifty at a time
- * with older ones on request; beside the selected record's body,
- * attributes, resource attributes, and its trace (a link into the Traces
- * workbench) or, with none selected, a summary. A record has no page of its
- * own: under 64rem each row opens in place, as on a trace's page.
+ * with older ones on request, under a chart of the period's records by
+ * severity; beside the selected record's body, attributes, resource
+ * attributes, and its trace (a link into the Traces workbench) or, with
+ * none selected, a summary. A record has no page of its own: under 64rem
+ * each row opens in place, as on a trace's page. With `live`, the period
+ * gives way to the records arriving now (LiveLogsView).
  */
 export function LogsPage({
   projectId,
   range,
   environment = DEFAULT_ENVIRONMENT,
   filters,
+  live = false,
 }: {
   projectId: string;
   range: PageRange;
   environment?: string;
   filters: LogFilters;
+  live?: boolean;
 }) {
   const navigate = useNavigate();
-  const list = useInfiniteQuery(logsQuery(projectId, range, environment, filters));
+  // Live reads no period: the list's query waits (its cached answer still fills the filter bar).
+  const list = useInfiniteQuery({
+    ...logsQuery(projectId, range, environment, filters),
+    enabled: !live,
+  });
+  // In the live view, the services of the records it has seen.
+  const [liveServices, setLiveServices] = React.useState<string[]>([]);
   const narrow = useMediaQuery(NARROW_WORKBENCH);
   // On a narrow screen, the record an address named, open in the list.
   const [openOnArrival, setOpenOnArrival] = React.useState<string | undefined>(undefined);
-  const search: LogsSearch = { range, environment, filters };
+  const search: LogsSearch = { range, environment, filters, live };
   // A filter keeps the selected record beside the list, listed or not.
+  // Turning Live on or off clears the selection: the other view does not hold it.
   const show = (next: Partial<LogsSearch>) =>
     void navigate({
       to: "/projects/$projectId/logs",
       params: { projectId },
       search: (previous: Record<string, unknown>) => ({
         ...logsSearchOf({ ...search, ...next }),
-        log: typeof previous.log === "string" ? previous.log : undefined,
+        log:
+          typeof previous.log === "string" && (next.live ?? live) === live
+            ? previous.log
+            : undefined,
       }),
     });
   const filter = (next: Partial<LogFilters>) => show({ filters: { ...filters, ...next } });
@@ -230,6 +535,13 @@ export function LogsPage({
   const first = list.data?.pages[0];
   const logs = (list.data?.pages ?? []).flatMap((page) => page.logs);
   const filtered = Object.values(filters).some((value) => value !== undefined);
+  const serviceChoices = [
+    ...new Set([
+      ...(first?.services ?? []),
+      ...(live ? liveServices : []),
+      ...(filters.service === undefined ? [] : [filters.service]),
+    ]),
+  ];
 
   const filterBar = (
     <ReportFilterBar
@@ -241,9 +553,32 @@ export function LogsPage({
       onEnvironment={(next) =>
         show({ environment: next, filters: { ...filters, service: undefined } })
       }
+      period={
+        live ? (
+          // The period gives way to Live, and comes back when Live is off.
+          <Button
+            variant="outline"
+            disabled
+            aria-label="Period: Live"
+            className="w-40 justify-start"
+          >
+            Live
+          </Button>
+        ) : undefined
+      }
       filters={
         first?.received !== false && (
           <>
+            <div className="flex items-center gap-2 px-1">
+              <Switch
+                id="logs-live"
+                checked={live}
+                onCheckedChange={(checked) => show({ live: checked })}
+              />
+              <Label htmlFor="logs-live" className="whitespace-nowrap">
+                Live
+              </Label>
+            </div>
             <TextFilter
               label="Words in the message"
               placeholder="Words in the message…"
@@ -254,7 +589,7 @@ export function LogsPage({
             <ChoiceFilter
               label="Service"
               anyLabel="Any service"
-              choices={(first?.services ?? []).map((name) => ({ value: name, label: name }))}
+              choices={serviceChoices.map((name) => ({ value: name, label: name }))}
               value={filters.service}
               onChange={(service) => filter({ service })}
               className="w-36"
@@ -302,6 +637,29 @@ export function LogsPage({
     </Alert>
   );
 
+  const searchHint = (
+    <p className="px-gutter pt-3 text-xs text-ink-subtle">
+      The message must contain every word. Matching ignores letter case and includes parts of longer
+      words.
+    </p>
+  );
+  // Live needs nothing of the period's list: it shows even when the list failed or never ran.
+  if (live) {
+    return (
+      <div className="flex flex-col min-[64rem]:h-full min-[64rem]:min-h-0">
+        {filterBar}
+        <LiveLogsView
+          key={JSON.stringify([environment, filters])}
+          projectId={projectId}
+          environment={environment}
+          filters={filters}
+          searchHint={searchHint}
+          onServices={setLiveServices}
+        />
+      </div>
+    );
+  }
+
   if (first === undefined || !first.received) {
     return (
       <div className="flex flex-col">
@@ -345,12 +703,6 @@ export function LogsPage({
       </EmptyHeader>
     </Empty>
   );
-  const searchHint = (
-    <p className="px-gutter pt-3 text-xs text-ink-subtle">
-      The message must contain every word. Matching ignores letter case and includes parts of longer
-      words.
-    </p>
-  );
   return (
     <div className="flex flex-col min-[64rem]:h-full min-[64rem]:min-h-0">
       {filterBar}
@@ -362,62 +714,71 @@ export function LogsPage({
         filterKey={JSON.stringify([range, environment, filters])}
         onOpenPage={setOpenOnArrival}
         renderList={(props) => (
-          <div
-            className="flex flex-col transition-opacity data-[stale=true]:opacity-60"
-            data-stale={list.isPlaceholderData}
-            aria-busy={list.isPlaceholderData}
-          >
-            {searchHint}
-            {list.isError && <div className="px-gutter pt-4">{failure}</div>}
-            {empty ? (
-              narrow ? (
-                <div className="px-gutter py-5">{guidance}</div>
-              ) : (
-                <p className="px-gutter py-6 text-sm text-ink-subtle">
-                  {filtered ? "No log record matches these filters." : "No logs in this period."}
-                </p>
-              )
-            ) : narrow ? (
-              // No room beside the list: a record opens in place, as on a trace's page.
-              <div className="flex flex-col gap-3 px-gutter py-3">
-                {openOnArrival !== undefined && !logs.some((log) => log.id === openOnArrival) && (
-                  <Alert>
-                    <InfoIcon />
-                    <AlertTitle>The linked log record is not in the list</AlertTitle>
-                    <AlertDescription>
-                      It is not among the records loaded for these filters. Load older logs, or
-                      choose a longer period, to find it.
-                    </AlertDescription>
-                  </Alert>
-                )}
-                <LogList
-                  key={openOnArrival}
-                  logs={logs}
-                  timeZone={first.timeZone}
-                  projectId={projectId}
-                  label="Log records, newest first"
-                  openId={openOnArrival}
-                />
-              </div>
-            ) : (
-              <LogRows logs={logs} timeZone={first.timeZone} {...props} />
-            )}
-            {list.hasNextPage && (
-              <Button
-                variant="outline"
-                className="my-4 self-center"
-                onClick={() => void list.fetchNextPage()}
-                disabled={list.isFetchingNextPage}
-              >
-                {list.isFetchingNextPage && (
-                  <LoaderCircleIcon
-                    aria-hidden="true"
-                    className="animate-spin motion-reduce:animate-none"
+          <div className="flex flex-col">
+            <LogsVolumeChart
+              projectId={projectId}
+              range={range}
+              environment={environment}
+              filters={filters}
+              onRange={(next) => show({ range: next })}
+            />
+            <div
+              className="flex flex-col transition-opacity data-[stale=true]:opacity-60"
+              data-stale={list.isPlaceholderData}
+              aria-busy={list.isPlaceholderData}
+            >
+              {searchHint}
+              {list.isError && <div className="px-gutter pt-4">{failure}</div>}
+              {empty ? (
+                narrow ? (
+                  <div className="px-gutter py-5">{guidance}</div>
+                ) : (
+                  <p className="px-gutter py-6 text-sm text-ink-subtle">
+                    {filtered ? "No log record matches these filters." : "No logs in this period."}
+                  </p>
+                )
+              ) : narrow ? (
+                // No room beside the list: a record opens in place, as on a trace's page.
+                <div className="flex flex-col gap-3 px-gutter py-3">
+                  {openOnArrival !== undefined && !logs.some((log) => log.id === openOnArrival) && (
+                    <Alert>
+                      <InfoIcon />
+                      <AlertTitle>The linked log record is not in the list</AlertTitle>
+                      <AlertDescription>
+                        It is not among the records loaded for these filters. Load older logs, or
+                        choose a longer period, to find it.
+                      </AlertDescription>
+                    </Alert>
+                  )}
+                  <LogList
+                    key={openOnArrival}
+                    logs={logs}
+                    timeZone={first.timeZone}
+                    projectId={projectId}
+                    label="Log records, newest first"
+                    openId={openOnArrival}
                   />
-                )}
-                Load older logs
-              </Button>
-            )}
+                </div>
+              ) : (
+                <LogRows logs={logs} timeZone={first.timeZone} {...props} />
+              )}
+              {list.hasNextPage && (
+                <Button
+                  variant="outline"
+                  className="my-4 self-center"
+                  onClick={() => void list.fetchNextPage()}
+                  disabled={list.isFetchingNextPage}
+                >
+                  {list.isFetchingNextPage && (
+                    <LoaderCircleIcon
+                      aria-hidden="true"
+                      className="animate-spin motion-reduce:animate-none"
+                    />
+                  )}
+                  Load older logs
+                </Button>
+              )}
+            </div>
           </div>
         )}
         summary={
@@ -427,62 +788,14 @@ export function LogsPage({
             <Summary first={first} logs={logs} more={list.hasNextPage} filters={filters} />
           )
         }
-        renderDetail={(id) => {
-          const log = logs.find((item) => item.id === id) ?? seen.get(id);
-          if (log === undefined) {
-            return (
-              <div className="px-gutter py-5">
-                <Empty className="border border-dashed p-10">
-                  <EmptyHeader>
-                    <EmptyMedia variant="icon">
-                      <SearchXIcon />
-                    </EmptyMedia>
-                    <EmptyTitle>This record is not in the list</EmptyTitle>
-                    <EmptyDescription>
-                      The list holds the newest records loaded for these filters. Load older logs,
-                      or change the filters, to find it.
-                    </EmptyDescription>
-                  </EmptyHeader>
-                  <EmptyContent>
-                    <ButtonLink
-                      variant="outline"
-                      to="/projects/$projectId/logs"
-                      params={{ projectId }}
-                      search={(previous) => ({ ...previous, log: undefined })}
-                    >
-                      All logs
-                    </ButtonLink>
-                  </EmptyContent>
-                </Empty>
-              </div>
-            );
-          }
-          return (
-            <div className="flex flex-col gap-4 px-gutter py-5">
-              <div className="flex flex-col gap-2">
-                <h2 className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xl font-semibold text-ink">
-                  <time dateTime={log.time} className="tabular-nums">
-                    {formatPreciseMoment(log.time, first.timeZone)}
-                  </time>
-                  <SeverityBadge log={log} />
-                </h2>
-                <p className="text-sm text-ink-subtle">
-                  {log.service === "" ? "No service named" : log.service}, in {log.environment}.
-                  Times in {first.timeZone}.
-                </p>
-              </div>
-              <LogRecordView
-                key={id}
-                summary={log}
-                timeZone={first.timeZone}
-                projectId={projectId}
-                onSpan={undefined}
-                spanName={undefined}
-                inWorkbench
-              />
-            </div>
-          );
-        }}
+        renderDetail={(id) => (
+          <RecordDetail
+            id={id}
+            log={logs.find((item) => item.id === id) ?? seen.get(id)}
+            timeZone={first.timeZone}
+            projectId={projectId}
+          />
+        )}
       />
     </div>
   );

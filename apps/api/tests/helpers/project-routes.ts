@@ -109,6 +109,7 @@ export const PROJECT_REQUESTS: readonly ProjectRequest[] = [
   request("GET", "/replays/:replayId/player", `/replays/${SOME_ID}/player`),
   request("DELETE", "/replays", "/replays"),
   request("GET", "/traces", "/traces?period=7d"),
+  request("GET", "/traces/chart", "/traces/chart?period=7d"),
   request("GET", "/traces/:traceId", `/traces/${TRACE_ID}`),
   request(
     "GET",
@@ -116,6 +117,8 @@ export const PROJECT_REQUESTS: readonly ProjectRequest[] = [
     `/traces/${TRACE_ID}/spans/00f067aa0ba902b7?start=1795003200000000000`,
   ),
   request("GET", "/logs", "/logs?period=7d"),
+  request("GET", "/logs/volume", "/logs/volume?period=7d"),
+  request("GET", "/logs/live", "/logs/live"),
   request("GET", "/logs/:logId", `/logs/${"0".repeat(32)}?time=1795003200000000000`),
   request("GET", "/metrics", "/metrics?period=7d"),
   request("GET", "/metrics/chart", "/metrics/chart?period=7d&name=http.requests&kind=counter"),

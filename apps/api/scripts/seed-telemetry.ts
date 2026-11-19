@@ -234,10 +234,15 @@ const HOURLY = [
 const HOURLY_TOTAL = HOURLY.reduce((sum, weight) => sum + weight, 0);
 
 /**
- * The search incident: two days before today, 13:00 to 15:30 UTC, the
- * full-text search runs two and a half times slower and a third of the
- * searches time out, so the Services and Databases charts show a spike in
- * the failed share, the 95th percentile, and the time spent.
+ * The demo's incident: two days before today, 13:00 to 15:30 UTC, the
+ * database is overloaded. The full-text search runs two and a half times
+ * slower and a third of the searches time out, the payment provider fails
+ * 40% of charges instead of 4%, and requests wait for a database
+ * connection, most with a warning that the pool is exhausted. So every
+ * chart shows it: the Services and Databases charts a spike in the failed
+ * share, the 95th percentile, and the time spent; the Traces chart more
+ * traces with errors and a higher 95th percentile; the Logs chart a rise
+ * in warnings and errors.
  */
 export const INCIDENT_DAYS_AGO = 2;
 const INCIDENT_HOURS = [13, 15.5] as const;
@@ -446,6 +451,7 @@ export function buildTelemetry(rng: Random, now: Date, userIds: readonly string[
       const method = route === "/api/cart/items" || route === "/api/checkout" ? "POST" : "GET";
       const userId = userIds.length > 0 && rng.chance(0.3) ? rng.pick(userIds) : undefined;
       const serverId = rng.hex(8);
+      const busy = inIncident(at);
       // Children first, so the server span's duration covers them.
       let cursor = at + rng.logNormal(2, 0.4);
       let status = 200;
@@ -596,11 +602,10 @@ export function buildTelemetry(rng: Random, now: Date, userIds: readonly string[
           // The slow route: a full-text search without an index.
           const query = rng.pick(SEARCHES);
           const start = cursor;
-          const incident = inIncident(cursor);
-          const timedOut = rng.chance(incident ? 0.35 : 0.015);
+          const timedOut = rng.chance(busy ? 0.35 : 0.015);
           const duration = timedOut
             ? 3000
-            : Math.min(2900, rng.logNormal(750, 0.55) * (incident ? 2.5 : 1));
+            : Math.min(2900, rng.logNormal(750, 0.55) * (busy ? 2.5 : 1));
           later(() =>
             db(trace, resource, parent, start, duration, {
               operation: "SELECT",
@@ -671,7 +676,7 @@ export function buildTelemetry(rng: Random, now: Date, userIds: readonly string[
           cursor += rates + 1;
           // The charge, through the billing service.
           const chargeAt = cursor;
-          const fails = rng.chance(0.04);
+          const fails = rng.chance(busy ? 0.4 : 0.04);
           const providerMs = fails ? 10_000 : rng.logNormal(420, 0.35);
           const billingMs = providerMs + 12;
           const clientId = outgoing(
@@ -810,6 +815,24 @@ export function buildTelemetry(rng: Random, now: Date, userIds: readonly string[
         }
       }
       for (const work of children) work();
+      if (busy) {
+        // Waiting for a database connection before the work: a warning on most requests.
+        const waitMs = rng.logNormal(400, 0.5);
+        cursor += waitMs;
+        if (rng.chance(0.6)) {
+          records.add(
+            resource,
+            SCOPES.pino,
+            logRecord(
+              at + 1,
+              "WARN",
+              `database pool exhausted: waited ${Math.round(waitMs)} ms for a connection`,
+              { "http.route": route, "db.pool.wait_ms": Math.round(waitMs) },
+              { traceId: trace.id, spanId: serverId },
+            ),
+          );
+        }
+      }
       const durationMs = cursor - at + rng.logNormal(1.5, 0.3);
       trace.span(resource, SCOPES.http, {
         id: serverId,

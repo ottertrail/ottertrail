@@ -127,6 +127,18 @@
   --seq-4: #20538f;
   --seq-5: #2563ad;
 
+  /*
+   * The parts of a state chart that are not a problem (the Logs chart's
+   * info records, the Traces chart's traces without errors), beside the
+   * status colors: a light neutral, so warnings and errors stand out.
+   * ink-tertiary is the quieter part below it (debug, trace, or no
+   * severity). The dataviz validator on surface-1 and surface-2: the
+   * Logs chart's parts at least 13.8 apart under color blindness and
+   * 18.3 to normal vision, the Traces chart's two 8.2 and 15.6, every
+   * part at least 3:1 (docs/design-system.md, "Charts").
+   */
+  --chart-neutral: #b0a9b0;
+
   /* Status colors are reserved for state and always ship with an icon and a label. */
   --status-good: var(--success);
   --status-warning: var(--warning);
@@ -218,6 +230,7 @@
   --color-seq-3: var(--seq-3);
   --color-seq-4: var(--seq-4);
   --color-seq-5: var(--seq-5);
+  --color-chart-neutral: var(--chart-neutral);
   --color-status-good: var(--status-good);
   --color-status-warning: var(--status-warning);
   --color-status-serious: var(--status-serious);

@@ -322,7 +322,8 @@ describe("the logs page", () => {
     const text = row.element().textContent ?? "";
     expect(text).toContain(`${LONG_BODY.slice(0, 1000)}…`);
     expect(text).not.toContain("the end");
-    expect(api.requests.some((request) => request.includes("/logs/"))).toBe(false);
+    // No whole record is read yet (the chart's /logs/volume is not one).
+    expect(api.requests.some((request) => /\/logs\/[0-9a-f]{32}/.test(request))).toBe(false);
 
     await row.click();
     await expect.element(logPane().getByText(/the end$/)).toBeVisible();

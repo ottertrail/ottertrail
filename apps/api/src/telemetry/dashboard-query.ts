@@ -234,3 +234,150 @@ export async function hasAnyRow(
   );
   return rows.length > 0;
 }
+
+/** The most buckets a list's chart has (the Logs and Traces pages), so each bar stays a few pixels wide. */
+export const LIST_CHART_BUCKETS = 120;
+
+/**
+ * Bucket lengths a list's chart takes, in seconds: whole minutes and hours
+ * that divide a day, and whole days.
+ */
+const LIST_CHART_STEPS = [
+  60, 120, 300, 600, 900, 1800, 3600, 7200, 10_800, 21_600, 43_200, 86_400, 172_800, 259_200,
+  345_600, 604_800,
+];
+
+const DAY_SECONDS = 86_400;
+
+const WALL_FORMATS = new Map<string, Intl.DateTimeFormat>();
+
+/** A moment's wall clock in `timeZone`: its day ("YYYY-MM-DD") and minutes since midnight. */
+function wallClock(ms: number, timeZone: string): { day: string; minutes: number } {
+  let format = WALL_FORMATS.get(timeZone);
+  if (format === undefined) {
+    format = new Intl.DateTimeFormat("en-CA", {
+      timeZone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      hourCycle: "h23",
+    });
+    WALL_FORMATS.set(timeZone, format);
+  }
+  const parts = new Map(format.formatToParts(ms).map((part) => [part.type, part.value]));
+  return {
+    day: `${parts.get("year")}-${parts.get("month")}-${parts.get("day")}`,
+    minutes: Number(parts.get("hour")) * 60 + Number(parts.get("minute")),
+  };
+}
+
+/** Milliseconds since 1970 of a day's wall-clock time read as UTC. */
+const asUtc = (day: string, minutes: number) => Date.parse(`${day}T00:00:00Z`) + minutes * 60_000;
+
+/**
+ * The moment a day's wall-clock time happens in `timeZone`; null when the
+ * clock skips it (the hour a daylight saving change jumps over).
+ */
+function zonedTime(day: string, minutes: number, timeZone: string): number | null {
+  const wanted = asUtc(day, minutes);
+  let guess = wanted;
+  // The offset at the guess, twice: the second settles a guess on the far side of a change.
+  for (let round = 0; round < 2; round += 1) {
+    const wall = wallClock(guess, timeZone);
+    guess += wanted - asUtc(wall.day, wall.minutes);
+  }
+  const wall = wallClock(guess, timeZone);
+  return wall.day === day && wall.minutes === minutes ? guess : null;
+}
+
+/** "YYYY-MM-DD" plus `days`. */
+export const addDays = (day: string, days: number) =>
+  new Date(Date.parse(`${day}T00:00:00Z`) + days * 86_400_000).toISOString().slice(0, 10);
+
+/**
+ * A list's chart's time buckets: their starts, on the clock of the
+ * instance's timezone, and how a row finds its bucket.
+ */
+export interface ListChartBuckets {
+  /** The buckets' length on the clock: one across a daylight saving change is an hour longer or shorter. */
+  stepSeconds: number;
+  /** Each bucket's start, in milliseconds since 1970. */
+  starts: number[];
+  /** A row's bucket, in SQL: a name that `index` maps to its place in `starts`. */
+  bucketSql: (params: QueryParams) => string;
+  index: Map<string, number>;
+}
+
+/**
+ * The buckets of a list's chart over a range, in the instance's timezone:
+ * the shortest step of LIST_CHART_STEPS that keeps them within about
+ * LIST_CHART_BUCKETS, up to the end of the range or now, whichever is
+ * sooner. A step shorter than a day starts each bucket on the clock's
+ * marks (midnight, 06:00, 12:00 for 6 hours) whatever the date's offset,
+ * so a daylight saving change makes one bucket an hour longer or shorter
+ * rather than moving every later one; a step of days starts each on a
+ * midnight, counted from the range's first day. Today at noon is 120
+ * buckets of 5 minutes; a past day, 96 of 15 minutes; 7 days, about 80
+ * of 2 hours; 30 days, 120 of 6 hours; 90 days, 90 of a day; 12 months,
+ * about 92 of 4 days. A bucket wholly before the retention's cut is left out.
+ */
+export function listChartBuckets(
+  range: Pick<TelemetryRange, "from" | "to" | "timeZone" | "firstDay" | "lastDay">,
+  now: Date,
+): ListChartBuckets {
+  const fromMs = range.from.getTime();
+  const endMs = Math.max(fromMs, Math.min(range.to.getTime(), now.getTime()));
+  // The span on the local clock, so a day an hour longer does not change the step.
+  const end = wallClock(endMs, range.timeZone);
+  const spanMs = asUtc(end.day, end.minutes) - asUtc(range.firstDay, 0);
+  const step =
+    LIST_CHART_STEPS.find(
+      (seconds) => Math.ceil(spanMs / (seconds * 1000)) <= LIST_CHART_BUCKETS,
+    ) ??
+    LIST_CHART_STEPS.at(-1) ??
+    604_800;
+  const { timeZone } = range;
+  const candidates: { name: string; start: number }[] = [];
+  if (step < DAY_SECONDS) {
+    const minutes = step / 60;
+    for (let day = range.firstDay; day <= range.lastDay; day = addDays(day, 1)) {
+      for (let slot = 0; slot * minutes < 1440; slot += 1) {
+        const start = zonedTime(day, slot * minutes, timeZone);
+        if (start !== null) candidates.push({ name: `${day} ${slot}`, start });
+      }
+    }
+  } else {
+    const days = step / DAY_SECONDS;
+    for (let group = 0; addDays(range.firstDay, group * days) <= range.lastDay; group += 1) {
+      const day = addDays(range.firstDay, group * days);
+      // Midnight, or the first minute after it on a day whose clock skips midnight.
+      let start: number | null = null;
+      for (let minute = 0; start === null && minute < 120; minute += 1) {
+        start = zonedTime(day, minute, timeZone);
+      }
+      if (start !== null) candidates.push({ name: `g${group}`, start });
+    }
+  }
+  const kept = candidates.filter((candidate, at) => {
+    const next = candidates[at + 1]?.start ?? range.to.getTime();
+    return candidate.start < endMs && next > fromMs;
+  });
+  const starts = kept.map((candidate) => candidate.start);
+  const index = new Map(kept.map((candidate, at) => [candidate.name, at]));
+  const bucketSql = (params: QueryParams) => {
+    const zone = params.add(timeZone, "String");
+    // A row later than the last bucket (a clock ahead of now) counts in it.
+    const time = `least(timestamp, fromUnixTimestamp64Milli(${params.add(Math.max(fromMs, endMs - 1), "Int64")}, 'UTC'))`;
+    if (step < DAY_SECONDS) {
+      return `concat(toString(toDate(${time}, ${zone})), ' ',
+                     toString(intDiv(toHour(${time}, ${zone}) * 60 + toMinute(${time}, ${zone}),
+                                     ${params.add(step / 60, "UInt32")})))`;
+    }
+    return `concat('g', toString(intDiv(
+              dateDiff('day', toDate(${params.add(range.firstDay, "String")}), toDate(${time}, ${zone})),
+              ${params.add(step / DAY_SECONDS, "UInt32")})))`;
+  };
+  return { stepSeconds: step, starts, bucketSql, index };
+}

@@ -215,6 +215,98 @@ const isSpanAnswer = (value: unknown): value is { timeZone: string; span: SpanDe
 
 const projectPath = (projectId: string) => `/api/projects/${encodeURIComponent(projectId)}`;
 
+/** The list's query parameters: the range, environment, and filters. */
+function listParams(range: PageRange, environment: string, filters: TraceFilters) {
+  return {
+    ...rangeParams(range),
+    ...(environment === DEFAULT_ENVIRONMENT ? {} : { environment }),
+    ...(filters.service === undefined ? {} : { service: filters.service }),
+    ...(filters.name === undefined ? {} : { name: filters.name }),
+    ...(filters.errors === true ? { errors: "true" } : {}),
+    ...(filters.minDuration === undefined ? {} : { minDuration: String(filters.minDuration) }),
+  };
+}
+
+/** The list's query key after its name: each filter by name, so undefined and left out are one query. */
+const listKey = (
+  projectId: string,
+  range: PageRange,
+  environment: string,
+  filters: TraceFilters,
+) => [
+  projectId,
+  range,
+  environment,
+  filters.service ?? null,
+  filters.name ?? null,
+  filters.errors === true,
+  filters.minDuration ?? null,
+];
+
+/** GET /api/projects/:id/traces/chart: the list's traces per time bucket. */
+export interface TraceChart {
+  timeZone: string;
+  environment: string;
+  firstDay: string;
+  lastDay: string;
+  /** The first bucket's start, ISO. */
+  start: string;
+  /** Each bucket's start, ISO, on the clock of the instance's timezone. */
+  bucketStarts: string[];
+  stepSeconds: number;
+  buckets: number;
+  /** Traces (root spans) per bucket. */
+  traces: number[];
+  /** Of those, the traces with a failed span. */
+  failed: number[];
+  /** The 95th-percentile duration per bucket, in microseconds; null without a trace. */
+  p95Us: (number | null)[];
+  total: { traces: number; failed: number };
+  /** Errors were counted among the latest 10,000 failed spans: older traces with errors count as without. */
+  failedCapped: boolean;
+}
+
+const isNumberOrNull = (value: unknown): value is number | null =>
+  value === null || isNumber(value);
+
+const isTraceChart = (value: unknown): value is TraceChart =>
+  isRecord(value) &&
+  isText(value.timeZone) &&
+  isText(value.environment) &&
+  isText(value.firstDay) &&
+  isText(value.lastDay) &&
+  isText(value.start) &&
+  isListOf(value.bucketStarts, isText) &&
+  isNumber(value.stepSeconds) &&
+  isNumber(value.buckets) &&
+  isListOf(value.traces, isNumber) &&
+  isListOf(value.failed, isNumber) &&
+  isListOf(value.p95Us, isNumberOrNull) &&
+  isRecord(value.total) &&
+  isNumber(value.total.traces) &&
+  isNumber(value.total.failed) &&
+  typeof value.failedCapped === "boolean";
+
+/** The chart above the traces list: the same range, environment, and filters. */
+export const traceChartQuery = (
+  projectId: string,
+  range: PageRange,
+  environment: string,
+  filters: TraceFilters,
+) =>
+  queryOptions({
+    queryKey: ["traces-chart", ...listKey(projectId, range, environment, filters)],
+    retry: telemetryRetry,
+    queryFn: async ({ signal }) => {
+      const query = new URLSearchParams(listParams(range, environment, filters));
+      return expectShape(
+        await apiRequest(`${projectPath(projectId)}/traces/chart?${query.toString()}`, { signal }),
+        isTraceChart,
+      );
+    },
+    placeholderData: keepPreviousData,
+  });
+
 /** The project's traces, newest first, a page at a time ("Load older"). */
 export const tracesQuery = (
   projectId: string,
@@ -224,25 +316,11 @@ export const tracesQuery = (
 ) =>
   infiniteQueryOptions({
     // Each filter by name, so a filter left undefined and one left out are the same query.
-    queryKey: [
-      "traces",
-      projectId,
-      range,
-      environment,
-      filters.service ?? null,
-      filters.name ?? null,
-      filters.errors === true,
-      filters.minDuration ?? null,
-    ],
+    queryKey: ["traces", ...listKey(projectId, range, environment, filters)],
     retry: telemetryRetry,
     queryFn: async ({ pageParam, signal }) => {
       const query = new URLSearchParams({
-        ...rangeParams(range),
-        ...(environment === DEFAULT_ENVIRONMENT ? {} : { environment }),
-        ...(filters.service === undefined ? {} : { service: filters.service }),
-        ...(filters.name === undefined ? {} : { name: filters.name }),
-        ...(filters.errors === true ? { errors: "true" } : {}),
-        ...(filters.minDuration === undefined ? {} : { minDuration: String(filters.minDuration) }),
+        ...listParams(range, environment, filters),
         ...(pageParam === null ? {} : { before: pageParam }),
       });
       return expectShape(

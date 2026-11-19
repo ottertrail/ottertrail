@@ -191,6 +191,7 @@ export function ReportFilterBar({
   onEnvironment,
   filters,
   actions,
+  period,
 }: {
   /** Names the bar for screen readers. */
   label?: string;
@@ -202,11 +203,13 @@ export function ReportFilterBar({
   /** The report's own controls, such as a device picker. */
   filters?: React.ReactNode;
   actions?: React.ReactNode;
+  /** In place of the period picker and the days shown, such as the Logs page's "Live". */
+  period?: React.ReactNode;
 }) {
   return (
     <FilterBar
       label={label}
-      period={<PeriodSelect range={range} answered={answered} onRange={onRange} />}
+      period={period ?? <PeriodSelect range={range} answered={answered} onRange={onRange} />}
       environment={
         <EnvironmentSelect
           environment={environment}
@@ -216,7 +219,8 @@ export function ReportFilterBar({
       }
       filters={filters}
       range={
-        answered !== undefined && (
+        answered !== undefined &&
+        period === undefined && (
           <FilterBarRange
             firstDay={answered.firstDay}
             lastDay={answered.lastDay}

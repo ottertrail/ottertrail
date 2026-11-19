@@ -167,10 +167,13 @@ export interface LogsSearch {
   range: PageRange;
   environment: string;
   filters: LogFilters;
+  /** The live view instead of the period's records; the period stays for when it is off. */
+  live?: boolean | undefined;
 }
 
-export const logsSearchOf = ({ range, environment, filters }: LogsSearch) => ({
+export const logsSearchOf = ({ range, environment, filters, live }: LogsSearch) => ({
   ...rangeSearch(range),
+  ...(live === true ? { live: true } : {}),
   ...environmentSearch(environment),
   ...(filters.service === undefined ? {} : { service: filters.service }),
   ...(filters.severity === undefined ? {} : { severity: filters.severity }),

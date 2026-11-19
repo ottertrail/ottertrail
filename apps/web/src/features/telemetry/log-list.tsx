@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { ChevronRightIcon, OctagonAlertIcon } from "lucide-react";
+import { ChevronRightIcon, InfoIcon, OctagonAlertIcon } from "lucide-react";
 import * as React from "react";
 
 import { StatusBadge, type StatusTone } from "@/components/status-badge";
@@ -236,27 +236,30 @@ function Entry({
         aria-expanded={open}
         aria-controls={detailId}
         onClick={() => setOpen((value) => !value)}
-        className="flex w-full items-start gap-3 rounded-lg px-3 py-2 text-left hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+        className="flex w-full min-w-0 flex-col gap-1 rounded-lg px-3 py-2 text-left hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none sm:flex-row sm:items-center sm:gap-3"
       >
-        <ChevronRightIcon
-          aria-hidden="true"
-          className={cn(
-            "mt-0.5 size-4 shrink-0 text-ink-subtle transition-transform motion-reduce:transition-none",
-            {
-              "rotate-90": open,
-            },
+        {/* One line from 40rem; under it, the message on a second line. */}
+        <span className="flex min-w-0 shrink-0 items-center gap-3">
+          <ChevronRightIcon
+            aria-hidden="true"
+            className={cn(
+              "size-4 shrink-0 text-ink-subtle transition-transform motion-reduce:transition-none",
+              {
+                "rotate-90": open,
+              },
+            )}
+          />
+          <time dateTime={log.time} className="shrink-0 font-mono text-xs leading-5 text-ink-muted">
+            {formatPreciseMoment(log.time, timeZone)}
+          </time>
+          <SeverityBadge log={log} />
+          {log.service !== "" && (
+            <span className="min-w-0 truncate text-xs leading-5 text-ink-subtle sm:max-w-32">
+              {log.service}
+            </span>
           )}
-        />
-        <time dateTime={log.time} className="shrink-0 font-mono text-xs leading-5 text-ink-muted">
-          {formatPreciseMoment(log.time, timeZone)}
-        </time>
-        <SeverityBadge log={log} />
-        {log.service !== "" && (
-          <span className="hidden shrink-0 text-xs leading-5 text-ink-subtle sm:inline">
-            {log.service}
-          </span>
-        )}
-        <span className="line-clamp-2 min-w-0 flex-1 font-mono text-xs leading-5 break-words text-ink">
+        </span>
+        <span className="min-w-0 flex-1 truncate pl-7 font-mono text-xs leading-5 text-ink sm:pl-0">
           {log.body === "" ? <span className="font-sans text-ink-subtle">(empty)</span> : log.body}
           {log.bodyTruncated && "…"}
         </span>
@@ -276,6 +279,22 @@ function Entry({
   );
 }
 
+/** A line in the live view's list where records were left out (live-logs.ts, LiveNote). */
+export function LiveNoteItem({ text, className }: { text: string; className?: string }) {
+  return (
+    <li
+      data-live-note=""
+      className={cn(
+        "flex items-center gap-2 border-y border-dashed py-2 text-xs text-pretty text-ink-subtle",
+        className,
+      )}
+    >
+      <InfoIcon aria-hidden="true" className="size-3.5 shrink-0" />
+      {text}
+    </li>
+  );
+}
+
 /**
  * Log records, each a row that opens to its whole body, attributes,
  * resource attributes, and its trace: a link to the trace's page, or, on
@@ -289,6 +308,7 @@ export function LogList({
   onSpan,
   spanNames,
   openId,
+  notes = [],
 }: {
   logs: readonly LogSummary[];
   timeZone: string;
@@ -299,21 +319,30 @@ export function LogList({
   /** The trace's spans' names, by span ID, for the button. */
   spanNames?: ReadonlyMap<string, string>;
   /** A record shown open from the start, such as one an address names. */
-  openId?: string;
+  openId?: string | undefined;
+  /** The live view's lines where records were left out, each before its record ("" at the end). */
+  notes?: readonly { id: string; before: string; text: string }[];
 }) {
+  const notesBefore = (id: string) =>
+    notes
+      .filter((note) => note.before === id)
+      .map((note) => <LiveNoteItem key={note.id} text={note.text} />);
   return (
     <ul aria-label={label} className="flex flex-col gap-2">
       {logs.map((log) => (
-        <Entry
-          key={log.id}
-          log={log}
-          timeZone={timeZone}
-          projectId={projectId}
-          onSpan={onSpan}
-          spanNames={spanNames}
-          initiallyOpen={log.id === openId}
-        />
+        <React.Fragment key={log.id}>
+          {notesBefore(log.id)}
+          <Entry
+            log={log}
+            timeZone={timeZone}
+            projectId={projectId}
+            onSpan={onSpan}
+            spanNames={spanNames}
+            initiallyOpen={log.id === openId}
+          />
+        </React.Fragment>
       ))}
+      {notesBefore("")}
     </ul>
   );
 }

@@ -158,6 +158,8 @@ describe("design tokens", () => {
   test("chart series and status marks meet 3:1 on cards", () => {
     const marks = [
       ...Array.from({ length: 8 }, (_, index) => `chart-${index + 1}`),
+      "chart-neutral",
+      "ink-tertiary",
       "status-good",
       "status-warning",
       "status-serious",

@@ -106,9 +106,12 @@ const EXPECTED: Record<string, string> = {
   "GET /api/projects/:id/users/:userId": "users:view",
 
   "GET /api/projects/:id/traces": "monitoring:view",
+  "GET /api/projects/:id/traces/chart": "monitoring:view",
   "GET /api/projects/:id/traces/:traceId": "monitoring:view",
   "GET /api/projects/:id/traces/:traceId/spans/:spanId": "monitoring:view",
   "GET /api/projects/:id/logs": "monitoring:view",
+  "GET /api/projects/:id/logs/volume": "monitoring:view",
+  "GET /api/projects/:id/logs/live": "monitoring:view",
   "GET /api/projects/:id/logs/:logId": "monitoring:view",
   "GET /api/projects/:id/metrics": "monitoring:view",
   "GET /api/projects/:id/metrics/chart": "monitoring:view",

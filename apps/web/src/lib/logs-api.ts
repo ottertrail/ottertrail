@@ -129,6 +129,142 @@ const isLogList = (value: unknown): value is LogList =>
   isTextOrNull(value.next) &&
   typeof value.received === "boolean";
 
+/** The search's filters as query parameters, besides the range. */
+function filterParams(environment: string, filters: LogFilters): Record<string, string> {
+  return {
+    ...(environment === DEFAULT_ENVIRONMENT ? {} : { environment }),
+    ...(filters.service === undefined ? {} : { service: filters.service }),
+    ...(filters.severity === undefined ? {} : { severity: filters.severity }),
+    ...(filters.search === undefined ? {} : { search: filters.search }),
+    ...(filters.traceId === undefined ? {} : { traceId: filters.traceId }),
+  };
+}
+
+/** The filters in a query key, each by name, so one left undefined and one left out are one query. */
+const filterKey = (filters: LogFilters) => [
+  filters.service ?? null,
+  filters.severity ?? null,
+  filters.search ?? null,
+  filters.traceId ?? null,
+];
+
+/** A severity range on the chart, or "none" for records that name none. */
+export const SEVERITY_LEVELS = [
+  "none",
+  "trace",
+  "debug",
+  "info",
+  "warn",
+  "error",
+  "fatal",
+] as const;
+export type SeverityLevel = (typeof SEVERITY_LEVELS)[number];
+
+/** GET /api/projects/:id/logs/volume: the search's records per time bucket and severity range. */
+export interface LogVolume {
+  timeZone: string;
+  environment: string;
+  firstDay: string;
+  lastDay: string;
+  /** The first bucket's start, ISO. */
+  start: string;
+  /** Each bucket's start, ISO, on the clock of the instance's timezone. */
+  bucketStarts: string[];
+  stepSeconds: number;
+  buckets: number;
+  counts: Record<SeverityLevel, number[]>;
+  total: number;
+}
+
+const isCounts = (value: unknown): value is Record<SeverityLevel, number[]> =>
+  isRecord(value) && SEVERITY_LEVELS.every((level) => isListOf(value[level], isNumber));
+
+const isLogVolume = (value: unknown): value is LogVolume =>
+  isRecord(value) &&
+  isText(value.timeZone) &&
+  isText(value.environment) &&
+  isText(value.firstDay) &&
+  isText(value.lastDay) &&
+  isText(value.start) &&
+  isListOf(value.bucketStarts, isText) &&
+  isNumber(value.stepSeconds) &&
+  isNumber(value.buckets) &&
+  isCounts(value.counts) &&
+  isNumber(value.total);
+
+/** The chart above the logs list: the same range, environment, and filters. */
+export const logVolumeQuery = (
+  projectId: string,
+  range: PageRange,
+  environment: string,
+  filters: LogFilters,
+) =>
+  queryOptions({
+    queryKey: ["logs-volume", projectId, range, environment, ...filterKey(filters)],
+    retry: telemetryRetry,
+    queryFn: async ({ signal }) => {
+      const query = new URLSearchParams({
+        ...rangeParams(range),
+        ...filterParams(environment, filters),
+      });
+      return expectShape(
+        await apiRequest(
+          `/api/projects/${encodeURIComponent(projectId)}/logs/volume?${query.toString()}`,
+          { signal },
+        ),
+        isLogVolume,
+      );
+    },
+    placeholderData: keepPreviousData,
+  });
+
+/** GET /api/projects/:id/logs/live: records that arrived after the cursor. */
+export interface LiveLogs {
+  timeZone: string;
+  environment: string;
+  /** Newest arrival first. */
+  logs: LogSummary[];
+  /** Where the next poll starts: an arrival, in nanoseconds since 1970. */
+  cursor: string;
+  /** Records that arrived after the cursor but were not sent: more than a page came at once. */
+  skipped: number;
+  /** The cursor was older than the API's window: what arrived from `from` to `to` is not read. */
+  gap: { from: string; to: string } | null;
+}
+
+const isGap = (value: unknown): value is { from: string; to: string } =>
+  isRecord(value) && isText(value.from) && isText(value.to);
+
+const isLiveLogs = (value: unknown): value is LiveLogs =>
+  isRecord(value) &&
+  isText(value.timeZone) &&
+  isText(value.environment) &&
+  isListOf(value.logs, isLogSummary) &&
+  isText(value.cursor) &&
+  isNumber(value.skipped) &&
+  (value.gap === null || isGap(value.gap));
+
+/** One poll of the live view. */
+export async function fetchLiveLogs(
+  projectId: string,
+  environment: string,
+  filters: LogFilters,
+  cursor: string | null,
+  signal: AbortSignal,
+): Promise<LiveLogs> {
+  const query = new URLSearchParams({
+    ...filterParams(environment, filters),
+    ...(cursor === null ? {} : { after: cursor }),
+  });
+  return expectShape(
+    await apiRequest(
+      `/api/projects/${encodeURIComponent(projectId)}/logs/live?${query.toString()}`,
+      { signal },
+    ),
+    isLiveLogs,
+  );
+}
+
 /** The project's log records, newest first, a page at a time ("Load older"). */
 export const logsQuery = (
   projectId: string,
@@ -138,25 +274,12 @@ export const logsQuery = (
 ) =>
   infiniteQueryOptions({
     // Each filter by name, so a filter left undefined and one left out are the same query.
-    queryKey: [
-      "logs",
-      projectId,
-      range,
-      environment,
-      filters.service ?? null,
-      filters.severity ?? null,
-      filters.search ?? null,
-      filters.traceId ?? null,
-    ],
+    queryKey: ["logs", projectId, range, environment, ...filterKey(filters)],
     retry: telemetryRetry,
     queryFn: async ({ pageParam, signal }) => {
       const query = new URLSearchParams({
         ...rangeParams(range),
-        ...(environment === DEFAULT_ENVIRONMENT ? {} : { environment }),
-        ...(filters.service === undefined ? {} : { service: filters.service }),
-        ...(filters.severity === undefined ? {} : { severity: filters.severity }),
-        ...(filters.search === undefined ? {} : { search: filters.search }),
-        ...(filters.traceId === undefined ? {} : { traceId: filters.traceId }),
+        ...filterParams(environment, filters),
         ...(pageParam === null ? {} : { before: pageParam }),
       });
       return expectShape(

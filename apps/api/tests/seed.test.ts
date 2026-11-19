@@ -3,7 +3,7 @@ import { afterAll, beforeAll, describe, expect, test } from "vite-plus/test";
 import { DEMO_PROJECT_NAME, removeDemo, seedDemo, type SeedResult } from "../scripts/seed-data.ts";
 import { seededRandom } from "../scripts/seed-random.ts";
 import { refusalOf } from "../scripts/seed-safety.ts";
-import { buildSite } from "../scripts/seed-site.ts";
+import { buildSite, DAY_MS } from "../scripts/seed-site.ts";
 import { INCIDENT_DAYS_AGO } from "../scripts/seed-telemetry.ts";
 import {
   DEVELOPMENT_PUBLIC_URL,
@@ -22,6 +22,9 @@ import { PUBLIC_URL, signedInDashboard } from "./helpers/dashboard.ts";
  */
 
 const GIB = 1024 ** 3;
+
+const median = (values: number[]) =>
+  values.toSorted((a, b) => a - b)[Math.floor(values.length / 2)] ?? 0;
 // The development Garage from compose.yaml, as the replay and source map tests use.
 const store = s3ObjectStore(LOCAL_OBJECT_STORE);
 let dashboard: Awaited<ReturnType<typeof signedInDashboard>>;
@@ -188,6 +191,44 @@ describe("every page has something to show", () => {
     const severities = new Set(logs.map((log: Json) => log.severityText));
     expect(severities.size).toBeGreaterThan(1);
     expect(logs.some((log: Json) => log.traceId !== "")).toBe(true);
+  });
+
+  test("the Logs and Traces charts: records of several severities and traces spread over the week, and the incident", async () => {
+    const now = SEED_NOW;
+    const today = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+    // The middle of the incident, 14:00 UTC (the test instance's timezone) two days ago.
+    const incidentAt = today - INCIDENT_DAYS_AGO * DAY_MS + 14 * 3_600_000;
+    const bucketOf = (chart: Json): number =>
+      chart.bucketStarts.findLastIndex((start: string) => Date.parse(start) <= incidentAt);
+
+    const volume: Json = await get("/logs/volume?period=7d");
+    for (const level of ["debug", "info", "warn", "error"]) {
+      expect({ level, any: volume.counts[level].some((count: number) => count > 0) }).toEqual({
+        level,
+        any: true,
+      });
+    }
+    const perBucket: number[] = volume.counts.info.map(
+      (_: number, index: number) =>
+        volume.counts.debug[index] + volume.counts.info[index] + volume.counts.warn[index],
+    );
+    // Spread over the week: records in nearly every bucket.
+    expect(perBucket.filter((count) => count > 0).length).toBeGreaterThan(volume.buckets * 0.9);
+    const severe: number[] = volume.counts.warn.map(
+      (warn: number, index: number) => warn + volume.counts.error[index],
+    );
+    const incident = bucketOf(volume);
+    expect(severe[incident]).toBeGreaterThan(5 * Math.max(1, median(severe)));
+
+    const chart: Json = await get("/traces/chart?period=7d");
+    expect(chart.total.failed).toBeGreaterThan(0);
+    expect(chart.traces.filter((count: number) => count > 0).length).toBeGreaterThan(
+      chart.buckets * 0.9,
+    );
+    const at = bucketOf(chart);
+    expect(chart.failed[at]).toBeGreaterThan(3 * Math.max(1, median(chart.failed)));
+    const p95: number[] = chart.p95Us.filter((value: number | null) => value !== null);
+    expect(chart.p95Us[at]).toBeGreaterThan(1.5 * median(p95));
   });
 
   test("metrics, services, databases, and hosts", async () => {

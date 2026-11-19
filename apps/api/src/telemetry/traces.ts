@@ -7,6 +7,7 @@ import {
   fetchFor,
   hasAnyRow,
   labelsInRange,
+  listChartBuckets,
   microseconds,
   newestPage,
   type TelemetryRange,
@@ -101,39 +102,8 @@ export async function listTraces(
   received: boolean;
 }> {
   const params = new QueryParams();
-  const project = params.add(range.projectId, "UUID");
-  const conditions = [
-    `project_id = ${project}`,
-    `timestamp >= ${params.time(range.from)} AND timestamp < ${params.time(range.to)}`,
-    `parent_span_id = ''`,
-    `environment = ${params.add(range.environment, "String")}`,
-  ];
-  if (filters.service !== undefined) {
-    conditions.push(`service = ${params.add(filters.service, "String")}`);
-  }
-  if (filters.name !== undefined) {
-    conditions.push(`positionCaseInsensitiveUTF8(name, ${params.add(filters.name, "String")}) > 0`);
-  }
-  if (filters.minDurationMs !== undefined && filters.minDurationMs > 0) {
-    conditions.push(
-      `duration_ns >= ${params.add((BigInt(filters.minDurationMs) * 1_000_000n).toString(), "UInt64")}`,
-    );
-  }
+  const conditions = rootConditions(params, range, filters);
   const window = failureWindow(range);
-  if (filters.errors) {
-    // Traces with a failed span in the window, the latest MAX_FAILED_SPANS:
-    // duplicates do not matter to IN, so no FINAL.
-    conditions.push(
-      `trace_id IN (
-         SELECT trace_id FROM spans
-         WHERE project_id = ${project}
-           AND timestamp >= ${params.time(window.from)}
-           AND timestamp < ${params.time(window.to)}
-           AND status_code = 'error'
-         ORDER BY timestamp DESC
-         LIMIT ${MAX_FAILED_SPANS})`,
-    );
-  }
   const [rows, labels] = await Promise.all([
     queryRows<RootRow>(
       reader,
@@ -169,6 +139,153 @@ export async function listTraces(
     ...labels,
     received: page.length > 0 || (await hasAnyRow(reader, "spans", range.projectId)),
   };
+}
+
+/**
+ * The trace IDs with a failed span in the window, the latest
+ * MAX_FAILED_SPANS: what "with errors" keeps, and what the chart counts as
+ * a trace with errors. Duplicates do not matter to IN, so no FINAL.
+ */
+function failedTraces(
+  params: QueryParams,
+  range: TelemetryRange,
+  limit = MAX_FAILED_SPANS,
+  column = "trace_id",
+): string {
+  const window = failureWindow(range);
+  return `(SELECT ${column} FROM spans
+           WHERE project_id = ${params.add(range.projectId, "UUID")}
+             AND timestamp >= ${params.time(window.from)}
+             AND timestamp < ${params.time(window.to)}
+             AND status_code = 'error'
+           ORDER BY timestamp DESC
+           LIMIT ${limit})`;
+}
+
+/** The list's conditions on root spans, which its chart shares: the project first, then the range. */
+function rootConditions(
+  params: QueryParams,
+  range: TelemetryRange,
+  filters: Omit<TraceFilters, "before">,
+  maxFailedSpans = MAX_FAILED_SPANS,
+): string[] {
+  const conditions = [
+    `project_id = ${params.add(range.projectId, "UUID")}`,
+    `timestamp >= ${params.time(range.from)} AND timestamp < ${params.time(range.to)}`,
+    `parent_span_id = ''`,
+    `environment = ${params.add(range.environment, "String")}`,
+  ];
+  if (filters.service !== undefined) {
+    conditions.push(`service = ${params.add(filters.service, "String")}`);
+  }
+  if (filters.name !== undefined) {
+    conditions.push(`positionCaseInsensitiveUTF8(name, ${params.add(filters.name, "String")}) > 0`);
+  }
+  if (filters.minDurationMs !== undefined && filters.minDurationMs > 0) {
+    conditions.push(
+      `duration_ns >= ${params.add((BigInt(filters.minDurationMs) * 1_000_000n).toString(), "UInt64")}`,
+    );
+  }
+  if (filters.errors) {
+    conditions.push(`trace_id IN ${failedTraces(params, range, maxFailedSpans)}`);
+  }
+  return conditions;
+}
+
+/** The Traces page's charts: traces per time bucket, those with errors, and the 95th-percentile duration. */
+export interface TraceChart {
+  /** The first bucket's start. */
+  start: Date;
+  /** Each bucket's start, on the clock of the instance's timezone (listChartBuckets). */
+  bucketStarts: Date[];
+  stepSeconds: number;
+  buckets: number;
+  /** Root spans per bucket, as the list counts traces. */
+  traces: number[];
+  /** Of those, the traces "With errors only" keeps. */
+  failed: number[];
+  /** The 95th percentile of the roots' durations, in microseconds; null without a trace. */
+  p95Us: (number | null)[];
+  /** Every trace counted, and those with errors. */
+  total: { traces: number; failed: number };
+  /**
+   * More failed spans than MAX_FAILED_SPANS in the window: errors are
+   * counted among the latest of them, so older traces with errors count as
+   * without.
+   */
+  failedCapped: boolean;
+}
+
+/**
+ * The list's traces over the range, in time buckets (listChartBuckets),
+ * in one read of root spans with the list's filters: how many, how many
+ * with errors exactly as "With errors only" finds them (a failed span,
+ * the root's own included, among the latest MAX_FAILED_SPANS of the
+ * window), whether that cap was reached, and the exact 95th percentile of
+ * their durations. Read without FINAL, as the Services page and its charts
+ * are: this adds up every root span of the period, the read FINAL was
+ * measured to fail on, so a retried root counts twice until its day is
+ * merged (docs/telemetry.md, "How the pages read").
+ */
+export async function traceChart(
+  reader: Reader,
+  range: TelemetryRange,
+  filters: Omit<TraceFilters, "before">,
+  now: Date,
+  { maxFailedSpans = MAX_FAILED_SPANS }: { maxFailedSpans?: number } = {},
+): Promise<TraceChart> {
+  const buckets = listChartBuckets(range, now);
+  const count = buckets.starts.length;
+  const blank = <T>(fill: T) => Array.from({ length: count }, () => fill);
+  const chart: TraceChart = {
+    start: new Date(buckets.starts[0] ?? range.from.getTime()),
+    bucketStarts: buckets.starts.map((ms) => new Date(ms)),
+    stepSeconds: buckets.stepSeconds,
+    buckets: count,
+    traces: blank(0),
+    failed: blank(0),
+    p95Us: blank<number | null>(null),
+    total: { traces: 0, failed: 0 },
+    failedCapped: false,
+  };
+  if (count === 0) return chart;
+  const params = new QueryParams();
+  const conditions = rootConditions(params, range, filters, maxFailedSpans);
+  const failed = filters.errors
+    ? "count()"
+    : `countIf(trace_id IN ${failedTraces(params, range, maxFailedSpans)})`;
+  const capped = `(SELECT count() FROM ${failedTraces(params, range, maxFailedSpans + 1, "1")}) > ${maxFailedSpans}`;
+  const rows = await queryRows<{
+    bucket: string;
+    traces: string;
+    failed: string;
+    p95: number;
+    capped: number | boolean;
+  }>(
+    reader,
+    `SELECT ${buckets.bucketSql(params)} AS bucket, count() AS traces, ${failed} AS failed,
+            quantileExactInclusive(0.95)(duration_ns) AS p95, any(${capped}) AS capped
+     FROM spans
+     WHERE ${conditions.join(" AND ")}
+     GROUP BY bucket
+     ORDER BY bucket
+     LIMIT ${count + 2}`,
+    params,
+    DASHBOARD_SETTINGS,
+  );
+  for (const row of rows) {
+    const index = buckets.index.get(row.bucket);
+    if (index === undefined) continue;
+    const traces = Number(row.traces);
+    const errors = Number(row.failed);
+    chart.traces[index] = traces;
+    chart.failed[index] = errors;
+    chart.p95Us[index] = traces === 0 ? null : row.p95 / 1000;
+    chart.total.traces += traces;
+    chart.total.failed += errors;
+    if (row.capped === true || row.capped === 1) chart.failedCapped = true;
+  }
+  return chart;
 }
 
 /** Where failed spans count: the range, an hour either side. */

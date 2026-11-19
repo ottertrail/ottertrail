@@ -11,7 +11,13 @@ import { clickHouseErrorHandler } from "../clickhouse/route-errors.ts";
 import { ENVIRONMENT_PATTERN, environmentOf } from "../collection/environment.ts";
 import type { Database } from "../db/schema.ts";
 import { RANGE_PROPERTIES, type RangeQuery } from "../reports/routes.ts";
-import { DashboardQueryLimiter, dashboardReader, SPARKLINE_PLACES } from "./dashboard-limit.ts";
+import {
+  DashboardQueryLimiter,
+  dashboardReader,
+  liveQueryLimiter,
+  liveReader,
+  SPARKLINE_PLACES,
+} from "./dashboard-limit.ts";
 import {
   CURSOR_PATTERN,
   cursorOf,
@@ -32,7 +38,9 @@ import {
 } from "./databases.ts";
 import { HOST_KEY, hostCharts, listHosts } from "./hosts.ts";
 import {
+  liveLogs,
   logDetail,
+  logVolume,
   MAX_SEARCH_LENGTH,
   MAX_SEARCH_WORDS,
   searchLogs,
@@ -56,7 +64,7 @@ import {
   serviceChart,
   servicesTrend,
 } from "./services.ts";
-import { listTraces, spanDetail, traceDetail, traceWindow } from "./traces.ts";
+import { listTraces, spanDetail, traceChart, traceDetail, traceWindow } from "./traces.ts";
 
 const UUID_PATTERN =
   "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$";
@@ -160,13 +168,47 @@ type LogsQuery = RangeQuery & {
   before?: string;
 };
 
+type LiveQuery = Omit<LogsQuery, "before" | "period" | "from" | "to"> & { after?: string };
+
+/** The log search's filters, which its chart and the live view take too. */
+const LOG_FILTER_PROPERTIES = {
+  service: { type: "string", pattern: SERVICE_PATTERN },
+  severity: { type: "string", enum: Object.keys(SEVERITIES) },
+  search: { type: "string", maxLength: MAX_SEARCH_LENGTH },
+  traceId: { type: "string", pattern: TRACE_ID_PATTERN },
+};
+
+/** The traces list's period and filters, which its chart takes too. */
+const TRACE_FILTER_PROPERTIES = {
+  ...RANGE_PROPERTIES,
+  service: { type: "string", pattern: SERVICE_PATTERN },
+  name: { type: "string", minLength: 1, maxLength: MAX_SEARCH_LENGTH },
+  errors: { type: "boolean" },
+  minDuration: { type: "integer", minimum: 0, maximum: MAX_MIN_DURATION_MS },
+};
+
+const tooManyWords = (search: string | undefined) =>
+  search !== undefined && searchWords(search).length > MAX_SEARCH_WORDS;
+
+const BAD_SEARCH = {
+  error: "invalid_search",
+  message: `A search holds at most ${MAX_SEARCH_WORDS} words.`,
+};
+
 /**
  * GET /api/projects/:id/traces[?period=7d|from=…&to=…&environment=…&service=…&name=…&errors=true&minDuration=<ms>&before=<cursor>]
+ * GET /api/projects/:id/traces/chart[?period=…&environment=…&service=…&name=…&errors=true&minDuration=<ms>]
+ *     (the list's traces per time bucket, those with errors, and the 95th-percentile duration)
  * GET /api/projects/:id/traces/:traceId[?at=<ISO time>]
  *     (looked for a day either side of `at` when given, else in all the telemetry kept)
  * GET /api/projects/:id/traces/:traceId/spans/:spanId?start=<ns since 1970>
  * GET /api/projects/:id/logs[?period=…&environment=…&service=…&severity=warn&search=…&traceId=…&before=<cursor>]
  *     (summaries: the body cut to 1,000 characters)
+ * GET /api/projects/:id/logs/volume[?period=…&environment=…&service=…&severity=…&search=…&traceId=…]
+ *     (the search's records per time bucket and severity range)
+ * GET /api/projects/:id/logs/live[?environment=…&service=…&severity=…&search=…&traceId=…&after=<cursor>]
+ *     (records that arrived after the cursor, an arrival in ns since 1970, in the last few
+ *     minutes: the live view's poll, one a process at a time)
  * GET /api/projects/:id/logs/:logId?time=<ns since 1970>
  *     (one whole record: body, attributes, resource attributes)
  * GET /api/projects/:id/metrics[?period=…&environment=…]
@@ -206,6 +248,8 @@ export const telemetryDashboardRoutes: FastifyPluginCallback<{
   limiter?: DashboardQueryLimiter;
   /** Of those, the places the Metrics list's sparklines may hold (SPARKLINE_PLACES). */
   sparklineLimiter?: DashboardQueryLimiter;
+  /** The live view's polls in flight on this process, in front of `limiter` (liveReader). */
+  liveLimiter?: DashboardQueryLimiter;
 }> = (
   app,
   {
@@ -216,6 +260,7 @@ export const telemetryDashboardRoutes: FastifyPluginCallback<{
     now = () => new Date(),
     limiter = new DashboardQueryLimiter(),
     sparklineLimiter = new DashboardQueryLimiter({ max: SPARKLINE_PLACES }),
+    liveLimiter = liveQueryLimiter(),
   },
   done,
 ) => {
@@ -249,11 +294,7 @@ export const telemetryDashboardRoutes: FastifyPluginCallback<{
           type: "object",
           additionalProperties: false,
           properties: {
-            ...RANGE_PROPERTIES,
-            service: { type: "string", pattern: SERVICE_PATTERN },
-            name: { type: "string", minLength: 1, maxLength: MAX_SEARCH_LENGTH },
-            errors: { type: "boolean" },
-            minDuration: { type: "integer", minimum: 0, maximum: MAX_MIN_DURATION_MS },
+            ...TRACE_FILTER_PROPERTIES,
             before: { type: "string", pattern: CURSOR_PATTERN },
           },
         },
@@ -274,6 +315,34 @@ export const telemetryDashboardRoutes: FastifyPluginCallback<{
         before,
       });
       return { ...answered(range), ...list };
+    },
+  );
+
+  app.get<{ Params: { id: string }; Querystring: Omit<TracesQuery, "before"> }>(
+    "/projects/:id/traces/chart",
+    {
+      preHandler: [signedIn, canView],
+      schema: {
+        params: PARAMS,
+        querystring: {
+          type: "object",
+          additionalProperties: false,
+          properties: TRACE_FILTER_PROPERTIES,
+        },
+      },
+    },
+    async (request, reply) => {
+      const asked = await rangeOf(request);
+      if ("problem" in asked) return reply.code(400).send(asked.problem);
+      const { range } = asked;
+      const { service, name, errors, minDuration } = request.query;
+      const chart = await traceChart(
+        readerOf(reply),
+        range,
+        { service, name, errors: errors === true, minDurationMs: minDuration },
+        now(),
+      );
+      return { ...answered(range), ...chart };
     },
   );
 
@@ -355,10 +424,7 @@ export const telemetryDashboardRoutes: FastifyPluginCallback<{
           additionalProperties: false,
           properties: {
             ...RANGE_PROPERTIES,
-            service: { type: "string", pattern: SERVICE_PATTERN },
-            severity: { type: "string", enum: Object.keys(SEVERITIES) },
-            search: { type: "string", maxLength: MAX_SEARCH_LENGTH },
-            traceId: { type: "string", pattern: TRACE_ID_PATTERN },
+            ...LOG_FILTER_PROPERTIES,
             before: { type: "string", pattern: CURSOR_PATTERN },
           },
         },
@@ -368,12 +434,7 @@ export const telemetryDashboardRoutes: FastifyPluginCallback<{
       const { service, severity, search, traceId } = request.query;
       const before = cursorOf(request.query.before);
       if (before === null) return reply.code(400).send(BAD_CURSOR);
-      if (search !== undefined && searchWords(search).length > MAX_SEARCH_WORDS) {
-        return reply.code(400).send({
-          error: "invalid_search",
-          message: `A search holds at most ${MAX_SEARCH_WORDS} words.`,
-        });
-      }
+      if (tooManyWords(search)) return reply.code(400).send(BAD_SEARCH);
       const asked = await rangeOf(request);
       if ("problem" in asked) return reply.code(400).send(asked.problem);
       const { range } = asked;
@@ -385,6 +446,72 @@ export const telemetryDashboardRoutes: FastifyPluginCallback<{
         before,
       });
       return { ...answered(range), ...result };
+    },
+  );
+
+  app.get<{ Params: { id: string }; Querystring: Omit<LogsQuery, "before"> }>(
+    "/projects/:id/logs/volume",
+    {
+      preHandler: [signedIn, canView],
+      schema: {
+        params: PARAMS,
+        querystring: {
+          type: "object",
+          additionalProperties: false,
+          properties: { ...RANGE_PROPERTIES, ...LOG_FILTER_PROPERTIES },
+        },
+      },
+    },
+    async (request, reply) => {
+      const { service, severity, search, traceId } = request.query;
+      if (tooManyWords(search)) return reply.code(400).send(BAD_SEARCH);
+      const asked = await rangeOf(request);
+      if ("problem" in asked) return reply.code(400).send(asked.problem);
+      const { range } = asked;
+      const volume = await logVolume(
+        readerOf(reply),
+        range,
+        { service, severity, search, traceId: traceId?.toLowerCase() },
+        now(),
+      );
+      return { ...answered(range), ...volume };
+    },
+  );
+
+  app.get<{ Params: { id: string }; Querystring: LiveQuery }>(
+    "/projects/:id/logs/live",
+    {
+      preHandler: [signedIn, canView],
+      schema: {
+        params: PARAMS,
+        querystring: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            environment: RANGE_PROPERTIES.environment,
+            ...LOG_FILTER_PROPERTIES,
+            after: { type: "string", pattern: "^[0-9]{1,19}$" },
+          },
+        },
+      },
+    },
+    async (request, reply) => {
+      const { service, severity, search, traceId } = request.query;
+      const after = request.query.after === undefined ? undefined : BigInt(request.query.after);
+      if (after !== undefined && after > MAX_NS) {
+        return reply.code(400).send({ error: "invalid_cursor", message: "after is out of range." });
+      }
+      if (tooManyWords(search)) return reply.code(400).send(BAD_SEARCH);
+      const { projectId, timeZone } = accessOf(request);
+      const environment = environmentOf(request.query.environment);
+      const live = await liveLogs(
+        liveReader(clickhouse, limiter, liveLimiter, reply),
+        { projectId, environment, retentionDays },
+        { service, severity, search, traceId: traceId?.toLowerCase() },
+        after,
+        now(),
+      );
+      return { timeZone, environment, ...live };
     },
   );
 

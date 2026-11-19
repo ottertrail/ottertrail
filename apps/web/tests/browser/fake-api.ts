@@ -27,7 +27,13 @@ import {
 import type { SavedFunnel } from "../../src/lib/funnels-api.ts";
 import type { GoalResult } from "../../src/lib/goals-api.ts";
 import type { HostCharts, HostList } from "../../src/lib/hosts-api.ts";
-import type { LogList, LogRecord, LogSummary } from "../../src/lib/logs-api.ts";
+import type {
+  LiveLogs,
+  LogList,
+  LogRecord,
+  LogSummary,
+  LogVolume,
+} from "../../src/lib/logs-api.ts";
 import type { Invitation, Member } from "../../src/lib/members-api.ts";
 import {
   isMetricKind,
@@ -64,7 +70,13 @@ import type { LocationDataStatus, Settings } from "../../src/lib/settings-api.ts
 import type { SourceMapFile, SourceMapRelease } from "../../src/lib/source-maps-api.ts";
 import type { Speed } from "../../src/lib/speed-api.ts";
 import type { StorageReport } from "../../src/lib/storage-api.ts";
-import type { SpanDetail, TraceDetail, TraceList, TraceSummary } from "../../src/lib/traces-api.ts";
+import type {
+  SpanDetail,
+  TraceChart,
+  TraceDetail,
+  TraceList,
+  TraceSummary,
+} from "../../src/lib/traces-api.ts";
 import type { Check, CheckResults, IncidentList } from "../../src/lib/uptime-api.ts";
 import type { Activity, User, UserActivity, UserList } from "../../src/lib/users-api.ts";
 import { STORAGE } from "./storage-fixtures.ts";
@@ -172,6 +184,12 @@ export interface FakeApi {
   logs: (query: URLSearchParams) => LogList | Response;
   /** Answers GET /api/projects/:id/logs/:logId; by default, fakeLog. */
   log: (logId: string, query: URLSearchParams) => LogRecord | Response;
+  /** Answers GET /api/projects/:id/logs/volume; by default, fakeLogVolume. */
+  logVolume: (query: URLSearchParams) => LogVolume | Response;
+  /** Answers GET /api/projects/:id/logs/live; by default, no record has arrived. */
+  liveLogs: (query: URLSearchParams) => LiveLogs | Response;
+  /** Answers GET /api/projects/:id/traces/chart; by default, fakeTraceChart. */
+  traceChart: (query: URLSearchParams) => TraceChart | Response;
   /** Answers GET /api/projects/:id/metrics; by default, fakeMetrics. */
   metrics: (query: URLSearchParams) => MetricList | Response;
   /** Answers GET /api/projects/:id/metrics/chart; by default, fakeMetricChart. */
@@ -892,6 +910,111 @@ export function fakeLogs(query: URLSearchParams): LogList {
 /** No log record ever received. */
 export function noLogs(query: URLSearchParams): LogList {
   return { ...fakeLogs(query), logs: [], next: null, services: [], received: false };
+}
+
+/**
+ * A list chart's buckets, as the API sizes them, in Asia/Singapore: the
+ * fake lists' 7 days in 84 of 2 hours, or chosen days (from and to) in 15
+ * minutes a bucket for one day, 2 hours for more.
+ */
+function listChartFrame(query: URLSearchParams) {
+  const firstDay = query.get("from") ?? "2026-11-10";
+  const lastDay = query.get("to") ?? "2026-11-16";
+  const days = (Date.parse(lastDay) - Date.parse(firstDay)) / 86_400_000 + 1;
+  const stepSeconds = days === 1 ? 900 : 7200;
+  return {
+    timeZone: "Asia/Singapore",
+    environment: query.get("environment") ?? "production",
+    firstDay,
+    lastDay,
+    // Midnight in Singapore (UTC+8), which keeps no daylight saving time.
+    start: new Date(Date.parse(`${firstDay}T00:00:00Z`) - 8 * 3_600_000).toISOString(),
+    bucketStarts: Array.from({ length: (days * 86_400) / stepSeconds }, (_, i) =>
+      new Date(
+        Date.parse(`${firstDay}T00:00:00Z`) - 8 * 3_600_000 + i * stepSeconds * 1000,
+      ).toISOString(),
+    ),
+    stepSeconds,
+    buckets: (days * 86_400) / stepSeconds,
+  };
+}
+
+/**
+ * The days 1 September to 29 November 2026 in Europe/Berlin, a bucket a
+ * day, each starting at its midnight: 22:00 UTC the day before until the
+ * clocks go back on 25 October, 23:00 UTC after.
+ */
+export function berlinDays() {
+  const bucketStarts = Array.from({ length: 90 }, (_, i) => {
+    const day = Date.UTC(2026, 8, 1) + i * 86_400_000;
+    const offset = day < Date.UTC(2026, 9, 26) ? 2 : 1;
+    return new Date(day - offset * 3_600_000).toISOString();
+  });
+  return {
+    timeZone: "Europe/Berlin",
+    environment: "production",
+    firstDay: "2026-09-01",
+    lastDay: "2026-11-29",
+    start: bucketStarts[0] ?? "",
+    bucketStarts,
+    stepSeconds: 86_400,
+    buckets: 90,
+  };
+}
+
+/**
+ * The logs chart: in each bucket i, 3 to 9 info records, 2 warnings every
+ * fifth, an error every seventeenth, a debug record every third; a
+ * minimum severity of warning or above keeps only those.
+ */
+export function fakeLogVolume(query: URLSearchParams): LogVolume {
+  const frame = listChartFrame(query);
+  const severe = query.get("severity") === "warn" || query.get("severity") === "error";
+  const line = (count: (i: number) => number, kept = true) =>
+    Array.from({ length: frame.buckets }, (_, i) => (kept ? count(i) : 0));
+  const counts = {
+    none: line(() => 0),
+    trace: line(() => 0),
+    debug: line((i) => (i % 3 === 0 ? 1 : 0), !severe),
+    info: line((i) => 3 + (i % 7), !severe),
+    warn: line((i) => (i % 5 === 0 ? 2 : 0), query.get("severity") !== "error"),
+    error: line((i) => (i % 17 === 0 ? 1 : 0)),
+    fatal: line(() => 0),
+  };
+  const total = Object.values(counts)
+    .flat()
+    .reduce((sum, count) => sum + count, 0);
+  return { ...frame, counts, total };
+}
+
+/** The live view: nothing has arrived. */
+export function noLiveLogs(query: URLSearchParams): LiveLogs {
+  return {
+    timeZone: "Asia/Singapore",
+    environment: query.get("environment") ?? "production",
+    logs: [],
+    cursor: query.get("after") ?? "1795000000000000000",
+    skipped: 0,
+    gap: null,
+  };
+}
+
+/** The traces chart: in bucket i, 5 to 15 traces, one with errors every fourth, p95 of 120 to 300 ms. */
+export function fakeTraceChart(query: URLSearchParams): TraceChart {
+  const frame = listChartFrame(query);
+  const traces = Array.from({ length: frame.buckets }, (_, i) => 5 + (i % 11));
+  const failed: number[] = traces.map((_, i) => (i % 4 === 0 ? 1 : 0));
+  return {
+    ...frame,
+    traces,
+    failed,
+    p95Us: traces.map((_, i) => 120_000 + (i % 10) * 20_000),
+    total: {
+      traces: traces.reduce((sum, count) => sum + count, 0),
+      failed: failed.reduce((sum, count) => sum + count, 0),
+    },
+    failedCapped: false,
+  };
 }
 
 /** What the fake API keeps of a project's session replays. */
@@ -3522,9 +3645,21 @@ async function answer(api: FakeApi, url: URL, init: RequestInit | undefined): Pr
     const result = api.span(spanPath[1], spanPath[2], url.searchParams);
     return result instanceof Response ? result : json({ timeZone: "Asia/Singapore", span: result });
   }
+  if (/^\/api\/projects\/[^/]+\/traces\/chart$/.test(path)) {
+    const result = api.traceChart(url.searchParams);
+    return result instanceof Response ? result : json(result);
+  }
   const tracePath = /^\/api\/projects\/[^/]+\/traces\/([^/]+)$/.exec(path);
   if (tracePath?.[1] !== undefined) {
     const result = api.trace(tracePath[1], url.searchParams);
+    return result instanceof Response ? result : json(result);
+  }
+  if (/^\/api\/projects\/[^/]+\/logs\/volume$/.test(path)) {
+    const result = api.logVolume(url.searchParams);
+    return result instanceof Response ? result : json(result);
+  }
+  if (/^\/api\/projects\/[^/]+\/logs\/live$/.test(path)) {
+    const result = api.liveLogs(url.searchParams);
     return result instanceof Response ? result : json(result);
   }
   const logPath = /^\/api\/projects\/[^/]+\/logs\/([^/]+)$/.exec(path);
@@ -3775,6 +3910,9 @@ export function installFakeApi(overrides: Partial<FakeApi> = {}): FakeApi {
     span: fakeSpan,
     logs: fakeLogs,
     log: fakeLog,
+    logVolume: fakeLogVolume,
+    liveLogs: noLiveLogs,
+    traceChart: fakeTraceChart,
     metrics: fakeMetrics,
     metricChart: fakeMetricChart,
     metricSparkline: fakeMetricSparkline,

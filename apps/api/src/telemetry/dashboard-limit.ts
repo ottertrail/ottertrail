@@ -184,3 +184,39 @@ export function dashboardReader(
         : <T>(work: () => Promise<T>) => share.run(() => gate(work), controller.signal),
   };
 }
+
+/**
+ * Places the Logs page's live view may hold at once on one process, of
+ * QUERIES_AT_ONCE: its polls come every few seconds from every page
+ * watching, and must not crowd out the other pages' queries. With the
+ * sparklines' SPARKLINE_PLACES, the split of the 4 places is: at most 1
+ * for sparklines, at most 1 for live polls, and so at least 2 always free
+ * for the lists, charts, and the Overview (LIST_PLACES).
+ */
+export const LIVE_QUERIES_AT_ONCE = 1;
+/** The places neither the sparklines nor the live polls can take. */
+export const LIST_PLACES = QUERIES_AT_ONCE - SPARKLINE_PLACES - LIVE_QUERIES_AT_ONCE;
+/**
+ * How long a live poll waits for its place before it is refused (503): a
+ * short wait, since the page asks again at its next poll anyway.
+ */
+export const LIVE_QUEUE_WAIT_MS = 2000;
+
+/** The live view's own pool, in front of the dashboard's (liveReader). */
+export const liveQueryLimiter = () =>
+  new DashboardQueryLimiter({ max: LIVE_QUERIES_AT_ONCE, waitMs: LIVE_QUEUE_WAIT_MS });
+
+/**
+ * Where a live poll's queries run: each first takes the live view's place
+ * (`live`, one a process), then one of the dashboard's places, as the
+ * sparklines' do (dashboardReader's `share`); so live polls hold at most
+ * LIVE_QUERIES_AT_ONCE of the dashboard's places at a time.
+ */
+export function liveReader(
+  clickhouse: ClickHouseClient,
+  limiter: DashboardQueryLimiter,
+  live: DashboardQueryLimiter,
+  reply: Parameters<typeof dashboardReader>[2],
+): Reader {
+  return dashboardReader(clickhouse, limiter, reply, live);
+}

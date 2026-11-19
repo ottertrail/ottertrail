@@ -654,12 +654,15 @@ const logsRoute = createRoute({
       q?: unknown;
       trace?: unknown;
       log?: unknown;
+      live?: unknown;
     },
   ) => {
     const filters = logFiltersFrom(search);
     return {
       ...rangeSearch(search),
       ...environmentSearch(search),
+      // The live view (docs/dashboard.md, "Live").
+      live: search.live === true || search.live === "true" ? true : undefined,
       service: filters.service,
       severity: filters.severity,
       q: filters.search,
@@ -670,13 +673,14 @@ const logsRoute = createRoute({
   },
   component: withPage(LogsPage, function LogsRouteComponent() {
     const { projectId } = logsRoute.useParams();
-    const { period, from, to, env, service, severity, q, trace } = logsRoute.useSearch();
+    const { period, from, to, env, service, severity, q, trace, live } = logsRoute.useSearch();
     return (
       <LogsPage
         projectId={projectId}
         range={rangeFrom({ period, from, to })}
         environment={env ?? DEFAULT_ENVIRONMENT}
         filters={{ service, severity, search: q, traceId: trace }}
+        live={live === true}
       />
     );
   }),

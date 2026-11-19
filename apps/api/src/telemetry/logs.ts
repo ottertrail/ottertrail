@@ -7,6 +7,7 @@ import {
   fetchFor,
   hasAnyRow,
   labelsInRange,
+  listChartBuckets,
   newestPage,
   type TelemetryRange,
 } from "./dashboard-query.ts";
@@ -139,6 +140,41 @@ function summaryOf(row: SummaryRow): LogSummary {
 }
 
 /**
+ * The conditions the search, its chart, and the live view share: the
+ * project first, then the time (a range of when records happened, or none
+ * for the live view, which adds its own), then the environment and
+ * filters.
+ */
+function filterConditions(
+  params: QueryParams,
+  scope: { projectId: string; environment: string; from?: Date; to?: Date },
+  filters: Omit<LogFilters, "before">,
+): string[] {
+  const conditions = [`project_id = ${params.add(scope.projectId, "UUID")}`];
+  if (scope.from !== undefined && scope.to !== undefined) {
+    conditions.push(
+      `timestamp >= ${params.time(scope.from)} AND timestamp < ${params.time(scope.to)}`,
+    );
+  }
+  conditions.push(`environment = ${params.add(scope.environment, "String")}`);
+  if (filters.service !== undefined) {
+    conditions.push(`service = ${params.add(filters.service, "String")}`);
+  }
+  if (filters.severity !== undefined) {
+    conditions.push(`severity_number >= ${params.add(SEVERITIES[filters.severity], "UInt8")}`);
+  }
+  if (filters.traceId !== undefined) {
+    conditions.push(`trace_id = ${params.add(filters.traceId, "String")}`);
+  }
+  // Each word, in any case, anywhere in the body: ClickHouse 26.8 reads the
+  // text index for ILIKE '%word%' (docs/telemetry.md, "How the pages read").
+  for (const word of searchWords(filters.search ?? "")) {
+    conditions.push(`body ILIKE ${params.add(`%${word}%`, "String")}`);
+  }
+  return conditions;
+}
+
+/**
  * Log records in the range, newest first, LOGS_PAGE_SIZE at a time, with
  * the cursor to the next page when there may be more. Read without FINAL,
  * in key order, so a page reads only as far back as it needs; copies of a
@@ -157,25 +193,7 @@ export async function searchLogs(
   received: boolean;
 }> {
   const params = new QueryParams();
-  const conditions = [
-    `project_id = ${params.add(range.projectId, "UUID")}`,
-    `timestamp >= ${params.time(range.from)} AND timestamp < ${params.time(range.to)}`,
-    `environment = ${params.add(range.environment, "String")}`,
-  ];
-  if (filters.service !== undefined) {
-    conditions.push(`service = ${params.add(filters.service, "String")}`);
-  }
-  if (filters.severity !== undefined) {
-    conditions.push(`severity_number >= ${params.add(SEVERITIES[filters.severity], "UInt8")}`);
-  }
-  if (filters.traceId !== undefined) {
-    conditions.push(`trace_id = ${params.add(filters.traceId, "String")}`);
-  }
-  // Each word, in any case, anywhere in the body: ClickHouse 26.8 reads the
-  // text index for ILIKE '%word%' (docs/telemetry.md, "How the pages read").
-  for (const word of searchWords(filters.search ?? "")) {
-    conditions.push(`body ILIKE ${params.add(`%${word}%`, "String")}`);
-  }
+  const conditions = filterConditions(params, range, filters);
   const [rows, labels] = await Promise.all([
     queryRows<SummaryRow>(
       reader,
@@ -286,5 +304,228 @@ export async function logDetail(
     attributes: row.attributes,
     resourceAttributes: row.resource_attributes,
     scope: { name: row.scope_name, version: row.scope_version },
+  };
+}
+
+/** A record's severity range, or "none" when the sender named none (0). */
+export const SEVERITY_LEVELS = [
+  "none",
+  "trace",
+  "debug",
+  "info",
+  "warn",
+  "error",
+  "fatal",
+] as const satisfies readonly ("none" | Severity)[];
+export type SeverityLevel = (typeof SEVERITY_LEVELS)[number];
+
+/** The Logs page's chart: records per time bucket and severity range. */
+export interface LogVolume {
+  /** The first bucket's start. */
+  start: Date;
+  /** Each bucket's start, on the clock of the instance's timezone (listChartBuckets). */
+  bucketStarts: Date[];
+  stepSeconds: number;
+  buckets: number;
+  /** Per severity range, a count per bucket. */
+  counts: Record<SeverityLevel, number[]>;
+  /** Every record counted, all buckets and ranges together. */
+  total: number;
+}
+
+/**
+ * The records the search would find in the range, counted per time bucket
+ * (listChartBuckets) and severity range, in one read: the project first,
+ * then the range, then the search's own filters. Read without FINAL, as
+ * the Traces chart and the Services page are (docs/telemetry.md, "How the
+ * pages read"): a count reads every row of the range, the read FINAL was
+ * measured to fail on for spans, so a retried record counts twice until
+ * its day is merged, which the logs table forces within about an hour of
+ * the day's last insert.
+ */
+export async function logVolume(
+  reader: Reader,
+  range: TelemetryRange,
+  filters: Omit<LogFilters, "before">,
+  now: Date,
+): Promise<LogVolume> {
+  const buckets = listChartBuckets(range, now);
+  const count = buckets.starts.length;
+  const blank = () => Array.from({ length: count }, () => 0);
+  const counts: Record<SeverityLevel, number[]> = {
+    none: blank(),
+    trace: blank(),
+    debug: blank(),
+    info: blank(),
+    warn: blank(),
+    error: blank(),
+    fatal: blank(),
+  };
+  let total = 0;
+  if (count > 0) {
+    const params = new QueryParams();
+    const conditions = filterConditions(params, range, filters);
+    const rows = await queryRows<{ bucket: string; level: SeverityLevel; records: string }>(
+      reader,
+      `SELECT ${buckets.bucketSql(params)} AS bucket,
+              multiIf(severity_number = 0, 'none', severity_number < 5, 'trace',
+                      severity_number < 9, 'debug', severity_number < 13, 'info',
+                      severity_number < 17, 'warn', severity_number < 21, 'error', 'fatal') AS level,
+              count() AS records
+       FROM logs
+       WHERE ${conditions.join(" AND ")}
+       GROUP BY bucket, level
+       ORDER BY bucket, level
+       LIMIT ${(count + 2) * SEVERITY_LEVELS.length}`,
+      params,
+      DASHBOARD_SETTINGS,
+    );
+    for (const row of rows) {
+      const index = buckets.index.get(row.bucket);
+      const line = counts[row.level];
+      if (line === undefined || index === undefined) continue;
+      const records = Number(row.records);
+      line[index] = (line[index] ?? 0) + records;
+      total += records;
+    }
+  }
+  return {
+    start: new Date(buckets.starts[0] ?? range.from.getTime()),
+    bucketStarts: buckets.starts.map((ms) => new Date(ms)),
+    stepSeconds: buckets.stepSeconds,
+    buckets: count,
+    counts,
+    total,
+  };
+}
+
+/** Records one poll of the live view sends at most: past it, the poll skips ahead to the newest. */
+export const LIVE_PAGE_SIZE = 200;
+/** How far back the live view looks for arrivals: a cursor older than this is a gap. */
+export const LIVE_WINDOW_MS = 5 * 60_000;
+/**
+ * How long after its arrival a record is first sent to the live view. A
+ * record's arrival is ClickHouse's clock as it writes the batch, and the
+ * batch shows once its part is committed, a moment later: reading only up
+ * to this long ago leaves the commit time to finish first.
+ */
+export const LIVE_SETTLE_MS = 2000;
+/**
+ * How far before its cursor each poll reads again: a part that became
+ * visible later than LIVE_SETTLE_MS after its rows' arrival (a slow
+ * commit, an index being built) is still found, and the page drops the
+ * records it already holds, by ID.
+ */
+export const LIVE_REREAD_MS = 10_000;
+
+/** One poll of the live view. */
+export interface LiveLogs {
+  /** Newest arrival first; one copy of each record ID. */
+  logs: LogSummary[];
+  /**
+   * Where the next poll starts, in nanoseconds since 1970: the arrival
+   * this poll read up to (LIVE_SETTLE_MS before ClickHouse's now).
+   */
+  cursor: string;
+  /** Records that arrived after the cursor but were not sent: more than a page came at once. */
+  skipped: number;
+  /**
+   * The cursor was older than LIVE_WINDOW_MS: what arrived from `from` to
+   * `to` is not read, and the poll started again at the window's start.
+   */
+  gap: { from: Date; to: Date } | null;
+}
+
+/**
+ * The live view's poll: records of the environment and filters that
+ * arrived after `after` (an arrival, in nanoseconds since 1970), less
+ * LIVE_REREAD_MS, up to LIVE_SETTLE_MS before ClickHouse's now, the newest
+ * LIVE_PAGE_SIZE first. When more than a page arrived after the cursor,
+ * the older ones are skipped and counted: the page shows the newest, not a
+ * backlog it would take many polls to read. A cursor older than
+ * LIVE_WINDOW_MS is a gap: the poll reads from the window's start and says
+ * what it left out. Without a cursor, it starts at the window's start. The
+ * project first, then the arrival, which the minmax index on received_at
+ * reads; records are kept for `retentionDays` by when they happened, which
+ * bounds the time too. Two reads: ClickHouse's clock, then the records
+ * with a count of those after the cursor. Read without FINAL: a retry is
+ * written again with a later arrival, which FINAL could not join anyway,
+ * so a poll drops a second row with an ID, and the page an ID it holds.
+ */
+export async function liveLogs(
+  reader: Reader,
+  scope: { projectId: string; environment: string; retentionDays: number },
+  filters: Omit<LogFilters, "before">,
+  after: bigint | undefined,
+  now: Date,
+): Promise<LiveLogs> {
+  const [clock] = await queryRows<{ now_ns: string }>(
+    reader,
+    "SELECT toString(toUnixTimestamp64Nano(now64(9))) AS now_ns",
+    new QueryParams(),
+    DASHBOARD_SETTINGS,
+  );
+  const serverNow = BigInt(clock?.now_ns ?? `${now.getTime()}000000`);
+  const ms = 1_000_000n;
+  const upper = serverNow - BigInt(LIVE_SETTLE_MS) * ms;
+  const windowStart = serverNow - BigInt(LIVE_WINDOW_MS) * ms;
+  const gap =
+    after !== undefined && after < windowStart
+      ? { from: dateOfNs(after), to: dateOfNs(windowStart) }
+      : null;
+  // Read from: the cursor, or the window's start when there is none or it is too old.
+  const since = after === undefined || gap !== null ? windowStart : after;
+  const reread = since - BigInt(LIVE_REREAD_MS) * ms;
+  const readFrom = after === undefined || gap !== null || reread < windowStart ? since : reread;
+
+  const params = new QueryParams();
+  const conditions = filterConditions(params, scope, filters);
+  const kept = new Date(now.getTime() - scope.retentionDays * 86_400_000);
+  const nanos = (value: bigint) =>
+    `fromUnixTimestamp64Nano(${params.add(value.toString(), "Int64")}, 'UTC')`;
+  const upperSql = nanos(upper);
+  const sinceSql = nanos(since);
+  conditions.splice(
+    1,
+    0,
+    `received_at > ${nanos(readFrom)}`,
+    `received_at <= ${upperSql}`,
+    `timestamp >= ${params.time(kept)}`,
+  );
+  const where = conditions.join(" AND ");
+  const rows = await queryRows<SummaryRow & { received_ns: string; after_cursor: string }>(
+    reader,
+    `SELECT ${SUMMARY_COLUMNS}, toString(toUnixTimestamp64Nano(received_at)) AS received_ns,
+            (SELECT count() FROM logs WHERE ${where} AND received_at > ${sinceSql}) AS after_cursor
+     FROM logs
+     WHERE ${where}
+     ORDER BY received_at DESC, id DESC
+     LIMIT ${LIVE_PAGE_SIZE}`,
+    params,
+    DASHBOARD_SETTINGS,
+  );
+  const seen = new Set<string>();
+  const unique = rows.filter((row) => {
+    if (seen.has(row.id)) return false;
+    seen.add(row.id);
+    return true;
+  });
+  // Skipped: what arrived after the cursor, less what this poll sent of it.
+  const arrived = Number(rows[0]?.after_cursor ?? 0);
+  const sentNew = rows.filter((row) => BigInt(row.received_ns) > since).length;
+  const oldest = rows.at(-1);
+  return {
+    logs: unique.map(summaryOf),
+    cursor: upper > since ? upper.toString() : since.toString(),
+    // A fresh start shows the newest page of the window; nothing is missed but what came before.
+    skipped: after === undefined || gap !== null ? 0 : Math.max(0, arrived - sentNew),
+    // After a gap, a window fuller than a page leaves out its older part too.
+    gap:
+      gap === null
+        ? null
+        : {
+            from: gap.from,
+            to: arrived > sentNew && oldest !== undefined ? dateOfNs(oldest.received_ns) : gap.to,
+          },
   };
 }

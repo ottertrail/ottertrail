@@ -2,9 +2,16 @@ import { randomBytes, randomUUID } from "node:crypto";
 
 import { afterAll, beforeAll, describe, expect, test } from "vite-plus/test";
 
-import { searchWords } from "../src/telemetry/logs.ts";
-import { MAX_TRACE_SPANS } from "../src/telemetry/traces.ts";
-import { signedInDashboard } from "./helpers/dashboard.ts";
+import { QueryParams, queryRows } from "../src/clickhouse/query.ts";
+import { listChartBuckets, telemetryRange } from "../src/telemetry/dashboard-query.ts";
+import {
+  LIVE_PAGE_SIZE,
+  LIVE_SETTLE_MS,
+  LIVE_WINDOW_MS,
+  searchWords,
+} from "../src/telemetry/logs.ts";
+import { MAX_TRACE_SPANS, traceChart } from "../src/telemetry/traces.ts";
+import { signedInDashboard, signedInUser } from "./helpers/dashboard.ts";
 import { insertProject } from "./helpers/projects.ts";
 import { keyValues, secretKeyOf } from "./helpers/telemetry.ts";
 
@@ -889,6 +896,582 @@ describe("ingestion for the pages", () => {
     expect(list.services).toEqual(["checkout"]);
     const filtered = await getJson(noisy.id, "/traces?period=7d&service=checkout");
     expect(filtered.traces).toHaveLength(1);
+  });
+});
+
+interface LogTime {
+  severityNumber: number;
+  timeNs: string;
+}
+
+/** A chart as the API answers it: each bucket's start. */
+interface ChartFrame {
+  buckets: number;
+  bucketStarts: string[];
+}
+
+/** The bucket a time falls in on a chart the API answered: the last start at or before it. */
+const bucketOf = (chart: ChartFrame, ns: bigint) =>
+  Math.max(
+    0,
+    chart.bucketStarts.findLastIndex((start) => Date.parse(start) <= Number(ns / MS)),
+  );
+
+/** Counts per bucket, as the API gives them, of records at these times. */
+function perBucket(chart: ChartFrame, times: bigint[]) {
+  const counts: number[] = Array.from({ length: chart.buckets }, () => 0);
+  for (const time of times) {
+    const index = bucketOf(chart, time);
+    counts[index] = (counts[index] ?? 0) + 1;
+  }
+  return counts;
+}
+
+/** "YYYY-MM-DD", in UTC (the tests' timezone), `days` ago. */
+const dayAgo = (days: number) =>
+  new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10);
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** The traces chart's totals of the shop with this query. */
+const traceTotals = async (query: string) =>
+  (await getJson(shop.id, `/traces/chart?period=7d&${query}`)).total;
+
+/** A poll's bodies, cursor, what it skipped, and its gap. */
+const poll = async (projectId: string, query = "") => {
+  const answer = await getJson(projectId, `/logs/live?${query}`);
+  return {
+    bodies: answer.logs.map((log: { body: string }) => log.body) as string[],
+    cursor: answer.cursor as string,
+    skipped: answer.skipped as number,
+    gap: answer.gap as { from: string; to: string } | null,
+    ids: answer.logs.map((log: { id: string }) => log.id) as string[],
+  };
+};
+
+/** Nanoseconds since 1970 as ClickHouse takes a DateTime64(9) in JSON. */
+const nanosText = (ns: bigint) =>
+  `${new Date(Number(ns / MS)).toISOString().slice(0, 19).replace("T", " ")}.${(ns % 1_000_000_000n)
+    .toString()
+    .padStart(9, "0")}`;
+
+/** Log records written straight into ClickHouse, each with its own arrival. */
+async function insertLogs(projectId: string, records: { body: string; receivedNs: bigint }[]) {
+  await dashboard.reader.client.insert({
+    table: "logs",
+    values: records.map((record) => ({
+      project_id: projectId,
+      timestamp: nanosText(record.receivedNs),
+      observed_timestamp: nanosText(record.receivedNs),
+      received_at: nanosText(record.receivedNs),
+      id: hex(16),
+      severity_number: 9,
+      body: record.body,
+      service: "web",
+      environment: "production",
+    })),
+    format: "JSONEachRow",
+  });
+}
+
+describe("GET /api/projects/:id/logs/volume", () => {
+  test("counts the records per time bucket and severity range", async () => {
+    const volume = await getJson(shop.id, "/logs/volume?period=7d");
+    expect(volume).toMatchObject({
+      timeZone: "UTC",
+      environment: "production",
+      retentionDays: 30,
+      total: 5,
+    });
+    // About 60 to 120 buckets over a week, on whole hours from the first day's start.
+    expect(volume.stepSeconds).toBe(7200);
+    expect(volume.buckets).toBeGreaterThanOrEqual(72);
+    expect(volume.buckets).toBeLessThanOrEqual(84);
+    expect(volume.start).toBe(`${dayAgo(6)}T00:00:00.000Z`);
+    // Each record in the bucket of its time, as the list gives it.
+    const { logs } = await getJson(shop.id, "/logs?period=7d");
+    const timesOf = (from: number, to: number) =>
+      logs
+        .filter((log: LogTime) => log.severityNumber >= from && log.severityNumber < to)
+        .map((log: LogTime) => BigInt(log.timeNs));
+    expect(volume.counts).toEqual({
+      none: perBucket(volume, timesOf(0, 1)),
+      trace: perBucket(volume, []),
+      debug: perBucket(volume, timesOf(5, 9)),
+      info: perBucket(volume, timesOf(9, 13)),
+      warn: perBucket(volume, timesOf(13, 17)),
+      error: perBucket(volume, timesOf(17, 21)),
+      fatal: perBucket(volume, []),
+    });
+    expect(volume.counts.debug.filter((count: number) => count > 0)).toEqual([1]);
+  });
+
+  test("applies the search's filters: severity, service, environment, words, and trace", async () => {
+    const totals = async (query: string) =>
+      (await getJson(shop.id, `/logs/volume?period=7d&${query}`)).total;
+    expect(await totals("severity=warn")).toBe(2);
+    expect(await totals("service=web")).toBe(4);
+    expect(await totals("service=web&severity=info")).toBe(2);
+    expect(await totals("environment=staging")).toBe(1);
+    expect(
+      (await getJson(shop.id, "/logs/volume?period=7d&environment=staging")).counts.fatal,
+    ).toContain(1);
+    expect(await totals("search=order%205120")).toBe(3);
+    expect(await totals(`traceId=${ORDER.trace.toUpperCase()}`)).toBe(3);
+  });
+
+  test("counts only the period", async () => {
+    const old = await newProject("Old logs");
+    const logs = [
+      { time: minutesAgo(48 * 60), severityNumber: 9, body: "two days ago" },
+      { time: minutesAgo(5), severityNumber: 9, body: "just now" },
+    ];
+    await sendLogs(old.secretKey, [{ service: "worker", logs }]);
+    const totals = async (query: string) => (await getJson(old.id, `/logs/volume?${query}`)).total;
+    expect(await totals("period=7d")).toBe(2);
+    expect(await totals(`from=${dayAgo(2)}&to=${dayAgo(2)}`)).toBe(1);
+    expect(await totals(`from=${dayAgo(1)}&to=${dayAgo(1)}`)).toBe(0);
+    // A day is 96 buckets of 15 minutes; a past day's last bucket ends at midnight.
+    const day = await getJson(old.id, `/logs/volume?from=${dayAgo(2)}&to=${dayAgo(2)}`);
+    expect({ step: day.stepSeconds, buckets: day.buckets }).toEqual({ step: 900, buckets: 96 });
+    expect(day.counts.info).toEqual(perBucket(day, [logs[0]?.time ?? 0n]));
+  });
+
+  test("reads without FINAL: a retried record counts twice until its day is merged", async () => {
+    const retried = await newProject("Retried logs");
+    const logs = [{ time: minutesAgo(5), severityNumber: 9, body: "sent twice" }];
+    // Merges stopped, so the copies stay as they would in a busy day before
+    // ClickHouse merges it (forced within about an hour, migration 0002).
+    const { client } = dashboard.reader;
+    await client.command({ query: "SYSTEM STOP MERGES logs" });
+    try {
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        await sendLogs(retried.secretKey, [{ service: "worker", logs }]);
+      }
+      expect((await getJson(retried.id, "/logs/volume?period=7d")).total).toBe(2);
+      // The list drops the copy.
+      expect((await getJson(retried.id, "/logs?period=7d")).logs).toHaveLength(1);
+    } finally {
+      await client.command({ query: "SYSTEM START MERGES logs" });
+    }
+  });
+
+  test("refuses bad parameters", async () => {
+    const bad = [
+      "period=7d&severity=loud",
+      "period=7d&traceId=abc",
+      "period=7d&search=a%20b%20c%20d%20e%20f%20g%20h%20i",
+      "period=forever",
+      "from=2026-11-10",
+    ].map((query) => `/logs/volume?${query}`);
+    expect(await statuses(shop.id, bad)).toEqual(all(bad, 400));
+  });
+});
+
+/** The exact inclusive percentile ClickHouse gives: a straight line between the two nearest values. */
+function percentile(values: number[], q: number): number {
+  const sorted = values.toSorted((a, b) => a - b);
+  const at = q * (sorted.length - 1);
+  const low = sorted[Math.floor(at)] ?? 0;
+  const high = sorted[Math.ceil(at)] ?? low;
+  return low + (high - low) * (at - Math.floor(at));
+}
+
+describe("GET /api/projects/:id/traces/chart", () => {
+  test("counts root spans per bucket, those with a failed span, and their 95th percentile", async () => {
+    const chart = await getJson(shop.id, "/traces/chart?period=7d");
+    expect(chart).toMatchObject({
+      timeZone: "UTC",
+      environment: "production",
+      stepSeconds: 7200,
+      total: { traces: 2, failed: 1 },
+    });
+    // Each root in the bucket of its start, as the list gives it.
+    const listed: { start: string; durationUs: number; error: boolean }[] = (
+      await getJson(shop.id, "/traces?period=7d")
+    ).traces;
+    const roots = listed.map((trace) => ({
+      start: BigInt(Date.parse(trace.start)) * MS,
+      us: trace.durationUs,
+      failed: trace.error,
+    }));
+    expect(roots.filter((root) => root.failed)).toHaveLength(1);
+    expect(chart.traces).toEqual(
+      perBucket(
+        chart,
+        roots.map((root) => root.start),
+      ),
+    );
+    // The order's charge failed, a child span: the trace counts as one with errors.
+    expect(chart.failed).toEqual(
+      perBucket(
+        chart,
+        roots.filter((root) => root.failed).map((root) => root.start),
+      ),
+    );
+    const expected = Array.from({ length: chart.buckets }, (_, index) => {
+      const here = roots.filter((root) => bucketOf(chart, root.start) === index);
+      return here.length === 0
+        ? null
+        : percentile(
+            here.map((root) => root.us),
+            0.95,
+          );
+    });
+    expect(
+      chart.p95Us.map((value: number | null) => (value === null ? null : Math.round(value))),
+    ).toEqual(expected.map((value) => (value === null ? null : Math.round(value))));
+  });
+
+  test('counts errors as "With errors only" finds them, and says when the failed spans\' cap was reached', async () => {
+    expect((await getJson(shop.id, "/traces/chart?period=7d")).failedCapped).toBe(false);
+    const failing = await newProject("Failing traces");
+    // Two traces whose roots failed, a minute apart.
+    const roots = [minutesAgo(3), minutesAgo(2)].map((start) => ({
+      traceId: hex(16),
+      spanId: hex(8),
+      name: "GET /broken",
+      start,
+      durationMs: 5,
+      status: { code: 2, message: "boom" },
+    }));
+    await sendSpans(failing.secretKey, [{ service: "web", spans: roots }]);
+    const asked = await telemetryRange(
+      dashboard.db,
+      { period: "7d" },
+      { projectId: failing.id, timeZone: "UTC" },
+      new Date(),
+      30,
+    );
+    if ("problem" in asked) throw new Error("no range");
+    const wide = await traceChart(dashboard.reader, asked.range, { errors: false }, new Date());
+    expect({ total: wide.total, capped: wide.failedCapped }).toEqual({
+      total: { traces: 2, failed: 2 },
+      capped: false,
+    });
+    // A cap of one failed span: only the latest trace counts with errors, as the filter keeps it.
+    const capped = await traceChart(dashboard.reader, asked.range, { errors: false }, new Date(), {
+      maxFailedSpans: 1,
+    });
+    expect({ total: capped.total, capped: capped.failedCapped }).toEqual({
+      total: { traces: 2, failed: 1 },
+      capped: true,
+    });
+    const filtered = await traceChart(dashboard.reader, asked.range, { errors: true }, new Date(), {
+      maxFailedSpans: 1,
+    });
+    expect(filtered.total).toEqual({ traces: 1, failed: 1 });
+  });
+
+  test("applies the list's filters: environment, service, name, errors, and duration", async () => {
+    expect(await traceTotals("environment=staging")).toEqual({ traces: 1, failed: 0 });
+    expect(await traceTotals("service=payments")).toEqual({ traces: 0, failed: 0 });
+    expect(await traceTotals("service=web")).toEqual({ traces: 2, failed: 1 });
+    expect(await traceTotals("name=HEALTH")).toEqual({ traces: 1, failed: 0 });
+    expect(await traceTotals("errors=true")).toEqual({ traces: 1, failed: 1 });
+    expect(await traceTotals("minDuration=100")).toEqual({ traces: 1, failed: 1 });
+  });
+
+  test("counts only the period", async () => {
+    const old = await newProject("Old traces");
+    await sendSpans(old.secretKey, [
+      {
+        service: "web",
+        spans: [
+          {
+            traceId: hex(16),
+            spanId: hex(8),
+            name: "old",
+            start: minutesAgo(48 * 60),
+            durationMs: 5,
+          },
+          { traceId: hex(16), spanId: hex(8), name: "new", start: minutesAgo(5), durationMs: 5 },
+        ],
+      },
+    ]);
+    const total = async (query: string) =>
+      (await getJson(old.id, `/traces/chart?${query}`)).total.traces;
+    expect(await total("period=7d")).toBe(2);
+    expect(await total(`from=${dayAgo(2)}&to=${dayAgo(2)}`)).toBe(1);
+    expect(await total(`from=${dayAgo(1)}&to=${dayAgo(1)}`)).toBe(0);
+  });
+
+  test("refuses bad parameters", async () => {
+    const bad = [
+      "period=7d&minDuration=-1",
+      "period=7d&errors=maybe",
+      "period=7d&name=",
+      "from=2026-11-10",
+    ].map((query) => `/traces/chart?${query}`);
+    expect(await statuses(shop.id, bad)).toEqual(all(bad, 400));
+  });
+});
+
+/** A moment's wall clock in `timeZone`, "2026-10-25 06:00". */
+const wallClock = (ms: number, timeZone: string) =>
+  new Intl.DateTimeFormat("sv-SE", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(ms);
+
+/** The buckets of chosen days in a timezone, as the charts make them, a day after the last. */
+async function bucketsOf(timeZone: string, from: string, to: string) {
+  const asked = await telemetryRange(
+    dashboard.db,
+    { from, to },
+    { projectId: shop.id, timeZone },
+    new Date(Date.parse(`${to}T00:00:00Z`) + 2 * 86_400_000),
+    400,
+  );
+  if ("problem" in asked) throw new Error("no range");
+  return listChartBuckets(asked.range, new Date(Date.parse(`${to}T00:00:00Z`) + 2 * 86_400_000));
+}
+
+/** The bucket ClickHouse puts a row at `iso` in, by its SQL. */
+async function bucketInClickHouse(buckets: Awaited<ReturnType<typeof bucketsOf>>, iso: string) {
+  const params = new QueryParams();
+  const [row] = await queryRows<{ bucket: string }>(
+    dashboard.reader,
+    `SELECT ${buckets.bucketSql(params)} AS bucket
+     FROM (SELECT toDateTime64(${params.add(iso.replace("T", " ").replace("Z", ""), "String")}, 9, 'UTC') AS timestamp)`,
+    params,
+  );
+  return buckets.index.get(row?.bucket ?? "");
+}
+
+describe("the lists' charts across a daylight saving change", () => {
+  test("Europe/Berlin, 25 October 2026: 6-hour buckets on the clock's marks, one 7 hours long", async () => {
+    const buckets = await bucketsOf("Europe/Berlin", "2026-10-11", "2026-11-09");
+    expect(buckets.stepSeconds).toBe(21_600);
+    const walls = buckets.starts.map((start) => wallClock(start, "Europe/Berlin"));
+    expect(walls.every((wall) => /(00|06|12|18):00$/.test(wall))).toBe(true);
+    expect(walls).toHaveLength(30 * 4);
+    const change = walls.indexOf("2026-10-25 00:00");
+    expect(walls.slice(change, change + 3)).toEqual([
+      "2026-10-25 00:00",
+      "2026-10-25 06:00",
+      "2026-10-25 12:00",
+    ]);
+    // The clock goes back an hour at 03:00: that bucket is 7 hours long, the others 6.
+    const lengths = buckets.starts.slice(1).map((start, at) => start - (buckets.starts[at] ?? 0));
+    expect(lengths[change]).toBe(7 * 3_600_000);
+    expect(lengths.filter((length) => length !== 6 * 3_600_000)).toEqual([7 * 3_600_000]);
+    // ClickHouse puts a row in the bucket of its local time: 06:30 local is 05:30 UTC.
+    expect(await bucketInClickHouse(buckets, "2026-10-25T05:30:00Z")).toBe(change + 1);
+    expect(await bucketInClickHouse(buckets, "2026-10-25T04:30:00Z")).toBe(change);
+  });
+
+  test("Europe/Berlin over 90 days: each day's bucket starts at its midnight", async () => {
+    const buckets = await bucketsOf("Europe/Berlin", "2026-09-01", "2026-11-29");
+    expect(buckets.stepSeconds).toBe(86_400);
+    const walls = buckets.starts.map((start) => wallClock(start, "Europe/Berlin"));
+    expect(walls).toHaveLength(90);
+    expect(walls.every((wall) => wall.endsWith(" 00:00"))).toBe(true);
+    expect(new Set(walls.map((wall) => wall.slice(0, 10))).size).toBe(90);
+    const after = walls.indexOf("2026-10-26 00:00");
+    // 00:30 on 26 October in Berlin is 23:30 UTC on the 25th.
+    expect(await bucketInClickHouse(buckets, "2026-10-25T23:30:00Z")).toBe(after);
+    expect(await bucketInClickHouse(buckets, "2026-10-25T22:30:00Z")).toBe(after - 1);
+  });
+
+  test("America/New_York, 1 November 2026: midnights and 6-hour marks", async () => {
+    const days = await bucketsOf("America/New_York", "2026-09-01", "2026-11-29");
+    const midnights = days.starts.map((start) => wallClock(start, "America/New_York"));
+    expect(midnights.every((wall) => wall.endsWith(" 00:00"))).toBe(true);
+    expect(midnights).toContain("2026-11-01 00:00");
+    expect(midnights).toContain("2026-11-02 00:00");
+    const marks = await bucketsOf("America/New_York", "2026-10-18", "2026-11-16");
+    const walls = marks.starts.map((start) => wallClock(start, "America/New_York"));
+    expect(walls.every((wall) => /(00|06|12|18):00$/.test(wall))).toBe(true);
+    expect(walls).toContain("2026-11-01 06:00");
+    // 06:30 local on 1 November, after the change to UTC-5, is 11:30 UTC.
+    expect(await bucketInClickHouse(marks, "2026-11-01T11:30:00Z")).toBe(
+      walls.indexOf("2026-11-01 06:00"),
+    );
+  });
+});
+
+describe("GET /api/projects/:id/logs/live", () => {
+  test("sends what arrived after the cursor, newest first, and reads 10 seconds before it again", async () => {
+    const live = await newProject("Live");
+    const start = await poll(live.id);
+    expect(start).toMatchObject({ bodies: [], skipped: 0, gap: null });
+    const cursor = BigInt(start.cursor);
+    // Rows made visible after the poll that should have read them: one arrived
+    // 5 seconds before the cursor (a late part), one 15 seconds before (past
+    // the re-read), and one not settled yet (it arrived a second after the
+    // cursor, less than LIVE_SETTLE_MS before the next poll's now).
+    await insertLogs(live.id, [
+      { body: "visible late, 5 s before the cursor", receivedNs: cursor - 5000n * MS },
+      { body: "visible late, 15 s before the cursor", receivedNs: cursor - 15_000n * MS },
+      { body: "not settled", receivedNs: cursor + 1000n * MS },
+    ]);
+    const next = await poll(live.id, `after=${start.cursor}`);
+    expect(next.bodies).toEqual(["visible late, 5 s before the cursor"]);
+    expect(BigInt(next.cursor)).toBeGreaterThan(cursor);
+    expect(BigInt(next.cursor)).toBeLessThan(cursor + 1000n * MS);
+
+    // A record sent now, with a time two days old: it shows by its arrival.
+    await sendLogs(live.secretKey, [
+      { service: "web", logs: [{ time: minutesAgo(48 * 60), severityNumber: 13, body: "late" }] },
+    ]);
+    await sleep(LIVE_SETTLE_MS + 300);
+    const third = await poll(live.id, `after=${next.cursor}`);
+    expect(third.bodies[0]).toBe("late");
+    expect(third.skipped).toBe(0);
+  });
+
+  test("past a page, skips ahead to the newest and counts what it skipped", async () => {
+    const live = await newProject("Live backlog");
+    const start = await poll(live.id);
+    const batch = Array.from({ length: LIVE_PAGE_SIZE + 50 }, (_, i) => ({
+      time: minutesAgo(1) + BigInt(i) * MS,
+      severityNumber: 9,
+      body: `line ${i}`,
+    }));
+    await sendLogs(live.secretKey, [{ service: "web", logs: batch }]);
+    await sleep(LIVE_SETTLE_MS + 300);
+    const next = await poll(live.id, `after=${start.cursor}`);
+    expect(next.bodies).toHaveLength(LIVE_PAGE_SIZE);
+    expect(new Set(next.bodies).size).toBe(LIVE_PAGE_SIZE);
+    expect(next.skipped).toBe(50);
+    expect(next.gap).toBeNull();
+    // From there, nothing new: nothing skipped.
+    expect(await poll(live.id, `after=${next.cursor}`)).toMatchObject({ skipped: 0, gap: null });
+  });
+
+  test("a cursor older than the window is a gap: it says what it left out and starts again", async () => {
+    const live = await newProject("Live gap");
+    await sendLogs(live.secretKey, [
+      { service: "web", logs: [{ time: minutesAgo(1), severityNumber: 9, body: "after the gap" }] },
+    ]);
+    await sleep(LIVE_SETTLE_MS + 300);
+    const now = BigInt(Date.now()) * MS;
+    const old = now - 20n * 60_000n * MS;
+    const answer = await getJson(live.id, `/logs/live?after=${old}`);
+    expect(answer.logs.map((log: { body: string }) => log.body)).toEqual(["after the gap"]);
+    expect(answer.skipped).toBe(0);
+    expect(answer.gap.from).toBe(new Date(Number(old / MS)).toISOString());
+    // The window's start: about 5 minutes before now.
+    const to = Date.parse(answer.gap.to);
+    expect(Math.abs(to - (Date.now() - LIVE_WINDOW_MS))).toBeLessThan(30_000);
+    // Without a cursor, a fresh start is no gap.
+    expect((await poll(live.id)).gap).toBeNull();
+  });
+
+  test("applies the filters and the environment, and sends one copy of a retried record", async () => {
+    const live = await newProject("Live filters");
+    const logs = [
+      { time: minutesAgo(1), severityNumber: 9, body: "web info" },
+      { time: minutesAgo(1) + MS, severityNumber: 17, body: "web error with card declined" },
+    ];
+    const groups = [
+      { service: "web", logs },
+      {
+        service: "worker",
+        logs: [{ time: minutesAgo(1), severityNumber: 17, body: "worker error" }],
+      },
+      {
+        service: "web",
+        environment: "staging",
+        logs: [{ time: minutesAgo(1), severityNumber: 17, body: "staging error" }],
+      },
+    ];
+    // Sent twice, as an exporter retries after a lost answer; merges stopped,
+    // so both copies stay as they would before ClickHouse merges the day.
+    const { client } = dashboard.reader;
+    await client.command({ query: "SYSTEM STOP MERGES logs" });
+    try {
+      for (let attempt = 0; attempt < 2; attempt += 1) await sendLogs(live.secretKey, groups);
+      await sleep(LIVE_SETTLE_MS + 300);
+      const every = await poll(live.id);
+      expect(every.bodies.toSorted(byText)).toEqual(
+        ["web info", "web error with card declined", "worker error"].toSorted(byText),
+      );
+      expect(new Set(every.ids).size).toBe(3);
+      expect((await poll(live.id, "service=web")).bodies.toSorted(byText)).toEqual([
+        "web error with card declined",
+        "web info",
+      ]);
+      expect((await poll(live.id, "severity=error")).bodies.toSorted(byText)).toEqual([
+        "web error with card declined",
+        "worker error",
+      ]);
+      expect((await poll(live.id, "search=declined")).bodies).toEqual([
+        "web error with card declined",
+      ]);
+      expect((await poll(live.id, "environment=staging")).bodies).toEqual(["staging error"]);
+    } finally {
+      await client.command({ query: "SYSTEM START MERGES logs" });
+    }
+  });
+
+  test("looks only a few minutes back", async () => {
+    const live = await newProject("Live window");
+    const tenMinutesAgo = BigInt(Date.now() - 10 * 60_000) * MS;
+    await insertLogs(live.id, [{ body: "arrived ten minutes ago", receivedNs: tenMinutesAgo }]);
+    await sendLogs(live.secretKey, [
+      { service: "web", logs: [{ time: minutesAgo(1), severityNumber: 9, body: "arrived now" }] },
+    ]);
+    await sleep(LIVE_SETTLE_MS + 300);
+    expect((await poll(live.id)).bodies).toEqual(["arrived now"]);
+    expect((await poll(live.id, "after=0")).bodies).toEqual(["arrived now"]);
+  });
+
+  test("refuses bad parameters", async () => {
+    const bad = [
+      "after=1-xyz",
+      `after=${"9".repeat(19)}`,
+      `after=${"1".repeat(20)}`,
+      "severity=loud",
+      "traceId=abc",
+      "search=a%20b%20c%20d%20e%20f%20g%20h%20i",
+    ].map((query) => `/logs/live?${query}`);
+    expect(await statuses(shop.id, bad)).toEqual(all(bad, 400));
+  });
+});
+
+describe("the charts' and live view's access", () => {
+  const paths = ["/logs/volume?period=7d", "/logs/live", "/traces/chart?period=7d"];
+
+  test("a member without monitoring gets 403; one without the project, as if it did not exist", async () => {
+    const without = await signedInUser(dashboard, {
+      name: "No monitoring",
+      email: "no-monitoring@example.com",
+      grants: { projects: [shop.id], areas: { errors: "view" } },
+    });
+    expect(await statuses(shop.id, paths, without.cookie)).toEqual(all(paths, 403));
+    const elsewhere = await signedInUser(dashboard, {
+      name: "Another project",
+      email: "another-project@example.com",
+      grants: { projects: [], areas: { monitoring: "view" } },
+    });
+    const answers = await Promise.all(
+      paths.map(async (path) => (await get(shop.id, path, elsewhere.cookie)).json()),
+    );
+    expect(answers).toEqual(
+      paths.map(() => ({ error: "not_found", message: "No project has this ID." })),
+    );
+    const viewer = await signedInUser(dashboard, {
+      name: "Monitoring viewer",
+      email: "monitoring-viewer@example.com",
+      grants: { projects: [shop.id], areas: { monitoring: "view" } },
+    });
+    expect(await statuses(shop.id, paths, viewer.cookie)).toEqual(all(paths, 200));
+  });
+
+  test("another project reads nothing of this one's", async () => {
+    const other = await insertProject(dashboard.db, { name: "Another shop" });
+    expect((await getJson(other.id, "/logs/volume?period=7d")).total).toBe(0);
+    expect((await getJson(other.id, "/traces/chart?period=7d")).total).toEqual({
+      traces: 0,
+      failed: 0,
+    });
+    expect((await getJson(other.id, "/logs/live")).logs).toEqual([]);
   });
 });
 

@@ -28,22 +28,22 @@ Dark only. `index.html` sets `class="dark"` and `color-scheme: dark`; all tokens
 
 The greys carry a faint orchid tint (OKLCH hue 325, chroma 0.003 to 0.012), so the neutrals and the accent read as one palette. The tint is too weak to make surfaces look purple, and it does not affect contrast or the chart colors.
 
-| Token               | Value     | Use                                                             |
-| ------------------- | --------- | --------------------------------------------------------------- |
-| `canvas`            | `#010101` | Page frame and sidebar                                          |
-| `surface-1`         | `#110f11` | Main content panel (`background`)                               |
-| `surface-2`         | `#161416` | Cards (`card`)                                                  |
-| `surface-3`         | `#1a181a` | Popovers, menus, dialogs (`popover`); sidebar active item       |
-| `surface-4`         | `#1b191b` | Spare lift step                                                 |
-| `hairline`          | `#282328` | Borders, dividers; also the `secondary` and `muted` fills       |
-| `hairline-strong`   | `#373338` | Quiet control borders; the wash inside fields (`input-fill`)    |
-| `field-edge`        | `#746f75` | Field edges (`input`), switch tracks; 3:1 on fills and surfaces |
-| `hairline-tertiary` | `#423d42` | Strongest divider                                               |
-| `ink`               | `#f9f7f9` | Primary text (`foreground`)                                     |
-| `ink-muted`         | `#dad3da` | Sidebar text, secondary emphasis                                |
-| `ink-subtle`        | `#938c93` | Descriptions, placeholders (`muted-foreground`)                 |
-| `ink-tertiary`      | `#69646a` | Decorative or disabled only (about 3.2:1, fails AA for text)    |
-| `success`           | `#27a644` | Success text and status                                         |
+| Token               | Value     | Use                                                                                                                                                |
+| ------------------- | --------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `canvas`            | `#010101` | Page frame and sidebar                                                                                                                             |
+| `surface-1`         | `#110f11` | Main content panel (`background`)                                                                                                                  |
+| `surface-2`         | `#161416` | Cards (`card`)                                                                                                                                     |
+| `surface-3`         | `#1a181a` | Popovers, menus, dialogs (`popover`); sidebar active item                                                                                          |
+| `surface-4`         | `#1b191b` | Spare lift step                                                                                                                                    |
+| `hairline`          | `#282328` | Borders, dividers; also the `secondary` and `muted` fills                                                                                          |
+| `hairline-strong`   | `#373338` | Quiet control borders; the wash inside fields (`input-fill`)                                                                                       |
+| `field-edge`        | `#746f75` | Field edges (`input`), switch tracks; 3:1 on fills and surfaces                                                                                    |
+| `hairline-tertiary` | `#423d42` | Strongest divider                                                                                                                                  |
+| `ink`               | `#f9f7f9` | Primary text (`foreground`)                                                                                                                        |
+| `ink-muted`         | `#dad3da` | Sidebar text, secondary emphasis                                                                                                                   |
+| `ink-subtle`        | `#938c93` | Descriptions, placeholders (`muted-foreground`)                                                                                                    |
+| `ink-tertiary`      | `#69646a` | Decoration, disabled states, and a chart's de-emphasized part ("Other", No status, the quietest part of a state chart); about 3.2:1, so never text |
+| `success`           | `#27a644` | Success text and status                                                                                                                            |
 
 ### Accent
 
@@ -71,7 +71,7 @@ Orchid, a muted magenta (OKLCH hue 325).
 
 ### Status
 
-`status-good`, `status-warning`, `status-serious` (`#ec835a`), and `status-critical` are reserved for state. Always render them through `StatusBadge` (icon + text label), never as color alone, and never reuse them as chart series colors.
+`status-good`, `status-warning`, `status-serious` (`#ec835a`), and `status-critical` are reserved for state. Always render them through `StatusBadge` (icon + text label), never as color alone, and never reuse them as chart series colors for categories. Two exceptions, for state itself, each beside a badge or a legend that names it: a meter past its threshold, with its `StatusBadge` after the figure (below); and a chart whose parts are states with a badge of their own (the Logs chart's severities, the Traces chart's traces with errors) colors those parts as their badges are, with a legend and a readout that name every part (see [Charts](#charts)).
 
 ## Charts
 
@@ -90,6 +90,7 @@ Rules:
 - On one page, a color means one thing. When a page's charts show different entities, such as status classes and percentiles, each takes slots no other on the page uses: a service's page gives the classes `chart-1` to `chart-4`, the failed share `chart-5`, and the percentiles `chart-6` to `chart-8`; a query shape's page keeps the same slots, its calls taking `chart-1`. The chart above the Services list keeps a service's page's slots (the classes, `chart-5` for the failed share, `chart-7` for the 95th percentile); the one above the Databases list gives calls `chart-1` and time spent `chart-2`.
 - A meter shows one share of a whole beside its figure, such as a host's CPU busy (`hosts-page.tsx`): 48 by 6 pixels, rounded, its fill `chart-1` on a track of `seq-1`, the darkest step of the same blue, hidden from screen readers since the figure says the value. Past a threshold the fill takes a status color, and a `StatusBadge` with its icon and a word ("High") follows the figure, so the state is never color alone.
 - A sparkline shows one row's shape over the period in a table (the Metrics list, `metric-sparkline.tsx`): 96 by 24 pixels, its own scale, no axis, a 2px line in `ink-subtle` broken where nothing arrived, and the latest value a dot in `chart-1`. Every row draws the same, so it needs no legend. It is decoration, hidden from screen readers and never focused, so a row adds no tab stop; visually hidden text beside it and its hover title give the lowest, highest, and latest values, and the row's own page has the chart. A sparkline with nothing to draw is a `Missing` dash named for the reason, never a flat line.
+- A chart of a state (the Logs chart's records by severity, the Traces chart's traces with and without errors) uses the status colors for the parts that say something is wrong, the same ones their badges use (Error or worse and traces with errors `status-critical`, Warning `status-warning`), and neutrals for the rest: `chart-neutral` (`#b0a9b0`) for the normal part and `ink-tertiary` for the quietest. Apart from a meter past its threshold (below), these are the only charts whose parts take status colors. The problem part sits on the baseline. The dataviz validator, on `surface-1` (`#110f11`) and `surface-2` (`#161416`) alike: the Logs chart's four parts are at least ΔE 13.8 apart under color blindness (deutan, warning against critical) and 18.3 to normal vision (warning against the neutral); the Traces chart's two parts 8.2 (deutan) and 15.6; every part is at least 3:1 on both surfaces. The validator's lightness band and chroma floor fail for these parts by design, since status colors are fixed and the neutrals are meant to read gray. No chart slot is used, so a hue never means a category on one page and a state on another; the legend and the readout name every part, so color is never the only cue. Stacked bars (`stacked-bar-chart.tsx`) keep 2px of surface between parts and between bars, a rounded top, and one baseline.
 - A thin segmented bar shows one whole split into parts, such as a route's requests by status class (`status-classes.tsx`): 8px high, rounded ends, a part per category with a value, in proportion, 2px apart, no text, with a legend naming the parts and a table view. Hover, keyboard focus, and its accessible name give every part's count and share.
 
 ## Typography
