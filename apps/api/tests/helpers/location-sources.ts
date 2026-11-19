@@ -119,5 +119,14 @@ export function allSources(month: string, location: Buffer = locationFile()) {
 /** A server that never answers: the request ends only when its signal aborts. */
 export const hangingFetch: Fetch = (_url, init) =>
   new Promise((_resolve, reject) => {
-    init?.signal?.addEventListener("abort", () => reject(init.signal?.reason), { once: true });
+    const signal = init?.signal;
+    // As fetch does, a signal already aborted rejects at once. Otherwise a
+    // stop that lands just before the call (the round holds its lease but
+    // has not reached the download yet, as on a busy machine) never fires
+    // again, and the round waits for ever.
+    if (signal?.aborted === true) {
+      reject(signal.reason);
+      return;
+    }
+    signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
   });
