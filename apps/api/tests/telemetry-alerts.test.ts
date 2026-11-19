@@ -849,16 +849,23 @@ describe("the worker", () => {
   test("each rule is due once a minute, and one worker of two takes it", async () => {
     const projects = [];
     for (let i = 0; i < 6; i += 1) projects.push(await slowProject(`Shop ${i}`));
-    const counting = countingReader(() => false);
+    // Each worker counts its own reads: the limit is per worker, and two
+    // workers that take rules at the same moment may run 8 between them.
+    const countingFirst = countingReader(() => false);
+    const countingSecond = countingReader(() => false);
     let clock = AT;
-    const first = evaluatorWith({ readerOf: counting.readerOf, concurrency: 4 }, () => clock);
-    const second = evaluatorWith({ readerOf: counting.readerOf, concurrency: 4 }, () => clock);
+    const first = evaluatorWith({ readerOf: countingFirst.readerOf, concurrency: 4 }, () => clock);
+    const second = evaluatorWith(
+      { readerOf: countingSecond.readerOf, concurrency: 4 },
+      () => clock,
+    );
     const [a, b] = await Promise.all([first.telemetryTick(), second.telemetryTick()]);
     const taken = [...a, ...b].map((item) => item.rule.id).toSorted();
     expect(taken).toEqual(projects.map((project) => project.ruleId).toSorted());
     expect(outcomes([...a, ...b])).toEqual(projects.map(() => "sent"));
-    // At most 4 projects at once.
-    expect(counting.most()).toBeLessThanOrEqual(4);
+    // At most 4 projects at once in each worker.
+    expect(countingFirst.most()).toBeLessThanOrEqual(4);
+    expect(countingSecond.most()).toBeLessThanOrEqual(4);
     // Not due again within the minute; due again a minute later.
     clock = after(0, 59);
     expect(await first.telemetryTick()).toEqual([]);
