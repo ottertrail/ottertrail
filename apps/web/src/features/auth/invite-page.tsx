@@ -7,11 +7,10 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
-import { AREA_LABELS, AREAS, type AreaLevel } from "@/lib/access";
 import { ApiError } from "@/lib/api";
 import { authClient, signInErrorMessage } from "@/lib/auth-client";
 import { formText } from "@/lib/form";
-import { acceptInvitation, type InvitationPreview, previewInvitation } from "@/lib/links-api";
+import { acceptInvitation, previewInvitation } from "@/lib/links-api";
 
 import { AuthLayout } from "./auth-layout";
 import { MIN_PASSWORD_LENGTH, useLinkToken } from "./link-token";
@@ -19,49 +18,9 @@ import { MIN_PASSWORD_LENGTH, useLinkToken } from "./link-token";
 /** Every link that no longer works gets this, whatever the reason (docs/access.md). */
 export const LINK_GONE = "This invitation link no longer works. Ask for a new one.";
 
-const LEVEL_TEXT: Record<AreaLevel, string> = { none: "", view: "view", manage: "manage" };
-
-/** What the invitation gives, in a few lines. */
-function AccessList({ invitation }: { invitation: InvitationPreview }) {
-  const { access } = invitation;
-  if (access === null) {
-    return (
-      <p className="text-sm text-ink-muted">
-        As an <strong className="text-ink">admin</strong>: every project and area, projects&apos;
-        keys and settings, notification channels, and members.
-      </p>
-    );
-  }
-  const areas = AREAS.filter((area) => access.areas[area] !== "none");
-  return (
-    <div className="flex flex-col gap-2 text-sm text-ink-muted">
-      <p>
-        As a <strong className="text-ink">member</strong>, on{" "}
-        {access.projects === "all"
-          ? "all projects, including new ones"
-          : access.projects.length === 0
-            ? "no project yet"
-            : access.projects.join(", ")}
-        :
-      </p>
-      {areas.length === 0 ? (
-        <p>No area yet: an admin can add some later.</p>
-      ) : (
-        <ul className="list-disc pl-5" aria-label="Areas">
-          {areas.map((area) => (
-            <li key={area}>
-              {AREA_LABELS[area].name} ({LEVEL_TEXT[access.areas[area]]})
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
-  );
-}
-
 /**
- * Accepting an invitation (/invite#token=…). The page shows who invited,
- * to which instance, and with what access. Accept reveals the name and
+ * Accepting an invitation (/invite#token=…). The page shows who invited
+ * whom, and to which instance; not the role or access. Accept reveals the name and
  * password fields; nothing is saved until they are submitted, so closing
  * the page leaves the invitation pending. A signed-in visitor signs out first.
  */
@@ -153,7 +112,6 @@ export function InvitePage() {
       description={`${invitation.invitedBy} invited ${invitation.email} to ${invitation.instanceName} on Ottertrail.`}
     >
       <div className="flex flex-col gap-5">
-        <AccessList invitation={invitation} />
         {session.data != null ? (
           <Alert>
             <OctagonAlertIcon />

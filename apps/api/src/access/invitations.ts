@@ -207,14 +207,15 @@ export async function renewInvitation(
   return invitation === null ? "not_found" : { invitation, token };
 }
 
-/** What the accept page shows: who invited, to which instance, with what access. */
+/**
+ * What the accept page shows: who invited whom, and to which instance. Not
+ * the role or access: the page does not show them, and whoever holds the
+ * link would otherwise learn the instance's project names.
+ */
 export interface InvitationPreview {
   email: string;
-  role: "admin" | "member";
   invitedBy: string;
   instanceName: string;
-  /** A member's areas and projects, by name; null for an admin. */
-  access: { projects: "all" | string[]; areas: MemberAccess["areas"] } | null;
 }
 
 async function validRow(db: Kysely<Database>, token: string, now: Date) {
@@ -233,30 +234,10 @@ export async function previewInvitation(
   const row = await validRow(db, token, now);
   if (row === undefined) return null;
   const invitation = invitationOf(row);
-  let access: InvitationPreview["access"] = null;
-  if (invitation.access !== null) {
-    const { projects, areas } = invitation.access;
-    const names =
-      projects === "all"
-        ? "all"
-        : projects.length === 0
-          ? []
-          : (
-              await db
-                .selectFrom("projects")
-                .select("name")
-                .where("id", "in", projects)
-                .orderBy("name")
-                .execute()
-            ).map((project) => project.name);
-    access = { projects: names, areas };
-  }
   return {
     email: invitation.email,
-    role: invitation.role,
     invitedBy: invitation.invitedBy.name,
     instanceName: (await readInstanceSettings(db)).name,
-    access,
   };
 }
 

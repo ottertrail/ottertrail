@@ -27,10 +27,8 @@ describe("accepting an invitation", () => {
 
     await expect.element(page.getByRole("heading", { name: "Join Acme Inc" })).toBeVisible();
     await expect.element(page.getByText(/Test Owner invited zoe@example\.com/)).toBeVisible();
-    await expect.element(page.getByText(/on Main site/)).toBeVisible();
-    await expect
-      .element(page.getByRole("list", { name: "Areas" }))
-      .toMatchTextContent(/Web analytics \(view\)Product analytics \(manage\)/);
+    // Who invited whom, and to what; not the role or the access.
+    expect(document.body.textContent).not.toMatch(/admin|member|Web analytics|Main site/i);
     // The token left the address bar.
     expect(window.location.hash).toBe("");
     expect(api.bodies.some((item) => item.path === "/api/invite/accept")).toBe(false);

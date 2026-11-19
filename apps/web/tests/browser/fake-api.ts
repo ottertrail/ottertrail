@@ -3671,10 +3671,8 @@ function answerLinks(api: FakeApi, url: URL, init: RequestInit | undefined): Res
       : json({
           invitation: {
             email: "zoe@example.com",
-            role: "member",
             invitedBy: "Test Owner",
             instanceName: api.settings.name,
-            access: { projects: ["Main site"], areas: { ...PRESETS.marketing } },
           },
         });
   }

@@ -1,6 +1,5 @@
-import type { Areas } from "./access";
 import { apiRequest, expectShape } from "./api";
-import { isListOf, isRecord, isText } from "./telemetry-shapes";
+import { isRecord, isText } from "./telemetry-shapes";
 
 /**
  * The public side of invitations and reset links (docs/access.md): no
@@ -10,25 +9,16 @@ import { isListOf, isRecord, isText } from "./telemetry-shapes";
 
 export interface InvitationPreview {
   email: string;
-  role: "admin" | "member";
   invitedBy: string;
   instanceName: string;
-  /** A member's areas and projects by name; null for an admin. */
-  access: { projects: "all" | string[]; areas: Areas } | null;
 }
 
 const isPreview = (value: unknown): value is { invitation: InvitationPreview } =>
   isRecord(value) &&
   isRecord(value.invitation) &&
   isText(value.invitation.email) &&
-  (value.invitation.role === "admin" || value.invitation.role === "member") &&
   isText(value.invitation.invitedBy) &&
-  isText(value.invitation.instanceName) &&
-  (value.invitation.access === null ||
-    (isRecord(value.invitation.access) &&
-      (value.invitation.access.projects === "all" ||
-        isListOf(value.invitation.access.projects, isText)) &&
-      isRecord(value.invitation.access.areas)));
+  isText(value.invitation.instanceName);
 
 const isEmail = (value: unknown): value is { email: string } =>
   isRecord(value) && isText(value.email);

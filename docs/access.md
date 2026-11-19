@@ -154,7 +154,7 @@ There is no email: Docker installs are not expected to have SMTP. The inviter co
 - The link carries a random 32-byte token in its fragment, `/invite#token=…`, as the setup link does. Only a SHA-256 hash of the token is stored (`dashboard_invitations`).
 - The link works for 7 days. Pending invitations show on the Members page (email, access, who invited, expiry), where they can be revoked. "New link" replaces the token, since the plain token cannot be shown again.
 - Inviting an email that already has an account is refused. Inviting a pending email again replaces the old invitation (one per email). Emails are stored in lower case; a check constraint refuses any other.
-- The accept page (`/invite`) shows who invited them, to which instance, and with what access. Accept reveals name, password, and confirm-password fields; the email is fixed. Submitting does everything in one transaction:
+- The accept page (`/invite`) shows who invited them and to which instance; not the role or the access, which the person sees once signed in. Its preview (`POST /api/invite/preview`) sends only the email, the inviter's name, and the instance's name, so whoever holds a link does not learn the instance's project names. Accept reveals name, password, and confirm-password fields; the email is fixed. Submitting does everything in one transaction:
   - use up the token: delete its one row, so a double submit or a second tab finds nothing;
   - check the email has no account;
   - create the user and their credential, with Better Auth's password hash;

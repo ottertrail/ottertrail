@@ -161,12 +161,11 @@ describe("members, invitations, reset links, and ownership", () => {
       ).toEqual(INVITATION_GONE);
       const preview = await send(undefined, "POST", "/api/invite/preview", { token: second });
       expect(preview.json()).toEqual({
+        // Who invited whom, and to what: no role, areas, or project names.
         invitation: {
           email: "twice@example.com",
-          role: "member",
           invitedBy: "Ada Admin",
           instanceName: OWNER.instanceName,
-          access: { projects: ["Some site"], areas: PRESETS.viewer },
         },
       });
       const rows = await dashboard.db
@@ -719,9 +718,16 @@ describe("members, invitations, reset links, and ownership", () => {
         (await invite(dashboard.cookie, "boss@example.com", { role: "admin" })).json().url,
       );
       expect((await invite(admin.cookie, "boss@example.com")).json()).toEqual(FORBIDDEN);
+      // The owner's link still works, and still makes an admin.
       expect(
         (await send(undefined, "POST", "/api/invite/preview", { token })).json().invitation,
-      ).toMatchObject({ role: "admin" });
+      ).toMatchObject({ email: "boss@example.com" });
+      const row = await dashboard.db
+        .selectFrom("dashboard_invitations")
+        .select("role")
+        .where("email", "=", "boss@example.com")
+        .executeTakeFirstOrThrow();
+      expect(row.role).toBe("admin");
     });
 
     test("a handover revokes the old owner's pending admin invitations", async () => {
