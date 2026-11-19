@@ -13,7 +13,7 @@ It is built in two parts:
 
 Each dashboard user has one role (`dashboard_users.role`):
 
-- **Owner.** Exactly one per instance; a partial unique index allows no second. The owner can do everything: the instance's settings (name and timezone), handing ownership to another user, and everything an admin can do, including to admins.
+- **Owner.** Exactly one per instance; a partial unique index allows no second. The owner can do everything: the instance's settings (name, timezone, and automatic location data updates, with the location data's status), handing ownership to another user, and everything an admin can do, including to admins.
 - **Admin.** Everything except the instance's settings and anything that touches the owner:
   - every project and area;
   - creating, changing, and deleting projects;
@@ -77,7 +77,7 @@ Fastify checks a route's parameters and body before the access check runs, so a 
 | Route                                                                                                                                                        | Needs                      |
 | ------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------- |
 | `GET /api/me`, `GET /api/projects`                                                                                                                           | Signed in                  |
-| `GET`, `PATCH /api/settings`                                                                                                                                 | `settings` (the owner)     |
+| `GET`, `PATCH /api/settings`, `GET /api/settings/location-data`                                                                                              | `settings` (the owner)     |
 | `/api/members…`, `/api/invitations…` (seven routes)                                                                                                          | `members`                  |
 | `POST /api/members/:userId/ownership`                                                                                                                        | `ownership` (the owner)    |
 | `POST /api/projects`, `GET /api/client-address` (the requester's own address, for blocked addresses)                                                         | `projects`                 |
@@ -145,7 +145,7 @@ These need no session, and declare nothing: health, collection with a project's 
 - A page the user cannot open shows "You don't have access" (`NoAccess`). Each project route names what it needs (`staticData.access` in `router.tsx`), and `ProjectLayout` checks it.
 - Opening a project, or the home page, goes to the project's overview when the user has one of its areas (uptime and alerts, errors, monitoring, web analytics, product analytics), and otherwise to the first area the user has, in the menu's order. The overview shows only the widgets of the user's areas ([dashboard](dashboard.md#overview)).
 - The project list hides "New project" and allowed sites from members.
-- The Settings page shows the instance's name and timezone to the owner, and the channels to the owner and admins. A member gets "You don't have access". The workspace menu's Members link, to `/settings/members`, shows to the owner and admins.
+- The Settings page shows the instance's name and timezone, and the location data, to the owner, and the channels to the owner and admins. A member gets "You don't have access". The workspace menu's Members link, to `/settings/members`, shows to the owner and admins.
 - Where one area's page links into another, the link shows only when the user has that area: an error's user, trace, and replay; a user's errors and replays; a replay's error and user; the alert rules on an error's page; "Add an alert rule" on the monitoring pages; links to the project's settings.
 - Buttons that change something show only with manage: Resolve and Reopen; adding, editing, pausing, and deleting checks and rules (the rules' switches are disabled); saving, renaming, and deleting funnels; adding and deleting goals.
 

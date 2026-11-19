@@ -8,15 +8,15 @@ Status: tested on one machine with Podman (see [What has been tested](#what-has-
 
 [deploy/compose.yaml](../deploy/compose.yaml) starts six services, and a seventh, Garage, with the `object-store` profile, which `example.env` turns on ([session replays and source maps](#session-replays-and-source-maps)). The API, the worker, and the migrations run one image, built from the [Dockerfile](../Dockerfile) for each release and published as `ghcr.io/ottertrail/ottertrail` ([Images and releases](#images-and-releases)). The settings of Caddy, ClickHouse, and Garage are inside the Compose file (`configs:`), so the file works on its own, next to its `.env`.
 
-| Service      | What it does                                                                                                                                                                                                                  | Reachable from outside |
-| ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------- |
-| `postgres`   | PostgreSQL 18, data in the `postgres-data` volume                                                                                                                                                                             | No                     |
-| `clickhouse` | ClickHouse 26.8, for analytics events and later logs and traces, data in `clickhouse-data`. Capped at 40% of the server's memory (see below)                                                                                  | No                     |
-| `migrate`    | Brings both databases' schemas up to date, then exits. The API and the worker start only after it succeeds                                                                                                                    | No                     |
-| `api`        | The API, the dashboard's files, and the tracker (`/t.js`), on port 3000 inside the stack. Geolocation file in `geo-data`                                                                                                      | No, only through Caddy |
-| `worker`     | Background work: runs uptime checks, evaluates alert rules and sends their notifications, deletes events past each project's retention and those of deleted projects, and joins session replays                               | No                     |
-| `caddy`      | HTTPS: gets and renews the certificate, redirects HTTP to HTTPS, compresses responses, passes every request to the API                                                                                                        | Ports 80 and 443       |
-| `garage`     | With the `object-store` profile, which `example.env` turns on: [Garage](https://garagehq.deuxfleurs.fr/) (AGPL-3.0), an S3-compatible store for session replays and source maps, in `garage-data`. About 10 MB of memory idle | No                     |
+| Service      | What it does                                                                                                                                                                                                                                   | Reachable from outside |
+| ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------- |
+| `postgres`   | PostgreSQL 18, data in the `postgres-data` volume                                                                                                                                                                                              | No                     |
+| `clickhouse` | ClickHouse 26.8, for analytics events and later logs and traces, data in `clickhouse-data`. Capped at 40% of the server's memory (see below)                                                                                                   | No                     |
+| `migrate`    | Brings both databases' schemas up to date, then exits. The API and the worker start only after it succeeds                                                                                                                                     | No                     |
+| `api`        | The API, the dashboard's files, and the tracker (`/t.js`), on port 3000 inside the stack. Reads the location data in `geo-data`                                                                                                                | No, only through Caddy |
+| `worker`     | Background work: runs uptime checks, evaluates alert rules and sends their notifications, deletes events past each project's retention and those of deleted projects, joins session replays, and keeps the location data in `geo-data` current | No                     |
+| `caddy`      | HTTPS: gets and renews the certificate, redirects HTTP to HTTPS, compresses responses, passes every request to the API                                                                                                                         | Ports 80 and 443       |
+| `garage`     | With the `object-store` profile, which `example.env` turns on: [Garage](https://garagehq.deuxfleurs.fr/) (AGPL-3.0), an S3-compatible store for session replays and source maps, in `garage-data`. About 10 MB of memory idle                  | No                     |
 
 Idle, the whole stack with Garage used about 425 MB of memory on 18 November 2026 (ClickHouse 158 MB, API 146 MB, worker 54 MB, PostgreSQL 39 MB, Caddy 23 MB, Garage 6 MB), measured with the test data below. The image is about 300 MB, almost all of it Node.js's own image. No sizing under real traffic has been measured.
 
@@ -66,17 +66,15 @@ docker compose ps
 
 Compose pulls the images, then starts the databases, `migrate`, the API, the worker, and Caddy. `migrate` should show "Exited (0)" and `api` "healthy", and with Garage, `garage` "healthy". The domain and the three passwords are checked first: Compose stops before anything starts, with "set … in .env". The object store's settings are checked as the services start ([Missing settings](#missing-settings)).
 
-Create the owner account, then download what the API knows about IP addresses:
+Create the owner account:
 
 ```sh
 docker compose exec api node dist/setup.mjs
-docker compose exec api node dist/update-geo.mjs
-docker compose up -d --force-recreate --no-deps api
 ```
 
-`setup.mjs` prints a link, valid for an hour, that creates the owner. Teammates join by invitation links from the dashboard's Members page ([access](access.md)). An account whose password is lost gets a reset link from the Members page, or from the server: `docker compose exec api node dist/reset-password.mjs <email>` prints one, valid for an hour. `update-geo.mjs` saves DB-IP's location database (about 130 MB) and the address ranges of cloud and hosting providers (about 400 KB) in the `geo-data` volume; the API reads both at startup, hence the restart. Without them, events are stored without a location, and events from cloud servers are not recognized ([web analytics](web-analytics.md#data-centers)). DB-IP publishes a new file each month, and providers add ranges every week: run the last two commands again monthly. The API warns at startup when either file is missing or old.
+`setup.mjs` prints a link, valid for an hour, that creates the owner. Teammates join by invitation links from the dashboard's Members page ([access](access.md)). An account whose password is lost gets a reset link from the Members page, or from the server: `docker compose exec api node dist/reset-password.mjs <email>` prints one, valid for an hour.
 
-The last command restarts only the API by recreating its container. `docker compose restart api` is the usual way, but Podman refuses it because `migrate` has exited.
+The worker downloads what the API knows about IP addresses when it starts: DB-IP's location database (about 130 MB) and the address ranges of cloud and hosting providers (about 400 KB), into the `geo-data` volume. The API loads them within 10 minutes, without a restart. Until then, events are stored without a location, and events from cloud servers are not recognized ([web analytics](web-analytics.md#data-centers)). See [Location data](#location-data) for how they stay current, and how to turn the downloads off.
 
 ## Updating
 
@@ -211,6 +209,20 @@ Optional, and only for alerts: invitations and password reset links are links th
 
 Messages are plain text: what happened, when (in the instance's timezone), the project, and a link to the dashboard; the subject starts with the instance's name. A failed message is retried for about an hour ([uptime and alerts](uptime-alerts.md#step-2-channels-and-delivery-as-built)); its error shows in the channel's deliveries on the Settings page. After changing either setting, run `docker compose up -d`.
 
+### Location data
+
+The worker keeps the location database and the data-center ranges in the `geo-data` volume current ([web analytics](web-analytics.md#keeping-the-files-current)). At start, then every 6 hours, it downloads DB-IP's new location database once a month and the providers' ranges once a week, checks each file, and replaces the old one in one step. The API looks for new files every 10 minutes and loads them without a restart. A failed download keeps the old file. A missing file is tried again within 15 minutes, backing off to 6 hours; a file in place 6 hours later, and once a day after 3 failures in a row. The owner sees each file's state, its last update, and the last error on the dashboard's Settings page, under Location data.
+
+The server needs to reach `download.db-ip.com` and the providers' lists over HTTPS (`ip-ranges.amazonaws.com`, `www.gstatic.com`, `www.microsoft.com` and `download.microsoft.com`, `docs.oracle.com`, `digitalocean.com`, `geoip.linode.com`, `geofeed.constant.com`).
+
+For an instance without internet access, or whose owner does not want the downloads, the owner turns off "Update location data automatically" on the Settings page. The worker then downloads nothing. The files stay as they are, and the API warns at startup once they are old. To update them by hand, with the setting on or off:
+
+```sh
+docker compose exec api node dist/update-geo.mjs
+```
+
+It downloads both files at once, and the API loads them within 10 minutes. It does not wait for a retry delay, but if the worker is updating at that moment, it says so, with when that update's lease ends at the latest, and exits with 1. Ctrl-C stops it cleanly: the old files stay, and the next update can start at once. With `GEO_SOURCE=cloudflare` or `none` in the services' environment, no location database is downloaded; the data-center ranges still are.
+
 ### One customer per instance
 
 Every install serves one customer, whether self-hosted or hosted: each hosted customer gets an instance of their own (decided 18 November 2026), so no customer can slow another. An instance holds projects, its owner (the account the setup link creates), and its instance settings: a display name and the timezone reports count days in, which the owner changes on the dashboard's Settings page ([dashboard](dashboard.md#instance-settings)). The limits on events, source maps, and replays apply to the whole instance, all projects together, with a budget per project inside them. Nobody can sign up in an install; teammates join by invitation ([access](access.md)). Nothing needs to be set for that.
@@ -320,7 +332,7 @@ Releases as an install gets them (18 and 19 November 2026), on macOS with Podman
 - No automated or off-site backups.
 - Garage runs as one node, without copies of its data on other servers: only `backup.sh` keeps another copy.
 - The object backup copies every object each time, without increments. That suits the default limits (1 GiB of source maps, 2 GiB of replays); a much larger bucket takes long and needs the disk space twice.
-- The geolocation database and the data-center ranges are updated by hand, monthly.
+- The location data's downloads come from DB-IP and the providers directly, without a mirror: an instance that cannot reach them keeps its old files, and the Settings page shows the error.
 - One server: no failover, and a few seconds of downtime for each update.
 - Release images are built in CI and pushed to ghcr.io, but nothing tests them there before they are pushed, and the release workflow has not run for a tag yet: run `vp run ready` before tagging a release.
 - podman-compose cannot run the Compose file (inline configs); Docker Compose 2.23.1 or later is needed, with Docker or Podman.

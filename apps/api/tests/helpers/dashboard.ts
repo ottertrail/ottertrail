@@ -37,6 +37,7 @@ export async function signedInDashboard({
   telemetry,
   uptime,
   notifications,
+  locationData,
   linkLimit = { capacity: 1000, refillPerSecond: 1000 },
 }: {
   timeZone?: string;
@@ -53,6 +54,8 @@ export async function signedInDashboard({
   uptime?: AppOptions["uptime"];
   /** Whether email is set up, for notification channels (tests/channels.test.ts). */
   notifications?: AppOptions["notifications"];
+  /** The location data the API has loaded, for the Settings page (tests/location-data.test.ts). */
+  locationData?: AppOptions["locationData"];
   /** Accepting invitations and using reset links, per client address; no limit by default. */
   linkLimit?: RateLimit;
 } = {}) {
@@ -85,6 +88,7 @@ export async function signedInDashboard({
     ...(telemetry === undefined ? {} : { telemetry }),
     ...(uptime === undefined ? {} : { uptime }),
     ...(notifications === undefined ? {} : { notifications }),
+    ...(locationData === undefined ? {} : { locationData }),
   });
   const link = await createSetupToken(testDb.db);
   await app.inject({

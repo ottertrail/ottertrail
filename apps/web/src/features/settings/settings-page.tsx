@@ -10,10 +10,12 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
+import { UnsavedChangesGuard } from "@/components/unsaved-changes-guard";
 import { meQuery } from "@/lib/access";
 import { formText } from "@/lib/form";
 import { type Settings, settingsQuery, updateSettings } from "@/lib/settings-api";
 
+import { LocationDataCard } from "./location-data-card";
 import { NotificationChannelsCard } from "./notification-channels";
 
 function SettingsCard({ settings }: { settings: Settings }) {
@@ -52,7 +54,11 @@ function SettingsCard({ settings }: { settings: Settings }) {
       </CardHeader>
       <CardContent>
         {/* Remounts with the saved values, so the form shows what the API stored. */}
-        <form key={JSON.stringify([settings.name, settings.timeZone])} onSubmit={submit}>
+        <form
+          key={JSON.stringify([settings.name, settings.timeZone])}
+          aria-label="Instance"
+          onSubmit={submit}
+        >
           <FieldGroup>
             <Field>
               <FieldLabel htmlFor="settings-name">Name</FieldLabel>
@@ -91,7 +97,7 @@ function SettingsCard({ settings }: { settings: Settings }) {
             <div className="flex items-center gap-3">
               <Button type="submit" disabled={save.isPending}>
                 {save.isPending && <LoaderCircleIcon aria-hidden="true" className="animate-spin" />}
-                Save changes
+                Save instance settings
               </Button>
               {save.isSuccess && (
                 <output className="text-sm text-ink-muted" aria-live="polite">
@@ -132,8 +138,9 @@ function InstanceSettings() {
 
 /**
  * The instance's settings: /settings (docs/access.md). The owner changes
- * the name and timezone; the owner and admins manage the notification
- * channels. Members do not see the page.
+ * the name and timezone, and whether location data updates on its own;
+ * the owner and admins manage the notification channels. Members do not
+ * see the page.
  */
 export function SettingsPage() {
   const me = useQuery(meQuery());
@@ -166,9 +173,13 @@ export function SettingsPage() {
     return <NoAccess />;
   }
   return (
-    <div className="mx-auto flex max-w-3xl flex-col gap-6 p-6">
-      {permissions.settings && <InstanceSettings />}
-      {permissions.channels && <NotificationChannelsCard timeZone={instance.timeZone} />}
-    </div>
+    // Leaving with the location data switch changed but not saved asks first.
+    <UnsavedChangesGuard>
+      <div className="mx-auto flex max-w-3xl flex-col gap-6 p-6">
+        {permissions.settings && <InstanceSettings />}
+        {permissions.settings && <LocationDataCard timeZone={instance.timeZone} />}
+        {permissions.channels && <NotificationChannelsCard timeZone={instance.timeZone} />}
+      </div>
+    </UnsavedChangesGuard>
   );
 }

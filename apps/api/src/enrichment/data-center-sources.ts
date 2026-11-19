@@ -207,9 +207,12 @@ export async function rangesByNetwork(
 /**
  * The lines of a gzipped text stream. A failed download or a corrupt file
  * rejects the loop that reads them, and stopping early cancels the download.
+ * A line longer than `maxLineLength` rejects it too: DB-IP's lines are
+ * short, and a stream without line breaks must not fill the memory.
  */
 export async function* gunzippedLines(
   stream: ReadableStream<Uint8Array<ArrayBuffer>>,
+  maxLineLength: number = 64 * 1024,
 ): AsyncGenerator<string> {
   const reader = stream
     .pipeThrough(new DecompressionStream("gzip"))
@@ -222,6 +225,9 @@ export async function* gunzippedLines(
       if (done) break;
       const lines = (rest + value).split("\n");
       rest = lines.pop() ?? "";
+      if (rest.length > maxLineLength || lines.some((line) => line.length > maxLineLength)) {
+        throw new Error(`a line longer than ${maxLineLength} characters: not DB-IP's file`);
+      }
       yield* lines;
     }
     if (rest !== "") yield rest;
@@ -249,6 +255,8 @@ export async function downloadDataCenters(options: {
   fetchStream: FetchStream;
   previous?: DataCenterFile | undefined;
   now?: Date;
+  /** The longest line DB-IP's ASN file may have (gunzippedLines). */
+  maxLineLength?: number;
 }): Promise<DataCenterDownload> {
   const now = options.now ?? new Date();
   const fetchedAt = now.toISOString();
@@ -284,7 +292,7 @@ export async function downloadDataCenters(options: {
     const url = asnDatabaseUrl(yearMonth(offset, now));
     try {
       networks = await rangesByNetwork(
-        gunzippedLines(await options.fetchStream(url)),
+        gunzippedLines(await options.fetchStream(url), options.maxLineLength),
         HOSTING_NETWORKS,
       );
       networkSource = url;

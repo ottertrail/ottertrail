@@ -17,6 +17,7 @@ import {
 } from "./config.ts";
 import { dashboardAppRoutes, sendsHsts } from "./dashboard-app/routes.ts";
 import type { Database } from "./db/schema.ts";
+import type { LoadedLocationData } from "./enrichment/reload.ts";
 import { errorRoutes } from "./errors/routes.ts";
 import { savedFunnelRoutes } from "./funnels/routes.ts";
 import { goalRoutes } from "./goals/routes.ts";
@@ -75,6 +76,12 @@ export interface AppOptions extends Omit<FastifyServerOptions, "logger"> {
    * replays; null, or omitted, when the install has none, and both are off.
    */
   objectStore?: ObjectStore | null;
+  /**
+   * The location database and data-center ranges the API has loaded, for
+   * the Settings page's status (enrichment/reload.ts). Omitted, the page
+   * reports neither file loaded.
+   */
+  locationData?: { readonly loaded: LoadedLocationData };
   /** Source maps (docs/errors.md, "Source maps"): the instance's storage limit, and upload limits. */
   sourceMaps?: {
     limitBytes: number;
@@ -139,6 +146,7 @@ export function buildApp({
   log,
   dashboard,
   objectStore = null,
+  locationData,
   sourceMaps = { limitBytes: DEFAULT_SOURCE_MAP_STORAGE_BYTES },
   replays = { limitBytes: DEFAULT_REPLAY_STORAGE_BYTES },
   telemetry = {},
@@ -249,6 +257,7 @@ export function buildApp({
       db,
       auth: dashboard.auth,
       trustedOrigins: dashboard.trustedOrigins,
+      ...(locationData === undefined ? {} : { locationData }),
     });
     app.register(projectRoutes, {
       prefix: "/api",

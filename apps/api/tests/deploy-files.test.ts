@@ -66,6 +66,15 @@ describe("deploy/compose.yaml works on its own, as a release download", () => {
     expect(compose).not.toMatch(/^\s*- \.{1,2}\//m);
   });
 
+  test("the worker writes the location data where the API reads it, both read-write", () => {
+    for (const service of ["api", "worker"]) {
+      const start = compose.indexOf(`\n  ${service}:\n`);
+      const end = compose.indexOf("\n\n", start);
+      expect(start, `compose.yaml has the ${service} service`).toBeGreaterThan(-1);
+      expect(compose.slice(start, end)).toContain("    volumes:\n      - geo-data:/app/data/geo\n");
+    }
+  });
+
   test("Caddy reads the domain from its environment, so a new domain recreates it", () => {
     // $$ is a literal dollar sign for Compose: Caddy reads {$OTTERTRAIL_DOMAIN}.
     expect(inlineConfig("caddyfile").split("\n")[0]).toBe("{$$OTTERTRAIL_DOMAIN} {");

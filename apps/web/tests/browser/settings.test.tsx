@@ -34,7 +34,7 @@ describe("the instance's settings", () => {
     await expect
       .element(page.getByText(/changes day boundaries in all reports, including past reports/))
       .toBeVisible();
-    await page.getByRole("button", { name: "Save changes" }).click();
+    await page.getByRole("button", { name: "Save instance settings" }).click();
 
     await expect.element(page.getByText("Saved.")).toBeVisible();
     expect(api.bodies).toContainEqual({
@@ -102,7 +102,7 @@ describe("the instance's settings", () => {
     await expect.element(page.getByRole("listbox")).not.toBeInTheDocument();
     await expect.element(timeZone).toHaveValue("America/North_Dakota/Center");
 
-    await page.getByRole("button", { name: "Save changes" }).click();
+    await page.getByRole("button", { name: "Save instance settings" }).click();
     await expect.element(page.getByText("Saved.")).toBeVisible();
     expect(api.bodies).toContainEqual({
       method: "PATCH",

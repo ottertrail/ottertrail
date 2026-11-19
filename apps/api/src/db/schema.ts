@@ -29,6 +29,8 @@ export interface InstanceSettingsTable {
    * visitor salts change at its midnight.
    */
   time_zone: string;
+  /** Whether the worker downloads new location data (migration 0009). */
+  update_location_data: ColumnType<boolean, never, boolean>;
   updated_at: ColumnType<Date, never, Date>;
 }
 
@@ -489,6 +491,36 @@ export interface OverviewLayoutsTable {
   updated_at: ColumnType<Date, Date | undefined, Date>;
 }
 
+/**
+ * The last update of one location data file (enrichment/updates.ts):
+ * "locations", the geolocation database, or "data_centers".
+ */
+export interface LocationDataUpdatesTable {
+  kind: "locations" | "data_centers";
+  last_attempt_at: Date;
+  last_success_at: Nullable<Date>;
+  /** Locations: the month of DB-IP's file, such as "2026-11". */
+  version: Nullable<string>;
+  /** Locations: when DB-IP built the file. Data centers: when the file was written. */
+  built_at: Nullable<Date>;
+  /** Data centers: how many providers the file holds. */
+  providers: Nullable<number>;
+  /** The file as the update left it, to tell whether it was replaced since. */
+  file_size: ColumnType<string | null, number | null | undefined, number | null>;
+  file_modified_at: Nullable<Date>;
+  /** Why the last attempt failed, or which sources failed; null after a clean one. */
+  last_error: Nullable<string>;
+  /** Failed attempts in a row; 0 after a success. */
+  failures: ColumnType<number, number | undefined, number>;
+}
+
+/** One row while a location data update runs (enrichment/updates.ts, withUpdateLease). */
+export interface LocationDataLeaseTable {
+  id: ColumnType<boolean, boolean | undefined, never>;
+  holder: string;
+  expires_at: Date;
+}
+
 export interface Database {
   instance_settings: InstanceSettingsTable;
   projects: ProjectsTable;
@@ -518,4 +550,6 @@ export interface Database {
   dashboard_invitations: DashboardInvitationsTable;
   dashboard_password_resets: DashboardPasswordResetsTable;
   overview_layouts: OverviewLayoutsTable;
+  location_data_updates: LocationDataUpdatesTable;
+  location_data_lease: LocationDataLeaseTable;
 }

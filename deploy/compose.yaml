@@ -164,6 +164,9 @@ services:
 
   api:
     <<: *app
+    # The location database and data-center ranges: the worker keeps them
+    # current, and the API loads a new file within 10 minutes. Read-write
+    # here too, for `docker compose exec api node dist/update-geo.mjs`.
     volumes:
       - geo-data:/app/data/geo
     depends_on:
@@ -186,6 +189,9 @@ services:
   worker:
     <<: *app
     command: ["node", "--enable-source-maps", "dist/worker.mjs"]
+    # Downloads the location data into the volume the API reads.
+    volumes:
+      - geo-data:/app/data/geo
     # On shutdown the worker lets running uptime checks finish and records
     # them: up to 30 seconds each, past Compose's default 10.
     stop_grace_period: 45s

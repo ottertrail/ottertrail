@@ -12,6 +12,12 @@ export interface DatabaseOptions {
    * never touch development data or each other.
    */
   schema?: string;
+  /**
+   * Hears an idle connection ending (PostgreSQL restarted, or the backend
+   * terminated); the API and the worker pass their own log. By default, a
+   * JSON line on stderr, for scripts.
+   */
+  onIdleError?: (error: Error) => void;
 }
 
 const SCHEMA_NAME = /^[a-z_][a-z0-9_]{0,62}$/;
@@ -21,8 +27,19 @@ const SCHEMA_NAME = /^[a-z_][a-z0-9_]{0,62}$/;
 // the day whenever the server's timezone differs from the data's.
 types.setTypeParser(types.builtins.DATE, (value) => value);
 
+function logIdleError(error: Error): void {
+  console.error(
+    JSON.stringify({
+      level: "warn",
+      time: Date.now(),
+      msg: "an idle PostgreSQL connection ended; the next query opens a new one",
+      err: error.message,
+    }),
+  );
+}
+
 export function createDatabase(options: DatabaseOptions): Kysely<Database> {
-  const { connectionString, maxConnections = 10, schema } = options;
+  const { connectionString, maxConnections = 10, schema, onIdleError = logIdleError } = options;
   if (schema !== undefined && !SCHEMA_NAME.test(schema)) {
     throw new Error(`Invalid schema name "${schema}"`);
   }
@@ -31,5 +48,10 @@ export function createDatabase(options: DatabaseOptions): Kysely<Database> {
     max: maxConnections,
     ...(schema === undefined ? {} : { options: `-c search_path=${schema}` }),
   });
+  // An idle connection whose backend ends (PostgreSQL restarted, or the
+  // backend terminated) makes the pool emit "error"; unheard, that would
+  // end the process. The pool has already dropped the connection, and the
+  // next query opens a new one.
+  pool.on("error", onIdleError);
   return new Kysely<Database>({ dialect: new PostgresDialect({ pool }) });
 }

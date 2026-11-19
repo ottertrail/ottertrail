@@ -16,6 +16,11 @@ export interface InstanceSettings {
   name: string;
   /** IANA timezone: reports count days in it, and visitor salts change at its midnight. */
   timeZone: string;
+  /**
+   * Whether the worker keeps the location database and the data-center
+   * ranges current on its own (enrichment/updates.ts). On by default.
+   */
+  updateLocationData: boolean;
 }
 
 interface CacheEntry {
@@ -40,9 +45,13 @@ export function readInstanceSettings(
   if (cached !== undefined && cached.expiresAt > now) return cached.settings;
   const settings = db
     .selectFrom("instance_settings")
-    .select(["name", "time_zone"])
+    .select(["name", "time_zone", "update_location_data"])
     .executeTakeFirstOrThrow()
-    .then((row) => ({ name: row.name, timeZone: row.time_zone }));
+    .then((row) => ({
+      name: row.name,
+      timeZone: row.time_zone,
+      updateLocationData: row.update_location_data,
+    }));
   caches.set(db, { settings, expiresAt: now + SETTINGS_CACHE_MS });
   // A failed read is not kept: the next caller tries again.
   settings.catch(() => {
@@ -52,19 +61,23 @@ export function readInstanceSettings(
 }
 
 /**
- * Changes the instance's name or timezone, and drops this process's cached
+ * Changes the instance's name, timezone, or automatic location data
+ * updates, and drops this process's cached
  * copy. Checking who may do it is the caller's job. In a transaction, call
  * forgetInstanceSettings() on the outer handle once it commits.
  */
 export async function updateInstanceSettings(
   db: Kysely<Database>,
-  changes: { name?: string; timeZone?: string },
+  changes: { name?: string; timeZone?: string; updateLocationData?: boolean },
 ): Promise<void> {
   const result = await db
     .updateTable("instance_settings")
     .set({
       ...(changes.name === undefined ? {} : { name: changes.name }),
       ...(changes.timeZone === undefined ? {} : { time_zone: changes.timeZone }),
+      ...(changes.updateLocationData === undefined
+        ? {}
+        : { update_location_data: changes.updateLocationData }),
       updated_at: new Date(),
     })
     .executeTakeFirst();

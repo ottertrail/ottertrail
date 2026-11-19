@@ -53,7 +53,7 @@ import type {
   TimelineItem,
 } from "../../src/lib/replays-api.ts";
 import type { ServiceChart, ServiceList, StatusCounts } from "../../src/lib/services-api.ts";
-import type { Settings } from "../../src/lib/settings-api.ts";
+import type { LocationDataStatus, Settings } from "../../src/lib/settings-api.ts";
 import type { SourceMapFile, SourceMapRelease } from "../../src/lib/source-maps-api.ts";
 import type { Speed } from "../../src/lib/speed-api.ts";
 import type { SpanDetail, TraceDetail, TraceList, TraceSummary } from "../../src/lib/traces-api.ts";
@@ -69,6 +69,8 @@ export interface FakeApi {
   signedIn: boolean;
   /** The instance's settings; PATCH changes them (the owner's only). */
   settings: Settings;
+  /** GET /api/settings/location-data: the files loaded and their last updates (the owner's only). */
+  locationData: LocationDataStatus;
   /** Who is signed in and what they may reach (GET /api/me); the owner by default. */
   access: FakeAccess;
   /** The Members page's users and pending invitations (GET /api/members). */
@@ -1919,6 +1921,47 @@ export function fakeList(query: URLSearchParams) {
 export const SETTINGS: Settings = {
   name: "Acme Inc",
   timeZone: "Asia/Singapore",
+  updateLocationData: true,
+};
+
+/** Both files loaded, and both updated by the worker without a problem. */
+export const LOCATION_DATA: LocationDataStatus = {
+  now: "2026-11-17T05:00:00.000Z",
+  geoSource: "database",
+  locations: {
+    loaded: {
+      type: "DBIP-City-Lite",
+      builtAt: "2026-11-01T02:52:26.000Z",
+      fileModifiedAt: "2026-11-15T03:59:00.000Z",
+    },
+    loadError: null,
+    lastUpdate: {
+      lastAttemptAt: "2026-11-15T04:00:00.000Z",
+      lastSuccessAt: "2026-11-15T04:00:00.000Z",
+      version: "2026-11",
+      builtAt: "2026-11-01T02:52:26.000Z",
+      providers: null,
+      fileModifiedAt: "2026-11-15T03:59:00.000Z",
+      lastError: null,
+    },
+  },
+  dataCenters: {
+    loaded: {
+      providers: 14,
+      updatedAt: "2026-11-17T04:00:00.000Z",
+      fileModifiedAt: "2026-11-17T04:00:00.000Z",
+    },
+    loadError: null,
+    lastUpdate: {
+      lastAttemptAt: "2026-11-17T04:00:00.000Z",
+      lastSuccessAt: "2026-11-17T04:00:00.000Z",
+      version: null,
+      builtAt: "2026-11-17T04:00:00.000Z",
+      providers: 14,
+      fileModifiedAt: "2026-11-17T04:00:00.000Z",
+      lastError: null,
+    },
+  },
 };
 
 /** A dashboard user's role and grants, as GET /api/me answers them (docs/access.md). */
@@ -3188,6 +3231,11 @@ async function answer(api: FakeApi, url: URL, init: RequestInit | undefined): Pr
     api.settings = { ...api.settings, ...(typeof changes === "object" ? changes : {}) };
     return json({ settings: api.settings });
   }
+  if (path === "/api/settings/location-data") {
+    return api.access.role === "owner"
+      ? json(api.locationData)
+      : json({ error: "forbidden", message: "You don't have access to this." }, 403);
+  }
   if (path === "/api/settings") {
     return api.access.role === "owner"
       ? json({ settings: api.settings })
@@ -3523,6 +3571,7 @@ export function installFakeApi(overrides: Partial<FakeApi> = {}): FakeApi {
   active = {
     signedIn: true,
     settings: SETTINGS,
+    locationData: LOCATION_DATA,
     access: OWNER_ACCESS,
     members: fakeMembers(),
     emailConfigured: false,

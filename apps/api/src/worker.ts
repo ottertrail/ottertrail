@@ -19,6 +19,13 @@
  * - Sending due notifications every few seconds, at most 10 at once, by
  *   email and webhook, retrying failures for about an hour, and deleting
  *   deliveries past their 30 days every hour (notifications/sender.ts).
+ * - At start, every 6 hours, sooner after a failure while a file is
+ *   missing, and within a minute of the setting being turned on:
+ *   downloading a new location database (monthly) and new data-center
+ *   ranges (weekly) when they are due and the instance's "Update location
+ *   data automatically" setting is on, one updater at a time
+ *   (enrichment/updates.ts). The API loads them within minutes
+ *   (enrichment/reload.ts).
  * - At start and every few hours: finding projects ClickHouse still holds
  *   events of but PostgreSQL no longer knows, deleting events older than
  *   each project's retention (retention/retention.ts),
@@ -38,6 +45,11 @@ import {
 } from "./clickhouse/delete-events.ts";
 import { loadConfig } from "./config.ts";
 import { createDatabase } from "./db/database.ts";
+import {
+  LocationDataJob,
+  SETTING_POLL_MS,
+  UPDATE_CHECK_INTERVAL_MS,
+} from "./enrichment/updates.ts";
 import { pruneDeliveries } from "./notifications/deliveries.ts";
 import { smtpMailer } from "./notifications/email.ts";
 import { DELIVERY_TICK_MS, DeliverySender, PRUNE_INTERVAL_MS } from "./notifications/sender.ts";
@@ -61,12 +73,19 @@ export const PURGE_INTERVAL_MS = 60 * 1000;
 export const REPLAY_INTERVAL_MS = 10_000;
 
 const config = loadConfig();
-const db = createDatabase({ connectionString: config.databaseUrl, maxConnections: 3 });
+const db = createDatabase({
+  connectionString: config.databaseUrl,
+  maxConnections: 3,
+  onIdleError: (error) =>
+    log("warn", "an idle PostgreSQL connection ended; the next query opens a new one", {
+      err: error.message,
+    }),
+});
 const clickhouse = createClickHouse(config.clickhouse);
 const objectStore = config.objectStore === null ? null : s3ObjectStore(config.objectStore);
 
 /** One JSON line per message, like the API's log. */
-function log(level: "info" | "error", msg: string, fields: Record<string, unknown> = {}) {
+function log(level: "info" | "warn" | "error", msg: string, fields: Record<string, unknown> = {}) {
   console.log(JSON.stringify({ level, time: Date.now(), name: "worker", msg, ...fields }));
 }
 
@@ -255,11 +274,28 @@ const stopRetention = every(RETENTION_INTERVAL_MS, async () => {
   }
 });
 
+/**
+ * The location database and the data-center ranges: each downloaded when
+ * due, checked, and swapped in; a failure keeps the old file, is recorded
+ * for the Settings page, and waits for the next round, hours later.
+ */
+const locationData = new LocationDataJob({
+  db,
+  geoSource: config.geoSource,
+  databasePath: config.geoDatabasePath,
+  dataCentersPath: config.dataCentersPath,
+  log,
+});
+const stopLocationData = every(SETTING_POLL_MS, () => locationData.tick());
+
 async function shutdown(signal: NodeJS.Signals) {
   log("info", "shutting down", { signal });
   stopping = true;
   // Telemetry rules not started yet are left to another worker, or the next start.
   alerts.stop();
+  // A download under way is cut off: the old files stay, its lease is given
+  // back, and the next start tries again.
+  await locationData.stop();
   // Runs in progress finish their batch first.
   await Promise.all([
     stopPurging(),
@@ -271,6 +307,7 @@ async function shutdown(signal: NodeJS.Signals) {
     stopDeliveries(),
     stopPruning(),
     stopRetention(),
+    stopLocationData(),
   ]);
   // Requests under way finish and are recorded: each is at most 30 seconds.
   await Promise.all([checks.drain(), deliveries.drain()]);
@@ -290,4 +327,5 @@ log("info", "worker started", {
   uptimeAllowPrivateAddresses: config.uptimeAllowPrivateAddresses,
   uptimeDenyAddresses: config.uptimeDenyAddresses,
   emailConfigured: config.email !== null,
+  locationDataCheckIntervalMs: UPDATE_CHECK_INTERVAL_MS,
 });

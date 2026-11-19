@@ -195,6 +195,7 @@ describe("owner setup", () => {
     expect(await readInstanceSettings(current.db)).toEqual({
       name: "Ada's company",
       timeZone: "Asia/Singapore",
+      updateLocationData: true,
     });
   });
 

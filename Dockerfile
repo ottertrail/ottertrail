@@ -40,7 +40,8 @@ COPY --from=build /src/packages/tracker/dist/tracker.js /src/packages/tracker/di
 # The session replay player, which the dashboard's player page loads.
 COPY --from=build /src/packages/replay-player/dist/player.js /src/packages/replay-player/dist/THIRD_PARTY_LICENSES.txt ./replay-player/
 COPY LICENSE THIRD_PARTY_NOTICES.md ./
-# The geolocation database lives in a volume mounted here, written by `node dist/update-geo.mjs`.
+# The location database and data-center ranges live in a volume mounted
+# here, which the worker keeps current (and `node dist/update-geo.mjs` updates by hand).
 RUN mkdir -p data/geo && chown node:node data/geo
 USER node
 EXPOSE 3000

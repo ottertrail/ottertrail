@@ -2,6 +2,10 @@ import type { GeoSource } from "../config.ts";
 import { DataCenters, type IsDataCenter, noDataCenters } from "./data-centers.ts";
 import { cloudflareLocation, GeoDatabase, type Locate, noLocation } from "./geo.ts";
 
+/** What to do about a missing or old file. */
+const UPDATE_HINT =
+  'The worker downloads it while "Update location data automatically" is on in Settings; or run "vp run geo:update" (in the Docker image: "node dist/update-geo.mjs"). The API loads a new file within 10 minutes.';
+
 /** A geolocation database older than this gives noticeably more wrong answers. */
 export const STALE_AFTER_DAYS = 60;
 
@@ -10,6 +14,8 @@ export interface LocationSetup {
   /** False when locations will be missing or stale: log it as a warning. */
   ok: boolean;
   message: string;
+  /** The database loaded, when GEO_SOURCE is "database" and the file opened. */
+  database?: { type: string; builtAt: Date };
 }
 
 /** Picks the location source the instance is configured for. Never throws. */
@@ -35,7 +41,7 @@ export async function setUpLocation(
     return {
       locate: noLocation,
       ok: false,
-      message: `No geolocation database at ${databasePath}: events are stored without a location. Run "vp run geo:update" (in the Docker image: "node dist/update-geo.mjs"), then restart.`,
+      message: `No geolocation database at ${databasePath}: events are stored without a location. ${UPDATE_HINT}`,
     };
   }
   const built = geo.builtAt.toISOString().slice(0, 10);
@@ -43,9 +49,10 @@ export async function setUpLocation(
   const stale = ageDays > STALE_AFTER_DAYS;
   return {
     locate: (request) => geo.lookup(request.ip),
+    database: { type: geo.type, builtAt: geo.builtAt },
     ok: !stale,
     message: stale
-      ? `The geolocation database (${geo.type}) was built on ${built}, over ${STALE_AFTER_DAYS} days ago: locations get less accurate. Run "vp run geo:update" (in the Docker image: "node dist/update-geo.mjs"), then restart.`
+      ? `The geolocation database (${geo.type}) was built on ${built}, over ${STALE_AFTER_DAYS} days ago: locations get less accurate. ${UPDATE_HINT}`
       : `Locations come from ${geo.type}, built on ${built}`,
   };
 }
@@ -58,6 +65,8 @@ export interface DataCenterSetup {
   /** False when the ranges are missing or stale: log it as a warning. */
   ok: boolean;
   message: string;
+  /** The ranges loaded, when the file opened. */
+  ranges?: { providers: number; updatedAt: Date };
 }
 
 /** Loads the data-center ranges. Never throws: without them, nothing counts as a data center. */
@@ -72,7 +81,7 @@ export async function setUpDataCenters(
     return {
       isDataCenter: noDataCenters,
       ok: false,
-      message: `No data-center ranges at ${path}: events from cloud servers are not recognized. Run "vp run geo:update" (in the Docker image: "node dist/update-geo.mjs"), then restart.`,
+      message: `No data-center ranges at ${path}: events from cloud servers are not recognized. ${UPDATE_HINT}`,
     };
   }
   const oldest = Math.min(...ranges.providers.map((provider) => provider.fetchedAt.getTime()));
@@ -81,9 +90,10 @@ export async function setUpDataCenters(
   const since = Number.isFinite(oldest) ? new Date(oldest).toISOString().slice(0, 10) : "never";
   return {
     isDataCenter: (ip) => ranges.has(ip),
+    ranges: { providers: ranges.providers.length, updatedAt: ranges.updatedAt },
     ok: !stale,
     message: stale
-      ? `The data-center ranges at ${path} date from ${since}, over ${DATA_CENTERS_STALE_AFTER_DAYS} days ago: newer cloud servers are not recognized. Run "vp run geo:update" (in the Docker image: "node dist/update-geo.mjs"), then restart.`
+      ? `The data-center ranges at ${path} date from ${since}, over ${DATA_CENTERS_STALE_AFTER_DAYS} days ago: newer cloud servers are not recognized. ${UPDATE_HINT}`
       : `Data-center ranges from ${ranges.providers.length} providers, downloaded ${since}`,
   };
 }
