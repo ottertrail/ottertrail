@@ -365,7 +365,11 @@ export async function logVolume(
   if (count > 0) {
     const params = new QueryParams();
     const conditions = filterConditions(params, range, filters);
-    const rows = await queryRows<{ bucket: string; level: SeverityLevel; records: string }>(
+    const rows = await queryRows<{
+      bucket: string | number;
+      level: SeverityLevel;
+      records: string;
+    }>(
       reader,
       `SELECT ${buckets.bucketSql(params)} AS bucket,
               multiIf(severity_number = 0, 'none', severity_number < 5, 'trace',
@@ -381,9 +385,9 @@ export async function logVolume(
       DASHBOARD_SETTINGS,
     );
     for (const row of rows) {
-      const index = buckets.index.get(row.bucket);
+      const index = Number(row.bucket);
       const line = counts[row.level];
-      if (line === undefined || index === undefined) continue;
+      if (line === undefined || index < 0 || index >= count) continue;
       const records = Number(row.records);
       line[index] = (line[index] ?? 0) + records;
       total += records;
@@ -476,7 +480,9 @@ export async function liveLogs(
   // Read from: the cursor, or the window's start when there is none or it is too old.
   const since = after === undefined || gap !== null ? windowStart : after;
   const reread = since - BigInt(LIVE_REREAD_MS) * ms;
-  const readFrom = after === undefined || gap !== null || reread < windowStart ? since : reread;
+  // The re-read reaches no further back than the window's start.
+  const readFrom =
+    after === undefined || gap !== null ? since : reread < windowStart ? windowStart : reread;
 
   const params = new QueryParams();
   const conditions = filterConditions(params, scope, filters);
@@ -496,7 +502,7 @@ export async function liveLogs(
   const rows = await queryRows<SummaryRow & { received_ns: string; after_cursor: string }>(
     reader,
     `SELECT ${SUMMARY_COLUMNS}, toString(toUnixTimestamp64Nano(received_at)) AS received_ns,
-            (SELECT count() FROM logs WHERE ${where} AND received_at > ${sinceSql}) AS after_cursor
+            (SELECT uniqExact(id) FROM logs WHERE ${where} AND received_at > ${sinceSql}) AS after_cursor
      FROM logs
      WHERE ${where}
      ORDER BY received_at DESC, id DESC
@@ -510,9 +516,12 @@ export async function liveLogs(
     seen.add(row.id);
     return true;
   });
-  // Skipped: what arrived after the cursor, less what this poll sent of it.
+  // Skipped: the records that arrived after the cursor, less those this poll sent.
   const arrived = Number(rows[0]?.after_cursor ?? 0);
-  const sentNew = rows.filter((row) => BigInt(row.received_ns) > since).length;
+  // Records, not rows: a retried record's copies count once, as the count above does.
+  const sentNew = new Set(
+    rows.filter((row) => BigInt(row.received_ns) > since).map((row) => row.id),
+  ).size;
   const oldest = rows.at(-1);
   return {
     logs: unique.map(summaryOf),

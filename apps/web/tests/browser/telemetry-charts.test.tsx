@@ -374,6 +374,39 @@ describe("the traces chart", () => {
       .toBeVisible();
   });
 
+  test("the duration's readout spans a bucket to the next one's start across a change of clocks", async () => {
+    await page.viewport(1440, 900);
+    // 6-hour buckets in Europe/Berlin around 25 October: 00:00 that day lasts 7 hours.
+    const bucketStarts = [
+      "2026-10-24T16:00:00.000Z",
+      "2026-10-24T22:00:00.000Z",
+      "2026-10-25T05:00:00.000Z",
+      "2026-10-25T11:00:00.000Z",
+    ];
+    installFakeApi({
+      traceChart: (query) => ({
+        ...installedTraceChart(query),
+        timeZone: "Europe/Berlin",
+        firstDay: "2026-10-24",
+        lastDay: "2026-10-25",
+        start: bucketStarts[0] ?? "",
+        bucketStarts,
+        stepSeconds: 21_600,
+        buckets: 4,
+        traces: [3, 4, 0, 0],
+        failed: [0, 1, 0, 0],
+        // Only the bucket across the change has a duration: the readout starts on it.
+        p95Us: [null, 150_000, null, null],
+        total: { traces: 7, failed: 1 },
+      }),
+    });
+    renderApp(TRACES);
+    await page.getByRole("button", { name: "Duration" }).click();
+    await expect
+      .element(page.getByRole("slider", { name: "95th-percentile duration per 6 hours" }))
+      .toHaveAttribute("aria-valuetext", "Sun 25 Oct 2026, 00:00 to 06:00: 95th percentile 150 ms");
+  });
+
   test("loads on its own while the list shows", async () => {
     await page.viewport(390, 844);
     installFakeApi({ traceChart: pending });
@@ -720,6 +753,97 @@ describe("live logs", () => {
     // The service filter offers the services Live has seen.
     await page.getByRole("combobox", { name: "Service" }).click();
     await expect.element(page.getByRole("option", { name: "billing" })).toBeVisible();
+  });
+
+  test("quick tab switches keep the quarter-second floor between polls", async () => {
+    await page.viewport(1440, 900);
+    LIVE_TIMING.pollMs = 10_000;
+    LIVE_TIMING.minGapMs = 250;
+    const api = installFakeApi({ liveLogs: liveFeed([[arrived(1)]]) });
+    renderApp(`${LOGS}?live=true`);
+    await expect.poll(liveBodies).toEqual(["arrived 1"]);
+    const before = requestsTo(api, "/logs/live");
+    const started = Date.now();
+    // Hidden and shown again ten times in about a fifth of a second: each show restarts the polls.
+    for (let switches = 0; switches < 10; switches += 1) {
+      Object.defineProperty(document, "visibilityState", { value: "hidden", configurable: true });
+      document.dispatchEvent(new Event("visibilitychange"));
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      Object.defineProperty(document, "visibilityState", { value: "visible", configurable: true });
+      document.dispatchEvent(new Event("visibilitychange"));
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    const elapsed = Date.now() - started;
+    // At most one poll a quarter second, plus the one the first show may start at once.
+    expect(requestsTo(api, "/logs/live") - before).toBeLessThanOrEqual(
+      Math.ceil(elapsed / 250) + 1,
+    );
+    expect(requestsTo(api, "/logs/live") - before).toBeLessThan(5);
+  });
+
+  test("a gap under a minute shows its seconds", async () => {
+    await page.viewport(1440, 900);
+    LIVE_TIMING.pollMs = 50;
+    let polls = 0;
+    installFakeApi({
+      liveLogs: (query) => {
+        polls += 1;
+        const answer = noLiveLogs(query);
+        if (polls === 1) return { ...answer, logs: [arrived(1)], cursor: "1" };
+        if (polls === 2) {
+          return {
+            ...answer,
+            logs: [arrived(2)],
+            cursor: "2",
+            gap: { from: "2026-11-16T04:01:05.000Z", to: "2026-11-16T04:01:40.000Z" },
+          };
+        }
+        return answer;
+      },
+    });
+    renderApp(`${LOGS}?live=true`);
+    await expect
+      .poll(liveLines)
+      .toContain(
+        "Records between 12:01:05 and 12:01:40 aren't shown. Turn Live off to search the period.",
+      );
+  });
+
+  test("turning Live off clears the selection", async () => {
+    await page.viewport(1440, 900);
+    LIVE_TIMING.pollMs = 50;
+    installFakeApi({ liveLogs: liveFeed([[arrived(1)]]) });
+    const router = renderApp(`${LOGS}?live=true`);
+    await expect.poll(liveBodies).toEqual(["arrived 1"]);
+    await page
+      .getByRole("list", { name: "Log records, newest arrival first" })
+      .getByRole("button", { name: /arrived 1/ })
+      .click();
+    await expect.poll(() => router.state.location.search).toMatchObject({ log: arrived(1).id });
+    await page.getByRole("switch", { name: "Live" }).click();
+    await expect.poll(() => router.state.location.search).toEqual({});
+  });
+
+  test("Show after more than 1,000 arrived keeps the selected record in the list", async () => {
+    await page.viewport(1440, 900);
+    LIVE_TIMING.pollMs = 50;
+    const queue: LogSummary[][] = [[arrived(2), arrived(1)]];
+    installFakeApi({ liveLogs: queuedFeed(queue) });
+    const router = renderApp(`${LOGS}?live=true`);
+    await expect.poll(liveBodies).toEqual(["arrived 2", "arrived 1"]);
+    await page
+      .getByRole("list", { name: "Log records, newest arrival first" })
+      .getByRole("button", { name: /arrived 1/ })
+      .click();
+    queue.push(Array.from({ length: 1200 }, (_, i) => arrived(100 + i)).toReversed());
+    await page.getByRole("button", { name: "1,000+ new records" }).click();
+    await expect.poll(() => liveBodies().length).toBe(1000);
+    // The newest first; the selected record kept at the end, though older than all of them.
+    expect(liveBodies()[0]).toBe("arrived 1299");
+    expect(liveBodies().at(-1)).toBe("arrived 1");
+    expect(router.state.location.search).toMatchObject({ log: arrived(1).id });
+    expect(logPane().element().textContent).not.toMatch(/not in the live list/);
   });
 
   test("polls nothing while the tab is hidden, and again once it shows", async () => {

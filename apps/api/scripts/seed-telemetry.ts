@@ -816,7 +816,8 @@ export function buildTelemetry(rng: Random, now: Date, userIds: readonly string[
       }
       for (const work of children) work();
       if (busy) {
-        // Waiting for a database connection before the work: a warning on most requests.
+        // The time spent waiting for a database connection, added to the request after its
+        // work (so the spans already placed keep their times): a warning on most requests.
         const waitMs = rng.logNormal(400, 0.5);
         cursor += waitMs;
         if (rng.chance(0.6)) {

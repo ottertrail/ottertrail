@@ -94,6 +94,19 @@ export function TimeChart({
     const known = starts?.[index];
     return known === undefined ? new Date(startMs + index * stepSeconds * 1000) : new Date(known);
   };
+  /**
+   * A bucket's span for its label: to the next bucket's start when `starts`
+   * gives one, so a bucket across a daylight saving change says how long it
+   * is; a bucket of days keeps its day.
+   */
+  const labelOf = (index: number) => {
+    const next = starts?.[index + 1];
+    const seconds =
+      next === undefined || stepSeconds >= 86_400
+        ? stepSeconds
+        : (Date.parse(next) - timeOf(index).getTime()) / 1000;
+    return bucketLabel(timeOf(index), seconds, timeZone);
+  };
   const last = buckets - 1;
   const all = lines.flatMap((line) => line.values.filter((value) => value !== null));
   const ticks = ticksFor(Math.min(domain?.min ?? 0, ...all), Math.max(domain?.max ?? 0, ...all));
@@ -128,7 +141,7 @@ export function TimeChart({
     ...lines.map((line) => line.values.findLastIndex((value) => value !== null)),
   );
   const shown = active ?? latest;
-  const readout = `${bucketLabel(timeOf(shown), stepSeconds, timeZone)}: ${lines
+  const readout = `${labelOf(shown)}: ${lines
     .map((line) => `${line.label} ${valueText(line.values[shown])}`)
     .join(", ")}`;
   const tooltipOnLeft = active !== null && x(active) > width / 2;
@@ -279,9 +292,7 @@ export function TimeChart({
             className="pointer-events-none absolute top-2 z-10 max-w-80 min-w-44 rounded-lg border bg-popover px-3 py-2 text-xs shadow-md"
             style={tooltipOnLeft ? { right: width - x(active) + 12 } : { left: x(active) + 12 }}
           >
-            <p className="mb-1.5 text-ink-subtle">
-              {bucketLabel(timeOf(active), stepSeconds, timeZone)}
-            </p>
+            <p className="mb-1.5 text-ink-subtle">{labelOf(active)}</p>
             <ul className="flex flex-col gap-1">
               {lines.map((line) => (
                 <li key={line.key} className="flex min-w-0 items-center gap-2">

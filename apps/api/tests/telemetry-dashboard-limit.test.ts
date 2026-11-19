@@ -233,6 +233,47 @@ describe("the split of the dashboard's places", () => {
   });
 });
 
+describe("the places, when sparklines and live polls take theirs", () => {
+  test("lists still get the two places left, and more sparklines and live polls wait in their own pools", async () => {
+    const limiter = new DashboardQueryLimiter({ max: QUERIES_AT_ONCE });
+    const sparklines = new DashboardQueryLimiter({ max: SPARKLINE_PLACES, waitMs: 1000 });
+    const live = new DashboardQueryLimiter({ max: LIVE_QUERIES_AT_ONCE, waitMs: 1000 });
+    const held = later();
+    const hold = () => held.promise;
+    const running = [
+      dashboardReader(clickhouse.client, limiter, reply(), sparklines).gate?.(hold),
+      liveReader(clickhouse.client, limiter, live, reply()).gate?.(hold),
+    ];
+    await expect.poll(() => limiter.running).toBe(2);
+    // More of each wait for their own pool, not for the dashboard's places.
+    const waitingRan = [false, false];
+    const waiting = [
+      dashboardReader(clickhouse.client, limiter, reply(), sparklines).gate?.(() => {
+        waitingRan[0] = true;
+        return held.promise;
+      }),
+      liveReader(clickhouse.client, limiter, live, reply()).gate?.(() => {
+        waitingRan[1] = true;
+        return held.promise;
+      }),
+    ];
+    // Two list requests run at once on the places left.
+    const listsRan: boolean[] = [];
+    const lists = [0, 1].map((at) =>
+      dashboardReader(clickhouse.client, limiter, reply()).gate?.(() => {
+        listsRan[at] = true;
+        return held.promise;
+      }),
+    );
+    await expect.poll(() => listsRan).toEqual([true, true]);
+    expect(limiter.running).toBe(QUERIES_AT_ONCE);
+    expect(waitingRan).toEqual([false, false]);
+    held.settle();
+    await Promise.all([...running, ...waiting, ...lists]);
+    expect(limiter.running).toBe(0);
+  });
+});
+
 describe("the live view's polls", () => {
   test("hold at most one of the dashboard's places, and give up after a short wait", async () => {
     expect({ places: LIVE_QUERIES_AT_ONCE, waitMs: LIVE_QUEUE_WAIT_MS }).toEqual({
@@ -257,6 +298,32 @@ describe("the live view's polls", () => {
     held.settle();
     await running;
     expect(await second.gate?.(() => Promise.resolve("ran"))).toBe("ran");
+  });
+
+  test("wait only a short while for one of the dashboard's places, then are refused", async () => {
+    const limiter = new DashboardQueryLimiter({ max: 1 });
+    const live = new DashboardQueryLimiter({ max: LIVE_QUERIES_AT_ONCE });
+    const held = later();
+    // Another page holds the only place.
+    const page = dashboardReader(clickhouse.client, limiter, reply()).gate?.(() => held.promise);
+    await expect.poll(() => limiter.running).toBe(1);
+    const started = Date.now();
+    await expect(
+      liveReader(clickhouse.client, limiter, live, reply(), 100).gate?.(() =>
+        Promise.resolve("ran"),
+      ),
+    ).rejects.toBeInstanceOf(DashboardBusyError);
+    // Refused after its own short wait, not the 10 seconds other pages wait.
+    expect(Date.now() - started).toBeLessThan(2000);
+    // And by default, the live view's own LIVE_QUEUE_WAIT_MS.
+    const timed = Date.now();
+    await expect(
+      liveReader(clickhouse.client, limiter, live, reply()).gate?.(() => Promise.resolve("ran")),
+    ).rejects.toBeInstanceOf(DashboardBusyError);
+    expect(Date.now() - timed).toBeGreaterThanOrEqual(LIVE_QUEUE_WAIT_MS - 100);
+    expect(Date.now() - timed).toBeLessThan(LIVE_QUEUE_WAIT_MS + 2000);
+    held.settle();
+    await page;
   });
 });
 

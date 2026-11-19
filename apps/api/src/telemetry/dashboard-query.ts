@@ -276,20 +276,44 @@ function wallClock(ms: number, timeZone: string): { day: string; minutes: number
 /** Milliseconds since 1970 of a day's wall-clock time read as UTC. */
 const asUtc = (day: string, minutes: number) => Date.parse(`${day}T00:00:00Z`) + minutes * 60_000;
 
+/** A moment's offset from UTC in `timeZone`, in milliseconds. */
+const offsetAt = (ms: number, timeZone: string) => {
+  const wall = wallClock(ms, timeZone);
+  return asUtc(wall.day, wall.minutes) - (ms - (ms % 60_000));
+};
+
 /**
- * The moment a day's wall-clock time happens in `timeZone`; null when the
- * clock skips it (the hour a daylight saving change jumps over).
+ * The first moment a day's wall-clock time happens in `timeZone`: the
+ * earlier of two when the clock repeats it (the hour after a change back);
+ * null when the clock skips it (the hour a change forward jumps over).
  */
 function zonedTime(day: string, minutes: number, timeZone: string): number | null {
   const wanted = asUtc(day, minutes);
-  let guess = wanted;
-  // The offset at the guess, twice: the second settles a guess on the far side of a change.
-  for (let round = 0; round < 2; round += 1) {
-    const wall = wallClock(guess, timeZone);
-    guess += wanted - asUtc(wall.day, wall.minutes);
+  // The offsets a few hours either side: one change a day at most, so one of them holds.
+  const offsets = new Set([
+    offsetAt(wanted - 14 * 3_600_000, timeZone),
+    offsetAt(wanted + 14 * 3_600_000, timeZone),
+  ]);
+  const found = [...offsets]
+    .map((offset) => wanted - offset)
+    .filter((ms) => {
+      const wall = wallClock(ms, timeZone);
+      return wall.day === day && wall.minutes === minutes;
+    });
+  return found.length === 0 ? null : Math.min(...found);
+}
+
+/**
+ * The first moment at or after a day's wall-clock time, within `span`
+ * minutes: the time itself, or, when the clock skips it, the moment the
+ * clock jumps to. null when the clock skips the whole span.
+ */
+function firstMoment(day: string, minutes: number, span: number, timeZone: string) {
+  for (let minute = minutes; minute < minutes + span && minute < 1440; minute += 1) {
+    const moment = zonedTime(day, minute, timeZone);
+    if (moment !== null) return moment;
   }
-  const wall = wallClock(guess, timeZone);
-  return wall.day === day && wall.minutes === minutes ? guess : null;
+  return null;
 }
 
 /** "YYYY-MM-DD" plus `days`. */
@@ -301,27 +325,35 @@ export const addDays = (day: string, days: number) =>
  * instance's timezone, and how a row finds its bucket.
  */
 export interface ListChartBuckets {
-  /** The buckets' length on the clock: one across a daylight saving change is an hour longer or shorter. */
+  /** The buckets' length on the clock; one across a daylight saving change is shorter or longer. */
   stepSeconds: number;
-  /** Each bucket's start, in milliseconds since 1970. */
+  /** Each bucket's start, in milliseconds since 1970, rising. */
   starts: number[];
-  /** A row's bucket, in SQL: a name that `index` maps to its place in `starts`. */
+  /**
+   * A row's bucket, in SQL: its place in `starts`, the last start at or
+   * before its moment, so every row of the range is in exactly one.
+   */
   bucketSql: (params: QueryParams) => string;
-  index: Map<string, number>;
 }
 
 /**
  * The buckets of a list's chart over a range, in the instance's timezone:
- * the shortest step of LIST_CHART_STEPS that keeps them within about
- * LIST_CHART_BUCKETS, up to the end of the range or now, whichever is
- * sooner. A step shorter than a day starts each bucket on the clock's
- * marks (midnight, 06:00, 12:00 for 6 hours) whatever the date's offset,
- * so a daylight saving change makes one bucket an hour longer or shorter
- * rather than moving every later one; a step of days starts each on a
- * midnight, counted from the range's first day. Today at noon is 120
- * buckets of 5 minutes; a past day, 96 of 15 minutes; 7 days, about 80
- * of 2 hours; 30 days, 120 of 6 hours; 90 days, 90 of a day; 12 months,
- * about 92 of 4 days. A bucket wholly before the retention's cut is left out.
+ * the shortest step of LIST_CHART_STEPS that keeps them within
+ * LIST_CHART_BUCKETS over the span on the local clock, up to the end of
+ * the range or now, whichever is sooner. A step shorter than a day starts
+ * each bucket on the clock's marks (midnight, 06:00, 12:00 for 6 hours)
+ * whatever the date's offset; a step of days starts each on a midnight,
+ * counted from the range's first day. A mark the clock skips (a change
+ * forward, or a midnight some zones skip) starts at the first moment that
+ * exists after it, and a slot the clock skips whole has no bucket, so the
+ * bucket before it is shorter; a mark the clock repeats (a change back)
+ * starts at its first occurrence, so the bucket that holds the repeated
+ * time is longer. Rows are placed by their moment, not by their wall
+ * clock (bucketSql), so none falls outside a bucket and none counts
+ * twice. Today at noon is 72 buckets of 10 minutes; a past day, 96 of 15
+ * minutes; 7 days, about 80 of 2 hours; 30 days, 120 of 6 hours; 90 days,
+ * 90 of a day; 12 months, about 92 of 4 days. A bucket wholly before the
+ * retention's cut is left out.
  */
 export function listChartBuckets(
   range: Pick<TelemetryRange, "from" | "to" | "timeZone" | "firstDay" | "lastDay">,
@@ -339,45 +371,35 @@ export function listChartBuckets(
     LIST_CHART_STEPS.at(-1) ??
     604_800;
   const { timeZone } = range;
-  const candidates: { name: string; start: number }[] = [];
+  const candidates: number[] = [];
   if (step < DAY_SECONDS) {
     const minutes = step / 60;
     for (let day = range.firstDay; day <= range.lastDay; day = addDays(day, 1)) {
       for (let slot = 0; slot * minutes < 1440; slot += 1) {
-        const start = zonedTime(day, slot * minutes, timeZone);
-        if (start !== null) candidates.push({ name: `${day} ${slot}`, start });
+        const start = firstMoment(day, slot * minutes, minutes, timeZone);
+        if (start !== null) candidates.push(start);
       }
     }
   } else {
     const days = step / DAY_SECONDS;
     for (let group = 0; addDays(range.firstDay, group * days) <= range.lastDay; group += 1) {
-      const day = addDays(range.firstDay, group * days);
-      // Midnight, or the first minute after it on a day whose clock skips midnight.
-      let start: number | null = null;
-      for (let minute = 0; start === null && minute < 120; minute += 1) {
-        start = zonedTime(day, minute, timeZone);
-      }
-      if (start !== null) candidates.push({ name: `g${group}`, start });
+      // Midnight, or the first moment after it on a day whose clock skips midnight.
+      const start = firstMoment(addDays(range.firstDay, group * days), 0, 1440, timeZone);
+      if (start !== null) candidates.push(start);
     }
   }
-  const kept = candidates.filter((candidate, at) => {
-    const next = candidates[at + 1]?.start ?? range.to.getTime();
-    return candidate.start < endMs && next > fromMs;
+  // Rising, each once: a slot whose start the clock carried into the next slot's is no bucket.
+  const rising = candidates.filter((start, at) => at === 0 || start > (candidates[at - 1] ?? 0));
+  const starts = rising.filter((start, at) => {
+    const next = rising[at + 1] ?? range.to.getTime();
+    return start < endMs && next > fromMs;
   });
-  const starts = kept.map((candidate) => candidate.start);
-  const index = new Map(kept.map((candidate, at) => [candidate.name, at]));
   const bucketSql = (params: QueryParams) => {
-    const zone = params.add(timeZone, "String");
     // A row later than the last bucket (a clock ahead of now) counts in it.
-    const time = `least(timestamp, fromUnixTimestamp64Milli(${params.add(Math.max(fromMs, endMs - 1), "Int64")}, 'UTC'))`;
-    if (step < DAY_SECONDS) {
-      return `concat(toString(toDate(${time}, ${zone})), ' ',
-                     toString(intDiv(toHour(${time}, ${zone}) * 60 + toMinute(${time}, ${zone}),
-                                     ${params.add(step / 60, "UInt32")})))`;
-    }
-    return `concat('g', toString(intDiv(
-              dateDiff('day', toDate(${params.add(range.firstDay, "String")}), toDate(${time}, ${zone})),
-              ${params.add(step / DAY_SECONDS, "UInt32")})))`;
+    const moment = `toUnixTimestamp64Milli(least(timestamp,
+      fromUnixTimestamp64Milli(${params.add(Math.max(fromMs, endMs - 1), "Int64")}, 'UTC')))`;
+    // The last start at or before the row's moment: starts rise, so a count of those.
+    return `greatest(0, arrayCount(start -> start <= ${moment}, ${params.add(starts, "Array(Int64)")}) - 1)`;
   };
-  return { stepSeconds: step, starts, bucketSql, index };
+  return { stepSeconds: step, starts, bucketSql };
 }

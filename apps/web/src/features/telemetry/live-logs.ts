@@ -119,17 +119,19 @@ function change(records: Records, next: Change): Records {
 
 const TIME_FORMATS = new Map<string, Intl.DateTimeFormat>();
 
-/** "12:01", in the timezone set in Settings, for a gap's line. */
-function clockTime(iso: string, timeZone: string): string {
-  let format = TIME_FORMATS.get(timeZone);
+/** "12:01", or "12:01:05" with `seconds`, in the timezone set in Settings, for a gap's line. */
+function clockTime(iso: string, timeZone: string, seconds: boolean): string {
+  const name = `${timeZone} ${seconds}`;
+  let format = TIME_FORMATS.get(name);
   if (format === undefined) {
     format = new Intl.DateTimeFormat("en-GB", {
       timeZone,
       hour: "2-digit",
       minute: "2-digit",
+      ...(seconds ? { second: "2-digit" } : {}),
       hourCycle: "h23",
     });
-    TIME_FORMATS.set(timeZone, format);
+    TIME_FORMATS.set(name, format);
   }
   return format.format(new Date(iso));
 }
@@ -138,8 +140,13 @@ function clockTime(iso: string, timeZone: string): string {
 function notesOf(answer: LiveLogs): string[] {
   const notes: string[] = [];
   if (answer.gap !== null) {
+    const { from, to } = answer.gap;
+    // Under a minute apart, minutes alone could read "12:01 and 12:01".
+    const seconds =
+      clockTime(from, answer.timeZone, false) === clockTime(to, answer.timeZone, false) ||
+      Date.parse(to) - Date.parse(from) < 60_000;
     notes.push(
-      `Records between ${clockTime(answer.gap.from, answer.timeZone)} and ${clockTime(answer.gap.to, answer.timeZone)} aren't shown. Turn Live off to search the period.`,
+      `Records between ${clockTime(from, answer.timeZone, seconds)} and ${clockTime(to, answer.timeZone, seconds)} aren't shown. Turn Live off to search the period.`,
     );
   }
   if (answer.skipped > 0) {
@@ -210,6 +217,8 @@ export function useLiveLogs({
   const [deadline, setDeadline] = React.useState(() => Date.now() + LIVE_TIMING.stopAfterMs);
   const cursor = React.useRef<string | null>(null);
   const request = React.useRef({ projectId, environment, filters });
+  /** When the last poll started: the floor between polls holds across restarts too. */
+  const lastPoll = React.useRef(Number.NEGATIVE_INFINITY);
   // Held only for a record the list shows: one that left it holds nothing.
   const selectedListed = selected !== undefined && records.shown.some((log) => log.id === selected);
   const hold = paused || away || selectedListed;
@@ -237,6 +246,7 @@ export function useLiveLogs({
       timer = setTimeout(() => void poll(), Math.max(LIVE_TIMING.minGapMs, LIVE_TIMING.pollMs));
     };
     const poll = async () => {
+      lastPoll.current = Date.now();
       try {
         const asked = request.current;
         const answer = await fetchLiveLogs(
@@ -273,7 +283,12 @@ export function useLiveLogs({
         setError(failure instanceof Error ? failure : new Error(String(failure)));
       }
     };
-    void poll();
+    // At once, unless the last poll (before Show, Resume, Retry, or a tab hidden a moment)
+    // was less than LIVE_TIMING.minGapMs ago.
+    timer = setTimeout(
+      () => void poll(),
+      Math.max(0, lastPoll.current + LIVE_TIMING.minGapMs - Date.now()),
+    );
     return () => {
       controller.abort();
       clearTimeout(timer);

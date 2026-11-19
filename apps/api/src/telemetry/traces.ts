@@ -256,7 +256,7 @@ export async function traceChart(
     : `countIf(trace_id IN ${failedTraces(params, range, maxFailedSpans)})`;
   const capped = `(SELECT count() FROM ${failedTraces(params, range, maxFailedSpans + 1, "1")}) > ${maxFailedSpans}`;
   const rows = await queryRows<{
-    bucket: string;
+    bucket: string | number;
     traces: string;
     failed: string;
     p95: number;
@@ -274,8 +274,8 @@ export async function traceChart(
     DASHBOARD_SETTINGS,
   );
   for (const row of rows) {
-    const index = buckets.index.get(row.bucket);
-    if (index === undefined) continue;
+    const index = Number(row.bucket);
+    if (index < 0 || index >= count) continue;
     const traces = Number(row.traces);
     const errors = Number(row.failed);
     chart.traces[index] = traces;

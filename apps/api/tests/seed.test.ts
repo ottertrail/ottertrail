@@ -274,8 +274,9 @@ describe("every page has something to show", () => {
     expect(services.stepSeconds).toBe(3600);
     const busyHours = services.counts.requests.filter((count: number) => count > 0).length;
     expect(busyHours).toBeGreaterThan(services.buckets * 0.9);
-    // The incident's 14:00 to 15:00, as an hourly bucket (the instance is in UTC).
-    const today = new Date();
+    // The incident's 14:00 to 15:00, as an hourly bucket (the instance is in UTC),
+    // on the clock the seed ran with.
+    const today = SEED_NOW;
     const incident =
       (Date.UTC(
         today.getUTCFullYear(),

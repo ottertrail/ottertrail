@@ -276,7 +276,7 @@ Other behavior: links and buttons without a ring of their own (a report's text l
 
 Known gaps:
 
-- `ink-tertiary` fails AA for text; use it only for decoration or disabled states.
+- `ink-tertiary` fails AA for text; use it only for decoration, disabled states, and a chart's de-emphasized part, as the token table says.
 - Disabled controls use 50% opacity and fall below 4.5:1, which WCAG allows for inactive components.
 - No light theme and no high-contrast theme.
 - Overlays (dialog, menu, select, tooltip) were checked by token values, not yet by an automated keyboard or screen reader test.

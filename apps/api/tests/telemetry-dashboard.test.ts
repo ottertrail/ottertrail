@@ -1218,29 +1218,77 @@ const wallClock = (ms: number, timeZone: string) =>
     minute: "2-digit",
   }).format(ms);
 
-/** The buckets of chosen days in a timezone, as the charts make them, a day after the last. */
-async function bucketsOf(timeZone: string, from: string, to: string) {
+/**
+ * The buckets of chosen days in a timezone, as the charts make them, at
+ * `now` (by default two days after the last), with where the range starts and ends.
+ */
+async function rangeBuckets(timeZone: string, from: string, to: string, now?: string) {
+  const at = new Date(now ?? Date.parse(`${to}T00:00:00Z`) + 2 * 86_400_000);
   const asked = await telemetryRange(
     dashboard.db,
     { from, to },
     { projectId: shop.id, timeZone },
-    new Date(Date.parse(`${to}T00:00:00Z`) + 2 * 86_400_000),
+    at,
     400,
   );
   if ("problem" in asked) throw new Error("no range");
-  return listChartBuckets(asked.range, new Date(Date.parse(`${to}T00:00:00Z`) + 2 * 86_400_000));
+  const { range } = asked;
+  return {
+    buckets: listChartBuckets(range, at),
+    fromMs: range.from.getTime(),
+    endMs: Math.min(range.to.getTime(), at.getTime()),
+  };
+}
+
+async function bucketsOf(timeZone: string, from: string, to: string) {
+  return (await rangeBuckets(timeZone, from, to)).buckets;
 }
 
 /** The bucket ClickHouse puts a row at `iso` in, by its SQL. */
 async function bucketInClickHouse(buckets: Awaited<ReturnType<typeof bucketsOf>>, iso: string) {
   const params = new QueryParams();
-  const [row] = await queryRows<{ bucket: string }>(
+  const [row] = await queryRows<{ bucket: string | number }>(
     dashboard.reader,
     `SELECT ${buckets.bucketSql(params)} AS bucket
      FROM (SELECT toDateTime64(${params.add(iso.replace("T", " ").replace("Z", ""), "String")}, 9, 'UTC') AS timestamp)`,
     params,
   );
-  return buckets.index.get(row?.bucket ?? "");
+  return Number(row?.bucket);
+}
+
+/**
+ * Every minute of a range placed by ClickHouse, as the charts' queries
+ * place rows: the minutes each bucket got, beside the minutes its span
+ * holds (to the next bucket's start, or the range's end). Equal, with the
+ * total every minute of the range, when no row falls outside a bucket and
+ * none counts twice.
+ */
+async function everyMinute(timeZone: string, from: string, to: string, now?: string) {
+  const { buckets, fromMs, endMs } = await rangeBuckets(timeZone, from, to, now);
+  const minutes = (endMs - fromMs) / 60_000;
+  const params = new QueryParams();
+  const rows = await queryRows<{ bucket: string | number; minutes: string }>(
+    dashboard.reader,
+    `SELECT ${buckets.bucketSql(params)} AS bucket, count() AS minutes
+     FROM (SELECT fromUnixTimestamp64Milli(${params.add(fromMs, "Int64")} + toInt64(number) * 60000, 'UTC') AS timestamp
+           FROM numbers(${params.add(minutes, "UInt64")}))
+     GROUP BY bucket ORDER BY bucket`,
+    params,
+  );
+  const placed = Array.from({ length: buckets.starts.length }, () => 0);
+  for (const row of rows) placed[Number(row.bucket)] = Number(row.minutes);
+  const spans = buckets.starts.map(
+    (start, at) =>
+      (Math.min(buckets.starts[at + 1] ?? endMs, endMs) - Math.max(start, fromMs)) / 60_000,
+  );
+  return {
+    buckets,
+    placed,
+    spans,
+    minutes,
+    total: placed.reduce((sum, count) => sum + count, 0),
+    walls: buckets.starts.map((start) => wallClock(start, timeZone)),
+  };
 }
 
 describe("the lists' charts across a daylight saving change", () => {
@@ -1295,6 +1343,92 @@ describe("the lists' charts across a daylight saving change", () => {
   });
 });
 
+describe("the lists' charts when the clock skips or repeats a time", () => {
+  test("America/New_York, 8 March 2026, 2-hour steps: the 02:00 bucket starts at 03:00, and every minute is in a bar", async () => {
+    const result = await everyMinute("America/New_York", "2026-03-05", "2026-03-11");
+    expect(result.buckets.stepSeconds).toBe(7200);
+    expect(result.placed).toEqual(result.spans);
+    expect(result.total).toBe(result.minutes);
+    const at = result.walls.indexOf("2026-03-08 03:00");
+    expect(result.walls.slice(at - 1, at + 2)).toEqual([
+      "2026-03-08 00:00",
+      "2026-03-08 03:00",
+      "2026-03-08 04:00",
+    ]);
+    // 03:00 to 04:00 local: one hour, the clock having skipped 02:00 to 03:00.
+    expect(result.spans[at]).toBe(60);
+    expect(result.spans.filter((span) => span !== 120)).toEqual([60]);
+  });
+
+  test("America/New_York, 8 March 2026, 1-hour and 15-minute steps: no bucket for the skipped hour, none lost", async () => {
+    const hours = await everyMinute("America/New_York", "2026-03-07", "2026-03-09");
+    expect(hours.buckets.stepSeconds).toBe(3600);
+    expect(hours.placed).toEqual(hours.spans);
+    expect(hours.total).toBe(hours.minutes);
+    expect(hours.walls).not.toContain("2026-03-08 02:00");
+    expect(hours.walls).toContain("2026-03-08 03:00");
+    expect(hours.walls).toHaveLength(3 * 24 - 1);
+    expect(new Set(hours.spans)).toEqual(new Set([60]));
+
+    const quarters = await everyMinute("America/New_York", "2026-03-08", "2026-03-08");
+    expect(quarters.buckets.stepSeconds).toBe(900);
+    expect(quarters.placed).toEqual(quarters.spans);
+    expect(quarters.total).toBe(quarters.minutes);
+    expect(quarters.walls).toHaveLength(96 - 4);
+    expect(new Set(quarters.spans)).toEqual(new Set([15]));
+  });
+
+  test("America/Santiago, 6 September 2026, 6-hour steps: the skipped midnight's bucket starts at 01:00", async () => {
+    const result = await everyMinute("America/Santiago", "2026-08-24", "2026-09-22");
+    expect(result.buckets.stepSeconds).toBe(21_600);
+    expect(result.placed).toEqual(result.spans);
+    expect(result.total).toBe(result.minutes);
+    const at = result.walls.indexOf("2026-09-06 01:00");
+    expect(at).toBeGreaterThan(0);
+    expect(result.walls).not.toContain("2026-09-06 00:00");
+    // 01:00 to 06:00: five hours.
+    expect(result.spans[at]).toBe(300);
+  });
+
+  test("Australia/Lord_Howe, 4 October 2026, hourly: the half hour after the jump is in the 02:00 bar", async () => {
+    const result = await everyMinute("Australia/Lord_Howe", "2026-10-03", "2026-10-05");
+    expect(result.buckets.stepSeconds).toBe(3600);
+    expect(result.placed).toEqual(result.spans);
+    expect(result.total).toBe(result.minutes);
+    const at = result.walls.indexOf("2026-10-04 02:30");
+    expect(at).toBeGreaterThan(0);
+    expect(result.spans[at]).toBe(30);
+  });
+
+  test("Europe/Berlin, 25 October 2026, 5, 10, and 15 minutes: the repeated hour in one bar, every minute once", async () => {
+    for (const [now, step, long] of [
+      ["2026-10-25T07:00:00Z", 300, 65],
+      ["2026-10-25T15:00:00Z", 600, 70],
+      [undefined, 900, 75],
+    ] as const) {
+      const result = await everyMinute("Europe/Berlin", "2026-10-25", "2026-10-25", now);
+      expect(result.buckets.stepSeconds).toBe(step);
+      expect(result.placed).toEqual(result.spans);
+      expect(result.total).toBe(result.minutes);
+      // One bar for each wall-clock slot: none twice.
+      expect(new Set(result.walls).size).toBe(result.walls.length);
+      // The last slot before 03:00 holds the hour the clock repeats.
+      const last = result.walls.indexOf(`2026-10-25 02:${String(60 - step / 60).padStart(2, "0")}`);
+      expect(result.spans[last]).toBe(long);
+      expect(result.spans.filter((span) => span !== step / 60)).toEqual([long]);
+    }
+    // 02:30 the second time (01:30 UTC) is in the bar of 02:45 the first time (00:45 UTC),
+    // and 03:00 (02:00 UTC) starts the next.
+    const { buckets } = await rangeBuckets("Europe/Berlin", "2026-10-25", "2026-10-25");
+    expect(await bucketInClickHouse(buckets, "2026-10-25T01:30:00Z")).toBe(
+      await bucketInClickHouse(buckets, "2026-10-25T00:59:00Z"),
+    );
+    expect(await bucketInClickHouse(buckets, "2026-10-25T02:00:00Z")).toBe(
+      (await bucketInClickHouse(buckets, "2026-10-25T01:30:00Z")) + 1,
+    );
+  });
+});
+
 describe("GET /api/projects/:id/logs/live", () => {
   test("sends what arrived after the cursor, newest first, and reads 10 seconds before it again", async () => {
     const live = await newProject("Live");
@@ -1342,6 +1476,43 @@ describe("GET /api/projects/:id/logs/live", () => {
     expect(next.gap).toBeNull();
     // From there, nothing new: nothing skipped.
     expect(await poll(live.id, `after=${next.cursor}`)).toMatchObject({ skipped: 0, gap: null });
+  });
+
+  test("counts what it skipped in records, not rows: a burst sent twice skips each record once", async () => {
+    const live = await newProject("Live burst retried");
+    const start = await poll(live.id);
+    const batch = Array.from({ length: LIVE_PAGE_SIZE + 50 }, (_, i) => ({
+      time: minutesAgo(1) + BigInt(i) * MS,
+      severityNumber: 9,
+      body: `line ${i}`,
+    }));
+    const { client } = dashboard.reader;
+    await client.command({ query: "SYSTEM STOP MERGES logs" });
+    try {
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        await sendLogs(live.secretKey, [{ service: "web", logs: batch }]);
+      }
+      await sleep(LIVE_SETTLE_MS + 300);
+      const next = await poll(live.id, `after=${start.cursor}`);
+      expect(new Set(next.ids).size).toBe(next.ids.length);
+      expect(next.skipped).toBe(LIVE_PAGE_SIZE + 50 - next.ids.length);
+      expect(next.skipped).toBe(50);
+    } finally {
+      await client.command({ query: "SYSTEM START MERGES logs" });
+    }
+  });
+
+  test("a cursor just inside the window still reads again before it, from the window's start", async () => {
+    const live = await newProject("Live edge of the window");
+    const settled = BigInt((await poll(live.id)).cursor);
+    // About 5 seconds inside the window: the 10 seconds before it reach past its start.
+    const after = settled + BigInt(LIVE_SETTLE_MS) * MS - BigInt(LIVE_WINDOW_MS) * MS + 5000n * MS;
+    await insertLogs(live.id, [
+      { body: "arrived 3 s before the cursor", receivedNs: after - 3000n * MS },
+    ]);
+    const next = await poll(live.id, `after=${after}`);
+    expect(next.gap).toBeNull();
+    expect(next.bodies).toEqual(["arrived 3 s before the cursor"]);
   });
 
   test("a cursor older than the window is a gap: it says what it left out and starts again", async () => {

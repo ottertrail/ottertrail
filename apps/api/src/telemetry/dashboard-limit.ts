@@ -50,9 +50,12 @@ export class DashboardQueryLimiter {
     return this.#running;
   }
 
-  /** Runs `work` once a place is free; refuses after waiting too long, or when `signal` fires. */
-  async run<T>(work: () => Promise<T>, signal?: AbortSignal): Promise<T> {
-    await this.#acquire(signal);
+  /**
+   * Runs `work` once a place is free; refuses after waiting too long
+   * (`waitMs`, the limiter's own by default), or when `signal` fires.
+   */
+  async run<T>(work: () => Promise<T>, signal?: AbortSignal, waitMs = this.#waitMs): Promise<T> {
+    await this.#acquire(signal, waitMs);
     try {
       return await work();
     } finally {
@@ -65,7 +68,7 @@ export class DashboardQueryLimiter {
    * places, and at most `perRequest` run or wait for one at once; the rest
    * wait their turn within the request. All end when `signal` fires.
    */
-  gate(signal?: AbortSignal, perRequest = QUERIES_PER_REQUEST) {
+  gate(signal?: AbortSignal, perRequest = QUERIES_PER_REQUEST, waitMs = this.#waitMs) {
     let held = 0;
     const turns: (() => void)[] = [];
     /** A place among the request's: at once when one is free, else when one is handed on. */
@@ -94,7 +97,7 @@ export class DashboardQueryLimiter {
     return async <T>(work: () => Promise<T>): Promise<T> => {
       await turn();
       try {
-        return await this.run(work, signal);
+        return await this.run(work, signal, waitMs);
       } finally {
         // The place passes straight to the request's next query, if one waits.
         const next = turns.shift();
@@ -104,7 +107,7 @@ export class DashboardQueryLimiter {
     };
   }
 
-  #acquire(signal?: AbortSignal): Promise<void> {
+  #acquire(signal: AbortSignal | undefined, waitMs: number): Promise<void> {
     if (signal?.aborted === true) return Promise.reject(signal.reason);
     if (this.#running < this.#max) {
       this.#running += 1;
@@ -128,7 +131,7 @@ export class DashboardQueryLimiter {
       const timer = setTimeout(() => {
         leave();
         reject(new DashboardBusyError("too many dashboard queries at once"));
-      }, this.#waitMs);
+      }, waitMs);
       const aborted = () => {
         leave();
         reject(signal?.reason);
@@ -168,13 +171,19 @@ export function dashboardReader(
    * then holds at most that pool's size of `limiter`'s places.
    */
   share?: DashboardQueryLimiter,
+  /** How long a query waits for one of `limiter`'s places: the limiter's own by default. */
+  waitMs?: number,
 ): Reader {
   const controller = new AbortController();
   // Once the answer is sent or the request is gone, nothing more is
   // needed: a failed query's 503 also ends the request's other queries,
   // running or waiting, so they free their places.
   reply.raw.once("close", () => controller.abort());
-  const gate = limiter.gate(controller.signal, share === undefined ? QUERIES_PER_REQUEST : 1);
+  const gate = limiter.gate(
+    controller.signal,
+    share === undefined ? QUERIES_PER_REQUEST : 1,
+    waitMs,
+  );
   return {
     client: clickhouse,
     signal: controller.signal,
@@ -210,13 +219,17 @@ export const liveQueryLimiter = () =>
  * Where a live poll's queries run: each first takes the live view's place
  * (`live`, one a process), then one of the dashboard's places, as the
  * sparklines' do (dashboardReader's `share`); so live polls hold at most
- * LIVE_QUERIES_AT_ONCE of the dashboard's places at a time.
+ * LIVE_QUERIES_AT_ONCE of the dashboard's places at a time. Each wait is
+ * short, LIVE_QUEUE_WAIT_MS for the live place and as long again for the
+ * dashboard's (`mainWaitMs`): a poll refused (503) is asked again at the
+ * page's next poll.
  */
 export function liveReader(
   clickhouse: ClickHouseClient,
   limiter: DashboardQueryLimiter,
   live: DashboardQueryLimiter,
   reply: Parameters<typeof dashboardReader>[2],
+  mainWaitMs = LIVE_QUEUE_WAIT_MS,
 ): Reader {
-  return dashboardReader(clickhouse, limiter, reply, live);
+  return dashboardReader(clickhouse, limiter, reply, live, mainWaitMs);
 }
