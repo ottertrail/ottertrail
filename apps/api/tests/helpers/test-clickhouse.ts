@@ -1,5 +1,3 @@
-import { randomUUID } from "node:crypto";
-
 import {
   type ClickHouseClient,
   createClickHouse,
@@ -7,6 +5,7 @@ import {
 } from "../../src/clickhouse/clickhouse.ts";
 import { migrateClickHouse } from "../../src/clickhouse/migrate.ts";
 import { loadConfig } from "../../src/config.ts";
+import { testName } from "./test-names.ts";
 
 export interface TestClickHouse {
   client: ClickHouseClient;
@@ -24,7 +23,8 @@ export interface TestClickHouse {
  */
 export async function createTestClickHouse(): Promise<TestClickHouse> {
   const config = loadConfig().clickhouse;
-  const database = `test_${randomUUID().replaceAll("-", "")}`;
+  // Named with when it was made, so a later run can drop it if this one is cut off.
+  const database = testName();
   const admin = createClickHouse(config, { database: "default" });
   try {
     await migrateClickHouse(admin, database);

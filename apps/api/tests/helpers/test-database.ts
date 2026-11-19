@@ -1,5 +1,3 @@
-import { randomUUID } from "node:crypto";
-
 import { type Kysely, sql } from "kysely";
 import { type MigrationResult, Migrator } from "kysely/migration";
 
@@ -8,6 +6,7 @@ import { createDatabase } from "../../src/db/database.ts";
 import { migrateToLatest } from "../../src/db/migrate.ts";
 import { migrations } from "../../src/db/migrations/index.ts";
 import type { Database } from "../../src/db/schema.ts";
+import { testName } from "./test-names.ts";
 
 /**
  * Test files run in parallel, each in its own schema. Kysely's migrator
@@ -39,7 +38,8 @@ export async function createTestDatabase({
   asDeployed = false,
 }: { asDeployed?: boolean } = {}): Promise<TestDatabase> {
   const connectionString = loadConfig().databaseUrl;
-  const schema = `test_${randomUUID().replaceAll("-", "")}`;
+  // Named with when it was made, so a later run can drop it if this one is cut off.
+  const schema = testName();
 
   await withAdmin(connectionString, async (admin) => {
     await sql`create schema ${sql.id(schema)}`.execute(admin);
@@ -48,9 +48,7 @@ export async function createTestDatabase({
   const db = createDatabase({ connectionString, maxConnections: 4, schema });
   async function destroy() {
     await db.destroy();
-    await withSchemaLock(connectionString, "exclusive", (connection) =>
-      sql`drop schema ${sql.id(schema)} cascade`.execute(connection),
-    );
+    await dropTestSchema(schema);
   }
 
   try {
@@ -62,6 +60,16 @@ export async function createTestDatabase({
     throw error;
   }
   return { db, schema, destroy };
+}
+
+/**
+ * Drops a test schema, holding SCHEMA_LOCK exclusively, as other files'
+ * migrators list every table while they run.
+ */
+export async function dropTestSchema(schema: string): Promise<void> {
+  await withSchemaLock(loadConfig().databaseUrl, "exclusive", (connection) =>
+    sql`drop schema if exists ${sql.id(schema)} cascade`.execute(connection),
+  );
 }
 
 /**

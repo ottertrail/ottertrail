@@ -22,6 +22,27 @@ import type { CheckOutcome } from "./request.ts";
 /** How long ClickHouse keeps results (the table's TTL). */
 export const RESULT_RETENTION_DAYS = 90;
 
+/**
+ * One run's outcome as a row of check_results. Exported for the
+ * development seed (scripts/seed-data.ts), which writes many at once.
+ */
+export function resultRow(
+  check: { id: string; projectId: string },
+  outcome: CheckOutcome,
+  at: Date,
+) {
+  return {
+    project_id: check.projectId,
+    check_id: check.id,
+    timestamp: clickHouseTime(at),
+    up: outcome.up,
+    status_code: outcome.statusCode ?? 0,
+    response_ms: outcome.responseMs,
+    cause: outcome.cause ?? "",
+    detail: outcome.detail.slice(0, 1000),
+  };
+}
+
 /** Writes one run's outcome: an asynchronous insert, waiting for the write, as events are. */
 export async function storeResult(
   clickhouse: ClickHouseClient,
@@ -29,18 +50,7 @@ export async function storeResult(
   outcome: CheckOutcome,
   at: Date,
 ): Promise<void> {
-  await insertRows(clickhouse, "check_results", [
-    {
-      project_id: check.projectId,
-      check_id: check.id,
-      timestamp: clickHouseTime(at),
-      up: outcome.up,
-      status_code: outcome.statusCode ?? 0,
-      response_ms: outcome.responseMs,
-      cause: outcome.cause ?? "",
-      detail: outcome.detail.slice(0, 1000),
-    },
-  ]);
+  await insertRows(clickhouse, "check_results", [resultRow(check, outcome, at)]);
 }
 
 /** A check's response times over a range, in buckets, with how many runs failed. */

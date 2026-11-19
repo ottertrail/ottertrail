@@ -44,5 +44,7 @@ export default defineConfig({
     // longer than the default five seconds. Fifteen still catches a hang.
     testTimeout: 15_000,
     hookTimeout: 30_000,
+    // Drops the test schemas and databases runs that were cut off left behind.
+    globalSetup: ["tests/helpers/global-setup.ts"],
   },
 });

@@ -59,6 +59,8 @@ export interface Chunk {
   last: boolean;
   cut: boolean;
   data: Buffer;
+  /** When it arrived; now when left out. The development seed (scripts/seed-data.ts) sets past times. */
+  receivedAt?: Date;
 }
 
 /**
@@ -104,6 +106,7 @@ export async function storeChunk(
       last: chunk.last,
       cut: chunk.cut,
       data: chunk.data,
+      ...(chunk.receivedAt === undefined ? {} : { received_at: chunk.receivedAt }),
     })
     .onConflict((oc) => oc.columns(["project_id", "replay_id", "seq"]).doNothing())
     .executeTakeFirst();
@@ -209,11 +212,21 @@ function checkRecording(text: string): { text: string; events: RecordedEvent[] }
 export async function joinReplays(
   db: Kysely<Database>,
   store: ObjectStore,
-  { now = new Date(), limit = 100 }: { now?: Date; limit?: number } = {},
+  {
+    now = new Date(),
+    limit = 100,
+    onlyProjectId,
+  }: {
+    now?: Date;
+    limit?: number;
+    /** One project's replays only (the development seed); every project's when left out. */
+    onlyProjectId?: string;
+  } = {},
 ): Promise<{ joined: number; dropped: number }> {
   const idleSince = new Date(now.getTime() - REPLAY_IDLE_MS);
-  const candidates = await db
-    .selectFrom("replay_chunks as c")
+  let query = db.selectFrom("replay_chunks as c");
+  if (onlyProjectId !== undefined) query = query.where("c.project_id", "=", onlyProjectId);
+  const candidates = await query
     .select(["c.project_id", "c.replay_id"])
     .where((eb) =>
       eb.not(

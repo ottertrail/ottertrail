@@ -147,7 +147,12 @@ export function toClickHouse(event: EventRow) {
   };
 }
 
-function toRow(projectId: string, event: NewEvent, receivedAt: Date): EventRow {
+/**
+ * One event's row, as storeEvents() writes it. Exported for the
+ * development seed (scripts/seed-data.ts), which stores events with the
+ * times they arrived in the past, each its own.
+ */
+export function toRow(projectId: string, event: NewEvent, receivedAt: Date): EventRow {
   return {
     project_id: projectId,
     event_id: event.eventId,

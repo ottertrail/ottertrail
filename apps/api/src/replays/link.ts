@@ -69,13 +69,23 @@ const firstOf = (column: string) =>
 export async function linkReplays(
   db: Kysely<Database>,
   reader: Reader,
-  { now = new Date(), limit = 200 }: { now?: Date; limit?: number } = {},
+  {
+    now = new Date(),
+    limit = 200,
+    onlyProjectId,
+  }: {
+    now?: Date;
+    limit?: number;
+    /** One project's replays only (the development seed); every project's when left out. */
+    onlyProjectId?: string;
+  } = {},
 ): Promise<{ linked: number; givenUp: number }> {
   // The due replays, at most LINK_PER_PROJECT of each project, the most due first.
   const waiting = await db
-    .selectFrom((eb) =>
-      eb
-        .selectFrom("replays")
+    .selectFrom((eb) => {
+      let replays = eb.selectFrom("replays");
+      if (onlyProjectId !== undefined) replays = replays.where("project_id", "=", onlyProjectId);
+      return replays
         .select([
           "project_id",
           "replay_id",
@@ -89,8 +99,8 @@ export async function linkReplays(
         ])
         .where("linked", "=", false)
         .where("next_link_at", "<=", now)
-        .as("due"),
-    )
+        .as("due");
+    })
     .select(["project_id", "replay_id", "created_at", "started_at", "ended_at"])
     .where("place", "<=", String(LINK_PER_PROJECT))
     .orderBy("next_link_at")

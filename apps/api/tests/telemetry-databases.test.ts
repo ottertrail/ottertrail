@@ -9,6 +9,7 @@ import { loadConfig } from "../src/config.ts";
 import { signedInDashboard } from "./helpers/dashboard.ts";
 import { insertProject } from "./helpers/projects.ts";
 import { keyValues, secretKeyOf } from "./helpers/telemetry.ts";
+import { testName } from "./helpers/test-names.ts";
 
 /**
  * The Databases page (GET /api/projects/:id/databases) and a query
@@ -746,7 +747,7 @@ describe("GET /api/projects/:id/databases/shapes/:shapeId", () => {
 describe("migration 0003", () => {
   test("works out the columns for spans stored before it", async () => {
     const config = loadConfig().clickhouse;
-    const database = `test_${randomUUID().replaceAll("-", "")}`;
+    const database = testName();
     const admin = createClickHouse(config, { database: "default" });
     const client = createClickHouse(config, { database });
     try {
