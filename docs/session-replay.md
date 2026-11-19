@@ -62,7 +62,7 @@ rrweb's options alone do not cover these rules: it has no option for attribute t
 - **Stylesheets** are kept, as the page needs them, with addresses in `url()`, `@import`, and `image-set()` cleaned to origin and path.
 - **A block marker added after the page loaded** cannot take back what was already recorded inside the element: new content there is dropped at once, and what was there before leaves the replay with the next full snapshot, at most 30 seconds later.
 
-A browser test proves the result rather than trusting either (`packages/tracker/tests/browser/replay.test.ts`): it records a fixture page full of planted values (a name, an email, a card number, tokens in a link's, an image's, a `srcset`'s, and a style's addresses, text in `title`, `placeholder`, `alt`, `aria-label`, `data-*`, and `<meta>`, a typed password, text input, text area, chosen option, an edited region, text inserted and an attribute changed after load, and text in masked and blocked regions), with the default settings, then decompresses what the recorder sent and checks that none of the planted values appears in it. Only the events' times are left out of that search, each after it is checked to be a time while the page was recorded: a 13-digit time now and then holds a planted number such as `4111` by chance. It runs the same with rrweb's own masking turned off, where raw rrweb does send a dozen of them, so the filter alone is proven. Each loosening (`data-replay-text`, `data-replay-media`, `data-ottertrail-unmask`) has its own case, including that unmasking never shows a typed value. The test runs in `vp run ready`; a new rrweb version is only taken when it passes.
+A browser test proves the result rather than trusting either (`packages/tracker/tests/browser/replay.test.ts`): it records a fixture page full of planted values (a name, an email, a card number, tokens in a link's, an image's, a `srcset`'s, and a style's addresses, text in `title`, `placeholder`, `alt`, `aria-label`, `data-*`, and `<meta>`, a typed password, text input, text area, chosen option, an edited region, text inserted and an attribute changed after load, and text in masked and blocked regions), with the default settings, then decompresses what the recorder sent and checks that none of the planted values appears in it. Only the events' times are left out of that search, each after it is checked to be a time while the page was recorded: a 13-digit time now and then holds a planted number such as `4111` by chance. It runs the same with rrweb's own masking turned off, where raw rrweb does send a dozen of them, so the filter alone is proven. Each loosening (`data-replay-text`, `data-replay-media`, `data-ottertrail-unmask`) has its own case, including that unmasking never shows a typed value. One more case starts the recording as a site waiting for consent does: the tracker runs with `data-replay-consent="wait"`, requests nothing, then `replay(true)` adds `r.js`, whose entry point runs with the configuration the tracker gave it; errors go through `captureError()`, and the replay is sent with the recorder's own timings. None of the planted values is in it, and nothing was written to cookies or storage. The test runs in `vp run ready`; a new rrweb version is only taken when it passes.
 
 ## Recording
 
@@ -73,19 +73,128 @@ Two switches, both needed:
 - **The project's setting,** in the dashboard: Replay off (the default) or "around errors". While it is off, the API refuses recordings (403 `replay_off`), and a recorder that is refused stops for the rest of the page load.
 - **The snippet,** on the site's pages: `data-replay="errors"` loads the recorder. The privacy settings are in the snippet too (`data-replay-text`, `data-replay-media`), as the site's own choice, because public keys never read a project's configuration (only collection is allowed with them). The dashboard shows the snippet to copy, with the chosen settings.
 
-The site decides about consent: it leaves `data-replay` off until a visitor agrees, or calls `window.ottertrail.replay(false)` to stop and drop the buffer.
+The site decides about consent ([below](#waiting-for-consent)): with `data-replay-consent="wait"`, recording starts only when the page says the visitor agreed, and `window.ottertrail.replay(false)` stops it and drops the buffer.
 
 A site should keep personal data out of its paths, such as an email address or a reset token in `/users/ada@example.com/reset/tok_…`. Query strings and fragments are always dropped, but a path is kept whole, as page analytics keeps it, and the Replays page lists and searches the paths of each replay ([below](#what-the-worker-derives)).
 
+### Waiting for consent
+
+For sites that ask visitors before recording. Add `data-replay-consent="wait"` beside `data-replay="errors"`:
+
+```html
+<script
+  defer
+  src="https://analytics.example.com/tracker.js"
+  data-key="pk_00000000000000000000000000000000"
+  data-host="https://analytics.example.com"
+  data-replay="errors"
+  data-replay-consent="wait"
+></script>
+```
+
+The tracker then does not load `r.js` until the page calls `window.ottertrail.replay(true)`. Everything else works as usual: pageviews, errors, Web Vitals. Errors before then carry no replay ID. The dashboard's Session replay tab has a "Wait for the visitor's consent" switch that adds the attribute to the code to copy and shows the calls below; it changes only what is shown, and nothing is saved, as for the privacy options.
+
+What each call does:
+
+- **`replay(true)`** starts recording, with the snippet's privacy settings (`data-replay-text`, `data-replay-media`): it loads `r.js` the first time, and the recorder records from then on, as described above. Calling it again while recording does nothing. Without `data-replay="errors"` on the tag it records nothing and warns in the console once: replay is the site's declared choice, with its privacy settings in the snippet, never something a call turns on alone. A tag pinned with `integrity` never loads `r.js` ([the recorder script](#the-recorder-script)), so there it records nothing either, and warns once. It never throws into the page, nor into a consent tool's callback: if the recorder fails to start or stop (such as an older `r.js` still in the browser's cache after an upgrade), it warns once and records nothing more.
+- **`replay(false)`** stops recording and drops what was recorded, in memory on the page. Called before `replay(true)`, or while `r.js` is still loading, it cancels the start: the recorder stops as soon as it runs, before it records. A replay already sent stays sent.
+- **`replay(true)` after `replay(false)`** starts a new, empty recording: what was dropped stays dropped, and the new one begins with a fresh snapshot, as on a page load. `r.js` is not downloaded again. The last call wins, so a visitor who declines and then agrees, or agrees, withdraws, and agrees again, is recorded from their last "yes". This also means a consent tool that reports "not yet given" when the page loads and "given" later works without special care. The exceptions: a recorder that stopped itself, because the API refused it (`replay_off`) or the filter failed, stays stopped for the page load, and each new recording sends at most one replay, so a page load whose visitor changes their mind can send more than one.
+
+The rule is the same without `data-replay-consent`: recording starts on load, as before, `replay(false)` stops it, and only an explicit `replay(true)` starts a new one.
+
+**Nothing is stored on the visitor's device.** The tracker writes no cookie, `localStorage`, or `sessionStorage`, for consent or anything else; it keeps the answer in memory for the page load only. The site's own consent tool remembers what the visitor chose, and the site calls `replay(true)` on every page load once that answer is known: from its consent tool's "consent given" callback, or right after the tag when the tool already has a stored "yes".
+
+**Calls before the tracker runs.** The tracker is `defer`red, so a consent banner can answer before `window.ottertrail` exists. A site that may call that early defines this stand-in first, before the tracker's tag and its consent tool's:
+
+```html
+<script>
+  window.ottertrail =
+    window.ottertrail ||
+    (function () {
+      var q = [];
+      function noop() {}
+      return {
+        q: q,
+        replay: function (on) {
+          q.push(on);
+        },
+        track: noop,
+        identify: noop,
+        reset: noop,
+        captureError: noop,
+      };
+    })();
+</script>
+```
+
+It keeps the answers to `replay()` in `q`. Its other methods, `track()`, `identify()`, `reset()`, and `captureError()`, do nothing: those calls are not queued, and are lost if they come before the tracker runs, but they never throw, so code written as `window.ottertrail?.track(…)` keeps working. When the tracker runs, it puts the real `window.ottertrail` in its place, points the stand-in's methods at its own (so a reference the page kept, such as `var ot = window.ottertrail`, reaches the tracker too), and makes the last queued call as `replay()` takes it: only `true` starts, and anything else, such as `"denied"`, stops. So a "yes" followed by a "no" before it ran never loads `r.js`. If the tracker never runs (blocked, or a tag without `data-key`), the answers stay queued and nothing is recorded.
+
+**The tracker twice on one page,** such as in a tag manager and in the page's template: the second copy finds the first's `window.ottertrail` (marked as the real one, which the stand-in is not), warns in the console once, and does nothing more. It sends no events, loads no recorder, and leaves `window.ottertrail` to the first, so `replay(false)` always reaches the one recorder.
+
+A plain HTML banner, for a site without a consent tool, that asks on each page load (a real site would remember the answer in its own way and call `replay(true)` without asking again):
+
+```html
+<script>
+  window.ottertrail =
+    window.ottertrail ||
+    (function () {
+      var q = [];
+      function noop() {}
+      return {
+        q: q,
+        replay: function (on) {
+          q.push(on);
+        },
+        track: noop,
+        identify: noop,
+        reset: noop,
+        captureError: noop,
+      };
+    })();
+</script>
+<script
+  defer
+  src="https://analytics.example.com/tracker.js"
+  data-key="pk_00000000000000000000000000000000"
+  data-host="https://analytics.example.com"
+  data-replay="errors"
+  data-replay-consent="wait"
+></script>
+
+<div id="replay-consent" role="region" aria-label="Session recording">
+  <p>May we record this visit, masked, to fix errors you run into?</p>
+  <button type="button" data-answer="yes">Agree</button>
+  <button type="button" data-answer="no">Decline</button>
+</div>
+<script>
+  document.querySelectorAll("#replay-consent button").forEach(function (button) {
+    button.addEventListener("click", function () {
+      window.ottertrail.replay(button.dataset.answer === "yes");
+      document.getElementById("replay-consent").hidden = true;
+    });
+  });
+</script>
+```
+
+**With a consent management platform.** Ottertrail shows no banner of its own: most sites that ask already run a consent tool, and a second banner would ask visitors twice. Put session replay in the tool's category for statistics or analytics (or a category of its own), keep the stand-in above the tool's script, and call `window.ottertrail.replay(true)` from the tool's "consent given" callback for that category and `window.ottertrail.replay(false)` from its "consent withdrawn" or "declined" callback. Tools that report the stored answer on every page load, or each time the visitor changes it, need nothing more: the last call wins, and calling `replay(true)` twice is harmless. How each tool names its callbacks is in its own documentation.
+
+**Telling visitors.** Whether a site must ask, and what its privacy notice must say, is for the site's owner and their legal advice: it depends on the law where the site and its visitors are, and on what the site records. A site that records sessions usually says so in its privacy notice, asking first or not. A sample paragraph to adapt, for a site using these defaults:
+
+> When something goes wrong on a page, we may keep a short recording of the page as it appeared and of what you did on it, such as clicks, scrolling, and mouse movements, to find and fix the problem. Page text is hidden in the recording, and so are the characters you type, though the recording shows where and when you typed, and how many characters. With it we keep the addresses of the pages you visited (without the part after a "?" or "#"), the size of your browser window, your browser, operating system, and type of device, and the error that happened. Recordings are kept on our own analytics server for 30 days and are not used for advertising. If you are signed in, a recording is linked to your account.
+
+Keep the last sentence only for a site that names its signed-in users (`identify`, [web analytics](web-analytics.md#known-users)): a replay is then linked to the user of its error. Change the rest when the settings change: with `data-replay-text="show"` the page's text is recorded, with `data-replay-media="show"` its images are, and with `data-replay-consent="wait"` the notice can say that recording starts only after the visitor agrees. "Our own analytics server" holds for a self-hosted instance; a site whose instance someone else hosts names them as it names its other processors. "30 days" is how long the instance keeps replays; backups made with `backup.sh` hold the object store's replays too ([deployment](deployment.md#backups)), for as long as the operator keeps the backups, so a site that keeps its backups longer than 30 days says so (for example, "and in backups for up to 90 days").
+
+The tests: `packages/tracker/tests/script.test.ts` ("session replay after consent") checks that `r.js` is not requested until `replay(true)`, that it then gets the snippet's privacy settings, the warning without `data-replay`, two calls in a row, `replay(false)` before and after `replay(true)` (running or still loading), a new recording after `replay(false)`, the queued calls (the last one counts, `[true, "denied"]` records nothing), the stand-in's other methods, a reference kept to the stand-in, the tracker loaded twice, the warning on a tag pinned with `integrity`, an older `r.js` without `again()`, and that nothing is written to cookies or storage. The stand-in they run is `packages/tracker/tests/stand-in.ts`, the same code as above. The browser test runs the tracker and `r.js`'s entry point in Chromium with the stand-in defined by a real inline script, runs the privacy test on a recording started by `replay(true)` (below), and on one started again after `replay(false)`: the first recording sent nothing, and the replay begins after the second `replay(true)`.
+
 ### The recorder script
 
-`r.js`, served beside the tracker as `v.js` is ([Web Vitals](web-analytics.md#web-vitals)), loaded by the tracker only when the snippet asks for it, so pages that do not record never download it: 93 KB, 29 KB gzipped, nearly all of it rrweb. The loader made `tracker.js` 135 bytes larger, gzipped. It inherits `v.js`'s limits: no recorder for a tracker pinned with `integrity`, the tracker's `nonce` under a strict Content Security Policy.
+`r.js`, served beside the tracker as `v.js` is ([Web Vitals](web-analytics.md#web-vitals)), loaded by the tracker only when the snippet asks for it, so pages that do not record never download it: 94 KB, 29 KB gzipped, nearly all of it rrweb. The loader made `tracker.js` 135 bytes larger, gzipped, and waiting for consent (`replay(true)`, the queue, the new recording after `replay(false)`, the guard against a second copy, the warnings) 351 bytes more, from 4,060 to 4,411 bytes gzipped. It inherits `v.js`'s limits: no recorder for a tracker pinned with `integrity`, the tracker's `nonce` under a strict Content Security Policy.
 
 ### Only around errors
 
 The recorder records all the time into memory and sends nothing until an error. rrweb's documented way: a full snapshot every 30 seconds (`checkoutEveryNms`), and the buffer keeps the current and the previous stretch, so it always starts with a snapshot and covers 30 to 60 seconds before now. Older stretches are dropped.
 
-When the tracker reports an error ([errors](errors.md#1-capture)), the recorder keeps recording for 10 more seconds, to show what the error did to the page, then sends the buffer. The error event carries the replay's ID (`replayId`, a UUID made by the recorder), and so do later errors of the same page load while it is still recording. One replay per page load: errors after it was sent get none.
+When the tracker reports an error ([errors](errors.md#1-capture)), the recorder keeps recording for 10 more seconds, to show what the error did to the page, then sends the buffer. The error event carries the replay's ID (`replayId`, a UUID made by the recorder), and so do later errors of the same page load while it is still recording. One replay per recording, and one recording per page load unless the page stops it and starts a new one ([waiting for consent](#waiting-for-consent)): errors after it was sent get none.
 
 ### Sending
 

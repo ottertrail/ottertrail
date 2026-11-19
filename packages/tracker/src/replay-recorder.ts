@@ -4,7 +4,8 @@
  * between full snapshots (30 to 60 seconds), and sends nothing until an
  * error. The first error starts a replay: recording goes on for
  * AFTER_ERROR_MS, then stops, and the recording is compressed and sent in
- * pieces (replay-pack.ts). One replay per page load.
+ * pieces (replay-pack.ts). One replay per recording: a page load has one
+ * recording, unless the page stops it and starts a new one (again()).
  *
  * Every event passes the privacy filter (replay-filter.ts) before it is
  * kept. If the filter fails, the recording stops and is dropped: a
@@ -41,6 +42,8 @@ export interface RecorderOptions extends Pick<
   /** navigator.sendBeacon; false when the browser refused. */
   beacon: (url: string, body: Blob) => boolean;
   afterErrorMs?: number;
+  /** Starts a new recorder in this one's place: Recorder.again. */
+  again?: () => void;
 }
 
 export interface ReplayRecorder extends Recorder {
@@ -76,6 +79,9 @@ export function createRecorder(options: RecorderOptions): ReplayRecorder {
   let exiting = false;
   /** Upload only once the recording is complete and passed the filter. */
   let complete = false;
+  /** Why recording ended early: the page's stop(), or the recorder itself. */
+  let stoppedBy: "page" | "itself" | undefined;
+  let restarted = false;
 
   const halt = () => {
     try {
@@ -87,8 +93,9 @@ export function createRecorder(options: RecorderOptions): ReplayRecorder {
     if (timer !== undefined) clearTimeout(timer);
   };
 
-  /** Stops for the rest of the page load and drops everything not sent. */
+  /** Stops for good and drops everything not sent. */
   const drop = () => {
+    stoppedBy ??= "itself";
     halt();
     state = "done";
     previous = [];
@@ -258,7 +265,19 @@ export function createRecorder(options: RecorderOptions): ReplayRecorder {
       }
       return undefined;
     },
-    stop: drop,
+    stop() {
+      stoppedBy ??= "page";
+      drop();
+    },
+    again() {
+      if (stoppedBy !== "page" || restarted) return;
+      restarted = true;
+      try {
+        options.again?.();
+      } catch {
+        // No new recording, as before.
+      }
+    },
     exit() {
       try {
         if (state === "after-error") finish();

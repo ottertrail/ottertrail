@@ -5,12 +5,14 @@
  * decompresses it, and checks that no planted value is in it.
  */
 import { record } from "@rrweb/record";
-import { afterEach, describe, expect, test } from "vite-plus/test";
+import { afterEach, describe, expect, test, vi } from "vite-plus/test";
 import { commands } from "vite-plus/test/browser/context";
 
+import { REPLAY_PROPERTY } from "../../src/replay-names.ts";
 import { MAX_CHUNK_BYTES, MAX_REPLAY_BYTES } from "../../src/replay-pack.ts";
 import type { RecorderOptions, ReplayRecorder } from "../../src/replay-recorder.ts";
 import { startReplay } from "../../src/replay-start.ts";
+import { STAND_IN } from "../stand-in.ts";
 
 const PAGE = `
   <main>
@@ -117,9 +119,14 @@ interface Chunk {
 let running: ReplayRecorder | undefined;
 const added: Element[] = [];
 
+/** Undoes what a test changed in the page beyond its body. */
+const cleanups: (() => void)[] = [];
+
 afterEach(() => {
   running?.stop();
   running = undefined;
+  // Last in, first out.
+  for (let cleanup = cleanups.pop(); cleanup !== undefined; cleanup = cleanups.pop()) cleanup();
   document.body.innerHTML = "";
   for (const element of added.splice(0)) element.remove();
 });
@@ -167,14 +174,48 @@ async function gunzip(chunks: Chunk[]): Promise<string> {
   return text;
 }
 
+interface Settings {
+  text?: boolean;
+  media?: boolean;
+}
+
+/** Starts a recording that uploads with `fetch`; error() reports an error to it. */
+type Start = (
+  settings: Settings,
+  fetch: typeof globalThis.fetch,
+  overrides: Partial<RecorderOptions>,
+) => Promise<{ error: () => Promise<string | undefined> | string | undefined }>;
+
+/** The recorder started directly, as r.js starts it, with its timings shortened. */
+const startDirectly: Start = async (settings, fetch, overrides) => {
+  let registered: unknown;
+  const recorder = startReplay(
+    {
+      endpoint: "https://analytics.example.com/api/replays",
+      key: "pk_test",
+      text: settings.text ?? false,
+      media: settings.media ?? false,
+      register: (value) => {
+        registered = value;
+      },
+    },
+    { fetch, beacon: () => false, afterErrorMs: 300, ...overrides },
+  );
+  if (recorder === undefined) throw new Error("no CompressionStream");
+  running = recorder;
+  expect(registered).toBe(recorder);
+  return recorder;
+};
+
 /**
  * Records PAGE with these settings, does what a visitor and the page's own
  * scripts would, reports an error, and returns what the recorder uploaded.
  */
 async function recordPage(
-  settings: { text?: boolean; media?: boolean } = {},
+  settings: Settings = {},
   overrides: Partial<RecorderOptions> = {},
   before: () => Promise<void> | void = () => {},
+  start: Start = startDirectly,
 ) {
   document.body.innerHTML = PAGE;
   const meta = document.createElement("meta");
@@ -194,24 +235,9 @@ async function recordPage(
     });
     return new Response(null, { status: 202 });
   };
-  let registered: unknown;
   // Every event's time falls between these (leaked).
   const from = Date.now();
-  const recorder = startReplay(
-    {
-      endpoint: "https://analytics.example.com/api/replays",
-      key: "pk_test",
-      text: settings.text ?? false,
-      media: settings.media ?? false,
-      register: (value) => {
-        registered = value;
-      },
-    },
-    { fetch, beacon: () => false, afterErrorMs: 300, ...overrides },
-  );
-  if (recorder === undefined) throw new Error("no CompressionStream");
-  running = recorder;
-  expect(registered).toBe(recorder);
+  const recorder = await start(settings, fetch, overrides);
   await tick();
 
   await before();
@@ -235,16 +261,16 @@ async function recordPage(
   byId("later-mask").textContent = "AfterMaskSecretPine";
   await tick();
 
-  const replayId = recorder.error();
+  const replayId = await recorder.error();
   expect(replayId).toMatch(/^[\da-f]{8}-[\da-f]{4}-4[\da-f]{3}-[89ab][\da-f]{3}-[\da-f]{12}$/);
   // Another error while it still records shares the replay.
-  expect(recorder.error()).toBe(replayId);
+  expect(await recorder.error()).toBe(replayId);
 
   await expect
-    .poll(() => chunks.some((chunk) => chunk.params.last === "1"), { timeout: 15_000 })
+    .poll(() => chunks.some((chunk) => chunk.params.last === "1"), { timeout: 20_000 })
     .toBe(true);
-  // Errors after it was sent get none: one replay per page load.
-  expect(recorder.error()).toBeUndefined();
+  // Errors after it was sent get none: one replay per recording.
+  expect(await recorder.error()).toBeUndefined();
   const to = Date.now();
   // Not sorted: they must arrive in order (expectWellFormed).
   const text = await gunzip(chunks);
@@ -439,5 +465,233 @@ describe("the privacy test", () => {
     const total = result.chunks.reduce((sum, chunk) => sum + chunk.bytes.length, 0);
     expect(total).toBeLessThanOrEqual(MAX_REPLAY_BYTES);
     expect(total).toBeGreaterThan(MAX_REPLAY_BYTES * 0.9);
+  }, 60_000);
+});
+
+interface TrackerApi {
+  replay(on: boolean): void;
+  captureError(error: unknown): void;
+}
+const api = () => Reflect.get(window, "ottertrail") as TrackerApi;
+
+let runs = 0;
+
+/**
+ * Runs the tracker (script.ts) in this page as its <script> tag with these
+ * attributes would, with fetch answering for the API. Scripts it adds to
+ * the page are kept, not loaded; returns them.
+ */
+async function runTracker(
+  attributes: Record<string, string>,
+  answer: (url: URL, init?: RequestInit) => Promise<Response> = async () =>
+    new Response(null, { status: 202 }),
+) {
+  const scripts: HTMLScriptElement[] = [];
+  const append = vi.spyOn(document.head, "append").mockImplementation((...nodes) => {
+    for (const node of nodes) if (node instanceof HTMLScriptElement) scripts.push(node);
+  });
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (input, init) =>
+    answer(new URL(input instanceof Request ? input.url : input.toString()), init);
+  cleanups.push(() => {
+    append.mockRestore();
+    globalThis.fetch = realFetch;
+    // The page's recording, and the tracker's API, go with the test.
+    Reflect.get(window, "ottertrail")?.replay?.(false);
+    Reflect.deleteProperty(window, "ottertrail");
+  });
+
+  const tag = document.createElement("script");
+  tag.src = "https://analytics.example.com/t.js";
+  Object.assign(tag.dataset, {
+    key: "pk_test",
+    host: "https://analytics.example.com",
+    vitals: "off",
+    ...attributes,
+  });
+  Object.defineProperty(document, "currentScript", { configurable: true, get: () => tag });
+  try {
+    // A module of its own each time: the tracker runs when imported.
+    const url = `../../src/script.ts?run=${(runs += 1)}`;
+    await import(/* @vite-ignore */ url);
+  } finally {
+    Reflect.deleteProperty(document, "currentScript");
+  }
+  return scripts;
+}
+
+/** Runs r.js's entry point (replay.ts) as the script the tracker added for it. */
+async function runRecorderScript(script: HTMLScriptElement) {
+  expect(script.src).toBe("https://analytics.example.com/r.js");
+  Object.defineProperty(document, "currentScript", { configurable: true, get: () => script });
+  try {
+    const url = `../../src/replay.ts?run=${(runs += 1)}`;
+    await import(/* @vite-ignore */ url);
+  } finally {
+    Reflect.deleteProperty(document, "currentScript");
+  }
+}
+
+/** What the page wrote to cookies and storage while `run` ran. */
+async function storageWrites(run: () => Promise<void>) {
+  const writes: string[] = [];
+  const cookie = vi.spyOn(Document.prototype, "cookie", "set").mockImplementation((value) => {
+    writes.push(`cookie ${value}`);
+  });
+  const setItem = vi.spyOn(Storage.prototype, "setItem").mockImplementation((key) => {
+    writes.push(`storage ${key}`);
+  });
+  try {
+    await run();
+  } finally {
+    cookie.mockRestore();
+    setItem.mockRestore();
+  }
+  return writes;
+}
+
+/** The stand-in, run as the site's own <script> before the tracker's deferred one. */
+const defineStandIn = () => {
+  const inline = document.createElement("script");
+  inline.textContent = STAND_IN;
+  document.head.appendChild(inline);
+  cleanups.push(() => inline.remove());
+};
+
+describe("a recording started by replay(true)", () => {
+  test('with data-replay-consent="wait", r.js is requested only after replay(true)', async () => {
+    document.body.innerHTML = PAGE;
+    const scripts = await runTracker({
+      replay: "errors",
+      replayConsent: "wait",
+      replayText: "show",
+    });
+    expect(scripts).toEqual([]);
+    api().replay(true);
+    api().replay(true);
+    expect(scripts.map((script) => script.src)).toEqual(["https://analytics.example.com/r.js"]);
+    expect(Reflect.get(scripts[0] ?? {}, REPLAY_PROPERTY)).toMatchObject({
+      endpoint: "https://analytics.example.com/api/replays",
+      key: "pk_test",
+      text: true,
+      media: false,
+    });
+  });
+
+  test("the before-load pattern queues the answer until the tracker runs", async () => {
+    defineStandIn();
+    api().replay(true);
+    expect(Reflect.get(window, "ottertrail")).toMatchObject({ q: [true] });
+    // Calls the site guards only with ?. work before the tracker runs.
+    api().captureError(new Error("before the tracker"));
+
+    const scripts = await runTracker({ replay: "errors", replayConsent: "wait" });
+    expect(scripts.map((script) => script.src)).toEqual(["https://analytics.example.com/r.js"]);
+    expect(Reflect.get(window, "ottertrail")).not.toHaveProperty("q");
+  });
+
+  test("with the before-load pattern, a decline after agreeing requests nothing", async () => {
+    defineStandIn();
+    api().replay(true);
+    api().replay(false);
+    const scripts = await runTracker({ replay: "errors", replayConsent: "wait" });
+    expect(scripts).toEqual([]);
+  });
+
+  test("the privacy test passes, and nothing is stored on the device", async () => {
+    // What the tracker sent to /api/events: each error's replay ID.
+    const errors: { message?: string; replayId?: string }[] = [];
+    let count = 0;
+    const writes = await storageWrites(async () => {
+      const result = await recordPage({}, {}, undefined, async (_settings, fetch) => {
+        const scripts = await runTracker(
+          { replay: "errors", replayConsent: "wait" },
+          async (url, init) => {
+            if (url.pathname === "/api/replays") return fetch(url, init);
+            const batch = JSON.parse(typeof init?.body === "string" ? init.body : "") as {
+              events: { error?: { message?: string; replayId?: string } }[];
+            };
+            for (const event of batch.events) if (event.error) errors.push(event.error);
+            return new Response(null, { status: 202 });
+          },
+        );
+        expect(scripts).toEqual([]);
+        api().replay(true); // The visitor agreed.
+        const [recorderScript] = scripts;
+        if (recorderScript === undefined) throw new Error("r.js was not requested");
+        await runRecorderScript(recorderScript);
+        return {
+          // An error the site caught, sent with the replay's ID.
+          error: async () => {
+            const message = `Caught ${(count += 1)}`;
+            api().captureError(new Error(message));
+            await expect
+              .poll(() => errors.some((error) => error.message === message), { timeout: 5_000 })
+              .toBe(true);
+            return errors.find((error) => error.message === message)?.replayId;
+          },
+        };
+      });
+      expectWellFormed(result);
+      expect(leaked(result, PLANTED)).toEqual([]);
+      expect(result.text).toContain("********** ************");
+    });
+    expect(writes).toEqual([]);
+    expect(document.cookie).toBe("");
+  }, 60_000);
+  test("a recording started again after replay(false) is new: the first sent nothing", async () => {
+    const errors: { message?: string; replayId?: string }[] = [];
+    let count = 0;
+    let restartedAt = 0;
+    let sentBeforeRestart = -1;
+    let uploads = 0;
+    const result = await recordPage({}, {}, undefined, async (_settings, fetch) => {
+      const scripts = await runTracker(
+        { replay: "errors", replayConsent: "wait" },
+        async (url, init) => {
+          if (url.pathname === "/api/replays") {
+            uploads += 1;
+            return fetch(url, init);
+          }
+          const batch = JSON.parse(typeof init?.body === "string" ? init.body : "") as {
+            events: { error?: { message?: string; replayId?: string } }[];
+          };
+          for (const event of batch.events) if (event.error) errors.push(event.error);
+          return new Response(null, { status: 202 });
+        },
+      );
+      api().replay(true);
+      const [recorderScript] = scripts;
+      if (recorderScript === undefined) throw new Error("r.js was not requested");
+      await runRecorderScript(recorderScript);
+      // The first recording takes the page in, typed values included.
+      await tick(100);
+      byId("name").textContent = "FirstRecordingSecretHazel";
+      await tick(100);
+      api().replay(false); // Withdrawn: dropped.
+      await tick(100);
+      sentBeforeRestart = uploads;
+      restartedAt = Date.now();
+      api().replay(true); // Agreed again: a new recording.
+      expect(scripts).toHaveLength(1); // r.js is not loaded again.
+      return {
+        error: async () => {
+          const message = `Again ${(count += 1)}`;
+          api().captureError(new Error(message));
+          await expect
+            .poll(() => errors.some((error) => error.message === message), { timeout: 5_000 })
+            .toBe(true);
+          return errors.find((error) => error.message === message)?.replayId;
+        },
+      };
+    });
+    expect(sentBeforeRestart).toBe(0);
+    expect(uploads).toBe(result.chunks.length);
+    // One replay, the second recording's, from its own snapshot on.
+    const recording = expectWellFormed(result);
+    const times = recording.events.map((event) => Reflect.get(event, "timestamp") as number);
+    expect(Math.min(...times)).toBeGreaterThanOrEqual(restartedAt);
+    expect(leaked(result, [...PLANTED, "FirstRecordingSecretHazel"])).toEqual([]);
+    expect(result.text).not.toContain("FirstRecordingSecretHazel");
   }, 60_000);
 });

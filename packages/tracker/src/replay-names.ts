@@ -29,6 +29,12 @@ export interface Recorder {
    * it while it still records. Undefined when no replay goes with this error.
    */
   error: () => string | undefined;
-  /** Stops recording for the rest of the page load and drops what was recorded. */
+  /** Stops recording and drops what was recorded. */
   stop: () => void;
+  /**
+   * After stop(): starts a new, empty recording, which registers itself as
+   * the tracker's recorder. Only once, and not when the recorder stopped
+   * itself (the API refused it, or the filter failed).
+   */
+  again: () => void;
 }

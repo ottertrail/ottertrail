@@ -41,9 +41,24 @@
  * In the site's HTML, data-ottertrail-mask masks an element's text,
  * data-ottertrail-block leaves an element out (only a box of its size),
  * and data-ottertrail-unmask shows an element's text in a private
- * recording. window.ottertrail.replay(false) stops recording for the rest
- * of the page load and drops what was recorded, as when a visitor
- * withdraws consent.
+ * recording.
+ *
+ * Consent: with data-replay-consent="wait" beside data-replay="errors", r.js
+ * is not loaded until the page calls window.ottertrail.replay(true), as
+ * when a visitor agrees. replay(false) stops recording and drops what was
+ * recorded, or cancels a start still waiting, as when a visitor declines or
+ * withdraws consent; replay(true) after it starts a new, empty recording.
+ * The last call wins. Nothing about consent is stored: the site calls
+ * replay(true) on each page load once its consent tool knows the answer.
+ * A page that may call before this script runs defines, first, the
+ * stand-in in docs/session-replay.md: replay() queues its answers in q, and
+ * track(), identify(), reset(), and captureError() do nothing until then.
+ * This script makes the last call queued in q once it runs, and points the
+ * stand-in's methods at its own, so a reference kept to it still works.
+ *
+ * Loaded twice on one page (in a tag manager and in the page's template),
+ * the second copy warns and does nothing: two copies would count every
+ * pageview twice, and replay(false) would reach only one recorder.
  */
 import {
   createEngagementTimer,
@@ -73,9 +88,10 @@ export interface OttertrailApi {
   /** Reports an error the site caught itself, with custom event properties if given. */
   captureError(error: unknown, properties?: Record<string, unknown>): void;
   /**
-   * replay(false) stops session replay for the rest of the page load and
-   * drops what was recorded. Recording cannot start again in the same page
-   * load: a site that waits for consent leaves data-replay out until then.
+   * replay(true) starts session replay, with the snippet's settings, when
+   * the snippet has data-replay (for data-replay-consent="wait"). replay(false)
+   * stops it and drops what was recorded; replay(true) after it starts a
+   * new, empty recording. The last call wins.
    */
   replay(on: boolean): void;
 }
@@ -109,8 +125,15 @@ function landing(): Page {
   return { url: cleanPageUrl(location.href), ...(referrer === undefined ? {} : { referrer }) };
 }
 
+/** Marks the real window.ottertrail, as no stand-in is: Symbol.for, so any copy sees it. */
+const REAL = Symbol.for("ottertrail.tracker");
+
 (() => {
   try {
+    if (window.ottertrail !== undefined && Reflect.get(window.ottertrail, REAL) === true) {
+      console.warn("Ottertrail: the tracker is on this page twice. This copy does nothing.");
+      return;
+    }
     const script = document.currentScript;
     const key = script?.dataset.key;
     const host = script?.dataset.host;
@@ -220,9 +243,19 @@ function landing(): Page {
       setUser(script.dataset.userId, script.dataset.userSignature, "data-user-id");
     }
 
-    // Session replay (r.js), once it runs; off for good after replay(false).
+    // Session replay (r.js), once it runs. Wanted from the start, unless
+    // the snippet waits for consent: then from replay(true) on.
     let recorder: Recorder | undefined;
-    let replayOff = false;
+    let replayWanted = script?.dataset.replayConsent !== "wait";
+    let replayLoaded = false;
+    // Each warning once per page load.
+    const warned = new Set<string>();
+    const warnOnce = (message: string) => {
+      if (!warned.has(message)) {
+        warned.add(message);
+        console.warn(`Ottertrail: ${message}`);
+      }
+    };
 
     // An error belongs to the page and user of that moment, as a custom event does.
     // With a replay recording, it carries the replay's ID.
@@ -275,28 +308,54 @@ function landing(): Page {
       );
       load("v.js", RECORD_PROPERTY, recordVital);
     }
-    if (beside && script?.dataset.replay === "errors") {
+    const replayDeclared = script?.dataset.replay === "errors";
+    const loadRecorder = () => {
+      if (!beside || !replayDeclared || replayLoaded) return;
+      replayLoaded = true;
       const config: ReplayConfig = {
         endpoint: new URL("/api/replays", host).href,
         key,
-        text: script.dataset.replayText === "show",
-        media: script.dataset.replayMedia === "show",
+        text: script?.dataset.replayText === "show",
+        media: script?.dataset.replayMedia === "show",
         register: (started) => {
           recorder = started;
-          if (replayOff) started.stop();
+          if (!replayWanted) started.stop();
         },
       };
       load("r.js", REPLAY_PROPERTY, config);
-    }
+    };
+    if (replayWanted) loadRecorder();
 
-    window.ottertrail = {
+    // The page's stand-in from before this script ran, with its queued calls.
+    const early: unknown = window.ottertrail;
+    const api: OttertrailApi = {
       identify: (id, signature) => setUser(id, signature, "identify()"),
       reset: () => setUser(undefined, undefined, "reset()"),
       captureError: errors.handled,
-      replay: (on) => {
-        if (!on) {
-          replayOff = true;
-          recorder?.stop();
+      // Unknown: a page's script may pass anything. Only true starts.
+      replay: (on: unknown) => {
+        try {
+          if (on !== true) {
+            replayWanted = false;
+            recorder?.stop();
+          } else if (!replayDeclared) {
+            // Replay is the site's choice, with its privacy settings in the snippet.
+            warnOnce(
+              'replay(true) needs data-replay="errors" on the script tag. Nothing is recorded.',
+            );
+          } else if (!beside) {
+            warnOnce(
+              "replay(true) cannot load the recorder for a script tag with integrity. Nothing is recorded.",
+            );
+          } else if (!replayWanted) {
+            replayWanted = true;
+            if (recorder === undefined) loadRecorder();
+            else recorder.again();
+          }
+        } catch {
+          // Such as an older r.js still in the browser's cache, without again():
+          // never thrown into the consent tool's callback.
+          warnOnce("session replay could not be changed.");
         }
       },
       track: (name, properties) => {
@@ -310,6 +369,17 @@ function landing(): Page {
         tracker.track(name, current ?? landing(), properties);
       },
     };
+    Object.defineProperty(api, REAL, { value: true });
+    window.ottertrail = api;
+    if (typeof early === "object" && early !== null && "q" in early && Array.isArray(early.q)) {
+      // A reference the page kept to the stand-in reaches this script too.
+      Object.assign(early, api);
+      // The last call wins, so only the last queued one is made, as the API
+      // takes it (only true starts): r.js is not requested for a "true" a
+      // later answer took back.
+      const queued = early.q as unknown[];
+      if (queued.length > 0) api.replay(queued[queued.length - 1] === true);
+    }
 
     const start = () => {
       if (document.visibilityState === "visible") {

@@ -112,8 +112,20 @@ export function startReplay(
         // rrweb's own failures stay inside it: never thrown into the page.
         errorHandler: () => true,
       }),
+    // replay(false), then replay(true): a new recording, as r.js starts one,
+    // with this one's listeners gone.
+    again: () => {
+      document.removeEventListener("prerenderingchange", recorder.start);
+      document.removeEventListener("visibilitychange", onHidden);
+      window.removeEventListener("pagehide", recorder.exit);
+      startReplay(config, overrides);
+    },
     ...overrides,
   });
+  // The page is hidden or left: send what is ready, by beacon.
+  const onHidden = () => {
+    if (document.visibilityState === "hidden") recorder.exit();
+  };
 
   config.register(recorder);
   // A prerendered page may never be seen: record once it is.
@@ -122,10 +134,7 @@ export function startReplay(
   } else {
     recorder.start();
   }
-  // The page is hidden or left: send what is ready, by beacon.
-  document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "hidden") recorder.exit();
-  });
+  document.addEventListener("visibilitychange", onHidden);
   window.addEventListener("pagehide", recorder.exit);
   return recorder;
 }

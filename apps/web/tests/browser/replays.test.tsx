@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vite-plus/test";
 import { page } from "vite-plus/test/browser/context";
 
+import { EARLY_CALLS } from "../../src/features/projects/replays-card.tsx";
 import type { Occurrence } from "../../src/lib/errors-api.ts";
 import {
   deferred,
@@ -196,6 +197,70 @@ describe("the project's Session replay card", () => {
     expect(text).toContain("3 replays, 1.5 MB in this project.");
     expect(text).toContain("2 MB of 5 GB used, by all projects together.");
     expect(text).toContain("Replays are kept for 30 days");
+  });
+
+  test("waiting for consent adds the attribute and the call to copy, and saves nothing", async () => {
+    const api = installFakeApi();
+    renderApp(SETTINGS);
+    const wait = page.getByRole("switch", { name: "Wait for the visitor's consent" });
+    await expect.element(wait).not.toBeChecked();
+    /** The code the tab offers to copy. */
+    const snippets = () =>
+      [...card().querySelectorAll("pre code")].map((element) => element.textContent);
+    expect(snippets()).toEqual(['data-replay="errors"']);
+    const before = card().textContent;
+    expect(before).not.toContain("replay(true)");
+    // Said with the switch off too: where consent is set up.
+    expect(before).toContain(
+      "Session replay records what visitors do on your pages. If your site asks visitors before recording, set that up in your consent banner or consent tool, then turn on Wait for the visitor's consent.",
+    );
+
+    await wait.click();
+    await expect.element(wait).toBeChecked();
+    expect(snippets()).toEqual([
+      'data-replay="errors" data-replay-consent="wait"',
+      "window.ottertrail.replay(true);",
+      EARLY_CALLS,
+    ]);
+    // The same stand-in as the tracker's tests run (packages/tracker/tests/stand-in.ts).
+    expect(EARLY_CALLS).toBe(`<script>
+  window.ottertrail = window.ottertrail || (function () {
+    var q = [];
+    function noop() {}
+    return {
+      q: q,
+      replay: function (on) { q.push(on); },
+      track: noop,
+      identify: noop,
+      reset: noop,
+      captureError: noop,
+    };
+  })();
+</script>`);
+    await expect.element(page.getByRole("button", { name: "Copy the consent call" })).toBeVisible();
+    await expect
+      .element(page.getByRole("button", { name: "Copy the script for early calls" }))
+      .toBeVisible();
+    const text = card().textContent;
+    expect(text).toContain("For sites that ask visitors before recording.");
+    expect(text).toContain("stores nothing on the visitor's device");
+    expect(text).toContain("window.ottertrail.replay(false)");
+    expect(text).toContain("other tracker calls do nothing");
+    expect(text).not.toContain("docs/session-replay.md");
+    await expect
+      .element(page.getByRole("link", { name: "Read about consent in the docs" }))
+      .toHaveAttribute("href", "https://docs.ottertrail.app/session-replay/turning-it-on/#consent");
+    // A copy helper, as the privacy options: not a field of the form.
+    await expect
+      .element(page.getByRole("tabpanel").getByRole("status"))
+      .toHaveTextContent("No unsaved changes");
+    expect(api.bodies).toEqual([]);
+
+    // Off again: the tab as it was.
+    await wait.click();
+    await expect.element(wait).not.toBeChecked();
+    expect(snippets()).toEqual(['data-replay="errors"']);
+    expect(card().textContent).toBe(before);
   });
 
   test("turns replays on around errors with the tab's Save, and says so", async () => {

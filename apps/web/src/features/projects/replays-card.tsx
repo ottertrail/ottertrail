@@ -18,6 +18,7 @@ import {
 import { Field, FieldContent, FieldDescription, FieldLabel } from "@/components/ui/field";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Switch } from "@/components/ui/switch";
 import { type DirtyForm, useDirtyForm } from "@/hooks/use-dirty-form";
 import { projectQuery } from "@/lib/projects-api";
 import {
@@ -30,8 +31,32 @@ import {
 } from "@/lib/replays-api";
 import { formatBytes } from "@/lib/source-maps-api";
 
+import { REPLAY_CONSENT_DOCS_URL } from "./format";
+
 /** The attribute that makes the tracker record, on the site's script tag. */
 export const REPLAY_ATTRIBUTE = 'data-replay="errors"';
+/** Beside it: the tracker loads the recorder only once the page says the visitor agreed. */
+export const CONSENT_ATTRIBUTE = 'data-replay-consent="wait"';
+/** What the page calls once the visitor agrees, on every page load. */
+export const CONSENT_CALL = "window.ottertrail.replay(true);";
+/**
+ * For a call that may come before the deferred tracker runs: a stand-in
+ * that queues it (packages/tracker/src/script.ts, docs/session-replay.md).
+ */
+export const EARLY_CALLS = `<script>
+  window.ottertrail = window.ottertrail || (function () {
+    var q = [];
+    function noop() {}
+    return {
+      q: q,
+      replay: function (on) { q.push(on); },
+      track: noop,
+      identify: noop,
+      reset: noop,
+      captureError: noop,
+    };
+  })();
+</script>`;
 
 const code = (text: string) => <code className="font-mono">{text}</code>;
 
@@ -90,16 +115,88 @@ function ModeChoice({ form, disabled }: { form: DirtyForm<ReplayValues>; disable
   );
 }
 
+/**
+ * Waiting for consent, a copy helper as the privacy options are: it changes
+ * the code shown to copy, and is never saved (it is the site's snippet).
+ */
+function ConsentChoice({
+  checked,
+  onCheckedChange,
+}: {
+  checked: boolean;
+  onCheckedChange: (checked: boolean) => void;
+}) {
+  const id = React.useId();
+  return (
+    <Field orientation="horizontal" className="items-start">
+      <Switch
+        id={id}
+        checked={checked}
+        onCheckedChange={onCheckedChange}
+        aria-describedby={`${id}-hint`}
+        className="mt-0.5"
+      />
+      <FieldContent>
+        <FieldLabel htmlFor={id}>Wait for the visitor&apos;s consent</FieldLabel>
+        <FieldDescription id={`${id}-hint`}>
+          For sites that ask visitors before recording. The page records only after your site calls
+          the tracker to say the visitor agreed. This changes only the code to copy; nothing is
+          saved.
+        </FieldDescription>
+      </FieldContent>
+    </Field>
+  );
+}
+
 /** What a site adds to its tag, and what stays private. */
 function SiteHelp() {
+  const [consent, setConsent] = React.useState(false);
   return (
     <div className="flex flex-col gap-3 text-sm text-ink-muted">
       <p>
         Enable this setting. Add this attribute to the tracker's script tag on the Install tab. Both
-        are required. If your site requests consent, add the attribute only after the visitor agrees
-        to recording.
+        are required.
       </p>
-      <CopyableCode text={REPLAY_ATTRIBUTE} copyLabel="Copy the replay attribute" />
+      <p>
+        Session replay records what visitors do on your pages. If your site asks visitors before
+        recording, set that up in your consent banner or consent tool, then turn on Wait for the
+        visitor&apos;s consent.
+      </p>
+      <ConsentChoice checked={consent} onCheckedChange={setConsent} />
+      <CopyableCode
+        text={consent ? `${REPLAY_ATTRIBUTE} ${CONSENT_ATTRIBUTE}` : REPLAY_ATTRIBUTE}
+        copyLabel="Copy the replay attribute"
+      />
+      {consent && (
+        <>
+          <p>
+            When the visitor agrees, call this from your consent banner, or from your consent
+            tool&apos;s &ldquo;consent given&rdquo; callback. Call it on every page load once you
+            know the answer: Ottertrail stores nothing on the visitor&apos;s device, so your consent
+            tool remembers it.
+          </p>
+          <CopyableCode text={CONSENT_CALL} copyLabel="Copy the consent call" />
+          <p>
+            The tracker loads after the page. If your site may call before then, add this script
+            before the tracker&apos;s tag and your consent tool&apos;s. The tracker makes the call
+            once it loads. Until then, other tracker calls do nothing.
+          </p>
+          <CopyableCode text={EARLY_CALLS} copyLabel="Copy the script for early calls" />
+          <p>
+            {code("window.ottertrail.replay(false)")} stops recording and discards what the page
+            recorded, when a visitor declines or changes their mind. The last call counts.{" "}
+            <a
+              href={REPLAY_CONSENT_DOCS_URL}
+              target="_blank"
+              rel="noreferrer"
+              className="text-ink underline underline-offset-4"
+            >
+              Read about consent in the docs
+            </a>
+            .
+          </p>
+        </>
+      )}
       <h3 className="pt-1 text-sm font-medium text-ink">Private by default</h3>
       <p>
         The visitor's browser masks page text, typed text, images, and media before sending the

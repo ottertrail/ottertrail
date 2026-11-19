@@ -4,6 +4,7 @@ import { MAX_ENGAGED_MS } from "../src/engagement.ts";
 import { type Recorder, REPLAY_PROPERTY, type ReplayConfig } from "../src/replay-names.ts";
 import type { QueuedEvent } from "../src/tracker.ts";
 import { RECORD_PROPERTY } from "../src/vital-names.ts";
+import { STAND_IN } from "./stand-in.ts";
 
 interface SentBatch {
   events: QueuedEvent[];
@@ -833,6 +834,7 @@ const replayConfig = (page: ReturnType<typeof fakePage>) => {
 const fakeRecorder = (replayId: string | undefined) => ({
   error: vi.fn<Recorder["error"]>(() => replayId),
   stop: vi.fn<Recorder["stop"]>(),
+  again: vi.fn<Recorder["again"]>(),
 });
 
 describe("session replay", () => {
@@ -957,5 +959,331 @@ describe("session replay", () => {
     const late = fakeRecorder("x");
     replayConfig(early)?.register(late);
     expect(late.stop).toHaveBeenCalledTimes(1);
+  });
+});
+
+/** The r.js scripts the tracker added to the page. */
+const recorders = (page: ReturnType<typeof fakePage>) =>
+  page.added.filter((element) => String(element.src).endsWith("/r.js"));
+
+const WAIT = { replay: "errors", replayConsent: "wait", vitals: "off" };
+
+interface StandIn {
+  q: unknown[];
+  replay(on: unknown): void;
+  track(name: string, properties?: object): void;
+  identify(userId: string): void;
+  reset(): void;
+  captureError(error: unknown): void;
+}
+
+/** The documented stand-in, run as the site's script before the tracker's tag. */
+const standIn = (page: ReturnType<typeof fakePage>) => {
+  // eslint-disable-next-line typescript/no-implied-eval, no-new-func -- the snippet as sites paste it
+  new Function("window", STAND_IN)(page.window);
+  return page.window.ottertrail as unknown as StandIn;
+};
+
+describe("session replay after consent", () => {
+  test('with data-replay-consent="wait", r.js waits for replay(true); the rest runs as usual', async () => {
+    const page = fakePage("https://example.com/", "", {
+      attributes: { ...WAIT, replayText: "show", replayMedia: "show", vitals: "on" },
+    });
+    await runScript();
+    // Web Vitals load, pageviews and errors are sent: only the recorder waits.
+    expect(page.added.map((element) => element.src)).toEqual([
+      "https://analytics.example.com/v.js",
+    ]);
+    uncaught(page, failure("before consent"));
+    const errors = await errorsSent(page);
+    expect(errors.map((event) => event.error)).toEqual([
+      expect.not.objectContaining({ replayId: expect.anything() }),
+    ]);
+    expect(page.events[0]).toMatchObject({ name: "pageview" });
+
+    page.window.ottertrail?.replay(true);
+    expect(recorders(page)).toHaveLength(1);
+    // The snippet's privacy settings, as without waiting.
+    expect(replayConfig(page)).toMatchObject({
+      endpoint: "https://analytics.example.com/api/replays",
+      key: "pk_test",
+      text: true,
+      media: true,
+    });
+    const replay = fakeRecorder("8a1c4d2e-0f3b-4c5d-9e6f-7a8b9c0d1e2f");
+    replayConfig(page)?.register(replay);
+    expect(replay.stop).not.toHaveBeenCalled();
+    uncaught(page, failure("after consent"));
+    const later = await errorsSent(page);
+    expect(later.at(-1)?.error?.replayId).toBe("8a1c4d2e-0f3b-4c5d-9e6f-7a8b9c0d1e2f");
+  });
+
+  test("other values of data-replay-consent do not wait", async () => {
+    const page = fakePage("https://example.com/", "", {
+      attributes: { ...WAIT, replayConsent: "yes" },
+    });
+    await runScript();
+    expect(recorders(page)).toHaveLength(1);
+  });
+
+  test("replay(true) without data-replay records nothing and warns once", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const tags: Record<string, string>[] = [{}, { replayConsent: "wait" }, { replay: "all" }];
+    for (const attributes of tags) {
+      warn.mockClear();
+      const page = fakePage("https://example.com/", "", { attributes });
+      await runScript();
+      page.window.ottertrail?.replay(true);
+      page.window.ottertrail?.replay(true);
+      expect(recorders(page)).toEqual([]);
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('needs data-replay="errors"'));
+      page.window.ottertrail?.replay(false); // Never a warning.
+      expect(warn).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  test("replay(true) twice is harmless", async () => {
+    const page = fakePage("https://example.com/", "", { attributes: WAIT });
+    await runScript();
+    page.window.ottertrail?.replay(true);
+    page.window.ottertrail?.replay(true);
+    expect(recorders(page)).toHaveLength(1);
+    const replay = fakeRecorder("x");
+    replayConfig(page)?.register(replay);
+    page.window.ottertrail?.replay(true);
+    expect(recorders(page)).toHaveLength(1);
+    expect(replay.stop).not.toHaveBeenCalled();
+    expect(replay.again).not.toHaveBeenCalled();
+  });
+
+  test("replay(false) before replay(true) cancels the start: r.js is never requested", async () => {
+    const page = fakePage("https://example.com/", "", { attributes: WAIT });
+    await runScript();
+    page.window.ottertrail?.replay(false);
+    expect(recorders(page)).toEqual([]);
+  });
+
+  test("replay(false) after replay(true) stops the recorder, running or still loading", async () => {
+    const running = fakePage("https://example.com/", "", { attributes: WAIT });
+    await runScript();
+    running.window.ottertrail?.replay(true);
+    const replay = fakeRecorder("x");
+    replayConfig(running)?.register(replay);
+    running.window.ottertrail?.replay(false);
+    expect(replay.stop).toHaveBeenCalledTimes(1);
+
+    const loading = fakePage("https://example.com/", "", { attributes: WAIT });
+    await runScript();
+    loading.window.ottertrail?.replay(true);
+    loading.window.ottertrail?.replay(false); // Before r.js has run.
+    const late = fakeRecorder("x");
+    replayConfig(loading)?.register(late);
+    expect(late.stop).toHaveBeenCalledTimes(1);
+  });
+
+  test("replay(true) after replay(false) starts a new recording: the last call wins", async () => {
+    // Declined, then agreed: r.js loads only then.
+    const declined = fakePage("https://example.com/", "", { attributes: WAIT });
+    await runScript();
+    declined.window.ottertrail?.replay(false);
+    declined.window.ottertrail?.replay(true);
+    expect(recorders(declined)).toHaveLength(1);
+    const first = fakeRecorder("first");
+    replayConfig(declined)?.register(first);
+    expect(first.stop).not.toHaveBeenCalled();
+
+    // Agreed, withdrew, agreed again: the stopped recorder starts a new one.
+    declined.window.ottertrail?.replay(false);
+    expect(first.stop).toHaveBeenCalledTimes(1);
+    declined.window.ottertrail?.replay(true);
+    expect(first.again).toHaveBeenCalledTimes(1);
+    expect(recorders(declined)).toHaveLength(1); // r.js is not loaded again.
+    const second = fakeRecorder("second");
+    replayConfig(declined)?.register(second); // As r.js registers the new one.
+    expect(second.stop).not.toHaveBeenCalled();
+    uncaught(declined, failure("boom"));
+    const errors = await errorsSent(declined);
+    expect(errors.at(-1)?.error?.replayId).toBe("second");
+    expect(first.error).not.toHaveBeenCalled();
+
+    // While r.js is still loading, false then true leaves it recording.
+    const loading = fakePage("https://example.com/", "", { attributes: WAIT });
+    await runScript();
+    loading.window.ottertrail?.replay(true);
+    loading.window.ottertrail?.replay(false);
+    loading.window.ottertrail?.replay(true);
+    expect(recorders(loading)).toHaveLength(1);
+    const kept = fakeRecorder("x");
+    replayConfig(loading)?.register(kept);
+    expect(kept.stop).not.toHaveBeenCalled();
+    expect(kept.again).not.toHaveBeenCalled();
+  });
+
+  test("without data-replay-consent, replay(false) then replay(true) records again too", async () => {
+    const page = fakePage("https://example.com/", "", { attributes: { replay: "errors" } });
+    await runScript();
+    const replay = fakeRecorder("x");
+    replayConfig(page)?.register(replay);
+    page.window.ottertrail?.replay(false);
+    page.window.ottertrail?.replay(true);
+    expect(replay.stop).toHaveBeenCalledTimes(1);
+    expect(replay.again).toHaveBeenCalledTimes(1);
+  });
+
+  test("calls queued before the tracker ran are made once it runs, the last one only", async () => {
+    const agreed = fakePage("https://example.com/", "", { attributes: WAIT });
+    standIn(agreed).replay(true);
+    await runScript();
+    expect(recorders(agreed)).toHaveLength(1);
+    // The stand-in is replaced: later calls reach the tracker.
+    agreed.window.ottertrail?.replay(false);
+    const replay = fakeRecorder("x");
+    replayConfig(agreed)?.register(replay);
+    expect(replay.stop).toHaveBeenCalledTimes(1);
+
+    // Agreed, then declined, before the tracker ran: r.js is never requested.
+    const changed = fakePage("https://example.com/", "", { attributes: WAIT });
+    const early = standIn(changed);
+    early.replay(true);
+    early.replay(false);
+    await runScript();
+    expect(recorders(changed)).toEqual([]);
+
+    // Without waiting, a queued false stops the recorder as it registers.
+    const declined = fakePage("https://example.com/", "", { attributes: { replay: "errors" } });
+    standIn(declined).replay(false);
+    await runScript();
+    const stopped = fakeRecorder("x");
+    replayConfig(declined)?.register(stopped);
+    expect(stopped.stop).toHaveBeenCalledTimes(1);
+
+    // The last entry counts as the API takes it: only true starts.
+    const denied = fakePage("https://example.com/", "", { attributes: WAIT });
+    const queue = standIn(denied);
+    queue.replay(true);
+    queue.replay("denied");
+    await runScript();
+    expect(recorders(denied)).toEqual([]);
+  });
+
+  test("before the tracker runs, the stand-in's other calls do nothing, and never throw", async () => {
+    const page = fakePage("https://example.com/", "", { attributes: WAIT });
+    const early = standIn(page);
+    expect(() => {
+      page.window.ottertrail?.track("signup", { plan: "free" });
+      page.window.ottertrail?.identify("42");
+      page.window.ottertrail?.reset();
+      page.window.ottertrail?.captureError(new Error("caught"));
+    }).not.toThrow();
+    expect(early.q).toEqual([]);
+    await runScript();
+    page.hide();
+    await page.settle();
+    // None of them was queued: only the pageview went.
+    expect(page.events.map((event) => event.name)).toEqual(["pageview"]);
+  });
+
+  test("a reference kept to the stand-in reaches the tracker once it runs", async () => {
+    const page = fakePage("https://example.com/", "", { attributes: WAIT });
+    const kept = standIn(page);
+    kept.replay(true);
+    await runScript();
+    expect(page.window.ottertrail).not.toBe(kept);
+    const replay = fakeRecorder("x");
+    replayConfig(page)?.register(replay);
+    kept.replay(false);
+    expect(replay.stop).toHaveBeenCalledTimes(1);
+    kept.track("signup");
+    page.hide();
+    await page.settle();
+    expect(page.events.map((event) => event.name)).toContain("signup");
+  });
+
+  test("a tracker on the page twice: the second warns and does nothing, so replay(false) reaches the recorder", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const page = fakePage("https://example.com/", "", { attributes: WAIT });
+    standIn(page).replay(true);
+    await runScript(); // In the template.
+    const api = page.window.ottertrail;
+    await runScript(); // And in a tag manager.
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("on this page twice"));
+    expect(page.window.ottertrail).toBe(api);
+    expect(recorders(page)).toHaveLength(1);
+    const replay = fakeRecorder("x");
+    replayConfig(page)?.register(replay);
+    page.window.ottertrail?.replay(false);
+    expect(replay.stop).toHaveBeenCalledTimes(1);
+    page.hide();
+    await page.settle();
+    expect(page.events.filter((event) => event.name === "pageview")).toHaveLength(1);
+  });
+
+  test("replay(true) on a tag pinned with integrity warns once and records nothing", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const page = fakePage("https://example.com/", "", { attributes: WAIT });
+    Object.assign(page.document.currentScript, {
+      hasAttribute: (name: string) => name === "integrity",
+    });
+    await runScript();
+    page.window.ottertrail?.replay(true);
+    page.window.ottertrail?.replay(true);
+    expect(page.added).toEqual([]);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("integrity"));
+  });
+
+  test("an older r.js without again() fails quietly, with one warning", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const page = fakePage("https://example.com/", "", { attributes: WAIT });
+    await runScript();
+    page.window.ottertrail?.replay(true);
+    const old = {
+      error: vi.fn<Recorder["error"]>(() => undefined),
+      stop: vi.fn<Recorder["stop"]>(),
+    };
+    replayConfig(page)?.register(old as unknown as Recorder);
+    page.window.ottertrail?.replay(false);
+    expect(() => {
+      page.window.ottertrail?.replay(true);
+      page.window.ottertrail?.replay(false);
+      page.window.ottertrail?.replay(true);
+    }).not.toThrow();
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("could not be changed"));
+  });
+
+  test("nothing is written to cookies or storage", async () => {
+    const page = fakePage("https://example.com/", "", { attributes: WAIT });
+    const writes: string[] = [];
+    Object.defineProperty(page.document, "cookie", {
+      get: () => "",
+      set: (value: string) => {
+        writes.push(`cookie ${value}`);
+      },
+    });
+    const storage = (name: string) => ({
+      length: 0,
+      getItem: () => null,
+      key: () => null,
+      setItem: (key: string) => writes.push(`${name} ${key}`),
+      removeItem: (key: string) => writes.push(`${name} remove ${key}`),
+      clear: () => writes.push(`${name} clear`),
+    });
+    vi.stubGlobal("localStorage", storage("localStorage"));
+    vi.stubGlobal("sessionStorage", storage("sessionStorage"));
+    Object.assign(page.window, {
+      localStorage: storage("localStorage"),
+      sessionStorage: storage("sessionStorage"),
+    });
+    await runScript();
+    page.window.ottertrail?.replay(true);
+    replayConfig(page)?.register(fakeRecorder("x"));
+    page.window.ottertrail?.replay(false);
+    page.window.ottertrail?.replay(true);
+    page.hide();
+    await page.settle();
+    expect(writes).toEqual([]);
   });
 });

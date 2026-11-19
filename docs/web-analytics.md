@@ -350,7 +350,7 @@ A delete takes at most 10,000 visits; past that it refuses, deleting nothing (40
 
 ## 3. The tracker
 
-`packages/tracker` builds `dist/tracker.js`, the script a site adds to its pages: about 9.4 KB, 4.1 KB gzipped. It loads `dist/v.js` (3.7 KB gzipped) from beside itself to measure [Web Vitals](#web-vitals), and `dist/r.js` (29 KB gzipped) to record [session replays](session-replay.md) when the page asks for them.
+`packages/tracker` builds `dist/tracker.js`, the script a site adds to its pages: about 10.3 KB, 4.4 KB gzipped. It loads `dist/v.js` (3.7 KB gzipped) from beside itself to measure [Web Vitals](#web-vitals), and `dist/r.js` (29 KB gzipped) to record [session replays](session-replay.md) when the page asks for them.
 
 ```html
 <script
@@ -371,7 +371,7 @@ It sends a pageview when the page loads and whenever the path changes, and gives
 window.ottertrail?.track("signup", { plan: "free" });
 ```
 
-`pageview`, `engagement`, `error`, and `vitals` are the tracker's own events: `track()` refuses those names, with a warning. The tracker also reports uncaught errors and unhandled promise rejections, and errors the site reports with `window.ottertrail.captureError(error)`; `data-errors="off"` turns automatic capture off ([errors](errors.md#1-capture)). `data-replay="errors"` records what happened before an error, masked in the browser, when the project's settings take replays too ([session replay](session-replay.md)).
+`pageview`, `engagement`, `error`, and `vitals` are the tracker's own events: `track()` refuses those names, with a warning. The tracker also reports uncaught errors and unhandled promise rejections, and errors the site reports with `window.ottertrail.captureError(error)`; `data-errors="off"` turns automatic capture off ([errors](errors.md#1-capture)). `data-replay="errors"` records what happened before an error, masked in the browser, when the project's settings take replays too ([session replay](session-replay.md)). With `data-replay-consent="wait"` beside it, recording waits until the page calls `window.ottertrail.replay(true)`, when the visitor agrees; `window.ottertrail.replay(false)` stops it and drops what was recorded, and the last call wins. A page that may call before the deferred tracker runs defines a small stand-in that queues the answer ([waiting for consent](session-replay.md#waiting-for-consent)); with it, `track()`, `identify()`, `reset()`, and `captureError()` do nothing before the tracker runs (they are not queued), and never throw. The tracker loaded twice on one page warns, and the second copy does nothing. Nothing about consent is stored on the device: the site calls `replay(true)` on each page load once its consent tool knows the answer.
 
 ### It runs on someone else's site
 

@@ -6,8 +6,14 @@ export function installSnippet(instanceOrigin: string, publicKey: string): strin
   return `<script defer src="${instanceOrigin}/t.js" data-key="${publicKey}" data-host="${instanceOrigin}"></script>`;
 }
 
-/** Where coding agents read how to add Ottertrail to an app: the one place this address is kept. */
-export const AGENT_DOCS_URL = "https://docs.ottertrail.app/llms.txt";
+/** The docs site: the one place its address is kept. */
+export const DOCS_URL = "https://docs.ottertrail.app";
+
+/** Where coding agents read how to add Ottertrail to an app. */
+export const AGENT_DOCS_URL = `${DOCS_URL}/llms.txt`;
+
+/** Session replay's consent section, for sites that ask visitors before recording. */
+export const REPLAY_CONSENT_DOCS_URL = `${DOCS_URL}/session-replay/turning-it-on/#consent`;
 
 /**
  * What "Copy setup prompt" copies, for a coding agent: the instance's

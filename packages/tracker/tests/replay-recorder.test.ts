@@ -217,6 +217,39 @@ describe("the replay recorder", () => {
     expect(page.sent).toEqual([]);
   });
 
+  test("again() after the page's stop starts a new recording, once", () => {
+    const again = vi.fn<() => void>();
+    const page = setup([], { again });
+    page.recorder.again(); // Still recording: nothing to start again.
+    expect(again).not.toHaveBeenCalled();
+    page.recorder.stop();
+    page.recorder.again();
+    page.recorder.again();
+    expect(again).toHaveBeenCalledTimes(1);
+  });
+
+  test("again() does nothing after the recorder stopped itself", async () => {
+    const again = vi.fn<() => void>();
+    const refused = setup([[403, { error: "replay_off" }]], { again });
+    refused.emit(meta());
+    refused.emit(snapshot("only"));
+    refused.recorder.error();
+    await vi.waitFor(() => expect(refused.fetch).toHaveBeenCalledTimes(1));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    refused.recorder.stop();
+    refused.recorder.again();
+
+    const failed = setup([], { again });
+    failed.emit({
+      get timestamp(): number {
+        throw new Error("unreadable");
+      },
+    });
+    failed.recorder.stop();
+    failed.recorder.again();
+    expect(again).not.toHaveBeenCalled();
+  });
+
   test("if the filter fails, the recording stops and nothing is sent (fail closed)", async () => {
     const page = setup();
     page.emit(meta());
