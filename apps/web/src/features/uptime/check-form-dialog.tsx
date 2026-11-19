@@ -351,7 +351,12 @@ function CheckForm({
       <DialogFooter>
         <DialogClose render={<Button variant="outline" type="button" />}>Cancel</DialogClose>
         <Button type="submit" disabled={save.isPending}>
-          {save.isPending && <LoaderCircleIcon aria-hidden="true" className="animate-spin" />}
+          {save.isPending && (
+            <LoaderCircleIcon
+              aria-hidden="true"
+              className="animate-spin motion-reduce:animate-none"
+            />
+          )}
           {check === undefined ? "Add check" : "Save changes"}
         </Button>
       </DialogFooter>

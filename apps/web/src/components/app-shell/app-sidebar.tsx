@@ -431,7 +431,11 @@ function ProjectMenu({ projectId }: { projectId: string }) {
               <SidebarMenuButton
                 render={<Link to="/projects/$projectId/alerts" params={{ projectId }} />}
                 isActive={
-                  matchRoute({ to: "/projects/$projectId/alerts", params: { projectId } }) !== false
+                  matchRoute({
+                    to: "/projects/$projectId/alerts",
+                    params: { projectId },
+                    fuzzy: true,
+                  }) !== false
                 }
                 tooltip="Alerts"
               >

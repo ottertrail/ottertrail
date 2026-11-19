@@ -41,6 +41,9 @@ const waterfallButtons = () =>
     button.textContent?.trim(),
   );
 
+/** The selected log record, beside the list. */
+const logPane = () => page.getByRole("region", { name: "Logs, selected" });
+
 const logEntries = (name: string) => [
   ...page.getByRole("list", { name }).element().querySelectorAll(":scope > li"),
 ];
@@ -56,13 +59,18 @@ describe("the traces page", () => {
     expect(lastQuery(api, "/traces")).toEqual({ period: "7d" });
     await expect.element(sidebarLink("Traces")).toHaveAttribute("data-active");
     const first = [...tracesTable().element().querySelectorAll("tbody tr")][0];
-    expect([...(first?.querySelectorAll("td") ?? [])].map((cell) => cell.textContent)).toEqual([
+    // The root span's name, service, start, and status; its duration and spans.
+    expect(
+      [...(first?.querySelectorAll("a, td > p > *, td:not(:first-child)") ?? [])].map(
+        (cell) => cell.textContent,
+      ),
+    ).toEqual([
       "POST /orders/{id}/charge",
       "web",
       "16 Nov 2026, 16:00:00.000",
+      "Error",
       "182 ms",
       "5",
-      "Error",
     ]);
   });
 
@@ -241,21 +249,28 @@ describe("the logs page", () => {
     await expect.poll(() => logEntries("Log records, newest first").length).toBe(50);
     expect(lastQuery(api, "/logs")).toEqual({ period: "7d" });
 
+    // A record opens beside the list; its trace, in the Traces workbench on its span.
     const list = page.getByRole("list", { name: "Log records, newest first" });
     await list.getByRole("button", { name: /Payment declined/ }).click();
     await expect
-      .element(list.getByRole("table", { name: "Attributes" }))
+      .element(logPane().getByRole("table", { name: "Attributes" }))
       .toMatchTextContent(/order\.id5120/);
     await expect
-      .element(list.getByRole("table", { name: "Resource attributes" }))
+      .element(logPane().getByRole("table", { name: "Resource attributes" }))
       .toMatchTextContent(/host\.nameweb-1/);
-    await list.getByRole("link", { name: `Open trace ${FAKE_TRACE_ID}` }).click();
+    await logPane()
+      .getByRole("link", { name: `Open trace ${FAKE_TRACE_ID}` })
+      .click();
 
-    await expect.poll(() => router.state.location.pathname).toBe(TRACE);
+    await expect.poll(() => router.state.location.pathname).toBe(TRACES);
     expect(router.state.location.search).toEqual({
+      trace: FAKE_TRACE_ID,
       at: "2026-11-16T08:00:00.000Z",
       span: FAKE_SPANS.charge,
     });
+    await expect
+      .element(page.getByRole("button", { name: "Level 2: charge card" }))
+      .toHaveAttribute("aria-pressed", "true");
   });
 
   test("searches words, filters by severity and trace, and pages back", async () => {
@@ -310,11 +325,11 @@ describe("the logs page", () => {
     expect(api.requests.some((request) => request.includes("/logs/"))).toBe(false);
 
     await row.click();
-    await expect.element(list.getByText(/the end$/)).toBeVisible();
+    await expect.element(logPane().getByText(/the end$/)).toBeVisible();
     expect(api.requests).toContain(
       `/api/projects/${PROJECT.id}/logs/${"1".padStart(32, "0")}?time=${Date.UTC(2026, 10, 16, 7, 59)}000000`,
     );
-    await expect.element(list.getByRole("table", { name: "Attributes" })).toBeVisible();
+    await expect.element(logPane().getByRole("table", { name: "Attributes" })).toBeVisible();
   });
 
   test("an opened record that cannot load says so, with a retry", async () => {
@@ -322,11 +337,11 @@ describe("the logs page", () => {
     renderApp(LOGS);
     const list = page.getByRole("list", { name: "Log records, newest first" });
     await list.getByRole("button", { name: /Payment declined/ }).click();
-    await expect.element(list.getByText("The record could not load")).toBeVisible();
-    await expect.element(list.getByRole("button", { name: "Retry" })).toBeVisible();
+    await expect.element(logPane().getByText("The record could not load")).toBeVisible();
+    await expect.element(logPane().getByRole("button", { name: "Retry" })).toBeVisible();
     // The trace link needs only the summary.
     await expect
-      .element(list.getByRole("link", { name: `Open trace ${FAKE_TRACE_ID}` }))
+      .element(logPane().getByRole("link", { name: `Open trace ${FAKE_TRACE_ID}` }))
       .toBeVisible();
   });
 

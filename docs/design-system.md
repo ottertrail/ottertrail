@@ -204,7 +204,13 @@ A list on the left and the selected item on the right (`workbench.tsx`), on shad
 - **Focus** follows `j` and `k` to the chosen row, and moves to it when an item is chosen from inside the detail pane (a name in the summary), whose content then goes. When an action takes the selected item out of the list (resolving an error under Unresolved), `j` and `k` carry on from its last place. When the selection clears (`Esc`, Back) with focus in the detail, focus returns to the row that was chosen, or the list.
 - **Rows** carry `data-workbench-id`, so the selection scrolls into view, and mark the chosen row with `aria-current` on its link or button and `data-state="selected"` (a 2px `brand` rule at its start). Row controls stay on one line and truncate, with the whole text in `title`.
 - **Under 64rem** the list fills the screen and choosing an item calls `onOpenPage`, which goes to the item's own page. An address with a selection, opened on a narrow screen, does the same once: the list's entry loses the selection first, so Back returns to the list. A window that narrows during a session (a zoom) leaves the list where it is. Every item keeps its full page.
-- A list's quick actions (an alert rule's on or off) stay instant, on the row.
+- A list's quick actions (an alert rule's on or off, a check's pause) stay instant, on the row. Deleting the selected item selects the one after it (the one before, at the end), with focus on its row.
+- **Rows' parts** are in `workbench-rows.ts`: `selectOnPlainClick` (a plain click on a row's link selects the row; one that opens a new tab follows the link), the list table's classes (`LIST_HEAD`, `GUTTER_START`, `GUTTER_END`, `SELECTED_ROW`), and `atLeast`, which writes a count from a list the API pages or caps as "50+" while more wait. `WorkbenchStartHint` (`workbench.tsx`) is the summary's last line, "Select a …, or press j to start at the top."
+- **A summary counts only what it can.** A figure taken from the items loaded reads "at least" while more wait, and says so; a figure the API counts whole (a period's services, an error's replays) says what it covers. A filter that cannot list a kind (warnings under "Error and above") drops its figure rather than showing 0.
+- **Filters keep the selection** on Replays, Traces, and Logs: an item a filter leaves out stays in the detail pane. New filters make a new list, so `j` starts at its top (`filterKey`), not at the old place. Errors' status filter clears the selection, as Unresolved and Resolved split one set of groups in two.
+- **What belongs to the selection** goes with it (`selectionSearch`): choosing a trace sets `at` to its row's start and drops the span of the trace before.
+- **Under 64rem, what has no page of its own follows the list** (`narrowFooter`): every check's uptime on Uptime, and the alerts firing now, the recent alerts, the hourly cap, and the link to the channels on Alerts. Anything else the summary shows is one step away, on an item's page.
+- **The detail is the item's own page's view** (`ErrorView`, `ReplayView`, `TraceView`, `LogRecordView`, `UserView`, `CheckView`, `RuleView`), laid out by its own `@container`, not the window, so tables fit the pane. With `inWorkbench`, links that would leave for the same kind of item stay on the workbench (a missing item's "All …" link clears the selection; a linked trace opens beside the list). A log record has no page: under 64rem its list opens records in place, and an address with a selection opens that one.
 
 ### Settings tabs and the Save bar
 
@@ -236,7 +242,7 @@ Two breakpoints, in rem so they follow the reader's font size, with one more for
 | under 60rem | The sidebar is a sheet behind the header's menu button. Multi-column layouts go to one column.                                                   |
 | under 64rem | A workbench shows its list alone; an item opens its own page. Breakdown tables stop sitting side by side.                                        |
 
-Hooks: `useMediaQuery` with `NARROW_SHELL` and `NARROW_WORKBENCH` (`hooks/use-media-query.ts`); in classes, `sm:` (40rem), `min-[60rem]:` and `min-[64rem]:` or `lg:` (64rem). Every screen is tested at 390 and 1440 wide. Controls are 32 to 40px high with a 44px hit area on a phone, and never wrap their labels.
+Hooks: `useMediaQuery` with `PHONE`, `NARROW_SHELL`, and `NARROW_WORKBENCH` (`hooks/use-media-query.ts`); a list leaves out on a phone a column its item's page has (`PHONE`) rather than hiding cells, which in a fixed table would shift the others; in classes, `sm:` (40rem), `min-[60rem]:` and `min-[64rem]:` or `lg:` (64rem). Every screen is tested at 390 and 1440 wide. Controls are 32 to 40px high with a 44px hit area on a phone, and never wrap their labels.
 
 ### Dates
 

@@ -27,9 +27,16 @@ function lastQuery(api: FakeApi, path: string): Record<string, string> {
 }
 
 const table = () => page.getByRole("table", { name: "Session replays, newest first" });
-const rows = () => [...document.querySelectorAll("tbody tr")];
+/** The list's rows: the summary beside it has a table of its own. */
+const rows = () => [
+  ...(document.querySelector("[data-slot=workbench-list]")?.querySelectorAll("tbody tr") ?? []),
+];
+/** A row's lines: when, its error, its user and pages; then its length. */
 const cells = (row: Element | undefined) =>
-  [...(row?.querySelectorAll("td") ?? [])].map((cell) => cell.textContent);
+  [...(row?.querySelectorAll("a, td > p[title], p > span, td:last-child") ?? [])].map(
+    (cell) => cell.textContent,
+  );
+const pane = () => page.getByRole("region", { name: "Replays, selected" });
 
 /** An empty list, as the API answers one for these days. */
 const emptyList = (query: URLSearchParams): ReplayList => ({
@@ -51,44 +58,52 @@ describe("the Replays page", () => {
     await expect.poll(() => router.state.location.pathname).toBe(REPLAYS);
     await expect.element(table()).toBeVisible();
     expect(lastQuery(api, "/replays/list")).toEqual({ period: "7d" });
+    // The list holds when, the error, the user and pages, and the length; the detail
+    // beside it the rest, with the error's and the user's links.
     expect(
       [...table().element().querySelectorAll("thead th")].map((cell) => cell.textContent),
-    ).toEqual(["When", "Length", "Error", "User", "Pages", "Environment", "Browser"]);
+    ).toEqual(["Replay", "Length"]);
     await expect.poll(() => rows().length).toBe(50);
     expect(cells(rows()[0])).toEqual([
       "16 Nov 2026, 16:00",
-      "45 s",
       "TypeError: cart is undefined",
       "ada",
       "/cart → /checkout",
-      "production",
-      "Firefox, Linux, desktop",
+      "45 s",
     ]);
     // Cut, anonymous; an error never found; one still looked for.
-    expect(cells(rows()[1]).slice(0, 4)).toEqual([
+    expect(cells(rows()[1])).toEqual([
       "16 Nov 2026, 15:00",
-      "Cut12 s",
       "ReferenceError: pay is not defined",
       "Anonymous",
+      "/pricing",
+      "12 sCut",
     ]);
-    expect(cells(rows()[2])[2]).toBe("Error not found");
-    expect(cells(rows()[2])[5]).toBe("—");
-    expect(cells(rows()[3])[2]).toBe("Looking for its error…");
+    expect(cells(rows()[2])[1]).toBe("Error not found");
+    expect(cells(rows()[3])[1]).toBe("Looking for its error…");
 
-    // Each replay, its error, and its user are links.
+    // Each replay is a link to its page; a plain click shows it beside the list.
     const first = table().getByRole("row").nth(1);
     await expect
       .element(first.getByRole("link", { name: "Replay at 16 Nov 2026, 16:00" }))
       .toHaveAttribute("href", `${REPLAYS}/${fakeReplayId(0)}`);
+    await first.getByRole("link", { name: "Replay at 16 Nov 2026, 16:00" }).click();
     await expect
-      .element(first.getByRole("link", { name: "TypeError: cart is undefined" }))
+      .element(pane().getByRole("link", { name: "TypeError: cart is undefined" }))
       .toHaveAttribute(
         "href",
         `/projects/${PROJECT.id}/errors/${ERROR_FINGERPRINTS.typeError}?from=2026-11-16&to=2026-11-16`,
       );
     await expect
-      .element(first.getByRole("link", { name: "ada" }))
+      .element(pane().getByRole("link", { name: "ada" }))
       .toHaveAttribute("href", `/projects/${PROJECT.id}/users/ada`);
+    await expect.element(pane().getByText("Firefox, Linux, desktop")).toBeVisible();
+    await expect.element(pane().getByText("production", { exact: true })).toBeVisible();
+    await expect.element(table().getByRole("row").nth(3)).toBeVisible();
+    await table().getByRole("link", { name: "Replay at 16 Nov 2026, 14:00" }).click();
+    // A replay whose error was not found has no environment.
+    await expect.element(pane().getByText("Not known")).toBeVisible();
+    expect(router.state.location.pathname).toBe(REPLAYS);
 
     // Older ones on request, from the last one's cursor.
     await page.getByRole("button", { name: "Load older replays" }).click();

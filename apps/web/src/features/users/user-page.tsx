@@ -8,6 +8,7 @@ import {
   PlayIcon,
   UserXIcon,
 } from "lucide-react";
+import type * as React from "react";
 
 import { ButtonLink } from "@/components/button-link";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -237,18 +238,26 @@ function Properties({ properties }: { properties: Record<string, unknown> }) {
 }
 
 /**
- * One known user: when first and last seen, and what they did, newest
- * first, by day in the timezone set in Settings. Only events that carry the
- * user's ID: anonymous browsing before a sign-in is not theirs for sure.
+ * One known user with the loading, missing, and failed states: when first
+ * and last seen, and what they did, newest first, by day in the timezone
+ * set in Settings. Only events that carry the user's ID: anonymous browsing
+ * before a sign-in is not theirs for sure. On the user's own page, and in
+ * the Users workbench beside the list, where `actions` links to the page
+ * and a missing user's link clears the selection instead.
  */
-export function UserPage({
+export function UserView({
   projectId,
   userId,
   environment = DEFAULT_ENVIRONMENT,
+  actions,
+  inWorkbench = false,
 }: {
   projectId: string;
   userId: string;
   environment?: string;
+  /** Beside the user's ID, such as a link to their own page. */
+  actions?: React.ReactNode;
+  inWorkbench?: boolean;
 }) {
   const query = useInfiniteQuery(userQuery(projectId, userId, environment));
   const first = query.data?.pages[0];
@@ -256,34 +265,30 @@ export function UserPage({
   const timeZone = first?.timeZone;
   const usersSearch = environment === DEFAULT_ENVIRONMENT ? {} : { env: environment };
 
-  const back = (
-    <Link
-      to="/projects/$projectId/users"
-      params={{ projectId }}
-      search={usersSearch}
-      className="inline-flex items-center gap-1 text-sm text-link hover:underline"
-    >
-      <ArrowLeftIcon aria-hidden="true" className="size-4" />
-      All users
-    </Link>
-  );
-
   if (query.error instanceof ApiError && query.error.status === 404) {
     return (
-      <div className="mx-auto flex max-w-4xl flex-col gap-6 p-6">
-        {back}
-        <Empty className="border border-dashed p-10">
-          <EmptyHeader>
-            <EmptyMedia variant="icon">
-              <UserXIcon />
-            </EmptyMedia>
-            <EmptyTitle>No events from this user</EmptyTitle>
-            <EmptyDescription>
-              No event in {environment} has the user ID <span className="font-mono">{userId}</span>,
-              or the project does not exist.
-            </EmptyDescription>
-          </EmptyHeader>
-          <EmptyContent>
+      <Empty className="border border-dashed p-10">
+        <EmptyHeader>
+          <EmptyMedia variant="icon">
+            <UserXIcon />
+          </EmptyMedia>
+          <EmptyTitle>No events from this user</EmptyTitle>
+          <EmptyDescription>
+            No event in {environment} has the user ID <span className="font-mono">{userId}</span>,
+            or the project does not exist.
+          </EmptyDescription>
+        </EmptyHeader>
+        <EmptyContent>
+          {inWorkbench ? (
+            <ButtonLink
+              variant="outline"
+              to="/projects/$projectId/users"
+              params={{ projectId }}
+              search={(previous) => ({ ...previous, user: undefined })}
+            >
+              See all users
+            </ButtonLink>
+          ) : (
             <ButtonLink
               variant="outline"
               to="/projects/$projectId/users"
@@ -292,9 +297,9 @@ export function UserPage({
             >
               See all users
             </ButtonLink>
-          </EmptyContent>
-        </Empty>
-      </div>
+          )}
+        </EmptyContent>
+      </Empty>
     );
   }
 
@@ -308,10 +313,12 @@ export function UserPage({
   }
 
   return (
-    <div className="mx-auto flex max-w-4xl flex-col gap-6 p-6">
-      {back}
+    <div className="flex flex-col gap-6">
       <div className="flex flex-col gap-3">
-        <h2 className="font-mono text-xl font-semibold break-all text-ink">{userId}</h2>
+        <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
+          <h2 className="min-w-0 font-mono text-xl font-semibold break-all text-ink">{userId}</h2>
+          {actions}
+        </div>
         {first !== undefined && (
           <dl className="flex flex-wrap gap-x-8 gap-y-2 text-sm">
             <div>
@@ -435,13 +442,42 @@ export function UserPage({
               disabled={query.isFetchingNextPage}
             >
               {query.isFetchingNextPage && (
-                <LoaderCircleIcon aria-hidden="true" className="animate-spin" />
+                <LoaderCircleIcon
+                  aria-hidden="true"
+                  className="animate-spin motion-reduce:animate-none"
+                />
               )}
               Load more
             </Button>
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+/** One known user on their own page, for deep links and narrow screens. */
+export function UserPage({
+  projectId,
+  userId,
+  environment = DEFAULT_ENVIRONMENT,
+}: {
+  projectId: string;
+  userId: string;
+  environment?: string;
+}) {
+  return (
+    <div className="mx-auto flex max-w-4xl flex-col gap-6 px-gutter py-5">
+      <Link
+        to="/projects/$projectId/users"
+        params={{ projectId }}
+        search={environment === DEFAULT_ENVIRONMENT ? {} : { env: environment }}
+        className="inline-flex items-center gap-1 self-start text-sm text-link hover:underline"
+      >
+        <ArrowLeftIcon aria-hidden="true" className="size-4" />
+        All users
+      </Link>
+      <UserView projectId={projectId} userId={userId} environment={environment} />
     </div>
   );
 }

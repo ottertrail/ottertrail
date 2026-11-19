@@ -391,12 +391,22 @@ describe("a rule's evaluation on the Alerts page", () => {
       },
       ...api.alerts.rules.slice(1),
     ];
-    renderApp(ALERTS);
+    renderApp(`${ALERTS}?rule=${first.id}`);
+    // The list says since when; the rule's detail, why.
     await expect
       .element(
-        page.getByText(
-          "Not evaluated since 16 Nov 2026, 09:41: Timeout exceeded: elapsed 15 seconds",
-        ),
+        page
+          .getByRole("region", { name: "Alerts, list" })
+          .getByText("Not evaluated since 16 Nov 2026, 09:41"),
+      )
+      .toBeVisible();
+    await expect
+      .element(
+        page
+          .getByRole("region", { name: "Alerts, selected" })
+          .getByText(
+            "Not evaluated since 16 Nov 2026, 09:41: Timeout exceeded: elapsed 15 seconds",
+          ),
       )
       .toBeVisible();
   });

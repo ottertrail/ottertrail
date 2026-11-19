@@ -126,7 +126,10 @@ function TimelineList({
  * nothing: nothing from the recording comes into the dashboard's page.
  * The timeline moves the player with a message to its frame, and hears
  * where it is from the same frame: both on this origin, and checked
- * (lib/replay-messages.ts).
+ * (lib/replay-messages.ts). The timeline sits beside the player where the
+ * nearest `@container` is 56rem wide or more, and under it otherwise (the
+ * pane beside the replays list), where the player scales the recorded
+ * page down to its width.
  */
 export function ReplayViewer({
   projectId,
@@ -184,7 +187,7 @@ export function ReplayViewer({
   return (
     <div
       className={cn(
-        "grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)_minmax(0,12rem)] gap-3 lg:grid-cols-[minmax(0,1fr)_18rem] lg:grid-rows-1",
+        "grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)_minmax(0,12rem)] gap-3 @4xl:grid-cols-[minmax(0,1fr)_18rem] @4xl:grid-rows-1",
         className,
       )}
     >

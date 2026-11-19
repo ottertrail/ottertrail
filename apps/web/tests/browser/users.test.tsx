@@ -36,7 +36,6 @@ describe("the users page", () => {
     expect([...(firstRow?.querySelectorAll("td") ?? [])].map((cell) => cell.textContent)).toEqual([
       "user-1",
       expect.stringMatching(/ago|yesterday|just now/),
-      "1 Nov 2026",
       "120",
     ]);
   });
@@ -92,9 +91,35 @@ describe("the users page", () => {
     await expect
       .element(page.getByRole("combobox", { name: "Environment" }))
       .toMatchTextContent(/staging/);
-    await page.getByRole("link", { name: "user-1", exact: true }).click();
-    await expect.poll(() => router.state.location.search).toEqual({ env: "staging" });
-    expect(router.state.location.pathname).toBe(`${USERS}/user-1`);
+    // The row links to the user's page in this environment; a plain click shows them beside it.
+    const row = page
+      .getByRole("region", { name: "Users, list" })
+      .getByRole("link", { name: "user-1", exact: true });
+    await expect.element(row).toHaveAttribute("href", `${USERS}/user-1?env=staging`);
+    await row.click();
+    await expect
+      .poll(() => router.state.location.search)
+      .toEqual({ env: "staging", user: "user-1" });
+    expect(router.state.location.pathname).toBe(USERS);
+  });
+
+  test("shows a user's first seen beside the list, where the list no longer has it", async () => {
+    installFakeApi({
+      user: (userId, query) => {
+        const answer = fakeUser("ada", query);
+        return answer instanceof Response
+          ? answer
+          : {
+              ...answer,
+              user: { ...answer.user, userId, firstSeenAt: "2026-11-01T02:00:00.000Z" },
+            };
+      },
+    });
+    renderApp(`${USERS}?user=user-1`);
+    const detail = page.getByRole("region", { name: "Users, selected" });
+    const term = detail.getByText("First seen", { exact: true });
+    await expect.element(term).toBeVisible();
+    expect(term.element().nextElementSibling?.textContent).toBe("1 Nov 2026, 10:00");
   });
 });
 

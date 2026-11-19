@@ -2786,18 +2786,31 @@ function notSeenWarning(rule: Rule): SaveWarning | null {
 }
 
 /** The alert routes; null for any other path. */
-function answerAlerts(api: FakeApi, path: string, init?: RequestInit): Response | null {
+/** Alerts, 20 a page after `before`, as the API pages them. */
+function alertPage(alerts: FakeApi["alerts"]["history"], query: URLSearchParams) {
+  const before = query.get("before");
+  const start = before === null ? 0 : alerts.findIndex((alert) => alert.id === before) + 1;
+  const page = alerts.slice(start, start + 20);
+  return {
+    timeZone: "Asia/Singapore",
+    retentionDays: 90,
+    alerts: page,
+    next: start + 20 < alerts.length ? (page.at(-1)?.id ?? null) : null,
+  };
+}
+
+function answerAlerts(
+  api: FakeApi,
+  path: string,
+  init: RequestInit | undefined,
+  query: URLSearchParams,
+): Response | null {
   const body = () => JSON.parse(typeof init?.body === "string" ? init.body : "null") as unknown;
   if (/^\/api\/projects\/[^/]+\/alerts\/firing$/.test(path)) {
     return json({ timeZone: "Asia/Singapore", alerts: api.alerts.firing });
   }
   if (/^\/api\/projects\/[^/]+\/alerts$/.test(path)) {
-    return json({
-      timeZone: "Asia/Singapore",
-      retentionDays: 90,
-      alerts: api.alerts.history,
-      next: null,
-    });
+    return json(alertPage(api.alerts.history, query));
   }
   if (/^\/api\/projects\/[^/]+\/alert-rules$/.test(path)) {
     if (init?.method === "POST") return saveRule(api, body());
@@ -2807,6 +2820,22 @@ function answerAlerts(api: FakeApi, path: string, init?: RequestInit): Response 
       hourlyCap: 20,
       rules: api.alerts.rules,
     });
+  }
+  const historyPath = /^\/api\/projects\/[^/]+\/alert-rules\/([^/]+)\/history$/.exec(path);
+  if (historyPath?.[1] !== undefined) {
+    const ruleId = decodeURIComponent(historyPath[1]);
+    if (!api.alerts.rules.some((rule) => rule.id === ruleId)) {
+      return json(
+        { error: "rule_not_found", message: "The project has no alert rule with this ID." },
+        404,
+      );
+    }
+    return json(
+      alertPage(
+        api.alerts.history.filter((alert) => alert.ruleId === ruleId),
+        query,
+      ),
+    );
   }
   const rulePath = /^\/api\/projects\/[^/]+\/alert-rules\/([^/]+)$/.exec(path);
   if (rulePath?.[1] === undefined) return null;
@@ -3328,7 +3357,7 @@ async function answer(api: FakeApi, url: URL, init: RequestInit | undefined): Pr
   }
   const overview = await answerOverview(api, url, init);
   if (overview !== null) return overview;
-  const alerts = answerAlerts(api, path, init);
+  const alerts = answerAlerts(api, path, init, url.searchParams);
   if (alerts !== null) return alerts;
   const checkSubPath = /^\/api\/projects\/[^/]+\/checks\/([^/]+)\/(results|incidents)$/.exec(path);
   if (checkSubPath?.[1] !== undefined) {

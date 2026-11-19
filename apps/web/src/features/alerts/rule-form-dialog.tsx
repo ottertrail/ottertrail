@@ -918,7 +918,12 @@ function RuleForm({
       <DialogFooter>
         <DialogClose render={<Button variant="outline" type="button" />}>Cancel</DialogClose>
         <Button type="submit" disabled={save.isPending}>
-          {save.isPending && <LoaderCircleIcon aria-hidden="true" className="animate-spin" />}
+          {save.isPending && (
+            <LoaderCircleIcon
+              aria-hidden="true"
+              className="animate-spin motion-reduce:animate-none"
+            />
+          )}
           {rule === undefined ? "Add rule" : "Save changes"}
         </Button>
       </DialogFooter>

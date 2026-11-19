@@ -48,6 +48,9 @@ export function Workbench({
   summary,
   action,
   onOpenPage,
+  selectionSearch,
+  filterKey,
+  narrowFooter,
   className,
 }: {
   /** Names the two panes for screen readers: "Errors". */
@@ -63,9 +66,29 @@ export function Workbench({
   action?: WorkbenchAction;
   /** Opens the item's own page (a new history entry). */
   onOpenPage: (id: string) => void;
+  /**
+   * Other address values that belong to the selection, set with it: a
+   * trace's start, and no span of the trace before it.
+   */
+  selectionSearch?: (id: string | undefined) => Record<string, unknown>;
+  /**
+   * The list's filters, as text: when they change, `j` starts from the top
+   * again rather than from where a selection that left the list had been.
+   */
+  filterKey?: string;
+  /**
+   * Under 64rem, shown under the list: what the summary holds that has no
+   * page of its own (the alerts firing now, every check's uptime).
+   */
+  narrowFooter?: React.ReactNode;
   className?: string;
 }) {
-  const [selected, setSelected] = useSearchParam(param);
+  const [selected, setSelectedParam] = useSearchParam(param);
+  const setSelected = React.useCallback(
+    (id: string | undefined, { replace = false }: { replace?: boolean } = {}) =>
+      setSelectedParam(id, { replace, also: selectionSearch?.(id) ?? {} }),
+    [setSelectedParam, selectionSearch],
+  );
   const narrow = useMediaQuery(NARROW_WORKBENCH);
   const listRef = React.useRef<HTMLElement>(null);
   const detailRef = React.useRef<HTMLElement>(null);
@@ -144,11 +167,25 @@ export function Workbench({
 
   // Where the selection last was in the list: when an action takes it out of the list
   // (resolving an error under Unresolved), j and k carry on from there, not the top.
+  // New filters make a new list, which j starts at its top.
   const lastIndex = React.useRef(-1);
+  const shownFilters = React.useRef(filterKey);
+  // The list and selection when the filters changed: the old list stays on screen until
+  // the new one comes, and the selection's place in it no longer counts.
+  const beforeFilters = React.useRef<string | null>(null);
   React.useEffect(() => {
+    const shown = `${selected ?? ""}\n${ids.join("\n")}`;
+    if (shownFilters.current !== filterKey) {
+      shownFilters.current = filterKey;
+      beforeFilters.current = shown;
+      lastIndex.current = -1;
+      return;
+    }
+    if (beforeFilters.current === shown) return;
+    beforeFilters.current = null;
     const index = selected === undefined ? -1 : ids.indexOf(selected);
     if (index !== -1) lastIndex.current = index;
-  }, [ids, selected]);
+  }, [ids, selected, filterKey]);
 
   React.useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -205,6 +242,15 @@ export function Workbench({
     return (
       <div data-slot="workbench" className={cn("min-h-0", className)}>
         {listPane}
+        {narrowFooter !== undefined && (
+          <section
+            aria-label={`${label}, overview`}
+            data-slot="workbench-footer"
+            className="border-t"
+          >
+            {narrowFooter}
+          </section>
+        )}
       </div>
     );
   }
@@ -230,6 +276,15 @@ export function Workbench({
         </section>
       </ResizablePanel>
     </ResizablePanelGroup>
+  );
+}
+
+/** The summary's last line: how to choose an item. */
+export function WorkbenchStartHint({ noun }: { noun: string }) {
+  return (
+    <p className="border-t pt-5 text-sm text-ink-muted">
+      Select {noun}, or press <Kbd>j</Kbd> to start at the top.
+    </p>
   );
 }
 

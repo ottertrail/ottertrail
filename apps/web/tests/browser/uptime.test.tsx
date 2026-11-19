@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vite-plus/test";
+import { afterEach, describe, expect, test } from "vite-plus/test";
 import { page } from "vite-plus/test/browser/context";
 
 import { fakeChecks, installFakeApi, PROJECT } from "./fake-api.ts";
@@ -7,6 +7,10 @@ import { renderApp } from "./render.tsx";
 const UPTIME = `/projects/${PROJECT.id}/uptime`;
 const CHECKS_PATH = `/api/projects/${PROJECT.id}/checks`;
 const [SHOP, API] = fakeChecks();
+
+afterEach(async () => {
+  await page.viewport(1280, 900);
+});
 
 const sidebarLink = (name: string) =>
   page.getByRole("navigation", { name: "Project" }).getByRole("link", { name });
@@ -19,6 +23,10 @@ const rowsOf = (caption: string) => {
     [...row.cells].map((cell) => cell.textContent ?? ""),
   );
 };
+
+/** A link in the checks list: the summary beside it names the checks too. */
+const listLink = (name: string, exact = false) =>
+  page.getByRole("region", { name: "Uptime, list" }).getByRole("link", { name, exact });
 
 const dialog = (name: string | RegExp) => page.getByRole("dialog", { name });
 
@@ -37,11 +45,15 @@ describe("the uptime page", () => {
     await expect.element(page.getByRole("table", { name: "Uptime checks" })).toBeVisible();
     await expect.element(sidebarLink("Uptime")).toHaveAttribute("data-active");
     expect(api.requests).toContain(CHECKS_PATH);
-    const rows = rowsOf("Uptime checks").map((cells) => cells.slice(0, 7));
-    expect(rows).toEqual([
+    // The list: each check, its state, its last 24 hours; every window and the latest run
+    // in the summary beside it.
+    expect(rowsOf("Uptime checks").map((cells) => cells.slice(0, 3))).toEqual([
+      ["Shop homeGET https://shop.example/, every minute", "Up", "100%"],
+      ["API healthGET https://api.shop.example/health, every 5 minutes", "Down", "70.00%"],
+    ]);
+    expect(rowsOf("Uptime of each check")).toEqual([
       [
-        "Shop homeGET https://shop.example/, every minute",
-        "Up",
+        "Shop home",
         "100%",
         // Cut, not rounded: 99.951% reads 99.95%.
         "99.95%",
@@ -50,8 +62,7 @@ describe("the uptime page", () => {
         "16 Nov 2026, 16:59",
       ],
       [
-        "API healthGET https://api.shop.example/health, every 5 minutes",
-        "Down",
+        "API health",
         "70.00%",
         "95.00%",
         // The check did not exist for the whole 30 days.
@@ -148,9 +159,9 @@ describe("the uptime page", () => {
         failuresBeforeDown: 3,
       },
     });
-    await expect.element(page.getByRole("link", { name: "Status page" })).toBeVisible();
-    expect(rowsOf("Uptime checks")[0]?.slice(1, 7)).toEqual([
-      "Pending",
+    await expect.element(listLink("Status page")).toBeVisible();
+    expect(rowsOf("Uptime checks")[0]?.slice(1, 3)).toEqual(["Pending", "–"]);
+    expect(rowsOf("Uptime of each check")[0]?.slice(1)).toEqual([
       "–",
       "–",
       "–",
@@ -175,7 +186,7 @@ describe("the uptime page", () => {
       path: `${CHECKS_PATH}/${API?.id}`,
       body: { name: "API", url: API?.url, intervalSeconds: 300 },
     });
-    await expect.element(page.getByRole("link", { name: "API", exact: true })).toBeVisible();
+    await expect.element(listLink("API", true)).toBeVisible();
 
     await page.getByRole("button", { name: "Pause Shop home" }).click();
     await expect.element(page.getByRole("button", { name: "Resume Shop home" })).toBeVisible();
@@ -190,7 +201,7 @@ describe("the uptime page", () => {
     const confirm = dialog("Delete the check “Shop home”?");
     await confirm.getByRole("button", { name: "Delete check" }).click();
     await expect.element(confirm).not.toBeInTheDocument();
-    await expect.element(page.getByRole("link", { name: "Shop home" })).not.toBeInTheDocument();
+    await expect.element(listLink("Shop home")).not.toBeInTheDocument();
     expect(api.requests.filter((path) => path === `${CHECKS_PATH}/${SHOP?.id}`)).toEqual([
       `${CHECKS_PATH}/${SHOP?.id}`,
       `${CHECKS_PATH}/${SHOP?.id}`,
@@ -201,11 +212,16 @@ describe("the uptime page", () => {
 describe("a check's page", () => {
   test("opens from the list with its state, uptime, response time, incidents, and failures", async () => {
     const api = installFakeApi();
+    // Narrower than 64rem, where a row's link opens the check's page (wider, it selects the
+    // row: list-workbenches.test.tsx).
+    await page.viewport(800, 900);
     const router = renderApp(UPTIME);
-    await page.getByRole("link", { name: "API health" }).click();
+    await listLink("API health").click();
 
     await expect.poll(() => router.state.location.pathname).toBe(`${UPTIME}/${API?.id}`);
     await expect.element(page.getByRole("heading", { name: "API health" })).toBeVisible();
+    // The sidebar shows beside the page from 60rem.
+    await page.viewport(1280, 900);
     await expect.element(sidebarLink("Uptime")).toHaveAttribute("data-active");
     await expect
       .element(page.getByText("Down since 16 Nov 2026, 09:40: Status code."))

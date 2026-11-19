@@ -106,6 +106,7 @@ export function AlertRulesCard({
                 <Link
                   to="/projects/$projectId/alerts"
                   params={{ projectId }}
+                  search={{ rule: rule.id }}
                   className="font-medium text-link hover:underline"
                 >
                   {rule.name}

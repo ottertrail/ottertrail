@@ -40,6 +40,13 @@ import {
   WorkbenchKeyHints,
   type WorkbenchListProps,
 } from "@/components/workbench";
+import {
+  GUTTER_END,
+  GUTTER_START,
+  LIST_HEAD,
+  SELECTED_ROW,
+  selectOnPlainClick,
+} from "@/components/workbench-rows";
 import { NARROW_WORKBENCH, useMediaQuery } from "@/hooks/use-media-query";
 import { useAccess } from "@/lib/access";
 import { DEFAULT_ENVIRONMENT, type PageRange } from "@/lib/analytics-api";
@@ -126,9 +133,9 @@ function NoErrors({ status, environment }: { status: StatusFilter; environment: 
   );
 }
 
-const headClass = "h-9 text-xs font-normal text-ink-subtle";
-const gutterStart = "pl-[var(--gutter)]";
-const gutterEnd = "pr-[var(--gutter)]";
+const headClass = LIST_HEAD;
+const gutterStart = GUTTER_START;
+const gutterEnd = GUTTER_END;
 
 /**
  * The listed groups, latest seen first (the order the API reads them in, so
@@ -184,7 +191,7 @@ function ErrorTable({
               key={group.fingerprint}
               data-workbench-id={group.fingerprint}
               data-state={chosen ? "selected" : undefined}
-              className="data-[state=selected]:shadow-[inset_2px_0_0_var(--brand)]"
+              className={SELECTED_ROW}
             >
               <TableCell className={`${gutterStart} py-2.5 align-top whitespace-normal`}>
                 <Link
@@ -192,20 +199,8 @@ function ErrorTable({
                   params={{ projectId, fingerprint: group.fingerprint }}
                   search={detailSearch}
                   aria-current={chosen ? "true" : undefined}
-                  onClick={(event) => {
-                    // A new tab or window still opens the page; a plain click selects.
-                    if (
-                      event.button !== 0 ||
-                      event.metaKey ||
-                      event.ctrlKey ||
-                      event.shiftKey ||
-                      event.altKey
-                    ) {
-                      return;
-                    }
-                    event.preventDefault();
-                    select(group.fingerprint);
-                  }}
+                  // A new tab or window still opens the page; a plain click selects.
+                  onClick={selectOnPlainClick(select, group.fingerprint)}
                   className="line-clamp-2 rounded-sm break-words text-link hover:underline"
                   title={`${group.type}: ${group.message}`}
                 >

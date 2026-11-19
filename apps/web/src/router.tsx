@@ -16,6 +16,7 @@ import { AppLayout } from "@/app";
 import { NoAccess } from "@/components/no-access";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AlertsPage } from "@/features/alerts/alerts-page";
+import { RulePage } from "@/features/alerts/rule-view";
 import { AnalyticsPage } from "@/features/analytics/analytics-page";
 import { InvitePage } from "@/features/auth/invite-page";
 import { ResetPasswordPage } from "@/features/auth/reset-password-page";
@@ -86,6 +87,7 @@ import { authClient } from "@/lib/auth-client";
 import { DEFAULT_DATABASE_SORT, isDatabaseSort } from "@/lib/databases-api";
 import { DEFAULT_STATUS_FILTER, isStatusFilter, type StatusFilter } from "@/lib/errors-api";
 import { lastProject } from "@/lib/last-project";
+import { isTraceId } from "@/lib/logs-api";
 import { isMetricKind, type MetricKind } from "@/lib/metrics-api";
 import { DEFAULT_OVERVIEW_PERIOD, isOverviewPeriod, type OverviewPeriod } from "@/lib/overview-api";
 import {
@@ -315,6 +317,12 @@ const webAnalyticsRoute = createRoute({
   },
 });
 
+/** A workbench's selected item from an address: any short text, none when absent or empty. */
+const selectionFrom = (value: unknown): string | undefined => {
+  const text = typeof value === "number" ? String(value) : value;
+  return typeof text === "string" && text !== "" && text.length <= 200 ? text : undefined;
+};
+
 /** The environment from a page's address: left out for production, the default. */
 const environmentSearch = (search: { env?: unknown }): { env: string | undefined } => {
   const environment = environmentFrom(search.env);
@@ -325,7 +333,11 @@ const usersRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: "/users",
   staticData: { title: "Users", access: "users" },
-  validateSearch: (search: { env?: unknown } & SearchSchemaInput) => environmentSearch(search),
+  validateSearch: (search: { env?: unknown; user?: unknown } & SearchSchemaInput) => ({
+    ...environmentSearch(search),
+    // The workbench's selected user (docs/design-system.md, "Workbench").
+    user: selectionFrom(search.user),
+  }),
   component: function UsersRouteComponent() {
     const { projectId } = usersRoute.useParams();
     const { env } = usersRoute.useSearch();
@@ -434,7 +446,13 @@ const replaysRoute = createRoute({
   path: "/replays",
   staticData: { title: "Replays", access: "replays" },
   validateSearch: (
-    search: ErrorSearchInput & { path?: unknown; user?: unknown; error?: unknown; min?: unknown },
+    search: ErrorSearchInput & {
+      path?: unknown;
+      user?: unknown;
+      error?: unknown;
+      min?: unknown;
+      replay?: unknown;
+    },
   ) => {
     const filters = replayFiltersFrom(search);
     return {
@@ -444,6 +462,8 @@ const replaysRoute = createRoute({
       user: filters.userId,
       error: filters.fingerprint,
       min: filters.minDuration,
+      // The workbench's selected replay (docs/design-system.md, "Workbench").
+      replay: selectionFrom(search.replay),
     };
   },
   component: function ReplaysRouteComponent() {
@@ -512,6 +532,9 @@ const tracesRoute = createRoute({
       name?: unknown;
       errors?: unknown;
       min?: unknown;
+      trace?: unknown;
+      at?: unknown;
+      span?: unknown;
     },
   ) => {
     const filters = traceFiltersFrom(search);
@@ -522,6 +545,9 @@ const tracesRoute = createRoute({
       name: filters.name,
       errors: filters.errors,
       min: filters.minDuration,
+      // The workbench's selected trace, when it ran, and its span shown.
+      trace: isTraceId(search.trace) ? search.trace.toLowerCase() : undefined,
+      ...traceSpanSearch(search),
     };
   },
   component: function TracesRouteComponent() {
@@ -544,6 +570,20 @@ const isMoment = (value: unknown): value is string =>
   /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,9})?Z$/.test(value) &&
   !Number.isNaN(Date.parse(value));
 
+/** When a trace ran, and the span shown, from an address. */
+function traceSpanSearch(search: { at?: unknown; span?: unknown }): {
+  at: string | undefined;
+  span: string | undefined;
+} {
+  return {
+    at: isMoment(search.at) ? search.at : undefined,
+    span:
+      typeof search.span === "string" && /^[0-9a-f]{16}$/.test(search.span)
+        ? search.span
+        : undefined,
+  };
+}
+
 /**
  * One trace. `at` (when it ran, from an error or a list) narrows where it
  * is looked for; `span` is the span shown, so a link can open on it.
@@ -552,15 +592,8 @@ const traceRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: "/traces/$traceId",
   staticData: { title: "Trace", access: "monitoring" },
-  validateSearch: (
-    search: { at?: unknown; span?: unknown } & SearchSchemaInput,
-  ): { at: string | undefined; span: string | undefined } => ({
-    at: isMoment(search.at) ? search.at : undefined,
-    span:
-      typeof search.span === "string" && /^[0-9a-f]{16}$/.test(search.span)
-        ? search.span
-        : undefined,
-  }),
+  validateSearch: (search: { at?: unknown; span?: unknown } & SearchSchemaInput) =>
+    traceSpanSearch(search),
   component: function TraceRouteComponent() {
     const { projectId, traceId } = traceRoute.useParams();
     const { at, span } = traceRoute.useSearch();
@@ -579,6 +612,7 @@ const logsRoute = createRoute({
       severity?: unknown;
       q?: unknown;
       trace?: unknown;
+      log?: unknown;
     },
   ) => {
     const filters = logFiltersFrom(search);
@@ -589,6 +623,8 @@ const logsRoute = createRoute({
       severity: filters.severity,
       q: filters.search,
       trace: filters.traceId,
+      // The workbench's selected record (docs/design-system.md, "Workbench").
+      log: selectionFrom(search.log),
     };
   },
   component: function LogsRouteComponent() {
@@ -829,14 +865,22 @@ const hostRoute = createRoute({
   },
 });
 
-/** The project's uptime checks. */
+/** The project's uptime checks, and the days the selected one's detail covers. */
 const uptimeRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: "/uptime",
   staticData: { title: "Uptime", access: "uptime_alerts" },
+  validateSearch: (
+    search: { period?: unknown; from?: unknown; to?: unknown; check?: unknown } & SearchSchemaInput,
+  ) => ({
+    ...rangeSearch(search),
+    // The workbench's selected check, whose detail shows these days.
+    check: selectionFrom(search.check),
+  }),
   component: function UptimeRouteComponent() {
     const { projectId } = uptimeRoute.useParams();
-    return <UptimePage projectId={projectId} />;
+    const { period, from, to } = uptimeRoute.useSearch();
+    return <UptimePage projectId={projectId} range={rangeFrom({ period, from, to })} />;
   },
 });
 
@@ -883,8 +927,10 @@ const alertsRoute = createRoute({
       host?: unknown;
       attr?: unknown;
       attrValue?: unknown;
+      rule?: unknown;
     } & SearchSchemaInput,
   ): {
+    rule: string | undefined;
     add: RuleKind | undefined;
     check: string | undefined;
     fingerprint: string | undefined;
@@ -897,6 +943,8 @@ const alertsRoute = createRoute({
     attr: string | undefined;
     attrValue: string | undefined;
   } => ({
+    // The workbench's selected rule (docs/design-system.md, "Workbench").
+    rule: typeof search.rule === "string" && UUID.test(search.rule) ? search.rule : undefined,
     add: isRuleKind(search.add) ? search.add : undefined,
     check: typeof search.check === "string" && UUID.test(search.check) ? search.check : undefined,
     fingerprint:
@@ -919,6 +967,17 @@ const alertsRoute = createRoute({
     const { projectId } = alertsRoute.useParams();
     const search = alertsRoute.useSearch();
     return <AlertsPage projectId={projectId} prefill={search} />;
+  },
+});
+
+/** One alert rule, for deep links and narrow screens. */
+const ruleRoute = createRoute({
+  getParentRoute: () => projectRoute,
+  path: "/alerts/$ruleId",
+  staticData: { title: "Rule", access: "uptime_alerts" },
+  component: function RuleRouteComponent() {
+    const { projectId, ruleId } = ruleRoute.useParams();
+    return <RulePage projectId={projectId} ruleId={ruleId} key={ruleId} />;
   },
 });
 
@@ -1136,6 +1195,7 @@ const routeTree = rootRoute.addChildren([
       uptimeRoute,
       checkRoute,
       alertsRoute,
+      ruleRoute,
       productRoute.addChildren([
         productIndexRoute,
         productEventsRoute,

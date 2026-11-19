@@ -1,7 +1,9 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { ArrowLeftIcon, OctagonAlertIcon, SearchXIcon } from "lucide-react";
+import type * as React from "react";
 
+import { ButtonLink } from "@/components/button-link";
 import { Missing } from "@/components/missing";
 import { StatusBadge } from "@/components/status-badge";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -9,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Empty,
+  EmptyContent,
   EmptyDescription,
   EmptyHeader,
   EmptyMedia,
@@ -101,7 +104,7 @@ function Stats({
   timeZone: string;
 }) {
   return (
-    <dl className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+    <dl className="grid grid-cols-2 gap-3 @2xl:grid-cols-3 @5xl:grid-cols-5">
       <Stat
         label="Uptime in this period"
         value={results === undefined ? "…" : formatUptime(results.uptime)}
@@ -176,12 +179,12 @@ function IncidentsCard({
             <TableBody>
               {data.incidents.map((incident) => (
                 <TableRow key={incident.id}>
-                  <TableCell className="whitespace-nowrap">
+                  <TableCell className="whitespace-normal">
                     <time dateTime={incident.startedAt}>
                       {formatMoment(incident.startedAt, data.timeZone)}
                     </time>
                   </TableCell>
-                  <TableCell className="whitespace-nowrap">
+                  <TableCell className="whitespace-normal">
                     {incident.endedAt === null ? (
                       <StatusBadge tone="critical">Ongoing</StatusBadge>
                     ) : (
@@ -252,7 +255,7 @@ function FailuresCard({ results }: { results: CheckResults }) {
             <TableBody>
               {results.latestFailures.map((failure) => (
                 <TableRow key={failure.at}>
-                  <TableCell className="whitespace-nowrap">
+                  <TableCell className="whitespace-normal">
                     <time dateTime={failure.at}>{formatMoment(failure.at, results.timeZone)}</time>
                   </TableCell>
                   <TableCell>{CAUSE_TEXT[failure.cause]}</TableCell>
@@ -276,56 +279,61 @@ function FailuresCard({ results }: { results: CheckResults }) {
 }
 
 /**
- * One check: what it does and its state, its uptime, its response time
- * over the period, its incidents, and its latest failures.
+ * One check with its loading, missing, and failed states: what it does and
+ * its state, its uptime, its response time over the period, its incidents,
+ * and its latest failures, laid out by the width of its own container. On
+ * the check's page, and in the Uptime workbench beside the list, where
+ * `actions` links to the page and a missing check's link clears the
+ * selection instead.
  */
-export function CheckPage({
+export function CheckView({
   projectId,
   checkId,
   range,
+  onRange,
+  onDeleted,
+  actions,
+  inWorkbench = false,
 }: {
   projectId: string;
   checkId: string;
   range: PageRange;
+  onRange: (range: PageRange) => void;
+  onDeleted: () => void;
+  /** Beside the check's name, such as a link to its own page. */
+  actions?: React.ReactNode;
+  inWorkbench?: boolean;
 }) {
-  const navigate = useNavigate();
   const checkAnswer = useQuery(checkQuery(projectId, checkId));
   const results = useQuery(checkResultsQuery(projectId, checkId, range));
-  const show = (next: PageRange) =>
-    void navigate({
-      to: "/projects/$projectId/uptime/$checkId",
-      params: { projectId, checkId },
-      search: rangeSearch(next),
-    });
-  const backLink = (
-    <Link
-      to="/projects/$projectId/uptime"
-      params={{ projectId }}
-      className="flex items-center gap-1 self-start text-sm text-link hover:underline"
-    >
-      <ArrowLeftIcon aria-hidden="true" className="size-4" />
-      All checks
-    </Link>
-  );
 
   const error = checkAnswer.error;
   if (error instanceof ApiError && error.status === 404) {
     if (error.code === "check_not_found") {
       return (
-        <div className="mx-auto flex max-w-6xl flex-col gap-6 p-6">
-          {backLink}
-          <Empty className="border border-dashed p-10">
-            <EmptyHeader>
-              <EmptyMedia variant="icon">
-                <SearchXIcon />
-              </EmptyMedia>
-              <EmptyTitle>No such check</EmptyTitle>
-              <EmptyDescription>
-                The project has no check with this ID. It may have been deleted.
-              </EmptyDescription>
-            </EmptyHeader>
-          </Empty>
-        </div>
+        <Empty className="border border-dashed p-10">
+          <EmptyHeader>
+            <EmptyMedia variant="icon">
+              <SearchXIcon />
+            </EmptyMedia>
+            <EmptyTitle>No such check</EmptyTitle>
+            <EmptyDescription>
+              The project has no check with this ID. It may have been deleted.
+            </EmptyDescription>
+          </EmptyHeader>
+          {inWorkbench && (
+            <EmptyContent>
+              <ButtonLink
+                variant="outline"
+                to="/projects/$projectId/uptime"
+                params={{ projectId }}
+                search={(previous) => ({ ...previous, check: undefined })}
+              >
+                All checks
+              </ButtonLink>
+            </EmptyContent>
+          )}
+        </Empty>
       );
     }
     return <NoSuchProject />;
@@ -334,56 +342,50 @@ export function CheckPage({
   const data = results.data;
 
   return (
-    <div className="mx-auto flex max-w-6xl flex-col gap-6 p-6">
-      <div className="flex flex-col gap-2">
-        {backLink}
-        {answer === undefined ? (
-          checkAnswer.isError ? (
-            <Alert variant="destructive">
-              <OctagonAlertIcon />
-              <AlertTitle>The check could not load</AlertTitle>
-              <AlertDescription>{checkAnswer.error.message}</AlertDescription>
-              <AlertAction>
-                <Button variant="outline" size="sm" onClick={() => void checkAnswer.refetch()}>
-                  Retry
-                </Button>
-              </AlertAction>
-            </Alert>
-          ) : (
-            <Skeleton className="h-16 w-full" aria-label="Loading" />
-          )
+    <div className="@container flex min-w-0 flex-col gap-6">
+      {answer === undefined ? (
+        checkAnswer.isError ? (
+          <Alert variant="destructive">
+            <OctagonAlertIcon />
+            <AlertTitle>The check could not load</AlertTitle>
+            <AlertDescription>{checkAnswer.error.message}</AlertDescription>
+            <AlertAction>
+              <Button variant="outline" size="sm" onClick={() => void checkAnswer.refetch()}>
+                Retry
+              </Button>
+            </AlertAction>
+          </Alert>
         ) : (
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div className="flex min-w-0 flex-col gap-1">
-              <h2 className="text-lg font-medium break-all text-ink">{answer.check.name}</h2>
-              <p className="text-sm break-all text-ink-subtle">
-                {answer.check.method} {answer.check.url},{" "}
-                {intervalText(answer.check.intervalSeconds).toLowerCase()}
-                {answer.check.word === null
-                  ? ""
-                  : `; "${answer.check.word}" ${answer.check.wordMode === "present" ? "must" : "must not"} be in the body`}
-              </p>
-              <p className="flex flex-wrap items-center gap-2 text-sm text-ink-muted">
-                <CheckStateBadge check={answer.check} />
-                <StateLine check={answer.check} timeZone={answer.timeZone} />
-              </p>
-            </div>
-            <CheckActions
-              projectId={projectId}
-              check={answer.check}
-              onDeleted={() =>
-                void navigate({ to: "/projects/$projectId/uptime", params: { projectId } })
-              }
-            />
+          <Skeleton className="h-16 w-full" aria-label="Loading" />
+        )
+      ) : (
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="flex min-w-0 flex-col gap-1">
+            <h2 className="text-lg font-medium break-all text-ink">{answer.check.name}</h2>
+            <p className="text-sm break-all text-ink-subtle">
+              {answer.check.method} {answer.check.url},{" "}
+              {intervalText(answer.check.intervalSeconds).toLowerCase()}
+              {answer.check.word === null
+                ? ""
+                : `; "${answer.check.word}" ${answer.check.wordMode === "present" ? "must" : "must not"} be in the body`}
+            </p>
+            <p className="flex flex-wrap items-center gap-2 text-sm text-ink-muted">
+              <CheckStateBadge check={answer.check} />
+              <StateLine check={answer.check} timeZone={answer.timeZone} />
+            </p>
           </div>
-        )}
-      </div>
+          <div className="flex flex-wrap items-center gap-1">
+            <CheckActions projectId={projectId} check={answer.check} onDeleted={onDeleted} />
+            {actions}
+          </div>
+        </div>
+      )}
 
       <RangeControls
         range={range}
         environment={DEFAULT_ENVIRONMENT}
         answered={data}
-        onRange={show}
+        onRange={onRange}
         onEnvironment={() => undefined}
       />
 
@@ -449,7 +451,7 @@ export function CheckPage({
                 : undefined
             }
           />
-          <div className="grid gap-4 lg:grid-cols-2">
+          <div className="grid gap-4 @5xl:grid-cols-2">
             {answer !== undefined && (
               <IncidentsCard projectId={projectId} check={answer.check} range={range} />
             )}
@@ -457,6 +459,46 @@ export function CheckPage({
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+/** One check on its own page, for deep links and narrow screens. */
+export function CheckPage({
+  projectId,
+  checkId,
+  range,
+}: {
+  projectId: string;
+  checkId: string;
+  range: PageRange;
+}) {
+  const navigate = useNavigate();
+  return (
+    <div className="flex flex-col gap-4 px-gutter py-5">
+      <Link
+        to="/projects/$projectId/uptime"
+        params={{ projectId }}
+        className="flex items-center gap-1 self-start text-sm text-link hover:underline"
+      >
+        <ArrowLeftIcon aria-hidden="true" className="size-4" />
+        All checks
+      </Link>
+      <CheckView
+        projectId={projectId}
+        checkId={checkId}
+        range={range}
+        onRange={(next) =>
+          void navigate({
+            to: "/projects/$projectId/uptime/$checkId",
+            params: { projectId, checkId },
+            search: rangeSearch(next),
+          })
+        }
+        onDeleted={() =>
+          void navigate({ to: "/projects/$projectId/uptime", params: { projectId } })
+        }
+      />
     </div>
   );
 }

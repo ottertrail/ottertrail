@@ -43,17 +43,34 @@ function TraceFacts({
   projectId,
   onSpan,
   spanName,
+  inWorkbench,
 }: {
   log: LogSummary & { traceId: string };
   projectId: string;
   onSpan: ((spanId: string) => void) | undefined;
   spanName: string | undefined;
+  inWorkbench: boolean;
 }) {
   return (
     <div className="flex min-w-0 flex-col gap-0.5">
       <dt className="text-xs text-ink-subtle">Trace</dt>
       <dd className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
-        {onSpan === undefined ? (
+        {onSpan === undefined && inWorkbench ? (
+          // Beside the logs list: the trace opens in the Traces workbench, on its span.
+          <Link
+            to="/projects/$projectId/traces"
+            params={{ projectId }}
+            search={{
+              trace: log.traceId.toLowerCase(),
+              at: log.time,
+              ...(log.spanId === null ? {} : { span: log.spanId }),
+            }}
+            className="font-mono text-link hover:underline"
+            aria-label={`Open trace ${log.traceId}`}
+          >
+            {log.traceId}
+          </Link>
+        ) : onSpan === undefined ? (
           <Link
             to="/projects/$projectId/traces/$traceId"
             params={{ projectId, traceId: log.traceId }}
@@ -85,20 +102,24 @@ const hasTrace = (log: LogSummary): log is LogSummary & { traceId: string } => l
 
 /**
  * An opened record: its whole body, times, labels, attributes, and
- * resource attributes, read now (a list holds only a summary of each).
+ * resource attributes, read now (a list holds only a summary of each), and
+ * its trace. Under a row it opened, and in the Logs workbench beside the
+ * list (`inWorkbench`), where the trace's link opens the Traces workbench.
  */
-function Detail({
+export function LogRecordView({
   summary,
   timeZone,
   projectId,
   onSpan,
   spanName,
+  inWorkbench = false,
 }: {
   summary: LogSummary;
   timeZone: string;
   projectId: string;
   onSpan: ((spanId: string) => void) | undefined;
   spanName: string | undefined;
+  inWorkbench?: boolean;
 }) {
   const query = useQuery(logQuery(projectId, summary));
   const log = query.data?.log;
@@ -121,10 +142,22 @@ function Detail({
           },
         ];
   return (
-    <div className="flex flex-col gap-4 border-t px-3 pt-3 pb-4">
+    <div
+      className={
+        inWorkbench
+          ? "@container flex flex-col gap-4"
+          : "flex flex-col gap-4 border-t px-3 pt-3 pb-4"
+      }
+    >
       {hasTrace(summary) && (
         <dl>
-          <TraceFacts log={summary} projectId={projectId} onSpan={onSpan} spanName={spanName} />
+          <TraceFacts
+            log={summary}
+            projectId={projectId}
+            onSpan={onSpan}
+            spanName={spanName}
+            inWorkbench={inWorkbench}
+          />
         </dl>
       )}
       {query.isPending ? (
@@ -148,7 +181,13 @@ function Detail({
           <pre className="max-h-96 overflow-auto rounded-lg bg-muted p-3 font-mono text-xs [overflow-wrap:anywhere] whitespace-pre-wrap text-ink">
             {query.data.log.body === "" ? "(empty body)" : query.data.log.body}
           </pre>
-          <dl className="grid gap-x-6 gap-y-3 text-sm sm:grid-cols-3">
+          <dl
+            className={
+              inWorkbench
+                ? "grid gap-x-6 gap-y-3 text-sm @md:grid-cols-2 @2xl:grid-cols-3"
+                : "grid gap-x-6 gap-y-3 text-sm sm:grid-cols-3"
+            }
+          >
             {facts.map((fact) => (
               <div key={fact.label} className="flex min-w-0 flex-col gap-0.5">
                 <dt className="text-xs text-ink-subtle">{fact.label}</dt>
@@ -179,14 +218,16 @@ function Entry({
   projectId,
   onSpan,
   spanNames,
+  initiallyOpen,
 }: {
   log: LogSummary;
   timeZone: string;
   projectId: string;
   onSpan: ((spanId: string) => void) | undefined;
   spanNames: ReadonlyMap<string, string> | undefined;
+  initiallyOpen: boolean;
 }) {
-  const [open, setOpen] = React.useState(false);
+  const [open, setOpen] = React.useState(initiallyOpen);
   const detailId = React.useId();
   return (
     <li className="rounded-lg ring-1 ring-border">
@@ -199,9 +240,12 @@ function Entry({
       >
         <ChevronRightIcon
           aria-hidden="true"
-          className={cn("mt-0.5 size-4 shrink-0 text-ink-subtle transition-transform", {
-            "rotate-90": open,
-          })}
+          className={cn(
+            "mt-0.5 size-4 shrink-0 text-ink-subtle transition-transform motion-reduce:transition-none",
+            {
+              "rotate-90": open,
+            },
+          )}
         />
         <time dateTime={log.time} className="shrink-0 font-mono text-xs leading-5 text-ink-muted">
           {formatPreciseMoment(log.time, timeZone)}
@@ -219,7 +263,7 @@ function Entry({
       </button>
       {open && (
         <div id={detailId}>
-          <Detail
+          <LogRecordView
             summary={log}
             timeZone={timeZone}
             projectId={projectId}
@@ -244,6 +288,7 @@ export function LogList({
   label,
   onSpan,
   spanNames,
+  openId,
 }: {
   logs: readonly LogSummary[];
   timeZone: string;
@@ -253,6 +298,8 @@ export function LogList({
   onSpan?: (spanId: string) => void;
   /** The trace's spans' names, by span ID, for the button. */
   spanNames?: ReadonlyMap<string, string>;
+  /** A record shown open from the start, such as one an address names. */
+  openId?: string;
 }) {
   return (
     <ul aria-label={label} className="flex flex-col gap-2">
@@ -264,6 +311,7 @@ export function LogList({
           projectId={projectId}
           onSpan={onSpan}
           spanNames={spanNames}
+          initiallyOpen={log.id === openId}
         />
       ))}
     </ul>

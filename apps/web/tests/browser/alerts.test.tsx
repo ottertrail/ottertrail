@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vite-plus/test";
-import { page } from "vite-plus/test/browser/context";
+import { page, userEvent } from "vite-plus/test/browser/context";
 
 import {
   ALERT_RULE_IDS,
@@ -51,24 +51,34 @@ describe("the Alerts page", () => {
     await expect.poll(() => router.state.location.pathname).toBe(ALERTS);
     await expect.element(page.getByRole("table", { name: "Alert rules" })).toBeVisible();
     expect(api.requests).toContain(RULES_PATH);
-    expect(rowsOf("Alert rules").map((cells) => cells.slice(0, 3))).toEqual([
-      ["API downAPI health goes down", "On call", "Firing"],
-      [
-        "New errorsAn error group is seen for the first time, in production",
-        "On call, Ops relay",
-        "Quiet",
-      ],
+    // Each rule, what it watches, and its state; where it sends, in its detail.
+    expect(rowsOf("Alert rules").map((cells) => cells.slice(0, 2))).toEqual([
+      ["API downAPI health goes down", "Firing"],
+      ["New errorsAn error group is seen for the first time, in production", "Quiet"],
       [
         `Checkout spike20 or more occurrences of the group ${ERROR_FINGERPRINTS.typeError} in 10 minutes, in any environment`,
-        "Ops relay",
         "Off",
       ],
       [
         "CertificatesThe certificate of any of the project's checks expires within 14 days",
-        "No channel",
         "OffDisabled because its last channel was deleted. Choose a channel to enable the rule again.",
       ],
     ]);
+    const sendsTo = [];
+    for (const name of ["API down", "New errors", "Checkout spike", "Certificates"]) {
+      await page
+        .getByRole("region", { name: "Alerts, list" })
+        .getByRole("link", { name, exact: true })
+        .click();
+      const detail = page.getByRole("region", { name: "Alerts, selected" });
+      await expect.element(detail.getByRole("heading", { name, exact: true })).toBeVisible();
+      const term = [...detail.element().querySelectorAll("dt")].find(
+        (dt) => dt.textContent === "Sends to",
+      );
+      sendsTo.push(term?.nextElementSibling?.textContent);
+    }
+    expect(sendsTo).toEqual(["On call", "On call, Ops relay", "Ops relay", "No channel"]);
+    await userEvent.keyboard("{Escape}");
     // On or off is a switch named for its rule.
     await expect.element(page.getByRole("switch", { name: "Turn off API down" })).toBeChecked();
     await expect
@@ -244,8 +254,14 @@ describe("the Alerts page", () => {
         ? { ...rule, channelIds: [EMAIL.id, "dddddddd-dddd-4ddd-8ddd-00000000dead"] }
         : rule,
     );
-    renderApp(ALERTS);
-    await expect.element(page.getByText("On call, A deleted channel")).toBeVisible();
+    renderApp(`${ALERTS}?rule=${ALERT_RULE_IDS.apiDown}`);
+    await expect
+      .element(
+        page
+          .getByRole("region", { name: "Alerts, selected" })
+          .getByText("On call, A deleted channel"),
+      )
+      .toBeVisible();
     await page.getByRole("button", { name: "Edit API down" }).click();
     const form = dialog("Edit “API down”");
     await form.getByRole("button", { name: "Save changes" }).click();

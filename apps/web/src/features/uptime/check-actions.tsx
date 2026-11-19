@@ -81,7 +81,12 @@ function DeleteCheckDialog({
         <DialogFooter>
           <DialogClose render={<Button variant="outline" type="button" />}>Cancel</DialogClose>
           <Button variant="destructive" onClick={() => remove.mutate()} disabled={remove.isPending}>
-            {remove.isPending && <LoaderCircleIcon aria-hidden="true" className="animate-spin" />}
+            {remove.isPending && (
+              <LoaderCircleIcon
+                aria-hidden="true"
+                className="animate-spin motion-reduce:animate-none"
+              />
+            )}
             Delete check
           </Button>
         </DialogFooter>

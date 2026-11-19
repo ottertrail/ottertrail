@@ -78,7 +78,7 @@ function Facts({
     },
   ];
   return (
-    <dl className="grid gap-x-6 gap-y-3 text-sm sm:grid-cols-2 lg:grid-cols-3">
+    <dl className="grid gap-x-6 gap-y-3 text-sm @lg:grid-cols-2 @3xl:grid-cols-3">
       {facts.map((fact) => (
         <div key={fact.label} className="flex min-w-0 flex-col gap-0.5">
           <dt className="text-xs text-ink-subtle">{fact.label}</dt>
@@ -102,12 +102,15 @@ export function SpanDetailCard({
   span,
   parentName,
   ref,
+  inWorkbench = false,
 }: {
   projectId: string;
   traceId: string;
   span: WaterfallSpan;
   parentName: string | undefined;
   ref?: React.Ref<HTMLElement>;
+  /** Beside the traces list: a linked trace opens there, not on its own page. */
+  inWorkbench?: boolean;
 }) {
   const query = useQuery(spanQuery(projectId, traceId, span));
   return (
@@ -206,7 +209,22 @@ export function SpanDetailCard({
                         className="flex flex-col gap-2 rounded-lg p-3 ring-1 ring-border"
                       >
                         <p className="flex flex-wrap items-baseline gap-x-3 text-sm">
-                          {isTraceId(link.traceId) ? (
+                          {isTraceId(link.traceId) && inWorkbench ? (
+                            <Link
+                              to="/projects/$projectId/traces"
+                              params={{ projectId }}
+                              search={(previous) => ({
+                                ...previous,
+                                trace: link.traceId.toLowerCase(),
+                                span: link.spanId,
+                                at: undefined,
+                              })}
+                              className="font-mono text-link hover:underline"
+                              aria-label={`Open linked trace ${link.traceId}`}
+                            >
+                              {link.traceId}
+                            </Link>
+                          ) : isTraceId(link.traceId) ? (
                             <Link
                               to="/projects/$projectId/traces/$traceId"
                               params={{ projectId, traceId: link.traceId }}

@@ -24,5 +24,8 @@ export function useMediaQuery(query: string): boolean {
 /** Under 60rem the sidebar is a menu in a sheet, and multi-column layouts go to one column. */
 export const NARROW_SHELL = "(width < 60rem)";
 
+/** A phone: the gutters narrow, and lists drop the columns their item's page has. */
+export const PHONE = "(width < 40rem)";
+
 /** Under 64rem a list-and-detail screen shows the list alone; an item opens its own page. */
 export const NARROW_WORKBENCH = "(width < 64rem)";

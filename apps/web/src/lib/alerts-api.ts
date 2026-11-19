@@ -341,6 +341,23 @@ export const historyQuery = (projectId: string) =>
     refetchInterval: 30_000,
   });
 
+/** One rule's alerts, newest first, 20 at a time (GET …/alert-rules/:ruleId/history). */
+export const ruleHistoryQuery = (projectId: string, ruleId: string) =>
+  infiniteQueryOptions({
+    queryKey: ["alerts", projectId, "history", ruleId],
+    initialPageParam: "",
+    queryFn: async ({ pageParam, signal }) =>
+      expectShape(
+        await apiRequest(
+          `${rulePath(projectId, ruleId)}/history${pageParam === "" ? "" : `?before=${encodeURIComponent(pageParam)}`}`,
+          { signal },
+        ),
+        isHistoryPage,
+      ),
+    getNextPageParam: (last) => last.next ?? undefined,
+    refetchInterval: 30_000,
+  });
+
 /**
  * Why a telemetry rule just saved may not fire yet: what it watches has
  * not reported in the last day ("not_seen"), or that could not be checked.
