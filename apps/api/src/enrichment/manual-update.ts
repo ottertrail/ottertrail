@@ -73,22 +73,22 @@ export async function manualUpdate(options: {
   if (!run.ran) {
     out.error(
       run.reason === "locked" && run.until !== null
-        ? `Another update is running (the worker's, or another command's). Its lease ends at ${run.until.toISOString()} at the latest; try again after that, or once it is done.`
-        : "Another update is running (the worker's, or another command's). Try again later.",
+        ? `Another update is running. Retry when it finishes or its lease expires at ${run.until.toISOString()}.`
+        : "Another update is running. Try again later.",
     );
     return 1;
   }
   if (options.stop.aborted) {
-    out.error("Stopped. The old files stay, and the next update tries again.");
+    out.error("Stopped. Old files kept; the next update retries.");
     return 1;
   }
   if (run.locations === "not_needed") {
     out.log(`No location database needed: GEO_SOURCE is "${options.geoSource}".`);
   } else if (run.locations === "updated") {
     out.log(
-      'Credit "IP geolocation by DB-IP" (https://db-ip.com) wherever locations are shown: the CC BY 4.0 license requires it.',
+      'CC BY 4.0 requires credit wherever locations appear: "IP geolocation by DB-IP" (https://db-ip.com).',
     );
   }
-  out.log("The API loads the new files within 10 minutes, without a restart.");
+  out.log("API loads new files within 10 minutes. No restart needed.");
   return run.locations === "failed" || run.dataCenters === "failed" ? 1 : 0;
 }

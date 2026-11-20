@@ -72,14 +72,14 @@ if [ -n "$from_s3" ]; then
   wanted=${1:-latest}
   case "$wanted" in
     latest | [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9][0-9][0-9][0-9][0-9]Z) ;;
-    *) echo "Not a backup's name: $wanted (such as 2026-11-17T030000Z, or latest)" >&2; exit 1 ;;
+    *) echo "Invalid backup name: $wanted (use 2026-11-17T030000Z or latest)" >&2; exit 1 ;;
   esac
   # Asks for each setting the environment lacks; a secret without echo.
   ask() {
     eval "value=\${$1:-}"
     if [ -z "$value" ]; then
       if [ ! -t 0 ]; then
-        echo "Set $1, or run this in a terminal to be asked for it." >&2
+        echo "Set $1 or run in a terminal to enter it." >&2
         exit 1
       fi
       printf '%s: ' "$2" >&2
@@ -100,18 +100,18 @@ if [ -n "$from_s3" ]; then
   ask BACKUP_S3_ENDPOINT "S3 endpoint, such as https://<account>.r2.cloudflarestorage.com"
   ask BACKUP_S3_REGION "Region (auto for Cloudflare R2)"
   ask BACKUP_S3_BUCKET "Bucket"
-  ask BACKUP_S3_PREFIX "Folder in the bucket (Folder on the Backups tab)"
+  ask BACKUP_S3_PREFIX "Folder in bucket (Settings > Backups)"
   ask BACKUP_S3_ACCESS_KEY_ID "Access key ID"
   ask BACKUP_S3_SECRET_ACCESS_KEY "Secret access key" secret
   if [ -z "$key_file" ]; then
     BACKUP_KEY_FILE=
-    ask BACKUP_KEY_FILE "Backup key file (the one the Backups tab downloads)"
+    ask BACKUP_KEY_FILE "Backup key file (from Settings > Backups)"
     key_file=$BACKUP_KEY_FILE
   fi
   key_file=$(absolute "$key_file")
-  [ -f "$key_file" ] || { echo "The key file $key_file is missing." >&2; exit 1; }
+  [ -f "$key_file" ] || { echo "Missing key file: $key_file." >&2; exit 1; }
 else
-  backup=$(absolute "${1:?Give the backup without its ending, such as backups/ottertrail-2026-11-17T120000Z}")
+  backup=$(absolute "${1:?Give the backup path without its extension, such as backups/ottertrail-2026-11-17T120000Z}")
 fi
 cd "$(dirname "$0")"
 
@@ -126,14 +126,14 @@ cleanup() {
   # A download cut off (Ctrl-C) may leave restore-backup's own folder: never decrypted data.
   [ -z "$from_s3" ] || rm -rf backups/.download-*
   if [ "$status" -ne 0 ] && [ -n "$step" ]; then
-    echo "The restore failed while $step." >&2
+    echo "Restore failed while $step." >&2
     if [ -n "$downloaded" ]; then
-      echo "The downloaded, decrypted files are in backups/: delete them once you no longer need them." >&2
+      echo "Decrypted files remain in backups/. Delete when no longer needed." >&2
     fi
     if [ -n "$restored" ]; then
-      echo "The databases were changed: run \`$compose down -v\` and start again." >&2
+      echo "Databases changed: run \`$compose down -v\` and start again." >&2
     else
-      echo "Nothing was changed: the databases were not touched." >&2
+      echo "Databases unchanged." >&2
     fi
   fi
 }
@@ -163,17 +163,17 @@ if [ -n "$from_s3" ]; then
   version=$(printf '%s\n' "$described" | tail -n 1 | cut -f 3)
   case "$chosen" in
     [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9][0-9][0-9][0-9][0-9]Z) ;;
-    *) echo "restore-backup named no backup." >&2; exit 1 ;;
+    *) echo "restore-backup returned no backup name." >&2; exit 1 ;;
   esac
-  echo "Chosen: the backup started $started (UTC), made by Ottertrail $version."
+  echo "Selected backup: $started (UTC), Ottertrail $version."
   if [ -z "$yes" ]; then
     if [ ! -t 0 ]; then
-      echo "Run this in a terminal to confirm, or add --yes to restore it." >&2
+      echo "Confirm in a terminal or add --yes to restore." >&2
       exit 1
     fi
     printf 'Restore it into this server'"'"'s empty databases? Type yes: ' >&2
     read -r answer
-    [ "$answer" = yes ] || { echo "Nothing was restored." >&2; step=; exit 1; }
+    [ "$answer" = yes ] || { echo "Nothing restored." >&2; step=; exit 1; }
   fi
   mkdir -p backups
   step="downloading and checking $chosen"
@@ -199,9 +199,9 @@ for file in "$backup.dump" "$backup.zip"; do
 done
 objects=$backup-objects.tar
 if [ -z "$without_objects" ] && [ ! -f "$objects" ]; then
-  echo "$objects is missing. It holds the source maps and session replays." >&2
-  echo "Put it next to the other two, or run again with --without-objects to restore" >&2
-  echo "without them: replays will not play, and source maps must be uploaded again." >&2
+  echo "Missing $objects (source maps and session replays)." >&2
+  echo "Place it beside the .dump and .zip, or rerun with --without-objects." >&2
+  echo "Without it, replays cannot play and source maps need uploading again." >&2
   exit 1
 fi
 unpacked=$(dirname "$backup")/$name-objects.restore
@@ -214,8 +214,8 @@ app() {
 }
 
 if [ -n "$without_objects" ]; then
-  echo "Restoring without the object store (--without-objects): session replays will" >&2
-  echo "not play, and source maps must be uploaded again." >&2
+  echo "Restoring without objects (--without-objects). Replays cannot play;" >&2
+  echo "upload source maps again." >&2
 else
   step="unpacking $objects"
   rm -rf "$unpacked"
@@ -246,7 +246,7 @@ until $compose exec -T postgres pg_isready -h 127.0.0.1 -U ottertrail -d ottertr
   [ "$($compose exec -T clickhouse cat /proc/1/comm 2> /dev/null)" = "clickhouse-serv" ] &&
   $compose exec -T clickhouse clickhouse-client --user ottertrail --query "SELECT 1" > /dev/null 2>&1; do
   tries=$((tries + 1))
-  [ "$tries" -lt 60 ] || { echo "The databases did not start." >&2; exit 1; }
+  [ "$tries" -lt 60 ] || { echo "Databases failed to start." >&2; exit 1; }
   sleep 2
 done
 
@@ -279,7 +279,7 @@ step=
 if [ -n "$downloaded" ]; then
   # The backup stays in the bucket; the plain copy here goes.
   rm -f "$backup.dump" "$backup.zip" "$backup-objects.tar"
-  echo "Restored $name from $BACKUP_S3_BUCKET/$BACKUP_S3_PREFIX, and deleted the downloaded files."
+  echo "Restored $name from $BACKUP_S3_BUCKET/$BACKUP_S3_PREFIX. Downloaded files deleted."
 else
   echo "Restored $name."
 fi

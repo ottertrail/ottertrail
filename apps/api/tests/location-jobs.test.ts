@@ -136,7 +136,7 @@ describe("the manual command", () => {
       out: { log: () => {}, error: (line) => errors.push(line) },
     });
     expect(code).toBe(1);
-    expect(errors).toContain("Stopped. The old files stay, and the next update tries again.");
+    expect(errors).toContain("Stopped. Old files kept; the next update retries.");
     expect(await leases()).toEqual([]);
     expect((await readdir(dir)).filter((name) => name.endsWith(".download"))).toEqual([]);
   });
@@ -158,7 +158,7 @@ describe("the manual command", () => {
     });
     expect(code).toBe(1);
     expect(errors).toEqual([
-      `Another update is running (the worker's, or another command's). Its lease ends at ${until.toISOString()} at the latest; try again after that, or once it is done.`,
+      `Another update is running. Retry when it finishes or its lease expires at ${until.toISOString()}.`,
     ]);
   });
 

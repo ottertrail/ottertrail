@@ -67,9 +67,9 @@ const POLL_MS = 5000;
 const sentence = (text: string) => (/[.!?]$/.test(text.trim()) ? text.trim() : `${text.trim()}.`);
 
 const TRIGGER_TEXT: Record<BackupRun["trigger"], string> = {
-  schedule: "the daily backup",
+  schedule: "daily backup",
   manual: "Back up now",
-  retry: "the retry of a failed backup",
+  retry: "retry",
 };
 
 /** When a run ended (or started, while it runs), in the instance's timezone. */
@@ -117,7 +117,7 @@ function BucketList({ timeZone, refreshKey }: { timeZone: string; refreshKey: st
   if (list.isPending) {
     return (
       <p className="text-sm text-ink-subtle" aria-busy="true">
-        Listing the backups in the bucket…
+        Loading backups…
       </p>
     );
   }
@@ -125,7 +125,7 @@ function BucketList({ timeZone, refreshKey }: { timeZone: string; refreshKey: st
     return (
       <Alert variant="destructive">
         <OctagonAlertIcon />
-        <AlertTitle>The backups in the bucket could not be listed</AlertTitle>
+        <AlertTitle>Couldn't list backups</AlertTitle>
         <AlertDescription>
           {list.isError ? list.error.message : list.data.ok ? "" : sentence(list.data.error)}
         </AlertDescription>
@@ -162,7 +162,7 @@ function BucketList({ timeZone, refreshKey }: { timeZone: string; refreshKey: st
               <TableCell className="text-right tabular-nums">{formatBytes(backup.bytes)}</TableCell>
               <TableCell>
                 {backup.complete ? (
-                  <StatusBadge tone="good">Whole</StatusBadge>
+                  <StatusBadge tone="good">Complete</StatusBadge>
                 ) : (
                   <StatusBadge tone="warning">Incomplete</StatusBadge>
                 )}
@@ -195,7 +195,7 @@ function StatusSection({ data, timeZone }: { data: Backups; timeZone: string }) 
       {off && settings.disabledAt !== null && (
         <p className="flex flex-wrap items-center gap-2 text-sm text-ink">
           <StatusBadge tone="neutral">Off</StatusBadge>
-          Backups are off since {formatMoment(settings.disabledAt, timeZone)}, turned off by{" "}
+          Off since {formatMoment(settings.disabledAt, timeZone)}, by{" "}
           {settings.disabledBy ?? "someone"}.
         </p>
       )}
@@ -222,7 +222,7 @@ function StatusSection({ data, timeZone }: { data: Backups; timeZone: string }) 
           {running !== null && (
             <StatusRow label="Now">
               <RunBadge run={running} />
-              {running.kind === "backup" ? "Backing up" : "Testing the restore"} (
+              {running.kind === "backup" ? "Backing up" : "Testing restore"} (
               {TRIGGER_TEXT[running.trigger]}), since {formatMoment(running.startedAt, timeZone)}.
             </StatusRow>
           )}
@@ -247,11 +247,11 @@ function StatusSection({ data, timeZone }: { data: Backups; timeZone: string }) 
       {last?.status === "failed" && (
         <Alert variant="destructive">
           <OctagonAlertIcon />
-          <AlertTitle>The last backup failed</AlertTitle>
+          <AlertTitle>Last backup failed</AlertTitle>
           <AlertDescription className="text-pretty">
-            {sentence(last.error ?? "No reason was recorded.")}{" "}
+            {sentence(last.error ?? "No error recorded.")}{" "}
             {status.retryAt !== null
-              ? `The worker tries once more at ${formatMoment(status.retryAt, timeZone)}.`
+              ? `Retries once at ${formatMoment(status.retryAt, timeZone)}.`
               : ""}
           </AlertDescription>
         </Alert>
@@ -259,10 +259,10 @@ function StatusSection({ data, timeZone }: { data: Backups; timeZone: string }) 
       {status.overdueSince !== null && (
         <Alert>
           <TriangleAlertIcon />
-          <AlertTitle>A backup is overdue</AlertTitle>
+          <AlertTitle>Backup overdue</AlertTitle>
           <AlertDescription className="text-pretty">
-            No backup has worked since the one due {formatMoment(status.overdueSince, timeZone)}.
-            The worker may be stopped: check that it runs (docker compose ps), or use Back up now.
+            No successful backup since {formatMoment(status.overdueSince, timeZone)}. Check the
+            worker (docker compose ps), or use Back up now.
           </AlertDescription>
         </Alert>
       )}
@@ -307,13 +307,13 @@ function StatusSection({ data, timeZone }: { data: Backups; timeZone: string }) 
             <span className="tabular-nums">{runTime(status.lastTestRestore, timeZone)}</span>
             {status.lastTestRestore.status === "succeeded" && (
               <span className="text-ink-subtle">
-                Backup {status.lastTestRestore.folder} decrypted, and every checksum matched.
+                Backup {status.lastTestRestore.folder}: decryption and checksums passed.
               </span>
             )}
           </StatusRow>
           {status.lastTestRestore.status === "failed" && (
             <dd className="text-sm text-pretty text-destructive">
-              {sentence(status.lastTestRestore.error ?? "No reason was recorded.")}
+              {sentence(status.lastTestRestore.error ?? "No error recorded.")}
             </dd>
           )}
         </dl>
@@ -379,19 +379,17 @@ function destinationFields(values: Values, separate: boolean) {
 }
 
 const STEP_TEXT: Record<ConnectionStep["step"], string> = {
-  put: "Write a test file in the folder",
+  put: "Write a test file",
   list: "List the folder",
-  get: "Read the file back",
-  delete: "Delete it",
+  get: "Read the file",
+  delete: "Delete the file",
 };
 
 function ConnectionResult({ result }: { result: ConnectionTest }) {
   return (
     <div className="flex flex-col gap-2">
       <p className="text-sm font-medium text-ink">
-        {result.ok
-          ? "The connection works: every step did."
-          : "The connection does not work yet: a step failed."}
+        {result.ok ? "Connection works." : "Connection failed."}
       </p>
       <ul aria-label="Test connection steps" className="flex flex-col gap-1.5">
         {result.steps.map((step) => (
@@ -422,16 +420,15 @@ function DestinationText({ data }: { data: Backups }) {
   if (destination.mode === "object_store") {
     return (
       <p className="text-sm text-pretty text-ink-subtle">
-        Backups use the object store's connection ({new URL(destination.objectStore.endpoint).host}
-        ).
+        Uses the object store ({new URL(destination.objectStore.endpoint).host}).
       </p>
     );
   }
   return (
     <p className="text-sm text-pretty text-ink-subtle">
       {destination.reason === "stack_garage"
-        ? "The object store is this server's own Garage, so a backup there isn't a backup. Use an S3-compatible bucket elsewhere."
-        : "Use an S3-compatible bucket, such as Amazon S3, Cloudflare R2, or Backblaze B2."}
+        ? "The object store is on this server, so back up to an S3-compatible bucket elsewhere."
+        : "Use an S3-compatible bucket."}
     </p>
   );
 }
@@ -655,10 +652,10 @@ function SettingsForm({
                 className={secret === "unreadable" ? "text-warning" : undefined}
               >
                 {secret === "saved"
-                  ? "Saved, and never shown again. Leave empty to keep it."
+                  ? "Leave empty to keep the saved secret."
                   : secret === "unreadable"
-                    ? "The saved secret can't be read since AUTH_SECRET changed. Enter it again."
-                    : "Never shown again after saving."}
+                    ? "AUTH_SECRET changed, so the saved secret can't be read. Enter it again."
+                    : "Hidden after saving."}
               </FieldDescription>
             </Field>
           )}
@@ -744,14 +741,14 @@ function KeySection({ data, timeZone }: { data: Backups; timeZone: string }) {
   return (
     <SettingsSection title="Backup key" className="border-t">
       {key.state === "none" && (
-        <p className="text-sm text-ink-subtle">Made when backups are first turned on.</p>
+        <p className="text-sm text-ink-subtle">Turn on backups to create a key.</p>
       )}
       {key.state === "unreadable" && (
         <Alert variant="destructive">
           <OctagonAlertIcon />
-          <AlertTitle>The backup key can't be read</AlertTitle>
+          <AlertTitle>Can't read backup key</AlertTitle>
           <AlertDescription className="text-pretty">
-            AUTH_SECRET changed since the key was made. Older backups need the key file you saved.
+            AUTH_SECRET changed. Older backups need your saved key file.
           </AlertDescription>
           <AlertAction>
             <Button
@@ -771,7 +768,7 @@ function KeySection({ data, timeZone }: { data: Backups; timeZone: string }) {
           {key.savedAt === null && (
             <Alert>
               <KeyRoundIcon />
-              <AlertTitle>Save the backup key somewhere other than this server</AlertTitle>
+              <AlertTitle>Save the key off this server</AlertTitle>
               <AlertDescription className="flex flex-col gap-2 text-pretty">
                 <Button
                   type="button"
@@ -786,7 +783,7 @@ function KeySection({ data, timeZone }: { data: Backups; timeZone: string }) {
             </Alert>
           )}
           <p className="text-sm font-medium text-pretty text-ink">
-            If the server and the key are both lost, the backups can't be restored.
+            Backups can't be restored if the server and key are lost.
           </p>
           <p className="text-sm text-pretty text-ink-subtle">
             A restore needs the key file, the bucket's access key, and the server's AUTH_SECRET.
@@ -879,7 +876,7 @@ export function BackupsTab({ timeZone, onDirty }: InstanceTabProps) {
   if (backups.isError && backups.data === undefined) {
     return (
       <SectionFailed
-        title="Backups could not load"
+        title="Couldn't load backups"
         message={backups.error.message}
         retry={() => void backups.refetch()}
       />

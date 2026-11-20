@@ -19,7 +19,7 @@ const email = process.argv
   ?.trim()
   .toLowerCase();
 if (email === undefined || email === "") {
-  console.error("Specify the account: vp run reset-password -- <email>");
+  console.error("Usage: vp run reset-password -- <email>");
   process.exit(1);
 }
 
@@ -33,7 +33,7 @@ try {
     .where("email", "=", email)
     .executeTakeFirst();
   if (user === undefined) {
-    console.error(`No dashboard account has the email ${email}.`);
+    console.error(`No account for ${email}.`);
     process.exitCode = 1;
   } else {
     const { token } = await createPasswordReset(db, user.id, {
@@ -45,7 +45,7 @@ try {
     // a server, so it cannot end up in request logs or proxies.
     console.log(
       [
-        `Open this link within ${COMMAND_RESET_TTL_MS / 60_000} minutes to set the password of ${email}:`,
+        `Set the password for ${email} within ${COMMAND_RESET_TTL_MS / 60_000} minutes:`,
         "",
         `  ${config.publicUrl}/reset-password#token=${token}`,
         "",
@@ -53,8 +53,8 @@ try {
         ...(config.publicUrl === DEVELOPMENT_PUBLIC_URL
           ? [
               "",
-              "In development, the dashboard dev server selects the next free port if 5173 is in use.",
-              "If it printed a different address, use that address with the same /reset-password#token=… part.",
+              "If port 5173 was taken, use the address the dashboard dev server printed,",
+              "with the same /reset-password#token=… part.",
             ]
           : []),
       ].join("\n"),

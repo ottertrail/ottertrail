@@ -203,7 +203,7 @@ export class ConfigError extends Error {
 function parsePort(raw: string): number {
   const port = Number(raw);
   if (!Number.isInteger(port) || port < 1 || port > 65_535) {
-    throw new ConfigError(`PORT must be an integer between 1 and 65535, received "${raw}"`);
+    throw new ConfigError(`PORT must be an integer from 1 to 65535, received "${raw}"`);
   }
   return port;
 }
@@ -217,7 +217,7 @@ function parseInstanceEventsPerSecond(raw: string | undefined): number {
   // At least one full batch of 50 events, as bursts are ten seconds' worth.
   if (!Number.isInteger(rate) || rate < 5 || rate > 1_000_000) {
     throw new ConfigError(
-      `INSTANCE_EVENTS_PER_SECOND must be an integer between 5 and 1000000, received "${raw}"`,
+      `INSTANCE_EVENTS_PER_SECOND must be an integer from 5 to 1000000, received "${raw}"`,
     );
   }
   return rate;
@@ -244,7 +244,7 @@ function parseDatabaseUrl(env: NodeJS.ProcessEnv): string {
   try {
     protocol = new URL(raw).protocol;
   } catch {
-    throw new ConfigError("DATABASE_URL is not a valid URL");
+    throw new ConfigError("DATABASE_URL must be a valid URL");
   }
   if (protocol !== "postgres:" && protocol !== "postgresql:") {
     throw new ConfigError("DATABASE_URL must start with postgres:// or postgresql://");
@@ -256,9 +256,7 @@ function parseClickHouse(env: NodeJS.ProcessEnv): ClickHouseConfig {
   const production = env.NODE_ENV === "production";
   const raw = env.CLICKHOUSE_URL?.trim();
   if ((raw === undefined || raw === "") && production) {
-    throw new ConfigError(
-      "CLICKHOUSE_URL is required in production, such as http://clickhouse:8123",
-    );
+    throw new ConfigError("CLICKHOUSE_URL is required in production (http://clickhouse:8123)");
   }
   const url = raw === undefined || raw === "" ? LOCAL_CLICKHOUSE.url : raw;
   const parsed = URL.parse(url);
@@ -268,7 +266,7 @@ function parseClickHouse(env: NodeJS.ProcessEnv): ClickHouseConfig {
   if (parsed.username !== "" || parsed.password !== "") {
     // Error messages never repeat the URL: it would show the password.
     throw new ConfigError(
-      "CLICKHOUSE_URL must not contain a user name or password. Use CLICKHOUSE_USER and CLICKHOUSE_PASSWORD.",
+      "Keep credentials out of CLICKHOUSE_URL. Use CLICKHOUSE_USER and CLICKHOUSE_PASSWORD.",
     );
   }
   const password = env.CLICKHOUSE_PASSWORD;
@@ -306,7 +304,7 @@ function parseObjectStore(env: NodeJS.ProcessEnv): ObjectStoreConfig | null {
   if (parsed.username !== "" || parsed.password !== "") {
     // Error messages never repeat the URL: it would show the secret.
     throw new ConfigError(
-      "OBJECT_STORE_URL must not contain keys. Use OBJECT_STORE_ACCESS_KEY_ID and OBJECT_STORE_SECRET_ACCESS_KEY.",
+      "Keep keys out of OBJECT_STORE_URL. Use OBJECT_STORE_ACCESS_KEY_ID and OBJECT_STORE_SECRET_ACCESS_KEY.",
     );
   }
   const accessKeyId = env.OBJECT_STORE_ACCESS_KEY_ID?.trim() ?? "";
@@ -349,7 +347,7 @@ function parseGarage(env: NodeJS.ProcessEnv, store: ObjectStoreConfig | null): G
   // Error messages never repeat the value.
   if (adminToken !== null && !/^[\x21-\x7E]{32,256}$/.test(adminToken)) {
     throw new ConfigError(
-      "GARAGE_ADMIN_TOKEN must be 32 to 256 visible characters without spaces. Generate one with `openssl rand -hex 32`.",
+      "GARAGE_ADMIN_TOKEN must be 32 to 256 visible characters without spaces. Generate with `openssl rand -hex 32`.",
     );
   }
   return { adminUrl: `${url.protocol}//${url.hostname}:${GARAGE_ADMIN_PORT}`, adminToken };
@@ -366,9 +364,7 @@ function parseBytes(name: string, raw: string | undefined, fallback: number): nu
   if (raw === undefined || raw.trim() === "") return fallback;
   const bytes = Number(raw);
   if (!Number.isSafeInteger(bytes) || bytes < 1024 ** 2 || bytes > 1024 ** 4) {
-    throw new ConfigError(
-      `${name} must be a number of bytes from 1 MiB to 1 TiB, received "${raw}"`,
-    );
+    throw new ConfigError(`${name} must be a byte count from 1 MiB to 1 TiB, received "${raw}"`);
   }
   return bytes;
 }
@@ -381,7 +377,7 @@ function parseTelemetryRetentionDays(raw: string | undefined): number {
   const days = Number(raw);
   if (!Number.isInteger(days) || days < 1 || days > 365) {
     throw new ConfigError(
-      `TELEMETRY_RETENTION_DAYS must be a whole number of days from 1 to 365, received "${raw}"`,
+      `TELEMETRY_RETENTION_DAYS must be 1 to 365 whole days, received "${raw}"`,
     );
   }
   return days;
@@ -402,7 +398,7 @@ function parseDenyAddresses(raw: string | undefined): string[] {
   for (const entry of entries) {
     if (parseAddressRange(entry) === null) {
       throw new ConfigError(
-        `UPTIME_DENY_ADDRESSES must be a comma-separated list of IP addresses and CIDR ranges. "${entry}" is not valid`,
+        `Invalid UPTIME_DENY_ADDRESSES entry: "${entry}". Use comma-separated IP addresses and CIDR ranges.`,
       );
     }
   }
@@ -429,7 +425,7 @@ function parseEmail(env: NodeJS.ProcessEnv): EmailConfig | null {
   // code sets (requireTLS, logging, certificate checks): none is taken.
   if (raw.includes("?") || raw.includes("#")) {
     throw new ConfigError(
-      "SMTP_URL must not contain a query string or fragment. Percent-encode ? and # in the user name or password.",
+      "No query string or fragment in SMTP_URL. Percent-encode ? and # in credentials.",
     );
   }
   const url = URL.parse(raw);
@@ -443,7 +439,7 @@ function parseEmail(env: NodeJS.ProcessEnv): EmailConfig | null {
     throw new ConfigError("SMTP_URL has an invalid port");
   }
   if ((url.username === "") !== (url.password === "")) {
-    throw new ConfigError("SMTP_URL must contain both a user name and a password, or neither");
+    throw new ConfigError("SMTP_URL needs both username and password, or neither");
   }
   if (url.pathname !== "" && url.pathname !== "/") {
     throw new ConfigError("SMTP_URL must not have a path");
@@ -452,7 +448,7 @@ function parseEmail(env: NodeJS.ProcessEnv): EmailConfig | null {
   const from = parseSender(env.EMAIL_FROM ?? "");
   if (from === null) {
     throw new ConfigError(
-      'EMAIL_FROM is required with SMTP_URL: an address, or a name and an address such as "Ottertrail <alerts@example.com>"',
+      'EMAIL_FROM is required with SMTP_URL, such as alerts@example.com or "Ottertrail <alerts@example.com>"',
     );
   }
   return { smtpUrl: raw, from };
@@ -466,7 +462,7 @@ function parseTrustProxy(raw: string | undefined): false | number | string[] {
   if (/^\d+$/.test(trimmed)) {
     const hops = Number(trimmed);
     if (hops < 1 || hops > 10) {
-      throw new ConfigError(`TRUST_PROXY hops must be between 1 and 10, received "${raw}"`);
+      throw new ConfigError(`TRUST_PROXY hops must be 1 to 10, received "${raw}"`);
     }
     return hops;
   }
@@ -479,7 +475,7 @@ function parseTrustProxy(raw: string | undefined): false | number | string[] {
       (/^\d+$/.test(prefix) && Number(prefix) <= (version === 6 ? 128 : 32));
     if (version === 0 || !validPrefix || extra !== undefined) {
       throw new ConfigError(
-        `TRUST_PROXY must be false, a number of hops, or a comma-separated list of IP addresses or CIDR ranges. "${entry}" is not valid`,
+        `Invalid TRUST_PROXY entry: "${entry}". Use false, a hop count, or comma-separated IP addresses or CIDR ranges.`,
       );
     }
   }
@@ -498,9 +494,7 @@ function parsePublicUrl(env: NodeJS.ProcessEnv): string {
   const raw = env.PUBLIC_URL?.trim();
   if (raw === undefined || raw === "") {
     if (env.NODE_ENV === "production") {
-      throw new ConfigError(
-        "PUBLIC_URL is required in production, such as https://analytics.example.com",
-      );
+      throw new ConfigError("PUBLIC_URL is required in production (https://analytics.example.com)");
     }
     return DEVELOPMENT_PUBLIC_URL;
   }
@@ -510,7 +504,7 @@ function parsePublicUrl(env: NodeJS.ProcessEnv): string {
   }
   if (url.pathname !== "/" || url.search !== "" || url.hash !== "" || url.username !== "") {
     throw new ConfigError(
-      `PUBLIC_URL must be an origin without a path, such as https://analytics.example.com, received "${raw}"`,
+      `PUBLIC_URL must be an origin without a path (https://analytics.example.com), received "${raw}"`,
     );
   }
   // Session cookies are marked Secure, which browsers only keep over HTTPS.
@@ -525,14 +519,14 @@ function parseAuthSecret(env: NodeJS.ProcessEnv): string {
   if (raw === undefined || raw === "") {
     if (env.NODE_ENV === "production") {
       throw new ConfigError(
-        "AUTH_SECRET is required in production. Generate one with `openssl rand -base64 32`.",
+        "AUTH_SECRET is required in production. Generate with `openssl rand -base64 32`.",
       );
     }
     return DEVELOPMENT_AUTH_SECRET;
   }
   // Error messages never repeat the value.
   if (raw.length < MIN_AUTH_SECRET_LENGTH) {
-    throw new ConfigError(`AUTH_SECRET must be at least ${MIN_AUTH_SECRET_LENGTH} characters long`);
+    throw new ConfigError(`AUTH_SECRET must be at least ${MIN_AUTH_SECRET_LENGTH} characters`);
   }
   return raw;
 }

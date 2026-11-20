@@ -159,10 +159,7 @@ describe("loadConfig", () => {
         "SMTP_URL must be an smtp:// or smtps:// URL",
       ],
       [`smtp://alerts:${password}@`, "SMTP_URL"],
-      [
-        `smtp://alerts@smtp.example.com`,
-        "SMTP_URL must contain both a user name and a password, or neither",
-      ],
+      [`smtp://alerts@smtp.example.com`, "SMTP_URL needs both username and password, or neither"],
       [`smtps://alerts:${password}@smtp.example.com/mail`, "SMTP_URL must not have a path"],
       ...[
         "?requireTLS=false",
@@ -175,12 +172,12 @@ describe("loadConfig", () => {
         (suffix) =>
           [
             `smtp://alerts:${password}@smtp.example.com:587${suffix}`,
-            "SMTP_URL must not contain a query string or fragment. Percent-encode ? and # in the user name or password.",
+            "No query string or fragment in SMTP_URL. Percent-encode ? and # in credentials.",
           ] as const,
       ),
       [
         `smtp://alerts:${password}#x@smtp.example.com:587`,
-        "SMTP_URL must not contain a query string or fragment",
+        "No query string or fragment in SMTP_URL",
       ],
     ] as const) {
       let error: unknown;
@@ -198,7 +195,7 @@ describe("loadConfig", () => {
   test("refuses an uptime deny list entry that is not an address or CIDR range", () => {
     for (const entry of ["example.com", "10.0.0.0/33", "::1/129", "10.0.0.1/8/2", "10.0.0"]) {
       expect(() => loadConfig({ UPTIME_DENY_ADDRESSES: `203.0.113.10,${entry}` })).toThrow(
-        `UPTIME_DENY_ADDRESSES must be a comma-separated list of IP addresses and CIDR ranges. "${entry}" is not valid`,
+        `Invalid UPTIME_DENY_ADDRESSES entry: "${entry}". Use comma-separated IP addresses and CIDR ranges.`,
       );
     }
   });
@@ -224,7 +221,7 @@ describe("loadConfig", () => {
     expect(loadConfig({ TELEMETRY_RETENTION_DAYS: "365" }).telemetryRetentionDays).toBe(365);
     for (const value of ["0", "366", "7.5", "-3", "a month"]) {
       expect(() => loadConfig({ TELEMETRY_RETENTION_DAYS: value })).toThrow(
-        "TELEMETRY_RETENTION_DAYS must be a whole number of days from 1 to 365",
+        "TELEMETRY_RETENTION_DAYS must be 1 to 365 whole days",
       );
     }
   });
@@ -319,7 +316,7 @@ describe("loadConfig", () => {
   describe("ClickHouse", () => {
     test.each([
       ["ftp://clickhouse:8123", /must be an http\(s\) URL/],
-      ["http://user:secret@clickhouse:8123", /must not contain a user name or password/],
+      ["http://user:secret@clickhouse:8123", /Keep credentials out of CLICKHOUSE_URL/],
     ])("refuses CLICKHOUSE_URL %s", (url, message) => {
       expect(() => loadConfig({ CLICKHOUSE_URL: url })).toThrow(message);
     });
@@ -428,7 +425,7 @@ describe("loadConfig", () => {
     test("refuses a source map limit below 1 MiB, above 1 TiB, or not a whole number", () => {
       for (const value of ["1000", String(1024 ** 4 + 1), "2097152.5", "lots"]) {
         expect(() => loadConfig({ SOURCE_MAP_STORAGE_BYTES: value })).toThrow(
-          "SOURCE_MAP_STORAGE_BYTES must be a number of bytes",
+          "SOURCE_MAP_STORAGE_BYTES must be a byte count",
         );
       }
     });

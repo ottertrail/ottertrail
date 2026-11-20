@@ -140,7 +140,7 @@ describe("waiting for ClickHouse's backup", () => {
         signal: new AbortController().signal,
         pollMs: 60_000,
       }),
-    ).rejects.toThrow(/^ClickHouse lost track of its backup/);
+    ).rejects.toThrow(/^ClickHouse restarted during backup/);
     expect(stops).toBe(1);
     expect(Date.now() - started).toBeLessThan(1000);
   });

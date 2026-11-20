@@ -17,14 +17,14 @@ const db = createDatabase({ connectionString: config.databaseUrl, maxConnections
 try {
   const link = await createSetupToken(db);
   if (link === null) {
-    console.error(`This instance already has an owner. Sign in at ${config.publicUrl}/sign-in`);
+    console.error(`Owner already exists. Sign in at ${config.publicUrl}/sign-in`);
     process.exitCode = 1;
   } else {
     // The token goes in the fragment (after #), which browsers never send to
     // a server, so it cannot end up in request logs or proxies.
     console.log(
       [
-        `Open this link within ${SETUP_LINK_TTL_MS / 60_000} minutes to create the owner account:`,
+        `Create the owner account within ${SETUP_LINK_TTL_MS / 60_000} minutes:`,
         "",
         `  ${config.publicUrl}/setup#token=${link.token}`,
         "",
@@ -32,8 +32,8 @@ try {
         ...(config.publicUrl === DEVELOPMENT_PUBLIC_URL
           ? [
               "",
-              "In development, the dashboard dev server selects the next free port if 5173 is in use.",
-              "If it printed a different address, use that address with the same /setup#token=… part.",
+              "If port 5173 was taken, use the address the dashboard dev server printed,",
+              "with the same /setup#token=… part.",
             ]
           : []),
       ].join("\n"),

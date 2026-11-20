@@ -329,8 +329,8 @@ describe("a separate destination (no object store)", () => {
     expect(file.body).toContain(`# public key: ${recipient}`);
 
     const lines = log.join("");
-    expect(lines).toContain("the backup key was shown");
-    expect(lines).toContain("the backup key was downloaded");
+    expect(lines).toContain("backup key shown");
+    expect(lines).toContain("backup key downloaded");
     expect(lines).not.toContain(key);
     expect(lines).not.toContain(GARAGE.secretAccessKey);
   });
@@ -371,7 +371,9 @@ describe("a separate destination (no object store)", () => {
     const body = wrong.json();
     expect(body.ok).toBe(false);
     expect(body.steps[0].status).toBe("failed");
-    expect(body.steps[0].error).toMatch(/secret access key doesn't match|access key/i);
+    expect(body.steps[0].error).toMatch(
+      /Secret access key mismatch|Unknown access key|Access denied/i,
+    );
     expect(body.steps.slice(1).map((step: { status: string }) => step.status)).toEqual([
       "skipped",
       "skipped",
@@ -400,7 +402,7 @@ describe("a separate destination (no object store)", () => {
         "failed",
       ]);
       expect(body.steps[3].error).toBe(
-        "The storage refused it: this access key may not delete files in the bucket's folder (AccessDenied). Give the key permission to delete objects there.",
+        "Access denied (AccessDenied). Give this key permission to delete objects in the backup folder.",
       );
     } finally {
       await s3.close();

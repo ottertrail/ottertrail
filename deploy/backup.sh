@@ -42,7 +42,7 @@ cleanup() {
   # The .dump is renamed last: without it, the others are not a backup.
   [ -f "backups/$name.dump" ] || rm -f "$objects.tar" "backups/$name.zip"
   if [ "$status" -ne 0 ] && [ -n "$step" ]; then
-    echo "The backup failed while $step. No backup file was kept." >&2
+    echo "Backup failed while $step. No backup kept." >&2
   fi
 }
 trap cleanup EXIT
@@ -72,12 +72,12 @@ data_bytes=$(bytes "$data_bytes")
 object_bytes=$(bytes "$object_bytes")
 folder_free=$(bytes "$folder_free")
 if [ -z "$disk_free" ] || [ -z "$data_bytes" ] || [ -z "$object_bytes" ]; then
-  echo "Could not measure the free space; the backup goes on. It needs about twice ClickHouse's data and twice the objects." >&2
+  echo "Couldn't measure free space. Continuing; needs about twice ClickHouse's data and twice the objects." >&2
 else
   need=$((2 * data_bytes + 2 * object_bytes))
-  echo "Free space: $(gib "$disk_free") on ClickHouse's disk${folder_free:+, $(gib "$folder_free") for backups/}. This backup needs about $(gib "$need")."
+  echo "Free space: $(gib "$disk_free") on ClickHouse's disk${folder_free:+, $(gib "$folder_free") for backups/}. Needs about $(gib "$need")."
   if [ "$disk_free" -lt "$need" ] || { [ -n "$folder_free" ] && [ "$folder_free" -lt "$need" ]; }; then
-    echo "Warning: less free space than the backup needs. It may fail part way, and then keeps no file. Copy old backups off the server and delete them first." >&2
+    echo "Warning: insufficient free space. Backup may fail and keep no files. Copy old backups off the server, then delete them." >&2
   fi
 fi
 
@@ -95,7 +95,7 @@ $compose exec -T clickhouse clickhouse-client --user ottertrail --receive_timeou
   --query "BACKUP DATABASE ottertrail TO File('$name.zip')" > /dev/null
 # ClickHouse writes it into its own volume (the backups setting in
 # compose.yaml's clickhouse-config): move it out to this folder.
-step="copying ClickHouse's backup out of its volume"
+step="copying ClickHouse's backup"
 $compose exec -T clickhouse cat "/var/lib/clickhouse/backups/$name.zip" > "backups/$name.zip.partial"
 
 # The object store last, with the same settings the API reads; without a
@@ -104,10 +104,10 @@ $compose exec -T clickhouse cat "/var/lib/clickhouse/backups/$name.zip" > "backu
 # keeps running: an object written after PostgreSQL's dump is in the
 # backup but nothing refers to it, and one deleted in between (an expired
 # replay) is left out, as if it had expired (docs/deployment.md).
-step="backing up the object store (source maps and session replays)"
+step="backing up the object store"
 mkdir "$objects.partial"
 app -v "$PWD/$objects.partial:/backup:z" api node dist/backup-objects.mjs /backup
-step="packing the object store's files into a tar"
+step="packing the object backup"
 tar -cf "$objects.tar.partial" -C "$objects.partial" .
 rm -rf "$objects.partial"
 

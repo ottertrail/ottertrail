@@ -91,12 +91,12 @@ export class BackupJob {
   async tick(): Promise<Work | null> {
     try {
       const work = await this.#take();
-      if (this.#failing) this.#options.log("info", "taking backups works again");
+      if (this.#failing) this.#options.log("info", "running due backups works again");
       this.#failing = false;
       return work;
     } catch (error) {
       if (!this.#failing) {
-        this.#options.log("error", "taking due backups failed", { err: String(error) });
+        this.#options.log("error", "running due backups failed", { err: String(error) });
       }
       this.#failing = true;
       return null;
@@ -108,10 +108,10 @@ export class BackupJob {
     if (this.#abort.signal.aborted) return null;
     const now = this.#now();
     const stale = await failStaleRuns(db, now);
-    if (stale > 0) this.#options.log("warn", "a backup run's worker stopped; it was marked failed");
+    if (stale > 0) this.#options.log("warn", "worker stopped; backup run marked failed");
     // A backup a worker's stop cut off is tried once more, now: the day is not skipped.
     if (await retryStoppedBackup(db, now)) {
-      this.#options.log("info", "a backup cut off by a worker's stop is tried again");
+      this.#options.log("info", "retrying backup interrupted by worker shutdown");
     }
     const { timeZone } = await readInstanceSettings(db);
 
@@ -167,14 +167,14 @@ export class BackupJob {
       touchRun(db, id, this.#now()).then(
         (touched) => {
           if (touched === 0 && !takenOver.signal.aborted) {
-            log("warn", "a backup run was marked stopped by another worker; it stops");
+            log("warn", "backup run stopped after another worker marked it stale");
             takenOver.abort();
           }
         },
         () => undefined,
       );
     }, this.#heartbeatMs);
-    log("info", work.kind === "backup" ? "a backup started" : "a test restore started", {
+    log("info", work.kind === "backup" ? "backup started" : "test restore started", {
       trigger: work.trigger,
     });
     try {
@@ -194,7 +194,7 @@ export class BackupJob {
       // A run marked stale is already finished: its row stays as the other worker left it.
       if (!takenOver.signal.aborted) await finishRun(db, run, outcome, this.#now());
       if (outcome.status === "failed") {
-        log("error", work.kind === "backup" ? "a backup failed" : "a test restore failed", {
+        log("error", work.kind === "backup" ? "backup failed" : "test restore failed", {
           trigger: work.trigger,
           err: outcome.error,
         });
@@ -205,7 +205,7 @@ export class BackupJob {
             .execute();
         }
       } else {
-        log("info", work.kind === "backup" ? "a backup finished" : "a test restore passed", {
+        log("info", work.kind === "backup" ? "backup finished" : "test restore passed", {
           folder: outcome.folder,
           bytes: outcome.bytes,
         });
@@ -228,7 +228,7 @@ export class BackupJob {
     try {
       return { settings, destination, client: backupClient(destination, rules) };
     } catch (error) {
-      return { settings, problem: `The destination can't be used: ${s3ErrorText(error)}` };
+      return { settings, problem: `Can't use destination: ${s3ErrorText(error)}` };
     }
   }
 
@@ -245,7 +245,7 @@ export class BackupJob {
       client.destroy();
       return {
         status: "failed",
-        error: "There is no backup key yet: turn backups on and save, which makes one.",
+        error: "Turn on backups and save to create a key.",
       };
     }
     // The identity signs the manifest (secrets.ts, manifestMac).
@@ -254,8 +254,7 @@ export class BackupJob {
       client.destroy();
       return {
         status: "failed",
-        error:
-          "The backup key can't be read: AUTH_SECRET changed since it was made. Make a new key on the Backups tab of Settings, and save it.",
+        error: "AUTH_SECRET changed. Create and save a new key in Settings > Backups.",
       };
     }
     try {
@@ -288,7 +287,7 @@ export class BackupJob {
       const message =
         error instanceof BackupError
           ? error.message
-          : `The backup failed: ${error instanceof Error ? error.message : String(error)}`;
+          : `Backup failed: ${error instanceof Error ? error.message : String(error)}`;
       return {
         status: "failed",
         error: signal.aborted ? WORKER_SHUTDOWN : message,
@@ -314,8 +313,8 @@ export class BackupJob {
           status: "failed",
           error:
             settings.keySealed === null
-              ? "There is no backup key yet, so there is nothing to check."
-              : "The backup key can't be read: AUTH_SECRET changed since it was made. Check a backup with the key file you saved instead (docs/deployment.md, Restoring from S3).",
+              ? "No backup key to check."
+              : "AUTH_SECRET changed. Check the backup with your saved key file (docs/deployment.md, Restoring from S3).",
         };
       }
       const checked = await testRestore({
@@ -331,7 +330,7 @@ export class BackupJob {
         error:
           error instanceof BackupError
             ? error.message
-            : `The test restore failed: ${error instanceof Error ? error.message : String(error)}`,
+            : `Test restore failed: ${error instanceof Error ? error.message : String(error)}`,
       };
     } finally {
       client.destroy();

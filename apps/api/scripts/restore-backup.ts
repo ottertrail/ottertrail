@@ -53,8 +53,7 @@ function destinationFromEnvironment(): Destination {
   const missing = Object.values(NAMES).filter((name) => read(name) === "");
   if (missing.length > 0) fail(`Set ${missing.join(", ")} (restore.sh asks for them).`);
   const url = endpointOrigin(read(NAMES.endpoint));
-  if (url === null)
-    fail(`${NAMES.endpoint} must be an http:// or https:// address without a path.`);
+  if (url === null) fail(`${NAMES.endpoint} must use http:// or https:// without a path.`);
   return {
     url,
     region: read(NAMES.region),
@@ -74,16 +73,14 @@ async function keyFrom(file: string): Promise<string> {
   try {
     text = await readFile(file, "utf8");
   } catch (error) {
-    fail(
-      `The key file ${file} can't be read: ${error instanceof Error ? error.message : String(error)}`,
-    );
+    fail(`Can't read key file ${file}: ${error instanceof Error ? error.message : String(error)}`);
   }
   const key = text
     .split(/\r?\n/)
     .map((line) => line.trim())
     .find((line) => line.startsWith("AGE-SECRET-KEY-"));
   if (key === undefined) {
-    fail(`${file} holds no backup key: it should have a line starting with AGE-SECRET-KEY-.`);
+    fail(`${file} needs a key line starting with AGE-SECRET-KEY-.`);
   }
   return key;
 }
@@ -102,11 +99,11 @@ try {
   if (command === "list") {
     const backups = await listBackups(client, destination.bucket, destination.prefix);
     if (backups.length === 0) {
-      fail(`${destination.bucket}/${destination.prefix} holds no backups.`);
+      fail(`No backups in ${destination.bucket}/${destination.prefix}.`);
     }
     for (const backup of backups) {
       console.log(
-        `${backup.name}  ${gib(backup.bytes).padStart(11)}  ${backup.complete ? "whole" : "incomplete (no manifest: not restorable)"}`,
+        `${backup.name}  ${gib(backup.bytes).padStart(11)}  ${backup.complete ? "complete" : "incomplete (no manifest; cannot restore)"}`,
       );
     }
   } else if (command === "describe") {
@@ -136,7 +133,7 @@ try {
       ...(name === "latest" ? {} : { name }),
     });
     console.error(
-      `Downloaded ${checked.name} (${gib(checked.bytes)}), decrypted it, and checked every part against its manifest.`,
+      `Downloaded ${checked.name} (${gib(checked.bytes)}). Decryption and manifest checks passed.`,
     );
     console.log(`${folder.replace(/\/+$/, "")}/ottertrail-${checked.name}`);
   } else {

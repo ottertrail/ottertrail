@@ -18,7 +18,7 @@ const args = process.argv.slice(2).filter((arg) => arg !== "--");
 const checkOnly = args.includes("--check");
 const dir = args.find((arg) => arg !== "--check");
 if (dir === undefined || dir === "") {
-  console.error("Specify the folder to restore from: restore-objects [--check] <folder>");
+  console.error("Usage: restore-objects [--check] <folder>");
   process.exit(1);
 }
 
@@ -29,23 +29,21 @@ try {
     const bytes = checked.reduce((total, entry) => total + entry.size, 0);
     console.log(
       manifest.bucket === null
-        ? "The object backup checks out: it was made without an object store, and holds nothing."
-        : `The object backup checks out: ${checked.length} objects (${bytes} bytes)${checked.length > 0 ? ", and the bucket answers" : ""}.`,
+        ? "Object backup checked: made without an object store, so it holds nothing."
+        : `Object backup checked: ${checked.length} objects (${bytes} bytes)${checked.length > 0 ? ", and the bucket answers" : ""}.`,
     );
   } else {
     const { count, bytes, backupBucket } = await restoreObjects(store, dir);
     if (backupBucket === null) {
-      console.log("The backup has no object store. There are no objects to restore.");
+      console.log("Backup has no object store. Nothing to restore.");
     } else if (store === null) {
-      console.log(
-        "The backup's bucket was empty, and no object store is set up: nothing to restore.",
-      );
+      console.log("Backup bucket empty; no object store configured. Nothing to restore.");
     } else {
-      console.log(`Restored ${count} objects (${bytes} bytes) into the bucket ${store.bucket}.`);
+      console.log(`Restored ${count} objects (${bytes} bytes) to ${store.bucket}.`);
     }
   }
 } catch (error) {
-  const what = checkOnly ? "The object backup does not check out" : "The object restore failed";
+  const what = checkOnly ? "Invalid object backup" : "Object restore failed";
   console.error(`${what}: ${error instanceof Error ? error.message : String(error)}`);
   process.exitCode = 1;
 }

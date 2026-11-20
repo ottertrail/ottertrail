@@ -197,7 +197,7 @@ export async function uploadStream(
     const number = parts.length + 1;
     if (number > MAX_PARTS) {
       throw new Error(
-        `the file is larger than ${MAX_PARTS} parts of ${PART_BYTES / 1024 ** 2} MiB, the most one S3 upload takes`,
+        `file exceeds the S3 limit: ${MAX_PARTS} parts of ${PART_BYTES / 1024 ** 2} MiB`,
       );
     }
     const sent = await client.send(
@@ -409,7 +409,7 @@ export async function testConnection(
       results.push({
         step: "list",
         status: "failed",
-        error: "The listing worked but did not show the file just written.",
+        error: "Test file missing from listing.",
       });
     } else {
       results.push({ step: "list", status: "ok" });
@@ -423,7 +423,7 @@ export async function testConnection(
       results.push({
         step: "get",
         status: "failed",
-        error: "The file read back differs from the one written.",
+        error: "Test file contents changed.",
       });
     } else {
       results.push({ step: "get", status: "ok" });
@@ -458,40 +458,40 @@ export function s3ErrorText(error: unknown, verb = "use"): string {
       case "AccessDenied":
       case "Forbidden":
       case "AllAccessDisabled":
-        return `The storage refused it: this access key may not ${verb} files in the bucket's folder (${code}). Give the key permission to ${verb} objects there.`;
+        return `Access denied (${code}). Give this key permission to ${verb} objects in the backup folder.`;
       case "NoSuchBucket":
-        return "The bucket doesn't exist (NoSuchBucket). Check its name, or create it first.";
+        return "Bucket not found (NoSuchBucket). Check the name or create it.";
       case "InvalidAccessKeyId":
-        return "The storage doesn't know this access key ID (InvalidAccessKeyId). Check it.";
+        return "Unknown access key ID (InvalidAccessKeyId). Check it.";
       case "SignatureDoesNotMatch":
-        return "The secret access key doesn't match the access key ID (SignatureDoesNotMatch). Enter the secret again.";
+        return "Secret access key mismatch (SignatureDoesNotMatch). Enter it again.";
       case "AuthorizationHeaderMalformed":
       case "PermanentRedirect":
       case "IllegalLocationConstraintException":
-        return `The region doesn't match the bucket's (${code}). Check the region.`;
+        return `Region mismatch (${code}). Check the region.`;
       case "InvalidBucketName":
-        return "The storage doesn't accept this bucket name (InvalidBucketName).";
+        return "Invalid bucket name (InvalidBucketName).";
       case "NoSuchKey":
-        return "The file isn't there (NoSuchKey).";
+        return "File not found (NoSuchKey).";
       default: {
         const detail = error.message !== "" && error.message !== code ? `: ${error.message}` : "";
-        return `The storage answered ${code}${status === undefined ? "" : ` (HTTP ${status})`}${detail}.`;
+        return `Storage returned ${code}${status === undefined ? "" : ` (HTTP ${status})`}${detail}.`;
       }
     }
   }
   const code = codeOf(error);
   const name = error instanceof Error ? error.name : "";
   if (DNS_CODES.has(code)) {
-    return `The endpoint's host name can't be resolved (${code}). Check the endpoint.`;
+    return `Can't resolve endpoint (${code}). Check the address.`;
   }
   if (code === "ECONNREFUSED") {
-    return "Nothing accepts connections at the endpoint (ECONNREFUSED). Check the endpoint and its port.";
+    return "Connection refused (ECONNREFUSED). Check the endpoint and port.";
   }
   if (code === "ETIMEDOUT" || name === "TimeoutError" || code === "ECONNRESET") {
-    return `The endpoint didn't answer in time (${code || name}). Check the endpoint, and that this server can reach it.`;
+    return `Endpoint timed out (${code || name}). Check the address and server connectivity.`;
   }
   if (code.startsWith("CERT_") || code.includes("SELF_SIGNED") || code.startsWith("UNABLE_TO_")) {
-    return `The endpoint's TLS certificate isn't trusted (${code}).`;
+    return `Untrusted endpoint TLS certificate (${code}).`;
   }
   return error instanceof Error ? error.message : String(error);
 }

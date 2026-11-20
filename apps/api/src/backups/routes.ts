@@ -67,7 +67,7 @@ function within(
     .header("retry-after", String(tried.retryAfterSeconds))
     .send({
       error: "rate_limited",
-      message: `You ran ${what} too often for now. Try again in ${tried.retryAfterSeconds} seconds.`,
+      message: `${what} limit reached. Retry in ${tried.retryAfterSeconds} seconds.`,
     });
   return false;
 }
@@ -91,7 +91,7 @@ const PASSWORD_NEEDED = {
 
 const WRONG_PASSWORD = {
   error: "wrong_password",
-  message: "The current password is incorrect. Enter it again.",
+  message: "Incorrect password. Try again.",
 } as const;
 
 const iso = (date: Date | null) => date?.toISOString() ?? null;
@@ -262,7 +262,7 @@ export const backupRoutes: FastifyPluginCallback<{
     const at = now();
     const channelIds = await readWarningChannels(trx);
     for (const action of actions) {
-      request.log.info({ userId: user.id, action }, "backup settings: a guarded action");
+      request.log.info({ userId: user.id, action }, "backup settings action");
       await notifyIn(trx, {
         channelIds,
         type: "backups.changed",
@@ -380,8 +380,7 @@ export const backupRoutes: FastifyPluginCallback<{
       return {
         refused: {
           error: "not_used",
-          message:
-            "This instance's backups use the object store's connection (OBJECT_STORE_URL), so they take no endpoint, region, or keys of their own. Choose a bucket and folder only.",
+          message: "Backups use OBJECT_STORE_URL. Set only the bucket and folder.",
         },
       };
     }
@@ -392,8 +391,7 @@ export const backupRoutes: FastifyPluginCallback<{
         return {
           refused: {
             error: "invalid_endpoint",
-            message:
-              "The endpoint must be an http:// or https:// address without a path, such as https://s3.eu-central-1.amazonaws.com.",
+            message: "Use an http:// or https:// endpoint without a path.",
           },
         };
       }
@@ -542,7 +540,7 @@ export const backupRoutes: FastifyPluginCallback<{
           .execute();
         await notice(trx, request, actions);
       });
-      if (key !== null) request.log.info("a backup key was made");
+      if (key !== null) request.log.info("backup key created");
       return view();
     },
   );
@@ -594,8 +592,7 @@ export const backupRoutes: FastifyPluginCallback<{
       if (!settings.enabled || settings.keyRecipient === null) {
         return reply.code(409).send({
           error: "backups_off",
-          message:
-            "Turn backups on and save first: Back up now uses the saved destination and the backup key, which turning backups on makes.",
+          message: "Turn on backups and save first.",
         });
       }
       if (!within(limits.backupNow, "Back up now", request, reply)) return reply;
@@ -604,7 +601,7 @@ export const backupRoutes: FastifyPluginCallback<{
         .set({ backup_requested_at: now() })
         .where("backup_requested_at", "is", null)
         .execute();
-      request.log.info("a backup was asked for");
+      request.log.info("backup requested");
       return view();
     },
   );
@@ -617,7 +614,7 @@ export const backupRoutes: FastifyPluginCallback<{
       if (settings.keySealed === null) {
         return reply.code(409).send({
           error: "no_key",
-          message: "There is no backup to check yet: turn backups on, save, and back up first.",
+          message: "Turn on backups, save, and back up first.",
         });
       }
       if (!within(limits.testRestore, "Test restore", request, reply)) return reply;
@@ -626,7 +623,7 @@ export const backupRoutes: FastifyPluginCallback<{
         .set({ test_restore_requested_at: now() })
         .where("test_restore_requested_at", "is", null)
         .execute();
-      request.log.info("a test restore was asked for");
+      request.log.info("test restore requested");
       return view();
     },
   );
@@ -662,7 +659,7 @@ export const backupRoutes: FastifyPluginCallback<{
     } catch (error) {
       return {
         ok: false as const,
-        error: `The backups could not be listed: ${s3ErrorText(error, "list")}`,
+        error: `Couldn't list backups: ${s3ErrorText(error, "list")}`,
       };
     } finally {
       client.destroy();
@@ -679,7 +676,7 @@ export const backupRoutes: FastifyPluginCallback<{
     ) {
       void reply.code(404).send({
         error: "no_key",
-        message: "There is no backup key yet: it is made when backups are first turned on.",
+        message: "Turn on backups to create a key.",
       });
       return null;
     }
@@ -688,7 +685,7 @@ export const backupRoutes: FastifyPluginCallback<{
       void reply.code(409).send({
         error: "key_unreadable",
         message:
-          "The backup key can't be read: AUTH_SECRET changed since it was made. Backups made with it can be restored with the key file you saved; make a new key to back up again.",
+          "AUTH_SECRET changed. Restore older backups with your saved key file. Create a new key to resume backups.",
       });
       return null;
     }
@@ -713,7 +710,7 @@ export const backupRoutes: FastifyPluginCallback<{
       if (!(await passwordConfirmed(request, reply, request.body.password))) return reply;
       await db.transaction().execute((trx) => notice(trx, request, ["key_shown"]));
       // Logged as an action, without the key.
-      request.log.info({ userId: signedInUser(request).id }, "the backup key was shown");
+      request.log.info({ userId: signedInUser(request).id }, "backup key shown");
       void reply.header("cache-control", "no-store");
       return {
         key: key.identity,
@@ -732,7 +729,7 @@ export const backupRoutes: FastifyPluginCallback<{
       if (!(await passwordConfirmed(request, reply, request.body.password))) return reply;
       await db.transaction().execute((trx) => notice(trx, request, ["key_downloaded"]));
       const { name } = await readInstanceSettings(db);
-      request.log.info({ userId: signedInUser(request).id }, "the backup key was downloaded");
+      request.log.info({ userId: signedInUser(request).id }, "backup key downloaded");
       return reply
         .header("cache-control", "no-store")
         .header("content-type", "text/plain; charset=utf-8")
@@ -758,7 +755,7 @@ export const backupRoutes: FastifyPluginCallback<{
         .where("key_sealed", "is not", null)
         .executeTakeFirst();
       if (result.numUpdatedRows === 0n) {
-        return reply.code(404).send({ error: "no_key", message: "There is no backup key yet." });
+        return reply.code(404).send({ error: "no_key", message: "No backup key yet." });
       }
       return view();
     },
@@ -773,7 +770,7 @@ export const backupRoutes: FastifyPluginCallback<{
         return reply.code(409).send({
           error: "key_readable",
           message:
-            "The backup key can still be read, so it is kept: backups in the bucket need it. A new key is made only when the old one can't be read.",
+            "The key still works and existing backups need it. Replace it only if it can't be read.",
         });
       }
       const key = await makeBackupKey();
@@ -791,10 +788,10 @@ export const backupRoutes: FastifyPluginCallback<{
       if (replaced.numUpdatedRows === 0n) {
         return reply.code(409).send({
           error: "key_changed",
-          message: "The key was replaced meanwhile, by another request. Reload the page to see it.",
+          message: "Another request replaced the key. Reload the page.",
         });
       }
-      request.log.info("the unreadable backup key was replaced with a new one");
+      request.log.info("unreadable backup key replaced");
       return view();
     },
   );

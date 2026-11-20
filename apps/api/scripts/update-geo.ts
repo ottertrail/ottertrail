@@ -34,7 +34,7 @@ try {
 } catch (error) {
   reachable = false;
   console.warn(
-    `PostgreSQL cannot be reached (${error instanceof Error ? error.message : String(error)}): updating without the lease, and the Settings page will not show this update.`,
+    `PostgreSQL unreachable (${error instanceof Error ? error.message : String(error)}). Updating without a lease; this update won't appear in Settings.`,
   );
 }
 

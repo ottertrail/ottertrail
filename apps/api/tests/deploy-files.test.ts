@@ -202,10 +202,10 @@ describe("storage: Garage's admin API, the free-disk floor, and backup.sh", () =
         objects: String(GiB / 2),
       });
       expect(stdout).toMatch(
-        /^Free space: 1000\.0 GiB on ClickHouse's disk, [\d.]+ GiB for backups\/\. This backup needs about 3\.0 GiB\.$/m,
+        /^Free space: 1000\.0 GiB on ClickHouse's disk, [\d.]+ GiB for backups\/\. Needs about 3\.0 GiB\.$/m,
       );
       expect(stderr).not.toContain("Warning");
-      expect(stderr).toContain("The backup failed while dumping PostgreSQL.");
+      expect(stderr).toContain("Backup failed while dumping PostgreSQL.");
     });
 
     test("too little: warns, and goes on to the backup", async () => {
@@ -216,10 +216,10 @@ describe("storage: Garage's admin API, the free-disk floor, and backup.sh", () =
       });
       expect(stdout).toContain("Free space: 2.0 GiB on ClickHouse's disk");
       expect(stderr).toContain(
-        "Warning: less free space than the backup needs. It may fail part way, and then keeps no file.",
+        "Warning: insufficient free space. Backup may fail and keep no files.",
       );
       // It went on: the dump was tried.
-      expect(stderr).toContain("The backup failed while dumping PostgreSQL.");
+      expect(stderr).toContain("Backup failed while dumping PostgreSQL.");
     });
 
     test("one figure unmeasured: says so, skips the comparison, and goes on", async () => {
@@ -229,17 +229,17 @@ describe("storage: Garage's admin API, the free-disk floor, and backup.sh", () =
         { free: String(1000 * GiB), data: String(GiB), objects: "ERROR: relation missing" },
       ]) {
         const { stdout, stderr } = await run(figures);
-        expect(stderr).toContain("Could not measure the free space; the backup goes on.");
+        expect(stderr).toContain("Couldn't measure free space. Continuing;");
         expect(stdout).not.toContain("Free space:");
         expect(stderr).not.toContain("Warning");
-        expect(stderr).toContain("The backup failed while dumping PostgreSQL.");
+        expect(stderr).toContain("Backup failed while dumping PostgreSQL.");
       }
     });
 
     test("unmeasured: says so, and goes on", async () => {
       const { stderr } = await run({ free: "", data: "", objects: "" });
-      expect(stderr).toContain("Could not measure the free space; the backup goes on.");
-      expect(stderr).toContain("The backup failed while dumping PostgreSQL.");
+      expect(stderr).toContain("Couldn't measure free space. Continuing;");
+      expect(stderr).toContain("Backup failed while dumping PostgreSQL.");
     });
   });
 });

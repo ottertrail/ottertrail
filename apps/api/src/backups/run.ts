@@ -178,13 +178,13 @@ export async function checkSpace(sources: BackupSources): Promise<void> {
     [disk, need] = await Promise.all([sources.readDisk(), sources.clickhouseBytes()]);
   } catch (error) {
     throw new BackupError(
-      `The free disk space could not be measured, so the backup did not start: ClickHouse did not answer (${error instanceof Error ? error.message : String(error)}). Check that ClickHouse runs, then back up again.`,
+      `Backup not started: couldn't measure free space. ClickHouse didn't answer (${error instanceof Error ? error.message : String(error)}). Check ClickHouse and retry.`,
     );
   }
   const keep = disk.totalBytes * BACKUP_FREE_RATIO;
   if (disk.freeBytes - need < keep) {
     throw new BackupError(
-      `Not enough free disk space, so the backup did not start: ClickHouse's backup needs about ${sizeText(need)} on the server's disk, which has ${sizeText(disk.freeBytes)} free, and ${sizeText(keep)} (7%) must stay free so ClickHouse keeps taking events. Free space on the disk (Settings, Storage shows what fills it), then back up again.`,
+      `Not enough free disk space: backup needs about ${sizeText(need)}, with ${sizeText(disk.freeBytes)} free. ${sizeText(keep)} (7%) must stay free for ClickHouse. Free disk space (see Settings > Storage), then retry.`,
     );
   }
 }
@@ -263,7 +263,7 @@ export function pgDumpOf(
       reject(
         new BackupError(
           error.code === "ENOENT"
-            ? `${command} is not installed where the worker runs. The image from the Dockerfile has it; a worker run another way needs PostgreSQL 18's client tools.`
+            ? `${command} is missing. Use the Dockerfile image or install PostgreSQL 18's client tools where the worker runs.`
             : `${command} could not start: ${error.message}`,
         ),
       );
@@ -288,7 +288,7 @@ export function localClickHouseFiles(dir: string | null): ClickHouseBackupFiles 
   const file = (name: string) => {
     if (dir === null) {
       throw new BackupError(
-        "The worker can't read ClickHouse's backups: CLICKHOUSE_BACKUP_PATH is not set. deploy/compose.yaml shares ClickHouse's backups folder with the worker and sets it; a worker run another way needs the same folder.",
+        "Set CLICKHOUSE_BACKUP_PATH to ClickHouse's shared backup folder. deploy/compose.yaml sets this up.",
       );
     }
     if (!/^[A-Za-z0-9-]+\.zip$/.test(name)) throw new Error(`not a backup file name: ${name}`);
@@ -302,7 +302,7 @@ export function localClickHouseFiles(dir: string | null): ClickHouseBackupFiles 
         info = await stat(where);
       } catch (error) {
         throw new BackupError(
-          `ClickHouse wrote its backup, but the worker can't find it in ${dir ?? ""} (${error instanceof Error ? error.message : String(error)}). Check that the worker and ClickHouse share the backups folder (the clickhouse-backups volume in deploy/compose.yaml).`,
+          `Worker can't find ClickHouse's backup in ${dir ?? ""} (${error instanceof Error ? error.message : String(error)}). Share the backup folder using the clickhouse-backups volume in deploy/compose.yaml.`,
         );
       }
       return { stream: createReadStream(where), size: info.size };
@@ -416,7 +416,7 @@ export async function waitForClickHouseBackup({
       const state = await readState();
       if (state === null) {
         throw new BackupError(
-          "ClickHouse lost track of its backup (no row in system.backups): it was restarted during it. Back up again.",
+          "ClickHouse restarted during backup (no row in system.backups). Back up again.",
         );
       }
       if (state.status === "BACKUP_CREATED") return;
@@ -502,7 +502,7 @@ async function* objectEntries(
         }
         token = page.IsTruncated === true ? page.NextContinuationToken : undefined;
         if (page.IsTruncated === true && (token === undefined || token === "")) {
-          throw new Error("the store said the listing goes on, but gave no token to continue");
+          throw new Error("incomplete listing: missing continuation token");
         }
       } while (token !== undefined);
     }
@@ -664,7 +664,7 @@ export async function runBackup({
       );
       parts.push({ name: "objects", file: PARTS.objects, ...digests });
     } catch (error) {
-      throw failedStep("Backing up the object store (source maps and session replays)", error);
+      throw failedStep("Backing up the object store", error);
     }
 
     onStep("writing the manifest");
@@ -955,8 +955,8 @@ export async function verifiedManifest({
   if (newest === undefined || !newest.complete) {
     throw new BackupError(
       name === undefined
-        ? `There is no whole backup in ${destination.bucket}/${destination.prefix} to check yet. Back up first, then test the restore.`
-        : `${destination.bucket}/${destination.prefix} holds no whole backup named ${name}.`,
+        ? `No complete backup in ${destination.bucket}/${destination.prefix}. Back up first.`
+        : `No complete backup named ${name} in ${destination.bucket}/${destination.prefix}.`,
     );
   }
   const folder = `${destination.prefix}/${newest.name}`;
@@ -970,14 +970,13 @@ export async function verifiedManifest({
     );
     const raw: unknown = JSON.parse((await readAll(body)).toString("utf8"));
     const parsed = manifestSchema.safeParse(raw);
-    if (!parsed.success)
-      throw new BackupError(`The manifest of ${newest.name} is not one Ottertrail wrote.`);
+    if (!parsed.success) throw new BackupError(`Invalid Ottertrail manifest for ${newest.name}.`);
     // Before any part is read: anyone who can write to the bucket can make
     // parts that decrypt, as age needs only the public key; only this key's
     // holder can sign the manifest.
     if (!isRecord(raw) || !manifestMacValid(identity, raw)) {
       throw new BackupError(
-        `The manifest of ${newest.name} is not signed with this backup key, so it was not made with this key, or it was changed after. It is refused, and nothing in it is read. If you didn't expect this, someone may have written to the bucket: check its access keys.`,
+        `Manifest signature mismatch for ${newest.name}: wrong backup key or changed manifest. Backup refused. Check the key and bucket access keys.`,
       );
     }
     manifest = parsed.data;
@@ -1043,7 +1042,7 @@ async function checkBackup({
       plain = measured(await decrypted(sealed.stream, identity));
     } catch (error) {
       throw new BackupError(
-        `${label} can't be decrypted with this instance's backup key (${error instanceof Error ? error.message : String(error)}). It was made with another key, or the file is damaged.`,
+        `Can't decrypt ${label}: wrong backup key or damaged file (${error instanceof Error ? error.message : String(error)}).`,
       );
     }
     const magic = MAGIC[part.name];
@@ -1071,7 +1070,7 @@ async function checkBackup({
     } catch (error) {
       file?.destroy();
       throw new BackupError(
-        `${label} doesn't match its checksum: decrypting it failed part way (${error instanceof Error ? error.message : String(error)}). The file in the bucket is damaged or was changed, so this backup can't be restored as it is. The next backup makes a new one.`,
+        `${label} checksum mismatch: decryption failed (${error instanceof Error ? error.message : String(error)}). File damaged or changed. Can't restore this backup; make a new one.`,
       );
     }
     const enc = sealed.digest();
@@ -1083,11 +1082,11 @@ async function checkBackup({
       dec.sha256 !== part.plain.sha256
     ) {
       throw new BackupError(
-        `${label} doesn't match its checksum in the manifest. The file in the bucket is damaged or was changed, so this backup can't be restored as it is. The next backup makes a new one.`,
+        `${label} checksum mismatch. File damaged or changed. Can't restore this backup; make a new one.`,
       );
     }
     if (magic !== null && !head.subarray(0, magic.length).equals(magic)) {
-      throw new BackupError(`${label} decrypts, but is not the file it should be.`);
+      throw new BackupError(`${label} decrypted to the wrong file format.`);
     }
     if (tar !== null) {
       let parsed: unknown = null;
@@ -1103,7 +1102,7 @@ async function checkBackup({
         const found = tar.files.get(entry.file);
         if (found === undefined || found.size !== entry.size || found.sha256 !== entry.sha256) {
           throw new BackupError(
-            `${label}: the object ${entry.key} doesn't match its checksum. The file in the bucket is damaged.`,
+            `${label}: checksum mismatch for object ${entry.key}. File damaged.`,
           );
         }
       }

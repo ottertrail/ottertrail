@@ -15,7 +15,7 @@ import { backupObjects } from "../src/storage/object-backup.ts";
 
 const dir = process.argv.slice(2).find((arg) => arg !== "--");
 if (dir === undefined || dir === "") {
-  console.error("Specify the backup folder: backup-objects <folder>");
+  console.error("Usage: backup-objects <folder>");
   process.exit(1);
 }
 
@@ -23,19 +23,15 @@ try {
   const config = loadConfig();
   const { bucket, count, bytes, gone } = await backupObjects(config.objectStore, dir);
   if (bucket === null) {
-    console.log(
-      "No object store is set up (OBJECT_STORE_URL): the backup records that it has none.",
-    );
+    console.log("No object store (OBJECT_STORE_URL). Backup records none.");
   } else {
-    console.log(`Backed up ${count} objects (${bytes} bytes) from the bucket ${bucket}.`);
+    console.log(`Backed up ${count} objects (${bytes} bytes) from ${bucket}.`);
   }
   if (gone.length > 0) {
     // Expired replays, or a deleted project's files: as if already gone.
-    console.log(`${gone.length} objects were deleted while the backup ran, and are not in it.`);
+    console.log(`${gone.length} objects deleted during backup; skipped.`);
   }
 } catch (error) {
-  console.error(
-    `The object backup failed: ${error instanceof Error ? error.message : String(error)}`,
-  );
+  console.error(`Object backup failed: ${error instanceof Error ? error.message : String(error)}`);
   process.exitCode = 1;
 }

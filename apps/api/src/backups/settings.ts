@@ -159,7 +159,7 @@ export function destinationOf(
 ): Destination | { problem: string } {
   const prefix = fields.prefix;
   if (!new RegExp(PREFIX_PATTERN).test(prefix)) {
-    return { problem: "Choose a folder for the backups, such as ottertrail-backups." };
+    return { problem: "Choose a backup folder, such as ottertrail-backups." };
   }
   if (mode.mode === "object_store") {
     const bucket = fields.bucket ?? mode.store.bucket;
@@ -180,8 +180,7 @@ export function destinationOf(
   const { endpoint, region, bucket, accessKeyId } = fields;
   if (endpoint === null || region === null || bucket === null || accessKeyId === null) {
     return {
-      problem:
-        "Backups need a destination: fill in the endpoint, region, bucket, and access key on the Backups tab, then save.",
+      problem: "Set the endpoint, region, bucket, and access key in Settings > Backups, then save.",
     };
   }
   let secret = fields.secretAccessKey ?? null;
@@ -193,7 +192,7 @@ export function destinationOf(
     if (secret === null) {
       return {
         problem:
-          "The saved secret access key can't be read: AUTH_SECRET changed since it was saved, or it was saved for another endpoint or access key. Enter the secret again on the Backups tab and save.",
+          "The saved secret access key can't be read: AUTH_SECRET, the endpoint, or the access key changed. Enter it again in Settings > Backups and save.",
       };
     }
   }
@@ -225,7 +224,7 @@ export function overlapsObjects(prefix: string): boolean {
 }
 
 export const OVERLAP_PROBLEM =
-  "This folder holds the object store's session replays or source maps, which share this bucket. Choose a folder of its own, such as ottertrail-backups.";
+  "This folder overlaps session replays or source maps. Choose a separate folder, such as ottertrail-backups.";
 
 /**
  * An endpoint as the form sends it, as an origin; null when it is not an

@@ -385,8 +385,8 @@ describe("a whole backup to an S3 destination", () => {
         env: { ...process.env, COMPOSE: `${process.execPath} ${fake}`, ...s3Env(prefix) },
       });
       expect(unasked.status).toBe(1);
-      expect(unasked.stdout).toContain(`Chosen: the backup started ${manifest.startedAt} (UTC)`);
-      expect(unasked.stderr).toContain("Run this in a terminal to confirm, or add --yes");
+      expect(unasked.stdout).toContain(`Selected backup: ${manifest.startedAt} (UTC)`);
+      expect(unasked.stderr).toContain("Confirm in a terminal or add --yes");
       expect(await readFile(log, "utf8")).not.toContain("restore-backup.mjs download");
 
       const result = spawnSync(
@@ -414,14 +414,14 @@ describe("a whole backup to an S3 destination", () => {
       expect(result.stdout).toContain(
         `Backups in ${LOCAL_OBJECT_STORE.bucket}/${prefix}, newest first:`,
       );
-      expect(result.stdout).toMatch(new RegExp(`^${name} .* whole$`, "m"));
+      expect(result.stdout).toMatch(new RegExp(`^${name} .* complete$`, "m"));
       expect(result.stderr).toContain(`Downloaded ${name}`);
       // The chosen backup is named, with its time and version, before anything is restored.
       expect(result.stdout).toContain(
-        `Chosen: the backup started ${manifest.startedAt} (UTC), made by Ottertrail ${OTTERTRAIL_VERSION}.`,
+        `Selected backup: ${manifest.startedAt} (UTC), Ottertrail ${OTTERTRAIL_VERSION}.`,
       );
       expect(result.stdout).toContain(
-        `Restored ottertrail-${name} from ${LOCAL_OBJECT_STORE.bucket}/${prefix}, and deleted the downloaded files.`,
+        `Restored ottertrail-${name} from ${LOCAL_OBJECT_STORE.bucket}/${prefix}. Downloaded files deleted.`,
       );
       const calls = (await readFile(log, "utf8")).split("\n");
       // PostgreSQL and ClickHouse got the decrypted dump and zip; the objects were checked, then restored.
@@ -472,7 +472,7 @@ describe("a whole backup to an S3 destination", () => {
         await put(`${folderKey}/manifest.json`, Buffer.from(JSON.stringify(manifest)));
         await expect(
           testRestore({ client, destination: destination(prefix), identity: key.identity }),
-        ).rejects.toThrow(`The manifest of ${forged} is not signed with this backup key`);
+        ).rejects.toThrow(`Manifest signature mismatch for ${forged}`);
       }
       // restore-backup, as restore.sh runs it: refused, and nothing written.
       const downloaded = spawnSync(
@@ -487,9 +487,7 @@ describe("a whole backup to an S3 destination", () => {
         { encoding: "utf8", cwd: API, env: { ...process.env, ...s3Env(prefix) } },
       );
       expect(downloaded.status).toBe(1);
-      expect(downloaded.stderr).toContain(
-        `The manifest of ${forged} is not signed with this backup key`,
-      );
+      expect(downloaded.stderr).toContain(`Manifest signature mismatch for ${forged}`);
       expect(
         (await readdir(folder)).filter((file) => file !== "ottertrail-backup-key.txt"),
       ).toEqual([]);
@@ -518,10 +516,8 @@ describe("a whole backup to an S3 destination", () => {
         },
       );
       expect(result.status).toBe(1);
-      expect(result.stderr).toContain(
-        `The manifest of ${forged} is not signed with this backup key`,
-      );
-      expect(result.stderr).toContain("Nothing was changed: the databases were not touched.");
+      expect(result.stderr).toContain(`Manifest signature mismatch for ${forged}`);
+      expect(result.stderr).toContain("Databases unchanged.");
       const calls = await readFile(log, "utf8");
       expect(calls).not.toContain("pg_restore");
       expect(calls).not.toContain("restore-backup.mjs download");
@@ -550,7 +546,7 @@ describe("a whole backup to an S3 destination", () => {
           identity: key.identity,
           writeTo: folder,
         }),
-      ).rejects.toThrow(/objects\.tar\.age of .* doesn't match its checksum/);
+      ).rejects.toThrow(/objects\.tar\.age of .* checksum mismatch/);
       expect(await readdir(folder)).toEqual([]);
     } finally {
       await put(partKey, original);
@@ -574,7 +570,7 @@ describe("a whole backup to an S3 destination", () => {
       const other = await makeBackupKey();
       await expect(
         testRestore({ client, destination: destination(prefix), identity: other.identity }),
-      ).rejects.toThrow(/is not signed with this backup key/);
+      ).rejects.toThrow(/Manifest signature mismatch/);
 
       // A part replaced by another valid age file to the same key: age's own
       // check passes, the manifest's checksums do not.
@@ -592,7 +588,7 @@ describe("a whole backup to an S3 destination", () => {
       );
       await expect(
         testRestore({ client, destination: destination(prefix), identity: key.identity }),
-      ).rejects.toThrow(`postgres.dump.age of ${name} doesn't match its checksum in the manifest`);
+      ).rejects.toThrow(`postgres.dump.age of ${name} checksum mismatch`);
       await s3.send(
         new PutObjectCommand({
           Bucket: LOCAL_OBJECT_STORE.bucket,
@@ -612,7 +608,7 @@ describe("a whole backup to an S3 destination", () => {
       );
       await expect(
         testRestore({ client, destination: destination(prefix), identity: key.identity }),
-      ).rejects.toThrow(`clickhouse.zip.age of ${name} doesn't match its checksum`);
+      ).rejects.toThrow(`clickhouse.zip.age of ${name} checksum mismatch`);
     } finally {
       client.destroy();
     }
@@ -634,7 +630,7 @@ describe("before a backup", () => {
       });
       await expect(attempt).rejects.toBeInstanceOf(BackupError);
       await expect(attempt).rejects.toThrow(
-        /^Not enough free disk space, so the backup did not start: ClickHouse's backup needs about .+ on the server's disk, which has 6 GB free, and 7 GB \(7%\) must stay free/,
+        /^Not enough free disk space: backup needs about .+, with 6 GB free\. 7 GB \(7%\) must stay free/,
       );
       expect(await listBackups(client, LOCAL_OBJECT_STORE.bucket, prefix)).toEqual([]);
     } finally {
@@ -656,7 +652,7 @@ describe("a bucket shared with the object store", () => {
           key,
           version: OTTERTRAIL_VERSION,
         }),
-      ).rejects.toThrow(/^This folder holds the object store's session replays or source maps/);
+      ).rejects.toThrow(/^This folder overlaps session replays or source maps/);
       expect(await listBackups(client, LOCAL_OBJECT_STORE.bucket, prefix)).toEqual([]);
     } finally {
       client.destroy();

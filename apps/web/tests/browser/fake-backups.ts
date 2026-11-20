@@ -133,7 +133,7 @@ export const BACKUPS_FAILED: Backups = {
       bytes: null,
       folder: null,
       error:
-        "Uploading PostgreSQL's dump failed: The storage refused it: this access key may not write files in the bucket's folder (AccessDenied). Give the key permission to write objects there.",
+        "Uploading PostgreSQL's dump failed: Access denied (AccessDenied). Give this key permission to write objects in the backup folder.",
     },
     lastSuccess: GOOD_RUN,
     nextDueAt: "2026-11-21T19:00:00.000Z",
@@ -186,7 +186,7 @@ export const FAKE_PASSWORD = "correct horse battery";
 const PASSWORD_NEEDED = { error: "password_required", message: "Enter your current password." };
 const WRONG_PASSWORD = {
   error: "wrong_password",
-  message: "The current password is incorrect. Enter it again.",
+  message: "Incorrect password. Try again.",
 };
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
