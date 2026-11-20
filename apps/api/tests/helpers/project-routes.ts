@@ -102,6 +102,10 @@ export const PROJECT_REQUESTS: readonly ProjectRequest[] = [
   request("GET", "/errors", "/errors?period=7d"),
   request("GET", "/errors/:fingerprint", `/errors/${FINGERPRINT}?period=7d`),
   request("PATCH", "/errors/:fingerprint", `/errors/${FINGERPRINT}`, { status: "resolved" }),
+  request("PUT", "/errors/:fingerprint/assignee", `/errors/${FINGERPRINT}/assignee`, {
+    assignee: null,
+  }),
+  request("GET", "/error-assignees", "/error-assignees"),
   request("GET", "/source-maps", "/source-maps"),
   request("GET", "/source-maps/files", "/source-maps/files?release=1.4.2"),
   request("DELETE", "/source-maps", "/source-maps?release=1.4.2"),

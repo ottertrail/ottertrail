@@ -47,6 +47,7 @@ import { DayCountCard } from "../analytics/day-count-card";
 import { formatWhole } from "../analytics/format";
 import { NoSuchProject } from "../projects/no-such-project";
 import { formatMoment } from "../users/format";
+import { AssigneeControl } from "./assignee";
 import { ErrorStatusBadge } from "./error-status";
 import { OccurrenceReplayCell } from "./occurrence-replay";
 import { EnvironmentSelect, PeriodSelect } from "./range-controls";
@@ -503,7 +504,8 @@ function Occurrences({
 }
 
 /**
- * One error group in full: its status (with Resolve or Reopen), its numbers,
+ * One error group in full: its status (with Resolve or Reopen), its
+ * assignee, its numbers,
  * the latest occurrence's server (for a server's exception), the latest
  * stack (a browser's mapped with the release's source maps where it can be),
  * its latest occurrences, a trend, where it happens, and the alert rules that
@@ -545,6 +547,7 @@ function Detail({
           buttonRef={resolveRef}
           keyHint={resolveRef !== undefined}
         />
+        <AssigneeControl projectId={projectId} group={group} />
       </div>
       <Stats detail={detail} />
       {detail.source === "server" && latest !== undefined && (

@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Kbd, KbdGroup } from "@/components/ui/kbd";
 import { Separator } from "@/components/ui/separator";
 import { SidebarTrigger, useSidebar } from "@/components/ui/sidebar";
+import { NotificationBell } from "@/features/notifications/notification-bell";
 import type { DocsLinkTarget } from "@/lib/docs";
 import { modifierKey } from "@/lib/keys";
 import { projectsQuery } from "@/lib/projects-api";
@@ -83,8 +84,8 @@ function DocsLink({ docs }: { docs: DocsLinkTarget }) {
 
 /**
  * The page title; inside a project, after the project's name. At the end,
- * the screen's Docs link when it has a page (lib/docs.ts), and the sidebar's
- * shortcut.
+ * the screen's Docs link when it has a page (lib/docs.ts), the notifications
+ * bell, and the sidebar's shortcut.
  */
 export function AppHeader({
   title,
@@ -111,6 +112,7 @@ export function AppHeader({
       </nav>
       <div className="ml-auto flex shrink-0 items-center gap-3">
         {docs !== undefined && <DocsLink docs={docs} />}
+        <NotificationBell />
         {!isMobile && (
           <p className="flex items-center gap-1.5 text-xs text-ink-subtle">
             <KbdGroup>

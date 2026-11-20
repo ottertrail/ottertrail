@@ -7,9 +7,9 @@ import { currentPath, renderApp } from "./render.tsx";
 /*
  * Each page loads in a chunk of its own (docs/dashboard.md, "Code
  * splitting"). Here modules are replaced: the Speed page waits until the
- * test lets it load; the Members page's and the custom range
- * dialog's fail as a file an old tab asks for after a deploy does (the
- * browser's TypeError); the instance Settings page's throws while it runs,
+ * test lets it load; the Members page's, the custom range dialog's and
+ * the notifications panel's fail as a file an old tab asks for after a
+ * deploy does (the browser's TypeError); the instance Settings page's throws while it runs,
  * as a bug would. Reloading is replaced too, to see that Reload asks for it.
  */
 
@@ -43,6 +43,12 @@ vi.mock("../../src/features/settings/members-page.tsx", () => {
 
 vi.mock("../../src/features/analytics/custom-range-dialog.tsx", () => {
   throw new TypeError(`${FAILED_FETCH}: https://ottertrail.example/assets/custom-range-old.js`);
+});
+
+vi.mock("../../src/features/notifications/notification-panel.tsx", () => {
+  throw new TypeError(
+    `${FAILED_FETCH}: https://ottertrail.example/assets/notification-panel-old.js`,
+  );
 });
 
 vi.mock("../../src/features/settings/settings-page.tsx", () => {
@@ -165,5 +171,24 @@ describe("the custom range dialog", () => {
     await expect.element(dialog).not.toBeInTheDocument();
     // The page is still there, with its period picker.
     await expect.element(page.getByRole("combobox", { name: "Period" })).toBeVisible();
+  });
+});
+
+describe("the notifications panel", () => {
+  test("whose code fails to download says so in the panel, and Reload reloads", async () => {
+    reload.calls = 0;
+    installFakeApi();
+    renderApp("/projects");
+
+    await page.getByRole("button", { name: /^Notifications/ }).click();
+    const panel = page.getByRole("dialog", { name: "Notifications" });
+    await expect.element(panel).toBeVisible();
+    await expect
+      .element(panel.getByText("Notifications could not load. Reload to try again."))
+      .toBeVisible();
+    await panel.getByRole("button", { name: "Reload" }).click();
+    expect(reload.calls).toBe(1);
+    // The page is still there.
+    await expect.element(page.getByRole("table", { name: "Projects" })).toBeVisible();
   });
 });

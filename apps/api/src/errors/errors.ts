@@ -5,6 +5,7 @@ import { fromClickHouseTime, QueryParams, queryRows, type Reader } from "../clic
 import { DEFAULT_ENVIRONMENT } from "../collection/environment.ts";
 import type { Database } from "../db/schema.ts";
 import { ERROR } from "../visits/visits.ts";
+import { type Assignee, assigneesOf } from "./assignments.ts";
 
 /**
  * Error groups: occurrences of an error with one fingerprint
@@ -55,6 +56,8 @@ export interface ErrorGroup {
   resolvedAt: Date | null;
   /** The dashboard user who resolved it; null when unknown or not resolved. */
   resolvedBy: string | null;
+  /** Who is on it (assignments.ts); null for nobody. */
+  assignee: Assignee | null;
 }
 
 /** The most groups a list reads; the page shows the most recent first. */
@@ -202,9 +205,10 @@ async function toGroups(
   rows: RangeRow[],
 ): Promise<ErrorGroup[]> {
   const fingerprints = rows.map((row) => row.fingerprint);
-  const [times, resolved] = await Promise.all([
+  const [times, resolved, assignees] = await Promise.all([
     seen(reader, range.projectId, range.environment, fingerprints),
     resolutions(db, range.projectId, fingerprints),
+    assigneesOf(db, range.projectId, fingerprints),
   ]);
   return rows.map((row) => {
     const time = times.get(row.fingerprint);
@@ -225,6 +229,7 @@ async function toGroups(
       status,
       resolvedAt: resolution?.resolvedAt ?? null,
       resolvedBy: resolution?.resolvedBy ?? null,
+      assignee: assignees.get(row.fingerprint) ?? null,
     };
   });
 }
@@ -255,7 +260,8 @@ export async function errorEnvironments(reader: Reader, range: ErrorRange): Prom
 
 /**
  * The groups seen in the range, latest first, with a status filter:
- * "unresolved" (the default) includes regressions. The filter applies to
+ * "unresolved" (the default) includes regressions, and an assignee
+ * filter. The filters apply to
  * the MAX_GROUPS most recently seen groups; `truncated` says when there
  * were more, which a shorter range shows.
  */
@@ -264,16 +270,24 @@ export async function listErrors(
   db: Kysely<Database>,
   range: ErrorRange,
   status: StatusFilter = "unresolved",
+  assignee: AssigneeFilter = null,
 ): Promise<{ groups: ErrorGroup[]; truncated: boolean }> {
   const read = await groupsInRange(reader, range);
   const rows = read.slice(0, MAX_GROUPS);
   const groups = await toGroups(reader, db, range, rows);
-  const wanted =
-    status === "all"
-      ? groups
-      : groups.filter((group) => (group.status === "resolved") === (status === "resolved"));
+  const wanted = groups.filter(
+    (group) =>
+      (status === "all" || (group.status === "resolved") === (status === "resolved")) &&
+      (assignee === null ||
+        (assignee.kind === "none"
+          ? group.assignee === null
+          : group.assignee?.id === assignee.userId)),
+  );
   return { groups: wanted, truncated: read.length > MAX_GROUPS };
 }
+
+/** Whose groups the list shows: everyone's (null), one user's, or nobody's. */
+export type AssigneeFilter = { kind: "user"; userId: string } | { kind: "none" } | null;
 
 export interface ErrorDay {
   /** "YYYY-MM-DD" in the instance's timezone. */

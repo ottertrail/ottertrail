@@ -34,6 +34,7 @@ import { heatmapOverlayRoutes } from "./heatmaps/overlay-routes.ts";
 import { heatmapCollectionRoutes } from "./heatmaps/routes.ts";
 import { userRoutes } from "./identities/routes.ts";
 import type { Mailer } from "./notifications/email.ts";
+import { inboxRoutes } from "./notifications/inbox-routes.ts";
 import { LinkSealer } from "./notifications/link-sealer.ts";
 import { channelRoutes } from "./notifications/routes.ts";
 import { addressPolicy, type Lookup, systemLookup } from "./outbound/addresses.ts";
@@ -424,12 +425,22 @@ export function buildApp({
       auth: dashboard.auth,
       ...(dashboard.now === undefined ? {} : { now: dashboard.now }),
     });
+    app.register(inboxRoutes, {
+      prefix: "/api",
+      db,
+      auth: dashboard.auth,
+      trustedOrigins: dashboard.trustedOrigins,
+      ...(dashboard.now === undefined ? {} : { now: dashboard.now }),
+    });
     app.register(errorRoutes, {
       prefix: "/api",
       db,
       clickhouse: dashboard.clickhouse,
       auth: dashboard.auth,
       trustedOrigins: dashboard.trustedOrigins,
+      publicUrl: dashboard.publicUrl,
+      emailConfigured: notifications.emailConfigured ?? false,
+      sealer,
       sourceMaps: { store: objectStore, cache: new SourceMapCache() },
       ...(dashboard.now === undefined ? {} : { now: dashboard.now }),
     });

@@ -14,9 +14,10 @@ export type AccessChange =
  * exactly `projects` and `areas`, and "all" clears their project list.
  * Projects deleted meanwhile are dropped. The owner is never changed here
  * (handing ownership over is its own step). Their pending reset link goes:
- * whoever made it judged the user as they were. A member's stars on
- * projects outside their new list go too (projects/stars.ts). Returns
- * false when no such user, or the owner.
+ * whoever made it judged the user as they were; so do the error groups
+ * assigned to them in projects whose errors they no longer see. A member's
+ * stars on projects outside their new list go too (projects/stars.ts).
+ * Returns false when no such user, or the owner.
  */
 export async function setUserAccess(
   db: Kysely<Database>,
@@ -54,6 +55,14 @@ export async function setUserAccessIn(
     .values({ user_id: userId, all_projects: change.projects === "all", ...change.areas })
     .execute();
   const { projects } = change;
+  // Error groups assigned to them where they no longer see errors go back to nobody.
+  if (change.areas.errors === "none") {
+    await trx.deleteFrom("error_assignments").where("assignee_id", "=", userId).execute();
+  } else if (projects !== "all") {
+    let lost = trx.deleteFrom("error_assignments").where("assignee_id", "=", userId);
+    if (projects.length > 0) lost = lost.where("project_id", "not in", projects);
+    await lost.execute();
+  }
   if (projects === "all") {
     return true;
   }

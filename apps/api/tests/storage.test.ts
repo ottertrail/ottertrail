@@ -170,6 +170,7 @@ beforeEach(async () => {
   await dashboard.db.deleteFrom("storage_warning_channels").execute();
   await dashboard.db.deleteFrom("notification_deliveries").execute();
   await dashboard.db.deleteFrom("notification_channels").execute();
+  await dashboard.db.deleteFrom("notifications").execute();
 });
 
 describe("GET /api/settings/storage", () => {
@@ -526,6 +527,31 @@ describe("the worker's storage check", () => {
       message: "The disk is 77% full, under 80% again: 23 GB of 100 GB is free.",
     });
     expect(await dashboard.db.selectFrom("storage_warnings").selectAll().execute()).toEqual([]);
+    // The inbox has one item each, for the owner and admins (notifications/inbox.ts).
+    const inbox = await dashboard.db
+      .selectFrom("notifications")
+      .select(["kind", "title", "permission", "project_id", "link"])
+      .where("kind", "like", "storage.%")
+      .orderBy("created_at")
+      .orderBy("id")
+      .execute();
+    expect(inbox).toEqual([
+      ...["The disk is 81% full", "The disk is 91% full"].map((title) => ({
+        kind: "storage.low",
+        title,
+        permission: "projects",
+        project_id: null,
+        link: "/settings?tab=storage",
+      })),
+      {
+        kind: "storage.recovered",
+        title: "The disk is 77% full, under 80% again",
+        permission: "projects",
+        project_id: null,
+        link: "/settings?tab=storage",
+      },
+    ]);
+    await dashboard.db.deleteFrom("notifications").execute();
 
     // And again at 80%: a new start.
     disk = percentFull(80);

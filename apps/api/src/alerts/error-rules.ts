@@ -2,6 +2,7 @@ import { type Kysely, sql } from "kysely";
 
 import { fromClickHouseTime, QueryParams, queryRows, type Reader } from "../clickhouse/query.ts";
 import { MAX_EVENT_AGE_MS } from "../collection/normalize.ts";
+import { MAX_FUTURE_MS } from "../collection/server-events.ts";
 import type { Database } from "../db/schema.ts";
 import { resolutions, statusOf } from "../errors/errors.ts";
 import { DASHBOARD_SETTINGS } from "../telemetry/dashboard-query.ts";
@@ -55,8 +56,6 @@ export const MAX_CATCH_UP_MS = 60 * 60 * 1000;
 export const MAX_WINDOW_GROUPS = 1000;
 /** Pages of arrivals one evaluation reads; the rest wait for the next minute. */
 export const MAX_PAGES = 5;
-/** How far ahead of its arrival a server says an event happened, at most (collection/server-events.ts). */
-const MAX_FUTURE_MS = 5 * 60 * 1000;
 /** Fingerprints per history query, so a query's parameters stay small. */
 const CHUNK = 200;
 /** The longest error message a notification quotes. */

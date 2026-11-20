@@ -24,6 +24,26 @@ export const DEFAULT_STATUS_FILTER: StatusFilter = "unresolved";
 export const isStatusFilter = (value: unknown): value is StatusFilter =>
   STATUS_FILTERS.some((item) => item.value === value);
 
+/** Whose groups the list shows; everyone's when left out. */
+export const ASSIGNEE_FILTERS = [
+  { value: "everyone", label: "Everyone" },
+  { value: "me", label: "Assigned to me" },
+  { value: "none", label: "Unassigned" },
+] as const;
+
+export type AssigneeFilter = (typeof ASSIGNEE_FILTERS)[number]["value"];
+
+export const DEFAULT_ASSIGNEE_FILTER: AssigneeFilter = "everyone";
+
+export const isAssigneeFilter = (value: unknown): value is AssigneeFilter =>
+  ASSIGNEE_FILTERS.some((item) => item.value === value);
+
+/** The dashboard user on an error group (docs/errors.md, "Assignment"). */
+export interface Assignee {
+  id: string;
+  name: string;
+}
+
 /** Occurrences of one error, grouped by its fingerprint. */
 export interface ErrorGroup {
   fingerprint: string;
@@ -43,6 +63,8 @@ export interface ErrorGroup {
   resolvedAt: string | null;
   /** The dashboard user who resolved it; null when unknown or not resolved. */
   resolvedBy: string | null;
+  /** Who is on it; null for nobody. */
+  assignee: Assignee | null;
 }
 
 /** GET /api/projects/:id/errors */
@@ -204,6 +226,9 @@ const isNumber = (value: unknown): value is number => typeof value === "number";
 const isListOf = <T>(value: unknown, isItem: (item: unknown) => item is T): value is T[] =>
   Array.isArray(value) && value.every(isItem);
 
+const isAssignee = (value: unknown): value is Assignee =>
+  isRecord(value) && isText(value.id) && isText(value.name);
+
 const isErrorStatus = (value: unknown): value is ErrorStatus =>
   value === "unresolved" || value === "resolved" || value === "regressed";
 
@@ -219,7 +244,8 @@ const isErrorGroup = (value: unknown): value is ErrorGroup =>
   isText(value.lastSeen) &&
   isErrorStatus(value.status) &&
   isTextOrNull(value.resolvedAt) &&
-  isTextOrNull(value.resolvedBy);
+  isTextOrNull(value.resolvedBy) &&
+  (value.assignee === null || isAssignee(value.assignee));
 
 const isErrorList = (value: unknown): value is ErrorList =>
   isRecord(value) &&
@@ -342,14 +368,16 @@ export const errorsQuery = (
   range: PageRange,
   environment: string,
   status: StatusFilter,
+  assignee: AssigneeFilter = DEFAULT_ASSIGNEE_FILTER,
 ) =>
   queryOptions({
-    queryKey: ["errors", projectId, range, environment, status],
+    queryKey: ["errors", projectId, range, environment, status, assignee],
     queryFn: async ({ signal }) => {
       const query = new URLSearchParams({
         ...rangeParams(range),
         ...environmentParams(environment),
         ...(status === DEFAULT_STATUS_FILTER ? {} : { status }),
+        ...(assignee === DEFAULT_ASSIGNEE_FILTER ? {} : { assignee }),
       });
       return expectShape(
         await apiRequest(`${errorsPath(projectId)}?${query.toString()}`, { signal }),
@@ -398,3 +426,41 @@ export async function setErrorStatus(
     isResolution,
   );
 }
+
+const isAssigneeAnswer = (
+  value: unknown,
+): value is { fingerprint: string; assignee: Assignee | null } =>
+  isRecord(value) &&
+  isText(value.fingerprint) &&
+  (value.assignee === null || isAssignee(value.assignee));
+
+/** Assigns a group to a dashboard user, or to nobody (null). */
+export async function setErrorAssignee(
+  projectId: string,
+  fingerprint: string,
+  assignee: string | null,
+) {
+  return expectShape(
+    await apiRequest(`${errorsPath(projectId)}/${encodeURIComponent(fingerprint)}/assignee`, {
+      method: "PUT",
+      body: { assignee },
+    }),
+    isAssigneeAnswer,
+  );
+}
+
+const isAssigneeList = (value: unknown): value is { users: Assignee[] } =>
+  isRecord(value) && isListOf(value.users, isAssignee);
+
+/** The people an error of the project can be assigned to: those who see its errors. */
+export const errorAssigneesQuery = (projectId: string) =>
+  queryOptions({
+    queryKey: ["error-assignees", projectId],
+    queryFn: async ({ signal }) =>
+      expectShape(
+        await apiRequest(`/api/projects/${encodeURIComponent(projectId)}/error-assignees`, {
+          signal,
+        }),
+        isAssigneeList,
+      ).users,
+  });

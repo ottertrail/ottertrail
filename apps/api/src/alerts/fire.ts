@@ -3,6 +3,7 @@ import { type Kysely, sql, type Transaction } from "kysely";
 import type { Database } from "../db/schema.ts";
 import { notifyIn } from "../notifications/deliveries.ts";
 import { type EventType, MAX_MESSAGE, type Subject } from "../notifications/events.ts";
+import { isRuleKind, sourceAreaOf } from "./kinds.ts";
 
 /**
  * Firing and resolving alerts (docs/uptime-alerts.md, "Alerts"): each
@@ -88,6 +89,14 @@ async function lockRule(trx: Transaction<Database>, ruleId: string): Promise<Loc
   return { ...row, project_name: project?.name ?? "" };
 }
 
+/** Who sees a rule's alerts in the inbox: alerts, and the area its kind watches (docs/access.md). */
+function inboxAreas(rule: LockedRule) {
+  const source = isRuleKind(rule.kind) ? sourceAreaOf(rule.kind) : null;
+  return {
+    areas: source === null ? ["uptime_alerts" as const] : ["uptime_alerts" as const, source],
+  };
+}
+
 /** What a notification says, before the rule's name and project are added. */
 interface Message {
   type: EventType;
@@ -111,6 +120,7 @@ async function sendSummary(trx: Transaction<Database>, rule: LockedRule, at: Dat
     ),
     url,
     time: at,
+    inbox: inboxAreas(rule),
   });
 }
 
@@ -143,6 +153,7 @@ async function sendCapped(
       message: cut(message.message, MAX_MESSAGE),
       url: message.url,
       time: message.at,
+      inbox: inboxAreas(rule),
     });
     notificationId = recorded.notificationId;
     sent += 1;

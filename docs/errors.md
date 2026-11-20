@@ -12,6 +12,7 @@ Browser errors: the tracker reports them, Ottertrail groups them, and the Errors
 | Source maps (original file names and lines)           | Done   |
 | Server errors (exceptions over OTLP, stage 3)         | Done   |
 | Alerts on new, regressed, and spiking errors          | Done   |
+| Assignment to a dashboard user                        | Done   |
 
 ## 1. Capture
 
@@ -90,12 +91,27 @@ For a range of days in the instance's timezone and one environment, each group s
 One group's page adds the occurrences per day, where they happen (page, browser, OS, release, and a server's service, the top 5 each), its latest 20 occurrences, and the latest one's stack, raw.
 
 ```text
-GET   /api/projects/:id/errors?period=7d&environment=production&status=unresolved|resolved|all
+GET   /api/projects/:id/errors?period=7d&environment=production&status=unresolved|resolved|all&assignee=me|none
 GET   /api/projects/:id/errors/:fingerprint?period=7d&environment=production
 PATCH /api/projects/:id/errors/:fingerprint   { "status": "resolved" | "unresolved" }
 ```
 
-The list reads at most 1,000 groups, the most recently seen, and says when there were more (`truncated`). Like every project route, these run the access check first; the PATCH also needs the dashboard's origin.
+The list reads at most 1,000 groups, the most recently seen, and says when there were more (`truncated`); the status and assignee filters apply to those. Like every project route, these run the access check first; the PATCH also needs the dashboard's origin.
+
+### Assignment
+
+Decided with the user on 20 November 2026: an error group can be on one person's plate, so the team knows who is on it. Code: `apps/api/src/errors/assignments.ts`; the dashboard: [errors](dashboard.md#86-errors).
+
+```text
+PUT /api/projects/:id/errors/:fingerprint/assignee   { "assignee": "<user ID>" | null }
+GET /api/projects/:id/error-assignees                the people who can be assigned
+```
+
+- **Who:** one dashboard user who can see the project's errors (errors at view, the owner and admins included), or nobody. Anyone else answers 400 `not_assignable`, checked before anything is read from ClickHouse. A group with no occurrence in the project in the last 366 days (the longest range a page shows) answers 404 `no_occurrences`; the assignment's title comes from that read, so it reads only that stretch. Assigning needs errors at manage, as resolving does ([access](access.md)). The list of people answers each one's ID and name.
+- **Where it is kept:** `error_assignments` (migration 0016), one row per group (project and fingerprint), with the assignee, who assigned it, and when, and an index on the assignee for "Assigned to me". Apart from `error_resolutions`, which holds a row only while a group is resolved: resolving and reopening keep the assignee.
+- **Each group** in the list and on its page carries `assignee` (`{ id, name }` or null). `assignee=me` lists the signed-in user's groups, `assignee=none` the unassigned.
+- **The assignee hears of it:** an item in their [notifications](access.md#notifications) ("Ada assigned you TypeError: …"; nothing when they assign themselves, nor when the same person is chosen again, even by two people at once: the upsert changes the row only for a new assignee, and only a change is told), and with SMTP an email through the account email queue, with a link to the group's page from `PUBLIC_URL`. When their resolved group happens again after both its resolution and the assignment, the worker adds an item ("Regressed: TypeError: …") within a minute, once per resolution. Each minute it reads the errors that arrived since its last pass, as the alert rules do, in the projects that have an assigned, resolved group not yet told, a page of 1,000 groups at a time, and matches them with those groups in PostgreSQL; so a group resolved long ago costs nothing until it happens again. After a restart or a gap it reads at most the last hour of arrivals, as the rules do. The resolution it told is copied inside PostgreSQL, whole, so a told group drops out at once. Nobody else is told: the alert rules do that.
+- **When it goes:** the assignee removed from the instance, or their access changed so they no longer see the project's errors (the project taken away, or errors set to none), sends the group back to Unassigned, in the same transaction (`setUserAccess`). Deleting the project deletes its assignments. The assignee's access is checked again after their row is locked, so a change at the same moment cannot leave an assignment behind.
 
 ## 5. Source maps
 
@@ -146,6 +162,7 @@ Alert rules ([uptime and alerts](uptime-alerts.md#step-3-alert-rules-as-built), 
 
 ## 6. Not done yet
 
+- Assignment: no history of who had a group before. A regression that arrives while the worker is stopped for more than an hour is not told to the assignee (the list still shows it as regressed).
 - Grouping by the original files and functions that source maps give (fingerprint version 2), and mapping the stacks of occurrences other than the latest.
 - A link from a server's error to its trace, with the Traces page ([telemetry](telemetry.md#how-it-is-built), step 3).
 - Ignoring a group, merging two, searching messages, and "resolved in the next release".

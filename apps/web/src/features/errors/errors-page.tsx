@@ -54,9 +54,13 @@ import { useAccess } from "@/lib/access";
 import { DEFAULT_ENVIRONMENT, type PageRange } from "@/lib/analytics-api";
 import { ApiError } from "@/lib/api";
 import {
+  ASSIGNEE_FILTERS,
+  type AssigneeFilter,
+  DEFAULT_ASSIGNEE_FILTER,
   type ErrorGroup,
   type ErrorList,
   errorsQuery,
+  isAssigneeFilter,
   isStatusFilter,
   STATUS_FILTERS,
   type StatusFilter,
@@ -66,6 +70,7 @@ import { formatWhole } from "../analytics/format";
 import { dayIn } from "../overview/format";
 import { NoSuchProject } from "../projects/no-such-project";
 import { formatDay, formatMoment, timeAgo } from "../users/format";
+import { AssigneeMark } from "./assignee";
 import { ErrorView } from "./error-page";
 import { ErrorStatusBadge } from "./error-status";
 import { EnvironmentSelect, PeriodSelect } from "./range-controls";
@@ -94,8 +99,34 @@ const EMPTY_TITLES: Record<StatusFilter, string> = {
   all: "No errors in this period",
 };
 
-function NoErrors({ status, environment }: { status: StatusFilter; environment: string }) {
+/** The list filtered by assignee, and empty. */
+const EMPTY_ASSIGNED: Record<Exclude<AssigneeFilter, "everyone">, string> = {
+  me: "No errors assigned to you in this period",
+  none: "No unassigned errors in this period",
+};
+
+function NoErrors({
+  status,
+  environment,
+  assignee = DEFAULT_ASSIGNEE_FILTER,
+}: {
+  status: StatusFilter;
+  environment: string;
+  assignee?: AssigneeFilter;
+}) {
   const where = environment === DEFAULT_ENVIRONMENT ? "" : ` in ${environment}`;
+  if (assignee !== "everyone") {
+    return (
+      <Empty className="border border-dashed p-10">
+        <EmptyHeader>
+          <EmptyMedia variant="icon">
+            <BugIcon />
+          </EmptyMedia>
+          <EmptyTitle>{EMPTY_ASSIGNED[assignee]}</EmptyTitle>
+        </EmptyHeader>
+      </Empty>
+    );
+  }
   if (status === "unresolved") {
     return (
       <Empty className="border border-dashed p-10">
@@ -211,6 +242,7 @@ function ErrorTable({
                 </TruncatedText>
                 <p className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-ink-subtle">
                   {group.status !== "unresolved" && <ErrorStatusBadge status={group.status} />}
+                  {group.assignee !== null && <AssigneeMark assignee={group.assignee} />}
                   <span>
                     Last seen{" "}
                     <time
@@ -405,15 +437,17 @@ export function ErrorsPage({
   range,
   environment = DEFAULT_ENVIRONMENT,
   status,
+  assignee = DEFAULT_ASSIGNEE_FILTER,
 }: {
   projectId: string;
   range: PageRange;
   environment?: string;
   status: StatusFilter;
+  assignee?: AssigneeFilter;
 }) {
   const navigate = useNavigate();
-  const query = useQuery(errorsQuery(projectId, range, environment, status));
-  const search: ErrorsSearch = { range, environment, status };
+  const query = useQuery(errorsQuery(projectId, range, environment, status, assignee));
+  const search: ErrorsSearch = { range, environment, status, assignee };
   const narrow = useMediaQuery(NARROW_WORKBENCH);
   // The detail's Resolve or Reopen button, which `e` presses.
   const resolveRef = React.useRef<HTMLButtonElement>(null);
@@ -447,7 +481,7 @@ export function ErrorsPage({
 
   const filterBar = (
     <FilterBar
-      label="Period, environment, and status"
+      label="Period, environment, status, and assignee"
       period={
         <PeriodSelect range={range} answered={data} onRange={(next) => show({ range: next })} />
       }
@@ -459,24 +493,43 @@ export function ErrorsPage({
         />
       }
       filters={
-        <ToggleGroup
-          value={[status]}
-          onValueChange={(value) => {
-            // Pressing the shown status again keeps it; one is always shown.
-            const [next] = value;
-            if (isStatusFilter(next)) show({ status: next });
-          }}
-          aria-label="Status"
-          variant="outline"
-          size="sm"
-          spacing={0}
-        >
-          {STATUS_FILTERS.map((item) => (
-            <ToggleGroupItem key={item.value} value={item.value}>
-              {item.label}
-            </ToggleGroupItem>
-          ))}
-        </ToggleGroup>
+        <>
+          <ToggleGroup
+            value={[status]}
+            onValueChange={(value) => {
+              // Pressing the shown status again keeps it; one is always shown.
+              const [next] = value;
+              if (isStatusFilter(next)) show({ status: next });
+            }}
+            aria-label="Status"
+            variant="outline"
+            size="sm"
+            spacing={0}
+          >
+            {STATUS_FILTERS.map((item) => (
+              <ToggleGroupItem key={item.value} value={item.value}>
+                {item.label}
+              </ToggleGroupItem>
+            ))}
+          </ToggleGroup>
+          <ToggleGroup
+            value={[assignee]}
+            onValueChange={(value) => {
+              const [next] = value;
+              if (isAssigneeFilter(next)) show({ assignee: next });
+            }}
+            aria-label="Assignee"
+            variant="outline"
+            size="sm"
+            spacing={0}
+          >
+            {ASSIGNEE_FILTERS.map((item) => (
+              <ToggleGroupItem key={item.value} value={item.value}>
+                {item.label}
+              </ToggleGroupItem>
+            ))}
+          </ToggleGroup>
+        </>
       }
       range={
         data !== undefined && (
@@ -554,10 +607,12 @@ export function ErrorsPage({
               narrow ? (
                 // No room for the guidance beside the list: it takes the list's place.
                 <div className="px-gutter py-5">
-                  <NoErrors status={status} environment={environment} />
+                  <NoErrors status={status} environment={environment} assignee={assignee} />
                 </div>
               ) : (
-                <p className="px-gutter py-6 text-sm text-ink-subtle">{EMPTY_LIST[status]}</p>
+                <p className="px-gutter py-6 text-sm text-ink-subtle">
+                  {assignee === "everyone" ? EMPTY_LIST[status] : `${EMPTY_ASSIGNED[assignee]}.`}
+                </p>
               )
             ) : (
               <ErrorTable list={data} projectId={projectId} search={search} {...props} />
@@ -567,7 +622,7 @@ export function ErrorsPage({
         summary={
           empty ? (
             <div className="px-gutter py-5">
-              <NoErrors status={status} environment={environment} />
+              <NoErrors status={status} environment={environment} assignee={assignee} />
             </div>
           ) : (
             <Summary list={data} status={status} projectId={projectId} />

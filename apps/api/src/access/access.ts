@@ -10,6 +10,7 @@ import {
   type Areas,
   hasPermission,
   type Permission,
+  PERMISSIONS,
   reaches,
   type Role,
 } from "./areas.ts";
@@ -141,6 +142,73 @@ export function canUse(access: UserAccess, area: Area, level: "view" | "manage")
 
 export function can(access: UserAccess, permission: Permission): boolean {
   return hasPermission(access.role, permission);
+}
+
+/**
+ * What a user reaches, for lists filtered in SQL rather than one check per
+ * row (the notifications inbox, notifications/inbox.ts): the projects, the
+ * areas they have at view or more, and the instance permissions they hold.
+ */
+export interface Reach {
+  userId: string;
+  projects: "all" | readonly string[];
+  areas: Area[];
+  permissions: Permission[];
+}
+
+const isPermission = (key: string): key is Permission => Object.hasOwn(PERMISSIONS, key);
+
+export function reachOf(access: UserAccess): Reach {
+  return {
+    userId: access.userId,
+    projects: access.projects,
+    areas: AREAS.filter((area) => canUse(access, area, "view")),
+    permissions: Object.keys(PERMISSIONS)
+      .filter(isPermission)
+      .filter((permission) => can(access, permission)),
+  };
+}
+
+/**
+ * The users who have `area` at `level` or more on `projectId`, by name: the
+ * owner and admins, and the members granted it. For choosing someone, such
+ * as an error's assignee; each choice is checked again with
+ * checkProjectAccess.
+ */
+export async function usersWithArea(
+  db: Kysely<Database>,
+  projectId: string,
+  area: Area,
+  level: "view" | "manage",
+): Promise<{ id: string; name: string }[]> {
+  const levels: ("view" | "manage")[] = level === "view" ? ["view", "manage"] : ["manage"];
+  const rows = await db
+    .selectFrom("dashboard_users as u")
+    .leftJoin("dashboard_member_access as a", "a.user_id", "u.id")
+    .select(["u.id", "u.name"])
+    .where((eb) =>
+      eb.or([
+        eb("u.role", "in", ["owner", "admin"]),
+        eb.and([
+          eb("u.role", "=", "member"),
+          eb(`a.${area}`, "in", levels),
+          eb.or([
+            eb("a.all_projects", "=", true),
+            eb.exists(
+              eb
+                .selectFrom("dashboard_member_projects as p")
+                .select("p.project_id")
+                .whereRef("p.user_id", "=", "u.id")
+                .where("p.project_id", "=", projectId),
+            ),
+          ]),
+        ]),
+      ]),
+    )
+    .orderBy("u.name")
+    .orderBy("u.id")
+    .execute();
+  return rows;
 }
 
 function meets(access: UserAccess, need: ProjectNeed): boolean {

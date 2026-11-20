@@ -20,7 +20,7 @@ import type { EventBudget, RateLimit, TokenBucketLimiter } from "./rate-limiter.
 export const DEFAULT_SERVER_IP_LIMIT: RateLimit = { capacity: 600, refillPerSecond: 50 };
 
 /** How far ahead of the server's clock an event may be: a few minutes of clock drift. */
-const MAX_FUTURE_MS = 5 * 60 * 1000;
+export const MAX_FUTURE_MS = 5 * 60 * 1000;
 
 const UUID_PATTERN =
   "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$";

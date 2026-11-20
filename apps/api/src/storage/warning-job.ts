@@ -57,6 +57,11 @@ export interface StorageCheckResult {
 const cut = (text: string) =>
   text.length <= MAX_MESSAGE ? text : `${text.slice(0, MAX_MESSAGE - 1)}…`;
 
+/** A backup's own warnings link to the Backups tab, the owner's alone. */
+const onBackupsTab = (id: WarningId) => id.startsWith("backup_") && id !== "backup_space";
+/** Who sees a warning's inbox item: the owner for the Backups tab's, else the owner and admins. */
+const permissionOf = (id: WarningId) => (onBackupsTab(id) ? "settings" : "projects");
+
 export class StorageWarningJob {
   readonly #db: Kysely<Database>;
   readonly #sources: StorageSources;
@@ -169,7 +174,7 @@ export class StorageWarningJob {
   ): Promise<{ started: WarningId[]; raised: WarningId[]; ended: WarningId[] }> {
     // Backup warnings link to the Backups tab, the others to Storage.
     const urlOf = (id: WarningId) =>
-      `${this.#publicUrl}/settings?tab=${id.startsWith("backup_") && id !== "backup_space" ? "backups" : "storage"}`;
+      `${this.#publicUrl}/settings?tab=${onBackupsTab(id) ? "backups" : "storage"}`;
     const now = reading.measuredAt;
     return this.#db.transaction().execute(async (trx) => {
       await sql`select pg_advisory_xact_lock(${LOCK_KEY})`.execute(trx);
@@ -214,6 +219,7 @@ export class StorageWarningJob {
           message: cut(`${warning.title}. ${warning.text}`),
           url: urlOf(warning.id),
           time: now,
+          inbox: { title: warning.title, permission: permissionOf(warning.id) },
         });
       }
 
@@ -230,6 +236,11 @@ export class StorageWarningJob {
           message: cut(message),
           url: urlOf(id),
           time: now,
+          // The message's first clause: "Backups work again".
+          inbox: {
+            title: message.split(/[:.](?:\s|$)/u)[0] ?? message,
+            permission: permissionOf(id),
+          },
         });
       }
 

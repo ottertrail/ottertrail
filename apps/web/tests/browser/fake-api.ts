@@ -18,6 +18,7 @@ import type {
   ShapeSummary,
 } from "../../src/lib/databases-api.ts";
 import {
+  type Assignee,
   type ErrorDetail,
   type ErrorGroup,
   type ErrorList,
@@ -82,6 +83,11 @@ import type { Check, CheckResults, IncidentList } from "../../src/lib/uptime-api
 import type { Activity, User, UserActivity, UserList } from "../../src/lib/users-api.ts";
 import { answerAccount, type FakeAccount, fakeAccount, sessionBody } from "./fake-account.ts";
 import { answerBackups, type FakeBackups, fakeBackups } from "./fake-backups.ts";
+import {
+  answerNotifications,
+  type FakeNotifications,
+  fakeNotifications,
+} from "./fake-notifications.ts";
 import { STORAGE } from "./storage-fixtures.ts";
 
 /**
@@ -169,6 +175,12 @@ export interface FakeApi {
   setErrorStatus: (api: FakeApi, fingerprint: string, status: string) => Response;
   /** Resolved error groups by fingerprint, as error_resolutions holds them. */
   resolutions: Record<string, { resolvedAt: string; resolvedBy: string | null }>;
+  /** Error groups' assignees by fingerprint; PUT …/assignee changes them. */
+  assignments: Record<string, Assignee>;
+  /** GET /api/projects/:id/error-assignees: who can be assigned. */
+  assignees: Assignee[];
+  /** The signed-in user's notifications (fake-notifications.ts). */
+  notifications: FakeNotifications;
   /** Answers GET /api/projects/:id/speed; by default, fakeSpeed. */
   speed: (query: URLSearchParams) => Speed | Response;
   /** Answers GET /api/projects/:id/heatmaps/pages; by default, fakeHeatmapPages. */
@@ -375,7 +387,19 @@ export const fakeResolutions = (): FakeApi["resolutions"] => ({
   },
 });
 
-const ERROR_GROUPS: Omit<ErrorGroup, "status" | "resolvedAt" | "resolvedBy">[] = [
+/** Assignments a test may start with: the TypeError on Ada Admin's plate. By default, none. */
+export const fakeAssignments = (): FakeApi["assignments"] => ({
+  [ERROR_FINGERPRINTS.typeError]: { id: "user-2", name: "Ada Admin" },
+});
+
+/** Who can be assigned: the members page's users. */
+export const FAKE_ASSIGNEES: Assignee[] = [
+  { id: "user-2", name: "Ada Admin" },
+  { id: "user-3", name: "Mia Member" },
+  { id: "user-1", name: "Test Owner" },
+];
+
+const ERROR_GROUPS: Omit<ErrorGroup, "status" | "resolvedAt" | "resolvedBy" | "assignee">[] = [
   {
     fingerprint: ERROR_FINGERPRINTS.typeError,
     type: "TypeError",
@@ -422,6 +446,7 @@ function errorGroups(api: FakeApi): ErrorGroup[] {
             : "resolved",
       resolvedAt: resolution?.resolvedAt ?? null,
       resolvedBy: resolution?.resolvedBy ?? null,
+      assignee: api.assignments[group.fingerprint] ?? null,
     };
   });
 }
@@ -430,8 +455,12 @@ function errorGroups(api: FakeApi): ErrorGroup[] {
 export function fakeErrors(query: URLSearchParams, api: FakeApi): ErrorList {
   const asked = query.get("status") ?? "unresolved";
   const status = isStatusFilter(asked) ? asked : "unresolved";
+  const assignee = query.get("assignee");
   const groups = errorGroups(api).filter(
-    (group) => status === "all" || (group.status === "resolved") === (status === "resolved"),
+    (group) =>
+      (status === "all" || (group.status === "resolved") === (status === "resolved")) &&
+      (assignee === null ||
+        (assignee === "none" ? group.assignee === null : group.assignee?.id === "user-1")),
   );
   return {
     timeZone: "Asia/Singapore",
@@ -3664,6 +3693,8 @@ async function answer(api: FakeApi, url: URL, init: RequestInit | undefined): Pr
   if (!api.signedIn && !path.startsWith("/api/auth/") && path !== "/api/setup") {
     return json({ error: "unauthorized", message: "Sign in to continue." }, 401);
   }
+  const notifications = answerNotifications(api.notifications, url, init);
+  if (notifications !== null) return notifications;
   const account = answerAccount(api.account, url, init);
   if (account !== null) return account;
   const backups = answerBackups(api.backups, url, init, api.access.role);
@@ -4007,6 +4038,29 @@ async function answer(api: FakeApi, url: URL, init: RequestInit | undefined): Pr
     const result = api.errors(url.searchParams, api);
     return result instanceof Response ? result : json(result);
   }
+  if (/^\/api\/projects\/[^/]+\/error-assignees$/.test(path)) {
+    return json({ users: api.assignees });
+  }
+  const assigneePath = /^\/api\/projects\/[^/]+\/errors\/([^/]+)\/assignee$/.exec(path);
+  if (assigneePath?.[1] !== undefined && init?.method === "PUT") {
+    const fingerprint = decodeURIComponent(assigneePath[1]);
+    const body: unknown = JSON.parse(typeof init.body === "string" ? init.body : "{}");
+    const id =
+      typeof body === "object" && body !== null && "assignee" in body ? body.assignee : null;
+    const person = api.assignees.find((user) => user.id === id) ?? null;
+    if (id !== null && person === null) {
+      return json(
+        {
+          error: "not_assignable",
+          message: "This person can't see this project's errors. Choose someone else.",
+        },
+        400,
+      );
+    }
+    const { [fingerprint]: _old, ...others } = api.assignments;
+    api.assignments = person === null ? others : { ...others, [fingerprint]: person };
+    return json({ fingerprint, assignee: person });
+  }
   const errorPath = /^\/api\/projects\/[^/]+\/errors\/([^/]+)$/.exec(path);
   if (errorPath?.[1] !== undefined && init?.method === "PATCH") {
     const body: unknown = JSON.parse(typeof init.body === "string" ? init.body : "{}");
@@ -4147,6 +4201,9 @@ export function installFakeApi(overrides: Partial<FakeApi> = {}): FakeApi {
     funnel: fakeFunnel,
     retention: fakeRetention,
     resolutions: fakeResolutions(),
+    assignments: {},
+    assignees: FAKE_ASSIGNEES,
+    notifications: fakeNotifications(),
     sourceMaps: fakeSourceMaps(),
     replays: fakeReplays(),
     replayList: fakeReplayList,

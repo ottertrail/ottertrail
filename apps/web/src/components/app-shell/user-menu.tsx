@@ -10,7 +10,6 @@ import {
 } from "lucide-react";
 
 import { OverflowTooltip, TruncatedText } from "@/components/truncated-text";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -29,6 +28,7 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar";
 import { Skeleton } from "@/components/ui/skeleton";
+import { UserAvatar } from "@/components/user-avatar";
 import { meQuery } from "@/lib/access";
 import { authClient } from "@/lib/auth-client";
 import {
@@ -70,34 +70,6 @@ function ThemeItems() {
         })}
       </DropdownMenuRadioGroup>
     </DropdownMenuGroup>
-  );
-}
-
-/** The first character a reader sees: a whole emoji or accented letter, not half of one. */
-const firstCharacter = (text: string) =>
-  new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(text)[Symbol.iterator]().next()
-    .value?.segment ?? "";
-
-/** "Ada Lovelace" is AL, "Ada" is A; with no name, the email's first letter. */
-function initialsOf(name: string, email: string): string {
-  const words = name
-    .trim()
-    .split(/\s+/u)
-    .filter((word) => word !== "");
-  const first = words[0];
-  if (first === undefined) return firstCharacter(email).toLocaleUpperCase();
-  const last = words.length > 1 ? words.at(-1) : undefined;
-  return `${firstCharacter(first)}${last === undefined ? "" : firstCharacter(last)}`.toLocaleUpperCase();
-}
-
-/** There are no photos: the initials stand in, on the sidebar's accent. */
-function UserAvatar({ name, email }: { name: string; email: string }) {
-  return (
-    <Avatar className="size-8 rounded-md after:rounded-md" aria-hidden="true">
-      <AvatarFallback className="rounded-md bg-sidebar-accent text-xs font-semibold text-ink">
-        {initialsOf(name, email)}
-      </AvatarFallback>
-    </Avatar>
   );
 }
 

@@ -14,6 +14,7 @@ import {
   type Subject,
   subjectProblem,
 } from "./events.ts";
+import { type InboxOptions, recordFromPayload } from "./inbox.ts";
 
 /**
  * Deliveries (docs/uptime-alerts.md, "Where alerts go"): a notification is
@@ -78,6 +79,11 @@ export interface NotifyInput {
   url: string;
   /** When it happened; now when left out. */
   time?: Date | undefined;
+  /**
+   * The inbox item it also makes (inbox.ts): its title and the areas a
+   * reader needs, each with a default; null for none.
+   */
+  inbox?: InboxOptions | null | undefined;
 }
 
 export interface Recorded {
@@ -204,22 +210,23 @@ async function lockChannels(trx: Transaction<Database>, ids: readonly string[]):
  * channel's hourly cap was reached.
  */
 export async function notify(db: Kysely<Database>, input: NotifyInput): Promise<Recorded> {
-  const payload = payloadFor(input);
-  return db.transaction().execute(async (trx) => {
-    const ids = await lockChannels(trx, input.channelIds);
-    return recordDeliveries(trx, ids, payload);
-  });
+  return db.transaction().execute(async (trx) => notifyIn(trx, input));
 }
 
 /**
  * notify, in a transaction the caller holds: alert rules record the
  * notification with the alert's state and history, so either all of it
- * is written or none of it, and a restart sends nothing twice.
+ * is written or none of it, and a restart sends nothing twice. The
+ * dashboard's inbox gets one item for it (inbox.ts), in the same
+ * transaction.
  */
 export async function notifyIn(trx: Transaction<Database>, input: NotifyInput): Promise<Recorded> {
   const payload = payloadFor(input);
   const ids = await lockChannels(trx, input.channelIds);
-  return recordDeliveries(trx, ids, payload);
+  const recorded = await recordDeliveries(trx, ids, payload);
+  // The inbox shows it too, whether or not the rule or warning has channels.
+  if (input.inbox !== null) await recordFromPayload(trx, payload, input.inbox ?? {});
+  return recorded;
 }
 
 /**

@@ -15,6 +15,7 @@ import * as heatmapOverlayTokens from "./0012_heatmap_overlay_tokens.ts";
 import * as accountEmails from "./0013_account_emails.ts";
 import * as backups from "./0014_backups.ts";
 import * as projectStars from "./0015_project_stars.ts";
+import * as notifications from "./0016_notifications.ts";
 
 /**
  * Every migration, in order. Kysely runs them by name, alphabetically, and
@@ -39,4 +40,5 @@ export const migrations: Record<string, Migration> = {
   "0013_account_emails": accountEmails,
   "0014_backups": backups,
   "0015_project_stars": projectStars,
+  "0016_notifications": notifications,
 };

@@ -55,6 +55,8 @@ export interface AccountEmailParams {
   email_changed: { oldEmail: string; newEmail: string };
   /** To the owner: who did what to the backups (backups/routes.ts, BACKUP_ACTIONS), and when (ISO). */
   backup_changed: { action: string; by: string; at: string };
+  /** To an error's new assignee (errors/assignments.ts): who, which error, where, and its page. */
+  error_assigned: { by: string; error: string; project: string; link: string };
 }
 
 export type AccountEmail = {
@@ -82,6 +84,7 @@ function storedParams(email: AccountEmail, sealer: LinkSealer): Record<string, s
       };
     case "email_changed":
     case "backup_changed":
+    case "error_assigned":
       return { ...email.params };
     default:
       return {};
@@ -223,6 +226,16 @@ export function accountEmailMessage(
       ["If you didn't do this, change your password and check the Backups tab of Settings."],
     ]);
   }
+  if (email.kind === "error_assigned") {
+    const by = oneLine(email.params.by);
+    return messageOf(subjectOf(instance, `${by} assigned you an error`), [
+      [
+        `${by} assigned you an error in ${oneLine(email.params.project)}:`,
+        oneLine(email.params.error),
+      ],
+      ["Open it:", { link: email.params.link }],
+    ]);
+  }
   // email_changed: to the old address.
   return messageOf(subjectOf(instance, "Your account email was changed"), [
     [
@@ -354,6 +367,15 @@ function emailOf(row: DueAccountEmail, sealer: LinkSealer): AccountEmail | null 
       return action === null || by === null || at === null
         ? null
         : { kind: row.kind, to: row.to, params: { action, by, at } };
+    }
+    case "error_assigned": {
+      const by = textOf(params, "by");
+      const error = textOf(params, "error");
+      const project = textOf(params, "project");
+      const assigned = textOf(params, "link");
+      return by === null || error === null || project === null || assigned === null
+        ? null
+        : { kind: row.kind, to: row.to, params: { by, error, project, link: assigned } };
     }
     case "email_changed": {
       const oldEmail = textOf(params, "oldEmail");

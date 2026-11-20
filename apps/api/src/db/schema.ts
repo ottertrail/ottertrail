@@ -486,7 +486,8 @@ export type AccountEmailKind =
   | "password_changed"
   | "backup_changed"
   | "invitation"
-  | "email_changed";
+  | "email_changed"
+  | "error_assigned";
 
 /**
  * An account email waiting for the worker (notifications/account-emails.ts):
@@ -648,6 +649,52 @@ export interface BackupRunsTable {
   error: Nullable<string>;
 }
 
+/** The instance permissions an inbox item can need (access/permissions). */
+export type InboxPermission = "projects" | "settings";
+
+/**
+ * An inbox item (notifications/inbox.ts, migration 0016): who sees it is
+ * decided when it is read, from its project, areas, permission, and user.
+ */
+export interface NotificationsTable {
+  id: ColumnType<string, string | undefined, never>;
+  /** An event type (notifications/events.ts), or "error.assigned". */
+  kind: ColumnType<string, string, never>;
+  /** null: about the instance, for those with `permission`. */
+  project_id: ColumnType<string | null, string | null | undefined, never>;
+  /** An instance item's reader: "projects" (the owner and admins) or "settings" (the owner). */
+  permission: ColumnType<InboxPermission | null, InboxPermission | null | undefined, never>;
+  /** The areas of the project a reader needs, each at view. */
+  areas: ColumnType<string[], string[] | undefined, never>;
+  /** A personal item's one reader; null for everyone the rest allows. */
+  user_id: ColumnType<string | null, string | null | undefined, never>;
+  title: ColumnType<string, string, never>;
+  /** The dashboard's path, with its query. */
+  link: ColumnType<string, string, never>;
+  /** The channel notification it mirrors: one item per source. */
+  source_id: ColumnType<string | null, string | null | undefined, never>;
+  created_at: ColumnType<Date, Date | undefined, never>;
+}
+
+/** Which inbox items a user has read; none: unread. */
+export interface NotificationReadsTable {
+  user_id: string;
+  notification_id: string;
+  read_at: ColumnType<Date, Date | undefined, Date>;
+}
+
+/** Who is on an error group (errors/assignments.ts): one person at most. */
+export interface ErrorAssignmentsTable {
+  project_id: string;
+  fingerprint: string;
+  assignee_id: string;
+  /** Who assigned it; null once that user is deleted. */
+  assigned_by: Nullable<string>;
+  assigned_at: ColumnType<Date, Date | undefined, Date>;
+  /** The resolution whose regression the assignee was told of. */
+  regression_told_for: Nullable<Date>;
+}
+
 export interface Database {
   instance_settings: InstanceSettingsTable;
   projects: ProjectsTable;
@@ -687,4 +734,7 @@ export interface Database {
   first_seen_rebuilds: FirstSeenRebuildsTable;
   backup_settings: BackupSettingsTable;
   backup_runs: BackupRunsTable;
+  notifications: NotificationsTable;
+  notification_reads: NotificationReadsTable;
+  error_assignments: ErrorAssignmentsTable;
 }

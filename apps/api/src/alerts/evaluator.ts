@@ -1,8 +1,10 @@
 import type { ClickHouseClient } from "../clickhouse/clickhouse.ts";
 import type { Reader } from "../clickhouse/query.ts";
+import { tellAssigneesOfRegressions } from "../errors/assignments.ts";
+import { pruneInbox } from "../notifications/inbox.ts";
 import type { StateChange } from "../uptime/checks.ts";
 import { evaluateCertificates, evaluateCheckDown } from "./check-rules.ts";
-import { evaluateErrorRules } from "./error-rules.ts";
+import { ARRIVAL_LAG_MS, evaluateErrorRules, MAX_CATCH_UP_MS } from "./error-rules.ts";
 import { type AlertContext, flushHeldBack } from "./fire.ts";
 import { endOrphanedCheckAlerts, pruneHistory } from "./rules.ts";
 import {
@@ -30,8 +32,10 @@ export const HISTORY_PRUNE_INTERVAL_MS = 60 * 60 * 1000;
  * - tick, every minute: check-down rules for every check (catching up a
  *   change the worker stopped before acting on, and ending, silently, any
  *   alert left firing for a check that no longer exists), error rules, the
- *   summaries of what rules' hourly caps held back; every hour,
- *   certificates (whose window moves with time) and the history's pruning.
+ *   summaries of what rules' hourly caps held back, and assignees told of
+ *   their regressed errors (errors/assignments.ts); every hour,
+ *   certificates (whose window moves with time), and the history's and
+ *   the notifications inbox's pruning (90 days each).
  *
  * - telemetryTick, every few seconds on a loop of its own: the route
  *   latency, route failures, and metric rules due (each once a minute,
@@ -49,6 +53,9 @@ export class AlertEvaluator {
   readonly #telemetry: Omit<PassOptions, "now" | "stopping">;
   #certificatesAt = 0;
   #prunedAt = 0;
+  #inboxPrunedAt = 0;
+  /** The end of the arrivals the last regression pass read (ms); none yet after a start. */
+  #regressionsThrough: number | null = null;
   #stopping = false;
 
   constructor({
@@ -185,6 +192,23 @@ export class AlertEvaluator {
     } catch (error) {
       this.#failed("held-back summaries", error);
     }
+    // The arrivals since the last pass, as the error rules read them: after
+    // a start or a gap, at most the last MAX_CATCH_UP_MS (telling is once
+    // per resolution, so reading some again tells nobody twice).
+    const until = at.getTime() - ARRIVAL_LAG_MS;
+    const from = Math.max(this.#regressionsThrough ?? 0, until - MAX_CATCH_UP_MS);
+    if (from < until) {
+      try {
+        await tellAssigneesOfRegressions(this.#context.db, this.#reader, {
+          from: new Date(from),
+          until: new Date(until),
+        });
+        this.#regressionsThrough = until;
+      } catch (error) {
+        this.#failed("telling assignees of regressions", error);
+      }
+    }
+    // Each clean-up apart, hourly: one that fails is tried again next minute, alone.
     if (at.getTime() - this.#prunedAt >= HISTORY_PRUNE_INTERVAL_MS) {
       try {
         const pruned = await pruneHistory(this.#context.db, at);
@@ -192,6 +216,15 @@ export class AlertEvaluator {
         this.#prunedAt = at.getTime();
       } catch (error) {
         this.#failed("deleting old alerts", error);
+      }
+    }
+    if (at.getTime() - this.#inboxPrunedAt >= HISTORY_PRUNE_INTERVAL_MS) {
+      try {
+        const pruned = await pruneInbox(this.#context.db, at);
+        if (pruned > 0) this.#context.log?.("info", "old notifications deleted", { pruned });
+        this.#inboxPrunedAt = at.getTime();
+      } catch (error) {
+        this.#failed("deleting old notifications", error);
       }
     }
   }

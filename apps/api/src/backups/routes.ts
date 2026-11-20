@@ -271,6 +271,8 @@ export const backupRoutes: FastifyPluginCallback<{
         message: `${user.name} ${BACKUP_ACTIONS[action]}.`,
         url: `${publicUrl}/settings?tab=backups`,
         time: at,
+        // The Backups tab is the owner's.
+        inbox: { title: `${user.name} ${BACKUP_ACTIONS[action]}`, permission: "settings" },
       });
       if (emailConfigured && sealer !== null) {
         const theOwner = await trx

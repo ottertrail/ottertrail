@@ -52,7 +52,14 @@ import {
 import { ApiError } from "@/lib/api";
 import { sessionQuery } from "@/lib/auth-client";
 import { DEFAULT_DATABASE_SORT, isDatabaseSort } from "@/lib/databases-api";
-import { DEFAULT_STATUS_FILTER, isStatusFilter, type StatusFilter } from "@/lib/errors-api";
+import {
+  type AssigneeFilter,
+  DEFAULT_ASSIGNEE_FILTER,
+  DEFAULT_STATUS_FILTER,
+  isAssigneeFilter,
+  isStatusFilter,
+  type StatusFilter,
+} from "@/lib/errors-api";
 import { lastProject } from "@/lib/last-project";
 import { lazyPage, withPage } from "@/lib/lazy-page";
 import { isTraceId } from "@/lib/logs-api";
@@ -79,6 +86,10 @@ const AlertsPage = lazyPage(() => import("@/features/alerts/alerts-page"), "Aler
 const AnalyticsPage = lazyPage(
   () => import("@/features/analytics/analytics-page"),
   "AnalyticsPage",
+);
+const NotificationsPage = lazyPage(
+  () => import("@/features/notifications/notifications-page"),
+  "NotificationsPage",
 );
 const CheckPage = lazyPage(() => import("@/features/uptime/check-page"), "CheckPage");
 const DatabasesPage = lazyPage(
@@ -458,15 +469,19 @@ type ErrorSearchInput = {
   env?: unknown;
 } & SearchSchemaInput;
 
-/** The error groups: days and environment as on web analytics, and a status (left out for unresolved). */
+/**
+ * The error groups: days and environment as on web analytics, a status
+ * (left out for unresolved), and an assignee (left out for everyone).
+ */
 const errorsRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: "/errors",
   staticData: { title: "Errors", access: "errors" },
   validateSearch: (
-    search: ErrorSearchInput & { status?: unknown; error?: unknown },
+    search: ErrorSearchInput & { status?: unknown; assignee?: unknown; error?: unknown },
   ): ReturnType<typeof rangeSearch> & { env: string | undefined } & {
     status: StatusFilter | undefined;
+    assignee: AssigneeFilter | undefined;
     error: string | undefined;
   } => ({
     ...rangeSearch(search),
@@ -475,18 +490,24 @@ const errorsRoute = createRoute({
       isStatusFilter(search.status) && search.status !== DEFAULT_STATUS_FILTER
         ? search.status
         : undefined,
+    // Whose groups: everyone's, the default, is left out.
+    assignee:
+      isAssigneeFilter(search.assignee) && search.assignee !== DEFAULT_ASSIGNEE_FILTER
+        ? search.assignee
+        : undefined,
     // The workbench's selected group (docs/design-system.md, "Workbench").
     error: typeof search.error === "string" && search.error !== "" ? search.error : undefined,
   }),
   component: withPage(ErrorsPage, function ErrorsRouteComponent() {
     const { projectId } = errorsRoute.useParams();
-    const { period, from, to, env, status } = errorsRoute.useSearch();
+    const { period, from, to, env, status, assignee } = errorsRoute.useSearch();
     return (
       <ErrorsPage
         projectId={projectId}
         range={rangeFrom({ period, from, to })}
         environment={env ?? DEFAULT_ENVIRONMENT}
         status={status ?? DEFAULT_STATUS_FILTER}
+        assignee={assignee ?? DEFAULT_ASSIGNEE_FILTER}
       />
     );
   }),
@@ -1276,6 +1297,22 @@ const accountRoute = createRoute({
   component: AccountPage,
 });
 
+/** The signed-in user's notifications, all or unread (docs/dashboard.md). */
+const notificationsRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: "/notifications",
+  staticData: { title: "Notifications" },
+  validateSearch: (
+    search: { filter?: unknown } & SearchSchemaInput,
+  ): { filter: "unread" | undefined } => ({
+    filter: search.filter === "unread" ? "unread" : undefined,
+  }),
+  component: withPage(NotificationsPage, function NotificationsRouteComponent() {
+    const { filter } = notificationsRoute.useSearch();
+    return <NotificationsPage filter={filter ?? "all"} />;
+  }),
+});
+
 /** Members and invitations, for the owner and admins (docs/access.md). */
 const membersRoute = createRoute({
   getParentRoute: () => appRoute,
@@ -1339,6 +1376,7 @@ const routeTree = rootRoute.addChildren([
     settingsRoute,
     membersRoute,
     accountRoute,
+    notificationsRoute,
     unknownAddressRoute,
   ]),
 ]);

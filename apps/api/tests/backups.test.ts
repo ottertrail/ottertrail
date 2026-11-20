@@ -559,6 +559,21 @@ describe("guarded actions", () => {
         message: "Ada Owner changed where backups go.",
         url: `${PUBLIC_URL}/settings?tab=backups`,
       });
+      // And the inbox, once each, for the owner (the Backups tab is theirs).
+      const inbox = await dashboard.db
+        .selectFrom("notifications")
+        .select(["title", "permission", "link"])
+        .orderBy("created_at")
+        .orderBy("id")
+        .execute();
+      expect(inbox).toEqual(
+        [
+          "Ada Owner changed where backups go",
+          "Ada Owner showed the backup key",
+          "Ada Owner downloaded the backup key",
+          "Ada Owner turned backups off",
+        ].map((title) => ({ title, permission: "settings", link: "/settings?tab=backups" })),
+      );
       const emails = await dashboard.db
         .selectFrom("account_emails")
         .select(["kind", "to_address", "params"])
