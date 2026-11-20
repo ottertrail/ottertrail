@@ -698,7 +698,14 @@ describe("the destination follows the object store", () => {
       backups: { objectStore: store, stackGarage: false, authSecret: TEST_AUTH_SECRET },
     });
     try {
-      for (const prefix of ["replays", "replays/backups", "source-maps", "source-maps/x/y"]) {
+      for (const prefix of [
+        "replays",
+        "replays/backups",
+        "source-maps",
+        "source-maps/x/y",
+        "avatars",
+        "avatars/backups",
+      ]) {
         const refused = await call(dashboard, "PATCH", "/api/settings/backups", {
           body: { prefix, currentPassword: OWNER.password },
         });

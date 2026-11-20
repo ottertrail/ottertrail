@@ -156,7 +156,7 @@ beforeAll(async () => {
   await store.put(`${mapFolder}app.js.map`, Buffer.from('{"version":3}'), "application/json");
   await store.put(`${replayFolder}one`, Buffer.alloc(70_000, 7), "application/octet-stream");
   await store.put(`${replayFolder}empty`, new Uint8Array(), "text/plain");
-  // Not the store's: a key outside replays/ and source-maps/ is never backed up.
+  // Not the store's: a key outside replays/, source-maps/, and avatars/ is never backed up.
   await store.put(`${run}-not-objects/stray`, Buffer.from("stray"), "text/plain");
 }, 60_000);
 
@@ -652,17 +652,18 @@ describe("a bucket shared with the object store", () => {
           key,
           version: OTTERTRAIL_VERSION,
         }),
-      ).rejects.toThrow(/^This folder overlaps session replays or source maps/);
+      ).rejects.toThrow(/^This folder overlaps session replays, source maps, or avatars/);
       expect(await listBackups(client, LOCAL_OBJECT_STORE.bucket, prefix)).toEqual([]);
     } finally {
       client.destroy();
     }
   });
 
-  test("backup.sh's object backup lists only replays/ and source-maps/, never the backups beside them", async () => {
+  test("backup.sh's object backup lists only replays/, source-maps/, and avatars/, never the backups beside them", async () => {
     const fake = await startListingS3({
       "replays/p1/r1": "replay",
       "source-maps/p1/m1": "map",
+      "avatars/instance/a.png": "icon",
       "ottertrail-backups/2026-11-20T030000Z/manifest.json": "a backup",
       "replays-elsewhere/x": "not the store's",
     });
@@ -672,13 +673,14 @@ describe("a bucket shared with the object store", () => {
         { ...LOCAL_OBJECT_STORE, url: fake.url, bucket: "shared" },
         join(dir, "out"),
       );
-      expect(summary.count).toBe(2);
+      expect(summary.count).toBe(3);
       const manifest = JSON.parse(await readFile(join(dir, "out", "manifest.json"), "utf8"));
       expect(manifest.objects.map((entry: { key: string }) => entry.key)).toEqual([
         "replays/p1/r1",
         "source-maps/p1/m1",
+        "avatars/instance/a.png",
       ]);
-      expect(fake.listed).toEqual(["replays/", "source-maps/"]);
+      expect(fake.listed).toEqual(["replays/", "source-maps/", "avatars/"]);
     } finally {
       await fake.close();
       await rm(dir, { recursive: true, force: true });

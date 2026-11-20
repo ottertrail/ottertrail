@@ -127,8 +127,8 @@ describe("the sidebar", () => {
     // The page reads the session again when the window regains focus; the name goes through the Profile form here.
     await page.getByRole("button", { name: /Account menu$/ }).click();
     await menu().getByRole("menuitem", { name: "Account settings" }).click();
-    await form("Name").getByRole("textbox", { name: "Name" }).fill(long);
-    await form("Name").getByRole("button", { name: "Save name" }).click();
+    await form("Profile").getByRole("textbox", { name: "Name" }).fill(long);
+    await form("Profile").getByRole("button", { name: "Save profile" }).click();
     await expect.element(userButton()).toMatchTextContent(long);
 
     await userButton().hover();
@@ -159,26 +159,26 @@ describe("Account settings", () => {
   test("the name follows the save rule, and the sidebar shows the new one", async () => {
     const api = installFakeApi();
     renderApp("/account");
-    const name = form("Name").getByRole("textbox", { name: "Name" });
-    const save = form("Name").getByRole("button", { name: "Save name" });
+    const name = form("Profile").getByRole("textbox", { name: "Name" });
+    const save = form("Profile").getByRole("button", { name: "Save profile" });
     await expect.element(name).toHaveValue("Test Owner");
-    await expect.element(saveBar("Name")).toHaveTextContent("No unsaved changes");
+    await expect.element(saveBar("Profile")).toHaveTextContent("No unsaved changes");
     await expect.element(save).toHaveAttribute("aria-disabled", "true");
 
     await name.fill("Test Owner ");
     // Spaces around it are no change.
     await expect.element(save).toHaveAttribute("aria-disabled", "true");
     await name.fill("Tess Owner");
-    await expect.element(saveBar("Name")).toHaveTextContent("Unsaved changes");
+    await expect.element(saveBar("Profile")).toHaveTextContent("Unsaved changes");
     await expect
       .element(page.getByRole("tab", { name: /^Profile\s*, unsaved changes$/ }))
       .toBeVisible();
-    await form("Name").getByRole("button", { name: "Discard" }).click();
+    await form("Profile").getByRole("button", { name: "Discard" }).click();
     await expect.element(name).toHaveValue("Test Owner");
 
     await name.fill("Tess Owner");
     await save.click();
-    await expect.element(saveBar("Name")).toHaveTextContent("No unsaved changes");
+    await expect.element(saveBar("Profile")).toHaveTextContent("No unsaved changes");
     expect(api.account.name).toBe("Tess Owner");
     await expect.element(userButton()).toMatchTextContent("Tess Owner");
   });
@@ -378,7 +378,7 @@ describe("Account settings", () => {
   test("leaving with an unsaved name asks first", async () => {
     installFakeApi();
     const router = renderApp("/account");
-    await form("Name").getByRole("textbox", { name: "Name" }).fill("Someone else");
+    await form("Profile").getByRole("textbox", { name: "Name" }).fill("Someone else");
     await page
       .getByRole("navigation", { name: "Instance" })
       .getByRole("link", { name: "Projects" })

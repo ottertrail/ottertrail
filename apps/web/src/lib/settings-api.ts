@@ -10,6 +10,8 @@ export interface Settings {
   timeZone: string;
   /** Whether the worker keeps the location database and data-center ranges current. */
   updateLocationData: boolean;
+  /** The instance's icon, or null for its initial. */
+  avatarUrl: string | null;
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -19,7 +21,8 @@ const isSettings = (value: unknown): value is Settings =>
   isRecord(value) &&
   typeof value.name === "string" &&
   typeof value.timeZone === "string" &&
-  typeof value.updateLocationData === "boolean";
+  typeof value.updateLocationData === "boolean" &&
+  (value.avatarUrl === null || typeof value.avatarUrl === "string");
 
 const isSettingsBody = (value: unknown): value is { settings: Settings } =>
   isRecord(value) && isSettings(value.settings);

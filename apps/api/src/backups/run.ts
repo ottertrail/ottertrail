@@ -152,7 +152,7 @@ export interface BackupSources {
   objectStore: ObjectStoreConfig | null;
   /**
    * The prefixes of the objects to back up: by default the store's own
-   * (OBJECT_PREFIXES, `replays/` and `source-maps/`); tests keep to their own.
+   * (OBJECT_PREFIXES, `replays/`, `source-maps/`, and `avatars/`); tests keep to their own.
    */
   objectPrefixes?: readonly string[];
   /** The disk ClickHouse writes to: its size and free space. */

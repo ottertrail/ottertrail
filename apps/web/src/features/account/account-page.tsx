@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { LoaderCircleIcon, MonitorSmartphoneIcon, OctagonAlertIcon } from "lucide-react";
 import * as React from "react";
 
+import { AvatarField } from "@/components/avatar-field";
 import { SettingsSection } from "@/components/settings-section";
 import { type SettingsTab, SettingsTabs } from "@/components/settings-tabs";
 import { TruncatedText } from "@/components/truncated-text";
@@ -35,6 +36,8 @@ import {
   updateName,
 } from "@/lib/account-api";
 import { ApiError } from "@/lib/api";
+import { saveAvatarFirst } from "@/lib/avatars";
+import { initialsOf } from "@/lib/initials";
 import { setupStatusQuery } from "@/lib/setup-api";
 
 import { MIN_PASSWORD_LENGTH } from "../auth/link-token";
@@ -59,27 +62,66 @@ function useAccountChanged() {
   return React.useCallback(() => queryClient.invalidateQueries(), [queryClient]);
 }
 
-function NameForm({ name, onDirty }: { name: string; onDirty: (dirty: boolean) => void }) {
+interface ProfileValues {
+  name: string;
+  /** The avatar's address, a chosen image's data: URL, or null. */
+  avatar: string | null;
+}
+
+/**
+ * The user's avatar and name: one form. Save sends a changed avatar first,
+ * then the name; if the name fails, the avatar stays saved and the name's
+ * edit stays.
+ */
+function NameForm({
+  name,
+  email,
+  avatarUrl,
+  uploads,
+  onDirty,
+}: {
+  name: string;
+  email: string;
+  avatarUrl: string | null;
+  uploads: boolean;
+  onDirty: (dirty: boolean) => void;
+}) {
   const changed = useAccountChanged();
-  const form = useDirtyForm({ name }, { normalize: { name: (value) => value.trim() } });
+  const form = useDirtyForm<ProfileValues>(
+    { name, avatar: avatarUrl },
+    { normalize: { name: (value) => value.trim() } },
+  );
   React.useEffect(() => onDirty(form.dirty), [onDirty, form.dirty]);
   const save = useMutation({
-    mutationFn: (values: { name: string }) => updateName(values.name.trim()),
-    onSuccess: async (user, values) => {
-      form.saved(values);
+    mutationFn: async (values: ProfileValues) => {
+      const before = form.initial;
+      const submitted = await saveAvatarFirst(form, values, "/api/account/avatar");
+      if (submitted.avatar !== before.avatar) void changed();
+      if (values.name.trim() === before.name.trim()) return { submitted, user: null };
+      return { submitted, user: await updateName(values.name.trim()) };
+    },
+    onSuccess: async ({ submitted, user }) => {
+      form.saved(submitted);
       await changed();
-      form.set("name", user.name);
+      if (user !== null) form.set("name", user.name);
     },
   });
   return (
     <SettingsSection
-      title="Name"
+      title="Profile"
       form={form}
       onSave={(values) => save.mutate(values)}
       saving={save.isPending}
       error={save.error?.message}
-      saveLabel="Save name"
+      saveLabel="Save profile"
     >
+      <AvatarField
+        label="Avatar"
+        value={form.values.avatar}
+        onChange={(avatar) => form.set("avatar", avatar)}
+        text={initialsOf(form.values.name, email)}
+        uploads={uploads}
+      />
       <Field>
         <FieldLabel htmlFor="account-name">Name</FieldLabel>
         <Input
@@ -562,7 +604,13 @@ export function AccountPage() {
       dirty: dirty.name || dirty.email,
       content: (
         <>
-          <NameForm name={user.name} onDirty={mark.name} />
+          <NameForm
+            name={user.name}
+            email={user.email}
+            avatarUrl={user.avatarUrl}
+            uploads={me.data.avatarUploads}
+            onDirty={mark.name}
+          />
           <EmailForm email={user.email} onDirty={mark.email} />
         </>
       ),

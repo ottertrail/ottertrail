@@ -124,6 +124,18 @@ export interface FakeApi {
   backups: FakeBackups;
   /** Who is signed in and what they may reach (GET /api/me); the owner by default. */
   access: FakeAccess;
+  /** Whether the instance has object storage, as GET /api/me says; true by default. */
+  avatarUploads: boolean;
+  /** The signed-in user's avatar, as GET /api/me says; none by default. */
+  userAvatarUrl: string | null;
+  /**
+   * Every avatar change the page sent, in order: the route, the method, and
+   * for an upload its Content-Type and size. An upload's address in the
+   * answers is the PNG itself as a data: URL, so the page can show it.
+   */
+  avatarRequests: { path: string; method: string; type: string | null; bytes: number }[];
+  /** An answer each avatar change gets instead of succeeding, such as a 503; null succeeds. */
+  avatarRefusal: Response | null;
   /** The Members page's users and pending invitations (GET /api/members). */
   members: { members: Member[]; invitations: Invitation[] };
   /** Which of the members is signed in, as GET /api/members answers `you`; the owner's row by default. */
@@ -389,14 +401,14 @@ export const fakeResolutions = (): FakeApi["resolutions"] => ({
 
 /** Assignments a test may start with: the TypeError on Ada Admin's plate. By default, none. */
 export const fakeAssignments = (): FakeApi["assignments"] => ({
-  [ERROR_FINGERPRINTS.typeError]: { id: "user-2", name: "Ada Admin" },
+  [ERROR_FINGERPRINTS.typeError]: { id: "user-2", name: "Ada Admin", avatarUrl: null },
 });
 
 /** Who can be assigned: the members page's users. */
 export const FAKE_ASSIGNEES: Assignee[] = [
-  { id: "user-2", name: "Ada Admin" },
-  { id: "user-3", name: "Mia Member" },
-  { id: "user-1", name: "Test Owner" },
+  { id: "user-2", name: "Ada Admin", avatarUrl: null },
+  { id: "user-3", name: "Mia Member", avatarUrl: null },
+  { id: "user-1", name: "Test Owner", avatarUrl: null },
 ];
 
 const ERROR_GROUPS: Omit<ErrorGroup, "status" | "resolvedAt" | "resolvedBy" | "assignee">[] = [
@@ -2223,6 +2235,7 @@ export const SETTINGS: Settings = {
   name: "Acme Inc",
   timeZone: "Asia/Singapore",
   updateLocationData: true,
+  avatarUrl: null,
 };
 
 /** Both files loaded, and both updated by the worker without a problem. */
@@ -2306,8 +2319,18 @@ function meOf(api: FakeApi) {
   const { role, projects, areas } = api.access;
   const admin = role !== "member";
   return {
-    user: { ...SESSION.user, name: api.account.name, email: api.account.email, role },
-    instance: { name: api.settings.name, timeZone: api.settings.timeZone },
+    user: {
+      ...SESSION.user,
+      name: api.account.name,
+      email: api.account.email,
+      role,
+      avatarUrl: api.userAvatarUrl,
+    },
+    instance: {
+      name: api.settings.name,
+      timeZone: api.settings.timeZone,
+      avatarUrl: api.settings.avatarUrl,
+    },
     access: { projects, areas },
     permissions: {
       settings: role === "owner",
@@ -2316,7 +2339,60 @@ function meOf(api: FakeApi) {
       channels: admin,
       projects: admin,
     },
+    avatarUploads: api.avatarUploads,
   };
+}
+
+/**
+ * PUT and DELETE /api/settings/avatar, /api/account/avatar, and
+ * /api/projects/:id/avatar, as the API answers them; null for other routes.
+ */
+async function answerAvatars(
+  api: FakeApi,
+  path: string,
+  init: RequestInit | undefined,
+): Promise<Response | null> {
+  const projectPath = /^\/api\/projects\/([^/]+)\/avatar$/.exec(path);
+  if (path !== "/api/settings/avatar" && path !== "/api/account/avatar" && projectPath === null) {
+    return null;
+  }
+  const method = init?.method ?? "GET";
+  const body = init?.body instanceof Blob ? init.body : null;
+  const type = new Headers(init?.headers).get("content-type");
+  api.avatarRequests = [...api.avatarRequests, { path, method, type, bytes: body?.size ?? 0 }];
+  if (!api.avatarUploads) {
+    return json(
+      {
+        error: "object_store_not_set_up",
+        message:
+          "Uploads need object storage. Set OBJECT_STORE_URL on the server, then restart it.",
+      },
+      409,
+    );
+  }
+  if (api.avatarRefusal !== null) return api.avatarRefusal.clone();
+  let url: string | null = null;
+  if (method === "PUT" && body !== null) {
+    const bytes = new Uint8Array(await body.arrayBuffer());
+    url = `data:image/png;base64,${btoa(String.fromCharCode(...bytes))}`;
+  }
+  if (path === "/api/settings/avatar") {
+    api.settings = { ...api.settings, avatarUrl: url };
+    return json({ avatarUrl: url });
+  }
+  if (path === "/api/account/avatar") {
+    api.userAvatarUrl = url;
+    return json({ avatarUrl: url });
+  }
+  const id = decodeURIComponent(projectPath?.[1] ?? "");
+  const project = api.projects.find((item) => item.id === id);
+  if (project === undefined)
+    return json({ error: "not_found", message: "No project has this ID." }, 404);
+  // Without an uploaded icon, what shows is the site's favicon (or nothing).
+  const favicon = project.iconUrl === null ? project.avatarUrl : null;
+  const changed = { ...project, iconUrl: url, avatarUrl: url ?? favicon };
+  api.projects = api.projects.map((item) => (item.id === id ? changed : item));
+  return json({ iconUrl: changed.iconUrl, avatarUrl: changed.avatarUrl });
 }
 
 /** The projects as GET /api/projects answers this user: theirs, in full only for admins. */
@@ -2331,6 +2407,7 @@ function projectsFor(api: FakeApi) {
             name: project.name,
             createdAt: project.createdAt,
             lastEventAt: project.lastEventAt,
+            avatarUrl: project.avatarUrl,
           }
         : project,
     );
@@ -2352,6 +2429,8 @@ export const PROJECT: Project = {
   mainGoalId: null,
   blockedAddresses: [],
   blockedReferrers: [],
+  avatarUrl: null,
+  iconUrl: null,
 };
 
 /** What the fake counts for "Delete spam" by default. */
@@ -3699,6 +3778,8 @@ async function answer(api: FakeApi, url: URL, init: RequestInit | undefined): Pr
   if (account !== null) return account;
   const backups = answerBackups(api.backups, url, init, api.access.role);
   if (backups !== null) return backups;
+  const avatars = await answerAvatars(api, path, init);
+  if (avatars !== null) return avatars;
   if (path === "/api/settings" && init?.method === "PATCH") {
     if (api.access.role !== "owner") {
       return json(
@@ -4177,6 +4258,10 @@ export function installFakeApi(overrides: Partial<FakeApi> = {}): FakeApi {
     holdStorage: null,
     backups: fakeBackups(),
     access: OWNER_ACCESS,
+    avatarUploads: true,
+    userAvatarUrl: null,
+    avatarRequests: [],
+    avatarRefusal: null,
     members: fakeMembers(),
     membersYou: "user-1",
     emailConfigured: false,

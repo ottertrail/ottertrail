@@ -3,21 +3,23 @@ import type { Kysely } from "kysely";
 
 import type { Auth } from "../auth/auth.ts";
 import { requireSession, signedInUser } from "../auth/routes.ts";
+import { avatarUrlOf } from "../avatars/avatars.ts";
 import type { Database } from "../db/schema.ts";
 import { readInstanceSettings } from "../settings/settings.ts";
 import { can, requirePermission, userAccessOf } from "./access.ts";
 import type { Permission } from "./areas.ts";
 
 /**
- * GET /api/me: who is signed in, the instance's name and timezone, and what they may
- * reach (docs/access.md), read afresh on each request. The dashboard hides
- * what the user cannot use; the routes refuse it regardless.
+ * GET /api/me: who is signed in, the instance's name, timezone, and icon,
+ * what they may reach (docs/access.md), read afresh on each request, and
+ * whether avatars can be uploaded (an object store is set up). The
+ * dashboard hides what the user cannot use; the routes refuse it regardless.
  */
-export const meRoutes: FastifyPluginCallback<{ db: Kysely<Database>; auth: Auth }> = (
-  app,
-  { db, auth },
-  done,
-) => {
+export const meRoutes: FastifyPluginCallback<{
+  db: Kysely<Database>;
+  auth: Auth;
+  avatarUploads?: boolean;
+}> = (app, { db, auth, avatarUploads = false }, done) => {
   const signedIn = requireSession(auth);
   const anyUser = requirePermission(db, "signed_in");
 
@@ -31,12 +33,20 @@ export const meRoutes: FastifyPluginCallback<{ db: Kysely<Database>; auth: Auth 
       channels: can(access, "channels"),
       projects: can(access, "projects"),
     };
-    const { name: instanceName, timeZone } = await readInstanceSettings(db);
+    const [settings, own] = await Promise.all([
+      readInstanceSettings(db),
+      db.selectFrom("dashboard_users").select("avatar_key").where("id", "=", id).executeTakeFirst(),
+    ]);
     return {
-      user: { id, name, email, role: access.role },
-      instance: { name: instanceName, timeZone },
+      user: { id, name, email, role: access.role, avatarUrl: avatarUrlOf(own?.avatar_key ?? null) },
+      instance: {
+        name: settings.name,
+        timeZone: settings.timeZone,
+        avatarUrl: avatarUrlOf(settings.avatarKey),
+      },
       access: { projects: access.projects, areas: access.areas },
       permissions,
+      avatarUploads,
     };
   });
 

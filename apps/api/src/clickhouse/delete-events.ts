@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import { type Kysely, sql } from "kysely";
 
+import { projectAvatarPrefix } from "../avatars/avatars.ts";
 import type { Database } from "../db/schema.ts";
 import { replayPrefix } from "../replays/replays.ts";
 import { projectPrefix } from "../source-maps/source-maps.ts";
@@ -270,8 +271,8 @@ async function removeDeletedRowsOf(
 
 /**
  * Deletes the events, traces, logs, metrics, check results, and heatmaps of every deleted project
- * (project_deletions) from ClickHouse, and its files from the object store (its source maps and
- * session replays), then
+ * (project_deletions) from ClickHouse, and its files from the object store (its source maps,
+ * session replays, icon, and favicon), then
  * forgets the deletions. A deletion stays until both have confirmed, so an
  * outage only delays it. The worker runs it every minute; running it
  * twice, or in two workers at once, is harmless. The rows leave reports at
@@ -298,7 +299,11 @@ export async function purgeDeletedProjects(
     }
     if (store !== null) {
       for (const projectId of chunk) {
-        for (const prefix of [projectPrefix(projectId), replayPrefix(projectId)]) {
+        for (const prefix of [
+          projectPrefix(projectId),
+          replayPrefix(projectId),
+          projectAvatarPrefix(projectId),
+        ]) {
           files += await store.deletePrefix(prefix);
         }
       }

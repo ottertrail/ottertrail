@@ -512,7 +512,7 @@ describe("assigning errors", () => {
     expect(names).toContain("Ada Owner");
     expect(names).not.toContain("otto");
     for (const user of list.json().users as Record<string, unknown>[]) {
-      expect(Object.keys(user).toSorted()).toEqual(["id", "name"]);
+      expect(Object.keys(user).toSorted()).toEqual(["avatarUrl", "id", "name"]);
     }
     expect(
       (await send(viewer.cookie, "GET", `/api/projects/${project}/error-assignees`)).statusCode,
@@ -559,7 +559,7 @@ describe("assigning errors", () => {
     expect(assigned.statusCode).toBe(200);
     expect(assigned.json()).toEqual({
       fingerprint: CART_GROUP,
-      assignee: { id: viewer.userId, name: "ada.viewer" },
+      assignee: { id: viewer.userId, name: "ada.viewer", avatarUrl: null },
     });
     const items = (await send(viewer.cookie, "GET", "/api/notifications")).json().notifications;
     expect(items).toMatchObject([
@@ -616,8 +616,8 @@ describe("assigning errors", () => {
       ]),
     );
     expect(byGroup).toEqual({
-      [CART_GROUP]: { id: viewer.userId, name: "ada.viewer" },
-      [PAYMENT_GROUP]: { id: manager.userId, name: "max" },
+      [CART_GROUP]: { id: viewer.userId, name: "ada.viewer", avatarUrl: null },
+      [PAYMENT_GROUP]: { id: manager.userId, name: "max", avatarUrl: null },
     });
     const fingerprints = async (query: string, cookie?: string) =>
       ((await list(query, cookie)).json().groups as { fingerprint: string }[]).map(
@@ -644,7 +644,7 @@ describe("assigning errors", () => {
     );
     expect(detail.json().group).toMatchObject({
       status: "resolved",
-      assignee: { id: viewer.userId, name: "ada.viewer" },
+      assignee: { id: viewer.userId, name: "ada.viewer", avatarUrl: null },
     });
 
     await send(manager.cookie, "PUT", assignee(PAYMENT_GROUP), { assignee: null });

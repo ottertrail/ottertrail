@@ -30,6 +30,7 @@ import {
 import { ApiStatus } from "@/components/api-status";
 import { InstanceName } from "@/components/app-shell/instance-name";
 import { UserMenu } from "@/components/app-shell/user-menu";
+import { AvatarSquare } from "@/components/avatar-square";
 import { BrandMark } from "@/components/brand-mark";
 import { OverflowTooltip, TruncatedText } from "@/components/truncated-text";
 import {
@@ -57,6 +58,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { canOpen, hasOverview, meQuery, useAccess } from "@/lib/access";
 import { DOCS_URL } from "@/lib/docs";
+import { initialOf } from "@/lib/initials";
 import { starredProjectsQuery, useProjectStar } from "@/lib/project-stars";
 import { projectsQuery } from "@/lib/projects-api";
 
@@ -149,9 +151,7 @@ function ProjectSwitcher({ projectId }: { projectId: string }) {
           />
         }
       >
-        <div className="flex size-8 shrink-0 items-center justify-center rounded-md bg-hairline-strong text-xs font-semibold text-ink">
-          {(current?.name ?? "?").slice(0, 1).toUpperCase()}
-        </div>
+        <AvatarSquare src={current?.avatarUrl} text={initialOf(current?.name ?? "?")} />
         <div className="grid min-w-0 flex-1 text-left leading-tight">
           <TruncatedText
             text={current?.name ?? "Unknown project"}
@@ -183,6 +183,12 @@ function ProjectSwitcher({ projectId }: { projectId: string }) {
                 })
               }
             >
+              <AvatarSquare
+                src={project.avatarUrl}
+                text={initialOf(project.name)}
+                className="size-5"
+                textClassName="text-[0.625rem]"
+              />
               {/* Wrapped, not cut off: the menu shows each name whole. */}
               <span className="min-w-0 flex-1 break-words">{project.name}</span>
               {isStarred(project.id) && (

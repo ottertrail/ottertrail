@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import * as React from "react";
 
+import { AvatarField } from "@/components/avatar-field";
 import { NoAccess } from "@/components/no-access";
 import { SettingsSection } from "@/components/settings-section";
 import { type SettingsTab, SettingsTabs } from "@/components/settings-tabs";
@@ -10,6 +11,8 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useDirtyForm } from "@/hooks/use-dirty-form";
 import { meQuery, type Permission } from "@/lib/access";
+import { saveAvatarFirst } from "@/lib/avatars";
+import { initialOf } from "@/lib/initials";
 import { type Settings, settingsQuery, updateSettings } from "@/lib/settings-api";
 
 import { BackupsTab } from "./backups-tab";
@@ -68,34 +71,55 @@ const INSTANCE_TABS: readonly InstanceTab[] = [
 interface GeneralValues {
   name: string;
   timeZone: string;
+  /** The icon's address, a chosen image's data: URL, or null. */
+  avatar: string | null;
 }
 
 /**
- * The instance's name and timezone: one form with its Save bar
- * (docs/design-system.md, "The save rule"). Saving a new timezone moves
- * where days start in every report, so every query but the settings'
- * own is read again.
+ * The instance's icon, name, and timezone: one form with its Save bar
+ * (docs/design-system.md, "The save rule"). Save sends a changed icon
+ * first, then the rest; if the rest fails, the icon stays saved and the
+ * other edits stay. Saving a new timezone moves where days start in every
+ * report, so every query but the settings' own is read again.
  */
 function GeneralForm({
   settings,
+  uploads,
   onDirty,
 }: {
   settings: Settings;
+  /** Whether the instance has object storage for the icon. */
+  uploads: boolean;
   onDirty: (dirty: boolean) => void;
 }) {
   const queryClient = useQueryClient();
   const form = useDirtyForm<GeneralValues>(
-    { name: settings.name, timeZone: settings.timeZone },
+    { name: settings.name, timeZone: settings.timeZone, avatar: settings.avatarUrl },
     { normalize: { name: (name) => name.trim(), timeZone: (zone) => zone.trim() } },
   );
   React.useEffect(() => onDirty(form.dirty), [onDirty, form.dirty]);
   const chosen = form.values.timeZone.trim();
   const movesDays = chosen !== "" && chosen !== form.initial.timeZone;
   const save = useMutation({
-    mutationFn: (values: GeneralValues) =>
-      updateSettings({ name: values.name, timeZone: values.timeZone.trim() }),
-    onSuccess: (updated, values) => {
-      form.saved(values);
+    mutationFn: async (values: GeneralValues) => {
+      const before = form.initial;
+      // Saved, whatever happens to the rest: the sidebar shows it at once.
+      const submitted = await saveAvatarFirst(form, values, "/api/settings/avatar");
+      if (submitted.avatar !== before.avatar) {
+        void queryClient.invalidateQueries({ queryKey: meQuery().queryKey });
+      }
+      const timeZone = values.timeZone.trim();
+      if (values.name.trim() === before.name.trim() && timeZone === before.timeZone) {
+        return { submitted, updated: null };
+      }
+      return { submitted, updated: await updateSettings({ name: values.name, timeZone }) };
+    },
+    onSuccess: ({ submitted, updated }) => {
+      form.saved(submitted);
+      if (updated === null) {
+        void queryClient.invalidateQueries({ queryKey: settingsQuery().queryKey });
+        return;
+      }
       queryClient.setQueryData(settingsQuery().queryKey, updated);
       // Every page counts days in the timezone: everything shown but the
       // settings themselves may change.
@@ -116,6 +140,13 @@ function GeneralForm({
       saveLabel="Save instance settings"
     >
       <FieldGroup>
+        <AvatarField
+          label="Icon"
+          value={form.values.avatar}
+          onChange={(avatar) => form.set("avatar", avatar)}
+          text={initialOf(form.values.name)}
+          uploads={uploads}
+        />
         <Field>
           <FieldLabel htmlFor="settings-name">Name</FieldLabel>
           <Input
@@ -153,6 +184,7 @@ function GeneralForm({
 /** The General tab, for the owner: the settings load here, as the location data's do. */
 function GeneralTab({ onDirty }: InstanceTabProps) {
   const settings = useQuery(settingsQuery());
+  const uploads = useQuery(meQuery()).data?.avatarUploads ?? false;
   if (settings.isPending) return <SectionSkeleton />;
   if (settings.isError) {
     return (
@@ -163,7 +195,7 @@ function GeneralTab({ onDirty }: InstanceTabProps) {
       />
     );
   }
-  return <GeneralForm settings={settings.data} onDirty={onDirty} />;
+  return <GeneralForm settings={settings.data} uploads={uploads} onDirty={onDirty} />;
 }
 
 /** The tab row and a section, while who the user is still loads. */

@@ -83,8 +83,8 @@ function shownTo(access: UserAccess, project: Project) {
   if (can(access, "projects")) {
     return project;
   }
-  const { id, name, createdAt, lastEventAt } = project;
-  return { id, name, createdAt, lastEventAt };
+  const { id, name, createdAt, lastEventAt, avatarUrl } = project;
+  return { id, name, createdAt, lastEventAt, avatarUrl };
 }
 
 /**

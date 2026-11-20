@@ -355,6 +355,7 @@ describe("the location data on the Settings page", () => {
       name: "Ada's company",
       timeZone: "UTC",
       updateLocationData: true,
+      avatarUrl: null,
     });
   });
 });

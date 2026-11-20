@@ -1,6 +1,7 @@
 import type { Kysely } from "kysely";
 
 import { checkProjectAccess } from "../access/access.ts";
+import { avatarUrlOf } from "../avatars/avatars.ts";
 import { fromClickHouseTime, QueryParams, queryRows, type Reader } from "../clickhouse/query.ts";
 import { MAX_EVENT_AGE_MS } from "../collection/normalize.ts";
 import { MAX_FUTURE_MS } from "../collection/server-events.ts";
@@ -26,6 +27,8 @@ import { ERROR } from "../visits/visits.ts";
 export interface Assignee {
   id: string;
   name: string;
+  /** Their avatar's address, or null (avatars/avatars.ts). */
+  avatarUrl: string | null;
 }
 
 /** The longest error message a title quotes. */
@@ -49,11 +52,17 @@ export async function assigneesOf(
     const rows = await db
       .selectFrom("error_assignments as a")
       .innerJoin("dashboard_users as u", "u.id", "a.assignee_id")
-      .select(["a.fingerprint", "u.id", "u.name"])
+      .select(["a.fingerprint", "u.id", "u.name", "u.avatar_key"])
       .where("a.project_id", "=", projectId)
       .where("a.fingerprint", "in", fingerprints.slice(start, start + CHUNK))
       .execute();
-    for (const row of rows) found.set(row.fingerprint, { id: row.id, name: row.name });
+    for (const row of rows) {
+      found.set(row.fingerprint, {
+        id: row.id,
+        name: row.name,
+        avatarUrl: avatarUrlOf(row.avatar_key),
+      });
+    }
   }
   return found;
 }
@@ -113,7 +122,7 @@ export async function assignError(
     projectId: string;
     fingerprint: string;
     assigneeId: string | null;
-    actor: Assignee;
+    actor: { id: string; name: string };
     /** The group must have happened since then: the longest range a page shows. */
     seenSince: Date;
     /** With SMTP: the queue's sealer and the instance's address, for the email's link. */
@@ -142,7 +151,7 @@ export async function assignError(
     // Locked, so a removal or a change of access at the same moment waits.
     const user = await trx
       .selectFrom("dashboard_users")
-      .select(["id", "name", "email"])
+      .select(["id", "name", "email", "avatar_key"])
       .where("id", "=", assigneeId)
       .forShare()
       .executeTakeFirst();
@@ -154,7 +163,7 @@ export async function assignError(
       level: "view",
     });
     if (!checked.ok) return { ok: false, reason: "not_assignable" };
-    const assignee = { id: user.id, name: user.name };
+    const assignee = { id: user.id, name: user.name, avatarUrl: avatarUrlOf(user.avatar_key) };
     // A row only when the assignee changed: the same person again, or a
     // second request racing the first, returns none and tells nobody.
     const changed = await trx

@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import * as React from "react";
 
+import { AvatarField } from "@/components/avatar-field";
 import { CopyableCode } from "@/components/copyable-code";
 import { NoAccess } from "@/components/no-access";
 import { SettingsSection } from "@/components/settings-section";
@@ -27,8 +28,11 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { ignoreOrder, useDirtyForm } from "@/hooks/use-dirty-form";
+import { meQuery } from "@/lib/access";
 import { ApiError } from "@/lib/api";
+import { saveAvatarFirst } from "@/lib/avatars";
 import { goalsQuery } from "@/lib/goals-api";
+import { initialOf } from "@/lib/initials";
 import { isFullProject, type Project, projectQuery, updateProject } from "@/lib/projects-api";
 
 import { DangerZone } from "./danger-zone";
@@ -190,9 +194,12 @@ interface GeneralValues {
   hostnames: string;
   retention: string;
   mainGoal: string;
+  /** The uploaded icon's address, a chosen image's data: URL, or null. */
+  avatar: string | null;
 }
 
 const generalValues = (project: Project): GeneralValues => ({
+  avatar: project.iconUrl,
   name: project.name,
   hostnames: project.allowedHostnames.join("\n"),
   retention: retentionValue(project.retentionDays),
@@ -200,9 +207,12 @@ const generalValues = (project: Project): GeneralValues => ({
 });
 
 /**
- * The project's name, allowed sites, how long it keeps events, and main
- * goal: one form, saved with its Save bar. Sites compare as a set,
- * so reordering them is no change.
+ * The project's icon, name, allowed sites, how long it keeps events, and
+ * main goal: one form, saved with its Save bar. Sites compare as a set,
+ * so reordering them is no change. Save sends a changed icon first, then
+ * the rest; if the rest fails, the icon stays saved and the other edits
+ * stay. Without an uploaded icon, the site's favicon shows, if the server
+ * fetched one.
  */
 function GeneralSettings({
   project,
@@ -233,9 +243,19 @@ function GeneralSettings({
   // A stricter limit than now deletes events: say so before saving.
   const deletes =
     chosenDays !== null && (project.retentionDays === null || chosenDays < project.retentionDays);
+  const uploads = useQuery(meQuery()).data?.avatarUploads ?? false;
   const save = useMutation({
-    mutationFn: (values: GeneralValues) =>
-      updateProject(project.id, {
+    mutationFn: async (values: GeneralValues) => {
+      const before = form.initial;
+      const submitted = await saveAvatarFirst(
+        form,
+        values,
+        `/api/projects/${encodeURIComponent(project.id)}/avatar`,
+      );
+      if (submitted.avatar !== before.avatar) {
+        void queryClient.invalidateQueries({ queryKey: ["projects"], exact: true });
+      }
+      const updated = await updateProject(project.id, {
         name: values.name,
         allowedHostnames: hostnamesFromText(values.hostnames),
         retentionDays: retentionDays(values.retention),
@@ -243,9 +263,15 @@ function GeneralSettings({
         ...(goals.isSuccess
           ? { mainGoalId: values.mainGoal === NO_GOAL ? null : values.mainGoal }
           : {}),
-      }),
-    onSuccess: (updated, values) => {
-      form.saved(values);
+      });
+      return { submitted, updated };
+    },
+    onError: () => {
+      // The icon may have been saved before the rest failed.
+      void queryClient.invalidateQueries({ queryKey: projectQuery(project.id).queryKey });
+    },
+    onSuccess: ({ submitted, updated }) => {
+      form.saved(submitted);
       queryClient.setQueryData(projectQuery(project.id).queryKey, updated);
       void queryClient.invalidateQueries({ queryKey: ["projects"], exact: true });
       // The overview's business figures start with the main goal.
@@ -262,6 +288,15 @@ function GeneralSettings({
       error={save.error?.message}
     >
       <FieldGroup>
+        <AvatarField
+          label="Icon"
+          value={form.values.avatar}
+          onChange={(icon) => form.set("avatar", icon)}
+          text={initialOf(form.values.name)}
+          // The site's favicon, when no icon was uploaded and none is chosen.
+          fallbackSrc={project.iconUrl === null ? project.avatarUrl : null}
+          uploads={uploads}
+        />
         <Field>
           <FieldLabel htmlFor="settings-name">Name</FieldLabel>
           <Input

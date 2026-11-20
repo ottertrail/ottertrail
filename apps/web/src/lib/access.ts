@@ -89,12 +89,18 @@ export function presetOf(areas: Areas): Preset {
 }
 
 export interface Me {
-  user: { id: string; name: string; email: string; role: Role };
-  /** The instance's name, and its timezone, which reports count days in. */
-  instance: { name: string; timeZone: string };
+  /** `avatarUrl`: the user's avatar, or null for their initials. */
+  user: { id: string; name: string; email: string; role: Role; avatarUrl: string | null };
+  /** The instance's name, its timezone, which reports count days in, and its icon (or null). */
+  instance: { name: string; timeZone: string; avatarUrl: string | null };
   access: { projects: "all" | string[]; areas: Record<Area, AreaLevel> };
   permissions: Record<Permission, boolean>;
+  /** Whether avatars can be uploaded: the instance has object storage. */
+  avatarUploads: boolean;
 }
+
+const isUrlOrNull = (value: unknown): value is string | null =>
+  value === null || typeof value === "string";
 
 const isLevel = (value: unknown): value is AreaLevel =>
   value === "none" || value === "view" || value === "manage";
@@ -117,9 +123,12 @@ const isMe = (value: unknown): value is Me =>
   isText(value.user.name) &&
   isText(value.user.email) &&
   isRole(value.user.role) &&
+  isUrlOrNull(value.user.avatarUrl) &&
   isRecord(value.instance) &&
   isText(value.instance.name) &&
   isText(value.instance.timeZone) &&
+  isUrlOrNull(value.instance.avatarUrl) &&
+  typeof value.avatarUploads === "boolean" &&
   isRecord(value.access) &&
   (value.access.projects === "all" ||
     (Array.isArray(value.access.projects) && value.access.projects.every(isText))) &&

@@ -210,12 +210,13 @@ export function destinationOf(
 
 /**
  * Where the object store keeps its objects (replays/replays.ts,
- * source-maps/source-maps.ts): object backups list only these, and a
- * backup folder in the store's own bucket may not overlap them.
+ * source-maps/source-maps.ts, avatars/avatars.ts): object backups list
+ * only these, and a backup folder in the store's own bucket may not
+ * overlap them.
  */
-export const OBJECT_PREFIXES = ["replays/", "source-maps/"] as const;
+export const OBJECT_PREFIXES = ["replays/", "source-maps/", "avatars/"] as const;
 
-/** Whether a backup folder overlaps the store's objects: "replays", "replays/x", or "source-maps". */
+/** Whether a backup folder overlaps the store's objects: "replays", "replays/x", "source-maps", or "avatars". */
 export function overlapsObjects(prefix: string): boolean {
   const folder = `${prefix}/`;
   return OBJECT_PREFIXES.some(
@@ -224,7 +225,7 @@ export function overlapsObjects(prefix: string): boolean {
 }
 
 export const OVERLAP_PROBLEM =
-  "This folder overlaps session replays or source maps. Choose a separate folder, such as ottertrail-backups.";
+  "This folder overlaps session replays, source maps, or avatars. Choose a separate folder, such as ottertrail-backups.";
 
 /**
  * An endpoint as the form sends it, as an origin; null when it is not an

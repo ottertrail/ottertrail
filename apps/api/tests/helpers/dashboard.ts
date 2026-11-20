@@ -47,6 +47,7 @@ export async function signedInDashboard({
   resetRequestLimits,
   invitationEmailLimit,
   backups,
+  avatars,
   logStream,
 }: {
   timeZone?: string;
@@ -79,6 +80,8 @@ export async function signedInDashboard({
   invitationEmailLimit?: RateLimit;
   /** Scheduled backups' routes: the object store, the outbound rules, the limits (tests/backups.test.ts). */
   backups?: AppOptions["backups"];
+  /** Avatar uploads per user (tests/avatars.test.ts). */
+  avatars?: AppOptions["avatars"];
   /** Where the API's log goes, at info and above; off when omitted. */
   logStream?: { write(line: string): void };
 } = {}) {
@@ -127,6 +130,7 @@ export async function signedInDashboard({
     ...(locationData === undefined ? {} : { locationData }),
     ...(storage === undefined ? {} : { storage }),
     ...(backups === undefined ? {} : { backups }),
+    ...(avatars === undefined ? {} : { avatars }),
     ...(logStream === undefined ? {} : { log: { level: "info", stream: logStream } }),
   });
   const link = await createSetupToken(testDb.db);

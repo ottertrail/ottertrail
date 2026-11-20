@@ -404,7 +404,9 @@ describe("blocked addresses", () => {
       headers: { cookie },
     });
     expect(one.statusCode).toBe(200);
+    // A member sees the project's icon, never its settings.
     expect(Object.keys(one.json().project).toSorted()).toEqual([
+      "avatarUrl",
       "createdAt",
       "id",
       "lastEventAt",

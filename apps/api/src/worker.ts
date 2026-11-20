@@ -38,6 +38,9 @@
  *   owner's "Back up now" or "Test restore", and the one retry of a failed
  *   backup (backups/job.ts): each backup encrypted and uploaded to S3, one
  *   at a time in any number of workers.
+ * - Every minute: fetching the favicon of projects whose first allowed
+ *   site changed, or was last fetched a week ago, as their default icon,
+ *   with the object store only (avatars/favicons.ts).
  * - At start and every few hours: finding projects ClickHouse still holds
  *   events of but PostgreSQL no longer knows, deleting events older than
  *   each project's retention (retention/retention.ts),
@@ -49,6 +52,7 @@
  */
 import { ALERT_TICK_MS, AlertEvaluator } from "./alerts/evaluator.ts";
 import { TELEMETRY_TICK_MS } from "./alerts/telemetry-rules.ts";
+import { FAVICON_TICK_MS, FaviconJob, faviconPolicy } from "./avatars/favicons.ts";
 import { BACKUP_TICK_MS, BackupJob } from "./backups/job.ts";
 import { BackupSecrets } from "./backups/secrets.ts";
 import { backupSourcesOf } from "./backups/sources.ts";
@@ -388,6 +392,30 @@ const backups = new BackupJob({
 });
 const stopBackups = every(BACKUP_TICK_MS, () => backups.tick());
 
+/** Projects' default icons: their site's favicon, through the outbound address rules. */
+// Never private addresses, whatever the uptime checks may reach.
+const favicons = new FaviconJob({
+  db,
+  store: objectStore,
+  policy: faviconPolicy(config),
+  lookup: systemLookup,
+  log,
+});
+
+/** Whether the last look for due favicons failed: an outage is logged once. */
+let faviconsFailing = false;
+
+const stopFavicons = every(FAVICON_TICK_MS, async () => {
+  try {
+    const fetched = await favicons.tick();
+    if (fetched.kept > 0) log("info", "project favicons fetched", fetched);
+    faviconsFailing = false;
+  } catch (error) {
+    if (!faviconsFailing) log("error", "fetching project favicons failed", { err: String(error) });
+    faviconsFailing = true;
+  }
+});
+
 // Without the token, Garage's admin API must refuse everyone (garage-admin.ts).
 if (config.garage !== null && config.garage.adminToken === null) {
   void probeOpenAdminApi(config.garage.adminUrl).then((result) => {
@@ -428,6 +456,7 @@ async function shutdown(signal: NodeJS.Signals) {
     stopLocationData(),
     stopStorage(),
     stopBackups(),
+    stopFavicons(),
   ]);
   // Requests under way finish and are recorded: each is at most 30 seconds.
   await Promise.all([checks.drain(), deliveries.drain(), accountEmails.drain()]);

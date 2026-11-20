@@ -105,9 +105,10 @@ describe("starring", () => {
     const menu = page.getByRole("menu");
     await expect.element(menu).toBeVisible();
     const items = menu.getByRole("menuitem").elements();
+    // Each project after its icon, here its initial.
     expect(items.map((item) => item.textContent)).toEqual([
-      "Docs",
-      "Main site",
+      "DDocs",
+      "MMain site",
       "Star this project",
       "All projects",
     ]);

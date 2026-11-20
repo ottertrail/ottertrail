@@ -72,7 +72,7 @@ export interface ObjectBackupOptions {
   /**
    * Only keys that start with this; tests use it to keep to their own
    * objects. By default, the store's own prefixes (OBJECT_PREFIXES):
-   * `replays/` and `source-maps/`, never other keys a shared bucket holds,
+   * `replays/`, `source-maps/`, and `avatars/`, never other keys a shared bucket holds,
    * such as scheduled backups.
    */
   prefix?: string;

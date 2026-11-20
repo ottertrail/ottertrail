@@ -26,15 +26,16 @@ import {
 interface Option {
   id: string | null;
   name: string;
+  avatarUrl: string | null;
 }
 
-const NOBODY: Option = { id: null, name: "Unassigned" };
+const NOBODY: Option = { id: null, name: "Unassigned", avatarUrl: null };
 
 /** A list row's assignee: the initials, then the name. */
 export function AssigneeMark({ assignee }: { assignee: Assignee }) {
   return (
     <span className="flex min-w-0 items-center gap-1.5">
-      <UserAvatar name={assignee.name} size="sm" className="size-5" />
+      <UserAvatar name={assignee.name} src={assignee.avatarUrl} size="sm" className="size-5" />
       <span className="sr-only">Assigned to </span>
       <span className="truncate">{assignee.name}</span>
     </span>
@@ -57,7 +58,7 @@ export function AssigneeControl({ projectId, group }: { projectId: string; group
           <span className="text-ink-muted">Unassigned</span>
         ) : (
           <span className="flex items-center gap-1.5 text-ink">
-            <UserAvatar name={group.assignee.name} size="sm" />
+            <UserAvatar name={group.assignee.name} src={group.assignee.avatarUrl} size="sm" />
             <span>{group.assignee.name}</span>
           </span>
         )}
@@ -132,7 +133,7 @@ function AssigneeField({
                     <span className="text-ink-muted">{option.name}</span>
                   ) : (
                     <span className="flex min-w-0 items-center gap-2">
-                      <UserAvatar name={option.name} size="sm" />
+                      <UserAvatar name={option.name} src={option.avatarUrl} size="sm" />
                       <span className="min-w-0 break-words">{option.name}</span>
                     </span>
                   )}

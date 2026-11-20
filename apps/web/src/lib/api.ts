@@ -44,7 +44,18 @@ export function expectShape<T>(value: unknown, isShape: (value: unknown) => valu
  */
 export async function apiRequest(
   path: string,
-  { method = "GET", body, signal }: { method?: string; body?: unknown; signal?: AbortSignal } = {},
+  {
+    method = "GET",
+    body,
+    raw,
+    signal,
+  }: {
+    method?: string;
+    body?: unknown;
+    /** Bytes sent as they are, with their type (an avatar's PNG), in place of `body`. */
+    raw?: { data: Blob; type: string };
+    signal?: AbortSignal;
+  } = {},
 ): Promise<unknown> {
   let response: Response;
   try {
@@ -53,9 +64,17 @@ export async function apiRequest(
       credentials: "same-origin",
       headers: {
         accept: "application/json",
-        ...(body === undefined ? {} : { "content-type": "application/json" }),
+        ...(raw !== undefined
+          ? { "content-type": raw.type }
+          : body === undefined
+            ? {}
+            : { "content-type": "application/json" }),
       },
-      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      ...(raw !== undefined
+        ? { body: raw.data }
+        : body === undefined
+          ? {}
+          : { body: JSON.stringify(body) }),
       ...(signal === undefined ? {} : { signal }),
     });
   } catch (error) {

@@ -10,6 +10,7 @@ import { alertRoutes } from "./alerts/routes.ts";
 import type { Auth } from "./auth/auth.ts";
 import { passwordTryLimiter } from "./auth/password-tries.ts";
 import { betterAuthRoutes, setupRoutes } from "./auth/routes.ts";
+import { avatarRoutes } from "./avatars/routes.ts";
 import { backupRoutes } from "./backups/routes.ts";
 import type { OutboundRules } from "./backups/s3.ts";
 import { BackupSecrets } from "./backups/secrets.ts";
@@ -192,6 +193,8 @@ export interface AppOptions extends Omit<FastifyServerOptions, "logger"> {
     backupNowLimit?: RateLimit;
     testRestoreLimit?: RateLimit;
   };
+  /** Avatar uploads per user (avatars/routes.ts), which tests lower. */
+  avatars?: { uploadLimit?: RateLimit };
   /** The built tracker, served at /t.js. Not served when omitted. */
   trackerScriptPath?: string;
   /** The built dashboard's directory, served at /. Not served when omitted. */
@@ -239,6 +242,7 @@ export function buildApp({
   notifications = {},
   storage = {},
   backups = {},
+  avatars = {},
   trackerScriptPath,
   dashboardPath,
   replayPlayerPath,
@@ -337,7 +341,12 @@ export function buildApp({
       emailConfigured: notifications.emailConfigured ?? false,
       ...(dashboard.setupLimit === undefined ? {} : { setupLimit: dashboard.setupLimit }),
     });
-    app.register(meRoutes, { prefix: "/api", db, auth: dashboard.auth });
+    app.register(meRoutes, {
+      prefix: "/api",
+      db,
+      auth: dashboard.auth,
+      avatarUploads: objectStore !== null,
+    });
     if (notifications.emailConfigured === true && notifications.linkSecret === undefined) {
       // Queued account email links are sealed with it (notifications/link-sealer.ts).
       throw new Error("notifications.linkSecret (AUTH_SECRET) is required with emailConfigured");
@@ -368,6 +377,7 @@ export function buildApp({
       emailConfigured: notifications.emailConfigured ?? false,
       sealer,
       passwordTries,
+      objectStore,
       ...(dashboard.now === undefined ? {} : { now: dashboard.now }),
     });
     app.register(accountRoutes, {
@@ -378,6 +388,14 @@ export function buildApp({
       passwordTries,
       emailConfigured: notifications.emailConfigured ?? false,
       sealer,
+    });
+    app.register(avatarRoutes, {
+      prefix: "/api",
+      db,
+      auth: dashboard.auth,
+      trustedOrigins: dashboard.trustedOrigins,
+      store: objectStore,
+      ...(avatars.uploadLimit === undefined ? {} : { uploadLimit: avatars.uploadLimit }),
     });
     app.register(settingsRoutes, {
       prefix: "/api",

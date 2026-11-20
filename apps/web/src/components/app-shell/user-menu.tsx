@@ -87,7 +87,7 @@ export function UserMenu() {
   if (me === undefined) {
     return <Skeleton className="h-12 w-full group-data-[collapsible=icon]:size-8" />;
   }
-  const { name, email } = me.user;
+  const { name, email, avatarUrl } = me.user;
   const collapsed = state === "collapsed" && !isMobile;
 
   async function signOut() {
@@ -123,7 +123,7 @@ export function UserMenu() {
               />
             }
           >
-            <UserAvatar name={name} email={email} />
+            <UserAvatar name={name} email={email} src={avatarUrl} />
             <span className="grid min-w-0 flex-1 text-left leading-tight">
               <TruncatedText text={name} className="text-sm font-medium text-ink" />
               <TruncatedText text={email} className="text-xs text-ink-subtle" />
@@ -138,7 +138,7 @@ export function UserMenu() {
           >
             <DropdownMenuGroup>
               <DropdownMenuLabel className="flex items-center gap-2 px-1 py-1.5 font-normal">
-                <UserAvatar name={name} email={email} />
+                <UserAvatar name={name} email={email} src={avatarUrl} />
                 {/* The menu wraps the name and email rather than cutting them off. */}
                 <span className="grid min-w-0 flex-1 text-left leading-tight [overflow-wrap:anywhere]">
                   <span className="text-sm font-medium text-ink">{name}</span>

@@ -5,6 +5,7 @@ import { requirePermission } from "../access/access.ts";
 import type { Auth } from "../auth/auth.ts";
 import { requireTrustedOrigin } from "../auth/origin.ts";
 import { requireSession } from "../auth/routes.ts";
+import { avatarUrlOf } from "../avatars/avatars.ts";
 import type { Database } from "../db/schema.ts";
 import type { LoadedLocationData } from "../enrichment/reload.ts";
 import { readUpdateStatus, type UpdateStatus } from "../enrichment/updates.ts";
@@ -18,9 +19,9 @@ import {
   updateInstanceSettings,
 } from "./settings.ts";
 
-/** The settings as the dashboard gets them. */
-function view(settings: InstanceSettings) {
-  return { settings };
+/** The settings as the dashboard gets them: the icon as its address. */
+function view({ avatarKey, ...settings }: InstanceSettings) {
+  return { settings: { ...settings, avatarUrl: avatarUrlOf(avatarKey) } };
 }
 
 /** A file's last recorded update, as the dashboard gets it. */

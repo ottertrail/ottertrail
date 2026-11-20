@@ -1,6 +1,7 @@
 import type { FastifyReply, FastifyRequest } from "fastify";
 import type { Kysely } from "kysely";
 
+import { avatarUrlOf } from "../avatars/avatars.ts";
 import type { Database } from "../db/schema.ts";
 import { readInstanceSettings } from "../settings/settings.ts";
 import {
@@ -180,12 +181,12 @@ export async function usersWithArea(
   projectId: string,
   area: Area,
   level: "view" | "manage",
-): Promise<{ id: string; name: string }[]> {
+): Promise<{ id: string; name: string; avatarUrl: string | null }[]> {
   const levels: ("view" | "manage")[] = level === "view" ? ["view", "manage"] : ["manage"];
   const rows = await db
     .selectFrom("dashboard_users as u")
     .leftJoin("dashboard_member_access as a", "a.user_id", "u.id")
-    .select(["u.id", "u.name"])
+    .select(["u.id", "u.name", "u.avatar_key"])
     .where((eb) =>
       eb.or([
         eb("u.role", "in", ["owner", "admin"]),
@@ -208,7 +209,11 @@ export async function usersWithArea(
     .orderBy("u.name")
     .orderBy("u.id")
     .execute();
-  return rows;
+  return rows.map((row) => ({
+    id: row.id,
+    name: row.name,
+    avatarUrl: avatarUrlOf(row.avatar_key),
+  }));
 }
 
 function meets(access: UserAccess, need: ProjectNeed): boolean {

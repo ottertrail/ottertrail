@@ -1,5 +1,6 @@
 import { type Kysely, sql } from "kysely";
 
+import { avatarUrlOf } from "../avatars/avatars.ts";
 import type { Database } from "../db/schema.ts";
 
 /** Matches the projects table's check (migration 0001_create_schema). */
@@ -45,6 +46,13 @@ export interface Project {
   blockedAddresses: string[];
   /** Domains whose referrals are ignored, with their subdomains (blocked-referrers.ts). Only those who manage projects see them. */
   blockedReferrers: string[];
+  /**
+   * What the dashboard shows for the project: its uploaded icon, else its
+   * site's favicon (avatars/favicons.ts), else null for its initial.
+   */
+  avatarUrl: string | null;
+  /** The uploaded icon alone, for the settings form; null without one. */
+  iconUrl: string | null;
 }
 
 /** The fewest and most days a project may keep its events; the database checks the same. */
@@ -115,6 +123,8 @@ function baseQuery(db: Kysely<Database>) {
       "projects.main_goal_id",
       "projects.blocked_addresses",
       "projects.blocked_referrers",
+      "projects.avatar_key",
+      "projects.favicon_key",
     ]);
 }
 
@@ -137,6 +147,8 @@ function toProject(row: ProjectRow): Project {
     mainGoalId: row.main_goal_id,
     blockedAddresses: row.blocked_addresses,
     blockedReferrers: row.blocked_referrers,
+    avatarUrl: avatarUrlOf(row.avatar_key ?? row.favicon_key),
+    iconUrl: avatarUrlOf(row.avatar_key),
   };
 }
 

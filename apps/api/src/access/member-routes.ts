@@ -12,6 +12,7 @@ import {
   requireSession,
   signedInUser,
 } from "../auth/routes.ts";
+import { deleteUserAvatars } from "../avatars/avatars.ts";
 import { clientKey, type RateLimit, TokenBucketLimiter } from "../collection/rate-limiter.ts";
 import type { Database } from "../db/schema.ts";
 import {
@@ -21,6 +22,7 @@ import {
   resetLink,
 } from "../notifications/account-emails.ts";
 import type { LinkSealer } from "../notifications/link-sealer.ts";
+import type { ObjectStore } from "../storage/object-store.ts";
 import { FORBIDDEN, requirePermission, userAccessOf } from "./access.ts";
 import { AREA_LEVELS, AREAS } from "./areas.ts";
 import type { AccessChange } from "./grants.ts";
@@ -235,6 +237,8 @@ export const memberRoutes: FastifyPluginCallback<{
    * the app's one limiter for current-password checks (auth/password-tries.ts).
    */
   passwordTries?: TokenBucketLimiter;
+  /** Where a removed user's avatar is deleted from; none without a store. */
+  objectStore?: ObjectStore | null;
   now?: () => Date;
 }> = (
   app,
@@ -251,6 +255,7 @@ export const memberRoutes: FastifyPluginCallback<{
     invitationEmailLimit = DEFAULT_INVITATION_EMAIL_LIMIT,
     sealer = null,
     passwordTries = passwordTryLimiter(),
+    objectStore = null,
     now = () => new Date(),
   },
   done,
@@ -366,8 +371,14 @@ export const memberRoutes: FastifyPluginCallback<{
   app.delete<{ Params: { userId: string } }>(
     "/members/:userId",
     { preHandler: [fromDashboard, signedIn, manageMembers], schema: { params: userParams } },
-    async (request, reply) =>
-      answerOf(await removeMember(db, actorOf(request), request.params.userId), reply, NO_MEMBER),
+    async (request, reply) => {
+      const result = await removeMember(db, actorOf(request), request.params.userId);
+      // Their avatar goes with them, once the row that pointed to it is gone.
+      if (result === "done") {
+        await deleteUserAvatars(objectStore, request.params.userId.toLowerCase(), request.log);
+      }
+      return answerOf(result, reply, NO_MEMBER);
+    },
   );
 
   app.post<{ Params: { userId: string }; Body: { email?: boolean } | null | undefined }>(

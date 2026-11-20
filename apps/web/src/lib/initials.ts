@@ -14,3 +14,8 @@ export function initialsOf(name: string, email = ""): string {
   const last = words.length > 1 ? words.at(-1) : undefined;
   return `${firstCharacter(first)}${last === undefined ? "" : firstCharacter(last)}`.toLocaleUpperCase();
 }
+
+/** A name's first character, as an instance's or project's square shows it ("?" for a name without one). */
+export function initialOf(name: string): string {
+  return firstCharacter(name.trim()).toLocaleUpperCase() || "?";
+}

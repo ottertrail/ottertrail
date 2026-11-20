@@ -42,6 +42,8 @@ export const isAssigneeFilter = (value: unknown): value is AssigneeFilter =>
 export interface Assignee {
   id: string;
   name: string;
+  /** Their avatar, or null for their initials. */
+  avatarUrl: string | null;
 }
 
 /** Occurrences of one error, grouped by its fingerprint. */
@@ -227,7 +229,10 @@ const isListOf = <T>(value: unknown, isItem: (item: unknown) => item is T): valu
   Array.isArray(value) && value.every(isItem);
 
 const isAssignee = (value: unknown): value is Assignee =>
-  isRecord(value) && isText(value.id) && isText(value.name);
+  isRecord(value) &&
+  isText(value.id) &&
+  isText(value.name) &&
+  (value.avatarUrl === null || typeof value.avatarUrl === "string");
 
 const isErrorStatus = (value: unknown): value is ErrorStatus =>
   value === "unresolved" || value === "resolved" || value === "regressed";

@@ -152,7 +152,13 @@ describe("members, admins, and the one access check", () => {
     );
     expect((await send(cookie, "GET", "/api/projects")).json()).toEqual({
       projects: [
-        { id: site.id, name: "Some site", createdAt: expect.any(String), lastEventAt: null },
+        {
+          id: site.id,
+          name: "Some site",
+          createdAt: expect.any(String),
+          lastEventAt: null,
+          avatarUrl: null,
+        },
       ],
     });
   });
@@ -164,21 +170,29 @@ describe("members, admins, and the one access check", () => {
       "Some site",
       "Other site",
     ]);
-    expect(Object.keys(projects[0]).toSorted()).toEqual(["createdAt", "id", "lastEventAt", "name"]);
+    expect(Object.keys(projects[0]).toSorted()).toEqual([
+      "avatarUrl",
+      "createdAt",
+      "id",
+      "lastEventAt",
+      "name",
+    ]);
     expect(
       Object.keys((await send(cookie, "GET", `/api/projects/${site.id}`)).json().project),
-    ).toHaveLength(4);
+    ).toHaveLength(5);
     const settings = requests.filter(
       ({ declaration }) => typeof declaration.need === "object" && "permission" in declaration.need,
     );
     expect(settings.map(({ method, route }) => routeKey(method, route)).toSorted()).toEqual([
       "DELETE /api/projects/:id",
+      "DELETE /api/projects/:id/avatar",
       "DELETE /api/projects/:id/replays",
       "PATCH /api/projects/:id",
       "POST /api/projects/:id/public-key",
       "POST /api/projects/:id/secret-key",
       "POST /api/projects/:id/spam-visits/delete",
       "POST /api/projects/:id/spam-visits/preview",
+      "PUT /api/projects/:id/avatar",
     ]);
     expect(await answers(cookie, site.id, settings)).toEqual(
       settings.map(({ method, route }) => ({
@@ -241,8 +255,14 @@ describe("members, admins, and the one access check", () => {
       errors: "view",
     });
     expect((await send(cookie, "GET", "/api/me")).json()).toEqual({
-      user: { id: userId, name: "me@example.com", email: "me@example.com", role: "member" },
-      instance: { name: "Ada's company", timeZone: "UTC" },
+      user: {
+        id: userId,
+        name: "me@example.com",
+        email: "me@example.com",
+        role: "member",
+        avatarUrl: null,
+      },
+      instance: { name: "Ada's company", timeZone: "UTC", avatarUrl: null },
       access: {
         projects: [site.id],
         areas: { ...ALL_AREAS, replays: "none", users: "none", errors: "view" },
@@ -254,6 +274,7 @@ describe("members, admins, and the one access check", () => {
         channels: false,
         projects: false,
       },
+      avatarUploads: false,
     });
     expect((await send(dashboard.cookie, "GET", "/api/me")).json()).toMatchObject({
       user: { role: "owner" },

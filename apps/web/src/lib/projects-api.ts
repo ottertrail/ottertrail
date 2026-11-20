@@ -13,6 +13,8 @@ export interface ProjectSummary {
   createdAt: string;
   /** When the most recent event happened, or null before the first one. */
   lastEventAt: string | null;
+  /** Its uploaded icon, else its site's favicon; null for its initial. */
+  avatarUrl: string | null;
 }
 
 /** A project with its keys and settings, as the owner and admins get it. */
@@ -37,6 +39,8 @@ export interface Project extends ProjectSummary {
   blockedAddresses: string[];
   /** Referrer domains whose visits are ignored, with their subdomains. */
   blockedReferrers: string[];
+  /** The uploaded icon alone; null without one. */
+  iconUrl: string | null;
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -51,7 +55,8 @@ function isProjectSummary(value: unknown): value is ProjectSummary {
     typeof value.id === "string" &&
     typeof value.name === "string" &&
     typeof value.createdAt === "string" &&
-    (value.lastEventAt === null || typeof value.lastEventAt === "string")
+    (value.lastEventAt === null || typeof value.lastEventAt === "string") &&
+    (value.avatarUrl === null || typeof value.avatarUrl === "string")
   );
 }
 
@@ -81,13 +86,15 @@ export function isFullProject(value: unknown): value is Project {
     "blockedAddresses" in value &&
     isStringList(value.blockedAddresses) &&
     "blockedReferrers" in value &&
-    isStringList(value.blockedReferrers)
+    isStringList(value.blockedReferrers) &&
+    "iconUrl" in value &&
+    (value.iconUrl === null || typeof value.iconUrl === "string")
   );
 }
 
 /** A project in full, or without its keys and settings; never a mix. */
 const isProject = (value: unknown): value is ProjectSummary | Project =>
-  isFullProject(value) || (isProjectSummary(value) && Object.keys(value).length === 4);
+  isFullProject(value) || (isProjectSummary(value) && Object.keys(value).length === 5);
 
 const isProjectList = (value: unknown): value is { projects: (ProjectSummary | Project)[] } =>
   isRecord(value) && Array.isArray(value.projects) && value.projects.every(isProject);

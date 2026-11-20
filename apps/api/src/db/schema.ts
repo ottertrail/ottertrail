@@ -32,6 +32,8 @@ export interface InstanceSettingsTable {
   /** Whether the worker downloads new location data (migration 0009). */
   update_location_data: ColumnType<boolean, never, boolean>;
   updated_at: ColumnType<Date, never, Date>;
+  /** The instance's icon in the object store (avatars/avatars.ts), or null (migration 0017). */
+  avatar_key: ColumnType<string | null, never, string | null>;
 }
 
 export interface ProjectsTable {
@@ -71,6 +73,14 @@ export interface ProjectsTable {
   blocked_addresses: ColumnType<string[], string[] | undefined, string[]>;
   /** Domains whose referrals are ignored, with their subdomains, normalised (projects/blocked-referrers.ts), at most 100. */
   blocked_referrers: ColumnType<string[], string[] | undefined, string[]>;
+  /** The uploaded icon in the object store (avatars/avatars.ts), or null (migration 0017). */
+  avatar_key: ColumnType<string | null, null | undefined, string | null>;
+  /** The site's favicon the worker fetched (avatars/favicons.ts), or null. */
+  favicon_key: ColumnType<string | null, null | undefined, string | null>;
+  /** The allowed site the favicon was last fetched for; another first site fetches again. */
+  favicon_hostname: ColumnType<string | null, null | undefined, string | null>;
+  /** When the worker last tried to fetch the favicon: it tries again weekly. */
+  favicon_checked_at: ColumnType<Date | null, null | undefined, Date | null>;
 }
 
 /**
@@ -392,6 +402,8 @@ export interface DashboardUsersTable {
   role: ColumnType<Role, Role | undefined, Role>;
   /** When the user last signed in; null before the first time. */
   last_sign_in_at: Nullable<Date>;
+  /** The user's avatar in the object store (avatars/avatars.ts), or null (migration 0017). */
+  avatar_key: ColumnType<string | null, null | undefined, string | null>;
   created_at: DatabaseDefault<Date>;
   updated_at: ColumnType<Date, Date | undefined, Date>;
 }

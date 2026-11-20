@@ -40,7 +40,7 @@ describe("the errors list", () => {
 
   test("filters by assignee, kept in the address with the other filters", async () => {
     const api = installFakeApi();
-    api.assignments = { [referenceError]: { id: "user-1", name: "Test Owner" } };
+    api.assignments = { [referenceError]: { id: "user-1", name: "Test Owner", avatarUrl: null } };
     const router = renderApp(`${ERRORS}?period=30d`);
     await expect.element(page.getByRole("group", { name: "Assignee" })).toBeVisible();
     await page.getByRole("button", { name: "Assigned to me" }).click();

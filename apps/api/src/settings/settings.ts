@@ -21,6 +21,8 @@ export interface InstanceSettings {
    * ranges current on its own (enrichment/updates.ts). On by default.
    */
   updateLocationData: boolean;
+  /** The instance's icon in the object store, or null (avatars/avatars.ts). */
+  avatarKey: string | null;
 }
 
 interface CacheEntry {
@@ -45,12 +47,13 @@ export function readInstanceSettings(
   if (cached !== undefined && cached.expiresAt > now) return cached.settings;
   const settings = db
     .selectFrom("instance_settings")
-    .select(["name", "time_zone", "update_location_data"])
+    .select(["name", "time_zone", "update_location_data", "avatar_key"])
     .executeTakeFirstOrThrow()
     .then((row) => ({
       name: row.name,
       timeZone: row.time_zone,
       updateLocationData: row.update_location_data,
+      avatarKey: row.avatar_key,
     }));
   caches.set(db, { settings, expiresAt: now + SETTINGS_CACHE_MS });
   // A failed read is not kept: the next caller tries again.

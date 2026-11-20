@@ -110,7 +110,12 @@ describe("the access check and the instance's settings", () => {
 
   test("only the owner reads and changes the settings", async () => {
     expect((await request(dashboard.cookie, "GET", "/api/settings")).json()).toEqual({
-      settings: { name: "Ada's company", timeZone: "Asia/Singapore", updateLocationData: true },
+      settings: {
+        name: "Ada's company",
+        timeZone: "Asia/Singapore",
+        updateLocationData: true,
+        avatarUrl: null,
+      },
     });
     for (const [method, payload] of [["GET"], ["PATCH", { name: "Carol's now" }]] as const) {
       const byMember = await request(carol.cookie, method, "/api/settings", payload);
@@ -123,7 +128,12 @@ describe("the access check and the instance's settings", () => {
       name: "  Ada & Co  ",
     });
     expect(byOwner.json()).toEqual({
-      settings: { name: "Ada & Co", timeZone: "Asia/Singapore", updateLocationData: true },
+      settings: {
+        name: "Ada & Co",
+        timeZone: "Asia/Singapore",
+        updateLocationData: true,
+        avatarUrl: null,
+      },
     });
     const rows = await dashboard.db.selectFrom("instance_settings").select("name").execute();
     expect(rows).toEqual([{ name: "Ada & Co" }]);
@@ -213,6 +223,7 @@ describe("the settings module", () => {
           name: "Ottertrail",
           timeZone: "UTC",
           updateLocationData: true,
+          avatarKey: null,
         });
         expect(await migrateTestDatabase(testDb, "latest")).toEqual([]);
         // A second row is refused: the instance has one set of settings.

@@ -196,6 +196,7 @@ describe("owner setup", () => {
       name: "Ada's company",
       timeZone: "Asia/Singapore",
       updateLocationData: true,
+      avatarKey: null,
     });
   });
 
