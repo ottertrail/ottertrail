@@ -2,21 +2,22 @@
 
 How to run Ottertrail on one server, and the decisions behind it. Each customer runs an instance of their own, hosted or self-hosted, on this same stack. Events, traces, logs, and metrics are stored in ClickHouse, where reports read them ([clickhouse.md](clickhouse.md)); PostgreSQL holds accounts, projects, and settings.
 
-Status: tested on one machine with Podman (see [What has been tested](#what-has-been-tested)). Nothing runs in production yet, and backups are manual.
+Status: tested on one machine with Podman (see [What has been tested](#what-has-been-tested)). Nothing runs in production yet. Backups run on a schedule, encrypted to S3-compatible storage, once the owner turns them on ([Backups](#backups)).
 
 ## What runs
 
-[deploy/compose.yaml](../deploy/compose.yaml) starts six services, and a seventh, Garage, with the `object-store` profile, which `example.env` turns on ([session replays and source maps](#session-replays-and-source-maps)). The API, the worker, and the migrations run one image, built from the [Dockerfile](../Dockerfile) for each release and published as `ghcr.io/ottertrail/ottertrail` ([Images and releases](#images-and-releases)). The settings of Caddy, ClickHouse, and Garage are inside the Compose file (`configs:`), so the file works on its own, next to its `.env`.
+[deploy/compose.yaml](../deploy/compose.yaml) starts seven services, and an eighth, Garage, with the `object-store` profile, which `example.env` turns on ([session replays and source maps](#session-replays-and-source-maps)). The API, the worker, and the migrations run one image, built from the [Dockerfile](../Dockerfile) for each release and published as `ghcr.io/ottertrail/ottertrail` ([Images and releases](#images-and-releases)). The settings of Caddy, ClickHouse, and Garage are inside the Compose file (`configs:`), so the file works on its own, next to its `.env`.
 
-| Service      | What it does                                                                                                                                                                                                                                   | Reachable from outside |
-| ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------- |
-| `postgres`   | PostgreSQL 18, data in the `postgres-data` volume                                                                                                                                                                                              | No                     |
-| `clickhouse` | ClickHouse 26.8, for analytics events and later logs and traces, data in `clickhouse-data`. Capped at 40% of the server's memory (see below)                                                                                                   | No                     |
-| `migrate`    | Brings both databases' schemas up to date, then exits. The API and the worker start only after it succeeds                                                                                                                                     | No                     |
-| `api`        | The API, the dashboard's files, and the tracker (`/t.js`), on port 3000 inside the stack. Reads the location data in `geo-data`                                                                                                                | No, only through Caddy |
-| `worker`     | Background work: runs uptime checks, evaluates alert rules and sends their notifications, deletes events past each project's retention and those of deleted projects, joins session replays, and keeps the location data in `geo-data` current | No                     |
-| `caddy`      | HTTPS: gets and renews the certificate, redirects HTTP to HTTPS, compresses responses, passes every request to the API                                                                                                                         | Ports 80 and 443       |
-| `garage`     | With the `object-store` profile, which `example.env` turns on: [Garage](https://garagehq.deuxfleurs.fr/) (AGPL-3.0), an S3-compatible store for session replays and source maps, in `garage-data`. About 10 MB of memory idle                  | No                     |
+| Service         | What it does                                                                                                                                                                                                                                                                                                                        | Reachable from outside |
+| --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------- |
+| `postgres`      | PostgreSQL 18, data in the `postgres-data` volume                                                                                                                                                                                                                                                                                   | No                     |
+| `clickhouse`    | ClickHouse 26.8, for analytics events and later logs and traces, data in `clickhouse-data`. Capped at 40% of the server's memory (see below)                                                                                                                                                                                        | No                     |
+| `backup-folder` | Makes the `clickhouse-backups` volume ClickHouse's and its group's, which the worker joins, then exits. ClickHouse starts after it ([Scheduled backups](#scheduled-backups))                                                                                                                                                        | No                     |
+| `migrate`       | Brings both databases' schemas up to date, then exits. The API and the worker start only after it succeeds                                                                                                                                                                                                                          | No                     |
+| `api`           | The API, the dashboard's files, and the tracker (`/t.js`), on port 3000 inside the stack. Reads the location data in `geo-data`                                                                                                                                                                                                     | No, only through Caddy |
+| `worker`        | Background work: runs uptime checks, evaluates alert rules and sends their notifications, deletes events past each project's retention and those of deleted projects, joins session replays, keeps the location data in `geo-data` current, and runs scheduled backups, reading ClickHouse's backup files from `clickhouse-backups` | No                     |
+| `caddy`         | HTTPS: gets and renews the certificate, redirects HTTP to HTTPS, compresses responses, passes every request to the API                                                                                                                                                                                                              | Ports 80 and 443       |
+| `garage`        | With the `object-store` profile, which `example.env` turns on: [Garage](https://garagehq.deuxfleurs.fr/) (AGPL-3.0), an S3-compatible store for session replays and source maps, in `garage-data`. About 10 MB of memory idle                                                                                                       | No                     |
 
 Idle, the whole stack with Garage used about 425 MB of memory on 18 November 2026 (ClickHouse 158 MB, API 146 MB, worker 54 MB, PostgreSQL 39 MB, Caddy 23 MB, Garage 6 MB), measured with the test data below. The image is about 300 MB, almost all of it Node.js's own image. No sizing under real traffic has been measured.
 
@@ -93,7 +94,55 @@ To go back to an earlier release, use its `compose.yaml` (or its version in `OTT
 
 ## Backups
 
-Not automated yet. Before each update, and regularly, in the install's folder:
+## Scheduled backups
+
+The worker backs the instance up every day, encrypts each backup, and uploads it to S3-compatible storage off the server. The owner sets it up on the **Backups** tab of the instance's Settings ([dashboard](dashboard.md#backups)); `backup.sh` below stays the manual option, and works with or without it. Code: `apps/api/src/backups/`.
+
+**When.** Daily, at a time the owner picks (03:00 by default) in the instance's timezone, so it follows daylight saving time: a time a spring change skips (02:30 when clocks jump from 02:00 to 03:00) runs the gap's length later, at 03:30; a time an autumn change repeats runs once, at the first. Turning backups on, or changing the time, makes only later times due. A worker that was down at the time runs the backup when it starts again. "Back up now" and "Test restore" on the tab are taken within 30 seconds. One run at a time, in any number of workers: a unique index allows one running row in `backup_runs`, and a run touches its heartbeat every minute, so a run whose worker died is marked failed after 10 minutes. A failed backup is tried once more an hour later, and not again before the next daily time.
+
+**Where.** It depends on the object store (`OBJECT_STORE_*`, which holds replays and source maps):
+
+- An off-site store (Amazon S3, Cloudflare R2, Backblaze B2, any `OBJECT_STORE_URL` whose host is not `garage`): backups reuse its connection and keys, in a bucket and folder the owner picks (the store's bucket by default, folder `ottertrail-backups`). The worker never backs up its own folder as one of the store's objects.
+- The stack's own Garage (`COMPOSE_PROFILES=object-store`, `OBJECT_STORE_URL=http://garage:3900`), or no store: Garage keeps its data on the server's own disk, so a backup there would be lost with the server. The tab asks for a separate destination: endpoint, region, bucket, folder, access key ID, and secret. "The stack's Garage" is the same test the Storage section uses (`parseGarage` in `config.ts`: the URL's host is the Compose service `garage`, or in development the local Garage).
+
+The separate destination's secret is stored in PostgreSQL sealed with AES-256-GCM under a key derived from `AUTH_SECRET` by HKDF (`auth/sealer.ts`, as queued account email links are), and is never returned: the tab only says one is saved. Its endpoint follows the uptime checks' address rules, as webhooks do: an IP address that `UPTIME_ALLOW_PRIVATE_ADDRESSES` and `UPTIME_DENY_ADDRESSES` refuse is refused when saved, and a host name is checked on every connection, so a destination on a private network needs `UPTIME_ALLOW_PRIVATE_ADDRESSES=true`. Cloud metadata addresses are always refused. The folder is never empty: the worker lists and deletes only keys under `<folder>/<UTC time>/`, never the bucket's other keys.
+
+**What.** In `backup.sh`'s order, each part streamed through encryption into a multipart upload, never held whole in memory or written to disk unencrypted, under `<folder>/<UTC time>/` (such as `ottertrail-backups/2026-11-20T190000Z/`):
+
+1. `postgres.dump.age`: `pg_dump -Fc` of `DATABASE_URL`, first. The password goes in `PGPASSWORD`, not on the command line. The image has PostgreSQL 18's client from the PostgreSQL project's Debian repository, as Debian trixie ships 17 (the [Dockerfile](../Dockerfile)).
+2. `clickhouse.zip.age`: ClickHouse's own `BACKUP DATABASE … TO File(…) ASYNC`, into its backups folder, which `deploy/compose.yaml` makes a volume of its own (`clickhouse-backups`, mounted at `/var/lib/clickhouse/backups` in ClickHouse and `/app/data/backups` in the worker, `CLICKHOUSE_BACKUP_PATH`). A one-off `backup-folder` service, ClickHouse's own image as root, makes that volume ClickHouse's user's and group's (101) with mode 2770 at each start, and the worker joins the group (`group_add`), so it can read the file and delete it once uploaded. The local file is deleted whether the run works or not.
+3. `objects.tar.age`: the object store's objects with their manifest, the same tar `backup.sh` makes, streamed object by object.
+4. `manifest.json`, last and not encrypted: the format and version, the backup's start and end, the instance's version, the key's public half, and each part's size and SHA-256 before and after encryption. A folder without it is not a whole backup: a run that fails deletes what it uploaded.
+
+Parts are uploaded in 16 MiB parts, each with its MD5, so one part may be up to 156 GiB (S3's 10,000 parts). After each backup that worked, retention deletes the folder's backups older than the days to keep (14 by default), but never the newest whole one, so a run of failures never leaves none; a folder without a manifest goes after a day.
+
+**Free space.** ClickHouse's backup file sits next to its data while it is uploaded, about as large as its active parts. Before it starts, the worker reads the disk from `system.disks` and refuses to back up unless 7% of the disk would still be free with the file on it, past the 5% under which ClickHouse refuses events ([ClickHouse keeps 5% of the disk free](#clickhouse-keeps-5-of-the-disk-free)). The refusal says how much it needs and has, and is a failed backup like any other. The rest is streamed, so it needs no disk.
+
+**Encryption.** Each part is an [age](https://age-encryption.org/v1) file, encrypted to the backup key's public half (an X25519 recipient, `age1…`) with [typage](https://github.com/FiloSottile/typage) (`age-encryption` 0.3.1, by age's author, BSD-3-Clause, maintained: 0.3.1 is of August 2026), streaming. age was chosen because it is a standard, small, audited format with a maintained library: a backup decrypts with the `age` command, without Ottertrail. The key (an `AGE-SECRET-KEY-1…` identity) is made when backups are first turned on, stored sealed with the `AUTH_SECRET`-derived key, and shown to the owner on request, to copy or download as an age identity file; both are recorded in the API's log as an action, without the key. The tab reminds the owner to save it until they confirm they have. **A lost key and a lost server mean the backups cannot be read**, by anyone: keep the key file off the server. If `AUTH_SECRET` changes, the stored key and secret can no longer be read: the tab says so, asks for the secret again, and offers a new key (backups made with the old one need the old key file).
+
+**Checking.** "Test connection" writes, lists, reads, and deletes a small file in the folder with the form's values, saved or not, and says which step failed, with the store's refusal in plain words. "Test restore" has the worker download the newest whole backup, decrypt every part as it streams in, and check every size and SHA-256, before and after decryption, and each object in the tar against its own manifest, without restoring anything.
+
+**Failures.** A failed or overdue backup (none worked since a daily time three hours past) shows on the tab, and as two storage warnings, "The last backup failed" and "A backup is overdue" ([Storage warnings](#storage-warnings)), which send `storage.low` and `storage.recovered` to the channels chosen for storage warnings, linking to `?tab=backups`.
+
+The schedule and the key are in PostgreSQL (`backup_settings`, one row; `backup_runs`, migration 0014): a restored instance keeps them, and backs up again to the same destination with the same key, as long as `AUTH_SECRET` is the same.
+
+### Restoring from S3
+
+`restore.sh --from-s3` restores a scheduled backup. It needs the release's `compose.yaml` and `restore.sh`, the `.env` with the old server's `AUTH_SECRET` (and the same passwords as you like), the key file, and the bucket's access key. On a fresh server:
+
+```sh
+# compose.yaml, example.env, restore.sh as at First start; .env with the old AUTH_SECRET
+./restore.sh --from-s3 --key ottertrail-backup-key.txt              # the newest
+./restore.sh --from-s3 --key ottertrail-backup-key.txt 2026-11-20T190000Z
+```
+
+It asks for `BACKUP_S3_ENDPOINT`, `BACKUP_S3_REGION`, `BACKUP_S3_BUCKET`, `BACKUP_S3_PREFIX` (the tab's Folder), `BACKUP_S3_ACCESS_KEY_ID`, and `BACKUP_S3_SECRET_ACCESS_KEY` unless the environment has them (the secret without echo), and passes them by name to a one-off container, never on a command line. It lists the folder's backups, newest first, then `dist/restore-backup.mjs download` fetches the chosen one, decrypts each part with the key file, checks every size and SHA-256 against the manifest, and writes `backups/ottertrail-<time>.dump`, `.zip`, and `-objects.tar`, each under a `.partial` name until it checks out. From there it restores as below, and deletes the decrypted files once it is done; after a failure it leaves them, and says so. Without `AUTH_SECRET`, the restore still works, but everyone signs in again, queued account emails are given up, and the backup key and secret saved on the tab can no longer be read.
+
+Without Ottertrail at all, a part decrypts with age: `age -d -i ottertrail-backup-key.txt -o postgres.dump postgres.dump.age`. Compare `sha256sum` with the manifest's `plain.sha256`.
+
+## Manual backups
+
+Before each update, and whenever you like, in the install's folder:
 
 ```sh
 ./backup.sh
@@ -114,7 +163,7 @@ The files are readable only by the user who ran the script. A run that fails say
 
 Disk space for a backup: ClickHouse writes its backup into its own volume, and the script then moves it out, so the disk needs free space of about twice ClickHouse's data. The objects need about twice their size too: once as files, once in the tar. Before it starts, the script prints the free space on ClickHouse's disk and in `backups/`, and what the backup needs: twice ClickHouse's data (its active parts) and twice the objects (what Ottertrail recorded in PostgreSQL), the same estimate as the Settings page's "The next backup would fail" warning. Below it, the script warns and goes on: a run that fails keeps no file. When it cannot measure, it says so and goes on. Copy all three files off the server: a backup on the same disk is lost with it. Delete old ones yourself; they hold your customers' data, and events deleted since stay in them.
 
-Both scripts run Compose in their own folder, next to `compose.yaml` and `.env`, wherever they are called from. To restore into empty databases (a new server, or after `docker compose down -v`), with the three files in `backups/`:
+Both scripts run Compose in their own folder, next to `compose.yaml` and `.env`, wherever they are called from. To restore into empty databases from files (a scheduled backup: [Restoring from S3](#restoring-from-s3)) (a new server, or after `docker compose down -v`), with the three files in `backups/`:
 
 ```sh
 ./restore.sh backups/ottertrail-2026-11-17T062707Z
@@ -212,6 +261,8 @@ The server works the warnings out, and the page shows them above the stores. Eac
 | The disk is N% full                       | 80% used (a warning) or 90% (critical); read-only or broken is critical                 | A full disk stops collection and can stop PostgreSQL                                                                     |
 | Session replays or source maps use N%     | 90% of a budget                                                                         | At the budget, new replays and uploads are refused; nothing breaks                                                       |
 | The budgets are larger than the free disk | The budgets' room left is more than the disk's free space, with the stack's Garage only | Garage keeps the objects on the same disk, so the budgets cannot keep it from filling                                    |
+| The last backup failed                    | The latest scheduled or manual backup failed                                            | The newest backup in the bucket is older than it should be ([Scheduled backups](#scheduled-backups))                     |
+| A backup is overdue                       | No backup worked since a daily time three hours past                                    | The worker may be stopped, or its backups keep failing                                                                   |
 
 A warning that is on ends only past a margin: 10% more free space than its threshold needs, or 2 points under a percentage (78% for the disk's warning, 88% for critical and for the budgets). A figure that hovers at a threshold therefore does not start and end a warning on each check. Merge headroom, once critical, stays critical until the free space is 10% past the partition's size. A warning whose figures could not be measured stays as it was: the page shows it as still on, saying it could not be measured now, and says "No warnings" only when every figure was measured. Failed figures carry a short fixed reason ("ClickHouse did not answer."); the driver's own message goes only to the API's or the worker's log.
 
@@ -380,7 +431,7 @@ Releases as an install gets them (18 and 19 November 2026), on macOS with Podman
 
 ## Known limitations
 
-- No automated or off-site backups.
+- Scheduled backups were tested against the development Garage standing in for an off-site store (apps/api/tests/backup-run.test.ts), and `restore.sh --from-s3` with a stand-in for Docker Compose; not yet against Amazon S3, R2, or B2, nor in a deployed stack, whose `backup-folder` service and shared volume are untested on Docker. A scheduled backup copies the object store's objects one at a time, which is slow with many small replays.
 - The Storage section has no history yet: no growth per day, no estimate of when the disk is full, and no size per project.
 - The disk is read only by ClickHouse. A volume moved to another disk (PostgreSQL's, or Garage's) is not measured on its own, except Garage's data partition with its token.
 - Garage runs as one node, without copies of its data on other servers: only `backup.sh` keeps another copy.

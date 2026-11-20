@@ -18,6 +18,8 @@ export const WARNING_IDS = [
   "replay_budget",
   "source_map_budget",
   "budgets_exceed_disk",
+  "backup_failed",
+  "backup_overdue",
 ] as const;
 
 export type WarningId = (typeof WARNING_IDS)[number];
@@ -45,6 +47,8 @@ export const WARNING_TITLES: Record<WarningId, string> = {
   replay_budget: "Session replays are near their budget",
   source_map_budget: "Source maps are near their budget",
   budgets_exceed_disk: "The budgets are larger than the free disk",
+  backup_failed: "The last backup failed",
+  backup_overdue: "A backup is overdue",
 };
 
 /** The thresholds: docs/deployment.md, "Storage warnings", explains each. */
@@ -272,8 +276,56 @@ export function evaluateWarnings(
     }
   }
 
+  // 6. Scheduled backups (backups/state.ts): the last one failed, or none worked since one was due.
+  const backups = reading.backups;
+  if (backups === undefined || backups === null) {
+    // Not measured with the stores (a reading made without them).
+  } else if (!backups.ok) {
+    undetermined.push("backup_failed", "backup_overdue");
+  } else {
+    if (backups.failed !== null) {
+      warnings.push({
+        id: "backup_failed",
+        level: "warning",
+        title: "The last backup failed",
+        text:
+          `The backup that ended ${utcText(backups.failed.at)} failed: ${sentence(backups.failed.error)} ` +
+          "The worker tries a failed backup once more an hour later; until one works, the newest backup in the bucket is the last good one. " +
+          "The owner sees every run, and can back up now, on the Backups tab of Settings.",
+        figures: { failedAt: backups.failed.at.toISOString() },
+      });
+    }
+    if (backups.overdue !== null) {
+      warnings.push({
+        id: "backup_overdue",
+        level: "warning",
+        title: "A backup is overdue",
+        text:
+          `No backup has worked since the daily backup due ${utcText(backups.overdue.since)}. ` +
+          "The worker may be stopped, or its backups keep failing. Check that the worker runs (`docker compose ps`), and the Backups tab of Settings for the last run and its error.",
+        figures: { dueAt: backups.overdue.since.toISOString() },
+      });
+    }
+  }
+
   return { warnings, undetermined };
 }
+
+/** "20 Nov 2026, 03:00 UTC": a moment in a message, which goes to every channel alike. */
+function utcText(moment: Date): string {
+  const text = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "UTC",
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).format(moment);
+  return `${text} UTC`;
+}
+
+const sentence = (text: string) => (/[.!?]$/.test(text.trim()) ? text.trim() : `${text.trim()}.`);
 
 /**
  * What a `storage.recovered` notification says about a warning that ended,
@@ -324,6 +376,10 @@ export function recovery(
         figures: { usedBytes: of.usedBytes, limitBytes: of.limitBytes, usedPercent: percent },
       };
     }
+    case "backup_failed":
+      return { message: "Backups work again: the latest backup finished.", figures: {} };
+    case "backup_overdue":
+      return { message: "Backups are on time again: a backup finished.", figures: {} };
     case "budgets_exceed_disk":
       break;
   }

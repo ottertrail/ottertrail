@@ -167,7 +167,9 @@ export class StorageWarningJob {
   async #record(
     reading: StorageReading,
   ): Promise<{ started: WarningId[]; raised: WarningId[]; ended: WarningId[] }> {
-    const url = `${this.#publicUrl}/settings?tab=storage`;
+    // Backup warnings link to the Backups tab, the others to Storage.
+    const urlOf = (id: WarningId) =>
+      `${this.#publicUrl}/settings?tab=${id.startsWith("backup_") && id !== "backup_space" ? "backups" : "storage"}`;
     const now = reading.measuredAt;
     return this.#db.transaction().execute(async (trx) => {
       await sql`select pg_advisory_xact_lock(${LOCK_KEY})`.execute(trx);
@@ -210,7 +212,7 @@ export class StorageWarningJob {
             ...warning.figures,
           },
           message: cut(`${warning.title}. ${warning.text}`),
-          url,
+          url: urlOf(warning.id),
           time: now,
         });
       }
@@ -226,7 +228,7 @@ export class StorageWarningJob {
           project: null,
           subject: { type: "storage", warning: id, ...figures },
           message: cut(message),
-          url,
+          url: urlOf(id),
           time: now,
         });
       }

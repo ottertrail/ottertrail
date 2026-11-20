@@ -14,7 +14,7 @@ It is built in two parts:
 
 Each dashboard user has one role (`dashboard_users.role`):
 
-- **Owner.** Exactly one per instance; a partial unique index allows no second. The owner can do everything: the instance's settings (name, timezone, and automatic location data updates, with the location data's status), handing ownership to another user, and everything an admin can do, including to admins.
+- **Owner.** Exactly one per instance; a partial unique index allows no second. The owner can do everything: the instance's settings (name, timezone, and automatic location data updates, with the location data's status), scheduled backups and the backup key, handing ownership to another user, and everything an admin can do, including to admins.
 - **Admin.** Everything except the instance's settings and anything that touches the owner:
   - every project and area;
   - creating, changing, and deleting projects;
@@ -87,6 +87,7 @@ Fastify checks a route's parameters and body before the access check runs, so a 
 | `POST /api/projects`, `GET /api/client-address` (the requester's own address, for blocked addresses)                                                         | `projects`                 |
 | `GET /api/settings/storage` (what fills the disk, and the storage warnings)                                                                                  | `projects`                 |
 | `PATCH /api/settings/storage` (the channels that get storage warnings)                                                                                       | `channels`                 |
+| `/api/settings/backups…` (ten routes: settings, Test connection, Back up now, Test restore, the list, the key, its file, saved, replace)                     | `settings` (the owner)     |
 | `/api/channels…` (all eight), `POST /api/channels/email-test` (a test email to the user's own address)                                                       | `channels`                 |
 | `GET /api/projects/:id`                                                                                                                                      | The project                |
 | `PATCH`, `DELETE /api/projects/:id`, `POST …/public-key`, `POST …/secret-key`, `DELETE …/replays`, `POST …/spam-visits/preview`, `POST …/spam-visits/delete` | `projects`                 |
@@ -299,6 +300,10 @@ The setup command stays. The setup page has:
 - a confirm-password field, checked in the browser and by the API;
 - the timezone, chosen on the page, with the browser's preselected and checked as the settings page checks it. The `TIMEZONE` setting is gone; the instance is in UTC until setup;
 - a line saying whether email (`SMTP_URL` and `EMAIL_FROM`) is set up, which covers alerts and account email (invitations, reset links, Forgot password, notices; [Account email](#account-email)), with a hint on how to set it when not (`GET /api/setup` answers `emailConfigured`, which the sign-in page also reads). Nothing is sent.
+
+### Scheduled backups
+
+The Backups tab's routes (`apps/api/src/backups/routes.ts`) need `settings`: admins and members get 403. Changes check Origin, and bodies are checked before any database work. The destination's secret is sealed with a key from `AUTH_SECRET` and never returned. The backup key is returned only by `GET /api/settings/backups/key` and `…/key/file`, with `Cache-Control: no-store`, and each logs that the key was shown or downloaded, with the user's ID, never the key. Test connection (10 in 10 minutes), Back up now, and Test restore (3 an hour each) are limited per user ([deployment](deployment.md#scheduled-backups)).
 
 ## Known limits
 

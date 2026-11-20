@@ -1,5 +1,6 @@
 import { type Kysely, sql } from "kysely";
 
+import { type BackupHealth, readBackupHealth } from "../backups/state.ts";
 import type { ClickHouseClient } from "../clickhouse/clickhouse.ts";
 import { HEATMAP_RETENTION_DAYS } from "../clickhouse/migrations.ts";
 import { QueryParams, queryRows } from "../clickhouse/query.ts";
@@ -109,6 +110,11 @@ export interface StorageReading {
   disk: Measured<Disk>;
   /** Null unless the object store is the stack's Garage. */
   garage: GarageReading | null;
+  /**
+   * Scheduled backups' health (backups/state.ts), for their two warnings;
+   * left out of readings made without it (tests of the other warnings).
+   */
+  backups?: Measured<BackupHealth> | null;
 }
 
 export interface StorageSources {
@@ -324,21 +330,27 @@ export async function measureStorage(
     });
     return { ok: false, error: reason };
   };
-  const [budgets, clickhouse, postgres, disk, garage] = await Promise.all([
+  const measuredAt = now();
+  const [budgets, clickhouse, postgres, disk, garage, backups] = await Promise.all([
     measureBudgets(sources, fail),
     measureClickHouse(sources, fail),
     measurePostgres(sources.db, fail),
     measureDisk(sources, fail),
     measureGarage(sources, fail),
+    readBackupHealth(sources.db, measuredAt).then(
+      (health): Measured<BackupHealth> => ({ ok: true, ...health }),
+      (error: unknown) => fail("PostgreSQL did not answer.", error),
+    ),
   ]);
   return {
-    measuredAt: now(),
+    measuredAt,
     objectStore: sources.objectStore?.kind ?? "none",
     budgets,
     clickhouse,
     postgres,
     disk,
     garage,
+    backups,
   };
 }
 

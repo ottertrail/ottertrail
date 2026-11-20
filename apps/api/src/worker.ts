@@ -34,6 +34,10 @@
  *   the stack's Garage bucket quota to the budgets plus 10% when it
  *   differs, and notifying the channels the "Storage warnings" setting
  *   names when a storage warning starts or ends (storage/warning-job.ts).
+ * - Every 30 seconds: the scheduled backup when its daily time is due, an
+ *   owner's "Back up now" or "Test restore", and the one retry of a failed
+ *   backup (backups/job.ts): each backup encrypted and uploaded to S3, one
+ *   at a time in any number of workers.
  * - At start and every few hours: finding projects ClickHouse still holds
  *   events of but PostgreSQL no longer knows, deleting events older than
  *   each project's retention (retention/retention.ts),
@@ -45,6 +49,9 @@
  */
 import { ALERT_TICK_MS, AlertEvaluator } from "./alerts/evaluator.ts";
 import { TELEMETRY_TICK_MS } from "./alerts/telemetry-rules.ts";
+import { BACKUP_TICK_MS, BackupJob } from "./backups/job.ts";
+import { BackupSecrets } from "./backups/secrets.ts";
+import { backupSourcesOf } from "./backups/sources.ts";
 import { createClickHouse } from "./clickhouse/clickhouse.ts";
 import {
   purgeDeletedProjects,
@@ -63,7 +70,7 @@ import { pruneDeliveries } from "./notifications/deliveries.ts";
 import { smtpMailer } from "./notifications/email.ts";
 import { LinkSealer } from "./notifications/link-sealer.ts";
 import { DELIVERY_TICK_MS, DeliverySender, PRUNE_INTERVAL_MS } from "./notifications/sender.ts";
-import { addressPolicy } from "./outbound/addresses.ts";
+import { addressPolicy, systemLookup } from "./outbound/addresses.ts";
 import { linkReplays } from "./replays/link.ts";
 import { deleteExpiredReplays, deleteJoinedChunks, joinReplays } from "./replays/replays.ts";
 import { deleteExpiredEvents } from "./retention/retention.ts";
@@ -72,6 +79,7 @@ import { s3ObjectStore } from "./storage/object-store.ts";
 import { storageSourcesOf } from "./storage/usage.ts";
 import { STORAGE_CHECK_INTERVAL_MS, StorageWarningJob } from "./storage/warning-job.ts";
 import { CHECK_TICK_MS, CheckScheduler } from "./uptime/scheduler.ts";
+import { OTTERTRAIL_VERSION } from "./version.ts";
 
 /**
  * How often retention runs, with the search for forgotten projects and the
@@ -363,6 +371,23 @@ const storage = new StorageWarningJob({
 });
 const stopStorage = every(STORAGE_CHECK_INTERVAL_MS, () => storage.tick());
 
+/**
+ * Scheduled backups: the destination's secret and the backup key are
+ * sealed with a key from AUTH_SECRET, as the API seals them; a separate
+ * destination follows the uptime checks' address rules.
+ */
+const backups = new BackupJob({
+  db,
+  objectStore: config.objectStore,
+  stackGarage: config.garage !== null,
+  secrets: new BackupSecrets(config.authSecret),
+  rules: { policy, lookup: systemLookup },
+  sources: backupSourcesOf(config, clickhouse),
+  version: OTTERTRAIL_VERSION,
+  log,
+});
+const stopBackups = every(BACKUP_TICK_MS, () => backups.tick());
+
 // Without the token, Garage's admin API must refuse everyone (garage-admin.ts).
 if (config.garage !== null && config.garage.adminToken === null) {
   void probeOpenAdminApi(config.garage.adminUrl).then((result) => {
@@ -383,6 +408,8 @@ async function shutdown(signal: NodeJS.Signals) {
   stopping = true;
   // Telemetry rules not started yet are left to another worker, or the next start.
   alerts.stop();
+  // A backup under way is cut off: it fails, saying so, and deletes what it uploaded.
+  backups.stop();
   // A download under way is cut off: the old files stay, its lease is given
   // back, and the next start tries again.
   await locationData.stop();
@@ -400,6 +427,7 @@ async function shutdown(signal: NodeJS.Signals) {
     stopRetention(),
     stopLocationData(),
     stopStorage(),
+    stopBackups(),
   ]);
   // Requests under way finish and are recorded: each is at most 30 seconds.
   await Promise.all([checks.drain(), deliveries.drain(), accountEmails.drain()]);
@@ -421,6 +449,7 @@ log("info", "worker started", {
   emailConfigured: config.email !== null,
   locationDataCheckIntervalMs: UPDATE_CHECK_INTERVAL_MS,
   storageCheckIntervalMs: STORAGE_CHECK_INTERVAL_MS,
+  clickhouseBackupPath: config.clickhouseBackupPath,
   garageAdmin:
     config.garage === null ? "not the stack's Garage" : config.garage.adminToken !== null,
 });

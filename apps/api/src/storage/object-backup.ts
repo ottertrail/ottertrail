@@ -36,7 +36,7 @@ import { s3Client } from "./object-store.ts";
 
 export const MANIFEST_FILE = "manifest.json";
 const OBJECTS_FOLDER = "objects";
-const FORMAT = "ottertrail-objects";
+export const OBJECTS_FORMAT = "ottertrail-objects";
 /** Objects copied at the same time: enough to hide a store's latency. */
 const CONCURRENCY = 8;
 /** Tries of each upload: the SDK never retries a request whose body is a stream. */
@@ -44,8 +44,8 @@ const UPLOAD_ATTEMPTS = 4;
 /** How long a restore waits for the bucket to answer: a store just started creates it. */
 const BUCKET_WAIT_MS = 60_000;
 
-const manifestSchema = z.object({
-  format: z.literal(FORMAT),
+export const objectManifestSchema = z.object({
+  format: z.literal(OBJECTS_FORMAT),
   version: z.literal(1),
   /** Null when the instance had no object store. */
   bucket: z.string().nullable(),
@@ -62,7 +62,7 @@ const manifestSchema = z.object({
   ),
 });
 
-export type ObjectManifest = z.infer<typeof manifestSchema>;
+export type ObjectManifest = z.infer<typeof objectManifestSchema>;
 type ManifestEntry = ObjectManifest["objects"][number];
 /** A manifest entry whose file was checked, with its MD5 for the upload (base64). */
 export type CheckedEntry = ManifestEntry & { md5: string };
@@ -156,7 +156,7 @@ export async function backupObjects(
   }
 
   const manifest: ObjectManifest = {
-    format: FORMAT,
+    format: OBJECTS_FORMAT,
     version: 1,
     bucket: config?.bucket ?? null,
     createdAt: new Date().toISOString(),
@@ -231,7 +231,7 @@ export async function readObjectManifest(dir: string): Promise<ObjectManifest> {
   }
   let parsed;
   try {
-    parsed = manifestSchema.safeParse(JSON.parse(text));
+    parsed = objectManifestSchema.safeParse(JSON.parse(text));
   } catch (error) {
     throw new Error(`${dir}/${MANIFEST_FILE} is not JSON`, { cause: error });
   }

@@ -81,6 +81,7 @@ import type {
 import type { Check, CheckResults, IncidentList } from "../../src/lib/uptime-api.ts";
 import type { Activity, User, UserActivity, UserList } from "../../src/lib/users-api.ts";
 import { answerAccount, type FakeAccount, fakeAccount, sessionBody } from "./fake-account.ts";
+import { answerBackups, type FakeBackups, fakeBackups } from "./fake-backups.ts";
 import { STORAGE } from "./storage-fixtures.ts";
 
 /**
@@ -112,6 +113,8 @@ export interface FakeApi {
    */
   storage: StorageReport | Response;
   holdStorage: Promise<void> | null;
+  /** The Backups tab's routes (the owner's only): fake-backups.ts. */
+  backups: FakeBackups;
   /** Who is signed in and what they may reach (GET /api/me); the owner by default. */
   access: FakeAccess;
   /** The Members page's users and pending invitations (GET /api/members). */
@@ -3654,6 +3657,8 @@ async function answer(api: FakeApi, url: URL, init: RequestInit | undefined): Pr
   }
   const account = answerAccount(api.account, url, init);
   if (account !== null) return account;
+  const backups = answerBackups(api.backups, url, init, api.access.role);
+  if (backups !== null) return backups;
   if (path === "/api/settings" && init?.method === "PATCH") {
     if (api.access.role !== "owner") {
       return json(
@@ -4090,6 +4095,7 @@ export function installFakeApi(overrides: Partial<FakeApi> = {}): FakeApi {
     locationData: LOCATION_DATA,
     storage: STORAGE,
     holdStorage: null,
+    backups: fakeBackups(),
     access: OWNER_ACCESS,
     members: fakeMembers(),
     membersYou: "user-1",

@@ -69,6 +69,12 @@ const app = buildApp({
   notifications: { emailConfigured: config.email !== null, mailer, linkSecret: config.authSecret },
   // Garage's admin token goes only to its client: never logged or returned.
   storage: storageSourcesOf(config, db, clickhouse),
+  // Backups reuse the object store's connection unless it is the stack's Garage.
+  backups: {
+    objectStore: config.objectStore,
+    stackGarage: config.garage !== null,
+    authSecret: config.authSecret,
+  },
   trackerScriptPath: config.trackerScriptPath,
   dashboardPath: resolve(config.dashboardPath),
   replayPlayerPath: resolve(config.replayPlayerPath),

@@ -73,6 +73,10 @@ x-app: &app
     # is set, with EMAIL_FROM. Webhooks need neither.
     SMTP_URL: ${SMTP_URL:-}
     EMAIL_FROM: ${EMAIL_FROM:-}
+    # Where the worker reads ClickHouse's backup files for scheduled backups:
+    # the clickhouse-backups volume, which ClickHouse writes them into
+    # (docs/deployment.md, "Backups"). Only the worker mounts it.
+    CLICKHOUSE_BACKUP_PATH: /app/data/backups
 
 services:
   postgres:
@@ -110,8 +114,14 @@ services:
         hard: 262144
     volumes:
       - clickhouse-data:/var/lib/clickhouse
+      # BACKUP … TO File(…) writes here (the backups setting below), and the
+      # worker reads each file from the same volume for scheduled backups.
+      - clickhouse-backups:/var/lib/clickhouse/backups
+    depends_on:
+      backup-folder:
+        condition: service_completed_successfully
     labels:
-      ottertrail.config.clickhouse-config: "b210455d7e4a"
+      ottertrail.config.clickhouse-config: "d119912724a3"
       ottertrail.config.clickhouse-users: "59ff9fd82108"
     configs:
       - source: clickhouse-config
@@ -125,6 +135,20 @@ services:
       interval: 5s
       timeout: 5s
       retries: 30
+
+  # Prepares the clickhouse-backups volume, then exits: owned by ClickHouse's
+  # user and group (101 in its image), writable by the group, which the worker
+  # joins (group_add below), so the worker can read ClickHouse's backup files
+  # and delete each once uploaded. The setgid bit keeps new files in the group.
+  # ClickHouse starts after it. ClickHouse's own image, as root, once per start.
+  backup-folder:
+    image: docker.io/clickhouse/clickhouse-server:26.8.38.9
+    restart: "no"
+    logging: *logging
+    user: "0:0"
+    entrypoint: ["sh", "-c", "chown 101:101 /backups && chmod 2770 /backups"]
+    volumes:
+      - clickhouse-backups:/backups
 
   # An S3-compatible object store for session replays and source maps, on
   # this server: only with the object-store profile (COMPOSE_PROFILES in
@@ -198,9 +222,13 @@ services:
   worker:
     <<: *app
     command: ["node", "--enable-source-maps", "dist/worker.mjs"]
-    # Downloads the location data into the volume the API reads.
+    # Downloads the location data into the volume the API reads. Reads
+    # ClickHouse's backup files from theirs for scheduled backups, as a member
+    # of ClickHouse's group (101), which owns that folder.
     volumes:
       - geo-data:/app/data/geo
+      - clickhouse-backups:/app/data/backups
+    group_add: ["101"]
     # On shutdown the worker lets running uptime checks finish and records
     # them: up to 30 seconds each, past Compose's default 10.
     stop_grace_period: 45s
@@ -233,6 +261,7 @@ services:
 volumes:
   postgres-data:
   clickhouse-data:
+  clickhouse-backups:
   geo-data:
   caddy-data:
   caddy-config:
@@ -297,8 +326,8 @@ configs:
           </logger>
 
           <!-- Where BACKUP ... TO File('name.zip') writes, and RESTORE reads
-               (docs/deployment.md, "Backups"). Inside ClickHouse's data volume,
-               which its user owns; copy each backup off the server. -->
+               (docs/deployment.md, "Backups"). deploy/compose.yaml mounts a volume
+               of its own here, which the worker reads for scheduled backups. -->
           <backups>
               <allowed_path>/var/lib/clickhouse/backups/</allowed_path>
           </backups>

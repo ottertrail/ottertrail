@@ -270,8 +270,8 @@ const KIND_TEXT: Record<AddressKind, string> = {
   denied: "an address this instance refuses",
 };
 
-/** What makes the request, as refusals name it: "checks" or "webhooks". */
-export type Requester = "checks" | "webhooks";
+/** What makes the request, as refusals name it: "checks", "webhooks", or "backups". */
+export type Requester = "checks" | "webhooks" | "backups";
 
 /**
  * A host that resolves to an address checks (or webhooks) may not reach.

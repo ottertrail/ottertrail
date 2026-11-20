@@ -210,6 +210,8 @@ const UNDETERMINED_TEXT: Record<string, string> = {
   replay_budget: "the replay budget",
   source_map_budget: "the source map budget",
   budgets_exceed_disk: "whether the budgets fit the disk",
+  backup_failed: "whether the last backup worked",
+  backup_overdue: "whether a backup is overdue",
 };
 
 /**

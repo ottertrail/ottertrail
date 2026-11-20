@@ -27,6 +27,7 @@
     "@clickhouse/client": "catalog:",
     "@fastify/static": "catalog:",
     "@jridgewell/trace-mapping": "catalog:",
+    "age-encryption": "catalog:",
     "better-auth": "catalog:",
     "bowser": "catalog:",
     "fastify": "^5.12.8",

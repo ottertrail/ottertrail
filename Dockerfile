@@ -30,6 +30,20 @@ ENV NODE_ENV=production \
     REPLAY_PLAYER_PATH=/app/replay-player/player.js \
     GEO_DATABASE_PATH=/app/data/geo/dbip-city-lite.mmdb
 WORKDIR /app
+# pg_dump for the worker's scheduled backups (docs/deployment.md, "Backups"):
+# PostgreSQL 18's client, to match the stack's PostgreSQL 18. Debian trixie
+# ships 17, which refuses to dump a newer server, so it comes from the
+# PostgreSQL project's own Debian repository, which postgresql-common's script
+# adds with its signing key. The package is pinned to major 18: that
+# repository keeps only the latest minor, and any 18.x pg_dump dumps any 18.x
+# server. About 70 MB.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates postgresql-common \
+ && /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y \
+ && apt-get install -y --no-install-recommends postgresql-client-18 \
+ && apt-get purge -y --auto-remove postgresql-common \
+ && rm -rf /var/lib/apt/lists/* \
+ && pg_dump --version
 # The API bundles its dependencies, so dist/ needs only Node.js. Each build
 # output carries THIRD_PARTY_LICENSES.txt for the code it bundles.
 COPY --from=build /src/apps/api/dist ./dist

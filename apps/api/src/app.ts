@@ -1,3 +1,5 @@
+import { randomBytes } from "node:crypto";
+
 import Fastify, { type FastifyServerOptions } from "fastify";
 import type { Kysely } from "kysely";
 
@@ -8,6 +10,9 @@ import { alertRoutes } from "./alerts/routes.ts";
 import type { Auth } from "./auth/auth.ts";
 import { passwordTryLimiter } from "./auth/password-tries.ts";
 import { betterAuthRoutes, setupRoutes } from "./auth/routes.ts";
+import { backupRoutes } from "./backups/routes.ts";
+import type { OutboundRules } from "./backups/s3.ts";
+import { BackupSecrets } from "./backups/secrets.ts";
 import type { ClickHouseClient } from "./clickhouse/clickhouse.ts";
 import { ProjectKeyCache } from "./collection/project-keys.ts";
 import type { RateLimit } from "./collection/rate-limiter.ts";
@@ -16,6 +21,7 @@ import {
   DEFAULT_REPLAY_STORAGE_BYTES,
   DEFAULT_SOURCE_MAP_STORAGE_BYTES,
   DEFAULT_TELEMETRY_RETENTION_DAYS,
+  type ObjectStoreConfig,
 } from "./config.ts";
 import { dashboardAppRoutes, sendsHsts } from "./dashboard-app/routes.ts";
 import type { Database } from "./db/schema.ts";
@@ -30,7 +36,7 @@ import { userRoutes } from "./identities/routes.ts";
 import type { Mailer } from "./notifications/email.ts";
 import { LinkSealer } from "./notifications/link-sealer.ts";
 import { channelRoutes } from "./notifications/routes.ts";
-import { addressPolicy, type Lookup } from "./outbound/addresses.ts";
+import { addressPolicy, type Lookup, systemLookup } from "./outbound/addresses.ts";
 import { overviewRoutes } from "./overview/routes.ts";
 import { productRoutes } from "./product/routes.ts";
 import { projectRoutes } from "./projects/routes.ts";
@@ -169,6 +175,22 @@ export interface AppOptions extends Omit<FastifyServerOptions, "logger"> {
   storage?: Partial<
     Pick<StorageSources, "objectStore" | "garage" | "readDisk" | "telemetryRetentionDays">
   >;
+  /**
+   * Scheduled backups' routes (backups/routes.ts): the object store's
+   * connection, which backups reuse unless it is the stack's own Garage,
+   * the AUTH_SECRET their stored secrets are sealed with (the link secret
+   * when omitted), the outbound rules a separate endpoint follows, and
+   * the per-user limits, which tests lower.
+   */
+  backups?: {
+    objectStore?: ObjectStoreConfig | null;
+    stackGarage?: boolean;
+    authSecret?: string;
+    rules?: OutboundRules;
+    testConnectionLimit?: RateLimit;
+    backupNowLimit?: RateLimit;
+    testRestoreLimit?: RateLimit;
+  };
   /** The built tracker, served at /t.js. Not served when omitted. */
   trackerScriptPath?: string;
   /** The built dashboard's directory, served at /. Not served when omitted. */
@@ -215,6 +237,7 @@ export function buildApp({
   uptime = {},
   notifications = {},
   storage = {},
+  backups = {},
   trackerScriptPath,
   dashboardPath,
   replayPlayerPath,
@@ -543,6 +566,28 @@ export function buildApp({
         garage: storage.garage ?? null,
         readDisk: storage.readDisk,
       },
+    });
+    app.register(backupRoutes, {
+      prefix: "/api",
+      db,
+      auth: dashboard.auth,
+      trustedOrigins: dashboard.trustedOrigins,
+      objectStore: backups.objectStore ?? null,
+      stackGarage: backups.stackGarage ?? false,
+      // Without either secret (a test that only lists routes), one for this process alone.
+      secrets: new BackupSecrets(
+        backups.authSecret ?? notifications.linkSecret ?? randomBytes(32).toString("hex"),
+      ),
+      // A separate destination follows the rules uptime checks and webhooks do.
+      rules: backups.rules ?? { policy, lookup: uptime.lookup ?? systemLookup },
+      ...(backups.testConnectionLimit === undefined
+        ? {}
+        : { testConnectionLimit: backups.testConnectionLimit }),
+      ...(backups.backupNowLimit === undefined ? {} : { backupNowLimit: backups.backupNowLimit }),
+      ...(backups.testRestoreLimit === undefined
+        ? {}
+        : { testRestoreLimit: backups.testRestoreLimit }),
+      ...(dashboard.now === undefined ? {} : { now: dashboard.now }),
     });
     app.register(reportRoutes, {
       prefix: "/api",

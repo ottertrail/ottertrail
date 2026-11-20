@@ -60,6 +60,7 @@ describe("loadConfig", () => {
       uptimeAllowPrivateAddresses: false,
       uptimeDenyAddresses: [],
       email: null,
+      clickhouseBackupPath: null,
     });
   });
 
@@ -96,6 +97,7 @@ describe("loadConfig", () => {
         UPTIME_DENY_ADDRESSES: " 203.0.113.10, 2001:db8::/32 ,",
         SMTP_URL: SMTP_URL,
         EMAIL_FROM: "Ottertrail <alerts@example.com>",
+        CLICKHOUSE_BACKUP_PATH: "/app/data/backups",
       }),
     ).toEqual({
       host: "0.0.0.0",
@@ -133,6 +135,7 @@ describe("loadConfig", () => {
       uptimeAllowPrivateAddresses: true,
       uptimeDenyAddresses: ["203.0.113.10", "2001:db8::/32"],
       email: { smtpUrl: SMTP_URL, from: "Ottertrail <alerts@example.com>" },
+      clickhouseBackupPath: "/app/data/backups",
     });
   });
 

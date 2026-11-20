@@ -36,7 +36,13 @@ describe("the tabs each role sees", () => {
     await workspaceMenu().getByRole("link", { name: "Settings" }).click();
 
     await expect.element(page.getByRole("tablist", { name: "Instance settings" })).toBeVisible();
-    expect(tabNames()).toEqual(["General", "Location data", "Storage", "Notification channels"]);
+    expect(tabNames()).toEqual([
+      "General",
+      "Location data",
+      "Storage",
+      "Backups",
+      "Notification channels",
+    ]);
     await expect.element(panel().getByRole("heading", { name: "Instance" })).toBeVisible();
     expect(currentPath(router)).toBe("/settings");
 

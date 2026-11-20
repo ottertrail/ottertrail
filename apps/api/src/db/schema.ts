@@ -587,6 +587,56 @@ export interface FirstSeenRebuildsTable {
   requested_at: ColumnType<Date, Date | undefined, Date>;
 }
 
+/** Scheduled backups' settings: one row (migration 0014; backups/settings.ts). */
+export interface BackupSettingsTable {
+  id: ColumnType<boolean, never, never>;
+  enabled: boolean;
+  /** "HH:MM" in the instance's timezone. */
+  time_of_day: string;
+  keep_days: number;
+  /** Null: the object store's own bucket, when backups reuse its connection. */
+  bucket: string | null;
+  prefix: string;
+  /** A separate destination's S3 endpoint; null when backups reuse the object store's. */
+  endpoint: string | null;
+  region: string | null;
+  access_key_id: string | null;
+  /** The separate destination's secret, sealed (backups/secrets.ts). Never returned. */
+  secret_sealed: string | null;
+  /** The backup key, an age X25519 identity, sealed (backups/secrets.ts). */
+  key_sealed: string | null;
+  /** Its public half ("age1…"), which each backup is encrypted to. */
+  key_recipient: string | null;
+  key_created_at: Date | null;
+  /** When the owner confirmed they saved the key. */
+  key_saved_at: Date | null;
+  /** Daily times before this are not due: turning backups on at 15:00 waits for the next 03:00. */
+  schedule_from: Date | null;
+  /** The local day ("YYYY-MM-DD") of the last daily time taken. */
+  last_slot: string | null;
+  /** When a failed backup is tried once more. */
+  retry_at: Date | null;
+  backup_requested_at: Date | null;
+  test_restore_requested_at: Date | null;
+  updated_at: ColumnType<Date, Date | undefined, Date>;
+}
+
+/** A backup or a test restore (backups/state.ts). */
+export interface BackupRunsTable {
+  id: ColumnType<string, string | undefined, never>;
+  kind: ColumnType<"backup" | "test_restore", "backup" | "test_restore", never>;
+  trigger: ColumnType<"schedule" | "manual" | "retry", "schedule" | "manual" | "retry", never>;
+  status: "running" | "succeeded" | "failed";
+  started_at: ColumnType<Date, Date | undefined, never>;
+  heartbeat_at: ColumnType<Date, Date | undefined, Date>;
+  finished_at: Nullable<Date>;
+  /** The backup's folder name, its UTC time ("2026-11-20T030000Z"). */
+  folder: Nullable<string>;
+  /** Encrypted bytes uploaded, or checked. */
+  bytes: Nullable<string | number>;
+  error: Nullable<string>;
+}
+
 export interface Database {
   instance_settings: InstanceSettingsTable;
   projects: ProjectsTable;
@@ -623,4 +673,6 @@ export interface Database {
   storage_warning_channels: StorageWarningChannelsTable;
   storage_warnings: StorageWarningsTable;
   first_seen_rebuilds: FirstSeenRebuildsTable;
+  backup_settings: BackupSettingsTable;
+  backup_runs: BackupRunsTable;
 }

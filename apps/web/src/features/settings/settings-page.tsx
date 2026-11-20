@@ -12,6 +12,7 @@ import { useDirtyForm } from "@/hooks/use-dirty-form";
 import { meQuery, type Permission } from "@/lib/access";
 import { type Settings, settingsQuery, updateSettings } from "@/lib/settings-api";
 
+import { BackupsTab } from "./backups-tab";
 import { LocationDataTab } from "./location-data-card";
 import { NotificationChannels } from "./notification-channels";
 import { type InstanceTabProps, SectionFailed, SectionSkeleton } from "./section-states";
@@ -49,6 +50,12 @@ const INSTANCE_TABS: readonly InstanceTab[] = [
     label: "Storage",
     permission: "projects",
     render: (props) => <StorageTab {...props} />,
+  },
+  {
+    value: "backups",
+    label: "Backups",
+    permission: "settings",
+    render: (props) => <BackupsTab {...props} />,
   },
   {
     value: "channels",
@@ -177,9 +184,9 @@ function PageSkeleton() {
 
 /**
  * The instance's settings: /settings (docs/access.md), as tabs, the chosen
- * one in `?tab=`. The owner has General (the name and timezone) and
- * Location data; the owner and admins have Storage (what fills the disk)
- * and the notification channels.
+ * one in `?tab=`. The owner has General (the name and timezone), Location
+ * data, and Backups; the owner and admins have Storage (what fills the
+ * disk) and the notification channels.
  * Members do not see the page.
  */
 export function SettingsPage() {

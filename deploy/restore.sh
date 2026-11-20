@@ -11,6 +11,20 @@
 #   ./restore.sh --without-objects backups/ottertrail-2026-11-17T120000Z
 #   COMPOSE="podman compose" ./restore.sh backups/ottertrail-2026-11-17T120000Z
 #
+# Or from a scheduled backup the worker uploaded to S3-compatible storage:
+#
+#   ./restore.sh --from-s3 --key ottertrail-backup-key.txt            (the newest)
+#   ./restore.sh --from-s3 --key ottertrail-backup-key.txt 2026-11-17T030000Z
+#
+# It lists the backups in the destination's folder, downloads one into
+# backups/, decrypts it with the key file the Backups tab downloads, and
+# checks every part against the backup's manifest (dist/restore-backup.mjs),
+# then restores it as below and deletes the downloaded files. The
+# destination comes from BACKUP_S3_ENDPOINT, BACKUP_S3_REGION,
+# BACKUP_S3_BUCKET, BACKUP_S3_PREFIX (the folder), BACKUP_S3_ACCESS_KEY_ID,
+# and BACKUP_S3_SECRET_ACCESS_KEY, or it asks for each one missing; the key
+# file from --key or BACKUP_KEY_FILE. Nothing secret goes on a command line.
+#
 # It first unpacks and checks the object backup (every file against its
 # manifest, and that the bucket answers), so a broken backup or an
 # unreachable store stops it before it changes anything. Then it starts
@@ -25,18 +39,96 @@ umask 077
 
 compose=${COMPOSE:-docker compose}
 without_objects=
-if [ "${1:-}" = "--without-objects" ]; then
-  without_objects=1
-  shift
+from_s3=
+key_file=${BACKUP_KEY_FILE:-}
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --without-objects) without_objects=1; shift ;;
+    --from-s3) from_s3=1; shift ;;
+    --key)
+      key_file=${2:?--key needs the backup key file}
+      shift 2
+      ;;
+    --) shift; break ;;
+    -*) echo "Unknown option: $1" >&2; exit 1 ;;
+    *) break ;;
+  esac
+done
+# Paths count from where the script was called. Then Compose runs in the
+# script's own folder, where it finds compose.yaml and .env.
+absolute() {
+  case "$1" in
+    /*) echo "$1" ;;
+    *) echo "$PWD/$1" ;;
+  esac
+}
+downloaded=
+if [ -n "$from_s3" ]; then
+  wanted=${1:-latest}
+  case "$wanted" in
+    latest | [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9][0-9][0-9][0-9][0-9]Z) ;;
+    *) echo "Not a backup's name: $wanted (such as 2026-11-17T030000Z, or latest)" >&2; exit 1 ;;
+  esac
+  # Asks for each setting the environment lacks; a secret without echo.
+  ask() {
+    eval "value=\${$1:-}"
+    if [ -z "$value" ]; then
+      if [ ! -t 0 ]; then
+        echo "Set $1, or run this in a terminal to be asked for it." >&2
+        exit 1
+      fi
+      printf '%s: ' "$2" >&2
+      if [ "${3:-}" = secret ]; then
+        stty -echo
+        read -r value
+        stty echo
+        echo >&2
+      else
+        read -r value
+      fi
+      eval "$1=\$value"
+    fi
+    # The variable that $1 names, for the one-off container's -e.
+    # shellcheck disable=SC2163
+    export "$1"
+  }
+  ask BACKUP_S3_ENDPOINT "S3 endpoint, such as https://<account>.r2.cloudflarestorage.com"
+  ask BACKUP_S3_REGION "Region (auto for Cloudflare R2)"
+  ask BACKUP_S3_BUCKET "Bucket"
+  ask BACKUP_S3_PREFIX "Folder in the bucket (Folder on the Backups tab)"
+  ask BACKUP_S3_ACCESS_KEY_ID "Access key ID"
+  ask BACKUP_S3_SECRET_ACCESS_KEY "Secret access key" secret
+  if [ -z "$key_file" ]; then
+    BACKUP_KEY_FILE=
+    ask BACKUP_KEY_FILE "Backup key file (the one the Backups tab downloads)"
+    key_file=$BACKUP_KEY_FILE
+  fi
+  key_file=$(absolute "$key_file")
+  [ -f "$key_file" ] || { echo "The key file $key_file is missing." >&2; exit 1; }
+else
+  backup=$(absolute "${1:?Give the backup without its ending, such as backups/ottertrail-2026-11-17T120000Z}")
 fi
-backup=${1:?Give the backup without its ending, such as backups/ottertrail-2026-11-17T120000Z}
-# The path counts from where the script was called. Then Compose runs in
-# the script's own folder, where it finds compose.yaml and .env.
-case "$backup" in
-  /*) ;;
-  *) backup=$PWD/$backup ;;
-esac
 cd "$(dirname "$0")"
+
+if [ -n "$from_s3" ]; then
+  # A one-off container of the app's image, with the destination's
+  # settings passed by name from this shell's environment.
+  s3() {
+    $compose run --rm --no-deps -T -u "$(id -u):$(id -g)" \
+      -e BACKUP_S3_ENDPOINT -e BACKUP_S3_REGION -e BACKUP_S3_BUCKET -e BACKUP_S3_PREFIX \
+      -e BACKUP_S3_ACCESS_KEY_ID -e BACKUP_S3_SECRET_ACCESS_KEY "$@"
+  }
+  echo "Backups in $BACKUP_S3_BUCKET/$BACKUP_S3_PREFIX, newest first:"
+  s3 api node dist/restore-backup.mjs list
+  mkdir -p backups
+  echo "Downloading and checking $wanted …"
+  # The decrypted files hold every customer's data: readable by this user only (umask above).
+  backup=$(s3 -v "$PWD/backups:/backup:z" -v "$key_file:/backup-key.txt:ro,z" \
+    api node dist/restore-backup.mjs download "$wanted" /backup-key.txt /backup) ||
+    { echo "Nothing was changed: the databases were not touched." >&2; exit 1; }
+  backup=$PWD/backups/$(basename "$backup")
+  downloaded=1
+fi
 name=$(basename "$backup")
 # The name goes into commands inside the containers: only names backup.sh makes.
 case "$name" in
@@ -69,6 +161,9 @@ cleanup() {
   rm -rf "$unpacked"
   if [ "$status" -ne 0 ] && [ -n "$step" ]; then
     echo "The restore failed while $step." >&2
+    if [ -n "$downloaded" ]; then
+      echo "The downloaded, decrypted files are in backups/: delete them once you no longer need them." >&2
+    fi
     if [ -n "$restored" ]; then
       echo "The databases were changed: run \`$compose down -v\` and start again." >&2
     else
@@ -144,4 +239,10 @@ fi
 step="starting the rest"
 $compose up -d
 step=
-echo "Restored $name."
+if [ -n "$downloaded" ]; then
+  # The backup stays in the bucket; the plain copy here goes.
+  rm -f "$backup.dump" "$backup.zip" "$backup-objects.tar"
+  echo "Restored $name from $BACKUP_S3_BUCKET/$BACKUP_S3_PREFIX, and deleted the downloaded files."
+else
+  echo "Restored $name."
+fi

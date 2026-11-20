@@ -134,6 +134,13 @@ export interface Config {
    * made, and their deliveries fail saying email is not set up.
    */
   email: EmailConfig | null;
+  /**
+   * Where the worker reads ClickHouse's backup files: the folder ClickHouse
+   * writes `BACKUP … TO File(…)` into, shared with the worker
+   * (deploy/compose.yaml, the clickhouse-backups volume). Null when unset:
+   * scheduled backups then fail, saying so (backups/run.ts).
+   */
+  clickhouseBackupPath: string | null;
 }
 
 export interface EmailConfig {
@@ -570,6 +577,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     ),
     uptimeDenyAddresses: parseDenyAddresses(env.UPTIME_DENY_ADDRESSES),
     email: parseEmail(env),
+    clickhouseBackupPath: env.CLICKHOUSE_BACKUP_PATH?.trim() || null,
   };
 }
 

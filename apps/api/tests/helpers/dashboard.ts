@@ -46,6 +46,8 @@ export async function signedInDashboard({
   passwordTryLimit,
   resetRequestLimits,
   invitationEmailLimit,
+  backups,
+  logStream,
 }: {
   timeZone?: string;
   now?: () => Date;
@@ -75,6 +77,10 @@ export async function signedInDashboard({
   resetRequestLimits?: { ip?: RateLimit; email?: RateLimit; instance?: RateLimit };
   /** Emailed invitations per owner or admin (tests/account-email.test.ts). */
   invitationEmailLimit?: RateLimit;
+  /** Scheduled backups' routes: the object store, the outbound rules, the limits (tests/backups.test.ts). */
+  backups?: AppOptions["backups"];
+  /** Where the API's log goes, at info and above; off when omitted. */
+  logStream?: { write(line: string): void };
 } = {}) {
   const testDb = await createTestDatabase();
   const testClickHouse = await createTestClickHouse().catch(async (error: unknown) => {
@@ -120,6 +126,8 @@ export async function signedInDashboard({
     notifications: { linkSecret: TEST_AUTH_SECRET, ...notifications },
     ...(locationData === undefined ? {} : { locationData }),
     ...(storage === undefined ? {} : { storage }),
+    ...(backups === undefined ? {} : { backups }),
+    ...(logStream === undefined ? {} : { log: { level: "info", stream: logStream } }),
   });
   const link = await createSetupToken(testDb.db);
   await app.inject({

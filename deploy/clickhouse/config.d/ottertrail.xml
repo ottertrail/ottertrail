@@ -29,8 +29,8 @@
     </logger>
 
     <!-- Where BACKUP ... TO File('name.zip') writes, and RESTORE reads
-         (docs/deployment.md, "Backups"). Inside ClickHouse's data volume,
-         which its user owns; copy each backup off the server. -->
+         (docs/deployment.md, "Backups"). deploy/compose.yaml mounts a volume
+         of its own here, which the worker reads for scheduled backups. -->
     <backups>
         <allowed_path>/var/lib/clickhouse/backups/</allowed_path>
     </backups>
