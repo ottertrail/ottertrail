@@ -17,7 +17,6 @@ import {
   HeartPulseIcon,
   LayoutDashboardIcon,
   MousePointerClickIcon,
-  PaletteIcon,
   ScrollTextIcon,
   ServerIcon,
   SettingsIcon,
@@ -72,16 +71,6 @@ function WorkspaceMenu() {
           >
             <FolderIcon />
             <span>Projects</span>
-          </SidebarMenuButton>
-        </SidebarMenuItem>
-        <SidebarMenuItem>
-          <SidebarMenuButton
-            render={<Link to="/design-system" />}
-            isActive={matchRoute({ to: "/design-system" }) !== false}
-            tooltip="Design system"
-          >
-            <PaletteIcon />
-            <span>Design system</span>
           </SidebarMenuButton>
         </SidebarMenuItem>
         {can("members") && (

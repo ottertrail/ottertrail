@@ -22,15 +22,18 @@ function breadcrumb(): string {
 }
 
 describe("the workspace", () => {
-  test("lists projects and the design system, and no project's menu", async () => {
+  test("lists projects, members and settings, and no project's menu", async () => {
     installFakeApi();
     renderApp("/projects");
 
     await expect.element(page.getByRole("link", { name: "Main site", exact: true })).toBeVisible();
     await expect.element(workspaceMenu().getByRole("link", { name: "Projects" })).toBeVisible();
-    await expect
-      .element(workspaceMenu().getByRole("link", { name: "Design system" }))
-      .toBeVisible();
+    expect(
+      workspaceMenu()
+        .getByRole("link")
+        .elements()
+        .map((link) => link.textContent),
+    ).toEqual(["Projects", "Members", "Settings"]);
     await expect
       .element(workspaceMenu().getByRole("link", { name: "Web analytics" }))
       .not.toBeInTheDocument();
@@ -205,9 +208,7 @@ describe("inside a project", () => {
 
     await expect.poll(() => currentPath(router)).toBe("/projects");
     await expect.element(page.getByRole("button", { name: /^Project:/ })).not.toBeInTheDocument();
-    await expect
-      .element(workspaceMenu().getByRole("link", { name: "Design system" }))
-      .toBeVisible();
+    await expect.element(workspaceMenu().getByRole("link", { name: "Projects" })).toBeVisible();
   });
 
   test("an unknown project says so", async () => {

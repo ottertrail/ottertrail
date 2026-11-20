@@ -68,9 +68,9 @@ describe("at 390 wide", () => {
   test("keeps the content inside the screen, with phone gutters", async () => {
     await page.viewport(390, 844);
     installFakeApi();
-    renderApp("/design-system");
+    renderApp(ANALYTICS);
 
-    await expect.element(page.getByRole("heading", { name: "Screen patterns" })).toBeVisible();
+    await expect.element(page.getByRole("heading", { name: "Visitors per day" })).toBeVisible();
     expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(390);
     const content = document.querySelector<HTMLElement>("[data-slot=app-content]");
     expect(content?.scrollWidth).toBeLessThanOrEqual(content?.clientWidth ?? 0);

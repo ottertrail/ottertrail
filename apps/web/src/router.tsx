@@ -81,10 +81,6 @@ const DatabasesPage = lazyPage(
   () => import("@/features/telemetry/databases-page"),
   "DatabasesPage",
 );
-const DesignSystemPage = lazyPage(
-  () => import("@/features/design-system/design-system-page"),
-  "DesignSystemPage",
-);
 const ErrorPage = lazyPage(() => import("@/features/errors/error-page"), "ErrorPage");
 const ErrorsPage = lazyPage(() => import("@/features/errors/errors-page"), "ErrorsPage");
 const EventPage = lazyPage(() => import("@/features/product/event-page"), "EventPage");
@@ -1250,13 +1246,6 @@ const membersRoute = createRoute({
   }),
 });
 
-const designSystemRoute = createRoute({
-  getParentRoute: () => appRoute,
-  path: "/design-system",
-  staticData: { title: "Design system" },
-  component: DesignSystemPage,
-});
-
 const routeTree = rootRoute.addChildren([
   signInRoute,
   setupRoute,
@@ -1303,7 +1292,6 @@ const routeTree = rootRoute.addChildren([
     ]),
     settingsRoute,
     membersRoute,
-    designSystemRoute,
   ]),
 ]);
 

@@ -24,7 +24,7 @@ describe("the session check", () => {
     const before = sessionChecks(api);
 
     for (let round = 0; round < 5; round++) {
-      for (const name of ["Design system", "Settings", "Projects"]) {
+      for (const name of ["Members", "Settings", "Projects"]) {
         await workspaceMenu().getByRole("link", { name }).hover();
         // Past the router's 50ms preload delay.
         await new Promise((resolve) => setTimeout(resolve, 80));
@@ -35,9 +35,9 @@ describe("the session check", () => {
     expect(sessionChecks(api)).toBe(before);
 
     // A navigation within the cache's 30 seconds uses the answer it has.
-    await workspaceMenu().getByRole("link", { name: "Design system" }).click();
-    await expect.poll(() => currentPath(router)).toBe("/design-system");
-    await expect.element(page.getByRole("heading", { level: 2, name: "Color" })).toBeVisible();
+    await workspaceMenu().getByRole("link", { name: "Members" }).click();
+    await expect.poll(() => currentPath(router)).toBe("/settings/members");
+    await expect.element(page.getByRole("heading", { name: "Everyone with access" })).toBeVisible();
     expect(sessionChecks(api)).toBe(before);
   });
 

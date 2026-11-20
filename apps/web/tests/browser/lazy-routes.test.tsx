@@ -6,8 +6,8 @@ import { currentPath, renderApp } from "./render.tsx";
 
 /*
  * Each page loads in a chunk of its own (docs/dashboard.md, "Code
- * splitting"). Here modules are replaced: the design system's page waits
- * until the test lets it load; the Members page's and the custom range
+ * splitting"). Here modules are replaced: the Speed page waits until the
+ * test lets it load; the Members page's and the custom range
  * dialog's fail as a file an old tab asks for after a deploy does (the
  * browser's TypeError); the instance Settings page's throws while it runs,
  * as a bug would. Reloading is replaced too, to see that Reload asks for it.
@@ -23,7 +23,7 @@ vi.mock("../../src/lib/reload.ts", () => ({
   },
 }));
 
-const designSystem = vi.hoisted(() => {
+const speed = vi.hoisted(() => {
   const gate = { requested: false, release: (): void => undefined };
   const released = new Promise<void>((resolve) => {
     gate.release = resolve;
@@ -31,9 +31,9 @@ const designSystem = vi.hoisted(() => {
   return Object.assign(gate, { released });
 });
 
-vi.mock("../../src/features/design-system/design-system-page.tsx", async (importOriginal) => {
-  designSystem.requested = true;
-  await designSystem.released;
+vi.mock("../../src/features/speed/speed-page.tsx", async (importOriginal) => {
+  speed.requested = true;
+  await speed.released;
   return await importOriginal();
 });
 
@@ -59,36 +59,35 @@ function captureErrors(): unknown[][] {
 }
 
 const workspaceMenu = () => page.getByRole("navigation", { name: "Instance" });
+const projectMenu = () => page.getByRole("navigation", { name: "Project" });
+const ANALYTICS = `/projects/${PROJECT.id}/web-analytics`;
+const LCP = "Largest Contentful Paint (LCP), p75";
 
 describe("a page in a chunk of its own", () => {
   test("loads on a link's hover, shows a skeleton in the shell while it downloads, then the page", async () => {
     installFakeApi();
-    const router = renderApp("/projects");
-    const link = workspaceMenu().getByRole("link", { name: "Design system" });
+    const router = renderApp(ANALYTICS);
+    const link = projectMenu().getByRole("link", { name: "Speed" });
     await expect.element(link).toBeVisible();
-    expect(designSystem.requested).toBe(false);
+    expect(speed.requested).toBe(false);
 
     await link.hover();
-    await expect.poll(() => designSystem.requested).toBe(true);
-    expect(currentPath(router)).toBe("/projects");
+    await expect.poll(() => speed.requested).toBe(true);
+    expect(currentPath(router)).toBe(ANALYTICS);
 
     await link.click();
     const pending = page.getByRole("status", { name: "Loading the page" });
     await expect.element(pending, { timeout: 3000 }).toBeVisible();
     // The shell stays while the page downloads: the menu, and the header's breadcrumb.
-    await expect.element(workspaceMenu()).toBeVisible();
+    await expect.element(projectMenu()).toBeVisible();
     await expect.element(page.getByRole("navigation", { name: "Breadcrumb" })).toBeVisible();
-    await expect
-      .element(page.getByRole("heading", { level: 2, name: "Color" }))
-      .not.toBeInTheDocument();
+    await expect.element(page.getByText(LCP, { exact: true })).not.toBeInTheDocument();
 
-    designSystem.release();
+    speed.release();
 
-    await expect
-      .element(page.getByRole("heading", { level: 2, name: "Color" }), { timeout: 3000 })
-      .toBeVisible();
+    await expect.element(page.getByText(LCP, { exact: true }), { timeout: 3000 }).toBeVisible();
     await expect.element(pending).not.toBeInTheDocument();
-    expect(currentPath(router)).toBe("/design-system");
+    expect(currentPath(router)).toBe(`/projects/${PROJECT.id}/speed`);
   });
 
   test("whose code fails to download says so in the shell, and Reload reloads", async () => {

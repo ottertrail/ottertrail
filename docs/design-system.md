@@ -4,19 +4,19 @@ Status: initial foundation. The name treatment and mascot are undecided; the mar
 
 A dark interface for a dense dashboard: a near-black canvas, a ladder of surfaces instead of shadows, hairline borders, and a single orchid accent used sparingly. This document records the tokens, the reasons behind them, and the remaining gaps.
 
-The live reference page is `/design-system`, "Design system" in the sidebar (`vp run dev`, then open the web URL). It renders the real components with made-up content; every example with names, figures or addresses is labelled "Sample data" (`Specimen`'s `sample`). Under "Screen patterns" it shows the filter bar, the stat strip, the report chart with a toggle group and its numbers, the breakdown table, pinned columns with the scroll hint and a missing value, the workbench, key hints and toggle groups, and the settings tabs with the save rule. `design-system-page.test.tsx` and `screen-patterns.test.tsx` walk them.
+This document is the reference. The components in `apps/web/src/components/` are the source: to see a block, read its component and a screen that uses it. When a component changes what this document says, update the document in the same change. The dashboard has no page of examples. `apps/web/tests/browser/screen-patterns.test.tsx` renders the shared screen blocks directly, with test content, and walks their behavior: the filter bar, the stat strip, the report chart with a toggle group and its numbers, the breakdown table, pinned columns with the scroll hint and a missing value, the workbench, key hints and toggle groups, and the settings tabs with the save rule.
 
 ## Where things live
 
-| What                                                                                                           | Where                                  |
-| -------------------------------------------------------------------------------------------------------------- | -------------------------------------- |
-| Tokens (CSS variables, Tailwind theme, type scale, radius)                                                     | `apps/web/src/styles/globals.css`      |
-| shadcn/ui components (Base UI primitives, `base-nova` style)                                                   | `apps/web/src/components/ui/`          |
-| Ottertrail components (`StatusBadge`, `ApiStatus`, `TimezoneCombobox`, app shell)                              | `apps/web/src/components/`             |
-| Screen blocks (`FilterBar`, `StatStrip`, `BreakdownTable`, `ReportChart`, `ScrollHint`, `Workbench`, settings) | `apps/web/src/components/`             |
-| Reference page                                                                                                 | `apps/web/src/features/design-system/` |
-| Contrast tests for the tokens                                                                                  | `apps/web/tests/tokens.test.ts`        |
-| shadcn configuration                                                                                           | `apps/web/components.json`             |
+| What                                                                                                           | Where                                             |
+| -------------------------------------------------------------------------------------------------------------- | ------------------------------------------------- |
+| Tokens (CSS variables, Tailwind theme, type scale, radius)                                                     | `apps/web/src/styles/globals.css`                 |
+| shadcn/ui components (Base UI primitives, `base-nova` style)                                                   | `apps/web/src/components/ui/`                     |
+| Ottertrail components (`StatusBadge`, `ApiStatus`, `TimezoneCombobox`, app shell)                              | `apps/web/src/components/`                        |
+| Screen blocks (`FilterBar`, `StatStrip`, `BreakdownTable`, `ReportChart`, `ScrollHint`, `Workbench`, settings) | `apps/web/src/components/`                        |
+| Tests of the screen blocks, rendered directly                                                                  | `apps/web/tests/browser/screen-patterns.test.tsx` |
+| Contrast tests for the tokens                                                                                  | `apps/web/tests/tokens.test.ts`                   |
+| shadcn configuration                                                                                           | `apps/web/components.json`                        |
 
 Use tokens through Tailwind utilities (`bg-card`, `text-ink-subtle`, `ring-border`, `text-headline`), not raw hex values in components.
 
@@ -140,7 +140,7 @@ No drop shadows for hierarchy; use the surface ladder and `ring-1 ring-border`.
 
 - Generated with `shadcn@4.23.0`, style `base-nova`, primitives from Base UI (`@base-ui/react`), icons from `lucide-react`. Base UI composes with a `render` prop where Radix used `asChild`.
 - Add components from `apps/web` with the pinned CLI: `pnpm dlx shadcn@4.23.0 add <name>`, then run `vp check --fix` from the repository root to apply formatting. Pin any dependency the CLI adds to an exact version in `pnpm-workspace.yaml`'s catalog (Resizable added `react-resizable-panels` 4.24.0).
-- Added with that CLI: Radio Group, Toggle Group (with Toggle), Resizable and Popover, shown on the reference page.
+- Added with that CLI: Radio Group, Toggle Group (with Toggle) and Resizable. Popover was added too and removed when nothing used it; add it again with the CLI when a screen needs one.
 - Local changes to generated files: the `text-link` substitutions above; `hooks/use-mobile.ts` rewritten with `useSyncExternalStore` (the generated version set state inside an effect); `select.tsx`, whose list opens below its trigger, aligned to its start (`alignItemWithTrigger = false`, `align = "start"`), where Base UI's default lays the list over the trigger so that the chosen item sits on it, which covered the controls above (the tabs over a page's period filter); and these, from the redesign's first phase:
   - **Field washes:** `bg-input/…` became `bg-input-fill/…` (input, textarea, select, combobox, checkbox, radio group, tabs, button), because `input` is now the 3:1 field edge; the outline button's and the active tab's border became `border-hairline-strong`, so they stay quiet. Error borders are full `border-destructive`, not `/50`, which fell to 2.5:1 (combobox included).
   - **Switch track:** the unchecked track is `bg-input` at full strength, not `/80`: the track is the switch's boundary, so it takes the field edge, 3.6 to 3.9:1 on the surfaces, with the thumb (`foreground`) 4.6:1 on it.
@@ -158,22 +158,24 @@ No drop shadows for hierarchy; use the surface ladder and `ring-1 ring-border`.
 - The root lint config relaxes five rules for `components/ui/*.tsx` only, so upstream updates stay reviewable.
 - A link that looks like a button is `ButtonLink` (`components/button-link.ts`), which takes the router's link props. Do not render a `Button` as a link (`render={<Link />}`): Base UI gives the rendered element the button role, so screen readers announce the link as a button.
 - A text field that filters a long list of choices is `Combobox` (`components/ui/combobox.tsx`, written by hand in the generated files' style, on Base UI's Combobox, which gives it the `combobox`, `listbox`, and `option` roles and the keyboard: arrows, Enter, Escape). `ComboboxInput` is the field, styled like `Input`, with a button that opens the list; its other props go to the `<input>`, so a `<label htmlFor>` names it. `ComboboxContent` is the floating list on `popover`, as wide as the field and at most 18rem high, scrolling inside; `ComboboxItem` marks the chosen option with a check; `ComboboxEmpty` says when nothing matches and stays mounted as a live region. Use it instead of an `<input list>` with a `<datalist>`, which browsers show as an unstyled native list. The timezone fields use it through `TimezoneCombobox` (`components/timezone-combobox.tsx`). A `datalist` stays only where any value may be typed past the suggestions, such as the alert rules' and the funnel editor's fields.
+- **Buttons:** one primary action per view (`Button`'s default variant, on `brand`). `secondary` and `outline` are the other actions, `ghost` an action inside a row or a toolbar, `destructive` an action that deletes, and `link` an action that reads as text. An icon-only button (`size="icon"`) has an `aria-label`.
+- **Fields:** every field has a visible label (`FieldLabel`, or `Label` beside a checkbox, radio or switch); a placeholder is never the label. A `FieldDescription` under it says what the value is for or what it changes. An error (`FieldError`, tied to the field with `aria-describedby`, the field marked `aria-invalid`) says what is wrong and how to correct it. Radios and a set of checkboxes sit in a `<fieldset>` with a `<legend>`.
 - Text to copy, such as an install snippet or a key, is `CopyableCode` (`components/copyable-code.tsx`): code that wraps, with its copy button inside the box. Never a read-only input, which looks editable, and never inside a form whose Save button would not store it.
 
 ### Data states
 
-Every region that loads data needs four states, shown on the reference page:
+Every region that loads data needs four states:
 
-- **Loading:** skeletons shaped like the content they replace.
-- **Empty:** say why there is no data and what to do next.
-- **Failure:** say what failed and offer a retry. Never show stale data as current.
+- **Loading:** skeletons (`ui/skeleton.tsx`) shaped like the content they replace, in a container with `aria-busy` and a label that names what loads ("Loading the summary"). A stat strip's loading state is a short bar for each label over a taller one for each figure; a table's is its title and a few row-high bars; a workbench list's is a few bars as high as its rows. A page whose code is still downloading shows `PagePending` (`components/route-states.tsx`): a filter bar, a strip of figures, a chart and rows.
+- **Empty:** say why there is no data and what to do next, in the region's place: `Empty` (`ui/empty.tsx`) with an icon, a title that says why ("No unresolved errors in this period") and a line on how to start. A breakdown table takes its `empty` text instead of drawing an empty table. A workbench with an empty list shows how to start in its detail pane (`summary`).
+- **Failure:** say what failed and offer a retry: a `destructive` `Alert` with a title that names what failed ("The errors could not load"), a line on why when it is known, and Retry as its `AlertAction`. Never show stale data as current.
 - **Delayed data:** use a `warning` `StatusBadge` with a label that names the delay. No component exists for this yet.
 
 Plus the full state. A region that refreshes keeps its last data, dimmed, and says when a refresh failed; it never shows it as current.
 
 ## Screen patterns
 
-Every screen takes one of three patterns, by what it is for. The blocks live in `apps/web/src/components/`, each with its states on the reference page under "Screen patterns". The approved mockups behind them were the Console (reports) and Workbench (lists and settings) directions.
+Every screen takes one of three patterns, by what it is for. The blocks live in `apps/web/src/components/`, and each takes the [data states](#data-states) above. The approved mockups behind them were the Console (reports) and Workbench (lists and settings) directions.
 
 | Kind of screen   | Pattern           | Screens                                                                                          |
 | ---------------- | ----------------- | ------------------------------------------------------------------------------------------------ |
@@ -207,7 +209,7 @@ A list on the left and the selected item on the right (`workbench.tsx`), on shad
 
 - **The selection is in the address** (`param`, such as `?error=<fingerprint>`), through TanStack Router (`hooks/use-search-param.ts`), so it survives a reload. A click adds a history entry; `j`, `k` and `Esc` replace it, so Back returns to where the list was opened rather than through every step.
 - **Nothing is selected on arrival.** The detail pane shows `summary`: the list summed up (counts, what needs attention), or with an empty list, how to start.
-- **Keys:** `j` and `k` select the next and previous item (`j` with nothing selected takes the first), `Esc` clears the selection, and one `action` key acts on the selected item (`e` resolves or reopens an error). They do nothing while focus is in a text field, an open list, a menu or a dialog (`lib/keys.ts`); a closed Select is a button, and the keys work after choosing in it. `WorkbenchKeyHints` lists them in the filter bar, from 64rem.
+- **Keys:** `j` and `k` select the next and previous item (`j` with nothing selected takes the first), `Esc` clears the selection, and one `action` key acts on the selected item (`e` resolves or reopens an error). They do nothing while focus is in a text field, an open list, a menu or a dialog (`lib/keys.ts`); a closed Select is a button, and the keys work after choosing in it. `WorkbenchKeyHints` lists them in the filter bar, from 64rem. A key hint is each key in a `Kbd` (keys pressed together side by side, in a `KbdGroup`), then what it does in plain words, in lower case: "j k move through a list", "e resolve or reopen", "Esc clear the choice".
 - **Focus** follows `j` and `k` to the chosen row, and moves to it when an item is chosen from inside the detail pane (a name in the summary), whose content then goes. When an action takes the selected item out of the list (resolving an error under Unresolved), `j` and `k` carry on from its last place. When the selection clears (`Esc`, Back) with focus in the detail, focus returns to the row that was chosen, or the list.
 - **Rows** carry `data-workbench-id`, so the selection scrolls into view, and mark the chosen row with `aria-current` on its link or button and `data-state="selected"` (a 2px `brand` rule at its start). Row controls stay on one line and truncate, with the whole text in `title`. A click anywhere on a row selects it, as a click on its name does ([Clickable rows](#clickable-rows)); `workbenchRow(id, chosen)` gives a row all of these.
 - **Under 64rem** the list fills the screen and choosing an item calls `onOpenPage`, which goes to the item's own page. `narrowNow()` reads the width at the moment of the click or key, so `j`, `k`, `Esc` and the action key do nothing there. A selection that appears while the screen is narrow (an address opened there, a link) does the same once: the list's entry loses the selection first, so Back returns to the list. Every item keeps its full page.
@@ -237,7 +239,9 @@ A row that is one item opening one thing takes a click anywhere on it: the Workb
 
 ### Toggle groups
 
-A toggle group (`ui/toggle-group.tsx`, on `ui/toggle.tsx`) is a set of pressed buttons (`aria-pressed`, Base UI's `data-pressed`): Errors' Unresolved, Resolved and All, a breakdown's views, a chart's measure, the Services and Databases trends. The chosen item is filled with `toggle-on` and written in `ink`; the others are `ink-subtle` on no fill, with a `muted` wash and `ink` text on hover. The weight stays `font-medium` for all, so choosing an item never moves the others.
+A toggle group (`ui/toggle-group.tsx`, on `ui/toggle.tsx`) is a set of pressed buttons (`aria-pressed`, Base UI's `data-pressed`): Errors' Unresolved, Resolved and All, a breakdown's views, a chart's measure, the Services and Databases trends.
+
+Use one when its choices switch one view (one table, one chart) between lists or measures of one kind. It is not tabs: the choices share one table or chart, so there is no panel per choice, and tabs would promise one. Use tabs (`SettingsTabs`, `ui/tabs.tsx`) when each choice has its own content. The group has a name that says what it chooses ("Which errors to list", "Which figure to chart"). Exactly one item is chosen: pressing the chosen item again keeps it chosen. What it shows changes at once, with no Apply button. The chosen item is filled with `toggle-on` and written in `ink`; the others are `ink-subtle` on no fill, with a `muted` wash and `ink` text on hover. The weight stays `font-medium` for all, so choosing an item never moves the others.
 
 Contrast (WCAG 1.4.11, non-text, at least 3:1; `tests/tokens.test.ts` and `tests/browser/controls.test.tsx`): the fill is 3.88:1 on `background`, 3.73:1 on `card`, 3.59:1 on `popover`, 4.25:1 on `canvas`, and 3.14:1 on a hovered item's `muted`. The unchosen items have no fill, so the fill against them is its contrast on the group's surface. `ink` on the fill is 4.61:1; `ink-subtle`, the unchosen items' text, is 5.83:1 on `background`, 5.60:1 on `card`, 5.39:1 on `popover` and 6.37:1 on `canvas`; `ink` on a hovered item's `muted` is 14.47:1. The focus ring is unchanged.
 
