@@ -3,6 +3,7 @@ import type { Kysely, Selectable } from "kysely";
 import type { Auth } from "../auth/auth.ts";
 import { hashToken, newToken } from "../auth/tokens.ts";
 import type { Database, DashboardInvitationsTable } from "../db/schema.ts";
+import { dropQueuedAccountEmails } from "../notifications/account-emails.ts";
 import { readInstanceSettings } from "../settings/settings.ts";
 import type { AccessChange } from "./grants.ts";
 import { setUserAccessIn } from "./grants.ts";
@@ -173,7 +174,7 @@ async function invitationFor(db: Kysely<Database>, actor: Actor, id: string) {
   return invitation;
 }
 
-/** Revokes an invitation: its link stops working. */
+/** Revokes an invitation: its link stops working, and its email goes if not sent yet. */
 export async function revokeInvitation(
   db: Kysely<Database>,
   actor: Actor,
@@ -182,6 +183,7 @@ export async function revokeInvitation(
   const found = await invitationFor(db, actor, id);
   if (typeof found === "string") return found;
   await db.deleteFrom("dashboard_invitations").where("id", "=", id).execute();
+  await dropQueuedAccountEmails(db, "invitation", found.email);
   return "done";
 }
 

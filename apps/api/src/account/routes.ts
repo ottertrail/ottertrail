@@ -16,6 +16,7 @@ import {
 } from "../auth/routes.ts";
 import type { TokenBucketLimiter } from "../collection/rate-limiter.ts";
 import type { Database } from "../db/schema.ts";
+import { enqueueAccountEmail } from "../notifications/account-emails.ts";
 
 /** As the setup form's name. */
 export const MAX_NAME_LENGTH = 200;
@@ -81,6 +82,8 @@ function limited(limiter: TokenBucketLimiter, userId: string, reply: FastifyRepl
  * and nobody else's. Better Auth's own routes for these
  * (/api/auth/update-user, /change-email, /change-password) are turned off
  * (auth.ts), so these are the only way, with these checks.
+ * With SMTP set up, an email change queues a notice to the old address
+ * (notifications/account-emails.ts).
  *
  * Bodies are checked by schema before anything else; the password tries,
  * shared with handing over ownership, are counted per user once the
@@ -93,7 +96,13 @@ export const accountRoutes: FastifyPluginCallback<{
   trustedOrigins: readonly string[];
   /** The app's one limiter for current-password checks (auth/password-tries.ts). */
   passwordTries?: TokenBucketLimiter;
-}> = (app, { db, auth, trustedOrigins, passwordTries = passwordTryLimiter() }, done) => {
+  /** Whether SMTP is set up: an email change then notifies the old address. */
+  emailConfigured?: boolean;
+}> = (
+  app,
+  { db, auth, trustedOrigins, passwordTries = passwordTryLimiter(), emailConfigured = false },
+  done,
+) => {
   const signedIn = requireSession(auth);
   const fromDashboard = requireTrustedOrigin(trustedOrigins);
   const anyUser = requirePermission(db, "signed_in");
@@ -173,6 +182,14 @@ export const accountRoutes: FastifyPluginCallback<{
           .returning(["id", "name", "email"])
           .executeTakeFirst();
         if (updated === undefined) return reply.code(409).send(EMAIL_INVITED);
+        if (emailConfigured) {
+          // The old address hears of it, so a change its owner didn't make is noticed.
+          await enqueueAccountEmail(db, {
+            kind: "email_changed",
+            to: user.email.toLowerCase(),
+            params: { oldEmail: user.email, newEmail: updated.email },
+          });
+        }
         return { user: updated };
       } catch (error) {
         // The unique index decides, so two users cannot take one address at once.

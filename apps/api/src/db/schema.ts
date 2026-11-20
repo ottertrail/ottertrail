@@ -472,7 +472,34 @@ export interface DashboardPasswordResetsTable {
   /** Who made it; null exactly when the server's command did (made_by_command). */
   created_by: Nullable<string>;
   made_by_command: ColumnType<boolean, boolean | undefined, boolean>;
+  /**
+   * Asked for on the sign-in page and emailed (one hour). A user has one
+   * emailed link and one made by a person or the command at most.
+   */
+  emailed: ColumnType<boolean, boolean | undefined, boolean>;
   created_at: ColumnType<Date, Date | undefined, Date>;
+}
+
+export type AccountEmailKind =
+  | "password_reset"
+  | "reset_link"
+  | "password_changed"
+  | "invitation"
+  | "email_changed";
+
+/**
+ * An account email waiting for the worker (notifications/account-emails.ts):
+ * deleted once sent or given up.
+ */
+export interface AccountEmailsTable {
+  id: ColumnType<string, string | undefined, never>;
+  kind: ColumnType<AccountEmailKind, AccountEmailKind, never>;
+  to_address: ColumnType<string, string, never>;
+  /** What the message names: links, names, addresses (account-emails.ts, AccountEmailParams). */
+  params: ColumnType<unknown, string | undefined, never>;
+  attempts: ColumnType<number, number | undefined, number>;
+  next_attempt_at: ColumnType<Date, Date | undefined, Date>;
+  created_at: ColumnType<Date, Date | undefined, never>;
 }
 
 /** One-time links that create the owner. Only a SHA-256 hash of each token is kept. */
@@ -589,6 +616,7 @@ export interface Database {
   dashboard_member_projects: DashboardMemberProjectsTable;
   dashboard_invitations: DashboardInvitationsTable;
   dashboard_password_resets: DashboardPasswordResetsTable;
+  account_emails: AccountEmailsTable;
   overview_layouts: OverviewLayoutsTable;
   location_data_updates: LocationDataUpdatesTable;
   location_data_lease: LocationDataLeaseTable;

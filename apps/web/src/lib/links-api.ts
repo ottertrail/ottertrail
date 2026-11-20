@@ -61,3 +61,17 @@ export async function resetPassword(input: {
     isEmail,
   );
 }
+
+const isRequested = (value: unknown): value is { requested: true; message: string } =>
+  isRecord(value) && value.requested === true && isText(value.message);
+
+/**
+ * Asks for a reset link by email ("Forgot password?"), with email set up
+ * only. The answer is the same whether or not an account has the address.
+ */
+export async function requestPasswordReset(email: string) {
+  return expectShape(
+    await apiRequest("/api/reset-password/request", { method: "POST", body: { email } }),
+    isRequested,
+  );
+}

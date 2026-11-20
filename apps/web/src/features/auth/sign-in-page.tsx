@@ -1,4 +1,4 @@
-import { useNavigate } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
 import { InfoIcon, LoaderCircleIcon, OctagonAlertIcon } from "lucide-react";
 import * as React from "react";
 
@@ -8,26 +8,35 @@ import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { authClient, signInErrorMessage } from "@/lib/auth-client";
 import { formText } from "@/lib/form";
-import { fetchOwnerExists } from "@/lib/setup-api";
+import { fetchSetupStatus } from "@/lib/setup-api";
 
 import { AuthLayout } from "./auth-layout";
 
-/** Whether the instance has its owner yet; null while unknown or when the check failed. */
-function useOwnerExists(): boolean | null {
-  const [ownerExists, setOwnerExists] = React.useState<boolean | null>(null);
+/**
+ * Whether the instance has its owner yet, and whether email is set up
+ * (GET /api/setup, which tells nothing else); null while unknown or when
+ * the check failed.
+ */
+function useSetupStatus(): { ownerExists: boolean; emailConfigured: boolean } | null {
+  const [status, setStatus] = React.useState<{
+    ownerExists: boolean;
+    emailConfigured: boolean;
+  } | null>(null);
   React.useEffect(() => {
     const controller = new AbortController();
-    fetchOwnerExists(controller.signal).then(setOwnerExists, () => {
-      // The sign-in form still works; the hint about setup is only extra.
+    fetchSetupStatus(controller.signal).then(setStatus, () => {
+      // The sign-in form still works; the setup hint and the reset line are only extra.
     });
     return () => controller.abort();
   }, []);
-  return ownerExists;
+  return status;
 }
 
 export function SignInPage() {
   const navigate = useNavigate();
-  const ownerExists = useOwnerExists();
+  const status = useSetupStatus();
+  const ownerExists = status?.ownerExists ?? null;
+  const emailConfigured = status?.emailConfigured ?? null;
   const [error, setError] = React.useState<string | null>(null);
   const [pending, setPending] = React.useState(false);
 
@@ -69,7 +78,17 @@ export function SignInPage() {
             <Input id="email" name="email" type="email" autoComplete="username" required />
           </Field>
           <Field>
-            <FieldLabel htmlFor="password">Password</FieldLabel>
+            <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+              <FieldLabel htmlFor="password">Password</FieldLabel>
+              {emailConfigured === true && (
+                <Link
+                  to="/forgot-password"
+                  className="relative rounded-sm text-sm text-link underline-offset-4 outline-none after:absolute after:-inset-x-1 after:-inset-y-2.5 hover:underline focus-visible:ring-3 focus-visible:ring-ring/50"
+                >
+                  Forgot password?
+                </Link>
+              )}
+            </div>
             <Input
               id="password"
               name="password"
@@ -95,6 +114,12 @@ export function SignInPage() {
           </Button>
         </FieldGroup>
       </form>
+      {emailConfigured === false && (
+        <p className="-mt-3 text-sm text-pretty text-ink-subtle">
+          Forgot your password? Email isn&apos;t set up on this instance, so ask the person who runs
+          it for a reset link.
+        </p>
+      )}
     </AuthLayout>
   );
 }

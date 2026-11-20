@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { LoaderCircleIcon, OctagonAlertIcon, UserPlusIcon } from "lucide-react";
+import { LoaderCircleIcon, MailCheckIcon, OctagonAlertIcon, UserPlusIcon } from "lucide-react";
 import * as React from "react";
 
 import { CopyableCode } from "@/components/copyable-code";
@@ -36,21 +36,39 @@ import {
 import type { ProjectSummary } from "@/lib/projects-api";
 
 import { AccessEditor } from "./access-editor";
-import { DEFAULT_ACCESS } from "./access-text";
+import { DEFAULT_ACCESS, emailedAbout, LINK_ONCE } from "./access-text";
 
 export type Actor = { id: string; role: Role };
 
 /** Where focus goes when a dialog or the sheet closes: the element, or the default. */
 export type FinalFocus = () => HTMLElement | true;
 
-/** Why a link can't be shown twice, and what to do when it is lost. */
-export const LINK_ONCE =
-  "Copy it now: Ottertrail keeps only a fingerprint of the link, so it can't show it again.";
+/** What a dialog's action may return: a link to show, and whether Ottertrail is emailing it. */
+export type MadeLink = { url: string; emailed?: boolean };
 
-/** A link to copy and send, shown once: the API keeps only its hash. */
-function LinkToSend({ url, about }: { url: string; about: string }) {
+/**
+ * A link to copy and send, shown once: the API keeps only its hash. When
+ * Ottertrail is emailing it, `emailedTo` says so first, as a status.
+ */
+function LinkToSend({
+  url,
+  about,
+  emailedTo,
+}: {
+  url: string;
+  about: string;
+  emailedTo?: string | undefined;
+}) {
   return (
-    <div className="flex flex-col gap-2">
+    <div className="flex flex-col gap-3">
+      {emailedTo !== undefined && (
+        <output className="block">
+          <Alert role="none">
+            <MailCheckIcon />
+            <AlertTitle>Ottertrail is emailing the link to {emailedTo}</AlertTitle>
+          </Alert>
+        </output>
+      )}
       <p className="text-sm text-pretty text-ink-muted">{about}</p>
       <CopyableCode text={url} copyLabel="Copy the link" />
     </div>
@@ -71,7 +89,10 @@ export function ActionDialog({
   confirmLabel,
   destructive = false,
   run,
+  alternative,
   linkAbout,
+  emailedTo,
+  emailedAbout: aboutEmailed,
   children,
   canConfirm = true,
   onClear,
@@ -84,8 +105,13 @@ export function ActionDialog({
   description: React.ReactNode;
   confirmLabel: string;
   destructive?: boolean;
-  run: () => Promise<{ url: string } | undefined>;
+  run: () => Promise<MadeLink | undefined>;
+  /** A second way to confirm beside the main one, as an outline button before it. */
+  alternative?: { label: string; run: () => Promise<MadeLink | undefined> };
   linkAbout?: string;
+  /** Whom an emailed link goes to, and what to say beside it, when the action emails it. */
+  emailedTo?: string;
+  emailedAbout?: string;
   children?: React.ReactNode;
   canConfirm?: boolean;
   /** Clears what the form holds, such as a password: on closing, and after a failure. */
@@ -95,7 +121,8 @@ export function ActionDialog({
 }) {
   const queryClient = useQueryClient();
   const action = useMutation({
-    mutationFn: run,
+    mutationFn: (which: "main" | "alternative") =>
+      which === "alternative" && alternative !== undefined ? alternative.run() : run(),
     onError: () => onClear?.(),
     onSuccess: (result) => {
       void queryClient.invalidateQueries({ queryKey: membersKey });
@@ -127,7 +154,7 @@ export function ActionDialog({
             className="flex flex-col gap-4"
             onSubmit={(event) => {
               event.preventDefault();
-              action.mutate();
+              action.mutate("main");
             }}
           >
             {children}
@@ -139,12 +166,28 @@ export function ActionDialog({
             )}
             <DialogFooter>
               <DialogClose render={<Button variant="outline" type="button" />}>Cancel</DialogClose>
+              {alternative !== undefined && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={action.isPending || !canConfirm}
+                  onClick={() => action.mutate("alternative")}
+                >
+                  {action.isPending && action.variables === "alternative" && (
+                    <LoaderCircleIcon
+                      aria-hidden="true"
+                      className="animate-spin motion-reduce:animate-none"
+                    />
+                  )}
+                  {alternative.label}
+                </Button>
+              )}
               <Button
                 type="submit"
                 variant={destructive ? "destructive" : "default"}
                 disabled={action.isPending || !canConfirm}
               >
-                {action.isPending && (
+                {action.isPending && action.variables === "main" && (
                   <LoaderCircleIcon
                     aria-hidden="true"
                     className="animate-spin motion-reduce:animate-none"
@@ -156,7 +199,11 @@ export function ActionDialog({
           </form>
         ) : (
           <>
-            <LinkToSend url={action.data.url} about={linkAbout ?? ""} />
+            {action.data.emailed === true ? (
+              <LinkToSend url={action.data.url} about={aboutEmailed ?? ""} emailedTo={emailedTo} />
+            ) : (
+              <LinkToSend url={action.data.url} about={linkAbout ?? ""} />
+            )}
             <DialogFooter>
               <DialogClose render={<Button type="button" />}>Done</DialogClose>
             </DialogFooter>
@@ -178,10 +225,13 @@ export function InviteDialog({
   actor,
   projects,
   days,
+  emailConfigured,
 }: {
   actor: Actor;
   projects: readonly ProjectSummary[];
   days: number;
+  /** Whether the instance has email set up: the invitation is then emailed as well. */
+  emailConfigured: boolean;
 }) {
   const queryClient = useQueryClient();
   const [open, setOpen] = React.useState(false);
@@ -214,9 +264,9 @@ export function InviteDialog({
         <DialogHeader>
           <DialogTitle>Invite someone</DialogTitle>
           <DialogDescription className="text-pretty">
-            Ottertrail doesn't email invitations, since many self-hosted servers have no mail server
-            set up. Copy the link and send it to the person yourself, for example in a chat or an
-            email. The link works once, within {days} days.
+            {emailConfigured
+              ? `Ottertrail emails an invitation link to the address you enter. You also get the link to copy, in case the email doesn't arrive. The link works once, within ${days} days.`
+              : `Email isn't set up on this instance, so Ottertrail can't email invitations. Copy the link and send it to the person yourself, for example in a chat or an email. The link works once, within ${days} days.`}
           </DialogDescription>
         </DialogHeader>
         {invite.data === undefined ? (
@@ -262,16 +312,24 @@ export function InviteDialog({
                     className="animate-spin motion-reduce:animate-none"
                   />
                 )}
-                Create invitation link
+                {emailConfigured ? "Send invitation" : "Create invitation link"}
               </Button>
             </DialogFooter>
           </form>
         ) : (
           <>
-            <LinkToSend
-              url={invite.data.url}
-              about={`Send this link to ${invite.data.invitation.email}. ${LINK_ONCE} If it gets lost, choose New link in the invitation's menu on the Invitations tab.`}
-            />
+            {invite.data.emailed ? (
+              <LinkToSend
+                url={invite.data.url}
+                emailedTo={invite.data.invitation.email}
+                about={`${emailedAbout("them")} If it gets lost, choose New link in the invitation's menu on the Invitations tab: it sends a new one.`}
+              />
+            ) : (
+              <LinkToSend
+                url={invite.data.url}
+                about={`Send this link to ${invite.data.invitation.email}. ${LINK_ONCE} If it gets lost, choose New link in the invitation's menu on the Invitations tab.`}
+              />
+            )}
             <DialogFooter>
               <DialogClose render={<Button type="button" />}>Done</DialogClose>
             </DialogFooter>

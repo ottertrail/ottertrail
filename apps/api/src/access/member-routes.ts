@@ -1,12 +1,25 @@
+import { createHash } from "node:crypto";
+
 import type { FastifyPluginCallback, FastifyReply, FastifyRequest } from "fastify";
 import type { Kysely } from "kysely";
 
 import { type Auth, canSignInWith } from "../auth/auth.ts";
 import { requireTrustedOrigin } from "../auth/origin.ts";
 import { passwordTryLimiter } from "../auth/password-tries.ts";
-import { newPasswordProperties, PASSWORDS_DIFFER, requireSession } from "../auth/routes.ts";
+import {
+  newPasswordProperties,
+  PASSWORDS_DIFFER,
+  requireSession,
+  signedInUser,
+} from "../auth/routes.ts";
 import { clientKey, type RateLimit, TokenBucketLimiter } from "../collection/rate-limiter.ts";
 import type { Database } from "../db/schema.ts";
+import {
+  dropQueuedAccountEmails,
+  enqueueAccountEmail,
+  inviteLink,
+  resetLink,
+} from "../notifications/account-emails.ts";
 import { FORBIDDEN, requirePermission, userAccessOf } from "./access.ts";
 import { AREA_LEVELS, AREAS } from "./areas.ts";
 import type { AccessChange } from "./grants.ts";
@@ -38,6 +51,18 @@ const UUID_PATTERN =
  */
 export const DEFAULT_LINK_LIMIT: RateLimit = { capacity: 10, refillPerSecond: 1 / 60 };
 
+/** Reset requests from the sign-in page per client address (IPv6 by its /64): 5 per 15 minutes. */
+export const DEFAULT_RESET_REQUEST_IP_LIMIT: RateLimit = { capacity: 5, refillPerSecond: 5 / 900 };
+
+/**
+ * Reset requests per email address: 3 an hour, counted the same way
+ * whether or not an account has it, so the limit tells nothing either.
+ */
+export const DEFAULT_RESET_REQUEST_EMAIL_LIMIT: RateLimit = {
+  capacity: 3,
+  refillPerSecond: 3 / 3600,
+};
+
 const problem = (error: string, message: string) => ({ error, message });
 const NO_MEMBER = problem("member_not_found", "This instance has no user with this ID.");
 const NO_INVITATION = problem("invitation_not_found", "No pending invitation has this ID.");
@@ -46,6 +71,28 @@ const INVITATION_GONE = problem(
   "This invitation link no longer works. Ask for a new one.",
 );
 const RESET_GONE = problem("invalid_link", "This reset link no longer works. Ask for a new one.");
+/** One answer for every address, with or without an account. */
+const RESET_REQUESTED = {
+  requested: true,
+  message:
+    "If an account uses that email, we'll send a reset link. Check your inbox and spam folder.",
+};
+/** One answer for both limits, for every address. */
+const RESET_REQUESTS_LIMITED = problem(
+  "rate_limited",
+  "Too many reset requests. Wait a little, then try again.",
+);
+const NO_EMAIL = problem(
+  "email_not_set_up",
+  "Email isn't set up on this instance, so Ottertrail can't send reset links. Ask the person who runs it for a reset link.",
+);
+const INVALID_EMAIL = problem(
+  "invalid_email",
+  "Sign-in does not accept this email address. Use letters, digits, and . _ ' + - before the @. Use a domain such as example.com.",
+);
+
+/** An address as a limiter's key: its hash, so the limiter's memory holds no address. */
+const emailKey = (email: string) => createHash("sha256").update(email).digest("hex");
 
 const accessSchema = {
   type: "object",
@@ -122,8 +169,8 @@ function answerOf(
  *   GET    /api/members                         users and pending invitations
  *   PATCH  /api/members/:userId                 { role, access? }
  *   DELETE /api/members/:userId
- *   POST   /api/members/:userId/reset-link      a one-time link, valid 24 hours
- *   POST   /api/invitations                     { email, role, access? }: a link to copy
+ *   POST   /api/members/:userId/reset-link      { email? }: a one-time link, valid 24 hours; emailed too with `email`
+ *   POST   /api/invitations                     { email, role, access? }: a link to copy, emailed too with SMTP
  *   POST   /api/invitations/:invitationId/link  a new link; the old one stops working
  *   DELETE /api/invitations/:invitationId
  * For the owner only (`ownership`):
@@ -133,10 +180,16 @@ function answerOf(
  *   POST   /api/invite/accept                   { token, name, password, confirmPassword }
  *   POST   /api/reset-password/preview          { token }: whose password
  *   POST   /api/reset-password                  { token, password, confirmPassword }
+ * Public, with SMTP only, limited per client address and per email address:
+ *   POST   /api/reset-password/request          { email }: one answer for every address
  *
- * Links are copied and sent by whoever made them: installs are not expected
- * to have email. Each carries its token in the fragment, which browsers
- * never send to a server.
+ * Links are copied by whoever made them, and without SMTP sent by them
+ * too. With SMTP (`emailConfigured`), invitations are emailed as well, a
+ * reset link is emailed when asked, and a reset sends the "password
+ * changed" notice, all through the worker's queue
+ * (notifications/account-emails.ts). Each link carries its token in the
+ * fragment, which browsers never send to a server, and starts with the
+ * instance's PUBLIC_URL, never a request's Host.
  */
 export const memberRoutes: FastifyPluginCallback<{
   db: Kysely<Database>;
@@ -144,6 +197,10 @@ export const memberRoutes: FastifyPluginCallback<{
   trustedOrigins: readonly string[];
   publicUrl: string;
   linkLimit?: RateLimit;
+  /** Whether SMTP is set up: account email is queued only then. */
+  emailConfigured?: boolean;
+  resetRequestIpLimit?: RateLimit;
+  resetRequestEmailLimit?: RateLimit;
   /**
    * Handing over ownership checks the owner's password: tries come from
    * the app's one limiter for current-password checks (auth/password-tries.ts).
@@ -158,6 +215,9 @@ export const memberRoutes: FastifyPluginCallback<{
     trustedOrigins,
     publicUrl,
     linkLimit = DEFAULT_LINK_LIMIT,
+    emailConfigured = false,
+    resetRequestIpLimit = DEFAULT_RESET_REQUEST_IP_LIMIT,
+    resetRequestEmailLimit = DEFAULT_RESET_REQUEST_EMAIL_LIMIT,
     passwordTries = passwordTryLimiter(),
     now = () => new Date(),
   },
@@ -168,9 +228,30 @@ export const memberRoutes: FastifyPluginCallback<{
   const manageMembers = requirePermission(db, "members");
   const owner = requirePermission(db, "ownership");
   const limiter = new TokenBucketLimiter(linkLimit);
+  const requestsByAddress = new TokenBucketLimiter(resetRequestIpLimit);
+  const requestsByEmail = new TokenBucketLimiter(resetRequestEmailLimit);
 
-  const inviteUrl = (token: string) => `${publicUrl}/invite#token=${token}`;
-  const resetUrl = (token: string) => `${publicUrl}/reset-password#token=${token}`;
+  const inviteUrl = (token: string) => inviteLink(publicUrl, token);
+  const resetUrl = (token: string) => resetLink(publicUrl, token);
+
+  /** Queues the invitation's email, replacing one not sent yet, whose link no longer works. */
+  async function emailInvitation(
+    invitation: { email: string; invitedBy: { name: string } },
+    token: string,
+  ) {
+    await db.transaction().execute(async (trx) => {
+      await dropQueuedAccountEmails(trx, "invitation", invitation.email);
+      await enqueueAccountEmail(trx, {
+        kind: "invitation",
+        to: invitation.email,
+        params: {
+          link: inviteUrl(token),
+          inviter: invitation.invitedBy.name,
+          invitedEmail: invitation.email,
+        },
+      });
+    });
+  }
 
   // Before the body is read or checked, as setup does.
   const limited = async (request: FastifyRequest, reply: FastifyReply) => {
@@ -190,6 +271,7 @@ export const memberRoutes: FastifyPluginCallback<{
   app.get("/members", { preHandler: [signedIn, manageMembers] }, async (request) => ({
     you: actorOf(request),
     invitationDays: INVITATION_TTL_MS / 86_400_000,
+    emailConfigured,
     members: await listMembers(db),
     invitations: await listInvitations(db),
   }));
@@ -223,15 +305,48 @@ export const memberRoutes: FastifyPluginCallback<{
       answerOf(await removeMember(db, actorOf(request), request.params.userId), reply, NO_MEMBER),
   );
 
-  app.post<{ Params: { userId: string } }>(
+  app.post<{ Params: { userId: string }; Body: { email?: boolean } | null | undefined }>(
     "/members/:userId/reset-link",
-    { preHandler: [fromDashboard, signedIn, manageMembers], schema: { params: userParams } },
+    {
+      preHandler: [fromDashboard, signedIn, manageMembers],
+      schema: {
+        params: userParams,
+        body: {
+          type: ["object", "null"],
+          additionalProperties: false,
+          properties: { email: { type: "boolean" } },
+        },
+      },
+    },
     async (request, reply) => {
+      const wantsEmail = request.body?.email === true;
+      if (wantsEmail && !emailConfigured) {
+        return reply
+          .code(409)
+          .send(
+            problem(
+              "email_not_set_up",
+              "Email isn't set up on this instance, so Ottertrail can't email the link. Make the link without email, copy it, and send it to them yourself.",
+            ),
+          );
+      }
       // Admins reset members; the owner resets anyone else.
       const made = await makeResetLink(db, actorOf(request), request.params.userId, now());
       if (made === "not_found") return reply.code(404).send(NO_MEMBER);
       if (made === "forbidden") return reply.code(403).send(FORBIDDEN);
-      return reply.code(201).send({ url: resetUrl(made.token), expiresAt: made.expiresAt });
+      const url = resetUrl(made.token);
+      if (wantsEmail) {
+        await db.transaction().execute(async (trx) => {
+          // The earlier link no longer works: its email, if not sent yet, goes.
+          await dropQueuedAccountEmails(trx, "reset_link", made.email);
+          await enqueueAccountEmail(trx, {
+            kind: "reset_link",
+            to: made.email,
+            params: { link: url, maker: signedInUser(request).name },
+          });
+        });
+      }
+      return reply.code(201).send({ url, expiresAt: made.expiresAt, emailed: wantsEmail });
     },
   );
 
@@ -316,9 +431,12 @@ export const memberRoutes: FastifyPluginCallback<{
           .code(409)
           .send(problem("account_exists", "Someone with this email already has an account."));
       }
-      return reply
-        .code(201)
-        .send({ invitation: created.invitation, url: inviteUrl(created.token) });
+      if (emailConfigured) await emailInvitation(created.invitation, created.token);
+      return reply.code(201).send({
+        invitation: created.invitation,
+        url: inviteUrl(created.token),
+        emailed: emailConfigured,
+      });
     },
   );
 
@@ -334,7 +452,12 @@ export const memberRoutes: FastifyPluginCallback<{
       );
       if (renewed === "not_found") return reply.code(404).send(NO_INVITATION);
       if (renewed === "forbidden") return reply.code(403).send(FORBIDDEN);
-      return { invitation: renewed.invitation, url: inviteUrl(renewed.token) };
+      if (emailConfigured) await emailInvitation(renewed.invitation, renewed.token);
+      return {
+        invitation: renewed.invitation,
+        url: inviteUrl(renewed.token),
+        emailed: emailConfigured,
+      };
     },
   );
 
@@ -423,7 +546,54 @@ export const memberRoutes: FastifyPluginCallback<{
       const { token, password, confirmPassword } = request.body;
       if (password !== confirmPassword) return reply.code(400).send(PASSWORDS_DIFFER);
       const used = await usePasswordReset(db, auth, token, password, now());
-      return used === null ? reply.code(404).send(RESET_GONE) : used;
+      if (used === null) return reply.code(404).send(RESET_GONE);
+      if (emailConfigured) {
+        await enqueueAccountEmail(db, { kind: "password_changed", to: used.email, params: {} });
+      }
+      return used;
+    },
+  );
+
+  // Before the body is read or checked, as the links' limit is.
+  const requestLimited = async (request: FastifyRequest, reply: FastifyReply) => {
+    const result = requestsByAddress.take(clientKey(request.ip));
+    if (result.allowed) return undefined;
+    return reply
+      .code(429)
+      .header("retry-after", String(result.retryAfterSeconds))
+      .send(RESET_REQUESTS_LIMITED);
+  };
+
+  app.post<{ Body: { email: string } }>(
+    "/reset-password/request",
+    {
+      onRequest: requestLimited,
+      bodyLimit: 4096,
+      schema: {
+        body: {
+          type: "object",
+          required: ["email"],
+          additionalProperties: false,
+          properties: { email: { type: "string", minLength: 3, maxLength: 320 } },
+        },
+      },
+    },
+    async (request, reply) => {
+      if (!emailConfigured) return reply.code(404).send(NO_EMAIL);
+      // As sign-in looks addresses up, and as accounts store them.
+      const email = request.body.email.trim().toLowerCase();
+      if (!canSignInWith(email)) return reply.code(400).send(INVALID_EMAIL);
+      const result = requestsByEmail.take(emailKey(email));
+      if (!result.allowed) {
+        return reply
+          .code(429)
+          .header("retry-after", String(result.retryAfterSeconds))
+          .send(RESET_REQUESTS_LIMITED);
+      }
+      // The same one insert for every address: the worker looks the account
+      // up, makes the link, and sends it, or sends nothing.
+      await enqueueAccountEmail(db, { kind: "password_reset", to: email, params: {} });
+      return reply.code(202).send(RESET_REQUESTED);
     },
   );
 

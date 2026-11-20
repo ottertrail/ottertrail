@@ -60,6 +60,7 @@ import {
   fetchSecret,
   rotateSecret,
   sendTest,
+  sendTestEmail,
 } from "@/lib/channels-api";
 import { storageQuery } from "@/lib/storage-api";
 
@@ -517,6 +518,50 @@ function ChannelItem({
 }
 
 /**
+ * Email is set up: what it sends, and a test email to the signed-in user's
+ * own address, sent while they wait, with the mail server's answer as a
+ * status in words (never color alone).
+ */
+function EmailSetUp() {
+  const test = useMutation({ mutationFn: sendTestEmail });
+  return (
+    <div className="flex flex-col gap-3 rounded-lg border p-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p className="flex min-w-0 flex-wrap items-center gap-2 text-sm text-muted-foreground">
+          <StatusBadge tone="good">Email set up</StatusBadge>
+          Alerts, invitations, and reset links go out through this instance&apos;s SMTP server.
+        </p>
+        <Button size="sm" variant="outline" disabled={test.isPending} onClick={() => test.mutate()}>
+          {test.isPending ? (
+            <LoaderCircleIcon
+              aria-hidden="true"
+              className="animate-spin motion-reduce:animate-none"
+            />
+          ) : (
+            <SendIcon aria-hidden="true" />
+          )}
+          Send a test email
+        </Button>
+      </div>
+      <output aria-live="polite" className="block empty:hidden">
+        {test.isSuccess && (
+          <p className="flex items-start gap-2 text-sm text-pretty text-ink">
+            <StatusBadge tone="good">Accepted</StatusBadge>
+            <span>{test.data.message}</span>
+          </p>
+        )}
+        {test.isError && (
+          <p className="flex items-start gap-2 text-sm text-pretty text-ink">
+            <StatusBadge tone="critical">Not sent</StatusBadge>
+            <span>{test.error.message}</span>
+          </p>
+        )}
+      </output>
+    </div>
+  );
+}
+
+/**
  * The Notification channels tab of the instance's Settings, for the owner
  * and admins: email lists and webhooks, with whether email is set up, a
  * test send, a webhook's secret, and each channel's recent deliveries.
@@ -554,10 +599,7 @@ export function NotificationChannels({ timeZone }: { timeZone: string }) {
       {list.isSuccess && (
         <>
           {list.data.email.configured ? (
-            <p className="flex items-center gap-2 text-sm text-muted-foreground">
-              <StatusBadge tone="good">Email set up</StatusBadge>
-              Email uses this instance's SMTP server.
-            </p>
+            <EmailSetUp />
           ) : (
             <Alert>
               <TriangleAlertIcon />

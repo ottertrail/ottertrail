@@ -27,6 +27,7 @@ import { heatmapRoutes } from "./heatmaps/dashboard-routes.ts";
 import { heatmapOverlayRoutes } from "./heatmaps/overlay-routes.ts";
 import { heatmapCollectionRoutes } from "./heatmaps/routes.ts";
 import { userRoutes } from "./identities/routes.ts";
+import type { Mailer } from "./notifications/email.ts";
 import { channelRoutes } from "./notifications/routes.ts";
 import { addressPolicy, type Lookup } from "./outbound/addresses.ts";
 import { overviewRoutes } from "./overview/routes.ts";
@@ -77,6 +78,9 @@ export interface AppOptions extends Omit<FastifyServerOptions, "logger"> {
     setupLimit?: RateLimit;
     /** Accepting invitations and using reset links, per client address (access/member-routes.ts). */
     linkLimit?: RateLimit;
+    /** "Forgot password?" requests per client address and per email address (access/member-routes.ts). */
+    resetRequestIpLimit?: RateLimit;
+    resetRequestEmailLimit?: RateLimit;
     /**
      * Current-password tries per user, shared by every route that checks
      * one: email and password changes, and handing over ownership.
@@ -139,11 +143,13 @@ export interface AppOptions extends Omit<FastifyServerOptions, "logger"> {
    */
   uptime?: { allowPrivateAddresses?: boolean; denyAddresses?: string[]; lookup?: Lookup };
   /**
-   * Notification channels (docs/uptime-alerts.md, "Where alerts go"):
-   * whether SMTP_URL is set, which the dashboard shows beside email
-   * channels. Webhook URLs follow `uptime`'s address rules and resolver.
+   * Email (docs/uptime-alerts.md, "Where alerts go"; docs/access.md,
+   * "Account email"): whether SMTP_URL is set, which the dashboard shows
+   * and which turns account email on (queued for the worker), and the
+   * mailer the test email goes out through at once. Webhook URLs follow
+   * `uptime`'s address rules and resolver.
    */
-  notifications?: { emailConfigured?: boolean };
+  notifications?: { emailConfigured?: boolean; mailer?: Mailer | null; testEmailLimit?: RateLimit };
   /**
    * The Storage section's sources (storage/usage.ts) beyond the app's own:
    * whether the object store is the stack's Garage and its bucket, Garage's
@@ -307,6 +313,13 @@ export function buildApp({
       trustedOrigins: dashboard.trustedOrigins,
       publicUrl: dashboard.publicUrl,
       ...(dashboard.linkLimit === undefined ? {} : { linkLimit: dashboard.linkLimit }),
+      ...(dashboard.resetRequestIpLimit === undefined
+        ? {}
+        : { resetRequestIpLimit: dashboard.resetRequestIpLimit }),
+      ...(dashboard.resetRequestEmailLimit === undefined
+        ? {}
+        : { resetRequestEmailLimit: dashboard.resetRequestEmailLimit }),
+      emailConfigured: notifications.emailConfigured ?? false,
       passwordTries,
       ...(dashboard.now === undefined ? {} : { now: dashboard.now }),
     });
@@ -316,6 +329,7 @@ export function buildApp({
       auth: dashboard.auth,
       trustedOrigins: dashboard.trustedOrigins,
       passwordTries,
+      emailConfigured: notifications.emailConfigured ?? false,
     });
     app.register(settingsRoutes, {
       prefix: "/api",
@@ -445,6 +459,10 @@ export function buildApp({
       trustedOrigins: dashboard.trustedOrigins,
       publicUrl: dashboard.publicUrl,
       emailConfigured: notifications.emailConfigured ?? false,
+      mailer: notifications.mailer ?? null,
+      ...(notifications.testEmailLimit === undefined
+        ? {}
+        : { testEmailLimit: notifications.testEmailLimit }),
       policy,
       ...(uptime.lookup === undefined ? {} : { lookup: uptime.lookup }),
       ...(dashboard.now === undefined ? {} : { now: dashboard.now }),

@@ -54,14 +54,13 @@ import {
 import { projectsQuery } from "@/lib/projects-api";
 
 import { formatDay, formatMoment } from "../users/format";
-import { accessSummary } from "./access-text";
+import { accessSummary, emailedAbout, LINK_ONCE } from "./access-text";
 import {
   AccessSheet,
   ActionDialog,
   type Actor,
   type FinalFocus,
   InviteDialog,
-  LINK_ONCE,
 } from "./member-dialogs";
 
 /** Whether `actor` may change, remove, or reset `target`: the API's rule (access/members.ts). */
@@ -598,10 +597,24 @@ export function MembersPage() {
               onOpenChange={setOpen}
               finalFocus={finalFocus}
               title={`A reset link for ${member.name}`}
-              description={`A reset link lets ${member.name} set a new password. Ottertrail doesn't email it, since many self-hosted servers have no mail server set up, so you send it to them yourself. It works once, within 24 hours. Using it signs them out everywhere. Their old password works until then, and a new link replaces any earlier one.`}
-              confirmLabel="Make the link"
+              description={
+                data.emailConfigured
+                  ? `A reset link lets ${member.name} set a new password. Email it to ${member.email}, or make the link and send it to them yourself. It works once, within 24 hours. Using it signs them out everywhere. Their old password works until then, and a new link replaces any earlier one.`
+                  : `A reset link lets ${member.name} set a new password. Email isn't set up on this instance, so Ottertrail can't email it: you send it to them yourself. It works once, within 24 hours. Using it signs them out everywhere. Their old password works until then, and a new link replaces any earlier one.`
+              }
+              {...(data.emailConfigured
+                ? {
+                    confirmLabel: "Email it to them",
+                    run: () => makeResetLink(member.id, { email: true }),
+                    alternative: {
+                      label: "Make the link",
+                      run: () => makeResetLink(member.id),
+                    },
+                    emailedTo: member.email,
+                    emailedAbout: `${emailedAbout(member.name)} If it gets lost, make a new one from their row's menu.`,
+                  }
+                : { confirmLabel: "Make the link", run: () => makeResetLink(member.id) })}
               linkAbout={`Send this link to ${member.name} yourself, for example in a chat or an email. ${LINK_ONCE} If it gets lost, make a new one from their row's menu.`}
-              run={() => makeResetLink(member.id)}
             />
           );
         case "owner":
@@ -666,9 +679,15 @@ export function MembersPage() {
           onOpenChange={setOpen}
           finalFocus={finalFocus}
           title={`A new link for ${invitation.email}`}
-          description={`Use this to replace a lost link: Ottertrail keeps only a fingerprint of each link, so it can't show it again. The old link stops working at once, and the new one works once, for ${data.invitationDays} days.`}
-          confirmLabel="Make a new link"
+          description={
+            data.emailConfigured
+              ? `Use this to resend the invitation or replace a lost link: Ottertrail keeps only a fingerprint of each link, so it can't send the old one again. The old link stops working at once. The new one is emailed to ${invitation.email} and works once, for ${data.invitationDays} days.`
+              : `Use this to replace a lost link: Ottertrail keeps only a fingerprint of each link, so it can't show it again. The old link stops working at once, and the new one works once, for ${data.invitationDays} days.`
+          }
+          confirmLabel={data.emailConfigured ? "Send a new link" : "Make a new link"}
           linkAbout={`Send this link to ${invitation.email} yourself, for example in a chat or an email. ${LINK_ONCE}`}
+          emailedTo={invitation.email}
+          emailedAbout={emailedAbout("them")}
           run={() => renewInvitation(invitation.id)}
         />
       ) : (
@@ -749,7 +768,12 @@ export function MembersPage() {
               </TabsTrigger>
             </TabsList>
           </div>
-          <InviteDialog actor={actor} projects={projects.data} days={data.invitationDays} />
+          <InviteDialog
+            actor={actor}
+            projects={projects.data}
+            days={data.invitationDays}
+            emailConfigured={data.emailConfigured}
+          />
         </div>
         <TabsContent value="members">
           <MembersTable
@@ -773,8 +797,9 @@ export function MembersPage() {
                   </EmptyMedia>
                   <EmptyTitle>No pending invitations</EmptyTitle>
                   <EmptyDescription>
-                    Nobody is waiting to join. To add someone, choose Invite at the top of the page,
-                    then copy the link it makes and send it to them yourself.
+                    {data.emailConfigured
+                      ? "Nobody is waiting to join. To add someone, choose Invite at the top of the page: Ottertrail emails them the link."
+                      : "Nobody is waiting to join. To add someone, choose Invite at the top of the page, then copy the link it makes and send it to them yourself."}
                   </EmptyDescription>
                 </EmptyHeader>
               </Empty>
@@ -791,9 +816,11 @@ export function MembersPage() {
               />
               <div className="flex max-w-3xl flex-col gap-2 px-gutter py-4 text-sm text-pretty text-ink-subtle">
                 <p>
-                  Ottertrail can't show an invitation's link again after it's made, because it keeps
-                  only a fingerprint of the link. If someone lost theirs, choose New link in their
-                  row's menu. To invite someone else, use Invite.
+                  Ottertrail can't show or send an invitation's link again after it's made, because
+                  it keeps only a fingerprint of the link. If someone lost theirs, choose New link
+                  in their row's menu
+                  {data.emailConfigured ? ", which emails them a new one" : ""}. To invite someone
+                  else, use Invite.
                 </p>
                 {adminInvitationsLocked && (
                   <p>

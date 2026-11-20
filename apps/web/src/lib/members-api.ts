@@ -40,6 +40,8 @@ export interface Invitation {
 export interface MembersAnswer {
   you: { id: string; role: Role };
   invitationDays: number;
+  /** Whether the instance has email set up: invitations and reset links can then be emailed. */
+  emailConfigured: boolean;
   members: Member[];
   invitations: Invitation[];
 }
@@ -86,14 +88,26 @@ const isMembersAnswer = (value: unknown): value is MembersAnswer =>
   isText(value.you.id) &&
   isRole(value.you.role) &&
   typeof value.invitationDays === "number" &&
+  typeof value.emailConfigured === "boolean" &&
   isListOf(value.members, isMember) &&
   isListOf(value.invitations, isInvitation);
 
-const isLinked = (value: unknown): value is { invitation: Invitation; url: string } =>
-  isRecord(value) && isInvitation(value.invitation) && isText(value.url);
+/** A link made: `emailed` when Ottertrail is also emailing it, through the worker's queue. */
+const isLinked = (
+  value: unknown,
+): value is { invitation: Invitation; url: string; emailed: boolean } =>
+  isRecord(value) &&
+  isInvitation(value.invitation) &&
+  isText(value.url) &&
+  typeof value.emailed === "boolean";
 
-const isResetLink = (value: unknown): value is { url: string; expiresAt: string } =>
-  isRecord(value) && isText(value.url) && isText(value.expiresAt);
+const isResetLink = (
+  value: unknown,
+): value is { url: string; expiresAt: string; emailed: boolean } =>
+  isRecord(value) &&
+  isText(value.url) &&
+  isText(value.expiresAt) &&
+  typeof value.emailed === "boolean";
 
 export const membersKey = ["members"] as const;
 
@@ -107,7 +121,7 @@ export const membersQuery = () =>
 const bodyOf = (choice: AccessChoice) =>
   choice.role === "admin" ? { role: "admin" } : { role: "member", access: choice.access };
 
-/** Invites `email`: the link to copy, which is not shown again. */
+/** Invites `email`: the link to copy, which is not shown again, and emailed with email set up. */
 export async function inviteMember(email: string, choice: AccessChoice) {
   const body = await apiRequest("/api/invitations", {
     method: "POST",
@@ -116,7 +130,7 @@ export async function inviteMember(email: string, choice: AccessChoice) {
   return expectShape(body, isLinked);
 }
 
-/** A new link for an invitation; the old one stops working. */
+/** A new link for an invitation, emailed again with email set up; the old one stops working. */
 export async function renewInvitation(id: string) {
   const body = await apiRequest(`/api/invitations/${encodeURIComponent(id)}/link`, {
     method: "POST",
@@ -140,10 +154,11 @@ export async function removeMember(userId: string) {
   await apiRequest(`/api/members/${encodeURIComponent(userId)}`, { method: "DELETE" });
 }
 
-/** A one-time link that sets the user's password, valid 24 hours. */
-export async function makeResetLink(userId: string) {
+/** A one-time link that sets the user's password, valid 24 hours; with `email`, emailed to them too. */
+export async function makeResetLink(userId: string, { email = false }: { email?: boolean } = {}) {
   const body = await apiRequest(`/api/members/${encodeURIComponent(userId)}/reset-link`, {
     method: "POST",
+    body: { email },
   });
   return expectShape(body, isResetLink);
 }

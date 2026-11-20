@@ -177,6 +177,18 @@ export async function rotateSecret(id: string): Promise<{ channel: Channel; secr
   );
 }
 
+const isTestEmail = (value: unknown): value is { email: string; message: string } =>
+  isRecord(value) && isText(value.email) && isText(value.message);
+
+/**
+ * Sends a test email to the signed-in user's own address, through the
+ * instance's SMTP server, while the request waits: the answer says whether
+ * the mail server accepted it, or throws its error.
+ */
+export async function sendTestEmail(): Promise<{ email: string; message: string }> {
+  return expectShape(await apiRequest("/api/channels/email-test", { method: "POST" }), isTestEmail);
+}
+
 /** Queues a test notification to the channel; the worker sends it within seconds. */
 export async function sendTest(id: string): Promise<void> {
   await apiRequest(`${channelPath(id)}/test`, { method: "POST" });

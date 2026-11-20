@@ -57,7 +57,7 @@ Edit `.env`:
 - `POSTGRES_PASSWORD`, `CLICKHOUSE_PASSWORD`, `AUTH_SECRET`, `OBJECT_STORE_SECRET_ACCESS_KEY`, `GARAGE_RPC_SECRET`, and `GARAGE_ADMIN_TOKEN`: the output of `openssl rand -hex 32`, a different value each. Hex keeps the password safe inside the database URL. `GARAGE_ADMIN_TOKEN` is optional ([Storage](#storage)).
 - `OBJECT_STORE_ACCESS_KEY_ID`: the output of `printf 'GK%s\n' "$(openssl rand -hex 12)"`, the form Garage's keys take.
 
-`example.env` turns on the stack's own object store, Garage, for session replays and source maps. To use another store, or none, see [Session replays and source maps](#session-replays-and-source-maps) before the first start. Alert email is optional ([Alert email](#alert-email)). The instance's timezone is chosen on the setup page; the owner can change it later on the dashboard's Settings page.
+`example.env` turns on the stack's own object store, Garage, for session replays and source maps. To use another store, or none, see [Session replays and source maps](#session-replays-and-source-maps) before the first start. Email is optional: alerts, invitations, and password resets work without it ([Email](#email)). The instance's timezone is chosen on the setup page; the owner can change it later on the dashboard's Settings page.
 
 ```sh
 docker compose up -d
@@ -72,7 +72,7 @@ Create the owner account:
 docker compose exec api node dist/setup.mjs
 ```
 
-`setup.mjs` prints a link, valid for an hour, that creates the owner. Teammates join by invitation links from the dashboard's Members page ([access](access.md)). An account whose password is lost gets a reset link from the Members page, or from the server: `docker compose exec api node dist/reset-password.mjs <email>` prints one, valid for an hour.
+`setup.mjs` prints a link, valid for an hour, that creates the owner. Teammates join by invitation links from the dashboard's Members page ([access](access.md)). An account whose password is lost gets a reset link by email from the sign-in page's "Forgot password?" when email is set up ([Email](#email)), from the Members page, or from the server: `docker compose exec api node dist/reset-password.mjs <email>` prints one, valid for an hour.
 
 The worker downloads what the API knows about IP addresses when it starts: DB-IP's location database (about 130 MB) and the address ranges of cloud and hosting providers (about 400 KB), into the `geo-data` volume. The API loads them within 10 minutes, without a restart. Until then, events are stored without a location, and events from cloud servers are not recognized ([web analytics](web-analytics.md#data-centers)). See [Location data](#location-data) for how they stay current, and how to turn the downloads off.
 
@@ -156,8 +156,8 @@ Restoring PostgreSQL alone, or moving it to a new major version (dump, new volum
 | `COMPOSE_PROFILES`    | `object-store` in `example.env`: Docker Compose then starts Garage ([session replays and source maps](#session-replays-and-source-maps))                                                                                                  |
 | `OBJECT_STORE_…`      | The object store for session replays and source maps, and its keys ([session replays and source maps](#session-replays-and-source-maps))                                                                                                  |
 | `GARAGE_ADMIN_TOKEN`  | Optional: the stack's Garage's admin token. With it, the Settings page shows the bucket's real size and Garage's disk, and the worker keeps a quota on the bucket ([Storage](#storage)). Never logged or shown                            |
-| `SMTP_URL`            | Optional: the SMTP server alert email goes through, with its user name and password ([alert email](#alert-email)). Never logged                                                                                                           |
-| `EMAIL_FROM`          | The sender of alert email, required with `SMTP_URL`                                                                                                                                                                                       |
+| `SMTP_URL`            | Optional: the SMTP server alert email and account email go through, with its user name and password ([email](#email)). Never logged                                                                                                       |
+| `EMAIL_FROM`          | The sender of alert email and account email, required with `SMTP_URL`                                                                                                                                                                     |
 
 Compose stops with "set … in .env" when `OTTERTRAIL_DOMAIN`, `POSTGRES_PASSWORD`, `CLICKHOUSE_PASSWORD`, or `AUTH_SECRET` is missing.
 
@@ -246,14 +246,19 @@ Webhooks, where alerts can go ([webhooks](webhooks.md)), follow the same rules w
 
 On shutdown the worker lets running checks and deliveries finish, at most 30 seconds each, so Compose gives it 45 seconds (`stop_grace_period`) before stopping it.
 
-### Alert email
+### Email
 
-Optional, and only for alerts: invitations and password reset links are links the dashboard shows, and never need email. Alerts go to email channels through an SMTP server the instance is set up with: an email provider's or a relay of your own. Without one, email channels can still be made, the Settings page says email is not set up on this instance, and each email delivery fails with that reason. Webhooks need no setting.
+Optional. An SMTP server the instance is set up with (an email provider's or a relay of your own) sends two kinds of email:
+
+- **Alerts**, to email channels. Without SMTP, email channels can still be made, the Settings page says email is not set up on this instance, and each email delivery fails with that reason. Webhooks need no setting.
+- **Account email** ([access](access.md#account-email)): reset links asked for with "Forgot password?" on the sign-in page, invitations, reset links an owner or admin emails from the Members page, the notice that a password was reset, and the notice to an old address that an account's email changed. Without SMTP, none of these is sent: the sign-in page has no "Forgot password?" link and says to ask the person who runs the instance for a reset link, and invitations and reset links are copied from the Members page and sent by hand, as before.
+
+The Notification channels tab of the Settings page has "Send a test email", which sends one to the signed-in owner's or admin's own address at once and shows the mail server's answer.
 
 - `SMTP_URL` in `.env`: `smtps://user:password@smtp.example.com:465` for TLS from the start, or `smtp://user:password@smtp.example.com:587` for STARTTLS, which is then required, so the password never crosses the network in plain text. Percent-encode a user name or password that holds `@`, `:`, `/`, `?`, `#`, or `%`. A relay that needs no password takes `smtp://relay.internal:25`. The URL takes no query string: the TLS, timeout, and logging settings are Ottertrail's, and none can be changed from it. The API and the worker refuse to start on a URL that is not `smtp://` or `smtps://`, has a path, a query string, or a fragment, or has a user name without a password; their messages never repeat it, and neither logs it.
 - `EMAIL_FROM`: the sender, an address or a name and an address, such as `Ottertrail <alerts@example.com>`. Required with `SMTP_URL`. The provider must allow sending from that address (its domain verified, with SPF and DKIM), or messages land in spam or are refused.
 
-Messages are plain text: what happened, when (in the instance's timezone), the project, and a link to the dashboard; the subject starts with the instance's name. A failed message is retried for about an hour ([uptime and alerts](uptime-alerts.md#step-2-channels-and-delivery-as-built)); its error shows in the channel's deliveries on the Settings page. After changing either setting, run `docker compose up -d`.
+Alert messages are plain text: what happened, when (in the instance's timezone), the project, and a link to the dashboard; the subject starts with the instance's name. A failed message is retried for about an hour ([uptime and alerts](uptime-alerts.md#step-2-channels-and-delivery-as-built)); its error shows in the channel's deliveries on the Settings page. Account email is plain text with a simple HTML version, sent by the worker with the same retries; its links start with `PUBLIC_URL`. After changing either setting, run `docker compose up -d`: the API and the worker both read them.
 
 ### Location data
 
@@ -360,7 +365,7 @@ Backups with the object store (18 November 2026), the same setup: Podman 6.2, po
 - Then `restore.sh` with all three files: "The object backup checks out: 2 objects (930 bytes), and the bucket answers", then the databases, then "Restored 2 objects (930 bytes)", exit 0, and no unpacked folder left. Before and after, the same: 4 events, 1 user, 2 projects, 1 replay, 1 source map, Garage's 2 objects and 930 bytes; the replay's recording answered 200 with 2,646 bytes, the player played it, and the stack mapped to `src/cart.ts` line 3.
 - After `down -v` again, `restore.sh --without-objects` with the tar missing warned, restored the databases, and exited 0. The player then said "This replay is not available: it may have expired", and the stack was not mapped.
 
-Not tested yet: Docker Engine and Docker Compose on a Linux server, a real domain with a Let's Encrypt certificate, ports 80 and 443, an `amd64` image, alert email through an SMTP server, an update that runs a migration on existing data, a restore on a new server, an object backup of Cloudflare R2 or Amazon S3, and the backup scripts under rootless Docker, rootless Podman on Linux, or SELinux.
+Not tested yet: Docker Engine and Docker Compose on a Linux server, a real domain with a Let's Encrypt certificate, ports 80 and 443, an `amd64` image, alert email and account email through a real SMTP server (only the tests' local SMTP server so far), an update that runs a migration on existing data, a restore on a new server, an object backup of Cloudflare R2 or Amazon S3, and the backup scripts under rootless Docker, rootless Podman on Linux, or SELinux.
 
 Releases as an install gets them (18 and 19 November 2026), on macOS with Podman 6.2 in a 4 GB machine shared with another project, and Docker Compose 5.8.0 and then 2.23.1 (the standalone binaries) on Podman's socket. The image was built from a clean export of the commit (`git archive`), tagged `ghcr.io/ottertrail/ottertrail:0.0.0-releasetest`, and chosen with `OTTERTRAIL_VERSION`, so nothing was pulled. The install folder held only `compose.yaml`, `example.env`, `backup.sh`, `restore.sh`, and a `.env` made from `example.env`; an override file kept elsewhere published Caddy on 8443 and 8081 and set `PUBLIC_URL`, as above.
 

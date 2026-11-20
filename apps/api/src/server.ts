@@ -6,6 +6,7 @@ import { createClickHouse } from "./clickhouse/clickhouse.ts";
 import { DEVELOPMENT_AUTH_SECRET, loadConfig } from "./config.ts";
 import { createDatabase } from "./db/database.ts";
 import { LiveLocationData } from "./enrichment/reload.ts";
+import { smtpMailer } from "./notifications/email.ts";
 import { s3ObjectStore } from "./storage/object-store.ts";
 import { storageSourcesOf } from "./storage/usage.ts";
 
@@ -23,6 +24,9 @@ const db = createDatabase({
 const clickhouse = createClickHouse(config.clickhouse);
 // Source maps; none when the install has no object store (docs/errors.md).
 const objectStore = config.objectStore === null ? null : s3ObjectStore(config.objectStore);
+// The test email on the Notification channels tab goes out from the API;
+// account email is queued for the worker, which has its own mailer.
+const mailer = config.email === null ? null : smtpMailer(config.email);
 const auth = createAuth({
   db,
   publicUrl: config.publicUrl,
@@ -61,7 +65,8 @@ const app = buildApp({
     allowPrivateAddresses: config.uptimeAllowPrivateAddresses,
     denyAddresses: config.uptimeDenyAddresses,
   },
-  notifications: { emailConfigured: config.email !== null },
+  // SMTP_URL holds a password: it goes only to the mailer, never logged.
+  notifications: { emailConfigured: config.email !== null, mailer },
   // Garage's admin token goes only to its client: never logged or returned.
   storage: storageSourcesOf(config, db, clickhouse),
   trackerScriptPath: config.trackerScriptPath,
@@ -100,6 +105,7 @@ app.addHook("onClose", async () => {
   await db.destroy();
   await clickhouse.close();
   objectStore?.close();
+  mailer?.close();
 });
 
 async function shutdown(signal: NodeJS.Signals) {

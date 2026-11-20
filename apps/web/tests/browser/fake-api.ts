@@ -118,8 +118,13 @@ export interface FakeApi {
   members: { members: Member[]; invitations: Invitation[] };
   /** Which of the members is signed in, as GET /api/members answers `you`; the owner's row by default. */
   membersYou: string;
-  /** Whether the server has SMTP_URL, as GET /api/setup says. */
+  /**
+   * Whether the server has SMTP_URL, as GET /api/setup and GET /api/members
+   * say: invitations then answer `emailed`, and Forgot password works.
+   */
   emailConfigured: boolean;
+  /** How POST /api/reset-password/request answers with email set up: as usual, or its limit. */
+  resetRequest: "accepted" | "limited";
   projects: Project[];
   /**
    * Answers GET /api/projects/:id/analytics. A Response stands for an error.
@@ -3297,6 +3302,8 @@ export interface FakeChannels {
   testsLeft: number;
   /** Webhooks' secrets by channel ID: only GET and POST /api/channels/:id/secret answer them. */
   secrets: Record<string, string>;
+  /** How POST /api/channels/email-test answers with email set up: accepted, or the server's error. */
+  testEmail: "accepted" | { error: string };
 }
 
 /** The fake webhook's secret, as GET /api/channels/:id/secret answers it. */
@@ -3381,6 +3388,7 @@ export function fakeChannels(): FakeChannels {
     },
     testsLeft: 5,
     secrets: { [webhook.id]: FAKE_SECRET },
+    testEmail: "accepted",
   };
 }
 
@@ -3463,6 +3471,31 @@ function saveChannel(api: FakeApi, body: unknown, existing?: Channel): Response 
 function answerChannels(api: FakeApi, url: URL, init: RequestInit | undefined): Response | null {
   const path = url.pathname;
   const body = () => JSON.parse(typeof init?.body === "string" ? init.body : "{}") as unknown;
+  if (path === "/api/channels/email-test" && init?.method === "POST") {
+    if (!api.channels.emailConfigured) {
+      return json(
+        {
+          error: "email_not_set_up",
+          message:
+            "Email isn't set up on this instance, so there's nothing to test. Whoever runs the server sets SMTP_URL and EMAIL_FROM, then restarts it.",
+        },
+        409,
+      );
+    }
+    const { testEmail } = api.channels;
+    return testEmail === "accepted"
+      ? json({
+          email: "owner@example.com",
+          message: "The mail server accepted a test email for owner@example.com. Check your inbox.",
+        })
+      : json(
+          {
+            error: "email_failed",
+            message: `The test email could not be sent. Check the server's email settings, then try again. Error: ${testEmail.error}`,
+          },
+          502,
+        );
+  }
   if (path === "/api/channels") {
     if (init?.method === "POST") return saveChannel(api, body());
     return json({
@@ -4061,6 +4094,7 @@ export function installFakeApi(overrides: Partial<FakeApi> = {}): FakeApi {
     members: fakeMembers(),
     membersYou: "user-1",
     emailConfigured: false,
+    resetRequest: "accepted",
     projects: [PROJECT],
     analytics: (_projectId, _period, _query, api) => analyticsFixture({ goals: api.goals }),
     goals: fakeGoals(),
@@ -4209,6 +4243,7 @@ function answerMembers(api: FakeApi, url: URL, init: RequestInit | undefined): R
     return json({
       you: { id: api.membersYou, role: api.access.role },
       invitationDays: 7,
+      emailConfigured: api.emailConfigured,
       members: state.members,
       invitations: state.invitations,
     });
@@ -4232,14 +4267,21 @@ function answerMembers(api: FakeApi, url: URL, init: RequestInit | undefined): R
       createdAt: "2026-11-17T08:00:00.000Z",
     };
     state.invitations = [invitation, ...state.invitations.filter((item) => item.email !== email)];
-    return json({ invitation, url: linkUrl("/invite", "new-invite-token") }, 201);
+    return json(
+      { invitation, url: linkUrl("/invite", "new-invite-token"), emailed: api.emailConfigured },
+      201,
+    );
   }
   const invitation = /^\/api\/invitations\/([^/]+)(\/link)?$/.exec(path);
   if (invitation?.[1] !== undefined) {
     const found = state.invitations.find((item) => item.id === invitation[1]);
     if (found === undefined) return json({ error: "invitation_not_found", message: "Gone." }, 404);
     if (invitation[2] !== undefined) {
-      return json({ invitation: found, url: linkUrl("/invite", "renewed-invite-token") });
+      return json({
+        invitation: found,
+        url: linkUrl("/invite", "renewed-invite-token"),
+        emailed: api.emailConfigured,
+      });
     }
     state.invitations = state.invitations.filter((item) => item.id !== found.id);
     return new Response(null, { status: 204 });
@@ -4250,7 +4292,11 @@ function answerMembers(api: FakeApi, url: URL, init: RequestInit | undefined): R
   if (found === undefined) return json({ error: "member_not_found", message: "Gone." }, 404);
   if (member[2] === "reset-link") {
     return json(
-      { url: linkUrl("/reset-password", "reset-token"), expiresAt: "2026-11-18T08:00:00.000Z" },
+      {
+        url: linkUrl("/reset-password", "reset-token"),
+        expiresAt: "2026-11-18T08:00:00.000Z",
+        emailed: body().email === true,
+      },
       201,
     );
   }
@@ -4311,6 +4357,34 @@ function answerLinks(api: FakeApi, url: URL, init: RequestInit | undefined): Res
   }
   if (path === "/api/setup") {
     return new Response(JSON.stringify({ created: true }), { status: 201 });
+  }
+  if (path === "/api/reset-password/request") {
+    if (!api.emailConfigured) {
+      return json(
+        {
+          error: "email_not_set_up",
+          message:
+            "Email isn't set up on this instance, so Ottertrail can't send reset links. Ask the person who runs it for a reset link.",
+        },
+        404,
+      );
+    }
+    return api.resetRequest === "limited"
+      ? json(
+          {
+            error: "rate_limited",
+            message: "Too many reset requests. Wait a little, then try again.",
+          },
+          429,
+        )
+      : json(
+          {
+            requested: true,
+            message:
+              "If an account uses that email, we'll send a reset link. Check your inbox and spam folder.",
+          },
+          202,
+        );
   }
   if (path === "/api/invite/preview") {
     return token !== GOOD_INVITE

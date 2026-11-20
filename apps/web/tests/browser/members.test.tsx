@@ -145,7 +145,11 @@ describe("the Members page", () => {
     // The moment it expires is in the time element, to the minute.
     expect(document.querySelector(`time[datetime="${inFive}"]`)).not.toBeNull();
     await expect
-      .element(page.getByText("Ottertrail can't show an invitation's link again", { exact: false }))
+      .element(
+        page.getByText("Ottertrail can't show or send an invitation's link again", {
+          exact: false,
+        }),
+      )
       .toBeVisible();
 
     await tab(/^Members/).click();
@@ -185,7 +189,12 @@ describe("the Members page", () => {
     const form = dialog("Invite someone");
     // Why no email goes out, and what to do instead.
     await expect
-      .element(form.getByText("Ottertrail doesn't email invitations", { exact: false }))
+      .element(
+        form.getByText(
+          "Email isn't set up on this instance, so Ottertrail can't email invitations",
+          { exact: false },
+        ),
+      )
       .toBeVisible();
     await form.getByRole("textbox", { name: "Email" }).fill("Leo@Example.com");
     await form.getByRole("radio", { name: /^Engineering/ }).click();
@@ -490,7 +499,11 @@ describe("the Members page", () => {
     await act("Ada Admin", "Make reset link");
     const reset = dialog("A reset link for Ada Admin");
     await expect
-      .element(reset.getByText("Ottertrail doesn't email it", { exact: false }))
+      .element(
+        reset.getByText("Email isn't set up on this instance, so Ottertrail can't email it", {
+          exact: false,
+        }),
+      )
       .toBeVisible();
     await reset.getByRole("button", { name: "Make the link" }).click();
     await expect

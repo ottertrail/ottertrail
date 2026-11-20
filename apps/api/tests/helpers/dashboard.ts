@@ -42,6 +42,7 @@ export async function signedInDashboard({
   storage,
   linkLimit = { capacity: 1000, refillPerSecond: 1000 },
   passwordTryLimit,
+  resetRequestLimits,
 }: {
   timeZone?: string;
   now?: () => Date;
@@ -67,6 +68,8 @@ export async function signedInDashboard({
   linkLimit?: RateLimit;
   /** Current-password tries per user, shared by the routes that check one (tests/account.test.ts). */
   passwordTryLimit?: RateLimit;
+  /** "Forgot password?" requests per client address and per email address (tests/account-email.test.ts). */
+  resetRequestLimits?: { ip?: RateLimit; email?: RateLimit };
 } = {}) {
   const testDb = await createTestDatabase();
   const testClickHouse = await createTestClickHouse().catch(async (error: unknown) => {
@@ -89,6 +92,12 @@ export async function signedInDashboard({
       trustedOrigins: [PUBLIC_URL],
       linkLimit,
       ...(passwordTryLimit === undefined ? {} : { passwordTryLimit }),
+      ...(resetRequestLimits?.ip === undefined
+        ? {}
+        : { resetRequestIpLimit: resetRequestLimits.ip }),
+      ...(resetRequestLimits?.email === undefined
+        ? {}
+        : { resetRequestEmailLimit: resetRequestLimits.email }),
       ...(now === undefined ? {} : { now }),
     },
     ...(objectStore === undefined ? {} : { objectStore }),

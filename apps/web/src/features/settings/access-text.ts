@@ -42,3 +42,11 @@ export function accessSummary(access: MemberAccess): string {
         : `${projects.length} projects`;
   return `${what} · ${where}`;
 }
+
+/** Why a link can't be shown twice, and what to do when it is lost. */
+export const LINK_ONCE =
+  "Copy it now: Ottertrail keeps only a fingerprint of the link, so it can't show it again.";
+
+/** What to say beside an emailed link: what to do if the email goes missing. */
+export const emailedAbout = (who: string) =>
+  `If it hasn't arrived within a few minutes, ask ${who} to check their spam folder, or copy the link and send it to them yourself. ${LINK_ONCE}`;

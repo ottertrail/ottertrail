@@ -37,6 +37,10 @@ const PUBLIC_ROUTES = new Set([
   "POST /api/invite/accept",
   "POST /api/reset-password/preview",
   "POST /api/reset-password",
+  // "Forgot password?" on the sign-in page: anyone may ask, so it answers
+  // the same for every address, is limited per client address and per
+  // email address, and only queues an email (docs/access.md).
+  "POST /api/reset-password/request",
   // The heatmap overlay on a customer's site: exchanging a one-time link
   // token (in the body) for an overlay session, and the browser's
   // preflight for the read. They take no cookie; the read itself declares
@@ -78,6 +82,7 @@ const EXPECTED: Record<string, string> = {
   "GET /api/channels/:channelId/secret": "permission:channels",
   "POST /api/channels/:channelId/secret": "permission:channels",
   "POST /api/channels/:channelId/test": "permission:channels",
+  "POST /api/channels/email-test": "permission:channels",
   "GET /api/channels/:channelId/deliveries": "permission:channels",
 
   "GET /api/projects/:id": "project",

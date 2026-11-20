@@ -9,32 +9,39 @@ import { type Actor, lockUser, mayManage } from "./members.ts";
 export const RESET_LINK_TTL_MS = 24 * 60 * 60 * 1000;
 /** How long a reset link from the server's command works. */
 export const COMMAND_RESET_TTL_MS = 60 * 60 * 1000;
+/** How long a reset link asked for on the sign-in page, and emailed, works. */
+export const EMAILED_RESET_TTL_MS = 60 * 60 * 1000;
+
+/** Who made a link: a user on the Members page, the server's command, or a request on the sign-in page. */
+export type ResetMaker = { userId: string } | "command" | "email";
 
 /**
  * A one-time link that sets a user's password (docs/access.md). A user has
- * one at most: a new one replaces the old. Only a hash of its token is
- * kept. `madeBy` names the user who made it, or is "command" for the server's
- * command. Callers check that the maker may reset the user; using the link
- * checks it again.
+ * one emailed link at most, and one other: a new one replaces the old of
+ * its sort, so asking for an email never voids a link an owner or admin
+ * made, nor the other way round. Only a hash of its token is kept.
+ * `madeBy` names the user who made it, "command" for the server's
+ * command, or "email" for a request on the sign-in page. Callers check
+ * that a maker may reset the user; using the link checks it again.
  */
 export async function createPasswordReset(
   db: Kysely<Database> | Transaction<Database>,
   userId: string,
-  { madeBy, ttlMs, now }: { madeBy: { userId: string } | "command"; ttlMs: number; now: Date },
+  { madeBy, ttlMs, now }: { madeBy: ResetMaker; ttlMs: number; now: Date },
 ): Promise<{ token: string; expiresAt: Date }> {
   const { token, hash } = newToken();
   const expiresAt = new Date(now.getTime() + ttlMs);
   const values = {
     token_hash: hash,
     expires_at: expiresAt,
-    created_by: madeBy === "command" ? null : madeBy.userId,
+    created_by: typeof madeBy === "string" ? null : madeBy.userId,
     made_by_command: madeBy === "command",
     created_at: now,
   };
   await db
     .insertInto("dashboard_password_resets")
-    .values({ ...values, user_id: userId })
-    .onConflict((conflict) => conflict.column("user_id").doUpdateSet(values))
+    .values({ ...values, user_id: userId, emailed: madeBy === "email" })
+    .onConflict((conflict) => conflict.columns(["user_id", "emailed"]).doUpdateSet(values))
     .execute();
   return { token, expiresAt };
 }
@@ -80,13 +87,14 @@ export async function usePasswordReset(
       .deleteFrom("dashboard_password_resets")
       .where("token_hash", "=", hashToken(token))
       .where("expires_at", ">", now)
-      .returning(["user_id", "created_by", "made_by_command"])
+      .returning(["user_id", "created_by", "made_by_command", "emailed"])
       .executeTakeFirst();
     if (used === undefined) return null;
     // A link a user made works only while they may still reset this user
     // as they are now: a maker since demoted, or a target since promoted,
     // makes it void. The rows are locked, so neither changes meanwhile.
-    if (!used.made_by_command) {
+    // A link from the command or an emailed request has no maker to check.
+    if (!used.made_by_command && !used.emailed) {
       const maker = used.created_by === null ? null : await lockUser(trx, used.created_by);
       const target = await lockUser(trx, used.user_id);
       if (maker === null || target === null || !mayManage(maker, target)) return null;
@@ -109,6 +117,8 @@ export async function usePasswordReset(
         .execute();
     }
     await trx.deleteFrom("dashboard_sessions").where("user_id", "=", used.user_id).execute();
+    // The user's other link, of the other sort, would set the password again: it goes too.
+    await trx.deleteFrom("dashboard_password_resets").where("user_id", "=", used.user_id).execute();
     const user = await trx
       .selectFrom("dashboard_users")
       .select("email")
@@ -128,15 +138,21 @@ export async function makeResetLink(
   actor: Actor,
   targetId: string,
   now: Date,
-): Promise<{ token: string; expiresAt: Date } | "not_found" | "forbidden"> {
+): Promise<{ token: string; expiresAt: Date; email: string } | "not_found" | "forbidden"> {
   return db.transaction().execute(async (trx) => {
     const target = await lockUser(trx, targetId);
     if (target === null) return "not_found";
     if (!mayManage(actor, target)) return "forbidden";
-    return createPasswordReset(trx, target.id, {
+    const made = await createPasswordReset(trx, target.id, {
       madeBy: { userId: actor.id },
       ttlMs: RESET_LINK_TTL_MS,
       now,
     });
+    const { email } = await trx
+      .selectFrom("dashboard_users")
+      .select("email")
+      .where("id", "=", target.id)
+      .executeTakeFirstOrThrow();
+    return { ...made, email };
   });
 }

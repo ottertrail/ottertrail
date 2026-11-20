@@ -17,7 +17,7 @@ import type { NotificationPayload } from "./events.ts";
 export const EMAIL_TIMEOUT_MS = 20_000;
 
 /** The longest subject line, in characters. */
-const MAX_SUBJECT = 200;
+export const MAX_SUBJECT = 200;
 
 export const NOT_SET_UP_ERROR =
   "Email is not configured on this instance. The instance's operator must set SMTP_URL and EMAIL_FROM.";
@@ -26,6 +26,8 @@ export interface MailMessage {
   to: string[];
   subject: string;
   text: string;
+  /** An HTML version of `text`, escaped (account email); plain text only when left out. */
+  html?: string;
 }
 
 /** Sends a message; throws Nodemailer's error when it fails. */
@@ -74,6 +76,7 @@ export function smtpMailer(config: EmailConfig, { ca }: { ca?: string } = {}): M
         to: message.to,
         subject: message.subject,
         text: message.text,
+        ...(message.html === undefined ? {} : { html: message.html }),
         signal,
       });
       return { accepted: Array.isArray(info.accepted) ? info.accepted.length : 0 };
@@ -100,7 +103,7 @@ function timeText(iso: string, timeZone: string): string {
 
 /** A line with no line breaks or other control characters. */
 // eslint-disable-next-line no-control-regex -- control characters are what it replaces
-const oneLine = (text: string) => text.replace(/[\u0000-\u001F\u007F]+/gu, " ").trim();
+export const oneLine = (text: string) => text.replace(/[\u0000-\u001F\u007F]+/gu, " ").trim();
 
 /** A notification as an email: the subject starts with the instance's name. */
 export function emailOf(

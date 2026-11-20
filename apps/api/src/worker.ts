@@ -19,6 +19,10 @@
  * - Sending due notifications every few seconds, at most 10 at once, by
  *   email and webhook, retrying failures for about an hour, and deleting
  *   deliveries past their 30 days every hour (notifications/sender.ts).
+ * - Sending account email every few seconds, with SMTP only: reset links,
+ *   "password changed" notices, invitations, and email-change notices,
+ *   retried as alert deliveries are, each row deleted once sent or given
+ *   up (notifications/account-emails.ts).
  * - At start, every 6 hours, sooner after a failure while a file is
  *   missing, and within a minute of the setting being turned on:
  *   downloading a new location database (monthly) and new data-center
@@ -54,6 +58,7 @@ import {
   SETTING_POLL_MS,
   UPDATE_CHECK_INTERVAL_MS,
 } from "./enrichment/updates.ts";
+import { AccountEmailSender } from "./notifications/account-emails.ts";
 import { pruneDeliveries } from "./notifications/deliveries.ts";
 import { smtpMailer } from "./notifications/email.ts";
 import { DELIVERY_TICK_MS, DeliverySender, PRUNE_INTERVAL_MS } from "./notifications/sender.ts";
@@ -228,6 +233,25 @@ const stopChecks = every(CHECK_TICK_MS, async () => {
 const mailer = config.email === null ? null : smtpMailer(config.email);
 const deliveries = new DeliverySender({ db, mailer, policy, log });
 
+/** Account email, apart from alert deliveries; links start with PUBLIC_URL. */
+const accountEmails = new AccountEmailSender({ db, mailer, publicUrl: config.publicUrl, log });
+
+/** Whether the last look for due account emails failed: an outage is logged once. */
+let accountEmailsFailing = false;
+
+const stopAccountEmails = every(DELIVERY_TICK_MS, async () => {
+  try {
+    await accountEmails.tick();
+    if (accountEmailsFailing) log("info", "taking due account emails works again");
+    accountEmailsFailing = false;
+  } catch (error) {
+    if (!accountEmailsFailing) {
+      log("error", "taking due account emails failed", { err: String(error) });
+    }
+    accountEmailsFailing = true;
+  }
+});
+
 /** Whether the last look for due deliveries failed: an outage is logged once. */
 let deliveriesFailing = false;
 
@@ -348,13 +372,14 @@ async function shutdown(signal: NodeJS.Signals) {
     stopAlerts(),
     stopTelemetryAlerts(),
     stopDeliveries(),
+    stopAccountEmails(),
     stopPruning(),
     stopRetention(),
     stopLocationData(),
     stopStorage(),
   ]);
   // Requests under way finish and are recorded: each is at most 30 seconds.
-  await Promise.all([checks.drain(), deliveries.drain()]);
+  await Promise.all([checks.drain(), deliveries.drain(), accountEmails.drain()]);
   mailer?.close();
   await clickhouse.close();
   objectStore?.close();

@@ -1,4 +1,4 @@
-/** GET /api/setup: whether the instance still needs its owner, and whether alert email is set up. */
+/** GET /api/setup: whether the instance still needs its owner, and whether email is set up (SMTP_URL). */
 export async function fetchSetupStatus(
   signal?: AbortSignal,
 ): Promise<{ ownerExists: boolean; emailConfigured: boolean }> {
@@ -14,11 +14,6 @@ export async function fetchSetupStatus(
     ownerExists: body.ownerExists === true,
     emailConfigured: "emailConfigured" in body && body.emailConfigured === true,
   };
-}
-
-/** GET /api/setup: whether the instance still needs its owner account. */
-export async function fetchOwnerExists(signal?: AbortSignal): Promise<boolean> {
-  return (await fetchSetupStatus(signal)).ownerExists;
 }
 
 export interface OwnerDetails {

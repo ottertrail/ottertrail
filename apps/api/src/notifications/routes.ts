@@ -5,6 +5,7 @@ import { requirePermission } from "../access/access.ts";
 import type { Auth } from "../auth/auth.ts";
 import { requireTrustedOrigin } from "../auth/origin.ts";
 import { requireSession, signedInUser } from "../auth/routes.ts";
+import { type RateLimit, TokenBucketLimiter } from "../collection/rate-limiter.ts";
 import type { Database } from "../db/schema.ts";
 import {
   type AddressPolicy,
@@ -14,6 +15,8 @@ import {
   systemLookup,
 } from "../outbound/addresses.ts";
 import { MAX_URL, type Problem } from "../outbound/url.ts";
+import { readInstanceSettings } from "../settings/settings.ts";
+import { testEmailMessage } from "./account-emails.ts";
 import {
   type Channel,
   type ChannelInput,
@@ -38,6 +41,10 @@ import {
   sendTest,
   TEST_SENDS_PER_MINUTE,
 } from "./deliveries.ts";
+import { EMAIL_TIMEOUT_MS, type Mailer, mailError } from "./email.ts";
+
+/** Test emails per user: 5 per 10 minutes. */
+export const DEFAULT_TEST_EMAIL_LIMIT: RateLimit = { capacity: 5, refillPerSecond: 5 / 600 };
 
 const UUID_PATTERN =
   "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$";
@@ -86,6 +93,7 @@ const NO_CHANNEL: Problem = {
  * POST   /api/channels/:channelId/secret       a new one, answered once
  * POST   /api/channels/:channelId/test         a test notification
  * GET    /api/channels/:channelId/deliveries[?before=<delivery ID>&limit=20]
+ * POST   /api/channels/email-test             a test email to the signed-in user, sent at once
  *
  * The instance's notification channels (channels.ts; docs/uptime-alerts.md).
  * Every route needs the owner or an admin (docs/access.md); changes need
@@ -104,6 +112,10 @@ export const channelRoutes: FastifyPluginCallback<{
   publicUrl: string;
   /** Whether SMTP_URL is set: the dashboard says so beside email channels. */
   emailConfigured: boolean;
+  /** The SMTP server's mailer, for the test email; null when SMTP_URL is unset. */
+  mailer?: Mailer | null;
+  /** Test emails per user (DEFAULT_TEST_EMAIL_LIMIT). */
+  testEmailLimit?: RateLimit;
   /** The uptime checks' address rules (UPTIME_ALLOW_PRIVATE_ADDRESSES, UPTIME_DENY_ADDRESSES). */
   policy: AddressPolicy;
   /** Resolves a webhook's host when it is saved; tests pass a fake. */
@@ -117,6 +129,8 @@ export const channelRoutes: FastifyPluginCallback<{
     trustedOrigins,
     publicUrl,
     emailConfigured,
+    mailer = null,
+    testEmailLimit = DEFAULT_TEST_EMAIL_LIMIT,
     policy,
     lookup = systemLookup,
     now = () => new Date(),
@@ -127,6 +141,60 @@ export const channelRoutes: FastifyPluginCallback<{
   const fromDashboard = requireTrustedOrigin(trustedOrigins);
   // The owner and admins (docs/access.md); members see channels by name on the Alerts page.
   const manageChannels = requirePermission(db, "channels");
+  const testEmails = new TokenBucketLimiter(testEmailLimit);
+
+  /**
+   * A test email to the signed-in user's own address, through the
+   * instance's SMTP server, sent while the request waits so the page can
+   * say how it went: the server's refusal in mailError's words, which
+   * never hold SMTP_URL. Not queued, and not a channel's delivery.
+   */
+  app.post(
+    "/channels/email-test",
+    { preHandler: [fromDashboard, signedIn, manageChannels] },
+    async (request, reply) => {
+      const user = signedInUser(request);
+      if (mailer === null || !emailConfigured) {
+        return reply.code(409).send({
+          error: "email_not_set_up",
+          message:
+            "Email isn't set up on this instance, so there's nothing to test. Whoever runs the server sets SMTP_URL and EMAIL_FROM, then restarts it.",
+        });
+      }
+      const tried = testEmails.take(user.id);
+      if (!tried.allowed) {
+        return reply
+          .code(429)
+          .header("retry-after", String(tried.retryAfterSeconds))
+          .send({
+            error: "rate_limited",
+            message: `You can send ${testEmailLimit.capacity} test emails in 10 minutes. Try again in ${tried.retryAfterSeconds} seconds.`,
+          });
+      }
+      const { name } = await readInstanceSettings(db);
+      const signal = AbortSignal.timeout(EMAIL_TIMEOUT_MS);
+      let error: string | null = null;
+      try {
+        const { accepted } = await mailer.send(
+          { to: [user.email], ...testEmailMessage(name) },
+          signal,
+        );
+        if (accepted === 0) error = "The SMTP server accepted none of the addresses.";
+      } catch (failure) {
+        error = mailError(failure, signal);
+      }
+      if (error !== null) {
+        return reply.code(502).send({
+          error: "email_failed",
+          message: `The test email could not be sent. Check the server's email settings, then try again. Error: ${error}`,
+        });
+      }
+      return {
+        email: user.email,
+        message: `The mail server accepted a test email for ${user.email}. Check your inbox.`,
+      };
+    },
+  );
 
   /**
    * Why a webhook's URL may not be saved: its host resolves to an address

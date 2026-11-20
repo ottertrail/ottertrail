@@ -86,6 +86,10 @@ const ErrorPage = lazyPage(() => import("@/features/errors/error-page"), "ErrorP
 const ErrorsPage = lazyPage(() => import("@/features/errors/errors-page"), "ErrorsPage");
 const EventPage = lazyPage(() => import("@/features/product/event-page"), "EventPage");
 const EventsPage = lazyPage(() => import("@/features/product/events-page"), "EventsPage");
+const ForgotPasswordPage = lazyPage(
+  () => import("@/features/auth/forgot-password-page"),
+  "ForgotPasswordPage",
+);
 const FunnelPage = lazyPage(() => import("@/features/product/funnel-page"), "FunnelPage");
 const HeatmapsPage = lazyPage(() => import("@/features/heatmaps/heatmaps-page"), "HeatmapsPage");
 const HostPage = lazyPage(() => import("@/features/telemetry/host-page"), "HostPage");
@@ -181,6 +185,14 @@ const inviteRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/invite",
   component: InvitePage,
+  pendingComponent: AuthPending,
+});
+
+/** Asking for a reset link by email ("Forgot password?"): public, with email set up. */
+const forgotPasswordRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/forgot-password",
+  component: ForgotPasswordPage,
   pendingComponent: AuthPending,
 });
 
@@ -1256,6 +1268,7 @@ const routeTree = rootRoute.addChildren([
   signInRoute,
   setupRoute,
   inviteRoute,
+  forgotPasswordRoute,
   resetPasswordRoute,
   appRoute.addChildren([
     homeRoute,
