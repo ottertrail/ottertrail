@@ -211,7 +211,10 @@ describe("every page has something to show", () => {
     expect(failed.traces.length).toBeGreaterThan(0);
     const { logs }: Json = await get("/logs?period=7d");
     expect(logs.length).toBeGreaterThan(0);
-    const severities = new Set(logs.map((log: Json) => log.severityText));
+    // The newest page can hold one severity at a quiet hour; the week holds several.
+    const { logs: warnings }: Json = await get("/logs?period=7d&severity=warn");
+    expect(warnings.length).toBeGreaterThan(0);
+    const severities = new Set([...logs, ...warnings].map((log: Json) => log.severityText));
     expect(severities.size).toBeGreaterThan(1);
     expect(logs.some((log: Json) => log.traceId !== "")).toBe(true);
   });
