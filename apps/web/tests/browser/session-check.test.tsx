@@ -37,7 +37,7 @@ describe("the session check", () => {
     // A navigation within the cache's 30 seconds uses the answer it has.
     await workspaceMenu().getByRole("link", { name: "Members" }).click();
     await expect.poll(() => currentPath(router)).toBe("/settings/members");
-    await expect.element(page.getByRole("heading", { name: "Everyone with access" })).toBeVisible();
+    await expect.element(page.getByRole("tab", { name: /^Members/ })).toBeVisible();
     expect(sessionChecks(api)).toBe(before);
   });
 
