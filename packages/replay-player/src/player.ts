@@ -170,9 +170,15 @@ export function startPlayer(root: HTMLElement, options: PlayerOptions): Player {
   const time = element("span", "ot-time", "0:00 / 0:00");
   time.setAttribute("aria-hidden", "true");
 
-  const jump = element("button", "ot-button", "Jump to the error");
+  // The button carries the marker's red bar and the error's time, so the
+  // line on the timeline explains itself: the marker lets the slider take
+  // the pointer, so it has no hover text of its own.
+  const jump = element("button", "ot-button");
   jump.type = "button";
   jump.hidden = true;
+  const jumpTime = element("span", "ot-jump-time");
+  jumpTime.setAttribute("aria-hidden", "true");
+  jump.append(element("span", "ot-swatch"), "Jump to the error", jumpTime);
 
   const speeds = element("div", "ot-group");
   speeds.setAttribute("role", "group");
@@ -361,7 +367,8 @@ export function startPlayer(root: HTMLElement, options: PlayerOptions): Player {
     if (errorAtOffset !== null) {
       marker.hidden = false;
       marker.style.left = `${markerPercent(errorAtOffset, totalTime)}%`;
-      marker.title = `The error, at ${formatClock(errorAtOffset)}`;
+      jumpTime.textContent = `· ${formatClock(errorAtOffset)}`;
+      jump.setAttribute("aria-label", `Jump to the error, at ${formatClock(errorAtOffset)}`);
       jump.hidden = false;
       jump.addEventListener("click", () => seek(errorAtOffset));
     }

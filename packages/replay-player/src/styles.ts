@@ -96,6 +96,14 @@ body {
   background: var(--danger);
   pointer-events: none;
 }
+.ot-swatch {
+  display: inline-block;
+  width: 3px;
+  height: 14px;
+  border-radius: 2px;
+  background: var(--danger);
+}
+.ot-jump-time { color: var(--ink-muted); font-variant-numeric: tabular-nums; }
 .ot-time { font-variant-numeric: tabular-nums; color: var(--ink-muted); white-space: nowrap; }
 .ot-group { display: inline-flex; gap: 4px; border: 0; margin: 0; padding: 0; }
 .ot-check { display: inline-flex; align-items: center; gap: 6px; color: var(--ink-muted); }

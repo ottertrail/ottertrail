@@ -169,6 +169,11 @@ describe("the replay player", () => {
     expect(marker?.hidden).toBe(false);
     expect(marker?.style.left).toBe("75%");
     expect(marker?.textContent).toBe("The error");
+    // The button names the marker: its red bar and the error's time.
+    const jump = page.getByRole("button", { name: "Jump to the error, at 1:30" });
+    await expect.element(jump).toBeVisible();
+    expect(jump.element().querySelector(".ot-swatch")).not.toBeNull();
+    expect(jump.element().textContent).toBe("Jump to the error· 1:30");
 
     // The page as recorded, in rrweb's frame.
     await expect
@@ -179,7 +184,7 @@ describe("the replay player", () => {
   test("jumps to the error, plays and pauses, by button and by Space", async () => {
     await start(() => json(recording()));
 
-    await page.getByRole("button", { name: "Jump to the error" }).click();
+    await page.getByRole("button", { name: /^Jump to the error/ }).click();
     await expect.element(slider()).toHaveAttribute("aria-valuetext", "1:30 of 2:00");
 
     await page.getByRole("button", { name: "Play the replay" }).click();
@@ -196,7 +201,7 @@ describe("the replay player", () => {
     await expect.element(page.getByRole("button", { name: "Play the replay" })).toBeVisible();
 
     // The timeline's arrows move 5 seconds.
-    await page.getByRole("button", { name: "Jump to the error" }).click();
+    await page.getByRole("button", { name: /^Jump to the error/ }).click();
     slider().element().focus();
     await userEvent.keyboard("{ArrowRight}");
     await expect.element(slider()).toHaveAttribute("aria-valuetext", "1:35 of 2:00");
@@ -235,7 +240,7 @@ describe("the replay player", () => {
     expect([...frame.sandbox]).toEqual(["allow-same-origin"]);
     expect(frame.sandbox.contains("allow-scripts")).toBe(false);
 
-    await page.getByRole("button", { name: "Jump to the error" }).click();
+    await page.getByRole("button", { name: /^Jump to the error/ }).click();
     const doc = frame.contentDocument;
     await expect.poll(() => doc?.querySelectorAll("img").length).toBe(2);
     // The scripts became noscript; the handlers stay attributes that never run.
