@@ -157,7 +157,7 @@ export function SetupPage() {
           {status.data !== undefined && (
             <p
               className="flex items-start gap-2 border-t pt-4 text-sm text-ink-muted"
-              aria-label="Alert email"
+              aria-label="Email status"
             >
               {status.data.emailConfigured ? (
                 <MailCheckIcon aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-success" />
@@ -166,11 +166,12 @@ export function SetupPage() {
               )}
               <span>
                 {status.data.emailConfigured ? (
-                  "Email for alerts is set up on this server."
+                  "Email is set up on this server: alerts, invitations, and password resets can be emailed."
                 ) : (
                   <>
-                    Email for alerts is not configured. Alerts can still go to webhooks. To send
-                    email, set <code className="font-mono">SMTP_URL</code> and{" "}
+                    Email isn't set up on this server, so alerts go only to webhooks, and invitation
+                    and reset links are copied and sent by hand. To send email, set{" "}
+                    <code className="font-mono">SMTP_URL</code> and{" "}
                     <code className="font-mono">EMAIL_FROM</code> on the server and restart it.
                   </>
                 )}

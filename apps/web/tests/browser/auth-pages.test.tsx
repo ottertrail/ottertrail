@@ -128,8 +128,8 @@ describe("owner setup", () => {
       .element(page.getByRole("combobox", { name: "Timezone" }))
       .toHaveValue(Intl.DateTimeFormat().resolvedOptions().timeZone);
     await expect
-      .element(page.getByLabelText("Alert email"))
-      .toMatchTextContent(/Email for alerts is not configured/);
+      .element(page.getByLabelText("Email status"))
+      .toMatchTextContent(/Email isn't set up on this server/);
     expectFits(390);
 
     restore = refuse("/api/setup", 400, "This setup link no longer works. Run the setup again.");

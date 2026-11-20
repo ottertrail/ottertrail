@@ -34,6 +34,15 @@ export const SCREEN_DOCS: Partial<Record<RoutePath, ScreenDocs>> = {
   // The workspace.
   "/projects": { topic: "Projects", path: "/introduction/instances-and-projects/#projects" },
   "/settings/members": { topic: "Members", path: "/team/members-and-roles/" },
+  "/account": {
+    topic: "Account settings",
+    path: "/team/account-settings/#profile",
+    tabs: {
+      password: { topic: "Password settings", path: "/team/account-settings/#password" },
+      sessions: { topic: "Sessions", path: "/team/account-settings/#sessions" },
+      appearance: { topic: "Appearance settings", path: "/team/account-settings/#appearance" },
+    },
+  },
   // The first tab the user may see depends on their role (General, or Storage
   // for an admin): the page that lists all four tabs.
   "/settings": {

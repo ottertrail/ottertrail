@@ -10,6 +10,10 @@ import { docsFor, DOCS_URL, SCREEN_DOCS } from "../src/lib/docs.ts";
 const EXPECTED: Record<string, [topic: string, path: string]> = {
   "/projects": ["Projects", "/introduction/instances-and-projects/#projects"],
   "/settings/members": ["Members", "/team/members-and-roles/"],
+  "/account": ["Account settings", "/team/account-settings/#profile"],
+  "/account?tab=password": ["Password settings", "/team/account-settings/#password"],
+  "/account?tab=sessions": ["Sessions", "/team/account-settings/#sessions"],
+  "/account?tab=appearance": ["Appearance settings", "/team/account-settings/#appearance"],
   "/settings": ["Instance settings", "/introduction/instances-and-projects/#the-instance"],
   "/settings?tab=location-data": [
     "Location data settings",

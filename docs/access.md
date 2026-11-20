@@ -298,7 +298,7 @@ The setup command stays. The setup page has:
 
 - a confirm-password field, checked in the browser and by the API;
 - the timezone, chosen on the page, with the browser's preselected and checked as the settings page checks it. The `TIMEZONE` setting is gone; the instance is in UTC until setup;
-- a line saying whether alert email (`SMTP_URL`) is set up, with a hint on how to set it when not (`GET /api/setup` answers `emailConfigured`). Nothing is sent.
+- a line saying whether email (`SMTP_URL` and `EMAIL_FROM`) is set up, which covers alerts and account email (invitations, reset links, Forgot password, notices; [Account email](#account-email)), with a hint on how to set it when not (`GET /api/setup` answers `emailConfigured`, which the sign-in page also reads). Nothing is sent.
 
 ## Known limits
 

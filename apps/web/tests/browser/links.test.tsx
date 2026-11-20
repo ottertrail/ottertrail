@@ -141,7 +141,7 @@ describe("the setup page", () => {
     open("/setup", "setup-token");
     const timeZone = page.getByRole("combobox", { name: "Timezone" });
     await expect.element(timeZone).toHaveValue(Intl.DateTimeFormat().resolvedOptions().timeZone);
-    await expect.element(page.getByText(/Email for alerts is not configured/)).toBeVisible();
+    await expect.element(page.getByText(/Email isn't set up on this server/)).toBeVisible();
 
     await page.getByRole("textbox", { name: "Name" }).fill("Ada");
     await page.getByRole("textbox", { name: "Email" }).fill("ada@example.com");
@@ -191,7 +191,11 @@ describe("the setup page", () => {
     installFakeApi({ signedIn: false, emailConfigured: true });
     open("/setup", "setup-token");
     await expect
-      .element(page.getByText("Email for alerts is set up on this server."))
+      .element(
+        page.getByText(
+          "Email is set up on this server: alerts, invitations, and password resets can be emailed.",
+        ),
+      )
       .toBeVisible();
   });
 });

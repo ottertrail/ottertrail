@@ -15,7 +15,7 @@ Code: `apps/api/src/auth/` and `apps/web/src/features/auth/`.
 
 ### Who can sign in
 
-The install's first account is its **owner**, created with the setup link ([below](#creating-the-owner)), which also names the instance ([Settings](#settings)). Other users are admins or members, with access per area and project ([access](access.md)). They join by invitation: an owner or admin copies a link from the Members page and sends it, or with SMTP set up, Ottertrail emails it too ([access](access.md#invitations)). Nobody can sign up yet: open sign-up, for the hosted service, needs Ottertrail's own account email for verification and password resets.
+The install's first account is its **owner**, created with the setup link ([below](#creating-the-owner)), which also names the instance ([Settings](#settings)). Other users are admins or members, with access per area and project ([access](access.md)). They join by invitation: an owner or admin copies a link from the Members page and sends it, or with SMTP set up, Ottertrail emails it too ([access](access.md#invitations)). Nobody can sign up on their own: open sign-up is planned for the hosted service, which will also verify new addresses by email.
 
 ### Creating the owner
 
