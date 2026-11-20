@@ -3,6 +3,7 @@ import type { Kysely } from "kysely";
 
 import { memberRoutes } from "./access/member-routes.ts";
 import { meRoutes } from "./access/routes.ts";
+import { accountRoutes } from "./account/routes.ts";
 import { alertRoutes } from "./alerts/routes.ts";
 import type { Auth } from "./auth/auth.ts";
 import { betterAuthRoutes, setupRoutes } from "./auth/routes.ts";
@@ -75,6 +76,8 @@ export interface AppOptions extends Omit<FastifyServerOptions, "logger"> {
     setupLimit?: RateLimit;
     /** Accepting invitations and using reset links, per client address (access/member-routes.ts). */
     linkLimit?: RateLimit;
+    /** Password tries for changing one's email or password, per user (account/routes.ts). */
+    accountLimit?: RateLimit;
   };
   /**
    * The S3-compatible object store that holds source maps and session
@@ -299,6 +302,13 @@ export function buildApp({
       publicUrl: dashboard.publicUrl,
       ...(dashboard.linkLimit === undefined ? {} : { linkLimit: dashboard.linkLimit }),
       ...(dashboard.now === undefined ? {} : { now: dashboard.now }),
+    });
+    app.register(accountRoutes, {
+      prefix: "/api",
+      db,
+      auth: dashboard.auth,
+      trustedOrigins: dashboard.trustedOrigins,
+      ...(dashboard.accountLimit === undefined ? {} : { passwordLimit: dashboard.accountLimit }),
     });
     app.register(settingsRoutes, {
       prefix: "/api",

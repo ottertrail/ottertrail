@@ -44,7 +44,7 @@ function problem(code: string, message: string) {
 }
 
 /** Node's request headers as a Fetch API Headers object. */
-function toHeaders(request: FastifyRequest): Headers {
+export function toHeaders(request: FastifyRequest): Headers {
   const headers = new Headers();
   for (const [name, value] of Object.entries(request.headers)) {
     if (value !== undefined) {

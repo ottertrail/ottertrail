@@ -41,6 +41,7 @@ export async function signedInDashboard({
   locationData,
   storage,
   linkLimit = { capacity: 1000, refillPerSecond: 1000 },
+  accountLimit,
 }: {
   timeZone?: string;
   now?: () => Date;
@@ -64,6 +65,8 @@ export async function signedInDashboard({
   storage?: AppOptions["storage"];
   /** Accepting invitations and using reset links, per client address; no limit by default. */
   linkLimit?: RateLimit;
+  /** Password tries for changing one's email or password, per user (tests/account.test.ts). */
+  accountLimit?: RateLimit;
 } = {}) {
   const testDb = await createTestDatabase();
   const testClickHouse = await createTestClickHouse().catch(async (error: unknown) => {
@@ -85,6 +88,7 @@ export async function signedInDashboard({
       publicUrl: PUBLIC_URL,
       trustedOrigins: [PUBLIC_URL],
       linkLimit,
+      ...(accountLimit === undefined ? {} : { accountLimit }),
       ...(now === undefined ? {} : { now }),
     },
     ...(objectStore === undefined ? {} : { objectStore }),

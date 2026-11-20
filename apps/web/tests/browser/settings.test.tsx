@@ -143,7 +143,8 @@ describe("the instance's settings", () => {
     const router = renderApp("/projects");
     await expect.element(page.getByText("Acme Inc", { exact: true })).toBeVisible();
 
-    await page.getByRole("button", { name: "Sign out" }).click();
+    await page.getByRole("button", { name: /Account menu$/ }).click();
+    await page.getByRole("menuitem", { name: "Sign out" }).click();
     await expect.poll(() => router.state.location.pathname).toBe("/sign-in");
 
     // Another user signs in on the same browser, after the settings changed.

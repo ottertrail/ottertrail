@@ -50,6 +50,7 @@ Signing in creates a **session**: a random token stored in the `dashboard_sessio
 - The cookie is `httpOnly` (page scripts cannot read it, so an injected script cannot steal it), `SameSite=Lax` (another site's background requests and form posts do not carry it; following a link to the dashboard does), and `Secure` over HTTPS.
 - A session lasts 7 days and renews while in use. Signing out deletes the session, so its cookie stops working at once, even if it was copied. A signed token that the server does not store (a JWT) could not be revoked before it expires.
 - Session rows keep the browser's User-Agent but no IP address; a check constraint rejects one.
+- Each user sees their sessions on [Account settings](#account-settings), and signs out any of the others there.
 - Requests that change something must come from a trusted origin (the instance's own `PUBLIC_URL`), which blocks cross-site request forgery: a page on another site cannot sign someone in or out.
 
 The session token is stored as it is in the database, so anyone who can read the database could act as a signed-in user. Database access must be protected like the dashboard itself.
@@ -110,7 +111,7 @@ Beside the snippet, "Copy setup prompt" copies a prompt for a coding agent: read
 
 The dashboard has two levels, the way hosting dashboards treat each site:
 
-- **The workspace** (the sidebar's first group, under the instance's name): the project list (`/projects`), the design-system reference, and the instance's settings (`/settings`).
+- **The workspace** (the sidebar's first group, under the instance's name): the project list (`/projects`), for the owner and admins the Members page (`/settings/members`), and the instance's settings (`/settings`).
 - **Inside a project** (`/projects/<id>/…`): the sidebar becomes the project's own menu, with a switcher to the other projects and a link back to all of them. It lists the project's overview first, then its modules (web analytics, speed, users, errors, and the rest), then the project's settings. The header shows the project's name before the page title.
 
 Every module belongs to one project (its records carry `project_id`), so a module's pages sit under the project instead of at the top with a project picker. The switcher keeps the current page: from one project's web analytics for the last 90 days, it opens the other project's web analytics for the last 90 days.
@@ -118,6 +119,14 @@ Every module belongs to one project (its records carry `project_id`), so a modul
 The sidebar is expanded on every screen. Ctrl B (⌘ B on a Mac) or the header's button collapses it to icons, and the browser remembers the choice (`ottertrail.sidebar` in `localStorage`). Under 60rem it is a menu in a sheet, opened by the header's menu button and closed when a link in it is chosen ([screen patterns](design-system.md#the-shell)).
 
 A screen with a page on the docs site shows a **Docs** link at the header's end, before the shortcut hint: Web analytics links to `https://docs.ottertrail.app/web-analytics/reports/`, an error group to the section on its page, a settings tab to the tab's own page where there is one. One map, `SCREEN_DOCS` in `lib/docs.ts`, gives each route (and settings tab) its page, with `DOCS_URL`, the one place the site's address is written. A screen left out of the map, such as a project with no area open to the user, shows no link: no link is better than a page that does not explain the screen. The link opens a new tab with `rel="noopener noreferrer"`, so the docs site is not told the instance's address, and its name says what it opens ("Web analytics docs (opens in a new tab)"); under 40rem it shows only its icon. `tests/docs-links.test.ts` lists the whole map, so a new screen gets a page or no link by choice; when the docs site moves or renames a page, update the map and that list. `docs-link.test.tsx` checks the link on a report, a list, detail pages, and the settings tabs, its absence, and the phone width.
+
+The sidebar's head and foot are the same on every page:
+
+- **The head:** the mark and "Ottertrail", with the API's health on the right ("API online", "Checking API", or "API unreachable" with its reason in a tooltip and a Retry button; `components/api-status.tsx`, a polite live region named "API status"). Collapsed to icons, the health is a dot on the mark's corner (green, gray while checking, red), which keeps the words for screen readers and shows them, with the reason, in a tooltip on hover and focus. Retry waits for the expanded sidebar.
+- **The foot:** who is signed in, after shadcn's NavUser block (`components/app-shell/user-menu.tsx`): an avatar with the initials (there are no photos), the name and email, cut off with an ellipsis when long, and an up-and-down chevron. It opens a menu, beside the sidebar on a desktop and below the button on a phone, whose header repeats the avatar, name and email (wrapped, not cut off), then **Account settings** and, after a rule, **Sign out**. Sign out ends the session, clears the query cache so nothing of this user's shows to the next, and opens sign-in. Collapsed, only the avatar shows, and its tooltip names the user. The name and email come from `GET /api/me`, read again after the account changes.
+- **Text cut off** in the foot shows whole in a tooltip on hover and keyboard focus, only while it is cut off (`components/truncated-text.tsx`, a stopgap until a shared component replaces the truncation across the app).
+
+`account.test.tsx` covers the menu (opening, Account settings, Sign out), the collapsed foot and dot, the health in the head, the tooltip for a long name, and the sheet at 390 wide.
 
 `/projects/<id>` opens the project's [overview](#overview) when the user has one of its areas, and otherwise the first page in the menu they may open. The home page (`/`) opens the project this browser showed last (kept in `localStorage`), or else the first project; with no projects, it opens the project list.
 
@@ -807,6 +816,27 @@ A table fits better than the list with a detail pane it replaced: every action i
 ### Not done yet
 
 - Signing up for the hosted service, which creates the customer's instance and its owner (a control plane outside the app; not built).
+
+## Account settings
+
+Code: `apps/web/src/features/account/account-page.tsx`, `apps/web/src/lib/account-api.ts`, and `apps/api/src/account/routes.ts`. How the API checks it: [access](access.md#your-account).
+
+`/account`, from the sidebar foot's menu, is every signed-in user's own account, whatever their role. It has three tabs ([settings tabs and the Save bar](design-system.md#settings-tabs-and-the-save-bar)), the chosen one in the address (`?tab=password`; Profile, the first, leaves it out). There is no Appearance tab: the dashboard is dark only until a light theme is built.
+
+- **Profile:** two forms under [the save rule](design-system.md#the-save-rule).
+  - **Name** ("Save name"): 1 to 200 characters; spaces around it do not count as a change. The sidebar and everything that names the user (the Members page, "Resolved by") show the new name once saved.
+  - **Email** ("Change email"): the new address and the current password, asked every time. The address changes at once, with no confirmation email: Ottertrail sends no account email, because most self-hosted servers have no mail set up (decided with the user, 20 November 2026). The section says so, and asks the user to check the new address, which they sign in with from then on. Typing the password alone is nothing to save; after a change the password field empties and a line says the new address. A wrong password shows under the password field, an address in use or one sign-in would refuse under the email field, and anything else (the limit of tries) above the Save bar.
+- **Password** ("Change password"): the current password, the new one (at least 12 characters, as at sign-up), and its confirmation, checked on the page first; and "Sign out of my other devices", on by default. With it, every other session ends and this browser carries on in a new one. A wrong current password shows under its field; the checkbox alone is nothing to save.
+- **Sessions:** every session of the user, the most recently active first: the browser and system read from its User-Agent ("Firefox 145 on Windows"; `parseUserAgent` in `lib/account-api.ts`, a few patterns rather than a parser library), when it signed in, and when it was last active. The current one is marked "This device" and "Active now". "Last active" is a day, not a time: Better Auth renews a session's row at most once a day. Each other session has Sign out, and "Sign out of all other devices" ends them all; both ask first, in a dialog, and say what happened in a live region, with focus on the section's heading. One line says that Ottertrail doesn't record where a device signed in from, because it never stores IP addresses. No Save bar: these are actions.
+
+The tabs' forms mark their tab "Unsaved", and leaving with edits asks first, as on the other settings pages. Loading shows the tabs' skeleton; a failed session list says so, with Retry.
+
+`account.test.tsx` covers each tab's save rule and errors (wrong password, an address in use, mismatched passwords, the limit of tries), the sessions with This device, Sign out and Sign out of all other devices, the leave guard, and every tab at 390 wide, against the fake API (`tests/browser/fake-account.ts`); `apps/api/tests/account.test.ts` the routes.
+
+### Not done yet
+
+- Two-factor sign-in and passkeys.
+- A light theme, and the Appearance tab that will choose it.
 
 ## Code splitting
 

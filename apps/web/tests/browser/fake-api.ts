@@ -80,6 +80,7 @@ import type {
 } from "../../src/lib/traces-api.ts";
 import type { Check, CheckResults, IncidentList } from "../../src/lib/uptime-api.ts";
 import type { Activity, User, UserActivity, UserList } from "../../src/lib/users-api.ts";
+import { answerAccount, type FakeAccount, fakeAccount, sessionBody } from "./fake-account.ts";
 import { STORAGE } from "./storage-fixtures.ts";
 
 /**
@@ -272,6 +273,8 @@ export interface FakeApi {
   spamCounts: SpamCounts | Response;
   /** Answers DELETE /api/projects/:id; by default, removes the project (204). */
   deleteProject: (api: FakeApi, id: string) => Response;
+  /** The signed-in user's own name, email, password, and sessions (fake-account.ts). */
+  account: FakeAccount;
   /** Every path the page asked for, with its query, in order. */
   requests: string[];
   /** The bodies of requests that change something, such as a delete's confirmation. */
@@ -2260,7 +2263,7 @@ function meOf(api: FakeApi) {
   const { role, projects, areas } = api.access;
   const admin = role !== "member";
   return {
-    user: { ...SESSION.user, role },
+    user: { ...SESSION.user, name: api.account.name, email: api.account.email, role },
     instance: { name: api.settings.name, timeZone: api.settings.timeZone },
     access: { projects, areas },
     permissions: {
@@ -3591,7 +3594,7 @@ async function answer(api: FakeApi, url: URL, init: RequestInit | undefined): Pr
     if (api.sessionRefusal !== null) {
       return json({ message: "Refused" }, api.sessionRefusal);
     }
-    return json(api.signedIn ? SESSION : null);
+    return json(api.signedIn ? sessionBody(api.account) : null);
   }
   if (path === "/api/auth/sign-out") {
     api.signedIn = false;
@@ -3616,6 +3619,8 @@ async function answer(api: FakeApi, url: URL, init: RequestInit | undefined): Pr
   if (!api.signedIn && !path.startsWith("/api/auth/") && path !== "/api/setup") {
     return json({ error: "unauthorized", message: "Sign in to continue." }, 401);
   }
+  const account = answerAccount(api.account, url, init);
+  if (account !== null) return account;
   if (path === "/api/settings" && init?.method === "PATCH") {
     if (api.access.role !== "owner") {
       return json(
@@ -4110,6 +4115,7 @@ export function installFakeApi(overrides: Partial<FakeApi> = {}): FakeApi {
     holdLayout: null,
     unknownWidgets: [],
     widget: fakeWidget,
+    account: fakeAccount(),
     requests: [],
     bodies: [],
     ...overrides,

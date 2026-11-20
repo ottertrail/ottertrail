@@ -46,6 +46,7 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
+  useSidebar,
 } from "@/components/ui/sidebar";
 import { Skeleton } from "@/components/ui/skeleton";
 import { canOpen, hasOverview, meQuery, useAccess } from "@/lib/access";
@@ -489,6 +490,21 @@ function ProjectMenu({ projectId }: { projectId: string }) {
 }
 
 /**
+ * The API's health beside the name: "Ottertrail …… API online". Collapsed
+ * to icons, a dot on the mark's corner, with the same accessible name.
+ */
+function SidebarApiStatus() {
+  const { isMobile, state } = useSidebar();
+  const collapsed = state === "collapsed" && !isMobile;
+  return (
+    <ApiStatus
+      compact={collapsed}
+      className={collapsed ? "absolute right-0.5 bottom-0" : "ml-auto shrink-0"}
+    />
+  );
+}
+
+/**
  * Two levels, like a hosting dashboard: the workspace (all projects), and
  * inside a project, that project's own menu with a switcher and a way back.
  */
@@ -497,11 +513,12 @@ export function AppSidebar() {
   return (
     <Sidebar variant="inset" collapsible="icon">
       <SidebarHeader>
-        <div className="flex h-8 items-center gap-2 px-1.5">
+        <div className="relative flex h-8 items-center gap-2 px-1.5">
           <BrandMark className="size-5 shrink-0" />
           <span className="truncate text-sm font-semibold tracking-tight text-ink group-data-[collapsible=icon]:hidden">
             Ottertrail
           </span>
+          <SidebarApiStatus />
         </div>
         {projectId !== undefined && (
           <SidebarMenu>
@@ -521,11 +538,8 @@ export function AppSidebar() {
         </nav>
       </SidebarContent>
 
-      <SidebarFooter className="gap-3 group-data-[collapsible=icon]:hidden">
+      <SidebarFooter>
         <UserMenu />
-        <div className="px-1.5 pb-1">
-          <ApiStatus />
-        </div>
       </SidebarFooter>
     </Sidebar>
   );

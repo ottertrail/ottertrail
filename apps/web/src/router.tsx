@@ -71,6 +71,7 @@ import { type Device, isDevice } from "@/lib/speed-api";
  * "Code splitting"); the shell, the router, the session check, and the
  * layouts above the pages stay in the main chunk.
  */
+const AccountPage = lazyPage(() => import("@/features/account/account-page"), "AccountPage");
 const AlertsPage = lazyPage(() => import("@/features/alerts/alerts-page"), "AlertsPage");
 const AnalyticsPage = lazyPage(
   () => import("@/features/analytics/analytics-page"),
@@ -1225,6 +1226,18 @@ const settingsRoute = createRoute({
   component: SettingsPage,
 });
 
+/** The signed-in user's own account: every user has it (docs/dashboard.md). */
+const accountRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: "/account",
+  staticData: { title: "Account settings" },
+  // The chosen tab (SettingsTabs), left out for the first.
+  validateSearch: (search: { tab?: unknown } & SearchSchemaInput): { tab: string | undefined } => ({
+    tab: typeof search.tab === "string" && search.tab !== "" ? search.tab : undefined,
+  }),
+  component: AccountPage,
+});
+
 /** Members and invitations, for the owner and admins (docs/access.md). */
 const membersRoute = createRoute({
   getParentRoute: () => appRoute,
@@ -1285,6 +1298,7 @@ const routeTree = rootRoute.addChildren([
     ]),
     settingsRoute,
     membersRoute,
+    accountRoute,
   ]),
 ]);
 

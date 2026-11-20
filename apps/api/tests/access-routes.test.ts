@@ -48,6 +48,9 @@ const PUBLIC_ROUTES = new Set([
 /** What each dashboard route declares, as text: "errors:manage", "permission:channels" … */
 const EXPECTED: Record<string, string> = {
   "GET /api/me": "signed_in",
+  "PATCH /api/account": "signed_in",
+  "POST /api/account/email": "signed_in",
+  "POST /api/account/password": "signed_in",
   "GET /api/settings": "permission:settings",
   "PATCH /api/settings": "permission:settings",
   "GET /api/settings/location-data": "permission:settings",
