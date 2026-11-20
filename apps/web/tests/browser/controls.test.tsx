@@ -9,6 +9,7 @@ import { Checkbox } from "../../src/components/ui/checkbox.tsx";
 import { Switch } from "../../src/components/ui/switch.tsx";
 import { Tabs, TabsList, TabsTrigger } from "../../src/components/ui/tabs.tsx";
 import { ToggleGroup, ToggleGroupItem } from "../../src/components/ui/toggle-group.tsx";
+import { applyTheme } from "../../src/lib/theme.ts";
 import { trackMounted } from "./mounted.ts";
 
 /*
@@ -103,6 +104,40 @@ describe("the pointer on clickable controls", () => {
 });
 
 describe("a toggle group's chosen item", () => {
+  test("in the light theme is a dark fill with white text, far from the unchosen items", async () => {
+    try {
+      const container = mount(
+        <ToggleGroup
+          defaultValue={["unresolved"]}
+          aria-label="Status"
+          variant="outline"
+          spacing={0}
+        >
+          <ToggleGroupItem value="unresolved" className="transition-none">
+            Unresolved
+          </ToggleGroupItem>
+          <ToggleGroupItem value="resolved" className="transition-none">
+            Resolved
+          </ToggleGroupItem>
+        </ToggleGroup>,
+      );
+      // mount() sets the dark theme: switch to light once mounted.
+      applyTheme("light");
+      const chosen = page.getByRole("button", { name: "Unresolved" });
+      const other = page.getByRole("button", { name: "Resolved" });
+      await expect.element(chosen).toHaveAttribute("aria-pressed", "true");
+      const surface = getComputedStyle(container).backgroundColor;
+      const fill = over(getComputedStyle(chosen.element()).backgroundColor, surface);
+      // The light toggle-on token, #4a444a, with white text on it.
+      expect(fill).toEqual([74, 68, 74]);
+      expect(over(getComputedStyle(chosen.element()).color, surface)).toEqual([255, 255, 255]);
+      const rest = over(getComputedStyle(other.element()).backgroundColor, surface);
+      expect(contrast(fill, rest)).toBeGreaterThanOrEqual(7);
+    } finally {
+      applyTheme("dark");
+    }
+  });
+
   test("is filled, in ink, at least 3:1 from the unchosen items at rest and hovered, and keeps aria-pressed", async () => {
     const container = mount(
       <ToggleGroup defaultValue={["unresolved"]} aria-label="Status" variant="outline" spacing={0}>

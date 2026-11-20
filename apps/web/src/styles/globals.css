@@ -56,6 +56,7 @@
    * on their hover wash (muted), with ink text 4.6:1 on it.
    */
   --toggle-on: var(--field-edge);
+  --toggle-on-foreground: var(--ink);
   --ink: #f9f7f9;
   --ink-muted: #dad3da;
   --ink-subtle: #938c93;
@@ -179,10 +180,12 @@
   /* 3:1 or more on every surface and on a field's wash. */
   --field-edge: #7e787e; /* oklch(0.58 0.012 325) */
   /*
-   * A step lighter than the field edge, so ink on it keeps 4.5:1, while the
-   * fill keeps 3:1 on the surfaces and on the hover wash (muted).
+   * A dark fill with white text, so the chosen item stands out at a glance:
+   * 7.7:1 or more on the surfaces and on the hover wash (muted), white on it
+   * 9.5:1. A mid-grey fill with dark text passed AA but read as muddy.
    */
-  --toggle-on: #847e84; /* oklch(0.6 0.011 325) */
+  --toggle-on: #4a444a; /* oklch(0.4 0.012 325) */
+  --toggle-on-foreground: #ffffff;
   --ink: #191419; /* oklch(0.2 0.013 325) */
   --ink-muted: #3c363c; /* oklch(0.34 0.013 325) */
   --ink-subtle: #655e65; /* oklch(0.49 0.014 325) */
@@ -316,6 +319,7 @@
   --color-hairline-tertiary: var(--hairline-tertiary);
   --color-field-edge: var(--field-edge);
   --color-toggle-on: var(--toggle-on);
+  --color-toggle-on-foreground: var(--toggle-on-foreground);
   --color-ink: var(--ink);
   --color-ink-muted: var(--ink-muted);
   --color-ink-subtle: var(--ink-subtle);

@@ -146,7 +146,7 @@ describe.each(["dark", "light"] as const)("the %s theme's tokens", (theme: Theme
     }
   });
 
-  // A toggle group's chosen item (components/ui/toggle.tsx): a toggle-on fill with ink text,
+  // A toggle group's chosen item (components/ui/toggle.tsx): a toggle-on fill with toggle-on-foreground text,
   // beside unchosen items that are transparent on the group's surface, or muted while hovered.
   describe("a toggle group's chosen item stands out (WCAG 1.4.11)", () => {
     for (const surface of [...contentSurfaces, "canvas", "muted"]) {
@@ -155,7 +155,9 @@ describe.each(["dark", "light"] as const)("the %s theme's tokens", (theme: Theme
       });
     }
     test("its text meets 4.5:1 on its fill", () => {
-      expect(contrast(resolveHex("ink"), resolveHex("toggle-on"))).toBeGreaterThanOrEqual(4.5);
+      expect(
+        contrast(resolveHex("toggle-on-foreground"), resolveHex("toggle-on")),
+      ).toBeGreaterThanOrEqual(4.5);
     });
   });
 
@@ -247,4 +249,13 @@ describe.each(["dark", "light"] as const)("the %s theme's tokens", (theme: Theme
 test("the dark link color is not used as a fill behind white text", () => {
   // The dark link step is too light for white text, so it must stay a text color.
   expect(contrast("#ffffff", resolver(darkTokens)("link"))).toBeLessThan(4.5);
+});
+
+// The light theme used to fill a chosen toggle mid-grey with dark text: AA, but hard
+// to see. Its dark fill must stand well apart from every surface and the hover wash.
+test("the light theme's chosen toggle stands well apart (7:1 or more)", () => {
+  const resolveHex = resolver(themes.light);
+  for (const surface of ["background", "card", "popover", "canvas", "muted"]) {
+    expect(contrast(resolveHex("toggle-on"), resolveHex(surface))).toBeGreaterThanOrEqual(7);
+  }
 });
