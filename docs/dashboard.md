@@ -15,7 +15,7 @@ Code: `apps/api/src/auth/` and `apps/web/src/features/auth/`.
 
 ### Who can sign in
 
-The install's first account is its **owner**, created with the setup link ([below](#creating-the-owner)), which also names the instance ([Settings](#settings)). Other users are admins or members, with access per area and project ([access](access.md)). They join by invitation: an owner or admin copies a link from the Members page and sends it, or with SMTP set up, Ottertrail emails it too ([access](access.md#invitations)). Nobody can sign up on their own: open sign-up is planned for the hosted service, which will also verify new addresses by email.
+The install's first account is its **owner**, created with the setup link ([below](#creating-the-owner)), which also names the instance ([Settings](#settings)). Other users are admins or members, with access per area and project ([access](access.md)). They join by invitation: an owner or admin copies a link from the Members page and sends it, or with SMTP set up, Ottertrail emails it too ([access](access.md#invitations)). Nobody can sign up to an instance: the only ways in are the owner's setup link and invitations (Better Auth's sign-up is turned off, `disableSignUp`, and a test checks it). The hosted service's planned sign-up, on its own site, creates a new instance for a new customer; it never adds anyone to an existing one.
 
 ### Creating the owner
 
