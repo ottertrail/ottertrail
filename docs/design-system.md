@@ -187,7 +187,7 @@ Every screen takes one of three patterns, by what it is for. The blocks live in 
 
 - The sidebar is expanded on every screen, on `canvas`, with the main panel inset beside it (`surface-1`, a hairline ring). Ctrl B (⌘ B on a Mac) or the header's button collapses it to icons; `lib/sidebar-state.ts` remembers the choice in `localStorage` (`ottertrail.sidebar`). The header shows the shortcut.
 - Under 60rem the sidebar is shadcn's sheet: the header's first button becomes "Open menu", and choosing a link closes the sheet (`app.tsx`).
-- The header holds the menu button, the breadcrumb (the project, then the page title as the page's `h1`) and the shortcut hint.
+- The header holds the menu button, the breadcrumb (the project, then the page title as the page's `h1`), and at its end the screen's Docs link and the shortcut hint. The Docs link is a small ghost button (`ButtonAnchor`, `size="sm"`, the `BookOpen` icon and "Docs" in `ink-subtle`), shown only on screens with a docs page (`lib/docs.ts`); under 40rem it is the icon alone, 28px with a 44px touch target, its name unchanged ([dashboard](dashboard.md#the-workspace-and-a-project)).
 - Page content sits inside `px-gutter`: 24px, 16px under 40rem. Nothing scrolls sideways at 320 to 1920 except a table inside its own container.
 
 ### Report (Console)

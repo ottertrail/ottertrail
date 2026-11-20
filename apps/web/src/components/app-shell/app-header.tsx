@@ -1,11 +1,13 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { MenuIcon } from "lucide-react";
+import { BookOpenIcon, MenuIcon } from "lucide-react";
 
+import { ButtonAnchor } from "@/components/button-anchor";
 import { Button } from "@/components/ui/button";
 import { Kbd, KbdGroup } from "@/components/ui/kbd";
 import { Separator } from "@/components/ui/separator";
 import { SidebarTrigger, useSidebar } from "@/components/ui/sidebar";
+import type { DocsLinkTarget } from "@/lib/docs";
 import { modifierKey } from "@/lib/keys";
 import { projectsQuery } from "@/lib/projects-api";
 
@@ -56,8 +58,43 @@ function MenuButton() {
   return <SidebarTrigger aria-keyshortcuts="Control+B Meta+B" />;
 }
 
-/** The page title; inside a project, after the project's name. */
-export function AppHeader({ title, projectId }: { title: string; projectId?: string | undefined }) {
+/**
+ * The screen's page on the docs site, in a new tab. `noreferrer` keeps the
+ * instance's address from the docs site. Under 40rem only the icon shows;
+ * the name stays, starting with the topic and holding the word shown.
+ */
+function DocsLink({ docs }: { docs: DocsLinkTarget }) {
+  return (
+    <ButtonAnchor
+      variant="ghost"
+      size="sm"
+      href={docs.url}
+      target="_blank"
+      rel="noopener noreferrer"
+      aria-label={`${docs.topic} docs (opens in a new tab)`}
+      // Under 40rem, the icon in 28px, with 44px to a finger as the menu button.
+      className="text-ink-subtle max-[40rem]:relative max-[40rem]:size-7 max-[40rem]:px-0 max-[40rem]:after:absolute max-[40rem]:after:-inset-2"
+    >
+      <BookOpenIcon aria-hidden="true" />
+      <span className="max-[40rem]:sr-only">Docs</span>
+    </ButtonAnchor>
+  );
+}
+
+/**
+ * The page title; inside a project, after the project's name. At the end,
+ * the screen's Docs link when it has a page (lib/docs.ts), and the sidebar's
+ * shortcut.
+ */
+export function AppHeader({
+  title,
+  projectId,
+  docs,
+}: {
+  title: string;
+  projectId?: string | undefined;
+  docs?: DocsLinkTarget | undefined;
+}) {
   const { isMobile } = useSidebar();
   return (
     <header className="flex h-12 shrink-0 items-center gap-2 border-b px-2 min-[60rem]:px-3">
@@ -67,15 +104,18 @@ export function AppHeader({ title, projectId }: { title: string; projectId?: str
         {projectId !== undefined && <ProjectCrumb projectId={projectId} />}
         <h1 className="truncate text-sm font-medium">{title}</h1>
       </nav>
-      {!isMobile && (
-        <p className="ml-auto flex shrink-0 items-center gap-1.5 text-xs text-ink-subtle">
-          <KbdGroup>
-            <Kbd>{modifierKey()}</Kbd>
-            <Kbd>B</Kbd>
-          </KbdGroup>
-          <span>sidebar</span>
-        </p>
-      )}
+      <div className="ml-auto flex shrink-0 items-center gap-3">
+        {docs !== undefined && <DocsLink docs={docs} />}
+        {!isMobile && (
+          <p className="flex items-center gap-1.5 text-xs text-ink-subtle">
+            <KbdGroup>
+              <Kbd>{modifierKey()}</Kbd>
+              <Kbd>B</Kbd>
+            </KbdGroup>
+            <span>sidebar</span>
+          </p>
+        )}
+      </div>
     </header>
   );
 }

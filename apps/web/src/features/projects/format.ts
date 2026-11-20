@@ -1,3 +1,5 @@
+import { DOCS_URL } from "@/lib/docs";
+
 /**
  * The script tag a site adds to its pages. The instance's own origin serves
  * the tracker (/t.js) and receives the events (data-host). With the
@@ -10,9 +12,6 @@ export function installSnippet(
 ): string {
   return `<script defer src="${instanceOrigin}/t.js" data-key="${publicKey}" data-host="${instanceOrigin}"${heatmaps ? ' data-heatmaps="on"' : ""}></script>`;
 }
-
-/** The docs site: the one place its address is kept. */
-export const DOCS_URL = "https://docs.ottertrail.app";
 
 /** Where coding agents read how to add Ottertrail to an app. */
 export const AGENT_DOCS_URL = `${DOCS_URL}/llms.txt`;
