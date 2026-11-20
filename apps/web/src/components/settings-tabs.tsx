@@ -6,6 +6,11 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { UnsavedChangesGuard } from "@/components/unsaved-changes-guard";
 import { useSearchParam } from "@/hooks/use-search-param";
 
+/** The tab row's list: 40px high, starting a tab's padding to the left. */
+const LINE_TABS_LIST = "-ms-3 p-0 group-data-horizontal/tabs:h-10";
+/** A tab as tall as the row, its underline on the row's bottom edge. */
+const LINE_TAB = "h-10 flex-none px-3 after:bg-primary group-data-horizontal/tabs:after:bottom-0";
+
 export interface SettingsTab {
   /** In the address: `?tab=<value>`. The first tab is the default and is left out. */
   value: string;
@@ -51,15 +56,13 @@ export function SettingsTabs({
           {/*
            * The list starts a tab's padding (px-3) to the left, and without
            * the list's own 3px, so the first tab's label lines up with the
-           * content below it.
+           * content below it. Its height and the underline are set on the
+           * selectors ui/tabs.tsx uses (a plain h-10 loses to its h-8), and the
+           * underline sits inside the tab: below it, the row would scroll.
            */}
-          <TabsList variant="line" aria-label={label} className="-ms-3 h-10 p-0">
+          <TabsList variant="line" aria-label={label} className={LINE_TABS_LIST}>
             {tabs.map((tab) => (
-              <TabsTrigger
-                key={tab.value}
-                value={tab.value}
-                className="h-10 flex-none px-3 after:bg-primary"
-              >
+              <TabsTrigger key={tab.value} value={tab.value} className={LINE_TAB}>
                 {tab.label}
                 {tab.dirty === true && (
                   <>

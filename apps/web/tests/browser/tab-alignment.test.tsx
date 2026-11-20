@@ -57,3 +57,36 @@ test("members: the first tab's label lines up with the table's first column", as
     Math.abs(range.getBoundingClientRect().left - textLeft(header.element())),
   ).toBeLessThanOrEqual(1);
 });
+
+/** The nearest ancestor that scrolls sideways: the tab row. */
+function scrollingRow(element: Element): HTMLElement | null {
+  let node = element.parentElement;
+  while (node !== null && getComputedStyle(node).overflowX !== "auto") node = node.parentElement;
+  return node;
+}
+
+test.each([
+  ["the instance's settings", "/settings", "General"],
+  ["a project's settings", `/projects/${PROJECT.id}/settings`, "Install"],
+  ["account settings", "/account", "Profile"],
+  ["members", "/settings/members", /^Members/],
+])(
+  "%s: the tabs fit their row, which never scrolls up and down, and the underline sits on its edge",
+  async (_, path, first) => {
+    installFakeApi();
+    renderApp(path);
+    const tab = page.getByRole("tab", { name: first });
+    await expect.element(tab).toBeVisible();
+    const row = scrollingRow(tab.element());
+    expect(row).not.toBeNull();
+    const scroller = row as HTMLElement;
+    // Scrolling up and down by a few pixels shows a scrollbar on macOS and cuts the labels.
+    expect(scroller.scrollHeight).toBe(scroller.clientHeight);
+    const list = tab.element().closest("[role=tablist]")?.getBoundingClientRect();
+    const box = tab.element().getBoundingClientRect();
+    expect(box.top).toBeGreaterThanOrEqual(list?.top ?? Number.NaN);
+    expect(box.bottom).toBeLessThanOrEqual(list?.bottom ?? Number.NaN);
+    const underline = getComputedStyle(tab.element(), "::after");
+    expect(underline.bottom).toBe("0px");
+  },
+);

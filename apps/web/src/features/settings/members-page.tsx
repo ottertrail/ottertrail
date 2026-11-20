@@ -739,14 +739,21 @@ export function MembersPage() {
           {/*
            * The scrolling row starts a tab's padding (px-3) into the gutter,
            * and the list drops its own 3px, so "Members" lines up with the
-           * table's first column, as on the settings pages.
+           * table's first column, as on the settings pages. The height and
+           * the underline go on ui/tabs.tsx's own selectors, as in
+           * SettingsTabs, so the tabs fit the row and it never scrolls up
+           * and down.
            */}
           <div className="-ms-3 min-w-0 flex-1 overflow-x-auto">
-            <TabsList variant="line" aria-label="Members and invitations" className="h-12 p-0">
+            <TabsList
+              variant="line"
+              aria-label="Members and invitations"
+              className="p-0 group-data-horizontal/tabs:h-12"
+            >
               <TabsTrigger
                 value="members"
                 data-members-tab="members"
-                className="group/tab h-12 flex-none px-3 after:bg-primary"
+                className="group/tab h-12 flex-none px-3 after:bg-primary group-data-horizontal/tabs:after:bottom-0"
               >
                 Members
                 {tabCount(data.members.length)}
@@ -754,7 +761,7 @@ export function MembersPage() {
               <TabsTrigger
                 value="invitations"
                 data-members-tab="invitations"
-                className="h-12 flex-none px-3 after:bg-primary"
+                className="h-12 flex-none px-3 after:bg-primary group-data-horizontal/tabs:after:bottom-0"
               >
                 Invitations
                 {pending > 0 && (
