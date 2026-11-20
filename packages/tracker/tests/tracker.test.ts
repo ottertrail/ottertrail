@@ -444,3 +444,35 @@ describe("the signed-in user", () => {
     ]);
   });
 });
+
+describe("paused (the heatmap overlay's wait)", () => {
+  test("nothing leaves, not even on exit; resume sends at once, with sentAt as it leaves", async () => {
+    const { transport, sent, beacons } = fakeTransport();
+    const tracker = createTracker({ key: "pk_test", transport, randomId, paused: true });
+    const heldAt = Date.now();
+    tracker.track("pageview", page);
+    for (let i = 0; i < 60; i += 1) tracker.track("click", page);
+    await vi.advanceTimersByTimeAsync(10_000);
+    tracker.flushOnExit();
+    await tracker.flush();
+    expect([sent, beacons]).toEqual([[], []]);
+    expect(tracker.queued()).toBe(61);
+
+    tracker.resume();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(sent[0]?.sentAt).toBeGreaterThanOrEqual(heldAt + 10_000);
+    expect(sent[0]?.events[0]?.occurredAt).toBe(heldAt);
+  });
+
+  test("discard drops the queue, and nothing is kept or sent after it", async () => {
+    const { transport, sent, beacons } = fakeTransport();
+    const tracker = createTracker({ key: "pk_test", transport, randomId, paused: true });
+    tracker.track("pageview", page);
+    tracker.discard();
+    tracker.track("click", page);
+    expect(tracker.queued()).toBe(0);
+    await vi.advanceTimersByTimeAsync(10_000);
+    tracker.flushOnExit();
+    expect([sent, beacons]).toEqual([[], []]);
+  });
+});

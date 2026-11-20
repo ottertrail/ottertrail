@@ -1448,6 +1448,10 @@ async function leave(page: ReturnType<typeof fakePage>) {
   await page.settle();
 }
 
+/** Every event received, once per ID: a retry or a second copy is the same row at the API. */
+const unique = (page: ReturnType<typeof fakePage>) =>
+  new Set(page.events.map((event) => event.id)).size;
+
 describe("the heatmap overlay", () => {
   const TOKEN = "Ab-_0123456789abcdefghijklmnopqrstuvwxyzABC";
   const opened = (path = "/pricing?plan=team", options: Parameters<typeof fakePage>[2] = {}) =>
@@ -1460,7 +1464,6 @@ describe("the heatmap overlay", () => {
       attributes: { heatmaps: "on", replay: "errors", environment: "staging" },
     });
     await runScript();
-    // The rest of the address stays.
     expect(page.window.location.href).toBe("https://example.com/pricing?plan=team");
     // Only o.js while it asks: no v.js, r.js, or h.js.
     expect(page.added).toEqual([
@@ -1476,11 +1479,11 @@ describe("the heatmap overlay", () => {
       environment: "staging",
       settled: expect.any(Function),
     });
+    page.window.ottertrail?.track("signup");
     await vi.advanceTimersByTimeAsync(4000);
-    await leave(page);
-    expect(page.events).toEqual([]);
+    await page.settle();
+    expect(page.batches).toEqual([]);
 
-    page.show();
     expect(configOf(page).settled(true)).toBe(true);
     page.window.ottertrail?.track("signup", { plan: "team" });
     page.window.ottertrail?.captureError(new Error("boom"));
@@ -1488,12 +1491,12 @@ describe("the heatmap overlay", () => {
     page.fire("error", new FakeErrorEvent({ message: "boom", error: new Error("boom") }));
     page.window.location.href = "https://example.com/next";
     page.window.history.pushState();
+    // Back from the back/forward cache: still the owner's look.
+    page.fire("pageshow", { persisted: true });
     await vi.advanceTimersByTimeAsync(60_000);
-    // A later answer changes nothing.
     expect(configOf(page).settled(false)).toBe(false);
     page.fire("pagehide");
     await leave(page);
-    expect(page.events).toEqual([]);
     expect(page.batches).toEqual([]);
     expect(page.added).toHaveLength(1);
     expect(warn).not.toHaveBeenCalled();
@@ -1504,7 +1507,6 @@ describe("the heatmap overlay", () => {
       attributes: { vitals: "off", heatmaps: "on", userId: "user-42" },
     });
     await runScript();
-    // An error, and a router's redirect, while o.js asks.
     page.fire("error", new FakeErrorEvent({ message: "early", error: new Error("early") }));
     page.window.ottertrail?.track("signup");
     page.window.location.href = "https://example.com/welcome";
@@ -1513,7 +1515,6 @@ describe("the heatmap overlay", () => {
       "https://analytics.example.com/o.js",
     ]);
     expect(configOf(page).settled(false)).toBe(true);
-    // Scripts held back load now.
     expect(page.added.map((element) => element.src)).toContain(
       "https://analytics.example.com/h.js",
     );
@@ -1523,12 +1524,74 @@ describe("the heatmap overlay", () => {
         .filter((event) => event.name !== ENGAGEMENT)
         .map((event) => [event.name, event.url, event.userId]),
     ).toEqual([
-      // The landing path, before the redirect.
       ["pageview", "https://example.com/pricing", "user-42"],
       ["error", "https://example.com/pricing", "user-42"],
       ["signup", "https://example.com/pricing", "user-42"],
       ["pageview", "https://example.com/welcome", "user-42"],
     ]);
+  });
+
+  test("events held while o.js asks leave with a fresh sentAt, so their order and times stay true", async () => {
+    const page = opened("/", { attributes: { vitals: "off" } });
+    await runScript();
+    await vi.advanceTimersByTimeAsync(2000);
+    page.window.ottertrail?.track("signup");
+    // No answer in 5 seconds: released by the wait, and sent at once (a timer
+    // set at the end of an advance runs on the next).
+    await vi.advanceTimersByTimeAsync(3000);
+    await vi.advanceTimersByTimeAsync(1);
+    await page.settle();
+    const batch = page.batches[0] as SentBatch & { sentAt: number };
+    // Written as it left, not as it was held.
+    expect(batch.sentAt).toBe(start + 5001);
+    // The API's correction: received − (sentAt − occurredAt). Each event keeps its age,
+    // so the pageview stays 2 seconds before the custom event.
+    expect(batch.events.map((event) => [event.name, batch.sentAt - event.occurredAt])).toEqual([
+      ["pageview", 5001],
+      ["signup", 3001],
+    ]);
+  });
+
+  test("a browser refusing beacons: a fetch carries the batch, for any visitor and after a release", async () => {
+    for (const path of ["/plain", "/held"]) {
+      const page =
+        path === "/plain"
+          ? fakePage(`https://example.com${path}`, "", { attributes: { vitals: "off" } })
+          : opened(path, { attributes: { vitals: "off" } });
+      const beacons = vi.fn<() => boolean>(() => false);
+      Object.assign(globalThis.navigator, { sendBeacon: beacons });
+      await runScript();
+      if (path === "/held") configOf(page).settled(false);
+      await leave(page);
+      expect(beacons).toHaveBeenCalled();
+      expect(page.events.map((event) => event.name)).toContain("pageview");
+    }
+  });
+
+  test("leaving or hiding the page while o.js asks releases it: the events go once", async () => {
+    const left = opened("/", { attributes: { vitals: "off" } });
+    await runScript();
+    left.window.ottertrail?.track("signup");
+    left.fire("pagehide");
+    await left.settle();
+    expect(left.events.map((event) => event.name)).toEqual(["pageview", "signup"]);
+    // The tracker's own visibilitychange after it sends nothing again.
+    await leave(left);
+    expect(left.events).toHaveLength(unique(left));
+
+    const hidden = opened("/", { attributes: { vitals: "off" } });
+    await runScript();
+    await leave(hidden);
+    expect(hidden.events.map((event) => event.name)).toEqual(["pageview"]);
+  });
+
+  test("back from the back/forward cache after a release: a new pageview, as for any visitor", async () => {
+    const page = opened("/", { attributes: { vitals: "off" } });
+    await runScript();
+    configOf(page).settled(false);
+    page.fire("pageshow", { persisted: true });
+    await leave(page);
+    expect(page.events.filter((event) => event.name === "pageview")).toHaveLength(2);
   });
 
   test("the page's stand-in: its queued consent is applied, and a kept reference works", async () => {
@@ -1551,36 +1614,23 @@ describe("the heatmap overlay", () => {
     const blocked = opened("/", { attributes: { vitals: "off" } });
     await runScript();
     (blocked.added[0] as { fail: () => void }).fail();
-    await leave(blocked);
+    await vi.advanceTimersByTimeAsync(0);
+    await blocked.settle();
     expect(blocked.events.map((event) => event.name)).toEqual(["pageview"]);
 
     const silent = opened("/", { attributes: { vitals: "off" } });
     await runScript();
     await vi.advanceTimersByTimeAsync(4999);
-    await leave(silent);
+    await silent.settle();
     expect(silent.events).toEqual([]);
-    silent.show();
     await vi.advanceTimersByTimeAsync(1);
-    await leave(silent);
-    expect(silent.events.map((event) => event.name)).toContain("pageview");
+    await vi.advanceTimersByTimeAsync(1);
+    await silent.settle();
+    expect(silent.events.map((event) => event.name)).toEqual(["pageview"]);
     // A late answer: not in time, and nothing starts twice.
     expect(configOf(silent).settled(true)).toBe(false);
-    silent.show();
     await leave(silent);
-    // One pageview: a batch held back and also handed over on hiding goes with
-    // the same ID, which the API stores once (at-least-once delivery).
-    const ids = new Set(
-      silent.events.filter((event) => event.name === "pageview").map((event) => event.id),
-    );
-    expect(ids.size).toBe(1);
-  });
-
-  test("a visitor who leaves while o.js asks is counted", async () => {
-    const page = opened("/", { attributes: { vitals: "off" } });
-    await runScript();
-    page.fire("pagehide");
-    await page.settle();
-    expect(page.events.map((event) => event.name)).toContain("pageview");
+    expect(silent.events.filter((event) => event.name === "pageview")).toHaveLength(1);
   });
 
   test("a second copy of the tracker on the page does nothing", async () => {

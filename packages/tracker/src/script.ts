@@ -152,9 +152,6 @@ function landing(): Page {
 /** How long a page opened with an overlay link waits for o.js's answer before it records as usual. */
 const OVERLAY_WAIT_MS = 5000;
 
-/** Sends and scripts held back at most while o.js answers about an overlay link. */
-const MAX_HELD = 100;
-
 /** Marks the real window.ottertrail, as no stand-in is: Symbol.for, so any copy sees it. */
 const REAL = Symbol.for("ottertrail.tracker");
 
@@ -210,37 +207,56 @@ const REAL = Symbol.for("ottertrail.tracker");
     // A page opened from the dashboard to see its heatmap
     // (docs/web-analytics.md, "The overlay on your site"): the link's token
     // leaves the address at once, and o.js asks the server about it. The
-    // page load is recorded as for any visitor, but nothing leaves, and no
-    // other script loads, until o.js answers. A real link: what was held
-    // is dropped, and nothing is ever sent for this page load (the owner's
-    // look is not counted). Anything else (an unknown or used link, o.js
-    // blocked or not answering within OVERLAY_WAIT_MS, the page left
-    // first): what was held goes, and the page load carries on as usual.
+    // page load is recorded as for any visitor, but the tracker is paused
+    // (its events wait in its queue), and no other script loads, until
+    // o.js answers. A real link: the queue is dropped, and nothing is sent
+    // for this page load (the owner's look is not counted). Anything else
+    // (an unknown or used link, o.js failing to load or not answering
+    // within OVERLAY_WAIT_MS, the page hidden or left first): the tracker
+    // resumes, and the page load carries on as usual.
     const overlay = /^#ottertrail-heatmap=([\w-]{43})$/.exec(location.hash);
     /** The link's answer: undefined while asked, true for the overlay shown, false otherwise. */
     let shown: boolean | undefined = overlay ? undefined : false;
+    /** The scripts that wait for the answer: v.js, r.js, h.js. */
     const held: (() => void)[] = [];
-    /** Runs `send` once nothing is held back: at once, after the answer, or never. */
-    const whenSending = (send: () => void) => {
-      if (shown === undefined) {
-        if (held.length < MAX_HELD) held.push(send);
-      } else if (!shown) {
-        send();
-      }
+    const whenSending = (run: () => void) => {
+      if (shown === undefined) held.push(run);
+      else if (!shown) run();
     };
+
+    const tracker = createTracker({
+      key,
+      transport: browserTransport(new URL("/api/events", host).href),
+      randomId,
+      // Only "more than one": some laptops report a single touch point.
+      touch: typeof navigator.maxTouchPoints === "number" && navigator.maxTouchPoints > 1,
+      paused: shown === undefined,
+      ...(environment === undefined ? {} : { environment }),
+      ...(release === undefined ? {} : { release }),
+    });
+
     /** The answer, once: true when it came in time (before the wait or the page's end). */
     const settle = (overlayShown: boolean) => {
       if (shown !== undefined) return false;
       shown = overlayShown;
       clearTimeout(timer);
-      for (const send of held.splice(0)) if (!shown) send();
+      if (shown) {
+        tracker.discard();
+      } else {
+        tracker.resume();
+        for (const run of held.splice(0)) run();
+      }
       return true;
     };
     const timer = overlay ? setTimeout(() => settle(false), OVERLAY_WAIT_MS) : undefined;
     if (overlay) {
       history.replaceState(history.state, "", location.pathname + location.search);
-      // Before the tracker's own: a visitor who leaves at once is counted.
+      // Before the tracker's own handlers: a visitor who hides or leaves
+      // the page at once is counted, by the tracker's own exit.
       window.addEventListener("pagehide", () => settle(false));
+      document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState === "hidden") settle(false);
+      });
       if (beside) {
         const config: OverlayConfig = {
           host,
@@ -253,21 +269,6 @@ const REAL = Symbol.for("ottertrail.tracker");
         settle(false);
       }
     }
-    const events = browserTransport(new URL("/api/events", host).href);
-
-    const tracker = createTracker({
-      key,
-      transport: {
-        send: (body) =>
-          new Promise((resolve) => whenSending(() => void events.send(body).then(resolve))),
-        beacon: (body) => (whenSending(() => events.beacon(body)), true),
-      },
-      randomId,
-      // Only "more than one": some laptops report a single touch point.
-      touch: typeof navigator.maxTouchPoints === "number" && navigator.maxTouchPoints > 1,
-      ...(environment === undefined ? {} : { environment }),
-      ...(release === undefined ? {} : { release }),
-    });
 
     let current: Page | undefined;
     // The signed-in user now, and when the current page was viewed: its

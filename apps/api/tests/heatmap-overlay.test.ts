@@ -316,7 +316,7 @@ describe("exchanging a link", () => {
     expect(await useOverlayLink(dashboard.db, other, later)).toBe(false);
   });
 
-  test("an expired link is refused as such; one never made as unknown, readable only by the instance's sites", async () => {
+  test("an expired link is refused as such, readable by the project's site; one never made as unknown, without CORS", async () => {
     const project = await newProject();
     const link = await linkFor(project.id);
     await dashboard.db
@@ -327,16 +327,13 @@ describe("exchanging a link", () => {
     const expired = await exchange(link);
     expect(expired.statusCode).toBe(410);
     expect(expired.json()).toMatchObject({ error: "link_expired" });
-    // An app started after the project: it read the instance's sites as it started
-    // (an app running already reads them again within a minute).
-    const fresh = appWith({});
-    const unknown = await exchange("A".repeat(43), { app: fresh });
+    // The link names its project: its site may read why.
+    expect(expired.headers["access-control-allow-origin"]).toBe(SITE);
+    // No project known: no site may read it (o.js shows nothing either way).
+    const unknown = await exchange("A".repeat(43));
     expect(unknown.statusCode).toBe(410);
     expect(unknown.json()).toMatchObject({ error: "link_unknown" });
-    // o.js on a project's site can tell it apart, and shows nothing.
-    expect(unknown.headers["access-control-allow-origin"]).toBe(SITE);
-    const elsewhere = await exchange("A".repeat(43), { origin: OTHER_SITE, app: fresh });
-    expect(elsewhere.headers["access-control-allow-origin"]).toBeUndefined();
+    expect(unknown.headers["access-control-allow-origin"]).toBeUndefined();
     // A session token is not a link.
     const session = await sessionFor(project.id);
     expect((await exchange(session)).json()).toMatchObject({ error: "link_unknown" });
@@ -524,6 +521,8 @@ describe("reading the overlay", () => {
     const forbidden = await read(own.id, `Bearer ${revokedSession}`);
     expect(forbidden.statusCode).toBe(403);
     expect(forbidden.json()).toMatchObject({ error: "forbidden" });
+    // Its project is known: the site may read it, so the overlay says "no access".
+    expect(forbidden.headers["access-control-allow-origin"]).toBe(SITE);
     // The project taken away, the area kept: unknown, as in the dashboard.
     await setUserAccess(dashboard.db, revoked.userId, {
       role: "member",
@@ -549,6 +548,8 @@ describe("reading the overlay", () => {
     const deleted = await read(own.id, `Bearer ${ownerSession}`);
     expect(deleted.statusCode).toBe(403);
     expect(deleted.json()).toMatchObject({ error: "origin_not_allowed" });
+    // No project any more: no site may read it.
+    expect(deleted.headers["access-control-allow-origin"]).toBeUndefined();
   });
 
   test("a session for one project cannot read another's, even on the same site", async () => {
@@ -817,8 +818,8 @@ describe("the dashboard session that made them", () => {
   });
 });
 
-describe("answers without data", () => {
-  test("a limit or a malformed token is readable by the instance's sites, so o.js can tell why", async () => {
+describe("answers before the project is known", () => {
+  test("a limit or a malformed token carries no CORS", async () => {
     const app = appWith({
       overlayExchangeLimit: { capacity: 1, refillPerSecond: 0.001 },
       overlayReadLimit: { capacity: 1, refillPerSecond: 0.001 },
@@ -827,13 +828,10 @@ describe("answers without data", () => {
     await exchange("A".repeat(43), { app });
     const limited = await exchange("A".repeat(43), { app });
     expect(limited.statusCode).toBe(429);
-    expect(limited.headers["access-control-allow-origin"]).toBe(SITE);
+    expect(limited.headers["access-control-allow-origin"]).toBeUndefined();
     const invalid = await read(project.id, "Bearer nope", { app });
     expect(invalid.json()).toMatchObject({ error: "invalid_token" });
-    expect(invalid.headers["access-control-allow-origin"]).toBe(SITE);
-    expect((await read(project.id, "Bearer nope", { app })).statusCode).toBe(429);
-    const otherSite = await read(project.id, "Bearer nope", { app, origin: OTHER_SITE });
-    expect(otherSite.headers["access-control-allow-origin"]).toBeUndefined();
+    expect(invalid.headers["access-control-allow-origin"]).toBeUndefined();
   });
 
   test("links are limited per user (429)", async () => {
@@ -854,8 +852,8 @@ describe("answers without data", () => {
   });
 });
 
-describe("the instance's sites, for answers without data", () => {
-  test("are read from what is kept: a 400 or a 429 makes no database call", async () => {
+describe("refusals before any database work", () => {
+  test("a 400 or a 429 makes no database call", async () => {
     let queries = 0;
     const counted = dashboard.db.withPlugin({
       transformQuery: (args) => {
@@ -875,16 +873,13 @@ describe("the instance's sites, for answers without data", () => {
       heatmaps: { overlayExchangeLimit: { capacity: 1, refillPerSecond: 0.001 } },
     });
     extraApps.push(app);
-    // The first read of the sites, as the app starts.
     await app.ready();
     queries = 0;
     const malformed = await exchange("short", { app });
     expect(malformed.statusCode).toBe(400);
-    expect(malformed.headers["access-control-allow-origin"]).toBe(SITE);
     await exchange("short", { app });
     const limited = await exchange("A".repeat(43), { app });
     expect(limited.statusCode).toBe(429);
-    expect(limited.headers["access-control-allow-origin"]).toBe(SITE);
     expect(queries).toBe(0);
   });
 });

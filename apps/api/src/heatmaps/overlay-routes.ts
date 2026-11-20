@@ -58,57 +58,6 @@ const ORIGIN_REFUSED = problem(
 const NO_ACCESS = problem("no_access", "Your account cannot view this project's heatmaps.");
 const LINK_UNKNOWN = problem("link_unknown", "No overlay link has this token.");
 
-/** How long the instance's site hostnames are kept before they are read again. */
-const SITES_TTL_MS = 60_000;
-/** After a failed read, how long before the next is tried. */
-const SITES_RETRY_MS = 10_000;
-
-/**
- * Every project's allowed hostnames: the origins whose pages may read the
- * overlay routes' answers that carry no data (a refusal, a rate limit, an
- * unknown link), so o.js can tell them apart. Data goes only to the
- * project's own sites.
- *
- * Read from what is kept, never waited for: an answer is decided before
- * any database work, and its CORS too. A stale or missing set is read
- * again in the background, at most once a minute (every 10 seconds after
- * a failure); until there is one, such answers carry no CORS.
- */
-export function instanceSites(db: Kysely<Database>, now: () => number = Date.now) {
-  let hostnames: ReadonlySet<string> | undefined;
-  let nextRead = 0;
-  let reading: Promise<void> | undefined;
-  const read = () => {
-    nextRead = now() + SITES_RETRY_MS;
-    reading = db
-      .selectFrom("projects")
-      .select("allowed_hostnames")
-      .execute()
-      .then((rows) => {
-        hostnames = new Set(
-          rows.flatMap((row) => row.allowed_hostnames.map((name) => name.toLowerCase())),
-        );
-        nextRead = now() + SITES_TTL_MS;
-      })
-      .catch(() => {
-        // Tried again after SITES_RETRY_MS; what was kept stays.
-      })
-      .finally(() => {
-        reading = undefined;
-      });
-    return reading;
-  };
-  return {
-    /** What is kept now, starting a read in the background when it is due. */
-    current(): ReadonlySet<string> | undefined {
-      if (reading === undefined && now() >= nextRead) void read();
-      return hostnames;
-    },
-    /** The first read, as the app starts. */
-    warm: () => reading ?? read(),
-  };
-}
-
 /**
  * Refuses fields the route does not take (400), where the schemas would
  * only drop them (Fastify's removeAdditional): the overlay's routes take
@@ -174,10 +123,11 @@ function accessOf(request: { projectAccess: ProjectAccess | null }): ProjectAcce
  * requireOverlayAccess, which checks the user's role and grants on each
  * read (access/access.ts).
  *
- * CORS: an answer with data is readable only by a page on one of the
- * project's allowed hostnames, the same rule collection uses; an answer
- * without data (a refusal, a limit, an unknown link) by a page on any
- * project's; never with credentials. Every answer is `Cache-Control: no-store`. Requests are
+ * CORS: once the project is known (from the link, or the read's address)
+ * and the Origin is one of its allowed hostnames, the same rule collection
+ * uses, the answer is readable by that page, a refusal too (a link used
+ * up, no access, a session ended); before that (a limit, a malformed or
+ * unknown token), by none. Never with credentials. Every answer is `Cache-Control: no-store`. Requests are
  * limited per client address before anything else, and a malformed body,
  * query, Origin, or Authorization is refused before any database work.
  */
@@ -197,10 +147,6 @@ export const heatmapOverlayRoutes: FastifyPluginCallback<{
   const readLimiter = new TokenBucketLimiter(options.readLimit ?? DEFAULT_OVERLAY_READ_LIMIT);
   /** Requests from an origin on the project's allowed hostnames: their answers carry CORS. */
   const allowed = new WeakMap<FastifyRequest, string>();
-  const sites = instanceSites(db);
-  app.addHook("onReady", async () => {
-    await sites.warm();
-  });
   const canView = requireOverlayAccess(db, { area: "web_analytics", level: "view" });
 
   // text/plain, so the exchange is a "simple" request without a preflight.
@@ -220,15 +166,7 @@ export const heatmapOverlayRoutes: FastifyPluginCallback<{
 
   app.addHook("onSend", async (request, reply) => {
     reply.header("cache-control", "no-store").header("vary", "Origin");
-    let origin = allowed.get(request);
-    if (origin === undefined && request.method !== "OPTIONS") {
-      // An answer without data (a refusal, a limit, an unknown link) to a
-      // page on any of the instance's sites: readable, so o.js can tell why.
-      const from = originOf(request);
-      if (from !== null && sites.current()?.has(from.hostname.toLowerCase()) === true) {
-        origin = from.origin;
-      }
-    }
+    const origin = allowed.get(request);
     if (origin !== undefined) {
       reply
         .header("access-control-allow-origin", origin)
@@ -286,7 +224,8 @@ export const heatmapOverlayRoutes: FastifyPluginCallback<{
       const clock = new Date();
       const link = await findOverlayLink(db, request.body.token, clock);
       // Never made, purged a day after it expired, or its dashboard session
-      // ended: o.js shows nothing, and the tracker counts the visit.
+      // ended: no project, so no CORS; o.js shows nothing, and the tracker
+      // counts the visit.
       if (link === null) return reply.code(410).send(LINK_UNKNOWN);
       if (!isAllowedHostname(origin.hostname, link.allowedHostnames)) {
         return reply.code(403).send(ORIGIN_REFUSED);

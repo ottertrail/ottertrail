@@ -83,6 +83,11 @@ export interface TrackerOptions {
   environment?: string;
   /** The site's version, such as "1.4.2". */
   release?: string;
+  /**
+   * Start paused: events are queued as usual, but nothing leaves until
+   * resume(); discard() drops them and keeps it so (the heatmap overlay).
+   */
+  paused?: boolean;
 }
 
 /** A signed-in user: the site's ID, and its server's signature for it when it gave one. */
@@ -109,6 +114,10 @@ export interface Tracker {
   flushOnExit(): void;
   /** Number of queued events, for tests and debugging. */
   queued(): number;
+  /** Sends what was queued while paused, and from now on as usual. */
+  resume(): void;
+  /** Drops what was queued while paused; nothing is sent for the rest of the page load. */
+  discard(): void;
   /**
    * The signed-in user, already checked (cleanUserId, cleanSignature), whom
    * events tracked from now on belong to; undefined for an anonymous
@@ -130,8 +139,11 @@ export function createTracker({
   touch = false,
   environment,
   release,
+  paused = false,
 }: TrackerOptions): Tracker {
   let queue: QueuedEvent[] = [];
+  /** Nothing leaves while paused; nothing is even kept once muted. */
+  let muted = false;
   let user: SignedUser | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let sending = false;
@@ -199,7 +211,7 @@ export function createTracker({
   }
 
   async function flush(): Promise<void> {
-    if (sending || queue.length === 0) {
+    if (paused || sending || queue.length === 0) {
       return;
     }
     cancelTimer();
@@ -238,7 +250,7 @@ export function createTracker({
     track(name, page, properties, extra) {
       try {
         const cleanName = sanitizeName(name);
-        if (cleanName === "" || page.url === "") {
+        if (muted || cleanName === "" || page.url === "") {
           return;
         }
         const cleanProperties = sanitizeProperties(properties);
@@ -272,6 +284,7 @@ export function createTracker({
     flush,
 
     flushOnExit() {
+      if (paused) return;
       try {
         cancelTimer();
         while (queue.length > 0) {
@@ -290,6 +303,19 @@ export function createTracker({
     },
 
     queued: () => queue.length,
+
+    resume() {
+      paused = false;
+      // At once, not at the end of a batch's wait begun while paused.
+      cancelTimer();
+      if (queue.length > 0) schedule(0);
+    },
+
+    discard() {
+      muted = true;
+      queue = [];
+      cancelTimer();
+    },
 
     setUser(next) {
       user = next;
