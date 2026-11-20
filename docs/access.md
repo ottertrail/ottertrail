@@ -162,11 +162,11 @@ The API refuses all of these regardless. Hiding them only saves the user a refus
 
 Code: `apps/api/src/access/invitations.ts` and `member-routes.ts`; `apps/web/src/features/settings/members-page.tsx` and `access-editor.tsx`; `apps/web/src/features/auth/invite-page.tsx`.
 
-There is no email: Docker installs are not expected to have SMTP. The inviter copies a link and sends it.
+Ottertrail never emails invitations or reset links, whatever `SMTP_URL` says: SMTP is only for alert channels, and most self-hosted installs have no mail server. The inviter copies a link and sends it.
 
 - On the Members page (`/settings/members`), the owner or an admin enters an email address and picks a role (admin only for the owner) or a member's access (a preset, the areas, and the projects). They get a link to copy.
 - The link carries a random 32-byte token in its fragment, `/invite#token=…`, as the setup link does. Only a SHA-256 hash of the token is stored (`dashboard_invitations`).
-- The link works for 7 days. Pending invitations show on the Members page (email, access, who invited, expiry), where they can be revoked. "New link" replaces the token, since the plain token cannot be shown again.
+- The link works for 7 days. Pending invitations show on the Members page's Invitations tab (email, role, access, who invited, when made, expiry), where they can be revoked, after a confirmation. "New link" replaces the token, since the plain token cannot be shown again.
 - Inviting an email that already has an account is refused. Inviting a pending email again replaces the old invitation (one per email). Emails are stored in lower case; a check constraint refuses any other.
 - The accept page (`/invite`) shows who invited them and to which instance; not the role or the access, which the person sees once signed in. Its preview (`POST /api/invite/preview`) sends only the email, the inviter's name, and the instance's name, so whoever holds a link does not learn the instance's project names. Accept reveals name, password, and confirm-password fields; the email is fixed. Submitting does everything in one transaction:
   - use up the token: delete its one row, so a double submit or a second tab finds nothing;
@@ -191,7 +191,7 @@ There is no email: Docker installs are not expected to have SMTP. The inviter co
 
 Code: `apps/api/src/access/members.ts` and `member-routes.ts`; `apps/web/src/features/settings/members-page.tsx`.
 
-- The Members page lists everyone, the owner first: name, email, role or a summary of their access ("Member: Viewer, all projects"), and last sign-in (`dashboard_users.last_sign_in_at`, set on each sign-in). Choosing someone shows the actions the signed-in user may take on them: their access (a form with Save access), Reset link, Remove, and for the owner, Make owner ([dashboard](dashboard.md#members)).
+- The Members page's Members tab lists everyone, the owner first: name, email, role, a summary of their access ("Viewer · All projects"; "Everything" for the owner and admins), and last sign-in (`dashboard_users.last_sign_in_at`, set on each sign-in). Each row's menu holds only the actions the signed-in user may take on that person: Change access (a sheet with Save), Make reset link, Remove, and for the owner, Make owner ([dashboard](dashboard.md#members)).
 - The owner and admins, within the role rules, change access and remove members, through `setUserAccess`. Nobody acts on themselves or on the owner there; an admin acts on members only, and makes no admins. Removing deletes the account and its sessions, and their pending invitations and the reset links they made; demoting an admin deletes both too. The only other column that names a dashboard user, `error_resolutions.resolved_by`, is set to null.
 - Each change locks the target's row before checking their role, in one transaction, and deletes only a user whose role is still the one checked. So an admin cannot act on someone the owner is promoting at the same moment.
 - The owner hands ownership to another user after entering their password again; the old owner becomes an admin. The owner cannot be removed and cannot demote themselves. The password may be tried 5 times, then once a minute, per user. The heir's row is locked first, and if promoting them changes nothing (they were deleted meanwhile), the whole handover rolls back, so the instance always has its owner.

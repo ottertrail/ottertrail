@@ -1,33 +1,29 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link, useNavigate } from "@tanstack/react-router";
+import { useQuery } from "@tanstack/react-query";
 import { cn } from "cn";
-import {
-  ArrowLeftIcon,
-  InfoIcon,
-  LoaderCircleIcon,
-  OctagonAlertIcon,
-  UserPlusIcon,
-} from "lucide-react";
+import { EllipsisIcon, MailIcon, OctagonAlertIcon } from "lucide-react";
 import * as React from "react";
 
 import { clickableRow, ROW_LINK } from "@/components/clickable-row";
-import { CopyableCode } from "@/components/copyable-code";
 import { NoAccess } from "@/components/no-access";
-import { SettingsSection } from "@/components/settings-section";
 import { StatusBadge } from "@/components/status-badge";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
-  Dialog,
-  DialogClose,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
+  Empty,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from "@/components/ui/empty";
+import { Field, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -38,32 +34,35 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { UnsavedChangesGuard } from "@/components/unsaved-changes-guard";
-import { GUTTER_END, GUTTER_START, LIST_HEAD, SELECTED_ROW } from "@/components/workbench-rows";
-import { ignoreOrder, useDirtyForm } from "@/hooks/use-dirty-form";
-import { NARROW_WORKBENCH, PHONE, useMediaQuery } from "@/hooks/use-media-query";
+import { GUTTER_END, GUTTER_START, LIST_HEAD } from "@/components/workbench-rows";
+import { PHONE, useMediaQuery } from "@/hooks/use-media-query";
+import { useSearchParam } from "@/hooks/use-search-param";
 import { meQuery, type Role } from "@/lib/access";
 import {
-  type AccessChoice,
-  changeMember,
   handOverOwnership,
   type Invitation,
-  inviteMember,
   makeResetLink,
   type Member,
-  membersKey,
   membersQuery,
   removeMember,
   renewInvitation,
   revokeInvitation,
 } from "@/lib/members-api";
-import { projectsQuery, type ProjectSummary } from "@/lib/projects-api";
+import { projectsQuery } from "@/lib/projects-api";
 
 import { formatDay, formatMoment } from "../users/format";
-import { AccessEditor } from "./access-editor";
-import { accessSummary, DEFAULT_ACCESS } from "./access-text";
-
-type Actor = { id: string; role: Role };
+import { accessSummary } from "./access-text";
+import {
+  AccessSheet,
+  ActionDialog,
+  type Actor,
+  type FinalFocus,
+  InviteDialog,
+  LINK_ONCE,
+} from "./member-dialogs";
+import { TruncatedText } from "./truncated-text";
 
 /** Whether `actor` may change, remove, or reset `target`: the API's rule (access/members.ts). */
 function mayManage(actor: Actor, target: { id: string; role: Role }) {
@@ -72,865 +71,435 @@ function mayManage(actor: Actor, target: { id: string; role: Role }) {
   return actor.role === "admin" && target.role === "member";
 }
 
+/** Whether `actor` may hand ownership to `target`: the owner, to anyone else. */
+const mayHandOver = (actor: Actor, target: Member) =>
+  actor.role === "owner" && target.id !== actor.id;
+
 /** Whether `actor` may renew or revoke an invitation: an admin's only the owner (access/invitations.ts). */
 const mayActOnInvitation = (actor: Actor, invitation: Invitation) =>
   actor.role === "owner" || invitation.role === "member";
 
 const ROLE_NAME: Record<Role, string> = { owner: "Owner", admin: "Admin", member: "Member" };
 
-function roleText(role: Role, access: Member["access"]) {
-  return access === null ? ROLE_NAME[role] : `Member: ${accessSummary(access)}`;
+/** What someone may reach: "Everything" for the owner and admins, a member's summary. */
+const accessText = (access: Member["access"]) =>
+  access === null ? "Everything" : accessSummary(access);
+
+const DAY = 86_400_000;
+const HOUR = 3_600_000;
+
+/** "in 5 days", "in 3 hours": how long an invitation's link still works; null once expired. */
+function expiresIn(iso: string, now: number): string | null {
+  const left = Date.parse(iso) - now;
+  if (left <= 0) return null;
+  const format = new Intl.RelativeTimeFormat("en", { numeric: "always" });
+  if (left >= DAY) return format.format(Math.round(left / DAY), "day");
+  if (left >= HOUR) return format.format(Math.floor(left / HOUR), "hour");
+  return format.format(Math.max(1, Math.floor(left / 60_000)), "minute");
 }
 
-/** "1 member", "3 members". */
-const count = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+const isExpired = (invitation: Invitation, now: number) => Date.parse(invitation.expiresAt) <= now;
 
-/** A link to copy and send, shown once: the API keeps only its hash. */
-function LinkToSend({ url, about }: { url: string; about: string }) {
-  return (
-    <div className="flex flex-col gap-2">
-      <p className="text-sm text-ink-muted">{about}</p>
-      <CopyableCode text={url} copyLabel="Copy the link" />
-    </div>
-  );
-}
+/** The row's menu button, by the person or invitation it acts on. */
+const menuButton = (id: string) =>
+  document.querySelector<HTMLElement>(`[data-actions-for="${CSS.escape(id)}"]`);
+const tabButton = (tab: Tab) => document.querySelector<HTMLElement>(`[data-members-tab="${tab}"]`);
 
-/**
- * An action behind a dialog: a button opens it, the action runs on
- * confirming, and a link it returns (an invitation's, a reset link) is shown
- * to copy, once.
- */
-function ActionDialog({
-  label,
-  buttonLabel,
-  title,
-  description,
-  confirmLabel,
-  destructive = false,
-  run,
-  linkAbout,
-  children,
-  canConfirm = true,
-  onClear,
-  onDone,
-}: {
-  /** The button's text. */
-  label: string;
-  /** The button's accessible name, naming the person it acts on. */
-  buttonLabel: string;
-  title: string;
-  description: React.ReactNode;
-  confirmLabel: string;
-  destructive?: boolean;
-  run: () => Promise<{ url: string } | undefined>;
-  linkAbout?: string;
-  children?: React.ReactNode;
-  canConfirm?: boolean;
-  /** Clears what the form holds, such as a password: on closing, and after a failure. */
-  onClear?: () => void;
-  /** After an action that returns no link, once the dialog has closed. */
-  onDone?: () => void;
-}) {
-  const queryClient = useQueryClient();
-  const [open, setOpen] = React.useState(false);
-  const action = useMutation({
-    mutationFn: run,
-    onError: () => onClear?.(),
-    onSuccess: (result) => {
-      void queryClient.invalidateQueries({ queryKey: membersKey });
-      // Handing over ownership changes what the signed-in user may do.
-      void queryClient.invalidateQueries({ queryKey: meQuery().queryKey });
-      if (result === undefined) {
-        setOpen(false);
-        // Nothing the form held, such as a password, stays once the action is done.
-        onClear?.();
-        onDone?.();
-      }
-    },
-  });
+type Tab = "members" | "invitations";
+
+/** What is open: the sheet or a dialog, and whom it acts on. */
+type Action =
+  | { kind: "access" | "reset" | "owner" | "remove"; id: string }
+  | { kind: "renew" | "revoke"; id: string };
+
+/** A row's actions menu, named for the person or invitation. */
+function RowMenu({ id, name, children }: { id: string; name: string; children: React.ReactNode }) {
   return (
-    <Dialog
-      open={open}
-      onOpenChange={(next) => {
-        setOpen(next);
-        if (!next) {
-          action.reset();
-          onClear?.();
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        render={
+          <Button
+            variant="ghost"
+            size="icon"
+            data-actions-for={id}
+            aria-label={`More actions for ${name}`}
+            className="relative after:absolute after:-inset-1.5"
+          />
         }
-      }}
-    >
-      <Button
-        variant={destructive ? "destructive" : "outline"}
-        className="self-start"
-        aria-label={buttonLabel}
-        onClick={() => setOpen(true)}
       >
-        {label}
-      </Button>
-      <DialogContent className="sm:max-w-lg">
-        <DialogHeader>
-          <DialogTitle>{title}</DialogTitle>
-          <DialogDescription>{description}</DialogDescription>
-        </DialogHeader>
-        {action.data === undefined ? (
-          <form
-            className="flex flex-col gap-4"
-            onSubmit={(event) => {
-              event.preventDefault();
-              action.mutate();
-            }}
-          >
-            {children}
-            {action.error !== null && (
-              <Alert variant="destructive" role="alert">
-                <OctagonAlertIcon />
-                <AlertDescription>{action.error.message}</AlertDescription>
-              </Alert>
-            )}
-            <DialogFooter>
-              <DialogClose render={<Button variant="outline" type="button" />}>Cancel</DialogClose>
-              <Button
-                type="submit"
-                variant={destructive ? "destructive" : "default"}
-                disabled={action.isPending || !canConfirm}
-              >
-                {action.isPending && (
-                  <LoaderCircleIcon
-                    aria-hidden="true"
-                    className="animate-spin motion-reduce:animate-none"
-                  />
-                )}
-                {confirmLabel}
-              </Button>
-            </DialogFooter>
-          </form>
-        ) : (
-          <>
-            <LinkToSend url={action.data.url} about={linkAbout ?? ""} />
-            <DialogFooter>
-              <DialogClose render={<Button type="button" />}>Done</DialogClose>
-            </DialogFooter>
-          </>
-        )}
-      </DialogContent>
-    </Dialog>
+        <EllipsisIcon aria-hidden="true" />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-auto min-w-44">
+        {children}
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 
-/** Whether a member's access can be saved: a chosen list needs a project. */
-const choiceReady = (choice: AccessChoice) =>
-  choice.role === "admin" || choice.access.projects === "all" || choice.access.projects.length > 0;
-
-function InviteDialog({
-  actor,
-  projects,
-  days,
-}: {
-  actor: Actor;
-  projects: readonly ProjectSummary[];
-  days: number;
-}) {
-  const queryClient = useQueryClient();
-  const [open, setOpen] = React.useState(false);
-  const [email, setEmail] = React.useState("");
-  const [choice, setChoice] = React.useState<AccessChoice>({
-    role: "member",
-    access: DEFAULT_ACCESS,
-  });
-  const invite = useMutation({
-    mutationFn: () => inviteMember(email.trim(), choice),
-    onSuccess: () => void queryClient.invalidateQueries({ queryKey: membersKey }),
-  });
-  return (
-    <Dialog
-      open={open}
-      onOpenChange={(next) => {
-        setOpen(next);
-        if (!next) {
-          invite.reset();
-          setEmail("");
-          setChoice({ role: "member", access: DEFAULT_ACCESS });
-        }
-      }}
-    >
-      <Button onClick={() => setOpen(true)}>
-        <UserPlusIcon aria-hidden="true" />
-        Invite
-      </Button>
-      <DialogContent className="max-h-[90svh] overflow-y-auto sm:max-w-2xl">
-        <DialogHeader>
-          <DialogTitle>Invite someone</DialogTitle>
-          <DialogDescription>
-            Copy the invitation link. Send it to the person yourself. This instance sends no email.
-            The link works once, for {days} days.
-          </DialogDescription>
-        </DialogHeader>
-        {invite.data === undefined ? (
-          <form
-            className="flex flex-col gap-5"
-            onSubmit={(event) => {
-              event.preventDefault();
-              invite.mutate();
-            }}
-          >
-            <FieldGroup>
-              <Field>
-                <FieldLabel htmlFor="invite-email">Email</FieldLabel>
-                <Input
-                  id="invite-email"
-                  type="email"
-                  required
-                  maxLength={320}
-                  autoComplete="off"
-                  value={email}
-                  onChange={(event) => setEmail(event.target.value)}
-                />
-              </Field>
-            </FieldGroup>
-            <AccessEditor
-              value={choice}
-              onChange={setChoice}
-              allowAdmin={actor.role === "owner"}
-              projects={projects}
-            />
-            {invite.error !== null && (
-              <Alert variant="destructive" role="alert">
-                <OctagonAlertIcon />
-                <AlertDescription>{invite.error.message}</AlertDescription>
-              </Alert>
-            )}
-            <DialogFooter>
-              <DialogClose render={<Button variant="outline" type="button" />}>Cancel</DialogClose>
-              <Button type="submit" disabled={invite.isPending || !choiceReady(choice)}>
-                {invite.isPending && (
-                  <LoaderCircleIcon
-                    aria-hidden="true"
-                    className="animate-spin motion-reduce:animate-none"
-                  />
-                )}
-                Create invitation link
-              </Button>
-            </DialogFooter>
-          </form>
-        ) : (
-          <>
-            <LinkToSend
-              url={invite.data.url}
-              about={`Send this link to ${invite.data.invitation.email}. The link appears only now. To replace a lost link, choose the invitation in the list and make a new link.`}
-            />
-            <DialogFooter>
-              <DialogClose render={<Button type="button" />}>Done</DialogClose>
-            </DialogFooter>
-          </>
-        )}
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-/** A choice compared by what it gives: the chosen projects in any order are the same. */
-function comparable(choice: AccessChoice) {
-  if (choice.role === "admin") return choice;
-  const { projects } = choice.access;
-  return {
-    ...choice,
-    access: { ...choice.access, projects: projects === "all" ? "all" : ignoreOrder(projects) },
-  };
-}
-
-const NOT_READY = "Choose at least one project, or choose all projects.";
-
-/**
- * A member's role and access, as a form under the save rule
- * (docs/design-system.md): Save waits for a change, Discard undoes it, and
- * leaving the page or choosing another person with it unsaved asks first.
- */
-function AccessSection({
+/** A member's name: the button the row's click stands for where it opens Change access. */
+function PersonName({
   member,
-  actor,
-  projects,
+  onOpen,
 }: {
   member: Member;
-  actor: Actor;
-  projects: readonly ProjectSummary[];
+  /** Opens Change access; left out where the viewer may not change them. */
+  onOpen: (() => void) | undefined;
 }) {
-  const queryClient = useQueryClient();
-  const initial: AccessChoice =
-    member.access === null ? { role: "admin" } : { role: "member", access: member.access };
-  const form = useDirtyForm(
-    { choice: initial },
-    { key: member.id, normalize: { choice: comparable } },
-  );
-  const [notReady, setNotReady] = React.useState(false);
-  const save = useMutation({
-    mutationFn: (values: { choice: AccessChoice }) => changeMember(member.id, values.choice),
-    onSuccess: (_, values) => {
-      form.saved(values);
-      void queryClient.invalidateQueries({ queryKey: membersKey });
-    },
-  });
-  return (
-    <SettingsSection
-      title="Access"
-      headingLevel={3}
-      description="Changes apply on their next click."
-      form={form}
-      onSave={(values) => {
-        const ready = choiceReady(values.choice);
-        setNotReady(!ready);
-        if (ready) save.mutate(values);
-      }}
-      saving={save.isPending}
-      error={notReady && !choiceReady(form.values.choice) ? NOT_READY : save.error?.message}
-      saveLabel="Save access"
-    >
-      <AccessEditor
-        value={form.values.choice}
-        onChange={(choice) => form.set("choice", choice)}
-        allowAdmin={actor.role === "owner"}
-        projects={projects}
-      />
-    </SettingsSection>
-  );
-}
-
-/** Why the signed-in user cannot change this person, in the role rules' words. */
-function whyNotManaged(actor: Actor, member: Member): string {
-  if (member.id === actor.id) {
-    return actor.role === "owner"
-      ? "This is you. The owner keeps access to everything. To give the instance to someone else, choose them and hand over ownership."
-      : "This is you. Nobody changes their own access or removes themselves here.";
+  if (onOpen === undefined) {
+    return <TruncatedText text={member.name} className="font-medium text-ink" />;
   }
-  if (member.role === "owner") {
-    return "The owner has access to everything. Nobody else changes the owner's access, makes their reset link, or removes them.";
-  }
-  return "Only the owner changes an admin's access, makes their reset link, or removes them.";
-}
-
-/** One fact about a person: a term and its value, as a row. */
-function Fact({ term, children }: { term: string; children: React.ReactNode }) {
   return (
-    <div className="grid grid-cols-[8rem_minmax(0,1fr)] gap-x-4 gap-y-1 py-2 text-sm">
-      <dt className="text-ink-subtle">{term}</dt>
-      <dd className="[overflow-wrap:anywhere] text-ink">{children}</dd>
-    </div>
+    <TruncatedText
+      text={member.name}
+      className="text-left font-medium text-link hover:underline"
+      render={
+        <button
+          type="button"
+          {...ROW_LINK}
+          aria-label={`${member.name}, change access`}
+          onClick={onOpen}
+        />
+      }
+    />
   );
 }
 
-/** A section of a person's actions without fields, under their name. */
-function ActionSection({
-  title,
-  description,
-  children,
-}: {
-  title: string;
-  description: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <SettingsSection title={title} headingLevel={3} description={description} className="border-t">
-      {children}
-    </SettingsSection>
-  );
-}
+const youBadge = (
+  <Badge variant="secondary" className="shrink-0">
+    You
+  </Badge>
+);
 
-function MemberDetail({
-  member,
+function MembersTable({
+  members,
   actor,
-  projects,
+  phone,
   timeZone,
-  onGone,
+  onAction,
 }: {
-  member: Member;
+  members: readonly Member[];
   actor: Actor;
-  projects: readonly ProjectSummary[];
+  phone: boolean;
   timeZone: string | undefined;
-  /** After the member is removed: says so, and leaves their page. */
-  onGone: (notice: string, id: string) => void;
+  onAction: (action: Action) => void;
 }) {
-  const [password, setPassword] = React.useState("");
-  const manage = mayManage(actor, member);
+  const lastSignIn = (member: Member) =>
+    member.lastSignInAt === null ? "Never" : formatDay(member.lastSignInAt, timeZone);
+  const menu = (member: Member) => {
+    const manage = mayManage(actor, member);
+    if (!manage && !mayHandOver(actor, member)) return null;
+    const act = (kind: "access" | "reset" | "owner" | "remove") => () =>
+      onAction({ kind, id: member.id });
+    return (
+      <RowMenu id={member.id} name={member.name}>
+        {manage && <DropdownMenuItem onClick={act("access")}>Change access</DropdownMenuItem>}
+        {manage && <DropdownMenuItem onClick={act("reset")}>Make reset link</DropdownMenuItem>}
+        {mayHandOver(actor, member) && (
+          <DropdownMenuItem onClick={act("owner")}>Make owner</DropdownMenuItem>
+        )}
+        {manage && (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem variant="destructive" onClick={act("remove")}>
+              Remove
+            </DropdownMenuItem>
+          </>
+        )}
+      </RowMenu>
+    );
+  };
+  const opener = (member: Member) =>
+    mayManage(actor, member) ? () => onAction({ kind: "access", id: member.id }) : undefined;
+
   return (
-    <div className="flex flex-col">
-      <header className="flex flex-col gap-1 pb-2">
-        <h2
-          tabIndex={-1}
-          data-slot="person-heading"
-          className="flex flex-wrap items-center gap-2 text-lg font-medium text-ink outline-none"
-        >
-          {member.name}
-          {member.id === actor.id && <Badge variant="secondary">You</Badge>}
-        </h2>
-        <p className="text-sm [overflow-wrap:anywhere] text-ink-muted">{member.email}</p>
-      </header>
-      <dl className="flex max-w-2xl flex-col divide-y border-y">
-        <Fact term="Role or access">{roleText(member.role, member.access)}</Fact>
-        <Fact term="Last sign-in">
-          {member.lastSignInAt === null ? "Never" : formatMoment(member.lastSignInAt, timeZone)}
-        </Fact>
-        <Fact term="Joined">{formatDay(member.createdAt, timeZone)}</Fact>
-      </dl>
-      {manage ? (
-        <AccessSection member={member} actor={actor} projects={projects} />
-      ) : (
-        <p className="flex max-w-2xl items-start gap-2 py-6 text-sm text-ink-muted">
-          <InfoIcon aria-hidden="true" className="mt-0.5 size-4 shrink-0" />
-          {whyNotManaged(actor, member)}
-        </p>
-      )}
-      {manage && (
-        <ActionSection
-          title="Password"
-          description="A reset link works once, within 24 hours, to set a new password. Using it signs them out everywhere. Their old password works until then."
-        >
-          <ActionDialog
-            label="Reset link"
-            buttonLabel={`Make a reset link for ${member.name}`}
-            title={`A reset link for ${member.name}`}
-            description="The link works once, within 24 hours, to set a new password. Using it signs them out everywhere. Their old password works until then. A new link replaces the previous link."
-            confirmLabel="Make the link"
-            linkAbout={`Send this link to ${member.name}. It is shown only now.`}
-            run={() => makeResetLink(member.id)}
-          />
-        </ActionSection>
-      )}
-      {actor.role === "owner" && member.id !== actor.id && (
-        <ActionSection
-          title="Ownership"
-          description="The owner alone changes the instance settings and hands over ownership. Handing it over makes you an admin."
-        >
-          <ActionDialog
-            label="Make owner"
-            buttonLabel={`Make ${member.name} the owner`}
-            title={`Make ${member.name} the owner?`}
-            description="They gain access to the instance settings and everything else. You become an admin. Only the new owner can make you the owner again."
-            confirmLabel="Hand over ownership"
-            destructive
-            canConfirm={password !== ""}
-            onClear={() => setPassword("")}
-            run={async () => {
-              await handOverOwnership(member.id, password);
-              return undefined;
-            }}
-          >
-            <Field>
-              <FieldLabel htmlFor={`password-${member.id}`}>Your password</FieldLabel>
-              <Input
-                id={`password-${member.id}`}
-                type="password"
-                autoComplete="current-password"
-                required
-                value={password}
-                onChange={(event) => setPassword(event.target.value)}
-              />
-            </Field>
-          </ActionDialog>
-        </ActionSection>
-      )}
-      {manage && (
-        <ActionSection
-          title="Remove"
-          description="Removing deletes their account and signs them out at once. What they did, such as resolving errors, stays recorded."
-        >
-          <ActionDialog
-            label="Remove"
-            buttonLabel={`Remove ${member.name}`}
-            title={`Remove ${member.name}?`}
-            description="This deletes their account and signs them out immediately. Their actions, such as resolving errors, remain recorded. This also revokes their pending invitations."
-            confirmLabel="Remove"
-            destructive
-            run={async () => {
-              await removeMember(member.id);
-              return undefined;
-            }}
-            onDone={() => onGone(`${member.name} was removed.`, member.id)}
-          />
-        </ActionSection>
-      )}
-    </div>
+    <Table className={cn(phone && "table-fixed")}>
+      <caption className="sr-only">Members</caption>
+      <TableHeader>
+        <TableRow className="hover:bg-transparent">
+          <TableHead scope="col" className={cn(LIST_HEAD, GUTTER_START)}>
+            {phone ? "Member" : "Name"}
+          </TableHead>
+          {!phone && (
+            <>
+              <TableHead scope="col" className={LIST_HEAD}>
+                Role
+              </TableHead>
+              <TableHead scope="col" className={LIST_HEAD}>
+                Access
+              </TableHead>
+              <TableHead scope="col" className={LIST_HEAD}>
+                Last sign-in
+              </TableHead>
+            </>
+          )}
+          <TableHead scope="col" className={cn(LIST_HEAD, GUTTER_END, "w-14")}>
+            <span className="sr-only">Actions</span>
+          </TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {members.map((member) => {
+          const manage = mayManage(actor, member);
+          const you = member.id === actor.id;
+          const access = accessText(member.access);
+          return (
+            <TableRow key={member.id} {...clickableRow(undefined, manage)}>
+              {phone ? (
+                <TableCell className={cn(GUTTER_START, "py-2.5 whitespace-normal")}>
+                  <div className="flex min-w-0 items-center gap-2">
+                    <PersonName member={member} onOpen={opener(member)} />
+                    {you && youBadge}
+                    <span className="ml-auto shrink-0 text-ink-muted">
+                      {ROLE_NAME[member.role]}
+                    </span>
+                  </div>
+                  <TruncatedText text={member.email} className="text-xs text-ink-subtle" />
+                  <div className="flex min-w-0 gap-1 text-xs text-ink-muted">
+                    <TruncatedText text={access} />
+                    <span className="shrink-0" aria-hidden="true">
+                      ·
+                    </span>
+                    <span className="shrink-0">
+                      <span className="sr-only">Last sign-in </span>
+                      {lastSignIn(member)}
+                    </span>
+                  </div>
+                </TableCell>
+              ) : (
+                <>
+                  <TableCell className={cn(GUTTER_START, "py-2.5")}>
+                    <div className="flex max-w-80 min-w-0 items-center gap-2">
+                      <PersonName member={member} onOpen={opener(member)} />
+                      {you && youBadge}
+                    </div>
+                    <TruncatedText
+                      text={member.email}
+                      className="max-w-80 text-xs text-ink-subtle"
+                    />
+                  </TableCell>
+                  <TableCell className="text-ink-muted">{ROLE_NAME[member.role]}</TableCell>
+                  <TableCell className="text-ink-muted">
+                    <TruncatedText text={access} className="max-w-96" />
+                  </TableCell>
+                  <TableCell className="text-ink-muted tabular-nums">
+                    {member.lastSignInAt === null ? (
+                      "Never"
+                    ) : (
+                      <time dateTime={member.lastSignInAt}>{lastSignIn(member)}</time>
+                    )}
+                  </TableCell>
+                </>
+              )}
+              <TableCell className={cn(GUTTER_END, "text-right")}>{menu(member)}</TableCell>
+            </TableRow>
+          );
+        })}
+      </TableBody>
+    </Table>
   );
 }
 
-function InvitationDetail({
+/** When an invitation's link stops working: "in 5 days", the moment in its tooltip-free text. */
+function Expiry({
   invitation,
-  actor,
   now,
-  days,
   timeZone,
-  onGone,
 }: {
   invitation: Invitation;
-  actor: Actor;
   now: number;
-  days: number;
   timeZone: string | undefined;
-  onGone: (notice: string, id: string) => void;
 }) {
-  const expired = new Date(invitation.expiresAt).getTime() <= now;
+  const left = expiresIn(invitation.expiresAt, now);
+  if (left === null) return <StatusBadge tone="warning">Expired</StatusBadge>;
   return (
-    <div className="flex flex-col">
-      <header className="flex flex-col gap-1 pb-2">
-        <h2
-          tabIndex={-1}
-          data-slot="person-heading"
-          className="text-lg font-medium [overflow-wrap:anywhere] text-ink outline-none"
-        >
-          {invitation.email}
-        </h2>
-        <p className="text-sm text-ink-muted">Invited, not joined yet</p>
-      </header>
-      <dl className="flex max-w-2xl flex-col divide-y border-y">
-        <Fact term="Access">{roleText(invitation.role, invitation.access)}</Fact>
-        <Fact term="Invited by">{invitation.invitedBy.name}</Fact>
-        <Fact term="Invited">{formatMoment(invitation.createdAt, timeZone)}</Fact>
-        <Fact term="Expires">
-          {expired ? (
-            <StatusBadge tone="warning">Expired</StatusBadge>
-          ) : (
-            formatMoment(invitation.expiresAt, timeZone)
-          )}
-        </Fact>
-      </dl>
-      {mayActOnInvitation(actor, invitation) ? (
-        <>
-          <ActionSection
-            title="Link"
-            description={`The link was shown once, when it was made. A new link works for ${days} days and stops the old one.`}
-          >
-            <ActionDialog
-              label="New link"
-              buttonLabel={`Make a new link for ${invitation.email}`}
-              title={`A new link for ${invitation.email}`}
-              description={`The old link stops working. The new link works for ${days} days. Use this to replace a lost link, which cannot be shown again.`}
-              confirmLabel="Make a new link"
-              linkAbout={`Send this link to ${invitation.email}. It is shown only now.`}
-              run={() => renewInvitation(invitation.id)}
-            />
-          </ActionSection>
-          <ActionSection title="Revoke" description="Revoking stops the link at once.">
-            <ActionDialog
-              label="Revoke"
-              buttonLabel={`Revoke the invitation of ${invitation.email}`}
-              title={`Revoke the invitation of ${invitation.email}?`}
-              description="Its link stops working at once."
-              confirmLabel="Revoke"
-              destructive
-              run={async () => {
-                await revokeInvitation(invitation.id);
-                return undefined;
-              }}
-              onDone={() =>
-                onGone(`The invitation of ${invitation.email} was revoked.`, invitation.id)
-              }
-            />
-          </ActionSection>
-        </>
-      ) : (
-        <p className="flex max-w-2xl items-start gap-2 py-6 text-sm text-ink-muted">
-          <InfoIcon aria-hidden="true" className="mt-0.5 size-4 shrink-0" />
-          Only the owner renews or revokes an invitation to be an admin.
-        </p>
-      )}
-    </div>
+    <time dateTime={invitation.expiresAt} title={formatMoment(invitation.expiresAt, timeZone)}>
+      {left}
+    </time>
   );
 }
 
-/** The detail pane with nobody chosen: who has access, and what the page is for. */
-function Summary({
-  members,
-  invitations,
-  days,
-}: {
-  members: readonly Member[];
-  invitations: readonly Invitation[];
-  days: number;
-}) {
-  const of = (role: Role) => members.filter((member) => member.role === role).length;
-  const figures = [
-    { label: "Owner", value: of("owner") },
-    { label: "Admins", value: of("admin") },
-    { label: "Members", value: of("member") },
-    { label: "Pending invitations", value: invitations.length },
-  ];
-  return (
-    <div className="flex max-w-2xl flex-col gap-5">
-      <h2 className="text-base font-medium text-ink">Everyone with access</h2>
-      <dl className="grid grid-cols-2 gap-px overflow-hidden border-y sm:grid-cols-4">
-        {figures.map((figure) => (
-          <div key={figure.label} className="flex flex-col gap-1 py-3 pr-4">
-            <dt className="text-xs text-ink-subtle">{figure.label}</dt>
-            <dd className="text-xl font-medium text-ink tabular-nums">{figure.value}</dd>
-          </div>
-        ))}
-      </dl>
-      <p className="text-sm text-pretty text-ink-muted">
-        The owner and admins have access to everything. Members have access to their assigned areas
-        and projects. Changes apply on the next click.
-      </p>
-      <p className="text-sm text-pretty text-ink-muted">
-        Each invitation link works once, for {days} days. Removing or demoting an admin revokes the
-        invitations they made.
-      </p>
-      <p className="text-sm text-ink-subtle">
-        Choose a person to change their access, make a reset link, or remove them.
-      </p>
-    </div>
-  );
-}
-
-/**
- * A person's name or email in the list, as a link that chooses them. The
- * chosen one is the router's active link, marked `aria-current="page"`.
- */
-function ChooseLink({
-  search,
-  children,
-}: {
-  search: { member?: string; invitation?: string };
-  children: React.ReactNode;
-}) {
-  return (
-    <Link
-      to="/settings/members"
-      search={search}
-      data-person={search.member ?? search.invitation}
-      {...ROW_LINK}
-      className="truncate font-medium text-link hover:underline"
-    >
-      {children}
-    </Link>
-  );
-}
-
-function PeopleList({
-  members,
+function InvitationsTable({
   invitations,
   actor,
-  chosen,
+  phone,
   now,
   timeZone,
+  onAction,
 }: {
-  members: readonly Member[];
   invitations: readonly Invitation[];
   actor: Actor;
-  chosen: { member: string | undefined; invitation: string | undefined };
+  phone: boolean;
   now: number;
   timeZone: string | undefined;
+  onAction: (action: Action) => void;
 }) {
-  // A phone leaves out what the person's page shows: the last sign-in, when an invitation expires.
-  const phone = useMediaQuery(PHONE);
+  const menu = (invitation: Invitation) =>
+    mayActOnInvitation(actor, invitation) ? (
+      <RowMenu id={invitation.id} name={invitation.email}>
+        <DropdownMenuItem onClick={() => onAction({ kind: "renew", id: invitation.id })}>
+          New link
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem
+          variant="destructive"
+          onClick={() => onAction({ kind: "revoke", id: invitation.id })}
+        >
+          Revoke
+        </DropdownMenuItem>
+      </RowMenu>
+    ) : null;
   return (
-    <div className="flex flex-col gap-6 pb-6">
-      <section aria-labelledby="members-list-title" className="flex flex-col gap-1">
-        <h2
-          id="members-list-title"
-          tabIndex={-1}
-          className="px-gutter text-sm font-medium text-ink outline-none"
-        >
-          Members
-        </h2>
-        <Table className="table-fixed">
-          <caption className="sr-only">Members</caption>
-          <TableHeader>
-            <TableRow className="hover:bg-transparent">
-              <TableHead scope="col" className={`${LIST_HEAD} ${GUTTER_START} w-[45%]`}>
-                Name
+    <Table className={cn(phone && "table-fixed")}>
+      <caption className="sr-only">Pending invitations</caption>
+      <TableHeader>
+        <TableRow className="hover:bg-transparent">
+          <TableHead scope="col" className={cn(LIST_HEAD, GUTTER_START)}>
+            {phone ? "Invitation" : "Email"}
+          </TableHead>
+          {!phone && (
+            <>
+              <TableHead scope="col" className={LIST_HEAD}>
+                Role
               </TableHead>
-              <TableHead scope="col" className={`${LIST_HEAD} ${phone ? GUTTER_END : ""}`}>
-                Role or access
+              <TableHead scope="col" className={LIST_HEAD}>
+                Access
               </TableHead>
-              {!phone && (
-                <TableHead scope="col" className={`${LIST_HEAD} ${GUTTER_END} w-36`}>
-                  Last sign-in
-                </TableHead>
+              <TableHead scope="col" className={LIST_HEAD}>
+                Invited by
+              </TableHead>
+              <TableHead scope="col" className={LIST_HEAD}>
+                Created
+              </TableHead>
+              <TableHead scope="col" className={LIST_HEAD}>
+                Expires
+              </TableHead>
+            </>
+          )}
+          <TableHead scope="col" className={cn(LIST_HEAD, GUTTER_END, "w-14")}>
+            <span className="sr-only">Actions</span>
+          </TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {invitations.map((invitation) => {
+          const access = accessText(invitation.access);
+          return (
+            <TableRow key={invitation.id}>
+              {phone ? (
+                <TableCell className={cn(GUTTER_START, "py-2.5 whitespace-normal")}>
+                  <div className="flex min-w-0 items-center gap-2">
+                    <TruncatedText text={invitation.email} className="font-medium text-ink" />
+                    <span className="ml-auto shrink-0 text-ink-muted">
+                      {ROLE_NAME[invitation.role]}
+                    </span>
+                  </div>
+                  <TruncatedText text={access} className="text-xs text-ink-muted" />
+                  <p className="flex min-w-0 flex-wrap gap-x-1 text-xs text-ink-subtle">
+                    <span>
+                      Expires <Expiry invitation={invitation} now={now} timeZone={timeZone} />
+                    </span>
+                    <span aria-hidden="true">·</span>
+                    <span className="min-w-0 [overflow-wrap:anywhere]">
+                      Invited by {invitation.invitedBy.name}
+                    </span>
+                  </p>
+                </TableCell>
+              ) : (
+                <>
+                  <TableCell className={cn(GUTTER_START, "py-2.5")}>
+                    <TruncatedText
+                      text={invitation.email}
+                      className="max-w-72 font-medium text-ink"
+                    />
+                  </TableCell>
+                  <TableCell className="text-ink-muted">{ROLE_NAME[invitation.role]}</TableCell>
+                  <TableCell className="text-ink-muted">
+                    <TruncatedText text={access} className="max-w-80" />
+                  </TableCell>
+                  <TableCell className="text-ink-muted">
+                    <TruncatedText text={invitation.invitedBy.name} className="max-w-48" />
+                  </TableCell>
+                  <TableCell className="text-ink-muted tabular-nums">
+                    <time dateTime={invitation.createdAt}>
+                      {formatDay(invitation.createdAt, timeZone)}
+                    </time>
+                  </TableCell>
+                  <TableCell className="text-ink-muted tabular-nums">
+                    <Expiry invitation={invitation} now={now} timeZone={timeZone} />
+                  </TableCell>
+                </>
               )}
+              <TableCell className={cn(GUTTER_END, "text-right")}>{menu(invitation)}</TableCell>
             </TableRow>
-          </TableHeader>
-          <TableBody>
-            {members.map((member) => {
-              const isChosen = chosen.member === member.id;
-              return (
-                <TableRow
-                  key={member.id}
-                  data-state={isChosen ? "selected" : undefined}
-                  {...clickableRow(SELECTED_ROW)}
-                >
-                  <TableCell className={`${GUTTER_START} py-2.5 whitespace-normal`}>
-                    <div className="flex min-w-0 items-center gap-2">
-                      <ChooseLink search={{ member: member.id }}>{member.name}</ChooseLink>
-                      {member.id === actor.id && <Badge variant="secondary">You</Badge>}
-                    </div>
-                    <p className="truncate text-xs text-ink-subtle" title={member.email}>
-                      {member.email}
-                    </p>
-                  </TableCell>
-                  <TableCell
-                    className={`truncate text-ink-muted ${phone ? GUTTER_END : ""}`}
-                    title={roleText(member.role, member.access)}
-                  >
-                    {roleText(member.role, member.access)}
-                  </TableCell>
-                  {!phone && (
-                    <TableCell className={`${GUTTER_END} text-ink-muted tabular-nums`}>
-                      {member.lastSignInAt === null
-                        ? "Never"
-                        : formatDay(member.lastSignInAt, timeZone)}
-                    </TableCell>
-                  )}
-                </TableRow>
-              );
-            })}
-          </TableBody>
-        </Table>
-      </section>
-      <section aria-labelledby="invitations-list-title" className="flex flex-col gap-1">
-        <h2
-          id="invitations-list-title"
-          tabIndex={-1}
-          className="px-gutter text-sm font-medium text-ink outline-none"
-        >
-          Pending invitations
-        </h2>
-        {invitations.length === 0 ? (
-          <p className="px-gutter py-2 text-sm text-ink-subtle">No pending invitations.</p>
-        ) : (
-          <Table className="table-fixed">
-            <caption className="sr-only">Pending invitations</caption>
-            <TableHeader>
-              <TableRow className="hover:bg-transparent">
-                <TableHead scope="col" className={`${LIST_HEAD} ${GUTTER_START} w-[45%]`}>
-                  Email
-                </TableHead>
-                <TableHead scope="col" className={`${LIST_HEAD} ${phone ? GUTTER_END : ""}`}>
-                  Access
-                </TableHead>
-                {!phone && (
-                  <TableHead scope="col" className={`${LIST_HEAD} ${GUTTER_END} w-36`}>
-                    Expires
-                  </TableHead>
-                )}
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {invitations.map((invitation) => {
-                const isChosen = chosen.invitation === invitation.id;
-                return (
-                  <TableRow
-                    key={invitation.id}
-                    data-state={isChosen ? "selected" : undefined}
-                    {...clickableRow(SELECTED_ROW)}
-                  >
-                    <TableCell className={`${GUTTER_START} py-2.5`}>
-                      <div className="flex min-w-0">
-                        <ChooseLink search={{ invitation: invitation.id }}>
-                          {invitation.email}
-                        </ChooseLink>
-                      </div>
-                    </TableCell>
-                    <TableCell
-                      className={`truncate text-ink-muted ${phone ? GUTTER_END : ""}`}
-                      title={roleText(invitation.role, invitation.access)}
-                    >
-                      {roleText(invitation.role, invitation.access)}
-                    </TableCell>
-                    {!phone && (
-                      <TableCell className={`${GUTTER_END} text-ink-muted tabular-nums`}>
-                        {new Date(invitation.expiresAt).getTime() <= now ? (
-                          <StatusBadge tone="warning">Expired</StatusBadge>
-                        ) : (
-                          formatDay(invitation.expiresAt, timeZone)
-                        )}
-                      </TableCell>
-                    )}
-                  </TableRow>
-                );
-              })}
-            </TableBody>
-          </Table>
-        )}
-      </section>
-    </div>
+          );
+        })}
+      </TableBody>
+    </Table>
   );
 }
 
-/** The two panes' shape while the members load. */
+/** Under the members table: what the viewer can't do here, why, and what to do instead. */
+function membersNote(actor: Actor) {
+  return actor.role === "owner"
+    ? "You're the owner, so you keep access to everything, and you can't change your own access or remove yourself. To give the instance to someone else, open their row's menu and choose Make owner."
+    : "As an admin, you can change, reset, and remove members. Admins and the owner have no menu here, because only the owner can change an admin, and nobody can change the owner or their own access. Ask the owner if this needs doing.";
+}
+
+/** The page's shape while it loads: the tab row, then rows. */
 function MembersSkeleton() {
   return (
-    <div
-      className="grid min-[64rem]:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]"
-      aria-busy="true"
-      aria-label="Loading members"
-    >
-      <div className="flex flex-col gap-3 px-gutter py-4 min-[64rem]:border-r">
-        <Skeleton className="h-8 w-24 self-end" />
+    <div aria-busy="true" aria-label="Loading members">
+      <div className="flex h-12 items-center justify-between gap-3 border-b px-gutter">
+        <Skeleton className="h-5 w-48" />
+        <Skeleton className="h-8 w-20" />
+      </div>
+      <div className="flex flex-col gap-3 px-gutter py-4">
         {[0, 1, 2, 3].map((index) => (
           <Skeleton key={index} className="h-10 w-full" />
         ))}
       </div>
-      <div className="hidden flex-col gap-4 px-gutter py-6 min-[64rem]:flex">
-        <Skeleton className="h-5 w-48" />
-        <Skeleton className="h-16 w-full max-w-2xl" />
-        <Skeleton className="h-4 w-full max-w-xl" />
-      </div>
     </div>
   );
 }
 
+/** "3" after a tab's label, read as part of it. */
+const tabCount = (n: number) => (
+  <span className="text-ink-subtle tabular-nums group-data-active/tab:text-ink-muted">{n}</span>
+);
+
 /**
- * The Members page (/settings/members; docs/access.md), a list with the
- * chosen person beside it (`?member=` or `?invitation=`): members with their
- * role or access and last sign-in, and pending invitations. The owner and
- * admins invite, change access, remove, and make reset links, within the
- * role rules; the owner hands over ownership. Under 64rem the list and a
- * person's page take the screen in turn.
+ * The Members page (/settings/members; docs/access.md): two tabs, Members
+ * and Invitations (`?tab=invitations`), each a table. A row's menu holds what
+ * the viewer may do to that person within the role rules, and a click on a
+ * member's row opens Change access, a sheet, where the viewer may change it.
+ * Invite, at the top right, makes an invitation link.
  */
-export function MembersPage({
-  chosen,
-}: {
-  /** The person chosen in the address: a member's ID, or an invitation's. */
-  chosen: { member: string | undefined; invitation: string | undefined };
-}) {
+export function MembersPage() {
   const me = useQuery(meQuery());
   const allowed = me.data?.permissions.members === true;
   const members = useQuery({ ...membersQuery(), enabled: allowed });
   const projects = useQuery({ ...projectsQuery(), enabled: allowed });
-  const navigate = useNavigate();
-  const narrow = useMediaQuery(NARROW_WORKBENCH);
+  const phone = useMediaQuery(PHONE);
+  const [tabParam, setTab] = useSearchParam("tab");
+  const tab: Tab = tabParam === "invitations" ? "invitations" : "members";
   // When the page opened: invitations past it show as expired.
   const [now] = React.useState(() => Date.now());
-  // What the last removal or revocation did, and the choice it left: shown until the next one.
-  const [notice, setNotice] = React.useState<{
-    text: string;
-    after: string;
-    seen: boolean;
-  } | null>(null);
-  // Where focus goes once the next person (or the list) has rendered.
-  const [focusTarget, setFocusTarget] = React.useState<string | null>(null);
-  const chosenKey = JSON.stringify([chosen.member ?? null, chosen.invitation ?? null]);
-  // Shown once the address holds the choice the removal left, and gone at the next choice:
-  // adjusted while rendering, as the address changes.
-  if (notice !== null && notice.after === chosenKey && !notice.seen) {
-    setNotice({ ...notice, seen: true });
-  } else if (notice !== null && notice.after !== chosenKey && notice.seen) {
-    setNotice(null);
-  }
-  const shownNotice = notice !== null && notice.after === chosenKey ? notice.text : "";
-
-  // Once the address holds the choice the removal left, and it has rendered.
-  const arrived = notice !== null && notice.after === chosenKey;
-  React.useEffect(() => {
-    if (focusTarget === null || !arrived) return undefined;
-    const frame = requestAnimationFrame(() => {
-      const target = focusTarget.startsWith("#")
-        ? document.querySelector<HTMLElement>(focusTarget)
-        : narrow
-          ? document.querySelector<HTMLElement>("[data-slot=person-heading]")
-          : document.querySelector<HTMLElement>(`[data-person="${CSS.escape(focusTarget)}"]`);
-      target?.focus();
-      setFocusTarget(null);
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [focusTarget, narrow, arrived]);
+  // What the last removal, revocation or save did: said once, until the next action.
+  const [notice, setNotice] = React.useState("");
+  // What is open, and whether: kept while it closes, so its content stays for the animation.
+  const [action, setAction] = React.useState<Action | null>(null);
+  const [open, setOpen] = React.useState(false);
+  // Opened again for the same person, the sheet or dialog starts afresh.
+  const [opened, setOpened] = React.useState(0);
+  const [password, setPassword] = React.useState("");
+  // Where focus goes once the sheet or dialog closes: a row's menu button, or a tab.
+  const focusTo = React.useRef<{ menu: string } | { tab: Tab } | null>(null);
+  const finalFocus = React.useCallback<FinalFocus>(() => {
+    const to = focusTo.current;
+    if (to === null) return true;
+    const element = "menu" in to ? menuButton(to.menu) : tabButton(to.tab);
+    return element ?? tabButton("members") ?? true;
+  }, []);
 
   if (me.data !== undefined && !allowed) {
     return <NoAccess />;
@@ -965,134 +534,274 @@ export function MembersPage({
     return <MembersSkeleton />;
   }
   const actor = data.you;
-  const member = data.members.find((item) => item.id === chosen.member);
-  const invitation = data.invitations.find((item) => item.id === chosen.invitation);
-  const anyChosen = chosen.member !== undefined || chosen.invitation !== undefined;
+  const pending = data.invitations.filter((item) => !isExpired(item, now)).length;
 
-  // The person is gone: the one after them in their list is chosen (the one before, at the
-  // end), with focus on their row, without asking about the form that went with them. With
-  // nobody left in that list, focus goes to its heading.
-  const leavePerson = (text: string, id: string) => {
-    const kind = data.members.some((item) => item.id === id) ? "member" : "invitation";
-    const ids = (kind === "member" ? data.members : data.invitations).map((item) => item.id);
-    const at = ids.indexOf(id);
-    const rest = ids.filter((item) => item !== id);
-    // Nobody acts on themselves or the owner, but they can still be chosen.
-    const next = rest[Math.min(at, rest.length - 1)];
-    const search = next === undefined ? {} : { [kind]: next };
-    setNotice({
-      text,
-      seen: false,
-      after: JSON.stringify([
-        kind === "member" ? (next ?? null) : null,
-        kind === "invitation" ? (next ?? null) : null,
-      ]),
-    });
-    setFocusTarget(next ?? (kind === "member" ? "#members-list-title" : "#invitations-list-title"));
-    void navigate({ to: "/settings/members", search, ignoreBlocker: true });
+  const start = (next: Action) => {
+    focusTo.current = { menu: next.id };
+    setNotice("");
+    setPassword("");
+    setAction(next);
+    setOpened((n) => n + 1);
+    setOpen(true);
   };
 
-  const detail = (() => {
+  // The row is going: focus goes to the nearest row after it with a menu (before it, at the
+  // end), or with none left, to its tab.
+  const leaveRow = (id: string, text: string) => {
+    const kind: Tab = data.members.some((item) => item.id === id) ? "members" : "invitations";
+    const withMenus =
+      kind === "members"
+        ? data.members
+            .filter((item) => item.id === id || mayManage(actor, item) || mayHandOver(actor, item))
+            .map((item) => item.id)
+        : data.invitations
+            .filter((item) => item.id === id || mayActOnInvitation(actor, item))
+            .map((item) => item.id);
+    const at = withMenus.indexOf(id);
+    const next = withMenus[at + 1] ?? withMenus[at - 1];
+    focusTo.current = next === undefined ? { tab: kind } : { menu: next };
+    setNotice(text);
+  };
+
+  const member =
+    action !== null && action.kind !== "renew" && action.kind !== "revoke"
+      ? data.members.find((item) => item.id === action.id)
+      : undefined;
+  const invitation =
+    action?.kind === "renew" || action?.kind === "revoke"
+      ? data.invitations.find((item) => item.id === action.id)
+      : undefined;
+  const dialogKey = `${action?.kind}-${action?.id}-${opened}`;
+
+  const dialog = (() => {
+    if (action === null) return null;
     if (member !== undefined) {
-      return (
-        <MemberDetail
-          key={member.id}
-          member={member}
-          actor={actor}
-          projects={projects.data}
-          timeZone={timeZone}
-          onGone={leavePerson}
-        />
-      );
+      switch (action.kind) {
+        case "access":
+          return (
+            <AccessSheet
+              key={dialogKey}
+              member={member}
+              actor={actor}
+              projects={projects.data}
+              open={open}
+              onOpenChange={setOpen}
+              finalFocus={finalFocus}
+              onSaved={() => setNotice(`${member.name}'s access was saved.`)}
+            />
+          );
+        case "reset":
+          return (
+            <ActionDialog
+              key={dialogKey}
+              open={open}
+              onOpenChange={setOpen}
+              finalFocus={finalFocus}
+              title={`A reset link for ${member.name}`}
+              description={`A reset link lets ${member.name} set a new password. Ottertrail doesn't email it, since many self-hosted servers have no mail server set up, so you send it to them yourself. It works once, within 24 hours. Using it signs them out everywhere. Their old password works until then, and a new link replaces any earlier one.`}
+              confirmLabel="Make the link"
+              linkAbout={`Send this link to ${member.name} yourself, for example in a chat or an email. ${LINK_ONCE} If it gets lost, make a new one from their row's menu.`}
+              run={() => makeResetLink(member.id)}
+            />
+          );
+        case "owner":
+          return (
+            <ActionDialog
+              key={dialogKey}
+              open={open}
+              onOpenChange={setOpen}
+              finalFocus={finalFocus}
+              title={`Make ${member.name} the owner?`}
+              description="They get the instance settings and everything else, and you become an admin. Only the new owner can make you the owner again. Enter your password to confirm it's you."
+              confirmLabel="Hand over ownership"
+              destructive
+              canConfirm={password !== ""}
+              onClear={() => setPassword("")}
+              run={async () => {
+                await handOverOwnership(member.id, password);
+                return undefined;
+              }}
+              onDone={() => setNotice(`${member.name} is now the owner. You're an admin.`)}
+            >
+              <Field>
+                <FieldLabel htmlFor={`password-${member.id}`}>Your password</FieldLabel>
+                <Input
+                  id={`password-${member.id}`}
+                  type="password"
+                  autoComplete="current-password"
+                  required
+                  value={password}
+                  onChange={(event) => setPassword(event.target.value)}
+                />
+              </Field>
+            </ActionDialog>
+          );
+        case "remove":
+          return (
+            <ActionDialog
+              key={dialogKey}
+              open={open}
+              onOpenChange={setOpen}
+              finalFocus={finalFocus}
+              title={`Remove ${member.name}?`}
+              description="This deletes their account and signs them out at once. What they did, such as resolving errors, stays recorded. Invitations they sent are revoked too, so those people need a new invitation."
+              confirmLabel="Remove"
+              destructive
+              run={async () => {
+                await removeMember(member.id);
+                return undefined;
+              }}
+              onDone={() => leaveRow(member.id, `${member.name} was removed.`)}
+            />
+          );
+        default:
+          return null;
+      }
     }
     if (invitation !== undefined) {
-      return (
-        <InvitationDetail
-          key={invitation.id}
-          invitation={invitation}
-          actor={actor}
-          now={now}
-          days={data.invitationDays}
-          timeZone={timeZone}
-          onGone={leavePerson}
+      return action.kind === "renew" ? (
+        <ActionDialog
+          key={dialogKey}
+          open={open}
+          onOpenChange={setOpen}
+          finalFocus={finalFocus}
+          title={`A new link for ${invitation.email}`}
+          description={`Use this to replace a lost link: Ottertrail keeps only a fingerprint of each link, so it can't show it again. The old link stops working at once, and the new one works once, for ${data.invitationDays} days.`}
+          confirmLabel="Make a new link"
+          linkAbout={`Send this link to ${invitation.email} yourself, for example in a chat or an email. ${LINK_ONCE}`}
+          run={() => renewInvitation(invitation.id)}
+        />
+      ) : (
+        <ActionDialog
+          key={dialogKey}
+          open={open}
+          onOpenChange={setOpen}
+          finalFocus={finalFocus}
+          title={`Revoke the invitation of ${invitation.email}?`}
+          description={`Its link stops working at once, so ${invitation.email} can't join with it. To invite them again later, use Invite.`}
+          confirmLabel="Revoke"
+          destructive
+          run={async () => {
+            await revokeInvitation(invitation.id);
+            return undefined;
+          }}
+          onDone={() =>
+            leaveRow(invitation.id, `The invitation of ${invitation.email} was revoked.`)
+          }
         />
       );
     }
-    if (anyChosen) {
-      return (
-        <div className="flex max-w-2xl flex-col items-start gap-3">
-          <h2 className="text-base font-medium text-ink">Nobody here has this link</h2>
-          <p className="text-sm text-ink-muted">
-            The person was removed, the invitation was used or revoked, or the link is mistyped.
-          </p>
-        </div>
-      );
-    }
-    return (
-      <Summary members={data.members} invitations={data.invitations} days={data.invitationDays} />
-    );
+    return null;
   })();
 
-  const toolbar = (
-    <div className="flex flex-wrap items-center justify-between gap-3 border-b px-gutter py-3">
-      <p className="text-sm text-ink-subtle">
-        {count(data.members.length, "person", "people")},{" "}
-        {count(data.invitations.length, "pending invitation", "pending invitations")}
-      </p>
-      <InviteDialog actor={actor} projects={projects.data} days={data.invitationDays} />
-    </div>
-  );
-  const list = (
-    <PeopleList
-      members={data.members}
-      invitations={data.invitations}
-      actor={actor}
-      chosen={chosen}
-      now={now}
-      timeZone={timeZone}
-    />
-  );
+  const adminInvitationsLocked =
+    actor.role !== "owner" && data.invitations.some((item) => !mayActOnInvitation(actor, item));
 
-  // One tree at every width, so crossing 64rem (a tablet turned) keeps the open dialogs and the
-  // unsaved access: CSS shows both panes from 64rem, and under it the list or the person.
   return (
-    <UnsavedChangesGuard searchKeys={["member"]}>
+    <UnsavedChangesGuard>
       <output
         aria-live="polite"
         data-slot="members-notice"
         className="block border-b px-gutter py-3 text-sm text-ink empty:border-0 empty:p-0"
       >
-        {shownNotice}
+        {notice}
       </output>
-      <div className="grid min-[64rem]:min-h-full min-[64rem]:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]">
-        <div
-          data-slot="members-list"
-          className={cn("flex flex-col min-[64rem]:border-r", anyChosen && "max-[64rem]:hidden")}
-        >
-          {toolbar}
-          <div className="pt-4">{list}</div>
+      <Tabs
+        value={tab}
+        onValueChange={(next) => {
+          if (next === "members" || next === "invitations") {
+            setNotice("");
+            setTab(next === "members" ? undefined : next);
+          }
+        }}
+        className="gap-0"
+      >
+        <div className="flex items-center gap-3 border-b px-gutter">
+          <div className="min-w-0 flex-1 overflow-x-auto">
+            <TabsList variant="line" aria-label="Members and invitations" className="h-12">
+              <TabsTrigger
+                value="members"
+                data-members-tab="members"
+                className="group/tab h-12 flex-none px-3 after:bg-primary"
+              >
+                Members
+                {tabCount(data.members.length)}
+              </TabsTrigger>
+              <TabsTrigger
+                value="invitations"
+                data-members-tab="invitations"
+                className="h-12 flex-none px-3 after:bg-primary"
+              >
+                Invitations
+                {pending > 0 && (
+                  <>
+                    <Badge variant="secondary" aria-hidden="true" className="tabular-nums">
+                      {pending}
+                    </Badge>
+                    <span className="sr-only">{pending} pending</span>
+                  </>
+                )}
+              </TabsTrigger>
+            </TabsList>
+          </div>
+          <InviteDialog actor={actor} projects={projects.data} days={data.invitationDays} />
         </div>
-        <div
-          data-slot="members-detail"
-          className={cn(
-            "flex flex-col px-gutter py-4 min-[64rem]:py-6",
-            !anyChosen && "max-[64rem]:hidden",
+        <TabsContent value="members">
+          <MembersTable
+            members={data.members}
+            actor={actor}
+            phone={phone}
+            timeZone={timeZone}
+            onAction={start}
+          />
+          <p className="max-w-3xl px-gutter py-4 text-sm text-pretty text-ink-subtle">
+            {membersNote(actor)}
+          </p>
+        </TabsContent>
+        <TabsContent value="invitations">
+          {data.invitations.length === 0 ? (
+            <div className="px-gutter py-6">
+              <Empty className="border border-dashed p-10">
+                <EmptyHeader>
+                  <EmptyMedia variant="icon">
+                    <MailIcon />
+                  </EmptyMedia>
+                  <EmptyTitle>No pending invitations</EmptyTitle>
+                  <EmptyDescription>
+                    Nobody is waiting to join. To add someone, choose Invite at the top of the page,
+                    then copy the link it makes and send it to them yourself.
+                  </EmptyDescription>
+                </EmptyHeader>
+              </Empty>
+            </div>
+          ) : (
+            <>
+              <InvitationsTable
+                invitations={data.invitations}
+                actor={actor}
+                phone={phone}
+                now={now}
+                timeZone={timeZone}
+                onAction={start}
+              />
+              <div className="flex max-w-3xl flex-col gap-2 px-gutter py-4 text-sm text-pretty text-ink-subtle">
+                <p>
+                  Ottertrail can't show an invitation's link again after it's made, because it keeps
+                  only a fingerprint of the link. If someone lost theirs, choose New link in their
+                  row's menu. To invite someone else, use Invite.
+                </p>
+                {adminInvitationsLocked && (
+                  <p>
+                    Invitations to be an admin have no menu for you, because only the owner can
+                    renew or revoke them. Ask the owner if one needs a new link.
+                  </p>
+                )}
+              </div>
+            </>
           )}
-        >
-          {anyChosen && (
-            <Link
-              to="/settings/members"
-              search={{}}
-              activeOptions={{ exact: true, includeSearch: true }}
-              className="mb-4 inline-flex items-center gap-1 self-start text-sm text-link hover:underline min-[64rem]:hidden"
-            >
-              <ArrowLeftIcon aria-hidden="true" className="size-4" />
-              All members
-            </Link>
-          )}
-          {detail}
-        </div>
-      </div>
+        </TabsContent>
+      </Tabs>
+      {dialog}
     </UnsavedChangesGuard>
   );
 }

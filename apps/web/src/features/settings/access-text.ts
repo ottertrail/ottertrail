@@ -1,4 +1,4 @@
-import { type Preset, PRESETS, presetOf } from "@/lib/access";
+import { AREA_LABELS, AREAS, type Preset, PRESETS, presetOf } from "@/lib/access";
 import type { MemberAccess } from "@/lib/members-api";
 
 export const PRESET_LABEL: Record<Preset, { name: string; about: string }> = {
@@ -17,15 +17,28 @@ export const PRESET_LABEL: Record<Preset, { name: string; about: string }> = {
 /** A new member's access before anything is chosen: the Viewer preset, on every project. */
 export const DEFAULT_ACCESS: MemberAccess = { projects: "all", areas: { ...PRESETS.viewer } };
 
-/** "Viewer, all projects", "Custom, 2 projects": a member's access in a few words. */
+/**
+ * A member's access in a few words: the preset's name, or with a custom set
+ * the areas they have, then where. "Viewer · All projects",
+ * "Web analytics, Errors · 2 projects".
+ */
 export function accessSummary(access: MemberAccess): string {
-  const preset = PRESET_LABEL[presetOf(access.areas)].name;
+  const preset = presetOf(access.areas);
+  const areas = AREAS.filter((area) => access.areas[area] !== "none").map(
+    (area) => AREA_LABELS[area].name,
+  );
+  const what =
+    preset !== "custom"
+      ? PRESET_LABEL[preset].name
+      : areas.length === 0
+        ? "No areas"
+        : areas.join(", ");
   const { projects } = access;
   const where =
     projects === "all"
-      ? "all projects"
+      ? "All projects"
       : projects.length === 1
         ? "1 project"
         : `${projects.length} projects`;
-  return `${preset}, ${where}`;
+  return `${what} · ${where}`;
 }
