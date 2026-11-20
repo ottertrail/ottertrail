@@ -12,6 +12,7 @@ import * as React from "react";
 
 import { ButtonLink } from "@/components/button-link";
 import { FilterBar } from "@/components/filter-bar";
+import { PageActions } from "@/components/page-header";
 import { type Stat, StatStrip } from "@/components/stat-strip";
 import { TruncatedText } from "@/components/truncated-text";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -430,13 +431,9 @@ export function AlertsPage({ projectId, prefill }: { projectId: string; prefill:
             {data.rules.length} of at most {data.maxRules} rules
           </p>
         }
-        actions={
-          <>
-            <WorkbenchKeyHints />
-            {addButton}
-          </>
-        }
+        actions={<WorkbenchKeyHints />}
       />
+      {addButton !== false && <PageActions>{addButton}</PageActions>}
       <Workbench
         label="Alerts"
         className="min-[64rem]:min-h-0 min-[64rem]:flex-1"

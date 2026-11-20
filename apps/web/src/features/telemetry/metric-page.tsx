@@ -3,6 +3,7 @@ import { Link, useNavigate } from "@tanstack/react-router";
 import { ArrowLeftIcon, BellPlusIcon, OctagonAlertIcon, SearchXIcon, XIcon } from "lucide-react";
 import * as React from "react";
 
+import { PageTitle } from "@/components/page-header";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
@@ -348,7 +349,8 @@ export function MetricPage({
             <ArrowLeftIcon aria-hidden="true" className="size-4" />
             All metrics
           </Link>
-          <h2 className="font-mono text-lg font-medium break-all text-ink">{name}</h2>
+          {/* The page header names it, so it is not repeated here. */}
+          <PageTitle title={name} />
           {kind !== undefined && (
             <div className="flex flex-wrap items-center justify-between gap-2">
               <p className="text-sm text-ink-subtle">

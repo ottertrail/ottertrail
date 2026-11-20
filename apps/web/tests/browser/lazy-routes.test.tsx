@@ -84,9 +84,9 @@ describe("a page in a chunk of its own", () => {
     await link.click();
     const pending = page.getByRole("status", { name: "Loading the page" });
     await expect.element(pending, { timeout: 3000 }).toBeVisible();
-    // The shell stays while the page downloads: the menu, and the header's breadcrumb.
+    // The shell stays while the page downloads: the menu, and the page's title row.
     await expect.element(projectMenu()).toBeVisible();
-    await expect.element(page.getByRole("navigation", { name: "Breadcrumb" })).toBeVisible();
+    await expect.element(page.getByRole("heading", { level: 1 })).toHaveTextContent("Speed");
     await expect.element(page.getByText(LCP, { exact: true })).not.toBeInTheDocument();
 
     speed.release();

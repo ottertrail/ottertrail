@@ -5,6 +5,7 @@ import type * as React from "react";
 
 import { ButtonLink } from "@/components/button-link";
 import { Missing } from "@/components/missing";
+import { PageTitle } from "@/components/page-header";
 import { StatusBadge } from "@/components/status-badge";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -111,9 +112,13 @@ export function ReplayView({
     >
       <div className="flex flex-col gap-2">
         <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
-          <h2 className="text-xl font-semibold text-ink">
-            Replay at <time dateTime={replay.startedAt}>{when}</time>
-          </h2>
+          {/* On its own page, the page header names the replay, so it is not repeated here. */}
+          {!inWorkbench && <PageTitle title={`Replay at ${when}`} />}
+          {inWorkbench && (
+            <h2 className="text-xl font-semibold text-ink">
+              Replay at <time dateTime={replay.startedAt}>{when}</time>
+            </h2>
+          )}
           {actions}
         </div>
         <dl className="flex flex-wrap gap-x-8 gap-y-2 text-sm">

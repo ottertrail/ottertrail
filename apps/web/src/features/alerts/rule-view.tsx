@@ -10,6 +10,7 @@ import {
 import * as React from "react";
 
 import { ButtonLink } from "@/components/button-link";
+import { PageTitle } from "@/components/page-header";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
@@ -165,7 +166,11 @@ export function RuleView({
       <div className="flex flex-col gap-3">
         <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
           <div className="flex min-w-0 flex-col gap-1">
-            <h2 className="text-xl font-semibold break-words text-ink">{rule.name}</h2>
+            {/* On its own page, the page header names it, so it is not repeated here. */}
+            {!inWorkbench && <PageTitle title={rule.name} />}
+            {inWorkbench && (
+              <h2 className="text-xl font-semibold break-words text-ink">{rule.name}</h2>
+            )}
             <p className="text-sm text-pretty text-ink-muted">{watchesText(rule, checkList)}</p>
           </div>
           {actions}

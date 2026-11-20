@@ -5,6 +5,7 @@ import type * as React from "react";
 
 import { ButtonLink } from "@/components/button-link";
 import { Missing } from "@/components/missing";
+import { PageTitle } from "@/components/page-header";
 import { StatusBadge } from "@/components/status-badge";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -363,7 +364,11 @@ export function CheckView({
       ) : (
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="flex min-w-0 flex-col gap-1">
-            <h2 className="text-lg font-medium break-all text-ink">{answer.check.name}</h2>
+            {/* On its own page, the page header names it, so it is not repeated here. */}
+            {!inWorkbench && <PageTitle title={answer.check.name} />}
+            {inWorkbench && (
+              <h2 className="text-lg font-medium break-all text-ink">{answer.check.name}</h2>
+            )}
             <p className="text-sm break-all text-ink-subtle">
               {answer.check.method} {answer.check.url},{" "}
               {intervalText(answer.check.intervalSeconds).toLowerCase()}

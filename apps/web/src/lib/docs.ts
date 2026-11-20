@@ -3,7 +3,7 @@ import type { RegisteredRouter } from "@tanstack/react-router";
 /** The docs site: the one place its address is kept. */
 export const DOCS_URL = "https://docs.ottertrail.app";
 
-/** A screen's page on the docs site, and what the header's Docs link calls it. */
+/** A screen's page on the docs site, and what the page header's Docs link calls it. */
 export interface DocsPage {
   /**
    * Names the link for screen readers, "<topic> docs (opens in a new tab)": the
@@ -14,7 +14,7 @@ export interface DocsPage {
   path: string;
 }
 
-/** A docs page with its full address, as the header links to it. */
+/** A docs page with its full address, as the page header links to it. */
 export type DocsLinkTarget = DocsPage & { url: string };
 
 /** A screen's docs: its page, and a better page for some of its settings tabs (`?tab=`). */
@@ -25,7 +25,7 @@ interface ScreenDocs extends DocsPage {
 type RoutePath = keyof RegisteredRouter["routesByPath"];
 
 /**
- * The header's Docs link on each screen, by the route's path. A screen left
+ * The page header's Docs link on each screen, by the route's path. A screen left
  * out has no page that explains it, and shows no link: no entry is better
  * than a page that does not fit. `tests/docs-links.test.ts` lists the map,
  * and every path in it was checked on the docs site.

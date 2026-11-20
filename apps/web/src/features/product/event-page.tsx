@@ -3,9 +3,9 @@ import { Link, useNavigate } from "@tanstack/react-router";
 import { ArrowLeftIcon, SearchXIcon, XIcon } from "lucide-react";
 
 import { BreakdownTable } from "@/components/breakdown-table";
+import { PageTitle } from "@/components/page-header";
 import { ReportChart } from "@/components/report-chart";
 import { type Stat, StatStrip } from "@/components/stat-strip";
-import { TruncatedText } from "@/components/truncated-text";
 import {
   Empty,
   EmptyDescription,
@@ -333,11 +333,8 @@ export function EventPage({
             <ArrowLeftIcon aria-hidden="true" className="size-4" />
             All events
           </Link>
-          <TruncatedText
-            text={name}
-            className="font-mono text-xl font-semibold text-ink"
-            render={<h2>{name}</h2>}
-          />
+          {/* The page header names the event, so it is not repeated here. */}
+          <PageTitle title={name} />
         </div>
         {query.isError && (
           <LoadFailed

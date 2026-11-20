@@ -1,13 +1,13 @@
 import { afterEach, describe, expect, test } from "vite-plus/test";
-import { page } from "vite-plus/test/browser/context";
+import { page, userEvent } from "vite-plus/test/browser/context";
 
 import { installFakeApi, PROJECT } from "./fake-api.ts";
 import { fakeNotifications, manyNotifications } from "./fake-notifications.ts";
 import { currentPath, renderApp } from "./render.tsx";
 
 /*
- * The notifications inbox (docs/dashboard.md, "Notifications"): the bell in
- * the header, its popover (a sheet on a phone), and the Notifications page.
+ * The notifications inbox (docs/dashboard.md, "Notifications"): the item in
+ * the sidebar's foot, its popover (a sheet on a phone), and the Notifications page.
  */
 
 const OVERVIEW = `/projects/${PROJECT.id}/overview`;
@@ -18,16 +18,20 @@ afterEach(async () => {
 
 const list = () => [...document.querySelectorAll("main li")];
 const bell = () => page.getByRole("button", { name: /^Notifications/ });
+/** The unread count at the item's end, as it shows ("" with none). */
+const shownCount = () =>
+  bell().element().querySelector("[data-slot=unread-count]")?.textContent ?? "";
 const panel = () => page.getByRole("dialog", { name: "Notifications" });
 
-describe("the bell", () => {
+describe("the sidebar's Notifications item", () => {
   test("says how many are unread, in its name and its badge, with 9+ past nine", async () => {
     const api = installFakeApi();
     renderApp(OVERVIEW);
     await expect
       .element(page.getByRole("button", { name: "Notifications, 3 unread" }))
       .toBeVisible();
-    expect(bell().element().textContent).toBe("3");
+    expect(shownCount()).toBe("3");
+    await expect.element(bell()).toHaveTextContent("Notifications3");
 
     api.notifications.items = manyNotifications(12).map((item) => ({ ...item, read: false }));
     // The count is read again when the window gets focus.
@@ -35,14 +39,14 @@ describe("the bell", () => {
     await expect
       .element(page.getByRole("button", { name: "Notifications, 12 unread" }))
       .toBeVisible();
-    expect(bell().element().textContent).toBe("9+");
+    expect(shownCount()).toBe("9+");
 
     api.notifications.items = [];
     window.dispatchEvent(new Event("visibilitychange"));
     await expect
       .element(page.getByRole("button", { name: "Notifications", exact: true }))
       .toBeVisible();
-    expect(bell().element().textContent).toBe("");
+    expect(shownCount()).toBe("");
   });
 
   test("opens the newest items, unread marked; opening one marks it read and goes to it", async () => {
@@ -106,10 +110,65 @@ describe("the bell", () => {
     await expect.poll(() => currentPath(router)).toBe("/notifications");
   });
 
-  test("on a phone, opens a sheet that fits the screen", async () => {
+  test("sits just above the user in the sidebar's foot, and opens to the sidebar's right", async () => {
+    await page.viewport(1440, 900);
+    installFakeApi();
+    renderApp(OVERVIEW);
+    await expect.element(bell()).toBeVisible();
+    const footer = document.querySelector("[data-slot=sidebar-footer]");
+    expect(footer?.contains(bell().element())).toBe(true);
+    const user = page.getByRole("button", { name: /Account menu$/ });
+    const item = bell().element().getBoundingClientRect();
+    const below = user.element().getBoundingClientRect();
+    expect(below.top - item.bottom).toBeGreaterThanOrEqual(0);
+    expect(below.top - item.bottom).toBeLessThanOrEqual(8);
+
+    await bell().click();
+    await expect.element(panel()).toBeVisible();
+    // Over the content, past the sidebar, once it has opened; its foot lines up with the item's.
+    const sidebar = document.querySelector("[data-slot=sidebar-container]");
+    const right = sidebar?.getBoundingClientRect().right ?? 0;
+    await expect
+      .poll(() => panel().element().getBoundingClientRect().left)
+      .toBeGreaterThanOrEqual(right);
+    await expect
+      .poll(() => Math.abs(panel().element().getBoundingClientRect().bottom - item.bottom))
+      .toBeLessThanOrEqual(2);
+  });
+
+  test("collapsed to icons, is the bell with a dot while any is unread, and a tooltip", async () => {
+    await page.viewport(1440, 900);
+    const api = installFakeApi();
+    renderApp(OVERVIEW);
+    await expect.element(bell()).toBeVisible();
+    await userEvent.keyboard("{Control>}b{/Control}");
+    await expect
+      .poll(() => document.querySelector("[data-slot=sidebar]")?.getAttribute("data-state"))
+      .toBe("collapsed");
+
+    const dot = () => bell().element().querySelector("[data-slot=unread-dot]");
+    expect(dot()?.getBoundingClientRect().width).toBe(8);
+    expect(
+      bell().element().querySelector("[data-slot=unread-count]")?.getBoundingClientRect().width,
+    ).toBe(0);
+    await bell().hover();
+    await expect
+      .poll(() => document.querySelector("[data-slot=tooltip-content][data-open]")?.textContent)
+      .toBe("Notifications");
+
+    api.notifications.items = [];
+    window.dispatchEvent(new Event("visibilitychange"));
+    await expect
+      .element(page.getByRole("button", { name: "Notifications", exact: true }))
+      .toBeVisible();
+    expect(dot()).toBeNull();
+  });
+
+  test("on a phone, is in the menu's foot and opens a sheet that fits the screen", async () => {
     await page.viewport(390, 844);
     installFakeApi();
     renderApp(OVERVIEW);
+    await page.getByRole("button", { name: "Open menu" }).click();
     await page.getByRole("button", { name: "Notifications, 3 unread" }).click();
     await expect.element(panel()).toBeVisible();
     await expect.element(panel().getByRole("link", { name: "Checkout API is down" })).toBeVisible();

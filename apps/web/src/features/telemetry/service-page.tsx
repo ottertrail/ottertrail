@@ -8,6 +8,7 @@ import {
   WaypointsIcon,
 } from "lucide-react";
 
+import { PageTitle } from "@/components/page-header";
 import { StatStrip } from "@/components/stat-strip";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -252,9 +253,8 @@ export function ServicePage({
           </nav>
           <div className="flex flex-wrap items-start justify-between gap-2">
             <div className="flex min-w-0 flex-col gap-1">
-              <h2 className="font-mono text-lg font-medium break-all text-ink">
-                {route ?? service}
-              </h2>
+              {/* The page header names it, so it is not repeated here. */}
+              <PageTitle title={route ?? service} />
               <p className="text-sm text-ink-subtle">
                 {route === undefined ? (
                   "A service: every route of its server spans."

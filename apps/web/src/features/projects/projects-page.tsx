@@ -5,6 +5,7 @@ import { FolderIcon, OctagonAlertIcon, StarIcon } from "lucide-react";
 
 import { ButtonLink } from "@/components/button-link";
 import { clickableRow, ROW_LINK } from "@/components/clickable-row";
+import { PageActions } from "@/components/page-header";
 import { PINNED, PINNED_END } from "@/components/pinned-column";
 import { ScrollHint } from "@/components/scroll-hint";
 import { StatusBadge } from "@/components/status-badge";
@@ -115,9 +116,9 @@ export function ProjectsPage() {
   return (
     <div className="flex flex-col">
       {list !== undefined && list.length > 0 && canManage && (
-        <div className="flex justify-end border-b px-gutter py-3">
+        <PageActions>
           <NewProjectDialog />
-        </div>
+        </PageActions>
       )}
 
       {projects.isPending && <ProjectsSkeleton />}

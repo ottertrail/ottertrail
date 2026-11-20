@@ -1451,7 +1451,7 @@ declare module "@tanstack/react-router" {
     router: ReturnType<typeof createAppRouter>;
   }
   interface StaticDataRouteOption {
-    /** Shown in the header of signed-in pages. */
+    /** The page header's title (and the tab's), unless the page names its item (`PageTitle`). */
     title?: string;
     /** What a project page needs (docs/access.md); without it, the page says so. */
     access?: PageAccess;

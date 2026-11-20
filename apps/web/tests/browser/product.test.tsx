@@ -122,7 +122,7 @@ describe("product events", () => {
 
     await expect.poll(() => router.state.location.pathname).toBe(SIGNUP);
     expect(router.state.location.search).toEqual({ period: "30d" });
-    await expect.element(page.getByRole("heading", { name: "signup", level: 2 })).toBeVisible();
+    await expect.element(page.getByRole("heading", { name: "signup", level: 1 })).toBeVisible();
     await expect.poll(() => stat("Events")).toBe("140");
     expect(lastQuery(api, "/events/signup")).toEqual({ period: "30d" });
     expect(stat("Visitors")).toBe("126");

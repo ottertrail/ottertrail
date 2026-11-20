@@ -2,6 +2,7 @@ import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { BellIcon, LoaderCircleIcon, OctagonAlertIcon } from "lucide-react";
 
+import { PageActions } from "@/components/page-header";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
@@ -34,8 +35,8 @@ export function NotificationsPage({ filter }: { filter: InboxFilter }) {
   const items = list.data?.pages.flatMap((page) => page.notifications);
 
   return (
-    <div className="mx-auto flex w-full max-w-3xl flex-col gap-4 px-gutter py-5">
-      <div className="flex flex-wrap items-center justify-between gap-3">
+    <div className="flex w-full max-w-3xl flex-col gap-4 px-gutter pt-1 pb-5">
+      <div className="flex flex-wrap items-center gap-3">
         <ToggleGroup
           value={[filter]}
           onValueChange={(value) => {
@@ -58,15 +59,16 @@ export function NotificationsPage({ filter }: { filter: InboxFilter }) {
             </ToggleGroupItem>
           ))}
         </ToggleGroup>
+      </div>
+      <PageActions>
         <Button
           variant="outline"
-          size="sm"
           disabled={unread === 0 || markAll.isPending}
           onClick={() => markAll.mutate()}
         >
           Mark all read
         </Button>
-      </div>
+      </PageActions>
       {markAll.isError && (
         <Alert variant="destructive">
           <OctagonAlertIcon />

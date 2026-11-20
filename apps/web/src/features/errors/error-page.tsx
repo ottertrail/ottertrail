@@ -6,6 +6,7 @@ import * as React from "react";
 import { BreakdownTable } from "@/components/breakdown-table";
 import { ButtonLink } from "@/components/button-link";
 import { FilterBar, FilterBarRange } from "@/components/filter-bar";
+import { PageTitle } from "@/components/page-header";
 import { StatStrip } from "@/components/stat-strip";
 import { TruncatedText } from "@/components/truncated-text";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -517,12 +518,15 @@ function Detail({
   environment,
   resolveRef,
   actions,
+  ownPage = false,
 }: {
   projectId: string;
   detail: ErrorDetail;
   environment: string;
   resolveRef?: React.Ref<HTMLButtonElement>;
   actions?: React.ReactNode;
+  /** On its own page the header shows the type, so its heading here is for screen readers only. */
+  ownPage?: boolean;
 }) {
   const { group } = detail;
   const latest = detail.occurrences[0];
@@ -532,7 +536,9 @@ function Detail({
       <div className="flex flex-col gap-3">
         <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
           <div className="flex min-w-0 flex-col gap-1">
-            <h2 className="text-xl font-semibold break-words text-ink">{group.type}</h2>
+            {!ownPage && (
+              <h2 className="text-xl font-semibold break-words text-ink">{group.type}</h2>
+            )}
             {group.message !== "" && (
               <p className="font-mono text-sm break-words whitespace-pre-wrap text-ink-muted">
                 {group.message}
@@ -670,6 +676,7 @@ export function ErrorView({
   environment,
   resolveRef,
   actions,
+  ownPage = false,
 }: {
   projectId: string;
   fingerprint: string;
@@ -679,6 +686,8 @@ export function ErrorView({
   resolveRef?: React.Ref<HTMLButtonElement>;
   /** Beside the error's name, such as a link to its own page. */
   actions?: React.ReactNode;
+  /** On the error's own page, whose header names it. */
+  ownPage?: boolean;
 }) {
   const query = useQuery(errorQuery(projectId, fingerprint, range, environment));
   const search: ErrorsSearch = { range, environment };
@@ -733,6 +742,7 @@ export function ErrorView({
       environment={environment}
       resolveRef={resolveRef}
       actions={actions}
+      ownPage={ownPage}
     />
   );
 }
@@ -769,6 +779,7 @@ export function ErrorPage({
 
   return (
     <div className="flex flex-col">
+      <PageTitle title={data?.group.type} />
       <FilterBar
         label="Period and environment"
         period={
@@ -806,6 +817,7 @@ export function ErrorPage({
           fingerprint={fingerprint}
           range={range}
           environment={environment}
+          ownPage
         />
       </div>
     </div>

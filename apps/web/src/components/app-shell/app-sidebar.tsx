@@ -4,7 +4,6 @@ import {
   ActivityIcon,
   ArrowLeftIcon,
   BellIcon,
-  BookOpenIcon,
   BugIcon,
   ChartColumnIcon,
   ChartLineIcon,
@@ -18,6 +17,8 @@ import {
   HeartPulseIcon,
   LayoutDashboardIcon,
   MousePointerClickIcon,
+  PanelLeftCloseIcon,
+  PanelLeftOpenIcon,
   ScrollTextIcon,
   ServerIcon,
   SettingsIcon,
@@ -33,6 +34,7 @@ import { UserMenu } from "@/components/app-shell/user-menu";
 import { AvatarSquare } from "@/components/avatar-square";
 import { BrandMark } from "@/components/brand-mark";
 import { OverflowTooltip, TruncatedText } from "@/components/truncated-text";
+import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -42,12 +44,12 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Kbd, KbdGroup } from "@/components/ui/kbd";
 import {
   Sidebar,
   SidebarContent,
   SidebarFooter,
   SidebarGroup,
-  SidebarGroupContent,
   SidebarGroupLabel,
   SidebarHeader,
   SidebarMenu,
@@ -56,9 +58,11 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { SidebarNotifications } from "@/features/notifications/notification-bell";
 import { canOpen, hasOverview, meQuery, useAccess } from "@/lib/access";
-import { DOCS_URL } from "@/lib/docs";
 import { initialOf } from "@/lib/initials";
+import { modifierKey } from "@/lib/keys";
 import { starredProjectsQuery, useProjectStar } from "@/lib/project-stars";
 import { projectsQuery } from "@/lib/projects-api";
 
@@ -531,8 +535,11 @@ function ProjectMenu({ projectId }: { projectId: string }) {
 }
 
 /**
- * The API's health beside the name: "Ottertrail …… API online". Collapsed
- * to icons, a dot on the mark's corner, with the same accessible name.
+ * The API's health in the head (docs/design-system.md, "The shell"): a
+ * green dot while it is online, a grey one while it is checked, and the
+ * full badge with Retry, on a line of its own under the name, when it
+ * cannot be reached, so "Ottertrail" is never cut off. Collapsed to icons,
+ * a dot on the mark's corner, with the same accessible name.
  */
 function SidebarApiStatus() {
   const { isMobile, state } = useSidebar();
@@ -540,40 +547,47 @@ function SidebarApiStatus() {
   return (
     <ApiStatus
       compact={collapsed}
-      className={collapsed ? "absolute right-0.5 bottom-0" : "ml-auto shrink-0"}
+      quiet
+      className={collapsed ? "absolute top-5 right-0.5" : "shrink-0 px-1.5"}
+      badgeClassName="order-last basis-full pb-1"
     />
   );
 }
 
 /**
- * The docs site's start, in a new tab, at the foot of the menu on every
- * page. The header's Docs link opens the page about the current screen.
+ * Collapses the sidebar to icons, or expands it again, as Ctrl or ⌘ B does;
+ * its tooltip shows the shortcut. Not in the phone's sheet, which closes on
+ * its own.
  */
-function SidebarDocs() {
+function SidebarToggle() {
+  const { isMobile, state, toggleSidebar } = useSidebar();
+  if (isMobile) return null;
+  const collapsed = state === "collapsed";
+  const label = collapsed ? "Expand sidebar" : "Collapse sidebar";
   return (
-    <SidebarGroup className="mt-auto">
-      <SidebarGroupContent>
-        <SidebarMenu>
-          <SidebarMenuItem>
-            <SidebarMenuButton
-              // `noreferrer` keeps the instance's address from the docs site.
-              render={
-                <a
-                  href={DOCS_URL}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  aria-label="Docs (opens in a new tab)"
-                />
-              }
-              tooltip="Docs"
-            >
-              <BookOpenIcon aria-hidden="true" />
-              <span>Docs</span>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-        </SidebarMenu>
-      </SidebarGroupContent>
-    </SidebarGroup>
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            aria-label={label}
+            aria-keyshortcuts="Control+B Meta+B"
+            className="shrink-0 text-ink-subtle group-data-[collapsible=icon]:size-8 hover:text-ink"
+            onClick={toggleSidebar}
+          />
+        }
+      >
+        {collapsed ? <PanelLeftOpenIcon /> : <PanelLeftCloseIcon />}
+      </TooltipTrigger>
+      <TooltipContent side={collapsed ? "right" : "bottom"}>
+        {label}
+        <KbdGroup>
+          <Kbd>{modifierKey()}</Kbd>
+          <Kbd>B</Kbd>
+        </KbdGroup>
+      </TooltipContent>
+    </Tooltip>
   );
 }
 
@@ -586,12 +600,23 @@ export function AppSidebar() {
   return (
     <Sidebar variant="inset" collapsible="icon">
       <SidebarHeader>
-        <div className="relative flex h-8 items-center gap-2 px-1.5">
-          <BrandMark className="size-5 shrink-0" />
-          <span className="truncate text-sm font-semibold tracking-tight text-ink group-data-[collapsible=icon]:hidden">
-            Ottertrail
-          </span>
+        {/*
+         * The mark and name, the API's health, and the toggle; an unreachable
+         * API's badge wraps under them. Collapsed to icons, the toggle goes
+         * under the mark, and the health is a dot on its corner.
+         */}
+        <div
+          data-slot="sidebar-head"
+          className="relative flex flex-wrap items-center gap-x-0.5 gap-y-1 group-data-[collapsible=icon]:flex-col group-data-[collapsible=icon]:flex-nowrap group-data-[collapsible=icon]:gap-2"
+        >
+          <div className="flex h-8 min-w-0 flex-1 items-center gap-2 pl-1.5 group-data-[collapsible=icon]:w-8 group-data-[collapsible=icon]:flex-none group-data-[collapsible=icon]:px-1.5">
+            <BrandMark className="size-5 shrink-0" />
+            <span className="text-sm font-semibold tracking-tight whitespace-nowrap text-ink group-data-[collapsible=icon]:hidden">
+              Ottertrail
+            </span>
+          </div>
           <SidebarApiStatus />
+          <SidebarToggle />
         </div>
         {projectId === undefined ? (
           <InstanceName />
@@ -611,10 +636,10 @@ export function AppSidebar() {
         >
           {projectId === undefined ? <WorkspaceMenu /> : <ProjectMenu projectId={projectId} />}
         </nav>
-        <SidebarDocs />
       </SidebarContent>
 
       <SidebarFooter>
+        <SidebarNotifications />
         <UserMenu />
       </SidebarFooter>
     </Sidebar>

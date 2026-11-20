@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "vite-plus/test";
-import { page, userEvent } from "vite-plus/test/browser/context";
+import { page } from "vite-plus/test/browser/context";
 
 import { installFakeApi, OTHER_PROJECT, PROJECT } from "./fake-api.ts";
 import { unmountAll } from "./mounted.ts";
@@ -15,14 +15,8 @@ const projectMenu = () => page.getByRole("navigation", { name: "Project" });
 const switcher = (name: string) =>
   page.getByRole("button", { name: `Project: ${name}. Switch project` });
 
-/** The sidebar's Docs link (the header's names its topic first). */
-const docsLink = () => page.getByRole("link", { name: "Docs (opens in a new tab)", exact: true });
-
-/** The header's breadcrumb as text, such as "Main site / Web analytics". */
-function breadcrumb(): string {
-  const nav = document.querySelector("header nav[aria-label=Breadcrumb]");
-  return [...(nav?.children ?? [])].map((child) => child.textContent).join(" ");
-}
+/** The page's title, its header's h1, such as "Web analytics". */
+const pageTitle = () => document.querySelector("[data-slot=page-header] h1")?.textContent;
 
 describe("the workspace", () => {
   test("lists projects, members and settings, and no project's menu", async () => {
@@ -90,36 +84,15 @@ describe("the sidebar", () => {
   test.each([
     ["the workspace", "/projects"],
     ["a project", ANALYTICS],
-  ])("in %s, Docs opens the docs site in a new tab, at the foot of the menu", async (_, path) => {
+  ])("in %s, has no Docs item: each page links its own docs", async (_, path) => {
     installFakeApi();
     renderApp(path);
-    await expect.element(docsLink()).toBeVisible();
-    await expect.element(docsLink()).toHaveAttribute("href", "https://docs.ottertrail.app");
-    await expect.element(docsLink()).toHaveAttribute("target", "_blank");
-    await expect.element(docsLink()).toHaveAttribute("rel", "noopener noreferrer");
-    // Just above the signed-in user, below the menu.
-    const footer = document.querySelector("[data-slot=sidebar-footer]");
-    const gap =
-      (footer?.getBoundingClientRect().top ?? 0) -
-      docsLink().element().getBoundingClientRect().bottom;
-    expect(gap).toBeGreaterThanOrEqual(0);
-    expect(gap).toBeLessThanOrEqual(16);
-  });
-
-  test("collapsed to icons, Docs keeps its icon and a tooltip", async () => {
-    await page.viewport(1440, 900);
-    installFakeApi();
-    renderApp("/projects");
-    await expect.element(docsLink()).toBeVisible();
-    await userEvent.keyboard("{Control>}b{/Control}");
-    await expect
-      .poll(() => document.querySelector("[data-slot=sidebar]")?.getAttribute("data-state"))
-      .toBe("collapsed");
-    expect(docsLink().element().getBoundingClientRect().width).toBeLessThanOrEqual(32);
-    await docsLink().hover();
-    await expect
-      .poll(() => document.querySelector("[data-slot=tooltip-content][data-open]")?.textContent)
-      .toBe("Docs");
+    await expect.element(page.getByRole("navigation", { name: /Instance|Project/ })).toBeVisible();
+    const sidebar = document.querySelector("[data-slot=sidebar]");
+    expect(
+      [...(sidebar?.querySelectorAll("a") ?? [])].map((link) => link.getAttribute("href")),
+    ).not.toContain("https://docs.ottertrail.app");
+    expect(sidebar?.textContent).not.toContain("Docs");
   });
 });
 
@@ -172,7 +145,7 @@ describe("inside a project", () => {
     const lastModule = items[14]?.getBoundingClientRect();
     const settings = items[15]?.getBoundingClientRect();
     expect((settings?.top ?? 0) - (lastModule?.bottom ?? 0)).toBeLessThan(8);
-    await expect.poll(breadcrumb).toBe("Main site / Web analytics");
+    await expect.poll(pageTitle).toBe("Web analytics");
   });
 
   test("Product analytics stays active on each of its pages", async () => {
@@ -181,7 +154,7 @@ describe("inside a project", () => {
 
     await projectMenu().getByRole("link", { name: "Product analytics" }).click();
     await expect.poll(() => currentPath(router)).toBe(`/projects/${PROJECT.id}/product/events`);
-    await expect.poll(breadcrumb).toBe("Main site / Product analytics");
+    await expect.poll(pageTitle).toBe("Product analytics");
 
     for (const path of ["events/signup", "funnel", "retention"]) {
       router.history.push(`/projects/${PROJECT.id}/product/${path}`);
@@ -213,7 +186,7 @@ describe("inside a project", () => {
     // The name is on the General tab.
     await page.getByRole("tab", { name: "General" }).click();
     await expect.element(page.getByRole("textbox", { name: "Name" })).toHaveValue("Main site");
-    await expect.poll(breadcrumb).toBe("Main site / Settings");
+    await expect.poll(pageTitle).toBe("Settings");
   });
 
   test("the switcher opens the same page of another project, keeping the period", async () => {
@@ -230,7 +203,7 @@ describe("inside a project", () => {
       .poll(() => api.requests.at(-1))
       .toBe(`/api/projects/${OTHER_PROJECT.id}/analytics?period=90d`);
     await expect.element(switcher("Docs")).toBeVisible();
-    await expect.poll(breadcrumb).toBe("Docs / Web analytics");
+    await expect.poll(pageTitle).toBe("Web analytics");
   });
 
   test("the switcher keeps the period but not the filters", async () => {

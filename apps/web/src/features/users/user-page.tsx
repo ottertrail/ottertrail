@@ -11,6 +11,7 @@ import {
 import type * as React from "react";
 
 import { ButtonLink } from "@/components/button-link";
+import { PageTitle } from "@/components/page-header";
 import { TruncatedText } from "@/components/truncated-text";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -323,7 +324,11 @@ export function UserView({
     <div className="flex flex-col gap-6">
       <div className="flex flex-col gap-3">
         <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
-          <h2 className="min-w-0 font-mono text-xl font-semibold break-all text-ink">{userId}</h2>
+          {/* On its own page, the page header names the user, so it is not repeated here. */}
+          {!inWorkbench && <PageTitle title={userId} />}
+          {inWorkbench && (
+            <h2 className="min-w-0 font-mono text-xl font-semibold break-all text-ink">{userId}</h2>
+          )}
           {actions}
         </div>
         {first !== undefined && (

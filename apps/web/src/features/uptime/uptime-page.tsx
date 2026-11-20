@@ -6,6 +6,7 @@ import * as React from "react";
 import { ButtonLink } from "@/components/button-link";
 import { FilterBar } from "@/components/filter-bar";
 import { Missing } from "@/components/missing";
+import { PageActions } from "@/components/page-header";
 import { PINNED } from "@/components/pinned-column";
 import { ScrollHint } from "@/components/scroll-hint";
 import { type Stat, StatStrip } from "@/components/stat-strip";
@@ -429,13 +430,9 @@ export function UptimePage({ projectId, range }: { projectId: string; range: Pag
             {data.checks.length} of at most {data.maxChecks} checks
           </p>
         }
-        actions={
-          <>
-            <WorkbenchKeyHints />
-            {addButton}
-          </>
-        }
+        actions={<WorkbenchKeyHints />}
       />
+      {addButton !== false && <PageActions>{addButton}</PageActions>}
       <Workbench
         label="Uptime"
         className="min-[64rem]:min-h-0 min-[64rem]:flex-1"

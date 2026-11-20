@@ -5,8 +5,13 @@ import * as React from "react";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
+import {
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+  useSidebar,
+} from "@/components/ui/sidebar";
 import { Skeleton } from "@/components/ui/skeleton";
-import { PHONE, useMediaQuery } from "@/hooks/use-media-query";
 import { loadChunk, PageLoadError } from "@/lib/lazy-page";
 import { bellLabel, unreadBadge, unreadCountQuery } from "@/lib/notifications-api";
 import { reloadPage } from "@/lib/reload";
@@ -66,74 +71,102 @@ function Panel({ unread, close, kind }: { unread: number; close: () => void; kin
   );
 }
 
-/** The bell's face: the icon, and the unread count over its corner. */
-function BellFace({ unread }: { unread: number }) {
+/** The unread count at the item's end: a small orchid pill, "9+" past nine. */
+function UnreadPill({ unread }: { unread: number }) {
+  return (
+    <span
+      aria-hidden="true"
+      data-slot="unread-count"
+      className="ml-auto flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full bg-brand px-1.5 text-[0.6875rem] leading-none font-semibold text-white tabular-nums group-data-[collapsible=icon]:hidden"
+    >
+      {unreadBadge(unread)}
+    </span>
+  );
+}
+
+/** Collapsed to icons: a dot on the bell's corner says something is unread. */
+function UnreadDot() {
+  return (
+    <span
+      aria-hidden="true"
+      data-slot="unread-dot"
+      className="absolute top-1.5 right-1.5 hidden size-2 rounded-full bg-brand ring-2 ring-sidebar group-data-[collapsible=icon]:block"
+    />
+  );
+}
+
+/** The item's face: the bell, the label, and the unread count. */
+function ItemFace({ unread }: { unread: number }) {
   return (
     <>
       <BellIcon aria-hidden="true" />
-      {unread > 0 && (
-        <span
-          aria-hidden="true"
-          className="absolute -top-0.5 -right-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-brand px-1 text-[0.625rem] leading-none font-semibold text-white tabular-nums"
-        >
-          {unreadBadge(unread)}
-        </span>
-      )}
+      <span className="min-w-0 flex-1 truncate">Notifications</span>
+      {unread > 0 && <UnreadPill unread={unread} />}
+      {unread > 0 && <UnreadDot />}
     </>
   );
 }
 
-const BELL_CLASS =
-  "relative text-ink-subtle max-[40rem]:size-7 max-[40rem]:after:absolute max-[40rem]:after:-inset-2";
-
 /**
- * The header's bell (docs/dashboard.md, "Notifications"): the unread count,
- * polled every minute while the tab is shown and on focus, and a panel of
- * the newest items, a popover beside the bell, or a sheet on a phone.
+ * The sidebar foot's Notifications item, above the user (docs/dashboard.md,
+ * "Notifications"): the unread count, polled every minute while the tab is
+ * shown and on focus, and a panel of the newest items, a popover to the
+ * right of the sidebar, or a sheet over the menu on a phone.
  */
-export function NotificationBell() {
+export function SidebarNotifications() {
   const [open, setOpen] = React.useState(false);
-  const phone = useMediaQuery(PHONE);
+  const { isMobile } = useSidebar();
   const count = useQuery(unreadCountQuery());
   const unread = count.data ?? 0;
   const label = bellLabel(unread);
   const close = () => setOpen(false);
 
-  if (phone) {
+  if (isMobile) {
     return (
-      <>
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          className={BELL_CLASS}
-          aria-label={label}
-          aria-haspopup="dialog"
-          aria-expanded={open}
-          onClick={() => setOpen(true)}
-        >
-          <BellFace unread={unread} />
-        </Button>
-        <Sheet open={open} onOpenChange={setOpen}>
-          <SheetContent side="right" className="w-full gap-0 data-[side=right]:w-full">
-            <Panel unread={unread} close={close} kind="sheet" />
-          </SheetContent>
-        </Sheet>
-      </>
+      <SidebarMenu>
+        <SidebarMenuItem>
+          <SidebarMenuButton
+            aria-label={label}
+            aria-haspopup="dialog"
+            aria-expanded={open}
+            onClick={() => setOpen(true)}
+          >
+            <ItemFace unread={unread} />
+          </SidebarMenuButton>
+          <Sheet open={open} onOpenChange={setOpen}>
+            <SheetContent side="right" className="w-full gap-0 data-[side=right]:w-full">
+              <Panel unread={unread} close={close} kind="sheet" />
+            </SheetContent>
+          </Sheet>
+        </SidebarMenuItem>
+      </SidebarMenu>
     );
   }
   return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger
-        render={<Button variant="ghost" size="icon-sm" className={BELL_CLASS} aria-label={label} />}
-      >
-        <BellFace unread={unread} />
-      </PopoverTrigger>
-      <PopoverContent
-        align="end"
-        className="max-h-[min(var(--available-height),32rem)] w-96 max-w-[calc(100vw-1rem)] gap-0 p-0"
-      >
-        <Panel unread={unread} close={close} kind="popover" />
-      </PopoverContent>
-    </Popover>
+    <SidebarMenu>
+      <SidebarMenuItem>
+        <Popover open={open} onOpenChange={setOpen}>
+          <PopoverTrigger
+            render={
+              <SidebarMenuButton
+                aria-label={label}
+                tooltip="Notifications"
+                className="relative data-popup-open:bg-sidebar-accent"
+              />
+            }
+          >
+            <ItemFace unread={unread} />
+          </PopoverTrigger>
+          <PopoverContent
+            side="right"
+            align="end"
+            sideOffset={20}
+            className="max-h-[min(var(--available-height),32rem)] w-96 max-w-[calc(100vw-1rem)] gap-0 p-0"
+          >
+            <Panel unread={unread} close={close} kind="popover" />
+          </PopoverContent>
+        </Popover>
+      </SidebarMenuItem>
+    </SidebarMenu>
   );
 }

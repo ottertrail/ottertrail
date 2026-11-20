@@ -4,7 +4,7 @@ import type * as React from "react";
 import { formatDayRange } from "@/features/analytics/format";
 
 /**
- * A report's controls, pinned under the header while the report scrolls
+ * A report's controls, pinned to the top of the panel once the page title scrolls away
  * (from 40rem; on a phone it scrolls away, so it never covers the figures):
  * the period, the environment, the filters, and at the end the days shown
  * and their timezone. It wraps onto more lines on narrow screens.

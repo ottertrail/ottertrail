@@ -1,11 +1,10 @@
 import { useQuery } from "@tanstack/react-query";
-import { Outlet, useMatches, useParams, useRouter, useSearch } from "@tanstack/react-router";
+import { Outlet, useMatches, useParams, useRouter } from "@tanstack/react-router";
 import * as React from "react";
 
-import { AppHeader } from "@/components/app-shell/app-header";
 import { AppSidebar } from "@/components/app-shell/app-sidebar";
+import { PageWithHeader } from "@/components/page-header";
 import { SidebarInset, SidebarProvider, useSidebar } from "@/components/ui/sidebar";
-import { docsFor } from "@/lib/docs";
 import { documentTitle, useDocumentTitle, useStatusTitle } from "@/lib/document-title";
 import { projectsQuery } from "@/lib/projects-api";
 import { rememberSidebar, sidebarOpen } from "@/lib/sidebar-state";
@@ -39,15 +38,12 @@ function TabTitle({
   return null;
 }
 
-/** The signed-in dashboard: sidebar, header, and the current page. */
+/** The signed-in dashboard: the sidebar and the current page, with no header bar. */
 export function AppLayout() {
   const matches = useMatches();
   const { projectId } = useParams({ strict: false });
   const title = matches.findLast((match) => match.staticData.title !== undefined)?.staticData.title;
-  // The screen's page on the docs site, by its route and its settings tab.
-  const { tab } = useSearch({ strict: false });
-  const docs = docsFor(matches.at(-1)?.fullPath, tab);
-  // Expanded unless this browser collapsed it (Ctrl or ⌘ B, or the header's button).
+  // Expanded unless this browser collapsed it (Ctrl or ⌘ B, or the sidebar's button).
   const [open, setOpen] = React.useState(sidebarOpen);
   const changeOpen = React.useCallback((next: boolean) => {
     setOpen(next);
@@ -59,10 +55,10 @@ export function AppLayout() {
       <TabTitle page={title} projectId={projectId} />
       <AppSidebar />
       <SidebarInset className="min-h-0 overflow-hidden min-[60rem]:ring-1 min-[60rem]:ring-border min-[60rem]:peer-data-[variant=inset]:shadow-none">
-        <AppHeader title={title ?? "Ottertrail"} projectId={projectId} docs={docs} />
-        <div data-slot="app-content" className="min-h-0 flex-1 overflow-y-auto">
+        {/* No header bar: the page's title row scrolls with it. */}
+        <PageWithHeader>
           <Outlet />
-        </div>
+        </PageWithHeader>
       </SidebarInset>
     </SidebarProvider>
   );

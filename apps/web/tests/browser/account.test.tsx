@@ -77,7 +77,9 @@ describe("the sidebar", () => {
     await page.viewport(1440, 900);
     installFakeApi();
     renderApp(ANALYTICS);
-    await expect.element(page.getByText("API online")).toBeVisible();
+    await expect
+      .element(page.getByRole("status", { name: "API status" }))
+      .toMatchTextContent("API online");
 
     await userEvent.keyboard("{Control>}b{/Control}");
     await expect.poll(() => sidebar()?.getAttribute("data-state")).toBe("collapsed");
@@ -99,7 +101,7 @@ describe("the sidebar", () => {
     await expect.poll(tooltip).toBe("API online");
   });
 
-  test("the API status sits in the header, on the logo's line", async () => {
+  test("the API status sits in the sidebar's head, on the logo's line", async () => {
     await page.viewport(1440, 900);
     installFakeApi();
     renderApp("/projects");

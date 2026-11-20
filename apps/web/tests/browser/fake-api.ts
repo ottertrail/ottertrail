@@ -97,6 +97,8 @@ import { STORAGE } from "./storage-fixtures.ts";
  */
 export interface FakeApi {
   signedIn: boolean;
+  /** How GET /api/health answers: 200 "ok" by default, or this status (503: the API is down). */
+  healthStatus: number;
   /**
    * How sign-in answers instead of succeeding, such as 401 for a wrong
    * password; null signs in. (The sign-in client keeps the fetch it started
@@ -3764,7 +3766,9 @@ async function answer(api: FakeApi, url: URL, init: RequestInit | undefined): Pr
     return json({ redirect: false, token: "fake", user: SESSION.user });
   }
   if (path === "/api/health") {
-    return json({ status: "ok" });
+    return api.healthStatus === 200
+      ? json({ status: "ok" })
+      : json({ status: "down" }, api.healthStatus);
   }
   // As the API: everything else needs a session (sign-in and setup are above or public).
   const links = answerLinks(api, url, init);
@@ -4250,6 +4254,7 @@ export async function fakeFetch(input: RequestInfo | URL, init?: RequestInit): P
 export function installFakeApi(overrides: Partial<FakeApi> = {}): FakeApi {
   active = {
     signedIn: true,
+    healthStatus: 200,
     signInRefusal: null,
     sessionRefusal: null,
     settings: SETTINGS,

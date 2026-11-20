@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { ArrowLeftIcon, OctagonAlertIcon, SearchXIcon } from "lucide-react";
 
+import { PageTitle } from "@/components/page-header";
 import { PINNED, PINNED_END } from "@/components/pinned-column";
 import { ScrollHint } from "@/components/scroll-hint";
 import { StatStrip } from "@/components/stat-strip";
@@ -224,6 +225,7 @@ export function QueryShapePage({
   const data = detail.data;
   const shape = data?.shape ?? null;
   const subject = shape === null ? "this query shape" : databaseLabel(shape.system, shape.database);
+  const shapeTitle = shape === null ? "Query shape" : `Query shape in ${subject}`;
   const linkClass = "flex items-center gap-1 text-sm text-link hover:underline";
 
   return (
@@ -248,9 +250,8 @@ export function QueryShapePage({
               All databases
             </Link>
           </nav>
-          <h2 className="text-lg font-medium text-ink">
-            Query shape{shape === null ? "" : ` in ${subject}`}
-          </h2>
+          {/* The page header names it, so it is not repeated here. */}
+          <PageTitle title={shapeTitle} />
           {shape !== null && (
             <>
               <pre className="max-h-80 overflow-auto rounded-lg bg-surface-2 p-3 font-mono text-xs break-all whitespace-pre-wrap text-ink ring-1 ring-border">

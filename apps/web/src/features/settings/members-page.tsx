@@ -5,6 +5,7 @@ import * as React from "react";
 
 import { clickableRow, ROW_LINK } from "@/components/clickable-row";
 import { NoAccess } from "@/components/no-access";
+import { PageActions } from "@/components/page-header";
 import { StatusBadge } from "@/components/status-badge";
 import { TruncatedText } from "@/components/truncated-text";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -444,13 +445,12 @@ function membersNote(actor: Actor) {
     : "Only the owner can manage admins. You can't change your own access or the owner's. Ask the owner to change an admin's access.";
 }
 
-/** The page's shape while it loads: the tab row, then rows. */
+/** The page's shape while it loads: the tab row (as high as the settings tabs'), then rows. */
 function MembersSkeleton() {
   return (
     <div aria-busy="true" aria-label="Loading members">
-      <div className="flex h-12 items-center justify-between gap-3 border-b px-gutter">
+      <div className="flex h-10 items-center gap-3 border-b px-gutter">
         <Skeleton className="h-5 w-48" />
-        <Skeleton className="h-8 w-20" />
       </div>
       <div className="flex flex-col gap-3 px-gutter py-4">
         {[0, 1, 2, 3].map((index) => (
@@ -718,6 +718,14 @@ export function MembersPage() {
 
   return (
     <UnsavedChangesGuard>
+      <PageActions>
+        <InviteDialog
+          actor={actor}
+          projects={projects.data}
+          days={data.invitationDays}
+          emailConfigured={data.emailConfigured}
+        />
+      </PageActions>
       <output
         aria-live="polite"
         data-slot="members-notice"
@@ -748,12 +756,12 @@ export function MembersPage() {
             <TabsList
               variant="line"
               aria-label="Members and invitations"
-              className="p-0 group-data-horizontal/tabs:h-12"
+              className="p-0 group-data-horizontal/tabs:h-10"
             >
               <TabsTrigger
                 value="members"
                 data-members-tab="members"
-                className="group/tab h-12 flex-none px-3 after:bg-primary group-data-horizontal/tabs:after:bottom-0"
+                className="group/tab h-10 flex-none px-3 after:bg-primary group-data-horizontal/tabs:after:bottom-0"
               >
                 Members
                 {tabCount(data.members.length)}
@@ -761,7 +769,7 @@ export function MembersPage() {
               <TabsTrigger
                 value="invitations"
                 data-members-tab="invitations"
-                className="h-12 flex-none px-3 after:bg-primary group-data-horizontal/tabs:after:bottom-0"
+                className="h-10 flex-none px-3 after:bg-primary group-data-horizontal/tabs:after:bottom-0"
               >
                 Invitations
                 {pending > 0 && (
@@ -775,12 +783,6 @@ export function MembersPage() {
               </TabsTrigger>
             </TabsList>
           </div>
-          <InviteDialog
-            actor={actor}
-            projects={projects.data}
-            days={data.invitationDays}
-            emailConfigured={data.emailConfigured}
-          />
         </div>
         <TabsContent value="members">
           <MembersTable

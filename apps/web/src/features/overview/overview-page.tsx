@@ -5,6 +5,7 @@ import * as React from "react";
 
 import { ButtonLink } from "@/components/button-link";
 import { FilterBar, FilterBarRange } from "@/components/filter-bar";
+import { PageActions } from "@/components/page-header";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
@@ -242,22 +243,22 @@ export function OverviewPage({
         </span>
       }
       range={<FilterBarRange firstDay={days.firstDay} lastDay={days.lastDay} timeZone={timeZone} />}
-      actions={
-        hasArea ? (
-          <Button
-            ref={editButton}
-            type="button"
-            variant="outline"
-            size="sm"
-            aria-expanded={editing}
-            aria-controls="overview-edit-bar"
-            onClick={() => startEditing(!editing)}
-          >
-            Edit overview
-          </Button>
-        ) : undefined
-      }
     />
+  );
+  // The page's action, in its header.
+  const editAction = hasArea && (
+    <PageActions>
+      <Button
+        ref={editButton}
+        type="button"
+        variant="outline"
+        aria-expanded={editing}
+        aria-controls="overview-edit-bar"
+        onClick={() => startEditing(!editing)}
+      >
+        Edit overview
+      </Button>
+    </PageActions>
   );
 
   if (layout.isPending || me === undefined) {
@@ -328,6 +329,7 @@ export function OverviewPage({
 
   return (
     <>
+      {editAction}
       {filterBar}
       {editing && (
         <div

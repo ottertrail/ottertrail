@@ -4,6 +4,7 @@ import { ArrowLeftIcon, InfoIcon, OctagonAlertIcon, SearchXIcon } from "lucide-r
 import * as React from "react";
 
 import { clickableRow, ROW_LINK } from "@/components/clickable-row";
+import { PageTitle } from "@/components/page-header";
 import { PINNED } from "@/components/pinned-column";
 import { ScrollHint } from "@/components/scroll-hint";
 import { StatusBadge } from "@/components/status-badge";
@@ -201,14 +202,17 @@ function Detail({
   const selected = rows.find((row) => row.span.spanId === spanId)?.span ?? rows[0]?.span;
   const root = rows[0]?.span;
   const failed = trace.spans.filter((span) => span.status === "error").length;
+  const traceName = root === undefined ? "Trace" : root.name || "(no name)";
 
   return (
     <>
       <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
         <div className="flex min-w-0 flex-col gap-2">
-          <h2 className="text-xl font-semibold break-words text-ink">
-            {root === undefined ? "Trace" : root.name || "(no name)"}
-          </h2>
+          {/* On its own page, the page header names the trace, so it is not repeated here. */}
+          {!inWorkbench && <PageTitle title={traceName} />}
+          {inWorkbench && (
+            <h2 className="text-xl font-semibold break-words text-ink">{traceName}</h2>
+          )}
           <p className="font-mono text-sm break-all text-ink-muted">{trace.traceId}</p>
         </div>
         {actions}

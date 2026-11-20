@@ -3,6 +3,7 @@ import { Link, useNavigate } from "@tanstack/react-router";
 import { ArrowLeftIcon, OctagonAlertIcon, SearchXIcon } from "lucide-react";
 import * as React from "react";
 
+import { PageTitle } from "@/components/page-header";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
@@ -234,7 +235,8 @@ export function HostPage({
             <ArrowLeftIcon aria-hidden="true" className="size-4" />
             All hosts
           </Link>
-          <h2 className="font-mono text-lg font-medium break-all text-ink">{host}</h2>
+          {/* The page header names it, so it is not repeated here. */}
+          <PageTitle title={host} />
           {data !== undefined && data.lastSeen !== null && (
             <p className="flex flex-wrap items-center gap-2 text-sm text-ink-subtle">
               <span>

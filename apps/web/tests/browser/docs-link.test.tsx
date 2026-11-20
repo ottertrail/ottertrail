@@ -10,17 +10,20 @@ import {
 } from "./fake-api.ts";
 import { renderApp } from "./render.tsx";
 
-/* The header's Docs link (app-header.tsx), from the map in lib/docs.ts. */
+/* The page header's Docs link (page-header.tsx), from the map in lib/docs.ts. */
 
 const DOCS = "https://docs.ottertrail.app";
 const docsLink = (topic: string) =>
   page.getByRole("link", { name: `${topic} docs (opens in a new tab)`, exact: true });
 
-/** The header's links that leave for the docs site. */
+/** The page's links that leave for the docs site. */
 const docsLinks = () =>
-  [...document.querySelectorAll<HTMLAnchorElement>("header a")].filter((link) =>
+  [...document.querySelectorAll<HTMLAnchorElement>("a")].filter((link) =>
     link.href.startsWith(DOCS),
   );
+
+/** The page's title, the header's h1. */
+const title = () => page.getByRole("heading", { level: 1 });
 
 afterEach(async () => {
   await page.viewport(1280, 900);
@@ -38,12 +41,15 @@ describe("at 1440 wide", () => {
     await expect.element(link).toHaveAttribute("target", "_blank");
     await expect.element(link).toHaveAttribute("rel", "noopener noreferrer");
     await expect.element(link).toHaveTextContent("Docs");
-    // Before the sidebar's shortcut, at the header's end.
-    const hint = page.getByText("sidebar", { exact: true });
-    await expect.element(hint).toBeVisible();
-    expect(link.element().getBoundingClientRect().right).toBeLessThan(
-      hint.element().getBoundingClientRect().left,
-    );
+    // Right after the title, on its line.
+    await expect.element(title()).toHaveTextContent("Web analytics");
+    const heading = title().element().getBoundingClientRect();
+    const box = link.element().getBoundingClientRect();
+    expect(box.left - heading.right).toBeGreaterThan(0);
+    expect(box.left - heading.right).toBeLessThanOrEqual(16);
+    expect(box.top).toBeGreaterThanOrEqual(heading.top);
+    expect(box.bottom).toBeLessThanOrEqual(heading.bottom);
+    expect(docsLinks()).toHaveLength(1);
   });
 
   test("a list and a detail page link to their own pages", async () => {
@@ -97,19 +103,17 @@ describe("at 1440 wide", () => {
 });
 
 describe("at 390 wide", () => {
-  test("shows the icon only, keeping the link's name", async () => {
+  test("keeps the word after the title, inside the screen", async () => {
     await page.viewport(390, 844);
     installFakeApi();
     renderApp(`/projects/${PROJECT.id}/web-analytics`);
 
     const link = docsLink("Web analytics");
     await expect.element(link).toBeVisible();
-    const word = link.getByText("Docs");
-    // The word is there for no one but screen readers, which read the name anyway.
-    expect(word.element().getBoundingClientRect().width).toBeLessThanOrEqual(1);
-    const box = link.element().getBoundingClientRect();
-    expect(box.width).toBe(28);
-    expect(box.height).toBe(28);
+    await expect.element(link).toHaveTextContent("Docs");
+    expect(link.element().getBoundingClientRect().left).toBeGreaterThan(
+      title().element().getBoundingClientRect().right,
+    );
     expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(390);
   });
 });
