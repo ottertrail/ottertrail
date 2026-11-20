@@ -217,11 +217,16 @@ const REAL = Symbol.for("ottertrail.tracker");
     const overlay = /^#ottertrail-heatmap=([\w-]{43})$/.exec(location.hash);
     /** The link's answer: undefined while asked, true for the overlay shown, false otherwise. */
     let shown: boolean | undefined = overlay ? undefined : false;
-    /** The scripts that wait for the answer: v.js, r.js, h.js. */
+    /** Whether the tracker sends: from the start, or once released. */
+    let sending = !overlay;
+    /** Whether v.js, r.js, and h.js may load: from the start, or after the answer or the wait. */
+    let loading = !overlay;
+    /** The scripts that wait: v.js, r.js, h.js. */
     const held: (() => void)[] = [];
     const whenSending = (run: () => void) => {
-      if (shown === undefined) held.push(run);
-      else if (!shown) run();
+      if (shown) return;
+      if (loading) run();
+      else held.push(run);
     };
 
     const tracker = createTracker({
@@ -235,27 +240,48 @@ const REAL = Symbol.for("ottertrail.tracker");
       ...(release === undefined ? {} : { release }),
     });
 
-    /** The answer, once: true when it came in time (before the wait or the page's end). */
+    /**
+     * The visit counts, for now: the tracker sends what it holds, and, with
+     * `scripts`, the scripts that wait load. Hidden or left, only the former.
+     */
+    const unpause = (scripts: boolean) => {
+      if (shown) return;
+      if (!sending) {
+        sending = true;
+        tracker.resume();
+      }
+      if (scripts && !loading) {
+        loading = true;
+        for (const run of held.splice(0)) run();
+      }
+    };
+    /**
+     * o.js's answer, once; true when it came in time, before the tracker
+     * stopped waiting. A real link that comes late still mutes the rest
+     * of the page load: what was sent stays sent, nothing more is, and
+     * scripts that have not loaded never do.
+     */
     const settle = (overlayShown: boolean) => {
       if (shown !== undefined) return false;
+      const inTime = !sending;
       shown = overlayShown;
       clearTimeout(timer);
       if (shown) {
+        held.length = 0;
         tracker.discard();
       } else {
-        tracker.resume();
-        for (const run of held.splice(0)) run();
+        unpause(true);
       }
-      return true;
+      return inTime;
     };
-    const timer = overlay ? setTimeout(() => settle(false), OVERLAY_WAIT_MS) : undefined;
+    const timer = overlay ? setTimeout(() => unpause(true), OVERLAY_WAIT_MS) : undefined;
     if (overlay) {
       history.replaceState(history.state, "", location.pathname + location.search);
       // Before the tracker's own handlers: a visitor who hides or leaves
       // the page at once is counted, by the tracker's own exit.
-      window.addEventListener("pagehide", () => settle(false));
+      window.addEventListener("pagehide", () => unpause(false));
       document.addEventListener("visibilitychange", () => {
-        if (document.visibilityState === "hidden") settle(false);
+        if (document.visibilityState === "hidden") unpause(false);
       });
       if (beside) {
         const config: OverlayConfig = {

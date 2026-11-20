@@ -1585,6 +1585,27 @@ describe("the heatmap overlay", () => {
     expect(hidden.events.map((event) => event.name)).toEqual(["pageview"]);
   });
 
+  test("a real link answered after the tab was hidden: muted from then on, and h.js never loads", async () => {
+    const page = opened("/", { attributes: { vitals: "off", heatmaps: "on", replay: "errors" } });
+    await runScript();
+    // The owner switches back to the dashboard before o.js answers: counted.
+    await leave(page);
+    expect(page.events.map((event) => event.name)).toEqual(["pageview"]);
+    page.show();
+    // Then the answer: a real link, late.
+    expect(configOf(page).settled(true)).toBe(false);
+    page.window.ottertrail?.track("signup");
+    page.fire("error", new FakeErrorEvent({ message: "boom", error: new Error("boom") }));
+    page.window.ottertrail?.replay(true);
+    await vi.advanceTimersByTimeAsync(10_000);
+    await leave(page);
+    expect(page.events.map((event) => event.name)).toEqual(["pageview"]);
+    // Neither h.js nor r.js: they waited for the answer, which was a real link.
+    expect(page.added.map((element) => element.src)).toEqual([
+      "https://analytics.example.com/o.js",
+    ]);
+  });
+
   test("back from the back/forward cache after a release: a new pageview, as for any visitor", async () => {
     const page = opened("/", { attributes: { vitals: "off" } });
     await runScript();

@@ -256,7 +256,10 @@ export function createTracker({
         const cleanProperties = sanitizeProperties(properties);
         const owner = extra !== undefined && "user" in extra ? extra.user : user;
         if (queue.length >= MAX_QUEUE) {
-          queue.shift(); // Bounded memory: drop the oldest event.
+          // Bounded memory: drop the oldest event; while paused, the newest,
+          // so the page load's first events, its pageview, are kept.
+          if (paused) return;
+          queue.shift();
         }
         const event: QueuedEvent = {
           id: randomId(),

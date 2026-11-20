@@ -446,22 +446,46 @@ describe("the signed-in user", () => {
 });
 
 describe("paused (the heatmap overlay's wait)", () => {
-  test("nothing leaves, not even on exit; resume sends at once, with sentAt as it leaves", async () => {
+  test("nothing leaves, not even on exit; resume sends every batch, in order, once, written as it leaves", async () => {
     const { transport, sent, beacons } = fakeTransport();
     const tracker = createTracker({ key: "pk_test", transport, randomId, paused: true });
     const heldAt = Date.now();
     tracker.track("pageview", page);
-    for (let i = 0; i < 60; i += 1) tracker.track("click", page);
+    for (let i = 0; i < 120; i += 1) tracker.track("click", page, { n: i });
     await vi.advanceTimersByTimeAsync(10_000);
     tracker.flushOnExit();
     await tracker.flush();
     expect([sent, beacons]).toEqual([[], []]);
-    expect(tracker.queued()).toBe(61);
+    expect(tracker.queued()).toBe(121);
 
+    const resumedAt = Date.now();
     tracker.resume();
-    await vi.advanceTimersByTimeAsync(1);
-    expect(sent[0]?.sentAt).toBeGreaterThanOrEqual(heldAt + 10_000);
-    expect(sent[0]?.events[0]?.occurredAt).toBe(heldAt);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(sent.map((batch) => batch.events.length)).toEqual([50, 50, 21]);
+    const events = sent.flatMap((batch) => batch.events);
+    expect(events.map((event) => event.properties?.n ?? "pageview")).toEqual([
+      "pageview",
+      ...Array.from({ length: 120 }, (_, i) => i),
+    ]);
+    expect(new Set(events.map((event) => event.id)).size).toBe(121);
+    expect(events[0]?.occurredAt).toBe(heldAt);
+    // Each batch is written as it leaves: after the wait, never when held.
+    for (const batch of sent) expect(batch.sentAt).toBeGreaterThanOrEqual(resumedAt);
+    expect(beacons).toEqual([]);
+  });
+
+  test("a full queue while paused keeps its first events, the pageview with them", async () => {
+    const { transport, sent } = fakeTransport();
+    const tracker = createTracker({ key: "pk_test", transport, randomId, paused: true });
+    tracker.track("pageview", page);
+    for (let i = 0; i < 249; i += 1) tracker.track("click", page, { n: i });
+    expect(tracker.queued()).toBe(MAX_QUEUE);
+    tracker.resume();
+    await vi.advanceTimersByTimeAsync(100);
+    const events = sent.flatMap((batch) => batch.events);
+    expect(events).toHaveLength(MAX_QUEUE);
+    expect(events[0]?.name).toBe("pageview");
+    expect(events.at(-1)?.properties?.n).toBe(MAX_QUEUE - 2);
   });
 
   test("discard drops the queue, and nothing is kept or sent after it", async () => {
