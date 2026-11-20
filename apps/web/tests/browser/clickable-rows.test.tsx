@@ -223,6 +223,8 @@ describe("clickable rows", () => {
 
     router.history.back();
     await expect.poll(() => router.state.location.pathname).toBe("/projects");
+    // The list draws again after the address changes: wait for its row.
+    await expect.element(page.getByRole("link", { name: PROJECT.name, exact: true })).toBeVisible();
     await cell(rowOf("Projects", PROJECT.name), 1).click();
     await expect.poll(() => router.state.location.pathname).toMatch(new RegExp(`^${P}`));
     expect(router.state.location.pathname).not.toBe(`${P}/settings`);
