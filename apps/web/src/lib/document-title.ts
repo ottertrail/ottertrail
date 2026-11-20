@@ -24,3 +24,39 @@ export function useDocumentTitle(title: string) {
     document.title = title;
   }, [title]);
 }
+
+/*
+ * A 404 or an error shown in place of a page names the tab instead of the
+ * page ("Page not found · Acme – Ottertrail"). The state registers its title
+ * here, and the shell's and the sign-in layout's tab titles read it, so the
+ * two never overwrite each other.
+ */
+let statusTitle: string | undefined;
+const statusListeners = new Set<() => void>();
+const subscribeStatus = (listener: () => void) => {
+  statusListeners.add(listener);
+  return () => statusListeners.delete(listener);
+};
+const setStatusTitle = (title: string | undefined) => {
+  statusTitle = title;
+  for (const listener of statusListeners) listener();
+};
+
+/** The title a 404 or error state put in place of the page's, if one shows. */
+export function useStatusTitle(): string | undefined {
+  return React.useSyncExternalStore(
+    subscribeStatus,
+    () => statusTitle,
+    () => undefined,
+  );
+}
+
+/** Puts `title` in place of the page's title in the tab while the state shows. */
+export function useShowStatusTitle(title: string) {
+  React.useEffect(() => {
+    setStatusTitle(title);
+    return () => {
+      if (statusTitle === title) setStatusTitle(undefined);
+    };
+  }, [title]);
+}

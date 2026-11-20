@@ -19,6 +19,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { AuthLayout } from "@/features/auth/auth-layout";
 import { ApiError, isUnreachable } from "@/lib/api";
+import { useShowStatusTitle } from "@/lib/document-title";
 import { PageLoadError } from "@/lib/lazy-page";
 import { hasNavigated } from "@/lib/navigations";
 import { reloadPage } from "@/lib/reload";
@@ -102,16 +103,8 @@ function usePlacement(): Placement {
   return routeId?.startsWith("/app/") ? "shell" : "alone";
 }
 
-/** "Page not found – Ottertrail" in the tab while the state shows. */
-function useTabTitle(title: string) {
-  React.useEffect(() => {
-    const before = document.title;
-    document.title = `${title} – Ottertrail`;
-    return () => {
-      document.title = before;
-    };
-  }, [title]);
-}
+/** "Page not found · Acme – Ottertrail" in the tab while the state shows. */
+const useTabTitle = useShowStatusTitle;
 
 /**
  * A state that replaces a page (docs/design-system.md, "Data states"): a

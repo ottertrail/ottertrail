@@ -7,7 +7,7 @@ import { AppSidebar } from "@/components/app-shell/app-sidebar";
 import { SidebarInset, SidebarProvider, useSidebar } from "@/components/ui/sidebar";
 import { useAccess } from "@/lib/access";
 import { docsFor } from "@/lib/docs";
-import { documentTitle, useDocumentTitle } from "@/lib/document-title";
+import { documentTitle, useDocumentTitle, useStatusTitle } from "@/lib/document-title";
 import { projectsQuery } from "@/lib/projects-api";
 import { rememberSidebar, sidebarOpen } from "@/lib/sidebar-state";
 
@@ -36,7 +36,8 @@ function TabTitle({
     projectId === undefined
       ? undefined
       : projects.data?.find((candidate) => candidate.id === projectId)?.name;
-  useDocumentTitle(documentTitle({ page, project, instance: me?.instance.name }));
+  const status = useStatusTitle();
+  useDocumentTitle(documentTitle({ page: status ?? page, project, instance: me?.instance.name }));
   return null;
 }
 
