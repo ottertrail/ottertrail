@@ -63,8 +63,3 @@ export function useProjectStar() {
     },
   });
 }
-
-/** Sorts a copy of `list` by name, as people read it ("Blog" before "docs" before "Shop"). */
-export function byName<T extends { name: string }>(list: readonly T[]): T[] {
-  return list.toSorted((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
-}

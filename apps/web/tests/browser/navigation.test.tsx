@@ -1,5 +1,5 @@
-import { describe, expect, test } from "vite-plus/test";
-import { page } from "vite-plus/test/browser/context";
+import { afterEach, describe, expect, test } from "vite-plus/test";
+import { page, userEvent } from "vite-plus/test/browser/context";
 
 import { installFakeApi, OTHER_PROJECT, PROJECT } from "./fake-api.ts";
 import { unmountAll } from "./mounted.ts";
@@ -14,6 +14,9 @@ const workspaceMenu = () => page.getByRole("navigation", { name: "Instance" });
 const projectMenu = () => page.getByRole("navigation", { name: "Project" });
 const switcher = (name: string) =>
   page.getByRole("button", { name: `Project: ${name}. Switch project` });
+
+/** The sidebar's Docs link (the header's names its topic first). */
+const docsLink = () => page.getByRole("link", { name: "Docs (opens in a new tab)", exact: true });
 
 /** The header's breadcrumb as text, such as "Main site / Web analytics". */
 function breadcrumb(): string {
@@ -64,6 +67,59 @@ describe("the workspace", () => {
 
     await expect.poll(() => currentPath(router)).toBe(OVERVIEW);
     await expect.element(page.getByRole("heading", { name: "Traffic" })).toBeVisible();
+  });
+});
+
+describe("the sidebar", () => {
+  afterEach(async () => {
+    await page.viewport(1280, 900);
+  });
+
+  test("the instance's name heads the workspace, as the switcher names a project", async () => {
+    installFakeApi();
+    renderApp("/projects");
+    await expect
+      .poll(
+        () =>
+          document.querySelector("[data-slot=sidebar-header] [data-slot=instance-name]")
+            ?.textContent,
+      )
+      .toBe("AAcme IncInstance");
+  });
+
+  test.each([
+    ["the workspace", "/projects"],
+    ["a project", ANALYTICS],
+  ])("in %s, Docs opens the docs site in a new tab, at the foot of the menu", async (_, path) => {
+    installFakeApi();
+    renderApp(path);
+    await expect.element(docsLink()).toBeVisible();
+    await expect.element(docsLink()).toHaveAttribute("href", "https://docs.ottertrail.app");
+    await expect.element(docsLink()).toHaveAttribute("target", "_blank");
+    await expect.element(docsLink()).toHaveAttribute("rel", "noopener noreferrer");
+    // Just above the signed-in user, below the menu.
+    const footer = document.querySelector("[data-slot=sidebar-footer]");
+    const gap =
+      (footer?.getBoundingClientRect().top ?? 0) -
+      docsLink().element().getBoundingClientRect().bottom;
+    expect(gap).toBeGreaterThanOrEqual(0);
+    expect(gap).toBeLessThanOrEqual(16);
+  });
+
+  test("collapsed to icons, Docs keeps its icon and a tooltip", async () => {
+    await page.viewport(1440, 900);
+    installFakeApi();
+    renderApp("/projects");
+    await expect.element(docsLink()).toBeVisible();
+    await userEvent.keyboard("{Control>}b{/Control}");
+    await expect
+      .poll(() => document.querySelector("[data-slot=sidebar]")?.getAttribute("data-state"))
+      .toBe("collapsed");
+    expect(docsLink().element().getBoundingClientRect().width).toBeLessThanOrEqual(32);
+    await docsLink().hover();
+    await expect
+      .poll(() => document.querySelector("[data-slot=tooltip-content][data-open]")?.textContent)
+      .toBe("Docs");
   });
 });
 

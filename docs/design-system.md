@@ -197,20 +197,6 @@ No drop shadows for hierarchy; use the surface ladder and `ring-1 ring-border`.
 - **Fields:** every field has a visible label (`FieldLabel`, or `Label` beside a checkbox, radio or switch); a placeholder is never the label. A `FieldDescription` under it says what the value is for or what it changes. An error (`FieldError`, tied to the field with `aria-describedby`, the field marked `aria-invalid`) says what is wrong and how to correct it. Radios and a set of checkboxes sit in a `<fieldset>` with a `<legend>`.
 - Text to copy, such as an install snippet or a key, is `CopyableCode` (`components/copyable-code.tsx`): code that wraps, with its copy button inside the box. Never a read-only input, which looks editable, and never inside a form whose Save button would not store it.
 
-### Project tiles
-
-The workspace sidebar's projects each start with a tile: the project's initial, 11px semibold, on a 20px square with 5px corners (`ProjectTile`, `components/project-tile.tsx`). Its color comes from the project's ID (FNV-1a, `lib/project-tile.ts`), so a project keeps its color whatever its name or its place in a list. The tile is decoration, hidden from screen readers: the name is always beside it or in its tooltip.
-
-The colors are chart slots 2 to 8 and the brand, each with the text token that keeps 4.5:1 on it in its theme (`tests/tokens.test.ts` checks every pair, and that each tile's classes name those tokens):
-
-- **Dark:** every chart slot takes the canvas's near-black (5.3 to 6.8:1); the brand takes white (4.6:1).
-- **Light:** orange, aqua, yellow, magenta and red take `ink` (5.5 to 5.6:1); green and violet take white (5.0 and 5.8:1), as does the brand (4.6:1).
-- `chart-1`'s light blue is left out: neither `ink` (4.1:1) nor white (4.4:1) reaches 4.5:1 on it.
-
-Tiles are not a chart's series, so a color here says nothing on any page's charts. Beside each tile, a dot says whether the project's events arrive (`EventDot`): `status-good` for an event in the last day, `ink-tertiary` for an older one, an `ink-tertiary` ring for none yet. The dot is never the only cue: the item's accessible name and its tooltip say the same in words.
-
-The instance's own tile, at the workspace sidebar's head, and the project switcher's are neutral (`sidebar-accent` with `ink`), since each names the one place the sidebar is in.
-
 ### Truncated text
 
 - **Text an ellipsis may cut off uses `TruncatedText`** (`components/truncated-text.tsx`), never `truncate` or `line-clamp-*` with a native `title`, which is slow, unstyled, and never shows on keyboard focus. It cuts its text to one line (`truncate`), or to a few with a `line-clamp-*` class, and only while the text is cut off shows the whole of it in a tooltip, on hover (after 300ms, so moving across a list shows none) and on keyboard focus. Escape closes it and still reaches the page, so a workbench's Escape works with a tooltip open.

@@ -4,6 +4,7 @@ import {
   ActivityIcon,
   ArrowLeftIcon,
   BellIcon,
+  BookOpenIcon,
   BugIcon,
   ChartColumnIcon,
   ChartLineIcon,
@@ -27,7 +28,7 @@ import {
 } from "lucide-react";
 
 import { ApiStatus } from "@/components/api-status";
-import { InstanceName, SidebarProjects } from "@/components/app-shell/sidebar-projects";
+import { InstanceName } from "@/components/app-shell/instance-name";
 import { UserMenu } from "@/components/app-shell/user-menu";
 import { BrandMark } from "@/components/brand-mark";
 import { OverflowTooltip, TruncatedText } from "@/components/truncated-text";
@@ -45,6 +46,7 @@ import {
   SidebarContent,
   SidebarFooter,
   SidebarGroup,
+  SidebarGroupContent,
   SidebarGroupLabel,
   SidebarHeader,
   SidebarMenu,
@@ -54,6 +56,7 @@ import {
 } from "@/components/ui/sidebar";
 import { Skeleton } from "@/components/ui/skeleton";
 import { canOpen, hasOverview, meQuery, useAccess } from "@/lib/access";
+import { DOCS_URL } from "@/lib/docs";
 import { starredProjectsQuery, useProjectStar } from "@/lib/project-stars";
 import { projectsQuery } from "@/lib/projects-api";
 
@@ -537,6 +540,38 @@ function SidebarApiStatus() {
 }
 
 /**
+ * The docs site's start, in a new tab, at the foot of the menu on every
+ * page. The header's Docs link opens the page about the current screen.
+ */
+function SidebarDocs() {
+  return (
+    <SidebarGroup className="mt-auto">
+      <SidebarGroupContent>
+        <SidebarMenu>
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              // `noreferrer` keeps the instance's address from the docs site.
+              render={
+                <a
+                  href={DOCS_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  aria-label="Docs (opens in a new tab)"
+                />
+              }
+              tooltip="Docs"
+            >
+              <BookOpenIcon aria-hidden="true" />
+              <span>Docs</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        </SidebarMenu>
+      </SidebarGroupContent>
+    </SidebarGroup>
+  );
+}
+
+/**
  * Two levels, like a hosting dashboard: the workspace (all projects), and
  * inside a project, that project's own menu with a switcher and a way back.
  */
@@ -570,8 +605,7 @@ export function AppSidebar() {
         >
           {projectId === undefined ? <WorkspaceMenu /> : <ProjectMenu projectId={projectId} />}
         </nav>
-        {/* Inside a project, the switcher names it: the shortcuts are for the workspace. */}
-        {projectId === undefined && <SidebarProjects />}
+        <SidebarDocs />
       </SidebarContent>
 
       <SidebarFooter>
