@@ -8,7 +8,7 @@ import { type Rating, RATINGS } from "./format";
 /** The same icons and status colors as StatusBadge's tones, for a mark without a badge. */
 const ICONS: Record<Rating, { icon: typeof CircleCheckIcon; className: string }> = {
   good: { icon: CircleCheckIcon, className: "text-status-good" },
-  needsImprovement: { icon: TriangleAlertIcon, className: "text-status-warning" },
+  needsImprovement: { icon: TriangleAlertIcon, className: "text-warning" },
   poor: { icon: OctagonAlertIcon, className: "text-status-critical" },
 };
 

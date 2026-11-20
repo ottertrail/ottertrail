@@ -8,7 +8,9 @@ import {
   markerPercent,
   readRecording,
   readSeekMessage,
+  readThemeMessage,
   SEEK_MESSAGE,
+  THEME_MESSAGE,
   TIME_MESSAGE,
   timeMessage,
   startOffset,
@@ -163,5 +165,25 @@ describe("messages from the dashboard", () => {
       totalMs: 60_000,
     });
     expect(timeMessage(-5, 10).offsetMs).toBe(0);
+  });
+});
+
+describe("readThemeMessage", () => {
+  test("takes the dashboard's theme, light or dark", () => {
+    expect(readThemeMessage({ type: THEME_MESSAGE, theme: "light" })).toBe("light");
+    expect(readThemeMessage({ type: THEME_MESSAGE, theme: "dark" })).toBe("dark");
+  });
+
+  test("ignores anything else", () => {
+    for (const data of [
+      null,
+      "light",
+      { type: THEME_MESSAGE },
+      { type: THEME_MESSAGE, theme: "system" },
+      { type: THEME_MESSAGE, theme: "light", extra: 1 },
+      { type: SEEK_MESSAGE, theme: "light" },
+    ]) {
+      expect(readThemeMessage(data)).toBeNull();
+    }
   });
 });

@@ -607,10 +607,16 @@ describe("replays in the dashboard", () => {
     );
     expect(response.body).toContain('data-error-at="1700000000000"');
     expect(response.body).toContain('<script src="/replay-player.js" defer></script>');
+    // The player's theme: the dashboard's, dark unless it asks for light.
+    expect(response.body).toContain('<html lang="en" data-theme="dark">');
+    const light = await get(`${project.id}/replays/${replay}/player?theme=light`);
+    expect(light.body).toContain('<html lang="en" data-theme="light">');
+    expect(light.body).toContain('<meta name="color-scheme" content="light" />');
     // Only what the page checked goes into it.
     expect((await get(`${project.id}/replays/${replay}/player?errorAt=<script>`)).statusCode).toBe(
       400,
     );
+    expect((await get(`${project.id}/replays/${replay}/player?theme=<b>`)).statusCode).toBe(400);
   });
 
   test("sums up the project's replays, and deletes them all on request", async () => {

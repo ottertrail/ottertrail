@@ -10,6 +10,7 @@ import {
   type MessagePeer,
   readRecording,
   readSeekMessage,
+  readThemeMessage,
   type Recording,
   startOffset,
   timeMessage,
@@ -224,6 +225,11 @@ export function startPlayer(root: HTMLElement, options: PlayerOptions): Player {
       // Before the recording is ready it is paused already.
       if (isPauseMessage(event.data)) {
         pause?.();
+        return;
+      }
+      const theme = readThemeMessage(event.data);
+      if (theme !== null) {
+        doc.documentElement.dataset.theme = theme;
         return;
       }
       const offset = readSeekMessage(event.data);

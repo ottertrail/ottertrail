@@ -141,7 +141,7 @@ describe("the sidebar", () => {
 });
 
 describe("Account settings", () => {
-  test("has Profile, Password and Sessions, for a member too", async () => {
+  test("has Profile, Password, Sessions and Appearance, for a member too", async () => {
     installFakeApi({ access: memberAccess({ web_analytics: "view" }) });
     const router = renderApp("/account");
     const tabs = page.getByRole("tablist", { name: "Account settings" });
@@ -151,7 +151,7 @@ describe("Account settings", () => {
         .getByRole("tab")
         .elements()
         .map((tab) => tab.textContent),
-    ).toEqual(["Profile", "Password", "Sessions"]);
+    ).toEqual(["Profile", "Password", "Sessions", "Appearance"]);
     await page.getByRole("tab", { name: "Sessions" }).click();
     await expect.poll(() => currentPath(router)).toBe("/account?tab=sessions");
   });

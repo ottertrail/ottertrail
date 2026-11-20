@@ -83,13 +83,17 @@ export function playerPolicy(allowedHostnames: readonly string[]): string {
   ].join("; ");
 }
 
-/** The player page: its script, and where to find the replay. Every value is checked first. */
-function playerPage(replayUrl: string, errorAt: number | null): string {
+/** The player's own theme, the dashboard's (packages/replay-player/src/styles.ts); dark when not given. */
+type PlayerTheme = "light" | "dark";
+
+/** The player page: its script, its theme, and where to find the replay. Every value is checked first. */
+function playerPage(replayUrl: string, errorAt: number | null, theme: PlayerTheme): string {
   const errorAttribute = errorAt === null ? "" : ` data-error-at="${String(errorAt)}"`;
   return `<!doctype html>
-<html lang="en">
+<html lang="en" data-theme="${theme}">
   <head>
     <meta charset="utf-8" />
+    <meta name="color-scheme" content="${theme}" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="referrer" content="no-referrer" />
     <title>Session replay</title>
@@ -281,7 +285,10 @@ export const replayRoutes: FastifyPluginCallback<{
     },
   );
 
-  app.get<{ Params: { id: string; replayId: string }; Querystring: { errorAt?: number } }>(
+  app.get<{
+    Params: { id: string; replayId: string };
+    Querystring: { errorAt?: number; theme?: PlayerTheme };
+  }>(
     "/projects/:id/replays/:replayId/player",
     {
       preHandler: [signedIn, canView],
@@ -290,7 +297,10 @@ export const replayRoutes: FastifyPluginCallback<{
         querystring: {
           type: "object",
           additionalProperties: false,
-          properties: { errorAt: { type: "integer", minimum: 0, maximum: 8_640_000_000_000_000 } },
+          properties: {
+            errorAt: { type: "integer", minimum: 0, maximum: 8_640_000_000_000_000 },
+            theme: { type: "string", enum: ["light", "dark"] },
+          },
         },
       },
     },
@@ -312,6 +322,7 @@ export const replayRoutes: FastifyPluginCallback<{
           playerPage(
             `/api/projects/${projectId}/replays/${replayId}`,
             request.query.errorAt ?? null,
+            request.query.theme ?? "dark",
           ),
         );
     },

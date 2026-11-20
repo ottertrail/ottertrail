@@ -131,6 +131,7 @@ export function readRecording(value: unknown): Recording | null {
 export const SEEK_MESSAGE = "ottertrail:replay-seek";
 export const TIME_MESSAGE = "ottertrail:replay-time";
 export const PAUSE_MESSAGE = "ottertrail:replay-pause";
+export const THEME_MESSAGE = "ottertrail:replay-theme";
 /** Offsets past this are no moment of any replay: a day. */
 export const MAX_MESSAGE_OFFSET_MS = 86_400_000;
 
@@ -156,6 +157,18 @@ export function readSeekMessage(data: unknown): number | null {
 /** Whether a message asks the player to pause (its pane hidden): exactly `{ type }`. */
 export function isPauseMessage(data: unknown): boolean {
   return isRecord(data) && hasExactly(data, ["type"]) && data.type === PAUSE_MESSAGE;
+}
+
+/** The player's own theme. Not the recorded page's: that keeps its own colors. */
+export type PlayerTheme = "light" | "dark";
+
+export const isPlayerTheme = (value: unknown): value is PlayerTheme =>
+  value === "light" || value === "dark";
+
+/** The theme a theme message asks for (the dashboard's changed): exactly `{ type, theme }`; null for anything else. */
+export function readThemeMessage(data: unknown): PlayerTheme | null {
+  if (!isRecord(data) || !hasExactly(data, ["type", "theme"])) return null;
+  return data.type === THEME_MESSAGE && isPlayerTheme(data.theme) ? data.theme : null;
 }
 
 /** Where the player is, for the dashboard: ms from the recording's start, and its length. */

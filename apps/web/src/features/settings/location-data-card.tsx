@@ -162,7 +162,7 @@ function FileStatus({
           key={line}
           className={
             lag === "stuck" || (file.loadError !== null && line.includes(file.loadError))
-              ? "text-sm [overflow-wrap:anywhere] text-status-warning"
+              ? "text-sm [overflow-wrap:anywhere] text-warning"
               : "text-sm text-muted-foreground"
           }
         >
@@ -180,7 +180,7 @@ function FileStatus({
           className={
             failed
               ? "text-sm [overflow-wrap:anywhere] text-destructive"
-              : "text-sm [overflow-wrap:anywhere] text-status-warning"
+              : "text-sm [overflow-wrap:anywhere] text-warning"
           }
         >
           {failed

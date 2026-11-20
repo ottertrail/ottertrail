@@ -1,6 +1,6 @@
 /* Hallmark · shape: app screen · genre: modern-minimal · theme: brand · redesign: full
  * nav: the app's sidebar, a sheet under 60rem · signature: the report strip; the list beside its detail
- * states: loading, empty, error, full · axes: dark/sans/orchid · contrast: pass · v2.0.0 */
+ * states: loading, empty, error, full · axes: dark+light/sans/orchid · contrast: pass · v2.0.0 */
 /* Hallmark · pre-emit critique: P4 H4 E4 S4 R5 V3 · weakest: V, the approved mockups set the blocks */
 /* Hallmark · dismissed F18 · data-slot is shadcn's hook here, not an image slot */
 /* Hallmark · dismissed F1 · the straight apostrophes are the app's copy, kept as found by the redesign */
@@ -15,10 +15,16 @@
 @import "@fontsource-variable/jetbrains-mono";
 
 /*
- * Ottertrail design tokens (dark only).
+ * Ottertrail design tokens: a dark theme and a light one.
+ *
+ * The dark values are the base (:root). The light theme (:root:not(.dark)
+ * below) sets only the values that differ; tokens that point at another
+ * (--primary: var(--brand)) follow it. The theme is the `dark` class on
+ * <html>, set before the first paint by public/theme.js and kept by
+ * src/lib/theme.ts, so shadcn's dark: variants switch with it.
  *
  * Decisions and contrast notes are documented in docs/design-system.md. tests/tokens.test.ts checks the
- * documented contrast pairs, so update both when a value changes.
+ * documented contrast pairs in both themes, so update both when a value changes.
  */
 
 @custom-variant dark (&:is(.dark *));
@@ -150,6 +156,102 @@
   --status-warning: var(--warning);
   --status-serious: #ec835a;
   --status-critical: var(--danger);
+}
+
+/*
+ * The light theme: the same orchid and the same faintly tinted greys (OKLCH
+ * hue 325) as a light ladder, from the docs site's light theme. The canvas
+ * (page frame and sidebar) is the darkest step, the main panel near white,
+ * cards a step down from it and popovers white. Text, links and the status
+ * colors are darker steps, so each keeps its ratio on white.
+ */
+:root:not(.dark) {
+  color-scheme: light;
+
+  --canvas: #f2eff2; /* oklch(0.955 0.005 325) */
+  --surface-1: #fefdfe; /* oklch(0.995 0.002 325) */
+  --surface-2: #f9f7f9; /* oklch(0.978 0.003 325) */
+  --surface-3: #ffffff;
+  --surface-4: #f6f3f6; /* oklch(0.967 0.005 325) */
+  --hairline: #e2dee3; /* oklch(0.905 0.008 325) */
+  --hairline-strong: #d6d1d6; /* oklch(0.866 0.009 325) */
+  --hairline-tertiary: #cbc5cb; /* oklch(0.83 0.011 325) */
+  /* 3:1 or more on every surface and on a field's wash. */
+  --field-edge: #7e787e; /* oklch(0.58 0.012 325) */
+  /*
+   * A step lighter than the field edge, so ink on it keeps 4.5:1, while the
+   * fill keeps 3:1 on the surfaces and on the hover wash (muted).
+   */
+  --toggle-on: #847e84; /* oklch(0.6 0.011 325) */
+  --ink: #191419; /* oklch(0.2 0.013 325) */
+  --ink-muted: #3c363c; /* oklch(0.34 0.013 325) */
+  --ink-subtle: #655e65; /* oklch(0.49 0.014 325) */
+  /* Decoration and a chart's quietest part, never text: 3.4:1 on cards. */
+  --ink-tertiary: #8a848a; /* oklch(0.62 0.011 325) */
+
+  --success: #0f6a31; /* oklch(0.46 0.12 150) */
+
+  /* The brand stays: white text on it is 4.62:1, and as the focus ring it is 4.0 to 4.6:1. */
+
+  /* Stronger than dark's #d588d9, which is under 2:1 on white. */
+  --link: #973d9d; /* oklch(0.52 0.17 325) */
+
+  /* Text colors: 4.5:1 on the surfaces and on their own tints. */
+  --warning: #8a5100; /* oklch(0.49 0.11 65) */
+  --danger: #a90017; /* oklch(0.46 0.19 25) */
+
+  /* The hover wash: ink at 6%, where dark uses white at 6%. */
+  --accent: rgb(25 20 25 / 0.06);
+  /*
+   * A lighter fill than the hairline, so the chosen toggle (toggle-on) keeps
+   * 3:1 against it as a hovered neighbor; also secondary text's 5.1:1.
+   */
+  --muted: #ebe6eb; /* oklch(0.93 0.009 325) */
+
+  /*
+   * The light steps of the dataviz reference palette, in the same order.
+   * Aqua, yellow, magenta and orange are darkened (same hue and chroma, lower
+   * OKLCH lightness) to reach 3:1 on the panel and on cards. Validated on
+   * surface-1 and surface-2: worst adjacent CVD delta E 8.8, normal-vision
+   * 16.6, all >= 3:1; the first 3 slots all-pairs 9.4 and 22.7.
+   */
+  --chart-1: #2a78d6;
+  --chart-2: #e96632;
+  --chart-3: #00a26e;
+  --chart-4: #c87e00;
+  --chart-5: #d56a93;
+  --chart-6: #008300;
+  --chart-7: #6250d6;
+  --chart-8: #e34948;
+
+  /*
+   * The sequential scale turns around: on a light surface a larger value is
+   * darker. Steps 100 to 400 of the reference blue ramp; ink stays 5:1 or
+   * more on the darkest.
+   */
+  --seq-1: #cde2fb;
+  --seq-2: #9ec5f4;
+  --seq-3: #6da7ec;
+  --seq-4: #5598e7;
+  --seq-5: #3987e5;
+
+  /*
+   * A state chart's normal part: a dark neutral here, so the status parts
+   * (lighter and in color) stand out, and the quietest part (ink-tertiary)
+   * is the lightest. The Logs chart's parts at least 15.8 apart under color
+   * blindness and 18.1 to normal vision, the Traces chart's two 10.3 and
+   * 18.3, every part at least 3:1 on surface-1 and surface-2.
+   */
+  --chart-neutral: #565056; /* oklch(0.44 0.012 325) */
+
+  /*
+   * Status marks (chart parts, meters, the badges' tints). Warning's text
+   * is too light for a mark at 3:1 contrast to stay apart from critical, so
+   * the mark takes a lighter amber (3.5:1 on cards); a badge's text stays
+   * the warning text color.
+   */
+  --status-warning: #be7200; /* oklch(0.62 0.14 65) */
+  --status-serious: #ba4f1f; /* oklch(0.56 0.15 42) */
 }
 
 /*

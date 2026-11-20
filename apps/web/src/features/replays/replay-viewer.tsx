@@ -8,8 +8,15 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useWorkbenchPane } from "@/components/workbench-pane";
-import { pauseMessage, readTimeMessage, seekMessage } from "@/lib/replay-messages";
+import {
+  pauseMessage,
+  playerUrlInTheme,
+  readTimeMessage,
+  seekMessage,
+  themeMessage,
+} from "@/lib/replay-messages";
 import { type ReplayTimeline, replayTimelineQuery } from "@/lib/replays-api";
+import { type Theme, useTheme } from "@/lib/theme";
 import { cn } from "@/lib/utils";
 
 import { currentIndex, describeItem, formatClock, timelineItems } from "./format";
@@ -146,6 +153,15 @@ export function ReplayViewer({
   className?: string;
 }) {
   const frameRef = React.useRef<HTMLIFrameElement>(null);
+  const { theme } = useTheme();
+  /**
+   * The frame opens in the theme of the moment its replay was chosen, for
+   * its first paint; later changes go to it as a message, so switching the
+   * theme does not load the replay again.
+   */
+  const [opened, setOpened] = React.useState({ playerSrc, theme });
+  if (opened.playerSrc !== playerSrc) setOpened({ playerSrc, theme });
+  const frameSrc = playerUrlInTheme(opened.playerSrc, opened.theme);
   const timeline = useQuery(replayTimelineQuery(projectId, replayId));
   const [currentMs, setCurrentMs] = React.useState<number | null>(null);
   /**
@@ -188,9 +204,18 @@ export function ReplayViewer({
     setCurrentMs(offsetMs);
   };
 
+  const postTheme = React.useCallback(
+    (value: Theme) =>
+      frameRef.current?.contentWindow?.postMessage(themeMessage(value), window.location.origin),
+    [],
+  );
+  React.useEffect(() => postTheme(theme), [theme, postTheme]);
+
   const onLoad = () => {
     loadedSrc.current = frameRef.current?.getAttribute("src") ?? null;
     if (asked.current !== null) post(asked.current);
+    // The theme may have changed while the page loaded.
+    postTheme(theme);
   };
 
   return (
@@ -206,7 +231,7 @@ export function ReplayViewer({
       {/* oxlint-disable-next-line react/iframe-missing-sandbox */}
       <iframe
         ref={frameRef}
-        src={playerSrc}
+        src={frameSrc}
         onLoad={onLoad}
         title={title}
         referrerPolicy="no-referrer"

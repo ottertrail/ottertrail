@@ -94,11 +94,12 @@ describe("an occurrence's replay", () => {
       )
       .toBeVisible();
     const frame = dialog.element().querySelector("iframe");
-    // Where the timeline marks the error: the recording's start, plus 35 seconds.
+    // Where the timeline marks the error: the recording's start, plus 35 seconds; and the
+    // dashboard's theme, so the player's page opens in it.
     await expect
       .poll(() => frame?.getAttribute("src"))
       .toBe(
-        `${REPLAYS_PATH}/${REPLAY_ID}/player?errorAt=${Date.parse("2026-11-16T08:00:35.000Z")}`,
+        `${REPLAYS_PATH}/${REPLAY_ID}/player?errorAt=${Date.parse("2026-11-16T08:00:35.000Z")}&theme=dark`,
       );
     expect(frame?.title).toBe("Session replay around the error at 16 Nov 2026, 16:00");
     // Beside it, what the visitor did, each moment a way to move the player there.
@@ -144,7 +145,9 @@ describe("the error marked in the player", () => {
     });
     const src = await openReplay();
     // The recording's own clock, not the server's time of the occurrence.
-    await expect.poll(src).toBe(`${REPLAYS_PATH}/${REPLAY_ID}/player?errorAt=${skewed + 35_000}`);
+    await expect
+      .poll(src)
+      .toBe(`${REPLAYS_PATH}/${REPLAY_ID}/player?errorAt=${skewed + 35_000}&theme=dark`);
   });
 
   test("is at the occurrence's time when the timeline cannot load", async () => {
@@ -154,7 +157,7 @@ describe("the error marked in the player", () => {
     const src = await openReplay();
     await expect.element(page.getByText("The timeline could not load")).toBeVisible();
     expect(src()).toBe(
-      `${REPLAYS_PATH}/${REPLAY_ID}/player?errorAt=${Date.parse("2026-11-16T08:00:00.000Z")}`,
+      `${REPLAYS_PATH}/${REPLAY_ID}/player?errorAt=${Date.parse("2026-11-16T08:00:00.000Z")}&theme=dark`,
     );
   });
 });

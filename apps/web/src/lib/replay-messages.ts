@@ -10,6 +10,7 @@
 export const SEEK_MESSAGE = "ottertrail:replay-seek";
 export const TIME_MESSAGE = "ottertrail:replay-time";
 export const PAUSE_MESSAGE = "ottertrail:replay-pause";
+export const THEME_MESSAGE = "ottertrail:replay-theme";
 /** Offsets past this are no moment of any replay: a day. */
 const MAX_OFFSET_MS = 86_400_000;
 
@@ -21,6 +22,14 @@ export const seekMessage = (offsetMs: number) => ({
 
 /** Asks the player to pause, as when its pane is hidden. */
 export const pauseMessage = () => ({ type: PAUSE_MESSAGE });
+
+/** Gives the player the dashboard's theme, as it changes (its page opens in it: playerUrlInTheme). */
+export const themeMessage = (theme: "light" | "dark") => ({ type: THEME_MESSAGE, theme });
+
+/** The player page's address with the dashboard's theme, for its first paint. */
+export function playerUrlInTheme(playerSrc: string, theme: "light" | "dark"): string {
+  return `${playerSrc}${playerSrc.includes("?") ? "&" : "?"}theme=${theme}`;
+}
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);

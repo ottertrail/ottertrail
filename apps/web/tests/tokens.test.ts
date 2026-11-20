@@ -3,33 +3,47 @@ import { readFileSync } from "node:fs";
 import { describe, expect, test } from "vite-plus/test";
 
 /*
- * Guards the contrast guarantees documented in docs/design-system.md.
- * Reads the :root token block in globals.css, resolves var() references,
- * and checks WCAG 2.x contrast ratios.
+ * Guards the contrast guarantees documented in docs/design-system.md, in
+ * both themes. Reads the dark tokens (the :root block in globals.css) and
+ * the light ones (:root:not(.dark), which sets only what differs, so a
+ * token it leaves out keeps its dark value or reference), resolves var()
+ * references within the theme, and checks WCAG 2.x contrast ratios.
  */
 
 const css = readFileSync(new URL("../src/styles/globals.css", import.meta.url), "utf8");
-const rootStart = css.indexOf(":root {");
-const rootBlock = css.slice(rootStart, css.indexOf("\n}", rootStart));
-const tokens = new Map(
-  Array.from(rootBlock.matchAll(/--([\w-]+):\s*([^;]+);/g), (match) => [
-    match[1] ?? "",
-    (match[2] ?? "").trim(),
-  ]),
-);
 
-function resolveHex(name: string): string {
-  let value = tokens.get(name);
-  for (let depth = 0; value?.startsWith("var(") && depth < 10; depth += 1) {
-    const reference = /^var\(--([\w-]+)\)$/.exec(value)?.[1];
-    value = reference === undefined ? undefined : tokens.get(reference);
-  }
-  if (value === undefined || !/^#[0-9a-f]{6}$/i.test(value)) {
-    throw new Error(
-      `Token --${name} does not resolve to a 6-digit hex color (got ${String(value)})`,
-    );
-  }
-  return value;
+function tokenBlock(selector: string): Map<string, string> {
+  const start = css.indexOf(`\n${selector} {`);
+  if (start === -1) throw new Error(`No ${selector} block in globals.css`);
+  const block = css.slice(start, css.indexOf("\n}", start + 1));
+  return new Map(
+    Array.from(block.matchAll(/--([\w-]+):\s*([^;]+);/g), (match) => [
+      match[1] ?? "",
+      (match[2] ?? "").trim(),
+    ]),
+  );
+}
+
+const darkTokens = tokenBlock(":root");
+const lightTokens = new Map([...darkTokens, ...tokenBlock(":root:not(.dark)")]);
+
+type Theme = "dark" | "light";
+const themes: Record<Theme, Map<string, string>> = { dark: darkTokens, light: lightTokens };
+
+function resolver(tokens: Map<string, string>) {
+  return (name: string): string => {
+    let value = tokens.get(name);
+    for (let depth = 0; value?.startsWith("var(") && depth < 10; depth += 1) {
+      const reference = /^var\(--([\w-]+)\)$/.exec(value)?.[1];
+      value = reference === undefined ? undefined : tokens.get(reference);
+    }
+    if (value === undefined || !/^#[0-9a-f]{6}$/i.test(value)) {
+      throw new Error(
+        `Token --${name} does not resolve to a 6-digit hex color (got ${String(value)})`,
+      );
+    }
+    return value;
+  };
 }
 
 function channels(hex: string): [number, number, number] {
@@ -65,10 +79,25 @@ function tint(background: string, color: string, alpha: number): string {
 
 const contentSurfaces = ["background", "card", "popover"];
 
-describe("design tokens", () => {
-  test("parses the token block", () => {
-    expect(tokens.size).toBeGreaterThan(40);
-  });
+test("parses both token blocks", () => {
+  expect(darkTokens.size).toBeGreaterThan(40);
+  expect(lightTokens.size).toBe(darkTokens.size);
+  expect(tokenBlock(":root:not(.dark)").size).toBeGreaterThan(25);
+});
+
+test("the light theme sets a value of its own for every color the dark one writes as hex", () => {
+  const light = tokenBlock(":root:not(.dark)");
+  const hexTokens = [...darkTokens].filter(([, value]) => /^#[0-9a-f]{6}$/i.test(value));
+  // White text on the brand, and the brand itself, are the same in both themes.
+  const shared = new Set(["brand", "primary-foreground", "sidebar-primary-foreground"]);
+  for (const [name] of hexTokens) {
+    if (shared.has(name)) continue;
+    expect(light.has(name), `--${name} has no light value`).toBe(true);
+  }
+});
+
+describe.each(["dark", "light"] as const)("the %s theme's tokens", (theme: Theme) => {
+  const resolveHex = resolver(themes[theme]);
 
   describe("body text meets WCAG AA (4.5:1) on every content surface", () => {
     const textTokens = [
@@ -81,7 +110,7 @@ describe("design tokens", () => {
       "warning",
     ];
     for (const text of textTokens) {
-      for (const surface of contentSurfaces) {
+      for (const surface of [...contentSurfaces, "canvas"]) {
         test(`${text} on ${surface}`, () => {
           expect(contrast(resolveHex(text), resolveHex(surface))).toBeGreaterThanOrEqual(4.5);
         });
@@ -99,19 +128,20 @@ describe("design tokens", () => {
     expect(contrast(resolveHex(text), resolveHex(surface))).toBeGreaterThanOrEqual(4.5);
   });
 
+  // StatusBadge (components/status-badge.tsx): the text color on a tint of the status mark.
   test.each([
-    ["status-good", 0.15],
-    ["status-warning", 0.15],
-    ["status-critical", 0.2],
-  ])("%s text on its own %s tint meets 4.5:1", (status, alpha) => {
+    ["success", "status-good", 0.15],
+    ["warning", "status-warning", 0.15],
+    ["danger", "status-critical", 0.2],
+  ])("%s text on a %s tint at %s meets 4.5:1", (text, status, alpha) => {
     for (const surface of contentSurfaces) {
-      const color = resolveHex(status);
-      expect(contrast(color, tint(resolveHex(surface), color, alpha))).toBeGreaterThanOrEqual(4.5);
+      const fill = tint(resolveHex(surface), resolveHex(status), alpha);
+      expect(contrast(resolveHex(text), fill)).toBeGreaterThanOrEqual(4.5);
     }
   });
 
   test("focus ring meets 3:1 against the surfaces it appears on", () => {
-    for (const surface of [...contentSurfaces, "sidebar"]) {
+    for (const surface of [...contentSurfaces, "canvas", "sidebar"]) {
       expect(contrast(resolveHex("ring"), resolveHex(surface))).toBeGreaterThanOrEqual(3);
     }
   });
@@ -130,7 +160,8 @@ describe("design tokens", () => {
   });
 
   // A field is drawn as its edge (input) around a wash of input-fill: 30% at rest, 50% on hover
-  // (components/ui/input.tsx, select.tsx). Disabled fields (80%) are exempt, as WCAG allows.
+  // (components/ui/input.tsx, select.tsx; light fields are transparent, which the surface
+  // checks cover). Disabled fields (80%) are exempt, as WCAG allows.
   const fieldStates = [
     ["at rest", 0.3],
     ["on hover", 0.5],
@@ -161,14 +192,17 @@ describe("design tokens", () => {
     }
   });
 
-  test("a switch's unchecked track (input) and its thumb (foreground) meet 3:1", () => {
+  test("a switch's unchecked track (input) and its thumb meet 3:1", () => {
     for (const surface of contentSurfaces) {
       expect(contrast(resolveHex("input"), resolveHex(surface))).toBeGreaterThanOrEqual(3);
     }
-    expect(contrast(resolveHex("foreground"), resolveHex("input"))).toBeGreaterThanOrEqual(3);
+    // The thumb (components/ui/switch.tsx): foreground in dark, background in light.
+    const thumb = theme === "dark" ? "foreground" : "background";
+    expect(contrast(resolveHex(thumb), resolveHex("input"))).toBeGreaterThanOrEqual(3);
+    expect(contrast(resolveHex("background"), resolveHex("primary"))).toBeGreaterThanOrEqual(3);
   });
 
-  test("chart series and status marks meet 3:1 on cards", () => {
+  test("chart series and status marks meet 3:1 on cards and on the panel", () => {
     const marks = [
       ...Array.from({ length: 8 }, (_, index) => `chart-${index + 1}`),
       "chart-neutral",
@@ -179,22 +213,38 @@ describe("design tokens", () => {
       "status-critical",
     ];
     for (const mark of marks) {
-      expect(contrast(resolveHex(mark), resolveHex("card"))).toBeGreaterThanOrEqual(3);
+      for (const surface of ["card", "background"]) {
+        expect(
+          contrast(resolveHex(mark), resolveHex(surface)),
+          `${mark} on ${surface}`,
+        ).toBeGreaterThanOrEqual(3);
+      }
     }
   });
 
-  test("text on every step of the sequential scale meets 4.5:1, and the steps rise", () => {
+  test("a meter's fill (chart-1) meets 3:1 on its track (seq-1)", () => {
+    expect(contrast(resolveHex("chart-1"), resolveHex("seq-1"))).toBeGreaterThanOrEqual(3);
+  });
+
+  test("text on every step of the sequential scale meets 4.5:1, and a larger value stands out more", () => {
     const steps = Array.from({ length: 5 }, (_, index) => resolveHex(`seq-${index + 1}`));
     for (const step of steps) {
       expect(contrast(resolveHex("foreground"), step)).toBeGreaterThanOrEqual(4.5);
     }
+    // Away from the surface: lighter on the dark theme, darker on the light one.
     const lightness = steps.map(luminance);
-    expect(lightness).toEqual(lightness.toSorted((a, b) => a - b));
+    const order =
+      theme === "dark" ? (a: number, b: number) => a - b : (a: number, b: number) => b - a;
+    expect(lightness).toEqual(lightness.toSorted(order));
     expect(new Set(lightness).size).toBe(steps.length);
+    // Each step a little further from the card than the one before.
+    const card = luminance(resolveHex("card"));
+    const distance = lightness.map((value) => Math.abs(value - card));
+    expect(distance).toEqual(distance.toSorted((a, b) => a - b));
   });
+});
 
-  test("link color is not used as a fill behind white text", () => {
-    // The link step is too light for white text, so it must stay a text color.
-    expect(contrast("#ffffff", resolveHex("link"))).toBeLessThan(4.5);
-  });
+test("the dark link color is not used as a fill behind white text", () => {
+  // The dark link step is too light for white text, so it must stay a text color.
+  expect(contrast("#ffffff", resolver(darkTokens)("link"))).toBeLessThan(4.5);
 });

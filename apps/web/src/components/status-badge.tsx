@@ -10,7 +10,7 @@ import { cn } from "@/lib/utils";
 
 const tones = {
   good: { icon: CircleCheckIcon, className: "bg-status-good/15 text-status-good" },
-  warning: { icon: TriangleAlertIcon, className: "bg-status-warning/15 text-status-warning" },
+  warning: { icon: TriangleAlertIcon, className: "bg-status-warning/15 text-warning" },
   critical: { icon: OctagonAlertIcon, className: "bg-status-critical/20 text-status-critical" },
   neutral: { icon: CircleDashedIcon, className: "bg-muted text-muted-foreground" },
 } as const;

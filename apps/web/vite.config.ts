@@ -86,6 +86,15 @@ export default defineConfig({
             headless: true,
             provider: playwright(),
             viewport: { width: 1280, height: 900 },
+            commands: {
+              /**
+               * The device's color scheme, as `prefers-color-scheme` reads it: dark before
+               * each test (tests/browser/setup.ts), light where a test asks.
+               */
+              async emulateColorScheme(context, scheme: "light" | "dark") {
+                await context.page.emulateMedia({ colorScheme: scheme });
+              },
+            },
             instances: [{ browser: "chromium" }],
           },
         },

@@ -10,7 +10,6 @@ import { trackMounted } from "./mounted.ts";
  * a test goes through the same routes, redirects, and layout as a visitor.
  */
 export function renderApp(path: string) {
-  document.documentElement.classList.add("dark");
   const history = createMemoryHistory({ initialEntries: [path] });
   const router = createAppRouter({ history, retryDelayMs: 0 });
   const container = document.createElement("div");

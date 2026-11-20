@@ -1,7 +1,7 @@
 import { describe, expect, test } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser/context";
 
-import { SEEK_MESSAGE, TIME_MESSAGE } from "../../src/lib/replay-messages.ts";
+import { SEEK_MESSAGE, THEME_MESSAGE, TIME_MESSAGE } from "../../src/lib/replay-messages.ts";
 import type { ReplayList } from "../../src/lib/replays-api.ts";
 import type { Activity, UserActivity } from "../../src/lib/users-api.ts";
 import {
@@ -226,15 +226,22 @@ async function fakePlayer() {
   const player = stand.contentWindow;
   if (player === null) throw new Error("No window for the fake player");
   const posted: { message: unknown; origin: string }[] = [];
+  /** The theme messages, kept apart: the page sends one on each load (theme.test.tsx). */
+  const themes: { message: unknown; origin: string }[] = [];
   player.postMessage = (message: unknown, origin: unknown) => {
-    posted.push({ message, origin: String(origin) });
+    const isTheme =
+      typeof message === "object" &&
+      message !== null &&
+      "type" in message &&
+      message.type === THEME_MESSAGE;
+    (isTheme ? themes : posted).push({ message, origin: String(origin) });
   };
   // The page reads the frame's window when it posts, and when a message comes.
   Object.defineProperty(frame, "contentWindow", { value: player });
   /** A message from `source` on `origin`, as the browser delivers it. */
   const deliver = (data: unknown, origin = location.origin, source: Window | null = player) =>
     window.dispatchEvent(new MessageEvent("message", { data, origin, source }));
-  return { frame, posted, deliver };
+  return { frame, posted, themes, deliver };
 }
 
 const timeline = () => page.getByRole("list", { name: "Timeline of the replay" });
@@ -259,7 +266,7 @@ describe("a replay's page", () => {
     const frame = document.querySelector("iframe");
     // The recording's own clock: its start, and the error 35 seconds in.
     expect(frame?.getAttribute("src")).toBe(
-      `/api/projects/${PROJECT.id}/replays/${fakeReplayId(0)}/player?errorAt=${Date.UTC(2026, 10, 16, 8, 0) + 35_000}`,
+      `/api/projects/${PROJECT.id}/replays/${fakeReplayId(0)}/player?errorAt=${Date.UTC(2026, 10, 16, 8, 0) + 35_000}&theme=dark`,
     );
     expect(frame?.hasAttribute("sandbox")).toBe(false);
     expect(frame?.getAttribute("referrerpolicy")).toBe("no-referrer");
@@ -323,7 +330,7 @@ describe("a replay's page", () => {
     installFakeApi();
     renderApp(`${REPLAYS}/${fakeReplayId(0)}`);
     await expect.element(timeline()).toBeVisible();
-    const { frame, posted, deliver } = await fakePlayer();
+    const { frame, posted, themes, deliver } = await fakePlayer();
     const seekTo12 = { message: { type: SEEK_MESSAGE, offsetMs: 12_000 }, origin: location.origin };
 
     await page.getByRole("button", { name: "0:12: Went to /checkout. Play from here" }).click();
@@ -331,6 +338,11 @@ describe("a replay's page", () => {
     // The frame's page loads (its script now listening): the moment is sent again.
     frame.dispatchEvent(new Event("load"));
     expect(posted.at(-1)).toEqual(seekTo12);
+    // And the dashboard's theme, which may have changed while it loaded.
+    expect(themes.at(-1)).toEqual({
+      message: { type: THEME_MESSAGE, theme: "dark" },
+      origin: location.origin,
+    });
     const sent = posted.length;
     expect(sent).toBeGreaterThanOrEqual(2);
 

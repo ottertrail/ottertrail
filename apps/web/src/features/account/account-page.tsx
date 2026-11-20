@@ -39,6 +39,7 @@ import { ApiError } from "@/lib/api";
 import { MIN_PASSWORD_LENGTH } from "../auth/link-token";
 import { SectionFailed, SectionSkeleton } from "../settings/section-states";
 import { formatDay, formatMoment } from "../users/format";
+import { AppearanceTab } from "./appearance-tab";
 
 const PASSWORDS_DIFFER = "The passwords do not match. Enter the same password in both fields.";
 
@@ -520,7 +521,7 @@ type DirtyPart = "name" | "email" | "password";
 
 /**
  * /account: the signed-in user's own name, email, password, and sessions,
- * for every user (docs/dashboard.md, "Account settings").
+ * and this device's theme, for every user (docs/dashboard.md, "Account settings").
  */
 export function AccountPage() {
   const me = useQuery(meQuery());
@@ -569,6 +570,7 @@ export function AccountPage() {
       content: <PasswordTab onDirty={mark.password} />,
     },
     { value: "sessions", label: "Sessions", content: <SessionsTab /> },
+    { value: "appearance", label: "Appearance", content: <AppearanceTab /> },
   ];
   return <SettingsTabs label="Account settings" tabs={tabs} />;
 }

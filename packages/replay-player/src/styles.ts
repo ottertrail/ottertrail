@@ -1,8 +1,14 @@
 /**
- * The player's own look, close to the dashboard's dark theme
- * (docs/design-system.md): a near-black canvas, hairline borders, the
- * orchid focus ring. Written into the page as a <style>, which its Content
- * Security Policy allows ('unsafe-inline' styles), so the player is one file.
+ * The player's own look, close to the dashboard's themes
+ * (docs/design-system.md): a near-black canvas or a light one, hairline
+ * borders, the orchid focus ring. Dark unless the page's <html> says
+ * data-theme="light": the API writes the dashboard's theme there
+ * (?theme=), and a theme message changes it while the page is open. The
+ * recorded page, in rrweb's own frame, keeps its own colors. Written into
+ * the page as a <style>, which its Content Security Policy allows
+ * ('unsafe-inline' styles), so the player is one file. The values are the
+ * dashboard's (apps/web/src/styles/globals.css); tests/styles.test.ts
+ * checks their contrast.
  */
 export const PLAYER_CSS = `
 :root {
@@ -17,6 +23,19 @@ export const PLAYER_CSS = `
   --ink-subtle: #938c93;
   --brand: #a557aa;
   --danger: #f47373;
+}
+:root[data-theme="light"] {
+  color-scheme: light;
+  --canvas: #f2eff2;
+  --surface: #f9f7f9;
+  --surface-raised: #ffffff;
+  --hairline: #e2dee3;
+  --hairline-strong: #d6d1d6;
+  --ink: #191419;
+  --ink-muted: #3c363c;
+  --ink-subtle: #655e65;
+  --brand: #a557aa;
+  --danger: #a90017;
 }
 *, *::before, *::after { box-sizing: border-box; }
 [hidden] { display: none !important; }

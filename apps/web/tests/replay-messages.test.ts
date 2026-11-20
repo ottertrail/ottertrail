@@ -1,9 +1,12 @@
 import { describe, expect, test } from "vite-plus/test";
 
 import {
+  playerUrlInTheme,
   readTimeMessage,
   SEEK_MESSAGE,
   seekMessage,
+  THEME_MESSAGE,
+  themeMessage,
   TIME_MESSAGE,
 } from "../src/lib/replay-messages.ts";
 
@@ -12,6 +15,16 @@ const ORIGIN = "https://ottertrail.example";
 const frame = {};
 
 describe("messages with the replay player", () => {
+  test("gives the player the dashboard's theme, in its address and as it changes", () => {
+    expect(themeMessage("light")).toEqual({ type: THEME_MESSAGE, theme: "light" });
+    expect(playerUrlInTheme("/api/projects/p/replays/r/player", "light")).toBe(
+      "/api/projects/p/replays/r/player?theme=light",
+    );
+    expect(playerUrlInTheme("/api/projects/p/replays/r/player?errorAt=5", "dark")).toBe(
+      "/api/projects/p/replays/r/player?errorAt=5&theme=dark",
+    );
+  });
+
   test("asks the player to move, in whole ms, within a day", () => {
     expect(seekMessage(1234.4)).toEqual({ type: SEEK_MESSAGE, offsetMs: 1234 });
     expect(seekMessage(-5).offsetMs).toBe(0);

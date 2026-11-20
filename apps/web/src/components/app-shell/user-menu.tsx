@@ -1,6 +1,13 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
-import { ChevronsUpDownIcon, LogOutIcon, UserCogIcon } from "lucide-react";
+import {
+  ChevronsUpDownIcon,
+  LogOutIcon,
+  MonitorIcon,
+  MoonIcon,
+  SunIcon,
+  UserCogIcon,
+} from "lucide-react";
 
 import { OverflowTooltip, TruncatedText } from "@/components/truncated-text";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -10,6 +17,8 @@ import {
   DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
@@ -22,6 +31,47 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { meQuery } from "@/lib/access";
 import { authClient } from "@/lib/auth-client";
+import {
+  isThemeChoice,
+  setThemeChoice,
+  THEME_CHOICES,
+  type ThemeChoice,
+  useTheme,
+} from "@/lib/theme";
+
+const THEME_ITEMS: Record<ThemeChoice, { label: string; icon: typeof SunIcon }> = {
+  system: { label: "System", icon: MonitorIcon },
+  light: { label: "Light", icon: SunIcon },
+  dark: { label: "Dark", icon: MoonIcon },
+};
+
+/** The theme, as on the Account settings page's Appearance tab: applied at once, kept on this device. */
+function ThemeItems() {
+  const { choice } = useTheme();
+  return (
+    <DropdownMenuGroup>
+      <DropdownMenuLabel className="px-1.5 text-xs font-normal text-ink-subtle">
+        Theme
+      </DropdownMenuLabel>
+      <DropdownMenuRadioGroup
+        value={choice}
+        onValueChange={(value: unknown) => {
+          if (isThemeChoice(value)) setThemeChoice(value);
+        }}
+      >
+        {THEME_CHOICES.map((value) => {
+          const { label, icon: Icon } = THEME_ITEMS[value];
+          return (
+            <DropdownMenuRadioItem key={value} value={value}>
+              <Icon aria-hidden="true" />
+              {label}
+            </DropdownMenuRadioItem>
+          );
+        })}
+      </DropdownMenuRadioGroup>
+    </DropdownMenuGroup>
+  );
+}
 
 /** The first character a reader sees: a whole emoji or accented letter, not half of one. */
 const firstCharacter = (text: string) =>
@@ -53,7 +103,7 @@ function UserAvatar({ name, email }: { name: string; email: string }) {
 
 /**
  * The sidebar's foot: who is signed in, as shadcn's NavUser block. It opens
- * a menu with the account's settings and Sign out. Collapsed to icons, only
+ * a menu with the account's settings, the theme, and Sign out. Collapsed to icons, only
  * the avatar shows, and its tooltip names the user.
  */
 export function UserMenu() {
@@ -129,6 +179,8 @@ export function UserMenu() {
               <UserCogIcon aria-hidden="true" />
               Account settings
             </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <ThemeItems />
             <DropdownMenuSeparator />
             <DropdownMenuItem onClick={() => void signOut()}>
               <LogOutIcon aria-hidden="true" />

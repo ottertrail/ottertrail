@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, vi } from "vite-plus/test";
 
+import { resetThemeForTests } from "../../src/lib/theme.ts";
+import { emulateColorScheme } from "./color-scheme.ts";
 import { fakeFetch, removeFakeApi } from "./fake-api.ts";
 import { unmountAll } from "./mounted.ts";
 
@@ -11,12 +13,15 @@ globalThis.fetch = fakeFetch;
 /** Console errors during a test, such as React or Base UI warnings; each test expects none. */
 let consoleErrors: unknown[][] = [];
 
-beforeEach(() => {
+beforeEach(async () => {
   consoleErrors = [];
   vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
     consoleErrors.push(args);
   });
   window.localStorage.clear();
+  // Each test starts on a dark device with no stored choice: System, so dark.
+  await emulateColorScheme("dark");
+  resetThemeForTests();
 });
 
 afterEach(() => {

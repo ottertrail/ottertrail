@@ -2,63 +2,73 @@
 
 Status: initial foundation. The name treatment and mascot are undecided; the mark in the app is a placeholder.
 
-A dark interface for a dense dashboard: a near-black canvas, a ladder of surfaces instead of shadows, hairline borders, and a single orchid accent used sparingly. This document records the tokens, the reasons behind them, and the remaining gaps.
+An interface for a dense dashboard, in a dark theme and a light one: a near-black canvas (or a light grey one), a ladder of surfaces instead of shadows, hairline borders, and a single orchid accent used sparingly. This document records the tokens, the reasons behind them, and the remaining gaps.
 
 This document is the reference. The components in `apps/web/src/components/` are the source: to see a block, read its component and a screen that uses it. When a component changes what this document says, update the document in the same change. The dashboard has no page of examples. `apps/web/tests/browser/screen-patterns.test.tsx` renders the shared screen blocks directly, with test content, and walks their behavior: the filter bar, the stat strip, the report chart with a toggle group and its numbers, the breakdown table, pinned columns with the scroll hint and a missing value, the workbench, key hints and toggle groups, and the settings tabs with the save rule.
 
 ## Where things live
 
-| What                                                                                                           | Where                                             |
-| -------------------------------------------------------------------------------------------------------------- | ------------------------------------------------- |
-| Tokens (CSS variables, Tailwind theme, type scale, radius)                                                     | `apps/web/src/styles/globals.css`                 |
-| shadcn/ui components (Base UI primitives, `base-nova` style)                                                   | `apps/web/src/components/ui/`                     |
-| Ottertrail components (`StatusBadge`, `ApiStatus`, `TimezoneCombobox`, app shell)                              | `apps/web/src/components/`                        |
-| Screen blocks (`FilterBar`, `StatStrip`, `BreakdownTable`, `ReportChart`, `ScrollHint`, `Workbench`, settings) | `apps/web/src/components/`                        |
-| Tests of the screen blocks, rendered directly                                                                  | `apps/web/tests/browser/screen-patterns.test.tsx` |
-| Contrast tests for the tokens                                                                                  | `apps/web/tests/tokens.test.ts`                   |
-| shadcn configuration                                                                                           | `apps/web/components.json`                        |
+| What                                                                                                           | Where                                                   |
+| -------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
+| Tokens (CSS variables, Tailwind theme, type scale, radius)                                                     | `apps/web/src/styles/globals.css`                       |
+| shadcn/ui components (Base UI primitives, `base-nova` style)                                                   | `apps/web/src/components/ui/`                           |
+| Ottertrail components (`StatusBadge`, `ApiStatus`, `TimezoneCombobox`, app shell)                              | `apps/web/src/components/`                              |
+| Screen blocks (`FilterBar`, `StatStrip`, `BreakdownTable`, `ReportChart`, `ScrollHint`, `Workbench`, settings) | `apps/web/src/components/`                              |
+| Tests of the screen blocks, rendered directly                                                                  | `apps/web/tests/browser/screen-patterns.test.tsx`       |
+| Contrast tests for the tokens, both themes                                                                     | `apps/web/tests/tokens.test.ts`                         |
+| The theme: the choice, applying it, and the script that sets it before the first paint                         | `apps/web/src/lib/theme.ts`, `apps/web/public/theme.js` |
+| shadcn configuration                                                                                           | `apps/web/components.json`                              |
 
 Use tokens through Tailwind utilities (`bg-card`, `text-ink-subtle`, `ring-border`, `text-headline`), not raw hex values in components.
 
 ## Color
 
-Dark only. `index.html` sets `class="dark"` and `color-scheme: dark`; all tokens live in `:root`.
+Two themes, dark and light, chosen per device: System (the default, which follows `prefers-color-scheme` and its changes), Light or Dark, on the Account settings page's Appearance tab or in the sidebar foot's menu ([dashboard](dashboard.md#account-settings)).
+
+- **Tokens.** The dark values are the base, in `:root`. The light theme, `:root:not(.dark)`, sets only the values that differ; a token that points at another (`--primary: var(--brand)`) follows it. Components use the same utilities in both (`bg-card`, `text-ink-subtle`), so a component never names a theme. The tables below give both values.
+- **The switch** is the `dark` class on `<html>`, so shadcn's `dark:` variants (`@custom-variant dark`) switch with the tokens. `src/lib/theme.ts` keeps the choice in localStorage (`ottertrail-theme`; nothing stored is System; storage that cannot be read or written is caught, and the choice then lasts until the page closes), sets the class, `color-scheme` on `<html>`, `<meta name="color-scheme">` and `<meta name="theme-color">` (each theme's canvas), and follows the device's scheme under System and a choice made in another tab.
+- **No flash of the wrong theme.** `public/theme.js` runs in `index.html`'s head, after the two meta tags and before the stylesheet and the app's module, with neither `defer` nor `async`, so the class is set before anything paints. It is a file, not an inline script, because the dashboard's Content Security Policy is `script-src 'self'` (`apps/api/src/dashboard-app/routes.ts`); `tests/theme-script.test.ts` checks it keeps the same key and colors as `theme.ts`. `index.html` still says `class="dark"`, for the moment before it runs.
+- **Charts** read every color as a CSS variable (`var(--chart-1)` in SVG attributes, `bg-seq-3` in classes), none in JavaScript, so they re-color when the class changes, without drawing again.
+- **The replay player** runs in a frame with a page and styles of its own (`packages/replay-player/src/styles.ts`): the dashboard opens it in its theme (`?theme=light`, which the API writes on the page's `<html>` as `data-theme`) and sends it the theme as a message when it changes, so the replay is not loaded again ([session replay](session-replay.md#the-timeline)). The recorded page, in rrweb's frame, keeps its own colors. The heatmap overlay draws on the customer's own site and has colors of its own, in neither theme.
 
 ### Neutrals
 
-The greys carry a faint orchid tint (OKLCH hue 325, chroma 0.003 to 0.012), so the neutrals and the accent read as one palette. The tint is too weak to make surfaces look purple, and it does not affect contrast or the chart colors.
+The greys carry a faint orchid tint (OKLCH hue 325, chroma 0.002 to 0.014), so the neutrals and the accent read as one palette. The tint is too weak to make surfaces look purple, and it does not affect contrast or the chart colors. The light ladder comes from the docs site's light theme: the canvas (page frame and sidebar) is its darkest step, the main panel near white, cards a step down from it, and popovers white, so the layering reads the same way round as in dark.
 
-| Token               | Value     | Use                                                                                                                                                |
-| ------------------- | --------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `canvas`            | `#010101` | Page frame and sidebar                                                                                                                             |
-| `surface-1`         | `#110f11` | Main content panel (`background`)                                                                                                                  |
-| `surface-2`         | `#161416` | Cards (`card`)                                                                                                                                     |
-| `surface-3`         | `#1a181a` | Popovers, menus, dialogs (`popover`); sidebar active item                                                                                          |
-| `surface-4`         | `#1b191b` | Spare lift step                                                                                                                                    |
-| `hairline`          | `#282328` | Borders, dividers; also the `secondary` and `muted` fills                                                                                          |
-| `hairline-strong`   | `#373338` | Quiet control borders; the wash inside fields (`input-fill`)                                                                                       |
-| `field-edge`        | `#746f75` | Field edges (`input`), switch tracks; 3:1 on fills and surfaces                                                                                    |
-| `hairline-tertiary` | `#423d42` | Strongest divider                                                                                                                                  |
-| `toggle-on`         | `#746f75` | The chosen item of a toggle group (`field-edge`'s value, its own token so it can be tuned alone)                                                   |
-| `ink`               | `#f9f7f9` | Primary text (`foreground`)                                                                                                                        |
-| `ink-muted`         | `#dad3da` | Sidebar text, secondary emphasis                                                                                                                   |
-| `ink-subtle`        | `#938c93` | Descriptions, placeholders (`muted-foreground`)                                                                                                    |
-| `ink-tertiary`      | `#69646a` | Decoration, disabled states, and a chart's de-emphasized part ("Other", No status, the quietest part of a state chart); about 3.2:1, so never text |
-| `success`           | `#27a644` | Success text and status                                                                                                                            |
+Light contrast, WCAG AA, on the canvas, panel, card and popover: `ink` 15.9 to 18.2:1, `ink-muted` 10.3 to 11.8, `ink-subtle` 5.5 to 6.3, `success` 5.9 to 6.7; field edges 3.8 to 4.3, and 3.4 to 3.8 on a field's wash; `ink-tertiary` 3.2 to 3.7. The sidebar's text (`ink-muted` on the canvas) is 10.3:1, and its current item (`sidebar-accent`) is white.
+
+| Token               | Dark      | Light     | Use                                                                                                                                                                     |
+| ------------------- | --------- | --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `canvas`            | `#010101` | `#f2eff2` | Page frame and sidebar                                                                                                                                                  |
+| `surface-1`         | `#110f11` | `#fefdfe` | Main content panel (`background`)                                                                                                                                       |
+| `surface-2`         | `#161416` | `#f9f7f9` | Cards (`card`)                                                                                                                                                          |
+| `surface-3`         | `#1a181a` | `#ffffff` | Popovers, menus, dialogs (`popover`); sidebar active item                                                                                                               |
+| `surface-4`         | `#1b191b` | `#f6f3f6` | Spare lift step                                                                                                                                                         |
+| `hairline`          | `#282328` | `#e2dee3` | Borders, dividers; also the `secondary` and `muted` fills                                                                                                               |
+| `hairline-strong`   | `#373338` | `#d6d1d6` | Quiet control borders; the wash inside fields (`input-fill`)                                                                                                            |
+| `field-edge`        | `#746f75` | `#7e787e` | Field edges (`input`), switch tracks; 3:1 on fills and surfaces                                                                                                         |
+| `hairline-tertiary` | `#423d42` | `#cbc5cb` | Strongest divider                                                                                                                                                       |
+| `toggle-on`         | `#746f75` | `#847e84` | The chosen item of a toggle group (dark: `field-edge`'s value; light: a step lighter, so ink on it keeps 4.5:1)                                                         |
+| `ink`               | `#f9f7f9` | `#191419` | Primary text (`foreground`)                                                                                                                                             |
+| `ink-muted`         | `#dad3da` | `#3c363c` | Sidebar text, secondary emphasis                                                                                                                                        |
+| `ink-subtle`        | `#938c93` | `#655e65` | Descriptions, placeholders (`muted-foreground`)                                                                                                                         |
+| `ink-tertiary`      | `#69646a` | `#8a848a` | Decoration, disabled states, and a chart's de-emphasized part ("Other", No status, the quietest part of a state chart); about 3.2:1 (light 3.2 to 3.7:1), so never text |
+| `success`           | `#27a644` | `#0f6a31` | Success text and status                                                                                                                                                 |
 
 ### Accent
 
-| Token         | Value           | Use                                                             |
-| ------------- | --------------- | --------------------------------------------------------------- |
-| `brand`       | `#a557aa`       | Brand mark, primary buttons (`primary`), text selection         |
-| `brand-focus` | same as `brand` | Focus rings (`ring`); a separate token so it can be tuned alone |
-| `link`        | `#d588d9`       | Link text                                                       |
+| Token         | Dark            | Light           | Use                                                             |
+| ------------- | --------------- | --------------- | --------------------------------------------------------------- |
+| `brand`       | `#a557aa`       | `#a557aa`       | Brand mark, primary buttons (`primary`), text selection         |
+| `brand-focus` | same as `brand` | same as `brand` | Focus rings (`ring`); a separate token so it can be tuned alone |
+| `link`        | `#d588d9`       | `#973d9d`       | Link text                                                       |
 
 Orchid, a muted magenta (OKLCH hue 325).
 
 - White text on `brand` is 4.62:1. Primary buttons use shadcn's hover (`bg-primary/80`), which darkens the fill over the surface; white text there is 6.1 to 6.3:1.
 - The focus ring is 3.82:1 (popover) to 4.52:1 (canvas).
 - `link` is 7.0:1 (popover) to 8.3:1 (canvas). It is too light for white text (2.51:1), so it is never a fill.
+- Light: the brand is unchanged, so white text on it stays 4.62:1, and the focus ring is 4.05:1 (canvas) to 4.62:1 (popover). `link` is a darker step of the same hue, `#973d9d` (OKLCH 0.52 0.17 325), 5.3:1 (canvas) to 6.1:1 (popover): the dark step is under 2:1 on white.
 - Alternatives considered: river teal (`#1d8181`), lagoon blue (`#1d7da3`), and no accent hue (white primary buttons). A warm otter brown was rejected: its link step was almost identical to `status-serious` orange, and green, yellow, and red hues would clash with the success, warning, and danger colors in the same way.
 - Trade-off: orchid is close in hue to `chart-5` (`#d55181`); keep the accent out of charts.
 
@@ -68,11 +78,22 @@ Orchid, a muted magenta (OKLCH hue 325).
 2. **`brand` is not a text color.** `#a557aa` is 3.82 to 4.13:1 on the content surfaces, below AA for body text. The four shadcn files that used `text-primary` for links (`button`, `badge`, `field`, `empty`) now use `text-link`.
 3. **Warning and danger colors.** `warning` is `#fab219`. `danger` is `#f47373`: `#eb5757` was the first candidate but dropped to 3.92:1 as text on its own 20% tint (destructive badges and buttons use that pattern). `#f47373` reaches 4.64:1 there.
 4. **Fills for `secondary` and `muted`.** The upper surface steps differ by only a few levels (`#161416` to `#1b191b`), so secondary buttons, tab lists, and skeletons on cards would be invisible. They use `hairline` (`#282328`) as a fill.
-5. **Hover wash.** `accent` is `rgb(255 255 255 / 0.06)`, so menu-item and ghost hovers work on any surface.
+5. **Hover wash.** `accent` is `rgb(255 255 255 / 0.06)`, so menu-item and ghost hovers work on any surface. Light: ink at 6%, `rgb(25 20 25 / 0.06)`.
+6. **Light `muted`.** In light, `muted` is its own step, `#ebe6eb` (OKLCH 0.93), lighter than `hairline`: a toggle group's chosen item (`toggle-on`) must keep 3:1 against a hovered neighbor's `muted` wash while ink on it keeps 4.5:1, and against `hairline` both cannot hold. `secondary` stays `hairline`.
+7. **Light warning and danger.** Text colors dark enough for 4.5:1 on white and on their own tints: `warning` `#8a5100` (5.7 to 6.5:1), `danger` `#a90017` (6.8 to 7.8:1).
 
 ### Status
 
-`status-good`, `status-warning`, `status-serious` (`#ec835a`), and `status-critical` are reserved for state. Always render them through `StatusBadge` (icon + text label), never as color alone, and never reuse them as chart series colors for categories. Two exceptions, for state itself, each beside a badge or a legend that names it: a meter past its threshold, with its `StatusBadge` after the figure (below); and a chart whose parts are states with a badge of their own (the Logs chart's severities, the Traces chart's traces with errors) colors those parts as their badges are, with a legend and a readout that name every part (see [Charts](#charts)).
+| Token             | Dark                 | Light                      |
+| ----------------- | -------------------- | -------------------------- |
+| `status-good`     | `success`, `#27a644` | `success`, `#0f6a31`       |
+| `status-warning`  | `warning`, `#fab219` | `#be7200`, its own (below) |
+| `status-serious`  | `#ec835a`            | `#ba4f1f`                  |
+| `status-critical` | `danger`, `#f47373`  | `danger`, `#a90017`        |
+
+`status-good`, `status-warning`, `status-serious`, and `status-critical` are reserved for state. Always render them through `StatusBadge` (icon + text label), never as color alone, and never reuse them as chart series colors for categories. Two exceptions, for state itself, each beside a badge or a legend that names it: a meter past its threshold, with its `StatusBadge` after the figure (below); and a chart whose parts are states with a badge of their own (the Logs chart's severities, the Traces chart's traces with errors) colors those parts as their badges are, with a legend and a readout that name every part (see [Charts](#charts)).
+
+The status tokens are marks: a chart's part, a meter, an icon, a badge's tint. Text in a status color uses the text tokens, `success`, `warning` and `danger` (`StatusBadge` writes `text-warning` on `bg-status-warning/15`). In dark each status token is its text token. In light, `status-warning` is a lighter amber than the `warning` text: an amber dark enough for text sits at the same lightness as critical red and is the same color to a reader with deuteranopia (ΔE 1.4), so the mark takes `#be7200` (OKLCH 0.62 0.14 65), 3.3 to 3.8:1 on the surfaces. Badge text on its tint, light: good 5.0 to 5.4:1, warning 5.1 to 5.4, critical 5.0 to 5.3.
 
 ## Charts
 
@@ -80,18 +101,31 @@ The analytics page uses `chart-1` for its line and its bars ([dashboard.md](dash
 
 `--chart-1` through `--chart-8` are the dark steps of the dataviz reference palette (blue, orange, aqua, yellow, magenta, green, violet, red). Validated with the dataviz palette validator against `#110f11` and `#161416`: every slot sits inside the lightness band and above the chroma floor, worst adjacent colorblind separation is ΔE 8.4, worst adjacent normal-vision separation is ΔE 19.3, and every slot is at least 3:1 against the card surface.
 
+| Slot              | Dark      | Light     |
+| ----------------- | --------- | --------- |
+| `chart-1` blue    | `#3987e5` | `#2a78d6` |
+| `chart-2` orange  | `#d95926` | `#e96632` |
+| `chart-3` aqua    | `#199e70` | `#00a26e` |
+| `chart-4` yellow  | `#c98500` | `#c87e00` |
+| `chart-5` magenta | `#d55181` | `#d56a93` |
+| `chart-6` green   | `#0ca30c` | `#008300` |
+| `chart-7` violet  | `#9085e9` | `#6250d6` |
+| `chart-8` red     | `#e66767` | `#e34948` |
+
+Light: the reference palette's light steps, in the same order. Its aqua (`#1baf7a`), yellow (`#eda100`) and magenta (`#e87ba4`) are under 3:1 on a light surface, and orange (`#eb6834`) just over, so those four are darkened to 3:1 on cards (the same hue and chroma, a lower OKLCH lightness): `#00a26e`, `#c87e00`, `#d56a93`, `#e96632`. The validator, `--mode light`, against `surface-1` (`#fefdfe`) and `surface-2` (`#f9f7f9`) alike: every slot inside the lightness band (0.43 to 0.77) and above the chroma floor, worst adjacent colorblind separation ΔE 8.8 (protan, yellow against aqua), worst adjacent normal-vision ΔE 16.6 (magenta against yellow), every slot 3:1 or more: 3.06 (yellow) to 5.42 (violet) on cards, 3.21 to 5.69 on the panel. The first 3 slots all-pairs: ΔE 9.4 (protan) and 22.7.
+
 Rules:
 
 - Assign series in slot order and never cycle. A ninth series folds into "Other" or small multiples.
 - Color follows the entity, not its rank. Filtering must not repaint the remaining series.
 - Charts that compare every pair (scatter, bubble, choropleth) use at most the first 3 slots.
 - One y-axis per chart. Two measures of different scale get two charts.
-- Sequential (magnitude) data uses one hue in steps: `--seq-1` to `--seq-5` (`bg-seq-1` …), blue from `#172437` to `#2563ad`, each lighter than the one before, so on the dark canvas a larger value stands out more. Body text keeps at least 4.5:1 on every step (`tests/tokens.test.ts`), so a cell's number is always readable on it; the color is never the only way to read the value. First used by the retention table. Diverging data (two hues with a gray midpoint) has no ramp yet; add one with its first chart.
+- Sequential (magnitude) data uses one hue in steps: `--seq-1` to `--seq-5` (`bg-seq-1` …), blue from `#172437` to `#2563ad`, each lighter than the one before, so on the dark canvas a larger value stands out more. In light the scale turns around, so a larger value is darker on the light surface: steps 100 to 400 of the reference blue ramp, `#cde2fb`, `#9ec5f4`, `#6da7ec`, `#5598e7`, `#3987e5`. Body text keeps at least 4.5:1 on every step (`tests/tokens.test.ts`; dark 14.7 to 5.7:1, light 13.7 to 5.0:1), so a cell's number is always readable on it; the color is never the only way to read the value. First used by the retention table. Diverging data (two hues with a gray midpoint) has no ramp yet; add one with its first chart.
 - Values, labels, and legends use text tokens, not the series color.
 - On one page, a color means one thing. When a page's charts show different entities, such as status classes and percentiles, each takes slots no other on the page uses: a service's page gives the classes `chart-1` to `chart-4`, the failed share `chart-5`, and the percentiles `chart-6` to `chart-8`; a query shape's page keeps the same slots, its calls taking `chart-1`. The chart above the Services list keeps a service's page's slots (the classes, `chart-5` for the failed share, `chart-7` for the 95th percentile); the one above the Databases list gives calls `chart-1` and time spent `chart-2`.
-- A meter shows one share of a whole beside its figure, such as a host's CPU busy (`hosts-page.tsx`): 48 by 6 pixels, rounded, its fill `chart-1` on a track of `seq-1`, the darkest step of the same blue, hidden from screen readers since the figure says the value. Past a threshold the fill takes a status color, and a `StatusBadge` with its icon and a word ("High") follows the figure, so the state is never color alone.
+- A meter shows one share of a whole beside its figure, such as a host's CPU busy (`hosts-page.tsx`): 48 by 6 pixels, rounded, its fill `chart-1` on a track of `seq-1`, the step of the same blue nearest the surface (3.3:1 between them in light), hidden from screen readers since the figure says the value. Past a threshold the fill takes a status color, and a `StatusBadge` with its icon and a word ("High") follows the figure, so the state is never color alone.
 - A sparkline shows one row's shape over the period in a table (the Metrics list, `metric-sparkline.tsx`): 96 by 24 pixels, its own scale, no axis, a 2px line in `ink-subtle` broken where nothing arrived, and the latest value a dot in `chart-1`. Every row draws the same, so it needs no legend. It is decoration, hidden from screen readers and never focused, so a row adds no tab stop; visually hidden text beside it and its hover title give the lowest, highest, and latest values, and the row's own page has the chart. A sparkline with nothing to draw is a `Missing` dash named for the reason, never a flat line.
-- A chart of a state (the Logs chart's records by severity, the Traces chart's traces with and without errors) uses the status colors for the parts that say something is wrong, the same ones their badges use (Error or worse and traces with errors `status-critical`, Warning `status-warning`), and neutrals for the rest: `chart-neutral` (`#b0a9b0`) for the normal part and `ink-tertiary` for the quietest. Apart from a meter past its threshold (below), these are the only charts whose parts take status colors. The problem part sits on the baseline. The dataviz validator, on `surface-1` (`#110f11`) and `surface-2` (`#161416`) alike: the Logs chart's four parts are at least ΔE 13.8 apart under color blindness (deutan, warning against critical) and 18.3 to normal vision (warning against the neutral); the Traces chart's two parts 8.2 (deutan) and 15.6; every part is at least 3:1 on both surfaces. The validator's lightness band and chroma floor fail for these parts by design, since status colors are fixed and the neutrals are meant to read gray. No chart slot is used, so a hue never means a category on one page and a state on another; the legend and the readout name every part, so color is never the only cue. Stacked bars (`stacked-bar-chart.tsx`) keep 2px of surface between parts and between bars, a rounded top, and one baseline.
+- A chart of a state (the Logs chart's records by severity, the Traces chart's traces with and without errors) uses the status colors for the parts that say something is wrong, the same ones their badges use (Error or worse and traces with errors `status-critical`, Warning `status-warning`), and neutrals for the rest: `chart-neutral` (`#b0a9b0`; light `#565056`) for the normal part and `ink-tertiary` for the quietest. Apart from a meter past its threshold (below), these are the only charts whose parts take status colors. The problem part sits on the baseline. The dataviz validator, on `surface-1` (`#110f11`) and `surface-2` (`#161416`) alike: the Logs chart's four parts are at least ΔE 13.8 apart under color blindness (deutan, warning against critical) and 18.3 to normal vision (warning against the neutral); the Traces chart's two parts 8.2 (deutan) and 15.6; every part is at least 3:1 on both surfaces. In light the neutrals turn around: the normal part is the dark grey (`#565056`, OKLCH 0.44) and the quietest the light one (`ink-tertiary`, `#8a848a`), since both must keep 3:1 on white, and the status marks sit between them in color; on `surface-1` and `surface-2`, the Logs chart's four parts are at least ΔE 15.8 apart under color blindness and 18.1 to normal vision, the Traces chart's two 10.3 (protan) and 18.3. The validator's lightness band and chroma floor fail for these parts by design, since status colors are fixed and the neutrals are meant to read gray. No chart slot is used, so a hue never means a category on one page and a state on another; the legend and the readout name every part, so color is never the only cue. Stacked bars (`stacked-bar-chart.tsx`) keep 2px of surface between parts and between bars, a rounded top, and one baseline.
 - A thin segmented bar shows one whole split into parts, such as a route's requests by status class (`status-classes.tsx`): 8px high, rounded ends, a part per category with a value, in proportion, 2px apart, no text, with a legend naming the parts and a table view. Hover, keyboard focus, and its accessible name give every part's count and share.
 
 ## Typography
@@ -256,7 +290,7 @@ A toggle group (`ui/toggle-group.tsx`, on `ui/toggle.tsx`) is a set of pressed b
 
 Use one when its choices switch one view (one table, one chart) between lists or measures of one kind. It is not tabs: the choices share one table or chart, so there is no panel per choice, and tabs would promise one. Use tabs (`SettingsTabs`, `ui/tabs.tsx`) when each choice has its own content. The group has a name that says what it chooses ("Which errors to list", "Which figure to chart"). Exactly one item is chosen: pressing the chosen item again keeps it chosen. What it shows changes at once, with no Apply button. The chosen item is filled with `toggle-on` and written in `ink`; the others are `ink-subtle` on no fill, with a `muted` wash and `ink` text on hover. The weight stays `font-medium` for all, so choosing an item never moves the others.
 
-Contrast (WCAG 1.4.11, non-text, at least 3:1; `tests/tokens.test.ts` and `tests/browser/controls.test.tsx`): the fill is 3.88:1 on `background`, 3.73:1 on `card`, 3.59:1 on `popover`, 4.25:1 on `canvas`, and 3.14:1 on a hovered item's `muted`. The unchosen items have no fill, so the fill against them is its contrast on the group's surface. `ink` on the fill is 4.61:1; `ink-subtle`, the unchosen items' text, is 5.83:1 on `background`, 5.60:1 on `card`, 5.39:1 on `popover` and 6.37:1 on `canvas`; `ink` on a hovered item's `muted` is 14.47:1. The focus ring is unchanged.
+Contrast (WCAG 1.4.11, non-text, at least 3:1; `tests/tokens.test.ts` and `tests/browser/controls.test.tsx`): the fill is 3.88:1 on `background`, 3.73:1 on `card`, 3.59:1 on `popover`, 4.25:1 on `canvas`, and 3.14:1 on a hovered item's `muted`. The unchosen items have no fill, so the fill against them is its contrast on the group's surface. `ink` on the fill is 4.61:1; `ink-subtle`, the unchosen items' text, is 5.83:1 on `background`, 5.60:1 on `card`, 5.39:1 on `popover` and 6.37:1 on `canvas`; `ink` on a hovered item's `muted` is 14.47:1. The focus ring is unchanged. Light: the fill (`#847e84`) is 3.91:1 on `background`, 3.72:1 on `card`, 3.96:1 on `popover`, 3.47:1 on `canvas`, and 3.22:1 on a hovered item's `muted`; `ink` on it is 4.59:1, `ink-subtle` 5.5 to 6.3:1 on the surfaces, and `ink` on `muted` 14.76:1.
 
 ### Settings tabs and the Save bar
 
@@ -276,6 +310,7 @@ Contrast (WCAG 1.4.11, non-text, at least 3:1; `tests/tokens.test.ts` and `tests
 - Leaving with unsaved changes asks first, in the app and when the tab closes.
 - Controls that used to save at once (the signed user IDs switch, the replay mode) are fields of their section's form.
 - Quick actions on a list item (an alert rule's on or off) stay instant.
+- A preference kept on this device only, with nothing sent to the server, applies at once and has no Save bar: the theme (Account settings, Appearance). One line beside it says it is saved on this device only.
 - Destructive actions confirm in a Dialog; deleting a project needs its name typed.
 
 ### Before signing in
@@ -302,12 +337,17 @@ Hooks: `useMediaQuery` with `PHONE`, `NARROW_SHELL`, and `NARROW_WORKBENCH` (`ho
 
 ## Accessibility
 
-`apps/web/tests/tokens.test.ts` enforces these guarantees on every test run:
+`apps/web/tests/tokens.test.ts` enforces these guarantees on every test run, in both themes:
 
-- Text tokens (`foreground`, `ink-muted`, `muted-foreground`, `link`, `destructive`, `success`, `warning`) are at least 4.5:1 on `background`, `card`, and `popover`.
+- Text tokens (`foreground`, `ink-muted`, `muted-foreground`, `link`, `destructive`, `success`, `warning`) are at least 4.5:1 on `background`, `card`, `popover`, and `canvas`.
 - Foreground/background pairs for primary, secondary, muted, sidebar, and sidebar-accent are at least 4.5:1.
-- Status text on its own tint (badges) is at least 4.5:1.
-- The focus ring and every chart and status mark are at least 3:1 on their surfaces.
+- Status text (`success`, `warning`, `danger`) on its status mark's tint (badges) is at least 4.5:1.
+- The focus ring and every chart and status mark are at least 3:1 on their surfaces (marks on cards and the panel), and a meter's fill on its track.
+- The sequential scale keeps text at 4.5:1 on every step, each step further from the card than the one before: lighter in dark, darker in light.
+- The light block sets its own value for every color the dark block writes, except the brand and white text on it.
+
+`packages/replay-player/tests/styles.test.ts` checks the player's own colors in both themes the same way.
+
 - Field edges (`input`) are at least 3:1 on `background`, `card` and `popover` (WCAG 1.4.11), and also on the field's own wash at rest (`input-fill` at 30%) and on hover (50%). The wash stays a quiet step off its surface (above 1.03:1, below 1.5:1). A switch's unchecked track (`input`) is 3:1 on the surfaces, and its thumb 3:1 on the track.
 
 **The pointer.** A base rule in `globals.css` gives every enabled control a click acts on `cursor: pointer`, since Tailwind 4's preflight leaves buttons at the default arrow: buttons and `role="button"`, toggle items, tabs, switches, checkboxes, radios, select and combobox triggers (a combobox's text field keeps its text cursor), menu items and list options, `<summary>`, native checkboxes and radios, and a label around a checkbox, radio or switch. Disabled controls (`:disabled`, `aria-disabled="true"`, `data-disabled`, or a label around one) keep their own cursor: the default arrow, or `not-allowed` where the control sets it (a field, the Save button). Links have the pointer already. A class on an element wins over the rule, as utilities come after the base layer: the status-class and disk bars, which are tooltip triggers that do nothing on a click, keep `cursor-default`.
@@ -318,5 +358,6 @@ Known gaps:
 
 - `ink-tertiary` fails AA for text; use it only for decoration, disabled states, and a chart's de-emphasized part, as the token table says.
 - Disabled controls use 50% opacity and fall below 4.5:1, which WCAG allows for inactive components.
-- No light theme and no high-contrast theme.
+- No high-contrast theme.
+- The theme is kept per device (localStorage), not with the account.
 - Overlays (dialog, menu, select, tooltip) were checked by token values, not yet by an automated keyboard or screen reader test.
