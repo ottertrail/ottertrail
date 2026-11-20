@@ -482,7 +482,6 @@ The page is a report ([Report (Console)](design-system.md#report-console)): the 
 
 ### Not done yet
 
-- Phase 2: the clicks drawn over the page on the live site.
 - A comparison with the period before.
 
 ## 8.8 Product analytics
