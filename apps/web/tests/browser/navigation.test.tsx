@@ -215,9 +215,9 @@ describe("inside a project", () => {
     installFakeApi();
     renderApp("/projects/33333333-3333-4333-8333-333333333333/settings");
 
-    await expect.element(page.getByText("No such project")).toBeVisible();
+    await expect.element(page.getByRole("heading", { name: "Project not found" })).toBeVisible();
     await expect
-      .element(page.getByRole("main").getByRole("link", { name: "All projects" }))
+      .element(page.getByRole("main").getByRole("link", { name: "Go to projects" }))
       .toBeVisible();
   });
 });

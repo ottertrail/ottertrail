@@ -1,30 +1,15 @@
-import { FolderXIcon } from "lucide-react";
+import { NotFound } from "@/components/route-states";
 
-import { ButtonLink } from "@/components/button-link";
-import {
-  Empty,
-  EmptyContent,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyMedia,
-  EmptyTitle,
-} from "@/components/ui/empty";
-
+/**
+ * A project that does not exist, or one the person may not reach: the API
+ * answers both with a 404, so the page cannot tell them apart either.
+ */
 export function NoSuchProject() {
   return (
-    <Empty className="m-6 border border-dashed p-10">
-      <EmptyHeader>
-        <EmptyMedia variant="icon">
-          <FolderXIcon />
-        </EmptyMedia>
-        <EmptyTitle>No such project</EmptyTitle>
-        <EmptyDescription>It may have been removed, or the link is wrong.</EmptyDescription>
-      </EmptyHeader>
-      <EmptyContent>
-        <ButtonLink variant="outline" to="/projects">
-          All projects
-        </ButtonLink>
-      </EmptyContent>
-    </Empty>
+    <NotFound
+      placement="shell"
+      title="Project not found"
+      line="It may have been deleted, or you may not have access."
+    />
   );
 }

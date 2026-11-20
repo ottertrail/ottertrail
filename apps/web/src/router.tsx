@@ -3,9 +3,11 @@ import {
   createRootRouteWithContext,
   createRoute,
   createRouter,
+  notFound,
   Outlet,
   parseSearchWith,
   redirect,
+  rootRouteId,
   type RouterHistory,
   type SearchSchemaInput,
   stringifySearchWith,
@@ -14,7 +16,7 @@ import type * as React from "react";
 
 import { AppLayout } from "@/app";
 import { NoAccess } from "@/components/no-access";
-import { AuthPending, PagePending, RouteError } from "@/components/route-states";
+import { AuthPending, PagePending, RouteError, RouteNotFound } from "@/components/route-states";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { type DeviceChoice, isDeviceChoice, pathFrom } from "@/features/heatmaps/search";
 import { ProductLayout } from "@/features/product/product-layout";
@@ -55,6 +57,7 @@ import { lastProject } from "@/lib/last-project";
 import { lazyPage, withPage } from "@/lib/lazy-page";
 import { isTraceId } from "@/lib/logs-api";
 import { isMetricKind, type MetricKind } from "@/lib/metrics-api";
+import { markNavigated } from "@/lib/navigations";
 import { DEFAULT_OVERVIEW_PERIOD, isOverviewPeriod, type OverviewPeriod } from "@/lib/overview-api";
 import {
   DEFAULT_FUNNEL_WINDOW,
@@ -157,6 +160,8 @@ interface RouterContext {
 
 const rootRoute = createRootRouteWithContext<RouterContext>()({
   component: Outlet,
+  // Before the shell: an address no route has, for someone signed out.
+  notFoundComponent: RouteNotFound,
 });
 
 const signInRoute = createRoute({
@@ -206,25 +211,39 @@ const resetPasswordRoute = createRoute({
 
 /**
  * Every page inside needs a session; without one (no session, or a 401),
- * the visitor goes to sign-in. A check that fails otherwise (a 429, a 5xx)
- * shows the error with Reload instead of signing them out (RouteError).
+ * the visitor goes to sign-in. A check that fails otherwise (a 429, a 5xx,
+ * no answer) shows the error alone, before the shell, instead of signing
+ * them out (RouteError).
+ * An address no route has gets the 404 in the shell (the catch-all route
+ * below), or, for someone signed out, alone (the root's notFoundComponent).
  */
 const appRoute = createRoute({
   getParentRoute: () => rootRoute,
   id: "app",
-  beforeLoad: async ({ context, preload }) => {
+  beforeLoad: async ({ context, preload, matches }) => {
     // Hovering a link preloads its route: that is no reason to ask the API
     // again (Better Auth rate-limits get-session), and the click checks.
     if (preload) {
       return;
     }
     if (!(await signedIn(context.queryClient))) {
+      const unknown = new Set<string>([unknownAddressRoute.id, unknownProjectPageRoute.id]);
+      if (matches.some((match) => unknown.has(match.routeId))) {
+        throw notFound({ routeId: rootRouteId });
+      }
       throw redirect({ to: "/sign-in" });
     }
   },
   // Nothing while the session is checked: the shell, or sign-in, follows.
   pendingComponent: () => null,
   component: AppLayout,
+});
+
+/** Any address no other route has: the 404, in the shell. */
+const unknownAddressRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: "$",
+  component: RouteNotFound,
 });
 
 /** Opens the project shown last in this browser, or the first one; with none, the project list. */
@@ -270,6 +289,13 @@ const projectRoute = createRoute({
     const { projectId } = projectRoute.useParams();
     return <ProjectLayout projectId={projectId} />;
   },
+});
+
+/** An address inside a project that no page has: the 404, under the project's menu. */
+const unknownProjectPageRoute = createRoute({
+  getParentRoute: () => projectRoute,
+  path: "$",
+  component: RouteNotFound,
 });
 
 /**
@@ -1308,10 +1334,12 @@ const routeTree = rootRoute.addChildren([
         productRetentionRoute,
       ]),
       projectSettingsRoute,
+      unknownProjectPageRoute,
     ]),
     settingsRoute,
     membersRoute,
     accountRoute,
+    unknownAddressRoute,
   ]),
 ]);
 
@@ -1360,6 +1388,9 @@ export function createAppRouter({
     // least pendingMinMs (0.5s), so a quick load never flashes one.
     defaultPendingComponent: PagePending,
     defaultErrorComponent: RouteError,
+    // Any other 404 (an address the catch-all routes miss, a route that
+    // throws notFound()): the same state, in that route's place.
+    defaultNotFoundComponent: RouteNotFound,
     parseSearch: parseSearchWith(parseExactJson),
     stringifySearch: stringifySearchWith(JSON.stringify, parseExactJson),
     Wrap: ({ children }: { children: React.ReactNode }) => (
@@ -1367,6 +1398,12 @@ export function createAppRouter({
         <TooltipProvider>{children}</TooltipProvider>
       </QueryClientProvider>
     ),
+  });
+  router.subscribe("onBeforeNavigate", ({ fromLocation }) => {
+    // The first load comes from nowhere.
+    if (fromLocation !== undefined) {
+      markNavigated(router);
+    }
   });
   return router;
 }

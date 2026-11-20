@@ -290,7 +290,7 @@ describe("the speed page", () => {
     });
     renderApp(SPEED);
 
-    await expect.element(page.getByText("No such project")).toBeVisible();
+    await expect.element(page.getByRole("heading", { name: "Project not found" })).toBeVisible();
   });
 });
 

@@ -12,6 +12,22 @@ export class ApiError extends Error {
   }
 }
 
+/** The code of an ApiError for a request that got no answer at all (a network failure). */
+export const UNREACHABLE = "unreachable";
+
+/**
+ * The statuses a proxy in front of the API answers when the API is down
+ * or restarting: Vite's dev proxy, or the reverse proxy in production.
+ */
+const PROXY_FAILURES = new Set([502, 503, 504]);
+
+/** Whether the API could not be reached: no answer at all, or a proxy's failure. */
+export function isUnreachable(error: unknown): boolean {
+  return (
+    error instanceof ApiError && (error.code === UNREACHABLE || PROXY_FAILURES.has(error.status))
+  );
+}
+
 /** Narrows a response body, or throws when the API answered something unexpected. */
 export function expectShape<T>(value: unknown, isShape: (value: unknown) => value is T): T {
   if (!isShape(value)) {
@@ -46,7 +62,11 @@ export async function apiRequest(
     if (signal?.aborted) {
       throw error;
     }
-    throw new ApiError(0, "Could not reach the API. Check that it is running, then try again.");
+    throw new ApiError(
+      0,
+      "Could not reach the API. Check that it is running, then try again.",
+      UNREACHABLE,
+    );
   }
   const payload: unknown = await response.json().catch(() => null);
   if (!response.ok) {

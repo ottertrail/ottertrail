@@ -172,7 +172,7 @@ describe("the errors page", () => {
     });
     renderApp(ERRORS);
 
-    await expect.element(page.getByText("No such project")).toBeVisible();
+    await expect.element(page.getByRole("heading", { name: "Project not found" })).toBeVisible();
   });
 });
 
@@ -401,6 +401,6 @@ describe("an error's page", () => {
     });
     renderApp(TYPE_ERROR);
 
-    await expect.element(page.getByText("No such project")).toBeVisible();
+    await expect.element(page.getByRole("heading", { name: "Project not found" })).toBeVisible();
   });
 });

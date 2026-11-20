@@ -50,10 +50,18 @@ describe("the session check", () => {
     installFakeApi({ sessionRefusal: 429 });
     const router = renderApp("/projects");
 
-    const alert = page.getByRole("alert");
-    await expect.element(alert.getByText("Something went wrong")).toBeVisible();
-    await expect.element(alert.getByText(/Too many requests to check your session/)).toBeVisible();
-    await expect.element(alert.getByRole("button", { name: "Reload" })).toBeVisible();
+    // Before the shell, alone in the panel; not a server out of reach, so no Try again.
+    await expect
+      .element(page.getByRole("heading", { level: 1, name: "Something went wrong" }))
+      .toBeVisible();
+    await expect.element(page.getByRole("button", { name: "Reload" })).toBeVisible();
+    await expect.element(page.getByRole("button", { name: "Try again" })).not.toBeInTheDocument();
+    await expect.element(workspaceMenu()).not.toBeInTheDocument();
+    // The reason waits under Details.
+    const reason = page.getByText(/Too many requests to check your session/);
+    await expect.element(reason).not.toBeVisible();
+    await page.getByText("Details").click();
+    await expect.element(reason).toBeVisible();
     expect(currentPath(router)).toBe("/projects");
     await expect.element(page.getByRole("heading", { name: "Sign in" })).not.toBeInTheDocument();
     for (const args of logged) {

@@ -374,9 +374,9 @@ describe("when there is nothing to show", () => {
     });
     renderApp(ANALYTICS);
 
-    await expect.element(page.getByText("No such project")).toBeVisible();
+    await expect.element(page.getByRole("heading", { name: "Project not found" })).toBeVisible();
     await expect
-      .element(page.getByRole("main").getByRole("link", { name: "All projects" }))
+      .element(page.getByRole("main").getByRole("link", { name: "Go to projects" }))
       .toBeVisible();
   });
 

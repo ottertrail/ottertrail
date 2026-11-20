@@ -96,15 +96,19 @@ describe("a page in a chunk of its own", () => {
     installFakeApi();
     renderApp("/settings/members");
 
-    const alert = page.getByRole("alert");
-    await expect.element(alert.getByText("This page could not load")).toBeVisible();
-    await expect.element(alert.getByText(/The page download failed/)).toBeVisible();
-    // The browser's own reason, as it gave it.
-    await expect.element(alert.getByText(/members-page-old\.js/)).toBeVisible();
+    await expect
+      .element(page.getByRole("heading", { level: 2, name: "Ottertrail was updated" }))
+      .toBeVisible();
+    await expect.element(page.getByText("Reload to get the new version.")).toBeVisible();
+    // Trying again in place would fail the same way: browsers remember a failed module.
+    await expect.element(page.getByRole("button", { name: "Try again" })).not.toBeInTheDocument();
+    // The browser's own reason, as it gave it, under Details.
+    await page.getByText("Details").click();
+    await expect.element(page.getByText(/members-page-old\.js/)).toBeVisible();
     // Not a white screen: the shell is still there, so another page is a click away.
     await expect.element(workspaceMenu().getByRole("link", { name: "Projects" })).toBeVisible();
 
-    await alert.getByRole("button", { name: "Reload" }).click();
+    await page.getByRole("button", { name: "Reload" }).click();
     expect(reload.calls).toBe(1);
     expect(logged.length).toBeGreaterThan(0);
     for (const args of logged) {
@@ -118,13 +122,16 @@ describe("a page in a chunk of its own", () => {
     installFakeApi();
     renderApp("/settings");
 
-    const alert = page.getByRole("alert");
-    await expect.element(alert.getByText("Something went wrong")).toBeVisible();
-    await expect.element(page.getByText("This page could not load")).not.toBeInTheDocument();
-    await expect.element(page.getByText(/may have been updated/)).not.toBeInTheDocument();
+    await expect
+      .element(page.getByRole("heading", { level: 2, name: "Something went wrong" }))
+      .toBeVisible();
+    await expect.element(page.getByText("Ottertrail was updated")).not.toBeInTheDocument();
+    await expect.element(page.getByRole("button", { name: "Try again" })).not.toBeInTheDocument();
+    await page.getByText("Details").click();
+    await expect.element(page.getByText(/reading 'timeZone'/)).toBeVisible();
     await expect.element(workspaceMenu().getByRole("link", { name: "Projects" })).toBeVisible();
 
-    await alert.getByRole("button", { name: "Reload" }).click();
+    await page.getByRole("button", { name: "Reload" }).click();
     expect(reload.calls).toBe(1);
     expect(logged.length).toBeGreaterThan(0);
     // What React reported is the module's own error (inside Vitest's wrapper), not a PageLoadError.

@@ -1,7 +1,7 @@
 import { queryOptions } from "@tanstack/react-query";
 import { createAuthClient } from "better-auth/react";
 
-import { ApiError } from "./api";
+import { ApiError, UNREACHABLE } from "./api";
 
 /**
  * Talks to the API's sign-in endpoints on this origin (/api/auth/*). The
@@ -17,7 +17,14 @@ export const authClient = createAuthClient();
  * check failed instead of signing the person out.
  */
 export async function checkSession(): Promise<boolean> {
-  const { data, error } = await authClient.getSession();
+  let answer: Awaited<ReturnType<typeof authClient.getSession>>;
+  try {
+    answer = await authClient.getSession();
+  } catch {
+    // fetch rejects only when no answer came: the network, or nothing listening.
+    throw new ApiError(0, "Could not reach the API to check your session.", UNREACHABLE);
+  }
+  const { data, error } = answer;
   if (error) {
     if (error.status === 401) {
       return false;

@@ -627,7 +627,7 @@ describe("the heatmaps page", () => {
       heatmapPages: () => json({ error: "not_found", message: "No project has this ID." }, 404),
     });
     renderApp(HEATMAPS);
-    await expect.element(page.getByText("No such project")).toBeVisible();
+    await expect.element(page.getByRole("heading", { name: "Project not found" })).toBeVisible();
   });
 
   test("with heatmaps off, tells the owner how to turn them on", async () => {

@@ -246,7 +246,7 @@ describe("product events", () => {
     });
     renderApp(EVENTS);
 
-    await expect.element(page.getByText("No such project")).toBeVisible();
+    await expect.element(page.getByRole("heading", { name: "Project not found" })).toBeVisible();
   });
 });
 
@@ -512,6 +512,6 @@ describe("retention", () => {
       retention: () => json({ error: "not_found", message: "No project has this ID." }, 404),
     });
     renderApp(RETENTION);
-    await expect.element(page.getByText("No such project")).toBeVisible();
+    await expect.element(page.getByRole("heading", { name: "Project not found" })).toBeVisible();
   });
 });

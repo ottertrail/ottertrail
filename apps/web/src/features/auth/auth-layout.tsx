@@ -8,13 +8,15 @@ import { documentTitle, useDocumentTitle } from "@/lib/document-title";
  * link): the canvas the app sits on, and one panel on it, as the app's own
  * content panel is, holding the page's title, one line on what it does,
  * and its form. On a phone the panel gives its frame to the form's width.
+ * Without a title the panel holds only its children: a 404 or an error
+ * before the shell (route-states.tsx), which lays out its own heading.
  */
 export function AuthLayout({
   title,
   description,
   children,
 }: {
-  title: string;
+  title?: string;
   description?: React.ReactNode;
   children: React.ReactNode;
 }) {
@@ -30,12 +32,14 @@ export function AuthLayout({
           data-slot="auth-panel"
           className="flex flex-col gap-6 sm:rounded-xl sm:bg-background sm:p-8 sm:ring-1 sm:ring-border"
         >
-          <header className="flex flex-col gap-1.5">
-            <h1 className="text-card-title [overflow-wrap:anywhere] text-ink">{title}</h1>
-            {description && (
-              <div className="text-sm text-pretty text-ink-subtle">{description}</div>
-            )}
-          </header>
+          {title !== undefined && (
+            <header className="flex flex-col gap-1.5">
+              <h1 className="text-card-title [overflow-wrap:anywhere] text-ink">{title}</h1>
+              {description && (
+                <div className="text-sm text-pretty text-ink-subtle">{description}</div>
+              )}
+            </header>
+          )}
           {children}
         </div>
       </div>
