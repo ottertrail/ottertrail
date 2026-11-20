@@ -28,6 +28,7 @@ import { heatmapOverlayRoutes } from "./heatmaps/overlay-routes.ts";
 import { heatmapCollectionRoutes } from "./heatmaps/routes.ts";
 import { userRoutes } from "./identities/routes.ts";
 import type { Mailer } from "./notifications/email.ts";
+import { LinkSealer } from "./notifications/link-sealer.ts";
 import { channelRoutes } from "./notifications/routes.ts";
 import { addressPolicy, type Lookup } from "./outbound/addresses.ts";
 import { overviewRoutes } from "./overview/routes.ts";
@@ -81,6 +82,9 @@ export interface AppOptions extends Omit<FastifyServerOptions, "logger"> {
     /** "Forgot password?" requests per client address and per email address (access/member-routes.ts). */
     resetRequestIpLimit?: RateLimit;
     resetRequestEmailLimit?: RateLimit;
+    resetRequestInstanceLimit?: RateLimit;
+    /** Emailed invitations and New links per owner or admin. */
+    invitationEmailLimit?: RateLimit;
     /**
      * Current-password tries per user, shared by every route that checks
      * one: email and password changes, and handing over ownership.
@@ -149,7 +153,13 @@ export interface AppOptions extends Omit<FastifyServerOptions, "logger"> {
    * mailer the test email goes out through at once. Webhook URLs follow
    * `uptime`'s address rules and resolver.
    */
-  notifications?: { emailConfigured?: boolean; mailer?: Mailer | null; testEmailLimit?: RateLimit };
+  notifications?: {
+    emailConfigured?: boolean;
+    mailer?: Mailer | null;
+    testEmailLimit?: RateLimit;
+    /** AUTH_SECRET: the key queued links are sealed with; required with `emailConfigured`. */
+    linkSecret?: string;
+  };
   /**
    * The Storage section's sources (storage/usage.ts) beyond the app's own:
    * whether the object store is the stack's Garage and its bucket, Garage's
@@ -304,6 +314,12 @@ export function buildApp({
       ...(dashboard.setupLimit === undefined ? {} : { setupLimit: dashboard.setupLimit }),
     });
     app.register(meRoutes, { prefix: "/api", db, auth: dashboard.auth });
+    if (notifications.emailConfigured === true && notifications.linkSecret === undefined) {
+      // Queued account email links are sealed with it (notifications/link-sealer.ts).
+      throw new Error("notifications.linkSecret (AUTH_SECRET) is required with emailConfigured");
+    }
+    const sealer =
+      notifications.linkSecret === undefined ? null : new LinkSealer(notifications.linkSecret);
     // One bucket per user for every route that checks the current password.
     const passwordTries = passwordTryLimiter(dashboard.passwordTryLimit);
     app.register(memberRoutes, {
@@ -319,7 +335,14 @@ export function buildApp({
       ...(dashboard.resetRequestEmailLimit === undefined
         ? {}
         : { resetRequestEmailLimit: dashboard.resetRequestEmailLimit }),
+      ...(dashboard.resetRequestInstanceLimit === undefined
+        ? {}
+        : { resetRequestInstanceLimit: dashboard.resetRequestInstanceLimit }),
+      ...(dashboard.invitationEmailLimit === undefined
+        ? {}
+        : { invitationEmailLimit: dashboard.invitationEmailLimit }),
       emailConfigured: notifications.emailConfigured ?? false,
+      sealer,
       passwordTries,
       ...(dashboard.now === undefined ? {} : { now: dashboard.now }),
     });
@@ -330,6 +353,7 @@ export function buildApp({
       trustedOrigins: dashboard.trustedOrigins,
       passwordTries,
       emailConfigured: notifications.emailConfigured ?? false,
+      sealer,
     });
     app.register(settingsRoutes, {
       prefix: "/api",

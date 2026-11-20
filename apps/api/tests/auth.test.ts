@@ -215,7 +215,10 @@ describe("owner setup", () => {
         publicUrl: PUBLIC_URL,
         trustedOrigins: [PUBLIC_URL],
       },
-      notifications: { emailConfigured: true },
+      notifications: {
+        emailConfigured: true,
+        linkSecret: "a-secret-only-these-tests-use-0123456789",
+      },
     });
     try {
       expect((await withEmail.inject({ url: "/api/setup" })).json()).toMatchObject({

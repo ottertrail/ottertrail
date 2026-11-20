@@ -14,6 +14,8 @@ import { createTestClickHouse } from "./test-clickhouse.ts";
 import { createTestDatabase } from "./test-database.ts";
 
 export const PUBLIC_URL = "http://localhost:5173";
+/** The auth secret of every test dashboard; it also seals queued account email links. */
+export const TEST_AUTH_SECRET = "a-secret-only-these-tests-use-0123456789";
 export const OWNER = {
   name: "Ada Owner",
   email: "ada@example.com",
@@ -43,6 +45,7 @@ export async function signedInDashboard({
   linkLimit = { capacity: 1000, refillPerSecond: 1000 },
   passwordTryLimit,
   resetRequestLimits,
+  invitationEmailLimit,
 }: {
   timeZone?: string;
   now?: () => Date;
@@ -69,7 +72,9 @@ export async function signedInDashboard({
   /** Current-password tries per user, shared by the routes that check one (tests/account.test.ts). */
   passwordTryLimit?: RateLimit;
   /** "Forgot password?" requests per client address and per email address (tests/account-email.test.ts). */
-  resetRequestLimits?: { ip?: RateLimit; email?: RateLimit };
+  resetRequestLimits?: { ip?: RateLimit; email?: RateLimit; instance?: RateLimit };
+  /** Emailed invitations per owner or admin (tests/account-email.test.ts). */
+  invitationEmailLimit?: RateLimit;
 } = {}) {
   const testDb = await createTestDatabase();
   const testClickHouse = await createTestClickHouse().catch(async (error: unknown) => {
@@ -80,7 +85,7 @@ export async function signedInDashboard({
     db: testDb.db,
     publicUrl: PUBLIC_URL,
     trustedOrigins: [PUBLIC_URL],
-    secret: "a-secret-only-these-tests-use-0123456789",
+    secret: TEST_AUTH_SECRET,
     rateLimit: false,
   });
   const app = buildApp({
@@ -98,6 +103,10 @@ export async function signedInDashboard({
       ...(resetRequestLimits?.email === undefined
         ? {}
         : { resetRequestEmailLimit: resetRequestLimits.email }),
+      ...(resetRequestLimits?.instance === undefined
+        ? {}
+        : { resetRequestInstanceLimit: resetRequestLimits.instance }),
+      ...(invitationEmailLimit === undefined ? {} : { invitationEmailLimit }),
       ...(now === undefined ? {} : { now }),
     },
     ...(objectStore === undefined ? {} : { objectStore }),
@@ -107,7 +116,8 @@ export async function signedInDashboard({
     ...(replayPlayerPath === undefined ? {} : { replayPlayerPath }),
     ...(telemetry === undefined ? {} : { telemetry }),
     ...(uptime === undefined ? {} : { uptime }),
-    ...(notifications === undefined ? {} : { notifications }),
+    // The auth secret seals queued account email links, as on a server.
+    notifications: { linkSecret: TEST_AUTH_SECRET, ...notifications },
     ...(locationData === undefined ? {} : { locationData }),
     ...(storage === undefined ? {} : { storage }),
   });

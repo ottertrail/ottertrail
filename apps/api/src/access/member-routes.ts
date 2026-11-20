@@ -20,6 +20,7 @@ import {
   inviteLink,
   resetLink,
 } from "../notifications/account-emails.ts";
+import type { LinkSealer } from "../notifications/link-sealer.ts";
 import { FORBIDDEN, requirePermission, userAccessOf } from "./access.ts";
 import { AREA_LEVELS, AREAS } from "./areas.ts";
 import type { AccessChange } from "./grants.ts";
@@ -61,6 +62,30 @@ export const DEFAULT_RESET_REQUEST_IP_LIMIT: RateLimit = { capacity: 5, refillPe
 export const DEFAULT_RESET_REQUEST_EMAIL_LIMIT: RateLimit = {
   capacity: 3,
   refillPerSecond: 3 / 3600,
+};
+
+/**
+ * Reset requests for the whole instance: 30 at once, then 600 an hour.
+ * Checked before the per-address limit, so it also bounds how many
+ * addresses that limit keeps in a hour, and far below what the worker
+ * sends, so the queue never grows without end.
+ */
+export const DEFAULT_RESET_REQUEST_INSTANCE_LIMIT: RateLimit = {
+  capacity: 30,
+  refillPerSecond: 600 / 3600,
+};
+
+/**
+ * Addresses the per-address limit keeps. The instance limit lets at most
+ * about 630 new ones in an hour, and a bucket is full again an hour after
+ * its last request, so one is never dropped while it still counts.
+ */
+const RESET_REQUEST_EMAIL_KEYS = 100_000;
+
+/** Emailed invitations and New links per owner or admin: 20 at once, then 20 an hour. */
+export const DEFAULT_INVITATION_EMAIL_LIMIT: RateLimit = {
+  capacity: 20,
+  refillPerSecond: 20 / 3600,
 };
 
 const problem = (error: string, message: string) => ({ error, message });
@@ -201,6 +226,10 @@ export const memberRoutes: FastifyPluginCallback<{
   emailConfigured?: boolean;
   resetRequestIpLimit?: RateLimit;
   resetRequestEmailLimit?: RateLimit;
+  resetRequestInstanceLimit?: RateLimit;
+  invitationEmailLimit?: RateLimit;
+  /** Seals the links queued emails carry; required with `emailConfigured`. */
+  sealer?: LinkSealer | null;
   /**
    * Handing over ownership checks the owner's password: tries come from
    * the app's one limiter for current-password checks (auth/password-tries.ts).
@@ -218,6 +247,9 @@ export const memberRoutes: FastifyPluginCallback<{
     emailConfigured = false,
     resetRequestIpLimit = DEFAULT_RESET_REQUEST_IP_LIMIT,
     resetRequestEmailLimit = DEFAULT_RESET_REQUEST_EMAIL_LIMIT,
+    resetRequestInstanceLimit = DEFAULT_RESET_REQUEST_INSTANCE_LIMIT,
+    invitationEmailLimit = DEFAULT_INVITATION_EMAIL_LIMIT,
+    sealer = null,
     passwordTries = passwordTryLimiter(),
     now = () => new Date(),
   },
@@ -229,7 +261,36 @@ export const memberRoutes: FastifyPluginCallback<{
   const owner = requirePermission(db, "ownership");
   const limiter = new TokenBucketLimiter(linkLimit);
   const requestsByAddress = new TokenBucketLimiter(resetRequestIpLimit);
-  const requestsByEmail = new TokenBucketLimiter(resetRequestEmailLimit);
+  const requestsByEmail = new TokenBucketLimiter(resetRequestEmailLimit, {
+    maxKeys: RESET_REQUEST_EMAIL_KEYS,
+  });
+  const requestsOfInstance = new TokenBucketLimiter(resetRequestInstanceLimit);
+  const invitationEmails = new TokenBucketLimiter(invitationEmailLimit);
+  /** The sealer, there whenever email is set up. */
+  const linkSealer = (): LinkSealer => {
+    if (sealer === null) throw new Error("Account email needs a LinkSealer");
+    return sealer;
+  };
+
+  /**
+   * Spends one of the actor's emailed invitations, with email set up;
+   * answers 429 and false when none is left.
+   */
+  function invitationEmailAllowed(actorId: string, reply: FastifyReply): boolean {
+    if (!emailConfigured) return true;
+    const result = invitationEmails.take(actorId);
+    if (result.allowed) return true;
+    void reply
+      .code(429)
+      .header("retry-after", String(result.retryAfterSeconds))
+      .send(
+        problem(
+          "rate_limited",
+          `You've emailed ${invitationEmailLimit.capacity} invitations in the last hour, which is the limit, so this one wasn't made or sent. Try again in about ${Math.ceil(result.retryAfterSeconds / 60)} minutes.`,
+        ),
+      );
+    return false;
+  }
 
   const inviteUrl = (token: string) => inviteLink(publicUrl, token);
   const resetUrl = (token: string) => resetLink(publicUrl, token);
@@ -241,15 +302,19 @@ export const memberRoutes: FastifyPluginCallback<{
   ) {
     await db.transaction().execute(async (trx) => {
       await dropQueuedAccountEmails(trx, "invitation", invitation.email);
-      await enqueueAccountEmail(trx, {
-        kind: "invitation",
-        to: invitation.email,
-        params: {
-          link: inviteUrl(token),
-          inviter: invitation.invitedBy.name,
-          invitedEmail: invitation.email,
+      await enqueueAccountEmail(
+        trx,
+        {
+          kind: "invitation",
+          to: invitation.email,
+          params: {
+            link: inviteUrl(token),
+            inviter: invitation.invitedBy.name,
+            invitedEmail: invitation.email,
+          },
         },
-      });
+        linkSealer(),
+      );
     });
   }
 
@@ -335,17 +400,22 @@ export const memberRoutes: FastifyPluginCallback<{
       if (made === "not_found") return reply.code(404).send(NO_MEMBER);
       if (made === "forbidden") return reply.code(403).send(FORBIDDEN);
       const url = resetUrl(made.token);
-      if (wantsEmail) {
-        await db.transaction().execute(async (trx) => {
-          // The earlier link no longer works: its email, if not sent yet, goes.
-          await dropQueuedAccountEmails(trx, "reset_link", made.email);
-          await enqueueAccountEmail(trx, {
-            kind: "reset_link",
-            to: made.email,
-            params: { link: url, maker: signedInUser(request).name },
-          });
-        });
-      }
+      await db.transaction().execute(async (trx) => {
+        // The earlier link no longer works: its email, if not sent yet, goes,
+        // whether or not this one is emailed.
+        await dropQueuedAccountEmails(trx, "reset_link", made.email);
+        if (wantsEmail) {
+          await enqueueAccountEmail(
+            trx,
+            {
+              kind: "reset_link",
+              to: made.email,
+              params: { link: url, maker: signedInUser(request).name },
+            },
+            linkSealer(),
+          );
+        }
+      });
       return reply.code(201).send({ url, expiresAt: made.expiresAt, emailed: wantsEmail });
     },
   );
@@ -424,7 +494,11 @@ export const memberRoutes: FastifyPluginCallback<{
       }
       const change = changeOf(request.body);
       if (change === null) return reply.code(400).send(ACCESS_REQUIRED);
-      const created = await createInvitation(db, actorOf(request), email, change, now());
+      const actor = actorOf(request);
+      if (!invitationEmailAllowed(actor.id, reply)) return reply;
+      const created = await createInvitation(db, actor, email, change, now());
+      // A refusal sends nothing: it spends none of the actor's emails.
+      if (typeof created === "string" && emailConfigured) invitationEmails.refund(actor.id, 1);
       if (created === "forbidden") return reply.code(403).send(FORBIDDEN);
       if (created === "account_exists") {
         return reply
@@ -444,12 +518,10 @@ export const memberRoutes: FastifyPluginCallback<{
     "/invitations/:invitationId/link",
     { preHandler: [fromDashboard, signedIn, manageMembers], schema: { params: invitationParams } },
     async (request, reply) => {
-      const renewed = await renewInvitation(
-        db,
-        actorOf(request),
-        request.params.invitationId,
-        now(),
-      );
+      const actor = actorOf(request);
+      if (!invitationEmailAllowed(actor.id, reply)) return reply;
+      const renewed = await renewInvitation(db, actor, request.params.invitationId, now());
+      if (typeof renewed === "string" && emailConfigured) invitationEmails.refund(actor.id, 1);
       if (renewed === "not_found") return reply.code(404).send(NO_INVITATION);
       if (renewed === "forbidden") return reply.code(403).send(FORBIDDEN);
       if (emailConfigured) await emailInvitation(renewed.invitation, renewed.token);
@@ -548,7 +620,11 @@ export const memberRoutes: FastifyPluginCallback<{
       const used = await usePasswordReset(db, auth, token, password, now());
       if (used === null) return reply.code(404).send(RESET_GONE);
       if (emailConfigured) {
-        await enqueueAccountEmail(db, { kind: "password_changed", to: used.email, params: {} });
+        await enqueueAccountEmail(
+          db,
+          { kind: "password_changed", to: used.email, params: {} },
+          linkSealer(),
+        );
       }
       return used;
     },
@@ -583,16 +659,29 @@ export const memberRoutes: FastifyPluginCallback<{
       // As sign-in looks addresses up, and as accounts store them.
       const email = request.body.email.trim().toLowerCase();
       if (!canSignInWith(email)) return reply.code(400).send(INVALID_EMAIL);
-      const result = requestsByEmail.take(emailKey(email));
-      if (!result.allowed) {
-        return reply
-          .code(429)
-          .header("retry-after", String(result.retryAfterSeconds))
-          .send(RESET_REQUESTS_LIMITED);
+      // The instance's limit first: it bounds the rows a flood from many
+      // client addresses can queue, and the addresses the next limit keeps.
+      // One after the other: an address is counted only past the instance's limit.
+      for (const take of [
+        () => requestsOfInstance.take("instance"),
+        () => requestsByEmail.take(emailKey(email)),
+      ]) {
+        const result = take();
+        if (!result.allowed) {
+          return reply
+            .code(429)
+            .header("retry-after", String(result.retryAfterSeconds))
+            .send(RESET_REQUESTS_LIMITED);
+        }
       }
-      // The same one insert for every address: the worker looks the account
-      // up, makes the link, and sends it, or sends nothing.
-      await enqueueAccountEmail(db, { kind: "password_reset", to: email, params: {} });
+      // The same one insert for every address (none when a request for it
+      // already waits): the worker looks the account up, makes the link,
+      // and sends it, or sends nothing.
+      await enqueueAccountEmail(
+        db,
+        { kind: "password_reset", to: email, params: {} },
+        linkSealer(),
+      );
       return reply.code(202).send(RESET_REQUESTED);
     },
   );

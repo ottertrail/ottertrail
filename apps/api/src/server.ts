@@ -66,7 +66,7 @@ const app = buildApp({
     denyAddresses: config.uptimeDenyAddresses,
   },
   // SMTP_URL holds a password: it goes only to the mailer, never logged.
-  notifications: { emailConfigured: config.email !== null, mailer },
+  notifications: { emailConfigured: config.email !== null, mailer, linkSecret: config.authSecret },
   // Garage's admin token goes only to its client: never logged or returned.
   storage: storageSourcesOf(config, db, clickhouse),
   trackerScriptPath: config.trackerScriptPath,

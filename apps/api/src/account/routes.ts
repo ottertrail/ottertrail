@@ -16,7 +16,8 @@ import {
 } from "../auth/routes.ts";
 import type { TokenBucketLimiter } from "../collection/rate-limiter.ts";
 import type { Database } from "../db/schema.ts";
-import { enqueueAccountEmail } from "../notifications/account-emails.ts";
+import { dropQueuedAccountEmails, enqueueAccountEmail } from "../notifications/account-emails.ts";
+import type { LinkSealer } from "../notifications/link-sealer.ts";
 
 /** As the setup form's name. */
 export const MAX_NAME_LENGTH = 200;
@@ -98,9 +99,18 @@ export const accountRoutes: FastifyPluginCallback<{
   passwordTries?: TokenBucketLimiter;
   /** Whether SMTP is set up: an email change then notifies the old address. */
   emailConfigured?: boolean;
+  /** Seals queued links; required with `emailConfigured`. */
+  sealer?: LinkSealer | null;
 }> = (
   app,
-  { db, auth, trustedOrigins, passwordTries = passwordTryLimiter(), emailConfigured = false },
+  {
+    db,
+    auth,
+    trustedOrigins,
+    passwordTries = passwordTryLimiter(),
+    emailConfigured = false,
+    sealer = null,
+  },
   done,
 ) => {
   const signedIn = requireSession(auth);
@@ -165,31 +175,54 @@ export const accountRoutes: FastifyPluginCallback<{
         // Only the address changes: the role, the grants, and every session
         // stay. An address with a pending invitation is the invitee's: in the
         // same statement, so no invitation can slip in between a check and it.
-        const updated = await db
-          .updateTable("dashboard_users")
-          .set({ email, updated_at: new Date() })
-          .where("id", "=", user.id)
-          .where((eb) =>
-            eb.not(
-              eb.exists(
-                eb
-                  .selectFrom("dashboard_invitations")
-                  .select(sql<number>`1`.as("one"))
-                  .where("dashboard_invitations.email", "=", email),
+        // Links emailed to the old address stop working with it, in the same
+        // transaction: the old mailbox may be the one someone else reads.
+        const updated = await db.transaction().execute(async (trx) => {
+          const old = await trx
+            .selectFrom("dashboard_users")
+            .select("email")
+            .where("id", "=", user.id)
+            .forUpdate()
+            .executeTakeFirstOrThrow();
+          const changed = await trx
+            .updateTable("dashboard_users")
+            .set({ email, updated_at: new Date() })
+            .where("id", "=", user.id)
+            .where((eb) =>
+              eb.not(
+                eb.exists(
+                  eb
+                    .selectFrom("dashboard_invitations")
+                    .select(sql<number>`1`.as("one"))
+                    .where("dashboard_invitations.email", "=", email),
+                ),
               ),
-            ),
-          )
-          .returning(["id", "name", "email"])
-          .executeTakeFirst();
+            )
+            .returning(["id", "name", "email"])
+            .executeTakeFirst();
+          if (changed === undefined) return undefined;
+          await trx
+            .deleteFrom("dashboard_password_resets")
+            .where("user_id", "=", user.id)
+            .where("emailed", "=", true)
+            .execute();
+          await dropQueuedAccountEmails(trx, "reset_link", old.email);
+          await dropQueuedAccountEmails(trx, "password_reset", old.email);
+          if (emailConfigured && sealer !== null) {
+            // The old address hears of it, so a change its owner didn't make is noticed.
+            await enqueueAccountEmail(
+              trx,
+              {
+                kind: "email_changed",
+                to: old.email,
+                params: { oldEmail: old.email, newEmail: changed.email },
+              },
+              sealer,
+            );
+          }
+          return changed;
+        });
         if (updated === undefined) return reply.code(409).send(EMAIL_INVITED);
-        if (emailConfigured) {
-          // The old address hears of it, so a change its owner didn't make is noticed.
-          await enqueueAccountEmail(db, {
-            kind: "email_changed",
-            to: user.email.toLowerCase(),
-            params: { oldEmail: user.email, newEmail: updated.email },
-          });
-        }
         return { user: updated };
       } catch (error) {
         // The unique index decides, so two users cannot take one address at once.

@@ -12,6 +12,7 @@ import {
   MAX_SUBJECT,
   oneLine,
 } from "./email.ts";
+import { type LinkSealer, sealBinding } from "./link-sealer.ts";
 
 /**
  * Account email (docs/access.md, "Account email"): a reset link someone
@@ -22,11 +23,21 @@ import {
  *
  * The API writes a row to account_emails (enqueueAccountEmail) and
  * answers; the worker sends it (AccountEmailSender), with the alert
- * deliveries' retries, and deletes the row once it is sent or given up,
- * so a link in a row is kept no longer than the send takes. A request
- * for a reset link holds only the address typed: the worker looks the
- * account up and makes the link, so the request does the same work
- * whether or not an account has the address.
+ * deliveries' retries, and deletes the row once it is sent or given up.
+ * A row with a link (an invitation, a reset link) holds it until then:
+ * seconds usually, about an hour through every retry, and a day at most,
+ * when every row is deleted. The link is sealed (link-sealer.ts,
+ * AES-GCM with a key from AUTH_SECRET), so a dump of the database holds
+ * no working link without the secret too.
+ *
+ * A request for a reset link holds only the address typed: the worker
+ * looks the account up and makes the link, so the request does the same
+ * work whether or not an account has the address. At most one such
+ * request waits per address (a partial unique index); the worker seals
+ * the link it made into the row, so a retry sends the same link.
+ *
+ * The worker takes invitations, reset links, and notices before reset
+ * requests, so a flood of requests cannot hold them back.
  *
  * Kept apart from notification_deliveries: these never show among a
  * channel's deliveries, and a channel's limits never hold them back.
@@ -55,11 +66,46 @@ export type AccountMessage =
 
 type Db = Kysely<Database> | Transaction<Database>;
 
-/** Queues an email for the worker; it is sent within seconds. */
-export async function enqueueAccountEmail(db: Db, email: AccountEmail): Promise<void> {
+/** What a row stores: the email's params, with any link sealed. */
+function storedParams(email: AccountEmail, sealer: LinkSealer): Record<string, string> {
+  const bound = sealBinding(email.kind, email.to);
+  switch (email.kind) {
+    case "reset_link":
+      return { sealedLink: sealer.seal(email.params.link, bound), maker: email.params.maker };
+    case "invitation":
+      return {
+        sealedLink: sealer.seal(email.params.link, bound),
+        inviter: email.params.inviter,
+        invitedEmail: email.params.invitedEmail,
+      };
+    case "email_changed":
+      return { ...email.params };
+    default:
+      return {};
+  }
+}
+
+/**
+ * Queues an email for the worker; it is sent within seconds. A reset
+ * request for an address that already has one waiting adds nothing.
+ */
+export async function enqueueAccountEmail(
+  db: Db,
+  email: AccountEmail,
+  sealer: LinkSealer,
+): Promise<void> {
+  const params = JSON.stringify(storedParams(email, sealer));
+  if (email.kind === "password_reset") {
+    await sql`
+      insert into account_emails (kind, to_address, params)
+      values ('password_reset', ${email.to}, ${params}::jsonb)
+      on conflict (to_address) where kind = 'password_reset' do nothing
+    `.execute(db);
+    return;
+  }
   await db
     .insertInto("account_emails")
-    .values({ kind: email.kind, to_address: email.to, params: JSON.stringify(email.params) })
+    .values({ kind: email.kind, to_address: email.to, params })
     .execute();
 }
 
@@ -133,6 +179,7 @@ export function accountEmailMessage(
         ["Set a new password:", { link: email.params.link }],
         [
           "This link works once and expires in 1 hour.",
+          "A newer request replaces this link.",
           "Your current password works until you reset it.",
         ],
         ["If you didn't request this, you can ignore this email."],
@@ -201,12 +248,22 @@ export interface DueAccountEmail {
   attempt: number;
 }
 
+/** Deletes every row a day old, sent or not: none keeps a link longer. How many. */
+export async function pruneAccountEmails(db: Kysely<Database>, now?: Date): Promise<number> {
+  const at = sql`coalesce(${now ?? null}::timestamptz, now())`;
+  const result = await sql`
+    delete from account_emails where created_at < ${at} - interval '1 day'
+  `.execute(db);
+  return Number(result.numAffectedRows ?? 0n);
+}
+
 /**
  * Takes up to `limit` due account emails, each one's attempt counted and
  * its next attempt moved on before anything is sent, as alert deliveries
  * are (deliveries.ts, takeDueDeliveries), never by two workers at once.
- * Rows whose last attempt never finished, and any row a day old, are
- * deleted first: none keeps a link longer than that.
+ * Invitations, reset links, and notices come before reset requests, then
+ * the oldest first. Rows whose last attempt never finished are deleted
+ * first.
  */
 export async function takeDueAccountEmails(
   db: Kysely<Database>,
@@ -218,8 +275,7 @@ export async function takeDueAccountEmails(
   return db.transaction().execute(async (trx) => {
     await sql`
       delete from account_emails
-      where (attempts >= ${MAX_ATTEMPTS} and next_attempt_at <= ${at})
-        or created_at < ${at} - interval '1 day'
+      where attempts >= ${MAX_ATTEMPTS} and next_attempt_at <= ${at}
     `.execute(trx);
     const taken = await sql<{
       id: string;
@@ -231,7 +287,7 @@ export async function takeDueAccountEmails(
       with due as (
         select id from account_emails
         where attempts < ${MAX_ATTEMPTS} and next_attempt_at <= ${at}
-        order by next_attempt_at, id
+        order by (kind = 'password_reset'), next_attempt_at, id
         limit ${limit}
         for update skip locked
       )
@@ -257,22 +313,25 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 const textOf = (record: Record<string, unknown>, key: string) =>
   typeof record[key] === "string" ? record[key] : null;
 
-/** A stored row as the email it stands for; null when it is not one (never written so). */
-function emailOf(row: DueAccountEmail): AccountEmail | null {
+/**
+ * A stored row as the email it stands for; null when it is not one, or
+ * its link cannot be opened (AUTH_SECRET changed since).
+ */
+function emailOf(row: DueAccountEmail, sealer: LinkSealer): AccountEmail | null {
   const params = isRecord(row.params) ? row.params : {};
+  const sealed = textOf(params, "sealedLink");
+  const link = sealed === null ? null : sealer.open(sealed, sealBinding(row.kind, row.to));
   switch (row.kind) {
     case "password_reset":
     case "password_changed":
       return { kind: row.kind, to: row.to, params: {} };
     case "reset_link": {
-      const link = textOf(params, "link");
       const maker = textOf(params, "maker");
       return link === null || maker === null
         ? null
         : { kind: row.kind, to: row.to, params: { link, maker } };
     }
     case "invitation": {
-      const link = textOf(params, "link");
       const inviter = textOf(params, "inviter");
       const invitedEmail = textOf(params, "invitedEmail");
       return link === null || inviter === null || invitedEmail === null
@@ -298,13 +357,18 @@ export type AccountEmailOutcome =
   | "no_account"
   /** Failed; tried again later. */
   | "retrying"
-  /** Failed for good (the last attempt, no mailer, or a row that is not an email). */
+  /** Failed for good (the last attempt, or a row that is not an email or cannot be opened). */
   | "given_up";
 
 export interface AccountEmailSenderOptions {
   db: Kysely<Database>;
-  /** The SMTP server's mailer; null when SMTP_URL is unset, and every row is given up. */
+  /**
+   * The SMTP server's mailer; null when SMTP_URL is unset on the worker:
+   * nothing is taken, and rows wait (a day at most) for a worker with it.
+   */
   mailer: Mailer | null;
+  /** Opens the sealed links, and seals the one a reset request's first attempt makes. */
+  sealer: LinkSealer;
   /** The instance's address (PUBLIC_URL): the links' base, as copied links use. */
   publicUrl: string;
   maxSending?: number;
@@ -332,9 +396,24 @@ export class AccountEmailSender {
     return this.#sending.size;
   }
 
-  /** Takes the emails due now and starts them; returns how many it started. */
+  /** How many account emails wait: the worker logs it at start when it has no mailer. */
+  async waiting(): Promise<number> {
+    const row = await this.#options.db
+      .selectFrom("account_emails")
+      .select((eb) => eb.fn.countAll<string>().as("count"))
+      .executeTakeFirstOrThrow();
+    return Number(row.count);
+  }
+
+  /**
+   * Deletes rows a day old, then takes the emails due now and starts
+   * them; returns how many it started. Without a mailer it takes none:
+   * giving them up would lose them, and a worker with SMTP sends them.
+   */
   async tick(): Promise<number> {
-    const { db, maxSending = MAX_ACCOUNT_SENDING, now } = this.#options;
+    const { db, mailer, maxSending = MAX_ACCOUNT_SENDING, now } = this.#options;
+    await pruneAccountEmails(db, now?.());
+    if (mailer === null) return 0;
     const due = await takeDueAccountEmails(db, {
       limit: maxSending - this.#sending.size,
       now: now?.(),
@@ -389,9 +468,11 @@ export class AccountEmailSender {
   }
 
   async #send(row: DueAccountEmail): Promise<AccountEmailOutcome> {
-    const { db, mailer, publicUrl, now = () => new Date(), log } = this.#options;
-    const email = emailOf(row);
-    if (mailer === null || email === null) return "given_up";
+    const { db, mailer, sealer, publicUrl, now = () => new Date(), log } = this.#options;
+    // Taken by a worker with a mailer only; left for one if not.
+    if (mailer === null) return "retrying";
+    const email = emailOf(row, sealer);
+    if (email === null) return "given_up";
     const { name } = await readInstanceSettings(db);
     let message: Omit<MailMessage, "to">;
     if (email.kind === "password_reset") {
@@ -401,14 +482,28 @@ export class AccountEmailSender {
         .where("email", "=", email.to)
         .executeTakeFirst();
       if (user === undefined) return "no_account";
-      // Made now, for this attempt: it replaces the user's earlier emailed link.
-      const { token } = await createPasswordReset(db, user.id, {
-        madeBy: "email",
-        ttlMs: EMAILED_RESET_TTL_MS,
-        now: now(),
-      });
+      const bound = sealBinding(row.kind, row.to);
+      const params = isRecord(row.params) ? row.params : {};
+      const sealed = textOf(params, "sealedLink");
+      // A retry sends the link the first attempt made, so an email that
+      // arrives after a timeout still works.
+      let link = sealed === null ? null : sealer.open(sealed, bound);
+      if (link === null) {
+        // Made now: it replaces the user's earlier emailed link.
+        const { token } = await createPasswordReset(db, user.id, {
+          madeBy: "email",
+          ttlMs: EMAILED_RESET_TTL_MS,
+          now: now(),
+        });
+        link = resetLink(publicUrl, token);
+        await db
+          .updateTable("account_emails")
+          .set({ params: JSON.stringify({ sealedLink: sealer.seal(link, bound) }) })
+          .where("id", "=", row.id)
+          .execute();
+      }
       message = accountEmailMessage(
-        { kind: "password_reset", to: email.to, params: { link: resetLink(publicUrl, token) } },
+        { kind: "password_reset", to: email.to, params: { link } },
         name,
       );
     } else {

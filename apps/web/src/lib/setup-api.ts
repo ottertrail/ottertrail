@@ -1,3 +1,5 @@
+import { queryOptions } from "@tanstack/react-query";
+
 /** GET /api/setup: whether the instance still needs its owner, and whether email is set up (SMTP_URL). */
 export async function fetchSetupStatus(
   signal?: AbortSignal,
@@ -15,6 +17,14 @@ export async function fetchSetupStatus(
     emailConfigured: "emailConfigured" in body && body.emailConfigured === true,
   };
 }
+
+/** GET /api/setup in the query cache: the account page reads whether email is set up. */
+export const setupStatusQuery = () =>
+  queryOptions({
+    queryKey: ["setup-status"],
+    queryFn: ({ signal }) => fetchSetupStatus(signal),
+    staleTime: 60_000,
+  });
 
 export interface OwnerDetails {
   token: string;

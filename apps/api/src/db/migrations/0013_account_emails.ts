@@ -12,7 +12,9 @@ import { type Kysely, sql } from "kysely";
  * - account_emails: the worker's queue of account emails (password reset,
  *   password changed, invitation, reset link, email changed), apart from
  *   alert deliveries. A row is deleted once its email is sent or given up,
- *   so a link in it is kept no longer than the send takes.
+ *   and any row a day old; a link in it is sealed with a key from
+ *   AUTH_SECRET (notifications/link-sealer.ts). One reset request waits
+ *   per address at most.
  */
 export async function up(db: Kysely<unknown>): Promise<void> {
   await sql`
@@ -43,6 +45,13 @@ export async function up(db: Kysely<unknown>): Promise<void> {
     )
   `.execute(db);
   await sql`create index account_emails_due on account_emails (next_attempt_at)`.execute(db);
+  // The daily clean-up's delete.
+  await sql`create index account_emails_created_at on account_emails (created_at)`.execute(db);
+  // One reset request waits per address at most: more add nothing (on conflict do nothing).
+  await sql`
+    create unique index account_emails_one_reset_request on account_emails (to_address)
+    where kind = 'password_reset'
+  `.execute(db);
 }
 
 export async function down(db: Kysely<unknown>): Promise<void> {

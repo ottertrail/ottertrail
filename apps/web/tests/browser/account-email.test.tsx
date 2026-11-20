@@ -216,3 +216,28 @@ describe("the test email", () => {
       .not.toBeInTheDocument();
   });
 });
+
+describe("the Account page's email change", () => {
+  test("with email set up, says the old address gets a notice", async () => {
+    installFakeApi({ emailConfigured: true });
+    renderApp("/account");
+    await expect
+      .element(
+        page.getByText(
+          "Ottertrail sends a notice of the change to your old address. Check the new address: you'll sign in with it from now on.",
+        ),
+      )
+      .toBeVisible();
+    await expect
+      .element(page.getByText("Ottertrail doesn't send a confirmation email", { exact: false }))
+      .not.toBeInTheDocument();
+  });
+
+  test("without email, says no confirmation is sent", async () => {
+    installFakeApi({ emailConfigured: false });
+    renderApp("/account");
+    await expect
+      .element(page.getByText("Ottertrail doesn't send a confirmation email", { exact: false }))
+      .toBeVisible();
+  });
+});

@@ -495,8 +495,8 @@ export interface AccountEmailsTable {
   id: ColumnType<string, string | undefined, never>;
   kind: ColumnType<AccountEmailKind, AccountEmailKind, never>;
   to_address: ColumnType<string, string, never>;
-  /** What the message names: links, names, addresses (account-emails.ts, AccountEmailParams). */
-  params: ColumnType<unknown, string | undefined, never>;
+  /** What the message names: names, addresses, and any link sealed (account-emails.ts). */
+  params: ColumnType<unknown, string | undefined, string>;
   attempts: ColumnType<number, number | undefined, number>;
   next_attempt_at: ColumnType<Date, Date | undefined, Date>;
   created_at: ColumnType<Date, Date | undefined, never>;

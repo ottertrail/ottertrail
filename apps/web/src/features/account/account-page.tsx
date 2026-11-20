@@ -35,6 +35,7 @@ import {
   updateName,
 } from "@/lib/account-api";
 import { ApiError } from "@/lib/api";
+import { setupStatusQuery } from "@/lib/setup-api";
 
 import { MIN_PASSWORD_LENGTH } from "../auth/link-token";
 import { SectionFailed, SectionSkeleton } from "../settings/section-states";
@@ -130,6 +131,8 @@ function EmailForm({ email, onDirty }: { email: string; onDirty: (dirty: boolean
       await changed();
     },
   });
+  // With email set up, the old address gets a notice of the change.
+  const emailConfigured = useQuery(setupStatusQuery()).data?.emailConfigured === true;
   const field = emailErrorField(save.error);
   const fieldError = (name: "email" | "password") =>
     field === name && save.error !== null ? (
@@ -142,8 +145,9 @@ function EmailForm({ email, onDirty }: { email: string; onDirty: (dirty: boolean
         <>
           <p>You sign in with this address. A new address works at once.</p>
           <p className="mt-1">
-            Ottertrail doesn't send a confirmation email, because most self-hosted servers have no
-            mail set up. Check the new address: you'll sign in with it from now on.
+            {emailConfigured
+              ? "Ottertrail sends a notice of the change to your old address. Check the new address: you'll sign in with it from now on."
+              : "Ottertrail doesn't send a confirmation email, because most self-hosted servers have no mail set up. Check the new address: you'll sign in with it from now on."}
           </p>
         </>
       }

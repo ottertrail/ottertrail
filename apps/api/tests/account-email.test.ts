@@ -1,5 +1,6 @@
 import { tmpdir } from "node:os";
 
+import { sql } from "kysely";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "vite-plus/test";
 
 import { PRESETS } from "../src/access/areas.ts";
@@ -10,11 +11,19 @@ import { createDatabase } from "../src/db/database.ts";
 import {
   AccountEmailSender,
   accountEmailMessage,
+  enqueueAccountEmail,
   takeDueAccountEmails,
 } from "../src/notifications/account-emails.ts";
 import { MAX_ATTEMPTS } from "../src/notifications/deliveries.ts";
 import { type Mailer, smtpMailer } from "../src/notifications/email.ts";
-import { OWNER, PUBLIC_URL, signedInDashboard, signedInUser } from "./helpers/dashboard.ts";
+import { LinkSealer, sealBinding } from "../src/notifications/link-sealer.ts";
+import {
+  OWNER,
+  PUBLIC_URL,
+  signedInDashboard,
+  signedInUser,
+  TEST_AUTH_SECRET,
+} from "./helpers/dashboard.ts";
 import { decodedBody, header, type SmtpSink, startSmtpSink } from "./helpers/smtp-sink.ts";
 
 type Dashboard = Awaited<ReturnType<typeof signedInDashboard>>;
@@ -45,6 +54,8 @@ beforeEach(() => {
   sink.messages.length = 0;
   sink.reject.count = 0;
 });
+
+const sealer = new LinkSealer(TEST_AUTH_SECRET);
 
 const sinkMailer = (): Mailer =>
   smtpMailer({ smtpUrl: `smtp://127.0.0.1:${sink.port}`, from: "Ottertrail <ops@example.com>" });
@@ -89,6 +100,7 @@ async function runWorker(dashboard: Dashboard, { now }: { now?: () => Date } = {
   const sender = new AccountEmailSender({
     db: dashboard.db,
     mailer: sinkMailer(),
+    sealer,
     publicUrl: PUBLIC_URL,
     ...(now === undefined ? {} : { now }),
   });
@@ -191,6 +203,7 @@ describe("with SMTP set up", () => {
         `You requested a password reset for ${OWNER.instanceName} on Ottertrail.`,
       );
       expect(text).toContain("This link works once and expires in 1 hour.");
+      expect(text).toContain("A newer request replaces this link.");
       const link = linkIn(message.raw, "/reset-password");
       expect(link.startsWith(`${PUBLIC_URL}/reset-password#token=`)).toBe(true);
       // An HTML version too.
@@ -328,7 +341,17 @@ describe("with SMTP set up", () => {
       // The first email's link no longer works: only the new one is queued.
       const rows = await queued(dashboard);
       expect(rows).toHaveLength(1);
-      expect(rows[0]?.params).toMatchObject({ link: body.url });
+      // The link is sealed: the row holds no working token.
+      expect(JSON.stringify(rows[0]?.params)).not.toContain(tokenOf(body.url));
+      const sealed = (rows[0]?.params as { sealedLink?: string } | undefined)?.sealedLink ?? "";
+      expect(sealer.open(sealed, sealBinding("invitation", "renew@example.com"))).toBe(body.url);
+      expect(sealer.open(sealed, sealBinding("invitation", "other@example.com"))).toBeNull();
+      expect(
+        new LinkSealer("another-secret").open(
+          sealed,
+          sealBinding("invitation", "renew@example.com"),
+        ),
+      ).toBeNull();
 
       const revoked = await send(dashboard, "DELETE", `/api/invitations/${invitation.id}`, {
         cookie: dashboard.cookie,
@@ -356,6 +379,12 @@ describe("with SMTP set up", () => {
       const body = emailed.json();
       expect(body.emailed).toBe(true);
       expect(Date.parse(body.expiresAt) - Date.now()).toBeGreaterThan(23 * 60 * 60 * 1000);
+      // Queued with the link sealed: a dump of the table holds no working token.
+      const dump = await sql<{ params: string }>`
+        select params::text as params from account_emails
+      `.execute(dashboard.db);
+      expect(dump.rows).toHaveLength(1);
+      expect(dump.rows[0]?.params).not.toContain(tokenOf(body.url));
       await runWorker(dashboard);
       const [message] = sink.messages;
       expect(message?.to).toEqual([email]);
@@ -401,6 +430,7 @@ describe("with SMTP set up", () => {
       const sender = new AccountEmailSender({
         db: dashboard.db,
         mailer: sinkMailer(),
+        sealer,
         publicUrl: PUBLIC_URL,
       });
       const [first] = await takeDueAccountEmails(dashboard.db, { limit: 10 });
@@ -413,19 +443,23 @@ describe("with SMTP set up", () => {
       expect(await queued(dashboard)).toEqual([]);
     });
 
-    test("without a mailer, a row is given up and deleted, and nothing is sent", async () => {
+    test("without a mailer, takes nothing and keeps the rows for a worker with SMTP", async () => {
       const { email } = await member();
       await request(dashboard, email);
       const sender = new AccountEmailSender({
         db: dashboard.db,
         mailer: null,
+        sealer,
         publicUrl: PUBLIC_URL,
       });
-      const [row] = await takeDueAccountEmails(dashboard.db, { limit: 10 });
-      if (row === undefined) throw new Error("Nothing queued");
-      expect(await sender.deliver(row)).toBe("given_up");
-      expect(await queued(dashboard)).toEqual([]);
+      expect(await sender.tick()).toBe(0);
+      expect(await sender.waiting()).toBe(1);
+      expect(await queued(dashboard)).toEqual([
+        { kind: "password_reset", to_address: email, params: {}, attempts: 0 },
+      ]);
       expect(sink.messages).toEqual([]);
+      // A worker with SMTP sends it.
+      expect(await runWorker(dashboard)).toEqual(["sent"]);
     });
   });
 
@@ -680,7 +714,7 @@ describe("an account email's message", () => {
     const app = buildApp({
       db,
       dashboard: { auth, clickhouse, publicUrl: PUBLIC_URL, trustedOrigins: [PUBLIC_URL] },
-      notifications: { emailConfigured: true },
+      notifications: { emailConfigured: true, linkSecret: TEST_AUTH_SECRET },
       dashboardPath: tmpdir(),
     });
     try {
@@ -704,6 +738,326 @@ describe("an account email's message", () => {
       await app.close();
       await db.destroy();
       await clickhouse.close();
+    }
+  });
+});
+
+/* The security review's findings (20 November 2026): each test fails without its fix. */
+describe("the review's fixes", () => {
+  let dashboard: Dashboard;
+  let counter = 0;
+  const WIDE = { capacity: 100_000, refillPerSecond: 100_000 };
+
+  beforeAll(async () => {
+    dashboard = await signedInDashboard({
+      notifications: { emailConfigured: true, mailer: sinkMailer() },
+      resetRequestLimits: { ip: WIDE, email: WIDE, instance: WIDE },
+      invitationEmailLimit: { capacity: 2, refillPerSecond: 2 / 3600 },
+    });
+  });
+
+  afterAll(async () => {
+    await dashboard?.close();
+  });
+
+  afterEach(async () => {
+    await dashboard.db.deleteFrom("account_emails").execute();
+  });
+
+  async function member() {
+    counter += 1;
+    const email = `fix-${counter}@example.com`;
+    const user = await signedInUser(dashboard, {
+      name: `Fix ${counter}`,
+      email,
+      password: PASSWORD,
+      grants: { projects: "all", areas: PRESETS.viewer },
+    });
+    return { ...user, email };
+  }
+
+  test("a flood of reset requests cannot hold back an invitation email", async () => {
+    for (let i = 0; i < 40; i += 1) {
+      expect(
+        (await request(dashboard, `junk-${i}@example.com`, `2001:db8:${i}::1`)).statusCode,
+      ).toBe(202);
+    }
+    // Queued after the flood, as an invitation made now would be.
+    await enqueueAccountEmail(
+      dashboard.db,
+      {
+        kind: "invitation",
+        to: "flood-invite@example.com",
+        params: {
+          link: `${PUBLIC_URL}/invite#token=x`,
+          inviter: OWNER.name,
+          invitedEmail: "flood-invite@example.com",
+        },
+      },
+      sealer,
+    );
+    // The worker takes 5 at a time: the invitation is in the first take.
+    const taken = await takeDueAccountEmails(dashboard.db, { limit: 5 });
+    expect(taken.map((row) => row.kind)).toContain("invitation");
+  });
+
+  test("one reset request waits per address, whatever its case and spaces", async () => {
+    for (const email of ["wait@example.com", " Wait@Example.com ", "WAIT@EXAMPLE.COM"]) {
+      expect((await request(dashboard, email)).statusCode).toBe(202);
+    }
+    expect(await queued(dashboard)).toEqual([
+      { kind: "password_reset", to_address: "wait@example.com", params: {}, attempts: 0 },
+    ]);
+  });
+
+  test("the clean-up's created_at and the one-request-per-address rule have their indexes", async () => {
+    const { rows } = await sql<{ indexname: string; indexdef: string }>`
+      select indexname, indexdef from pg_indexes where tablename = 'account_emails'
+    `.execute(dashboard.db);
+    const byName = new Map(rows.map((row) => [row.indexname, row.indexdef]));
+    expect(byName.get("account_emails_created_at")).toContain("(created_at)");
+    expect(byName.get("account_emails_one_reset_request")).toMatch(
+      /UNIQUE INDEX .*\(to_address\) WHERE \(kind = 'password_reset'::text\)/u,
+    );
+  });
+
+  test("two workers taking at once never take one email twice", async () => {
+    for (let i = 0; i < 8; i += 1) await request(dashboard, `twice-${i}@example.com`);
+    const [a, b] = await Promise.all([
+      takeDueAccountEmails(dashboard.db, { limit: 5 }),
+      takeDueAccountEmails(dashboard.db, { limit: 5 }),
+    ]);
+    const ids = [...(a ?? []), ...(b ?? [])].map((row) => row.id);
+    expect(ids).toHaveLength(8);
+    expect(new Set(ids).size).toBe(8);
+  });
+
+  test("two uses of one token at once: one sets the password", async () => {
+    const { email } = await member();
+    await request(dashboard, email);
+    await runWorker(dashboard);
+    const token = tokenOf(linkIn(sink.messages.at(-1)?.raw ?? "", "/reset-password"));
+    const answers = await Promise.all([
+      useReset(dashboard, token, "first long new password"),
+      useReset(dashboard, token, "second long new password"),
+    ]);
+    expect(answers.map((answer) => answer.statusCode).toSorted((a, b) => a - b)).toEqual([
+      200, 404,
+    ]);
+  });
+
+  test("a retry of a reset request sends the link the first attempt made", async () => {
+    const { email } = await member();
+    await request(dashboard, email);
+    // The server takes the message, but the answer never arrives: a timeout.
+    const real = sinkMailer();
+    let calls = 0;
+    const flaky: Mailer = {
+      send: async (message, signal) => {
+        calls += 1;
+        await real.send(message, signal);
+        if (calls === 1) throw Object.assign(new Error("timed out"), { code: "ETIMEDOUT" });
+        return { accepted: 1 };
+      },
+      close: () => real.close(),
+    };
+    const sender = new AccountEmailSender({
+      db: dashboard.db,
+      mailer: flaky,
+      sealer,
+      publicUrl: PUBLIC_URL,
+    });
+    const [row] = await takeDueAccountEmails(dashboard.db, { limit: 5 });
+    if (row === undefined) throw new Error("Nothing queued");
+    expect(await sender.deliver(row)).toBe("retrying");
+    // The row holds the link sealed, never in clear.
+    const [stored] = await queued(dashboard);
+    const first = linkIn(sink.messages.at(-1)?.raw ?? "", "/reset-password");
+    expect(JSON.stringify(stored?.params)).not.toContain(tokenOf(first));
+    const [again] = await takeDueAccountEmails(dashboard.db, {
+      limit: 5,
+      now: new Date(Date.now() + 60_000),
+    });
+    if (again === undefined) throw new Error("Not due again");
+    expect(await sender.deliver(again)).toBe("sent");
+    const second = linkIn(sink.messages.at(-1)?.raw ?? "", "/reset-password");
+    expect(second).toBe(first);
+    // The email that arrived first still works.
+    expect((await useReset(dashboard, tokenOf(first))).statusCode).toBe(200);
+  });
+
+  test("changing the email voids links emailed to the old address", async () => {
+    const { email, userId, cookie } = await member();
+    await request(dashboard, email);
+    await runWorker(dashboard);
+    const sent = tokenOf(linkIn(sink.messages.at(-1)?.raw ?? "", "/reset-password"));
+    // A reset link emailed by the owner, and a new request, both still queued.
+    await send(dashboard, "POST", `/api/members/${userId}/reset-link`, {
+      cookie: dashboard.cookie,
+      payload: { email: true },
+    });
+    await request(dashboard, email);
+    const changed = await send(dashboard, "POST", "/api/account/email", {
+      cookie,
+      payload: { email: `moved-${counter}@example.com`, password: PASSWORD },
+    });
+    expect(changed.statusCode).toBe(200);
+    const preview = await send(dashboard, "POST", "/api/reset-password/preview", {
+      payload: { token: sent },
+    });
+    expect(preview.statusCode).toBe(404);
+    expect((await queued(dashboard)).map((row) => [row.kind, row.to_address])).toEqual([
+      ["email_changed", email],
+    ]);
+  });
+
+  test("making a reset link again drops the queued email of the earlier one", async () => {
+    const { userId } = await member();
+    await send(dashboard, "POST", `/api/members/${userId}/reset-link`, {
+      cookie: dashboard.cookie,
+      payload: { email: true },
+    });
+    expect(await queued(dashboard)).toHaveLength(1);
+    await send(dashboard, "POST", `/api/members/${userId}/reset-link`, {
+      cookie: dashboard.cookie,
+      payload: { email: false },
+    });
+    expect(await queued(dashboard)).toEqual([]);
+  });
+
+  test("an owner or admin emails at most so many invitations an hour; a refusal spends none", async () => {
+    const invite = (email: string) =>
+      send(dashboard, "POST", "/api/invitations", {
+        cookie: dashboard.cookie,
+        payload: { email, role: "admin" },
+      });
+    // An address with an account is refused, and spends nothing.
+    expect((await invite(OWNER.email)).statusCode).toBe(409);
+    expect((await invite("cap-1@example.com")).statusCode).toBe(201);
+    expect((await invite("cap-2@example.com")).statusCode).toBe(201);
+    const third = await invite("cap-3@example.com");
+    expect(third.statusCode).toBe(429);
+    expect(third.json().message).toMatch(
+      /^You've emailed 2 invitations in the last hour, which is the limit, so this one wasn't made or sent\. Try again in about \d+ minutes\.$/u,
+    );
+    expect(
+      await dashboard.db
+        .selectFrom("dashboard_invitations")
+        .select("email")
+        .where("email", "=", "cap-3@example.com")
+        .execute(),
+    ).toEqual([]);
+  });
+});
+
+describe("the review's limits on Forgot password", () => {
+  test("the instance's limit answers as the others do, for any client and address", async () => {
+    const dashboard = await signedInDashboard({
+      notifications: { emailConfigured: true, mailer: sinkMailer() },
+      resetRequestLimits: {
+        ip: { capacity: 1000, refillPerSecond: 1000 },
+        email: { capacity: 1000, refillPerSecond: 1000 },
+        instance: { capacity: 3, refillPerSecond: 1 / 3600 },
+      },
+    });
+    try {
+      const answers = [];
+      for (let i = 0; i < 4; i += 1) {
+        answers.push(await request(dashboard, `wide-${i}@example.com`, `2001:db8:${i + 100}::1`));
+      }
+      expect(answers.map((answer) => answer.statusCode)).toEqual([202, 202, 202, 429]);
+      expect(answers[3]?.json()).toEqual(LIMITED);
+      expect(await queued(dashboard)).toHaveLength(3);
+    } finally {
+      await dashboard.close();
+    }
+  });
+
+  test("past the instance's limit, a flood of addresses cannot reset a victim's count", async () => {
+    const dashboard = await signedInDashboard({
+      notifications: { emailConfigured: true, mailer: sinkMailer() },
+      resetRequestLimits: {
+        ip: { capacity: 100_000, refillPerSecond: 100_000 },
+        email: { capacity: 3, refillPerSecond: 3 / 3600 },
+        instance: { capacity: 4, refillPerSecond: 1 / 3600 },
+      },
+    });
+    try {
+      for (let i = 0; i < 3; i += 1) await request(dashboard, "victim@example.com");
+      // 10,001 other addresses, refused by the instance's limit before the
+      // per-address one counts them, so they cannot push the victim's out.
+      for (let i = 0; i < 10_001; i += 1) await request(dashboard, `flood-${i}@example.com`);
+      expect((await request(dashboard, "victim@example.com")).statusCode).toBe(429);
+    } finally {
+      await dashboard.close();
+    }
+  }, 120_000);
+
+  test("a request the instance's limit refuses does not count against its address", async () => {
+    const dashboard = await signedInDashboard({
+      notifications: { emailConfigured: true, mailer: sinkMailer() },
+      resetRequestLimits: {
+        ip: { capacity: 1000, refillPerSecond: 1000 },
+        email: { capacity: 2, refillPerSecond: 2 / 3600 },
+        instance: { capacity: 1, refillPerSecond: 2 },
+      },
+    });
+    try {
+      expect((await request(dashboard, "order@example.com")).statusCode).toBe(202);
+      // At once: the instance's bucket is empty, so this one is refused there.
+      expect((await request(dashboard, "order@example.com")).statusCode).toBe(429);
+      await new Promise((resolve) => setTimeout(resolve, 700));
+      // The address still has its second request.
+      await dashboard.db.deleteFrom("account_emails").execute();
+      expect((await request(dashboard, "order@example.com")).statusCode).toBe(202);
+    } finally {
+      await dashboard.close();
+    }
+  });
+
+  test("case and spaces count against one address's limit", async () => {
+    const dashboard = await signedInDashboard({
+      notifications: { emailConfigured: true, mailer: sinkMailer() },
+      resetRequestLimits: {
+        ip: { capacity: 1000, refillPerSecond: 1000 },
+        email: { capacity: 3, refillPerSecond: 3 / 3600 },
+      },
+    });
+    try {
+      const answers = [];
+      for (const email of [
+        "Case@Example.com",
+        " case@example.com",
+        "CASE@EXAMPLE.COM ",
+        "case@example.com",
+      ]) {
+        answers.push(await request(dashboard, email));
+      }
+      expect(answers.map((answer) => answer.statusCode)).toEqual([202, 202, 202, 429]);
+    } finally {
+      await dashboard.close();
+    }
+  });
+
+  test("the per-client limit runs before the body is read", async () => {
+    const dashboard = await signedInDashboard({
+      notifications: { emailConfigured: true, mailer: sinkMailer() },
+      resetRequestLimits: { ip: { capacity: 1, refillPerSecond: 1 / 3600 } },
+    });
+    try {
+      expect((await request(dashboard, "first@example.com", "198.51.100.200")).statusCode).toBe(
+        202,
+      );
+      const malformed = await dashboard.app.inject({
+        method: "POST",
+        url: "/api/reset-password/request",
+        remoteAddress: "198.51.100.200",
+        headers: { "content-type": "application/json" },
+        payload: "not json",
+      });
+      expect(malformed.statusCode).toBe(429);
+    } finally {
+      await dashboard.close();
     }
   });
 });

@@ -61,6 +61,7 @@ import {
 import { AccountEmailSender } from "./notifications/account-emails.ts";
 import { pruneDeliveries } from "./notifications/deliveries.ts";
 import { smtpMailer } from "./notifications/email.ts";
+import { LinkSealer } from "./notifications/link-sealer.ts";
 import { DELIVERY_TICK_MS, DeliverySender, PRUNE_INTERVAL_MS } from "./notifications/sender.ts";
 import { addressPolicy } from "./outbound/addresses.ts";
 import { linkReplays } from "./replays/link.ts";
@@ -234,7 +235,29 @@ const mailer = config.email === null ? null : smtpMailer(config.email);
 const deliveries = new DeliverySender({ db, mailer, policy, log });
 
 /** Account email, apart from alert deliveries; links start with PUBLIC_URL. */
-const accountEmails = new AccountEmailSender({ db, mailer, publicUrl: config.publicUrl, log });
+// Queued links are sealed with a key from AUTH_SECRET, which the API uses too.
+const accountEmails = new AccountEmailSender({
+  db,
+  mailer,
+  sealer: new LinkSealer(config.authSecret),
+  publicUrl: config.publicUrl,
+  log,
+});
+if (mailer === null) {
+  // The API may have SMTP while this worker has not: say so once, and keep the rows.
+  void accountEmails.waiting().then(
+    (waiting) => {
+      if (waiting > 0) {
+        log(
+          "warn",
+          "account emails are waiting, but SMTP_URL is not set on the worker: they stay queued for up to a day. Set SMTP_URL and EMAIL_FROM for the worker as for the API, then restart it to send them",
+          { waiting },
+        );
+      }
+    },
+    () => undefined,
+  );
+}
 
 /** Whether the last look for due account emails failed: an outage is logged once. */
 let accountEmailsFailing = false;
