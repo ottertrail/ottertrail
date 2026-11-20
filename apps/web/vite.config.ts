@@ -62,6 +62,12 @@ export default defineConfig({
       "@": fileURLToPath(new URL("./src", import.meta.url)),
     },
   },
+  build: {
+    // The entry holds React DOM and the shell, about 510 kB. What a first
+    // visit loads is held by INITIAL_JS_BUDGET, the check that counts, so
+    // Vite warns only for a chunk well past the entry's size.
+    chunkSizeWarningLimit: 600,
+  },
   server: {
     // The API serves these on the instance's own origin; the dev server forwards
     // them. Not under Vitest (noApiInTests above).
