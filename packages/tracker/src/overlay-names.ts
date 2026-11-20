@@ -18,6 +18,8 @@ export interface OverlayConfig {
   /**
    * o.js says, once, whether the link was a real one and the overlay is
    * shown (true), or not (false): the tracker then records the page load.
+   * Returns whether the answer came in time: false when the tracker had
+   * stopped waiting (and recorded the page load) already.
    */
-  settled: (shown: boolean) => void;
+  settled: (shown: boolean) => boolean;
 }

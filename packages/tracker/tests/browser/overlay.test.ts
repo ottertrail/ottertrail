@@ -126,9 +126,9 @@ function heatmap(overrides: Record<string, unknown> = {}) {
 }
 
 /** Opens the overlay with these answers; its shadow root, caught as it is attached. */
-function open(api = fakeApi(), environment?: string) {
+function open(api = fakeApi(), environment?: string, inTime = true) {
   const states: OverlayState[] = [];
-  const settled = vi.fn<(shown: boolean) => void>();
+  const settled = vi.fn<(shown: boolean) => boolean>(() => inTime);
   // Called through: the spy only keeps what the overlay asked for and got.
   const spy = vi.spyOn(Element.prototype, "attachShadow");
   const overlay = startOverlay(
@@ -416,30 +416,23 @@ describe("the overlay", () => {
     expect(view.api.calls).toHaveLength(1);
   });
 
-  test("the server failing (503, 429) shows the panel with Retry, which sends the link again", async () => {
-    let answers = [() => json(503, { error: "storage_unavailable" })];
-    const view = open(
-      fakeApi({
-        exchange: () =>
-          (answers.shift() ?? (() => json(200, { token: SESSION, projectId: PROJECT })))(),
-      }),
-    );
-    await view.settled("failed");
-    expect(view.told.mock.calls).toEqual([[false]]);
-    answers = [];
-    view.button("Retry")?.click();
-    await view.settled("ready");
-    expect(view.api.calls.filter((call) => call.url.endsWith("/session"))).toHaveLength(2);
-  });
+  test.each([429, 503])(
+    "a first exchange answered %i shows nothing: the owner opens the link again",
+    async (status) => {
+      const view = open(fakeApi({ exchange: () => json(status, { error: "busy" }) }));
+      await vi.waitFor(() => expect(view.told).toHaveBeenCalledWith(false));
+      expect(document.querySelector("ottertrail-heatmap")).toBeNull();
+      expect(view.states).toEqual([]);
+    },
+  );
 
-  test("a choice made during a slow exchange shares it: one request, and a session that stands", async () => {
+  test("reads asked during a slow exchange share it: one request, and the last choice shows", async () => {
     let release: (() => void) | undefined;
     let exchanges = 0;
     const view = open(
       fakeApi({
         exchange: async () => {
           exchanges += 1;
-          if (exchanges === 1) return json(503, {});
           await new Promise<void>((done) => {
             release = done;
           });
@@ -447,26 +440,55 @@ describe("the overlay", () => {
         },
       }),
     );
-    await view.settled("failed");
-    view.button("Retry")?.click();
     await vi.waitFor(() => expect(release).toBeDefined());
-    // Mid-exchange, the reader picks another device and period.
-    view.button("Mobile")?.click();
-    const select = view.root().querySelector("select") as HTMLSelectElement;
-    select.value = "7d";
-    select.dispatchEvent(new Event("change"));
+    void view.overlay.reload();
+    void view.overlay.reload();
     release?.();
     await view.settled("ready");
-    expect(exchanges).toBe(2);
-    const reads = view.api.calls.filter((call) => call.url.includes("/heatmap?"));
-    // The last choice is what shows, and no state from an older request won.
-    const last = new URL(reads.at(-1)?.url ?? "");
-    expect([last.searchParams.get("device"), last.searchParams.get("period")]).toEqual([
-      "mobile",
-      "7d",
-    ]);
+    expect(exchanges).toBe(1);
     await new Promise((done) => setTimeout(done, 50));
     expect(view.overlay.state()).toBe("ready");
+  });
+
+  test("a real link answered after the tracker stopped waiting: the visit was counted, so no note says otherwise", async () => {
+    const late = open(fakeApi(), undefined, false);
+    await late.settled("ready");
+    expect(late.root().querySelector<HTMLElement>(".note")?.hidden).toBe(true);
+    late.overlay.close();
+    const onTime = open();
+    await onTime.settled("ready");
+    expect(onTime.root().querySelector<HTMLElement>(".note")?.hidden).toBe(false);
+  });
+
+  test("an element shown by a class change is drawn without a resize", async () => {
+    document.body.innerHTML = `<style>.closed{display:none}</style><section><a id="tab" class="closed" href="#" style="position:absolute;left:300px;top:200px;width:120px;height:60px">Tab</a></section>`;
+    const tab = keyOf(element("#tab"));
+    const view = open(
+      fakeApi({
+        read: () =>
+          json(
+            200,
+            heatmap({
+              elements: [
+                { label: null, element: tab.element, clicks: 4, rageClicks: 0, cells: [[3, 3, 4]] },
+              ],
+            }),
+          ),
+      }),
+    );
+    await view.settled("ready");
+    const canvas = view.root().querySelector("canvas") as HTMLCanvasElement;
+    const ratio = window.devicePixelRatio || 1;
+    const alpha = () =>
+      (canvas.getContext("2d") as CanvasRenderingContext2D).getImageData(
+        Math.round((300 + (3.5 / 8) * 120) * ratio),
+        Math.round((200 + (3.5 / 8) * 60) * ratio),
+        1,
+        1,
+      ).data[3] ?? 0;
+    expect(alpha()).toBe(0);
+    element("#tab").classList.remove("closed");
+    await vi.waitFor(() => expect(alpha()).toBeGreaterThan(100), { timeout: 2000 });
   });
 
   test("the expired and no-access messages say what to do", () => {
@@ -594,6 +616,8 @@ describe("opened from the dashboard, with the tracker", () => {
     expect(Reflect.get(overlayScript, OVERLAY_PROPERTY)).toMatchObject({ host: HOST, token: LINK });
 
     await run(overlayScript, "overlay.ts");
+    // Off the element at once: no other script of the page reads the token there.
+    expect(Reflect.get(overlayScript, OVERLAY_PROPERTY)).toBeUndefined();
     await vi.waitFor(() => expect(api.calls).toHaveLength(2));
     expect(document.querySelector("ottertrail-heatmap")).not.toBeNull();
     await page.leave();
@@ -629,6 +653,21 @@ describe("opened from the dashboard, with the tracker", () => {
 });
 
 describe("hostile keys", () => {
+  test("repeated work counts too: 200 cut keys of 22 div steps on 1,000 chains of 20 divs", () => {
+    const chains = Array.from({ length: 1000 }, () => "<div>".repeat(20) + "</div>".repeat(20));
+    document.body.innerHTML = `<div id="app">${chains.join("")}</div>`;
+    const keys = Array.from({ length: 200 }, (_, index) => ({
+      label: null,
+      element: `*>p:${index + 2}>${Array.from({ length: 22 }, () => "div").join(">")}`,
+    }));
+    for (let pass = 0; pass < 3; pass += 1) {
+      const started = performance.now();
+      const found = resolveKeys(document, keys);
+      expect(performance.now() - started).toBeLessThan(100);
+      expect(found.every((item) => item === null)).toBe(true);
+    }
+  });
+
   test("200 keys made to be slow, on a page of 6,000 elements, stay within a set budget", () => {
     // Wide and deep: 3,000 siblings of unknown tags, and a chain 3,000 deep.
     const wide = Array.from({ length: 3000 }, () => "<u-x></u-x>").join("");

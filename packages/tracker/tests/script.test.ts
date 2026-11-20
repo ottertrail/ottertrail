@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vite-plus/test";
 
-import { MAX_ENGAGED_MS } from "../src/engagement.ts";
+import { ENGAGEMENT, MAX_ENGAGED_MS } from "../src/engagement.ts";
 import { HEATMAP_PROPERTY, type HeatmapConfig } from "../src/heatmap-names.ts";
 import { type OverlayConfig, OVERLAY_PROPERTY } from "../src/overlay-names.ts";
 import { type Recorder, REPLAY_PROPERTY, type ReplayConfig } from "../src/replay-names.ts";
@@ -77,7 +77,18 @@ function fakePage(
         string | undefined
       >,
     },
-    createElement: (tagName: string) => ({ tagName }) as Record<string, unknown>,
+    createElement: (tagName: string) => {
+      const element: Record<string, unknown> = { tagName };
+      // A script's load failing: a test fires it with element.fail().
+      Object.defineProperties(element, {
+        addEventListener: {
+          value: (type: string, listener: () => void) => {
+            if (type === "error") Object.defineProperty(element, "fail", { value: listener });
+          },
+        },
+      });
+      return element;
+    },
     head: { append: (element: Record<string, unknown>) => added.push(element) },
     referrer,
     visibilityState: "visible" as "visible" | "hidden",
@@ -1431,19 +1442,27 @@ const configOf = (page: ReturnType<typeof fakePage>) =>
     OVERLAY_PROPERTY
   ] as OverlayConfig;
 
+/** Hides the page, which sends what is waiting, and lets beacons arrive. */
+async function leave(page: ReturnType<typeof fakePage>) {
+  page.hide();
+  await page.settle();
+}
+
 describe("the heatmap overlay", () => {
   const TOKEN = "Ab-_0123456789abcdefghijklmnopqrstuvwxyzABC";
+  const opened = (path = "/pricing?plan=team", options: Parameters<typeof fakePage>[2] = {}) =>
+    fakePage(`https://example.com${path}#ottertrail-heatmap=${TOKEN}`, "", options);
 
-  test("a link's fragment leaves the address, o.js is loaded with the nonce, and nothing is sent while it asks", async () => {
+  test("a real link: the fragment leaves, o.js loads with the nonce, and nothing at all is sent", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    const page = fakePage(`https://example.com/pricing?plan=team#ottertrail-heatmap=${TOKEN}`, "", {
+    const page = opened("/pricing?plan=team", {
       nonce: "abc123",
       attributes: { heatmaps: "on", replay: "errors", environment: "staging" },
     });
     await runScript();
     // The rest of the address stays.
     expect(page.window.location.href).toBe("https://example.com/pricing?plan=team");
-    // Only o.js: no v.js, r.js, or h.js.
+    // Only o.js while it asks: no v.js, r.js, or h.js.
     expect(page.added).toEqual([
       expect.objectContaining({
         src: "https://analytics.example.com/o.js",
@@ -1458,103 +1477,134 @@ describe("the heatmap overlay", () => {
       settled: expect.any(Function),
     });
     await vi.advanceTimersByTimeAsync(4000);
-    page.hide();
-    await page.settle();
+    await leave(page);
     expect(page.events).toEqual([]);
 
-    // The link was real and the overlay shows: nothing, ever, for this page load.
     page.show();
-    configOf(page).settled(true);
+    expect(configOf(page).settled(true)).toBe(true);
     page.window.ottertrail?.track("signup", { plan: "team" });
     page.window.ottertrail?.captureError(new Error("boom"));
-    page.window.ottertrail?.identify("42");
     page.window.ottertrail?.replay(true);
     page.fire("error", new FakeErrorEvent({ message: "boom", error: new Error("boom") }));
     page.window.location.href = "https://example.com/next";
     page.window.history.pushState();
     await vi.advanceTimersByTimeAsync(60_000);
     // A later answer changes nothing.
-    configOf(page).settled(false);
-    page.hide();
+    expect(configOf(page).settled(false)).toBe(false);
     page.fire("pagehide");
-    await page.settle();
+    await leave(page);
     expect(page.events).toEqual([]);
     expect(page.batches).toEqual([]);
     expect(page.added).toHaveLength(1);
     expect(warn).not.toHaveBeenCalled();
   });
 
-  test("a link that is not one (made up, used up) records the page load as usual", async () => {
-    const page = fakePage(`https://example.com/pricing#ottertrail-heatmap=${TOKEN}`, "", {
-      attributes: { vitals: "off", heatmaps: "on" },
+  test("not a link: the page load is recorded as for any visitor, with what happened while waiting", async () => {
+    const page = opened("/pricing", {
+      attributes: { vitals: "off", heatmaps: "on", userId: "user-42" },
     });
     await runScript();
-    configOf(page).settled(false);
-    // Recorded as usual from now on: h.js too.
+    // An error, and a router's redirect, while o.js asks.
+    page.fire("error", new FakeErrorEvent({ message: "early", error: new Error("early") }));
+    page.window.ottertrail?.track("signup");
+    page.window.location.href = "https://example.com/welcome";
+    page.window.history.pushState();
     expect(page.added.map((element) => element.src)).toEqual([
       "https://analytics.example.com/o.js",
-      "https://analytics.example.com/h.js",
     ]);
-    page.window.ottertrail?.track("signup");
-    page.hide();
-    await page.settle();
-    expect(page.events.map((event) => [event.name, event.url])).toEqual([
-      ["pageview", "https://example.com/pricing"],
-      ["signup", "https://example.com/pricing"],
+    expect(configOf(page).settled(false)).toBe(true);
+    // Scripts held back load now.
+    expect(page.added.map((element) => element.src)).toContain(
+      "https://analytics.example.com/h.js",
+    );
+    await leave(page);
+    expect(
+      page.events
+        .filter((event) => event.name !== ENGAGEMENT)
+        .map((event) => [event.name, event.url, event.userId]),
+    ).toEqual([
+      // The landing path, before the redirect.
+      ["pageview", "https://example.com/pricing", "user-42"],
+      ["error", "https://example.com/pricing", "user-42"],
+      ["signup", "https://example.com/pricing", "user-42"],
+      ["pageview", "https://example.com/welcome", "user-42"],
     ]);
   });
 
-  test("o.js not answering within 5 seconds (blocked, offline): the page load is recorded", async () => {
-    const page = fakePage(`https://example.com/#ottertrail-heatmap=${TOKEN}`, "", {
-      attributes: { vitals: "off" },
+  test("the page's stand-in: its queued consent is applied, and a kept reference works", async () => {
+    const page = opened("/", {
+      attributes: { vitals: "off", replay: "errors", replayConsent: "wait" },
     });
+    const early = standIn(page);
+    early.replay(true);
+    await runScript();
+    configOf(page).settled(false);
+    expect(page.added.map((element) => element.src)).toContain(
+      "https://analytics.example.com/r.js",
+    );
+    early.track("from-kept-reference");
+    await leave(page);
+    expect(page.events.map((event) => event.name)).toContain("from-kept-reference");
+  });
+
+  test("o.js failing to load settles at once; not answering within 5 seconds, after them", async () => {
+    const blocked = opened("/", { attributes: { vitals: "off" } });
+    await runScript();
+    (blocked.added[0] as { fail: () => void }).fail();
+    await leave(blocked);
+    expect(blocked.events.map((event) => event.name)).toEqual(["pageview"]);
+
+    const silent = opened("/", { attributes: { vitals: "off" } });
     await runScript();
     await vi.advanceTimersByTimeAsync(4999);
-    page.hide();
-    await page.settle();
-    expect(page.events).toEqual([]);
-    page.show();
+    await leave(silent);
+    expect(silent.events).toEqual([]);
+    silent.show();
     await vi.advanceTimersByTimeAsync(1);
-    page.hide();
-    await page.settle();
-    expect(page.events.map((event) => event.name)).toEqual(["pageview"]);
-    // A late answer starts nothing twice.
-    configOf(page).settled(false);
-    page.show();
-    page.hide();
-    await page.settle();
-    expect(page.events.filter((event) => event.name === "pageview")).toHaveLength(1);
+    await leave(silent);
+    expect(silent.events.map((event) => event.name)).toContain("pageview");
+    // A late answer: not in time, and nothing starts twice.
+    expect(configOf(silent).settled(true)).toBe(false);
+    silent.show();
+    await leave(silent);
+    // One pageview: a batch held back and also handed over on hiding goes with
+    // the same ID, which the API stores once (at-least-once delivery).
+    const ids = new Set(
+      silent.events.filter((event) => event.name === "pageview").map((event) => event.id),
+    );
+    expect(ids.size).toBe(1);
   });
 
-  test("a second copy of the tracker on the page does nothing either", async () => {
-    vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    const page = fakePage(`https://example.com/#ottertrail-heatmap=${TOKEN}`, "", {
-      attributes: { vitals: "off" },
-    });
+  test("a visitor who leaves while o.js asks is counted", async () => {
+    const page = opened("/", { attributes: { vitals: "off" } });
     await runScript();
-    expect(page.window.location.href).toBe("https://example.com/");
+    page.fire("pagehide");
+    await page.settle();
+    expect(page.events.map((event) => event.name)).toContain("pageview");
+  });
+
+  test("a second copy of the tracker on the page does nothing", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const page = opened("/", { attributes: { vitals: "off" } });
+    await runScript();
     configOf(page).settled(true);
     await runScript();
     await vi.advanceTimersByTimeAsync(10_000);
-    page.hide();
-    await page.settle();
+    await leave(page);
     expect(page.events).toEqual([]);
     expect(page.added).toHaveLength(1);
   });
 
   test("with an integrity attribute, o.js cannot load: the page load is recorded at once", async () => {
-    const page = fakePage(`https://example.com/#ottertrail-heatmap=${TOKEN}`, "", {
-      attributes: { vitals: "off" },
-    });
+    const page = opened("/", { attributes: { vitals: "off" } });
     Object.assign(page.document.currentScript, {
       hasAttribute: (name: string) => name === "integrity",
     });
     await runScript();
     expect(page.window.location.href).toBe("https://example.com/");
     expect(page.added).toEqual([]);
-    page.hide();
-    await page.settle();
-    expect(page.events.map((event) => event.name)).toEqual(["pageview"]);
+    await leave(page);
+    expect(page.events.map((event) => event.name)).toContain("pageview");
   });
 
   test("other fragments are the page's own: counted as usual, and kept", async () => {
@@ -1570,8 +1620,7 @@ describe("the heatmap overlay", () => {
       await runScript();
       expect(page.window.location.href).toBe(`https://example.com/${fragment}`);
       expect(page.added).toEqual([]);
-      page.hide();
-      await page.settle();
+      await leave(page);
       expect(page.events.map((event) => event.name)).toContain("pageview");
     }
   });

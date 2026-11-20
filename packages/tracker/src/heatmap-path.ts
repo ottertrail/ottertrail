@@ -54,18 +54,24 @@ function stepOf(element: Element): string {
   return `${TAGS.has(tag) ? tag : "x"}${place > 1 ? `:${Math.min(place, 9999)}` : ""}`;
 }
 
-/** describe(), with the step of each element from `step`. */
+/**
+ * describe(), with the step of each element from `step`; `more` is asked
+ * before each ancestor and stops the walk (null) when it says no.
+ */
 function keyWith(
   element: Element,
   step: (element: Element) => string,
-): { element: string; label?: string } {
+  more: () => boolean = () => true,
+): { element: string; label?: string } | null {
   const steps: string[] = [];
   let label: string | undefined;
   for (let node: Element | null = element; node !== null; node = node.parentElement) {
-    steps.unshift(step(node));
+    if (!more()) return null;
+    steps.push(step(node));
     label = nameOf(node);
     if (label !== undefined || node.tagName === "BODY") break;
   }
+  steps.reverse();
   let cut = steps.length > MAX_STEPS;
   let kept = steps.slice(-MAX_STEPS);
   while (kept.join(">").length > MAX_PATH_LENGTH - 2) {
@@ -82,10 +88,14 @@ function keyWith(
  * name. At most 24 steps, the nearest kept, "*>" first when cut.
  */
 export function describe(element: Element): { element: string; label?: string } {
-  return keyWith(element, stepOf);
+  return keyWith(element, stepOf) ?? { element: "" };
 }
 
-/** The most elements resolveKeys() looks at in one pass, for every key together. */
+/**
+ * The most work units resolveKeys() spends in one pass, for every key
+ * together: one for each element examined (a candidate, a child, an
+ * ancestor), each step looked up or compared, and each sibling counted.
+ */
 export const RESOLVE_BUDGET = 50_000;
 
 /** A key as the API names an element. */
@@ -112,6 +122,7 @@ export function resolveKeys(
   let left = budget;
   const steps = new Map<Element, string>();
   const step = (element: Element): string => {
+    left -= 1;
     const known = steps.get(element);
     if (known !== undefined) return known;
     // Every sibling's step in one walk over them.
@@ -139,10 +150,12 @@ export function resolveKeys(
     }
     return list;
   };
+  // Each ancestor costs one, and the walk stops when the budget is spent.
   const accepts = (element: Element, key: ElementKey) => {
-    const written = keyWith(element, step);
-    left -= MAX_STEPS;
-    return written.element === key.element && (written.label ?? null) === key.label;
+    const written = keyWith(element, step, () => (left -= 1) > 0);
+    return (
+      written !== null && written.element === key.element && (written.label ?? null) === key.label
+    );
   };
 
   const one = (key: ElementKey): Element | null => {
@@ -157,7 +170,8 @@ export function resolveKeys(
         if (step(candidate) !== last) continue;
         let node = candidate.parentElement;
         let index = parts.length - 2;
-        while (index >= 0 && node !== null && step(node) === parts[index]) {
+        while (index >= 0 && node !== null) {
+          if (left <= 0 || step(node) !== parts[index]) break;
           node = node.parentElement;
           index -= 1;
         }
@@ -170,7 +184,10 @@ export function resolveKeys(
         ? doc.body === null
           ? []
           : [doc.body]
-        : all(`[${NAME_ATTRIBUTE}]`).filter((element) => nameOf(element) === key.label);
+        : all(`[${NAME_ATTRIBUTE}]`).filter((element) => {
+            left -= 1;
+            return nameOf(element) === key.label;
+          });
     const walk = (node: Element, index: number): Element | null => {
       if (index === parts.length) return accepts(node, key) ? node : null;
       for (const child of node.children) {

@@ -327,12 +327,15 @@ describe("exchanging a link", () => {
     const expired = await exchange(link);
     expect(expired.statusCode).toBe(410);
     expect(expired.json()).toMatchObject({ error: "link_expired" });
-    const unknown = await exchange("A".repeat(43));
+    // An app started after the project: it read the instance's sites as it started
+    // (an app running already reads them again within a minute).
+    const fresh = appWith({});
+    const unknown = await exchange("A".repeat(43), { app: fresh });
     expect(unknown.statusCode).toBe(410);
     expect(unknown.json()).toMatchObject({ error: "link_unknown" });
     // o.js on a project's site can tell it apart, and shows nothing.
     expect(unknown.headers["access-control-allow-origin"]).toBe(SITE);
-    const elsewhere = await exchange("A".repeat(43), { origin: OTHER_SITE });
+    const elsewhere = await exchange("A".repeat(43), { origin: OTHER_SITE, app: fresh });
     expect(elsewhere.headers["access-control-allow-origin"]).toBeUndefined();
     // A session token is not a link.
     const session = await sessionFor(project.id);
@@ -848,5 +851,40 @@ describe("answers without data", () => {
     expect(limited.statusCode).toBe(429);
     expect(limited.json()).toMatchObject({ error: "rate_limited" });
     expect(Number(limited.headers["retry-after"])).toBeGreaterThan(0);
+  });
+});
+
+describe("the instance's sites, for answers without data", () => {
+  test("are read from what is kept: a 400 or a 429 makes no database call", async () => {
+    let queries = 0;
+    const counted = dashboard.db.withPlugin({
+      transformQuery: (args) => {
+        queries += 1;
+        return args.node;
+      },
+      transformResult: async (args) => args.result,
+    });
+    const app = buildApp({
+      db: counted,
+      dashboard: {
+        auth: dashboard.auth,
+        clickhouse: dashboard.reader.client,
+        publicUrl: PUBLIC_URL,
+        trustedOrigins: [PUBLIC_URL],
+      },
+      heatmaps: { overlayExchangeLimit: { capacity: 1, refillPerSecond: 0.001 } },
+    });
+    extraApps.push(app);
+    // The first read of the sites, as the app starts.
+    await app.ready();
+    queries = 0;
+    const malformed = await exchange("short", { app });
+    expect(malformed.statusCode).toBe(400);
+    expect(malformed.headers["access-control-allow-origin"]).toBe(SITE);
+    await exchange("short", { app });
+    const limited = await exchange("A".repeat(43), { app });
+    expect(limited.statusCode).toBe(429);
+    expect(limited.headers["access-control-allow-origin"]).toBe(SITE);
+    expect(queries).toBe(0);
   });
 });

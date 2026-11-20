@@ -22,6 +22,8 @@ const isConfig = (value: unknown): value is OverlayConfig =>
 try {
   const script = document.currentScript;
   const config: unknown = script === null ? undefined : Reflect.get(script, OVERLAY_PROPERTY);
+  // Off the element at once: the token and the tracker's callback are o.js's alone.
+  if (script !== null) Reflect.deleteProperty(script, OVERLAY_PROPERTY);
   if (isConfig(config)) {
     startOverlay(config, {
       window,

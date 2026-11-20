@@ -43,6 +43,8 @@ const MAX_LISTED = 50;
  * elements change (scrolling and resizing only redraw).
  */
 const RESOLVE_EVERY_MS = 1000;
+/** A redraw for attribute changes (class, style, hidden, open) at most this often. */
+const REDRAW_EVERY_MS = 200;
 
 /** The overlay's states (docs/web-analytics.md, "The overlay on your site"). */
 export type OverlayState =
@@ -197,14 +199,20 @@ export function startOverlay(config: OverlayConfig, options: OverlayOptions) {
   const pagePath = win.location.pathname;
   let link: string | null = config.token;
   let told = false;
-  /** Tells the tracker, once, whether the overlay is shown. */
-  const settled = (shown: boolean) => {
-    if (told) return;
+  /**
+   * Tells the tracker, once, whether the overlay is shown; returns whether
+   * that was in time (false: the tracker stopped waiting and counted the visit).
+   */
+  const settled = (shown: boolean): boolean => {
+    if (told) return true;
     told = true;
     try {
-      config.settled(shown);
+      // An older tracker, cached, answers nothing: in time.
+      const answer: unknown = config.settled(shown);
+      return answer !== false;
     } catch {
       // The tracker's own business.
+      return true;
     }
   };
   let session: { token: string; projectId: string } | null = null;
@@ -390,7 +398,12 @@ export function startOverlay(config: OverlayConfig, options: OverlayOptions) {
       // A session from another request meanwhile stands: a failure is not news.
       if (session !== null) return { ok: true };
       const { status: code, error } = answer;
-      if (code === 429 || code >= 500) return { ok: false, state: "failed", show: true };
+      // Busy or failing: nothing says the link was ever made, so nothing
+      // shows (the owner opens it again from the dashboard), and the link
+      // may be sent again by a later read.
+      if (code === 0 || code === 429 || code >= 500) {
+        return { ok: false, state: "failed", show: false };
+      }
       // Anything else was the link's one use, or never will be.
       link = null;
       const body = answer.body;
@@ -427,6 +440,11 @@ export function startOverlay(config: OverlayConfig, options: OverlayOptions) {
     setState("loading");
     const exchanged = await exchange();
     if (!current()) return;
+    if (!exchanged.ok && !exchanged.show) {
+      // As at the start: nothing to say about a link not known to be one.
+      stop();
+      return;
+    }
     if (!exchanged.ok || session === null) {
       setState(exchanged.ok ? "failed" : exchanged.state);
       return;
@@ -639,6 +657,17 @@ export function startOverlay(config: OverlayConfig, options: OverlayOptions) {
     typeof MutationObserver === "function" ? new MutationObserver(scheduleResolve) : null;
   const resized =
     typeof ResizeObserver === "function" ? new ResizeObserver(() => scheduleDraw()) : null;
+  // Tabs, menus, dialogs, details: shown or moved by these attributes,
+  // without elements coming or going or the body resizing. A redraw only,
+  // at most every REDRAW_EVERY_MS.
+  let redrawTimer: ReturnType<typeof setTimeout> | undefined;
+  const redrawSoon = () => {
+    redrawTimer ??= setTimeout(() => {
+      redrawTimer = undefined;
+      scheduleDraw();
+    }, REDRAW_EVERY_MS);
+  };
+  const moved = typeof MutationObserver === "function" ? new MutationObserver(redrawSoon) : null;
   const onKey = (event: KeyboardEvent) => {
     if (event.key === "Escape") stop();
   };
@@ -650,7 +679,9 @@ export function startOverlay(config: OverlayConfig, options: OverlayOptions) {
     link = null;
     data = null;
     observer?.disconnect();
+    moved?.disconnect();
     resized?.disconnect();
+    if (redrawTimer !== undefined) clearTimeout(redrawTimer);
     win.removeEventListener("scroll", scheduleDraw, { capture: true });
     win.removeEventListener("resize", scheduleDraw);
     if (frame !== undefined) win.cancelAnimationFrame(frame);
@@ -682,13 +713,19 @@ export function startOverlay(config: OverlayConfig, options: OverlayOptions) {
     // Scrolling anywhere, a scrolling box inside the page too, moves elements.
     win.addEventListener("scroll", scheduleDraw, { capture: true, passive: true });
     win.addEventListener("resize", scheduleDraw, { passive: true });
-    // Elements come and go, or are named: keys may find others. Layout
-    // alone only moves them, which the redraw follows.
+    // Elements come and go, or are named: keys may find others (at most
+    // every RESOLVE_EVERY_MS). Elements shown, hidden, or moved by their
+    // attributes, or a body that resizes, only need a redraw.
     observer?.observe(doc.documentElement, {
       childList: true,
       subtree: true,
       attributes: true,
       attributeFilter: [NAME_ATTRIBUTE],
+    });
+    moved?.observe(doc.documentElement, {
+      subtree: true,
+      attributes: true,
+      attributeFilter: ["class", "style", "hidden", "open"],
     });
     if (doc.body !== null) resized?.observe(doc.body);
   };
@@ -696,12 +733,16 @@ export function startOverlay(config: OverlayConfig, options: OverlayOptions) {
   // Nothing shows until the server has answered about the link: a made-up
   // token shows nothing, and the tracker records the page load.
   void (async () => {
-    let shown = false;
+    let exchanged: Exchanged = { ok: false, state: "failed", show: false };
     try {
-      const exchanged = await exchange();
-      shown = exchanged.ok;
-      if (closed) return;
-      if (exchanged.ok) {
+      exchanged = await exchange();
+    } finally {
+      const inTime = settled(exchanged.ok);
+      if (closed) {
+        // Closed meanwhile: nothing to show.
+      } else if (exchanged.ok) {
+        // Too late, the tracker counted this visit: the note would be wrong.
+        note.hidden = !inTime;
         reveal();
         void load();
       } else if (exchanged.show) {
@@ -712,8 +753,6 @@ export function startOverlay(config: OverlayConfig, options: OverlayOptions) {
       } else {
         stop();
       }
-    } finally {
-      settled(shown);
     }
   })();
 
@@ -723,5 +762,7 @@ export function startOverlay(config: OverlayConfig, options: OverlayOptions) {
     /** For tests. */
     state: () => state,
     redraw: () => resolveAll(),
+    /** For tests: reads again, as a change of period or device does. */
+    reload: () => load(),
   };
 }

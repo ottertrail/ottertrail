@@ -60,33 +60,52 @@ const LINK_UNKNOWN = problem("link_unknown", "No overlay link has this token.");
 
 /** How long the instance's site hostnames are kept before they are read again. */
 const SITES_TTL_MS = 60_000;
+/** After a failed read, how long before the next is tried. */
+const SITES_RETRY_MS = 10_000;
 
 /**
- * Every project's allowed hostnames, read at most once a minute: the
- * origins whose pages may read the overlay routes' answers that carry no
- * data (a refusal, a rate limit, an unknown link), so o.js can tell them
- * apart. Data goes only to the project's own sites.
+ * Every project's allowed hostnames: the origins whose pages may read the
+ * overlay routes' answers that carry no data (a refusal, a rate limit, an
+ * unknown link), so o.js can tell them apart. Data goes only to the
+ * project's own sites.
+ *
+ * Read from what is kept, never waited for: an answer is decided before
+ * any database work, and its CORS too. A stale or missing set is read
+ * again in the background, at most once a minute (every 10 seconds after
+ * a failure); until there is one, such answers carry no CORS.
  */
-function instanceSites(db: Kysely<Database>) {
-  let cached: { at: number; hostnames: ReadonlySet<string> } | undefined;
-  let loading: Promise<ReadonlySet<string>> | undefined;
-  return async (): Promise<ReadonlySet<string>> => {
-    if (cached !== undefined && Date.now() - cached.at < SITES_TTL_MS) return cached.hostnames;
-    loading ??= db
+export function instanceSites(db: Kysely<Database>, now: () => number = Date.now) {
+  let hostnames: ReadonlySet<string> | undefined;
+  let nextRead = 0;
+  let reading: Promise<void> | undefined;
+  const read = () => {
+    nextRead = now() + SITES_RETRY_MS;
+    reading = db
       .selectFrom("projects")
       .select("allowed_hostnames")
       .execute()
       .then((rows) => {
-        const hostnames = new Set(
+        hostnames = new Set(
           rows.flatMap((row) => row.allowed_hostnames.map((name) => name.toLowerCase())),
         );
-        cached = { at: Date.now(), hostnames };
-        return hostnames;
+        nextRead = now() + SITES_TTL_MS;
+      })
+      .catch(() => {
+        // Tried again after SITES_RETRY_MS; what was kept stays.
       })
       .finally(() => {
-        loading = undefined;
+        reading = undefined;
       });
-    return loading;
+    return reading;
+  };
+  return {
+    /** What is kept now, starting a read in the background when it is due. */
+    current(): ReadonlySet<string> | undefined {
+      if (reading === undefined && now() >= nextRead) void read();
+      return hostnames;
+    },
+    /** The first read, as the app starts. */
+    warm: () => reading ?? read(),
   };
 }
 
@@ -179,6 +198,9 @@ export const heatmapOverlayRoutes: FastifyPluginCallback<{
   /** Requests from an origin on the project's allowed hostnames: their answers carry CORS. */
   const allowed = new WeakMap<FastifyRequest, string>();
   const sites = instanceSites(db);
+  app.addHook("onReady", async () => {
+    await sites.warm();
+  });
   const canView = requireOverlayAccess(db, { area: "web_analytics", level: "view" });
 
   // text/plain, so the exchange is a "simple" request without a preflight.
@@ -203,12 +225,8 @@ export const heatmapOverlayRoutes: FastifyPluginCallback<{
       // An answer without data (a refusal, a limit, an unknown link) to a
       // page on any of the instance's sites: readable, so o.js can tell why.
       const from = originOf(request);
-      try {
-        if (from !== null && (await sites()).has(from.hostname.toLowerCase())) {
-          origin = from.origin;
-        }
-      } catch {
-        // The database cannot be read: no CORS, as for any other origin.
+      if (from !== null && sites.current()?.has(from.hostname.toLowerCase()) === true) {
+        origin = from.origin;
       }
     }
     if (origin !== undefined) {
