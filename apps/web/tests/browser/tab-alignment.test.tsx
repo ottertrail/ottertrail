@@ -42,3 +42,18 @@ test("product analytics: the first report link's label starts at the page's gutt
   await expect.element(link).toBeVisible();
   expect(Math.abs(textLeft(link.element()) - contentLeft(nav.element()))).toBeLessThanOrEqual(1);
 });
+
+test("members: the first tab's label lines up with the table's first column", async () => {
+  installFakeApi();
+  renderApp("/settings/members");
+  const tab = page.getByRole("tab", { name: /^Members/ });
+  await expect.element(tab).toBeVisible();
+  const header = page.getByRole("columnheader", { name: "Name" });
+  await expect.element(header).toBeVisible();
+  const label = tab.element().firstChild as Node;
+  const range = document.createRange();
+  range.selectNodeContents(label);
+  expect(
+    Math.abs(range.getBoundingClientRect().left - textLeft(header.element())),
+  ).toBeLessThanOrEqual(1);
+});

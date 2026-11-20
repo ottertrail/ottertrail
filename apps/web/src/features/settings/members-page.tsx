@@ -717,8 +717,13 @@ export function MembersPage() {
         className="gap-0"
       >
         <div className="flex items-center gap-3 border-b px-gutter">
-          <div className="min-w-0 flex-1 overflow-x-auto">
-            <TabsList variant="line" aria-label="Members and invitations" className="h-12">
+          {/*
+           * The scrolling row starts a tab's padding (px-3) into the gutter,
+           * and the list drops its own 3px, so "Members" lines up with the
+           * table's first column, as on the settings pages.
+           */}
+          <div className="-ms-3 min-w-0 flex-1 overflow-x-auto">
+            <TabsList variant="line" aria-label="Members and invitations" className="h-12 p-0">
               <TabsTrigger
                 value="members"
                 data-members-tab="members"
