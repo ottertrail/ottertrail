@@ -275,6 +275,17 @@ interface ServicesTrend {
   durations: Record<"p50Us" | "p95Us" | "p99Us", (number | null)[]>;
 }
 
+/**
+ * Two minutes ahead of the clock, as a client's clock may be, but within
+ * today: from 23:58, two minutes ahead is tomorrow, which today's range
+ * leaves out. A second before midnight is still ahead of the clock.
+ */
+function aheadToday(): bigint {
+  const now = new Date();
+  const midnight = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1);
+  return BigInt(Math.min(now.getTime() + 120_000, midnight - 1000)) * MS;
+}
+
 describe("GET /api/projects/:id/services/trend", () => {
   test("every service's requests together, in 5-minute buckets, worked out by hand", async () => {
     const trend: ServicesTrend = await getJson(shop.id, `/services/trend?${DAY}`);
@@ -348,7 +359,7 @@ describe("GET /api/projects/:id/services/trend", () => {
   test("a request ahead of the server's clock counts in the last bucket", async () => {
     const project = await insertProject(dashboard.db, { name: "Ahead" });
     const secretKey = await secretKeyOf(dashboard.db, project.id);
-    const ahead = BigInt(Date.now() + 120_000) * MS;
+    const ahead = aheadToday();
     await sendSpans(secretKey, "api", [span("GET /", ahead, 5, {})]);
     const trend: ServicesTrend = await getJson(project.id, "/services/trend?period=today");
     expect(trend.totals.requests).toBe(1);
@@ -471,7 +482,7 @@ describe("GET /api/projects/:id/databases/trend", () => {
   test("a call ahead of the server's clock counts in the last bucket", async () => {
     const project = await insertProject(dashboard.db, { name: "Ahead calls" });
     const secretKey = await secretKeyOf(dashboard.db, project.id);
-    const ahead = BigInt(Date.now() + 120_000) * MS;
+    const ahead = aheadToday();
     await sendSpans(secretKey, "api", [span("SELECT 1", ahead, 5, POSTGRES, { kind: CLIENT })]);
     const trend: DatabasesTrend = await getJson(project.id, "/databases/trend?period=today");
     expect(trend.totals.calls).toBe(1);

@@ -2,7 +2,13 @@ import { randomBytes, randomUUID } from "node:crypto";
 
 import { afterAll, beforeAll, describe, expect, test } from "vite-plus/test";
 
-import { MAX_SERIES, quantileOfBuckets, SPLIT_LINES } from "../src/telemetry/metrics.ts";
+import {
+  bucketsOf,
+  MAX_SERIES,
+  quantileOfBuckets,
+  SPARKLINE_BUCKETS,
+  SPLIT_LINES,
+} from "../src/telemetry/metrics.ts";
 import { signedInDashboard } from "./helpers/dashboard.ts";
 import { insertProject } from "./helpers/projects.ts";
 import { keyValues, secretKeyOf } from "./helpers/telemetry.ts";
@@ -599,6 +605,15 @@ describe("GET /api/projects/:id/metrics/chart", () => {
   });
 });
 
+/** A range from `firstDay` to today (20 November 2026, UTC), as the periods ask for it. */
+const endingToday = (firstDay: string) => ({
+  firstDay,
+  lastDay: "2026-11-20",
+  dayStart: new Date(`${firstDay}T00:00:00Z`),
+  from: new Date(`${firstDay}T00:00:00Z`),
+  to: new Date("2026-11-21T00:00:00Z"),
+});
+
 describe("chart buckets", () => {
   test("percentiles from buckets, by hand", () => {
     // Nothing counted.
@@ -609,6 +624,35 @@ describe("chart buckets", () => {
     expect(quantileOfBuckets([10, 20], [4, 0, 0], 0.5, null, null)).toBe(5);
     // A first bound below 0 is where it starts.
     expect(quantileOfBuckets([-5, 20], [4, 0, 0], 0.5, null, null)).toBe(-5);
+  });
+
+  test("a range of days keeps its step at every time of day; today's grows with the day", () => {
+    // Just after midnight, a 15-minute mark, and an hour; 06:00, when 7 days
+    // of 30 minutes passed 300 buckets; noon; and just before midnight.
+    const times = ["00:05", "00:15:30", "00:20", "06:00", "06:00:30", "12:00", "13:00:30", "23:55"];
+    for (const [period, firstDay, chartStep, sparklineStep] of [
+      ["7d", "2026-11-14", 3600, 21_600],
+      ["30d", "2026-10-22", 10_800, 86_400],
+      ["90d", "2026-08-23", 43_200, 604_800],
+      ["12m", "2025-11-21", 172_800, 604_800],
+    ] as const) {
+      for (const time of times) {
+        const now = new Date(`2026-11-20T${time}Z`);
+        expect({
+          period,
+          time,
+          chartStep: bucketsOf(endingToday(firstDay), now).stepMs / 1000,
+          sparklineStep: bucketsOf(endingToday(firstDay), now, SPARKLINE_BUCKETS).stepMs / 1000,
+        }).toEqual({ period, time, chartStep, sparklineStep });
+      }
+    }
+    // 7 days at 00:05: the 6 days before, hourly, and today's first hour.
+    const early = bucketsOf(endingToday("2026-11-14"), new Date("2026-11-20T00:05:00Z"));
+    expect(early.count).toBe(6 * 24 + 1);
+    // Today's chart is drawn up to now, so its step follows the part that has passed.
+    const today = endingToday("2026-11-20");
+    expect(bucketsOf(today, new Date("2026-11-20T00:05:00Z")).stepMs).toBe(60_000);
+    expect(bucketsOf(today, new Date("2026-11-20T23:55:00Z")).stepMs).toBe(300_000);
   });
 });
 

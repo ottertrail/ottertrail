@@ -1,4 +1,4 @@
-import type { Random } from "./seed-random.ts";
+import { type Random, seededRandom } from "./seed-random.ts";
 /**
  * The demo shop's servers, for the development seed (seed-data.ts): what
  * three services (web, billing, worker) and an OpenTelemetry Collector on
@@ -245,14 +245,21 @@ const HOURLY_TOTAL = HOURLY.reduce((sum, weight) => sum + weight, 0);
  * database is overloaded. The full-text search runs two and a half times
  * slower and a third of the searches time out, the payment provider fails
  * 40% of charges instead of 4%, and requests wait for a database
- * connection, most with a warning that the pool is exhausted. So every
- * chart shows it: the Services and Databases charts a spike in the failed
- * share, the 95th percentile, and the time spent; the Traces chart more
- * traces with errors and a higher 95th percentile; the Logs chart a rise
- * in warnings and errors.
+ * connection (a call of its own), most with a warning that the pool is
+ * exhausted, and a quarter give up waiting and fail. So every chart shows
+ * it: the Services and Databases charts a spike in the failed share, the
+ * 95th percentile, and the time spent; the Traces chart more traces with
+ * errors and a higher 95th percentile; the Logs chart a rise in warnings
+ * and errors.
  */
 export const INCIDENT_DAYS_AGO = 2;
 const INCIDENT_HOURS = [13, 15.5] as const;
+/**
+ * Which of the incident's requests give up waiting, and their waits' span
+ * IDs, are drawn from a generator of their own, so the rest of the data is
+ * what it was without them.
+ */
+const GIVE_UP_SEED = 20_261_121;
 
 /** A database call, for the database client's duration histogram. */
 interface DatabaseCall {
@@ -292,6 +299,7 @@ export function buildTelemetry(rng: Random, now: Date, userIds: readonly string[
   const incidentFrom = today - INCIDENT_DAYS_AGO * DAY_MS + (INCIDENT_HOURS[0] ?? 0) * 3_600_000;
   const incidentTo = today - INCIDENT_DAYS_AGO * DAY_MS + (INCIDENT_HOURS[1] ?? 0) * 3_600_000;
   const inIncident = (at: number) => at >= incidentFrom && at < incidentTo;
+  const giveUp = seededRandom(GIVE_UP_SEED);
   const web = (at: number, host: string) => service("web", webVersion(at), host, "nodejs");
   const billing = service("billing", "1.8.0", "app-2", "python");
   const worker = (at: number) => service("worker", webVersion(at), "app-2", "nodejs");
@@ -826,6 +834,25 @@ export function buildTelemetry(rng: Random, now: Date, userIds: readonly string[
         // The time spent waiting for a database connection, added to the request after its
         // work (so the spans already placed keep their times): a warning on most requests.
         const waitMs = rng.logNormal(400, 0.5);
+        // The wait is a call to the database, as node-postgres's pool instrumentation reports
+        // it, so every incident hour's time spent stands out, not only those with many
+        // searches (without it, one bar in five held less than twice an average hour's).
+        // Its ID comes from giveUp, so the other draws stay as they were.
+        trace.span(resource, SCOPES.pg, {
+          id: giveUp.hex(8),
+          name: "pg-pool.connect",
+          kind: CLIENT,
+          start: cursor,
+          durationMs: waitMs,
+          parent: serverId,
+          attributes: {
+            "db.system.name": "postgresql",
+            "db.namespace": "shop",
+            "db.operation.name": "connect",
+            "server.address": "db-1.internal",
+            "server.port": 5432,
+          },
+        });
         cursor += waitMs;
         if (rng.chance(0.6)) {
           records.add(
@@ -836,6 +863,24 @@ export function buildTelemetry(rng: Random, now: Date, userIds: readonly string[
               "WARN",
               `database pool exhausted: waited ${Math.round(waitMs)} ms for a connection`,
               { "http.route": route, "db.pool.wait_ms": Math.round(waitMs) },
+              { traceId: trace.id, spanId: serverId },
+            ),
+          );
+        }
+        // A quarter give up waiting (503), so the Traces chart's incident bars stand out from
+        // the other hours' one or two failed traces whatever the other draws: without them, a
+        // 2-hour bar held 3 failed traces or fewer on about one seed run in four.
+        if (failure === undefined && giveUp.chance(0.25)) {
+          status = 503;
+          failure = "timed out waiting for a database connection";
+          records.add(
+            resource,
+            SCOPES.pino,
+            logRecord(
+              cursor,
+              "ERROR",
+              `request failed: ${failure}`,
+              { "http.route": route },
               { traceId: trace.id, spanId: serverId },
             ),
           );

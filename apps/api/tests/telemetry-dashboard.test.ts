@@ -20,6 +20,12 @@ let dashboard: Awaited<ReturnType<typeof signedInDashboard>>;
 const MS = 1_000_000n;
 /** Now, less some minutes, in nanoseconds since 1970: every record is recent. */
 const minutesAgo = (minutes: number) => BigInt(Date.now() - minutes * 60_000) * MS;
+/** `minutes` ago, or today's midnight (UTC, the tests' timezone) when that is later. */
+const minutesAgoToday = (minutes: number) => {
+  const now = new Date();
+  const midnight = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  return BigInt(Math.max(now.getTime() - minutes * 60_000, midnight)) * MS;
+};
 
 const byText = (a: string, b: string) => a.localeCompare(b);
 
@@ -1024,7 +1030,8 @@ describe("GET /api/projects/:id/logs/volume", () => {
     const old = await newProject("Old logs");
     const logs = [
       { time: minutesAgo(48 * 60), severityNumber: 9, body: "two days ago" },
-      { time: minutesAgo(5), severityNumber: 9, body: "just now" },
+      // Today, also from 00:00 to 00:05, when 5 minutes ago is yesterday.
+      { time: minutesAgoToday(5), severityNumber: 9, body: "just now" },
     ];
     await sendLogs(old.secretKey, [{ service: "worker", logs }]);
     const totals = async (query: string) => (await getJson(old.id, `/logs/volume?${query}`)).total;
@@ -1185,7 +1192,14 @@ describe("GET /api/projects/:id/traces/chart", () => {
             start: minutesAgo(48 * 60),
             durationMs: 5,
           },
-          { traceId: hex(16), spanId: hex(8), name: "new", start: minutesAgo(5), durationMs: 5 },
+          {
+            traceId: hex(16),
+            spanId: hex(8),
+            name: "new",
+            // Today, also from 00:00 to 00:05, when 5 minutes ago is yesterday.
+            start: minutesAgoToday(5),
+            durationMs: 5,
+          },
         ],
       },
     ]);
@@ -1290,6 +1304,24 @@ async function everyMinute(timeZone: string, from: string, to: string, now?: str
     walls: buckets.starts.map((start) => wallClock(start, timeZone)),
   };
 }
+
+describe("the lists' charts at every time of day", () => {
+  test("a range of days keeps its step from just after midnight to just before the next", async () => {
+    const times = ["00:05", "00:15:30", "06:00:30", "12:00", "13:00:30", "23:55"];
+    for (const [from, step] of [
+      // 3 days: 72 hours in 120 buckets is an hour each; 30 minutes only fit before 12:00.
+      ["2026-11-18", 3600],
+      // 2 days: 30 minutes; 15 minutes only fit before 06:00.
+      ["2026-11-19", 1800],
+      ["2026-11-14", 7200],
+    ] as const) {
+      for (const time of times) {
+        const { buckets } = await rangeBuckets("UTC", from, "2026-11-20", `2026-11-20T${time}Z`);
+        expect({ from, time, step: buckets.stepSeconds }).toEqual({ from, time, step });
+      }
+    }
+  });
+});
 
 describe("the lists' charts across a daylight saving change", () => {
   test("Europe/Berlin, 25 October 2026: 6-hour buckets on the clock's marks, one 7 hours long", async () => {

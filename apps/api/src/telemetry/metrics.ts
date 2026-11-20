@@ -164,20 +164,26 @@ export interface Buckets {
  * `maxBuckets` (MAX_BUCKETS for a chart), counted from the start of the range's first day so they
  * fall on whole minutes and hours of the instance's time, from the
  * range's start (or the retention's) to its end or now, whichever is sooner.
+ * A range of several days takes its step from all of it, to its end, so
+ * its chart keeps one step at every time of day (7 days are hourly at
+ * 00:10 as at 23:50); a range of one day takes it from the part up to now,
+ * so today's chart is not a few wide buckets in its first hours.
  */
 export function bucketsOf(
-  range: Pick<TelemetryRange, "dayStart" | "from" | "to">,
+  range: Pick<TelemetryRange, "dayStart" | "from" | "to" | "firstDay" | "lastDay">,
   now: Date,
   maxBuckets = MAX_BUCKETS,
 ): Buckets {
   const anchor = range.dayStart.getTime();
   const fromMs = range.from.getTime();
   const endMs = Math.max(fromMs, Math.min(range.to.getTime(), now.getTime()));
+  const spanEndMs = range.firstDay === range.lastDay ? endMs : Math.max(fromMs, range.to.getTime());
   for (const step of STEPS_SECONDS) {
     const stepMs = step * 1000;
     const firstMs = anchor + Math.floor((fromMs - anchor) / stepMs) * stepMs;
-    const count = endMs > fromMs ? Math.ceil((endMs - firstMs) / stepMs) : 0;
-    if (count <= maxBuckets || step === STEPS_SECONDS.at(-1)) {
+    const span = spanEndMs > fromMs ? Math.ceil((spanEndMs - firstMs) / stepMs) : 0;
+    if (span <= maxBuckets || step === STEPS_SECONDS.at(-1)) {
+      const count = endMs > fromMs ? Math.ceil((endMs - firstMs) / stepMs) : 0;
       return { firstMs, stepMs, count: Math.min(count, maxBuckets), fromMs, endMs };
     }
   }

@@ -339,10 +339,13 @@ export interface ListChartBuckets {
 /**
  * The buckets of a list's chart over a range, in the instance's timezone:
  * the shortest step of LIST_CHART_STEPS that keeps them within
- * LIST_CHART_BUCKETS over the span on the local clock, up to the end of
- * the range or now, whichever is sooner. A step shorter than a day starts
- * each bucket on the clock's marks (midnight, 06:00, 12:00 for 6 hours)
- * whatever the date's offset; a step of days starts each on a midnight,
+ * LIST_CHART_BUCKETS over the span on the local clock: a range of several
+ * days its whole span, so its chart keeps one step at every time of day,
+ * and one day (today) the part up to now, so its first hours are not a few
+ * wide bars. The buckets run up to the end of the range or now, whichever
+ * is sooner. A step shorter than a day starts each bucket on the clock's
+ * marks (midnight, 06:00, 12:00 for 6 hours) whatever the date's offset; a
+ * step of days starts each on a midnight,
  * counted from the range's first day. A mark the clock skips (a change
  * forward, or a midnight some zones skip) starts at the first moment that
  * exists after it, and a slot the clock skips whole has no bucket, so the
@@ -362,7 +365,10 @@ export function listChartBuckets(
   const fromMs = range.from.getTime();
   const endMs = Math.max(fromMs, Math.min(range.to.getTime(), now.getTime()));
   // The span on the local clock, so a day an hour longer does not change the step.
-  const end = wallClock(endMs, range.timeZone);
+  const end =
+    range.firstDay === range.lastDay
+      ? wallClock(endMs, range.timeZone)
+      : { day: addDays(range.lastDay, 1), minutes: 0 };
   const spanMs = asUtc(end.day, end.minutes) - asUtc(range.firstDay, 0);
   const step =
     LIST_CHART_STEPS.find(
