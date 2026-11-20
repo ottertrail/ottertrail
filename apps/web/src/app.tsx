@@ -5,7 +5,6 @@ import * as React from "react";
 import { AppHeader } from "@/components/app-shell/app-header";
 import { AppSidebar } from "@/components/app-shell/app-sidebar";
 import { SidebarInset, SidebarProvider, useSidebar } from "@/components/ui/sidebar";
-import { useAccess } from "@/lib/access";
 import { docsFor } from "@/lib/docs";
 import { documentTitle, useDocumentTitle, useStatusTitle } from "@/lib/document-title";
 import { projectsQuery } from "@/lib/projects-api";
@@ -22,7 +21,7 @@ function CloseMenuOnNavigation() {
   return null;
 }
 
-/** The tab's title: the page, then the project when inside one, then the instance. */
+/** The tab's title: the page, then the project when inside one. */
 function TabTitle({
   page,
   projectId,
@@ -30,14 +29,13 @@ function TabTitle({
   page: string | undefined;
   projectId?: string | undefined;
 }) {
-  const { me } = useAccess();
   const projects = useQuery({ ...projectsQuery(), enabled: projectId !== undefined });
   const project =
     projectId === undefined
       ? undefined
       : projects.data?.find((candidate) => candidate.id === projectId)?.name;
   const status = useStatusTitle();
-  useDocumentTitle(documentTitle({ page: status ?? page, project, instance: me?.instance.name }));
+  useDocumentTitle(documentTitle({ page: status ?? page, project }));
   return null;
 }
 

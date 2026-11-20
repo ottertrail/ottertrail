@@ -84,7 +84,7 @@ describe("the sidebar", () => {
           document.querySelector("[data-slot=sidebar-header] [data-slot=instance-name]")
             ?.textContent,
       )
-      .toBe("AAcme IncInstance");
+      .toBe("AAcme Inc");
   });
 
   test.each([

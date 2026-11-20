@@ -55,7 +55,7 @@ beforeEach(async () => {
 
 describe("an address no route has", () => {
   test("signed in, shows the 404 in the shell, with the address and the way on", async () => {
-    const api = installFakeApi();
+    installFakeApi();
     const router = renderApp("/no-such-page?from=email");
 
     await expect.element(heading("Page not found", 2)).toBeVisible();
@@ -63,10 +63,7 @@ describe("an address no route has", () => {
     await expect.element(workspaceMenu().getByRole("link", { name: "Projects" })).toBeVisible();
     await expect.element(page.getByRole("heading", { level: 1 })).toBeVisible();
     await expect.element(page.getByText("/no-such-page?from=email")).toBeVisible();
-    // In the shell the tab names the instance too, as every page's does.
-    await expect
-      .poll(() => document.title)
-      .toBe(`Page not found · ${api.settings.name} – Ottertrail`);
+    await expect.poll(() => document.title).toBe(`Page not found – Ottertrail`);
     // The address stays as it was asked for.
     expect(currentPath(router)).toBe("/no-such-page?from=email");
     // On the page's first load nothing is announced and focus stays put; nothing to go back to.
@@ -78,7 +75,7 @@ describe("an address no route has", () => {
     await expect.poll(() => currentPath(router)).toBe("/projects");
     await expect.element(page.getByRole("link", { name: "Main site", exact: true })).toBeVisible();
     // The tab's title is the page's again.
-    await expect.poll(() => document.title).toBe(`Projects · ${api.settings.name} – Ottertrail`);
+    await expect.poll(() => document.title).toBe(`Projects – Ottertrail`);
   });
 
   test("reached by a link, takes focus to its heading, and Go back returns", async () => {
@@ -159,7 +156,7 @@ describe("an address no route has", () => {
 
 describe("a project that cannot be opened", () => {
   test("shows the 404 with its own title and why, in the shell", async () => {
-    const api = installFakeApi();
+    installFakeApi();
     const router = renderApp("/projects/33333333-3333-4333-8333-333333333333/settings");
 
     await expect.element(heading("Project not found", 2)).toBeVisible();
@@ -167,9 +164,7 @@ describe("a project that cannot be opened", () => {
       .element(page.getByText("It may have been deleted, or you may not have access."))
       .toBeVisible();
     await expect.element(page.getByText("404", { exact: true })).toBeVisible();
-    await expect
-      .poll(() => document.title)
-      .toBe(`Project not found · ${api.settings.name} – Ottertrail`);
+    await expect.poll(() => document.title).toBe(`Project not found – Ottertrail`);
 
     await page.getByRole("main").getByRole("link", { name: "Go to projects" }).click();
     await expect.poll(() => currentPath(router)).toBe("/projects");

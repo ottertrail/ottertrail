@@ -4,15 +4,15 @@ const PRODUCT = "Ottertrail";
 
 /**
  * The browser tab's title, most specific first, so a narrow tab still shows
- * the page: "Errors · Demo shop · Acme – Ottertrail". Parts not known yet, or
- * the same as the product's name, are left out.
+ * the page: "Errors · Demo shop – Ottertrail". Parts not known yet, or the
+ * same as the product's name, are left out. The instance's name is not in
+ * it: the sidebar shows it.
  */
 export function documentTitle(parts: {
   page?: string | undefined;
   project?: string | undefined;
-  instance?: string | undefined;
 }): string {
-  const shown = [parts.page, parts.project, parts.instance]
+  const shown = [parts.page, parts.project]
     .map((part) => part?.trim())
     .filter((part): part is string => part !== undefined && part !== "" && part !== PRODUCT);
   return shown.length === 0 ? PRODUCT : `${shown.join(" · ")} – ${PRODUCT}`;
@@ -27,7 +27,7 @@ export function useDocumentTitle(title: string) {
 
 /*
  * A 404 or an error shown in place of a page names the tab instead of the
- * page ("Page not found · Acme – Ottertrail"). The state registers its title
+ * page ("Page not found – Ottertrail"). The state registers its title
  * here, and the shell's and the sign-in layout's tab titles read it, so the
  * two never overwrite each other.
  */

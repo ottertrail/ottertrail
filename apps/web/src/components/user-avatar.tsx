@@ -26,7 +26,7 @@ export function UserAvatar({
     >
       <AvatarFallback
         className={cn(
-          "rounded-md bg-sidebar-accent font-semibold text-ink",
+          "rounded-md bg-hairline-strong font-semibold text-ink",
           size === "sm" ? "text-[0.625rem]" : "text-xs",
         )}
       >

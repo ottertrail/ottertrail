@@ -140,6 +140,14 @@ describe.each(["dark", "light"] as const)("the %s theme's tokens", (theme: Theme
     }
   });
 
+  // The initial squares in the sidebar: the instance's, the project switcher's, and the user's avatar.
+  test("an initial's square stands apart from the sidebar, and its letter meets 4.5:1", () => {
+    expect(contrast(resolveHex("hairline-strong"), resolveHex("sidebar"))).toBeGreaterThanOrEqual(
+      1.3,
+    );
+    expect(contrast(resolveHex("ink"), resolveHex("hairline-strong"))).toBeGreaterThanOrEqual(4.5);
+  });
+
   test("focus ring meets 3:1 against the surfaces it appears on", () => {
     for (const surface of [...contentSurfaces, "canvas", "sidebar"]) {
       expect(contrast(resolveHex("ring"), resolveHex(surface))).toBeGreaterThanOrEqual(3);

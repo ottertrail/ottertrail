@@ -149,7 +149,7 @@ function ProjectSwitcher({ projectId }: { projectId: string }) {
           />
         }
       >
-        <div className="flex size-8 shrink-0 items-center justify-center rounded-md bg-sidebar-accent text-xs font-semibold text-ink">
+        <div className="flex size-8 shrink-0 items-center justify-center rounded-md bg-hairline-strong text-xs font-semibold text-ink">
           {(current?.name ?? "?").slice(0, 1).toUpperCase()}
         </div>
         <div className="grid min-w-0 flex-1 text-left leading-tight">

@@ -13,8 +13,8 @@ function initialOf(name: string): string {
 }
 
 /**
- * The workspace sidebar's head under the mark: the instance's initial,
- * name, and "Instance", as the project switcher names a project.
+ * The workspace sidebar's head under the mark: the instance's initial and
+ * name, where the project switcher names a project inside one.
  */
 export function InstanceName() {
   const me = useQuery(meQuery());
@@ -29,14 +29,14 @@ export function InstanceName() {
     >
       <span
         aria-hidden="true"
-        className="flex size-8 shrink-0 items-center justify-center rounded-md bg-sidebar-accent text-xs font-semibold text-ink"
+        className="flex size-8 shrink-0 items-center justify-center rounded-md bg-hairline-strong text-xs font-semibold text-ink"
       >
         {initialOf(name)}
       </span>
-      <div className="grid min-w-0 flex-1 leading-tight group-data-[collapsible=icon]:hidden">
-        <TruncatedText text={name} className="text-sm font-medium text-ink" />
-        <span className="truncate text-xs text-ink-subtle">Instance</span>
-      </div>
+      <TruncatedText
+        text={name}
+        className="min-w-0 flex-1 text-sm font-medium text-ink group-data-[collapsible=icon]:hidden"
+      />
     </div>
   );
 }
