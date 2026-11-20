@@ -70,6 +70,9 @@ describe("TruncatedText", () => {
     await expect.poll(() => text.element().getAttribute("tabindex")).toBe("0");
     await text.hover();
     await expect.poll(tooltipText).toBe(LONG);
+    // The tooltip itself never scrolls, so no scrollbar shows while it animates.
+    const popup = tooltip();
+    expect(popup === null ? null : getComputedStyle(popup).overflowY).toBe("visible");
     await page.getByRole("button", { name: "Before" }).hover();
     await expect.poll(tooltip).toBeNull();
 
@@ -79,6 +82,21 @@ describe("TruncatedText", () => {
     await expect.poll(tooltipText).toBe(LONG);
     await userEvent.keyboard("{Escape}");
     await expect.poll(tooltip).toBeNull();
+  });
+
+  test("a very long text scrolls inside the tooltip, with the arrow outside the scroll", async () => {
+    const huge = Array.from({ length: 80 }, (_, index) => `site-${index}.example`).join(", ");
+    mount(
+      <Box width={120}>
+        <TruncatedText text={huge} />
+      </Box>,
+    );
+    await page.getByText(huge).first().hover();
+    await expect.poll(tooltipText).toBe(huge);
+    const popup = tooltip();
+    const scroller = popup?.querySelector<HTMLElement>("[data-slot=tooltip-scroll]");
+    expect(scroller?.scrollHeight).toBeGreaterThan(scroller?.clientHeight ?? 0);
+    expect(popup === null ? null : popup.scrollHeight - popup.clientHeight).toBe(0);
   });
 
   test("the lines form shows one item per line", async () => {

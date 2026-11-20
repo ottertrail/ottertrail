@@ -193,20 +193,31 @@ function TooltipText({
         <TooltipContent
           side={side}
           anchor={ref}
-          className="max-h-[min(20rem,50vh)] max-w-sm overflow-y-auto [overflow-wrap:anywhere] whitespace-pre-line"
+          className="max-w-sm [overflow-wrap:anywhere] whitespace-pre-line"
           // Inside a control, the pointer may move onto the tooltip without closing it.
           onPointerEnter={nested ? () => clearTimeout(timer.current) : undefined}
           onPointerLeave={nested ? () => setOpen(false) : undefined}
         >
-          {lines === undefined ? (
-            text
-          ) : (
-            <span className="flex flex-col">
-              {lines.map((line) => (
-                <span key={line}>{line}</span>
-              ))}
-            </span>
-          )}
+          {/*
+           * A very long text scrolls in here, not on the tooltip itself: there
+           * the arrow, which hangs below the box, would overflow it, so it
+           * would scroll by a few pixels, and macOS would flash a scrollbar as
+           * it opens and closes.
+           */}
+          <div
+            data-slot="tooltip-scroll"
+            className="max-h-[min(20rem,50vh)] min-w-0 overflow-y-auto"
+          >
+            {lines === undefined ? (
+              text
+            ) : (
+              <span className="flex flex-col">
+                {lines.map((line) => (
+                  <span key={line}>{line}</span>
+                ))}
+              </span>
+            )}
+          </div>
         </TooltipContent>
       )}
     </Tooltip>
