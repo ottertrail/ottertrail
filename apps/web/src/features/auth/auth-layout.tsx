@@ -1,6 +1,7 @@
 import type * as React from "react";
 
 import { BrandMark } from "@/components/brand-mark";
+import { documentTitle, useDocumentTitle } from "@/lib/document-title";
 
 /**
  * The pages before signing in (sign-in, owner setup, an invitation, a reset
@@ -17,6 +18,7 @@ export function AuthLayout({
   description?: React.ReactNode;
   children: React.ReactNode;
 }) {
+  useDocumentTitle(documentTitle({ page: title }));
   return (
     <main className="flex min-h-svh flex-col items-center bg-canvas px-gutter py-8 sm:justify-center sm:py-12">
       <div className="flex w-full max-w-[26rem] min-w-0 flex-col gap-6">
