@@ -178,14 +178,14 @@ export function accountEmailMessage(
   switch (email.kind) {
     case "password_reset":
       return messageOf(subjectOf(instance, "Reset your password"), [
-        [`You requested a password reset for ${instance} on Ottertrail.`],
+        [`You requested a password reset for ${instance}.`],
         ["Set a new password:", { link: email.params.link }],
         [
           "This link works once and expires in 1 hour.",
           "A newer request replaces this link.",
           "Your current password works until you reset it.",
         ],
-        ["If you didn't request this, you can ignore this email."],
+        ["If you didn't request this, ignore this email."],
       ]);
     case "reset_link": {
       const maker = oneLine(email.params.maker);
@@ -202,7 +202,7 @@ export function accountEmailMessage(
     case "password_changed":
       return messageOf(subjectOf(instance, "Your password was changed"), [
         [`Your Ottertrail password for ${instance} was changed.`],
-        ["All sessions that were active before the reset were ended."],
+        ["The reset signed out all devices."],
         ["If you didn't make this change, contact the person who runs this instance."],
       ]);
     case "invitation": {
@@ -211,7 +211,7 @@ export function accountEmailMessage(
         [`${inviter} invited you to the Ottertrail instance ${instance}.`],
         ["Create your account:", { link: email.params.link }],
         [`This invitation is for ${email.params.invitedEmail} and expires in 7 days.`],
-        ["If you weren't expecting it, you can ignore this email."],
+        ["If you weren't expecting this invitation, ignore this email."],
       ]);
     }
   }
@@ -239,10 +239,8 @@ export function accountEmailMessage(
 export function testEmailMessage(instanceName: string): Omit<MailMessage, "to"> {
   const instance = oneLine(instanceName);
   return messageOf(subjectOf(instance, "Test email"), [
-    [`This is a test email from the Ottertrail instance ${instance}.`],
-    [
-      "If you can read it, email from this instance reaches you: invitations, reset links, and email alerts. You don't need to do anything.",
-    ],
+    [`Test email from ${instance} on Ottertrail.`],
+    ["This instance can email you invitations, reset links, and alerts."],
   ]);
 }
 

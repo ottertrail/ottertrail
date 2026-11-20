@@ -70,7 +70,7 @@ export function SetupPage() {
 
   if (token === null) {
     return (
-      <AuthLayout title="Set up Ottertrail" description="This page needs a setup link.">
+      <AuthLayout title="Set up Ottertrail">
         <Alert>
           <OctagonAlertIcon />
           <AlertTitle>No setup link</AlertTitle>
@@ -86,7 +86,7 @@ export function SetupPage() {
   }
 
   return (
-    <AuthLayout title="Create the owner account" description="The owner manages this instance.">
+    <AuthLayout title="Create the owner account">
       <form onSubmit={(event) => void createAccount(event)}>
         <FieldGroup>
           <Field>
@@ -105,12 +105,7 @@ export function SetupPage() {
               autoComplete="organization"
               required
               maxLength={100}
-              aria-describedby="workspace-hint"
             />
-            <FieldDescription id="workspace-hint">
-              This name appears at the top of the sidebar. Use your company or team name, for
-              example. You can change it later in Settings.
-            </FieldDescription>
           </Field>
           <Field>
             <FieldLabel htmlFor="password">Password</FieldLabel>
@@ -125,7 +120,7 @@ export function SetupPage() {
               aria-describedby="password-hint"
             />
             <FieldDescription id="password-hint">
-              At least {MIN_PASSWORD_LENGTH} characters. A passphrase of a few words works well.
+              At least {MIN_PASSWORD_LENGTH} characters.
             </FieldDescription>
           </Field>
           <Field>
@@ -150,8 +145,7 @@ export function SetupPage() {
               aria-describedby="time-zone-hint"
             />
             <FieldDescription id="time-zone-hint">
-              Reports count days in this timezone. Your browser's timezone is selected. The owner
-              can change it later in Settings.
+              Reports use this timezone for day boundaries.
             </FieldDescription>
           </Field>
           {status.data !== undefined && (

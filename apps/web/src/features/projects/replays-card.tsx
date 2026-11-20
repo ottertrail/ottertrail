@@ -61,11 +61,11 @@ export const EARLY_CALLS = `<script>
 const code = (text: string) => <code className="font-mono">{text}</code>;
 
 const MODES: { value: ReplayMode; label: string; hint: string }[] = [
-  { value: "off", label: "Off", hint: "Nothing is recorded. Any recordings sent are rejected." },
+  { value: "off", label: "Off", hint: "Recordings are rejected." },
   {
     value: "errors",
     label: "Around errors",
-    hint: "Each page keeps its last 30 to 60 seconds in memory. It sends the recording only when an error occurs.",
+    hint: "Keeps 30 to 60 seconds in memory and sends only on an error.",
   },
 ];
 
@@ -139,9 +139,7 @@ function ConsentChoice({
       <FieldContent>
         <FieldLabel htmlFor={id}>Wait for the visitor&apos;s consent</FieldLabel>
         <FieldDescription id={`${id}-hint`}>
-          For sites that ask visitors before recording. The page records only after your site calls
-          the tracker to say the visitor agreed. This changes only the code to copy; nothing is
-          saved.
+          Records only after your site reports consent. Changes the snippet below; nothing is saved.
         </FieldDescription>
       </FieldContent>
     </Field>
@@ -153,15 +151,7 @@ function SiteHelp() {
   const [consent, setConsent] = React.useState(false);
   return (
     <div className="flex flex-col gap-3 text-sm text-ink-muted">
-      <p>
-        Enable this setting. Add this attribute to the tracker's script tag on the Install tab. Both
-        are required.
-      </p>
-      <p>
-        Session replay records what visitors do on your pages. If your site asks visitors before
-        recording, set that up in your consent banner or consent tool, then turn on Wait for the
-        visitor&apos;s consent.
-      </p>
+      <p>Enable recording here and add this attribute to your site's tracker tag.</p>
       <ConsentChoice checked={consent} onCheckedChange={setConsent} />
       <CopyableCode
         text={consent ? `${REPLAY_ATTRIBUTE} ${CONSENT_ATTRIBUTE}` : REPLAY_ATTRIBUTE}
@@ -170,10 +160,8 @@ function SiteHelp() {
       {consent && (
         <>
           <p>
-            When the visitor agrees, call this from your consent banner, or from your consent
-            tool&apos;s &ldquo;consent given&rdquo; callback. Call it on every page load once you
-            know the answer: Ottertrail stores nothing on the visitor&apos;s device, so your consent
-            tool remembers it.
+            Call this from your consent tool on every page load after consent is given. Ottertrail
+            doesn't store consent; your consent tool must remember it.
           </p>
           <CopyableCode text={CONSENT_CALL} copyLabel="Copy the consent call" />
           <p>
@@ -199,9 +187,7 @@ function SiteHelp() {
       )}
       <h3 className="pt-1 text-sm font-medium text-ink">Private by default</h3>
       <p>
-        The visitor's browser masks page text, typed text, images, and media before sending the
-        recording. Masked content never reaches Ottertrail. Nobody can recover it later. Your site's
-        HTML can allow more content:
+        Page text, typed values, images, and media are masked before sending. To change masking:
       </p>
       <ul className="flex list-disc flex-col gap-1 pl-5">
         <li>
@@ -384,11 +370,9 @@ export function ReplaysSettings({
     },
   });
   const title = "Session replay";
-  const description =
-    "Record what a visitor saw and did in the minute before an error. Play the replay from the error's page.";
   if (query.isPending || query.isError || !query.data.configured) {
     return (
-      <SettingsSection title={title} description={description} headingRef={headingRef}>
+      <SettingsSection title={title} headingRef={headingRef}>
         {query.isPending ? (
           <div className="flex flex-col gap-2" aria-busy="true" aria-label="Loading">
             <Skeleton className="h-5 w-1/2" />
@@ -418,7 +402,7 @@ export function ReplaysSettings({
     <>
       <SettingsSection
         title={title}
-        description={description}
+
         headingRef={headingRef}
         form={form}
         onSave={(values) => save.mutate(values)}

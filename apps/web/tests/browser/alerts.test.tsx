@@ -111,11 +111,7 @@ describe("the Alerts page", () => {
     renderApp(ALERTS);
     await expect.element(page.getByText("No alert rules yet")).toBeVisible();
     await expect
-      .element(
-        page.getByText(
-          /A rule monitors a project's checks, certificates, errors, routes, or metrics/,
-        ),
-      )
+      .element(page.getByText(/Add a rule to receive email or webhook notifications/))
       .toBeVisible();
     expect(page.getByRole("table").elements()).toEqual([]);
     await page.getByRole("button", { name: "Add rule" }).click();
@@ -140,13 +136,7 @@ describe("the Alerts page", () => {
     await expect.element(form).toBeVisible();
 
     await choose(form, "When", "Error spike");
-    await expect
-      .element(
-        form.getByText(
-          /Sends a notification when the error count in the window reaches the threshold/,
-        ),
-      )
-      .toBeVisible();
+    await expect.element(form.getByText(/Notifies at the threshold/)).toBeVisible();
     await form.getByLabelText("Environment (optional)").fill("not an environment");
     await form.getByLabelText("Errors").fill("0");
     await form.getByLabelText("In the last (minutes)").fill("90");

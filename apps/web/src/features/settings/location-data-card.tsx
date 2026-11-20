@@ -313,7 +313,6 @@ function LocationDataForm({
   return (
     <SettingsSection
       title="Location data"
-      description="Where visitors are, and which visits come from cloud servers, come from two files the instance downloads. Only the owner can view and change this."
       form={form}
       onSave={(values) => save.mutate(values)}
       saving={save.isPending}
@@ -324,9 +323,8 @@ function LocationDataForm({
         <div className="flex flex-col gap-1">
           <Label htmlFor={switchId}>Update location data automatically</Label>
           <p id={descriptionId} className="text-sm text-muted-foreground">
-            The worker downloads DB-IP's location database each month and the cloud providers'
-            address ranges each week, and the API loads them without a restart. Turn this off on an
-            instance without internet access. Running update-geo.mjs by hand works either way.
+            Downloads DB-IP locations monthly and cloud address ranges weekly, with no restart. Turn
+            off without internet access. You can also run update-geo.mjs manually.
           </p>
         </div>
         <Switch

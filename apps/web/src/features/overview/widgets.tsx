@@ -200,7 +200,7 @@ export function AttentionWidget(props: WidgetProps) {
             const manage = canUse("uptime_alerts", "manage");
             return (
               <WidgetEmpty
-                title="Ottertrail is not watching anything for this project yet"
+                title="No checks or alert rules yet"
                 action={
                   manage ? (
                     <div className="flex flex-wrap gap-2">
@@ -224,8 +224,7 @@ export function AttentionWidget(props: WidgetProps) {
                   ) : undefined
                 }
               >
-                An uptime check requests your site from outside your servers. An alert rule tells
-                you when something goes wrong.
+                Add a check or alert rule to start monitoring.
               </WidgetEmpty>
             );
           }
@@ -461,7 +460,7 @@ export function UptimeWidget(props: WidgetProps) {
                 ) : undefined
               }
             >
-              A check requests your site every few minutes from outside your servers.
+              Add a URL to check its availability.
             </WidgetEmpty>
           ) : (
             <div className="flex flex-col gap-2">
@@ -659,8 +658,8 @@ export function ServicesWidget(props: WidgetProps) {
                 </Table>
               </ScrollHint>
               <WidgetNote>
-                Changes compare with the period before. They are not marked good or bad: your alert
-                rules decide that.{data.more ? " Quieter services are on the Services page." : ""}
+                Changes compare with the previous period.
+                {data.more ? " Quieter services are on the Services page." : ""}
               </WidgetNote>
             </div>
           );
@@ -701,7 +700,7 @@ export function SpeedWidget(props: WidgetProps) {
                   </Link>
                 }
               >
-                The tracker's v.js measures each page load. The Speed page explains how to add it.
+                Check the tracker setup on the Speed page.
               </WidgetEmpty>
             );
           }
@@ -884,8 +883,7 @@ export function MainGoalWidget(props: WidgetProps) {
                 minCount={MIN_LOADS_FOR_CHANGE}
               />
               <WidgetNote>
-                No main goal is set, so the business figures start with new signed-in users: those
-                whose first event fell in this period. {choose}
+                No main goal is set. Showing users first seen in this period. {choose}
                 {choose === null && canUse("product_analytics", "view")
                   ? "An admin chooses the main goal."
                   : ""}
@@ -998,8 +996,8 @@ export function TrafficWidget(props: WidgetProps) {
                 }
               >
                 {can("projects")
-                  ? "Install the tracking snippet on your site. Traffic shows here from the first pageview."
-                  : "This project has not received any pageviews yet."}
+                  ? "Install the tracking snippet on your site."
+                  : "Ask an admin to install the tracking snippet."}
               </WidgetEmpty>
             );
           }

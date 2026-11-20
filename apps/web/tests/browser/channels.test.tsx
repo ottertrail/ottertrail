@@ -31,9 +31,7 @@ describe("notification channels on the Settings page", () => {
     await expect
       .element(page.getByText("Email is not set up on this instance", { exact: true }))
       .toBeVisible();
-    await expect
-      .element(page.getByText(/until whoever runs the server sets SMTP_URL/))
-      .toBeVisible();
+    await expect.element(page.getByText(/To enable email, set SMTP_URL/)).toBeVisible();
     await expect.element(page.getByText("2 of 20 channels")).toBeVisible();
     await expect
       .element(item("On call").getByText("ops@example.com, dev@example.com"))
@@ -184,9 +182,7 @@ describe("notification channels on the Settings page", () => {
 
     await relay.getByRole("button", { name: "Replace secret of Ops relay" }).click();
     const confirm = dialog("Replace the secret of “Ops relay”?");
-    await expect
-      .element(confirm.getByText(/rejects them until it has the new secret/))
-      .toBeVisible();
+    await expect.element(confirm.getByText(/signature checks will fail/)).toBeVisible();
     await confirm.getByRole("button", { name: "Replace secret" }).click();
     await expect.element(confirm).not.toBeInTheDocument();
     await expect.element(relay.getByText(ROTATED_SECRET)).toBeVisible();
@@ -200,7 +196,7 @@ describe("notification channels on the Settings page", () => {
 
     await onCall.getByRole("button", { name: "Send test to On call" }).click();
     await expect
-      .element(onCall.getByText(/Test queued. It will be sent within seconds/))
+      .element(onCall.getByText(/Test queued. Check Deliveries for the result/))
       .toBeVisible();
     expect(api.requests).toContain(`/api/channels/${EMAIL.id}/test`);
     // The deliveries open with the test in them, queued.

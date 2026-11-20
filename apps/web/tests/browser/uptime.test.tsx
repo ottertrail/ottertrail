@@ -122,9 +122,7 @@ describe("the uptime page", () => {
     await form.getByLabelText("Word (optional)").fill("healthy");
     await choose("Method", "HEAD");
     await expect
-      .element(
-        form.getByText("A HEAD request has no response body to search for the word. Use GET."),
-      )
+      .element(form.getByText("HEAD has no response body. Use GET to check for text."))
       .toBeVisible();
     await choose("Method", "GET");
     expect(api.bodies).toEqual([]);

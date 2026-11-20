@@ -46,7 +46,7 @@ export async function apiRequest(
     if (signal?.aborted) {
       throw error;
     }
-    throw new ApiError(0, "Could not reach the API. Check that it is running. Then try again.");
+    throw new ApiError(0, "Could not reach the API. Check that it is running, then try again.");
   }
   const payload: unknown = await response.json().catch(() => null);
   if (!response.ok) {

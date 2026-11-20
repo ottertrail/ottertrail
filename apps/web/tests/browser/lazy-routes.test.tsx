@@ -98,9 +98,7 @@ describe("a page in a chunk of its own", () => {
 
     const alert = page.getByRole("alert");
     await expect.element(alert.getByText("This page could not load")).toBeVisible();
-    await expect
-      .element(alert.getByText(/Ottertrail may have been updated since this tab was opened/))
-      .toBeVisible();
+    await expect.element(alert.getByText(/The page download failed/)).toBeVisible();
     // The browser's own reason, as it gave it.
     await expect.element(alert.getByText(/members-page-old\.js/)).toBeVisible();
     // Not a white screen: the shell is still there, so another page is a click away.
@@ -152,7 +150,7 @@ describe("the custom range dialog", () => {
 
     const dialog = page.getByRole("dialog", { name: "The calendar could not load" });
     await expect.element(dialog).toBeVisible();
-    await expect.element(dialog.getByText(/may have been updated since this tab/)).toBeVisible();
+    await expect.element(dialog.getByText(/The calendar download failed/)).toBeVisible();
     await dialog.getByRole("button", { name: "Reload" }).click();
     expect(reload.calls).toBe(1);
 

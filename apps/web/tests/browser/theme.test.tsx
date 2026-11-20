@@ -51,7 +51,12 @@ describe("the Appearance tab", () => {
     renderApp("/account?tab=appearance");
 
     await expect.element(page.getByRole("heading", { name: "Theme" })).toBeVisible();
-    await expect.element(page.getByText(/^Saved on this device only/)).toBeVisible();
+    expect(page.getByText("Dark text on light surfaces.").elements()).toHaveLength(0);
+    expect(page.getByText("Light text on a near-black canvas.").elements()).toHaveLength(0);
+    expect(
+      page.getByText("Light or dark as this device is set, and as it changes.").elements(),
+    ).toHaveLength(0);
+    await expect.element(page.getByText(/^Applies immediately to this browser only/)).toBeVisible();
     // Nothing stored: System, which follows this (dark) device.
     await expect.element(radio("System")).toBeChecked();
     expect(isDark()).toBe(true);

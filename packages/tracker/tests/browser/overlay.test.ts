@@ -494,7 +494,7 @@ describe("the overlay", () => {
   test("the expired and no-access messages say what to do", () => {
     expect(MESSAGES.link_expired).toContain("Open it again from the dashboard");
     expect(MESSAGES.session_expired).toContain("30 minutes");
-    expect(MESSAGES.no_access).toContain("cannot view");
+    expect(MESSAGES.no_access).toContain("Ask an owner or admin");
   });
 
   test("nothing recorded for the page says so", async () => {

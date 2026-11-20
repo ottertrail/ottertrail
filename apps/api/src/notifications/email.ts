@@ -20,7 +20,7 @@ export const EMAIL_TIMEOUT_MS = 20_000;
 export const MAX_SUBJECT = 200;
 
 export const NOT_SET_UP_ERROR =
-  "Email is not configured on this instance. The instance's operator must set SMTP_URL and EMAIL_FROM.";
+  "Email isn't set up. Ask the instance's operator to set SMTP_URL and EMAIL_FROM.";
 
 export interface MailMessage {
   to: string[];
@@ -120,7 +120,7 @@ export function emailOf(
     `Open in Ottertrail: ${payload.url}`,
     "",
     `-- `,
-    `Sent by the Ottertrail instance "${oneLine(instance.name)}" to one of its notification channels.`,
+    `Sent by "${oneLine(instance.name)}" on Ottertrail.`,
     "",
   ].join("\n");
   return { subject, text };

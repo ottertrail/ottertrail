@@ -49,11 +49,7 @@ describe("the rule form's telemetry kinds", () => {
     await page.getByRole("button", { name: "Add rule" }).click();
     const form = dialog("Add an alert rule");
     await choose(form, "When", "Route latency");
-    await expect
-      .element(
-        form.getByText(/Sends a notification when the requests' 95th or 99th percentile duration/),
-      )
-      .toBeVisible();
+    await expect.element(form.getByText(/Notifies above the threshold/)).toBeVisible();
 
     await form.getByLabelText("Above (milliseconds)").fill("0");
     await form.getByLabelText("At least (requests)").fill("0");

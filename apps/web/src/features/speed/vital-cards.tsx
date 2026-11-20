@@ -117,10 +117,6 @@ export function SecondaryVitals({ speed }: { speed: Speed }) {
         <h2 id="speed-before-lcp" className="text-sm font-medium text-ink">
           Measurements before LCP
         </h2>
-        <p className="max-w-4xl text-xs text-pretty text-ink-subtle">
-          These two measurements help explain LCP. The main content cannot appear before the server
-          responds and the browser starts to display the page.
-        </p>
       </div>
       <StatStrip
         label="Measurements before LCP"

@@ -76,9 +76,7 @@ export function UnsavedChangesGuard({ children }: { children: React.ReactNode })
         <DialogContent showCloseButton={false}>
           <DialogHeader>
             <DialogTitle>Leave without saving?</DialogTitle>
-            <DialogDescription>
-              Changes on this page are not saved yet. If you leave, they are lost.
-            </DialogDescription>
+            <DialogDescription>Your unsaved changes will be lost.</DialogDescription>
           </DialogHeader>
           <DialogFooter>
             <Button variant="outline" onClick={() => blocker.reset?.()}>

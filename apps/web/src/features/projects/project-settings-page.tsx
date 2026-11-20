@@ -55,7 +55,6 @@ function CopySetupPrompt({ project }: { project: Project }) {
   const [showText, setShowText] = React.useState(false);
   const timer = React.useRef<number | undefined>(undefined);
   React.useEffect(() => () => window.clearTimeout(timer.current), []);
-  const hintId = React.useId();
   const prompt = setupPrompt(window.location.origin, project.publicKey, {
     heatmaps: project.heatmaps,
   });
@@ -76,14 +75,10 @@ function CopySetupPrompt({ project }: { project: Project }) {
   return (
     <div className="flex flex-col gap-3">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-        <Button variant="outline" size="sm" aria-describedby={hintId} onClick={() => void copy()}>
+        <Button variant="outline" size="sm" onClick={() => void copy()}>
           {state === "copied" ? <CheckIcon aria-hidden="true" /> : <CopyIcon aria-hidden="true" />}
           {state === "copied" ? "Copied" : state === "failed" ? "Copy failed" : "Copy setup prompt"}
         </Button>
-        <span id={hintId} className="text-sm text-ink-muted">
-          For a coding agent: the instructions, this instance, and the public key. Never the secret
-          key.
-        </span>
         <span aria-live="polite" className="sr-only">
           {state === "copied" ? "Setup prompt copied" : state === "failed" ? "Copy failed" : ""}
         </span>
@@ -111,8 +106,7 @@ function InstallSection({ project }: { project: Project }) {
       description={
         <>
           Add this tag to every page of your site, in the{" "}
-          <code className="font-mono">&lt;head&gt;</code>. It records pageviews and how long each
-          page is visible, without cookies.
+          <code className="font-mono">&lt;head&gt;</code>.
         </>
       }
     >
@@ -139,9 +133,7 @@ function InstallSection({ project }: { project: Project }) {
             >
               Waiting for the first event
             </StatusBadge>
-            <span className="text-ink-muted">
-              Open your site in a browser after installation. This status updates automatically.
-            </span>
+            <span className="text-ink-muted">Open your site to send the first event.</span>
           </>
         ) : (
           <>
@@ -169,8 +161,7 @@ function InstallSection({ project }: { project: Project }) {
         <h3 className="text-sm font-medium text-ink">Public key</h3>
         <CopyableCode text={project.publicKey} copyLabel="Copy the public key" />
         <p className="text-sm text-muted-foreground">
-          The snippet already includes this key. Anyone can see it in your pages, so by design it
-          only lets pages on allowed sites send events, and it cannot read data.
+          This key allows event collection from allowed sites only. It cannot read data.
         </p>
       </div>
     </SettingsSection>
@@ -295,8 +286,7 @@ function GeneralSettings({
             aria-describedby="settings-hostnames-hint"
           />
           <FieldDescription id="settings-hostnames-hint">
-            Enter one hostname per line. Each subdomain is separate. List both www.example.com and
-            example.com if both serve pages. Changes apply within a minute.
+            One hostname per line, including each subdomain. Changes apply within a minute.
           </FieldDescription>
         </Field>
         <Field>

@@ -62,7 +62,7 @@ describe("an alert email", () => {
         "Open in Ottertrail: https://ottertrail.example.com/projects/0d6e5f80/uptime/c0ffee00",
         "",
         "-- ",
-        'Sent by the Ottertrail instance "Acme" to one of its notification channels.',
+        'Sent by "Acme" on Ottertrail.',
         "",
       ].join("\n"),
     );
@@ -276,7 +276,7 @@ describe("email deliveries", () => {
       { status: "failed", attempts: 1, next_attempt_at: null, last_error: NOT_SET_UP_ERROR },
     ]);
     expect(NOT_SET_UP_ERROR).toBe(
-      "Email is not configured on this instance. The instance's operator must set SMTP_URL and EMAIL_FROM.",
+      "Email isn't set up. Ask the instance's operator to set SMTP_URL and EMAIL_FROM.",
     );
   });
 });

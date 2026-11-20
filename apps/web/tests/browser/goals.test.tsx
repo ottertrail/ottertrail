@@ -63,9 +63,7 @@ describe("goals on the analytics page", () => {
       ["Team signupsignup where plan = team", "40", "5.2%", "44"],
       ["MostViewed /page-1", "600", "78%", "900"],
     ]);
-    await expect
-      .element(page.getByText(/^Visitor counts and shares for each goal use this page's period/))
-      .toBeVisible();
+    await expect.element(page.getByText(/Visitors count once per day/)).toBeVisible();
   });
 
   test("adds a page goal; the next answer counts it", async () => {
@@ -99,7 +97,7 @@ describe("goals on the analytics page", () => {
     renderApp(ANALYTICS);
 
     await page.getByRole("button", { name: "Add goal" }).click();
-    await expect.element(dialog().getByText(/Server events have no visitor/)).toBeVisible();
+    await expect.element(dialog().getByText(/Server events do not count/)).toBeVisible();
     await dialog().getByRole("textbox", { name: "Name" }).fill("Free signup");
     // The page's custom events are offered.
     await expect
@@ -153,7 +151,7 @@ describe("goals on the analytics page", () => {
       .toBeVisible();
     await dialog().getByRole("textbox", { name: "Path" }).fill("/pricing?plan=team");
     await expect
-      .element(dialog().getByText(/Enter the path without its query \(\?\) or fragment \(#\)/))
+      .element(dialog().getByText(/Paths are stored without queries \(\?\) or fragments \(#\)/))
       .toBeVisible();
 
     expect(api.bodies.filter((body) => body.path === GOALS_PATH)).toEqual([]);
@@ -268,11 +266,7 @@ describe("goals on the analytics page", () => {
     await page.getByRole("button", { name: "Delete the goal Saw pricing" }).click();
     const confirm = page.getByRole("dialog", { name: "Delete the goal “Saw pricing”?" });
     await expect.element(confirm).toBeVisible();
-    await expect
-      .element(
-        confirm.getByText(/Counts are calculated from your events each time and are not stored/),
-      )
-      .toBeVisible();
+    await expect.element(confirm.getByText(/Your events are kept/)).toBeVisible();
 
     await confirm.getByRole("button", { name: "Cancel" }).click();
     await expect.element(confirm).not.toBeInTheDocument();
@@ -293,9 +287,7 @@ describe("goals on the analytics page", () => {
     renderApp(ANALYTICS);
 
     await expect.element(page.getByText("No goals yet")).toBeVisible();
-    await expect
-      .element(page.getByText(/A goal is a page or event that counts as a success/))
-      .toBeVisible();
+    await expect.element(page.getByText(/Add a page or event to track as a goal/)).toBeVisible();
     await page.getByRole("button", { name: "Add goal" }).click();
     await expect.element(dialog()).toBeVisible();
   });

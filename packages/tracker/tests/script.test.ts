@@ -1234,7 +1234,7 @@ describe("session replay after consent", () => {
     const api = page.window.ottertrail;
     await runScript(); // And in a tag manager.
     expect(warn).toHaveBeenCalledTimes(1);
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining("on this page twice"));
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("duplicate tracker ignored"));
     expect(page.window.ottertrail).toBe(api);
     expect(recorders(page)).toHaveLength(1);
     const replay = fakeRecorder("x");
@@ -1365,7 +1365,9 @@ describe("heatmaps", () => {
     pinned.window.location.href = "https://example.com/next";
     pinned.window.history.pushState();
     expect(pinned.added).toEqual([]);
-    const said = warn.mock.calls.filter(([message]) => String(message).includes("data-heatmaps"));
+    const said = warn.mock.calls.filter(([message]) =>
+      String(message).includes("Heatmaps are off"),
+    );
     expect(said).toHaveLength(1);
     expect(String(said[0]?.[0])).toContain("integrity");
   });

@@ -33,14 +33,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import {
-  Empty,
-  EmptyContent,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyMedia,
-  EmptyTitle,
-} from "@/components/ui/empty";
+import { Empty, EmptyContent, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Table,
@@ -252,8 +245,7 @@ function RotateSecretDialog({
         <DialogHeader>
           <DialogTitle>Replace the secret of “{channel.name}”?</DialogTitle>
           <DialogDescription>
-            New requests use the new signing secret. A receiver that checks signatures rejects them
-            until it has the new secret.
+            Update your receiver with the new secret, or signature checks will fail.
           </DialogDescription>
         </DialogHeader>
         {rotate.error !== null && (
@@ -477,7 +469,7 @@ function ChannelItem({
       </div>
       {test.isSuccess && (
         <output className="text-sm text-ink-muted" aria-live="polite">
-          Test queued. It will be sent within seconds. Its result appears in the deliveries.
+          Test queued. Check Deliveries for the result.
         </output>
       )}
       {test.error !== null && (
@@ -530,7 +522,6 @@ function EmailSetUp() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="flex min-w-0 flex-wrap items-center gap-2 text-sm text-muted-foreground">
           <StatusBadge tone="good">Email set up</StatusBadge>
-          Alerts, invitations, and reset links go out through this instance&apos;s SMTP server.
         </p>
         <Button size="sm" variant="outline" disabled={test.isPending} onClick={() => test.mutate()}>
           {test.isPending ? (
@@ -574,11 +565,7 @@ export function NotificationChannels({ timeZone }: { timeZone: string }) {
   const [adding, setAdding] = React.useState(false);
 
   return (
-    <SettingsSection
-      title="Notification channels"
-      wide
-      description="Channels send alerts to email addresses or your webhook. Every project can use them. Each project's alert rules select their channels."
-    >
+    <SettingsSection title="Notification channels" wide>
       {list.isPending && (
         <div className="flex flex-col gap-2" aria-busy="true">
           <Skeleton className="h-24 w-full" />
@@ -606,8 +593,8 @@ export function NotificationChannels({ timeZone }: { timeZone: string }) {
               <TriangleAlertIcon />
               <AlertTitle>Email is not set up on this instance</AlertTitle>
               <AlertDescription>
-                You can add email channels, but they send nothing until whoever runs the server sets
-                SMTP_URL and EMAIL_FROM and restarts it. Webhooks work without email configuration.
+                To enable email, set SMTP_URL and EMAIL_FROM on the server and restart it. You can
+                save email channels now. Webhooks already work.
               </AlertDescription>
             </Alert>
           )}
@@ -618,10 +605,6 @@ export function NotificationChannels({ timeZone }: { timeZone: string }) {
                   <BellIcon />
                 </EmptyMedia>
                 <EmptyTitle>No channels yet</EmptyTitle>
-                <EmptyDescription>
-                  Add email addresses or a webhook. Send a test notification to check that the
-                  channel works.
-                </EmptyDescription>
               </EmptyHeader>
               <EmptyContent>
                 <Button onClick={() => setAdding(true)}>

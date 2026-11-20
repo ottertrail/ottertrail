@@ -8,7 +8,6 @@ import {
   Dialog,
   DialogClose,
   DialogContent,
-  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -89,7 +88,7 @@ function problemsOf(draft: Draft): Partial<Record<FieldName, string>> {
   } else if (draft.word.length > MAX_WORD) {
     problems.word = `The word has at most ${MAX_WORD} characters.`;
   } else if (draft.word !== "" && draft.method === "HEAD") {
-    problems.word = "A HEAD request has no response body to search for the word. Use GET.";
+    problems.word = "HEAD has no response body. Use GET to check for text.";
   }
   return problems;
 }
@@ -244,10 +243,6 @@ function CheckForm({
     >
       <DialogHeader>
         <DialogTitle>{check === undefined ? "Add a check" : `Edit “${check.name}”`}</DialogTitle>
-        <DialogDescription>
-          This instance's server requests the URL on a schedule. The check is marked down after the
-          specified number of consecutive failures.
-        </DialogDescription>
       </DialogHeader>
       <Field data-invalid={errorOf("url") !== null || undefined}>
         <FieldLabel htmlFor={ids.url}>URL</FieldLabel>

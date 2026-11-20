@@ -190,11 +190,7 @@ describe("Account settings", () => {
     const password = form("Email").getByLabelText("Current password");
     const save = form("Email").getByRole("button", { name: "Change email" });
     await expect.element(email).toHaveValue("owner@example.com");
-    await expect
-      .element(form("Email"))
-      .toMatchTextContent(
-        "Ottertrail doesn't send a confirmation email, because most self-hosted servers have no mail set up. Check the new address: you'll sign in with it from now on.",
-      );
+    await expect.element(form("Email")).toMatchTextContent("Email isn't set up on this instance.");
     // The password alone is nothing to save.
     await password.fill("anything");
     await expect.element(save).toHaveAttribute("aria-disabled", "true");
@@ -225,7 +221,7 @@ describe("Account settings", () => {
     await expect
       .element(
         form("Email").getByText(
-          "Someone has a pending invitation for this email address, so it can't be yours yet. Enter a different address, or ask an owner or admin to revoke the invitation on the Members page.",
+          "This address has a pending invitation. Use another address, or ask an owner or admin to revoke the invitation on the Members page.",
         ),
       )
       .toBeVisible();
@@ -234,9 +230,7 @@ describe("Account settings", () => {
     await email.fill("New@Example.com");
     await save.click();
     await expect
-      .element(
-        form("Email").getByText("Your email is now new@example.com. Sign in with it from now on."),
-      )
+      .element(form("Email").getByText("Sign in with new@example.com from now on."))
       .toBeVisible();
     expect(api.account.email).toBe("new@example.com");
     await expect.element(password).toHaveValue("");
@@ -294,11 +288,7 @@ describe("Account settings", () => {
     await current.fill(FAKE_PASSWORD);
     await save.click();
     await expect
-      .element(
-        form("Password").getByText(
-          "Your password is changed, and your other devices are signed out.",
-        ),
-      )
+      .element(form("Password").getByText("Password changed. Your other devices are signed out."))
       .toBeVisible();
     expect(api.account.password).toBe("a long new password");
     await expect.element(current).toHaveValue("");
@@ -321,7 +311,7 @@ describe("Account settings", () => {
     await form("Password").getByLabelText("Confirm new password").fill("a long new password");
     await form("Password").getByRole("checkbox", { name: "Sign out of my other devices" }).click();
     await form("Password").getByRole("button", { name: "Change password" }).click();
-    await expect.element(form("Password").getByText("Your password is changed.")).toBeVisible();
+    await expect.element(form("Password").getByText("Password changed.")).toBeVisible();
     expect(api.account.sessions).toHaveLength(3);
     expect(api.bodies.at(-1)?.body).toMatchObject({ revokeOtherSessions: false });
   });
@@ -346,7 +336,7 @@ describe("Account settings", () => {
     await expect
       .element(
         page.getByText(
-          "Ottertrail doesn't record where a device signed in from, because it never stores IP addresses.",
+          "Sign-in locations aren't available because Ottertrail doesn't store IP addresses.",
         ),
       )
       .toBeVisible();

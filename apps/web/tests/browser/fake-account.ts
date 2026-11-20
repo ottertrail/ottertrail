@@ -155,7 +155,7 @@ export function answerAccount(
     if (account.invitedEmails.includes(address)) {
       return problem(
         "email_invited",
-        "Someone has a pending invitation for this email address, so it can't be yours yet. Enter a different address, or ask an owner or admin to revoke the invitation on the Members page.",
+        "This address has a pending invitation. Use another address, or ask an owner or admin to revoke the invitation on the Members page.",
         409,
       );
     }

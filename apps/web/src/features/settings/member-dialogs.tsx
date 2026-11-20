@@ -265,8 +265,8 @@ export function InviteDialog({
           <DialogTitle>Invite someone</DialogTitle>
           <DialogDescription className="text-pretty">
             {emailConfigured
-              ? `Ottertrail emails an invitation link to the address you enter. You also get the link to copy, in case the email doesn't arrive. The link works once, within ${days} days.`
-              : `Email isn't set up on this instance, so Ottertrail can't email invitations. Copy the link and send it to the person yourself, for example in a chat or an email. The link works once, within ${days} days.`}
+              ? `The invitation is emailed, and you can copy the link. It works once, within ${days} days.`
+              : `Email isn't set up. Copy the invitation link and send it yourself. It works once, within ${days} days.`}
           </DialogDescription>
         </DialogHeader>
         {invite.data === undefined ? (
@@ -322,12 +322,12 @@ export function InviteDialog({
               <LinkToSend
                 url={invite.data.url}
                 emailedTo={invite.data.invitation.email}
-                about={`${emailedAbout("them")} If it gets lost, choose New link in the invitation's menu on the Invitations tab: it sends a new one.`}
+                about={`${emailedAbout("them")} For a replacement, choose New link on the Invitations tab.`}
               />
             ) : (
               <LinkToSend
                 url={invite.data.url}
-                about={`Send this link to ${invite.data.invitation.email}. ${LINK_ONCE} If it gets lost, choose New link in the invitation's menu on the Invitations tab.`}
+                about={`Send this link to ${invite.data.invitation.email}. ${LINK_ONCE} For a replacement, choose New link on the Invitations tab.`}
               />
             )}
             <DialogFooter>
@@ -426,8 +426,7 @@ export function AccessSheet({
           <SheetHeader className="border-b pr-12">
             <SheetTitle>Change access for {member.name}</SheetTitle>
             <SheetDescription className="text-pretty text-ink-subtle">
-              {member.email}. Changes apply the next time they click anything in Ottertrail, so they
-              don't need to sign out and back in.
+              {member.email}. Changes apply on their next action.
             </SheetDescription>
           </SheetHeader>
           <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto p-4">
@@ -439,8 +438,8 @@ export function AccessSheet({
             />
             {demoting && (
               <p className="text-sm text-pretty text-ink-muted">
-                Making {member.name} a member revokes the invitations they sent, because a member
-                can't invite anyone. Their invitees need a new invitation from you.
+                Members can't invite people. Invitations {member.name} sent will be revoked; send
+                replacements to their invitees.
               </p>
             )}
             {form.conflict && (
@@ -448,8 +447,7 @@ export function AccessSheet({
                 <OctagonAlertIcon />
                 <AlertTitle>Their access changed while you edited it</AlertTitle>
                 <AlertDescription>
-                  Someone else saved a change. Your edits are kept; save to replace theirs, or load
-                  the new values to start again from them.
+                  Save to overwrite their changes, or load the new values to discard your edits.
                 </AlertDescription>
                 <Button
                   type="button"
@@ -493,8 +491,7 @@ export function AccessSheet({
             <DialogHeader>
               <DialogTitle>Discard your changes?</DialogTitle>
               <DialogDescription className="text-pretty">
-                Your changes to {member.name}'s access aren't saved yet. If you close, they're lost
-                and their access stays as it was.
+                Unsaved changes to {member.name}'s access will be lost.
               </DialogDescription>
             </DialogHeader>
             <DialogFooter>

@@ -177,7 +177,7 @@ describe("adding a check", () => {
     [
       { url: "https://example.com/", method: "HEAD", word: "ok" },
       "invalid_word",
-      "A HEAD request has no response body to search for the word. Use GET.",
+      "HEAD has no response body. Use GET to check for text.",
     ],
     [
       { url: "https://example.com/", expectedStatuses: "2xx" },

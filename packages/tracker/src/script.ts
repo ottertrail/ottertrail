@@ -158,7 +158,7 @@ const REAL = Symbol.for("ottertrail.tracker");
 (() => {
   try {
     if (window.ottertrail !== undefined && Reflect.get(window.ottertrail, REAL) === true) {
-      console.warn("Ottertrail: the tracker is on this page twice. This copy does nothing.");
+      console.warn("Ottertrail: duplicate tracker ignored. Remove the extra script tag.");
       return;
     }
     const script = document.currentScript;
@@ -453,7 +453,7 @@ const REAL = Symbol.for("ottertrail.tracker");
     const heatmapsAsked = script?.dataset.heatmaps === "on";
     if (heatmapsAsked && !beside) {
       warnOnce(
-        "data-heatmaps cannot load h.js for a script tag with integrity. No heatmaps are recorded.",
+        "Heatmaps are off because the script tag has integrity. Remove integrity to enable them.",
       );
     }
     const heatmapsDeclared = beside && heatmapsAsked;
@@ -503,7 +503,7 @@ const REAL = Symbol.for("ottertrail.tracker");
             );
           } else if (!beside) {
             warnOnce(
-              "replay(true) cannot load the recorder for a script tag with integrity. Nothing is recorded.",
+              "Replay is off because the script tag has integrity. Remove integrity to enable it.",
             );
           } else if (!replayWanted) {
             replayWanted = true;
@@ -519,9 +519,7 @@ const REAL = Symbol.for("ottertrail.tracker");
       track: (name, properties) => {
         // The tracker sends these itself; a page sending them would distort reports.
         if (name === "pageview" || name === ENGAGEMENT || name === ERROR || name === VITALS) {
-          console.warn(
-            `Ottertrail: "${name}" is reserved for the tracker's own events. The event is not sent.`,
-          );
+          console.warn(`Ottertrail: "${name}" is reserved. Use a different event name.`);
           return;
         }
         tracker.track(name, current ?? landing(), properties);

@@ -181,13 +181,13 @@ describe("the project's Session replay card", () => {
     await expect.element(off()).toBeChecked();
     await expect.element(aroundErrors()).not.toBeChecked();
     const text = card().textContent;
-    expect(text).toContain("Both are required");
+    expect(text).toContain("Enable recording here and add this attribute");
     await expect
       .element(page.getByRole("button", { name: "Copy the replay attribute" }))
       .toBeVisible();
     expect(text).toContain('data-replay="errors"');
-    expect(text).toContain("visitor's browser masks");
-    expect(text).toContain("never reaches Ottertrail");
+    expect(text).toContain("masked before sending");
+    expect(text).toContain("To change masking:");
     for (const option of [
       'data-replay-text="show"',
       'data-replay-media="show"',
@@ -214,9 +214,7 @@ describe("the project's Session replay card", () => {
     const before = card().textContent;
     expect(before).not.toContain("replay(true)");
     // Said with the switch off too: where consent is set up.
-    expect(before).toContain(
-      "Session replay records what visitors do on your pages. If your site asks visitors before recording, set that up in your consent banner or consent tool, then turn on Wait for the visitor's consent.",
-    );
+    expect(before).toContain("Records only after your site reports consent.");
 
     await wait.click();
     await expect.element(wait).toBeChecked();
@@ -245,8 +243,8 @@ describe("the project's Session replay card", () => {
       .element(page.getByRole("button", { name: "Copy the script for early calls" }))
       .toBeVisible();
     const text = card().textContent;
-    expect(text).toContain("For sites that ask visitors before recording.");
-    expect(text).toContain("stores nothing on the visitor's device");
+    expect(text).toContain("Records only after your site reports consent.");
+    expect(text).toContain("doesn't store consent");
     expect(text).toContain("window.ottertrail.replay(false)");
     expect(text).toContain("other tracker calls do nothing");
     expect(text).not.toContain("docs/session-replay.md");

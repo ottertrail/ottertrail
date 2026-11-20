@@ -58,8 +58,7 @@ export function HeatmapsSettings({
         <div className="flex flex-col gap-1">
           <Label htmlFor={switchId}>Record clicks and scroll depth</Label>
           <p id={descriptionId} className="text-sm text-muted-foreground">
-            Pages send where visitors click and how far they scroll, for the Heatmaps page. Once on,
-            the snippet above includes {code('data-heatmaps="on"')}: update it on your site.
+            Once enabled, add {code('data-heatmaps="on"')} to your site's snippet.
           </p>
         </div>
         <Switch

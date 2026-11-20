@@ -203,8 +203,8 @@ function SourceMapNote({
     case "no_release":
       return (
         <p className="text-sm text-ink-muted">
-          This occurrence has no release, so no source map can be chosen for it. Your site sets one
-          with {code('data-release="1.4.2"')} on the tracker&apos;s script tag.
+          No release was sent, so source maps are unavailable. Set {code('data-release="1.4.2"')} on
+          the tracker&apos;s script tag.
         </p>
       );
     case "no_files":
@@ -336,7 +336,7 @@ export function StackCard({
         <CardTitle>
           <h3>Stack trace</h3>
         </CardTitle>
-        <CardDescription>The latest occurrence&apos;s stack, top frame first.</CardDescription>
+        <CardDescription>Latest occurrence, top frame first.</CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
         {stack === null ? (
@@ -346,8 +346,7 @@ export function StackCard({
         ) : source === "server" ? (
           <>
             <p className="text-sm text-ink-muted">
-              The stack appears as the server sent it. Source maps apply to browser code. Server
-              stacks are not mapped.
+              Server stacks are shown as received. Source maps apply only to browser code.
             </p>
             <RawStack stack={stack} />
           </>

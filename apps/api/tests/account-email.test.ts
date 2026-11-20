@@ -199,9 +199,7 @@ describe("with SMTP set up", () => {
       if (message === undefined) throw new Error("No email");
       expect(header(message.raw, "subject")).toBe(`${OWNER.instanceName}: Reset your password`);
       const text = decodedBody(message.raw);
-      expect(text).toContain(
-        `You requested a password reset for ${OWNER.instanceName} on Ottertrail.`,
-      );
+      expect(text).toContain(`You requested a password reset for ${OWNER.instanceName}.`);
       expect(text).toContain("This link works once and expires in 1 hour.");
       expect(text).toContain("A newer request replaces this link.");
       const link = linkIn(message.raw, "/reset-password");
@@ -283,9 +281,7 @@ describe("with SMTP set up", () => {
       expect(header(message?.raw ?? "", "subject")).toBe(
         `${OWNER.instanceName}: Your password was changed`,
       );
-      expect(decodedBody(message?.raw ?? "")).toContain(
-        "All sessions that were active before the reset were ended.",
-      );
+      expect(decodedBody(message?.raw ?? "")).toContain("The reset signed out all devices.");
     });
 
     test("malformed bodies and addresses sign-in refuses are refused, and nothing is queued", async () => {
@@ -939,7 +935,7 @@ describe("the review's fixes", () => {
     const third = await invite("cap-3@example.com");
     expect(third.statusCode).toBe(429);
     expect(third.json().message).toMatch(
-      /^You've emailed 2 invitations in the last hour, which is the limit, so this one wasn't made or sent\. Try again in about \d+ minutes\.$/u,
+      /^The limit is 2 emailed invitations per hour\. This invitation wasn't created or sent\. Try again in about \d+ minutes\.$/u,
     );
     expect(
       await dashboard.db

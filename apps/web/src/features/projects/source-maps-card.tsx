@@ -54,9 +54,8 @@ function UploadHelp() {
   return (
     <div className="flex flex-col gap-3 text-sm text-ink-muted">
       <p>
-        After each build, upload a source map for each minified file. Upload once per release and
-        file. Use the project's secret key from the “Your server” tab. Keep it in your build's
-        secrets. Never put it in a page.
+        After each build, upload one map per minified file and release. Use the secret key from Your
+        server; keep it in your build's secrets.
       </p>
       <CopyableCode text={cliExample(origin)} copyLabel="Copy the upload command" />
       <p className="text-xs text-ink-subtle">
@@ -71,13 +70,11 @@ function UploadHelp() {
           {code("/assets/index-4f3a.js")}, without the site&apos;s address.
         </li>
         <li>
-          {code("release")} must match the {code("data-release")} on the tracker's script tag. This
-          maps each error to the code that ran.
+          {code("release")} must match the {code("data-release")} on the tracker's script tag.
         </li>
         <li>
-          Build the maps without publishing them so visitors cannot read your source. In Vite,{" "}
-          {code('build.sourcemap: "hidden"')} writes maps without the comment that directs browsers
-          to them. Upload the maps. Exclude them from your deployment.
+          In Vite, use {code('build.sourcemap: "hidden"')}. Upload the maps and exclude them from
+          your deployment.
         </li>
       </ul>
     </div>
@@ -101,9 +98,6 @@ function FilesDialog({ projectId, release }: { projectId: string; release: Sourc
       <DialogContent className="sm:max-w-xl">
         <DialogHeader>
           <DialogTitle>Release {release.release}</DialogTitle>
-          <DialogDescription>
-            Minified files with source maps, listed by path with each map's stored size.
-          </DialogDescription>
         </DialogHeader>
         {files.isPending ? (
           <div className="flex flex-col gap-2" aria-busy="true" aria-label="Loading">
@@ -452,11 +446,7 @@ export function SourceMapsCard({ projectId }: { projectId: string }) {
   // Where focus goes when a delete dialog closes: the deleted row's buttons are gone.
   const headingRef = React.useRef<HTMLHeadingElement>(null);
   return (
-    <SettingsSection
-      title="Source maps"
-      description="With your build's source maps, error stacks show your original files and lines instead of minified code."
-      headingRef={headingRef}
-    >
+    <SettingsSection title="Source maps" headingRef={headingRef}>
       <div id="source-maps" className="flex flex-col gap-4">
         {query.isPending ? (
           <div className="flex flex-col gap-2" aria-busy="true" aria-label="Loading">

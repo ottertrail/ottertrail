@@ -58,7 +58,6 @@ function RenameFunnelDialog({ projectId, funnel }: { projectId: string; funnel: 
         onOpenChange={setOpen}
         projectId={projectId}
         title={`Rename the funnel “${funnel.name}”`}
-        description="Only the name changes. The steps, counted identities, and conversion window remain as saved."
         initialName={funnel.name}
         submitLabel="Rename funnel"
         save={(name) =>
@@ -133,9 +132,7 @@ function DeleteFunnelDialog({
         <DialogHeader>
           <DialogTitle>Delete the funnel “{funnel.name}”?</DialogTitle>
           <DialogDescription>
-            This deletes the funnel's definition: its name, steps, counted identities, and
-            conversion window. Your events are retained. You can build and save the same funnel
-            again without losing data.
+            Your events are kept. You can recreate this funnel later.
           </DialogDescription>
         </DialogHeader>
         {remove.error !== null && (
@@ -307,8 +304,7 @@ export function SavedFunnelsCard({
         failure === null && <LoadingRows rows={2} />
       ) : funnels.length === 0 ? (
         <p className="text-sm text-ink-subtle">
-          No funnels are saved yet. Set the steps below. Select Show funnel. Then select Save funnel
-          to save it here with a name.
+          Set the steps, then choose Show funnel and Save funnel.
         </p>
       ) : (
         <SavedFunnelTable

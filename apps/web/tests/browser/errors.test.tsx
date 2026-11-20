@@ -286,7 +286,7 @@ describe("an error's page", () => {
     ).toEqual([]);
 
     // The stack as sent, with no source maps.
-    await expect.element(page.getByText(/Source maps apply to browser code/)).toBeVisible();
+    await expect.element(page.getByText(/Source maps apply only to browser code/)).toBeVisible();
     await expect.element(page.getByText(/payments\.gateway\.CardDeclined/)).toBeVisible();
     expect(page.getByRole("list", { name: "Frames, top first" }).elements()).toEqual([]);
 

@@ -10,7 +10,6 @@ import {
   Dialog,
   DialogClose,
   DialogContent,
-  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -386,21 +385,17 @@ const fieldsOf = (draft: Draft): RuleFields => ({
 
 /** What each kind does, under its choice. */
 const KIND_HELP: Record<RuleKind, string> = {
-  check_down: "Sends a notification when a check goes down. Sends another when it is up again.",
-  certificate_expiring:
-    "Sends one notification per certificate within the specified days before expiry. Sends another when the certificate is renewed.",
-  error_new:
-    "Sends one notification per error group first seen after the rule is added. Previously seen groups do not count as new.",
-  error_regressed:
-    "Sends one notification each time an error group resolved in the dashboard occurs again in any environment.",
-  error_spike:
-    "Sends a notification when the error count in the window reaches the threshold. Sends another after it stays below the threshold for a full window.",
+  check_down: "Notifies when a check goes down and when it recovers.",
+  certificate_expiring: "Notifies once per expiring certificate, then again when renewed.",
+  error_new: "Notifies once per error group first seen after this rule is added.",
+  error_regressed: "Notifies whenever a resolved error recurs in any environment.",
+  error_spike: "Notifies at the threshold, then again after a full window below it.",
   route_latency:
-    "Sends a notification when the requests' 95th or 99th percentile duration exceeds the threshold over the window. Requests count as on the Services page. Sends another after the duration stays at or below the threshold for a full window. Windows with fewer requests than the minimum, including none, neither trigger nor resolve alerts.",
+    "Notifies above the threshold, then again after a full window at or below it. Requests count as on the Services page. Windows below the minimum request count do not trigger or resolve alerts.",
   route_failures:
-    "Sends a notification when the failed request share exceeds the threshold over the window. Sends another after the share stays at or below the threshold for a full window. Windows with fewer requests than the minimum, including none, neither trigger nor resolve alerts.",
+    "Notifies above the threshold, then again after a full window at or below it. Windows below the minimum request count do not trigger or resolve alerts.",
   metric_threshold:
-    "Sends a notification when the metric is above or below the value over the window. The metric is calculated as on its chart. Sends another after the metric stays on the non-alerting side for a full window. Windows without points neither trigger nor resolve alerts.",
+    "Notifies above or below the chosen value, then again after a full window without that condition. Calculated as on its chart. Empty windows do not trigger or resolve alerts.",
 };
 
 /** What a metric rule can read of each measure, as the metric's page calls it. */
@@ -689,10 +684,6 @@ function RuleForm({
         <DialogTitle>
           {rule === undefined ? "Add an alert rule" : `Edit “${rule.name}”`}
         </DialogTitle>
-        <DialogDescription>
-          A rule monitors the project. It notifies its channels when an alert starts and again when
-          the alert ends.
-        </DialogDescription>
       </DialogHeader>
       <SelectField
         label="When"
@@ -727,13 +718,11 @@ function RuleForm({
         <>
           {textField("fingerprint", "Error group (optional)", {
             placeholder: "All errors",
-            description:
-              "Leave empty to count all errors. This field is filled automatically from an error's page.",
+            description: "Leave empty to count all errors.",
           })}
           <div className="grid gap-4 sm:grid-cols-2">
             {textField("threshold", "Errors", {
               numeric: "numeric",
-              description: "Sends when the count reaches this.",
             })}
             {windowField}
           </div>
@@ -744,7 +733,6 @@ function RuleForm({
           {environmentField}
           {textField("service", "Service", {
             options: suggestions.services,
-            description: "The services that sent requests in the last day are suggested.",
           })}
           {textField("route", "Route (optional)", {
             placeholder: "All the service's requests",
@@ -764,7 +752,6 @@ function RuleForm({
                 />
                 {textField("thresholdMs", "Above (milliseconds)", {
                   numeric: "decimal",
-                  description: "Sends when the duration is above this.",
                 })}
               </>
             ) : (
@@ -842,7 +829,7 @@ function RuleForm({
           {textField("host", "Host (optional)", {
             placeholder: "All hosts",
             options: suggestions.hosts,
-            description: "Include only one host's series. Use its resource's host.name.",
+            description: "Use the resource attribute host.name.",
           })}
           <div className="grid gap-4 sm:grid-cols-2">
             {textField("attributeKey", "Attribute (optional)", {
@@ -851,7 +838,6 @@ function RuleForm({
             })}
             {textField("attributeValue", "Its value", {
               options: suggestions.values,
-              description: "Only the points with this value.",
             })}
           </div>
         </>

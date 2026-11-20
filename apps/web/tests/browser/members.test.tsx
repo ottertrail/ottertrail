@@ -146,7 +146,7 @@ describe("the Members page", () => {
     expect(document.querySelector(`time[datetime="${inFive}"]`)).not.toBeNull();
     await expect
       .element(
-        page.getByText("Ottertrail can't show or send an invitation's link again", {
+        page.getByText("Only a fingerprint is saved, so invitation links can't be retrieved.", {
           exact: false,
         }),
       )
@@ -165,11 +165,7 @@ describe("the Members page", () => {
     await expect.element(tab(/^Invitations/)).toHaveAccessibleName("Invitations");
     await tab(/^Invitations/).click();
     await expect.element(page.getByText("No pending invitations")).toBeVisible();
-    await expect
-      .element(
-        page.getByText("To add someone, choose Invite at the top of the page", { exact: false }),
-      )
-      .toBeVisible();
+    await expect.element(page.getByText("Choose Invite", { exact: false })).toBeVisible();
   });
 
   test("members have no Members page or link", async () => {
@@ -189,12 +185,7 @@ describe("the Members page", () => {
     const form = dialog("Invite someone");
     // Why no email goes out, and what to do instead.
     await expect
-      .element(
-        form.getByText(
-          "Email isn't set up on this instance, so Ottertrail can't email invitations",
-          { exact: false },
-        ),
-      )
+      .element(form.getByText("Email isn't set up. Copy the invitation link", { exact: false }))
       .toBeVisible();
     await form.getByRole("textbox", { name: "Email" }).fill("Leo@Example.com");
     await form.getByRole("radio", { name: /^Engineering/ }).click();
@@ -280,11 +271,7 @@ describe("the Members page", () => {
       "Remove",
     ]);
     await expect.element(menuButton("Test Owner")).not.toBeInTheDocument();
-    await expect
-      .element(
-        page.getByText("You're the owner, so you keep access to everything", { exact: false }),
-      )
-      .toBeVisible();
+    await expect.element(page.getByText("Owners keep full access", { exact: false })).toBeVisible();
   });
 
   test("an admin's row menus: members only, and no ownership", async () => {
@@ -302,7 +289,7 @@ describe("the Members page", () => {
     await settle();
     expect(document.querySelector("[data-slot=sheet-content]")).toBeNull();
     await expect
-      .element(page.getByText("only the owner can change an admin", { exact: false }))
+      .element(page.getByText("Only the owner can manage admins", { exact: false }))
       .toBeVisible();
   });
 
@@ -331,7 +318,9 @@ describe("the Members page", () => {
     await expect.element(menuButton("boss@example.com")).not.toBeInTheDocument();
     expect(await itemsFor("zoe@example.com")).toEqual(["New link", "Revoke"]);
     await expect
-      .element(page.getByText("only the owner can renew or revoke them", { exact: false }))
+      .element(
+        page.getByText("Only the owner can renew or revoke admin invitations", { exact: false }),
+      )
       .toBeVisible();
   });
 
@@ -365,7 +354,7 @@ describe("the Members page", () => {
     await expect.element(sheet("Mia Member")).toBeVisible();
     await expect
       .element(
-        sheet("Mia Member").getByText("Changes apply the next time they click", { exact: false }),
+        sheet("Mia Member").getByText("Changes apply on their next action", { exact: false }),
       )
       .toBeVisible();
 
@@ -445,7 +434,7 @@ describe("the Members page", () => {
       .getByRole("radio", { name: /^Member/ })
       .click();
     await expect
-      .element(accessForm().getByText("revokes the invitations they sent", { exact: false }))
+      .element(accessForm().getByText("will be revoked; send replacements", { exact: false }))
       .toBeVisible();
   });
 
@@ -500,7 +489,7 @@ describe("the Members page", () => {
     const reset = dialog("A reset link for Ada Admin");
     await expect
       .element(
-        reset.getByText("Email isn't set up on this instance, so Ottertrail can't email it", {
+        reset.getByText("Email isn't set up. Copy the reset link and send it yourself.", {
           exact: false,
         }),
       )

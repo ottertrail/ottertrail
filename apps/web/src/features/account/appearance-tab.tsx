@@ -1,18 +1,14 @@
 import * as React from "react";
 
 import { SettingsSection } from "@/components/settings-section";
-import { Field, FieldContent, FieldDescription, FieldLabel } from "@/components/ui/field";
+import { Field, FieldContent, FieldLabel } from "@/components/ui/field";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { isThemeChoice, setThemeChoice, type ThemeChoice, useTheme } from "@/lib/theme";
 
-const THEME_OPTIONS: { value: ThemeChoice; label: string; hint: string }[] = [
-  {
-    value: "system",
-    label: "System",
-    hint: "Light or dark as this device is set, and as it changes.",
-  },
-  { value: "light", label: "Light", hint: "Dark text on light surfaces." },
-  { value: "dark", label: "Dark", hint: "Light text on a near-black canvas." },
+const THEME_OPTIONS: { value: ThemeChoice; label: string }[] = [
+  { value: "system", label: "System" },
+  { value: "light", label: "Light" },
+  { value: "dark", label: "Dark" },
 ];
 
 /**
@@ -24,10 +20,7 @@ export function AppearanceTab() {
   const { choice } = useTheme();
   const id = React.useId();
   return (
-    <SettingsSection
-      title="Theme"
-      description="Saved on this device only, at once. Other devices and browsers keep their own."
-    >
+    <SettingsSection title="Theme" description="Applies immediately to this browser only.">
       <RadioGroup
         name="theme"
         aria-label="Theme"
@@ -39,15 +32,9 @@ export function AppearanceTab() {
       >
         {THEME_OPTIONS.map((option) => (
           <Field key={option.value} orientation="horizontal" className="items-start">
-            <RadioGroupItem
-              value={option.value}
-              id={`${id}-${option.value}`}
-              aria-describedby={`${id}-${option.value}-hint`}
-              className="mt-0.5"
-            />
+            <RadioGroupItem value={option.value} id={`${id}-${option.value}`} className="mt-0.5" />
             <FieldContent>
               <FieldLabel htmlFor={`${id}-${option.value}`}>{option.label}</FieldLabel>
-              <FieldDescription id={`${id}-${option.value}-hint`}>{option.hint}</FieldDescription>
             </FieldContent>
           </Field>
         ))}

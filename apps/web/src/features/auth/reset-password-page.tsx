@@ -79,7 +79,7 @@ export function ResetPasswordPage() {
     const gone =
       token === null || (preview.error instanceof ApiError && preview.error.status === 404);
     return (
-      <AuthLayout title="Set a new password" description="A reset link sets it.">
+      <AuthLayout title="Set a new password">
         <Alert variant={gone ? "default" : "destructive"}>
           <OctagonAlertIcon />
           <AlertDescription>{gone ? LINK_GONE : preview.error?.message}</AlertDescription>
@@ -89,7 +89,7 @@ export function ResetPasswordPage() {
   }
   if (preview.data === undefined || session.isPending) {
     return (
-      <AuthLayout title="Set a new password" description="A reset link sets it.">
+      <AuthLayout title="Set a new password">
         <div className="flex flex-col gap-3" aria-busy="true">
           <span className="sr-only">Loading…</span>
           <Skeleton className="h-9 w-full" />
@@ -128,7 +128,7 @@ export function ResetPasswordPage() {
   return (
     <AuthLayout
       title="Set a new password"
-      description={`For ${preview.data.email}. Every device signed in to this account is signed out.`}
+      description={`For ${preview.data.email}. This signs out all devices.`}
     >
       <form onSubmit={(event) => void submit(event)}>
         <FieldGroup>
@@ -145,7 +145,7 @@ export function ResetPasswordPage() {
               aria-describedby="password-hint"
             />
             <FieldDescription id="password-hint">
-              At least {MIN_PASSWORD_LENGTH} characters. A passphrase of a few words works well.
+              At least {MIN_PASSWORD_LENGTH} characters.
             </FieldDescription>
           </Field>
           <Field>

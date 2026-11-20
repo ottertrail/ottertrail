@@ -42,8 +42,7 @@ export function DefinitionSummary({ definition }: { definition: FunnelDefinition
         </div>
       </dl>
       <p className="text-xs text-ink-subtle">
-        The period and environment are not saved. The funnel opens with the period and environment
-        currently selected.
+        Uses the current period and environment when reopened.
       </p>
     </div>
   );
@@ -62,7 +61,7 @@ function FunnelNameForm({
 }: {
   projectId: string;
   title: string;
-  description: string;
+  description?: string;
   initialName: string;
   submitLabel: string;
   save: (name: string) => Promise<SavedFunnel>;
@@ -103,7 +102,7 @@ function FunnelNameForm({
     >
       <DialogHeader>
         <DialogTitle>{title}</DialogTitle>
-        <DialogDescription>{description}</DialogDescription>
+        {description && <DialogDescription>{description}</DialogDescription>}
       </DialogHeader>
       <Field data-invalid={nameError !== null || undefined}>
         <FieldLabel htmlFor={nameId}>Name</FieldLabel>
@@ -160,7 +159,7 @@ export function FunnelNameDialog({
   savedFocus?: React.RefObject<HTMLElement | null>;
   projectId: string;
   title: string;
-  description: string;
+  description?: string;
   initialName: string;
   submitLabel: string;
   save: (name: string) => Promise<SavedFunnel>;

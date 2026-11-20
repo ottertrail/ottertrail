@@ -4,17 +4,11 @@ import * as React from "react";
 
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useSettled } from "@/hooks/use-settled";
-import { activeFilters, type ListReport, listQuery } from "@/lib/analytics-api";
+import { type ListReport, listQuery } from "@/lib/analytics-api";
 
 import { FilterLink } from "./filter-link";
 import { type PageSearch, rankedRows } from "./list-rows";
@@ -58,16 +52,12 @@ export function ShowAllDialog({
       <FilterLink projectId={projectId} search={search} name={name} value={value} onClick={close} />
     ),
   );
-  const filtered = activeFilters(search.filters).length > 0;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="flex max-h-[85vh] flex-col sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
-          <DialogDescription>
-            Every row for this period{filtered ? " and these filters" : ""}, most visitors first.
-          </DialogDescription>
         </DialogHeader>
         <Input
           type="search"

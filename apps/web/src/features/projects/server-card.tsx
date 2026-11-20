@@ -68,7 +68,7 @@ export function ServerSettings({
     <>
       <SettingsSection
         title="Your server"
-        description="A browser cannot block or fake events from your server, such as payments. These events need the secret key. Keep it on your server. Never put it in a page."
+        description="Keep the secret key on your server. Never put it in a page."
       >
         <div className="flex flex-col gap-2">
           <div className="flex items-center justify-between gap-2">
@@ -115,9 +115,7 @@ export function ServerSettings({
           <div className="flex flex-col gap-1">
             <Label htmlFor={switchId}>Only accept user IDs signed by your server</Label>
             <p id={descriptionId} className="text-sm text-muted-foreground">
-              Anyone can copy the snippet and send events with any user ID. When enabled, browser
-              events need your server's signature for the user ID to count. Events without a
-              signature are retained without the user ID.
+              Browser events without a valid signature are kept without their user ID.
             </p>
           </div>
           <Switch

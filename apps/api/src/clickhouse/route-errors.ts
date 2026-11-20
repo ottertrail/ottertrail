@@ -36,7 +36,7 @@ export function clickHouseErrorHandler(
     return reply.code(503).header("retry-after", "60").send({
       error: "reports_busy",
       message:
-        "This report needs more memory than it can currently use. Try a shorter range or narrower filters. Alternatively, try again in a minute.",
+        "This report exceeded its memory limit. Shorten the range, narrow the filters, or try again in a minute.",
     });
   }
   if (error instanceof ClickHouseError && error.type === "TIMEOUT_EXCEEDED") {

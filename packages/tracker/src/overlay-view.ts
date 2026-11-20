@@ -59,8 +59,7 @@ export type OverlayState =
 export const MESSAGES: Record<Exclude<OverlayState, "ready" | "empty">, string> = {
   loading: "Loading the heatmap…",
   link_expired: "This link has expired or was already used. Open it again from the dashboard.",
-  no_access:
-    "Your account cannot view this project's heatmaps. An owner or admin can give you Web analytics.",
+  no_access: "You don't have heatmap access. Ask an owner or admin for Web analytics access.",
   session_expired: "This heatmap session ended after 30 minutes. Open it again from the dashboard.",
   failed: "The heatmap could not load.",
 };
@@ -314,7 +313,7 @@ export function startOverlay(config: OverlayConfig, options: OverlayOptions) {
     "p",
     {
       className: "note",
-      text: "Only you see this overlay, and this visit is not counted.",
+      text: "Only you see this overlay. This visit doesn't count.",
     },
     panel,
   );

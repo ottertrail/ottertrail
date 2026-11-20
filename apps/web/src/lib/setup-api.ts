@@ -53,7 +53,7 @@ export async function createOwner(details: OwnerDetails): Promise<CreateOwnerRes
   } catch {
     return {
       ok: false,
-      message: "Could not reach the API. Check that it is running. Then try again.",
+      message: "Could not reach the API. Check that it is running, then try again.",
     };
   }
   if (response.status === 201) {

@@ -90,7 +90,7 @@ export function InvitePage() {
     const gone =
       token === null || (preview.error instanceof ApiError && preview.error.status === 404);
     return (
-      <AuthLayout title="Invitation" description="Join an Ottertrail instance.">
+      <AuthLayout title="Invitation">
         <Alert variant={gone ? "default" : "destructive"}>
           <OctagonAlertIcon />
           <AlertDescription>{gone ? LINK_GONE : preview.error?.message}</AlertDescription>
@@ -100,7 +100,7 @@ export function InvitePage() {
   }
   if (preview.data === undefined || session.isPending) {
     return (
-      <AuthLayout title="Invitation" description="Join an Ottertrail instance.">
+      <AuthLayout title="Invitation">
         <div className="flex flex-col gap-3" aria-busy="true">
           <span className="sr-only">Loading the invitation…</span>
           <Skeleton className="h-4 w-full" />
@@ -164,7 +164,7 @@ export function InvitePage() {
                   aria-describedby="password-hint"
                 />
                 <FieldDescription id="password-hint">
-                  At least {MIN_PASSWORD_LENGTH} characters. A passphrase of a few words works well.
+                  At least {MIN_PASSWORD_LENGTH} characters.
                 </FieldDescription>
               </Field>
               <Field>

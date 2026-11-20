@@ -79,12 +79,11 @@ export function ProjectsPage() {
 
   return (
     <div className="flex flex-col">
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b px-gutter py-3">
-        <p className="text-sm text-pretty text-ink-subtle">
-          Each website or app you track is a project, with its own snippet and data.
-        </p>
-        {list !== undefined && list.length > 0 && canManage && <NewProjectDialog />}
-      </div>
+      {list !== undefined && list.length > 0 && canManage && (
+        <div className="flex justify-end border-b px-gutter py-3">
+          <NewProjectDialog />
+        </div>
+      )}
 
       {projects.isPending && <ProjectsSkeleton />}
 

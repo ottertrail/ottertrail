@@ -348,8 +348,7 @@ export function UserView({
         )}
         {timeZone !== undefined && (
           <p className="text-sm text-ink-subtle">
-            Times in {timeZone}. Only events sent with this user ID count. Browsing before sign-in
-            does not count because someone else may have used the device.
+            Times in {timeZone}. Only events with this user ID count.
           </p>
         )}
       </div>

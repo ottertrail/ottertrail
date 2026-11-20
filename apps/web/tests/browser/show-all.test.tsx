@@ -101,9 +101,7 @@ describe("show all", () => {
     await expect
       .poll(() => lastListQuery(api))
       .toMatchObject({ period: "30d", country: "DE", report: "pages" });
-    await expect
-      .element(page.getByText("Every row for this period and these filters, most visitors first."))
-      .toBeVisible();
+    await expect.element(page.getByRole("dialog")).toBeVisible();
   });
 
   test("Escape closes it", async () => {

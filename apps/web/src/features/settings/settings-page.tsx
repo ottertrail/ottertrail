@@ -108,7 +108,7 @@ function GeneralForm({
   return (
     <SettingsSection
       title="Instance"
-      description="The instance name and timezone apply to all projects. Only the owner can view and change them."
+      description="Applies to all projects."
       form={form}
       onSave={(values) => save.mutate(values)}
       saving={save.isPending}
@@ -141,8 +141,8 @@ function GeneralForm({
           />
           <FieldDescription id="settings-time-zone-hint">
             {movesDays
-              ? "Changing the timezone changes day boundaries in all reports, including past reports. Visitors seen before the change count again after it until midnight."
-              : "Reports count days in this timezone. Use a name such as Europe/Berlin or Asia/Singapore."}
+              ? "Changes day boundaries in past reports too. Visitors seen before this change count again until midnight."
+              : "Reports use this timezone for day boundaries."}
           </FieldDescription>
         </Field>
       </FieldGroup>

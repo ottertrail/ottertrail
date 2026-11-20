@@ -109,7 +109,7 @@ const RESET_REQUESTS_LIMITED = problem(
 );
 const NO_EMAIL = problem(
   "email_not_set_up",
-  "Email isn't set up on this instance, so Ottertrail can't send reset links. Ask the person who runs it for a reset link.",
+  "Email isn't set up on this instance. Ask the person who runs it for a reset link.",
 );
 const INVALID_EMAIL = problem(
   "invalid_email",
@@ -286,7 +286,7 @@ export const memberRoutes: FastifyPluginCallback<{
       .send(
         problem(
           "rate_limited",
-          `You've emailed ${invitationEmailLimit.capacity} invitations in the last hour, which is the limit, so this one wasn't made or sent. Try again in about ${Math.ceil(result.retryAfterSeconds / 60)} minutes.`,
+          `The limit is ${invitationEmailLimit.capacity} emailed invitations per hour. This invitation wasn't created or sent. Try again in about ${Math.ceil(result.retryAfterSeconds / 60)} minutes.`,
         ),
       );
     return false;
@@ -391,7 +391,7 @@ export const memberRoutes: FastifyPluginCallback<{
           .send(
             problem(
               "email_not_set_up",
-              "Email isn't set up on this instance, so Ottertrail can't email the link. Make the link without email, copy it, and send it to them yourself.",
+              "Email isn't set up. Make the link without email, then copy and send it yourself.",
             ),
           );
       }

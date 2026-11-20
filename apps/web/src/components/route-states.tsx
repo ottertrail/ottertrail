@@ -84,7 +84,7 @@ export function RouteError({ error }: ErrorComponentProps) {
         <AlertTitle>{chunk ? "This page could not load" : "Something went wrong"}</AlertTitle>
         <AlertDescription>
           {chunk
-            ? `Its code could not be downloaded (${messageOf(error.cause)}). Ottertrail may have been updated since this tab was opened, or the connection dropped. Reload to get the current version.`
+            ? `The page download failed (${messageOf(error.cause)}). Reload to try again.`
             : `${messageOf(error)} Reloading the page may help.`}
         </AlertDescription>
         <AlertAction>

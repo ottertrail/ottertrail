@@ -698,7 +698,7 @@ function WarningChannelsSection({
   return (
     <SettingsSection
       title="Storage warnings"
-      description="The worker checks every 5 minutes. The chosen channels hear when a warning starts, when it becomes critical, and when it ends. None are chosen at first."
+      description="Checked every 5 minutes. Selected channels are notified when warnings start, become critical, or end."
       form={form}
       onSave={(values) => save.mutate(values)}
       saving={save.isPending}
@@ -768,10 +768,7 @@ export function StorageTab({ timeZone, onDirty }: InstanceTabProps) {
   const refreshFailed = storage.isError;
   return (
     <div className="flex flex-col">
-      <SettingsSection
-        title="What fills the disk"
-        description="What fills the server's disk, and what limits it. Each store is measured on its own when the page opens."
-      >
+      <SettingsSection title="What fills the disk">
         <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
           <p className="mr-auto text-sm text-ink-subtle">
             Measured {formatMoment(report.measuredAt, timeZone)}.

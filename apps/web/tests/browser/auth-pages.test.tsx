@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vite-plus/test";
-import { page } from "vite-plus/test/browser/context";
+import { page, userEvent } from "vite-plus/test/browser/context";
 
 import { GOOD_INVITE, GOOD_RESET, installFakeApi, requestUrl } from "./fake-api.ts";
 import { unmountAll } from "./mounted.ts";
@@ -63,6 +63,19 @@ afterEach(async () => {
 });
 
 describe("sign-in", () => {
+  test("without email, the password reset dialog fits on a phone", async () => {
+    installFakeApi({ signedIn: false, emailConfigured: false });
+    renderApp("/sign-in");
+    const trigger = page.getByRole("button", { name: "Forgot password?" });
+    await trigger.click();
+    const dialog = page.getByRole("dialog", { name: "Forgot your password?" });
+    await expect.element(dialog).toBeVisible();
+    expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(390);
+    await userEvent.keyboard("{Escape}");
+    await expect.element(dialog).not.toBeInTheDocument();
+    await expect.element(trigger).toHaveFocus();
+  });
+
   test("asks for the email and password, says when they are wrong, and signs in", async () => {
     const api = installFakeApi({ signedIn: false });
     const router = renderApp("/sign-in");
@@ -103,9 +116,7 @@ describe("sign-in", () => {
     await page.getByRole("button", { name: "Sign in" }).click();
     await expect
       .element(
-        page
-          .getByRole("alert")
-          .filter({ hasText: "Too many attempts. Wait a minute. Then try again." }),
+        page.getByRole("alert").filter({ hasText: "Too many attempts. Try again in a minute." }),
       )
       .toBeVisible();
   });
@@ -287,7 +298,7 @@ describe("the link's token", () => {
     for (const [path, token, loaded] of [
       ["/invite", GOOD_INVITE, /Test Owner invited zoe@example\.com/],
       ["/reset-password", GOOD_RESET, /For mia@example\.com/],
-      ["/setup", "setup-token", /The owner manages this instance/],
+      ["/setup", "setup-token", /Create the owner account/],
     ] as const) {
       unmountAll();
       const api = installFakeApi({ signedIn: false });

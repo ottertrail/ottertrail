@@ -57,7 +57,7 @@ export function stepProblems(step: DraftStep): StepProblems {
     if (!path.startsWith("/")) problems.path = "A path starts with /, such as /pricing.";
     else if (/[?#]/.test(path))
       problems.path =
-        "Enter the path without its query (?) or fragment (#): Ottertrail stores page paths without them, since they can hold secrets.";
+        "Paths are stored without queries (?) or fragments (#). Remove them from this path.";
     else if (CONTROL.test(path)) problems.path = "This path is not valid.";
     else if (characters(path) > MAX_PATH)
       problems.path = `A path here has at most ${MAX_PATH} characters.`;
@@ -102,7 +102,7 @@ export function stepsOverlap(first: FunnelStep, second: FunnelStep): boolean {
 }
 
 const OVERLAP =
-  "One event could match both this step and the previous step. It would count for both. Insert another step between them. Alternatively, filter both steps by different values of the same property.";
+  "One event could count for both this step and the previous one. Insert a step between them, or filter them by different values of the same property.";
 
 /** Each step's problems, and, for a step one event could share with the step before, that. */
 export function allStepProblems(drafts: readonly DraftStep[]): StepProblems[] {

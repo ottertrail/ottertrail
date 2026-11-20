@@ -4,6 +4,16 @@ import * as React from "react";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
 import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { authClient, signInErrorMessage } from "@/lib/auth-client";
@@ -58,7 +68,7 @@ export function SignInPage() {
   }
 
   return (
-    <AuthLayout title="Sign in" description="Sign in to this Ottertrail instance.">
+    <AuthLayout title="Sign in">
       {ownerExists === false && (
         <Alert>
           <InfoIcon />
@@ -80,7 +90,25 @@ export function SignInPage() {
           <Field>
             <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
               <FieldLabel htmlFor="password">Password</FieldLabel>
-              {emailConfigured === true && (
+              {emailConfigured === false ? (
+                <Dialog>
+                  <DialogTrigger className="relative rounded-sm text-sm text-link underline-offset-4 outline-none after:absolute after:-inset-x-1 after:-inset-y-2.5 hover:underline focus-visible:ring-3 focus-visible:ring-ring/50">
+                    Forgot password?
+                  </DialogTrigger>
+                  <DialogContent showCloseButton={false}>
+                    <DialogHeader>
+                      <DialogTitle>Forgot your password?</DialogTitle>
+                      <DialogDescription>
+                        Email isn't set up on this instance. Ask the person who runs it for a reset
+                        link.
+                      </DialogDescription>
+                    </DialogHeader>
+                    <DialogFooter>
+                      <DialogClose render={<Button variant="outline" />}>Close</DialogClose>
+                    </DialogFooter>
+                  </DialogContent>
+                </Dialog>
+              ) : (
                 <Link
                   to="/forgot-password"
                   className="relative rounded-sm text-sm text-link underline-offset-4 outline-none after:absolute after:-inset-x-1 after:-inset-y-2.5 hover:underline focus-visible:ring-3 focus-visible:ring-ring/50"
@@ -114,12 +142,6 @@ export function SignInPage() {
           </Button>
         </FieldGroup>
       </form>
-      {emailConfigured === false && (
-        <p className="-mt-3 text-sm text-pretty text-ink-subtle">
-          Forgot your password? Email isn&apos;t set up on this instance, so ask the person who runs
-          it for a reset link.
-        </p>
-      )}
     </AuthLayout>
   );
 }

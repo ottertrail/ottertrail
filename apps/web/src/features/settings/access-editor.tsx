@@ -1,7 +1,7 @@
 import * as React from "react";
 
 import { Checkbox } from "@/components/ui/checkbox";
-import { FieldDescription, FieldLegend, FieldSet } from "@/components/ui/field";
+import { FieldLegend, FieldSet } from "@/components/ui/field";
 import {
   AREA_LABELS,
   AREA_LEVELS,
@@ -131,9 +131,6 @@ export function AccessEditor({
           </FieldSet>
           <FieldSet>
             <FieldLegend variant="label">Areas</FieldLegend>
-            <FieldDescription>
-              Replays and users show individual people. Each has a separate access area.
-            </FieldDescription>
             <div className="flex flex-col gap-3">
               {AREAS.map((area) => (
                 <fieldset key={area} className="flex flex-wrap items-center gap-x-4 gap-y-1">

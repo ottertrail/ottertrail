@@ -440,8 +440,8 @@ function InvitationsTable({
 /** Under the members table: what the viewer can't do here, why, and what to do instead. */
 function membersNote(actor: Actor) {
   return actor.role === "owner"
-    ? "You're the owner, so you keep access to everything, and you can't change your own access or remove yourself. To give the instance to someone else, open their row's menu and choose Make owner."
-    : "As an admin, you can change, reset, and remove members. Admins and the owner have no menu here, because only the owner can change an admin, and nobody can change the owner or their own access. Ask the owner if this needs doing.";
+    ? "Owners keep full access and can't remove themselves. To transfer ownership, choose Make owner in another person's menu."
+    : "Only the owner can manage admins. You can't change your own access or the owner's. Ask the owner to change an admin's access.";
 }
 
 /** The page's shape while it loads: the tab row, then rows. */
@@ -599,8 +599,8 @@ export function MembersPage() {
               title={`A reset link for ${member.name}`}
               description={
                 data.emailConfigured
-                  ? `A reset link lets ${member.name} set a new password. Email it to ${member.email}, or make the link and send it to them yourself. It works once, within 24 hours. Using it signs them out everywhere. Their old password works until then, and a new link replaces any earlier one.`
-                  : `A reset link lets ${member.name} set a new password. Email isn't set up on this instance, so Ottertrail can't email it: you send it to them yourself. It works once, within 24 hours. Using it signs them out everywhere. Their old password works until then, and a new link replaces any earlier one.`
+                  ? `Email the reset link to ${member.email}, or copy and send it yourself. Works once within 24 hours and replaces earlier links. Using it signs them out everywhere; their current password works until then.`
+                  : `Email isn't set up. Copy the reset link and send it yourself. Works once within 24 hours and replaces earlier links. Using it signs them out everywhere; their current password works until then.`
               }
               {...(data.emailConfigured
                 ? {
@@ -614,7 +614,7 @@ export function MembersPage() {
                     emailedAbout: `${emailedAbout(member.name)} If it gets lost, make a new one from their row's menu.`,
                   }
                 : { confirmLabel: "Make the link", run: () => makeResetLink(member.id) })}
-              linkAbout={`Send this link to ${member.name} yourself, for example in a chat or an email. ${LINK_ONCE} If it gets lost, make a new one from their row's menu.`}
+              linkAbout={`Send this link to ${member.name}. ${LINK_ONCE} For a replacement, use their row's menu.`}
             />
           );
         case "owner":
@@ -625,7 +625,7 @@ export function MembersPage() {
               onOpenChange={setOpen}
               finalFocus={finalFocus}
               title={`Make ${member.name} the owner?`}
-              description="They get the instance settings and everything else, and you become an admin. Only the new owner can make you the owner again. Enter your password to confirm it's you."
+              description="They get full access, and you become an admin. Only they can restore your ownership."
               confirmLabel="Hand over ownership"
               destructive
               canConfirm={password !== ""}
@@ -657,7 +657,7 @@ export function MembersPage() {
               onOpenChange={setOpen}
               finalFocus={finalFocus}
               title={`Remove ${member.name}?`}
-              description="This deletes their account and signs them out at once. What they did, such as resolving errors, stays recorded. Invitations they sent are revoked too, so those people need a new invitation."
+              description="Deletes their account and signs them out immediately. Their activity stays recorded. Their invitations are revoked; send replacements to their invitees."
               confirmLabel="Remove"
               destructive
               run={async () => {
@@ -681,11 +681,11 @@ export function MembersPage() {
           title={`A new link for ${invitation.email}`}
           description={
             data.emailConfigured
-              ? `Use this to resend the invitation or replace a lost link: Ottertrail keeps only a fingerprint of each link, so it can't send the old one again. The old link stops working at once. The new one is emailed to ${invitation.email} and works once, for ${data.invitationDays} days.`
-              : `Use this to replace a lost link: Ottertrail keeps only a fingerprint of each link, so it can't show it again. The old link stops working at once, and the new one works once, for ${data.invitationDays} days.`
+              ? `The old link stops working immediately. The new link is emailed to ${invitation.email} and works once, within ${data.invitationDays} days.`
+              : `The old link stops working immediately. Copy and send the new link; it works once, within ${data.invitationDays} days.`
           }
           confirmLabel={data.emailConfigured ? "Send a new link" : "Make a new link"}
-          linkAbout={`Send this link to ${invitation.email} yourself, for example in a chat or an email. ${LINK_ONCE}`}
+          linkAbout={`Send this link to ${invitation.email}. ${LINK_ONCE}`}
           emailedTo={invitation.email}
           emailedAbout={emailedAbout("them")}
           run={() => renewInvitation(invitation.id)}
@@ -697,7 +697,7 @@ export function MembersPage() {
           onOpenChange={setOpen}
           finalFocus={finalFocus}
           title={`Revoke the invitation of ${invitation.email}?`}
-          description={`Its link stops working at once, so ${invitation.email} can't join with it. To invite them again later, use Invite.`}
+          description={`The link stops working immediately. Use Invite to invite ${invitation.email} again.`}
           confirmLabel="Revoke"
           destructive
           run={async () => {
@@ -798,8 +798,8 @@ export function MembersPage() {
                   <EmptyTitle>No pending invitations</EmptyTitle>
                   <EmptyDescription>
                     {data.emailConfigured
-                      ? "Nobody is waiting to join. To add someone, choose Invite at the top of the page: Ottertrail emails them the link."
-                      : "Nobody is waiting to join. To add someone, choose Invite at the top of the page, then copy the link it makes and send it to them yourself."}
+                      ? "Choose Invite to email an invitation."
+                      : "Choose Invite, then copy and send the link."}
                   </EmptyDescription>
                 </EmptyHeader>
               </Empty>
@@ -816,16 +816,13 @@ export function MembersPage() {
               />
               <div className="flex max-w-3xl flex-col gap-2 px-gutter py-4 text-sm text-pretty text-ink-subtle">
                 <p>
-                  Ottertrail can't show or send an invitation's link again after it's made, because
-                  it keeps only a fingerprint of the link. If someone lost theirs, choose New link
-                  in their row's menu
-                  {data.emailConfigured ? ", which emails them a new one" : ""}. To invite someone
-                  else, use Invite.
+                  Only a fingerprint is saved, so invitation links can't be retrieved. Choose New
+                  link in the row's menu to replace one{data.emailConfigured ? " and email it" : ""}
+                  .
                 </p>
                 {adminInvitationsLocked && (
                   <p>
-                    Invitations to be an admin have no menu for you, because only the owner can
-                    renew or revoke them. Ask the owner if one needs a new link.
+                    Only the owner can renew or revoke admin invitations. Ask them for a new link.
                   </p>
                 )}
               </div>

@@ -241,8 +241,8 @@ function Summary({
           <p className="flex items-start gap-1.5 text-sm text-destructive">
             <TriangleAlertIcon aria-hidden="true" className="mt-0.5 size-4 shrink-0" />
             {failing.length === 1
-              ? "1 of the rules on is not evaluated now. Its detail says why."
-              : `${failing.length} of the rules on are not evaluated now. Their details say why.`}
+              ? "1 enabled rule is not being evaluated. Open it for details."
+              : `${failing.length} enabled rules are not being evaluated. Open them for details.`}
           </p>
         )}
         <p className="text-xs text-pretty text-ink-subtle">
@@ -365,8 +365,7 @@ export function AlertsPage({ projectId, prefill }: { projectId: string; prefill:
           <BellOffIcon />
           <AlertTitle>No notification channels yet</AlertTitle>
           <AlertDescription>
-            Alerts need an email channel or webhook channel. Channels belong to the instance. Every
-            project can use them.
+            Add an email or webhook channel to enable alerts.
             {!can("channels") && " An admin adds them in Settings."}
           </AlertDescription>
           {can("channels") && (
@@ -411,11 +410,7 @@ export function AlertsPage({ projectId, prefill }: { projectId: string; prefill:
               </EmptyMedia>
               <EmptyTitle>No alert rules yet</EmptyTitle>
               <EmptyDescription>
-                A rule monitors a project's checks, certificates, errors, routes, or metrics. It
-                notifies your team when a check goes down or a certificate nears expiry. It can
-                report new, regressed, or spiking errors, slow or failing routes, and metrics above
-                or below a value. It sends notifications through your selected email or webhook
-                channels. It sends another notification when the alert ends.
+                Add a rule to receive email or webhook notifications.
               </EmptyDescription>
             </EmptyHeader>
             {canManage && <EmptyContent>{addButton}</EmptyContent>}

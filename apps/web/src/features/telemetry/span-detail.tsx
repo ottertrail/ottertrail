@@ -5,7 +5,7 @@ import type * as React from "react";
 
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { isTraceId } from "@/lib/logs-api";
 import { type SpanDetail, type SpanKind, spanQuery, type WaterfallSpan } from "@/lib/traces-api";
@@ -127,7 +127,6 @@ export function SpanDetailCard({
               Span: {span.name === "" ? "(no name)" : span.name}
             </h3>
           </CardTitle>
-          <CardDescription>The span selected in the waterfall.</CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-6">
           {query.isPending ? (

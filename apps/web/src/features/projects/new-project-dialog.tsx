@@ -9,7 +9,6 @@ import {
   Dialog,
   DialogClose,
   DialogContent,
-  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -65,9 +64,6 @@ export function NewProjectDialog({ variant = "default" }: { variant?: "default" 
         <form onSubmit={submit}>
           <DialogHeader>
             <DialogTitle>New project</DialogTitle>
-            <DialogDescription>
-              A project is one website or app. Each gets its own tracking snippet.
-            </DialogDescription>
           </DialogHeader>
           <FieldGroup className="py-4">
             <Field>
@@ -84,8 +80,7 @@ export function NewProjectDialog({ variant = "default" }: { variant?: "default" 
                 aria-describedby="project-hostnames-hint"
               />
               <FieldDescription id="project-hostnames-hint">
-                Enter allowed hostnames, one per line. Only pages on these sites may send events.
-                You can add hostnames later.
+                One hostname per line. Only these sites can send events.
               </FieldDescription>
             </Field>
             {create.error !== null && (

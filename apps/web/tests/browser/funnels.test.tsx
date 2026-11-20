@@ -148,7 +148,7 @@ describe("saved funnels", () => {
     await expect.element(dialog.getByText("/ → purchase")).toBeVisible();
     await expect.element(dialog.getByText("Users, within 1 hour")).toBeVisible();
     await expect
-      .element(dialog.getByText(/The period and environment are not saved/))
+      .element(dialog.getByText(/Uses the current period and environment when reopened/))
       .toBeVisible();
 
     await dialog.getByRole("textbox", { name: "Name" }).fill("  Home to purchase ");
@@ -300,7 +300,7 @@ describe("saved funnels", () => {
     await expect
       .element(page.getByRole("alert"))
       .toHaveTextContent(
-        "The changes could not be saved. The funnel changed elsewhere after this page loaded it, such as in another tab. The saved version is now reloaded. Review it. Then save again.",
+        "The changes could not be saved. The funnel changed elsewhere. The saved version has been reloaded; review it before saving again.",
       );
     await expect
       .element(status())
@@ -415,7 +415,7 @@ describe("saved funnels", () => {
 
     await page.getByRole("button", { name: "Delete the funnel Team trial" }).click();
     const confirm = page.getByRole("dialog", { name: "Delete the funnel “Team trial”?" });
-    await expect.element(confirm.getByText(/Your events are retained/)).toBeVisible();
+    await expect.element(confirm.getByText(/Your events are kept/)).toBeVisible();
     await confirm.getByRole("button", { name: "Cancel" }).click();
     await expect.element(confirm).not.toBeInTheDocument();
     expect(api.requests.some((path) => path.startsWith(`${FUNNELS_PATH}/`))).toBe(false);
@@ -463,7 +463,7 @@ describe("saved funnels", () => {
     renderApp(FUNNEL);
 
     await expect
-      .element(page.getByText(/^No funnels are saved yet\. Set the steps below/))
+      .element(page.getByText(/Set the steps, then choose Show funnel and Save funnel/))
       .toBeVisible();
     await expect.element(page.getByText("0 of 50 saved")).toBeVisible();
     expect(savedRows()).toEqual([]);

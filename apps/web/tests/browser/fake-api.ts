@@ -4370,7 +4370,7 @@ function answerLinks(api: FakeApi, url: URL, init: RequestInit | undefined): Res
         {
           error: "email_not_set_up",
           message:
-            "Email isn't set up on this instance, so Ottertrail can't send reset links. Ask the person who runs it for a reset link.",
+            "Email isn't set up on this instance. Ask the person who runs it for a reset link.",
         },
         404,
       );

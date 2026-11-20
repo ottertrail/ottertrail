@@ -45,8 +45,8 @@ export function accessSummary(access: MemberAccess): string {
 
 /** Why a link can't be shown twice, and what to do when it is lost. */
 export const LINK_ONCE =
-  "Copy it now: Ottertrail keeps only a fingerprint of the link, so it can't show it again.";
+  "Only a fingerprint is saved, so this link can't be shown again. Copy it now.";
 
 /** What to say beside an emailed link: what to do if the email goes missing. */
 export const emailedAbout = (who: string) =>
-  `If it hasn't arrived within a few minutes, ask ${who} to check their spam folder, or copy the link and send it to them yourself. ${LINK_ONCE}`;
+  `If it doesn't arrive in a few minutes, ask ${who} to check spam or send them the link yourself. ${LINK_ONCE}`;

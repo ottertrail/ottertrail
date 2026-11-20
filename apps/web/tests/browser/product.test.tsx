@@ -346,7 +346,7 @@ describe("the funnel", () => {
     await page.getByRole("button", { name: "Show funnel" }).click();
 
     await expect
-      .element(step(2).getByText(/One event could match both this step and the previous step/))
+      .element(step(2).getByText(/One event could count for both this step and the previous one/))
       .toBeVisible();
     expect(funnelRequests(api)).toEqual([]);
   });

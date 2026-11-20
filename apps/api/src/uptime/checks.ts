@@ -168,7 +168,7 @@ export function checkValuesOf(input: CheckInput, base?: CheckValues): CheckValue
   if (word !== null && method === "HEAD") {
     return {
       error: "invalid_word",
-      message: "A HEAD request has no response body to search for the word. Use GET.",
+      message: "HEAD has no response body. Use GET to check for text.",
     };
   }
   const intervalSeconds = input.intervalSeconds ?? base?.intervalSeconds ?? DEFAULT_INTERVAL;

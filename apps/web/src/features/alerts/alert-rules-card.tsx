@@ -4,14 +4,7 @@ import { BellPlusIcon, OctagonAlertIcon } from "lucide-react";
 
 import { ButtonLink } from "@/components/button-link";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import {
-  Card,
-  CardAction,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { Card, CardAction, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAccess } from "@/lib/access";
 import { type Rule, type RuleKind, rulesQuery, watchesCheck, watchesError } from "@/lib/alerts-api";
@@ -25,13 +18,6 @@ import { watchesText } from "./rule-text";
 export type Watched =
   | { checkId: string }
   | { fingerprint: string; environment: string; status: ErrorStatus };
-
-/** What the rules on an error watch for, by where the error stands. */
-function errorRulesText(status: ErrorStatus): string {
-  return status === "resolved"
-    ? "Rules that notify your team when this resolved error occurs again or its occurrences spike."
-    : "Rules that notify your team when this error's occurrences spike, or when it occurs again after it is resolved.";
-}
 
 /**
  * The alert rules that watch a check or an error group, with a link that
@@ -68,11 +54,6 @@ export function AlertRulesCard({
         <CardTitle>
           <h3>Alert rules</h3>
         </CardTitle>
-        <CardDescription>
-          {"checkId" in watched
-            ? "Rules that notify your team when this check goes down or its certificate nears expiry."
-            : errorRulesText(watched.status)}
-        </CardDescription>
         {canAdd && (
           <CardAction>
             <ButtonLink

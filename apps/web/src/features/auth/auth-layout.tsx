@@ -14,7 +14,7 @@ export function AuthLayout({
   children,
 }: {
   title: string;
-  description: React.ReactNode;
+  description?: React.ReactNode;
   children: React.ReactNode;
 }) {
   return (
@@ -30,7 +30,9 @@ export function AuthLayout({
         >
           <header className="flex flex-col gap-1.5">
             <h1 className="text-card-title [overflow-wrap:anywhere] text-ink">{title}</h1>
-            <div className="text-sm text-pretty text-ink-subtle">{description}</div>
+            {description && (
+              <div className="text-sm text-pretty text-ink-subtle">{description}</div>
+            )}
           </header>
           {children}
         </div>

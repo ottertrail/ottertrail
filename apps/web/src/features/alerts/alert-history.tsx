@@ -60,14 +60,7 @@ export function FiringSection({ projectId, ruleId }: { projectId: string; ruleId
     (alert) => ruleId === undefined || alert.ruleId === ruleId,
   );
   return (
-    <PaneSection
-      title="Firing now"
-      description={
-        ruleId === undefined
-          ? "Unresolved alerts include checks still down and certificates still near expiry. They also include error spikes, routes, and metrics still beyond their thresholds."
-          : "What the rule fires for now, until it is resolved."
-      }
-    >
+    <PaneSection title="Firing now">
       {firing.isError ? (
         <Alert variant="destructive">
           <OctagonAlertIcon />
@@ -123,7 +116,7 @@ export function HistorySection({ projectId, ruleId }: { projectId: string; ruleI
   return (
     <PaneSection
       title={ruleId === undefined ? "Recent alerts" : "Its alerts"}
-      description={`${ruleId === undefined ? "All alerts triggered by the rules" : "The alerts this rule triggered"}, newest first, kept for ${first?.retentionDays ?? 90} days. Alerts suppressed by a rule's hourly limit are listed and marked. No notification is sent for them.`}
+      description={`Kept for ${first?.retentionDays ?? 90} days. Held-back alerts exceeded the hourly limit and sent no notification.`}
     >
       {history.isError ? (
         <Alert variant="destructive">

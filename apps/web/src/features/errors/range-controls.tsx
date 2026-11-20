@@ -52,9 +52,7 @@ function CalendarUnavailable({
         <DialogHeader>
           <DialogTitle>The calendar could not load</DialogTitle>
           <DialogDescription>
-            Its code could not be downloaded. Ottertrail may have been updated since this tab was
-            opened, or the connection dropped. Reload to get the current version, or choose a period
-            instead.
+            The calendar download failed. Reload to try again, or choose a preset period.
           </DialogDescription>
         </DialogHeader>
         <DialogFooter>

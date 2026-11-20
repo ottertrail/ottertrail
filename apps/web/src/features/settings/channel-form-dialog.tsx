@@ -8,7 +8,6 @@ import {
   Dialog,
   DialogClose,
   DialogContent,
-  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -143,7 +142,12 @@ function ChannelForm({
       id: ids[field],
       autoComplete: "off",
       "aria-invalid": error !== null || undefined,
-      "aria-describedby": error === null ? `${ids[field]}-hint` : `${ids[field]}-error`,
+      "aria-describedby":
+        error === null
+          ? field === "name"
+            ? undefined
+            : `${ids[field]}-hint`
+          : `${ids[field]}-error`,
     };
   };
   const errorText = (field: FieldName) => {
@@ -165,9 +169,6 @@ function ChannelForm({
         <DialogTitle>
           {channel === undefined ? "Add a notification channel" : `Edit “${channel.name}”`}
         </DialogTitle>
-        <DialogDescription>
-          Alerts go to email addresses or to your webhook as signed JSON requests.
-        </DialogDescription>
       </DialogHeader>
       {channel === undefined && (
         <Field>
@@ -207,7 +208,7 @@ function ChannelForm({
             <FieldDescription id={`${ids.addresses}-hint`}>
               One per line, at most {MAX_ADDRESSES}.
               {!emailConfigured &&
-                " This instance can't send email yet, because SMTP_URL and EMAIL_FROM aren't set on the server. You can save the channel now: it sends once whoever runs the server sets them and restarts it."}
+                " Email isn't set up. To enable sending, set SMTP_URL and EMAIL_FROM on the server and restart it. You can save this channel now."}
             </FieldDescription>
           )}
         </Field>
@@ -224,8 +225,7 @@ function ChannelForm({
           />
           {errorText("url") ?? (
             <FieldDescription id={`${ids.url}-hint`}>
-              Each alert is a POST with a JSON body signed with the webhook's secret. The webhook
-              must return 2xx within 10 seconds. Redirects are not followed, so enter the final URL.
+              Signed JSON POST. Must return 2xx within 10 seconds. No redirects; use the final URL.
             </FieldDescription>
           )}
         </Field>
@@ -238,9 +238,7 @@ function ChannelForm({
           placeholder={draft.kind === "email" ? "The first address" : "The URL's host"}
           onChange={(event) => change({ name: event.target.value })}
         />
-        {errorText("name") ?? (
-          <FieldDescription id={`${ids.name}-hint`}>What alert rules call it.</FieldDescription>
-        )}
+        {errorText("name")}
       </Field>
       {checked && !valid && (
         <p role="alert" className="text-sm text-destructive">

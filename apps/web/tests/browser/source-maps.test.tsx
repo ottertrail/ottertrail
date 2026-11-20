@@ -110,9 +110,7 @@ describe("an error's stack", () => {
     renderApp(TYPE_ERROR);
 
     await expect
-      .element(
-        page.getByText(/^This occurrence has no release, so no source map can be chosen for it/),
-      )
+      .element(page.getByText(/No release was sent, so source maps are unavailable/))
       .toBeVisible();
     await expect.element(page.getByText('data-release="1.4.2"')).toBeVisible();
     // Nothing mapped: the stack as the browser reported it, without a button.
@@ -355,7 +353,7 @@ describe("the project's Source maps card", () => {
       `curl -X PUT "${window.location.origin}/api/source-maps?release=1.4.2&path=/assets/index-4f3a.js"`,
     );
     expect(text).toContain("Authorization: Bearer $OTTERTRAIL_SECRET_KEY");
-    expect(text).toContain("from the “Your server” tab");
+    expect(text).toContain("secret key from Your server");
     expect(text).toContain("must match the data-release on the tracker's script tag");
     expect(text).toContain('build.sourcemap: "hidden"');
     // Never the real key.

@@ -8,7 +8,6 @@ import {
   Dialog,
   DialogClose,
   DialogContent,
-  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -22,9 +21,8 @@ import { emptyStep, hasProblems, stepOf, stepProblems } from "../product/funnel-
 import { StepFields } from "../product/step-fields";
 
 const STEP_HELP = {
-  event:
-    "Counts visitors whose browser sent this event. If you add a property filter, the value must match. Server events have no visitor and do not count toward goals.",
-  page: "Counts the visitors who viewed exactly this path, without its query or fragment.",
+  event: "Counts browser visitors with matching events. Server events do not count.",
+  page: "Matches the exact path, without query or fragment.",
 } as const;
 
 /** The form, mounted while the dialog is open, so each opening starts empty. */
@@ -73,10 +71,6 @@ function AddGoalForm({
     >
       <DialogHeader>
         <DialogTitle>Add a goal</DialogTitle>
-        <DialogDescription>
-          A goal is a page or event that counts as a success. The analytics page shows how many
-          visitors reached it.
-        </DialogDescription>
       </DialogHeader>
       <Field data-invalid={nameError !== null || undefined}>
         <FieldLabel htmlFor={nameId}>Name</FieldLabel>

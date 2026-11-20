@@ -25,14 +25,16 @@ describe("the instance's settings", () => {
     renderApp("/settings");
     const timeZone = page.getByRole("combobox", { name: "Timezone" });
     await expect.element(timeZone).toHaveValue("Asia/Singapore");
-    await expect.element(page.getByText(/Reports count days in this timezone/)).toBeVisible();
+    await expect
+      .element(page.getByText(/Reports use this timezone for day boundaries/))
+      .toBeVisible();
 
     await page.getByRole("textbox", { name: "Name" }).fill("Acme Labs");
     await timeZone.fill("berlin");
     await page.getByRole("option", { name: /^Europe\/Berlin/ }).click();
     await expect.element(timeZone).toHaveValue("Europe/Berlin");
     await expect
-      .element(page.getByText(/changes day boundaries in all reports, including past reports/))
+      .element(page.getByText(/Changes day boundaries in past reports too/))
       .toBeVisible();
     await page.getByRole("button", { name: "Save instance settings" }).click();
 
@@ -47,7 +49,9 @@ describe("the instance's settings", () => {
     });
     // The menu shows the new name, and the warning is gone with the change saved.
     await expect.element(page.getByText("Acme Labs", { exact: true }).first()).toBeVisible();
-    await expect.element(page.getByText(/Reports count days in this timezone/)).toBeVisible();
+    await expect
+      .element(page.getByText(/Reports use this timezone for day boundaries/))
+      .toBeVisible();
   });
 
   test("the timezone list filters by any part of the name, spaces matching underscores", async () => {

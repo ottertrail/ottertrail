@@ -20,7 +20,7 @@ const REQUESTED =
 /** Both limits answer this, for every address; the API names no wait time in it. */
 const LIMITED = "Too many reset requests. Wait a little, then try again.";
 const NO_EMAIL =
-  "Email isn't set up on this instance, so Ottertrail can't send you a reset link. Ask the person who runs it for a reset link.";
+  "Email isn't set up on this instance. Ask the person who runs it for a reset link.";
 
 const backToSignIn = (
   <Link
@@ -76,11 +76,10 @@ export function ForgotPasswordPage() {
   }
 
   const title = "Reset your password";
-  const description = "Enter your account email to request a reset link.";
 
   if (emailConfigured === null) {
     return (
-      <AuthLayout title={title} description={description}>
+      <AuthLayout title={title}>
         <div className="flex flex-col gap-3" aria-busy="true">
           <span className="sr-only">Loading…</span>
           <Skeleton className="h-9 w-full" />
@@ -91,7 +90,7 @@ export function ForgotPasswordPage() {
   }
   if (!emailConfigured) {
     return (
-      <AuthLayout title={title} description={description}>
+      <AuthLayout title={title}>
         <Alert>
           <OctagonAlertIcon />
           <AlertDescription>{NO_EMAIL}</AlertDescription>
@@ -102,7 +101,7 @@ export function ForgotPasswordPage() {
   }
   if (answer !== null) {
     return (
-      <AuthLayout title={title} description={description}>
+      <AuthLayout title={title}>
         <output className="block">
           <Alert role="none">
             <MailCheckIcon />
@@ -114,7 +113,7 @@ export function ForgotPasswordPage() {
     );
   }
   return (
-    <AuthLayout title={title} description={description}>
+    <AuthLayout title={title}>
       <form onSubmit={(event) => void submit(event)}>
         <FieldGroup>
           <Field>

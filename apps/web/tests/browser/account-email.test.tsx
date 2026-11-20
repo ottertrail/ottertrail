@@ -41,17 +41,30 @@ describe("the sign-in page", () => {
     expect(api.signedIn).toBe(false);
   });
 
-  test("without email, no link: one quiet line under Sign in says whom to ask", async () => {
+  test("without email, Forgot password opens a dialog and returns focus on close", async () => {
     installFakeApi({ signedIn: false, emailConfigured: false });
-    renderApp("/sign-in");
-    const line = page.getByText(NO_EMAIL_LINE);
-    await expect.element(line).toBeVisible();
+    const router = renderApp("/sign-in");
+    const trigger = page.getByRole("button", { name: "Forgot password?" });
+    await expect.element(trigger).toBeVisible();
+    const label = page.getByText("Password", { exact: true }).element().getBoundingClientRect();
+    const box = trigger.element().getBoundingClientRect();
+    expect(Math.abs(box.top - label.top)).toBeLessThan(8);
+    expect(box.left).toBeGreaterThan(label.right);
+    await expect.element(page.getByText(NO_EMAIL_LINE)).not.toBeInTheDocument();
+    await trigger.click();
+    const reset = dialog("Forgot your password?");
+    await expect.element(reset).toBeVisible();
     await expect
-      .element(page.getByRole("link", { name: "Forgot password?" }))
-      .not.toBeInTheDocument();
-    const button = page.getByRole("button", { name: "Sign in" }).element().getBoundingClientRect();
-    expect(line.element().getBoundingClientRect().top).toBeGreaterThan(button.bottom);
-    expect(line.element().className).toContain("text-ink-subtle");
+      .element(
+        reset.getByText(
+          "Email isn't set up on this instance. Ask the person who runs it for a reset link.",
+        ),
+      )
+      .toBeVisible();
+    expect(currentPath(router)).toBe("/sign-in");
+    await reset.getByRole("button", { name: "Close", exact: true }).click();
+    await expect.element(reset).not.toBeInTheDocument();
+    await expect.element(trigger).toHaveFocus();
   });
 });
 
@@ -62,9 +75,6 @@ describe("the Forgot password page", () => {
     renderApp("/forgot-password");
     await expect
       .element(page.getByRole("heading", { level: 1, name: "Reset your password" }))
-      .toBeVisible();
-    await expect
-      .element(page.getByText("Enter your account email to request a reset link."))
       .toBeVisible();
     await page.getByRole("textbox", { name: "Email" }).fill("someone@example.com");
     await page.getByRole("button", { name: "Send reset link" }).click();
@@ -109,7 +119,7 @@ describe("the Members page with email set up", () => {
     const form = dialog("Invite someone");
     await expect
       .element(
-        form.getByText("Ottertrail emails an invitation link to the address you enter.", {
+        form.getByText("The invitation is emailed, and you can copy the link.", {
           exact: false,
         }),
       )
@@ -221,15 +231,9 @@ describe("the Account page's email change", () => {
   test("with email set up, says the old address gets a notice", async () => {
     installFakeApi({ emailConfigured: true });
     renderApp("/account");
+    await expect.element(page.getByText("A notice goes to your old address.")).toBeVisible();
     await expect
-      .element(
-        page.getByText(
-          "Ottertrail sends a notice of the change to your old address. Check the new address: you'll sign in with it from now on.",
-        ),
-      )
-      .toBeVisible();
-    await expect
-      .element(page.getByText("Ottertrail doesn't send a confirmation email", { exact: false }))
+      .element(page.getByText("Email isn't set up on this instance.", { exact: false }))
       .not.toBeInTheDocument();
   });
 
@@ -237,7 +241,7 @@ describe("the Account page's email change", () => {
     installFakeApi({ emailConfigured: false });
     renderApp("/account");
     await expect
-      .element(page.getByText("Ottertrail doesn't send a confirmation email", { exact: false }))
+      .element(page.getByText("Email isn't set up on this instance.", { exact: false }))
       .toBeVisible();
   });
 });

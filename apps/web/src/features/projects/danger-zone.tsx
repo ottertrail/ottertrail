@@ -33,14 +33,14 @@ const KEYS = {
     button: "Replace public key",
     title: "Replace the public key?",
     description:
-      "Pages with the current snippet stop sending events immediately. Replace your site's snippet with the new snippet immediately afterward. The project's data is retained.",
+      "The current snippet stops working immediately. Replace it on your site. Existing data is kept.",
     replace: replacePublicKey,
   },
   secret: {
     button: "Replace secret key",
     title: "Replace the secret key?",
     description:
-      "The current key stops working immediately for server events and user ID signatures. Configure your server with the new key immediately afterward. The project's data is retained.",
+      "The current key immediately stops working for server events and user ID signatures. Update your server with the new key. Existing data is kept.",
     replace: replaceSecretKey,
   },
 } as const;
@@ -180,7 +180,7 @@ function DeleteProjectDialog({ project }: { project: Project }) {
 /** Changes that cannot be undone, each behind its own confirmation. */
 export function DangerZone({ project }: { project: Project }) {
   return (
-    <SettingsSection title="Danger zone" description="Changes here cannot be undone.">
+    <SettingsSection title="Danger zone">
       <div className="flex flex-col divide-y">
         <div className="flex flex-wrap items-center justify-between gap-3 pb-4">
           <div className="min-w-0 flex-1">

@@ -74,7 +74,6 @@ function NameForm({ name, onDirty }: { name: string; onDirty: (dirty: boolean) =
   return (
     <SettingsSection
       title="Name"
-      description="Your teammates see it on the Members page and beside what you resolve."
       form={form}
       onSave={(values) => save.mutate(values)}
       saving={save.isPending}
@@ -127,12 +126,12 @@ function EmailForm({ email, onDirty }: { email: string; onDirty: (dirty: boolean
     onSuccess: async (user) => {
       form.saved({ email: user.email, password: "" });
       form.setValues({ email: user.email, password: "" });
-      setNotice(`Your email is now ${user.email}. Sign in with it from now on.`);
+      setNotice(`Sign in with ${user.email} from now on.`);
       await changed();
     },
   });
   // With email set up, the old address gets a notice of the change.
-  const emailConfigured = useQuery(setupStatusQuery()).data?.emailConfigured === true;
+  const emailConfigured = useQuery(setupStatusQuery()).data?.emailConfigured;
   const field = emailErrorField(save.error);
   const fieldError = (name: "email" | "password") =>
     field === name && save.error !== null ? (
@@ -143,12 +142,14 @@ function EmailForm({ email, onDirty }: { email: string; onDirty: (dirty: boolean
       title="Email"
       description={
         <>
-          <p>You sign in with this address. A new address works at once.</p>
-          <p className="mt-1">
-            {emailConfigured
-              ? "Ottertrail sends a notice of the change to your old address. Check the new address: you'll sign in with it from now on."
-              : "Ottertrail doesn't send a confirmation email, because most self-hosted servers have no mail set up. Check the new address: you'll sign in with it from now on."}
-          </p>
+          <p>The new address takes effect immediately. Check it before saving.</p>
+          {emailConfigured !== undefined && (
+            <p className="mt-1">
+              {emailConfigured
+                ? "A notice goes to your old address."
+                : "Email isn't set up on this instance."}
+            </p>
+          )}
         </>
       }
       form={form}
@@ -192,7 +193,7 @@ function EmailForm({ email, onDirty }: { email: string; onDirty: (dirty: boolean
           />
           {fieldError("password") ?? (
             <FieldDescription id="account-email-password-hint">
-              Asked each time, so nobody at an unlocked screen can take over your account.
+              Enter your current password.
             </FieldDescription>
           )}
         </Field>
@@ -230,8 +231,8 @@ function PasswordTab({ onDirty }: { onDirty: (dirty: boolean) => void }) {
       form.discard();
       setNotice(
         values.revokeOtherSessions
-          ? "Your password is changed, and your other devices are signed out."
-          : "Your password is changed.",
+          ? "Password changed. Your other devices are signed out."
+          : "Password changed.",
       );
       // Signing out the others gave this browser a new session.
       await queryClient.invalidateQueries({ queryKey: accountSessionsQuery().queryKey });
@@ -241,7 +242,7 @@ function PasswordTab({ onDirty }: { onDirty: (dirty: boolean) => void }) {
   return (
     <SettingsSection
       title="Password"
-      description={`At least ${MIN_PASSWORD_LENGTH} characters. A passphrase of a few words works well.`}
+      description={`At least ${MIN_PASSWORD_LENGTH} characters.`}
       form={form}
       onSave={(values) => {
         if (values.password !== values.confirmPassword) {
@@ -427,7 +428,7 @@ function SessionRow({
         <SignOutDialog
           trigger={{ text: "Sign out", label: `Sign out ${name}`, size: "sm" }}
           title={`Sign out ${name}?`}
-          description="That browser is signed out at once, and needs your password to sign in again."
+          description="This browser will be signed out immediately."
           confirm="Sign out"
           action={() => revokeSession(session.id)}
           onDone={() => onSignedOut(name)}
@@ -467,10 +468,9 @@ function SessionsTab() {
       headingRef={headingRef}
       description={
         <>
-          <p>Every browser signed in to your account. Signing one out ends its session at once.</p>
+          <p>Signing out a browser ends its session immediately.</p>
           <p className="mt-1">
-            Ottertrail doesn't record where a device signed in from, because it never stores IP
-            addresses.
+            Sign-in locations aren't available because Ottertrail doesn't store IP addresses.
           </p>
         </>
       }
