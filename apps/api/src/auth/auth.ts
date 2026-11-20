@@ -91,13 +91,18 @@ export function createAuth({
       },
     },
     // Ottertrail's own routes change the name, email, and password, with
-    // their own checks and limits (account/routes.ts); Better Auth's stay off.
-    disabledPaths: ["/update-user", "/change-email", "/change-password"],
+    // their own checks and limits (account/routes.ts); Better Auth's stay
+    // off, and so do deleting the user and unlinking their credential,
+    // which nothing in Ottertrail offers.
+    disabledPaths: [
+      "/update-user",
+      "/change-email",
+      "/change-password",
+      "/delete-user",
+      "/delete-user/callback",
+      "/unlink-account",
+    ],
     session: {
-      // Better Auth refuses to list a session's siblings once it is a day
-      // old ("fresh" sessions only). The Account page lists them for every
-      // session; what changes the account asks for the password again.
-      freshAge: 0,
       modelName: "dashboard_sessions",
       fields: {
         expiresAt: "expires_at",

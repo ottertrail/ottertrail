@@ -220,6 +220,17 @@ describe("Account settings", () => {
       .toBeVisible();
     await expect.element(email).toHaveAttribute("aria-invalid", "true");
 
+    await email.fill("zoe@example.com");
+    await save.click();
+    await expect
+      .element(
+        form("Email").getByText(
+          "Someone has a pending invitation for this email address, so it can't be yours yet. Enter a different address, or ask an owner or admin to revoke the invitation on the Members page.",
+        ),
+      )
+      .toBeVisible();
+    await expect.element(email).toHaveAttribute("aria-invalid", "true");
+
     await email.fill("New@Example.com");
     await save.click();
     await expect

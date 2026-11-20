@@ -1,11 +1,12 @@
 import { APIError } from "better-auth";
 import type { FastifyPluginCallback, FastifyReply } from "fastify";
-import type { Kysely } from "kysely";
+import { type Kysely, sql } from "kysely";
 
 import { requirePermission } from "../access/access.ts";
 import { checkPassword } from "../access/members.ts";
 import { type Auth, canSignInWith, MAX_PASSWORD_LENGTH } from "../auth/auth.ts";
 import { requireTrustedOrigin } from "../auth/origin.ts";
+import { passwordTryLimiter } from "../auth/password-tries.ts";
 import {
   newPasswordProperties,
   PASSWORDS_DIFFER,
@@ -13,15 +14,8 @@ import {
   signedInUser,
   toHeaders,
 } from "../auth/routes.ts";
-import { type RateLimit, TokenBucketLimiter } from "../collection/rate-limiter.ts";
+import type { TokenBucketLimiter } from "../collection/rate-limiter.ts";
 import type { Database } from "../db/schema.ts";
-
-/**
- * Changing one's email or password checks the current password: 5 tries,
- * then one a minute, per user, for each of the two. Both routes need a
- * session, so the user is the key; nobody reaches them without one.
- */
-export const ACCOUNT_PASSWORD_LIMIT: RateLimit = { capacity: 5, refillPerSecond: 1 / 60 };
 
 /** As the setup form's name. */
 export const MAX_NAME_LENGTH = 200;
@@ -41,6 +35,18 @@ const EMAIL_IN_USE = problem(
   "Another account already uses this email address. Enter a different one.",
 );
 const SAME_EMAIL = problem("same_email", "This is already your email address.");
+const EMAIL_INVITED = problem(
+  "email_invited",
+  "Someone has a pending invitation for this email address, so it can't be yours yet. Enter a different address, or ask an owner or admin to revoke the invitation on the Members page.",
+);
+const NO_SESSION = problem("session_not_found", "You have no other session with this ID.");
+const CURRENT_SESSION = problem(
+  "current_session",
+  "This is the session you're using now. To end it, sign out.",
+);
+
+const UUID_PATTERN =
+  "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$";
 
 /** PostgreSQL's unique_violation. */
 const isUniqueViolation = (error: unknown) =>
@@ -64,30 +70,33 @@ function limited(limiter: TokenBucketLimiter, userId: string, reply: FastifyRepl
 /**
  * The signed-in user's own account (docs/access.md, "Your account"):
  *
- *   PATCH /api/account            { name }
- *   POST  /api/account/email      { email, password }
- *   POST  /api/account/password   { currentPassword, password, confirmPassword, revokeOtherSessions }
+ *   PATCH  /api/account                 { name }
+ *   POST   /api/account/email           { email, password }
+ *   POST   /api/account/password        { currentPassword, password, confirmPassword, revokeOtherSessions }
+ *   GET    /api/account/sessions        the user's sessions, without their tokens
+ *   DELETE /api/account/sessions/:id    signs out one other session
+ *   DELETE /api/account/sessions        signs out every other session
  *
  * Every signed-in user may change their own name, email, and password,
  * and nobody else's. Better Auth's own routes for these
  * (/api/auth/update-user, /change-email, /change-password) are turned off
  * (auth.ts), so these are the only way, with these checks.
  *
- * Bodies are checked by schema before anything else; the rate limit runs
- * on the user once the session is known. Nothing here logs a password or
+ * Bodies are checked by schema before anything else; the password tries,
+ * shared with handing over ownership, are counted per user once the
+ * session is known. Nothing here logs a password or
  * an email: the request log has the method and URL only (app.ts).
  */
 export const accountRoutes: FastifyPluginCallback<{
   db: Kysely<Database>;
   auth: Auth;
   trustedOrigins: readonly string[];
-  passwordLimit?: RateLimit;
-}> = (app, { db, auth, trustedOrigins, passwordLimit = ACCOUNT_PASSWORD_LIMIT }, done) => {
+  /** The app's one limiter for current-password checks (auth/password-tries.ts). */
+  passwordTries?: TokenBucketLimiter;
+}> = (app, { db, auth, trustedOrigins, passwordTries = passwordTryLimiter() }, done) => {
   const signedIn = requireSession(auth);
   const fromDashboard = requireTrustedOrigin(trustedOrigins);
   const anyUser = requirePermission(db, "signed_in");
-  const emailTries = new TokenBucketLimiter(passwordLimit);
-  const passwordTries = new TokenBucketLimiter(passwordLimit);
 
   app.patch<{ Body: { name: string } }>(
     "/account",
@@ -139,18 +148,31 @@ export const accountRoutes: FastifyPluginCallback<{
       const email = request.body.email.trim().toLowerCase();
       if (!canSignInWith(email)) return reply.code(400).send(INVALID_EMAIL);
       if (email === user.email.toLowerCase()) return reply.code(400).send(SAME_EMAIL);
-      if (limited(emailTries, user.id, reply)) return reply;
+      if (limited(passwordTries, user.id, reply)) return reply;
       if (!(await checkPassword(db, auth, user.id, request.body.password))) {
         return reply.code(403).send(WRONG_PASSWORD);
       }
       try {
-        // Only the address changes: the role, the grants, and every session stay.
+        // Only the address changes: the role, the grants, and every session
+        // stay. An address with a pending invitation is the invitee's: in the
+        // same statement, so no invitation can slip in between a check and it.
         const updated = await db
           .updateTable("dashboard_users")
           .set({ email, updated_at: new Date() })
           .where("id", "=", user.id)
+          .where((eb) =>
+            eb.not(
+              eb.exists(
+                eb
+                  .selectFrom("dashboard_invitations")
+                  .select(sql<number>`1`.as("one"))
+                  .where("dashboard_invitations.email", "=", email),
+              ),
+            ),
+          )
           .returning(["id", "name", "email"])
-          .executeTakeFirstOrThrow();
+          .executeTakeFirst();
+        if (updated === undefined) return reply.code(409).send(EMAIL_INVITED);
         return { user: updated };
       } catch (error) {
         // The unique index decides, so two users cannot take one address at once.
@@ -210,6 +232,72 @@ export const accountRoutes: FastifyPluginCallback<{
         }
         throw error;
       }
+    },
+  );
+
+  app.get("/account/sessions", { preHandler: [signedIn, anyUser] }, async (request) => {
+    const { id, sessionId } = signedInUser(request);
+    const rows = await db
+      .selectFrom("dashboard_sessions")
+      .select(["id", "created_at", "updated_at", "user_agent"])
+      .where("user_id", "=", id)
+      .where("expires_at", ">", new Date())
+      .orderBy("updated_at", "desc")
+      .execute();
+    // No token: the page never needs one, and it names the session.
+    return {
+      sessions: rows.map((row) => ({
+        id: row.id,
+        createdAt: row.created_at.toISOString(),
+        lastActiveAt: row.updated_at.toISOString(),
+        userAgent: row.user_agent,
+        current: row.id === sessionId,
+      })),
+    };
+  });
+
+  app.delete<{ Params: { id: string } }>(
+    "/account/sessions/:id",
+    {
+      preHandler: [fromDashboard, signedIn, anyUser],
+      schema: {
+        params: {
+          type: "object",
+          required: ["id"],
+          properties: { id: { type: "string", pattern: UUID_PATTERN } },
+        },
+      },
+    },
+    async (request, reply) => {
+      const { id, sessionId } = signedInUser(request);
+      if (request.params.id.toLowerCase() === sessionId) {
+        return reply.code(400).send(CURRENT_SESSION);
+      }
+      // Only the user's own: another user's session ID deletes nothing.
+      // Its heatmap overlay tokens go with it (a foreign key).
+      const deleted = await db
+        .deleteFrom("dashboard_sessions")
+        .where("id", "=", request.params.id)
+        .where("user_id", "=", id)
+        .where("id", "<>", sessionId)
+        .executeTakeFirst();
+      return deleted.numDeletedRows > 0n
+        ? reply.code(204).send()
+        : reply.code(404).send(NO_SESSION);
+    },
+  );
+
+  app.delete(
+    "/account/sessions",
+    { preHandler: [fromDashboard, signedIn, anyUser] },
+    async (request) => {
+      const { id, sessionId } = signedInUser(request);
+      const deleted = await db
+        .deleteFrom("dashboard_sessions")
+        .where("user_id", "=", id)
+        .where("id", "<>", sessionId)
+        .executeTakeFirst();
+      return { signedOut: Number(deleted.numDeletedRows) };
     },
   );
 

@@ -105,7 +105,8 @@ interface EmailValues {
 function emailErrorField(error: Error | null): "email" | "password" | null {
   if (!(error instanceof ApiError)) return null;
   if (error.code === "wrong_password") return "password";
-  if (["email_in_use", "invalid_email", "same_email"].includes(error.code ?? "")) return "email";
+  if (["email_in_use", "email_invited", "invalid_email", "same_email"].includes(error.code ?? ""))
+    return "email";
   return null;
 }
 
@@ -423,7 +424,7 @@ function SessionRow({
           title={`Sign out ${name}?`}
           description="That browser is signed out at once, and needs your password to sign in again."
           confirm="Sign out"
-          action={() => revokeSession(session.token)}
+          action={() => revokeSession(session.id)}
           onDone={() => onSignedOut(name)}
         />
       )}

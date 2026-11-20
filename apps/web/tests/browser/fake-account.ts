@@ -5,7 +5,6 @@
  */
 export interface FakeSession {
   id: string;
-  token: string;
   userAgent: string | null;
   createdAt: string;
   updatedAt: string;
@@ -20,6 +19,8 @@ export interface FakeAccount {
   currentSessionId: string;
   /** Other users' emails, which an email change cannot take. */
   takenEmails: string[];
+  /** Emails with a pending invitation, which an email change cannot take either. */
+  invitedEmails: string[];
   /** Password tries left before the API answers 429. */
   triesLeft: number;
   /** Whether listing the sessions fails (a 500). */
@@ -43,21 +44,18 @@ export function fakeAccount(): FakeAccount {
     sessions: [
       {
         id: "session-1",
-        token: "token-1",
         userAgent: CHROME_MAC,
         createdAt: "2026-11-16T00:00:00.000Z",
         updatedAt: "2026-11-16T00:00:00.000Z",
       },
       {
         id: "session-2",
-        token: "token-2",
         userAgent: FIREFOX_WINDOWS,
         createdAt: "2026-11-10T08:30:00.000Z",
         updatedAt: "2026-11-15T12:00:00.000Z",
       },
       {
         id: "session-3",
-        token: "token-3",
         userAgent: SAFARI_IPHONE,
         createdAt: "2026-11-02T19:45:00.000Z",
         updatedAt: "2026-11-12T07:00:00.000Z",
@@ -65,6 +63,7 @@ export function fakeAccount(): FakeAccount {
     ],
     currentSessionId: "session-1",
     takenEmails: ["admin@example.com"],
+    invitedEmails: ["zoe@example.com"],
     triesLeft: 5,
     listFails: false,
   };
@@ -101,7 +100,7 @@ export function sessionBody(account: FakeAccount) {
       expiresAt: "2026-12-16T00:00:00.000Z",
       createdAt: current?.createdAt ?? "2026-11-16T00:00:00.000Z",
       updatedAt: current?.updatedAt ?? "2026-11-16T00:00:00.000Z",
-      token: current?.token ?? "fake",
+      token: "fake",
       ipAddress: null,
       userAgent: current?.userAgent ?? null,
     },
@@ -153,6 +152,13 @@ export function answerAccount(
         409,
       );
     }
+    if (account.invitedEmails.includes(address)) {
+      return problem(
+        "email_invited",
+        "Someone has a pending invitation for this email address, so it can't be yours yet. Enter a different address, or ask an owner or admin to revoke the invitation on the Members page.",
+        409,
+      );
+    }
     account.email = address;
     return json({ user: user() });
   }
@@ -173,7 +179,6 @@ export function answerAccount(
       // As Better Auth: every session goes, and this browser gets a new one.
       const renewed: FakeSession = {
         id: "session-renewed",
-        token: "token-renewed",
         userAgent: CHROME_MAC,
         createdAt: "2026-11-17T09:00:00.000Z",
         updatedAt: "2026-11-17T09:00:00.000Z",
@@ -183,21 +188,40 @@ export function answerAccount(
     }
     return new Response(null, { status: 204 });
   }
-  if (path === "/api/auth/list-sessions") {
-    return account.listFails
-      ? json({ message: "Internal Server Error" }, 500)
-      : json(account.sessions);
-  }
-  if (path === "/api/auth/revoke-session") {
-    const { token } = bodyOf(init);
-    account.sessions = account.sessions.filter((session) => session.token !== token);
-    return json({ status: true });
-  }
-  if (path === "/api/auth/revoke-other-sessions") {
+  if (path === "/api/account/sessions" && init?.method === "DELETE") {
+    const before = account.sessions.length;
     account.sessions = account.sessions.filter(
       (session) => session.id === account.currentSessionId,
     );
-    return json({ status: true });
+    return json({ signedOut: before - account.sessions.length });
+  }
+  if (path === "/api/account/sessions") {
+    if (account.listFails) return json({ message: "Internal Server Error" }, 500);
+    return json({
+      sessions: account.sessions.map((session) => ({
+        id: session.id,
+        createdAt: session.createdAt,
+        lastActiveAt: session.updatedAt,
+        userAgent: session.userAgent,
+        current: session.id === account.currentSessionId,
+      })),
+    });
+  }
+  const one = /^\/api\/account\/sessions\/([^/]+)$/.exec(path);
+  if (one !== null && init?.method === "DELETE") {
+    const id = decodeURIComponent(one[1] ?? "");
+    if (id === account.currentSessionId) {
+      return problem(
+        "current_session",
+        "This is the session you're using now. To end it, sign out.",
+        400,
+      );
+    }
+    const before = account.sessions.length;
+    account.sessions = account.sessions.filter((session) => session.id !== id);
+    return account.sessions.length < before
+      ? new Response(null, { status: 204 })
+      : problem("session_not_found", "You have no other session with this ID.", 404);
   }
   return null;
 }

@@ -1,7 +1,6 @@
 import { queryOptions } from "@tanstack/react-query";
 
-import { ApiError, apiRequest, expectShape } from "./api";
-import { authClient } from "./auth-client";
+import { apiRequest, expectShape } from "./api";
 
 /** The signed-in user's own account, as the account routes answer it. */
 export interface AccountUser {
@@ -48,79 +47,71 @@ export async function changePassword(input: {
   await apiRequest("/api/account/password", { method: "POST", body: input });
 }
 
-/** One of the user's sessions, as Better Auth's list-sessions answers it. */
+/** One of the user's sessions, as GET /api/account/sessions answers it: no token. */
 export interface AccountSession {
   id: string;
-  /** What revoking it takes; the cookie also needs the server's signature, which the page never sees. */
-  token: string;
   userAgent: string | null;
   createdAt: Date;
+  /** When the session's row was last renewed: at most once a day. */
   updatedAt: Date;
+  /** This browser's. */
+  current: boolean;
 }
 
-const asDate = (value: unknown) =>
-  value instanceof Date ? value : typeof value === "string" ? new Date(value) : null;
+const isDateText = (value: unknown): value is string =>
+  typeof value === "string" && !Number.isNaN(Date.parse(value));
 
 function toSession(value: unknown): AccountSession | null {
-  if (!isRecord(value) || typeof value.id !== "string" || typeof value.token !== "string") {
+  if (
+    !isRecord(value) ||
+    typeof value.id !== "string" ||
+    !isDateText(value.createdAt) ||
+    !isDateText(value.lastActiveAt) ||
+    typeof value.current !== "boolean"
+  ) {
     return null;
   }
-  const createdAt = asDate(value.createdAt);
-  const updatedAt = asDate(value.updatedAt);
-  if (createdAt === null || updatedAt === null) return null;
   return {
     id: value.id,
-    token: value.token,
     userAgent:
       typeof value.userAgent === "string" && value.userAgent !== "" ? value.userAgent : null,
-    createdAt,
-    updatedAt,
+    createdAt: new Date(value.createdAt),
+    updatedAt: new Date(value.lastActiveAt),
+    current: value.current,
   };
 }
 
-/** Better Auth's client answers { data, error }: an error becomes an ApiError, as the API's own. */
-function failed(error: { status: number; message?: string | undefined }): never {
-  throw new ApiError(
-    error.status,
-    error.status === 429
-      ? "Too many requests. Wait a few seconds. Then try again."
-      : (error.message ?? `The request failed (HTTP ${error.status}).`),
-  );
-}
+const isSessionsBody = (value: unknown): value is { sessions: unknown[] } =>
+  isRecord(value) && Array.isArray(value.sessions);
 
 /**
  * Every session of the signed-in user, most recently active first, and
- * which one is this browser's (`currentId`, null if it could not be told).
+ * which one is this browser's (`currentId`).
  */
 export const accountSessionsQuery = () =>
   queryOptions({
     queryKey: ["account", "sessions"],
-    queryFn: async () => {
-      const [list, current] = await Promise.all([
-        authClient.listSessions(),
-        authClient.getSession(),
-      ]);
-      if (list.error) failed(list.error);
-      if (current.error) failed(current.error);
-      if (!Array.isArray(list.data)) throw new ApiError(0, "The API sent an unexpected response.");
-      const sessions = list.data
+    queryFn: async ({ signal }) => {
+      const body = expectShape(
+        await apiRequest("/api/account/sessions", { signal }),
+        isSessionsBody,
+      );
+      const sessions = body.sessions
         .map(toSession)
         .filter((session) => session !== null)
         .toSorted((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime());
-      return { sessions, currentId: current.data?.session.id ?? null };
+      return { sessions, currentId: sessions.find((session) => session.current)?.id ?? null };
     },
   });
 
 /** Signs out one of the user's other sessions. */
-export async function revokeSession(token: string): Promise<void> {
-  const { error } = await authClient.revokeSession({ token });
-  if (error) failed(error);
+export async function revokeSession(id: string): Promise<void> {
+  await apiRequest(`/api/account/sessions/${encodeURIComponent(id)}`, { method: "DELETE" });
 }
 
 /** Signs out every session of the user but this one. */
 export async function revokeOtherSessions(): Promise<void> {
-  const { error } = await authClient.revokeOtherSessions();
-  if (error) failed(error);
+  await apiRequest("/api/account/sessions", { method: "DELETE" });
 }
 
 /** A browser and its system, as a User-Agent names them; null for each part not recognized. */
@@ -135,7 +126,7 @@ const BROWSERS: readonly [RegExp, string][] = [
   [/\bSamsungBrowser\/(\d+)/, "Samsung Internet"],
   [/\b(?:Firefox|FxiOS)\/(\d+)/, "Firefox"],
   [/\b(?:CriOS|Chrome)\/(\d+)/, "Chrome"],
-  [/\bVersion\/(\d+)[\d.]* (?:Mobile\/\S+ )?Safari\//, "Safari"],
+  [/\bVersion\/(\d+)(?:\.\d+)* (?:Mobile\/\S+ )?Safari\//, "Safari"],
 ];
 
 const SYSTEMS: readonly [RegExp, string][] = [

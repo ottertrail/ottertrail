@@ -6,6 +6,7 @@ import { meRoutes } from "./access/routes.ts";
 import { accountRoutes } from "./account/routes.ts";
 import { alertRoutes } from "./alerts/routes.ts";
 import type { Auth } from "./auth/auth.ts";
+import { passwordTryLimiter } from "./auth/password-tries.ts";
 import { betterAuthRoutes, setupRoutes } from "./auth/routes.ts";
 import type { ClickHouseClient } from "./clickhouse/clickhouse.ts";
 import { ProjectKeyCache } from "./collection/project-keys.ts";
@@ -76,8 +77,11 @@ export interface AppOptions extends Omit<FastifyServerOptions, "logger"> {
     setupLimit?: RateLimit;
     /** Accepting invitations and using reset links, per client address (access/member-routes.ts). */
     linkLimit?: RateLimit;
-    /** Password tries for changing one's email or password, per user (account/routes.ts). */
-    accountLimit?: RateLimit;
+    /**
+     * Current-password tries per user, shared by every route that checks
+     * one: email and password changes, and handing over ownership.
+     */
+    passwordTryLimit?: RateLimit;
   };
   /**
    * The S3-compatible object store that holds source maps and session
@@ -294,6 +298,8 @@ export function buildApp({
       ...(dashboard.setupLimit === undefined ? {} : { setupLimit: dashboard.setupLimit }),
     });
     app.register(meRoutes, { prefix: "/api", db, auth: dashboard.auth });
+    // One bucket per user for every route that checks the current password.
+    const passwordTries = passwordTryLimiter(dashboard.passwordTryLimit);
     app.register(memberRoutes, {
       prefix: "/api",
       db,
@@ -301,6 +307,7 @@ export function buildApp({
       trustedOrigins: dashboard.trustedOrigins,
       publicUrl: dashboard.publicUrl,
       ...(dashboard.linkLimit === undefined ? {} : { linkLimit: dashboard.linkLimit }),
+      passwordTries,
       ...(dashboard.now === undefined ? {} : { now: dashboard.now }),
     });
     app.register(accountRoutes, {
@@ -308,7 +315,7 @@ export function buildApp({
       db,
       auth: dashboard.auth,
       trustedOrigins: dashboard.trustedOrigins,
-      ...(dashboard.accountLimit === undefined ? {} : { passwordLimit: dashboard.accountLimit }),
+      passwordTries,
     });
     app.register(settingsRoutes, {
       prefix: "/api",

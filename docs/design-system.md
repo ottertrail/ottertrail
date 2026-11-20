@@ -177,10 +177,10 @@ Plus the full state. A region that refreshes keeps its last data, dimmed, and sa
 
 Every screen takes one of three patterns, by what it is for. The blocks live in `apps/web/src/components/`, and each takes the [data states](#data-states) above. The approved mockups behind them were the Console (reports) and Workbench (lists and settings) directions.
 
-| Kind of screen   | Pattern           | Screens                                                                                          |
-| ---------------- | ----------------- | ------------------------------------------------------------------------------------------------ |
-| Report           | Console           | Overview, Web analytics, Speed, Heatmaps, Product analytics, Services, Databases, Hosts, Metrics |
-| List with detail | Workbench         | Errors, Replays, Traces, Logs, Users, Uptime, Alerts                                             |
+| Kind of screen   | Pattern           | Screens                                                                                                 |
+| ---------------- | ----------------- | ------------------------------------------------------------------------------------------------------- |
+| Report           | Console           | Overview, Web analytics, Speed, Heatmaps, Product analytics, Services, Databases, Hosts, Metrics        |
+| List with detail | Workbench         | Errors, Replays, Traces, Logs, Users, Uptime, Alerts                                                    |
 | Settings         | Tabs and Save bar | Project settings, instance Settings, Account settings, Members (tables, with a sheet for Change access) |
 
 ### The shell

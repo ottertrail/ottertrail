@@ -261,6 +261,27 @@ export async function acceptInvitation(
   const pending = await validRow(db, token, now);
   if (pending === undefined) return null;
   const passwordHash = await (await auth.$context).password.hash(password);
+  try {
+    return await acceptIn(db, token, name, passwordHash, now);
+  } catch (error) {
+    // Someone took the address between the check and the insert (an
+    // account created or renamed to it): the link no longer works, as for
+    // an address with an account. The transaction rolled back.
+    if (typeof error === "object" && error !== null && "code" in error && error.code === "23505") {
+      return null;
+    }
+    throw error;
+  }
+}
+
+/** acceptInvitation's transaction, once the password is hashed. */
+function acceptIn(
+  db: Kysely<Database>,
+  token: string,
+  name: string,
+  passwordHash: string,
+  now: Date,
+): Promise<{ email: string } | null> {
   return db.transaction().execute(async (trx) => {
     const used = await trx
       .deleteFrom("dashboard_invitations")

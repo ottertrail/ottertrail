@@ -3,6 +3,7 @@ import type { Kysely } from "kysely";
 
 import { type Auth, canSignInWith } from "../auth/auth.ts";
 import { requireTrustedOrigin } from "../auth/origin.ts";
+import { passwordTryLimiter } from "../auth/password-tries.ts";
 import { newPasswordProperties, PASSWORDS_DIFFER, requireSession } from "../auth/routes.ts";
 import { clientKey, type RateLimit, TokenBucketLimiter } from "../collection/rate-limiter.ts";
 import type { Database } from "../db/schema.ts";
@@ -36,9 +37,6 @@ const UUID_PATTERN =
  * its /64): 10 at once, then one a minute.
  */
 export const DEFAULT_LINK_LIMIT: RateLimit = { capacity: 10, refillPerSecond: 1 / 60 };
-
-/** Handing over ownership checks the owner's password: 5 tries, then one a minute, per user. */
-export const OWNERSHIP_LIMIT: RateLimit = { capacity: 5, refillPerSecond: 1 / 60 };
 
 const problem = (error: string, message: string) => ({ error, message });
 const NO_MEMBER = problem("member_not_found", "This instance has no user with this ID.");
@@ -146,10 +144,23 @@ export const memberRoutes: FastifyPluginCallback<{
   trustedOrigins: readonly string[];
   publicUrl: string;
   linkLimit?: RateLimit;
+  /**
+   * Handing over ownership checks the owner's password: tries come from
+   * the app's one limiter for current-password checks (auth/password-tries.ts).
+   */
+  passwordTries?: TokenBucketLimiter;
   now?: () => Date;
 }> = (
   app,
-  { db, auth, trustedOrigins, publicUrl, linkLimit = DEFAULT_LINK_LIMIT, now = () => new Date() },
+  {
+    db,
+    auth,
+    trustedOrigins,
+    publicUrl,
+    linkLimit = DEFAULT_LINK_LIMIT,
+    passwordTries = passwordTryLimiter(),
+    now = () => new Date(),
+  },
   done,
 ) => {
   const signedIn = requireSession(auth);
@@ -157,7 +168,6 @@ export const memberRoutes: FastifyPluginCallback<{
   const manageMembers = requirePermission(db, "members");
   const owner = requirePermission(db, "ownership");
   const limiter = new TokenBucketLimiter(linkLimit);
-  const passwordTries = new TokenBucketLimiter(OWNERSHIP_LIMIT);
 
   const inviteUrl = (token: string) => `${publicUrl}/invite#token=${token}`;
   const resetUrl = (token: string) => `${publicUrl}/reset-password#token=${token}`;
