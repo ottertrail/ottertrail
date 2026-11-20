@@ -29,10 +29,11 @@ export function ProductLayout({ projectId }: { projectId: string }) {
        * Links, not tabs: each report is a page of its own, at its own address.
        * They take the look of shadcn's line tabs (TabsList variant="line"),
        * and the global focus ring, drawn inward: the row scrolls, so it would
-       * clip a ring drawn outside.
+       * clip a ring drawn outside. The row starts a link's padding (px-3)
+       * to the left, so the first label lines up with the report below.
        */}
       <nav aria-label="Product analytics reports" className="overflow-x-auto border-b px-gutter">
-        <div className={cn(tabsListVariants({ variant: "line" }), "h-10")}>
+        <div className={cn(tabsListVariants({ variant: "line" }), "-ms-3 h-10 p-0")}>
           {TABS.map((tab) => (
             <Link
               key={tab.to}

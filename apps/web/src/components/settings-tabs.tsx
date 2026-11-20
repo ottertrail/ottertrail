@@ -48,7 +48,12 @@ export function SettingsTabs({
         className={cn("gap-0", className)}
       >
         <div className="overflow-x-auto border-b px-gutter">
-          <TabsList variant="line" aria-label={label} className="h-10">
+          {/*
+           * The list starts a tab's padding (px-3) to the left, and without
+           * the list's own 3px, so the first tab's label lines up with the
+           * content below it.
+           */}
+          <TabsList variant="line" aria-label={label} className="-ms-3 h-10 p-0">
             {tabs.map((tab) => (
               <TabsTrigger
                 key={tab.value}
