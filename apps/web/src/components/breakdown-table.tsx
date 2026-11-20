@@ -1,6 +1,7 @@
 import { cn } from "cn";
 import * as React from "react";
 
+import { TruncatedText } from "@/components/truncated-text";
 import {
   Table,
   TableBody,
@@ -17,8 +18,13 @@ export interface BreakdownRow {
   key: string;
   /** Names the row: a path, a country, a source. */
   label: React.ReactNode;
-  /** Full text when the label is cut short, such as a long path. */
+  /**
+   * The whole text, for the tooltip while the label is cut off (a long
+   * path); needed when the label is not plain text (a filter link).
+   */
   title?: string;
+  /** The label leaves part of `title` out on purpose: the tooltip shows even when it fits. */
+  shortened?: boolean;
   /**
    * After the label, in the name cell, never cut short with it: a small
    * link for the row (a page's heatmap) or a mark in words (rage clicks).
@@ -96,13 +102,11 @@ export function BreakdownTable({
       className={cn("flex min-w-0 flex-col gap-2", className)}
     >
       <div className="flex min-h-8 flex-wrap items-center justify-between gap-x-3 gap-y-2">
-        <Heading
-          id={headingId}
-          className="min-w-0 truncate text-sm font-medium text-ink"
-          title={title}
-        >
-          {title}
-        </Heading>
+        <TruncatedText
+          text={title}
+          className="text-sm font-medium text-ink"
+          render={<Heading id={headingId}>{title}</Heading>}
+        />
         {views !== undefined && (
           // One table whose rows change: toggle buttons (aria-pressed), not tabs with panels.
           <ToggleGroup
@@ -183,14 +187,10 @@ export function BreakdownTable({
                       )}
                     >
                       {row.action === undefined ? (
-                        <div className="truncate text-ink" title={row.title}>
-                          {row.label}
-                        </div>
+                        <RowName row={row} />
                       ) : (
                         <div className="flex min-w-0 items-center gap-1.5">
-                          <div className="min-w-0 truncate text-ink" title={row.title}>
-                            {row.label}
-                          </div>
+                          <RowName row={row} />
                           <div className="flex shrink-0 items-center">{row.action}</div>
                         </div>
                       )}
@@ -234,5 +234,23 @@ export function BreakdownTable({
       )}
       {showAll !== undefined && rows.length > 0 && <div className="flex">{showAll}</div>}
     </section>
+  );
+}
+
+/**
+ * A row's name on one line, its whole text in a tooltip while it is cut
+ * off: `title`, or the label itself when it is plain text.
+ */
+export function RowName({
+  row,
+}: {
+  row: { label: React.ReactNode; title?: string; shortened?: boolean };
+}) {
+  const text = row.title ?? (typeof row.label === "string" ? row.label : undefined);
+  if (text === undefined) return <div className="min-w-0 truncate text-ink">{row.label}</div>;
+  return (
+    <TruncatedText text={text} shortened={row.shortened} className="text-ink" render={<div />}>
+      {row.label}
+    </TruncatedText>
   );
 }

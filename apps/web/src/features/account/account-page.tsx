@@ -404,7 +404,7 @@ function SessionRow({
       <MonitorSmartphoneIcon aria-hidden="true" className="size-4 shrink-0 text-ink-subtle" />
       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
         <div className="flex min-w-0 items-center gap-2">
-          <TruncatedText className="text-sm font-medium text-ink">{name}</TruncatedText>
+          <TruncatedText text={name} className="text-sm font-medium text-ink" />
           {current && (
             <Badge variant="outline" className="shrink-0">
               This device

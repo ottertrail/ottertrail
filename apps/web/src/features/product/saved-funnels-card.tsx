@@ -5,6 +5,7 @@ import * as React from "react";
 
 import { PINNED, PINNED_END } from "@/components/pinned-column";
 import { ScrollHint } from "@/components/scroll-hint";
+import { TruncatedText } from "@/components/truncated-text";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
@@ -204,27 +205,30 @@ function SavedFunnelTable({
                   scope="row"
                   className={`py-1.5 pr-3 text-left align-middle font-normal ${PINNED}`}
                 >
-                  <Link
-                    to="/projects/$projectId/product/funnel"
-                    params={{ projectId }}
-                    search={funnelSearchOf({
-                      range: search.range,
-                      environment: search.environment,
-                      funnel: funnel.id,
-                      steps: stepsFrom(funnel.steps),
-                      count: funnel.count,
-                      window: funnel.window,
-                    })}
-                    aria-current={open ? "true" : undefined}
-                    className={`block truncate text-link hover:underline ${open ? "font-medium" : ""}`}
-                    title={funnel.name}
-                  >
-                    {funnel.name}
-                  </Link>
+                  <TruncatedText
+                    text={funnel.name}
+                    className={`text-link hover:underline ${open ? "font-medium" : ""}`}
+                    render={
+                      <Link
+                        to="/projects/$projectId/product/funnel"
+                        params={{ projectId }}
+                        search={funnelSearchOf({
+                          range: search.range,
+                          environment: search.environment,
+                          funnel: funnel.id,
+                          steps: stepsFrom(funnel.steps),
+                          count: funnel.count,
+                          window: funnel.window,
+                        })}
+                        aria-current={open ? "true" : undefined}
+                      />
+                    }
+                  />
                 </th>
-                <TableCell className="truncate py-1.5 text-ink" title={steps}>
-                  {steps}
+                <TableCell className="py-1.5 text-ink">
+                  <TruncatedText text={steps} />
                 </TableCell>
+
                 <TableCell className="py-1.5 text-ink-subtle">
                   {countLine(funnel.count, funnel.window)}
                 </TableCell>

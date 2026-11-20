@@ -9,6 +9,7 @@ import { PINNED } from "@/components/pinned-column";
 import { ScrollHint } from "@/components/scroll-hint";
 import { type Stat, StatStrip } from "@/components/stat-strip";
 import { StatusBadge } from "@/components/status-badge";
+import { TruncatedText } from "@/components/truncated-text";
 import { Badge } from "@/components/ui/badge";
 import {
   Table,
@@ -264,9 +265,7 @@ export function AttentionWidget(props: WidgetProps) {
                       <TableCell className="py-1.5 pl-0 align-top whitespace-normal text-ink max-sm:p-0">
                         <span className="mb-1 block">{row.state}</span>
                         {row.what}
-                        <span className="block truncate text-xs text-ink-subtle" title={row.detail}>
-                          {row.detail}
-                        </span>
+                        <TruncatedText text={row.detail} className="text-xs text-ink-subtle" />
                       </TableCell>
                       <TableCell className="py-1.5 align-top break-words whitespace-normal text-ink-muted max-sm:p-0">
                         {row.cause}
@@ -385,14 +384,16 @@ export function ErrorsWidget(props: WidgetProps) {
                                 <StatusBadge tone="critical">Regressed</StatusBadge>
                               )}
                               {group.isNew && <Badge variant="outline">New</Badge>}
-                              <Link
-                                to="/projects/$projectId/errors/$fingerprint"
-                                params={{ projectId, fingerprint: group.fingerprint }}
-                                className="truncate text-link hover:underline"
-                                title={`${group.type}: ${group.message}`}
-                              >
-                                {group.type}: {group.message}
-                              </Link>
+                              <TruncatedText
+                                text={`${group.type}: ${group.message}`}
+                                className="text-link hover:underline"
+                                render={
+                                  <Link
+                                    to="/projects/$projectId/errors/$fingerprint"
+                                    params={{ projectId, fingerprint: group.fingerprint }}
+                                  />
+                                }
+                              />
                             </div>
                           </TableCell>
                           <TableCell className={`py-1.5 ${numClass}`}>
@@ -490,20 +491,20 @@ export function UptimeWidget(props: WidgetProps) {
                     {data.checks.map((check) => (
                       <TableRow key={check.id} className="hover:bg-transparent">
                         <TableCell className={`${PINNED} py-1.5 pl-0`}>
-                          <Link
-                            to="/projects/$projectId/uptime/$checkId"
-                            params={{ projectId, checkId: check.id }}
-                            className="block truncate text-link hover:underline"
-                            title={check.name}
-                          >
-                            {check.name}
-                          </Link>
-                          <span
-                            className="block max-w-full truncate text-xs text-ink-subtle"
-                            title={shortUrl(check.url)}
-                          >
-                            {shortUrl(check.url)}
-                          </span>
+                          <TruncatedText
+                            text={check.name}
+                            className="text-link hover:underline"
+                            render={
+                              <Link
+                                to="/projects/$projectId/uptime/$checkId"
+                                params={{ projectId, checkId: check.id }}
+                              />
+                            }
+                          />
+                          <TruncatedText
+                            text={shortUrl(check.url)}
+                            className="max-w-full text-xs text-ink-subtle"
+                          />
                         </TableCell>
                         <TableCell className="py-1.5">
                           {check.paused ? (

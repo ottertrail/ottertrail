@@ -1,5 +1,6 @@
 import * as React from "react";
 
+import { TruncatedText } from "@/components/truncated-text";
 import { MISSING } from "@/lib/missing";
 
 import { bucketLabel, tickLabel, ticksFor } from "./chart-time";
@@ -157,9 +158,7 @@ export function TimeChart({
                 className="h-0.5 w-3 shrink-0 rounded-full"
                 style={{ background: line.color }}
               />
-              <span className="max-w-64 truncate" title={line.label}>
-                {line.label}
-              </span>
+              <TruncatedText text={line.label} className="max-w-64" />
             </li>
           ))}
         </ul>

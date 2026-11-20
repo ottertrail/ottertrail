@@ -17,6 +17,11 @@ import {
 } from "./fake-api.ts";
 import { renderApp } from "./render.tsx";
 
+const tooltip = () => document.querySelector("[data-slot=tooltip-content]")?.textContent;
+/** A row's name, the trigger of its tooltip. */
+const nameOf = (row: Element | undefined) =>
+  row?.querySelector<HTMLElement>("[data-truncated-text]") ?? document.body;
+
 /*
  * The Heatmaps screen (docs/dashboard.md, "Heatmaps"), its setting on the
  * project's Install tab, and who may open it. The Pages tables' links to it
@@ -257,13 +262,12 @@ describe("the heatmaps page", () => {
       rows.map((row) => row.querySelector("[data-slot=status-badge]")?.textContent ?? null),
     ).toEqual([null, "Rage clicks", "Rage clicks"]);
     expect(rows[1]?.querySelector("[data-slot=status-badge] svg")).not.toBeNull();
-    // The full path, and the site's own name with it, on hover.
-    expect(rows[0]?.querySelector("[title]")?.getAttribute("title")).toBe(
-      "hero-cta (section:1>div>a)",
-    );
-    expect(rows[1]?.querySelector("[title]")?.getAttribute("title")).toBe(
-      "body>main>section:2>div>button",
-    );
+    // The full path, and the site's own name with it, in a tooltip on hover, though
+    // nothing is cut off.
+    await userEvent.hover(nameOf(rows[0]));
+    await expect.poll(tooltip).toBe("hero-cta (section:1>div>a)");
+    await userEvent.hover(nameOf(rows[1]));
+    await expect.poll(tooltip).toBe("body>main>section:2>div>button");
   });
 
   test("lists the rage-click hotspots beside the elements, from 64rem of content", async () => {

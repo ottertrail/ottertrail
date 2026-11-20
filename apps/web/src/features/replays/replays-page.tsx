@@ -13,6 +13,7 @@ import { ButtonLink } from "@/components/button-link";
 import { FilterBarRange } from "@/components/filter-bar";
 import { type Stat, StatStrip } from "@/components/stat-strip";
 import { StatusBadge } from "@/components/status-badge";
+import { TruncatedText } from "@/components/truncated-text";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
@@ -138,28 +139,20 @@ function ReplayTable({
                 >
                   <time dateTime={replay.startedAt}>{when}</time>
                 </Link>
-                <p
+                <TruncatedText
+                  text={error}
                   className={
-                    replay.error === null
-                      ? "mt-1 truncate text-sm text-ink-subtle"
-                      : "mt-1 truncate text-sm text-ink"
+                    replay.error === null ? "mt-1 text-sm text-ink-subtle" : "mt-1 text-sm text-ink"
                   }
-                  title={error}
-                >
-                  {error}
-                </p>
+                  render={<p />}
+                />
                 <p className="mt-0.5 flex min-w-0 gap-x-3 text-xs text-ink-subtle">
-                  <span
-                    className={
-                      replay.userId === null ? "shrink-0" : "max-w-40 shrink-0 truncate font-mono"
-                    }
-                    title={replay.userId ?? undefined}
-                  >
-                    {replay.userId ?? "Anonymous"}
-                  </span>
-                  <span className="min-w-0 truncate font-mono" title={pages}>
-                    {pages}
-                  </span>
+                  {replay.userId === null ? (
+                    <span className="shrink-0">Anonymous</span>
+                  ) : (
+                    <TruncatedText text={replay.userId} className="max-w-40 shrink-0 font-mono" />
+                  )}
+                  <TruncatedText text={pages} className="font-mono" />
                 </p>
               </TableCell>
               <TableCell
@@ -265,23 +258,27 @@ function Summary({
               {ranked.map((group) => (
                 <TableRow key={group.fingerprint} className="hover:bg-transparent">
                   <th scope="row" className="py-1.5 pr-3 text-left align-top font-normal">
-                    <Link
-                      to="/projects/$projectId/replays"
-                      params={{ projectId }}
-                      search={(previous) => ({
-                        ...previous,
-                        error: group.fingerprint,
-                        replay: undefined,
-                      })}
-                      className="block truncate font-medium text-link hover:underline"
-                      title={`${group.type}: ${group.message}`}
-                    >
-                      {group.type}
-                    </Link>
+                    <TruncatedText
+                      text={group.type}
+                      className="font-medium text-link hover:underline"
+                      render={
+                        <Link
+                          to="/projects/$projectId/replays"
+                          params={{ projectId }}
+                          search={(previous) => ({
+                            ...previous,
+                            error: group.fingerprint,
+                            replay: undefined,
+                          })}
+                        />
+                      }
+                    />
                     {group.message !== "" && (
-                      <div className="truncate text-ink-muted" title={group.message}>
-                        {group.message}
-                      </div>
+                      <TruncatedText
+                        text={group.message}
+                        className="text-ink-muted"
+                        render={<div />}
+                      />
                     )}
                   </th>
                   <TableCell className="py-1.5 pr-0 text-right align-top tabular-nums">

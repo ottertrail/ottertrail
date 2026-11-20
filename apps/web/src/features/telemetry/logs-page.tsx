@@ -13,6 +13,7 @@ import * as React from "react";
 import { ButtonLink } from "@/components/button-link";
 import { FilterBarRange } from "@/components/filter-bar";
 import { type Stat, StatStrip } from "@/components/stat-strip";
+import { TruncatedText } from "@/components/truncated-text";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
@@ -114,18 +115,20 @@ function LogRows({
                 </time>
                 <SeverityBadge log={log} />
                 {log.service !== "" && (
-                  <span className="max-w-32 shrink-0 truncate text-xs text-ink-subtle">
-                    {log.service}
-                  </span>
+                  <TruncatedText
+                    text={log.service}
+                    side="bottom"
+                    className="max-w-32 shrink-0 text-xs text-ink-subtle"
+                  />
                 )}
-                <span className="min-w-0 flex-1 truncate font-mono text-xs text-ink">
-                  {log.body === "" ? (
-                    <span className="font-sans text-ink-subtle">(empty)</span>
-                  ) : (
-                    log.body
-                  )}
-                  {log.bodyTruncated && "…"}
-                </span>
+                {log.body === "" ? (
+                  <span className="min-w-0 flex-1 font-sans text-xs text-ink-subtle">(empty)</span>
+                ) : (
+                  <TruncatedText
+                    text={`${log.body}${log.bodyTruncated ? "…" : ""}`}
+                    className="flex-1 font-mono text-xs text-ink"
+                  />
+                )}
               </button>
             </li>
           </React.Fragment>
@@ -195,7 +198,11 @@ function Summary({
             </time>
             {latestError.service}
           </p>
-          <p className="line-clamp-3 font-mono text-xs break-words text-ink">{latestError.body}</p>
+          <TruncatedText
+            text={latestError.body}
+            className="line-clamp-3 font-mono text-xs break-words text-ink"
+            render={<p />}
+          />
         </section>
       )}
       <WorkbenchStartHint noun="a record" />

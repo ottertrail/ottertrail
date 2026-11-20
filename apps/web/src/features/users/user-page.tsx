@@ -11,6 +11,7 @@ import {
 import type * as React from "react";
 
 import { ButtonLink } from "@/components/button-link";
+import { TruncatedText } from "@/components/truncated-text";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -56,25 +57,29 @@ function ErrorTitle({
       <WhenAllowed
         area="errors"
         fallback={
-          <span className="min-w-0 truncate" title={text}>
+          <TruncatedText text={text}>
             <span className="font-medium">{error.type}</span>
             {error.message !== "" && `: ${error.message}`}
-          </span>
+          </TruncatedText>
         }
       >
-        <Link
-          to="/projects/$projectId/errors/$fingerprint"
-          params={{ projectId, fingerprint: error.fingerprint }}
-          search={{
-            ...range,
-            ...(environment === DEFAULT_ENVIRONMENT ? {} : { env: environment }),
-          }}
-          className="min-w-0 truncate text-link hover:underline"
-          title={text}
+        <TruncatedText
+          text={text}
+          className="text-link hover:underline"
+          render={
+            <Link
+              to="/projects/$projectId/errors/$fingerprint"
+              params={{ projectId, fingerprint: error.fingerprint }}
+              search={{
+                ...range,
+                ...(environment === DEFAULT_ENVIRONMENT ? {} : { env: environment }),
+              }}
+            />
+          }
         >
           <span className="font-medium">{error.type}</span>
           {error.message !== "" && `: ${error.message}`}
-        </Link>
+        </TruncatedText>
       </WhenAllowed>
       {path !== "" && (
         <span className="shrink-0 text-ink-subtle">
@@ -164,16 +169,18 @@ function UserReplays({
                     {replay.cut && ", cut"}
                   </span>
                   {replay.error !== null && (
-                    <span
-                      className="min-w-0 truncate text-sm text-ink"
-                      title={replay.error.message}
+                    <TruncatedText
+                      text={`${replay.error.type}${replay.error.message === "" ? "" : `: ${replay.error.message}`}`}
+                      className="text-sm text-ink"
                     >
-                      {replay.error.type}
-                    </span>
+                      <span className="font-medium">{replay.error.type}</span>
+                      {replay.error.message !== "" && `: ${replay.error.message}`}
+                    </TruncatedText>
                   )}
-                  <span className="min-w-0 truncate font-mono text-xs text-ink-subtle">
-                    {pagesText(replay.pages)}
-                  </span>
+                  <TruncatedText
+                    text={pagesText(replay.pages)}
+                    className="font-mono text-xs text-ink-subtle"
+                  />
                 </li>
               ))}
             </ul>

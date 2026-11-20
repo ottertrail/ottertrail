@@ -7,6 +7,7 @@ import { clickableRow, ROW_LINK } from "@/components/clickable-row";
 import { PINNED } from "@/components/pinned-column";
 import { ScrollHint } from "@/components/scroll-hint";
 import { StatusBadge } from "@/components/status-badge";
+import { TruncatedText } from "@/components/truncated-text";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -102,23 +103,29 @@ function Waterfall({
                     className="flex min-w-0 items-center gap-2"
                     style={{ paddingLeft: `${Math.min(depth, MAX_INDENT) * 14}px` }}
                   >
-                    <button
-                      type="button"
-                      aria-pressed={isSelected}
-                      {...ROW_LINK}
-                      onClick={() => onSelect(span)}
-                      className="min-w-0 truncate rounded-sm text-left text-link hover:underline focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
-                      title={`${span.name} (${span.service})`}
+                    <TruncatedText
+                      text={span.name === "" ? "(no name)" : span.name}
+                      className="rounded-sm text-left text-link hover:underline focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+                      render={
+                        <button
+                          type="button"
+                          aria-pressed={isSelected}
+                          {...ROW_LINK}
+                          onClick={() => onSelect(span)}
+                        />
+                      }
                     >
                       <span className="sr-only">
                         {depth === 0 ? "Top level" : `Level ${depth + 1}`}
                         {orphan ? ", parent not received" : ""}:{" "}
                       </span>
                       {span.name === "" ? "(no name)" : span.name}
-                    </button>
-                    <span className="shrink-0 truncate text-xs text-ink-subtle">
-                      {span.service}
-                    </span>
+                    </TruncatedText>
+                    <TruncatedText
+                      text={span.service}
+                      className="max-w-40 shrink-0 text-xs text-ink-subtle"
+                    />
+
                     {span.status === "error" && <StatusBadge tone="critical">Error</StatusBadge>}
                   </div>
                 </TableCell>

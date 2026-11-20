@@ -4,6 +4,7 @@ import * as React from "react";
 
 import { CopyableCode } from "@/components/copyable-code";
 import { SettingsSection } from "@/components/settings-section";
+import { TruncatedText } from "@/components/truncated-text";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
@@ -293,12 +294,8 @@ function ReleaseTable({
       <tbody>
         {releases.map((release) => (
           <tr key={release.release} className="border-t border-hairline">
-            <th
-              scope="row"
-              className="truncate py-1.5 pr-3 text-left font-mono font-normal text-ink"
-              title={release.release}
-            >
-              {release.release}
+            <th scope="row" className="py-1.5 pr-3 text-left font-mono font-normal text-ink">
+              <TruncatedText text={release.release} />
             </th>
             <td className="py-1.5 text-right text-ink tabular-nums">
               {release.files.toLocaleString("en")}

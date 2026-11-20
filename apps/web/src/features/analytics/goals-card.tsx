@@ -1,6 +1,7 @@
 import { PlusIcon, TargetIcon } from "lucide-react";
 import * as React from "react";
 
+import { TruncatedText } from "@/components/truncated-text";
 import { Button } from "@/components/ui/button";
 import {
   Empty,
@@ -111,12 +112,13 @@ function GoalTable({
                 scope="row"
                 className="py-1.5 pr-3 pl-0 text-left align-top font-normal max-sm:block max-sm:pr-0"
               >
-                <div className="truncate text-ink" title={goal.name}>
-                  {goal.name}
-                </div>
-                <div className="truncate text-xs text-ink-subtle" title={reached}>
-                  {reached}
-                </div>
+                <TruncatedText text={goal.name} className="text-ink" render={<div />} />
+                <TruncatedText
+                  text={reached}
+                  className="text-xs text-ink-subtle"
+                  render={<div />}
+                />
+
                 <div aria-hidden="true" className="mt-1 h-1.5 max-w-xs">
                   <div
                     className="h-full rounded-r bg-chart-1"

@@ -7,6 +7,7 @@ import { BreakdownTable } from "@/components/breakdown-table";
 import { ButtonLink } from "@/components/button-link";
 import { FilterBar, FilterBarRange } from "@/components/filter-bar";
 import { StatStrip } from "@/components/stat-strip";
+import { TruncatedText } from "@/components/truncated-text";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -426,47 +427,39 @@ function Occurrences({
                 </div>
               </TableCell>
               <TableCell data-label="User" className={stackCell}>
-                <span className="block max-w-48 truncate">
-                  {occurrence.userId === null ? (
-                    <span className="text-ink-subtle">Anonymous</span>
-                  ) : !showUsers ? (
-                    <span className="font-mono">{occurrence.userId}</span>
-                  ) : (
-                    <Link
-                      to="/projects/$projectId/users/$userId"
-                      params={{ projectId, userId: occurrence.userId }}
-                      search={userSearch}
-                      className="font-mono text-link hover:underline"
-                    >
-                      {occurrence.userId}
-                    </Link>
-                  )}
-                </span>
+                {occurrence.userId === null ? (
+                  <span className="text-ink-subtle">Anonymous</span>
+                ) : !showUsers ? (
+                  <TruncatedText text={occurrence.userId} className="max-w-48 font-mono" />
+                ) : (
+                  <TruncatedText
+                    text={occurrence.userId}
+                    className="max-w-48 font-mono text-link hover:underline"
+                    render={
+                      <Link
+                        to="/projects/$projectId/users/$userId"
+                        params={{ projectId, userId: occurrence.userId }}
+                        search={userSearch}
+                      />
+                    }
+                  />
+                )}
               </TableCell>
-              <TableCell
-                data-label={headings.page}
-                className={`font-mono ${stackCell}`}
-                title={occurrence.path}
-              >
-                <span className="block max-w-64 truncate">
-                  {occurrence.path === "" ? (
-                    <span className="font-sans text-ink-subtle">(none)</span>
-                  ) : (
-                    occurrence.path
-                  )}
-                </span>
+              <TableCell data-label={headings.page} className={`font-mono ${stackCell}`}>
+                {occurrence.path === "" ? (
+                  <span className="font-sans text-ink-subtle">(none)</span>
+                ) : (
+                  <TruncatedText text={occurrence.path} className="max-w-64" />
+                )}
               </TableCell>
               {isServer(occurrence) ? (
                 <>
                   <TableCell data-label={headings.browser} className={`font-mono ${stackCell}`}>
-                    <span className="block max-w-48 truncate">{occurrence.service}</span>
+                    <TruncatedText text={occurrence.service ?? ""} className="max-w-48" />
                   </TableCell>
-                  <TableCell
-                    data-label={headings.system}
-                    className={`font-mono ${stackCell}`}
-                    title={traceTitle(occurrence)}
-                  >
-                    <span className="block max-w-40 truncate">
+                  <TableCell data-label={headings.system} className={`font-mono ${stackCell}`}>
+                    {/* The tooltip names the span too. */}
+                    <TruncatedText text={traceTitle(occurrence)} className="max-w-40">
                       {hasTrace(occurrence) ? (
                         <TraceLink
                           projectId={projectId}
@@ -476,7 +469,7 @@ function Occurrences({
                       ) : (
                         <span className="font-sans text-ink-subtle">(none)</span>
                       )}
-                    </span>
+                    </TruncatedText>
                   </TableCell>
                 </>
               ) : (

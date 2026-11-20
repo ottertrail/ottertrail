@@ -1,5 +1,6 @@
 import type * as React from "react";
 
+import { RowName } from "@/components/breakdown-table";
 import { MISSING } from "@/lib/missing";
 
 import { formatWhole } from "./format";
@@ -7,7 +8,10 @@ import { formatWhole } from "./format";
 export interface RankedRow {
   key: string;
   label: React.ReactNode;
-  /** Full text when the label is cut short, such as a long path. */
+  /**
+   * The whole text, for the tooltip while the label is cut off (a long
+   * path); needed when the label is not plain text (a filter link).
+   */
   title?: string;
   /** Sets the bar's length. */
   primary: number;
@@ -62,9 +66,8 @@ export function RankedList({
         {rows.map((row) => (
           <tr key={row.key}>
             <td className="py-1.5 pr-3 align-top">
-              <div className="truncate text-ink" title={row.title}>
-                {row.label}
-              </div>
+              <RowName row={row} />
+
               <div
                 aria-hidden="true"
                 className="mt-1 h-1.5 rounded-r bg-chart-1"

@@ -6,6 +6,7 @@ import * as React from "react";
 import { clickableRow, ROW_LINK } from "@/components/clickable-row";
 import { PINNED } from "@/components/pinned-column";
 import { ScrollHint } from "@/components/scroll-hint";
+import { TruncatedText } from "@/components/truncated-text";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
@@ -134,16 +135,18 @@ function DatabaseCard({
             {database.shapes.map((shape) => (
               <TableRow key={shape.id} {...clickableRow()}>
                 <TableCell className={`max-w-md min-w-48 pl-0 max-sm:max-w-48 ${PINNED}`}>
-                  <Link
-                    to="/projects/$projectId/databases/$shapeId"
-                    params={{ projectId, shapeId: shape.id }}
-                    search={shapeSearchOf({ range, environment })}
-                    {...ROW_LINK}
+                  <TruncatedText
+                    text={shape.shape}
                     className="line-clamp-2 font-mono text-xs break-all whitespace-normal text-link hover:underline"
-                    title={shape.shape}
-                  >
-                    {shape.shape}
-                  </Link>
+                    render={
+                      <Link
+                        to="/projects/$projectId/databases/$shapeId"
+                        params={{ projectId, shapeId: shape.id }}
+                        search={shapeSearchOf({ range, environment })}
+                        {...ROW_LINK}
+                      />
+                    }
+                  />
                 </TableCell>
                 <TableCell className="text-right tabular-nums">
                   {formatWhole(shape.calls)}

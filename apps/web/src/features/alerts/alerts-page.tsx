@@ -13,6 +13,7 @@ import * as React from "react";
 import { ButtonLink } from "@/components/button-link";
 import { FilterBar } from "@/components/filter-bar";
 import { type Stat, StatStrip } from "@/components/stat-strip";
+import { TruncatedText } from "@/components/truncated-text";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
@@ -134,31 +135,32 @@ function RuleTable({
           return (
             <TableRow key={rule.id} {...workbenchRow(rule.id, chosen)}>
               <TableCell className={`${GUTTER_START} py-2.5 align-top whitespace-normal`}>
-                <Link
-                  to="/projects/$projectId/alerts/$ruleId"
-                  params={{ projectId, ruleId: rule.id }}
-                  aria-current={chosen ? "true" : undefined}
-                  {...ROW_LINK}
-                  onClick={selectOnPlainClick(select, rule.id)}
-                  className="block truncate rounded-sm font-medium text-link hover:underline"
-                  title={rule.name}
-                >
-                  {rule.name}
-                </Link>
-                <span className="line-clamp-2 text-xs break-words text-ink-subtle">
-                  {watchesText(rule, checks)}
-                </span>
+                <TruncatedText
+                  text={rule.name}
+                  className="rounded-sm font-medium text-link hover:underline"
+                  render={
+                    <Link
+                      to="/projects/$projectId/alerts/$ruleId"
+                      params={{ projectId, ruleId: rule.id }}
+                      aria-current={chosen ? "true" : undefined}
+                      {...ROW_LINK}
+                      onClick={selectOnPlainClick(select, rule.id)}
+                    />
+                  }
+                />
+                <TruncatedText
+                  text={watchesText(rule, checks)}
+                  className="line-clamp-2 text-xs break-words text-ink-subtle"
+                />
               </TableCell>
               <TableCell className="py-2.5 align-top whitespace-normal">
                 <div className="flex flex-col gap-1">
                   <RuleStateBadge rule={rule} />
                   {!rule.enabled && rule.disabledReason !== null && (
-                    <span
+                    <TruncatedText
+                      text={rule.disabledReason}
                       className="line-clamp-3 text-xs text-ink-subtle"
-                      title={rule.disabledReason}
-                    >
-                      {rule.disabledReason}
-                    </span>
+                    />
                   )}
                   {rule.enabled && rule.evaluationError !== null && (
                     <span

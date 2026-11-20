@@ -4,6 +4,7 @@ import { ChevronRightIcon, InfoIcon, OctagonAlertIcon } from "lucide-react";
 import * as React from "react";
 
 import { StatusBadge, type StatusTone } from "@/components/status-badge";
+import { TruncatedText } from "@/components/truncated-text";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -254,15 +255,23 @@ function Entry({
           </time>
           <SeverityBadge log={log} />
           {log.service !== "" && (
-            <span className="min-w-0 truncate text-xs leading-5 text-ink-subtle sm:max-w-32">
-              {log.service}
-            </span>
+            <TruncatedText
+              text={log.service}
+              side="bottom"
+              className="text-xs leading-5 text-ink-subtle sm:max-w-32"
+            />
           )}
         </span>
-        <span className="min-w-0 flex-1 truncate pl-7 font-mono text-xs leading-5 text-ink sm:pl-0">
-          {log.body === "" ? <span className="font-sans text-ink-subtle">(empty)</span> : log.body}
-          {log.bodyTruncated && "…"}
-        </span>
+        {log.body === "" ? (
+          <span className="min-w-0 flex-1 pl-7 font-sans text-xs leading-5 text-ink-subtle sm:pl-0">
+            (empty)
+          </span>
+        ) : (
+          <TruncatedText
+            text={`${log.body}${log.bodyTruncated ? "…" : ""}`}
+            className="flex-1 pl-7 font-mono text-xs leading-5 text-ink sm:pl-0"
+          />
+        )}
       </button>
       {open && (
         <div id={detailId}>

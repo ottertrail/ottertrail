@@ -3,6 +3,7 @@ import { Link } from "@tanstack/react-router";
 import { BookOpenIcon, MenuIcon } from "lucide-react";
 
 import { ButtonAnchor } from "@/components/button-anchor";
+import { TruncatedText } from "@/components/truncated-text";
 import { Button } from "@/components/ui/button";
 import { Kbd, KbdGroup } from "@/components/ui/kbd";
 import { Separator } from "@/components/ui/separator";
@@ -20,13 +21,12 @@ function ProjectCrumb({ projectId }: { projectId: string }) {
   }
   return (
     <>
-      <Link
-        to="/projects/$projectId"
-        params={{ projectId }}
-        className="max-w-48 truncate text-sm text-ink-subtle hover:text-ink"
-      >
-        {name}
-      </Link>
+      <TruncatedText
+        text={name}
+        side="bottom"
+        className="max-w-48 text-sm text-ink-subtle hover:text-ink"
+        render={<Link to="/projects/$projectId" params={{ projectId }} />}
+      />
       <span aria-hidden="true" className="text-sm text-ink-subtle">
         /
       </span>
@@ -102,7 +102,12 @@ export function AppHeader({
       <Separator orientation="vertical" className="my-auto h-4" />
       <nav aria-label="Breadcrumb" className="flex min-w-0 items-center gap-2">
         {projectId !== undefined && <ProjectCrumb projectId={projectId} />}
-        <h1 className="truncate text-sm font-medium">{title}</h1>
+        <TruncatedText
+          text={title}
+          side="bottom"
+          className="text-sm font-medium"
+          render={<h1>{title}</h1>}
+        />
       </nav>
       <div className="ml-auto flex shrink-0 items-center gap-3">
         {docs !== undefined && <DocsLink docs={docs} />}

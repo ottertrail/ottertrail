@@ -1,5 +1,7 @@
 import * as React from "react";
 
+import { TruncatedText } from "@/components/truncated-text";
+
 import { tickLabel, ticksFor } from "./chart-time";
 import { bucketStart, type ListChartFrame, listBucketLabel } from "./list-chart-frame";
 
@@ -116,9 +118,7 @@ export function StackedBarChart({
                 className="size-2 shrink-0 rounded-sm"
                 style={{ background: part.color }}
               />
-              <span className="max-w-64 truncate" title={part.label}>
-                {part.label}
-              </span>
+              <TruncatedText text={part.label} className="max-w-64" />
             </li>
           ))}
         </ul>

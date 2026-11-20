@@ -1,6 +1,7 @@
 import { PINNED } from "@/components/pinned-column";
 import { ScrollHint } from "@/components/scroll-hint";
 import { type Stat, StatStrip } from "@/components/stat-strip";
+import { TruncatedText } from "@/components/truncated-text";
 import {
   Table,
   TableBody,
@@ -18,10 +19,10 @@ import { stepText } from "./funnel-steps";
 
 function StepName({ step }: { step: FunnelStep }) {
   return (
-    <span className="min-w-0 truncate" title={stepText(step)}>
+    <TruncatedText text={`${step.type === "page" ? "Page " : "Event "}${stepText(step)}`}>
       <span className="text-ink-subtle">{step.type === "page" ? "Page " : "Event "}</span>
       <span className="font-mono text-ink">{stepText(step)}</span>
-    </span>
+    </TruncatedText>
   );
 }
 

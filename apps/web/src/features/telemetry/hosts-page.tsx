@@ -7,6 +7,7 @@ import { Missing } from "@/components/missing";
 import { PINNED } from "@/components/pinned-column";
 import { ScrollHint } from "@/components/scroll-hint";
 import { StatusBadge } from "@/components/status-badge";
+import { TruncatedText } from "@/components/truncated-text";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
@@ -210,16 +211,21 @@ export function HostsPage({
                       {data.hosts.map((host) => (
                         <TableRow key={host.host} {...clickableRow()}>
                           <TableCell className={`max-w-xs pl-0 max-sm:max-w-40 ${PINNED}`}>
-                            <Link
-                              to="/projects/$projectId/hosts/$host"
-                              params={{ projectId, host: host.host }}
-                              search={{ ...rangeSearch(range), ...environmentSearch(environment) }}
-                              {...ROW_LINK}
-                              className="block truncate font-mono text-xs text-link hover:underline"
-                              title={host.host}
-                            >
-                              {host.host}
-                            </Link>
+                            <TruncatedText
+                              text={host.host}
+                              className="font-mono text-xs text-link hover:underline"
+                              render={
+                                <Link
+                                  to="/projects/$projectId/hosts/$host"
+                                  params={{ projectId, host: host.host }}
+                                  search={{
+                                    ...rangeSearch(range),
+                                    ...environmentSearch(environment),
+                                  }}
+                                  {...ROW_LINK}
+                                />
+                              }
+                            />
                           </TableCell>
                           <TableCell>
                             <span className="flex flex-wrap items-center gap-2">

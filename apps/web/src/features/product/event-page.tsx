@@ -5,6 +5,7 @@ import { ArrowLeftIcon, SearchXIcon, XIcon } from "lucide-react";
 import { BreakdownTable } from "@/components/breakdown-table";
 import { ReportChart } from "@/components/report-chart";
 import { type Stat, StatStrip } from "@/components/stat-strip";
+import { TruncatedText } from "@/components/truncated-text";
 import {
   Empty,
   EmptyDescription,
@@ -332,9 +333,11 @@ export function EventPage({
             <ArrowLeftIcon aria-hidden="true" className="size-4" />
             All events
           </Link>
-          <h2 className="truncate font-mono text-xl font-semibold text-ink" title={name}>
-            {name}
-          </h2>
+          <TruncatedText
+            text={name}
+            className="font-mono text-xl font-semibold text-ink"
+            render={<h2>{name}</h2>}
+          />
         </div>
         {query.isError && (
           <LoadFailed

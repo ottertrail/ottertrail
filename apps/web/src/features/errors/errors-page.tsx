@@ -13,6 +13,7 @@ import { ButtonLink } from "@/components/button-link";
 import { CopyableCode } from "@/components/copyable-code";
 import { FilterBar, FilterBarRange } from "@/components/filter-bar";
 import { type Stat, StatStrip } from "@/components/stat-strip";
+import { TruncatedText } from "@/components/truncated-text";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
@@ -190,20 +191,24 @@ function ErrorTable({
           return (
             <TableRow key={group.fingerprint} {...workbenchRow(group.fingerprint, chosen)}>
               <TableCell className={`${gutterStart} py-2.5 align-top whitespace-normal`}>
-                <Link
-                  to="/projects/$projectId/errors/$fingerprint"
-                  params={{ projectId, fingerprint: group.fingerprint }}
-                  search={detailSearch}
-                  aria-current={chosen ? "true" : undefined}
-                  // A new tab or window still opens the page; a plain click selects.
-                  {...ROW_LINK}
-                  onClick={selectOnPlainClick(select, group.fingerprint)}
+                <TruncatedText
+                  text={`${group.type}${group.message === "" ? "" : `: ${group.message}`}`}
                   className="line-clamp-2 rounded-sm break-words text-link hover:underline"
-                  title={`${group.type}: ${group.message}`}
+                  render={
+                    <Link
+                      to="/projects/$projectId/errors/$fingerprint"
+                      params={{ projectId, fingerprint: group.fingerprint }}
+                      search={detailSearch}
+                      aria-current={chosen ? "true" : undefined}
+                      // A new tab or window still opens the page; a plain click selects.
+                      {...ROW_LINK}
+                      onClick={selectOnPlainClick(select, group.fingerprint)}
+                    />
+                  }
                 >
                   <span className="font-medium">{group.type}</span>
                   {group.message !== "" && <span>: {group.message}</span>}
-                </Link>
+                </TruncatedText>
                 <p className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-ink-subtle">
                   {group.status !== "unresolved" && <ErrorStatusBadge status={group.status} />}
                   <span>
@@ -338,19 +343,23 @@ function Summary({
             {ranked.map((group) => (
               <TableRow key={group.fingerprint} className="hover:bg-transparent">
                 <th scope="row" className="py-1.5 pr-3 text-left align-top font-normal">
-                  <Link
-                    to="/projects/$projectId/errors"
-                    params={{ projectId }}
-                    search={(previous) => ({ ...previous, error: group.fingerprint })}
-                    className="block truncate font-medium text-link hover:underline"
-                    title={`${group.type}: ${group.message}`}
-                  >
-                    {group.type}
-                  </Link>
+                  <TruncatedText
+                    text={group.type}
+                    className="font-medium text-link hover:underline"
+                    render={
+                      <Link
+                        to="/projects/$projectId/errors"
+                        params={{ projectId }}
+                        search={(previous) => ({ ...previous, error: group.fingerprint })}
+                      />
+                    }
+                  />
                   {group.message !== "" && (
-                    <div className="truncate text-ink-muted" title={group.message}>
-                      {group.message}
-                    </div>
+                    <TruncatedText
+                      text={group.message}
+                      className="text-ink-muted"
+                      render={<div />}
+                    />
                   )}
                 </th>
                 <TableCell className="py-1.5 text-right align-top tabular-nums">

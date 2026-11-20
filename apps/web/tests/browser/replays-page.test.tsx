@@ -33,7 +33,7 @@ const rows = () => [
 ];
 /** A row's lines: when, its error, its user and pages; then its length. */
 const cells = (row: Element | undefined) =>
-  [...(row?.querySelectorAll("a, td > p[title], p > span, td:last-child") ?? [])].map(
+  [...(row?.querySelectorAll("a, td > p:first-of-type, p > span, td:last-child") ?? [])].map(
     (cell) => cell.textContent,
   );
 const pane = () => page.getByRole("region", { name: "Replays, selected" });
@@ -415,8 +415,8 @@ describe("a user's replays", () => {
     await expect.element(list).toBeVisible();
     const items = [...list.element().querySelectorAll("li")];
     expect(items.map((item) => item.textContent)).toEqual([
-      "16 Nov 2026, 16:0045 sTypeError/cart → /checkout",
-      "16 Nov 2026, 12:0012 sTypeError/pricing",
+      "16 Nov 2026, 16:0045 sTypeError: cart is undefined/cart → /checkout",
+      "16 Nov 2026, 12:0012 sTypeError: cart is undefined/pricing",
     ]);
     await expect
       .element(list.getByRole("link", { name: "16 Nov 2026, 12:00" }))

@@ -103,7 +103,8 @@ export function TimezoneCombobox({
             const offset = offsets.get(zone);
             return (
               <ComboboxItem key={zone} value={zone}>
-                <span className="min-w-0 truncate">
+                {/* Wrapped, not cut off: a tooltip would not show on a highlighted option. */}
+                <span className="min-w-0 break-words">
                   {zone}
                   {offset !== null && offset !== undefined && (
                     <span className="text-muted-foreground"> ({offset})</span>

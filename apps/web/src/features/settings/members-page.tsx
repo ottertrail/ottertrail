@@ -6,6 +6,7 @@ import * as React from "react";
 import { clickableRow, ROW_LINK } from "@/components/clickable-row";
 import { NoAccess } from "@/components/no-access";
 import { StatusBadge } from "@/components/status-badge";
+import { TruncatedText } from "@/components/truncated-text";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -62,7 +63,6 @@ import {
   InviteDialog,
   LINK_ONCE,
 } from "./member-dialogs";
-import { TruncatedText } from "./truncated-text";
 
 /** Whether `actor` may change, remove, or reset `target`: the API's rule (access/members.ts). */
 function mayManage(actor: Actor, target: { id: string; role: Role }) {

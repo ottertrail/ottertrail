@@ -13,6 +13,7 @@ import { ButtonLink } from "@/components/button-link";
 import { CopyableCode } from "@/components/copyable-code";
 import { FilterBar } from "@/components/filter-bar";
 import { type Stat, StatStrip } from "@/components/stat-strip";
+import { TruncatedText } from "@/components/truncated-text";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
@@ -147,18 +148,20 @@ function UserTable({
           return (
             <TableRow key={user.userId} {...workbenchRow(user.userId, chosen)}>
               <TableCell className={`${GUTTER_START} py-2.5 font-mono`}>
-                <Link
-                  to="/projects/$projectId/users/$userId"
-                  params={{ projectId, userId: user.userId }}
-                  search={environment === DEFAULT_ENVIRONMENT ? {} : { env: environment }}
-                  aria-current={chosen ? "true" : undefined}
-                  {...ROW_LINK}
-                  onClick={selectOnPlainClick(select, user.userId)}
-                  className="block truncate rounded-sm text-link hover:underline"
-                  title={user.userId}
-                >
-                  {user.userId}
-                </Link>
+                <TruncatedText
+                  text={user.userId}
+                  className="rounded-sm text-link hover:underline"
+                  render={
+                    <Link
+                      to="/projects/$projectId/users/$userId"
+                      params={{ projectId, userId: user.userId }}
+                      search={environment === DEFAULT_ENVIRONMENT ? {} : { env: environment }}
+                      aria-current={chosen ? "true" : undefined}
+                      {...ROW_LINK}
+                      onClick={selectOnPlainClick(select, user.userId)}
+                    />
+                  }
+                />
               </TableCell>
               <TableCell
                 className="truncate py-2.5"
@@ -266,15 +269,17 @@ function Summary({
             {ranked.map((user) => (
               <TableRow key={user.userId} className="hover:bg-transparent">
                 <th scope="row" className="py-1.5 pr-3 text-left align-top font-normal">
-                  <Link
-                    to="/projects/$projectId/users"
-                    params={{ projectId }}
-                    search={(previous) => ({ ...previous, user: user.userId })}
-                    className="block truncate font-mono text-link hover:underline"
-                    title={user.userId}
-                  >
-                    {user.userId}
-                  </Link>
+                  <TruncatedText
+                    text={user.userId}
+                    className="font-mono text-link hover:underline"
+                    render={
+                      <Link
+                        to="/projects/$projectId/users"
+                        params={{ projectId }}
+                        search={(previous) => ({ ...previous, user: user.userId })}
+                      />
+                    }
+                  />
                 </th>
                 <TableCell className="py-1.5 pr-0 text-right align-top tabular-nums">
                   {user.events.toLocaleString("en-US")}

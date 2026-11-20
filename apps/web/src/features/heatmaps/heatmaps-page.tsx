@@ -8,6 +8,7 @@ import { ButtonLink } from "@/components/button-link";
 import { ReportChart } from "@/components/report-chart";
 import { type Stat, StatStrip } from "@/components/stat-strip";
 import { StatusBadge } from "@/components/status-badge";
+import { TruncatedText } from "@/components/truncated-text";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
@@ -167,9 +168,8 @@ function PagePicker({
         <ComboboxList>
           {(item: string) => (
             <ComboboxItem key={item} value={item}>
-              <span className="min-w-0 truncate font-mono text-xs" title={item}>
-                {item}
-              </span>
+              {/* The whole path, wrapped: a tooltip would not show on a highlighted option. */}
+              <span className="min-w-0 font-mono text-xs break-all">{item}</span>
             </ComboboxItem>
           )}
         </ComboboxList>
@@ -342,9 +342,7 @@ function NoPageData({
               {otherPages.map((item) => (
                 <li key={item.path}>
                   <ButtonLink variant="outline" size="sm" {...link({ path: item.path })}>
-                    <span className="max-w-48 truncate font-mono text-xs" title={item.path}>
-                      {item.path}
-                    </span>
+                    <TruncatedText text={item.path} className="max-w-48 font-mono text-xs" />
                   </ButtonLink>
                 </li>
               ))}
@@ -406,9 +404,12 @@ function Report({ heatmap, projectId }: { heatmap: Heatmap; projectId: string })
   return (
     <>
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <h2 className="min-w-0 truncate pt-1 font-mono text-sm text-ink" title={heatmap.path}>
-          {heatmap.path}
-        </h2>
+        <TruncatedText
+          text={heatmap.path}
+          className="pt-1 font-mono text-sm text-ink"
+          render={<h2>{heatmap.path}</h2>}
+        />
+
         <OpenOnSite
           projectId={projectId}
           path={heatmap.path}
@@ -511,6 +512,9 @@ function Report({ heatmap, projectId }: { heatmap: Heatmap; projectId: string })
                 </span>
               ),
               title: elementTitle(item.label, item.element),
+              // A name, or the path's last steps, leaves the rest of the path out.
+              shortened:
+                elementTitle(item.label, item.element) !== elementName(item.label, item.element),
               action:
                 item.rageClicks > 0 ? (
                   <StatusBadge tone="warning">Rage clicks</StatusBadge>
@@ -540,6 +544,9 @@ function Report({ heatmap, projectId }: { heatmap: Heatmap; projectId: string })
                 </span>
               ),
               title: elementTitle(item.label, item.element),
+              // A name, or the path's last steps, leaves the rest of the path out.
+              shortened:
+                elementTitle(item.label, item.element) !== elementName(item.label, item.element),
               bar: item.rageClicks,
               figures: [
                 formatWhole(item.rageClicks),

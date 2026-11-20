@@ -8,6 +8,7 @@ import { clickableRow, ROW_LINK } from "@/components/clickable-row";
 import { PINNED, PINNED_END } from "@/components/pinned-column";
 import { ScrollHint } from "@/components/scroll-hint";
 import { StatusBadge } from "@/components/status-badge";
+import { TruncatedText } from "@/components/truncated-text";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
@@ -178,13 +179,14 @@ export function ProjectsPage() {
                       <LastEvent project={project} timeZone={timeZone} />
                     </TableCell>
                     {canManage && (
-                      <TableCell className="max-w-72 truncate text-ink-muted">
+                      <TableCell className="max-w-72 text-ink-muted">
                         {full === null ? null : noSites ? (
                           <StatusBadge tone="warning">None: events are refused</StatusBadge>
                         ) : (
-                          <span title={full.allowedHostnames.join(", ")}>
-                            {full.allowedHostnames.join(", ")}
-                          </span>
+                          <TruncatedText
+                            text={full.allowedHostnames.join(", ")}
+                            lines={full.allowedHostnames}
+                          />
                         )}
                       </TableCell>
                     )}

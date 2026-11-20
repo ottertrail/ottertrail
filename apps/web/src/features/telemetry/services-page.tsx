@@ -6,6 +6,7 @@ import * as React from "react";
 import { clickableRow, ROW_LINK } from "@/components/clickable-row";
 import { PINNED, PINNED_END } from "@/components/pinned-column";
 import { ScrollHint } from "@/components/scroll-hint";
+import { TruncatedText } from "@/components/truncated-text";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
@@ -199,20 +200,23 @@ function ServiceCard({
                 <TableCell className={`max-w-md pl-0 ${PINNED} ${MARKED}`}>
                   {!isNamedRoute(route.route) || !isLinkableService(service.service) ? (
                     // A route without a name (or only spaces) has no page: its address could not name it.
-                    <span className="block truncate font-mono text-xs text-ink-subtle">
-                      {isNamedRoute(route.route) ? route.route : "(no name)"}
-                    </span>
+                    <TruncatedText
+                      text={isNamedRoute(route.route) ? route.route : "(no name)"}
+                      className="font-mono text-xs text-ink-subtle"
+                    />
                   ) : (
-                    <Link
-                      to="/projects/$projectId/services/$service"
-                      params={{ projectId, service: service.service }}
-                      search={serviceSearchOf({ range, environment, route: route.route })}
-                      {...ROW_LINK}
-                      className="block truncate font-mono text-xs text-link hover:underline"
-                      title={route.route}
-                    >
-                      {route.route}
-                    </Link>
+                    <TruncatedText
+                      text={route.route}
+                      className="font-mono text-xs text-link hover:underline"
+                      render={
+                        <Link
+                          to="/projects/$projectId/services/$service"
+                          params={{ projectId, service: service.service }}
+                          search={serviceSearchOf({ range, environment, route: route.route })}
+                          {...ROW_LINK}
+                        />
+                      }
+                    />
                   )}
                 </TableCell>
                 <StatCells

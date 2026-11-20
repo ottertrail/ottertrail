@@ -9,6 +9,7 @@ import { Missing } from "@/components/missing";
 import { PINNED } from "@/components/pinned-column";
 import { ScrollHint } from "@/components/scroll-hint";
 import { type Stat, StatStrip } from "@/components/stat-strip";
+import { TruncatedText } from "@/components/truncated-text";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
@@ -135,20 +136,23 @@ function CheckTable({
           return (
             <TableRow key={check.id} {...workbenchRow(check.id, chosen)}>
               <TableCell className={`${GUTTER_START} py-2.5`}>
-                <Link
-                  to="/projects/$projectId/uptime/$checkId"
-                  params={{ projectId, checkId: check.id }}
-                  aria-current={chosen ? "true" : undefined}
-                  {...ROW_LINK}
-                  onClick={selectOnPlainClick(select, check.id)}
-                  className="block truncate rounded-sm text-link hover:underline"
-                  title={check.name}
-                >
-                  {check.name}
-                </Link>
-                <span className="block truncate text-xs text-ink-subtle" title={check.url}>
-                  {check.method} {check.url}, {intervalText(check.intervalSeconds).toLowerCase()}
-                </span>
+                <TruncatedText
+                  text={check.name}
+                  className="rounded-sm text-link hover:underline"
+                  render={
+                    <Link
+                      to="/projects/$projectId/uptime/$checkId"
+                      params={{ projectId, checkId: check.id }}
+                      aria-current={chosen ? "true" : undefined}
+                      {...ROW_LINK}
+                      onClick={selectOnPlainClick(select, check.id)}
+                    />
+                  }
+                />
+                <TruncatedText
+                  text={`${check.method} ${check.url}, ${intervalText(check.intervalSeconds).toLowerCase()}`}
+                  className="text-xs text-ink-subtle"
+                />
               </TableCell>
               <TableCell className={`py-2.5 ${canManage || !phone ? "" : GUTTER_END}`}>
                 <CheckStateBadge check={check} />
@@ -269,24 +273,28 @@ function Summary({
                   >
                     {underList ? (
                       // No pane beside the list: the name opens the check's page.
-                      <Link
-                        to="/projects/$projectId/uptime/$checkId"
-                        params={{ projectId, checkId: check.id }}
-                        className="block truncate text-link hover:underline"
-                        title={check.name}
-                      >
-                        {check.name}
-                      </Link>
+                      <TruncatedText
+                        text={check.name}
+                        className="text-link hover:underline"
+                        render={
+                          <Link
+                            to="/projects/$projectId/uptime/$checkId"
+                            params={{ projectId, checkId: check.id }}
+                          />
+                        }
+                      />
                     ) : (
-                      <Link
-                        to="/projects/$projectId/uptime"
-                        params={{ projectId }}
-                        search={(previous) => ({ ...previous, check: check.id })}
-                        className="block truncate text-link hover:underline"
-                        title={check.name}
-                      >
-                        {check.name}
-                      </Link>
+                      <TruncatedText
+                        text={check.name}
+                        className="text-link hover:underline"
+                        render={
+                          <Link
+                            to="/projects/$projectId/uptime"
+                            params={{ projectId }}
+                            search={(previous) => ({ ...previous, check: check.id })}
+                          />
+                        }
+                      />
                     )}
                   </th>
                   <TableCell className="py-1.5 text-right align-top tabular-nums">

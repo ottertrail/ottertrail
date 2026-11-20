@@ -6,6 +6,7 @@ import { clickableRow, ROW_LINK } from "@/components/clickable-row";
 import { Missing } from "@/components/missing";
 import { PINNED } from "@/components/pinned-column";
 import { ScrollHint } from "@/components/scroll-hint";
+import { TruncatedText } from "@/components/truncated-text";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
@@ -154,22 +155,24 @@ export function MetricsPage({
                             {metric.name === "" ? (
                               <span className="text-ink-subtle">(no name)</span>
                             ) : (
-                              <Link
-                                to="/projects/$projectId/metrics/$name"
-                                params={{ projectId, name: metric.name }}
-                                search={metricSearchOf({
-                                  range,
-                                  environment,
-                                  kind: metric.kind,
-                                  split: undefined,
-                                  stat: DEFAULT_STAT[metric.kind],
-                                })}
-                                {...ROW_LINK}
-                                className="block truncate font-mono text-xs text-link hover:underline"
-                                title={metric.name}
-                              >
-                                {metric.name}
-                              </Link>
+                              <TruncatedText
+                                text={metric.name}
+                                className="font-mono text-xs text-link hover:underline"
+                                render={
+                                  <Link
+                                    to="/projects/$projectId/metrics/$name"
+                                    params={{ projectId, name: metric.name }}
+                                    search={metricSearchOf({
+                                      range,
+                                      environment,
+                                      kind: metric.kind,
+                                      split: undefined,
+                                      stat: DEFAULT_STAT[metric.kind],
+                                    })}
+                                    {...ROW_LINK}
+                                  />
+                                }
+                              />
                             )}
                           </TableCell>
                           <TableCell className="w-28">
@@ -182,21 +185,29 @@ export function MetricsPage({
                             />
                           </TableCell>
                           <TableCell>{KIND_LABELS[metric.kind]}</TableCell>
-                          <TableCell className="max-w-32 truncate">
+                          <TableCell className="max-w-32">
                             {unitText(metric.unit) === "" ? (
                               <Missing label="No unit" className="text-ink-subtle" />
                             ) : (
-                              unitText(metric.unit)
+                              <TruncatedText text={unitText(metric.unit)} />
                             )}
                           </TableCell>
-                          <TableCell
-                            className="max-w-64 truncate"
-                            title={metric.services.join(", ")}
-                          >
-                            {metric.services.join(", ")}
-                            {metric.serviceCount > metric.services.length &&
-                              ` and ${metric.serviceCount - metric.services.length} more`}
+                          <TableCell className="max-w-64">
+                            <TruncatedText
+                              text={`${metric.services.join(", ")}${
+                                metric.serviceCount > metric.services.length
+                                  ? ` and ${metric.serviceCount - metric.services.length} more`
+                                  : ""
+                              }`}
+                              lines={[
+                                ...metric.services,
+                                ...(metric.serviceCount > metric.services.length
+                                  ? [`and ${metric.serviceCount - metric.services.length} more`]
+                                  : []),
+                              ]}
+                            />
                           </TableCell>
+
                           <TableCell className="font-mono text-xs whitespace-nowrap">
                             <time dateTime={metric.lastSeen}>
                               {formatPreciseMoment(metric.lastSeen, data.timeZone)}

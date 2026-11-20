@@ -7,6 +7,7 @@ import { ButtonLink } from "@/components/button-link";
 import { FilterBarRange } from "@/components/filter-bar";
 import { type Stat, StatStrip } from "@/components/stat-strip";
 import { StatusBadge } from "@/components/status-badge";
+import { TruncatedText } from "@/components/truncated-text";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -124,22 +125,22 @@ function TraceTable({
               {...workbenchRow(trace.traceId, chosen)}
             >
               <TableCell className={`${GUTTER_START} py-2.5 align-top whitespace-normal`}>
-                <Link
-                  to="/projects/$projectId/traces/$traceId"
-                  params={{ projectId, traceId: trace.traceId }}
-                  search={{ at: trace.start }}
-                  aria-current={chosen ? "true" : undefined}
-                  {...ROW_LINK}
-                  onClick={selectOnPlainClick(select, trace.traceId)}
-                  className="block truncate rounded-sm font-medium text-link hover:underline"
-                  title={trace.name}
-                >
-                  {trace.name === "" ? "(no name)" : trace.name}
-                </Link>
+                <TruncatedText
+                  text={trace.name === "" ? "(no name)" : trace.name}
+                  className="rounded-sm font-medium text-link hover:underline"
+                  render={
+                    <Link
+                      to="/projects/$projectId/traces/$traceId"
+                      params={{ projectId, traceId: trace.traceId }}
+                      search={{ at: trace.start }}
+                      aria-current={chosen ? "true" : undefined}
+                      {...ROW_LINK}
+                      onClick={selectOnPlainClick(select, trace.traceId)}
+                    />
+                  }
+                />
                 <p className="mt-1 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-xs text-ink-subtle">
-                  <span className="max-w-48 truncate" title={trace.service}>
-                    {trace.service}
-                  </span>
+                  <TruncatedText text={trace.service} className="max-w-48" />
                   <time dateTime={trace.start} className="font-mono">
                     {formatPreciseMoment(trace.start, timeZone)}
                   </time>
@@ -240,21 +241,27 @@ function Summary({
                 className="hover:bg-transparent"
               >
                 <th scope="row" className="py-1.5 pr-3 text-left align-top font-normal">
-                  <Link
-                    to="/projects/$projectId/traces"
-                    params={{ projectId }}
-                    search={(previous) => ({
-                      ...previous,
-                      trace: trace.traceId,
-                      span: undefined,
-                      at: trace.start,
-                    })}
-                    className="block truncate font-medium text-link hover:underline"
-                    title={trace.name}
-                  >
-                    {trace.name === "" ? "(no name)" : trace.name}
-                  </Link>
-                  <div className="truncate text-xs text-ink-subtle">{trace.service}</div>
+                  <TruncatedText
+                    text={trace.name === "" ? "(no name)" : trace.name}
+                    className="font-medium text-link hover:underline"
+                    render={
+                      <Link
+                        to="/projects/$projectId/traces"
+                        params={{ projectId }}
+                        search={(previous) => ({
+                          ...previous,
+                          trace: trace.traceId,
+                          span: undefined,
+                          at: trace.start,
+                        })}
+                      />
+                    }
+                  />
+                  <TruncatedText
+                    text={trace.service}
+                    className="text-xs text-ink-subtle"
+                    render={<div />}
+                  />
                 </th>
                 <TableCell className="py-1.5 pr-0 text-right align-top tabular-nums">
                   {formatDuration(trace.durationUs)}

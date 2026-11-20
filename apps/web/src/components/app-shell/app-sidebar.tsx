@@ -27,6 +27,7 @@ import {
 import { ApiStatus } from "@/components/api-status";
 import { UserMenu } from "@/components/app-shell/user-menu";
 import { BrandMark } from "@/components/brand-mark";
+import { OverflowTooltip, TruncatedText } from "@/components/truncated-text";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -62,7 +63,9 @@ function WorkspaceMenu() {
   const showSettings = can("settings") || can("channels");
   return (
     <SidebarGroup>
-      <SidebarGroupLabel className="truncate">{label}</SidebarGroupLabel>
+      <SidebarGroupLabel>
+        <TruncatedText text={label} />
+      </SidebarGroupLabel>
       <SidebarMenu>
         <SidebarMenuItem>
           <SidebarMenuButton
@@ -112,18 +115,28 @@ function ProjectSwitcher({ projectId }: { projectId: string }) {
   const navigate = useNavigate();
   const projects = useQuery(projectsQuery());
   const current = projects.data?.find((project) => project.id === projectId);
+  const { isMobile, state } = useSidebar();
+  // Collapsed to icons, the button shows only the initial: its tooltip names the project.
+  const collapsed = state === "collapsed" && !isMobile;
 
   if (projects.data === undefined) {
     return <Skeleton className="h-12 w-full" />;
   }
   return (
     <DropdownMenu>
-      <DropdownMenuTrigger
+      <OverflowTooltip
+        always={collapsed}
+        side={collapsed ? "right" : "bottom"}
+        content={current?.name ?? "Unknown project"}
         render={
-          <SidebarMenuButton
-            size="lg"
-            className="data-popup-open:bg-sidebar-accent"
-            aria-label={`Project: ${current?.name ?? "unknown"}. Switch project`}
+          <DropdownMenuTrigger
+            render={
+              <SidebarMenuButton
+                size="lg"
+                className="data-popup-open:bg-sidebar-accent"
+                aria-label={`Project: ${current?.name ?? "unknown"}. Switch project`}
+              />
+            }
           />
         }
       >
@@ -131,13 +144,14 @@ function ProjectSwitcher({ projectId }: { projectId: string }) {
           {(current?.name ?? "?").slice(0, 1).toUpperCase()}
         </div>
         <div className="grid min-w-0 flex-1 text-left leading-tight">
-          <span className="truncate text-sm font-medium text-ink">
-            {current?.name ?? "Unknown project"}
-          </span>
+          <TruncatedText
+            text={current?.name ?? "Unknown project"}
+            className="text-sm font-medium text-ink"
+          />
           <span className="truncate text-xs text-ink-subtle">Project</span>
         </div>
         <ChevronsUpDownIcon className="ml-auto text-ink-subtle" />
-      </DropdownMenuTrigger>
+      </OverflowTooltip>
       <DropdownMenuContent className="min-w-56">
         <DropdownMenuGroup>
           <DropdownMenuLabel>Projects</DropdownMenuLabel>
@@ -160,7 +174,8 @@ function ProjectSwitcher({ projectId }: { projectId: string }) {
                 })
               }
             >
-              <span className="flex-1 truncate">{project.name}</span>
+              {/* Wrapped, not cut off: the menu shows each name whole. */}
+              <span className="min-w-0 flex-1 break-words">{project.name}</span>
               {project.id === projectId && <CheckIcon aria-label="Current project" />}
             </DropdownMenuItem>
           ))}

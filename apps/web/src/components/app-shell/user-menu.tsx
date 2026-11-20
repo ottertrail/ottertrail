@@ -103,12 +103,8 @@ export function UserMenu() {
           >
             <UserAvatar name={name} email={email} />
             <span className="grid min-w-0 flex-1 text-left leading-tight">
-              <TruncatedText focusable={false} className="text-sm font-medium text-ink">
-                {name}
-              </TruncatedText>
-              <TruncatedText focusable={false} className="text-xs text-ink-subtle">
-                {email}
-              </TruncatedText>
+              <TruncatedText text={name} className="text-sm font-medium text-ink" />
+              <TruncatedText text={email} className="text-xs text-ink-subtle" />
             </span>
             <ChevronsUpDownIcon aria-hidden="true" className="ml-auto text-ink-subtle" />
           </OverflowTooltip>

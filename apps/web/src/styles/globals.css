@@ -5,7 +5,7 @@
 /* Hallmark · dismissed F18 · data-slot is shadcn's hook here, not an image slot */
 /* Hallmark · dismissed F1 · the straight apostrophes are the app's copy, kept as found by the redesign */
 /* Hallmark · dismissed 54 · BreakdownTable's heading level comes from a prop */
-/* Hallmark · waive 49b · the Databases page's query shape links (a.line-clamp-2) · a shape shows its first two lines by design, the whole in its title and on its page */
+/* Hallmark · waive 49b · the Databases page's query shape links (a.line-clamp-2) · a shape shows its first two lines by design, the whole in its tooltip (TruncatedText) and on its page */
 /* Hallmark · dismissed F25 · a report table that scrolls on a phone pins its first column and its actions column (pinned-column.ts), with the scroll hint at the edge; a list with a chosen item (Members) shows the list or the item on a phone, one at a time */
 /* Hallmark · dismissed 70 · add-goal-dialog.tsx's "signup" is an example event name, not a success message */
 @import "tailwindcss";

@@ -13,6 +13,7 @@ import { BreakdownTable } from "@/components/breakdown-table";
 import { ButtonLink } from "@/components/button-link";
 import { FilterBar, FilterBarRange } from "@/components/filter-bar";
 import { type Stat, StatStrip } from "@/components/stat-strip";
+import { TruncatedText } from "@/components/truncated-text";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
@@ -592,9 +593,8 @@ function ActiveFilters({ projectId, search }: { projectId: string; search: PageS
               key={name}
               className="inline-flex max-w-full items-center gap-0.5 rounded-md bg-muted py-0.5 pr-0.5 pl-2 text-sm text-ink"
             >
-              <span className="truncate" title={text}>
-                {text}
-              </span>
+              <TruncatedText text={text} />
+
               <Link
                 to="/projects/$projectId/web-analytics"
                 params={{ projectId }}
