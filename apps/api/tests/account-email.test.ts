@@ -812,7 +812,8 @@ describe("the review's fixes", () => {
 
   test("the clean-up's created_at and the one-request-per-address rule have their indexes", async () => {
     const { rows } = await sql<{ indexname: string; indexdef: string }>`
-      select indexname, indexdef from pg_indexes where tablename = 'account_emails'
+      select indexname, indexdef from pg_indexes
+      where schemaname = current_schema() and tablename = 'account_emails'
     `.execute(dashboard.db);
     const byName = new Map(rows.map((row) => [row.indexname, row.indexdef]));
     expect(byName.get("account_emails_created_at")).toContain("(created_at)");
