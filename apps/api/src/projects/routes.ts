@@ -4,6 +4,7 @@ import type { Kysely } from "kysely";
 import {
   can,
   canReachProject,
+  checkProjectAccess,
   requirePermission,
   requireProjectAccess,
   type UserAccess,
@@ -30,6 +31,7 @@ import {
   replaceSecretKey,
   updateProject,
 } from "./projects.ts";
+import { listStarredProjects, starProject, unstarProject } from "./stars.ts";
 
 const UUID_PATTERN =
   "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$";
@@ -62,6 +64,11 @@ const idParamsSchema = {
   type: "object",
   required: ["id"],
   properties: { id: { type: "string", pattern: UUID_PATTERN } },
+} as const;
+const starParamsSchema = {
+  type: "object",
+  required: ["projectId"],
+  properties: { projectId: { type: "string", pattern: UUID_PATTERN } },
 } as const;
 
 function problem(code: string, message: string) {
@@ -351,6 +358,41 @@ export const projectRoutes: FastifyPluginCallback<{
       }
       projectKeys?.forgetProject(project.id);
       return { project };
+    },
+  );
+
+  /*
+   * Starred projects: the signed-in user's own (stars.ts). They sit outside
+   * /projects/:id because they change nothing of the project, only the
+   * user's list; starring still needs the project, checked by the one
+   * access check (checkProjectAccess), so a project the user may not reach
+   * answers 404 as everywhere else.
+   */
+  app.get("/starred-projects", { preHandler: [signedIn, anyUser] }, async (request) => ({
+    projectIds: await listStarredProjects(db, userAccessOf(request)),
+  }));
+
+  app.put<{ Params: { projectId: string } }>(
+    "/starred-projects/:projectId",
+    { preHandler: [fromDashboard, signedIn, anyUser], schema: { params: starParamsSchema } },
+    async (request, reply) => {
+      const { userId } = userAccessOf(request);
+      const checked = await checkProjectAccess(db, userId, request.params.projectId, "project");
+      if (!checked.ok) {
+        return reply.code(checked.status).send(checked.body);
+      }
+      await starProject(db, userId, checked.access.projectId);
+      return reply.code(204).send();
+    },
+  );
+
+  // Taking a star off needs no access to the project: it deletes only the user's own row.
+  app.delete<{ Params: { projectId: string } }>(
+    "/starred-projects/:projectId",
+    { preHandler: [fromDashboard, signedIn, anyUser], schema: { params: starParamsSchema } },
+    async (request, reply) => {
+      await unstarProject(db, userAccessOf(request).userId, request.params.projectId);
+      return reply.code(204).send();
     },
   );
   done();

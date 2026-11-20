@@ -539,6 +539,13 @@ export interface OverviewLayoutsTable {
   updated_at: ColumnType<Date, Date | undefined, Date>;
 }
 
+/** A project one dashboard user starred (projects/stars.ts). */
+export interface ProjectStarsTable {
+  user_id: string;
+  project_id: string;
+  created_at: DatabaseDefault<Date>;
+}
+
 /**
  * The last update of one location data file (enrichment/updates.ts):
  * "locations", the geolocation database, or "data_centers".
@@ -672,6 +679,7 @@ export interface Database {
   dashboard_password_resets: DashboardPasswordResetsTable;
   account_emails: AccountEmailsTable;
   overview_layouts: OverviewLayoutsTable;
+  project_stars: ProjectStarsTable;
   location_data_updates: LocationDataUpdatesTable;
   location_data_lease: LocationDataLeaseTable;
   storage_warning_channels: StorageWarningChannelsTable;

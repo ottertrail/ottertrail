@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { cn } from "cn";
-import { FolderIcon, OctagonAlertIcon } from "lucide-react";
+import { FolderIcon, OctagonAlertIcon, StarIcon } from "lucide-react";
 
 import { ButtonLink } from "@/components/button-link";
 import { clickableRow, ROW_LINK } from "@/components/clickable-row";
@@ -30,6 +30,7 @@ import {
 } from "@/components/ui/table";
 import { GUTTER_END, GUTTER_START, LIST_HEAD } from "@/components/workbench-rows";
 import { useAccess } from "@/lib/access";
+import { starredProjectsQuery, useProjectStar } from "@/lib/project-stars";
 import { isFullProject, type ProjectSummary, projectsQuery } from "@/lib/projects-api";
 
 import { formatDay, formatMoment } from "../users/format";
@@ -44,6 +45,36 @@ function LastEvent({ project, timeZone }: { project: ProjectSummary; timeZone?: 
     <span className="text-ink-muted" title={formatMoment(project.lastEventAt, timeZone)}>
       {timeAgo(new Date(project.lastEventAt))}
     </span>
+  );
+}
+
+/**
+ * A project's star: a toggle that acts alone inside the clickable row
+ * (it is a button, so the row leaves its click to it).
+ */
+function StarButton({
+  project,
+  starred,
+  onToggle,
+}: {
+  project: ProjectSummary;
+  starred: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <Button
+      variant="ghost"
+      size="icon-sm"
+      aria-pressed={starred}
+      aria-label={`${starred ? "Unstar" : "Star"} ${project.name}`}
+      onClick={onToggle}
+      className="relative -my-1 after:absolute after:-inset-2"
+    >
+      <StarIcon
+        aria-hidden="true"
+        className={starred ? "fill-chart-4 text-chart-4" : "text-ink-subtle"}
+      />
+    </Button>
   );
 }
 
@@ -75,7 +106,11 @@ export function ProjectsPage() {
   // Creating projects, their allowed sites, and their settings are for those who manage projects.
   const canManage = can("projects");
   const timeZone = me?.instance.timeZone;
-  const list = projects.data;
+  const starredIds = useQuery(starredProjectsQuery()).data;
+  const star = useProjectStar();
+  const isStarred = (id: string) => starredIds?.includes(id) === true;
+  // Starred projects first, each part in the API's order (oldest project first).
+  const list = projects.data?.toSorted((a, b) => Number(isStarred(b.id)) - Number(isStarred(a.id)));
 
   return (
     <div className="flex flex-col">
@@ -125,6 +160,16 @@ export function ProjectsPage() {
         </div>
       )}
 
+      {star.isError && (
+        <div className="max-w-3xl px-gutter pt-4">
+          <Alert variant="destructive">
+            <OctagonAlertIcon />
+            <AlertTitle>The star could not be saved</AlertTitle>
+            <AlertDescription>{star.error.message}</AlertDescription>
+          </Alert>
+        </div>
+      )}
+
       {list !== undefined && list.length > 0 && (
         <ScrollHint>
           <Table>
@@ -164,15 +209,35 @@ export function ProjectsPage() {
                 return (
                   <TableRow key={project.id} {...clickableRow()}>
                     {/* The row's header, for reading the table by rows. */}
-                    <TableHead scope="row" className={cn(GUTTER_START, PINNED, "h-auto py-2.5")}>
-                      <Link
-                        to="/projects/$projectId"
-                        params={{ projectId: project.id }}
-                        {...ROW_LINK}
-                        className="text-link hover:underline"
-                      >
-                        {project.name}
-                      </Link>
+                    {/* Named by the link alone: the star is a control, not part of the name. */}
+                    <TableHead
+                      scope="row"
+                      aria-labelledby={`project-name-${project.id}`}
+                      className={cn(GUTTER_START, PINNED, "h-auto py-2.5")}
+                    >
+                      <span className="flex items-center gap-1.5">
+                        {starredIds !== undefined && (
+                          <StarButton
+                            project={project}
+                            starred={isStarred(project.id)}
+                            onToggle={() =>
+                              star.mutate({
+                                projectId: project.id,
+                                starred: !isStarred(project.id),
+                              })
+                            }
+                          />
+                        )}
+                        <Link
+                          id={`project-name-${project.id}`}
+                          to="/projects/$projectId"
+                          params={{ projectId: project.id }}
+                          {...ROW_LINK}
+                          className="text-link hover:underline"
+                        >
+                          {project.name}
+                        </Link>
+                      </span>
                     </TableHead>
                     <TableCell>
                       <LastEvent project={project} timeZone={timeZone} />

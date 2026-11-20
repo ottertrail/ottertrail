@@ -2,6 +2,8 @@ import { readFileSync } from "node:fs";
 
 import { describe, expect, test } from "vite-plus/test";
 
+import { PROJECT_TILES, projectTile } from "../src/lib/project-tile.ts";
+
 /*
  * Guards the contrast guarantees documented in docs/design-system.md, in
  * both themes. Reads the dark tokens (the :root block in globals.css) and
@@ -140,6 +142,14 @@ describe.each(["dark", "light"] as const)("the %s theme's tokens", (theme: Theme
     }
   });
 
+  // The workspace sidebar's project tiles (lib/project-tile.ts): the initial on its fill.
+  test.each(PROJECT_TILES.map((tile) => [tile.fill, tile[theme], tile]))(
+    "a project tile's initial on %s (%s) meets 4.5:1",
+    (fill, text) => {
+      expect(contrast(resolveHex(text), resolveHex(fill))).toBeGreaterThanOrEqual(4.5);
+    },
+  );
+
   test("focus ring meets 3:1 against the surfaces it appears on", () => {
     for (const surface of [...contentSurfaces, "canvas", "sidebar"]) {
       expect(contrast(resolveHex("ring"), resolveHex(surface))).toBeGreaterThanOrEqual(3);
@@ -258,4 +268,24 @@ test("the light theme's chosen toggle stands well apart (7:1 or more)", () => {
   for (const surface of ["background", "card", "popover", "canvas", "muted"]) {
     expect(contrast(resolveHex("toggle-on"), resolveHex(surface))).toBeGreaterThanOrEqual(7);
   }
+});
+
+test("each project tile's classes name the tokens its contrast is checked with", () => {
+  for (const tile of PROJECT_TILES) {
+    const classes = tile.className.split(" ");
+    expect(classes).toContain(`bg-${tile.fill}`);
+    expect(classes).toContain(`text-${tile.light}`);
+    // One text color for both themes needs no dark: class.
+    const darkClasses = classes.filter((name) => name.startsWith("dark:"));
+    expect(darkClasses).toEqual(tile.dark === tile.light ? [] : [`dark:text-${tile.dark}`]);
+  }
+});
+
+test("a project's tile comes from its ID: the same each time, and spread over the colors", () => {
+  const id = "11111111-1111-4111-8111-111111111111";
+  expect(projectTile(id)).toBe(projectTile(id));
+  const fills = new Set(
+    Array.from({ length: 64 }, (_, index) => projectTile(`project-${index}`).fill),
+  );
+  expect(fills.size).toBe(PROJECT_TILES.length);
 });

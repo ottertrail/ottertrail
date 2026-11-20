@@ -130,6 +130,11 @@ export interface FakeApi {
   resetRequest: "accepted" | "limited";
   projects: Project[];
   /**
+   * The signed-in user's starred projects, oldest star first; GET lists
+   * those they may reach, PUT and DELETE /api/starred-projects/:id change it.
+   */
+  starred: string[];
+  /**
    * Answers GET /api/projects/:id/analytics. A Response stands for an error.
    * By default, analyticsFixture with the fake API's `goals`.
    */
@@ -3742,6 +3747,23 @@ async function answer(api: FakeApi, url: URL, init: RequestInit | undefined): Pr
   if (path === "/api/projects") {
     return json({ projects: projectsFor(api) });
   }
+  if (path === "/api/starred-projects") {
+    const reachable = new Set(projectsFor(api).map((project) => project.id));
+    return json({ projectIds: api.starred.filter((id) => reachable.has(id)) });
+  }
+  const starPath = /^\/api\/starred-projects\/([^/]+)$/.exec(path);
+  if (starPath?.[1] !== undefined) {
+    const id = decodeURIComponent(starPath[1]);
+    if (init?.method === "PUT") {
+      if (!projectsFor(api).some((project) => project.id === id)) {
+        return json({ error: "not_found", message: "No project has this ID." }, 404);
+      }
+      if (!api.starred.includes(id)) api.starred = [...api.starred, id];
+    } else if (init?.method === "DELETE") {
+      api.starred = api.starred.filter((starred) => starred !== id);
+    }
+    return new Response(null, { status: 204 });
+  }
   if (/^\/api\/projects\/[^/]+\/users$/.test(path)) {
     const result = api.users(url.searchParams);
     return result instanceof Response ? result : json(result);
@@ -4102,6 +4124,7 @@ export function installFakeApi(overrides: Partial<FakeApi> = {}): FakeApi {
     emailConfigured: false,
     resetRequest: "accepted",
     projects: [PROJECT],
+    starred: [],
     analytics: (_projectId, _period, _query, api) => analyticsFixture({ goals: api.goals }),
     goals: fakeGoals(),
     savedFunnels: fakeSavedFunnels(),

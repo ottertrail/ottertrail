@@ -74,6 +74,10 @@ const EXPECTED: Record<string, string> = {
   "POST /api/settings/backups/key/saved": "permission:settings",
   "POST /api/settings/backups/key/replace": "permission:settings",
   "GET /api/projects": "signed_in",
+  // The user's own stars; starring checks the project through checkProjectAccess.
+  "GET /api/starred-projects": "signed_in",
+  "PUT /api/starred-projects/:projectId": "signed_in",
+  "DELETE /api/starred-projects/:projectId": "signed_in",
   "GET /api/members": "permission:members",
   "PATCH /api/members/:userId": "permission:members",
   "DELETE /api/members/:userId": "permission:members",

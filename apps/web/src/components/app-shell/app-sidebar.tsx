@@ -20,11 +20,14 @@ import {
   ScrollTextIcon,
   ServerIcon,
   SettingsIcon,
+  StarIcon,
+  StarOffIcon,
   UsersIcon,
   WaypointsIcon,
 } from "lucide-react";
 
 import { ApiStatus } from "@/components/api-status";
+import { InstanceName, SidebarProjects } from "@/components/app-shell/sidebar-projects";
 import { UserMenu } from "@/components/app-shell/user-menu";
 import { BrandMark } from "@/components/brand-mark";
 import { OverflowTooltip, TruncatedText } from "@/components/truncated-text";
@@ -51,21 +54,17 @@ import {
 } from "@/components/ui/sidebar";
 import { Skeleton } from "@/components/ui/skeleton";
 import { canOpen, hasOverview, meQuery, useAccess } from "@/lib/access";
+import { starredProjectsQuery, useProjectStar } from "@/lib/project-stars";
 import { projectsQuery } from "@/lib/projects-api";
 
 /** The workspace level: things above any one project, under the instance's name. */
 function WorkspaceMenu() {
   const matchRoute = useMatchRoute();
-  const { me, can } = useAccess();
-  // A neutral label until it loads, or if it cannot.
-  const label = me?.instance.name ?? "Instance";
+  const { can } = useAccess();
   // The Settings page holds the instance's settings (the owner) and the channels (admins too).
   const showSettings = can("settings") || can("channels");
   return (
     <SidebarGroup>
-      <SidebarGroupLabel>
-        <TruncatedText text={label} />
-      </SidebarGroupLabel>
       <SidebarMenu>
         <SidebarMenuItem>
           <SidebarMenuButton
@@ -114,7 +113,14 @@ function WorkspaceMenu() {
 function ProjectSwitcher({ projectId }: { projectId: string }) {
   const navigate = useNavigate();
   const projects = useQuery(projectsQuery());
+  const starredIds = useQuery(starredProjectsQuery()).data;
+  const star = useProjectStar();
   const current = projects.data?.find((project) => project.id === projectId);
+  const isStarred = (id: string) => starredIds?.includes(id) === true;
+  // Starred projects first, then the rest, each in the list's own order.
+  const list = (projects.data ?? []).toSorted(
+    (a, b) => Number(isStarred(b.id)) - Number(isStarred(a.id)),
+  );
   const { isMobile, state } = useSidebar();
   // Collapsed to icons, the button shows only the initial: its tooltip names the project.
   const collapsed = state === "collapsed" && !isMobile;
@@ -155,7 +161,7 @@ function ProjectSwitcher({ projectId }: { projectId: string }) {
       <DropdownMenuContent className="min-w-56">
         <DropdownMenuGroup>
           <DropdownMenuLabel>Projects</DropdownMenuLabel>
-          {projects.data.map((project) => (
+          {list.map((project) => (
             <DropdownMenuItem
               key={project.id}
               onClick={() =>
@@ -176,11 +182,22 @@ function ProjectSwitcher({ projectId }: { projectId: string }) {
             >
               {/* Wrapped, not cut off: the menu shows each name whole. */}
               <span className="min-w-0 flex-1 break-words">{project.name}</span>
+              {isStarred(project.id) && (
+                <StarIcon aria-label="Starred" className="fill-current text-ink-subtle" />
+              )}
               {project.id === projectId && <CheckIcon aria-label="Current project" />}
             </DropdownMenuItem>
           ))}
         </DropdownMenuGroup>
         <DropdownMenuSeparator />
+        {current !== undefined && starredIds !== undefined && (
+          <DropdownMenuItem
+            onClick={() => star.mutate({ projectId: current.id, starred: !isStarred(current.id) })}
+          >
+            {isStarred(current.id) ? <StarOffIcon /> : <StarIcon />}
+            {isStarred(current.id) ? "Unstar this project" : "Star this project"}
+          </DropdownMenuItem>
+        )}
         <DropdownMenuItem onClick={() => void navigate({ to: "/projects" })}>
           All projects
         </DropdownMenuItem>
@@ -535,7 +552,9 @@ export function AppSidebar() {
           </span>
           <SidebarApiStatus />
         </div>
-        {projectId !== undefined && (
+        {projectId === undefined ? (
+          <InstanceName />
+        ) : (
           <SidebarMenu>
             <SidebarMenuItem>
               <ProjectSwitcher projectId={projectId} />
@@ -547,10 +566,12 @@ export function AppSidebar() {
       <SidebarContent>
         <nav
           aria-label={projectId === undefined ? "Instance" : "Project"}
-          className="flex flex-1 flex-col gap-2"
+          className="flex flex-col gap-2"
         >
           {projectId === undefined ? <WorkspaceMenu /> : <ProjectMenu projectId={projectId} />}
         </nav>
+        {/* Inside a project, the switcher names it: the shortcuts are for the workspace. */}
+        {projectId === undefined && <SidebarProjects />}
       </SidebarContent>
 
       <SidebarFooter>
