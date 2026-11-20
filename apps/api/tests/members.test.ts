@@ -10,7 +10,10 @@ import { OWNER, PUBLIC_URL, signedInDashboard, signedInUser } from "./helpers/da
 
 type Dashboard = Awaited<ReturnType<typeof signedInDashboard>>;
 
-const FORBIDDEN = { error: "forbidden", message: "You don't have access to this." };
+const FORBIDDEN = {
+  error: "forbidden",
+  message: "You don't have access to this. Ask the instance's owner or an admin if you need it.",
+};
 const INVITATION_GONE = {
   error: "invalid_link",
   message: "This invitation link no longer works. Ask for a new one.",

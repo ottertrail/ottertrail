@@ -260,7 +260,7 @@ describe("the speed page", () => {
     await expect.element(page.getByText("No page loads measured in this period")).toBeVisible();
     await expect.element(page.getByText("v.js", { exact: true })).toBeVisible();
     await expect
-      .element(page.getByText(/Navigation within the app has no separate values/))
+      .element(page.getByText(/navigation within the app has no values of its own/))
       .toBeVisible();
     await expect.element(page.getByText('data-vitals="off"', { exact: true })).toBeVisible();
     await expect.element(card("Largest Contentful Paint (LCP), p75")).not.toBeInTheDocument();

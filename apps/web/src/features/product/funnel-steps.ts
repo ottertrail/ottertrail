@@ -55,7 +55,9 @@ export function stepProblems(step: DraftStep): StepProblems {
   if (step.type === "page") {
     const path = step.path.trim();
     if (!path.startsWith("/")) problems.path = "A path starts with /, such as /pricing.";
-    else if (/[?#]/.test(path)) problems.path = "A path has no query (?) or fragment (#).";
+    else if (/[?#]/.test(path))
+      problems.path =
+        "Enter the path without its query (?) or fragment (#): Ottertrail stores page paths without them, since they can hold secrets.";
     else if (CONTROL.test(path)) problems.path = "This path is not valid.";
     else if (characters(path) > MAX_PATH)
       problems.path = `A path here has at most ${MAX_PATH} characters.`;

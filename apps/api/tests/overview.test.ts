@@ -30,7 +30,10 @@ const day = (days: number) => new Date(NOW.getTime() - days * DAY_MS).toISOStrin
 /** A moment on the day `days` before today, at `time` (UTC). */
 const at = (days: number, time: string) => new Date(`${day(days)}T${time}:00.000Z`);
 
-const FORBIDDEN = { error: "forbidden", message: "You don't have access to this." };
+const FORBIDDEN = {
+  error: "forbidden",
+  message: "You don't have access to this. Ask the instance's owner or an admin if you need it.",
+};
 const NOT_FOUND = { error: "not_found", message: "No project has this ID." };
 
 /** The widgets' routes and the area each needs. */

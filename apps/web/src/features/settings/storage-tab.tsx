@@ -616,7 +616,12 @@ function GarageRow({
       share={share(bucket?.bytes ?? null)}
     >
       {bucket === null ? (
-        <p>Garage has no bucket of this name: replays and source maps cannot be stored.</p>
+        <p>
+          Garage has no bucket with the name OBJECT_STORE_BUCKET sets, so replays and source maps
+          cannot be stored. The stack&apos;s Garage creates that bucket when it starts: check
+          OBJECT_STORE_BUCKET in .env, then run{" "}
+          <code className="font-mono">docker compose up -d</code>.
+        </p>
       ) : (
         <p>
           The bucket holds {bucket.objects.toLocaleString("en")}{" "}

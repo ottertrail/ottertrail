@@ -68,7 +68,7 @@ All in one place, `apps/api/src/access/access.ts`:
 - The heatmap overlay's read (`GET /api/heatmap-overlay/:projectId/heatmap`), called from the customer's own site, has no cookie: it runs `requireOverlayAccess(db, need)`, which takes an overlay session token as `Authorization: Bearer` and then decides as `requireProjectAccess` does, through the same function (`checkProjectAccess`), for the user the token names ([Heatmap overlay tokens](#heatmap-overlay-tokens)).
 - All three read the user's role and grants from PostgreSQL on every request, so a change applies on the next click. Deleting a user deletes their sessions with them (a foreign key), which signs them out at once.
 - A project the member is not granted answers exactly as a project that does not exist: 404 with `{ "error": "not_found", "message": "No project has this ID." }`. A member cannot tell the two apart.
-- A granted project without the area or level answers 403 with `{ "error": "forbidden", "message": "You don't have access to this." }`. So does an instance route without the permission.
+- A granted project without the area or level answers 403 with `{ "error": "forbidden", "message": "You don't have access to this. Ask the instance's owner or an admin if you need it." }`. So does an instance route without the permission.
 - Not signed in answers 401, as before.
 
 Fastify checks a route's parameters and body before the access check runs, so a malformed request answers 400 even where access would be refused. A 400 says nothing about the project.

@@ -169,8 +169,8 @@ function InstallSection({ project }: { project: Project }) {
         <h3 className="text-sm font-medium text-ink">Public key</h3>
         <CopyableCode text={project.publicKey} copyLabel="Copy the public key" />
         <p className="text-sm text-muted-foreground">
-          The snippet already includes this key. It only lets pages on allowed sites send events. It
-          cannot read data.
+          The snippet already includes this key. Anyone can see it in your pages, so by design it
+          only lets pages on allowed sites send events, and it cannot read data.
         </p>
       </div>
     </SettingsSection>

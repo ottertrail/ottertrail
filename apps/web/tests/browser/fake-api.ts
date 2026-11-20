@@ -3630,11 +3630,25 @@ async function answer(api: FakeApi, url: URL, init: RequestInit | undefined): Pr
   if (path === "/api/settings/location-data") {
     return api.access.role === "owner"
       ? json(api.locationData)
-      : json({ error: "forbidden", message: "You don't have access to this." }, 403);
+      : json(
+          {
+            error: "forbidden",
+            message:
+              "You don't have access to this. Ask the instance's owner or an admin if you need it.",
+          },
+          403,
+        );
   }
   if (path === "/api/settings/storage") {
     if (api.access.role === "member") {
-      return json({ error: "forbidden", message: "You don't have access to this." }, 403);
+      return json(
+        {
+          error: "forbidden",
+          message:
+            "You don't have access to this. Ask the instance's owner or an admin if you need it.",
+        },
+        403,
+      );
     }
     await api.holdStorage;
     if (init?.method === "PATCH") {
@@ -3658,7 +3672,14 @@ async function answer(api: FakeApi, url: URL, init: RequestInit | undefined): Pr
   if (path === "/api/settings") {
     return api.access.role === "owner"
       ? json({ settings: api.settings })
-      : json({ error: "forbidden", message: "You don't have access to this." }, 403);
+      : json(
+          {
+            error: "forbidden",
+            message:
+              "You don't have access to this. Ask the instance's owner or an admin if you need it.",
+          },
+          403,
+        );
   }
   if (path === "/api/me") {
     return json(meOf(api));
@@ -4564,7 +4585,14 @@ async function answerOverview(
   const widget = WIDGETS.find((item) => item.id === name);
   if (widget === undefined) return null;
   if (!canSee(api, widget.area)) {
-    return json({ error: "forbidden", message: "You don't have access to this." }, 403);
+    return json(
+      {
+        error: "forbidden",
+        message:
+          "You don't have access to this. Ask the instance's owner or an admin if you need it.",
+      },
+      403,
+    );
   }
   const result = api.widget(widget.id, url.searchParams, api);
   return result instanceof Response ? result : json(result);

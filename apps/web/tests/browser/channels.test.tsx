@@ -32,7 +32,7 @@ describe("notification channels on the Settings page", () => {
       .element(page.getByText("Email is not set up on this instance", { exact: true }))
       .toBeVisible();
     await expect
-      .element(page.getByText(/until the instance.s operator sets SMTP_URL/))
+      .element(page.getByText(/until whoever runs the server sets SMTP_URL/))
       .toBeVisible();
     await expect.element(page.getByText("2 of 20 channels")).toBeVisible();
     await expect
@@ -40,7 +40,9 @@ describe("notification channels on the Settings page", () => {
       .toBeVisible();
     await expect
       .element(
-        item("On call").getByText("No email is sent until email is configured on this instance."),
+        item("On call").getByText(
+          "Not sent yet: SMTP_URL and EMAIL_FROM aren't set on this server.",
+        ),
       )
       .toBeVisible();
     await expect
@@ -59,7 +61,7 @@ describe("notification channels on the Settings page", () => {
       .element(page.getByText("Email is not set up on this instance", { exact: true }))
       .not.toBeInTheDocument();
     await expect
-      .element(page.getByText("No email is sent until email is configured on this instance."))
+      .element(page.getByText("Not sent yet: SMTP_URL and EMAIL_FROM aren't set on this server."))
       .not.toBeInTheDocument();
   });
 

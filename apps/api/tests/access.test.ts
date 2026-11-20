@@ -15,7 +15,10 @@ import {
 } from "./helpers/test-database.ts";
 
 const NOT_FOUND = { error: "not_found", message: "No project has this ID." };
-const FORBIDDEN = { error: "forbidden", message: "You don't have access to this." };
+const FORBIDDEN = {
+  error: "forbidden",
+  message: "You don't have access to this. Ask the instance's owner or an admin if you need it.",
+};
 
 type Dashboard = Awaited<ReturnType<typeof signedInDashboard>>;
 

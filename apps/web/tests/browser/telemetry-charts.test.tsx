@@ -601,7 +601,7 @@ describe("live logs", () => {
       .toEqual([
         "arrived 3",
         "arrived 2",
-        "50 records skipped; turn Live off to search them.",
+        "50 records skipped, because more arrived at once than Live shows. Turn Live off to search them.",
         "arrived 1",
       ]);
   });
@@ -630,7 +630,7 @@ describe("live logs", () => {
     gapNext = true;
     await page.getByRole("button", { name: "Resume" }).click();
     const line =
-      "Records between 12:01 and 12:16 aren't shown. Turn Live off to search the period.";
+      "Records between 12:01 and 12:16 aren't shown, because Live looks back only 5 minutes. Turn Live off to search the period.";
     await expect.poll(() => liveLines().includes(line)).toBe(true);
     // The poll after the stop asks from where Live stopped; the API says what it left out.
     expect(lastQuery(api, "/logs/live").after).toBeDefined();
@@ -806,7 +806,7 @@ describe("live logs", () => {
     await expect
       .poll(liveLines)
       .toContain(
-        "Records between 12:01:05 and 12:01:40 aren't shown. Turn Live off to search the period.",
+        "Records between 12:01:05 and 12:01:40 aren't shown, because Live looks back only 5 minutes. Turn Live off to search the period.",
       );
   });
 

@@ -171,7 +171,8 @@ describe("channels", () => {
       expect(refused.statusCode).toBe(403);
       expect(refused.json()).toEqual({
         error: "forbidden",
-        message: "You don't have access to this.",
+        message:
+          "You don't have access to this. Ask the instance's owner or an admin if you need it.",
       });
     }
 

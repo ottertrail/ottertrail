@@ -146,12 +146,12 @@ function notesOf(answer: LiveLogs): string[] {
       clockTime(from, answer.timeZone, false) === clockTime(to, answer.timeZone, false) ||
       Date.parse(to) - Date.parse(from) < 60_000;
     notes.push(
-      `Records between ${clockTime(from, answer.timeZone, seconds)} and ${clockTime(to, answer.timeZone, seconds)} aren't shown. Turn Live off to search the period.`,
+      `Records between ${clockTime(from, answer.timeZone, seconds)} and ${clockTime(to, answer.timeZone, seconds)} aren't shown, because Live looks back only 5 minutes. Turn Live off to search the period.`,
     );
   }
   if (answer.skipped > 0) {
     notes.push(
-      `${formatWhole(answer.skipped)} ${answer.skipped === 1 ? "record" : "records"} skipped; turn Live off to search them.`,
+      `${formatWhole(answer.skipped)} ${answer.skipped === 1 ? "record" : "records"} skipped, because more arrived at once than Live shows. Turn Live off to search them.`,
     );
   }
   return notes;

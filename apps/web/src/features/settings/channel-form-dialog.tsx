@@ -207,7 +207,7 @@ function ChannelForm({
             <FieldDescription id={`${ids.addresses}-hint`}>
               One per line, at most {MAX_ADDRESSES}.
               {!emailConfigured &&
-                " Email is not configured on this instance yet. No email is sent until it is configured."}
+                " This instance can't send email yet, because SMTP_URL and EMAIL_FROM aren't set on the server. You can save the channel now: it sends once whoever runs the server sets them and restarts it."}
             </FieldDescription>
           )}
         </Field>
@@ -225,7 +225,7 @@ function ChannelForm({
           {errorText("url") ?? (
             <FieldDescription id={`${ids.url}-hint`}>
               Each alert is a POST with a JSON body signed with the webhook's secret. The webhook
-              must return 2xx within 10 seconds. Redirects are not followed.
+              must return 2xx within 10 seconds. Redirects are not followed, so enter the final URL.
             </FieldDescription>
           )}
         </Field>

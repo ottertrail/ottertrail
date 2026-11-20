@@ -153,7 +153,7 @@ describe("goals on the analytics page", () => {
       .toBeVisible();
     await dialog().getByRole("textbox", { name: "Path" }).fill("/pricing?plan=team");
     await expect
-      .element(dialog().getByText("A path has no query (?) or fragment (#)."))
+      .element(dialog().getByText(/Enter the path without its query \(\?\) or fragment \(#\)/))
       .toBeVisible();
 
     expect(api.bodies.filter((body) => body.path === GOALS_PATH)).toEqual([]);

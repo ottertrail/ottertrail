@@ -436,7 +436,7 @@ function ChannelItem({
           {channel.kind === "email" && !emailConfigured && (
             <p className="flex items-center gap-1 text-xs text-warning">
               <TriangleAlertIcon aria-hidden="true" className="size-3" />
-              No email is sent until email is configured on this instance.
+              Not sent yet: SMTP_URL and EMAIL_FROM aren&apos;t set on this server.
             </p>
           )}
         </div>
@@ -563,8 +563,8 @@ export function NotificationChannels({ timeZone }: { timeZone: string }) {
               <TriangleAlertIcon />
               <AlertTitle>Email is not set up on this instance</AlertTitle>
               <AlertDescription>
-                You can add email channels. No email is sent until the instance's operator sets
-                SMTP_URL and EMAIL_FROM. Webhooks work without email configuration.
+                You can add email channels, but they send nothing until whoever runs the server sets
+                SMTP_URL and EMAIL_FROM and restarts it. Webhooks work without email configuration.
               </AlertDescription>
             </Alert>
           )}

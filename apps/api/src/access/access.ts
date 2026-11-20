@@ -75,7 +75,10 @@ export function declarationOf(handler: object): AccessDeclaration | undefined {
 }
 
 export const NOT_FOUND = { error: "not_found", message: "No project has this ID." } as const;
-export const FORBIDDEN = { error: "forbidden", message: "You don't have access to this." } as const;
+export const FORBIDDEN = {
+  error: "forbidden",
+  message: "You don't have access to this. Ask the instance's owner or an admin if you need it.",
+} as const;
 const UNAUTHORIZED = { error: "unauthorized", message: "Sign in to continue." } as const;
 
 /**

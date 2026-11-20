@@ -1040,7 +1040,11 @@ describe("open on your site", () => {
     vi.restoreAllMocks();
     api.overlayLink = () =>
       new Response(
-        JSON.stringify({ error: "forbidden", message: "You don't have access to this." }),
+        JSON.stringify({
+          error: "forbidden",
+          message:
+            "You don't have access to this. Ask the instance's owner or an admin if you need it.",
+        }),
         {
           status: 403,
         },
@@ -1048,7 +1052,11 @@ describe("open on your site", () => {
     const { popup } = stubOpen();
     await page.getByRole("button", { name: "Open on your site" }).click();
     await expect
-      .element(page.getByText("You don't have access to this."))
+      .element(
+        page.getByText(
+          "You don't have access to this. Ask the instance's owner or an admin if you need it.",
+        ),
+      )
       .toHaveAttribute("role", "alert");
     expect(popup?.closed).toBe(true);
     expect(popup?.location.href).toBe("");
