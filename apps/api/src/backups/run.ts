@@ -2,14 +2,16 @@ import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { once } from "node:events";
 import { createReadStream, createWriteStream } from "node:fs";
-import { rename, rm, stat } from "node:fs/promises";
+import { mkdtemp, readdir, rename, rm, stat } from "node:fs/promises";
 import path from "node:path";
 import { Readable } from "node:stream";
 import { buffer as readAll } from "node:stream/consumers";
 import { setTimeout as sleep } from "node:timers/promises";
 
 import {
+  AbortMultipartUploadCommand,
   GetObjectCommand,
+  ListMultipartUploadsCommand,
   ListObjectsV2Command,
   NoSuchKey,
   type S3Client,
@@ -44,7 +46,8 @@ import {
   s3ErrorText,
   uploadStream,
 } from "./s3.ts";
-import type { Destination } from "./settings.ts";
+import { manifestMac, manifestMacValid } from "./secrets.ts";
+import { type Destination, OBJECT_PREFIXES, OVERLAP_PROBLEM, overlapsObjects } from "./settings.ts";
 
 /**
  * One backup (docs/deployment.md, "Backups"), in backup.sh's order, each
@@ -103,9 +106,14 @@ export const manifestSchema = z.object({
     bytes: z.number().int().nonnegative(),
     gone: z.number().int().nonnegative(),
   }),
+  /** HMAC-SHA256 of the rest, under a key from the backup key (secrets.ts, manifestMac). */
+  mac: z.string(),
 });
 
 export type BackupManifest = z.infer<typeof manifestSchema>;
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
 
 /** A failure in words for the Backups tab: what failed, why, and what to do. */
 export class BackupError extends Error {
@@ -124,7 +132,15 @@ export interface PostgresDump {
 export interface ClickHouseBackupFiles {
   read(name: string): Promise<{ stream: AsyncIterable<Uint8Array>; size: number }>;
   remove(name: string): Promise<void>;
+  /**
+   * Deletes the files an earlier run left (`ottertrail-worker-*.zip`): one
+   * run at a time (state.ts), so no other run owns them. Their names.
+   */
+  removeLeftovers(): Promise<string[]>;
 }
+
+/** The ClickHouse backup files the worker makes, and only those. */
+export const WORKER_ZIP = /^ottertrail-worker-[0-9A-Za-z-]+\.zip$/;
 
 /** What a backup reads from. */
 export interface BackupSources {
@@ -134,8 +150,11 @@ export interface BackupSources {
   clickhouseDatabase: string;
   clickhouseFiles: ClickHouseBackupFiles;
   objectStore: ObjectStoreConfig | null;
-  /** Only objects whose keys start with this: tests keep to their own. */
-  objectPrefix?: string;
+  /**
+   * The prefixes of the objects to back up: by default the store's own
+   * (OBJECT_PREFIXES, `replays/` and `source-maps/`); tests keep to their own.
+   */
+  objectPrefixes?: readonly string[];
   /** The disk ClickHouse writes to: its size and free space. */
   readDisk(): Promise<{ totalBytes: number; freeBytes: number }>;
   /** What ClickHouse's backup will take: its active parts' bytes. */
@@ -291,6 +310,12 @@ export function localClickHouseFiles(dir: string | null): ClickHouseBackupFiles 
     async remove(name) {
       await rm(file(name), { force: true });
     },
+    async removeLeftovers() {
+      if (dir === null) return [];
+      const names = (await readdir(dir).catch(() => [])).filter((name) => WORKER_ZIP.test(name));
+      for (const name of names) await rm(path.join(dir, name), { force: true });
+      return names;
+    },
   };
 }
 
@@ -299,14 +324,55 @@ const CLICKHOUSE_POLL_MS = 2000;
 /** The longest ClickHouse's backup may take. */
 const CLICKHOUSE_BACKUP_MS = 12 * 60 * 60 * 1000;
 
-/** Runs ClickHouse's BACKUP into `file` and waits for it. */
+/** How long a failed or stopped run waits for ClickHouse's backup to end before deleting its file. */
+export const CLICKHOUSE_STOP_MS = 10 * 60 * 1000;
+
+/** The backup's state in system.backups; null when there is no row. */
+async function backupState(
+  client: ClickHouseClient,
+  id: string,
+): Promise<{ status: string; error: string; query_id: string } | null> {
+  const result = await client.query({
+    query: "SELECT status, error, query_id FROM system.backups WHERE id = {id:String}",
+    query_params: { id },
+    format: "JSONEachRow",
+  });
+  const [state] = await result.json<{ status: string; error: string; query_id: string }>();
+  return state ?? null;
+}
+
+/**
+ * Stops ClickHouse's backup (KILL QUERY on its query, which cancels it)
+ * and waits, up to CLICKHOUSE_STOP_MS, until it is no longer being
+ * written, so its file can be deleted rather than finished afterwards.
+ */
+async function stopClickHouseBackup(client: ClickHouseClient, id: string): Promise<void> {
+  const deadline = Date.now() + CLICKHOUSE_STOP_MS;
+  let killed = false;
+  while (Date.now() < deadline) {
+    const state = await backupState(client, id).catch(() => null);
+    if (state === null || state.status !== "CREATING_BACKUP") return;
+    if (!killed && state.query_id !== "") {
+      await client
+        .command({
+          query: "KILL QUERY WHERE query_id = {query:String} ASYNC",
+          query_params: { query: state.query_id },
+        })
+        .catch(() => undefined);
+      killed = true;
+    }
+    await sleep(CLICKHOUSE_POLL_MS);
+  }
+}
+
+/** Runs ClickHouse's BACKUP into `file` and waits for it; on any failure, stops it first. */
 async function backupClickHouse(
   client: ClickHouseClient,
   database: string,
   file: string,
   signal: AbortSignal,
 ): Promise<void> {
-  if (!/^[A-Za-z0-9-]+\.zip$/.test(file)) throw new Error(`not a backup file name: ${file}`);
+  if (!WORKER_ZIP.test(file)) throw new Error(`not a backup file name: ${file}`);
   // ASYNC: the request returns at once, and a long backup needs no long-lived HTTP request.
   const started = await client.query({
     query: `BACKUP DATABASE ${identifier(database)} TO File('${file}') ASYNC`,
@@ -314,24 +380,60 @@ async function backupClickHouse(
   });
   const [row] = await started.json<{ id: string; status: string }>();
   if (row === undefined) throw new Error("ClickHouse started no backup");
-  const deadline = Date.now() + CLICKHOUSE_BACKUP_MS;
-  for (;;) {
-    const result = await client.query({
-      query: "SELECT status, error FROM system.backups WHERE id = {id:String}",
-      query_params: { id: row.id },
-      format: "JSONEachRow",
-    });
-    const [state] = await result.json<{ status: string; error: string }>();
-    if (state?.status === "BACKUP_CREATED") return;
-    if (state !== undefined && state.status !== "CREATING_BACKUP") {
-      const reason = state.error.split("\n")[0]?.slice(0, 400) ?? "";
-      throw new BackupError(
-        `ClickHouse's backup failed (${state.status}): ${reason || "no message"}`,
-      );
+  await waitForClickHouseBackup({
+    readState: () => backupState(client, row.id),
+    stop: () => stopClickHouseBackup(client, row.id),
+    signal,
+  });
+}
+
+/** What a ClickHouse backup's row says: its status and error. */
+export type ClickHouseBackupState = { status: string; error: string } | null;
+
+/**
+ * Waits for ClickHouse's backup to be created. On any failure or abort,
+ * first `stop`s it (cancels it, and waits for its end), so its file is not
+ * finished, or written to, after the run deletes it. No row in
+ * system.backups is a failure at once (ClickHouse restarted), not a wait.
+ */
+export async function waitForClickHouseBackup({
+  readState,
+  stop,
+  signal,
+  pollMs = CLICKHOUSE_POLL_MS,
+  timeoutMs = CLICKHOUSE_BACKUP_MS,
+}: {
+  readState: () => Promise<ClickHouseBackupState>;
+  stop: () => Promise<void>;
+  signal: AbortSignal;
+  pollMs?: number;
+  timeoutMs?: number;
+}): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  try {
+    for (;;) {
+      signal.throwIfAborted();
+      const state = await readState();
+      if (state === null) {
+        throw new BackupError(
+          "ClickHouse lost track of its backup (no row in system.backups): it was restarted during it. Back up again.",
+        );
+      }
+      if (state.status === "BACKUP_CREATED") return;
+      if (state.status !== "CREATING_BACKUP") {
+        const reason = state.error.split("\n")[0]?.slice(0, 400) ?? "";
+        throw new BackupError(
+          `ClickHouse's backup failed (${state.status}): ${reason || "no message"}`,
+        );
+      }
+      if (Date.now() > deadline) {
+        throw new BackupError("ClickHouse's backup took more than 12 hours.");
+      }
+      await sleep(pollMs, undefined, { signal });
     }
-    if (Date.now() > deadline)
-      throw new BackupError("ClickHouse's backup took more than 12 hours.");
-    await sleep(CLICKHOUSE_POLL_MS, undefined, { signal });
+  } catch (error) {
+    await stop();
+    throw error;
   }
 }
 
@@ -339,12 +441,10 @@ async function backupClickHouse(
 async function* objectEntries(
   store: ObjectStoreConfig,
   {
-    skipPrefix,
-    onlyPrefix,
+    prefixes,
     summary,
   }: {
-    skipPrefix: string | null;
-    onlyPrefix: string | undefined;
+    prefixes: readonly string[];
     summary: { count: number; bytes: number; gone: number };
   },
   startedAt: Date,
@@ -353,57 +453,59 @@ async function* objectEntries(
   const listed: ObjectManifest["objects"] = [];
   let next = 0;
   try {
-    let token: string | undefined;
-    do {
-      const page = await client.send(
-        new ListObjectsV2Command({
-          Bucket: store.bucket,
-          Prefix: onlyPrefix,
-          ContinuationToken: token,
-        }),
-      );
-      for (const item of page.Contents ?? []) {
-        const key = item.Key;
-        // Never the backups themselves, when they share the store's bucket.
-        if (key === undefined || (skipPrefix !== null && key.startsWith(skipPrefix))) continue;
-        let response;
-        try {
-          response = await client.send(new GetObjectCommand({ Bucket: store.bucket, Key: key }));
-        } catch (error) {
-          // Deleted after it was listed (expired, or its project deleted): as if gone before.
-          if (error instanceof NoSuchKey) {
-            summary.gone += 1;
-            continue;
-          }
-          throw error;
-        }
-        if (!(response.Body instanceof Readable) || response.ContentLength === undefined) {
-          throw new Error(`could not read ${key}: no body or length`);
-        }
-        const file = `objects/${String(++next).padStart(6, "0")}`;
-        const hash = createHash("sha256");
-        const body = response.Body;
-        const length = response.ContentLength;
-        const contentType = response.ContentType ?? "application/octet-stream";
-        yield {
-          name: file,
-          size: length,
-          body: (async function* () {
-            for await (const chunk of body as AsyncIterable<Buffer>) {
-              hash.update(chunk);
-              yield chunk;
+    // Only the store's own prefixes: never other keys a shared bucket holds, backups among them.
+    for (const prefix of prefixes) {
+      let token: string | undefined;
+      do {
+        const page = await client.send(
+          new ListObjectsV2Command({
+            Bucket: store.bucket,
+            Prefix: prefix,
+            ContinuationToken: token,
+          }),
+        );
+        for (const item of page.Contents ?? []) {
+          const key = item.Key;
+          if (key === undefined) continue;
+          let response;
+          try {
+            response = await client.send(new GetObjectCommand({ Bucket: store.bucket, Key: key }));
+          } catch (error) {
+            // Deleted after it was listed (expired, or its project deleted): as if gone before.
+            if (error instanceof NoSuchKey) {
+              summary.gone += 1;
+              continue;
             }
-            listed.push({ key, file, size: length, contentType, sha256: hash.digest("hex") });
-          })(),
-        };
-        summary.count += 1;
-        summary.bytes += length;
-      }
-      token = page.IsTruncated === true ? page.NextContinuationToken : undefined;
-      if (page.IsTruncated === true && (token === undefined || token === "")) {
-        throw new Error("the store said the listing goes on, but gave no token to continue");
-      }
-    } while (token !== undefined);
+            throw error;
+          }
+          if (!(response.Body instanceof Readable) || response.ContentLength === undefined) {
+            throw new Error(`could not read ${key}: no body or length`);
+          }
+          const file = `objects/${String(++next).padStart(6, "0")}`;
+          const hash = createHash("sha256");
+          const body = response.Body;
+          const length = response.ContentLength;
+          const contentType = response.ContentType ?? "application/octet-stream";
+          yield {
+            name: file,
+            size: length,
+            body: (async function* () {
+              for await (const chunk of body as AsyncIterable<Buffer>) {
+                hash.update(chunk);
+                yield chunk;
+              }
+              listed.push({ key, file, size: length, contentType, sha256: hash.digest("hex") });
+            })(),
+          };
+          summary.count += 1;
+          summary.bytes += length;
+        }
+        token = page.IsTruncated === true ? page.NextContinuationToken : undefined;
+        if (page.IsTruncated === true && (token === undefined || token === "")) {
+          throw new Error("the store said the listing goes on, but gave no token to continue");
+        }
+      } while (token !== undefined);
+    }
   } finally {
     client.destroy();
   }
@@ -443,24 +545,45 @@ export async function runBackup({
   sources,
   destination,
   client,
-  recipient,
+  key,
   version,
   now = () => new Date(),
   signal = new AbortController().signal,
   onStep = () => undefined,
+  staleUploadMs = STALE_UPLOAD_MS,
 }: {
   sources: BackupSources;
   destination: Destination;
   client: S3Client;
-  /** The backup key's public half, "age1…". */
-  recipient: string;
+  /**
+   * The backup key: parts are encrypted to its public half ("age1…"), and
+   * the manifest's MAC comes from the identity, so only its holder can make
+   * a backup that Test restore and restore.sh accept.
+   */
+  key: { identity: string; recipient: string };
   /** The instance's version (version.ts). */
   version: string;
   now?: () => Date;
   signal?: AbortSignal;
   /** Hears each step as it starts, for the log. */
   onStep?: (step: string) => void;
+  /** How old a multipart upload left in the folder must be to be aborted; tests lower it. */
+  staleUploadMs?: number;
 }): Promise<BackupResult> {
+  const recipient = key.recipient;
+  const store = sources.objectStore;
+  if (
+    store !== null &&
+    store.url === destination.url &&
+    store.bucket === destination.bucket &&
+    overlapsObjects(destination.prefix)
+  ) {
+    throw new BackupError(OVERLAP_PROBLEM);
+  }
+  onStep("cleaning up after earlier runs");
+  // One run at a time (state.ts): what an earlier run left is nobody's now.
+  await sources.clickhouseFiles.removeLeftovers().catch(() => []);
+  await abortStaleUploads(client, destination, now(), staleUploadMs).catch(() => 0);
   onStep("checking free disk space");
   await checkSpace(sources);
   const startedAt = now();
@@ -523,19 +646,12 @@ export async function runBackup({
 
     onStep("backing up the object store");
     try {
-      const store = sources.objectStore;
-      const shared =
-        store !== null && store.url === destination.url && store.bucket === destination.bucket;
       const entries =
         store === null
           ? noObjects(startedAt)
           : objectEntries(
               store,
-              {
-                skipPrefix: shared ? `${destination.prefix}/` : null,
-                onlyPrefix: sources.objectPrefix,
-                summary: objects,
-              },
+              { prefixes: sources.objectPrefixes ?? OBJECT_PREFIXES, summary: objects },
               startedAt,
             );
       const digests = await encryptAndUpload(
@@ -563,7 +679,9 @@ export async function runBackup({
       clickhouseDatabase: sources.clickhouseDatabase,
       parts,
       objects: { bucket: sources.objectStore?.bucket ?? null, ...objects },
+      mac: "",
     };
+    manifest.mac = manifestMac(key.identity, manifest);
     const text = Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`);
     try {
       await putObject(
@@ -588,6 +706,55 @@ export async function runBackup({
     }
     throw error;
   }
+}
+
+/** A multipart upload left in the folder this long is a run cut off hard: it is aborted. */
+export const STALE_UPLOAD_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Aborts multipart uploads under the destination's folder started more
+ * than `olderThanMs` ago: a worker killed mid-upload leaves its parts,
+ * which the store keeps (and charges for) until aborted. How many.
+ */
+export async function abortStaleUploads(
+  client: S3Client,
+  destination: Destination,
+  now: Date,
+  olderThanMs: number,
+): Promise<number> {
+  if (destination.prefix === "") throw new Error("backups need a folder");
+  const folder = `${destination.prefix}/`;
+  let aborted = 0;
+  let keyMarker: string | undefined;
+  let uploadIdMarker: string | undefined;
+  for (let page = 0; page < 20; page++) {
+    const listed = await client.send(
+      new ListMultipartUploadsCommand({
+        Bucket: destination.bucket,
+        Prefix: folder,
+        KeyMarker: keyMarker,
+        UploadIdMarker: uploadIdMarker,
+      }),
+    );
+    for (const upload of listed.Uploads ?? []) {
+      if (upload.Key === undefined || upload.UploadId === undefined) continue;
+      if (!upload.Key.startsWith(folder)) continue;
+      const started = upload.Initiated?.getTime() ?? 0;
+      if (now.getTime() - started < olderThanMs) continue;
+      await client.send(
+        new AbortMultipartUploadCommand({
+          Bucket: destination.bucket,
+          Key: upload.Key,
+          UploadId: upload.UploadId,
+        }),
+      );
+      aborted += 1;
+    }
+    if (listed.IsTruncated !== true) break;
+    keyMarker = listed.NextKeyMarker;
+    uploadIdMarker = listed.NextUploadIdMarker;
+  }
+  return aborted;
 }
 
 /**
@@ -726,14 +893,7 @@ async function readTar(
  * size and SHA-256, before and after decryption, and each object in the
  * object tar against its own manifest. Restores nothing.
  */
-export async function testRestore({
-  client,
-  destination,
-  identity,
-  name,
-  writeTo,
-  signal = new AbortController().signal,
-}: {
+export async function testRestore(options: {
   client: S3Client;
   destination: Destination;
   /** The backup key, "AGE-SECRET-KEY-1…". */
@@ -742,12 +902,47 @@ export async function testRestore({
   name?: string;
   /**
    * Also writes each decrypted part into this folder, as backup.sh names its
-   * files (`ottertrail-<name>.dump`, `.zip`, `-objects.tar`), for restore.sh:
-   * each under a `.partial` name until it checks out.
+   * files (`ottertrail-<name>.dump`, `.zip`, `-objects.tar`), for restore.sh.
+   * They are written into a new folder inside it first, which goes on any
+   * failure, so decrypted data is never left behind by one; only once every
+   * part checks out are they moved here.
    */
   writeTo?: string;
   signal?: AbortSignal;
 }): Promise<RestoreCheck> {
+  const { writeTo } = options;
+  if (writeTo === undefined) return checkBackup(options);
+  const staging = await mkdtemp(path.join(writeTo, ".download-"));
+  try {
+    const checked = await checkBackup({ ...options, writeTo: staging });
+    for (const part of checked.parts) {
+      const file = `ottertrail-${checked.name}${LOCAL_ENDINGS[part.name]}`;
+      await rename(path.join(staging, file), path.join(writeTo, file));
+    }
+    return checked;
+  } finally {
+    await rm(staging, { recursive: true, force: true });
+  }
+}
+
+/**
+ * The newest whole backup's manifest (or the one named `name`), once its
+ * MAC checks out with the backup key; throws before anything else is read
+ * when it does not.
+ */
+export async function verifiedManifest({
+  client,
+  destination,
+  identity,
+  name,
+  signal,
+}: {
+  client: S3Client;
+  destination: Destination;
+  identity: string;
+  name?: string;
+  signal?: AbortSignal;
+}): Promise<{ name: string; folder: string; manifest: BackupManifest }> {
   let backups;
   try {
     backups = await listBackups(client, destination.bucket, destination.prefix, signal);
@@ -773,9 +968,18 @@ export async function testRestore({
       `${folder}/${MANIFEST_KEY}`,
       signal,
     );
-    const parsed = manifestSchema.safeParse(JSON.parse((await readAll(body)).toString("utf8")));
+    const raw: unknown = JSON.parse((await readAll(body)).toString("utf8"));
+    const parsed = manifestSchema.safeParse(raw);
     if (!parsed.success)
       throw new BackupError(`The manifest of ${newest.name} is not one Ottertrail wrote.`);
+    // Before any part is read: anyone who can write to the bucket can make
+    // parts that decrypt, as age needs only the public key; only this key's
+    // holder can sign the manifest.
+    if (!isRecord(raw) || !manifestMacValid(identity, raw)) {
+      throw new BackupError(
+        `The manifest of ${newest.name} is not signed with this backup key, so it was not made with this key, or it was changed after. It is refused, and nothing in it is read. If you didn't expect this, someone may have written to the bucket: check its access keys.`,
+      );
+    }
     manifest = parsed.data;
   } catch (error) {
     if (error instanceof BackupError) throw error;
@@ -783,6 +987,44 @@ export async function testRestore({
       `Reading the manifest of ${newest.name} failed: ${error instanceof SyntaxError ? "it is not JSON" : s3ErrorText(error, "read")}`,
     );
   }
+
+  return { name: newest.name, folder, manifest };
+}
+
+async function checkBackup({
+  client,
+  destination,
+  identity,
+  name,
+  writeTo,
+  signal = new AbortController().signal,
+}: {
+  client: S3Client;
+  destination: Destination;
+  /** The backup key, "AGE-SECRET-KEY-1…". */
+  identity: string;
+  /** This backup rather than the newest whole one. */
+  name?: string;
+  /**
+   * Also writes each decrypted part into this folder, as backup.sh names its
+   * files (`ottertrail-<name>.dump`, `.zip`, `-objects.tar`), for restore.sh:
+   * each under a `.partial` name until it checks out.
+   */
+  writeTo?: string;
+  signal?: AbortSignal;
+}): Promise<RestoreCheck> {
+  const {
+    name: chosen,
+    folder,
+    manifest,
+  } = await verifiedManifest({
+    client,
+    destination,
+    identity,
+    ...(name === undefined ? {} : { name }),
+    signal,
+  });
+  const newest = { name: chosen };
 
   const checked: RestoreCheck["parts"] = [];
   let bytes = 0;

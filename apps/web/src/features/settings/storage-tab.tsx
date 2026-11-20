@@ -295,6 +295,23 @@ function Warnings({ report }: { report: StorageReport }) {
   );
 }
 
+/**
+ * Whether scheduled backups are on: off is a state to see, not a warning,
+ * so a session that turned them off can't hide it (docs/dashboard.md, "Backups").
+ */
+function BackupsLine({ report, timeZone }: { report: StorageReport; timeZone: string }) {
+  const backups = report.backups;
+  if (backups === undefined || backups === null || backups.enabled) return null;
+  return (
+    <p className="flex flex-wrap items-center gap-2 text-sm text-ink-muted">
+      <StatusBadge tone="neutral">Backups off</StatusBadge>
+      {backups.disabledAt === null
+        ? "Scheduled backups are off."
+        : `Backups are off since ${formatMoment(backups.disabledAt, timeZone)}, turned off by ${backups.disabledBy ?? "someone"}.`}
+    </p>
+  );
+}
+
 /** "Could not measure" with the reason: never 0 bytes, never an old figure. */
 function Unmeasured({ error }: { error: string }) {
   return (
@@ -780,6 +797,7 @@ export function StorageTab({ timeZone, onDirty }: InstanceTabProps) {
           aria-busy={refreshing || undefined}
         >
           <Warnings report={report} />
+          <BackupsLine report={report} timeZone={timeZone} />
           <Stores report={report} />
         </div>
       </SettingsSection>

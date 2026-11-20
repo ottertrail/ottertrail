@@ -35,6 +35,9 @@ export interface BackupSettings {
   accessKeyId: string | null;
   /** Whether a secret is saved, and whether the server can still read it; never the secret. */
   secret: "none" | "saved" | "unreadable";
+  /** Since when, and by whom, backups are off; null while on, or never turned on. */
+  disabledAt: string | null;
+  disabledBy: string | null;
 }
 
 export interface Backups {
@@ -104,6 +107,8 @@ const isBackups = (value: unknown): value is Backups => {
     (settings.secret === "none" ||
       settings.secret === "saved" ||
       settings.secret === "unreadable") &&
+    isTextOrNull(settings.disabledAt) &&
+    isTextOrNull(settings.disabledBy) &&
     isRecord(destination) &&
     (destination.mode === "object_store" || destination.mode === "separate") &&
     isRecord(key) &&
@@ -144,6 +149,8 @@ export interface BackupChanges {
   accessKeyId?: string | null;
   /** Only when typed: left out, the saved one stays. */
   secretAccessKey?: string;
+  /** Needed to change the destination or turn backups off. */
+  currentPassword?: string;
 }
 
 export async function updateBackups(changes: BackupChanges): Promise<Backups> {
@@ -228,15 +235,25 @@ const isKey = (value: unknown): value is BackupKey =>
   isRecord(value) && isText(value.key) && isText(value.recipient) && isText(value.createdAt);
 
 /** The key, to show: fetched only when asked, and kept by the section, not the query cache. */
-export async function fetchBackupKey(): Promise<BackupKey> {
-  return expectShape(await apiRequest("/api/settings/backups/key"), isKey);
+export async function fetchBackupKey(password: string): Promise<BackupKey> {
+  return expectShape(
+    await apiRequest("/api/settings/backups/key", { method: "POST", body: { password } }),
+    isKey,
+  );
 }
 
 /** The key file's text and name, for a download made in the page. */
-export async function fetchBackupKeyFile(): Promise<{ text: string; fileName: string }> {
+export async function fetchBackupKeyFile(
+  password: string,
+): Promise<{ text: string; fileName: string }> {
   let response: Response;
   try {
-    response = await fetch("/api/settings/backups/key/file", { credentials: "same-origin" });
+    response = await fetch("/api/settings/backups/key/file", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ password }),
+    });
   } catch {
     throw new Error("Could not reach the API. Check that it is running. Then try again.");
   }

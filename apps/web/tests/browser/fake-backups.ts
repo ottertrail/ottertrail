@@ -43,6 +43,8 @@ export const BACKUPS_OFF: Backups = {
     region: null,
     accessKeyId: null,
     secret: "none",
+    disabledAt: null,
+    disabledBy: null,
   },
   destination: { mode: "separate", reason: "none", objectStore: null },
   key: { state: "none", recipient: null, createdAt: null, savedAt: null },
@@ -179,6 +181,14 @@ export function fakeBackups(overrides: Partial<FakeBackups> = {}): FakeBackups {
   };
 }
 
+/** The signed-in owner's password, as the fake checks it. */
+export const FAKE_PASSWORD = "correct horse battery";
+const PASSWORD_NEEDED = { error: "password_required", message: "Enter your current password." };
+const WRONG_PASSWORD = {
+  error: "wrong_password",
+  message: "The current password is incorrect. Enter it again.",
+};
+
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
@@ -212,14 +222,22 @@ export function answerBackups(
   };
 
   if (path === "/api/settings/backups" && method === "PATCH") {
-    const { secretAccessKey, ...fields } = isRecord(body) ? body : {};
+    const { secretAccessKey, currentPassword, ...fields } = isRecord(body) ? body : {};
     const enabled = "enabled" in fields ? fields.enabled === true : current.settings.enabled;
+    const turnedOff = current.settings.enabled && !enabled;
+    // As the API: turning off needs the password (so does a changed destination, not checked here).
+    if (turnedOff && currentPassword === undefined) return json(PASSWORD_NEEDED, 400);
+    if (currentPassword !== undefined && currentPassword !== FAKE_PASSWORD) {
+      return json(WRONG_PASSWORD, 403);
+    }
     return replace({
       ...current,
       settings: {
         ...current.settings,
         ...fields,
         secret: typeof secretAccessKey === "string" ? "saved" : current.settings.secret,
+        disabledAt: enabled ? null : turnedOff ? current.status.now : current.settings.disabledAt,
+        disabledBy: enabled ? null : turnedOff ? "Test Owner" : current.settings.disabledBy,
       },
       // The first turn-on makes the key.
       key:
@@ -248,6 +266,13 @@ export function answerBackups(
   }
   if (path === "/api/settings/backups/list") {
     return backups.list instanceof Response ? backups.list.clone() : json(backups.list);
+  }
+  const keyPassword = isRecord(body) ? body.password : undefined;
+  if (
+    (path === "/api/settings/backups/key" || path === "/api/settings/backups/key/file") &&
+    keyPassword !== FAKE_PASSWORD
+  ) {
+    return json(WRONG_PASSWORD, 403);
   }
   if (path === "/api/settings/backups/key") return json(backups.key);
   if (path === "/api/settings/backups/key/file") {

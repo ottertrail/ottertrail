@@ -12,6 +12,9 @@ import {
   failStaleRuns,
   finishRun,
   HEARTBEAT_MS,
+  retryStoppedBackup,
+  RUN_TAKEN_OVER,
+  WORKER_SHUTDOWN,
   type RunKind,
   type RunTrigger,
   startRun,
@@ -62,17 +65,21 @@ export interface BackupJobOptions {
   version: string;
   log: BackupLog;
   now?: () => Date;
+  /** How often a run touches its heartbeat; tests shorten it. */
+  heartbeatMs?: number;
 }
 
 export class BackupJob {
   readonly #options: BackupJobOptions;
   readonly #now: () => Date;
+  readonly #heartbeatMs: number;
   #abort = new AbortController();
   #failing = false;
 
   constructor(options: BackupJobOptions) {
     this.#options = options;
     this.#now = options.now ?? (() => new Date());
+    this.#heartbeatMs = options.heartbeatMs ?? HEARTBEAT_MS;
   }
 
   /** Stops a run in progress: it fails, saying the worker stopped, and cleans up. */
@@ -102,6 +109,10 @@ export class BackupJob {
     const now = this.#now();
     const stale = await failStaleRuns(db, now);
     if (stale > 0) this.#options.log("warn", "a backup run's worker stopped; it was marked failed");
+    // A backup a worker's stop cut off is tried once more, now: the day is not skipped.
+    if (await retryStoppedBackup(db, now)) {
+      this.#options.log("info", "a backup cut off by a worker's stop is tried again");
+    }
     const { timeZone } = await readInstanceSettings(db);
 
     const claimed = await db.transaction().execute(async (trx) => {
@@ -149,22 +160,45 @@ export class BackupJob {
   async #run(id: string, work: Work): Promise<void> {
     const { db, log } = this.#options;
     const run = { id, kind: work.kind };
+    // Stops this run alone: another worker marked it stale, so it must not go on.
+    const takenOver = new AbortController();
+    const signal = AbortSignal.any([this.#abort.signal, takenOver.signal]);
     const heartbeat = setInterval(() => {
-      void touchRun(db, id, this.#now()).catch(() => undefined);
-    }, HEARTBEAT_MS);
+      touchRun(db, id, this.#now()).then(
+        (touched) => {
+          if (touched === 0 && !takenOver.signal.aborted) {
+            log("warn", "a backup run was marked stopped by another worker; it stops");
+            takenOver.abort();
+          }
+        },
+        () => undefined,
+      );
+    }, this.#heartbeatMs);
     log("info", work.kind === "backup" ? "a backup started" : "a test restore started", {
       trigger: work.trigger,
     });
     try {
-      const outcome =
-        work.kind === "backup" ? await this.#backup(work.trigger) : await this.#testRestore();
-      await finishRun(db, run, outcome, this.#now());
+      let outcome =
+        work.kind === "backup"
+          ? await this.#backup(work.trigger, signal)
+          : await this.#testRestore(signal);
+      if (outcome.status === "failed" && takenOver.signal.aborted) {
+        outcome = { status: "failed", error: RUN_TAKEN_OVER };
+      } else if (
+        outcome.status === "failed" &&
+        work.kind === "backup" &&
+        this.#abort.signal.aborted
+      ) {
+        outcome = { status: "failed", error: WORKER_SHUTDOWN };
+      }
+      // A run marked stale is already finished: its row stays as the other worker left it.
+      if (!takenOver.signal.aborted) await finishRun(db, run, outcome, this.#now());
       if (outcome.status === "failed") {
         log("error", work.kind === "backup" ? "a backup failed" : "a test restore failed", {
           trigger: work.trigger,
           err: outcome.error,
         });
-        if (work.kind === "backup" && work.trigger !== "retry" && !this.#abort.signal.aborted) {
+        if (work.kind === "backup" && work.trigger !== "retry" && !signal.aborted) {
           await db
             .updateTable("backup_settings")
             .set({ retry_at: new Date(this.#now().getTime() + RETRY_AFTER_MS) })
@@ -200,16 +234,28 @@ export class BackupJob {
 
   async #backup(
     trigger: RunTrigger,
+    signal: AbortSignal,
   ): Promise<
     { status: "succeeded"; folder: string; bytes: number } | { status: "failed"; error: string }
   > {
     const target = await this.#destination();
     if (target.problem !== undefined) return { status: "failed", error: target.problem };
     const { settings, destination, client } = target;
-    if (settings.keyRecipient === null) {
+    if (settings.keyRecipient === null || settings.keySealed === null) {
+      client.destroy();
       return {
         status: "failed",
         error: "There is no backup key yet: turn backups on and save, which makes one.",
+      };
+    }
+    // The identity signs the manifest (secrets.ts, manifestMac).
+    const identity = this.#options.secrets.openKey(settings.keySealed);
+    if (identity === null) {
+      client.destroy();
+      return {
+        status: "failed",
+        error:
+          "The backup key can't be read: AUTH_SECRET changed since it was made. Make a new key on the Backups tab of Settings, and save it.",
       };
     }
     try {
@@ -217,10 +263,10 @@ export class BackupJob {
         sources: this.#options.sources,
         destination,
         client,
-        recipient: settings.keyRecipient,
+        key: { identity, recipient: settings.keyRecipient },
         version: this.#options.version,
         now: this.#now,
-        signal: this.#abort.signal,
+        signal,
         onStep: (step) => this.#options.log("info", `backup: ${step}`, { trigger }),
       });
       try {
@@ -245,16 +291,16 @@ export class BackupJob {
           : `The backup failed: ${error instanceof Error ? error.message : String(error)}`;
       return {
         status: "failed",
-        error: this.#abort.signal.aborted
-          ? "The worker was stopped during the backup, so it did not finish. Nothing it uploaded was kept."
-          : message,
+        error: signal.aborted ? WORKER_SHUTDOWN : message,
       };
     } finally {
       client.destroy();
     }
   }
 
-  async #testRestore(): Promise<
+  async #testRestore(
+    signal: AbortSignal,
+  ): Promise<
     { status: "succeeded"; folder: string; bytes: number } | { status: "failed"; error: string }
   > {
     const target = await this.#destination();
@@ -276,7 +322,7 @@ export class BackupJob {
         client,
         destination,
         identity,
-        signal: this.#abort.signal,
+        signal,
       });
       return { status: "succeeded", folder: checked.name, bytes: checked.bytes };
     } catch (error) {

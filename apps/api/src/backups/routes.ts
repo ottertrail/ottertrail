@@ -1,15 +1,21 @@
 import type { FastifyPluginCallback, FastifyReply, FastifyRequest } from "fastify";
-import type { Kysely } from "kysely";
+import type { Kysely, Transaction } from "kysely";
 
 import { requirePermission } from "../access/access.ts";
+import { checkPassword } from "../access/members.ts";
 import type { Auth } from "../auth/auth.ts";
 import { requireTrustedOrigin } from "../auth/origin.ts";
+import { passwordTryLimiter } from "../auth/password-tries.ts";
 import { requireSession, signedInUser } from "../auth/routes.ts";
 import { type RateLimit, TokenBucketLimiter } from "../collection/rate-limiter.ts";
 import type { ObjectStoreConfig } from "../config.ts";
 import type { Database } from "../db/schema.ts";
+import { enqueueAccountEmail } from "../notifications/account-emails.ts";
+import { notifyIn } from "../notifications/deliveries.ts";
+import type { LinkSealer } from "../notifications/link-sealer.ts";
 import { AddressNotAllowedError, refusedKind } from "../outbound/addresses.ts";
 import { readInstanceSettings } from "../settings/settings.ts";
+import { readWarningChannels } from "../storage/warning-state.ts";
 import {
   backupClient,
   listBackups,
@@ -31,6 +37,8 @@ import {
   MAX_KEEP_DAYS,
   MAX_PREFIX,
   MAX_SECRET,
+  OVERLAP_PROBLEM,
+  overlapsObjects,
   PREFIX_PATTERN,
   readBackupSettings,
   REGION_PATTERN,
@@ -63,6 +71,28 @@ function within(
     });
   return false;
 }
+
+/** What each guarded action did, as a notice says it after the person's name. */
+export const BACKUP_ACTIONS = {
+  key_shown: "showed the backup key",
+  key_downloaded: "downloaded the backup key",
+  destination_changed: "changed where backups go",
+  turned_off: "turned backups off",
+} as const;
+
+export type BackupAction = keyof typeof BACKUP_ACTIONS;
+
+const PASSWORD = { type: "string", minLength: 1, maxLength: 128 } as const;
+
+const PASSWORD_NEEDED = {
+  error: "password_required",
+  message: "Enter your current password.",
+} as const;
+
+const WRONG_PASSWORD = {
+  error: "wrong_password",
+  message: "The current password is incorrect. Enter it again.",
+} as const;
 
 const iso = (date: Date | null) => date?.toISOString() ?? null;
 
@@ -106,6 +136,8 @@ interface SettingsBody extends DestinationBody {
   enabled?: boolean;
   timeOfDay?: string;
   keepDays?: number;
+  /** Needed to change the destination or turn backups off. */
+  currentPassword?: string;
 }
 
 const SEPARATE_ONLY = ["endpoint", "region", "accessKeyId", "secretAccessKey"] as const;
@@ -117,8 +149,8 @@ const SEPARATE_ONLY = ["endpoint", "region", "accessKeyId", "secretAccessKey"] a
  * POST   /api/settings/backups/run              Back up now (the worker runs it)
  * POST   /api/settings/backups/test-restore     Test restore (the worker runs it)
  * GET    /api/settings/backups/list             the backups in the destination's folder
- * GET    /api/settings/backups/key              the backup key, to view (logged)
- * GET    /api/settings/backups/key/file         the backup key as a file (logged)
+ * POST   /api/settings/backups/key              the backup key, to view { password } (logged)
+ * POST   /api/settings/backups/key/file         the backup key as a file { password } (logged)
  * POST   /api/settings/backups/key/saved        the owner saved the key: the reminder goes
  * POST   /api/settings/backups/key/replace      a new key, only when the old can't be read
  *
@@ -128,6 +160,13 @@ const SEPARATE_ONLY = ["endpoint", "region", "accessKeyId", "secretAccessKey"] a
  * is never in an answer; the key only in the two key routes, which log
  * that it was shown (not the key). Test connection, Back up now, and Test
  * restore are limited per user.
+ *
+ * A stolen session must not take or stop the backups quietly: showing or
+ * downloading the key, changing the destination, and turning backups off
+ * need the current password (from the app's one limiter for password
+ * tries, auth/password-tries.ts), and each sends `backups.changed` to the
+ * channels that get storage warnings, and an account email to the owner
+ * when SMTP is set up.
  */
 export const backupRoutes: FastifyPluginCallback<{
   db: Kysely<Database>;
@@ -141,6 +180,13 @@ export const backupRoutes: FastifyPluginCallback<{
   testConnectionLimit?: RateLimit;
   backupNowLimit?: RateLimit;
   testRestoreLimit?: RateLimit;
+  /** The app's one limiter for current-password checks. */
+  passwordTries?: TokenBucketLimiter;
+  /** For notices' links. */
+  publicUrl: string;
+  /** With SMTP set up, the owner gets an account email for each guarded action. */
+  emailConfigured?: boolean;
+  sealer?: LinkSealer | null;
   now?: () => Date;
 }> = (
   app,
@@ -155,6 +201,10 @@ export const backupRoutes: FastifyPluginCallback<{
     testConnectionLimit = DEFAULT_TEST_CONNECTION_LIMIT,
     backupNowLimit = DEFAULT_BACKUP_NOW_LIMIT,
     testRestoreLimit = DEFAULT_TEST_RESTORE_LIMIT,
+    passwordTries = passwordTryLimiter(),
+    publicUrl,
+    emailConfigured = false,
+    sealer = null,
     now = () => new Date(),
   },
   done,
@@ -168,6 +218,80 @@ export const backupRoutes: FastifyPluginCallback<{
     backupNow: new TokenBucketLimiter(backupNowLimit),
     testRestore: new TokenBucketLimiter(testRestoreLimit),
   };
+
+  /**
+   * Checks the current password; false once it has answered the request
+   * (missing, wrong, or too many tries).
+   */
+  async function passwordConfirmed(
+    request: FastifyRequest,
+    reply: FastifyReply,
+    password: string | undefined,
+  ): Promise<boolean> {
+    if (password === undefined || password === "") {
+      void reply.code(400).send(PASSWORD_NEEDED);
+      return false;
+    }
+    const user = signedInUser(request);
+    const tried = passwordTries.take(user.id);
+    if (!tried.allowed) {
+      void reply
+        .code(429)
+        .header("retry-after", String(tried.retryAfterSeconds))
+        .send({
+          error: "rate_limited",
+          message: `Too many attempts. Retry after ${tried.retryAfterSeconds} seconds.`,
+        });
+      return false;
+    }
+    if (!(await checkPassword(db, auth, user.id, password))) {
+      void reply.code(403).send(WRONG_PASSWORD);
+      return false;
+    }
+    return true;
+  }
+
+  /** Tells the storage-warning channels, and the owner by email, what was done to the backups. */
+  async function notice(
+    trx: Transaction<Database>,
+    request: FastifyRequest,
+    actions: readonly BackupAction[],
+  ): Promise<void> {
+    if (actions.length === 0) return;
+    const user = signedInUser(request);
+    const at = now();
+    const channelIds = await readWarningChannels(trx);
+    for (const action of actions) {
+      request.log.info({ userId: user.id, action }, "backup settings: a guarded action");
+      await notifyIn(trx, {
+        channelIds,
+        type: "backups.changed",
+        project: null,
+        subject: { type: "backups", action },
+        message: `${user.name} ${BACKUP_ACTIONS[action]}.`,
+        url: `${publicUrl}/settings?tab=backups`,
+        time: at,
+      });
+      if (emailConfigured && sealer !== null) {
+        const theOwner = await trx
+          .selectFrom("dashboard_users")
+          .select("email")
+          .where("role", "=", "owner")
+          .executeTakeFirst();
+        if (theOwner !== undefined) {
+          await enqueueAccountEmail(
+            trx,
+            {
+              kind: "backup_changed",
+              to: theOwner.email,
+              params: { action: BACKUP_ACTIONS[action], by: user.name, at: at.toISOString() },
+            },
+            sealer,
+          );
+        }
+      }
+    }
+  }
 
   function keyState(settings: BackupSettings): "none" | "ready" | "unreadable" {
     if (settings.keySealed === null) return "none";
@@ -205,9 +329,16 @@ export const backupRoutes: FastifyPluginCallback<{
         secret:
           settings.secretSealed === null
             ? ("none" as const)
-            : secrets.openSecret(settings.secretSealed) === null
+            : secrets.openSecret(
+                  settings.secretSealed,
+                  settings.endpoint ?? "",
+                  settings.accessKeyId ?? "",
+                ) === null
               ? ("unreadable" as const)
               : ("saved" as const),
+        /** Since when, and by whom, backups are off; null while on, or never turned on. */
+        disabledAt: settings.enabled ? null : iso(settings.disabledAt),
+        disabledBy: settings.enabled ? null : settings.disabledBy,
       },
       destination:
         mode.mode === "object_store"
@@ -275,17 +406,36 @@ export const backupRoutes: FastifyPluginCallback<{
         };
       }
     }
-    return {
-      fields: {
-        bucket: body.bucket === undefined ? saved.bucket : body.bucket,
-        prefix: body.prefix ?? saved.prefix,
-        endpoint,
-        region: body.region === undefined ? saved.region : body.region,
-        accessKeyId: body.accessKeyId === undefined ? saved.accessKeyId : body.accessKeyId,
-        secretAccessKey: body.secretAccessKey ?? null,
-        secretSealed: saved.secretSealed,
-      },
+    const accessKeyId = body.accessKeyId === undefined ? saved.accessKeyId : body.accessKeyId;
+    // The saved secret goes only with the endpoint and key it was saved for.
+    const sameKey = endpoint === saved.endpoint && accessKeyId === saved.accessKeyId;
+    const fields = {
+      bucket: body.bucket === undefined ? saved.bucket : body.bucket,
+      prefix: body.prefix ?? saved.prefix,
+      endpoint,
+      region: body.region === undefined ? saved.region : body.region,
+      accessKeyId,
+      secretAccessKey: body.secretAccessKey ?? null,
+      secretSealed: sameKey ? saved.secretSealed : null,
     };
+    // A separate destination in the object store's own bucket may not overlap its objects either.
+    if (
+      objectStore !== null &&
+      mode.mode === "separate" &&
+      fields.endpoint === objectStore.url &&
+      fields.bucket === objectStore.bucket &&
+      overlapsObjects(fields.prefix)
+    ) {
+      return { refused: { error: "folder_overlaps_objects", message: OVERLAP_PROBLEM } };
+    }
+    if (
+      mode.mode === "object_store" &&
+      (fields.bucket ?? mode.store.bucket) === mode.store.bucket &&
+      overlapsObjects(fields.prefix)
+    ) {
+      return { refused: { error: "folder_overlaps_objects", message: OVERLAP_PROBLEM } };
+    }
+    return { fields };
   }
 
   app.get("/settings/backups", { preHandler: [signedIn, owner] }, async () => view());
@@ -305,6 +455,7 @@ export const backupRoutes: FastifyPluginCallback<{
             timeOfDay: { type: "string", pattern: TIME_PATTERN },
             keepDays: { type: "integer", minimum: 1, maximum: MAX_KEEP_DAYS },
             ...DESTINATION_FIELDS,
+            currentPassword: PASSWORD,
           },
         },
       },
@@ -315,6 +466,19 @@ export const backupRoutes: FastifyPluginCallback<{
       const merged = fieldsOf(saved, body);
       if ("refused" in merged) return reply.code(400).send(merged.refused);
       const enabled = body.enabled ?? saved.enabled;
+      const f = merged.fields;
+      const destinationChanged =
+        f.secretAccessKey !== null ||
+        (f.bucket ?? null) !== (saved.bucket ?? null) ||
+        f.prefix !== saved.prefix ||
+        f.endpoint !== saved.endpoint ||
+        f.region !== saved.region ||
+        f.accessKeyId !== saved.accessKeyId;
+      const turnedOff = saved.enabled && !enabled;
+      const actions: BackupAction[] = [
+        ...(destinationChanged ? (["destination_changed"] as const) : []),
+        ...(turnedOff ? (["turned_off"] as const) : []),
+      ];
       if (enabled) {
         const destination = destinationOf(mode, merged.fields, secrets);
         if ("problem" in destination) {
@@ -323,12 +487,16 @@ export const backupRoutes: FastifyPluginCallback<{
             .send({ error: "destination_incomplete", message: destination.problem });
         }
       }
+      if (actions.length > 0 && !(await passwordConfirmed(request, reply, body.currentPassword))) {
+        return reply;
+      }
       // Made before the transaction: age's key generation is asynchronous.
       const key = enabled && saved.keySealed === null ? await makeBackupKey() : null;
       const at = now();
       const scheduleChanged =
         (enabled && !saved.enabled) ||
         (body.timeOfDay !== undefined && body.timeOfDay !== saved.timeOfDay);
+      const user = signedInUser(request);
       await db.transaction().execute(async (trx) => {
         const current = await readBackupSettings(trx, { lock: true });
         const secret = merged.fields.secretAccessKey;
@@ -343,9 +511,18 @@ export const backupRoutes: FastifyPluginCallback<{
             endpoint: merged.fields.endpoint,
             region: merged.fields.region,
             access_key_id: merged.fields.accessKeyId,
-            ...(secret === null || secret === undefined
-              ? {}
-              : { secret_sealed: secrets.sealSecret(secret) }),
+            // A new endpoint or key without a new secret clears the old one (fieldsOf).
+            secret_sealed:
+              secret === null || secret === undefined
+                ? merged.fields.secretSealed
+                : secrets.sealSecret(
+                    secret,
+                    merged.fields.endpoint ?? "",
+                    merged.fields.accessKeyId ?? "",
+                  ),
+            // Off is a state the tab and the Storage page show: since when, and by whom.
+            ...(turnedOff ? { disabled_at: at, disabled_by: user.name } : {}),
+            ...(enabled ? { disabled_at: null, disabled_by: null } : {}),
             // Another request may have made one meanwhile: never replace a key.
             ...(key !== null && current.keySealed === null
               ? {
@@ -361,6 +538,7 @@ export const backupRoutes: FastifyPluginCallback<{
             updated_at: at,
           })
           .execute();
+        await notice(trx, request, actions);
       });
       if (key !== null) request.log.info("a backup key was made");
       return view();
@@ -515,21 +693,42 @@ export const backupRoutes: FastifyPluginCallback<{
     return { identity, recipient: settings.keyRecipient, createdAt: settings.keyCreatedAt };
   }
 
-  app.get("/settings/backups/key", { preHandler: [signedIn, owner] }, async (request, reply) => {
-    const key = await openKey(reply);
-    if (key === null) return reply;
-    // Logged as an action, without the key.
-    request.log.info({ userId: signedInUser(request).id }, "the backup key was shown");
-    void reply.header("cache-control", "no-store");
-    return { key: key.identity, recipient: key.recipient, createdAt: key.createdAt.toISOString() };
-  });
+  const keyBody = {
+    body: {
+      type: "object",
+      additionalProperties: false,
+      required: ["password"],
+      properties: { password: PASSWORD },
+    },
+  } as const;
 
-  app.get(
-    "/settings/backups/key/file",
-    { preHandler: [signedIn, owner] },
+  app.post<{ Body: { password: string } }>(
+    "/settings/backups/key",
+    { preHandler: [fromDashboard, signedIn, owner], schema: keyBody },
     async (request, reply) => {
       const key = await openKey(reply);
       if (key === null) return reply;
+      if (!(await passwordConfirmed(request, reply, request.body.password))) return reply;
+      await db.transaction().execute((trx) => notice(trx, request, ["key_shown"]));
+      // Logged as an action, without the key.
+      request.log.info({ userId: signedInUser(request).id }, "the backup key was shown");
+      void reply.header("cache-control", "no-store");
+      return {
+        key: key.identity,
+        recipient: key.recipient,
+        createdAt: key.createdAt.toISOString(),
+      };
+    },
+  );
+
+  app.post<{ Body: { password: string } }>(
+    "/settings/backups/key/file",
+    { preHandler: [fromDashboard, signedIn, owner], schema: keyBody },
+    async (request, reply) => {
+      const key = await openKey(reply);
+      if (key === null) return reply;
+      if (!(await passwordConfirmed(request, reply, request.body.password))) return reply;
+      await db.transaction().execute((trx) => notice(trx, request, ["key_downloaded"]));
       const { name } = await readInstanceSettings(db);
       request.log.info({ userId: signedInUser(request).id }, "the backup key was downloaded");
       return reply
@@ -576,7 +775,8 @@ export const backupRoutes: FastifyPluginCallback<{
         });
       }
       const key = await makeBackupKey();
-      await db
+      // Only over the key read above: of two at once, one replaces it, and the other is refused.
+      const replaced = await db
         .updateTable("backup_settings")
         .set({
           key_sealed: secrets.sealKey(key.identity),
@@ -584,7 +784,14 @@ export const backupRoutes: FastifyPluginCallback<{
           key_created_at: now(),
           key_saved_at: null,
         })
-        .execute();
+        .where("key_sealed", "=", settings.keySealed)
+        .executeTakeFirst();
+      if (replaced.numUpdatedRows === 0n) {
+        return reply.code(409).send({
+          error: "key_changed",
+          message: "The key was replaced meanwhile, by another request. Reload the page to see it.",
+        });
+      }
       request.log.info("the unreadable backup key was replaced with a new one");
       return view();
     },

@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vite-plus/test";
 
 import { tarHeader } from "../src/backups/archive.ts";
+import { waitForClickHouseBackup } from "../src/backups/run.ts";
 import { backupName, backupTime } from "../src/backups/s3.ts";
 import {
   dueSlot,
@@ -10,6 +11,7 @@ import {
   overdueSlot,
   slotOn,
 } from "../src/backups/schedule.ts";
+import { canonicalJson, manifestMac, manifestMacValid } from "../src/backups/secrets.ts";
 
 /** The daily backup's time in the instance's timezone (backups/schedule.ts). */
 
@@ -122,5 +124,71 @@ describe("names and the tar", () => {
     header.forEach((byte, index) => (sum += index >= 148 && index < 156 ? 32 : byte));
     expect(Number.parseInt(header.subarray(148, 154).toString("ascii"), 8)).toBe(sum);
     expect(() => tarHeader("x".repeat(101), 0, "0", new Date())).toThrow(/too long/);
+  });
+});
+
+describe("waiting for ClickHouse's backup", () => {
+  test("a missing system.backups row fails at once, and stops the backup", async () => {
+    let stops = 0;
+    const started = Date.now();
+    await expect(
+      waitForClickHouseBackup({
+        readState: async () => null,
+        stop: async () => {
+          stops += 1;
+        },
+        signal: new AbortController().signal,
+        pollMs: 60_000,
+      }),
+    ).rejects.toThrow(/^ClickHouse lost track of its backup/);
+    expect(stops).toBe(1);
+    expect(Date.now() - started).toBeLessThan(1000);
+  });
+
+  test("an abort while it is being written stops it before the run goes on", async () => {
+    const controller = new AbortController();
+    const events: string[] = [];
+    const waiting = waitForClickHouseBackup({
+      readState: async () => {
+        events.push("read");
+        return { status: "CREATING_BACKUP", error: "" };
+      },
+      stop: async () => {
+        events.push("stop");
+      },
+      signal: controller.signal,
+      pollMs: 10,
+    });
+    setTimeout(() => controller.abort(), 30);
+    await expect(waiting).rejects.toThrow(/abort/i);
+    expect(events.at(-1)).toBe("stop");
+    expect(events.filter((event) => event === "stop")).toHaveLength(1);
+  });
+
+  test("a created backup needs no stop", async () => {
+    let stops = 0;
+    await waitForClickHouseBackup({
+      readState: async () => ({ status: "BACKUP_CREATED", error: "" }),
+      stop: async () => {
+        stops += 1;
+      },
+      signal: new AbortController().signal,
+    });
+    expect(stops).toBe(0);
+  });
+});
+
+describe("the manifest's MAC", () => {
+  // Not a key: shaped like one, and joined at run time so secret scanners pass it by.
+  const identity = ["AGE", "SECRET", "KEY", "1".padEnd(59, "Q")].join("-");
+  test("covers every field, whatever the key order, and only this key makes it", () => {
+    const manifest = { b: 1, a: { d: [1, 2], c: "x" }, mac: "" };
+    const mac = manifestMac(identity, manifest);
+    expect(mac).toMatch(/^hmac-sha256:[0-9a-f]{64}$/);
+    expect(manifestMacValid(identity, { a: { c: "x", d: [1, 2] }, b: 1, mac })).toBe(true);
+    expect(manifestMacValid(identity, { a: { c: "x", d: [1, 2] }, b: 2, mac })).toBe(false);
+    expect(manifestMacValid(identity.replace(/Q$/, "P"), { ...manifest, mac })).toBe(false);
+    expect(manifestMacValid(identity, { ...manifest, mac: undefined })).toBe(false);
+    expect(canonicalJson({ b: 1, a: [{ d: 1, c: 2 }] })).toBe('{"a":[{"c":2,"d":1}],"b":1}');
   });
 });

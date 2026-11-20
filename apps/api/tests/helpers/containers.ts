@@ -5,6 +5,7 @@ import {
   type ClickHouseBackupFiles,
   pgDumpOf,
   type PostgresDump,
+  WORKER_ZIP,
 } from "../../src/backups/run.ts";
 
 /**
@@ -108,6 +109,19 @@ export function containerClickHouseFiles(containers: DevContainers): ClickHouseB
     },
     async remove(name) {
       execFileSync(containers.cli, ["exec", containers.clickhouse, "rm", "-f", where(name)]);
+    },
+    async removeLeftovers() {
+      const names = execFileSync(
+        containers.cli,
+        ["exec", containers.clickhouse, "ls", "/var/lib/clickhouse/backups"],
+        { encoding: "utf8" },
+      )
+        .split("\n")
+        .filter((name) => WORKER_ZIP.test(name));
+      for (const name of names) {
+        execFileSync(containers.cli, ["exec", containers.clickhouse, "rm", "-f", where(name)]);
+      }
+      return names;
     },
   };
 }

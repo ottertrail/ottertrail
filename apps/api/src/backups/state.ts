@@ -148,13 +148,52 @@ export async function startRun(
   return row?.id ?? null;
 }
 
-export async function touchRun(db: Executor, id: string, now: Date): Promise<void> {
-  await db
+/**
+ * Touches a running run's heartbeat. 0 when it is no longer running: another
+ * worker marked it stale (failStaleRuns), and the run must stop.
+ */
+export async function touchRun(db: Executor, id: string, now: Date): Promise<number> {
+  const result = await db
     .updateTable("backup_runs")
     .set({ heartbeat_at: now })
     .where("id", "=", id)
     .where("status", "=", "running")
-    .execute();
+    .executeTakeFirst();
+  return Number(result.numUpdatedRows);
+}
+
+/** A backup cut off by the worker's own shutdown. */
+export const WORKER_SHUTDOWN =
+  "The worker was stopped during the backup, so it did not finish. Nothing it uploaded was kept. The worker tries it again once when it starts.";
+
+/** A run that another worker marked stale while it still ran: it stopped. */
+export const RUN_TAKEN_OVER =
+  "This run's heartbeat was late, so another worker marked it stopped, and it ended. The next one runs at its time.";
+
+/**
+ * When the latest backup was cut off by a worker stopping (its own
+ * shutdown, or a stale heartbeat), and was not itself a retry, schedules
+ * its one retry now, so a restart during the daily backup does not skip
+ * the day. True when it did.
+ */
+export async function retryStoppedBackup(db: Kysely<Database>, now: Date): Promise<boolean> {
+  const last = await db
+    .selectFrom("backup_runs")
+    .select(["trigger", "status", "error"])
+    .where("kind", "=", "backup")
+    .where("status", "!=", "running")
+    .orderBy("started_at", "desc")
+    .limit(1)
+    .executeTakeFirst();
+  if (last === undefined || last.status !== "failed" || last.trigger === "retry") return false;
+  if (last.error !== WORKER_STOPPED && last.error !== WORKER_SHUTDOWN) return false;
+  const result = await db
+    .updateTable("backup_settings")
+    .set({ retry_at: now })
+    .where("enabled", "=", true)
+    .where("retry_at", "is", null)
+    .executeTakeFirst();
+  return Number(result.numUpdatedRows) > 0;
 }
 
 /** Records how a run ended, and keeps the newest RUNS_KEPT of its kind. */

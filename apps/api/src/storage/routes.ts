@@ -5,6 +5,7 @@ import { requirePermission } from "../access/access.ts";
 import type { Auth } from "../auth/auth.ts";
 import { requireTrustedOrigin } from "../auth/origin.ts";
 import { requireSession } from "../auth/routes.ts";
+import { readBackupSettings } from "../backups/settings.ts";
 import type { Database } from "../db/schema.ts";
 import { measureStorage, quotaPlanOf, type StorageReading, type StorageSources } from "./usage.ts";
 import {
@@ -84,10 +85,11 @@ export const storageRoutes: FastifyPluginCallback<{
   const canChoose = requirePermission(db, "channels");
 
   app.get("/settings/storage", { preHandler: [signedIn, canView] }, async (request) => {
-    const [reading, active, channels] = await Promise.all([
+    const [reading, active, channels, backups] = await Promise.all([
       measureStorage(sources, { log: (msg, fields) => request.log.warn(fields, msg) }),
       readActiveWarnings(db).catch(() => new Map<WarningId, ActiveWarning>()),
       channelsView(db),
+      readBackupSettings(db).catch(() => null),
     ]);
     const levels = new Map<WarningId, WarningLevel>(
       [...active].map(([id, warning]) => [id, warning.level]),
@@ -113,6 +115,15 @@ export const storageRoutes: FastifyPluginCallback<{
       /** The warnings that could not be worked out now: their figures were not measured. */
       undetermined,
       warningChannels: channels,
+      /** Scheduled backups on or off; off says since when and by whom (backups/routes.ts). */
+      backups:
+        backups === null
+          ? null
+          : {
+              enabled: backups.enabled,
+              disabledAt: backups.enabled ? null : (backups.disabledAt?.toISOString() ?? null),
+              disabledBy: backups.enabled ? null : backups.disabledBy,
+            },
     };
   });
 

@@ -10,7 +10,9 @@
  * ones, and `alert.held_back` when a rule's hourly cap held notifications
  * back; telemetry alerts (step 4) send the route and metric ones. The
  * worker's storage check sends the storage ones, about the instance
- * rather than a project (storage/warning-job.ts). `test` is the
+ * rather than a project (storage/warning-job.ts); `backups.changed` says
+ * the owner's backup key was shown or downloaded, where backups go
+ * changed, or backups were turned off (backups/routes.ts). `test` is the
  * dashboard's test send.
  */
 export const EVENT_TYPES = [
@@ -31,6 +33,7 @@ export const EVENT_TYPES = [
   "alert.held_back",
   "storage.low",
   "storage.recovered",
+  "backups.changed",
   "test",
 ] as const;
 

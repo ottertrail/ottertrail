@@ -1,3 +1,5 @@
+import { createHmac, hkdfSync, timingSafeEqual } from "node:crypto";
+
 import { generateX25519Identity, identityToRecipient } from "age-encryption";
 
 import { Sealer } from "../auth/sealer.ts";
@@ -28,13 +30,20 @@ export class BackupSecrets {
     this.#sealer = new Sealer(authSecret, "ottertrail stored secrets v1");
   }
 
-  sealSecret(secret: string): string {
-    return this.#sealer.seal(secret, SECRET_BINDING);
+  /**
+   * Seals the secret bound to the endpoint and access key it belongs to:
+   * moved to another endpoint or key, it does not open.
+   */
+  sealSecret(secret: string, endpoint: string, accessKeyId: string): string {
+    return this.#sealer.seal(secret, `${SECRET_BINDING}\n${endpoint}|${accessKeyId}`);
   }
 
-  /** The secret access key, or null when AUTH_SECRET changed since it was saved. */
-  openSecret(sealed: string): string | null {
-    return this.#sealer.open(sealed, SECRET_BINDING);
+  /**
+   * The secret access key, or null when AUTH_SECRET changed since it was
+   * saved, or it was saved for another endpoint or access key.
+   */
+  openSecret(sealed: string, endpoint: string, accessKeyId: string): string | null {
+    return this.#sealer.open(sealed, `${SECRET_BINDING}\n${endpoint}|${accessKeyId}`);
   }
 
   sealKey(identity: string): string {
@@ -45,6 +54,45 @@ export class BackupSecrets {
   openKey(sealed: string): string | null {
     return this.#sealer.open(sealed, KEY_BINDING);
   }
+}
+
+/**
+ * JSON with every object's keys sorted: the bytes a manifest's MAC is
+ * worked out over, the same however the JSON was written.
+ */
+export function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (typeof value === "object" && value !== null) {
+    const entries = Object.entries(value)
+      .filter(([, item]) => item !== undefined)
+      .toSorted(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+    return `{${entries.map(([key, item]) => `${JSON.stringify(key)}:${canonicalJson(item)}`).join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+/**
+ * A backup manifest's MAC: HMAC-SHA256 of its canonical JSON (without
+ * `mac`), under a key derived from the backup key by HKDF. age needs only
+ * the public recipient to encrypt, which the manifest names, so anyone who
+ * can write to the bucket could make a backup that decrypts; only the
+ * holder of the key can make one whose MAC checks out.
+ */
+export function manifestMac(identity: string, manifest: Record<string, unknown>): string {
+  const { mac: _mac, ...rest } = manifest;
+  const key = Buffer.from(
+    hkdfSync("sha256", identity, Buffer.alloc(0), "ottertrail backup manifest v1", 32),
+  );
+  return `hmac-sha256:${createHmac("sha256", key).update(canonicalJson(rest)).digest("hex")}`;
+}
+
+/** Whether a manifest carries the MAC the backup key gives it. */
+export function manifestMacValid(identity: string, manifest: Record<string, unknown>): boolean {
+  const given = manifest.mac;
+  if (typeof given !== "string") return false;
+  const expected = Buffer.from(manifestMac(identity, manifest));
+  const actual = Buffer.from(given);
+  return actual.length === expected.length && timingSafeEqual(actual, expected);
 }
 
 /** A new backup key: an age X25519 identity and its recipient. */

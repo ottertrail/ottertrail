@@ -141,7 +141,7 @@ function BucketList({ timeZone, refreshKey }: { timeZone: string; refreshKey: st
   if (backups.length === 0) {
     return (
       <p className="text-sm text-ink-subtle">
-        No backups in {bucket}/{prefix} yet. The first one appears here after the next backup.
+        No backups in {bucket}/{prefix} yet.
       </p>
     );
   }
@@ -172,8 +172,7 @@ function BucketList({ timeZone, refreshKey }: { timeZone: string; refreshKey: st
         </TableBody>
       </Table>
       <p className="text-sm text-ink-subtle">
-        In {bucket}/{prefix}. Incomplete ones have no manifest, so they can't be restored; the
-        worker deletes them after a day.
+        In {bucket}/{prefix}. Incomplete backups can't be restored.
       </p>
     </div>
   );
@@ -192,15 +191,16 @@ function StatusSection({ data, timeZone }: { data: Backups; timeZone: string }) 
   const off = !settings.enabled;
 
   return (
-    <SettingsSection
-      title="Backups"
-      description="The worker backs up PostgreSQL, ClickHouse, and the object store's files every day, encrypts each part with the backup key, and uploads them to the destination below."
-    >
-      {off && last === null ? (
-        <p className="text-sm text-ink-subtle">
-          Backups are off. Turn them on under Schedule and destination, choose where they go, and
-          save: the worker then backs up every day at the time you pick.
+    <SettingsSection title="Backups">
+      {off && settings.disabledAt !== null && (
+        <p className="flex flex-wrap items-center gap-2 text-sm text-ink">
+          <StatusBadge tone="neutral">Off</StatusBadge>
+          Backups are off since {formatMoment(settings.disabledAt, timeZone)}, turned off by{" "}
+          {settings.disabledBy ?? "someone"}.
         </p>
+      )}
+      {off && last === null ? (
+        settings.disabledAt === null && <p className="text-sm text-ink-subtle">Backups are off.</p>
       ) : (
         <dl className="flex flex-col gap-3">
           <StatusRow label="Last backup">
@@ -252,7 +252,7 @@ function StatusSection({ data, timeZone }: { data: Backups; timeZone: string }) 
             {sentence(last.error ?? "No reason was recorded.")}{" "}
             {status.retryAt !== null
               ? `The worker tries once more at ${formatMoment(status.retryAt, timeZone)}.`
-              : "Fix what it says, then use Back up now, or wait for the next daily backup."}
+              : ""}
           </AlertDescription>
         </Alert>
       )}
@@ -288,12 +288,10 @@ function StatusSection({ data, timeZone }: { data: Backups; timeZone: string }) 
         </div>
         <p className="text-sm text-ink-subtle" aria-live="polite">
           {status.backupRequested
-            ? "Back up now is asked for: the worker starts it within a minute."
+            ? "Backup starts within a minute."
             : status.testRestoreRequested
-              ? "Test restore is asked for: the worker starts it within a minute."
-              : off
-                ? "Back up now needs backups turned on and saved."
-                : "Test restore downloads the newest backup, decrypts every part, and checks each checksum, without restoring anything."}
+              ? "Test restore starts within a minute."
+              : ""}
         </p>
         {(run.error ?? restore.error) !== null && (
           <p role="alert" className="text-sm text-destructive">
@@ -424,20 +422,16 @@ function DestinationText({ data }: { data: Backups }) {
   if (destination.mode === "object_store") {
     return (
       <p className="text-sm text-pretty text-ink-subtle">
-        Backups go to the object store that holds session replays and source maps (
-        {new URL(destination.objectStore.endpoint).host}), which is off this server, with its access
-        key. Choose a bucket and a folder for them: the worker lists and deletes only inside that
-        folder.
+        Backups use the object store's connection ({new URL(destination.objectStore.endpoint).host}
+        ).
       </p>
     );
   }
   return (
     <p className="text-sm text-pretty text-ink-subtle">
       {destination.reason === "stack_garage"
-        ? "Replays and source maps are in this stack's own Garage, on this server's disk: a backup there would be lost with the server. "
-        : "This instance has no object store, so backups need a destination of their own. "}
-      Enter an S3-compatible bucket somewhere else, such as Amazon S3, Cloudflare R2, or Backblaze
-      B2, with an access key that may write, list, read, and delete in it.
+        ? "The object store is this server's own Garage, so a backup there isn't a backup. Use an S3-compatible bucket elsewhere."
+        : "Use an S3-compatible bucket, such as Amazon S3, Cloudflare R2, or Backblaze B2."}
     </p>
   );
 }
@@ -465,6 +459,15 @@ function SettingsForm({
   });
   React.useEffect(() => onDirty(form.dirty), [onDirty, form.dirty]);
   const separate = data.destination.mode === "separate";
+  // Not a field of the form: typed to confirm a save, never saved, and emptied after.
+  const [password, setPassword] = React.useState("");
+  const changedDestination =
+    form.values.secretAccessKey !== "" ||
+    (["bucket", "prefix", "endpoint", "region", "accessKeyId"] as const).some(
+      (field) => form.values[field].trim() !== form.initial[field].trim(),
+    );
+  const turningOff = form.initial.enabled && !form.values.enabled;
+  const needsPassword = changedDestination || turningOff;
   const save = useMutation({
     mutationFn: (values: Values) => {
       const changes: BackupChanges = {
@@ -472,10 +475,12 @@ function SettingsForm({
         timeOfDay: values.timeOfDay,
         keepDays: Number(values.keepDays),
         ...destinationFields(values, separate),
+        ...(needsPassword ? { currentPassword: password } : {}),
       };
       return updateBackups(changes);
     },
     onSuccess: (updated, values) => {
+      setPassword("");
       // The secret field empties once saved: it is never shown again.
       form.setValues((previous) =>
         previous.secretAccessKey === values.secretAccessKey
@@ -491,7 +496,6 @@ function SettingsForm({
   });
   const ids = {
     enabled: React.useId(),
-    enabledHint: React.useId(),
     time: React.useId(),
     keep: React.useId(),
     bucket: React.useId(),
@@ -501,6 +505,7 @@ function SettingsForm({
     accessKey: React.useId(),
     secret: React.useId(),
     secretHint: React.useId(),
+    password: React.useId(),
   };
   const { values } = form;
   const secret = data.settings.secret;
@@ -508,7 +513,6 @@ function SettingsForm({
   return (
     <SettingsSection
       title="Schedule and destination"
-      description="When the worker backs up, how long backups are kept, and where they go. Only the owner can view and change this."
       form={form}
       onSave={(submitted) => save.mutate(submitted)}
       saving={save.isPending}
@@ -519,15 +523,10 @@ function SettingsForm({
       <div className="flex items-start justify-between gap-4">
         <div className="flex flex-col gap-1">
           <Label htmlFor={ids.enabled}>Back up every day</Label>
-          <p id={ids.enabledHint} className="text-sm text-ink-subtle">
-            Turning this on for the first time makes the backup key below. Backups made by backup.sh
-            on the server work either way.
-          </p>
         </div>
         <Switch
           id={ids.enabled}
           name="enabled"
-          aria-describedby={ids.enabledHint}
           checked={values.enabled}
           disabled={save.isPending}
           onCheckedChange={(checked) => form.set("enabled", checked)}
@@ -546,7 +545,7 @@ function SettingsForm({
             onChange={(event) => form.set("timeOfDay", event.target.value)}
             className="w-36"
           />
-          <FieldDescription>In the instance's timezone, {timeZone}.</FieldDescription>
+          <FieldDescription>{timeZone}</FieldDescription>
         </Field>
         <Field>
           <FieldLabel htmlFor={ids.keep}>Days to keep</FieldLabel>
@@ -562,9 +561,7 @@ function SettingsForm({
             onChange={(event) => form.set("keepDays", event.target.value)}
             className="w-24"
           />
-          <FieldDescription>
-            Older backups in the folder are deleted after each backup, except the newest whole one.
-          </FieldDescription>
+          <FieldDescription>Older backups are deleted, except the newest one.</FieldDescription>
         </Field>
       </FieldGroup>
 
@@ -586,10 +583,6 @@ function SettingsForm({
                 value={values.endpoint}
                 onChange={(event) => form.set("endpoint", event.target.value)}
               />
-              <FieldDescription>
-                The S3 address, without the bucket, such as
-                https://&lt;account&gt;.r2.cloudflarestorage.com for R2.
-              </FieldDescription>
             </Field>
           )}
           {separate && (
@@ -604,7 +597,7 @@ function SettingsForm({
                 value={values.region}
                 onChange={(event) => form.set("region", event.target.value)}
               />
-              <FieldDescription>auto for Cloudflare R2.</FieldDescription>
+              <FieldDescription>auto for R2.</FieldDescription>
             </Field>
           )}
           <Field>
@@ -629,9 +622,6 @@ function SettingsForm({
               value={values.prefix}
               onChange={(event) => form.set("prefix", event.target.value)}
             />
-            <FieldDescription>
-              Each backup goes in a folder of its own inside it, named by its time in UTC.
-            </FieldDescription>
           </Field>
           {separate && (
             <Field>
@@ -665,10 +655,10 @@ function SettingsForm({
                 className={secret === "unreadable" ? "text-warning" : undefined}
               >
                 {secret === "saved"
-                  ? "A secret is saved. It is never shown again: leave this empty to keep it, or type a new one to replace it."
+                  ? "Saved, and never shown again. Leave empty to keep it."
                   : secret === "unreadable"
-                    ? "The saved secret can't be read: AUTH_SECRET changed since it was saved. Type it again, and save."
-                    : "Stored encrypted on this server, and never shown again after saving."}
+                    ? "The saved secret can't be read since AUTH_SECRET changed. Enter it again."
+                    : "Never shown again after saving."}
               </FieldDescription>
             </Field>
           )}
@@ -683,10 +673,6 @@ function SettingsForm({
             >
               {test.isPending ? "Testing…" : "Test connection"}
             </Button>
-            <p className="text-sm text-ink-subtle">
-              Tries writing, listing, reading, and deleting a small file in the folder, with the
-              values above, saved or not.
-            </p>
           </div>
           <div aria-live="polite">
             {test.isSuccess && <ConnectionResult result={test.data} />}
@@ -698,6 +684,20 @@ function SettingsForm({
           </div>
         </div>
       </fieldset>
+      {needsPassword && (
+        <Field>
+          <FieldLabel htmlFor={ids.password}>Current password</FieldLabel>
+          <Input
+            id={ids.password}
+            name="currentPassword"
+            type="password"
+            autoComplete="current-password"
+            value={password}
+            onChange={(event) => setPassword(event.target.value)}
+            className="max-w-72"
+          />
+        </Field>
+      )}
     </SettingsSection>
   );
 }
@@ -708,11 +708,21 @@ function KeySection({ data, timeZone }: { data: Backups; timeZone: string }) {
   const { key } = data;
   // Fetched only when asked, and kept here while shown: never in the query cache.
   const [shown, setShown] = React.useState<BackupKey | null>(null);
+  // Showing or downloading the key needs the current password, typed here and emptied after.
+  const [password, setPassword] = React.useState("");
+  const passwordId = React.useId();
   const setData = (updated: Backups) => queryClient.setQueryData(backupsQuery().queryKey, updated);
-  const show = useMutation({ mutationFn: fetchBackupKey, onSuccess: setShown });
+  const show = useMutation({
+    mutationFn: fetchBackupKey,
+    onSuccess: (fetched) => {
+      setPassword("");
+      setShown(fetched);
+    },
+  });
   const download = useMutation({
     mutationFn: fetchBackupKeyFile,
     onSuccess: ({ text, fileName }) => {
+      setPassword("");
       const url = URL.createObjectURL(new Blob([text], { type: "text/plain" }));
       const link = document.createElement("a");
       link.href = url;
@@ -732,25 +742,16 @@ function KeySection({ data, timeZone }: { data: Backups; timeZone: string }) {
   const failure = show.error ?? download.error ?? saved.error ?? replace.error;
 
   return (
-    <SettingsSection
-      title="Backup key"
-      description="Every backup is encrypted with this key before it leaves the server, in the age format, so it can also be decrypted without Ottertrail."
-      className="border-t"
-    >
+    <SettingsSection title="Backup key" className="border-t">
       {key.state === "none" && (
-        <p className="text-sm text-ink-subtle">
-          The key is made when you first turn backups on and save. It then shows here, to copy or
-          download.
-        </p>
+        <p className="text-sm text-ink-subtle">Made when backups are first turned on.</p>
       )}
       {key.state === "unreadable" && (
         <Alert variant="destructive">
           <OctagonAlertIcon />
           <AlertTitle>The backup key can't be read</AlertTitle>
           <AlertDescription className="text-pretty">
-            The server's AUTH_SECRET changed since the key was made, and the key is stored encrypted
-            with it. Backups made with the old key can still be restored with the key file you
-            saved. Make a new key to go on backing up; save it as you did the old one.
+            AUTH_SECRET changed since the key was made. Older backups need the key file you saved.
           </AlertDescription>
           <AlertAction>
             <Button
@@ -772,10 +773,6 @@ function KeySection({ data, timeZone }: { data: Backups; timeZone: string }) {
               <KeyRoundIcon />
               <AlertTitle>Save the backup key somewhere other than this server</AlertTitle>
               <AlertDescription className="flex flex-col gap-2 text-pretty">
-                <span>
-                  Download it or copy it into a password manager. This server keeps the only other
-                  copy, so if the server is lost, the key is lost with it.
-                </span>
                 <Button
                   type="button"
                   size="sm"
@@ -789,12 +786,10 @@ function KeySection({ data, timeZone }: { data: Backups; timeZone: string }) {
             </Alert>
           )}
           <p className="text-sm font-medium text-pretty text-ink">
-            If the server is lost and nobody has the key, the backups can't be read by anyone,
-            Ottertrail included, so they can't be restored.
+            If the server and the key are both lost, the backups can't be restored.
           </p>
           <p className="text-sm text-pretty text-ink-subtle">
-            Restoring on a new server takes three things: this key file, the bucket's access key,
-            and the old server's AUTH_SECRET. restore.sh --from-s3 asks for the first two.
+            A restore needs the key file, the bucket's access key, and the server's AUTH_SECRET.
           </p>
           <dl className="flex flex-col gap-3">
             <StatusRow label="Public key">
@@ -813,13 +808,25 @@ function KeySection({ data, timeZone }: { data: Backups; timeZone: string }) {
             )}
           </dl>
           {shown !== null && <CopyableCode text={shown.key} copyLabel="Copy the backup key" />}
+          <Field>
+            <FieldLabel htmlFor={passwordId}>Current password</FieldLabel>
+            <Input
+              id={passwordId}
+              name="keyPassword"
+              type="password"
+              autoComplete="current-password"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              className="max-w-72"
+            />
+          </Field>
           <div className="flex flex-wrap items-center gap-2">
             {shown === null ? (
               <Button
                 type="button"
                 variant="outline"
-                disabled={show.isPending}
-                onClick={() => show.mutate()}
+                disabled={show.isPending || password === ""}
+                onClick={() => show.mutate(password)}
               >
                 <EyeIcon aria-hidden="true" />
                 Show key
@@ -833,16 +840,13 @@ function KeySection({ data, timeZone }: { data: Backups; timeZone: string }) {
             <Button
               type="button"
               variant="outline"
-              disabled={download.isPending}
-              onClick={() => download.mutate()}
+              disabled={download.isPending || password === ""}
+              onClick={() => download.mutate(password)}
             >
               <DownloadIcon aria-hidden="true" />
               Download key file
             </Button>
           </div>
-          <p className="text-sm text-ink-subtle">
-            Showing or downloading the key is recorded in the server's log, without the key.
-          </p>
         </>
       )}
       {failure !== null && (

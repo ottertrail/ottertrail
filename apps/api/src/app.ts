@@ -572,6 +572,11 @@ export function buildApp({
       db,
       auth: dashboard.auth,
       trustedOrigins: dashboard.trustedOrigins,
+      publicUrl: dashboard.publicUrl,
+      // The key, the destination, and turning backups off need the current password.
+      passwordTries,
+      emailConfigured: notifications.emailConfigured ?? false,
+      sealer,
       objectStore: backups.objectStore ?? null,
       stackGarage: backups.stackGarage ?? false,
       // Without either secret (a test that only lists routes), one for this process alone.

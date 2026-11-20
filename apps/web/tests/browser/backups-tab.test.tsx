@@ -7,6 +7,7 @@ import {
   BACKUPS_REUSED,
   BACKUPS_SEPARATE,
   FAKE_KEY,
+  FAKE_PASSWORD,
   fakeBackups,
 } from "./fake-backups.ts";
 import { renderApp } from "./render.tsx";
@@ -37,14 +38,12 @@ describe("the Backups tab's states", () => {
     renderApp(BACKUPS_TAB);
 
     await expect.element(page.getByRole("tab", { name: "Backups", selected: true })).toBeVisible();
-    await expect
-      .element(status().getByText(/^Backups are off\. Turn them on under Schedule and destination/))
-      .toBeVisible();
+    await expect.element(status().getByText(/^Backups are off\.$/)).toBeVisible();
     await expect
       .element(form().getByRole("switch", { name: "Back up every day" }))
       .not.toBeChecked();
     await expect
-      .element(form().getByText(/This instance has no object store, so backups need a destination/))
+      .element(form().getByText(/^Use an S3-compatible bucket, such as Amazon S3/))
       .toBeVisible();
     for (const name of [
       "Endpoint",
@@ -57,12 +56,10 @@ describe("the Backups tab's states", () => {
       await expect.element(form().getByLabelText(name, { exact: true })).toBeVisible();
     }
     await expect.element(form().getByLabelText("Time of day")).toHaveValue("03:00");
-    await expect
-      .element(form().getByText("In the instance's timezone, Asia/Singapore."))
-      .toBeVisible();
+    await expect.element(form().getByText("Asia/Singapore", { exact: true })).toBeVisible();
     await expect.element(status().getByRole("button", { name: "Back up now" })).toBeDisabled();
     await expect
-      .element(keySection().getByText(/^The key is made when you first turn backups on and save/))
+      .element(keySection().getByText(/^Made when backups are first turned on\./))
       .toBeVisible();
   });
 
@@ -73,7 +70,7 @@ describe("the Backups tab's states", () => {
     await expect
       .element(
         form().getByText(
-          /^Backups go to the object store that holds session replays and source maps \(acct\.r2\.cloudflarestorage\.com\)/,
+          /^Backups use the object store's connection \(acct\.r2\.cloudflarestorage\.com\)/,
         ),
       )
       .toBeVisible();
@@ -103,7 +100,7 @@ describe("the Backups tab's states", () => {
     await expect
       .element(
         form().getByText(
-          /^Replays and source maps are in this stack's own Garage, on this server's disk/,
+          /^The object store is this server's own Garage, so a backup there isn't a backup/,
         ),
       )
       .toBeVisible();
@@ -114,9 +111,7 @@ describe("the Backups tab's states", () => {
     const secret = form().getByLabelText("Secret access key");
     await expect.element(secret).toHaveValue("");
     await expect.element(secret).toHaveAttribute("type", "password");
-    await expect
-      .element(form().getByText(/^A secret is saved\. It is never shown again/))
-      .toBeVisible();
+    await expect.element(form().getByText(/^Saved, and never shown again/)).toBeVisible();
   });
 
   test("the key not yet saved: a reminder that stays until the owner confirms", async () => {
@@ -128,7 +123,7 @@ describe("the Backups tab's states", () => {
     await expect
       .element(
         keySection().getByText(
-          /^If the server is lost and nobody has the key, the backups can't be read by anyone/,
+          /^If the server and the key are both lost, the backups can't be restored/,
         ),
       )
       .toBeVisible();
@@ -198,12 +193,14 @@ describe("the schedule and destination", () => {
     await form().getByLabelText("Bucket").fill("acme-backups");
     await form().getByLabelText("Access key ID").fill("AKIAEXAMPLE");
     await form().getByLabelText("Secret access key").fill("the-secret");
+    // A new destination needs the current password.
+    await form().getByLabelText("Current password").fill(FAKE_PASSWORD);
     await form().getByLabelText("Days to keep").fill("30");
     await save().click();
 
     await expect.element(form().getByText("No unsaved changes")).toBeVisible();
     await expect.element(form().getByLabelText("Secret access key")).toHaveValue("");
-    await expect.element(form().getByText(/^A secret is saved/)).toBeVisible();
+    await expect.element(form().getByText(/^Saved, and never shown again/)).toBeVisible();
     expect(api.bodies.find((body) => body.path === "/api/settings/backups")?.body).toEqual({
       enabled: true,
       timeOfDay: "03:00",
@@ -214,7 +211,10 @@ describe("the schedule and destination", () => {
       region: "eu-central-1",
       accessKeyId: "AKIAEXAMPLE",
       secretAccessKey: "the-secret",
+      currentPassword: FAKE_PASSWORD,
     });
+    // The password field goes once saved.
+    await expect.element(form().getByLabelText("Current password")).not.toBeInTheDocument();
     // Turning on made the key: the reminder shows.
     await expect
       .element(keySection().getByText("Save the backup key somewhere other than this server"))
@@ -224,7 +224,9 @@ describe("the schedule and destination", () => {
   test("a reused destination saves no endpoint or keys", async () => {
     const api = installFakeApi({ backups: fakeBackups({ view: BACKUPS_REUSED }) });
     renderApp(BACKUPS_TAB);
+    await expect.element(form().getByLabelText("Current password")).not.toBeInTheDocument();
     await form().getByLabelText("Folder").fill("instance-1");
+    await form().getByLabelText("Current password").fill(FAKE_PASSWORD);
     await save().click();
     await expect.element(form().getByText("No unsaved changes")).toBeVisible();
     expect(api.bodies.find((body) => body.path === "/api/settings/backups")?.body).toEqual({
@@ -233,6 +235,7 @@ describe("the schedule and destination", () => {
       keepDays: 14,
       bucket: "acme-backups",
       prefix: "instance-1",
+      currentPassword: FAKE_PASSWORD,
     });
   });
 
@@ -293,16 +296,34 @@ describe("the schedule and destination", () => {
   });
 });
 
+describe("turning backups off", () => {
+  test("needs the password, and then shows since when and by whom they are off", async () => {
+    const api = installFakeApi({ backups: fakeBackups({ view: BACKUPS_REUSED }) });
+    renderApp(BACKUPS_TAB);
+    await form().getByRole("switch", { name: "Back up every day" }).click();
+    await expect.element(form().getByLabelText("Current password")).toBeVisible();
+    await form().getByLabelText("Current password").fill(FAKE_PASSWORD);
+    await save().click();
+    await expect.element(form().getByText("No unsaved changes")).toBeVisible();
+    // 04:00 UTC is noon in Singapore.
+    await expect
+      .element(
+        status().getByText(/Backups are off since 20 Nov 2026, 12:00, turned off by Test Owner\./),
+      )
+      .toBeVisible();
+    expect(api.bodies.find((body) => body.path === "/api/settings/backups")?.body).toMatchObject({
+      enabled: false,
+      currentPassword: FAKE_PASSWORD,
+    });
+  });
+});
+
 describe("Back up now and the key", () => {
   test("Back up now asks the worker, and says so", async () => {
     const api = installFakeApi({ backups: fakeBackups({ view: BACKUPS_REUSED }) });
     renderApp(BACKUPS_TAB);
     await status().getByRole("button", { name: "Back up now" }).click();
-    await expect
-      .element(
-        status().getByText("Back up now is asked for: the worker starts it within a minute."),
-      )
-      .toBeVisible();
+    await expect.element(status().getByText("Backup starts within a minute.")).toBeVisible();
     await expect.element(status().getByRole("button", { name: "Back up now" })).toBeDisabled();
     await expect.element(status().getByRole("button", { name: "Test restore" })).toBeDisabled();
     expect(api.requests).toContain("/api/settings/backups/run");
@@ -315,6 +336,14 @@ describe("Back up now and the key", () => {
 
     await expect.element(keySection().getByText(FAKE_KEY.recipient)).toBeVisible();
     expect(api.requests).not.toContain("/api/settings/backups/key");
+    // Both need the current password.
+    await expect.element(keySection().getByRole("button", { name: "Show key" })).toBeDisabled();
+    await keySection().getByLabelText("Current password").fill("wrong one");
+    await keySection().getByRole("button", { name: "Show key" }).click();
+    await expect
+      .element(keySection().getByText("The current password is incorrect. Enter it again."))
+      .toBeVisible();
+    await keySection().getByLabelText("Current password").fill(FAKE_PASSWORD);
     await keySection().getByRole("button", { name: "Show key" }).click();
     await expect.element(keySection().getByText(FAKE_KEY.key)).toBeVisible();
     expect(api.requests).toContain("/api/settings/backups/key");
@@ -329,6 +358,7 @@ describe("Back up now and the key", () => {
     ) {
       clicked.push({ download: this.download, href: this.href });
     });
+    await keySection().getByLabelText("Current password").fill(FAKE_PASSWORD);
     await keySection().getByRole("button", { name: "Download key file" }).click();
     await expect.poll(() => clicked).toHaveLength(1);
     expect(clicked[0]?.download).toBe("ottertrail-backup-key-acme-inc.txt");

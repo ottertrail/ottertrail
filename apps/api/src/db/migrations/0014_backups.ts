@@ -19,6 +19,10 @@ import { type Kysely, sql } from "kysely";
  *   index allows one running row.
  * - storage_warnings takes two more warnings: the last backup failed, and
  *   a backup is overdue (storage/warnings.ts).
+ * - account_emails takes `backup_changed`: the owner hears when the key is
+ *   shown or downloaded, the destination changes, or backups are turned off
+ *   (backups/routes.ts). `disabled_at` and `disabled_by` (a name) say since
+ *   when, and by whom, backups are off.
  */
 export async function up(db: Kysely<unknown>): Promise<void> {
   await sql`
@@ -43,6 +47,8 @@ export async function up(db: Kysely<unknown>): Promise<void> {
       schedule_from              timestamptz,
       last_slot                  date,
       retry_at                   timestamptz,
+      disabled_at                timestamptz,
+      disabled_by                text,
       backup_requested_at        timestamptz,
       test_restore_requested_at  timestamptz,
       updated_at                 timestamptz not null default now(),
@@ -79,9 +85,22 @@ export async function up(db: Kysely<unknown>): Promise<void> {
         'backup_space', 'disk_used', 'replay_budget', 'source_map_budget', 'budgets_exceed_disk',
         'backup_failed', 'backup_overdue'))
   `.execute(db);
+  await sql`
+    alter table account_emails
+      drop constraint account_emails_kind_check,
+      add constraint account_emails_kind_check check (kind in ('password_reset', 'reset_link',
+        'password_changed', 'invitation', 'email_changed', 'backup_changed'))
+  `.execute(db);
 }
 
 export async function down(db: Kysely<unknown>): Promise<void> {
+  await sql`delete from account_emails where kind = 'backup_changed'`.execute(db);
+  await sql`
+    alter table account_emails
+      drop constraint account_emails_kind_check,
+      add constraint account_emails_kind_check check (kind in ('password_reset', 'reset_link',
+        'password_changed', 'invitation', 'email_changed'))
+  `.execute(db);
   await sql`delete from storage_warnings where warning in ('backup_failed', 'backup_overdue')`.execute(
     db,
   );

@@ -484,6 +484,7 @@ export type AccountEmailKind =
   | "password_reset"
   | "reset_link"
   | "password_changed"
+  | "backup_changed"
   | "invitation"
   | "email_changed";
 
@@ -616,6 +617,9 @@ export interface BackupSettingsTable {
   last_slot: string | null;
   /** When a failed backup is tried once more. */
   retry_at: Date | null;
+  /** Since when backups are off, and the name of who turned them off; null while on, or never on. */
+  disabled_at: Date | null;
+  disabled_by: string | null;
   backup_requested_at: Date | null;
   test_restore_requested_at: Date | null;
   updated_at: ColumnType<Date, Date | undefined, Date>;

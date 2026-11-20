@@ -78,6 +78,8 @@ export interface BackupSettings {
   scheduleFrom: Date | null;
   lastSlot: string | null;
   retryAt: Date | null;
+  disabledAt: Date | null;
+  disabledBy: string | null;
   backupRequestedAt: Date | null;
   testRestoreRequestedAt: Date | null;
 }
@@ -106,6 +108,8 @@ export async function readBackupSettings(
     scheduleFrom: row.schedule_from,
     lastSlot: row.last_slot,
     retryAt: row.retry_at,
+    disabledAt: row.disabled_at,
+    disabledBy: row.disabled_by,
     backupRequestedAt: row.backup_requested_at,
     testRestoreRequestedAt: row.test_restore_requested_at,
   };
@@ -158,10 +162,14 @@ export function destinationOf(
     return { problem: "Choose a folder for the backups, such as ottertrail-backups." };
   }
   if (mode.mode === "object_store") {
+    const bucket = fields.bucket ?? mode.store.bucket;
+    if (bucket === mode.store.bucket && overlapsObjects(prefix)) {
+      return { problem: OVERLAP_PROBLEM };
+    }
     return {
       url: mode.store.url,
       region: mode.store.region,
-      bucket: fields.bucket ?? mode.store.bucket,
+      bucket,
       prefix,
       accessKeyId: mode.store.accessKeyId,
       secretAccessKey: mode.store.secretAccessKey,
@@ -181,11 +189,11 @@ export function destinationOf(
     if (fields.secretSealed === null) {
       return { problem: "Enter the destination's secret access key on the Backups tab." };
     }
-    secret = secrets.openSecret(fields.secretSealed);
+    secret = secrets.openSecret(fields.secretSealed, endpoint, accessKeyId);
     if (secret === null) {
       return {
         problem:
-          "The saved secret access key can't be read: AUTH_SECRET changed since it was saved. Enter the secret again on the Backups tab and save.",
+          "The saved secret access key can't be read: AUTH_SECRET changed since it was saved, or it was saved for another endpoint or access key. Enter the secret again on the Backups tab and save.",
       };
     }
   }
@@ -200,6 +208,24 @@ export function destinationOf(
     objectStoreBucket: null,
   };
 }
+
+/**
+ * Where the object store keeps its objects (replays/replays.ts,
+ * source-maps/source-maps.ts): object backups list only these, and a
+ * backup folder in the store's own bucket may not overlap them.
+ */
+export const OBJECT_PREFIXES = ["replays/", "source-maps/"] as const;
+
+/** Whether a backup folder overlaps the store's objects: "replays", "replays/x", or "source-maps". */
+export function overlapsObjects(prefix: string): boolean {
+  const folder = `${prefix}/`;
+  return OBJECT_PREFIXES.some(
+    (objects) => folder.startsWith(objects) || objects.startsWith(folder),
+  );
+}
+
+export const OVERLAP_PROBLEM =
+  "This folder holds the object store's session replays or source maps, which share this bucket. Choose a folder of its own, such as ottertrail-backups.";
 
 /**
  * An endpoint as the form sends it, as an origin; null when it is not an

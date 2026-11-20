@@ -1,31 +1,39 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { copyFile, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { GetObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3";
+import {
+  CreateMultipartUploadCommand,
+  GetObjectCommand,
+  ListMultipartUploadsCommand,
+  PutObjectCommand,
+} from "@aws-sdk/client-s3";
 import { sql } from "kysely";
 import { afterAll, beforeAll, describe, expect, test } from "vite-plus/test";
 
-import { decrypted } from "../src/backups/archive.ts";
+import { decrypted, encrypted } from "../src/backups/archive.ts";
 import { BackupJob, RETRY_AFTER_MS } from "../src/backups/job.ts";
 import {
   applyRetention,
   BackupError,
   type BackupSources,
+  type PostgresDump,
   manifestSchema,
   runBackup,
   testRestore,
 } from "../src/backups/run.ts";
-import { backupClient, listBackups } from "../src/backups/s3.ts";
+import { backupClient, deleteBackup, listBackups, uploadStream } from "../src/backups/s3.ts";
 import { BackupSecrets, makeBackupKey } from "../src/backups/secrets.ts";
 import type { Destination } from "../src/backups/settings.ts";
 import { clickHouseDataBytes } from "../src/backups/sources.ts";
+import { WORKER_STOPPED } from "../src/backups/state.ts";
 import { identifier } from "../src/clickhouse/clickhouse.ts";
 import { LOCAL_OBJECT_STORE } from "../src/config.ts";
 import { addressPolicy, systemLookup } from "../src/outbound/addresses.ts";
-import { checkObjectBackup } from "../src/storage/object-backup.ts";
+import { backupObjects, checkObjectBackup } from "../src/storage/object-backup.ts";
 import { s3Client, s3ObjectStore } from "../src/storage/object-store.ts";
 import { storageSourcesOf } from "../src/storage/usage.ts";
 import { StorageWarningJob } from "../src/storage/warning-job.ts";
@@ -61,7 +69,9 @@ let dashboard: Dashboard;
 let containers: DevContainers;
 let key: { identity: string; recipient: string };
 let projectId: string;
-const objectPrefix = `${run}-objects/`;
+/** The test's objects, under the store's own prefixes, in folders of their own. */
+const objectPrefixes = [`replays/${run}/`, `source-maps/${run}/`];
+const [replayFolder = "", mapFolder = ""] = objectPrefixes;
 const store = s3ObjectStore(LOCAL_OBJECT_STORE);
 const s3 = s3Client(LOCAL_OBJECT_STORE);
 
@@ -86,7 +96,7 @@ function sources(disk = { totalBytes: 100 * GiB, freeBytes: 60 * GiB }): BackupS
     clickhouseDatabase: dashboard.clickhouseDatabase,
     clickhouseFiles: containerClickHouseFiles(containers),
     objectStore: LOCAL_OBJECT_STORE,
-    objectPrefix,
+    objectPrefixes,
     readDisk: async () => disk,
     clickhouseBytes: () => clickHouseDataBytes(dashboard.reader.client),
   };
@@ -103,8 +113,8 @@ async function getBytes(keyName: string): Promise<Buffer> {
 }
 
 /** Puts a one-byte object, "x". */
-const put = (keyName: string) =>
-  s3.send(new PutObjectCommand({ Bucket: LOCAL_OBJECT_STORE.bucket, Key: keyName, Body: "x" }));
+const put = (keyName: string, body: Buffer | string = "x") =>
+  s3.send(new PutObjectCommand({ Bucket: LOCAL_OBJECT_STORE.bucket, Key: keyName, Body: body }));
 
 /** The test's backups, oldest first. */
 const runs = () =>
@@ -143,21 +153,15 @@ beforeAll(async () => {
       path: `/page/${index}`,
     })),
   );
-  await store.put(
-    `${objectPrefix}maps/app.js.map`,
-    Buffer.from('{"version":3}'),
-    "application/json",
-  );
-  await store.put(
-    `${objectPrefix}replays/one`,
-    Buffer.alloc(70_000, 7),
-    "application/octet-stream",
-  );
-  await store.put(`${objectPrefix}empty`, new Uint8Array(), "text/plain");
+  await store.put(`${mapFolder}app.js.map`, Buffer.from('{"version":3}'), "application/json");
+  await store.put(`${replayFolder}one`, Buffer.alloc(70_000, 7), "application/octet-stream");
+  await store.put(`${replayFolder}empty`, new Uint8Array(), "text/plain");
+  // Not the store's: a key outside replays/ and source-maps/ is never backed up.
+  await store.put(`${run}-not-objects/stray`, Buffer.from("stray"), "text/plain");
 }, 60_000);
 
 afterAll(async () => {
-  await store.deletePrefix(objectPrefix);
+  for (const prefix of [...objectPrefixes, `${run}-not-objects/`]) await store.deletePrefix(prefix);
   await store.deletePrefix(`test-backups/${run}/`);
   store.close();
   s3.destroy();
@@ -176,12 +180,13 @@ describe("a whole backup to an S3 destination", () => {
         sources: sources(),
         destination: destination(prefix),
         client,
-        recipient: key.recipient,
+        key,
         version: OTTERTRAIL_VERSION,
         onStep: (step) => void steps.push(step),
       });
       name = result.name;
       expect(steps).toEqual([
+        "cleaning up after earlier runs",
         "checking free disk space",
         "dumping PostgreSQL",
         "backing up ClickHouse",
@@ -215,6 +220,7 @@ describe("a whole backup to an S3 destination", () => {
       name,
       instance: { version: OTTERTRAIL_VERSION },
       encryption: { format: "age", recipient: key.recipient },
+      mac: expect.stringMatching(/^hmac-sha256:[0-9a-f]{64}$/),
       clickhouseDatabase: dashboard.clickhouseDatabase,
       objects: { bucket: LOCAL_OBJECT_STORE.bucket, count: 3, gone: 0 },
     });
@@ -344,9 +350,9 @@ describe("a whole backup to an S3 destination", () => {
       const { manifest, checked } = await checkObjectBackup(LOCAL_OBJECT_STORE, objects);
       expect(manifest.bucket).toBe(LOCAL_OBJECT_STORE.bucket);
       expect(checked.map((entry) => entry.key).toSorted()).toEqual([
-        `${objectPrefix}empty`,
-        `${objectPrefix}maps/app.js.map`,
-        `${objectPrefix}replays/one`,
+        `${replayFolder}empty`,
+        `${replayFolder}one`,
+        `${mapFolder}app.js.map`,
       ]);
     } finally {
       await rm(dir, { recursive: true, force: true });
@@ -372,20 +378,35 @@ describe("a whole backup to an S3 destination", () => {
       const plainOf = (part: string) =>
         manifest.parts.find((entry) => entry.name === part)?.plain.sha256;
 
-      const result = spawnSync("sh", [join(folder, "restore.sh"), "--from-s3", "--key", keyFile], {
+      // Without a terminal to ask in, and without --yes, it restores nothing.
+      const unasked = spawnSync("sh", [join(folder, "restore.sh"), "--from-s3", "--key", keyFile], {
         encoding: "utf8",
         input: "",
-        env: {
-          ...process.env,
-          COMPOSE: `${process.execPath} ${fake}`,
-          BACKUP_S3_ENDPOINT: LOCAL_OBJECT_STORE.url,
-          BACKUP_S3_REGION: LOCAL_OBJECT_STORE.region,
-          BACKUP_S3_BUCKET: LOCAL_OBJECT_STORE.bucket,
-          BACKUP_S3_PREFIX: prefix,
-          BACKUP_S3_ACCESS_KEY_ID: LOCAL_OBJECT_STORE.accessKeyId,
-          BACKUP_S3_SECRET_ACCESS_KEY: LOCAL_OBJECT_STORE.secretAccessKey,
-        },
+        env: { ...process.env, COMPOSE: `${process.execPath} ${fake}`, ...s3Env(prefix) },
       });
+      expect(unasked.status).toBe(1);
+      expect(unasked.stdout).toContain(`Chosen: the backup started ${manifest.startedAt} (UTC)`);
+      expect(unasked.stderr).toContain("Run this in a terminal to confirm, or add --yes");
+      expect(await readFile(log, "utf8")).not.toContain("restore-backup.mjs download");
+
+      const result = spawnSync(
+        "sh",
+        [join(folder, "restore.sh"), "--from-s3", "--yes", "--key", keyFile],
+        {
+          encoding: "utf8",
+          input: "",
+          env: {
+            ...process.env,
+            COMPOSE: `${process.execPath} ${fake}`,
+            BACKUP_S3_ENDPOINT: LOCAL_OBJECT_STORE.url,
+            BACKUP_S3_REGION: LOCAL_OBJECT_STORE.region,
+            BACKUP_S3_BUCKET: LOCAL_OBJECT_STORE.bucket,
+            BACKUP_S3_PREFIX: prefix,
+            BACKUP_S3_ACCESS_KEY_ID: LOCAL_OBJECT_STORE.accessKeyId,
+            BACKUP_S3_SECRET_ACCESS_KEY: LOCAL_OBJECT_STORE.secretAccessKey,
+          },
+        },
+      );
       expect({ status: result.status, failed: /failed/i.test(result.stderr) }).toEqual({
         status: 0,
         failed: false,
@@ -395,6 +416,10 @@ describe("a whole backup to an S3 destination", () => {
       );
       expect(result.stdout).toMatch(new RegExp(`^${name} .* whole$`, "m"));
       expect(result.stderr).toContain(`Downloaded ${name}`);
+      // The chosen backup is named, with its time and version, before anything is restored.
+      expect(result.stdout).toContain(
+        `Chosen: the backup started ${manifest.startedAt} (UTC), made by Ottertrail ${OTTERTRAIL_VERSION}.`,
+      );
       expect(result.stdout).toContain(
         `Restored ottertrail-${name} from ${LOCAL_OBJECT_STORE.bucket}/${prefix}, and deleted the downloaded files.`,
       );
@@ -414,6 +439,126 @@ describe("a whole backup to an S3 destination", () => {
     }
   }, 120_000);
 
+  test("a forged backup with consistent checksums is refused by Test restore and restore.sh", async () => {
+    // Someone with write access to the bucket, but not the key: parts that
+    // decrypt (age needs only the public key, which the manifest names), and
+    // a manifest whose checksums match them, newer than the real backup.
+    const forged = "2099-01-01T000000Z";
+    const folderKey = `${prefix}/${forged}`;
+    const real = manifestSchema.parse(
+      JSON.parse((await getBytes(`${prefix}/${name}/manifest.json`)).toString("utf8")),
+    );
+    const parts = [];
+    for (const part of real.parts) {
+      const plain = Buffer.from(`forged ${part.name}: COPY ... TO PROGRAM 'evil'`);
+      const sealed = await encryptAll(plain, key.recipient);
+      await put(`${folderKey}/${part.file}`, sealed);
+      parts.push({
+        ...part,
+        plain: { bytes: plain.length, sha256: sha256(plain) },
+        encrypted: { bytes: sealed.length, sha256: sha256(sealed) },
+      });
+    }
+    const client = backupClient(destination(prefix), RULES);
+    const folder = await mkdtemp(join(tmpdir(), "ottertrail-forged-"));
+    try {
+      for (const mac of [undefined, "hmac-sha256:" + "0".repeat(64), real.mac]) {
+        const manifest = {
+          ...real,
+          name: forged,
+          parts,
+          ...(mac === undefined ? { mac: "" } : { mac }),
+        };
+        await put(`${folderKey}/manifest.json`, Buffer.from(JSON.stringify(manifest)));
+        await expect(
+          testRestore({ client, destination: destination(prefix), identity: key.identity }),
+        ).rejects.toThrow(`The manifest of ${forged} is not signed with this backup key`);
+      }
+      // restore-backup, as restore.sh runs it: refused, and nothing written.
+      const downloaded = spawnSync(
+        process.execPath,
+        [
+          join(API, "scripts/restore-backup.ts"),
+          "download",
+          forged,
+          await keyFileIn(folder),
+          folder,
+        ],
+        { encoding: "utf8", cwd: API, env: { ...process.env, ...s3Env(prefix) } },
+      );
+      expect(downloaded.status).toBe(1);
+      expect(downloaded.stderr).toContain(
+        `The manifest of ${forged} is not signed with this backup key`,
+      );
+      expect(
+        (await readdir(folder)).filter((file) => file !== "ottertrail-backup-key.txt"),
+      ).toEqual([]);
+
+      // restore.sh picks it as the latest, and stops before restoring anything.
+      await copyFile(join(DEPLOY, "restore.sh"), join(folder, "restore.sh"));
+      const log = join(folder, "compose.log");
+      await writeFile(join(folder, "fake-compose.mjs"), fakeCompose(log));
+      const result = spawnSync(
+        "sh",
+        [
+          join(folder, "restore.sh"),
+          "--from-s3",
+          "--yes",
+          "--key",
+          join(folder, "ottertrail-backup-key.txt"),
+        ],
+        {
+          encoding: "utf8",
+          input: "",
+          env: {
+            ...process.env,
+            COMPOSE: `${process.execPath} ${join(folder, "fake-compose.mjs")}`,
+            ...s3Env(prefix),
+          },
+        },
+      );
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain(
+        `The manifest of ${forged} is not signed with this backup key`,
+      );
+      expect(result.stderr).toContain("Nothing was changed: the databases were not touched.");
+      const calls = await readFile(log, "utf8");
+      expect(calls).not.toContain("pg_restore");
+      expect(calls).not.toContain("restore-backup.mjs download");
+    } finally {
+      client.destroy();
+      await rm(folder, { recursive: true, force: true });
+      await deleteBackup(s3, LOCAL_OBJECT_STORE.bucket, prefix, forged);
+    }
+  }, 120_000);
+
+  test("a download that fails part way leaves no decrypted file", async () => {
+    const folder = await mkdtemp(join(tmpdir(), "ottertrail-partial-"));
+    const partKey = `${prefix}/${name}/objects.tar.age`;
+    const original = await getBytes(partKey);
+    const client = backupClient(destination(prefix), RULES);
+    try {
+      // The last part is damaged: the first two were decrypted and written before it failed.
+      const damaged = Buffer.from(original);
+      const at = Math.floor(damaged.length / 2);
+      damaged[at] = (damaged[at] ?? 0) ^ 0xff;
+      await put(partKey, damaged);
+      await expect(
+        testRestore({
+          client,
+          destination: destination(prefix),
+          identity: key.identity,
+          writeTo: folder,
+        }),
+      ).rejects.toThrow(/objects\.tar\.age of .* doesn't match its checksum/);
+      expect(await readdir(folder)).toEqual([]);
+    } finally {
+      await put(partKey, original);
+      client.destroy();
+      await rm(folder, { recursive: true, force: true });
+    }
+  }, 120_000);
+
   test("Test restore checks every checksum, and catches a damaged part", async () => {
     const client = backupClient(destination(prefix), RULES);
     try {
@@ -425,11 +570,36 @@ describe("a whole backup to an S3 destination", () => {
       expect(checked).toMatchObject({ name, objects: 3 });
       expect(checked.parts.map((part) => part.name)).toEqual(["postgres", "clickhouse", "objects"]);
 
-      // Another key cannot read it.
+      // Another key cannot read it: its manifest is not signed with that key.
       const other = await makeBackupKey();
       await expect(
         testRestore({ client, destination: destination(prefix), identity: other.identity }),
-      ).rejects.toThrow(/can't be decrypted with this instance's backup key/);
+      ).rejects.toThrow(/is not signed with this backup key/);
+
+      // A part replaced by another valid age file to the same key: age's own
+      // check passes, the manifest's checksums do not.
+      const replacedKey = `${prefix}/${name}/postgres.dump.age`;
+      const original = await getBytes(replacedKey);
+      await s3.send(
+        new PutObjectCommand({
+          Bucket: LOCAL_OBJECT_STORE.bucket,
+          Key: replacedKey,
+          Body: await encryptAll(
+            Buffer.from("PGDMP but not the dump this backup made"),
+            key.recipient,
+          ),
+        }),
+      );
+      await expect(
+        testRestore({ client, destination: destination(prefix), identity: key.identity }),
+      ).rejects.toThrow(`postgres.dump.age of ${name} doesn't match its checksum in the manifest`);
+      await s3.send(
+        new PutObjectCommand({
+          Bucket: LOCAL_OBJECT_STORE.bucket,
+          Key: replacedKey,
+          Body: original,
+        }),
+      );
 
       // One byte changed in the middle of ClickHouse's part, the size the same.
       const partKey = `${prefix}/${name}/clickhouse.zip.age`;
@@ -459,7 +629,7 @@ describe("before a backup", () => {
         sources: sources({ totalBytes: 100 * GiB, freeBytes: 6 * GiB }),
         destination: destination(prefix),
         client,
-        recipient: key.recipient,
+        key,
         version: OTTERTRAIL_VERSION,
       });
       await expect(attempt).rejects.toBeInstanceOf(BackupError);
@@ -471,6 +641,144 @@ describe("before a backup", () => {
       client.destroy();
     }
   });
+});
+
+describe("a bucket shared with the object store", () => {
+  test("a backup folder overlapping the store's objects is refused before anything runs", async () => {
+    const prefix = `replays/${run}/backups`;
+    const client = backupClient(destination(prefix), RULES);
+    try {
+      await expect(
+        runBackup({
+          sources: sources(),
+          destination: destination(prefix),
+          client,
+          key,
+          version: OTTERTRAIL_VERSION,
+        }),
+      ).rejects.toThrow(/^This folder holds the object store's session replays or source maps/);
+      expect(await listBackups(client, LOCAL_OBJECT_STORE.bucket, prefix)).toEqual([]);
+    } finally {
+      client.destroy();
+    }
+  });
+
+  test("backup.sh's object backup lists only replays/ and source-maps/, never the backups beside them", async () => {
+    const fake = await startListingS3({
+      "replays/p1/r1": "replay",
+      "source-maps/p1/m1": "map",
+      "ottertrail-backups/2026-11-20T030000Z/manifest.json": "a backup",
+      "replays-elsewhere/x": "not the store's",
+    });
+    const dir = await mkdtemp(join(tmpdir(), "ottertrail-objects-"));
+    try {
+      const summary = await backupObjects(
+        { ...LOCAL_OBJECT_STORE, url: fake.url, bucket: "shared" },
+        join(dir, "out"),
+      );
+      expect(summary.count).toBe(2);
+      const manifest = JSON.parse(await readFile(join(dir, "out", "manifest.json"), "utf8"));
+      expect(manifest.objects.map((entry: { key: string }) => entry.key)).toEqual([
+        "replays/p1/r1",
+        "source-maps/p1/m1",
+      ]);
+      expect(fake.listed).toEqual(["replays/", "source-maps/"]);
+    } finally {
+      await fake.close();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("an interrupted run", () => {
+  test("an abort during ClickHouse's backup stops it, and deletes its file and what was uploaded", async () => {
+    const prefix = `test-backups/${run}/aborted`;
+    const client = backupClient(destination(prefix), RULES);
+    const controller = new AbortController();
+    const zips: string[] = [];
+    const files = containerClickHouseFiles(containers);
+    try {
+      const attempt = runBackup({
+        sources: {
+          ...sources(),
+          clickhouseFiles: {
+            ...files,
+            read: async (zip) => {
+              zips.push(zip);
+              // Aborted while the part streams: the upload and the run stop.
+              controller.abort();
+              return files.read(zip);
+            },
+          },
+        },
+        destination: destination(prefix),
+        client,
+        key,
+        version: OTTERTRAIL_VERSION,
+        signal: controller.signal,
+      });
+      await expect(attempt).rejects.toBeInstanceOf(BackupError);
+      expect(zips).toHaveLength(1);
+      expect(clickHouseFileExists(containers, zips[0] ?? "")).toBe(false);
+      expect(await listBackups(client, LOCAL_OBJECT_STORE.bucket, prefix)).toEqual([]);
+    } finally {
+      client.destroy();
+    }
+  }, 120_000);
+
+  test("a run starts by deleting leftover zips and aborting stale multipart uploads", async () => {
+    const prefix = `test-backups/${run}/leftovers`;
+    const leftover = "ottertrail-worker-2020-01-01T000000Z.zip";
+    execFileSync(containers.cli, [
+      "exec",
+      containers.clickhouse,
+      "touch",
+      `/var/lib/clickhouse/backups/${leftover}`,
+    ]);
+    const created = await s3.send(
+      new CreateMultipartUploadCommand({
+        Bucket: LOCAL_OBJECT_STORE.bucket,
+        Key: `${prefix}/2020-01-01T000000Z/clickhouse.zip.age`,
+      }),
+    );
+    const client = backupClient(destination(prefix), RULES);
+    try {
+      // The disk check refuses it right after the clean-up.
+      await expect(
+        runBackup({
+          sources: sources({ totalBytes: 100 * GiB, freeBytes: 1 * GiB }),
+          destination: destination(prefix),
+          client,
+          key,
+          version: OTTERTRAIL_VERSION,
+          staleUploadMs: 0,
+        }),
+      ).rejects.toThrow(/^Not enough free disk space/);
+      expect(clickHouseFileExists(containers, leftover)).toBe(false);
+      const uploads = await s3.send(
+        new ListMultipartUploadsCommand({
+          Bucket: LOCAL_OBJECT_STORE.bucket,
+          Prefix: `${prefix}/`,
+        }),
+      );
+      expect((uploads.Uploads ?? []).map((upload) => upload.UploadId)).not.toContain(
+        created.UploadId,
+      );
+    } finally {
+      client.destroy();
+    }
+  });
+
+  test("a multipart upload that fails part way is aborted, leaving no parts", async () => {
+    const keyName = `test-backups/${run}/multipart/big.age`;
+    await expect(
+      uploadStream(s3, LOCAL_OBJECT_STORE.bucket, keyName, failingSource()),
+    ).rejects.toThrow("the source failed");
+    const uploads = await s3.send(
+      new ListMultipartUploadsCommand({ Bucket: LOCAL_OBJECT_STORE.bucket, Prefix: keyName }),
+    );
+    expect(uploads.Uploads ?? []).toEqual([]);
+  }, 60_000);
 });
 
 describe("retention", () => {
@@ -550,7 +858,11 @@ describe("the worker's backups", () => {
         region: LOCAL_OBJECT_STORE.region,
         bucket: LOCAL_OBJECT_STORE.bucket,
         access_key_id: LOCAL_OBJECT_STORE.accessKeyId,
-        secret_sealed: secrets.sealSecret(LOCAL_OBJECT_STORE.secretAccessKey),
+        secret_sealed: secrets.sealSecret(
+          LOCAL_OBJECT_STORE.secretAccessKey,
+          LOCAL_OBJECT_STORE.url,
+          LOCAL_OBJECT_STORE.accessKeyId,
+        ),
         key_sealed: secrets.sealKey(key.identity),
         key_recipient: key.recipient,
         key_created_at: clock,
@@ -715,6 +1027,63 @@ describe("the worker's backups", () => {
     expect(row.last_slot).toBe("2026-10-25");
   });
 
+  test("a run another worker marked stopped stops, and leaves the row as that worker left it", async () => {
+    await dashboard.db
+      .updateTable("backup_settings")
+      .set({ backup_requested_at: new Date(), retry_at: null })
+      .execute();
+    // pg_dump that never ends: a chunk every 20 ms.
+    const state = { stopped: false };
+    const endless: PostgresDump = {
+      stdout: (async function* () {
+        while (!state.stopped) {
+          yield Buffer.alloc(1024, 1);
+          await new Promise((resolve) => setTimeout(resolve, 20));
+        }
+      })(),
+      done: new Promise(() => undefined),
+      kill: () => {
+        state.stopped = true;
+      },
+    };
+    clock = new Date();
+    const worker = new BackupJob({
+      db: dashboard.db,
+      objectStore: null,
+      stackGarage: false,
+      secrets,
+      rules: RULES,
+      sources: { ...sources(), dumpPostgres: () => endless },
+      version: OTTERTRAIL_VERSION,
+      log: () => undefined,
+      now: () => new Date(),
+      heartbeatMs: 50,
+    });
+    const ticking = worker.tick();
+    // Another worker takes it for stopped.
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    await dashboard.db
+      .updateTable("backup_runs")
+      .set({ status: "failed", finished_at: new Date(), error: WORKER_STOPPED })
+      .where("status", "=", "running")
+      .execute();
+    expect(await ticking).toEqual({ kind: "backup", trigger: "manual" });
+    expect(state.stopped).toBe(true);
+    const last = (await runs()).at(-1);
+    expect(last).toMatchObject({ status: "failed", error: WORKER_STOPPED });
+    // When a worker next looks, that stopped backup gets its one retry.
+    const retry = await dashboard.db
+      .selectFrom("backup_settings")
+      .select("retry_at")
+      .executeTakeFirstOrThrow();
+    expect(retry.retry_at).toBeNull();
+    // No daily time due, so the retry is what runs.
+    await dashboard.db.updateTable("backup_settings").set({ schedule_from: new Date() }).execute();
+    const quick = job(sources({ totalBytes: 100 * GiB, freeBytes: 1 * GiB }));
+    clock = new Date();
+    expect(await quick.tick()).toEqual({ kind: "backup", trigger: "retry" });
+  }, 60_000);
+
   test("a run whose worker stopped is marked failed, and frees the next", async () => {
     const stale = new Date(clock.getTime() - 20 * 60_000);
     await dashboard.db
@@ -786,6 +1155,83 @@ if (args[0] === "exec") {
 note(joined);
 process.exit(0);
 `;
+}
+
+/** 17 MiB, past one part, then a failure. */
+async function* failingSource() {
+  yield Buffer.alloc(17 * 1024 * 1024, 1);
+  throw new Error("the source failed");
+}
+
+/** `plain` encrypted to `recipient`, as an age file. */
+async function encryptAll(plain: Buffer, recipient: string): Promise<Buffer> {
+  const chunks: Buffer[] = [];
+  const source = (async function* () {
+    yield plain;
+  })();
+  for await (const chunk of await encrypted(source, recipient)) chunks.push(Buffer.from(chunk));
+  return Buffer.concat(chunks);
+}
+
+/** The key file in `folder`, as the Backups tab downloads it. */
+async function keyFileIn(folder: string): Promise<string> {
+  const file = join(folder, "ottertrail-backup-key.txt");
+  await writeFile(file, `# a test key\n${key.identity}\n`);
+  return file;
+}
+
+/** restore.sh's settings for the dev Garage and `prefix`. */
+function s3Env(prefix: string): Record<string, string> {
+  return {
+    BACKUP_S3_ENDPOINT: LOCAL_OBJECT_STORE.url,
+    BACKUP_S3_REGION: LOCAL_OBJECT_STORE.region,
+    BACKUP_S3_BUCKET: LOCAL_OBJECT_STORE.bucket,
+    BACKUP_S3_PREFIX: prefix,
+    BACKUP_S3_ACCESS_KEY_ID: LOCAL_OBJECT_STORE.accessKeyId,
+    BACKUP_S3_SECRET_ACCESS_KEY: LOCAL_OBJECT_STORE.secretAccessKey,
+  };
+}
+
+/**
+ * A stand-in S3 bucket holding `objects`, which answers ListObjectsV2 and
+ * GetObject and records each listing's prefix.
+ */
+async function startListingS3(
+  objects: Record<string, string>,
+): Promise<{ url: string; listed: string[]; close: () => Promise<void> }> {
+  const listed: string[] = [];
+  const server = createServer((request, response) => {
+    const url = new URL(request.url ?? "/", "http://s3");
+    const [, , ...rest] = url.pathname.split("/");
+    const keyName = decodeURIComponent(rest.join("/"));
+    if (keyName === "") {
+      const prefix = url.searchParams.get("prefix") ?? "";
+      listed.push(prefix);
+      const contents = Object.keys(objects)
+        .filter((name) => name.startsWith(prefix))
+        .map(
+          (name) =>
+            `<Contents><Key>${name}</Key><Size>${objects[name]?.length ?? 0}</Size></Contents>`,
+        )
+        .join("");
+      response.writeHead(200, { "content-type": "application/xml" });
+      response.end(
+        `<?xml version="1.0" encoding="UTF-8"?><ListBucketResult><Name>shared</Name><Prefix>${prefix}</Prefix><IsTruncated>false</IsTruncated>${contents}</ListBucketResult>`,
+      );
+      return;
+    }
+    const body = Buffer.from(objects[keyName] ?? "");
+    response.writeHead(200, { "content-length": body.length, "content-type": "text/plain" });
+    response.end(body);
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  const port = typeof address === "object" && address !== null ? address.port : 0;
+  return {
+    url: `http://127.0.0.1:${port}`,
+    listed,
+    close: () => new Promise<void>((resolve) => server.close(() => resolve())),
+  };
 }
 
 function sha256(bytes: Buffer): string {

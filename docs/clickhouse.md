@@ -152,7 +152,7 @@ ClickHouse's backup may hold events from after the dump, which is mostly harmles
 
 After both, it backs up the object store's source maps and session replays. `deploy/restore.sh` puts them all back into an empty instance. How to use them: [deployment](deployment.md#backups).
 
-The worker's scheduled backups take the same three parts in the same order ([deployment](deployment.md#scheduled-backups)). ClickHouse's runs `ASYNC`, and the worker polls `system.backups` for its end, so a long backup holds no HTTP request open. It writes into the `clickhouse-backups` volume that `deploy/compose.yaml` mounts at ClickHouse's backups path and shares with the worker, which reads the file, encrypts and uploads it, and deletes it. The `ottertrail` user may run `BACKUP` and read `system.backups` (checked on 26.8.38.9).
+The worker's scheduled backups take the same three parts in the same order ([deployment](deployment.md#scheduled-backups)). ClickHouse's runs `ASYNC`, and the worker polls `system.backups` for its end, so a long backup holds no HTTP request open. It writes into the `clickhouse-backups` volume that `deploy/compose.yaml` mounts at ClickHouse's backups path and shares with the worker, which reads the file, encrypts and uploads it, and deletes it. A run that fails or is stopped first cancels the backup with `KILL QUERY` on the query `system.backups` names, and waits for its end, so ClickHouse does not finish writing a file the run deleted. The `ottertrail` user may run `BACKUP` and read `system.backups` (checked on 26.8.38.9).
 
 ## 64-bit integers
 

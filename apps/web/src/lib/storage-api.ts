@@ -87,6 +87,8 @@ export interface StorageReport {
   /** The warnings that could not be worked out now, as their figures were not measured. */
   undetermined: string[];
   warningChannels: WarningChannels;
+  /** Scheduled backups: off says since when and by whom; absent from an older API. */
+  backups?: { enabled: boolean; disabledAt: string | null; disabledBy: string | null } | null;
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>

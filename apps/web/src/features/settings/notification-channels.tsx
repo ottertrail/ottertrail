@@ -86,6 +86,7 @@ const EVENT_TEXT: Record<string, string> = {
   "alert.held_back": "Alerts held back",
   "storage.low": "Storage low",
   "storage.recovered": "Storage recovered",
+  "backups.changed": "Backup settings changed",
   test: "Test",
 };
 

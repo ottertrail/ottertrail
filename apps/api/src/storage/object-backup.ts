@@ -17,6 +17,7 @@ import {
 } from "@aws-sdk/client-s3";
 import { z } from "zod";
 
+import { OBJECT_PREFIXES } from "../backups/settings.ts";
 import type { ObjectStoreConfig } from "../config.ts";
 import { s3Client } from "./object-store.ts";
 
@@ -68,7 +69,12 @@ type ManifestEntry = ObjectManifest["objects"][number];
 export type CheckedEntry = ManifestEntry & { md5: string };
 
 export interface ObjectBackupOptions {
-  /** Only keys that start with this; tests use it to keep to their own objects. */
+  /**
+   * Only keys that start with this; tests use it to keep to their own
+   * objects. By default, the store's own prefixes (OBJECT_PREFIXES):
+   * `replays/` and `source-maps/`, never other keys a shared bucket holds,
+   * such as scheduled backups.
+   */
   prefix?: string;
   /** Keys asked for per listing page; S3's most, 1,000, unless a test needs pages. */
   pageSize?: number;
@@ -118,38 +124,40 @@ export async function backupObjects(
     const client = s3Client(config);
     let next = 0;
     try {
-      let token: string | undefined;
-      do {
-        const page = await client.send(
-          new ListObjectsV2Command({
-            Bucket: config.bucket,
-            Prefix: options.prefix,
-            MaxKeys: options.pageSize,
-            ContinuationToken: token,
-          }),
-        );
-        const keys = (page.Contents ?? []).flatMap((item) =>
-          item.Key === undefined ? [] : [item.Key],
-        );
-        await options.afterList?.(keys);
-        const files = keys.map(() => `${OBJECTS_FOLDER}/${String(++next).padStart(6, "0")}`);
-        const results = await mapLimit(keys, CONCURRENCY, (key, index) =>
-          downloadObject(client, config.bucket, key, dir, files[index] ?? ""),
-        );
-        results.forEach((entry, index) => {
-          if (entry === null) gone.push(keys[index] ?? "");
-          else entries.push(entry);
-        });
-        if (page.IsTruncated === true) {
-          // More to list, but no way to ask for it: never a backup that looks whole.
-          if (page.NextContinuationToken === undefined || page.NextContinuationToken === "") {
-            throw new Error("the store said the listing goes on, but gave no token to continue");
+      for (const prefix of options.prefix === undefined ? OBJECT_PREFIXES : [options.prefix]) {
+        let token: string | undefined;
+        do {
+          const page = await client.send(
+            new ListObjectsV2Command({
+              Bucket: config.bucket,
+              Prefix: prefix,
+              MaxKeys: options.pageSize,
+              ContinuationToken: token,
+            }),
+          );
+          const keys = (page.Contents ?? []).flatMap((item) =>
+            item.Key === undefined ? [] : [item.Key],
+          );
+          await options.afterList?.(keys);
+          const files = keys.map(() => `${OBJECTS_FOLDER}/${String(++next).padStart(6, "0")}`);
+          const results = await mapLimit(keys, CONCURRENCY, (key, index) =>
+            downloadObject(client, config.bucket, key, dir, files[index] ?? ""),
+          );
+          results.forEach((entry, index) => {
+            if (entry === null) gone.push(keys[index] ?? "");
+            else entries.push(entry);
+          });
+          if (page.IsTruncated === true) {
+            // More to list, but no way to ask for it: never a backup that looks whole.
+            if (page.NextContinuationToken === undefined || page.NextContinuationToken === "") {
+              throw new Error("the store said the listing goes on, but gave no token to continue");
+            }
+            token = page.NextContinuationToken;
+          } else {
+            token = undefined;
           }
-          token = page.NextContinuationToken;
-        } else {
-          token = undefined;
-        }
-      } while (token !== undefined);
+        } while (token !== undefined);
+      }
     } finally {
       client.destroy();
     }

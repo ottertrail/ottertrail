@@ -53,6 +53,8 @@ export interface AccountEmailParams {
   invitation: { link: string; inviter: string; invitedEmail: string };
   /** Sent to the old address. */
   email_changed: { oldEmail: string; newEmail: string };
+  /** To the owner: who did what to the backups (backups/routes.ts, BACKUP_ACTIONS), and when (ISO). */
+  backup_changed: { action: string; by: string; at: string };
 }
 
 export type AccountEmail = {
@@ -79,6 +81,7 @@ function storedParams(email: AccountEmail, sealer: LinkSealer): Record<string, s
         invitedEmail: email.params.invitedEmail,
       };
     case "email_changed":
+    case "backup_changed":
       return { ...email.params };
     default:
       return {};
@@ -212,6 +215,14 @@ export function accountEmailMessage(
       ]);
     }
   }
+  if (email.kind === "backup_changed") {
+    const by = oneLine(email.params.by);
+    const at = new Date(email.params.at).toISOString().slice(0, 16).replace("T", " ");
+    return messageOf(subjectOf(instance, "Backup settings changed"), [
+      [`${by} ${oneLine(email.params.action)} on ${instance}, at ${at} UTC.`],
+      ["If you didn't do this, change your password and check the Backups tab of Settings."],
+    ]);
+  }
   // email_changed: to the old address.
   return messageOf(subjectOf(instance, "Your account email was changed"), [
     [
@@ -337,6 +348,14 @@ function emailOf(row: DueAccountEmail, sealer: LinkSealer): AccountEmail | null 
       return link === null || inviter === null || invitedEmail === null
         ? null
         : { kind: row.kind, to: row.to, params: { link, inviter, invitedEmail } };
+    }
+    case "backup_changed": {
+      const action = textOf(params, "action");
+      const by = textOf(params, "by");
+      const at = textOf(params, "at");
+      return action === null || by === null || at === null
+        ? null
+        : { kind: row.kind, to: row.to, params: { action, by, at } };
     }
     case "email_changed": {
       const oldEmail = textOf(params, "oldEmail");

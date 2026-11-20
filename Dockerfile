@@ -34,14 +34,19 @@ WORKDIR /app
 # PostgreSQL 18's client, to match the stack's PostgreSQL 18. Debian trixie
 # ships 17, which refuses to dump a newer server, so it comes from the
 # PostgreSQL project's own Debian repository, which postgresql-common's script
-# adds with its signing key. The package is pinned to major 18: that
-# repository keeps only the latest minor, and any 18.x pg_dump dumps any 18.x
-# server. About 70 MB.
+# adds with its signing key; the repository's source list is removed after,
+# so an image built on this one runs `apt-get update` against Debian alone.
+# Pinned exactly. That repository keeps only the latest minor of each package,
+# so when this version is gone the build fails at this step: bump it to the
+# one `apt-cache policy postgresql-client-18` lists (docs/deployment.md,
+# "Images and releases"). About 70 MB.
+ARG POSTGRESQL_CLIENT_VERSION=18.7-1.pgdg13+5
 RUN apt-get update \
  && apt-get install -y --no-install-recommends ca-certificates postgresql-common \
  && /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y \
- && apt-get install -y --no-install-recommends postgresql-client-18 \
+ && apt-get install -y --no-install-recommends "postgresql-client-18=${POSTGRESQL_CLIENT_VERSION}" \
  && apt-get purge -y --auto-remove postgresql-common \
+ && rm -f /etc/apt/sources.list.d/pgdg.list /etc/apt/sources.list.d/pgdg.sources \
  && rm -rf /var/lib/apt/lists/* \
  && pg_dump --version
 # The API bundles its dependencies, so dist/ needs only Node.js. Each build

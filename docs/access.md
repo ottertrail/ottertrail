@@ -76,38 +76,39 @@ Fastify checks a route's parameters and body before the access check runs, so a 
 
 ### Each route's need
 
-| Route                                                                                                                                                        | Needs                      |
-| ------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------- |
-| `GET /api/me`, `GET /api/projects`                                                                                                                           | Signed in                  |
-| `PATCH /api/account`, `POST /api/account/email`, `POST /api/account/password` (the user's own account)                                                       | Signed in                  |
-| `GET`, `DELETE /api/account/sessions`, `DELETE /api/account/sessions/:id` (the user's own sessions)                                                          | Signed in                  |
-| `GET`, `PATCH /api/settings`, `GET /api/settings/location-data`                                                                                              | `settings` (the owner)     |
-| `/api/members…`, `/api/invitations…` (seven routes)                                                                                                          | `members`                  |
-| `POST /api/members/:userId/ownership`                                                                                                                        | `ownership` (the owner)    |
-| `POST /api/projects`, `GET /api/client-address` (the requester's own address, for blocked addresses)                                                         | `projects`                 |
-| `GET /api/settings/storage` (what fills the disk, and the storage warnings)                                                                                  | `projects`                 |
-| `PATCH /api/settings/storage` (the channels that get storage warnings)                                                                                       | `channels`                 |
-| `/api/settings/backups…` (ten routes: settings, Test connection, Back up now, Test restore, the list, the key, its file, saved, replace)                     | `settings` (the owner)     |
-| `/api/channels…` (all eight), `POST /api/channels/email-test` (a test email to the user's own address)                                                       | `channels`                 |
-| `GET /api/projects/:id`                                                                                                                                      | The project                |
-| `PATCH`, `DELETE /api/projects/:id`, `POST …/public-key`, `POST …/secret-key`, `DELETE …/replays`, `POST …/spam-visits/preview`, `POST …/spam-visits/delete` | `projects`                 |
-| `…/analytics`, `…/analytics/list`, `…/speed`, `…/heatmaps`, `…/heatmaps/pages`, `POST …/heatmaps/overlay-link`                                               | `web_analytics` view       |
-| `GET /api/heatmap-overlay/:projectId/heatmap` (an overlay session token, no cookie)                                                                          | `web_analytics` view       |
-| `…/events`, `…/events/:name`, `…/funnel`, `…/retention`, `GET …/goals`, `GET …/funnels`                                                                      | `product_analytics` view   |
-| `POST`, `DELETE …/goals`, `POST`, `PUT`, `DELETE …/funnels`                                                                                                  | `product_analytics` manage |
-| `GET …/errors`, `GET …/errors/:fingerprint`, `GET …/source-maps`, `…/source-maps/files`                                                                      | `errors` view              |
-| `PATCH …/errors/:fingerprint`, `DELETE …/source-maps`                                                                                                        | `errors` manage            |
-| `GET …/replays`, `…/replays/list`, `…/replays/:replayId`, `…/timeline`, `…/player`                                                                           | `replays` view             |
-| `…/users`, `…/users/:userId`                                                                                                                                 | `users` view               |
-| `…/traces…`, `…/logs…`, `…/metrics…`, `…/services…`, `…/databases…`, `…/hosts…`                                                                              | `monitoring` view          |
-| `GET …/checks…`, `GET …/alert-rules…`, `…/alerts`, `…/alerts/firing`, `…/alert-channels`                                                                     | `uptime_alerts` view       |
-| `POST`, `PATCH`, `DELETE …/checks…` and `…/alert-rules…`                                                                                                     | `uptime_alerts` manage     |
-| `GET`, `PUT`, `DELETE …/overview/layout` (the user's own layout)                                                                                             | The project                |
-| `…/overview/attention`, `…/overview/uptime`                                                                                                                  | `uptime_alerts` view       |
-| `…/overview/errors`                                                                                                                                          | `errors` view              |
-| `…/overview/services`                                                                                                                                        | `monitoring` view          |
-| `…/overview/speed`, `…/overview/traffic`, `…/overview/sources`                                                                                               | `web_analytics` view       |
-| `…/overview/main-goal`, `…/overview/goals`, `…/overview/users`                                                                                               | `product_analytics` view   |
+| Route                                                                                                                                                        | Needs                               |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------- |
+| `GET /api/me`, `GET /api/projects`                                                                                                                           | Signed in                           |
+| `PATCH /api/account`, `POST /api/account/email`, `POST /api/account/password` (the user's own account)                                                       | Signed in                           |
+| `GET`, `DELETE /api/account/sessions`, `DELETE /api/account/sessions/:id` (the user's own sessions)                                                          | Signed in                           |
+| `GET`, `PATCH /api/settings`, `GET /api/settings/location-data`                                                                                              | `settings` (the owner)              |
+| `/api/members…`, `/api/invitations…` (seven routes)                                                                                                          | `members`                           |
+| `POST /api/members/:userId/ownership`                                                                                                                        | `ownership` (the owner)             |
+| `POST /api/projects`, `GET /api/client-address` (the requester's own address, for blocked addresses)                                                         | `projects`                          |
+| `GET /api/settings/storage` (what fills the disk, and the storage warnings)                                                                                  | `projects`                          |
+| `PATCH /api/settings/storage` (the channels that get storage warnings)                                                                                       | `channels`                          |
+| `/api/settings/backups…` (ten routes: settings, Test connection, Back up now, Test restore, the list, the key, its file, saved, replace)                     | `settings` (the owner)              |
+| `POST /api/settings/backups/key`, `…/key/file`, and a `PATCH` that changes the destination or turns backups off                                              | `settings` and the current password |
+| `/api/channels…` (all eight), `POST /api/channels/email-test` (a test email to the user's own address)                                                       | `channels`                          |
+| `GET /api/projects/:id`                                                                                                                                      | The project                         |
+| `PATCH`, `DELETE /api/projects/:id`, `POST …/public-key`, `POST …/secret-key`, `DELETE …/replays`, `POST …/spam-visits/preview`, `POST …/spam-visits/delete` | `projects`                          |
+| `…/analytics`, `…/analytics/list`, `…/speed`, `…/heatmaps`, `…/heatmaps/pages`, `POST …/heatmaps/overlay-link`                                               | `web_analytics` view                |
+| `GET /api/heatmap-overlay/:projectId/heatmap` (an overlay session token, no cookie)                                                                          | `web_analytics` view                |
+| `…/events`, `…/events/:name`, `…/funnel`, `…/retention`, `GET …/goals`, `GET …/funnels`                                                                      | `product_analytics` view            |
+| `POST`, `DELETE …/goals`, `POST`, `PUT`, `DELETE …/funnels`                                                                                                  | `product_analytics` manage          |
+| `GET …/errors`, `GET …/errors/:fingerprint`, `GET …/source-maps`, `…/source-maps/files`                                                                      | `errors` view                       |
+| `PATCH …/errors/:fingerprint`, `DELETE …/source-maps`                                                                                                        | `errors` manage                     |
+| `GET …/replays`, `…/replays/list`, `…/replays/:replayId`, `…/timeline`, `…/player`                                                                           | `replays` view                      |
+| `…/users`, `…/users/:userId`                                                                                                                                 | `users` view                        |
+| `…/traces…`, `…/logs…`, `…/metrics…`, `…/services…`, `…/databases…`, `…/hosts…`                                                                              | `monitoring` view                   |
+| `GET …/checks…`, `GET …/alert-rules…`, `…/alerts`, `…/alerts/firing`, `…/alert-channels`                                                                     | `uptime_alerts` view                |
+| `POST`, `PATCH`, `DELETE …/checks…` and `…/alert-rules…`                                                                                                     | `uptime_alerts` manage              |
+| `GET`, `PUT`, `DELETE …/overview/layout` (the user's own layout)                                                                                             | The project                         |
+| `…/overview/attention`, `…/overview/uptime`                                                                                                                  | `uptime_alerts` view                |
+| `…/overview/errors`                                                                                                                                          | `errors` view                       |
+| `…/overview/services`                                                                                                                                        | `monitoring` view                   |
+| `…/overview/speed`, `…/overview/traffic`, `…/overview/sources`                                                                                               | `web_analytics` view                |
+| `…/overview/main-goal`, `…/overview/goals`, `…/overview/users`                                                                                               | `product_analytics` view            |
 
 `GET /api/projects/:id/alert-channels` lists the instance's channels by ID, name, and kind only, for the rule form. A rule may name any of the instance's channels.
 
@@ -303,7 +304,7 @@ The setup command stays. The setup page has:
 
 ### Scheduled backups
 
-The Backups tab's routes (`apps/api/src/backups/routes.ts`) need `settings`: admins and members get 403. Changes check Origin, and bodies are checked before any database work. The destination's secret is sealed with a key from `AUTH_SECRET` and never returned. The backup key is returned only by `GET /api/settings/backups/key` and `…/key/file`, with `Cache-Control: no-store`, and each logs that the key was shown or downloaded, with the user's ID, never the key. Test connection (10 in 10 minutes), Back up now, and Test restore (3 an hour each) are limited per user ([deployment](deployment.md#scheduled-backups)).
+The Backups tab's routes (`apps/api/src/backups/routes.ts`) need `settings`: admins and members get 403. Changes check Origin, and bodies are checked before any database work. The destination's secret is sealed with a key from `AUTH_SECRET` and never returned. The backup key is returned only by `POST /api/settings/backups/key` and `…/key/file`, with the current password in the body and `Cache-Control: no-store`, and each logs that the key was shown or downloaded, with the user's ID, never the key. Those two, a change of destination, and turning backups off need the current password (the shared limiter in `auth/password-tries.ts`), and each notifies the storage-warning channels (`backups.changed`) and, with SMTP, emails the owner (`backup_changed` in the account email queue). `key/replace` writes only over the key it read, so two at once cannot each show a different key. Test connection (10 in 10 minutes), Back up now, and Test restore (3 an hour each) are limited per user ([deployment](deployment.md#scheduled-backups)).
 
 ## Known limits
 

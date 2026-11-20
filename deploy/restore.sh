@@ -13,13 +13,16 @@
 #
 # Or from a scheduled backup the worker uploaded to S3-compatible storage:
 #
-#   ./restore.sh --from-s3 --key ottertrail-backup-key.txt            (the newest)
+#   ./restore.sh --from-s3 --key ottertrail-backup-key.txt            (the newest; asks first)
 #   ./restore.sh --from-s3 --key ottertrail-backup-key.txt 2026-11-17T030000Z
 #
-# It lists the backups in the destination's folder, downloads one into
-# backups/, decrypts it with the key file the Backups tab downloads, and
-# checks every part against the backup's manifest (dist/restore-backup.mjs),
-# then restores it as below and deletes the downloaded files. The
+# It lists the backups in the destination's folder, checks the chosen
+# one's manifest against the key file the Backups tab downloads (its MAC,
+# so a backup someone else uploaded is refused), shows its time and the
+# Ottertrail version that made it and asks before going on (--yes skips
+# the question), downloads it into backups/, decrypts it, and checks every
+# part against the manifest (dist/restore-backup.mjs), then restores it as
+# below and deletes the downloaded files. The
 # destination comes from BACKUP_S3_ENDPOINT, BACKUP_S3_REGION,
 # BACKUP_S3_BUCKET, BACKUP_S3_PREFIX (the folder), BACKUP_S3_ACCESS_KEY_ID,
 # and BACKUP_S3_SECRET_ACCESS_KEY, or it asks for each one missing; the key
@@ -40,11 +43,13 @@ umask 077
 compose=${COMPOSE:-docker compose}
 without_objects=
 from_s3=
+yes=
 key_file=${BACKUP_KEY_FILE:-}
 while [ $# -gt 0 ]; do
   case "$1" in
     --without-objects) without_objects=1; shift ;;
     --from-s3) from_s3=1; shift ;;
+    --yes) yes=1; shift ;;
     --key)
       key_file=${2:?--key needs the backup key file}
       shift 2
@@ -110,6 +115,33 @@ else
 fi
 cd "$(dirname "$0")"
 
+# Set before anything is downloaded, so a failure from here on cleans up
+# and says what happened.
+step=
+restored=
+unpacked=
+cleanup() {
+  status=$?
+  [ -z "$unpacked" ] || rm -rf "$unpacked"
+  # A download cut off (Ctrl-C) may leave restore-backup's own folder: never decrypted data.
+  [ -z "$from_s3" ] || rm -rf backups/.download-*
+  if [ "$status" -ne 0 ] && [ -n "$step" ]; then
+    echo "The restore failed while $step." >&2
+    if [ -n "$downloaded" ]; then
+      echo "The downloaded, decrypted files are in backups/: delete them once you no longer need them." >&2
+    fi
+    if [ -n "$restored" ]; then
+      echo "The databases were changed: run \`$compose down -v\` and start again." >&2
+    else
+      echo "Nothing was changed: the databases were not touched." >&2
+    fi
+  fi
+}
+trap cleanup EXIT
+# Some shells (dash, Debian's sh) skip the EXIT trap when a signal such as
+# Ctrl-C ends the script: exit instead, which runs it.
+trap 'exit 1' INT TERM HUP
+
 if [ -n "$from_s3" ]; then
   # A one-off container of the app's image, with the destination's
   # settings passed by name from this shell's environment.
@@ -118,16 +150,42 @@ if [ -n "$from_s3" ]; then
       -e BACKUP_S3_ENDPOINT -e BACKUP_S3_REGION -e BACKUP_S3_BUCKET -e BACKUP_S3_PREFIX \
       -e BACKUP_S3_ACCESS_KEY_ID -e BACKUP_S3_SECRET_ACCESS_KEY "$@"
   }
+  step="listing the backups in $BACKUP_S3_BUCKET/$BACKUP_S3_PREFIX"
   echo "Backups in $BACKUP_S3_BUCKET/$BACKUP_S3_PREFIX, newest first:"
   s3 api node dist/restore-backup.mjs list
+  # The chosen backup's manifest, checked against the key: a backup anyone
+  # who can write to the bucket made, without the key, stops here.
+  step="checking the backup's manifest against the key"
+  described=$(s3 -v "$key_file:/backup-key.txt:ro,z" \
+    api node dist/restore-backup.mjs describe "$wanted" /backup-key.txt)
+  chosen=$(printf '%s\n' "$described" | tail -n 1 | cut -f 1)
+  started=$(printf '%s\n' "$described" | tail -n 1 | cut -f 2)
+  version=$(printf '%s\n' "$described" | tail -n 1 | cut -f 3)
+  case "$chosen" in
+    [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9][0-9][0-9][0-9][0-9]Z) ;;
+    *) echo "restore-backup named no backup." >&2; exit 1 ;;
+  esac
+  echo "Chosen: the backup started $started (UTC), made by Ottertrail $version."
+  if [ -z "$yes" ]; then
+    if [ ! -t 0 ]; then
+      echo "Run this in a terminal to confirm, or add --yes to restore it." >&2
+      exit 1
+    fi
+    printf 'Restore it into this server'"'"'s empty databases? Type yes: ' >&2
+    read -r answer
+    [ "$answer" = yes ] || { echo "Nothing was restored." >&2; step=; exit 1; }
+  fi
   mkdir -p backups
-  echo "Downloading and checking $wanted …"
-  # The decrypted files hold every customer's data: readable by this user only (umask above).
+  step="downloading and checking $chosen"
+  echo "Downloading and checking $chosen …"
+  # The decrypted files hold every customer's data: readable by this user only
+  # (umask above). restore-backup writes them through a folder of its own,
+  # which it deletes on any failure.
   backup=$(s3 -v "$PWD/backups:/backup:z" -v "$key_file:/backup-key.txt:ro,z" \
-    api node dist/restore-backup.mjs download "$wanted" /backup-key.txt /backup) ||
-    { echo "Nothing was changed: the databases were not touched." >&2; exit 1; }
-  backup=$PWD/backups/$(basename "$backup")
+    api node dist/restore-backup.mjs download "$chosen" /backup-key.txt /backup)
+  backup=$PWD/backups/$(basename "$(printf '%s\n' "$backup" | tail -n 1)")
   downloaded=1
+  step=
 fi
 name=$(basename "$backup")
 # The name goes into commands inside the containers: only names backup.sh makes.
@@ -154,27 +212,6 @@ unpacked=$(dirname "$backup")/$name-objects.restore
 app() {
   $compose run --rm --no-deps -T -u "$(id -u):$(id -g)" "$@"
 }
-step=
-restored=
-cleanup() {
-  status=$?
-  rm -rf "$unpacked"
-  if [ "$status" -ne 0 ] && [ -n "$step" ]; then
-    echo "The restore failed while $step." >&2
-    if [ -n "$downloaded" ]; then
-      echo "The downloaded, decrypted files are in backups/: delete them once you no longer need them." >&2
-    fi
-    if [ -n "$restored" ]; then
-      echo "The databases were changed: run \`$compose down -v\` and start again." >&2
-    else
-      echo "Nothing was changed: the databases were not touched." >&2
-    fi
-  fi
-}
-trap cleanup EXIT
-# Some shells (dash, Debian's sh) skip the EXIT trap when a signal such as
-# Ctrl-C ends the script: exit instead, which runs it.
-trap 'exit 1' INT TERM HUP
 
 if [ -n "$without_objects" ]; then
   echo "Restoring without the object store (--without-objects): session replays will" >&2

@@ -3,15 +3,22 @@
  * storage, for deploy/restore.sh (docs/deployment.md, "Restoring from S3"):
  *
  *   node dist/restore-backup.mjs list
- *   node dist/restore-backup.mjs download <name|latest> <key file> <folder>
+ *   node dist/restore-backup.mjs describe <name|latest> <key file>
+ *   node dist/restore-backup.mjs download <name> <key file> <folder>
  *   vpx scripts/restore-backup.ts …
  *
- * `download` reads the backup's manifest, streams each part through
+ * `describe` checks the backup's manifest against the key (its MAC, which
+ * only the key's holder can make: anyone who can write to the bucket could
+ * otherwise upload a backup that decrypts) and prints its name, start, and
+ * the Ottertrail version that made it, tab-separated, for restore.sh to
+ * ask about. `download` checks the MAC again, before it reads any part,
+ * then reads the backup's manifest, streams each part through
  * decryption with the key file (age's identity format, as the Backups tab
  * downloads it), checks every size and SHA-256 before and after
  * decryption, and writes the plain files into the folder as backup.sh
- * names them: ottertrail-<name>.dump, .zip, and -objects.tar. A part that
- * does not check out is never left under its own name. It prints the
+ * names them: ottertrail-<name>.dump, .zip, and -objects.tar, through a
+ * folder of its own inside that is deleted on any failure, so a failed
+ * download leaves no decrypted data. It prints the
  * backup's path without its ending, which restore.sh restores.
  *
  * Where the backups are comes from the environment, never the command
@@ -21,7 +28,7 @@
  */
 import { readFile } from "node:fs/promises";
 
-import { BackupError, testRestore } from "../src/backups/run.ts";
+import { BackupError, testRestore, verifiedManifest } from "../src/backups/run.ts";
 import { backupClient, listBackups, s3ErrorText } from "../src/backups/s3.ts";
 import { endpointOrigin, type Destination } from "../src/backups/settings.ts";
 import { addressPolicy, systemLookup } from "../src/outbound/addresses.ts";
@@ -102,10 +109,23 @@ try {
         `${backup.name}  ${gib(backup.bytes).padStart(11)}  ${backup.complete ? "whole" : "incomplete (no manifest: not restorable)"}`,
       );
     }
+  } else if (command === "describe") {
+    const [name, keyFile] = rest;
+    if (name === undefined || keyFile === undefined) {
+      fail("Usage: restore-backup describe <name|latest> <key file>");
+    }
+    const identity = await keyFrom(keyFile);
+    const { manifest } = await verifiedManifest({
+      client,
+      destination,
+      identity,
+      ...(name === "latest" ? {} : { name }),
+    });
+    console.log(`${manifest.name}\t${manifest.startedAt}\t${manifest.instance.version}`);
   } else if (command === "download") {
     const [name, keyFile, folder] = rest;
     if (name === undefined || keyFile === undefined || folder === undefined) {
-      fail("Usage: restore-backup download <name|latest> <key file> <folder>");
+      fail("Usage: restore-backup download <name> <key file> <folder>");
     }
     const identity = await keyFrom(keyFile);
     const checked = await testRestore({
@@ -120,7 +140,9 @@ try {
     );
     console.log(`${folder.replace(/\/+$/, "")}/ottertrail-${checked.name}`);
   } else {
-    fail("Usage: restore-backup list | download <name|latest> <key file> <folder>");
+    fail(
+      "Usage: restore-backup list | describe <name|latest> <key file> | download <name> <key file> <folder>",
+    );
   }
 } catch (error) {
   fail(error instanceof BackupError ? error.message : s3ErrorText(error, "read"));
