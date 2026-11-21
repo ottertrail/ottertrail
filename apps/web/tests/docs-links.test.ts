@@ -10,6 +10,7 @@ import { docsFor, DOCS_URL, SCREEN_DOCS } from "../src/lib/docs.ts";
 const EXPECTED: Record<string, [topic: string, path: string]> = {
   "/projects": ["Projects", "/introduction/instances-and-projects/#projects"],
   "/settings/members": ["Members", "/team/members-and-roles/"],
+  "/notifications": ["Notifications", "/introduction/notifications/"],
   "/account": ["Account settings", "/team/account-settings/#profile"],
   "/account?tab=password": ["Password settings", "/team/account-settings/#password"],
   "/account?tab=sessions": ["Sessions", "/team/account-settings/#sessions"],
@@ -20,6 +21,7 @@ const EXPECTED: Record<string, [topic: string, path: string]> = {
     "/self-hosting/location-data/#the-location-data-tab",
   ],
   "/settings?tab=storage": ["Storage settings", "/self-hosting/storage/"],
+  "/settings?tab=backups": ["Backups settings", "/self-hosting/backups/#the-backups-tab"],
   "/settings?tab=channels": ["Notification channels settings", "/uptime-and-alerts/channels/"],
   "/projects/$projectId/overview": ["Overview", "/introduction/overview/"],
   "/projects/$projectId/web-analytics": ["Web analytics", "/web-analytics/reports/"],

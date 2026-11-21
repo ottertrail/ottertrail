@@ -34,6 +34,7 @@ export const SCREEN_DOCS: Partial<Record<RoutePath, ScreenDocs>> = {
   // The workspace.
   "/projects": { topic: "Projects", path: "/introduction/instances-and-projects/#projects" },
   "/settings/members": { topic: "Members", path: "/team/members-and-roles/" },
+  "/notifications": { topic: "Notifications", path: "/introduction/notifications/" },
   "/account": {
     topic: "Account settings",
     path: "/team/account-settings/#profile",
@@ -54,6 +55,7 @@ export const SCREEN_DOCS: Partial<Record<RoutePath, ScreenDocs>> = {
         path: "/self-hosting/location-data/#the-location-data-tab",
       },
       storage: { topic: "Storage settings", path: "/self-hosting/storage/" },
+      backups: { topic: "Backups settings", path: "/self-hosting/backups/#the-backups-tab" },
       channels: { topic: "Notification channels settings", path: "/uptime-and-alerts/channels/" },
     },
   },
