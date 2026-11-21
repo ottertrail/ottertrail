@@ -43,7 +43,11 @@ export default defineConfig({
       }),
     ],
     format: "esm",
+    // For readable stack traces (node --enable-source-maps), which need only
+    // the mappings: the maps leave the sources out, so the image carries no
+    // copy of the TypeScript source or of the bundled packages' code.
     sourcemap: true,
+    outputOptions: { sourcemapExcludeSources: true },
     dts: false,
   },
   test: {

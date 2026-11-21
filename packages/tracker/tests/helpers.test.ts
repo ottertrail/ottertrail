@@ -186,6 +186,29 @@ describe("randomId", () => {
       }
     }
   });
+
+  test.each([
+    [0x00, "00000000-0000-4000-8000-000000000000"],
+    [0xff, "ffffffff-ffff-4fff-bfff-ffffffffffff"],
+  ])("the fallback sets only the version and variant bits (bytes of %i)", (fill, expected) => {
+    const own = Object.getOwnPropertyDescriptor(crypto, "randomUUID");
+    Object.defineProperty(crypto, "randomUUID", { value: undefined, configurable: true });
+    const random = vi
+      .spyOn(crypto, "getRandomValues")
+      .mockImplementation((array: ArrayBufferView<ArrayBuffer>) => {
+        new Uint8Array(array.buffer, array.byteOffset, array.byteLength).fill(fill);
+        return array;
+      });
+    try {
+      expect(randomId()).toBe(expected);
+    } finally {
+      random.mockRestore();
+      // As above: remove the own property, or put the original back.
+      Reflect.deleteProperty(crypto, "randomUUID");
+      if (own !== undefined) Object.defineProperty(crypto, "randomUUID", own);
+    }
+    expect(typeof crypto.randomUUID).toBe("function");
+  });
 });
 
 /** A window with just enough location and history for watchNavigation. */
