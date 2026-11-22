@@ -145,8 +145,18 @@ describe("the Backups tab's routes", () => {
       disabledAt: null,
       disabledBy: null,
     });
-    expect(body.destination).toEqual({ reportedAt: null, config: null, problem: null });
-    expect(body.connectionTest).toEqual({ requested: false, testedAt: null, result: null });
+    expect(body.destination).toEqual({
+      reportedAt: null,
+      config: null,
+      problem: null,
+      stale: false,
+    });
+    expect(body.connectionTest).toEqual({
+      requested: false,
+      untaken: false,
+      testedAt: null,
+      result: null,
+    });
     expect(body.key).toEqual({ state: "none", recipient: null, createdAt: null, savedAt: null });
     expect(body.status.nextDueAt).toBeNull();
     expect(body.status.lastBackup).toBeNull();
@@ -346,6 +356,7 @@ describe("the Backups tab's routes", () => {
     expect(asked.statusCode).toBe(200);
     expect(asked.json().connectionTest).toEqual({
       requested: true,
+      untaken: false,
       testedAt: null,
       result: null,
     });
@@ -388,16 +399,42 @@ describe("the Backups tab's routes", () => {
     const view = (await call(dashboard, "GET", "/api/settings/backups")).json();
     expect(view.connectionTest).toEqual({
       requested: false,
+      untaken: false,
       testedAt: testedAt.toISOString(),
       result: { ok: false, steps },
     });
   });
 
+  test("a request no worker took in a few minutes is not waited for, and a new one replaces it", async () => {
+    const old = new Date(Date.now() - 4 * 60_000);
+    await dashboard.db
+      .updateTable("backup_settings")
+      .set({ connection_test_requested_at: old })
+      .execute();
+    const view = (await call(dashboard, "GET", "/api/settings/backups")).json();
+    expect(view.connectionTest).toMatchObject({ requested: false, untaken: true });
+    // The third of three allowed.
+    const again = await call(dashboard, "POST", "/api/settings/backups/test-connection");
+    expect(again.statusCode).toBe(200);
+    expect(again.json().connectionTest).toMatchObject({ requested: true, untaken: false });
+    const row = await dashboard.db
+      .selectFrom("backup_settings")
+      .select("connection_test_requested_at")
+      .executeTakeFirstOrThrow();
+    expect(row.connection_test_requested_at?.getTime()).toBeGreaterThan(old.getTime());
+  });
+
+  test("a report older than two hours is out of date", async () => {
+    await report(dashboard, { destination: REPORTED }, new Date(Date.now() - 3 * 3_600_000));
+    const view = (await call(dashboard, "GET", "/api/settings/backups")).json();
+    expect(view.destination).toMatchObject({ config: REPORTED, stale: true });
+    await report(dashboard, { destination: REPORTED });
+    const fresh = (await call(dashboard, "GET", "/api/settings/backups")).json();
+    expect(fresh.destination.stale).toBe(false);
+  });
+
   test("Test connection is limited per user", async () => {
-    // Two ran above, of three.
-    expect(
-      (await call(dashboard, "POST", "/api/settings/backups/test-connection")).statusCode,
-    ).toBe(200);
+    // Three ran above, of three.
     const fourth = await call(dashboard, "POST", "/api/settings/backups/test-connection");
     expect(fourth.statusCode).toBe(429);
     expect(fourth.json().error).toBe("rate_limited");

@@ -56,6 +56,12 @@ export const BACKUP_TICK_MS = 30_000;
 export const RETRY_AFTER_MS = 60 * 60 * 1000;
 /** An unchanged destination is reported again this long after the last report: a heartbeat. */
 export const REPORT_EVERY_MS = 60 * 60 * 1000;
+/**
+ * A report another worker wrote that differs from this worker's is written
+ * over at most this often: two workers with different BACKUP_S3_* don't
+ * rewrite the row on every tick.
+ */
+export const CONTESTED_REPORT_MS = 10 * 60 * 1000;
 
 /** Without BACKUP_S3_*: what a run and Test connection say. */
 export const NO_DESTINATION =
@@ -96,6 +102,10 @@ export class BackupJob {
   #failing = false;
   /** Whether this worker stored the listing yet: once on start, then after changes. */
   #listed = false;
+  /** When this worker last wrote its report; null before it has. */
+  #reportedAt: Date | null = null;
+  /** Whether it logged its configuration problem: once, at its first report. */
+  #problemLogged = false;
 
   constructor(options: BackupJobOptions) {
     this.#options = options;
@@ -192,25 +202,36 @@ export class BackupJob {
   }
 
   /**
-   * Writes what this worker has to PostgreSQL when it differs from what is
-   * there (another worker's, or nothing yet), or REPORT_EVERY_MS after it
-   * was last written. Of several workers, the last write wins.
+   * Writes what this worker has to PostgreSQL: when nothing is there yet;
+   * when the same report is REPORT_EVERY_MS old (a heartbeat); and when
+   * another worker's report differs, at most every CONTESTED_REPORT_MS. Of
+   * several workers, the last write wins. Its configuration problem is
+   * logged once: the variables don't change while it runs.
    */
   async #report(): Promise<void> {
     const { db } = this.#options;
     const now = this.#now();
     const report = this.#reportNow();
+    if (report.problem !== null && !this.#problemLogged) {
+      this.#problemLogged = true;
+      this.#options.log("error", "the backup destination is invalid: backups can't run", {
+        problem: report.problem,
+      });
+    }
     const saved = await readBackupSettings(db);
     const same =
       saved.destinationProblem === report.problem &&
       sameDestination(saved.destination, report.destination);
+    const since = (at: Date | null) => (at === null ? Infinity : now.getTime() - at.getTime());
+    if (same && since(saved.destinationReportedAt) < REPORT_EVERY_MS) return;
     if (
-      same &&
+      !same &&
       saved.destinationReportedAt !== null &&
-      now.getTime() - saved.destinationReportedAt.getTime() < REPORT_EVERY_MS
+      since(this.#reportedAt) < CONTESTED_REPORT_MS
     ) {
       return;
     }
+    this.#reportedAt = now;
     await db
       .updateTable("backup_settings")
       .set({
@@ -219,11 +240,6 @@ export class BackupJob {
         destination_reported_at: now,
       })
       .execute();
-    if (!same && report.problem !== null) {
-      this.#options.log("error", "the backup destination is invalid: backups can't run", {
-        problem: report.problem,
-      });
-    }
   }
 
   /** A client for the destination, or why there is none. */
@@ -255,6 +271,8 @@ export class BackupJob {
       } finally {
         target.client.destroy();
       }
+      // Cut off by this worker stopping: the request stays for the next worker.
+      if (this.#abort.signal.aborted) return false;
     }
     await db
       .updateTable("backup_settings")
@@ -300,6 +318,8 @@ export class BackupJob {
           })),
         };
       } catch (error) {
+        // Cut off by this worker stopping: the stored listing stays as it was.
+        if (this.#abort.signal.aborted) return;
         list = {
           ok: false,
           bucket,

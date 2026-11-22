@@ -68,7 +68,22 @@ import { type InstanceTabProps, SectionFailed, SectionSkeleton } from "./section
 /** While the worker has work under way or asked for, the tab reads the status again this often. */
 const POLL_MS = 5000;
 
-const BACKUPS_DOCS_URL = `${DOCS_URL}/self-hosting/backups/`;
+const BACKUPS_DOCS_URL = `${DOCS_URL}/self-hosting/backups/#set-up-scheduled-backups`;
+
+function DocsLink() {
+  return (
+    <a
+      href={BACKUPS_DOCS_URL}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="inline-flex items-center gap-0.5 text-ink underline underline-offset-4"
+    >
+      Backups docs
+      <ArrowUpRightIcon aria-hidden="true" className="size-3" />
+      <span className="sr-only">(opens in a new tab)</span>
+    </a>
+  );
+}
 
 const code = (text: string) => <code className="font-mono">{text}</code>;
 
@@ -436,10 +451,23 @@ function DestinationBlock({ data, timeZone }: { data: Backups; timeZone: string 
   });
   const config = destination.config;
   const pending = connectionTest.requested;
+  const on = data.settings.enabled;
+  const reportedAt =
+    destination.reportedAt === null ? null : formatMoment(destination.reportedAt, timeZone);
 
   return (
     <section aria-label="Destination" className="flex flex-col gap-3">
       <h3 className="text-sm font-medium text-ink">Destination</h3>
+      {destination.stale && reportedAt !== null && (
+        <Alert>
+          <TriangleAlertIcon />
+          <AlertTitle>Worker report out of date</AlertTitle>
+          <AlertDescription className="text-pretty">
+            The worker last reported at {reportedAt}. Check that the worker is running (
+            {code("docker compose ps")}).
+          </AlertDescription>
+        </Alert>
+      )}
       {config !== null ? (
         <dl className="flex flex-col gap-3">
           {DESTINATION_ROWS.map(([field, label]) => (
@@ -447,9 +475,9 @@ function DestinationBlock({ data, timeZone }: { data: Backups; timeZone: string 
               <span className="[overflow-wrap:anywhere]">{config[field]}</span>
             </StatusRow>
           ))}
-          {destination.reportedAt !== null && (
+          {reportedAt !== null && (
             <StatusRow label="Reported">
-              <span className="tabular-nums">{formatMoment(destination.reportedAt, timeZone)}</span>
+              <span className="tabular-nums">{reportedAt}</span>
             </StatusRow>
           )}
         </dl>
@@ -459,22 +487,24 @@ function DestinationBlock({ data, timeZone }: { data: Backups; timeZone: string 
           <AlertTitle>Backup destination invalid</AlertTitle>
           <AlertDescription className="text-pretty">
             {sentence(destination.problem)} Then restart the worker.
+            {on && " Until then, backups fail."}
+          </AlertDescription>
+        </Alert>
+      ) : on ? (
+        // On, and the worker lost its variables (restarted without them): the next backup fails.
+        <Alert variant="destructive">
+          <OctagonAlertIcon />
+          <AlertTitle>Backups have no destination</AlertTitle>
+          <AlertDescription className="text-pretty">
+            Backups are on, but the worker has no {code("BACKUP_S3_*")} variables, so the next
+            backup fails. Set them in the server&apos;s {code(".env")} and restart the worker.{" "}
+            <DocsLink />
           </AlertDescription>
         </Alert>
       ) : (
         <p className="text-sm text-pretty text-ink-subtle">
           Set the {code("BACKUP_S3_*")} variables in the server&apos;s {code(".env")} and restart
-          the worker.{" "}
-          <a
-            href={BACKUPS_DOCS_URL}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center gap-0.5 text-ink underline underline-offset-4"
-          >
-            Backups docs
-            <ArrowUpRightIcon aria-hidden="true" className="size-3" />
-            <span className="sr-only">(opens in a new tab)</span>
-          </a>
+          the worker. <DocsLink />
         </p>
       )}
       {config !== null && (
@@ -492,6 +522,11 @@ function DestinationBlock({ data, timeZone }: { data: Backups; timeZone: string 
           <div aria-live="polite" className="flex flex-col gap-2">
             {pending ? (
               <p className="text-sm text-ink-subtle">Test connection starts within a minute.</p>
+            ) : connectionTest.untaken ? (
+              <p className="text-sm text-pretty text-warning">
+                The worker hasn&apos;t taken the test. Check that it is running (
+                {code("docker compose ps")}), then test again.
+              </p>
             ) : (
               connectionTest.result !== null && (
                 <>

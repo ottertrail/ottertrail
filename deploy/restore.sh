@@ -76,24 +76,28 @@ if [ -n "$from_s3" ]; then
     latest | [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9][0-9][0-9][0-9][0-9]Z) ;;
     *) echo "Invalid backup name: $wanted (use 2026-11-17T030000Z or latest)" >&2; exit 1 ;;
   esac
-  # A variable's value in the .env beside this script, as Compose reads it
-  # for the worker: the last line that sets it, without one pair of quotes
-  # around it, or a comment after an unquoted value. Read, never run.
+  # A variable's value in the .env beside this script, read as Compose
+  # reads it for the worker, and never run: the last line that sets it
+  # (optionally after `export`), without a CR at its end; surrounding
+  # whitespace trimmed; a value in a pair of single or double quotes is
+  # what is inside them, and the rest of the line is dropped; an unquoted
+  # value ends at " #", a comment. An `=` inside the value stays.
   env_file=$(dirname "$0")/.env
+  # from_env_file: start
   from_env_file() {
     [ -f "$env_file" ] || return 0
-    line=$(grep -E "^[[:space:]]*(export[[:space:]]+)?$1=" "$env_file" | tail -n 1) || return 0
-    value=${line#*=}
+    line=$(tr -d '\r' < "$env_file" |
+      grep -E "^[[:space:]]*(export[[:space:]]+)?$1[[:space:]]*=" | tail -n 1) || return 0
+    [ -n "$line" ] || return 0
+    value=$(printf '%s\n' "${line#*=}" | sed 's/^[[:space:]]*//')
     case "$value" in
-      \"*\") value=${value#\"}; value=${value%\"} ;;
-      \'*\') value=${value#\'}; value=${value%\'} ;;
-      *)
-        value=${value%%[[:space:]]#*}
-        value=$(printf '%s' "$value" | sed 's/[[:space:]]*$//')
-        ;;
+      \"*) value=${value#\"}; value=${value%%\"*} ;;
+      \'*) value=${value#\'}; value=${value%%\'*} ;;
+      *) value=$(printf '%s\n' "$value" | sed -e 's/[[:space:]]#.*$//' -e 's/[[:space:]]*$//') ;;
     esac
     printf '%s' "$value"
   }
+  # from_env_file: end
   # Asks for each setting the environment and .env lack; a secret without echo.
   ask() {
     eval "value=\${$1:-}"

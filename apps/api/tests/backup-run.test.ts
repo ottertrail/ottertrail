@@ -16,7 +16,13 @@ import { sql } from "kysely";
 import { afterAll, beforeAll, describe, expect, test } from "vite-plus/test";
 
 import { decrypted, encrypted } from "../src/backups/archive.ts";
-import { BackupJob, NO_DESTINATION, REPORT_EVERY_MS, RETRY_AFTER_MS } from "../src/backups/job.ts";
+import {
+  BackupJob,
+  CONTESTED_REPORT_MS,
+  NO_DESTINATION,
+  REPORT_EVERY_MS,
+  RETRY_AFTER_MS,
+} from "../src/backups/job.ts";
 import {
   applyRetention,
   BackupError,
@@ -1266,6 +1272,84 @@ describe("the worker's report to the Backups tab", () => {
     expect(steps.slice(1).map((step) => step.status)).toEqual(["skipped", "skipped", "skipped"]);
     // The listing failed too, and says so.
     expect((await row()).backup_list).toMatchObject({ ok: false, prefix });
+  });
+
+  test("two workers with different variables rewrite the report at most every 10 minutes, and log once", async () => {
+    logs.length = 0;
+    clock = new Date(clock.getTime() + REPORT_EVERY_MS);
+    const good = worker(destination(prefix));
+    const bad = worker({ problem: "Set BACKUP_S3_REGION too." });
+    await good.tick();
+    expect((await row()).destination_problem).toBeNull();
+    // The other worker's differs: written once, then not again for 10 minutes.
+    await bad.tick();
+    expect((await row()).destination_problem).toBe("Set BACKUP_S3_REGION too.");
+    const start = clock.getTime();
+    const written = new Set<number>();
+    for (let minute = 1; minute <= 12; minute += 1) {
+      clock = new Date(start + minute * 60_000);
+      for (const job of [good, bad]) {
+        await job.tick();
+        written.add((await row()).destination_reported_at?.getTime() ?? 0);
+      }
+    }
+    // Each writes again only CONTESTED_REPORT_MS after its last write: not on every tick.
+    expect([...written]).toEqual([start, start + CONTESTED_REPORT_MS]);
+    // The problem is logged once, not on every tick.
+    expect(logs.filter((line) => line.level === "error")).toHaveLength(1);
+  });
+
+  test("backups on while the worker reports no destination is a storage warning, until it reports one", async () => {
+    const { readBackupHealth } = await import("../src/backups/state.ts");
+    await own.db.updateTable("backup_settings").set({ enabled: true }).execute();
+    try {
+      clock = new Date(clock.getTime() + REPORT_EVERY_MS);
+      await worker(null).tick();
+      expect((await readBackupHealth(own.db, clock)).noDestination).toEqual({ problem: null });
+      clock = new Date(clock.getTime() + REPORT_EVERY_MS);
+      await worker({ problem: "Set BACKUP_S3_REGION too." }).tick();
+      expect((await readBackupHealth(own.db, clock)).noDestination).toEqual({
+        problem: "Set BACKUP_S3_REGION too.",
+      });
+      clock = new Date(clock.getTime() + REPORT_EVERY_MS);
+      await worker(destination(prefix)).tick();
+      expect((await readBackupHealth(own.db, clock)).noDestination).toBeNull();
+    } finally {
+      await own.db.updateTable("backup_settings").set({ enabled: false }).execute();
+    }
+  });
+
+  test("a worker stopping mid-test leaves the request pending and the listing as it was", async () => {
+    // An endpoint that never answers.
+    const hanging = createServer(() => undefined);
+    await new Promise<void>((resolve) => hanging.listen(0, "127.0.0.1", resolve));
+    const { port } = hanging.address() as AddressInfo;
+    try {
+      clock = new Date(clock.getTime() + 60_000);
+      await own.db
+        .updateTable("backup_settings")
+        .set({ connection_test_requested_at: clock })
+        .execute();
+      const before = await row();
+      const job = worker({ ...destination(prefix), url: `http://127.0.0.1:${port}` });
+      const ticking = job.tick();
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      job.stop();
+      await ticking;
+      const after = await row();
+      expect(after.connection_test_requested_at).toEqual(clock);
+      expect(after.connection_test).toEqual(before.connection_test);
+      expect(after.connection_tested_at).toEqual(before.connection_tested_at);
+      expect(after.backup_list).toEqual(before.backup_list);
+      expect(after.backup_listed_at).toEqual(before.backup_listed_at);
+    } finally {
+      hanging.closeAllConnections();
+      await new Promise<void>((resolve) => hanging.close(() => resolve()));
+      await own.db
+        .updateTable("backup_settings")
+        .set({ connection_test_requested_at: null })
+        .execute();
+    }
   });
 
   test("Test connection reports a refused permission on the step it refused", async () => {

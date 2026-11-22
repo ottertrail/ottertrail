@@ -47,6 +47,7 @@ export const REPORTED: Backups["destination"] = {
     accessKeyId: "AKIAEXAMPLE",
   },
   problem: null,
+  stale: false,
 };
 
 /** Backups off, never turned on, and no destination: the worker has no BACKUP_S3_*. */
@@ -58,8 +59,13 @@ export const BACKUPS_OFF: Backups = {
     disabledAt: null,
     disabledBy: null,
   },
-  destination: { reportedAt: "2026-11-20T03:30:00.000Z", config: null, problem: null },
-  connectionTest: { requested: false, testedAt: null, result: null },
+  destination: {
+    reportedAt: "2026-11-20T03:30:00.000Z",
+    config: null,
+    problem: null,
+    stale: false,
+  },
+  connectionTest: { requested: false, untaken: false, testedAt: null, result: null },
   key: { state: "none", recipient: null, createdAt: null, savedAt: null },
   status: {
     now: "2026-11-20T04:00:00.000Z",
@@ -82,6 +88,7 @@ export const BACKUPS_INVALID: Backups = {
   destination: {
     reportedAt: "2026-11-20T03:30:00.000Z",
     config: null,
+    stale: false,
     problem:
       "Set BACKUP_S3_REGION too: backups need the endpoint, region, bucket, access key ID, and secret access key.",
   },
@@ -276,6 +283,7 @@ export function answerBackups(
         ...current,
         connectionTest: {
           requested: false,
+          untaken: false,
           testedAt: current.status.now,
           result: backups.connection,
         },
@@ -288,7 +296,7 @@ export function answerBackups(
     if (backups.connection instanceof Response) return backups.connection.clone();
     return replace({
       ...current,
-      connectionTest: { ...current.connectionTest, requested: true },
+      connectionTest: { ...current.connectionTest, requested: true, untaken: false },
     });
   }
   if (path === "/api/settings/backups/run") {

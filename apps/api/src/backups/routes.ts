@@ -96,6 +96,14 @@ interface SettingsBody {
   currentPassword?: string;
 }
 
+/** The worker re-reports hourly (backups/job.ts): a report older than this is out of date. */
+export const REPORT_STALE_MS = 2 * 60 * 60 * 1000;
+/**
+ * The worker takes a Test connection within 30 seconds: one not taken
+ * after this is not waited for, and a new request replaces it.
+ */
+export const CONNECTION_TEST_UNTAKEN_MS = 3 * 60 * 1000;
+
 /** Turning backups on without a destination the worker reported. */
 export const NO_DESTINATION_REPORTED =
   "No backup destination. Set the BACKUP_S3_* variables in the server's .env, restart the worker, then turn backups on.";
@@ -271,6 +279,13 @@ export const backupRoutes: FastifyPluginCallback<{
       scheduleFrom: settings.scheduleFrom,
       lastSlot: settings.lastSlot,
     };
+    const requestedAt = settings.connectionTestRequestedAt;
+    const testPending =
+      requestedAt === null
+        ? null
+        : at.getTime() - requestedAt.getTime() > CONNECTION_TEST_UNTAKEN_MS
+          ? "untaken"
+          : "waiting";
     const overdue =
       runs.running?.kind === "backup"
         ? null
@@ -289,9 +304,15 @@ export const backupRoutes: FastifyPluginCallback<{
         reportedAt: iso(settings.destinationReportedAt),
         config: settings.destination,
         problem: settings.destinationProblem,
+        // The worker may be stopped: what it last said may no longer hold.
+        stale:
+          settings.destinationReportedAt !== null &&
+          at.getTime() - settings.destinationReportedAt.getTime() > REPORT_STALE_MS,
       },
       connectionTest: {
-        requested: settings.connectionTestRequestedAt !== null,
+        requested: testPending === "waiting",
+        /** Asked for, and no worker took it in CONNECTION_TEST_UNTAKEN_MS. */
+        untaken: testPending === "untaken",
         testedAt: iso(settings.connectionTestedAt),
         result: settings.connectionTest,
       },
@@ -405,11 +426,22 @@ export const backupRoutes: FastifyPluginCallback<{
         return reply.code(409).send({ error: "no_destination", message: missing });
       }
       if (!within(limits.testConnection, "Test connection", request, reply)) return reply;
-      // The worker takes it on its next tick, with its own BACKUP_S3_*.
+      // The worker takes it on its next tick, with its own BACKUP_S3_*. One
+      // still waiting stays; one no worker took in a few minutes is replaced.
+      const at = now();
       await db
         .updateTable("backup_settings")
-        .set({ connection_test_requested_at: now() })
-        .where("connection_test_requested_at", "is", null)
+        .set({ connection_test_requested_at: at })
+        .where((eb) =>
+          eb.or([
+            eb("connection_test_requested_at", "is", null),
+            eb(
+              "connection_test_requested_at",
+              "<",
+              new Date(at.getTime() - CONNECTION_TEST_UNTAKEN_MS),
+            ),
+          ]),
+        )
         .execute();
       request.log.info("backup test connection requested");
       return view();

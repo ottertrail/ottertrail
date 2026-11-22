@@ -212,6 +212,7 @@ const UNDETERMINED_TEXT: Record<string, string> = {
   budgets_exceed_disk: "whether the budgets fit the disk",
   backup_failed: "whether the last backup worked",
   backup_overdue: "whether a backup is overdue",
+  backup_destination: "whether backups have a destination",
 };
 
 /**

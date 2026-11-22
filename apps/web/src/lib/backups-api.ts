@@ -65,9 +65,17 @@ export interface Backups {
     config: DestinationConfig | null;
     /** What is wrong with the variables, in words. */
     problem: string | null;
+    /** Over two hours old: the worker reports hourly, so it may be stopped. */
+    stale: boolean;
   };
   /** Test connection: asked for and not yet run, and the last result. */
-  connectionTest: { requested: boolean; testedAt: string | null; result: ConnectionTest | null };
+  connectionTest: {
+    requested: boolean;
+    /** Asked for, and no worker took it within a few minutes: a new request replaces it. */
+    untaken: boolean;
+    testedAt: string | null;
+    result: ConnectionTest | null;
+  };
   key: {
     state: "none" | "ready" | "unreadable";
     recipient: string | null;
@@ -150,8 +158,10 @@ const isBackups = (value: unknown): value is Backups => {
     isTextOrNull(destination.reportedAt) &&
     isDestinationConfig(destination.config) &&
     isTextOrNull(destination.problem) &&
+    typeof destination.stale === "boolean" &&
     isRecord(connectionTest) &&
     typeof connectionTest.requested === "boolean" &&
+    typeof connectionTest.untaken === "boolean" &&
     isTextOrNull(connectionTest.testedAt) &&
     (connectionTest.result === null || isConnectionTest(connectionTest.result)) &&
     isRecord(key) &&

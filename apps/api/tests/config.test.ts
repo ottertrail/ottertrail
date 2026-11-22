@@ -485,7 +485,7 @@ describe("the backup destination (BACKUP_S3_*)", () => {
       [{ BACKUP_S3_ENDPOINT: "https://storage.example.com/bucket" }, /without a path/],
       [{ BACKUP_S3_ENDPOINT: "https://id:hunter2@storage.example.com" }, /Keep keys out/],
       [{ BACKUP_S3_REGION: "us east" }, /BACKUP_S3_REGION must be/],
-      [{ BACKUP_S3_BUCKET: "Not_A_Bucket" }, /not a valid bucket name/],
+      [{ BACKUP_S3_BUCKET: "Not_A_Bucket" }, /BACKUP_S3_BUCKET must be a bucket name/],
       [{ BACKUP_S3_PREFIX: "a/../b" }, /BACKUP_S3_PREFIX must be a folder/],
       [{ BACKUP_S3_PREFIX: "x".repeat(201) }, /BACKUP_S3_PREFIX must be a folder/],
       [{ BACKUP_S3_ACCESS_KEY_ID: "has space" }, /BACKUP_S3_ACCESS_KEY_ID must be/],
@@ -503,6 +503,30 @@ describe("the backup destination (BACKUP_S3_*)", () => {
       expect(text).toMatch(message);
       expect(text).not.toContain("hunter2");
       expect(text).not.toContain(SECRET);
+    }
+  });
+
+  test("a secret pasted into any of them never shows in the problem, which the tab shows", () => {
+    // Shaped like a secret, and invalid in each variable it lands in.
+    const pasted = `wJalr/XUtnFEMI/K7MDENG+${"x".repeat(20)} bPxRfiCY`;
+    for (const name of [
+      "BACKUP_S3_ENDPOINT",
+      "BACKUP_S3_REGION",
+      "BACKUP_S3_BUCKET",
+      "BACKUP_S3_PREFIX",
+      "BACKUP_S3_ACCESS_KEY_ID",
+    ]) {
+      const loaded = loadBackupS3({ ...FULL, [name]: pasted }, null);
+      expect(loaded).toEqual({ problem: expect.stringContaining(name) });
+      expect(JSON.stringify(loaded)).not.toContain("XUtnFEMI");
+    }
+    // A secret too long, and a URL with one in it.
+    for (const change of [
+      { BACKUP_S3_SECRET_ACCESS_KEY: `${pasted}${"s".repeat(300)}` },
+      { BACKUP_S3_ENDPOINT: `https://AKIA1:${pasted}@storage.example.com` },
+      { BACKUP_S3_ENDPOINT: `https://storage.example.com/${pasted}` },
+    ]) {
+      expect(JSON.stringify(loadBackupS3({ ...FULL, ...change }, null))).not.toContain("XUtnFEMI");
     }
   });
 

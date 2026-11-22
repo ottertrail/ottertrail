@@ -18,6 +18,9 @@ import { type Kysely, sql } from "kysely";
  *   step's result, and when); and the folder's backups as it last listed
  *   them (`backup_list`, and when).
  *
+ * - storage_warnings takes `backup_destination`: backups are on, and the
+ *   worker reports no destination or a problem (storage/warnings.ts).
+ *
  * Nothing is live, so nothing the tab saved is carried over.
  */
 export async function up(db: Kysely<unknown>): Promise<void> {
@@ -40,9 +43,24 @@ export async function up(db: Kysely<unknown>): Promise<void> {
       add constraint backup_settings_destination_check
         check (destination is null or destination_problem is null)
   `.execute(db);
+  await sql`
+    alter table storage_warnings
+      drop constraint storage_warnings_warning_check,
+      add constraint storage_warnings_warning_check check (warning in ('merge_headroom',
+        'backup_space', 'disk_used', 'replay_budget', 'source_map_budget', 'budgets_exceed_disk',
+        'backup_failed', 'backup_overdue', 'backup_destination'))
+  `.execute(db);
 }
 
 export async function down(db: Kysely<unknown>): Promise<void> {
+  await sql`delete from storage_warnings where warning = 'backup_destination'`.execute(db);
+  await sql`
+    alter table storage_warnings
+      drop constraint storage_warnings_warning_check,
+      add constraint storage_warnings_warning_check check (warning in ('merge_headroom',
+        'backup_space', 'disk_used', 'replay_budget', 'source_map_budget', 'budgets_exceed_disk',
+        'backup_failed', 'backup_overdue'))
+  `.execute(db);
   await sql`
     alter table backup_settings
       drop constraint backup_settings_destination_check,

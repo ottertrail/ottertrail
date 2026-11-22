@@ -395,8 +395,9 @@ export const BACKUP_S3_VARIABLES = [
  * ConfigError when some are set but not all that are needed, or one is
  * invalid. BACKUP_S3_PREFIX defaults to "ottertrail-backups". In the
  * object store's own bucket, the folder may not overlap its objects
- * (replays/, source-maps/, avatars/). Errors never repeat the endpoint or
- * a key.
+ * (replays/, source-maps/, avatars/). Errors name the variable and the
+ * rule, never a value: they reach PostgreSQL and the Backups tab, and a
+ * secret pasted on the wrong line must not.
  */
 export function parseBackupS3(
   env: NodeJS.ProcessEnv,
@@ -433,17 +434,19 @@ export function parseBackupS3(
   const region = read("BACKUP_S3_REGION");
   if (!new RegExp(REGION_PATTERN).test(region)) {
     throw new ConfigError(
-      `BACKUP_S3_REGION must be letters, digits, hyphens, and underscores (auto for Cloudflare R2), received "${region}"`,
+      "BACKUP_S3_REGION must be up to 64 letters, digits, hyphens, and underscores, such as auto for Cloudflare R2",
     );
   }
   const bucket = read("BACKUP_S3_BUCKET");
   if (!new RegExp(BUCKET_PATTERN).test(bucket)) {
-    throw new ConfigError(`BACKUP_S3_BUCKET is not a valid bucket name, received "${bucket}"`);
+    throw new ConfigError(
+      "BACKUP_S3_BUCKET must be a bucket name: 3 to 63 lowercase letters, digits, dots, and hyphens",
+    );
   }
   const prefix = read("BACKUP_S3_PREFIX").replace(/^\/+|\/+$/g, "") || DEFAULT_PREFIX;
   if (prefix.length > MAX_PREFIX || !new RegExp(PREFIX_PATTERN).test(prefix)) {
     throw new ConfigError(
-      `BACKUP_S3_PREFIX must be a folder of letters, digits, dots, hyphens, and underscores, with slashes between names, up to ${MAX_PREFIX} characters, received "${prefix.slice(0, MAX_PREFIX)}"`,
+      `BACKUP_S3_PREFIX must be a folder of letters, digits, dots, hyphens, and underscores, with slashes between names and no "..", up to ${MAX_PREFIX} characters`,
     );
   }
   const accessKeyId = read("BACKUP_S3_ACCESS_KEY_ID");

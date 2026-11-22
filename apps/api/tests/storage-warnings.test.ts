@@ -174,6 +174,38 @@ describe("each storage warning's threshold", () => {
   });
 });
 
+/** Backups on, with `noDestination` as the worker reported it. */
+const health = (noDestination: { problem: string | null } | null) =>
+  evaluateWarnings({
+    ...reading({}),
+    backups: { ok: true, enabled: true, failed: null, overdue: null, noDestination },
+  });
+
+describe("backups on without a destination", () => {
+  test("warns, with the worker's problem when it has one, and links nothing else", () => {
+    expect(health(null).warnings).toEqual([]);
+    const missing = health({ problem: null }).warnings;
+    expect(missing).toEqual([
+      expect.objectContaining({
+        id: "backup_destination",
+        level: "warning",
+        title: "Backups have no destination",
+      }),
+    ]);
+    expect(missing[0]?.text).toBe(
+      "Backups are on, but the worker has no BACKUP_S3_* variables. The next backup will fail. Set them in the server's .env and run `docker compose up -d`.",
+    );
+    const invalid = health({ problem: "Set BACKUP_S3_REGION too." }).warnings[0];
+    expect(invalid?.text).toMatch(
+      /^Backups are on, but the worker's BACKUP_S3_\* variables have a problem: Set BACKUP_S3_REGION too\. /,
+    );
+    expect(invalid?.figures).toEqual({ problem: "Set BACKUP_S3_REGION too." });
+    expect(recovery("backup_destination", reading({})).message).toBe(
+      "Backups have a destination again: the worker reported one.",
+    );
+  });
+});
+
 describe("a warning that is on ends only past a margin", () => {
   test("the disk: on at 80%, still on at 78.5%, off under 78%", () => {
     const on = new Map<WarningId, WarningLevel>([["disk_used", "warning"]]);

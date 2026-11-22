@@ -20,6 +20,7 @@ export const WARNING_IDS = [
   "budgets_exceed_disk",
   "backup_failed",
   "backup_overdue",
+  "backup_destination",
 ] as const;
 
 export type WarningId = (typeof WARNING_IDS)[number];
@@ -49,6 +50,7 @@ export const WARNING_TITLES: Record<WarningId, string> = {
   budgets_exceed_disk: "The budgets are larger than the free disk",
   backup_failed: "The last backup failed",
   backup_overdue: "A backup is overdue",
+  backup_destination: "Backups have no destination",
 };
 
 /** The thresholds: docs/deployment.md, "Storage warnings", explains each. */
@@ -281,7 +283,7 @@ export function evaluateWarnings(
   if (backups === undefined || backups === null) {
     // Not measured with the stores (a reading made without them).
   } else if (!backups.ok) {
-    undetermined.push("backup_failed", "backup_overdue");
+    undetermined.push("backup_failed", "backup_overdue", "backup_destination");
   } else {
     if (backups.failed !== null) {
       warnings.push({
@@ -304,6 +306,20 @@ export function evaluateWarnings(
           `No backup has worked since the daily backup due ${utcText(backups.overdue.since)}. ` +
           "The worker may be stopped, or its backups keep failing. Check that the worker runs (`docker compose ps`), and the Backups tab of Settings for the last run and its error.",
         figures: { dueAt: backups.overdue.since.toISOString() },
+      });
+    }
+    if (backups.noDestination !== null) {
+      const { problem } = backups.noDestination;
+      warnings.push({
+        id: "backup_destination",
+        level: "warning",
+        title: "Backups have no destination",
+        text:
+          (problem === null
+            ? "Backups are on, but the worker has no BACKUP_S3_* variables. "
+            : `Backups are on, but the worker's BACKUP_S3_* variables have a problem: ${sentence(problem)} `) +
+          "The next backup will fail. Set them in the server's .env and run `docker compose up -d`.",
+        figures: problem === null ? {} : { problem },
       });
     }
   }
@@ -380,6 +396,8 @@ export function recovery(
       return { message: "Backups work again: the latest backup finished.", figures: {} };
     case "backup_overdue":
       return { message: "Backups are on time again: a backup finished.", figures: {} };
+    case "backup_destination":
+      return { message: "Backups have a destination again: the worker reported one.", figures: {} };
     case "budgets_exceed_disk":
       break;
   }

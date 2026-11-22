@@ -263,3 +263,63 @@ describe("storage: Garage's admin API, the free-disk floor, and backup.sh", () =
     });
   });
 });
+
+describe("restore.sh reads the backup variables from the file beside it as Compose does", () => {
+  const script = readFileSync(join(deploy, "restore.sh"), "utf8");
+  const reader = script.slice(
+    script.indexOf("  # from_env_file: start"),
+    script.indexOf("  # from_env_file: end"),
+  );
+
+  /** What restore.sh's reader returns for `name` from a file holding `text`. */
+  async function readValue(text: string, name: string): Promise<string> {
+    const folder = await mkdtemp(join(tmpdir(), "ottertrail-env-reader-"));
+    try {
+      const file = join(folder, "settings");
+      await writeFile(file, text);
+      const { stdout } = await promisify(execFile)("sh", [
+        "-c",
+        `env_file="$1"\n${reader}\nfrom_env_file "$2"`,
+        "sh",
+        file,
+        name,
+      ]);
+      return stdout;
+    } finally {
+      await rm(folder, { recursive: true, force: true });
+    }
+  }
+
+  test.each([
+    ["A=plain", "plain"],
+    ["A=plain   ", "plain"],
+    ["A= spaced", "spaced"],
+    ["A=plain\r", "plain"],
+    ["A=plain # a comment", "plain"],
+    ["A=no#comment", "no#comment"],
+    ['A="quoted"', "quoted"],
+    ['A="quoted"   ', "quoted"],
+    ['A="quoted"\r', "quoted"],
+    ['A="pre" # c', "pre"],
+    ['A="has # inside"', "has # inside"],
+    ["A='single' # c", "single"],
+    ["A=key=with=equals", "key=with=equals"],
+    ['A="x=y"', "x=y"],
+    ["export A=exported", "exported"],
+    ["  A = around", "around"],
+    ["A=", ""],
+    ["# A=commented", ""],
+    ["AB=other", ""],
+  ])("%j reads as %j", async (line, expected) => {
+    expect(await readValue(`OTHER=1\n${line}\n`, "A")).toBe(expected);
+  });
+
+  test("the last line wins, in a file with CRLF line ends", async () => {
+    expect(await readValue("A=first\r\nB=b\r\nA=second\r\n", "A")).toBe("second");
+  });
+
+  test("it never runs the file", async () => {
+    expect(await readValue("A=$(echo ran)\nB=`echo ran`\n", "A")).toBe("$(echo ran)");
+    expect(reader).not.toMatch(/\beval\b|^\s*\.\s|\bsource\b/m);
+  });
+});

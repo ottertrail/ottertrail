@@ -241,6 +241,12 @@ export interface BackupHealth {
   failed: { at: Date; error: string } | null;
   /** No backup succeeded since the daily time this long past. */
   overdue: { since: Date } | null;
+  /**
+   * The worker reports no destination, or a problem with its BACKUP_S3_*:
+   * the next backup can't run. Null while it reports one, or before it
+   * has reported at all.
+   */
+  noDestination: { problem: string | null } | null;
 }
 
 /** Reads backups' health now: off, failed, overdue, or fine. */
@@ -250,7 +256,14 @@ export async function readBackupHealth(db: Kysely<Database>, now: Date): Promise
     latestRuns(db),
     readInstanceSettings(db),
   ]);
-  if (!settings.enabled) return { enabled: false, failed: null, overdue: null };
+  if (!settings.enabled) {
+    return { enabled: false, failed: null, overdue: null, noDestination: null };
+  }
+  const noDestination =
+    settings.destinationReportedAt !== null &&
+    (settings.destination === null || settings.destinationProblem !== null)
+      ? { problem: settings.destinationProblem }
+      : null;
   const last = runs.lastBackup;
   const failed =
     last !== null && last.status === "failed"
@@ -270,5 +283,10 @@ export async function readBackupHealth(db: Kysely<Database>, now: Date): Promise
           timeZone,
           runs.lastSuccess?.startedAt ?? null,
         );
-  return { enabled: true, failed, overdue: slot === null ? null : { since: slot.at } };
+  return {
+    enabled: true,
+    failed,
+    overdue: slot === null ? null : { since: slot.at },
+    noDestination,
+  };
 }

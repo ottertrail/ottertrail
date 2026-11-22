@@ -6,6 +6,7 @@ import {
   BACKUPS_FAILED,
   BACKUPS_INVALID,
   BACKUPS_KEY_UNSAVED,
+  BACKUPS_OFF,
   BACKUPS_ON,
   BACKUPS_READY,
   FAKE_KEY,
@@ -57,7 +58,10 @@ describe("the Backups tab's states", () => {
     const docs = destination().getByRole("link", { name: /^Backups docs/ });
     await expect
       .element(docs)
-      .toHaveAttribute("href", "https://docs.ottertrail.app/self-hosting/backups/");
+      .toHaveAttribute(
+        "href",
+        "https://docs.ottertrail.app/self-hosting/backups/#set-up-scheduled-backups",
+      );
     await expect.element(docs).toHaveAttribute("target", "_blank");
     // Nothing to test yet, and no destination fields to type in.
     await expect
@@ -85,6 +89,56 @@ describe("the Backups tab's states", () => {
       )
       .toBeVisible();
     await expect.element(toggle()).toBeDisabled();
+  });
+
+  test("on, but the worker lost its variables: an alert, not a hint", async () => {
+    installFakeApi({
+      backups: fakeBackups({
+        view: { ...BACKUPS_ON, destination: { ...BACKUPS_OFF.destination } },
+      }),
+    });
+    renderApp(BACKUPS_TAB);
+    await expect.element(destination().getByText("Backups have no destination")).toBeVisible();
+    await expect
+      .element(
+        destination().getByText(
+          "Backups are on, but the worker has no BACKUP_S3_* variables, so the next backup fails.",
+          { exact: false },
+        ),
+      )
+      .toBeVisible();
+    // Still on: it can be turned off.
+    await expect.element(toggle()).toBeChecked();
+    await expect.element(toggle()).toBeEnabled();
+  });
+
+  test("on, with a problem: the alert says backups fail until it is fixed", async () => {
+    installFakeApi({
+      backups: fakeBackups({
+        view: { ...BACKUPS_ON, destination: BACKUPS_INVALID.destination },
+      }),
+    });
+    renderApp(BACKUPS_TAB);
+    await expect
+      .element(destination().getByText(/Then restart the worker\. Until then, backups fail\.$/))
+      .toBeVisible();
+  });
+
+  test("a report over two hours old says when the worker last reported, and what to check", async () => {
+    installFakeApi({
+      backups: fakeBackups({
+        view: { ...BACKUPS_ON, destination: { ...BACKUPS_ON.destination, stale: true } },
+      }),
+    });
+    renderApp(BACKUPS_TAB);
+    await expect.element(destination().getByText("Worker report out of date")).toBeVisible();
+    await expect
+      .element(
+        destination().getByText(
+          "The worker last reported at 20 Nov 2026, 11:30. Check that the worker is running (docker compose ps).",
+        ),
+      )
+      .toBeVisible();
   });
 
   test("a reported destination: its parts as text, when the worker reported, and the switch on offer", async () => {
@@ -314,6 +368,26 @@ describe("Test connection", () => {
     // Testing changed nothing saved.
     await expect.element(form().getByText("No unsaved changes")).toBeVisible();
   }, 15_000);
+
+  test("one no worker took in a few minutes says so, and may be asked again", async () => {
+    installFakeApi({
+      backups: fakeBackups({
+        view: { ...BACKUPS_ON, connectionTest: { ...BACKUPS_ON.connectionTest, untaken: true } },
+      }),
+    });
+    renderApp(BACKUPS_TAB);
+    await expect
+      .element(
+        destination().getByText(
+          "The worker hasn't taken the test. Check that it is running (docker compose ps), then test again.",
+        ),
+      )
+      .toBeVisible();
+    await destination().getByRole("button", { name: "Test connection" }).click();
+    await expect
+      .element(destination().getByText("Test connection starts within a minute."))
+      .toBeVisible();
+  });
 
   test("a refusal from the API says why", async () => {
     installFakeApi({
