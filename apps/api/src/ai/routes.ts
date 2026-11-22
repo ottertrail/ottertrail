@@ -1,12 +1,13 @@
 import type { FastifyPluginCallback, FastifyReply } from "fastify";
 import type { Kysely } from "kysely";
 
-import { canUse, type ProjectAccess, requireProjectAccess } from "../access/access.ts";
+import { canUse, FORBIDDEN, type ProjectAccess, requireProjectAccess } from "../access/access.ts";
 import type { Auth } from "../auth/auth.ts";
 import { requireSession } from "../auth/routes.ts";
 import type { ClickHouseClient } from "../clickhouse/clickhouse.ts";
 import { clickHouseErrorHandler } from "../clickhouse/route-errors.ts";
 import { environmentOf } from "../collection/environment.ts";
+import { USER_ID_PATTERN } from "../collection/identity.ts";
 import type { Database } from "../db/schema.ts";
 import { localDays, previousDays } from "../reports/reports.ts";
 import { RANGE_PROPERTIES, type RangeQuery, requestDays } from "../reports/routes.ts";
@@ -55,6 +56,8 @@ const FILTER_PROPERTIES = {
   model: LABEL,
   // "" is the calls that name no feature, which the page shows as "Unlabeled".
   feature: { type: "string", pattern: `^[^\\u0000-\\u001F\\u007F]{0,${MAX_AI_LABEL_CHARS}}$` },
+  // One end user's calls, as user IDs are taken everywhere; needs the users area (userRefused).
+  user: { type: "string", maxLength: 200, pattern: USER_ID_PATTERN },
 };
 
 type AiQuery = RangeQuery & {
@@ -62,6 +65,7 @@ type AiQuery = RangeQuery & {
   provider?: string;
   model?: string;
   feature?: string;
+  user?: string;
 };
 
 /** The access requireProjectAccess set: these routes always run it. */
@@ -77,7 +81,15 @@ const filtersOf = (query: AiQuery) => ({
   provider: query.provider,
   model: query.model,
   feature: query.feature,
+  user: query.user,
 });
+
+/**
+ * Whether the request filters by a user without users at view: refused
+ * (403), as an alert of another area is, rather than answered for everyone.
+ */
+const userRefused = (request: { query: AiQuery; projectAccess: ProjectAccess | null }) =>
+  request.query.user !== undefined && !canUse(accessOf(request).user, "users", "view");
 
 const schema = (extra: object = {}) => ({
   params: PARAMS,
@@ -104,7 +116,7 @@ const answered = (range: TelemetryRange) => ({
 });
 
 /**
- * GET /api/projects/:id/ai[?period=7d|from=…&to=…&environment=…&service=…&provider=…&model=…&feature=…]
+ * GET /api/projects/:id/ai[?period=7d|from=…&to=…&environment=…&service=…&provider=…&model=…&feature=…&user=…]
  *     (totals, the previous period's totals, breakdowns by model, feature, and user,
  *     failures by error.type, and what the filters offer)
  * GET /api/projects/:id/ai/chart[?…the same…&split=model|feature]
@@ -115,7 +127,9 @@ const answered = (range: TelemetryRange) => ({
  * The AI page (docs/ai-usage.md, "The report"; report.ts). Each runs
  * requireProjectAccess for monitoring at view, and reads only the project
  * it found. The breakdown by user, and the user of each call, need users
- * at view too: without it, `users` is null and `usersHidden` true.
+ * at view too: without it, `users` is null and `usersHidden` true, and a
+ * `user` filter (one end user's calls, the user page's AI section) is
+ * refused with 403.
  *
  * AI calls are kept as long as the project's events, so the range is not
  * cut to the 30 days of spans. Cost is worked out at the instance's
@@ -165,6 +179,7 @@ export const aiRoutes: FastifyPluginCallback<{
     "/projects/:id/ai",
     { preHandler: [signedIn, canView], schema: schema() },
     async (request, reply) => {
+      if (userRefused(request)) return reply.code(403).send(FORBIDDEN);
       const moment = now();
       const asked = await rangeOf(request, moment);
       if ("problem" in asked) return reply.code(400).send(asked.problem);
@@ -230,6 +245,7 @@ export const aiRoutes: FastifyPluginCallback<{
       schema: schema({ split: { type: "string", enum: SPLITS } }),
     },
     async (request, reply) => {
+      if (userRefused(request)) return reply.code(403).send(FORBIDDEN);
       const moment = now();
       const asked = await rangeOf(request, moment);
       if ("problem" in asked) return reply.code(400).send(asked.problem);
@@ -252,6 +268,7 @@ export const aiRoutes: FastifyPluginCallback<{
     "/projects/:id/ai/calls",
     { preHandler: [signedIn, canView], schema: schema() },
     async (request, reply) => {
+      if (userRefused(request)) return reply.code(403).send(FORBIDDEN);
       const asked = await rangeOf(request, now());
       if ("problem" in asked) return reply.code(400).send(asked.problem);
       const { range } = asked;

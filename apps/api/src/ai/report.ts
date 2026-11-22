@@ -59,6 +59,8 @@ export interface AiFilters {
   provider?: string | undefined;
   model?: string | undefined;
   feature?: string | undefined;
+  /** One end user's calls (user_id); the routes take it only from a reader with the users area. */
+  user?: string | undefined;
 }
 
 export const SPLITS = ["model", "feature"] as const;
@@ -79,6 +81,7 @@ function conditions(params: QueryParams, scope: AiScope, filters: AiFilters): st
     const value = filters[column];
     if (value !== undefined) parts.push(`${column} = ${params.add(value, "String")}`);
   }
+  if (filters.user !== undefined) parts.push(`user_id = ${params.add(filters.user, "String")}`);
   return parts.join(" AND ");
 }
 

@@ -1,0 +1,176 @@
+import { useQuery } from "@tanstack/react-query";
+import { Link } from "@tanstack/react-router";
+import { OctagonAlertIcon } from "lucide-react";
+
+import { BreakdownTable } from "@/components/breakdown-table";
+import { StatStrip } from "@/components/stat-strip";
+import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import { type AiFeatureRow, type AiModelRow, aiReportQuery } from "@/lib/ai-api";
+import type { PageRange } from "@/lib/analytics-api";
+import { MISSING } from "@/lib/missing";
+
+import { featureLabel, formatMs, formatTokens, formatUsd, modelLabel } from "../ai/format";
+import { formatConversion, formatCount, formatWhole } from "../analytics/format";
+import { aiSearchOf } from "../telemetry/search";
+
+/** The days the section covers: the user page has no period of its own. */
+const RANGE: PageRange = { period: "30d" };
+
+/** The models and features a section lists: those that cost this user the most. */
+const LISTED = 3;
+
+const share = (value: number | null) => (value === null ? MISSING : formatConversion(value));
+
+/** A model's or feature's row: its name, its estimated cost (the bar), and its calls. */
+const rowOf = (key: string, label: string, row: AiModelRow | AiFeatureRow) => ({
+  key,
+  label,
+  title: label,
+  bar: row.costUsd,
+  figures: [formatUsd(row.costUsd), formatWhole(row.calls)],
+});
+
+/**
+ * One user's AI calls over the last 30 days in one environment
+ * (docs/ai-usage.md, "A user's AI usage"): the AI report's routes with the
+ * user filter, so counts, tokens, estimated cost, latency, and failures,
+ * never what was asked or answered. Nothing at all for a project that has
+ * never had an AI call, nor while that is not known yet; one line when
+ * this user had none. Shown only with
+ * the monitoring area (the caller checks), and on a page that already
+ * needs the users area, which the filter needs too.
+ */
+export function UserAi({
+  projectId,
+  userId,
+  environment,
+}: {
+  projectId: string;
+  userId: string;
+  environment: string;
+}) {
+  const report = useQuery(aiReportQuery(projectId, RANGE, environment, { user: userId }));
+  const data = report.data;
+  if (data !== undefined && !data.received) return null;
+
+  const heading = (
+    <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+      <h3 id="user-ai" className="text-sm font-medium text-ink-subtle">
+        AI in the last 30 days
+      </h3>
+      <Link
+        to="/projects/$projectId/ai"
+        params={{ projectId }}
+        search={aiSearchOf({ range: RANGE, environment, filters: {} })}
+        className="text-sm whitespace-nowrap text-link hover:underline"
+      >
+        AI page
+      </Link>
+    </div>
+  );
+
+  const failure = report.isError && (
+    <Alert variant="destructive">
+      <OctagonAlertIcon />
+      <AlertTitle>
+        {data === undefined ? "The AI usage could not load" : "The AI usage could not refresh"}
+      </AlertTitle>
+      <AlertDescription>
+        {report.error.message}
+        {data !== undefined && " The figures below are from the last successful load."}
+      </AlertDescription>
+      <AlertAction>
+        <Button variant="outline" size="sm" onClick={() => void report.refetch()}>
+          Retry
+        </Button>
+      </AlertAction>
+    </Alert>
+  );
+
+  if (data === undefined) {
+    if (report.isError) {
+      return (
+        <section className="flex flex-col gap-2" aria-labelledby="user-ai">
+          {heading}
+          {failure}
+        </section>
+      );
+    }
+    // Nothing while it loads: most projects have no AI calls, and a placeholder
+    // for a section that then never shows would move the page.
+    return null;
+  }
+
+  const { totals } = data;
+  const unpriced = totals.noPriceCalls;
+  return (
+    <section className="flex flex-col gap-3" aria-labelledby="user-ai">
+      {heading}
+      {failure}
+      {totals.calls === 0 ? (
+        <p className="text-sm text-ink-subtle">No AI calls from this user in the last 30 days.</p>
+      ) : (
+        <>
+          <StatStrip
+            label="The user's AI usage"
+            stats={[
+              { label: "Calls", value: formatCount(totals.calls) },
+              { label: "Estimated cost (USD)", value: formatUsd(totals.costUsd) },
+              { label: "Input tokens", value: formatTokens(totals.inputTokens) },
+              { label: "Output tokens", value: formatTokens(totals.outputTokens) },
+              { label: "Failed", value: share(totals.failedShare) },
+              { label: "95th percentile", value: formatMs(totals.p95Ms) },
+            ]}
+          />
+          {/* Side by side by the content's width: the workbench's pane is narrower than the page. */}
+          <div className="@container">
+            <div className="grid gap-6 @2xl:grid-cols-2">
+              <BreakdownTable
+                title="Models"
+                headingLevel={4}
+                caption="The models that cost this user the most, the costliest first"
+                nameHeading="Model"
+                figureHeadings={["Est. cost", "Calls"]}
+                rows={data.models
+                  .slice(0, LISTED)
+                  .map((row) =>
+                    rowOf(
+                      row.other ? "\u0000other" : row.model,
+                      row.other ? "Other models" : modelLabel(row.model),
+                      row,
+                    ),
+                  )}
+                empty=""
+                layout="stack"
+              />
+              <BreakdownTable
+                title="Features"
+                headingLevel={4}
+                caption="The features that cost this user the most, the costliest first"
+                nameHeading="Feature"
+                figureHeadings={["Est. cost", "Calls"]}
+                rows={data.features
+                  .slice(0, LISTED)
+                  .map((row) =>
+                    rowOf(
+                      row.other ? "\u0000other" : row.feature,
+                      row.other ? "Other features" : featureLabel(row.feature),
+                      row,
+                    ),
+                  )}
+                empty=""
+                layout="stack"
+              />
+            </div>
+          </div>
+          <p className="text-xs text-pretty text-ink-subtle">
+            Cost is an estimate from token counts and model prices.
+            {unpriced > 0 &&
+              ` ${formatWhole(unpriced)} ${unpriced === 1 ? "call" : "calls"} had no price and ${unpriced === 1 ? "is" : "are"} not in it.`}
+          </p>
+        </>
+      )}
+    </section>
+  );
+}

@@ -16,6 +16,8 @@ export interface AiFilters {
   provider?: string | undefined;
   model?: string | undefined;
   feature?: string | undefined;
+  /** One end user's calls (the user page's AI section); the API needs the Users area for it. */
+  user?: string | undefined;
 }
 
 /** The longest model, provider, or feature the API stores and filters by. */
@@ -328,6 +330,7 @@ function aiParams(range: PageRange, environment: string, filters: AiFilters) {
     ...(filters.provider === undefined ? {} : { provider: filters.provider }),
     ...(filters.model === undefined ? {} : { model: filters.model }),
     ...(filters.feature === undefined ? {} : { feature: filters.feature }),
+    ...(filters.user === undefined ? {} : { user: filters.user }),
   });
 }
 
@@ -340,6 +343,7 @@ const filterKey = (filters: AiFilters) => ({
   provider: filters.provider,
   model: filters.model,
   feature: filters.feature,
+  user: filters.user,
 });
 
 /** The totals, the period before, and the breakdowns. */

@@ -282,8 +282,110 @@ const NO_TOTALS: AiTotals = {
   failedShare: null,
 };
 
-/** The week's report, as the owner (with the Users area) reads it. */
+/** The user "ada" (the users fakes' one user): her calls, filtered with `user=ada`. */
+export const ADA_AI_TOTALS: AiTotals = {
+  ...AI_PREVIOUS,
+  calls: 310,
+  inputTokens: 410_000,
+  outputTokens: 98_000,
+  cacheReadTokens: 0,
+  costUsd: 1.71,
+  cacheReadShare: 0,
+  p95Ms: 4980,
+  failed: 6,
+  failedShare: 6 / 310,
+  noPriceCalls: 4,
+  noPriceModels: ["acme-support-ft-2026-10"],
+};
+
+const ADA_MODELS: AiModelRow[] = [
+  {
+    ...AI_MODELS[0],
+    ...figures({
+      calls: 210,
+      inputTokens: 300_000,
+      outputTokens: 80_000,
+      costUsd: 1.52,
+      failed: 4,
+      p50Ms: 1800,
+      p95Ms: 6000,
+      firstChunkP50Ms: 600,
+    }),
+  },
+  {
+    ...AI_MODELS[1],
+    ...figures({
+      calls: 96,
+      inputTokens: 100_000,
+      outputTokens: 17_000,
+      costUsd: 0.19,
+      failed: 2,
+      p50Ms: 900,
+      p95Ms: 2700,
+      firstChunkP50Ms: 330,
+    }),
+  },
+  {
+    ...AI_MODELS[3],
+    ...figures({
+      calls: 4,
+      inputTokens: 10_000,
+      outputTokens: 1000,
+      costUsd: 0,
+      noPriceCalls: 4,
+      p50Ms: 1200,
+      p95Ms: 1500,
+      firstChunkP50Ms: null,
+    }),
+  },
+];
+
+const ADA_FEATURES: AiFeatureRow[] = (
+  [
+    ["support-chat", 180, 1.31],
+    ["summarize-ticket", 30, 0.21],
+    ["", 96, 0.19],
+    ["search-index", 4, 0],
+  ] as const
+).map(([feature, calls, costUsd]) => ({
+  feature,
+  other: false,
+  ...figures({
+    calls,
+    inputTokens: calls * 1300,
+    outputTokens: calls * 300,
+    costUsd,
+    p50Ms: 1500,
+    p95Ms: 4980,
+    firstChunkP50Ms: null,
+  }),
+}));
+
+/** One user's report (`user=`): ada's calls, or none for anyone else. */
+function userReport(report: AiReport, userId: string): AiReport {
+  const ada = userId === "ada";
+  const totals = ada ? ADA_AI_TOTALS : NO_TOTALS;
+  return {
+    ...report,
+    totals,
+    previous: { ...report.previous, totals: NO_TOTALS },
+    models: ada ? ADA_MODELS : [],
+    features: ada ? ADA_FEATURES : [],
+    users: report.users === null ? null : ada ? [{ ...AI_USERS[1], userId }] : [],
+    failures: ada
+      ? [{ errorType: "RateLimitError", calls: 6, lastAt: "2026-11-16T07:41:00.000Z" }]
+      : [],
+  };
+}
+
+/** The week's report, as the owner (with the Users area) reads it; `user=` filters by one user. */
 export function fakeAiReport(query: URLSearchParams, usersVisible: boolean): AiReport {
+  const userId = query.get("user");
+  const report = weekReport(query, usersVisible);
+  return userId === null ? report : userReport(report, userId);
+}
+
+function weekReport(query: URLSearchParams, usersVisible: boolean): AiReport {
   return {
     ...rangeOf(query),
     environments: ["production", "staging"],

@@ -551,7 +551,30 @@ describe("the report", () => {
     expect(sum(body.models.map((row: { calls: number }) => row.calls))).toBe(calls);
   });
 
+  test("one user's calls: totals, models, features, the chart, and the latest calls", async () => {
+    const body = await report(path("&user=u1"));
+    const mine = current.filter((call) => call.userId === "u1");
+    expect(body.totals).toMatchObject({ calls: 4, failed: 0, noPriceCalls: 1 });
+    expect(body.totals.costUsd).toBeCloseTo(costOfCalls(mine), 9);
+    expect(body.models.map((row: { model: string }) => row.model)).toEqual([SONNET, LOCAL]);
+    expect(body.features.map((row: { feature: string }) => row.feature)).toEqual([
+      "support-chat",
+      "",
+    ]);
+    expect(body.users).toEqual([expect.objectContaining({ userId: "u1", calls: 4 })]);
+    // Whether the project has calls at all stays the project's.
+    expect((await report(path("&user=nobody"))).totals.calls).toBe(0);
+    expect((await report(path("&user=nobody"))).received).toBe(true);
+    const chart = await report(`/projects/${projectId}/ai/chart?period=7d&user=u2`);
+    expect(sum(chart.total.calls)).toBe(2);
+    const { calls } = await report(`/projects/${projectId}/ai/calls?period=7d&user=u2`);
+    expect(calls.map((call: { userId: string }) => call.userId)).toEqual(["u2", "u2"]);
+  });
+
   test.each([
+    "?period=7d&user=",
+    `?period=7d&user=${"u".repeat(201)}`,
+    "?period=7d&user=%01",
     "?period=7d&model=",
     `?period=7d&model=${"m".repeat(101)}`,
     "?period=7d&provider=%01",
@@ -670,7 +693,7 @@ describe("the latest calls", () => {
 });
 
 describe("access", () => {
-  test("monitoring at view; without users, no breakdown by user and no user on a call", async () => {
+  test("monitoring at view; without users, no breakdown by user, no user on a call, and no user filter", async () => {
     const watcher = await member("ai-monitoring@example.com", { monitoring: "view" });
     const body = await report(`/projects/${projectId}/ai?period=7d`, watcher.cookie);
     expect(body).toMatchObject({ users: null, usersHidden: true, totals: { calls: 7 } });
@@ -682,6 +705,14 @@ describe("access", () => {
     expect(calls.map((call: { userId: string | null }) => call.userId)).toEqual(
       Array.from({ length: 7 }, () => null),
     );
+
+    for (const suffix of ["", "/chart", "/calls"]) {
+      const filtered = await get(
+        `/projects/${projectId}/ai${suffix}?period=7d&user=u1`,
+        watcher.cookie,
+      );
+      expect(filtered.statusCode).toBe(403);
+    }
 
     const both = await member("ai-users@example.com", { monitoring: "view", users: "view" });
     expect((await report(`/projects/${projectId}/ai?period=7d`, both.cookie)).users).toHaveLength(

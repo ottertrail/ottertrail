@@ -1,6 +1,6 @@
 # AI usage tracking
 
-**Status: phase 1 is built: detection and storage of AI calls, the price table, the report API, the AI cost and failures alert rule kinds, the AI page (`/projects/<id>/ai`, [dashboard](dashboard.md#ai)), the alert form for the new kinds ([dashboard](dashboard.md#813-alerts)), and the instance's own prices in Settings → AI models ([below](#prices)). From phase 2, `POST /api/ai-calls` for apps without OpenTelemetry ([below](#sending-calls-over-http)), the `ai_latency` rule kind, the Overview's AI cost widget ([below](#the-overviews-ai-cost-widget)), the list of calls in the Workbench pattern, and conversations grouped by `gen_ai.conversation.id` ([below](#the-calls-list)) are built. The docs site explains it at `/monitoring/ai-usage/`.**
+**Status: phase 1 is built: detection and storage of AI calls, the price table, the report API, the AI cost and failures alert rule kinds, the AI page (`/projects/<id>/ai`, [dashboard](dashboard.md#ai)), the alert form for the new kinds ([dashboard](dashboard.md#813-alerts)), and the instance's own prices in Settings → AI models ([below](#prices)). From phase 2, `POST /api/ai-calls` for apps without OpenTelemetry ([below](#sending-calls-over-http)), the `ai_latency` rule kind, the Overview's AI cost widget ([below](#the-overviews-ai-cost-widget)), the list of calls in the Workbench pattern, conversations grouped by `gen_ai.conversation.id` ([below](#the-calls-list)), and a user's AI usage on the user's page ([below](#a-users-ai-usage)) are built. The docs site explains it at `/monitoring/ai-usage/`.**
 
 An app that calls language models pays per token, and its calls fail, stall, and get cut off in ways its other requests do not. This module shows the LLM calls an app makes: tokens, estimated cost, latency, and failures, per model, per feature, and per user, with the trace of each call one click away. It reads the spans the app already sends over OTLP ([telemetry](telemetry.md)), or calls its server sends over HTTP; nothing of Ottertrail's runs in the app.
 
@@ -115,13 +115,13 @@ Each needs `projects` (`requirePermission`), and the changes the dashboard's `Or
 Three project routes (`apps/api/src/ai/routes.ts`, queries in `apps/api/src/ai/report.ts`), each behind `requireProjectAccess` for `monitoring` at view:
 
 ```text
-GET /api/projects/:id/ai?period=7d|from=…&to=…&environment=…&service=…&provider=…&model=…&feature=…
+GET /api/projects/:id/ai?period=7d|from=…&to=…&environment=…&service=…&provider=…&model=…&feature=…&user=…
 GET /api/projects/:id/ai/chart?…the same…&split=model|feature
 GET /api/projects/:id/ai/calls?…the same…
 ```
 
 - **Period:** as the other reports: `period` (`today`, `7d`, `30d`, `90d`, `12m`) or `from` and `to`, days in the instance's timezone, at most 366. Not cut to the 30 days of spans: AI calls are kept as long as events.
-- **Filters:** each exactly as stored; `feature=` (empty) is the calls with no feature. `environment` is `production` when left out.
+- **Filters:** each exactly as stored; `feature=` (empty) is the calls with no feature. `environment` is `production` when left out. `user` is one end user's calls (`user_id`), validated as user IDs are everywhere (1 to 200 characters, no control characters); it needs `users` at view as well, and without it the request is refused with 403, as an alert rule of another area is, rather than answered for everyone. `received` stays the project's, whatever the filters.
 - **Totals** (`totals`): estimated cost, calls, the token counts, the cache-read share of the input, the 95th-percentile duration, the failed calls and share, and the calls of models without a price. `previous` holds the same totals for the period before, counted as the other reports count it (`previousDays`: as many days right before, up to the same moment when the period is still running), so the page shows the change.
 - **By model** (`models`) and **by feature** (`features`): calls, tokens, cost, the median and 95th-percentile duration, the median time to the first chunk, the failed share, and the share cut off at the token limit (finish reason `length` or `max_tokens`), the costliest first; past the listed ones, one row with `other: true`.
 - **By user** (`users`): the 50 users whose calls cost the most, without the calls that name no user. Only with `users` at view: otherwise `users` is `null` and `usersHidden` is `true`, and the latest calls carry no user.
@@ -194,6 +194,14 @@ Three rule kinds, evaluated by the worker with the telemetry rules, once a minut
 ## The Overview's AI cost widget
 
 The project Overview ([dashboard](dashboard.md#the-widgets)) has an AI cost widget after the services one: the estimated cost of the period's AI calls and their number, each against the period before, with the AI page's minimum of 20 calls before a change shows, and the three models that cost the most. Its route, `GET /api/projects/:id/overview/ai-cost`, needs `monitoring` at view, as the AI page does; a user without it neither sees the widget nor gets its numbers (403). It reuses the report's queries (`aiTotals` for both periods, `aiModels`, `hasAiCalls`) at the instance's prices, in the Overview's environment, with no filters. It answers `received` (any AI call at all), `costUsd`, `calls`, `noPriceCalls`, `previousCostUsd`, `previousCalls`, and `models` (`model`, `costUsd`, `calls`; the breakdown's Other row and models that cost nothing are left out). The widget says "Cost is an estimate from token counts and model prices." and how many calls had no price; its links to the AI page (the head's, and each model's, filtered by it) keep the Overview's period and environment. Without any AI call it says "No AI calls yet" and links to the docs site's page on sending them.
+
+## A user's AI usage
+
+A user's page and the Users workbench's detail pane (`UserView`, [dashboard](dashboard.md#users)) have an "AI in the last 30 days" section after Replays: the user's calls, estimated cost, input and output tokens, failed share, and 95th-percentile duration, then the three models and the three features that cost them the most, from `GET …/ai?period=30d&user=…` in the page's environment (`apps/web/src/features/users/user-ai.tsx`). The user page has no period of its own, so the section takes the last 30 days. It says "Cost is an estimate from token counts and model prices." and how many calls had no price, and links to the AI page over the same days and environment ("AI page"); that page has no user filter.
+
+- **Access:** shown only with `monitoring` at view, which the AI routes need; without it there is no section and no request. The page itself needs `users`, which the `user` filter needs too.
+- **Most projects have no AI calls:** while the project has never had one (`received` false), and while that is not known yet, the section shows nothing at all. With AI calls but none from this user in the period, it says "No AI calls from this user in the last 30 days."
+- **Failure:** "The AI usage could not load", with Retry.
 
 ## Sending calls
 
@@ -429,7 +437,7 @@ A conversation is the calls that share a `conversation_id` ([Detection](#detecti
    - an AI calls list in the Workbench pattern (built 22 November 2026; [The calls list](#the-calls-list));
    - an `ai_latency` alert (built 22 November 2026; [Alerts](#alerts));
    - a cost widget on the Overview (built 22 November 2026; [above](#the-overviews-ai-cost-widget));
-   - a user's AI cost on the user's page;
+   - a user's AI usage on the user's page (built 22 November 2026; [above](#a-users-ai-usage));
    - comparing the totals with the token metrics;
    - grouping by `gen_ai.conversation.id` (built 22 November 2026; [Conversations](#conversations));
    - an AI access area, if owners want finance people to see costs without the traces.
@@ -440,9 +448,10 @@ A conversation is the calls that share a `conversation_id` ([Detection](#detecti
 - `apps/api/tests/ai-http-calls.test.ts`: `POST /api/ai-calls`: every field stored, the key (missing, malformed, public, unknown) checked before the body, each rule refusing the whole batch, unknown fields such as a prompt dropped, 1,000 calls and 1 MiB, a call over a day old, empty optional names as left out, a retried batch one row, each call a unit of the budget OTLP shares, the address's rate by IPv6 /64, the requests in progress, an unknown key's body never parsed, 503 when the key cannot be looked up and when ClickHouse cannot write, with the budget given back, and the calls on the AI page and in a cost rule.
 - `apps/api/tests/ai-call-list.test.ts`: the calls list's routes: every field, each filter and the environment, paging past the first day with each call once, one call with its price's source and whether its trace is kept, the totals and cost against the AI page's, conversations from spans and from calls over HTTP, their filters, one conversation's calls, the 1,000 bound, and access with and without `users`. `ai-calls.test.ts` and `ai-http-calls.test.ts` cover the conversation ID's rules.
 - `apps/web/tests/browser/ai-calls.test.tsx` and `list-workbenches.test.tsx`: the calls list and the Conversations view against the fake API (`fake-ai-calls.ts`).
-- `apps/api/tests/ai-report.test.ts`: the price table's shape and matching, the arithmetic in JavaScript and in ClickHouse, the report's figures and each filter, the previous period, the chart and its Other line, the latest calls, access with and without `users`, and retention, project deletion, and the orphan sweep.
+- `apps/api/tests/ai-report.test.ts`: the price table's shape and matching, the arithmetic in JavaScript and in ClickHouse, the report's figures and each filter (one user's calls on every route, refused without `users`), the previous period, the chart and its Other line, the latest calls, access with and without `users`, and retention, project deletion, and the orphan sweep.
 - `apps/api/tests/ai-alerts.test.ts`: the three kinds fired, the cost and latency kinds resolved, the failures and latency kinds quiet below their minimum, the month's window across a timezone, the kept hours of the month and the last 24 hours against a full scan (a late call, midnight, a new month), the unlabeled feature, the worker's pass, and the rule routes' validation.
 - `apps/api/tests/ai-models.test.ts`: cost at read time with custom rows from a day, for all calls, price as (one level), on another ID of a bundled entry, exactly at a start, in a non-UTC timezone, and after a reset, ClickHouse against `priceAt`; kept hours marked stale and added up again after a change, and after a row changed past the routes; the list across the instance's projects only, and without ClickHouse; admins yes, members no; validation, the caps, a reset refused for a target, Origin, and the limit per user.
 - `apps/web/tests/browser/ai-models.test.tsx`: the tab, the No price filter, the search and paging, a model's sheet, Edit price from a date and for all calls, price as, Add model, Reset with its confirm, the states, and the AI page's link.
 - `apps/web/tests/browser/ai.test.tsx` and `ai-alerts.test.tsx`: the page and the alert form against the fake API (`fake-ai.ts`), and a call without a trace without its link; `report-screens.test.tsx` the page at 390 and 1440 wide.
+- `apps/web/tests/browser/users.test.tsx`: a user's AI section with its figures, models, and features, the line for no calls in the period, nothing without `monitoring` (and no request) or for a project without AI calls, the failure and Retry, and its fit at 390 and 1440 wide, on the page and beside the list.
 - `apps/api/tests/overview.test.ts` and `apps/web/tests/browser/overview.test.tsx`: the AI cost widget's figures against the period before, its models, its access, the change hidden below 20 calls, and the state without AI calls.

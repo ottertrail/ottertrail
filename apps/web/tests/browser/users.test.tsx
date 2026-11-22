@@ -3,7 +3,15 @@ import { page, userEvent } from "vite-plus/test/browser/context";
 
 import { rangeCovering } from "@/features/users/format";
 
-import { type FakeApi, fakeUser, fakeUsers, installFakeApi, PROJECT } from "./fake-api.ts";
+import { fakeAi, fakeAiReport, noAiCalls } from "./fake-ai.ts";
+import {
+  type FakeApi,
+  fakeUser,
+  fakeUsers,
+  installFakeApi,
+  memberAccess,
+  PROJECT,
+} from "./fake-api.ts";
 import { renderApp } from "./render.tsx";
 
 const USERS = `/projects/${PROJECT.id}/users`;
@@ -239,5 +247,148 @@ describe("a user's page", () => {
 
     await expect.element(page.getByText("No events from this user")).toBeVisible();
     await expect.element(page.getByRole("link", { name: "See all users" })).toBeVisible();
+  });
+});
+
+/** The user page's requests to the AI report. */
+const aiRequests = (api: FakeApi) =>
+  api.requests.filter((request) => request.split("?")[0]?.endsWith(`/${PROJECT.id}/ai`));
+
+const section = () => page.getByRole("region", { name: "AI in the last 30 days" });
+/** The section's figures, each its label and value. */
+const strip = () => document.querySelector('dl[aria-label="The user\'s AI usage"]');
+
+describe("a user's AI usage", () => {
+  test("their calls, estimated cost, tokens, failures, and latency, and what cost the most", async () => {
+    const api = installFakeApi();
+    renderApp(`${USERS}/ada?env=staging`);
+
+    await expect.element(section()).toBeVisible();
+    expect(new URLSearchParams(aiRequests(api).at(-1)?.split("?")[1])).toEqual(
+      new URLSearchParams({ period: "30d", environment: "staging", user: "ada" }),
+    );
+    expect(
+      [...(strip()?.querySelectorAll("[data-slot=stat]") ?? [])].map((stat) => [
+        stat.querySelector("dt")?.textContent,
+        stat.querySelector("dd")?.textContent,
+      ]),
+    ).toEqual([
+      ["Calls", "310"],
+      ["Estimated cost (USD)", "$1.71"],
+      ["Input tokens", "410K"],
+      ["Output tokens", "98K"],
+      ["Failed", "1.9%"],
+      ["95th percentile", "4.98 s"],
+    ]);
+    const names = (title: string) =>
+      [
+        ...section()
+          .getByRole("region", { name: title })
+          .element()
+          .querySelectorAll("tbody tr td:first-child"),
+      ].map((cell) => cell.textContent);
+    expect(names("Models")).toEqual(["claude-sonnet-4-6", "gpt-5-mini", "acme-support-ft-2026-10"]);
+    expect(names("Features")).toEqual(["support-chat", "summarize-ticket", "Unlabeled"]);
+    await expect
+      .element(
+        section().getByText(
+          "Cost is an estimate from token counts and model prices. 4 calls had no price and are not in it.",
+        ),
+      )
+      .toBeVisible();
+    await expect
+      .element(section().getByRole("link", { name: "AI page" }))
+      .toHaveAttribute("href", `/projects/${PROJECT.id}/ai?period=30d&env=staging`);
+  });
+
+  test("one line when they made no AI call in the period", async () => {
+    installFakeApi({
+      ai: {
+        ...fakeAi(),
+        report: (query, users) =>
+          fakeAiReport(
+            new URLSearchParams({ ...Object.fromEntries(query), user: "someone-else" }),
+            users,
+          ),
+      },
+    });
+    renderApp(`${USERS}/ada`);
+
+    await expect
+      .element(section().getByText("No AI calls from this user in the last 30 days."))
+      .toBeVisible();
+    expect(strip()).toBeNull();
+  });
+
+  test("nothing for a project that has never had an AI call", async () => {
+    const api = installFakeApi({ ai: { ...fakeAi(), report: noAiCalls } });
+    renderApp(`${USERS}/ada`);
+
+    await expect.element(page.getByRole("list", { name: /^Activity on/ }).first()).toBeVisible();
+    await expect.poll(() => aiRequests(api).length).toBeGreaterThan(0);
+    expect(section().query()).toBeNull();
+    expect(document.querySelector("main")?.textContent).not.toMatch(/\bAI\b/);
+  });
+
+  test("nothing, and no request, without the monitoring area", async () => {
+    const api = installFakeApi({ access: memberAccess({ users: "view" }) });
+    renderApp(`${USERS}/ada`);
+
+    await expect.element(page.getByRole("list", { name: /^Activity on/ }).first()).toBeVisible();
+    expect(section().query()).toBeNull();
+    expect(aiRequests(api)).toEqual([]);
+  });
+
+  test("says when it could not load, and retries", async () => {
+    let fail = true;
+    installFakeApi({
+      ai: {
+        ...fakeAi(),
+        report: (query, users) =>
+          fail
+            ? new Response(
+                JSON.stringify({ error: "unavailable", message: "ClickHouse is not answering." }),
+                {
+                  status: 503,
+                  headers: { "Content-Type": "application/json" },
+                },
+              )
+            : fakeAiReport(query, users),
+      },
+    });
+    renderApp(`${USERS}/ada`);
+
+    await expect.element(section().getByText("The AI usage could not load")).toBeVisible();
+    fail = false;
+    await section().getByRole("button", { name: "Retry" }).click();
+    await expect.element(section().getByText("$1.71")).toBeVisible();
+  });
+
+  test.each([
+    [390, 844],
+    [1440, 900],
+  ])("fits at %i wide", async (width, height) => {
+    await page.viewport(width, height);
+    installFakeApi();
+    renderApp(`${USERS}/ada`);
+    await expect.element(section().getByText("$1.71")).toBeVisible();
+    expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(width);
+    for (const stat of strip()?.querySelectorAll("[data-slot=stat] dd") ?? []) {
+      expect(stat.scrollWidth).toBeLessThanOrEqual(stat.clientWidth);
+    }
+  });
+
+  test("fits beside the list at 1440 wide", async () => {
+    await page.viewport(1440, 900);
+    installFakeApi();
+    renderApp(`${USERS}?user=ada`);
+    const pane = page.getByRole("region", { name: "Users, selected" });
+    await expect
+      .element(pane.getByRole("region", { name: "AI in the last 30 days" }).getByText("$1.71"))
+      .toBeVisible();
+    expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(1440);
+    for (const stat of strip()?.querySelectorAll("[data-slot=stat] dd") ?? []) {
+      expect(stat.scrollWidth).toBeLessThanOrEqual(stat.clientWidth);
+    }
   });
 });

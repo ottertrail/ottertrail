@@ -35,6 +35,7 @@ import { countryName } from "../analytics/format";
 import { ARRIVING_HINT } from "../errors/occurrence-replay";
 import { formatReplayDuration, pagesText } from "../replays/format";
 import { dayKey, formatLongDay, formatMoment, formatTime, rangeCovering } from "./format";
+import { UserAi } from "./user-ai";
 
 /** An error: its type and message, linked to its group on the Errors page. */
 function ErrorTitle({
@@ -249,7 +250,8 @@ function Properties({ properties }: { properties: Record<string, unknown> }) {
  * One known user with the loading, missing, and failed states: when first
  * and last seen, and what they did, newest first, by day in the timezone
  * set in Settings. Only events that carry the user's ID: anonymous browsing
- * before a sign-in is not theirs for sure. On the user's own page, and in
+ * before a sign-in is not theirs for sure. With monitoring, their AI usage
+ * (user-ai.tsx). On the user's own page, and in
  * the Users workbench beside the list, where `actions` links to the page
  * and a missing user's link clears the selection instead.
  */
@@ -386,6 +388,9 @@ export function UserView({
               />
             </WhenAllowed>
           )}
+          <WhenAllowed area="monitoring">
+            <UserAi projectId={projectId} userId={userId} environment={environment} />
+          </WhenAllowed>
           {days.map((day) => (
             <section key={day.key} className="flex flex-col gap-2">
               <h3 className="text-sm font-medium text-ink-subtle">

@@ -144,7 +144,7 @@ Some answers show less to a user without another area:
 - `GET /api/projects` and `GET /api/projects/:id` answer only the ID, name, creation time, and last event to users without the `projects` permission: no keys and no settings, among them the blocked addresses and blocked referrers ([web analytics](web-analytics.md#blocked-addresses)). The list holds only the projects the user may reach.
 - The analytics page's answer has no goals without `product_analytics`.
 - The heatmap reports answer the project's allowed hostnames (`siteHostnames`) to users with Web analytics, for "Open on your site": the addresses of the project's own sites, not its keys or other settings.
-- The AI page's breakdown by user, and the user of each of its latest calls, go only to users with `users`: otherwise `users` is null and `usersHidden` true ([AI usage](ai-usage.md#the-report)).
+- The AI page's breakdown by user, and the user of each of its latest calls, go only to users with `users`: otherwise `users` is null and `usersHidden` true ([AI usage](ai-usage.md#the-report)). The AI routes' `user` filter needs `users` too, and is refused with 403 without it.
 - The overview's signed-in users widget names the newest users only to users with `users` (`newest` is null otherwise). Its firing alerts hold only the kinds the user may see, as the Alerts page's do.
 - An error's occurrences and a user's events carry no replay, and a user's page no replays, without `replays`.
 - The replay and source map overviews (`GET …/replays`, `GET …/source-maps`) leave out `instance`, what all projects store together against the instance's limit, for users without the `projects` permission.
@@ -176,7 +176,7 @@ These need no session, and declare nothing: health, collection with a project's 
 - Opening a project, or the home page, goes to the project's overview when the user has one of its areas (uptime and alerts, errors, monitoring, web analytics, product analytics), and otherwise to the first area the user has, in the menu's order. The overview shows only the widgets of the user's areas ([dashboard](dashboard.md#overview)).
 - The project list hides "New project" and allowed sites from members.
 - The Settings page's General, Location data, and Backups tabs show to the owner, and its Storage, AI models, and Notification channels tabs to the owner and admins. A member gets "You don't have access". The workspace menu's Members link, to `/settings/members`, shows to the owner and admins.
-- Where one area's page links into another, the link shows only when the user has that area: an error's user, trace, and replay; a user's errors and replays; a replay's error and user; the alert rules on an error's page; "Add an alert rule" on the monitoring pages; links to the project's settings.
+- Where one area's page links into another, the link shows only when the user has that area: an error's user, trace, and replay; a user's errors, replays, and AI usage (which needs monitoring); a replay's error and user; the alert rules on an error's page; "Add an alert rule" on the monitoring pages; links to the project's settings.
 - Buttons that change something show only with manage: Resolve and Reopen; adding, editing, pausing, and deleting checks and rules (the rules' switches are disabled); saving, renaming, and deleting funnels; adding and deleting goals.
 
 The API refuses all of these regardless. Hiding them only saves the user a refusal.
