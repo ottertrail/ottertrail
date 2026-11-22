@@ -585,7 +585,24 @@ export interface HeatmapOverlayTokensTable {
   expires_at: ColumnType<Date, Date, never>;
   /** When a link was exchanged; null until then, and always for a session. */
   used_at: ColumnType<Date | null, never, Date>;
+  /** The page the link was made for, which its session may save a view of (heatmaps/snapshots.ts). */
+  path: ColumnType<string | null, string | null | undefined, never>;
   created_at: DatabaseDefault<Date>;
+}
+
+/** A saved heatmap view: one per project, page, and device class (heatmaps/snapshots.ts). */
+export interface HeatmapSnapshotsTable {
+  project_id: string;
+  path: string;
+  device: "mobile" | "tablet" | "desktop";
+  width: number;
+  height: number;
+  page_height: number;
+  object_key: string;
+  size_bytes: number;
+  /** Who saved it; null once that user is removed. */
+  saved_by: string | null;
+  saved_at: Date;
 }
 
 /** One dashboard user's layout of one project's overview (overview/layout.ts). */
@@ -788,6 +805,7 @@ export interface Database {
   dashboard_accounts: DashboardAccountsTable;
   owner_setup_tokens: OwnerSetupTokensTable;
   heatmap_overlay_tokens: HeatmapOverlayTokensTable;
+  heatmap_snapshots: HeatmapSnapshotsTable;
   dashboard_member_access: DashboardMemberAccessTable;
   dashboard_member_projects: DashboardMemberProjectsTable;
   dashboard_invitations: DashboardInvitationsTable;

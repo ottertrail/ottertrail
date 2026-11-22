@@ -539,7 +539,7 @@ describe("the backup destination (BACKUP_S3_*)", () => {
     for (const prefix of ["replays", "replays/backups", "source-maps/x", "avatars"]) {
       expect(() =>
         parseBackupS3({ ...shared, BACKUP_S3_PREFIX: prefix }, LOCAL_OBJECT_STORE),
-      ).toThrow(/overlaps session replays, source maps, or avatars/);
+      ).toThrow(/overlaps session replays, source maps, avatars, or saved heatmap views/);
     }
     // A folder of its own, another bucket, or no object store, is fine.
     expect(

@@ -36,6 +36,13 @@ export const HEATMAP_SCRIPT_URL_PATH = "/h.js";
 export const OVERLAY_SCRIPT_URL_PATH = "/o.js";
 
 /**
+ * Saved heatmap views, which the overlay loads from beside itself when the
+ * owner presses "Save this view" (packages/tracker/src/snapshot.ts;
+ * docs/web-analytics.md, "Saved views"): s.js in the tracker's folder.
+ */
+export const SNAPSHOT_SCRIPT_URL_PATH = "/s.js";
+
+/**
  * Scripts found missing, logged once each: every page of every site asks
  * for them, and a missing v.js breaks nothing visible that would get it
  * noticed and fixed.
@@ -101,6 +108,9 @@ export const trackerScriptRoutes: FastifyPluginCallback<{ scriptPath: string }> 
   );
   app.get(OVERLAY_SCRIPT_URL_PATH, (request, reply) =>
     sendScript(request, reply, join(dirname(scriptPath), "o.js")),
+  );
+  app.get(SNAPSHOT_SCRIPT_URL_PATH, (request, reply) =>
+    sendScript(request, reply, join(dirname(scriptPath), "s.js")),
   );
   done();
 };

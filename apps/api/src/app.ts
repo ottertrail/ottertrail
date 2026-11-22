@@ -35,6 +35,7 @@ import { goalRoutes } from "./goals/routes.ts";
 import { heatmapRoutes } from "./heatmaps/dashboard-routes.ts";
 import { heatmapOverlayRoutes } from "./heatmaps/overlay-routes.ts";
 import { heatmapCollectionRoutes } from "./heatmaps/routes.ts";
+import { heatmapSnapshotRoutes } from "./heatmaps/snapshot-routes.ts";
 import { userRoutes } from "./identities/routes.ts";
 import type { Mailer } from "./notifications/email.ts";
 import { inboxRoutes } from "./notifications/inbox-routes.ts";
@@ -160,6 +161,7 @@ export interface AppOptions extends Omit<FastifyServerOptions, "logger"> {
     overlayExchangeLimit?: RateLimit;
     overlayReadLimit?: RateLimit;
     overlayMintLimit?: RateLimit;
+    overlaySaveLimit?: RateLimit;
   };
   /**
    * OTLP traces, logs, and metrics (docs/telemetry.md), stored in
@@ -594,6 +596,18 @@ export function buildApp({
         ? {}
         : { exchangeLimit: heatmaps.overlayExchangeLimit }),
       ...(heatmaps.overlayReadLimit === undefined ? {} : { readLimit: heatmaps.overlayReadLimit }),
+      ...(heatmaps.overlaySaveLimit === undefined ? {} : { saveLimit: heatmaps.overlaySaveLimit }),
+      store: objectStore,
+      ...(dashboard.now === undefined ? {} : { now: dashboard.now }),
+    });
+    app.register(heatmapSnapshotRoutes, {
+      prefix: "/api",
+      db,
+      clickhouse: dashboard.clickhouse,
+      store: objectStore,
+      auth: dashboard.auth,
+      limiter,
+      trustedOrigins: dashboard.trustedOrigins,
       ...(dashboard.now === undefined ? {} : { now: dashboard.now }),
     });
     app.register(overviewRoutes, {

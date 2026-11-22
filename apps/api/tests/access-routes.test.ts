@@ -27,6 +27,7 @@ const PUBLIC_ROUTES = new Set([
   "GET /r.js",
   "GET /h.js",
   "GET /o.js",
+  "GET /s.js",
   "GET /replay-player.js",
   "GET /*",
   // Sign-in (Better Auth), setup, accepting an invitation, and a reset link.
@@ -48,6 +49,7 @@ const PUBLIC_ROUTES = new Set([
   // the overlay token's access below (access.ts, requireOverlayAccess).
   "POST /api/heatmap-overlay/session",
   "OPTIONS /api/heatmap-overlay/:projectId/heatmap",
+  "OPTIONS /api/heatmap-overlay/:projectId/snapshot",
 ]);
 
 /** What each dashboard route declares, as text: "errors:manage", "permission:channels" … */
@@ -135,8 +137,14 @@ const EXPECTED: Record<string, string> = {
   "GET /api/projects/:id/heatmaps": "web_analytics:view",
   "GET /api/projects/:id/heatmaps/pages": "web_analytics:view",
   "POST /api/projects/:id/heatmaps/overlay-link": "web_analytics:view",
+  "GET /api/projects/:id/heatmaps/snapshots": "web_analytics:view",
+  "GET /api/projects/:id/heatmaps/snapshots/:device": "web_analytics:view",
+  "GET /api/projects/:id/heatmaps/snapshots/:device/player": "web_analytics:view",
+  "GET /api/projects/:id/heatmaps/snapshots/:device/heatmap": "web_analytics:view",
+  "DELETE /api/projects/:id/heatmaps/snapshots/:device": "web_analytics:view",
   // An overlay session token in place of the cookie, checked by the same rules.
   "GET /api/heatmap-overlay/:projectId/heatmap": "overlay:web_analytics:view",
+  "POST /api/heatmap-overlay/:projectId/snapshot": "overlay:web_analytics:view",
 
   "GET /api/projects/:id/events": "product_analytics:view",
   "GET /api/projects/:id/events/:name": "product_analytics:view",

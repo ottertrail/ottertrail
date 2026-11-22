@@ -9,6 +9,7 @@ import {
 } from "../access/access.ts";
 import {
   findOverlayLink,
+  overlaySessionPath,
   OVERLAY_TOKEN_PATTERN,
   startOverlaySession,
   useOverlayLink,
@@ -19,10 +20,12 @@ import { ENVIRONMENT_PATTERN } from "../collection/environment.ts";
 import { isAllowedHostname, originHostname } from "../collection/normalize.ts";
 import { clientKey, type RateLimit, TokenBucketLimiter } from "../collection/rate-limiter.ts";
 import type { Database } from "../db/schema.ts";
+import type { ObjectStore } from "../storage/object-store.ts";
 import { dashboardReader, type DashboardQueryLimiter } from "../telemetry/dashboard-limit.ts";
 import { DASHBOARD_SETTINGS } from "../telemetry/dashboard-query.ts";
 import { heatmapRangeOf } from "./dashboard-routes.ts";
 import { emptyOverlay, heatmapOverlay } from "./report.ts";
+import { MAX_SNAPSHOT_BYTES, readSnapshot, saveSnapshot } from "./snapshots.ts";
 import { DEVICES, type HeatmapDevice } from "./store.ts";
 
 /**
@@ -33,6 +36,8 @@ import { DEVICES, type HeatmapDevice } from "./store.ts";
 export const DEFAULT_OVERLAY_EXCHANGE_LIMIT: RateLimit = { capacity: 10, refillPerSecond: 1 / 30 };
 /** Reads and preflights per client address: a burst of 60, then one a second. */
 export const DEFAULT_OVERLAY_READ_LIMIT: RateLimit = { capacity: 60, refillPerSecond: 1 };
+/** Saved views per client address: a burst of 10, then one every 10 seconds. */
+export const DEFAULT_OVERLAY_SAVE_LIMIT: RateLimit = { capacity: 10, refillPerSecond: 1 / 10 };
 /** The periods the overlay offers, in days back from today. */
 export const OVERLAY_PERIODS = ["7d", "30d", "90d"] as const;
 /** The exchange's body is a token in JSON: far below a kilobyte. */
@@ -57,6 +62,14 @@ const ORIGIN_REFUSED = problem(
 );
 const NO_ACCESS = problem("no_access", "Your account cannot view this project's heatmaps.");
 const LINK_UNKNOWN = problem("link_unknown", "No overlay link has this token.");
+const WRONG_PAGE = problem(
+  "wrong_page",
+  "This overlay session can save a view of the page its link opened only.",
+);
+export const SNAPSHOTS_NEED_STORE = problem(
+  "object_store_not_set_up",
+  "Saved views need object storage. Set OBJECT_STORE_URL on the server, then restart it.",
+);
 
 /**
  * Refuses fields the route does not take (400), where the schemas would
@@ -116,6 +129,8 @@ function accessOf(request: { projectAccess: ProjectAccess | null }): ProjectAcce
  *   POST    /api/heatmap-overlay/session                    { token }: link → session
  *   GET     /api/heatmap-overlay/:projectId/heatmap?path=/pricing&device=desktop&period=30d&environment=…
  *   OPTIONS /api/heatmap-overlay/:projectId/heatmap          the browser's preflight
+ *   POST    /api/heatmap-overlay/:projectId/snapshot?path=/pricing   a saved view (gzip), heatmaps/snapshots.ts
+ *   OPTIONS /api/heatmap-overlay/:projectId/snapshot         the browser's preflight
  *
  * No cookie and no public key plays a part. The exchange takes a link
  * token in its body and uses it once; the read takes the session token as
@@ -135,16 +150,20 @@ export const heatmapOverlayRoutes: FastifyPluginCallback<{
   db: Kysely<Database>;
   clickhouse: ClickHouseClient;
   limiter: DashboardQueryLimiter;
+  /** Where saved views go; none: saving is refused (409). */
+  store?: ObjectStore | null;
   exchangeLimit?: RateLimit;
   readLimit?: RateLimit;
+  saveLimit?: RateLimit;
   /** The clock that decides "today" for the period; tests fix it. */
   now?: () => Date;
 }> = (app, options, done) => {
-  const { db, clickhouse, limiter, now = () => new Date() } = options;
+  const { db, clickhouse, limiter, store = null, now = () => new Date() } = options;
   const exchangeLimiter = new TokenBucketLimiter(
     options.exchangeLimit ?? DEFAULT_OVERLAY_EXCHANGE_LIMIT,
   );
   const readLimiter = new TokenBucketLimiter(options.readLimit ?? DEFAULT_OVERLAY_READ_LIMIT);
+  const saveLimiter = new TokenBucketLimiter(options.saveLimit ?? DEFAULT_OVERLAY_SAVE_LIMIT);
   /** Requests from an origin on the project's allowed hostnames: their answers carry CORS. */
   const allowed = new WeakMap<FastifyRequest, string>();
   const canView = requireOverlayAccess(db, { area: "web_analytics", level: "view" });
@@ -163,6 +182,12 @@ export const heatmapOverlayRoutes: FastifyPluginCallback<{
       },
     );
   }
+  // A saved view: the snapshot as gzip-compressed JSON, checked by the route.
+  app.addContentTypeParser(
+    "application/gzip",
+    { parseAs: "buffer", bodyLimit: MAX_SNAPSHOT_BYTES },
+    (_request, body, parsed) => parsed(null, body),
+  );
 
   app.addHook("onSend", async (request, reply) => {
     reply.header("cache-control", "no-store").header("vary", "Origin");
@@ -244,6 +269,8 @@ export const heatmapOverlayRoutes: FastifyPluginCallback<{
         token: session.token,
         projectId: link.projectId,
         expiresAt: session.expiresAt.toISOString(),
+        // Whether "Save this view" can work: saved views need the object store.
+        snapshots: store !== null,
       };
     },
   );
@@ -325,6 +352,88 @@ export const heatmapOverlayRoutes: FastifyPluginCallback<{
         ...head,
         ...(await heatmapOverlay(reader, { ...asked.range, device }, path)),
       };
+    },
+  );
+
+  const savePath = "/heatmap-overlay/:projectId/snapshot";
+
+  app.options<{ Params: { projectId: string } }>(
+    savePath,
+    {
+      onRequest: limitedBy(readLimiter),
+      schema: { params: PARAMS_SCHEMA },
+      preHandler: fromProjectSite({ needsToken: false }),
+    },
+    async (_request, reply) =>
+      reply
+        .code(204)
+        .header("access-control-allow-methods", "POST")
+        .header("access-control-allow-headers", "Authorization, Content-Type")
+        .header("access-control-max-age", "600")
+        .send(),
+  );
+
+  app.post<{ Params: { projectId: string }; Querystring: { path: string }; Body: Buffer }>(
+    savePath,
+    {
+      bodyLimit: MAX_SNAPSHOT_BYTES,
+      onRequest: limitedBy(saveLimiter),
+      preValidation: only("query", ["path"]),
+      schema: {
+        params: PARAMS_SCHEMA,
+        querystring: {
+          type: "object",
+          required: ["path"],
+          additionalProperties: false,
+          properties: { path: { type: "string", minLength: 1, maxLength: 2048, pattern: "^/" } },
+        },
+      },
+      preHandler: [fromProjectSite({ needsToken: true }), canView],
+    },
+    async (request, reply) => {
+      const access = accessOf(request);
+      if (store === null) return reply.code(409).send(SNAPSHOTS_NEED_STORE);
+      if (!Buffer.isBuffer(request.body)) {
+        return reply
+          .code(415)
+          .send(problem("unsupported_media_type", "Send the snapshot as application/gzip."));
+      }
+      // The session's own page, from its link: never another page of the site.
+      const token = bearerToken(request.headers.authorization) ?? "";
+      const { path } = request.query;
+      if ((await overlaySessionPath(db, token, access.projectId)) !== path) {
+        return reply.code(403).send(WRONG_PAGE);
+      }
+      const read = await readSnapshot(request.body);
+      if (!read.ok) return reply.code(read.status).send(read.body);
+      let saved;
+      try {
+        saved = await saveSnapshot(
+          db,
+          store,
+          {
+            projectId: access.projectId,
+            path,
+            userId: access.user.userId,
+            body: request.body,
+            info: read.info,
+          },
+          request.log,
+        );
+      } catch (error) {
+        request.log.error({ err: error }, "could not save a heatmap snapshot");
+        return reply
+          .code(503)
+          .header("retry-after", "30")
+          .send(problem("storage_unavailable", "The view could not be saved. Try again."));
+      }
+      if (saved === null) return reply.code(404).send(NO_ACCESS);
+      return reply.code(201).send({
+        path,
+        device: read.info.device,
+        width: read.info.width,
+        savedAt: saved.savedAt.toISOString(),
+      });
     },
   );
 

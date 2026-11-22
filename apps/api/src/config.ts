@@ -395,7 +395,7 @@ export const BACKUP_S3_VARIABLES = [
  * ConfigError when some are set but not all that are needed, or one is
  * invalid. BACKUP_S3_PREFIX defaults to "ottertrail-backups". In the
  * object store's own bucket, the folder may not overlap its objects
- * (replays/, source-maps/, avatars/). Errors name the variable and the
+ * (replays/, source-maps/, avatars/, heatmap-snapshots/). Errors name the variable and the
  * rule, never a value: they reach PostgreSQL and the Backups tab, and a
  * secret pasted on the wrong line must not.
  */
@@ -466,7 +466,7 @@ export function parseBackupS3(
     overlapsObjects(prefix)
   ) {
     throw new ConfigError(
-      "BACKUP_S3_PREFIX overlaps session replays, source maps, or avatars in the object store's bucket. Choose a separate folder, such as ottertrail-backups.",
+      "BACKUP_S3_PREFIX overlaps session replays, source maps, avatars, or saved heatmap views in the object store's bucket. Choose a separate folder, such as ottertrail-backups.",
     );
   }
   return { url: endpoint.origin, region, bucket, prefix, accessKeyId, secretAccessKey };

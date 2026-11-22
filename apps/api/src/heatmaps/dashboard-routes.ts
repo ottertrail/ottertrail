@@ -51,6 +51,21 @@ function accessOf(request: { projectAccess: ProjectAccess | null }): ProjectAcce
 const addDays = (day: string, days: number) =>
   new Date(Date.parse(`${day}T00:00:00Z`) + days * 86_400_000).toISOString().slice(0, 10);
 
+/** An overlay link's page: null without a body, undefined for anything but `{ path }`. */
+function linkPathOf(body: unknown): string | null | undefined {
+  if (body === undefined || body === null) return null;
+  if (typeof body !== "object" || Array.isArray(body)) return undefined;
+  const keys = Object.keys(body);
+  if (keys.length === 0) return null;
+  const path: unknown = "path" in body ? body.path : undefined;
+  return keys.length === 1 &&
+    typeof path === "string" &&
+    path.startsWith("/") &&
+    path.length <= 2048
+    ? path
+    : undefined;
+}
+
 /** Overlay links each user may make: 20 at once, then 20 a minute. */
 export const DEFAULT_OVERLAY_MINT_LIMIT: RateLimit = { capacity: 20, refillPerSecond: 20 / 60 };
 
@@ -130,7 +145,7 @@ export async function heatmapRangeOf(
  *
  *   GET /api/projects/:id/heatmaps/pages?period=7d|from=…&to=…&environment=…&device=…&search=…
  *   GET /api/projects/:id/heatmaps?path=/pricing&period=…&environment=…&device=…
- *   POST /api/projects/:id/heatmaps/overlay-link
+ *   POST /api/projects/:id/heatmaps/overlay-link   { path }
  *
  * The range is cut to the 90 days heatmap rows are kept (`clipped`). Both
  * say whether the project takes heatmaps, so the screen can say how to
@@ -245,10 +260,18 @@ export const heatmapRoutes: FastifyPluginCallback<{
     },
   );
 
-  app.post<{ Params: { id: string } }>(
+  app.post<{ Params: { id: string }; Body: unknown }>(
     "/projects/:id/heatmaps/overlay-link",
     { preHandler: [fromDashboard, signedIn, canView], schema: { params: PARAMS_SCHEMA } },
     async (request, reply) => {
+      // The page it opens, if given: its session may save a view of that page only.
+      const path = linkPathOf(request.body);
+      if (path === undefined) {
+        return reply.code(400).send({
+          error: "invalid_request",
+          message: "The body is { path }, a page path starting with /, or empty.",
+        });
+      }
       const { projectId, user } = accessOf(request);
       const limited = mintLimiter.take(user.userId);
       if (!limited.allowed) {
@@ -266,6 +289,7 @@ export const heatmapRoutes: FastifyPluginCallback<{
         { userId: user.userId, sessionId: signedInUser(request).sessionId },
         projectId,
         new Date(),
+        path,
       );
       return reply
         .header("cache-control", "no-store")

@@ -19,9 +19,12 @@ import type { Database } from "../db/schema.ts";
  * found by its hash, never compared as text, so the lookup leaks nothing
  * about a guess through its timing.
  *
- * Neither grants anything by itself: every read checks the user's role
- * and grants again, through the same check as the dashboard's routes
- * (access.ts, requireOverlayAccess).
+ * A link may name the page it was made for; its session may then save a
+ * view of that page, and of no other (heatmaps/snapshots.ts).
+ *
+ * Neither grants anything by itself: every read and save checks the
+ * user's role and grants again, through the same check as the dashboard's
+ * routes (access.ts, requireOverlayAccess).
  */
 
 /** How long a link works, unused. */
@@ -34,7 +37,10 @@ export const OVERLAY_SESSION_TTL_MS = 30 * 60 * 1000;
  * without a reason, as for a token never made). Only hashes, of no use.
  */
 export const OVERLAY_TOKEN_KEEP_MS = 24 * 60 * 60 * 1000;
-/** The only scope there is: heatmap aggregates of one project. */
+/**
+ * The only scope there is: heatmap aggregates of one project, and saving
+ * a view of the link's page.
+ */
 export const OVERLAY_SCOPE = "heatmap:read";
 /** A token as newToken() writes it: 32 bytes in base64url, 43 characters. */
 export const OVERLAY_TOKEN_PATTERN = "^[A-Za-z0-9_-]{43}$";
@@ -51,12 +57,17 @@ export async function purgeOverlayTokens(db: Kysely<Database>, now: Date): Promi
     .execute();
 }
 
-/** A new link for this user and project. Returns the token once; only its hash is kept. */
+/**
+ * A new link for this user and project, for the page at `path` (null: a
+ * link whose session saves nothing). Returns the token once; only its
+ * hash is kept.
+ */
 export async function mintOverlayLink(
   db: Kysely<Database>,
   { userId, sessionId }: { userId: string; sessionId: string },
   projectId: string,
   now: Date,
+  path: string | null = null,
 ): Promise<{ token: string; expiresAt: Date }> {
   await purgeOverlayTokens(db, now);
   const { token, hash } = newToken();
@@ -71,6 +82,7 @@ export async function mintOverlayLink(
       project_id: projectId,
       scope: OVERLAY_SCOPE,
       expires_at: expiresAt,
+      path,
     })
     .execute();
   return { token, expiresAt };
@@ -82,6 +94,8 @@ export interface OverlayLink {
   sessionId: string;
   projectId: string;
   allowedHostnames: string[];
+  /** The page it was made for, or null. */
+  path: string | null;
   /** Used already, or past its 5 minutes. */
   spent: boolean;
 }
@@ -102,6 +116,7 @@ export async function findOverlayLink(
       "t.project_id",
       "t.used_at",
       "t.expires_at",
+      "t.path",
       "p.allowed_hostnames",
       "s.expires_at as session_expires_at",
     ])
@@ -115,6 +130,7 @@ export async function findOverlayLink(
     sessionId: row.session_id,
     projectId: row.project_id,
     allowedHostnames: row.allowed_hostnames,
+    path: row.path,
     spent: row.used_at !== null || row.expires_at <= now || row.session_expires_at <= now,
   };
 }
@@ -140,10 +156,13 @@ export async function useOverlayLink(
   return row !== undefined;
 }
 
-/** A session for the link's user and project. Returns the token once; only its hash is kept. */
+/**
+ * A session for the link's user, project, and page. Returns the token
+ * once; only its hash is kept.
+ */
 export async function startOverlaySession(
   db: Kysely<Database>,
-  { userId, sessionId }: { userId: string; sessionId: string },
+  { userId, sessionId, path }: { userId: string; sessionId: string; path: string | null },
   projectId: string,
   now: Date,
 ): Promise<{ token: string; expiresAt: Date }> {
@@ -160,6 +179,7 @@ export async function startOverlaySession(
       project_id: projectId,
       scope: OVERLAY_SCOPE,
       expires_at: expiresAt,
+      path,
     })
     .execute();
   return { token, expiresAt };
@@ -187,4 +207,20 @@ export async function overlaySessionUser(
     .where("s.expires_at", ">", now)
     .executeTakeFirst();
   return row?.user_id ?? null;
+}
+
+/** The page a session may save a view of (its link's), or null; checked after requireOverlayAccess. */
+export async function overlaySessionPath(
+  db: Kysely<Database>,
+  token: string,
+  projectId: string,
+): Promise<string | null> {
+  const row = await db
+    .selectFrom("heatmap_overlay_tokens")
+    .select("path")
+    .where("token_hash", "=", hashToken(token))
+    .where("kind", "=", "session")
+    .where("project_id", "=", projectId)
+    .executeTakeFirst();
+  return row?.path ?? null;
 }

@@ -284,7 +284,7 @@ describe("the image holds every tracker script the API serves", () => {
 
   test("the build makes each script the API serves, and the image copies each", () => {
     expect(built).toContain("tracker.js");
-    expect(served).toEqual(expect.arrayContaining(["v.js", "r.js", "h.js", "o.js"]));
+    expect(served).toEqual(expect.arrayContaining(["v.js", "r.js", "h.js", "o.js", "s.js"]));
     expect(built).toEqual(expect.arrayContaining(served));
     expect(copied.toSorted()).toEqual(built.toSorted());
   });

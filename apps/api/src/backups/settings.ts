@@ -161,13 +161,18 @@ export type Destination = BackupS3Config;
 
 /**
  * Where the object store keeps its objects (replays/replays.ts,
- * source-maps/source-maps.ts, avatars/avatars.ts): object backups list
- * only these, and a backup folder in the store's own bucket may not
- * overlap them.
+ * source-maps/source-maps.ts, avatars/avatars.ts,
+ * heatmaps/snapshots.ts): object backups list only these, and a backup
+ * folder in the store's own bucket may not overlap them.
  */
-export const OBJECT_PREFIXES = ["replays/", "source-maps/", "avatars/"] as const;
+export const OBJECT_PREFIXES = [
+  "replays/",
+  "source-maps/",
+  "avatars/",
+  "heatmap-snapshots/",
+] as const;
 
-/** Whether a backup folder overlaps the store's objects: "replays", "replays/x", "source-maps", or "avatars". */
+/** Whether a backup folder overlaps the store's objects: "replays", "replays/x", "source-maps", "avatars", or "heatmap-snapshots". */
 export function overlapsObjects(prefix: string): boolean {
   const folder = `${prefix}/`;
   return OBJECT_PREFIXES.some(
@@ -176,4 +181,4 @@ export function overlapsObjects(prefix: string): boolean {
 }
 
 export const OVERLAP_PROBLEM =
-  "This folder overlaps session replays, source maps, or avatars. Choose a separate folder, such as ottertrail-backups.";
+  "This folder overlaps session replays, source maps, avatars, or saved heatmap views. Choose a separate folder, such as ottertrail-backups.";

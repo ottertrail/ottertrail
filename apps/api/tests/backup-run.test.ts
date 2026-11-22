@@ -661,18 +661,21 @@ describe("a bucket shared with the object store", () => {
           key,
           version: OTTERTRAIL_VERSION,
         }),
-      ).rejects.toThrow(/^This folder overlaps session replays, source maps, or avatars/);
+      ).rejects.toThrow(
+        /^This folder overlaps session replays, source maps, avatars, or saved heatmap views/,
+      );
       expect(await listBackups(client, LOCAL_OBJECT_STORE.bucket, prefix)).toEqual([]);
     } finally {
       client.destroy();
     }
   });
 
-  test("backup.sh's object backup lists only replays/, source-maps/, and avatars/, never the backups beside them", async () => {
+  test("backup.sh's object backup lists only the store's prefixes, never the backups beside them", async () => {
     const fake = await startListingS3({
       "replays/p1/r1": "replay",
       "source-maps/p1/m1": "map",
       "avatars/instance/a.png": "icon",
+      "heatmap-snapshots/p1/s1.json.gz": "a saved view",
       "ottertrail-backups/2026-11-20T030000Z/manifest.json": "a backup",
       "replays-elsewhere/x": "not the store's",
     });
@@ -682,14 +685,15 @@ describe("a bucket shared with the object store", () => {
         { ...LOCAL_OBJECT_STORE, url: fake.url, bucket: "shared" },
         join(dir, "out"),
       );
-      expect(summary.count).toBe(3);
+      expect(summary.count).toBe(4);
       const manifest = JSON.parse(await readFile(join(dir, "out", "manifest.json"), "utf8"));
       expect(manifest.objects.map((entry: { key: string }) => entry.key)).toEqual([
         "replays/p1/r1",
         "source-maps/p1/m1",
         "avatars/instance/a.png",
+        "heatmap-snapshots/p1/s1.json.gz",
       ]);
-      expect(fake.listed).toEqual(["replays/", "source-maps/", "avatars/"]);
+      expect(fake.listed).toEqual(["replays/", "source-maps/", "avatars/", "heatmap-snapshots/"]);
     } finally {
       await fake.close();
       await rm(dir, { recursive: true, force: true });
