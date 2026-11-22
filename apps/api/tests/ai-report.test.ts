@@ -6,6 +6,7 @@ import {
   costOf,
   type ModelPrice,
   priceOf,
+  priceBookOf,
   pricedColumns,
   PRICES,
   type TokenCounts,
@@ -419,7 +420,7 @@ describe("the price table", () => {
     const params = new QueryParams();
     const rows = await queryRows<{ id: string; cost: number; priced: boolean | number }>(
       dashboard.reader,
-      `SELECT id, cost, priced FROM (SELECT *, ${pricedColumns(params, table)} FROM ai_calls
+      `SELECT id, cost, priced FROM (SELECT *, ${pricedColumns(params, priceBookOf([], table))} FROM ai_calls
        WHERE project_id = ${params.add(project, "UUID")}) ORDER BY id`,
       params,
     );

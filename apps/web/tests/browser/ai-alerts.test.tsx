@@ -57,7 +57,7 @@ describe("the rule form's AI kinds", () => {
     const form = dialog("Add an alert rule");
     await choose(form, "When", "AI cost");
     await expect
-      .element(form.getByText(/The cost is an estimate from token counts at list prices/))
+      .element(form.getByText(/The cost is an estimate from token counts and model prices/))
       .toBeVisible();
     // The cost rule has no window in minutes: its own windows instead.
     expect(form.getByLabelText("In the last (minutes)").elements()).toEqual([]);

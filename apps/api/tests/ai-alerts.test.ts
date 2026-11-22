@@ -212,7 +212,7 @@ describe("AI cost", () => {
       },
     });
     expect(first?.message).toMatch(
-      /^Shop: the estimated AI cost in production was \$[0-9.]+ over the last hour, above the rule's \$[0-9.]+\. The cost is an estimate, from token counts at list prices\. 1 call of models without a price is not counted\.$/,
+      /^Shop: the estimated AI cost in production was \$[0-9.]+ over the last hour, above the rule's \$[0-9.]+\. The cost is an estimate, from token counts and model prices\. 1 call of models without a price is not counted\.$/,
     );
     expect(second?.message).toMatch(
       /^Shop: the estimated AI cost for the feature support-chat in production was/,

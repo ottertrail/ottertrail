@@ -362,12 +362,12 @@ A request failed when its span's status is Error. `route.failures_resolved` has 
     "ruleId": "5a2c7e10-3b4d-4e6f-8a9b-0c1d2e3f4a5b",
     "ruleName": "Support chat spend"
   },
-  "message": "Shop: the estimated AI cost for the feature support-chat in production was $61.25 over the last 24 hours, above the rule's $50. The cost is an estimate, from token counts at list prices. 12 calls of models without a price are not counted.",
+  "message": "Shop: the estimated AI cost for the feature support-chat in production was $61.25 over the last 24 hours, above the rule's $50. The cost is an estimate, from token counts and model prices. 12 calls of models without a price are not counted.",
   "url": "https://analytics.example.com/projects/0d6e5f80-0c4f-4b8e-9d3a-3f8f6a1c2b7e/ai?env=%22production%22&feature=%22support-chat%22"
 }
 ```
 
-`costWindow` is `1h`, `1d`, or `month` (the month so far, in the instance's timezone); `costUsd` is the window's estimated cost in US dollars, rounded to 6 decimals; `noPriceCalls` the calls of models the price table does not have, whose cost it leaves out; `estimated` is always true. `feature` and `model` are null for a rule on all of them. `ai.cost_resolved` has the same subject, and a message such as `Shop: the estimated AI cost in production stayed at or below $50 for 60 minutes: $41.9 over the last 24 hours. The cost is an estimate, from token counts at list prices.`
+`costWindow` is `1h`, `1d`, or `month` (the month so far, in the instance's timezone); `costUsd` is the window's estimated cost in US dollars, rounded to 6 decimals; `noPriceCalls` the calls of models the price table does not have, whose cost it leaves out; `estimated` is always true. `feature` and `model` are null for a rule on all of them. `ai.cost_resolved` has the same subject, and a message such as `Shop: the estimated AI cost in production stayed at or below $50 for 60 minutes: $41.9 over the last 24 hours. The cost is an estimate, from token counts and model prices.`
 
 #### `ai.failures` and `ai.failures_resolved`
 

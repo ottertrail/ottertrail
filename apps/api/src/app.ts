@@ -6,6 +6,7 @@ import type { Kysely } from "kysely";
 import { memberRoutes } from "./access/member-routes.ts";
 import { meRoutes } from "./access/routes.ts";
 import { accountRoutes } from "./account/routes.ts";
+import { aiModelRoutes } from "./ai/model-routes.ts";
 import { aiRoutes } from "./ai/routes.ts";
 import { alertRoutes } from "./alerts/routes.ts";
 import type { Auth } from "./auth/auth.ts";
@@ -196,6 +197,8 @@ export interface AppOptions extends Omit<FastifyServerOptions, "logger"> {
   };
   /** Avatar uploads per user (avatars/routes.ts), which tests lower. */
   avatars?: { uploadLimit?: RateLimit };
+  /** Changes to the AI model prices per user (ai/model-routes.ts), which tests lower. */
+  aiModels?: { changeLimit?: RateLimit };
   /** The built tracker, served at /t.js. Not served when omitted. */
   trackerScriptPath?: string;
   /** The built dashboard's directory, served at /. Not served when omitted. */
@@ -244,6 +247,7 @@ export function buildApp({
   storage = {},
   backups = {},
   avatars = {},
+  aiModels = {},
   trackerScriptPath,
   dashboardPath,
   replayPlayerPath,
@@ -480,6 +484,16 @@ export function buildApp({
       clickhouse: telemetry.clickhouse ?? dashboard.clickhouse,
       auth: dashboard.auth,
       limiter,
+      ...(dashboard.now === undefined ? {} : { now: dashboard.now }),
+    });
+    app.register(aiModelRoutes, {
+      prefix: "/api",
+      db,
+      clickhouse: telemetry.clickhouse ?? dashboard.clickhouse,
+      auth: dashboard.auth,
+      trustedOrigins: dashboard.trustedOrigins,
+      limiter,
+      ...(aiModels.changeLimit === undefined ? {} : { changeLimit: aiModels.changeLimit }),
       ...(dashboard.now === undefined ? {} : { now: dashboard.now }),
     });
     // Uptime checks and webhooks follow the same address rules.

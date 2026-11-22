@@ -14,6 +14,8 @@ import { DashboardQueryLimiter, dashboardReader } from "../telemetry/dashboard-l
 import { SERVICE_PATTERN, type TelemetryRange } from "../telemetry/dashboard-query.ts";
 import { dayIn } from "../visitors/visitor-ids.ts";
 import { MAX_AI_LABEL_CHARS } from "./calls.ts";
+import { readPriceBook } from "./custom-prices.ts";
+import type { PriceBook } from "./prices.ts";
 import {
   aiChart,
   aiFailures,
@@ -86,11 +88,12 @@ const schema = (extra: object = {}) => ({
   },
 });
 
-const scopeOf = (range: TelemetryRange): AiScope => ({
+const scopeOf = (range: TelemetryRange, prices: PriceBook): AiScope => ({
   projectId: range.projectId,
   environment: range.environment,
   from: range.from,
   to: range.to,
+  prices,
 });
 
 const answered = (range: TelemetryRange) => ({
@@ -115,7 +118,8 @@ const answered = (range: TelemetryRange) => ({
  * at view too: without it, `users` is null and `usersHidden` true.
  *
  * AI calls are kept as long as the project's events, so the range is not
- * cut to the 30 days of spans.
+ * cut to the 30 days of spans. Cost is worked out at the instance's
+ * prices of now (custom-prices.ts), read for each request.
  */
 export const aiRoutes: FastifyPluginCallback<{
   db: Kysely<Database>;
@@ -165,7 +169,7 @@ export const aiRoutes: FastifyPluginCallback<{
       const asked = await rangeOf(request, moment);
       if ("problem" in asked) return reply.code(400).send(asked.problem);
       const { range } = asked;
-      const scope = scopeOf(range);
+      const scope = scopeOf(range, await readPriceBook(db));
       const filters = filtersOf(request.query);
       const withUsers = canUse(accessOf(request).user, "users", "view");
       const previous = await previousDays(
@@ -238,6 +242,7 @@ export const aiRoutes: FastifyPluginCallback<{
           filtersOf(request.query),
           request.query.split ?? "model",
           moment,
+          await readPriceBook(db),
         )),
       };
     },
@@ -255,9 +260,12 @@ export const aiRoutes: FastifyPluginCallback<{
         ...answered(range),
         limit: RECENT_CALLS,
         usersHidden: !withUsers,
-        calls: await recentAiCalls(readerOf(reply), scopeOf(range), filtersOf(request.query), {
-          withUsers,
-        }),
+        calls: await recentAiCalls(
+          readerOf(reply),
+          scopeOf(range, await readPriceBook(db)),
+          filtersOf(request.query),
+          { withUsers },
+        ),
       };
     },
   );

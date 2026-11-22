@@ -30,7 +30,7 @@ afterEach(async () => {
 });
 
 describe("the tabs each role sees", () => {
-  test("the owner has General, Location data, Storage and Notification channels, General first", async () => {
+  test("the owner has General, Location data, Storage, AI models, Backups and Notification channels, General first", async () => {
     installFakeApi();
     const router = renderApp("/projects");
     await workspaceMenu().getByRole("link", { name: "Settings" }).click();
@@ -40,6 +40,7 @@ describe("the tabs each role sees", () => {
       "General",
       "Location data",
       "Storage",
+      "AI models",
       "Backups",
       "Notification channels",
     ]);
@@ -53,12 +54,12 @@ describe("the tabs each role sees", () => {
     await expect.poll(() => currentPath(router)).toBe("/settings");
   });
 
-  test("an admin has Storage and the channels, Storage first", async () => {
+  test("an admin has Storage, AI models and the channels, Storage first", async () => {
     installFakeApi({ access: ADMIN_ACCESS });
     renderApp("/settings");
 
     await expect.element(page.getByRole("tablist", { name: "Instance settings" })).toBeVisible();
-    expect(tabNames()).toEqual(["Storage", "Notification channels"]);
+    expect(tabNames()).toEqual(["Storage", "AI models", "Notification channels"]);
     await expect
       .element(panel().getByRole("heading", { name: "What fills the disk" }))
       .toBeVisible();
@@ -77,8 +78,9 @@ describe("the tabs each role sees", () => {
       .element(panel().getByRole("heading", { name: "What fills the disk" }))
       .toBeVisible();
     await settle();
-    // The owner's settings are never asked for; the storage, which admins may read, is.
-    expect(api.requests.filter((path) => path.startsWith("/api/settings"))).toEqual([
+    // The owner's settings are never asked for; the storage and the AI models, which admins may read, are.
+    expect(api.requests.filter((path) => path.startsWith("/api/settings")).toSorted()).toEqual([
+      "/api/settings/ai-models",
       "/api/settings/storage",
     ]);
   });
@@ -257,7 +259,7 @@ describe("the Settings page fits", () => {
     [390, 844],
     [1440, 900],
   ] as const) {
-    for (const tab of ["general", "location-data", "storage", "channels"]) {
+    for (const tab of ["general", "location-data", "storage", "ai-models", "channels"]) {
       test(`at ${width} wide, the ${tab} tab: the tab row scrolls inside itself, nothing else sideways`, async () => {
         await page.viewport(width, height);
         installFakeApi();

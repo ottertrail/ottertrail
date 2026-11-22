@@ -1,6 +1,6 @@
 # AI usage tracking
 
-**Status: phase 1 is built: detection and storage of AI calls, the price table, the report API, the two alert rule kinds, the AI page (`/projects/<id>/ai`, [dashboard](dashboard.md#ai)), and the alert form for the new kinds ([dashboard](dashboard.md#813-alerts)). The docs site explains it at `/monitoring/ai-usage/`.**
+**Status: phase 1 is built: detection and storage of AI calls, the price table, the report API, the two alert rule kinds, the AI page (`/projects/<id>/ai`, [dashboard](dashboard.md#ai)), the alert form for the new kinds ([dashboard](dashboard.md#813-alerts)), and the instance's own prices in Settings → AI models ([below](#prices)). The docs site explains it at `/monitoring/ai-usage/`.**
 
 An app that calls language models pays per token, and its calls fail, stall, and get cut off in ways its other requests do not. This module shows the LLM calls an app makes: tokens, estimated cost, latency, and failures, per model, per feature, and per user, with the trace of each call one click away. It reads the spans the app already sends over OTLP ([telemetry](telemetry.md)); nothing of Ottertrail's runs in the app.
 
@@ -10,7 +10,7 @@ Made on 22 November 2026, all as the design proposed:
 
 1. **AI calls get their own ClickHouse table**, `ai_calls`, written beside the spans and kept as long as the project's events, not the 30 days of spans. Cost questions are asked by the month and the year, and a row is small next to the spans around it: each one is a paid API call.
 2. **Prompts and completions are never stored.** They are dropped at ingestion for every project, AI page or not ([telemetry](telemetry.md#ai-prompts-and-completions-are-not-stored), `apps/api/src/telemetry/ai-content.ts`). This module reads only token counts and names.
-3. **Prices come from a small hand-kept table in the repository** (`apps/api/src/ai/price-table.ts`), read from the providers' own price pages, each entry with its source and the day it was checked, updated each release. Per-project overrides come in phase 2. Prices are never fetched at run time: self-hosted instances must work offline.
+3. **Prices come from a small hand-kept table in the repository** (`apps/api/src/ai/price-table.ts`), read from the providers' own price pages, each entry with its source and the day it was checked, updated each release. The owner and admins set the instance's own prices over it in Settings → AI models ([Prices](#prices)). Prices are never fetched at run time: self-hosted instances must work offline.
 4. **A call's feature** is its `ottertrail.feature` attribute, else `gen_ai.agent.name`, else none ("Unlabeled").
 5. **Access:** the `monitoring` area at view. The breakdown by user, and the user of each call, also need `users` at view.
 
@@ -66,9 +66,10 @@ The user is the ID the tracker's `data-user-id` sends, so a call links to the Us
 
 `apps/api/src/ai/prices.ts` holds the matching and the arithmetic; `price-table.ts` the prices.
 
-- **Matching:** by model ID, in any case, whatever provider sent it: first an exact ID or documented alias, then the longest listed prefix. The response model is matched first (`claude-sonnet-4-6`, `gpt-4o-2024-08-06`, `us.anthropic.claude-sonnet-4-6`), as each call names it.
+- **Which price:** the instance's own price for the call's model with the latest start at or before the call's time; else, when the model matches a bundled entry, the instance's price on any of that entry's IDs (a price on `gpt-4o` covers `gpt-4o-2024-08-06` too); else the entry's bundled price; else, for a model priced as another, that model's price at the call's time, by the same steps; else none ([Prices](#prices)).
+- **Matching in the bundled table:** by model ID, in any case, whatever provider sent it: first an exact ID or documented alias, then the longest listed prefix. The response model is matched first (`claude-sonnet-4-6`, `gpt-4o-2024-08-06`, `us.anthropic.claude-sonnet-4-6`), as each call names it.
 - **Arithmetic,** per call, then added up: cache reads at the cache read price, cache writes at the cache write price, the rest of the input at the input price, and the output (reasoning included, as the conventions count it) at the output price. A provider with no separate cache price charges cached tokens as input. The conventions count cached tokens in the input, so the rest is the input less both; a call whose input is smaller than its cached tokens comes from a sender that counts them apart (as Anthropic's API does), so all of its input is the rest. The cache-read share is at most 1 for the same reason.
-- **In ClickHouse:** the table goes into each query as array parameters (IDs, prefixes longest first, and the prices), and a row's entry is found with `indexOf` and `arrayFirstIndex`, so nothing is fetched or joined.
+- **In ClickHouse:** the prices go into each query as array parameters, never as SQL text: the bundled IDs, prefixes longest first, and every price as a numbered slot (the bundled entries, then each custom row). A row's bundled entry is found with `indexOf` and `arrayFirstIndex`. A model with custom rows, and a bundled entry with custom rows on its IDs, each have a timeline worked out in JavaScript (`priceBookOf` in `prices.ts`): the moments the price may change (the rows' starts, and those of the entry and of the model it is priced as), each with the slot that applies from then; a call finds its model with one `indexOf` over those models, else its entry with one `indexOf` over those entries, and its slot with one `arrayCount` over that short array. Model IDs are lower-cased with `lowerUTF8` in ClickHouse and `toLowerCase` in JavaScript: the same for ASCII and most letters; the few whose case mapping depends on the language or changes the length (such as `İ` or `ẞ`) can differ, so a custom price on such an ID may not match its calls. Nothing is fetched or joined. `priceAt` works out the same in JavaScript, and `ai-models.test.ts` checks the two agree.
 - **No price:** a model the table lacks counts its tokens but no cost. The totals count those calls (`noPriceCalls`) and name up to 20 of the models, so the page can say what its cost leaves out.
 
 ### The price table
@@ -86,6 +87,26 @@ Checked on 22 November 2026, standard pay-as-you-go prices in US dollars per mil
 Left out because the price or the ID could not be confirmed on the provider's own pages: models already shut down, models priced by image, audio, or minute rather than text tokens, gated variants, `gemini-flash-latest` (it moves), Mistral Medium (only on its deprecation list), Claude models AWS lists as end of life, and Google Cloud's `@` IDs for Opus 4.1, Opus 4, and Sonnet 4. Each entry's `notes` says what its prices leave out, such as a higher price past a prompt length or a price change already announced.
 
 To update it: read each source again, change the numbers and `checked`, and add new models with their IDs as the provider's model page names them. Never add a price from memory or from a third-party list.
+
+### Prices
+
+Settings → AI models (`?tab=ai-models`, [dashboard](dashboard.md#ai-models)), for the owner and admins (`projects`). The bundled table matches model IDs exactly, then by the longest listed prefix, and its prices change; negotiated discounts, regional prices, and self-hosted models cannot be in it. So the instance keeps prices of its own, in US dollars per million tokens (USD only), in PostgreSQL's `ai_model_prices` (migration `0019_ai_model_prices`; `apps/api/src/ai/custom-prices.ts`):
+
+- **A row** names a provider and a model ID in lower case (matched exactly, as calls are read; a row on an ID of a bundled entry covers every call of the entry, below the calls' own rows), `effective_from` (a moment, or null for all calls), and either the four prices (`numeric`, 0 to 10,000, at most 6 decimals; a null cache price is charged as input) or `price_as` (another model, for all calls), never both. Unique on (model, `effective_from`), nulls not distinct; `created_by`, `updated_by`, and their times.
+- **Edit price** sets the four prices either from a day on (midnight in the instance's timezone; a real price change: calls before it keep the earlier price), replacing a row from the same day, or for all calls (a correction), replacing every row of the model: the dialog names the dated prices and the price as it replaces. At most 100 rows per model and 1,000 in all (409 past them).
+- **Price as** points a model the table lacks (a dated snapshot) at another model's price, resolved at read time at the call's time, one level deep only: a model priced as another cannot be a target, and a model others are priced as cannot be priced as one. A model with a bundled price cannot be priced as another (its own price would win). A model's own dated prices win over its price as from their day.
+- **Add model** is Edit price for a model the list lacks, such as a self-hosted one at $0. **Reset to built-in** deletes every row of the model, after a confirm; it is refused (409, naming them) while other models are priced as it.
+- **Kept hours:** every change blanks the AI cost rules' `ai_cost_windows.settings_key` in the same transaction, so each rule's next evaluation adds its hours up again at the new prices; the hours are not deleted, so an evaluation running meanwhile stays consistent at the old prices. The price book's fingerprint (a hash of the bundled table and, of each custom row, the model, start, prices, and price as) is part of the key too, so that evaluation's own write is added up again at the next run, and so is a row changed past the routes.
+- **Reads:** each report request and each cost rule's evaluation reads the rows (a small PostgreSQL query) into a price book.
+
+```text
+GET  /api/settings/ai-models            every model with calls in the last 30 days across the instance's projects, every bundled entry (its first ID), and every model with rows
+PUT  /api/settings/ai-models/price      { provider, model, effectiveFrom: "YYYY-MM-DD" | null, input, output, cacheRead, cacheWrite }
+PUT  /api/settings/ai-models/price-as   { provider, model, priceAs: { provider, model } }
+POST /api/settings/ai-models/reset      { model }
+```
+
+Each needs `projects` (`requirePermission`), and the changes the dashboard's `Origin`; bodies are checked by schema before any database work, and changes are limited to 30 per user, then one every 10 seconds (`DEFAULT_AI_MODEL_CHANGE_LIMIT` in `model-routes.ts`). The list's ClickHouse query filters by `project_id IN` the instance's projects first, groups by model in lower case, and lists at most 2,000 models (when ClickHouse cannot answer, the list still answers, with `callsCounted: false` and each `calls` null, so prices stay editable); each row carries its price now and its source (`built_in`, `custom`, `price_as`, or none), the bundled price with the day it was checked, the custom prices with who changed them and when, and the price as. The table is deployment-wide customer data, an intended exception to CLAUDE.md's rule against adding any: it is instance settings, like `instance_settings`, and moves to an organization with the other instance settings ([multi-tenancy](multi-tenancy.md#two-levels-of-settings)). No row names another row: `price_as` names a model.
 
 ## The report
 
@@ -161,10 +182,10 @@ Two rule kinds, evaluated by the worker with the telemetry rules, once a minute 
 
 - **Scope:** `environment` is one environment, `production` when left out; `feature` and `model` (at most 100 characters each) narrow the rule to one of each, exactly as stored, or all when `null`. A `feature` of `""` is the calls that name none ("Unlabeled"), as the report's `feature=` is.
 - **The window** ends a minute before the evaluation, as the telemetry rules' do.
-- **Kept hours.** A cost rule whose window holds 3 closed hours or more (the last 24 hours, and the month so far) does not read the whole window each minute: the cost, calls, and calls without a price of each closed hour (UTC hours that ended before the window's end) are kept in PostgreSQL (`ai_cost_windows` and `ai_cost_hours`, migration `0018_ai_cost_hours`; `apps/api/src/alerts/ai-cost-hours.ts`), and each evaluation reads from ClickHouse only the part of the hour the window starts in, the hours closed since the last evaluation, and the hour still open. They are added up again from scratch at the first evaluation after the instance's midnight, when the rule's settings change, and when the window no longer follows on from what is kept; a new month starts from nothing. The last hour's rule reads its window whole.
+- **Kept hours.** A cost rule whose window holds 3 closed hours or more (the last 24 hours, and the month so far) does not read the whole window each minute: the cost, calls, and calls without a price of each closed hour (UTC hours that ended before the window's end) are kept in PostgreSQL (`ai_cost_windows` and `ai_cost_hours`, migration `0018_ai_cost_hours`; `apps/api/src/alerts/ai-cost-hours.ts`), and each evaluation reads from ClickHouse only the part of the hour the window starts in, the hours closed since the last evaluation, and the hour still open. They are added up again from scratch at the first evaluation after the instance's midnight, when the rule's settings or the prices change ([Prices](#prices)), and when the window no longer follows on from what is kept; a new month starts from nothing. The last hour's rule reads its window whole.
 - **No data:** a failures rule with fewer calls than its minimum does not judge the window. A cost rule always has a value: no calls cost 0.
 - **When saved,** a rule whose calls have not arrived in the last 24 hours is saved with a warning, as the telemetry rules are.
-- **Notifications:** `ai.cost`, `ai.cost_resolved`, `ai.failures`, `ai.failures_resolved` ([webhooks](webhooks.md)). Every cost message says the cost is an estimate from token counts at list prices, and how many calls of models without a price it leaves out. The link opens the AI page with the rule's environment, feature, and model (`/projects/:id/ai?env=…&feature=…&model=…`).
+- **Notifications:** `ai.cost`, `ai.cost_resolved`, `ai.failures`, `ai.failures_resolved` ([webhooks](webhooks.md)). Every cost message says the cost is an estimate from token counts and model prices, and how many calls of models without a price it leaves out. The link opens the AI page with the rule's environment, feature, and model (`/projects/:id/ai?env=…&feature=…&model=…`).
 
 ## Sending calls
 
@@ -212,12 +233,15 @@ The Vercel AI SDK's `functionId` arrives as `gen_ai.agent.name`, which is the fe
 
 ## Known limits
 
-- **Cost is an estimate.** It is tokens times list prices. It leaves out batch discounts, negotiated prices, regional and US-only surcharges, higher prices past a prompt length, Anthropic's 1-hour cache writes (spans do not say which cache was used: the 5-minute price is taken), per-request fees such as web search, and price changes the table does not have yet. The page must say so.
+- **Cost is an estimate.** It is tokens times the built-in list prices, or the prices set in Settings → AI models. With the built-in prices it leaves out batch discounts, negotiated prices, regional and US-only surcharges, higher prices past a prompt length, Anthropic's 1-hour cache writes (spans do not say which cache was used: the 5-minute price is taken), per-request fees such as web search, and price changes the table does not have yet. The page must say so.
 - **Sampled traces undercount.** A call is counted only if its span reaches Ottertrail; with head or tail sampling, the totals are those of the sampled traces. The token metrics are not sampled; comparing against them is phase 2.
 - **A retried call counts twice** in the totals, chart, breakdowns, and alerts until its parts are merged: they read without `FINAL`. The forced merge acts on a whole month's partition, which is still being written to for the month, so within the month a copy lasts until ClickHouse merges its part, as it usually does within minutes to hours. The latest calls never show a copy.
 - **A late call in a closed hour** (one that arrives after its hour has ended and been kept, or one retention deletes from it) is not in a cost rule's total until the next daily recompute, after the instance's midnight. The AI page reads every call each time and is not affected.
 - **Reasoning tokens** are priced as output, as the conventions count them in the output. A sender that counts them apart from the output undercounts.
-- **Models are matched by ID only,** whatever the provider. A self-hosted or fine-tuned model with a listed ID's name is priced as the listed one; a dated snapshot the table does not list has no price until it is added.
+- **Models are matched by ID only,** whatever the provider. A self-hosted or fine-tuned model with a listed ID's name is priced as the listed one unless the instance sets a price of its own; a dated snapshot the table does not list has no price until it gets one in Settings → AI models (a price, or price as).
+- **Custom prices are the instance's,** not a project's: every project's calls of a model take the same price.
+- **A dated price is a moment,** midnight of its day in the instance's timezone when it was set: changing the timezone afterwards does not move it, so it then starts at another hour of the new timezone's day.
+- **Rows on two IDs of one bundled entry** both cover the entry: a call without a row of its own takes the later start of the two.
 - **OpenInference spans** that name only `llm.*` attributes (no `gen_ai.*`) are not detected: set `OPENINFERENCE_ENABLE_GENAI_SEMCONV=true`.
 - **Calls older than the telemetry retention** cannot be sent: the traces route refuses spans older than `TELEMETRY_RETENTION_DAYS`, so a project's history starts when it starts sending.
 
@@ -230,9 +254,9 @@ The Vercel AI SDK's `functionId` arrives as `gen_ai.agent.name`, which is the fe
    - the report API and the AI page in the project sidebar, after Databases ([dashboard](dashboard.md#ai); built);
    - the `ai_cost` and `ai_failures` alerts, in the API and the Alerts page's form (built);
    - these docs, with the snippets above, and the docs site's page `/monitoring/ai-usage/` (built);
-   - tests against real ClickHouse with OpenTelemetry's own exporters (`ai-calls.test.ts`, `ai-report.test.ts`, `ai-alerts.test.ts`).
+   - tests against real ClickHouse with OpenTelemetry's own exporters (`ai-calls.test.ts`, `ai-report.test.ts`, `ai-alerts.test.ts`);
+   - the instance's own prices in Settings → AI models, from a day on or for all calls, and price as (built 22 November 2026; [Prices](#prices)).
 2. **Phase 2:**
-   - per-project price overrides in Settings, each with the day it applies from;
    - `POST /api/ai-calls` with the secret key, for apps without OpenTelemetry, into the same table;
    - an AI calls list in the Workbench pattern;
    - an `ai_latency` alert;
@@ -246,4 +270,6 @@ The Vercel AI SDK's `functionId` arrives as `gen_ai.agent.name`, which is the fe
 - `apps/api/tests/ai-calls.test.ts`: spans of each kind of sender through OpenTelemetry's protobuf and JSON exporters, stored as calls or not, the old and new names, the bounds; a retried batch one row; each call a unit of the budget, never a 413 for a batch the budget takes without them; a 503 that gives it back when the calls cannot be written, whether the spans were.
 - `apps/api/tests/ai-report.test.ts`: the price table's shape and matching, the arithmetic in JavaScript and in ClickHouse, the report's figures and each filter, the previous period, the chart and its Other line, the latest calls, access with and without `users`, and retention, project deletion, and the orphan sweep.
 - `apps/api/tests/ai-alerts.test.ts`: both kinds fired, resolved, and quiet below their minimum, the month's window across a timezone, the kept hours of the month and the last 24 hours against a full scan (a late call, midnight, a new month), the unlabeled feature, the worker's pass, and the rule routes' validation.
+- `apps/api/tests/ai-models.test.ts`: cost at read time with custom rows from a day, for all calls, price as (one level), on another ID of a bundled entry, exactly at a start, in a non-UTC timezone, and after a reset, ClickHouse against `priceAt`; kept hours marked stale and added up again after a change, and after a row changed past the routes; the list across the instance's projects only, and without ClickHouse; admins yes, members no; validation, the caps, a reset refused for a target, Origin, and the limit per user.
+- `apps/web/tests/browser/ai-models.test.tsx`: the tab, the No price filter, Edit price from a date and for all calls, price as, Add model, Reset with its confirm, the states, and the AI page's link.
 - `apps/web/tests/browser/ai.test.tsx` and `ai-alerts.test.tsx`: the page and the alert form against the fake API (`fake-ai.ts`); `report-screens.test.tsx` the page at 390 and 1440 wide.

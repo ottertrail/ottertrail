@@ -1,5 +1,6 @@
 import type { Kysely } from "kysely";
 
+import type { PriceBook } from "../ai/prices.ts";
 import { aiHours, aiWindow, type AiWindow } from "../ai/report.ts";
 import type { Reader } from "../clickhouse/query.ts";
 import type { Database } from "../db/schema.ts";
@@ -18,7 +19,8 @@ import type { AiCostSettings } from "./kinds.ts";
  * A call that arrives late, for an hour already closed, is not in the kept
  * total: the hours are added up again from scratch once a day, at the
  * first evaluation after the instance's midnight, when the rule's
- * settings change, and when the window no longer follows on from the
+ * settings or the prices change (Settings → AI models clears them), and
+ * when the window no longer follows on from the
  * hours kept (the clock went back, or the rule was not evaluated for its
  * whole window). Likewise a call retention deletes from a closed hour
  * stays counted until then.
@@ -36,9 +38,20 @@ const filtersOf = (settings: AiCostSettings) => ({
   ...(settings.model === null ? {} : { model: settings.model }),
 });
 
-/** What the kept hours were added up for: a change starts them again. */
-const keyOf = (settings: AiCostSettings) =>
-  JSON.stringify([settings.environment, settings.feature, settings.model, settings.costWindow]);
+/**
+ * What the kept hours were added up for: a change starts them again. The
+ * prices are in it (the price book's fingerprint), so hours kept at
+ * prices since changed are added up again, even by an evaluation that
+ * read the old ones while the change cleared them (ai/custom-prices.ts).
+ */
+const keyOf = (settings: AiCostSettings, prices: PriceBook) =>
+  JSON.stringify([
+    settings.environment,
+    settings.feature,
+    settings.model,
+    settings.costWindow,
+    prices.fingerprint,
+  ]);
 
 const add = (a: AiWindow, b: AiWindow): AiWindow => ({
   calls: a.calls + b.calls,
@@ -60,16 +73,21 @@ export async function costOverWindow(
   rule: { id: string; projectId: string },
   settings: AiCostSettings,
   window: { from: Date; to: Date },
-  { at, dayStart }: { at: Date; dayStart: Date },
+  { at, dayStart, prices }: { at: Date; dayStart: Date; prices: PriceBook },
 ): Promise<AiWindow> {
-  const base = { projectId: rule.projectId, environment: settings.environment, ...window };
+  const base = {
+    projectId: rule.projectId,
+    environment: settings.environment,
+    prices,
+    ...window,
+  };
   const filters = filtersOf(settings);
   const closedFrom = ceilHour(window.from);
   const closedTo = floorHour(window.to);
   if (closedTo.getTime() - closedFrom.getTime() < MIN_CLOSED_HOURS * HOUR_MS) {
     return aiWindow(reader, base, filters);
   }
-  const key = keyOf(settings);
+  const key = keyOf(settings, prices);
   const kept = await db
     .selectFrom("ai_cost_windows")
     .selectAll()

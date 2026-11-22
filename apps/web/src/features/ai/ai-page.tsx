@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { useNavigate } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
 import { ArrowUpRightIcon, OctagonAlertIcon, SparklesIcon } from "lucide-react";
 
 import { ButtonAnchor } from "@/components/button-anchor";
@@ -135,10 +135,21 @@ function Summary({ report }: { report: AiReport }) {
           {formatWhole(unpriced)} {unpriced === 1 ? "call" : "calls"} had no price and{" "}
           {unpriced === 1 ? "is" : "are"} not in the cost
           {totals.noPriceModels.length > 0 && `: ${totals.noPriceModels.join(", ")}`}.
+          <WhenAllowed permission="projects">
+            {" "}
+            <Link
+              to="/settings"
+              search={{ tab: "ai-models", show: "no-price" }}
+              className="text-link hover:underline"
+            >
+              Set prices in Settings
+            </Link>
+            .
+          </WhenAllowed>
         </p>
       )}
       <p className="max-w-4xl text-xs text-pretty text-ink-subtle">
-        Cost is an estimate from token counts at list prices. {comparisonNote(report)}
+        Cost is an estimate from token counts and model prices. {comparisonNote(report)}
       </p>
     </section>
   );

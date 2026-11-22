@@ -106,13 +106,15 @@ describe("the AI page", () => {
     await expect.element(page.getByText("Up 36% from $24.10", { exact: true })).toBeInTheDocument();
     await expect
       .element(
-        page.getByText("90 calls had no price and are not in the cost: acme-support-ft-2026-10."),
+        page.getByText(
+          "90 calls had no price and are not in the cost: acme-support-ft-2026-10. Set prices in Settings.",
+        ),
       )
       .toBeVisible();
     await expect
       .element(
         page.getByText(
-          "Cost is an estimate from token counts at list prices. Changes compare with 3 to 9 Nov 2026.",
+          "Cost is an estimate from token counts and model prices. Changes compare with 3 to 9 Nov 2026.",
         ),
       )
       .toBeVisible();

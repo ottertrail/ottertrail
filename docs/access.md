@@ -94,6 +94,7 @@ Fastify checks a route's parameters and body before the access check runs, so a 
 | `POST /api/projects`, `GET /api/client-address` (the requester's own address, for blocked addresses)                                                         | `projects`                          |
 | `GET /api/settings/storage` (what fills the disk, and the storage warnings)                                                                                  | `projects`                          |
 | `PATCH /api/settings/storage` (the channels that get storage warnings)                                                                                       | `channels`                          |
+| `GET /api/settings/ai-models`, `PUT …/price`, `PUT …/price-as`, `POST …/reset` (the AI model prices)                                                         | `projects`                          |
 | `/api/settings/backups…` (ten routes: settings, Test connection, Back up now, Test restore, the list, the key, its file, saved, replace)                     | `settings` (the owner)              |
 | `POST /api/settings/backups/key`, `…/key/file`, and a `PATCH` that changes the destination or turns backups off                                              | `settings` and the current password |
 | `/api/channels…` (all eight), `POST /api/channels/email-test` (a test email to the user's own address)                                                       | `channels`                          |
@@ -173,7 +174,7 @@ These need no session, and declare nothing: health, collection with a project's 
 - A page the user cannot open shows "You don't have access" (`NoAccess`). Each project route names what it needs (`staticData.access` in `router.tsx`), and `ProjectLayout` checks it.
 - Opening a project, or the home page, goes to the project's overview when the user has one of its areas (uptime and alerts, errors, monitoring, web analytics, product analytics), and otherwise to the first area the user has, in the menu's order. The overview shows only the widgets of the user's areas ([dashboard](dashboard.md#overview)).
 - The project list hides "New project" and allowed sites from members.
-- The Settings page's General and Location data tabs show to the owner, and its Storage and Notification channels tabs to the owner and admins. A member gets "You don't have access". The workspace menu's Members link, to `/settings/members`, shows to the owner and admins.
+- The Settings page's General, Location data, and Backups tabs show to the owner, and its Storage, AI models, and Notification channels tabs to the owner and admins. A member gets "You don't have access". The workspace menu's Members link, to `/settings/members`, shows to the owner and admins.
 - Where one area's page links into another, the link shows only when the user has that area: an error's user, trace, and replay; a user's errors and replays; a replay's error and user; the alert rules on an error's page; "Add an alert rule" on the monitoring pages; links to the project's settings.
 - Buttons that change something show only with manage: Resolve and Reopen; adding, editing, pausing, and deleting checks and rules (the rules' switches are disabled); saving, renaming, and deleting funnels; adding and deleting goals.
 

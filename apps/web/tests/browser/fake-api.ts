@@ -82,6 +82,7 @@ import type {
 import type { Check, CheckResults, IncidentList } from "../../src/lib/uptime-api.ts";
 import type { Activity, User, UserActivity, UserList } from "../../src/lib/users-api.ts";
 import { answerAccount, type FakeAccount, fakeAccount, sessionBody } from "./fake-account.ts";
+import { answerAiModels, type FakeAiModels, fakeAiModels } from "./fake-ai-models.ts";
 import { answerAi, type FakeAi, fakeAi } from "./fake-ai.ts";
 import { answerBackups, type FakeBackups, fakeBackups } from "./fake-backups.ts";
 import {
@@ -125,6 +126,8 @@ export interface FakeApi {
   holdStorage: Promise<void> | null;
   /** The Backups tab's routes (the owner's only): fake-backups.ts. */
   backups: FakeBackups;
+  /** The AI models tab's routes (the owner's and admins'): fake-ai-models.ts. */
+  aiModels: FakeAiModels;
   /** Who is signed in and what they may reach (GET /api/me); the owner by default. */
   access: FakeAccess;
   /** Whether the instance has object storage, as GET /api/me says; true by default. */
@@ -3795,6 +3798,8 @@ async function answer(api: FakeApi, url: URL, init: RequestInit | undefined): Pr
   if (account !== null) return account;
   const backups = answerBackups(api.backups, url, init, api.access.role);
   if (backups !== null) return backups;
+  const aiModels = answerAiModels(api.aiModels, url, init, api.access.role);
+  if (aiModels !== null) return aiModels;
   const ai = await answerAi(api.ai, url, api.access.areas.users !== "none");
   if (ai !== null) return ai;
   const avatars = await answerAvatars(api, path, init);
@@ -4277,6 +4282,7 @@ export function installFakeApi(overrides: Partial<FakeApi> = {}): FakeApi {
     storage: STORAGE,
     holdStorage: null,
     backups: fakeBackups(),
+    aiModels: fakeAiModels(),
     access: OWNER_ACCESS,
     avatarUploads: true,
     userAvatarUrl: null,

@@ -1311,9 +1311,13 @@ const settingsRoute = createRoute({
   getParentRoute: () => appRoute,
   path: "/settings",
   staticData: { title: "Settings" },
-  // The chosen tab (SettingsTabs), left out for the first the user may see.
-  validateSearch: (search: { tab?: unknown } & SearchSchemaInput): { tab: string | undefined } => ({
+  // The chosen tab (SettingsTabs), left out for the first the user may see;
+  // `show=no-price` lists only the AI models without a price (ai-models-tab.tsx).
+  validateSearch: (
+    search: { tab?: unknown; show?: unknown } & SearchSchemaInput,
+  ): { tab: string | undefined; show: "no-price" | undefined } => ({
     tab: typeof search.tab === "string" && search.tab !== "" ? search.tab : undefined,
+    show: search.show === "no-price" ? "no-price" : undefined,
   }),
   component: SettingsPage,
 });

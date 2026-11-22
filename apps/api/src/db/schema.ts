@@ -233,6 +233,28 @@ export interface AiCostWindowsTable {
   recomputed_at: Date;
 }
 
+/**
+ * One of the instance's own AI model prices (0019; ai/custom-prices.ts):
+ * prices from a moment (or for all calls), or the model it is priced as.
+ * numeric columns arrive as strings.
+ */
+export interface AiModelPricesTable {
+  id: ColumnType<string, string | undefined, never>;
+  provider: string;
+  model: string;
+  effective_from: Date | null;
+  input: ColumnType<string | null, number | null, number | null>;
+  output: ColumnType<string | null, number | null, number | null>;
+  cache_read: ColumnType<string | null, number | null, number | null>;
+  cache_write: ColumnType<string | null, number | null, number | null>;
+  price_as_provider: string | null;
+  price_as_model: string | null;
+  created_by: string | null;
+  updated_by: string | null;
+  created_at: DatabaseDefault<Date>;
+  updated_at: ColumnType<Date, Date | undefined, Date>;
+}
+
 /** One closed hour of an AI cost rule's window, with calls. */
 export interface AiCostHoursTable {
   rule_id: string;
@@ -741,6 +763,7 @@ export interface Database {
   alert_states: AlertStatesTable;
   ai_cost_windows: AiCostWindowsTable;
   ai_cost_hours: AiCostHoursTable;
+  ai_model_prices: AiModelPricesTable;
   alert_history: AlertHistoryTable;
   alert_evaluations: AlertEvaluationsTable;
   alert_error_groups: AlertErrorGroupsTable;

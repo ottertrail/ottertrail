@@ -48,6 +48,7 @@ export async function signedInDashboard({
   invitationEmailLimit,
   backups,
   avatars,
+  aiModels,
   logStream,
 }: {
   timeZone?: string;
@@ -82,6 +83,8 @@ export async function signedInDashboard({
   backups?: AppOptions["backups"];
   /** Avatar uploads per user (tests/avatars.test.ts). */
   avatars?: AppOptions["avatars"];
+  /** Changes to the AI model prices per user (tests/ai-models.test.ts). */
+  aiModels?: AppOptions["aiModels"];
   /** Where the API's log goes, at info and above; off when omitted. */
   logStream?: { write(line: string): void };
 } = {}) {
@@ -131,6 +134,7 @@ export async function signedInDashboard({
     ...(storage === undefined ? {} : { storage }),
     ...(backups === undefined ? {} : { backups }),
     ...(avatars === undefined ? {} : { avatars }),
+    ...(aiModels === undefined ? {} : { aiModels }),
     ...(logStream === undefined ? {} : { log: { level: "info", stream: logStream } }),
   });
   const link = await createSetupToken(testDb.db);

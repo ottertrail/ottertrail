@@ -1,5 +1,6 @@
 import { type Kysely, sql } from "kysely";
 
+import { readPriceBook } from "../ai/custom-prices.ts";
 import { aiSeen, aiWindow } from "../ai/report.ts";
 import type { Reader } from "../clickhouse/query.ts";
 import type { Database } from "../db/schema.ts";
@@ -99,6 +100,7 @@ export async function readAi(
     ? await costOverWindow(db, reader, rule, settings, window, {
         at,
         dayStart: (await localStarts(db, at)).day,
+        prices: await readPriceBook(db),
       })
     : await aiWindow(
         reader,
@@ -170,7 +172,7 @@ function estimateText(reading: AiReading): string {
     reading.noPriceCalls === 0
       ? ""
       : ` ${callsText(reading.noPriceCalls)} of models without a price ${reading.noPriceCalls === 1 ? "is" : "are"} not counted.`;
-  return ` The cost is an estimate, from token counts at list prices.${unpriced}`;
+  return ` The cost is an estimate, from token counts and model prices.${unpriced}`;
 }
 
 /** The message when an AI rule fires, or resolves. */

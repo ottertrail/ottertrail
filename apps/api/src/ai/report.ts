@@ -6,7 +6,7 @@ import {
   listChartBuckets,
   type TelemetryRange,
 } from "../telemetry/dashboard-query.ts";
-import { pricedColumns } from "./prices.ts";
+import { BUNDLED_BOOK, type PriceBook, pricedColumns } from "./prices.ts";
 
 /**
  * The AI page's figures (docs/ai-usage.md, "The report"): totals, a chart,
@@ -49,6 +49,8 @@ export interface AiScope {
    * open hours, alerts/ai-cost-hours.ts); none: no calls.
    */
   ranges?: readonly { from: Date; to: Date }[] | undefined;
+  /** The prices cost is worked out at (custom-prices.ts, readPriceBook); the bundled table alone when left out. */
+  prices?: PriceBook | undefined;
 }
 
 /** The report's filters, each exactly as stored; a feature of "" is the unlabeled calls. */
@@ -87,7 +89,7 @@ function pricedCalls(
   filters: AiFilters,
   { final = false, extra = "" }: { final?: boolean; extra?: string } = {},
 ): string {
-  return `SELECT *, ${pricedColumns(params)}
+  return `SELECT *, ${pricedColumns(params, scope.prices ?? BUNDLED_BOOK)}
           FROM ${AI_CALLS_TABLE}${final ? " FINAL" : ""}
           WHERE ${conditions(params, scope, filters)} ${extra}`;
 }
@@ -620,6 +622,7 @@ export async function aiChart(
   filters: AiFilters,
   split: AiSplit,
   now: Date,
+  prices: PriceBook = BUNDLED_BOOK,
 ): Promise<AiChart> {
   const buckets = listChartBuckets(range, now);
   const size = buckets.starts.length;
@@ -644,6 +647,7 @@ export async function aiChart(
     environment: range.environment,
     from: range.from,
     to: range.to,
+    prices,
   };
   const place = (target: AiSeries, row: BucketRow) => {
     const index = Number(row.bucket);

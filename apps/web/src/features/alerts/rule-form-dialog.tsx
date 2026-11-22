@@ -469,7 +469,7 @@ const KIND_HELP: Record<RuleKind, string> = {
   metric_threshold:
     "Notifies above or below the chosen value, then again after a full window without that condition. Calculated as on its chart. Empty windows do not trigger or resolve alerts.",
   ai_cost:
-    "Notifies when the estimated cost goes above the amount, then again after an hour at or below it. The cost is an estimate from token counts at list prices, as on the AI page.",
+    "Notifies when the estimated cost goes above the amount, then again after an hour at or below it. The cost is an estimate from token counts and model prices, as on the AI page.",
   ai_failures:
     "Notifies above the threshold, then again after a full window at or below it. Windows below the minimum call count do not trigger or resolve alerts.",
 };
