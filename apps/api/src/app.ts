@@ -6,7 +6,7 @@ import type { Kysely } from "kysely";
 import { memberRoutes } from "./access/member-routes.ts";
 import { meRoutes } from "./access/routes.ts";
 import { accountRoutes } from "./account/routes.ts";
-import { aiCallIngestRoutes } from "./ai/ingest-routes.ts";
+import { type AiCallIngestOptions, aiCallIngestRoutes } from "./ai/ingest-routes.ts";
 import { aiModelRoutes } from "./ai/model-routes.ts";
 import { aiRoutes } from "./ai/routes.ts";
 import { alertRoutes } from "./alerts/routes.ts";
@@ -148,8 +148,8 @@ export interface AppOptions extends Omit<FastifyServerOptions, "logger"> {
    * Not served without a ClickHouse client.
    */
   telemetry?: Partial<Omit<TelemetryOptions, "projects" | "now" | "budget">>;
-  /** POST /api/ai-calls (ai/ingest-routes.ts): its limit per client address, which tests lower. */
-  aiCalls?: { ipLimit?: RateLimit };
+  /** POST /api/ai-calls (ai/ingest-routes.ts): its limit per client address and its requests in progress, which tests lower. */
+  aiCalls?: Pick<AiCallIngestOptions, "ipLimit" | "maxInFlight" | "maxInFlightPerProject">;
   /**
    * Uptime checks (docs/uptime-alerts.md): whether they may reach private
    * addresses (UPTIME_ALLOW_PRIVATE_ADDRESSES, off by default), the
@@ -326,7 +326,7 @@ export function buildApp({
       clickhouse: telemetryClickHouse,
       projects: projectKeys,
       budget,
-      ...(aiCalls.ipLimit === undefined ? {} : { ipLimit: aiCalls.ipLimit }),
+      ...aiCalls,
       ...(collection.now === undefined ? {} : { now: collection.now }),
     });
   }

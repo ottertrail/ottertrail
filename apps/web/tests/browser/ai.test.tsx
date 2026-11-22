@@ -480,7 +480,13 @@ describe("the AI page's states", () => {
     installFakeApi({ ai: { ...fakeAi(), report: noAiCalls } });
     renderApp(AI);
     await expect.element(page.getByText("No AI calls yet")).toBeVisible();
-    await expect.element(page.getByText(/GenAI instrumentation for your model SDK/)).toBeVisible();
+    await expect
+      .element(
+        page.getByText(
+          /GenAI instrumentation for your model SDK, or send each call from your server over HTTP,/,
+        ),
+      )
+      .toBeVisible();
     await expect
       .element(page.getByRole("link", { name: "How to send AI calls (opens in a new tab)" }))
       .toHaveAttribute("href", "https://docs.ottertrail.app/monitoring/ai-usage/");

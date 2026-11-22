@@ -171,8 +171,8 @@ function NoCallsYet({ projectId }: { projectId: string }) {
         <EmptyTitle>No AI calls yet</EmptyTitle>
         <EmptyDescription>
           This page reads the LLM calls in your server&apos;s traces. Send traces over OpenTelemetry
-          with a GenAI instrumentation for your model SDK, and each call shows here with its tokens,
-          cost, and latency.
+          with a GenAI instrumentation for your model SDK, or send each call from your server over
+          HTTP, and each call shows here with its tokens, cost, and latency.
         </EmptyDescription>
       </EmptyHeader>
       <EmptyContent className="flex-row flex-wrap justify-center">

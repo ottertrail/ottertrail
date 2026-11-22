@@ -195,6 +195,8 @@ Any instrumentation that follows the OpenTelemetry GenAI conventions sends calls
 
 For an app without OpenTelemetry: its server sends each call's names, token counts, and duration to `POST /api/ai-calls`, and the calls go into the same `ai_calls` table, so the AI page and the alert rules read them as they read calls found in spans. Code: `apps/api/src/ai/ingest-routes.ts`.
 
+Send a call one way only. A call whose trace already has a GenAI span for it is counted from that span; sending it over HTTP as well counts it twice. `traceId` and `spanId` are for linking a call to a trace that has no GenAI span of its own, such as the request that made the call.
+
 ```text
 POST /api/ai-calls
 Authorization: Bearer sk_…
@@ -223,23 +225,24 @@ Content-Type: application/json
 | `service`                                                                               | No       | At most 100 characters: the service filter on the AI page                                                                                                                     |
 | `traceId`, `spanId`                                                                     | No       | 32 and 16 hex characters, for an app that has traces too: the call's "Open its trace" link. A `spanId` needs its `traceId`                                                    |
 
-- **The project's secret key,** as server-side events and OTLP take it, checked before the body is read: a missing or malformed key gets 401 (`unauthorized`), an unknown one 401 (`unknown_key`) after the lookup. A public key never works. No CORS headers: a page cannot read the answers, and must never hold the key.
-- **Checked before any database work:** the schema, the text rules, and the times, cheapest first. Requests per IP address are limited as for server-side events (bursts of 600, then 50 a second).
+- **The project's secret key,** as server-side events and OTLP take it, looked up before the body is read, as OTLP does (cached, unknown keys too): a missing or malformed key gets 401 (`unauthorized`), an unknown one 401 (`unknown_key`), and neither body is read. A public key never works. No CORS headers: a page cannot read the answers, and must never hold the key.
+- **Before the body is read,** cheapest first: the key's form, requests per IP address (an IPv6 address by its /64; bursts of 600, then 50 a second, as for server-side events), the requests in progress (8 per API process, 4 of them one project's, as OTLP's: 503 `busy` or 429 past them), and the key. Then the schema, the text rules, and the times.
+- **Optional names may be empty:** `operation`, `feature`, `service`, `errorType`, and a finish reason that is "" or only spaces are as left out, as on a span.
 - **No prompts or completions.** The schema has no field for them, and fields it does not know are dropped (Fastify's `removeAdditional`, as for server-side events), so a prompt sent by mistake is never stored.
 - **Cost is not sent:** it is worked out from the tokens when the calls are read ([Cost](#cost)).
 - **The server's clock is trusted:** a call more than 5 minutes ahead is refused (400); one more than 24 hours old is counted in `tooOld` and not stored.
 - **Limits:** at most 1,000 calls and 1 MiB a request (a usual call is about 300 bytes). Each call costs one unit of the project's telemetry budget, the one OTLP spends ([telemetry](telemetry.md#limits)); a batch larger than the whole budget is refused (413).
-- **A batch is stored whole or not at all,** and the answer comes once ClickHouse has written it (an asynchronous insert, waiting for the write).
+- **The answer comes once ClickHouse has written the batch** (an asynchronous insert, waiting for the write). A batch of one month's calls is one write, stored whole or not at all. A batch whose calls fall in two months is two partitions, and a failed write (503) can store part of it; a retry with the same body is safe, as the copies merge ([Retries](#retries)).
 
-| Status | Body `error`                   | Meaning                                                                           | Should the sender retry? |
-| ------ | ------------------------------ | --------------------------------------------------------------------------------- | ------------------------ |
-| 202    | none: `{ "stored", "tooOld" }` | Written to ClickHouse. `stored` counts the calls written, a retry's included      | No                       |
-| 400    | `invalid_request`              | The batch breaks a rule above                                                     | No: it will fail again   |
-| 401    | `unauthorized`, `unknown_key`  | No secret key, a malformed one, or one no project has                             | No                       |
-| 413    | `payload_too_large`            | Over 1 MiB, or more calls than the project's whole budget                         | No: send smaller batches |
-| 415    | `unsupported_media_type`       | Not `application/json`                                                            | No                       |
-| 429    | `rate_limited`                 | Too many requests from the address, or calls for the budget                       | Yes, after `Retry-After` |
-| 503    | `storage_unavailable`          | The key could not be looked up, or ClickHouse could not write; nothing was stored | Yes, after `Retry-After` |
+| Status | Body `error`                   | Meaning                                                                                          | Should the sender retry? |
+| ------ | ------------------------------ | ------------------------------------------------------------------------------------------------ | ------------------------ |
+| 202    | none: `{ "stored", "tooOld" }` | Written to ClickHouse. `stored` counts the calls written, a retry's included                     | No                       |
+| 400    | `invalid_request`              | The batch breaks a rule above                                                                    | No: it will fail again   |
+| 401    | `unauthorized`, `unknown_key`  | No secret key, a malformed one, or one no project has                                            | No                       |
+| 413    | `payload_too_large`            | Over 1 MiB, or more calls than the project's whole budget                                        | No: send smaller batches |
+| 415    | `unsupported_media_type`       | Not `application/json`                                                                           | No                       |
+| 429    | `rate_limited`                 | Too many requests from the address or in progress for the project, or calls for the budget       | Yes, after `Retry-After` |
+| 503    | `storage_unavailable`, `busy`  | The key could not be looked up, ClickHouse could not write, or too many requests are in progress | Yes, after `Retry-After` |
 
 ### Retries
 
@@ -394,7 +397,7 @@ The Vercel AI SDK's `functionId` arrives as `gen_ai.agent.name`, which is the fe
 ## Tests
 
 - `apps/api/tests/ai-calls.test.ts`: spans of each kind of sender through OpenTelemetry's protobuf and JSON exporters, stored as calls or not, the old and new names, the bounds; a retried batch one row; each call a unit of the budget, never a 413 for a batch the budget takes without them; a 503 that gives it back when the calls cannot be written, whether the spans were.
-- `apps/api/tests/ai-http-calls.test.ts`: `POST /api/ai-calls`: every field stored, the key (missing, malformed, public, unknown) checked before the body, each rule refusing the whole batch, unknown fields such as a prompt dropped, 1,000 calls and 1 MiB, a call over a day old, a retried batch one row, each call a unit of the budget OTLP shares, the address's rate, a bad batch refused without a lookup, 503 with the budget given back, and the calls on the AI page and in a cost rule.
+- `apps/api/tests/ai-http-calls.test.ts`: `POST /api/ai-calls`: every field stored, the key (missing, malformed, public, unknown) checked before the body, each rule refusing the whole batch, unknown fields such as a prompt dropped, 1,000 calls and 1 MiB, a call over a day old, empty optional names as left out, a retried batch one row, each call a unit of the budget OTLP shares, the address's rate by IPv6 /64, the requests in progress, an unknown key's body never parsed, 503 when the key cannot be looked up and when ClickHouse cannot write, with the budget given back, and the calls on the AI page and in a cost rule.
 - `apps/api/tests/ai-report.test.ts`: the price table's shape and matching, the arithmetic in JavaScript and in ClickHouse, the report's figures and each filter, the previous period, the chart and its Other line, the latest calls, access with and without `users`, and retention, project deletion, and the orphan sweep.
 - `apps/api/tests/ai-alerts.test.ts`: both kinds fired, resolved, and quiet below their minimum, the month's window across a timezone, the kept hours of the month and the last 24 hours against a full scan (a late call, midnight, a new month), the unlabeled feature, the worker's pass, and the rule routes' validation.
 - `apps/api/tests/ai-models.test.ts`: cost at read time with custom rows from a day, for all calls, price as (one level), on another ID of a bundled entry, exactly at a start, in a non-UTC timezone, and after a reset, ClickHouse against `priceAt`; kept hours marked stale and added up again after a change, and after a row changed past the routes; the list across the instance's projects only, and without ClickHouse; admins yes, members no; validation, the caps, a reset refused for a target, Origin, and the limit per user.

@@ -5,7 +5,7 @@ import { afterAll, beforeAll, describe, expect, test } from "vite-plus/test";
 import { MAX_AI_CALLS_PER_BATCH } from "../src/ai/ingest-routes.ts";
 import { evaluateTelemetryRule, telemetryRules } from "../src/alerts/telemetry-rules.ts";
 import { buildApp } from "../src/app.ts";
-import { createClickHouse } from "../src/clickhouse/clickhouse.ts";
+import { type ClickHouseClient, createClickHouse } from "../src/clickhouse/clickhouse.ts";
 import { loadConfig } from "../src/config.ts";
 import { createDatabase } from "../src/db/database.ts";
 import { PUBLIC_URL, signedInDashboard } from "./helpers/dashboard.ts";
@@ -56,10 +56,12 @@ function send(
   body: unknown,
   headers: Record<string, string> = {},
   app: ReturnType<typeof buildApp> = dashboard.app,
+  remoteAddress?: string,
 ) {
   return app.inject({
     method: "POST",
     url: "/api/ai-calls",
+    ...(remoteAddress === undefined ? {} : { remoteAddress }),
     headers: {
       "content-type": "application/json",
       authorization: `Bearer ${secretKey}`,
@@ -161,6 +163,32 @@ describe("POST /api/ai-calls", () => {
       error_type: "",
       operation: "",
     });
+  });
+
+  test("an empty or blank operation, feature, service, error type, or finish reason is as left out", async () => {
+    const project = await newProject("Empty");
+    const call = aiCall({
+      operation: "",
+      feature: "   ",
+      service: "",
+      errorType: " ",
+      finishReasons: ["", "stop"],
+    });
+    const response = await send(
+      { v: 1, calls: [call] },
+      { authorization: `Bearer ${project.key}` },
+    );
+    expect(response.statusCode).toBe(202);
+    expect(await storedCalls(project.id)).toMatchObject([
+      {
+        operation: "",
+        feature: "",
+        service: "",
+        error_type: "",
+        failed: false,
+        finish_reasons: ["stop"],
+      },
+    ]);
   });
 
   test("a retried batch is the same rows: its id and time are the key", async () => {
@@ -393,12 +421,72 @@ describe("limits", () => {
         statuses.push(response.statusCode);
       }
       expect(statuses).toEqual([401, 401, 429]);
+      // An IPv6 address counts by its /64: another address in it shares the bucket.
+      const unknown = { authorization: `Bearer sk_${"0".repeat(32)}` };
+      const body = { v: 1, calls: [aiCall()] };
+      expect((await send(body, unknown, app, "2001:db8:1:2::1")).statusCode).toBe(401);
+      expect((await send(body, unknown, app, "2001:db8:1:2::2")).statusCode).toBe(401);
+      expect((await send(body, unknown, app, "2001:db8:1:2:ffff::9")).statusCode).toBe(429);
+      expect((await send(body, unknown, app, "2001:db8:1:3::1")).statusCode).toBe(401);
     } finally {
       await app.close();
     }
   });
 
-  test("a bad batch costs no lookup: refused even while PostgreSQL is down; 503 if the key cannot be looked up", async () => {
+  test("requests in progress: at most the instance's, and of those one project's, as OTLP's", async () => {
+    // A ClickHouse whose inserts wait until the test lets them finish.
+    const waiting: (() => void)[] = [];
+    const slow = {
+      insert: () =>
+        new Promise<void>((resolve) => {
+          waiting.push(resolve);
+        }),
+    } as unknown as ClickHouseClient;
+    const app = buildApp({
+      db: dashboard.db,
+      telemetry: { clickhouse: slow },
+      aiCalls: { maxInFlight: 2, maxInFlightPerProject: 1 },
+    });
+    try {
+      const first = await newProject("In progress 1");
+      const second = await newProject("In progress 2");
+      const firstAuth = { authorization: `Bearer ${first.key}` };
+      const secondAuth = { authorization: `Bearer ${second.key}` };
+      const body = { v: 1, calls: [aiCall()] };
+      const one = send(body, firstAuth, app);
+      await expect.poll(() => waiting.length).toBe(1);
+      const sameProject = await send(body, firstAuth, app);
+      expect(sameProject.statusCode).toBe(429);
+      expect(sameProject.headers["retry-after"]).toBe("1");
+      const two = send(body, secondAuth, app);
+      await expect.poll(() => waiting.length).toBe(2);
+      const full = await send(body, secondAuth, app);
+      expect(full.statusCode).toBe(503);
+      expect(full.json().error).toBe("busy");
+      for (const resolve of waiting) resolve();
+      expect((await one).statusCode).toBe(202);
+      expect((await two).statusCode).toBe(202);
+      // Their places are given back.
+      const after = send(body, firstAuth, app);
+      await expect.poll(() => waiting.length).toBe(3);
+      waiting[2]?.();
+      expect((await after).statusCode).toBe(202);
+    } finally {
+      await app.close();
+    }
+  });
+
+  test("the key is looked up before the body is read: an unknown key's body is never parsed", async () => {
+    // Over 1 MiB, and not JSON: read, it would be 413 or 400.
+    const junk = `{${"x".repeat(2 * 1024 * 1024)}`;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const response = await send(junk, { authorization: `Bearer sk_${"1".repeat(32)}` });
+      expect(response.statusCode).toBe(401);
+      expect(response.json().error).toBe("unknown_key");
+    }
+  });
+
+  test("503 if the key cannot be looked up, whatever the body", async () => {
     const unreachable = createDatabase({
       connectionString: "postgres://unused@127.0.0.1:1/unused",
     });
@@ -408,7 +496,7 @@ describe("limits", () => {
     });
     try {
       const bad = await send({ v: 1, calls: [aiCall({ model: "" })] }, {}, broken);
-      expect(bad.statusCode).toBe(400);
+      expect(bad.statusCode).toBe(503);
       const good = await send({ v: 1, calls: [aiCall()] }, {}, broken);
       expect(good.statusCode).toBe(503);
       expect(good.headers["retry-after"]).toBe("5");

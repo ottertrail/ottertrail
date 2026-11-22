@@ -1,4 +1,4 @@
-import type { FastifyError, FastifyPluginCallback, FastifyReply } from "fastify";
+import type { FastifyError, FastifyPluginCallback, FastifyReply, FastifyRequest } from "fastify";
 
 import type { ClickHouseClient } from "../clickhouse/clickhouse.ts";
 import { insertRows } from "../clickhouse/insert.ts";
@@ -6,14 +6,16 @@ import { AI_CALLS_TABLE } from "../clickhouse/migrations.ts";
 import { ENVIRONMENT_PATTERN, environmentOf, RELEASE_PATTERN } from "../collection/environment.ts";
 import { USER_ID_PATTERN } from "../collection/identity.ts";
 import { isStorableText, MAX_EVENT_AGE_MS } from "../collection/normalize.ts";
-import type { ProjectKeyCache } from "../collection/project-keys.ts";
+import type { CollectingProject, ProjectKeyCache } from "../collection/project-keys.ts";
 import {
+  clientKey,
   type EventBudget,
   type RateLimit,
   TokenBucketLimiter,
 } from "../collection/rate-limiter.ts";
 import { DEFAULT_SERVER_IP_LIMIT, MAX_FUTURE_MS } from "../collection/server-events.ts";
 import { nanosText } from "../telemetry/normalize.ts";
+import { DEFAULT_MAX_IN_FLIGHT, DEFAULT_MAX_IN_FLIGHT_PER_PROJECT } from "../telemetry/routes.ts";
 import {
   type AiCallRow,
   cleanLabel,
@@ -34,11 +36,15 @@ const MAX_CALL_MS = 86_400_000;
 const UUID_PATTERN =
   "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$";
 const BEARER = /^Bearer (sk_[0-9a-f]{32})$/;
-/** No control characters (C0, DEL, and C1), as user IDs. */
-const textOf = (max: number) => ({
+/**
+ * No control characters (C0, DEL, and C1), as user IDs. A required name
+ * has at least one; an optional one may be "", which is as left out.
+ */
+const textOf = (max: number, min = 1) => ({
   type: "string",
-  pattern: `^[^\\u0000-\\u001F\\u007F-\\u009F]{1,${max}}$`,
+  pattern: `^[^\\u0000-\\u001F\\u007F-\\u009F]{${min},${max}}$`,
 });
+const optionalTextOf = (max: number) => textOf(max, 0);
 const TOKENS = { type: "integer", minimum: 0, maximum: MAX_TOKENS };
 const MILLISECONDS = { type: "number", minimum: 0, maximum: MAX_CALL_MS };
 
@@ -96,7 +102,7 @@ const batchSchema = {
           occurredAt: { type: "integer", minimum: 0, maximum: 8_640_000_000_000_000 },
           provider: textOf(MAX_AI_LABEL_CHARS),
           model: textOf(MAX_AI_LABEL_CHARS),
-          operation: textOf(MAX_AI_LABEL_CHARS),
+          operation: optionalTextOf(MAX_AI_LABEL_CHARS),
           inputTokens: TOKENS,
           outputTokens: TOKENS,
           cacheReadTokens: TOKENS,
@@ -105,15 +111,15 @@ const batchSchema = {
           durationMs: MILLISECONDS,
           firstChunkMs: MILLISECONDS,
           ok: { type: "boolean" },
-          errorType: textOf(MAX_AI_ERROR_TYPE_CHARS),
+          errorType: optionalTextOf(MAX_AI_ERROR_TYPE_CHARS),
           finishReasons: {
             type: "array",
             maxItems: MAX_FINISH_REASONS,
-            items: textOf(MAX_FINISH_REASON_CHARS),
+            items: optionalTextOf(MAX_FINISH_REASON_CHARS),
           },
           userId: { type: "string", maxLength: 200, pattern: USER_ID_PATTERN },
-          feature: textOf(MAX_AI_LABEL_CHARS),
-          service: textOf(MAX_AI_LABEL_CHARS),
+          feature: optionalTextOf(MAX_AI_LABEL_CHARS),
+          service: optionalTextOf(MAX_AI_LABEL_CHARS),
           traceId: { type: "string", pattern: "^[0-9a-fA-F]{32}$" },
           spanId: { type: "string", pattern: "^[0-9a-fA-F]{16}$" },
         },
@@ -143,8 +149,11 @@ export interface AiCallIngestOptions {
   projects: ProjectKeyCache;
   /** The telemetry budget, shared with OTLP (telemetry/routes.ts): each call is a unit. */
   budget: EventBudget;
-  /** Requests per client address (DEFAULT_SERVER_IP_LIMIT). */
+  /** Requests per client address, an IPv6 address by its /64 (DEFAULT_SERVER_IP_LIMIT). */
   ipLimit?: RateLimit;
+  /** Requests this process works on at once, and one project's of them, as OTLP's (telemetry/routes.ts). */
+  maxInFlight?: number;
+  maxInFlightPerProject?: number;
   now?: () => number;
 }
 
@@ -154,9 +163,10 @@ export interface AiCallIngestOptions {
  * into the same ai_calls table as calls found in spans (calls.ts), so the
  * AI page and the alert rules read them unchanged.
  *
- * As server events (collection/server-events.ts): the project's secret
- * key and the address's rate checked before the body is read, a schema
- * check before any database work, the server's clock trusted (5 minutes
+ * As OTLP's (telemetry/routes.ts), before the body is read: the secret
+ * key's form, the address's rate, the requests in progress, and the key's
+ * project (cached, unknown keys too). Then, as server events
+ * (collection/server-events.ts): a schema check, the server's clock trusted (5 minutes
  * ahead at most; over a day old counted, not stored), and 202 only once
  * ClickHouse has written the calls, 503 while it cannot. Each call is a
  * unit of the project's telemetry budget, as a span that is an AI call
@@ -170,8 +180,29 @@ export const aiCallIngestRoutes: FastifyPluginCallback<AiCallIngestOptions> = (
   options,
   done,
 ) => {
-  const { clickhouse, projects, budget, now = Date.now } = options;
+  const {
+    clickhouse,
+    projects,
+    budget,
+    now = Date.now,
+    maxInFlight = DEFAULT_MAX_IN_FLIGHT,
+    maxInFlightPerProject = DEFAULT_MAX_IN_FLIGHT_PER_PROJECT,
+  } = options;
   const ipLimiter = new TokenBucketLimiter(options.ipLimit ?? DEFAULT_SERVER_IP_LIMIT, { now });
+  /** The project each request's key names, found before its body is read. */
+  const projectOf = new WeakMap<FastifyRequest, CollectingProject>();
+  /** Requests in progress, with their project once its key is found, as OTLP counts them. */
+  const inFlight = new Map<FastifyRequest, string | null>();
+  const inFlightOf = new Map<string, number>();
+  const finished = async (request: FastifyRequest) => {
+    if (!inFlight.has(request)) return;
+    const projectId = inFlight.get(request) ?? null;
+    inFlight.delete(request);
+    if (projectId === null) return;
+    const left = (inFlightOf.get(projectId) ?? 1) - 1;
+    if (left === 0) inFlightOf.delete(projectId);
+    else inFlightOf.set(projectId, left);
+  };
 
   app.setErrorHandler((error: FastifyError, request, reply) => {
     if (error.validation !== undefined || error.statusCode === 400) {
@@ -198,27 +229,70 @@ export const aiCallIngestRoutes: FastifyPluginCallback<AiCallIngestOptions> = (
     {
       bodyLimit: MAX_AI_CALLS_BODY_BYTES,
       schema: { body: batchSchema },
-      // Before the body is read: a request without a well-formed key, or a
-      // flood from one address, costs nothing more.
+      // Before the body is read, as OTLP's (telemetry/routes.ts): the key's
+      // form, the address's rate, the requests in progress, and the key
+      // itself (cached, unknown keys too), so a request that cannot be
+      // stored is never read or parsed.
       onRequest: async (request, reply) => {
-        if (!BEARER.test(request.headers.authorization ?? "")) {
+        const secretKey = BEARER.exec(request.headers.authorization ?? "")?.[1];
+        if (secretKey === undefined) {
           return reply
             .code(401)
             .send(
               problem("unauthorized", "Send the project's secret key: Authorization: Bearer sk_…"),
             );
         }
-        const result = ipLimiter.take(request.ip);
+        const result = ipLimiter.take(clientKey(request.ip));
         if (!result.allowed) {
           return reply
             .code(429)
             .header("retry-after", String(result.retryAfterSeconds))
             .send(problem("rate_limited", "Too many requests from this address."));
         }
+        if (inFlight.size >= maxInFlight) {
+          return reply
+            .code(503)
+            .header("retry-after", "1")
+            .send(problem("busy", "Too many requests are in progress. Try again shortly."));
+        }
+        // Taken before anything waits, so requests arriving together cannot
+        // all pass the check; given back when the answer is sent.
+        inFlight.set(request, null);
+        let project;
+        try {
+          project = await projects.findBySecret(secretKey);
+        } catch (error) {
+          request.log.error({ err: error }, "could not look up the secret key");
+          return storageUnavailable(reply);
+        }
+        if (project === null) {
+          return reply.code(401).send(problem("unknown_key", "No project has this secret key."));
+        }
+        const ofProject = inFlightOf.get(project.id) ?? 0;
+        if (ofProject >= maxInFlightPerProject) {
+          return reply
+            .code(429)
+            .header("retry-after", "1")
+            .send(
+              problem(
+                "rate_limited",
+                "Too many requests from this project are in progress. Try again shortly.",
+              ),
+            );
+        }
+        inFlight.set(request, project.id);
+        inFlightOf.set(project.id, ofProject + 1);
+        projectOf.set(request, project);
         return undefined;
       },
+      onResponse: finished,
+      onRequestAbort: finished,
     },
     async (request, reply) => {
+      const project = projectOf.get(request);
+      if (project === undefined) {
+        throw new Error("the AI calls onRequest hook must find its project first");
+      }
       const invalid = (message: string) =>
         reply.code(400).send(problem("invalid_request", message));
       const receivedAt = now();
@@ -226,7 +300,6 @@ export const aiCallIngestRoutes: FastifyPluginCallback<AiCallIngestOptions> = (
       if (!isStorableText(release)) return invalid("release contains an unpaired surrogate.");
       const environment = environmentOf(request.body.environment);
 
-      // Every check of the body before the key's lookup: a bad batch costs no query.
       const rows: Omit<AiCallRow, "project_id">[] = [];
       let tooOld = 0;
       for (const [index, call] of request.body.calls.entries()) {
@@ -292,18 +365,6 @@ export const aiCallIngestRoutes: FastifyPluginCallback<AiCallIngestOptions> = (
             .map((reason) => cleanLabel(reason, MAX_FINISH_REASON_CHARS).toLowerCase())
             .filter((reason) => reason !== ""),
         });
-      }
-
-      const secretKey = BEARER.exec(request.headers.authorization ?? "")?.[1] ?? "";
-      let project;
-      try {
-        project = await projects.findBySecret(secretKey);
-      } catch (error) {
-        request.log.error({ err: error }, "could not look up the secret key");
-        return storageUnavailable(reply);
-      }
-      if (project === null) {
-        return reply.code(401).send(problem("unknown_key", "No project has this secret key."));
       }
 
       if (rows.length > budget.capacity) {
