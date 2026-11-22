@@ -235,6 +235,8 @@ A recording is whatever a browser sent with a public key, which anyone can copy 
 - The player runs in a page of its own, `GET /api/projects/:id/replays/:replayId/player` (`apps/api/src/replays/dashboard-routes.ts`), served with a Content Security Policy that lets images, stylesheets, and fonts load only from the project's allowed hostnames ([keys and allowed hostnames](web-analytics.md#keys-and-allowed-hostnames)), so a forged recording cannot make the viewer's browser call other servers; scripts only from Ottertrail, none inline; no forms or `<base>`; and only the dashboard may frame it. The recording itself comes from `GET /api/projects/:id/replays/:replayId`, after the access check every project route runs.
 - Nothing from a recording is put into the dashboard's own page.
 
+The same script shows a saved heatmap view ([web analytics](web-analytics.md#saved-views)) in its snapshot mode (`packages/replay-player/src/snapshot.ts`): its page, `GET /api/projects/:id/heatmaps/snapshots/:device/player`, is served with the same policy and names the snapshot and its heatmap in place of a recording. rrweb rebuilds the snapshot in the same sandboxed frame, with no controls; the player finds the heatmap's elements in the frame and draws over it, and tells the dashboard which elements it did not find. A test (`tests/browser/snapshot.test.ts`) rebuilds a snapshot with a script and handlers, checks none ran and links do nothing, and that the elements are found and drawn.
+
 ## Finding replays
 
 Replays stay error-only (decided 18 November 2026): the three views below show the recordings the rules above already made, and add nothing to what a page records or sends.
