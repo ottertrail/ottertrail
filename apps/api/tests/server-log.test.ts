@@ -161,6 +161,7 @@ describe("masking", () => {
     ["an encoded name after ;", "/a?x=1;%73ession=s1", "/a?x=1;%73ession=…"],
     ["a malformed escape stays", "/a?%zztoken=t0k&b=%7", "/a?%zztoken=…&b=%7"],
     ["a parameter inside another's value", "/go?next=/cb?token=t0k", "/go?next=/cb?token=…"],
+    ["a name holding ?", "/a?token?x=1&b=2", "/a?token?x=…&b=2"],
   ])("%s", (_name, text, masked) => {
     expect(redactText(text)).toBe(masked);
   });
@@ -170,6 +171,10 @@ describe("masking", () => {
     const long = `/a?${"%7".repeat(50_000)}${"?x".repeat(50_000)}=1`;
     const started = performance.now();
     expect(redactText(long)).toBe(long);
+    expect(redactUrl(long)).toBe(long);
+    const unclosed = `/a${"?".repeat(100_000)}`;
+    expect(redactUrl(unclosed)).toBe(unclosed);
+    expect(redactText(`/a${"?x".repeat(50_000)}`)).toBe(`/a${"?x".repeat(50_000)}`);
     expect(performance.now() - started).toBeLessThan(500);
   });
 
@@ -225,6 +230,11 @@ describe("masking", () => {
     ["/projects/p1/errors?user=bob", "/projects/p1/errors?user=…"],
     // The same names percent-encoded, as a server reads them.
     ["/projects/p1/errors?%75ser=bob", "/projects/p1/errors?%75ser=…"],
+    // A name holding `?`, as `p.<property>` may, and one after a `?` in another's.
+    ["/x?p.a?b=secret&y=1", "/x?p.a?b=…&y=1"],
+    ["/x?a?user=bob&y=1", "/x?a?user=…&y=1"],
+    ["/x?next=/cb?search=bob", "/x?next=/cb?search=…"],
+    ["/x?%70%2Ea=bob", "/x?%70%2Ea=…"],
     ["/api/projects/p1/logs?%53EARCH=bob&period=1h", "/api/projects/p1/logs?%53EARCH=…&period=1h"],
     // Text a user typed: the Logs page's search, the logs' and reports' API.
     ["/projects/p1/logs?q=bob%40x.com&live=1", "/projects/p1/logs?q=…&live=1"],

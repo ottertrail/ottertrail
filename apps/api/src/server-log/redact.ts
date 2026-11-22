@@ -24,22 +24,10 @@ export const MASK = "…";
 const SECRET_NAME =
   /token|secret|passw(?:or)?d|pwd|signature|sig|key|code|state|auth|session|credential/i;
 
-/**
- * A query parameter's separator and name in any text, up to its `=`. The
- * name holds no separator, so each character is read once (linear time),
- * and a parameter inside another's value (`?next=/cb?token=…`) is found.
- */
-const PARAMETER_NAME = /[?&;]([^?&;=#\s"'<>]*)=/g;
-
-/** Where a parameter's value ends in any text. */
-const PARAMETER_END = /[&#\s"'<>]/g;
-
-/** A query parameter's name in a URL; its value runs to the next `&` or `#`. */
-const URL_PARAMETER_NAME = /[?&]([^?&=#]*)=/g;
-const URL_PARAMETER_END = /[&#]/g;
-
-/** A URL's personal-data parameters, as redactUrl lists them. */
-const PERSONAL_NAME = /^(?:search|q|user|userId|email|p\..*)$/is;
+/** A URL's personal-data parameters, as redactUrl lists them, but `p.<name>`. */
+const PERSONAL_NAME = /^(?:search|q|user|userId|email)$/i;
+/** Their longest name, percent-encoded whole. */
+const PERSONAL_ENCODED_LENGTH = 18;
 
 /**
  * A parameter's name as a server reads it: each `%XX` decoded on its own,
@@ -53,26 +41,80 @@ function decodeName(name: string): string {
   );
 }
 
+/** How a text's query parameters are read. */
+interface ParameterRules {
+  /** Characters a name starts after: `&` also ends a name not yet closed by `=`. */
+  separator: RegExp;
+  /** Characters that end a name not yet closed by `=`. */
+  stop: RegExp;
+  /** Where a value ends (global). */
+  end: RegExp;
+  /**
+   * Whether the name ending at `end` is masked. It may start after any of
+   * `starts` (each just after a separator, oldest first): a name can hold
+   * `?` or `;`, and a parameter can follow one inside another's name.
+   */
+  masks: (text: string, starts: readonly number[], end: number) => boolean;
+}
+
 /**
- * Masks the value of each parameter `names` finds whose decoded name
- * `matches`, up to `end`. A masked value is not read again; another's is,
- * for a parameter inside it.
+ * Masks the value of each parameter whose name `rules` mask. One pass over
+ * the text: each `=` closes the names open before it, and a masked value
+ * is not read again; another's is, for a parameter inside it
+ * (`?next=/cb?token=…`).
  */
-function maskParameters(text: string, names: RegExp, end: RegExp, matches: RegExp): string {
+function maskParameters(text: string, rules: ParameterRules): string {
   let masked = "";
   let from = 0;
-  names.lastIndex = 0;
-  for (let found = names.exec(text); found; found = names.exec(text)) {
-    if (!matches.test(decodeName(found[1] ?? ""))) continue;
-    const start = found.index + found[0].length;
-    end.lastIndex = start;
-    const stop = end.exec(text)?.index ?? text.length;
-    masked += `${text.slice(from, start)}${MASK}`;
-    from = stop;
-    names.lastIndex = stop;
+  let starts: number[] = [];
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text.charAt(index);
+    if (char === "=") {
+      if (starts.length > 0 && rules.masks(text, starts, index)) {
+        rules.end.lastIndex = index + 1;
+        const stop = rules.end.exec(text)?.index ?? text.length;
+        masked += `${text.slice(from, index + 1)}${MASK}`;
+        from = stop;
+        index = stop - 1;
+      }
+      starts = [];
+    } else if (rules.separator.test(char)) {
+      if (char === "&") starts = [];
+      starts.push(index + 1);
+    } else if (rules.stop.test(char)) {
+      starts = [];
+    }
   }
   return masked + text.slice(from);
 }
+
+/**
+ * Secrets in any text. The longest name holds every shorter one, and the
+ * pattern matches anywhere in it, so only that one is tested.
+ */
+const SECRET_PARAMETERS: ParameterRules = {
+  separator: /[?&;]/,
+  stop: /[#\s"'<>]/,
+  end: /[&#\s"'<>]/g,
+  masks: (text, starts, end) => SECRET_NAME.test(decodeName(text.slice(starts[0], end))),
+};
+
+/**
+ * Personal data in a URL. Each name is tested, in constant time: only a
+ * short one can be one of PERSONAL_NAME, and `p.` is read from its start.
+ */
+const PERSONAL_PARAMETERS: ParameterRules = {
+  separator: /[?&]/,
+  stop: /#/,
+  end: /[&#]/g,
+  masks: (text, starts, end) =>
+    starts.some(
+      (start) =>
+        (end - start <= PERSONAL_ENCODED_LENGTH &&
+          PERSONAL_NAME.test(decodeName(text.slice(start, end)))) ||
+        /^p\./i.test(decodeName(text.slice(start, Math.min(end, start + 6)))),
+    ),
+};
 
 /**
  * The user and password in a URL: `postgres://ottertrail:…@postgres`, an
@@ -98,7 +140,7 @@ export function redactText(text: string): string {
     .replace(URL_USERINFO, `$1${MASK}@`)
     .replace(AUTHORIZATION, `$1 ${MASK}`)
     .replace(SECRET_KEY, `sk_${MASK}`);
-  return maskParameters(masked, PARAMETER_NAME, PARAMETER_END, SECRET_NAME);
+  return maskParameters(masked, SECRET_PARAMETERS);
 }
 
 /**
@@ -124,7 +166,7 @@ export function redactUrl(url: string): string {
   const masked = redactText(url)
     .replace(/(\/users\/)[^/?#]+/g, `$1${MASK}`)
     .replace(/(\/reset-password\/)[^/?#]+/g, `$1${MASK}`);
-  return maskParameters(masked, URL_PARAMETER_NAME, URL_PARAMETER_END, PERSONAL_NAME);
+  return maskParameters(masked, PERSONAL_PARAMETERS);
 }
 
 /**

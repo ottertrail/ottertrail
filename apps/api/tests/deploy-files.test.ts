@@ -389,16 +389,61 @@ describe("restore.sh reads the backup variables from the file beside it as Compo
       expect(await readValue("S3_SECRET=from-file\nA=${S3_SECRET}\n", "A", env)).toBe("from-shell");
     });
 
+    test("a reference reads only the lines before it, as Compose does, each resolved in turn", async () => {
+      // Defined after the line that uses it: unset there.
+      expect(await readValue("A=${LATER}\nLATER=late\n", "A")).toBe("");
+      // Redefined around the reference: the definition before it counts.
+      expect(await readValue("B=first\nA=$B-${B}\nB=second\n", "A")).toBe("first-first");
+      expect(await readValue("B=first\nB=second\nA=${B}\nB=third\n", "A")).toBe("second");
+      // A chain, each from the lines before its own.
+      expect(await readValue("C=c\nB=${C}b\nA=${B}a\n", "A")).toBe("cba");
+      expect(await readValue("C=c\nB=$C\nC=x\nA=$B$C\n", "A")).toBe("cx");
+      // A variable that refers to itself takes its own earlier value.
+      expect(await readValue("A=one\nA=${A}-two\n", "A")).toBe("one-two");
+    });
+
     test.each([
-      ["A=${S3_SECRET:?unset}", "${S3_SECRET:?unset}"],
-      ["A=${S3_SECRET:+set}", "${S3_SECRET:+set}"],
-      ["A=${UNSET:-$OTHER}", "${UNSET:-$OTHER}"],
-      ["A=${NO_END", "${NO_END"],
-      ["A=${CHAIN}", "${CHAIN}"],
+      ['A="ab\\$cd"', "ab$cd"],
+      ['A="ab\\$S3_SECRET"', "ab$S3_SECRET"],
+      ['A="x\\\\y"', "x\\y"],
+      ['A="x\\\\$S3_SECRET"', "x\\from-shell"],
+      ['A="say \\"hi\\"" # c', 'say "hi"'],
+      ['A="a\\qb"', "a\\qb"],
+      ["A='it\\'s'", "it's"],
+      ["A='a\\$b\\\\'", "a\\$b\\\\"],
+      ["A=a\\$B", "a\\b"],
+    ])("escapes as Compose's dotenv parser reads them: %j reads as %j", async (line, expected) => {
+      expect(await readValue(`B=b\n${line}\n`, "A", { S3_SECRET: "from-shell" })).toBe(expected);
+    });
+
+    test.each([
+      ["A=${S3_SECRET:?unset}", "a ${...} form"],
+      ["A=${S3_SECRET:+set}", "a ${...} form"],
+      ["A=${UNSET:-$OTHER}", "a ${...} form"],
+      ["A=${NO_END", "a ${...} form"],
+      ["A=pre${CHAIN}", "a ${...} form"],
+      ['A="a\\nb"', "an escape such as \\n in double quotes"],
+      ['A="no end', "a quoted value that does not end on its line"],
+      ['A="no end\\"', "a quoted value that does not end on its line"],
     ])("%j stops, saying to export the variable", async (line, form) => {
-      expect(await refusal(`CHAIN=$S3_SECRET\n${line}\n`, "A")).toBe(
+      expect(await refusal(`CHAIN=\${X:?y}\n${line}\n`, "A")).toBe(
         `A in .env uses ${form}, which restore.sh can't resolve. Export A in this shell, then run restore.sh again.\n`,
       );
+    });
+
+    test("the message never shows the value, nor runs a backslash in it", async () => {
+      for (const line of [
+        "A=${T0P_s3cret_part:?sk_live_t0psecret}",
+        "A=t0psecret${NO_END_t0psecret",
+        "A=${X:-t0psecret$Y}",
+        'A="t0psecret\\n\\c"',
+        'A="t0psecret',
+      ]) {
+        const message = await refusal(`${line}\n`, "A");
+        expect(message).toMatch(/^A in \.env uses /);
+        expect(message).not.toContain("t0psecret");
+        expect(message.split("\n")).toHaveLength(2);
+      }
     });
 
     test("restore.sh asks for nothing more once the reader stops", () => {
@@ -408,7 +453,7 @@ describe("restore.sh reads the backup variables from the file beside it as Compo
 
   test("it never runs the file", async () => {
     expect(await readValue("A=$(echo ran)\nB=`echo ran`\n", "A")).toBe("$(echo ran)");
-    expect(await readValue("A=${B}\nB=`echo ran`\n", "A")).toBe("`echo ran`");
+    expect(await readValue("B=`echo ran`\nA=${B}\n", "A")).toBe("`echo ran`");
     expect(reader).not.toMatch(/\beval\b|^\s*\.\s|\bsource\b/m);
   });
 });
