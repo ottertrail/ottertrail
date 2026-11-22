@@ -299,6 +299,10 @@ describe("a user's AI usage", () => {
     await expect
       .element(section().getByRole("link", { name: "AI page" }))
       .toHaveAttribute("href", `/projects/${PROJECT.id}/ai?period=30d&env=staging`);
+    // Their calls, one by one, on the calls list filtered to them.
+    await expect
+      .element(section().getByRole("link", { name: "AI calls" }))
+      .toHaveAttribute("href", `/projects/${PROJECT.id}/ai/calls?period=30d&env=staging&user=ada`);
   });
 
   test("one line when they made no AI call in the period", async () => {

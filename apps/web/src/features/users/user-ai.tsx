@@ -10,6 +10,7 @@ import { type AiFeatureRow, type AiModelRow, aiReportQuery } from "@/lib/ai-api"
 import type { PageRange } from "@/lib/analytics-api";
 import { MISSING } from "@/lib/missing";
 
+import { aiCallsSearchOf } from "../ai/calls-search";
 import { featureLabel, formatMs, formatTokens, formatUsd, modelLabel } from "../ai/format";
 import { formatConversion, formatCount, formatWhole } from "../analytics/format";
 import { aiSearchOf } from "../telemetry/search";
@@ -59,14 +60,24 @@ export function UserAi({
       <h3 id="user-ai" className="text-sm font-medium text-ink-subtle">
         AI in the last 30 days
       </h3>
-      <Link
-        to="/projects/$projectId/ai"
-        params={{ projectId }}
-        search={aiSearchOf({ range: RANGE, environment, filters: {} })}
-        className="text-sm whitespace-nowrap text-link hover:underline"
-      >
-        AI page
-      </Link>
+      <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1">
+        <Link
+          to="/projects/$projectId/ai/calls"
+          params={{ projectId }}
+          search={aiCallsSearchOf({ range: RANGE, environment, filters: { user: userId } })}
+          className="text-sm whitespace-nowrap text-link hover:underline"
+        >
+          AI calls
+        </Link>
+        <Link
+          to="/projects/$projectId/ai"
+          params={{ projectId }}
+          search={aiSearchOf({ range: RANGE, environment, filters: {} })}
+          className="text-sm whitespace-nowrap text-link hover:underline"
+        >
+          AI page
+        </Link>
+      </div>
     </div>
   );
 
