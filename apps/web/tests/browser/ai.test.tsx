@@ -297,6 +297,33 @@ describe("the AI page", () => {
       .toMatchTextContent(/^Unlabeled/);
   });
 
+  test("a model priced only from a day inside the period shows its cost and the calls without a price", async () => {
+    installFakeApi({
+      ai: {
+        ...fakeAi(),
+        report: (query, users) => {
+          const report = fakeAiReport(query, users);
+          const [sonnet, ...rest] = report.models;
+          if (sonnet === undefined) throw new Error("The fake report has no models");
+          // 12 of its 4,210 calls came before its price started.
+          return { ...report, models: [{ ...sonnet, priced: false, noPriceCalls: 12 }, ...rest] };
+        },
+      },
+    });
+    renderApp(`${AI}?period=30d`);
+    await expect.element(page.getByRole("table", { name: MODELS })).toBeVisible();
+    const costs = () => rowsOf(MODELS).map((row) => row[4]);
+    expect(costs()).toEqual([
+      "$29.3712 calls without a price",
+      "$3.27",
+      "$0.024",
+      // None of its calls had a price.
+      "No price",
+    ]);
+    // A feature whose calls use a model without a price: the same.
+    expect(rowsOf(FEATURES)[0]?.[3]).toBe("$24.8090 calls without a price");
+  });
+
   test("an address with filters asks for them, and the filter bar clears one", async () => {
     const api = installFakeApi();
     const router = renderApp(`${AI}?env=staging&service=worker&provider=openai`);

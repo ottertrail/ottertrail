@@ -164,11 +164,7 @@ export function FiguresTable({
                       {formatTokens(row.inputTokens + row.outputTokens)}
                     </TableCell>
                     <TableCell className="text-right tabular-nums">
-                      {isModel && !row.other && !row.priced ? (
-                        <span className="text-ink-subtle">No price</span>
-                      ) : (
-                        formatUsd(row.costUsd)
-                      )}
+                      <RowCost figures={row} />
                     </TableCell>
                     <TableCell className="text-right tabular-nums">{formatMs(row.p50Ms)}</TableCell>
                     <TableCell className="text-right tabular-nums">{formatMs(row.p95Ms)}</TableCell>
@@ -193,6 +189,32 @@ export function FiguresTable({
         </ScrollHint>
       )}
     </section>
+  );
+}
+
+/**
+ * A row's estimated cost: "No price" when none of its calls had one; the
+ * cost of those that did, with how many did not, when only some had one
+ * (a price that starts inside the period, a feature that uses several models).
+ */
+function RowCost({
+  figures,
+}: {
+  figures: { calls: number; costUsd: number; noPriceCalls: number };
+}) {
+  const unpriced = figures.noPriceCalls;
+  if (figures.calls > 0 && unpriced >= figures.calls) {
+    return <span className="text-ink-subtle">No price</span>;
+  }
+  return (
+    <>
+      {formatUsd(figures.costUsd)}
+      {unpriced > 0 && (
+        <span className="block text-xs text-ink-subtle">
+          {formatWhole(unpriced)} {unpriced === 1 ? "call" : "calls"} without a price
+        </span>
+      )}
+    </>
   );
 }
 
