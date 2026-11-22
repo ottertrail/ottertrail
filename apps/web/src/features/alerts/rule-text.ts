@@ -1,4 +1,4 @@
-import type { Aggregate, ChannelName, Rule } from "@/lib/alerts-api";
+import type { Aggregate, ChannelName, CostWindow, Rule } from "@/lib/alerts-api";
 import type { Check } from "@/lib/uptime-api";
 
 const minutes = (count: number) => (count === 1 ? "1 minute" : `${count} minutes`);
@@ -15,6 +15,23 @@ const AGGREGATE_TEXT: Record<Aggregate, string> = {
   p95: "The 95th percentile",
   p99: "The 99th percentile",
 };
+
+/** An AI cost rule's window, as a sentence ends it. */
+const COST_WINDOW_TEXT: Record<CostWindow, string> = {
+  "1h": "the last hour",
+  "1d": "the last 24 hours",
+  month: "the month to date",
+};
+
+/** An AI rule's model and feature, as words: " of the model gpt-5 in the feature support", or "". */
+function aiScopeText(settings: Rule["settings"]): string {
+  const model = settings.model ?? null;
+  const feature = settings.feature ?? null;
+  return `${model === null ? "" : ` of the model ${model}`}${feature === null ? "" : ` in the feature ${feature}`}`;
+}
+
+const usd = (value: number) =>
+  value.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 6 });
 
 /** What a rule watches, in a sentence, with its check's name when it names one. */
 export function watchesText(rule: Rule, checks: readonly Pick<Check, "id" | "name">[]): string {
@@ -53,6 +70,14 @@ export function watchesText(rule: Rule, checks: readonly Pick<Check, "id" | "nam
       return `The ${p} percentile duration of ${what} is above ${number(settings.thresholdMs ?? 0)} ms over ${window}, with ${fewest}, in ${environment}`;
     }
     return `More than ${number(settings.thresholdPercent ?? 0)}% of ${what} fail over ${window}, with ${fewest}, in ${environment}`;
+  }
+  if (rule.kind === "ai_cost") {
+    const over = COST_WINDOW_TEXT[settings.costWindow ?? "1d"];
+    return `The estimated cost of AI calls${aiScopeText(settings)} is above ${usd(settings.thresholdUsd ?? 0)} over ${over}, in ${environment}`;
+  }
+  if (rule.kind === "ai_failures") {
+    const fewest = `at least ${(settings.minCalls ?? 20).toLocaleString("en")} calls`;
+    return `More than ${number(settings.thresholdPercent ?? 0)}% of AI calls${aiScopeText(settings)} fail over ${window}, with ${fewest}, in ${environment}`;
   }
   if (rule.kind === "metric_threshold") {
     const filters = [

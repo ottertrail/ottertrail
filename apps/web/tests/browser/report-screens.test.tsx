@@ -6,7 +6,7 @@ import { fakeSpeed, installFakeApi, ORDERS_SHAPE, PROJECT } from "./fake-api.ts"
 import { renderApp } from "./render.tsx";
 
 /*
- * Speed, Heatmaps, Product analytics, Services, Databases, Hosts, and Metrics as
+ * Speed, Heatmaps, Product analytics, Services, Databases, AI, Hosts, and Metrics as
  * reports (docs/design-system.md, "Report (Console)"): the pinned filter
  * bar, the strips of figures, the funnel's save rule, the metric's split in
  * the filter bar, and each screen at 390 and 1440 wide. The screens' own
@@ -147,6 +147,26 @@ const SCREENS = [
       // The start time scrolls: pinned beside the trace link, it would leave no room.
       unpinnedStart: ["Slowest calls, slowest first"],
       end: ["Slowest calls, slowest first"],
+    },
+  },
+  {
+    name: "AI",
+    path: `${P}/ai`,
+    ready: () => page.getByRole("table", { name: "The latest 50 calls, newest first" }),
+    tables: [
+      "Calls by model, the costliest first",
+      "Calls by feature, the costliest first",
+      "The latest 50 calls, newest first",
+    ],
+    phone: {
+      scroll: [
+        "Calls by model, the costliest first",
+        "Calls by feature, the costliest first",
+        "The latest 50 calls, newest first",
+      ],
+      // The start time scrolls: pinned beside the trace link, it would leave no room.
+      unpinnedStart: ["The latest 50 calls, newest first"],
+      end: ["The latest 50 calls, newest first"],
     },
   },
   {

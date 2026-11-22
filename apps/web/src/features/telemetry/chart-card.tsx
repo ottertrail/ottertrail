@@ -15,6 +15,11 @@ export interface ChartFrame {
   stepSeconds: number;
   buckets: number;
   timeZone: string;
+  /**
+   * Each bucket's start, ISO, when the buckets follow a clock with daylight
+   * saving changes (the AI page's chart, as the lists' charts).
+   */
+  starts?: string[] | undefined;
 }
 
 /** What a chart over time buckets is given, in a card or in a report. */
@@ -58,7 +63,9 @@ function ChartTable({ title, frame, lines, formatValue }: ChartProps) {
           <tr key={index} className="border-t border-hairline">
             <th scope="row" className="py-1.5 text-left font-normal whitespace-nowrap text-ink">
               {bucketLabel(
-                new Date(startMs + index * frame.stepSeconds * 1000),
+                new Date(
+                  frame.starts?.[index] ?? new Date(startMs + index * frame.stepSeconds * 1000),
+                ),
                 frame.stepSeconds,
                 frame.timeZone,
               )}
@@ -83,6 +90,7 @@ function Chart({ plotHeight, ...props }: ChartProps & { plotHeight?: number }) {
   return (
     <TimeChart
       start={frame.start}
+      starts={frame.starts}
       stepSeconds={frame.stepSeconds}
       buckets={frame.buckets}
       timeZone={frame.timeZone}

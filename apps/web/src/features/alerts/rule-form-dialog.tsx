@@ -31,6 +31,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useAccess } from "@/lib/access";
+import { aiReportQuery } from "@/lib/ai-api";
 import {
   type ChannelName,
   kindArea,
@@ -38,6 +39,13 @@ import {
   AGGREGATES,
   createRule,
   DEFAULT_CERTIFICATE_DAYS,
+  DEFAULT_COST_WINDOW,
+  DEFAULT_MIN_CALLS,
+  type CostWindow,
+  isAiKind,
+  MAX_AI_FILTER_CHARS,
+  MAX_COST_USD,
+  MAX_MIN_CALLS,
   DEFAULT_MIN_REQUESTS,
   DEFAULT_THRESHOLD,
   DEFAULT_WINDOW_MINUTES,
@@ -88,6 +96,9 @@ export interface RulePrefill {
   host?: string | undefined;
   attr?: string | undefined;
   attrValue?: string | undefined;
+  /** From the AI page: a model and a feature. */
+  model?: string | undefined;
+  feature?: string | undefined;
 }
 
 /** The form's fields, as typed. */
@@ -117,6 +128,12 @@ interface Draft {
   host: string;
   attributeKey: string;
   attributeValue: string;
+  costWindow: CostWindow;
+  thresholdUsd: string;
+  /** "" for all models or features. */
+  model: string;
+  feature: string;
+  minCalls: string;
   channelIds: string[];
 }
 
@@ -136,7 +153,11 @@ type TextFieldName =
   | "value"
   | "host"
   | "attributeKey"
-  | "attributeValue";
+  | "attributeValue"
+  | "thresholdUsd"
+  | "model"
+  | "feature"
+  | "minCalls";
 
 type FieldName =
   | TextFieldName
@@ -145,7 +166,8 @@ type FieldName =
   | "metricKind"
   | "aggregate"
   | "percentile"
-  | "direction";
+  | "direction"
+  | "costWindow";
 
 const ALL_CHECKS = "";
 const ENVIRONMENT = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
@@ -194,6 +216,11 @@ function draftOf(
     host: settings.host ?? prefill.host ?? "",
     attributeKey: settings.attributeKey ?? prefill.attr ?? "",
     attributeValue: settings.attributeValue ?? prefill.attrValue ?? "",
+    costWindow: settings.costWindow ?? DEFAULT_COST_WINDOW,
+    thresholdUsd: text(settings.thresholdUsd),
+    model: settings.model ?? prefill.model ?? "",
+    feature: settings.feature ?? prefill.feature ?? "",
+    minCalls: String(settings.minCalls ?? DEFAULT_MIN_CALLS),
     // A channel deleted meanwhile is dropped, so the rule can be saved; a
     // new rule sends to the only channel there is, if there is one.
     channelIds:
@@ -237,7 +264,7 @@ function problemsOf(draft: Draft): Partial<Record<FieldName, string>> {
       problems.threshold = `Enter a whole number of errors from 1 to ${MAX_THRESHOLD.toLocaleString("en")}.`;
     }
   }
-  if (draft.kind === "error_spike" || isTelemetry(draft.kind)) {
+  if (draft.kind === "error_spike" || (isTelemetry(draft.kind) && draft.kind !== "ai_cost")) {
     const most = isRoute(draft.kind) ? MAX_ROUTE_WINDOW_MINUTES : MAX_WINDOW_MINUTES;
     if (!wholeIn(draft.windowMinutes, MIN_WINDOW_MINUTES, most)) {
       problems.windowMinutes = `Enter a whole number of minutes from ${MIN_WINDOW_MINUTES} to ${most}.`;
@@ -264,6 +291,29 @@ function problemsOf(draft: Draft): Partial<Record<FieldName, string>> {
     const percent = numberOf(draft.thresholdPercent);
     if (percent === null || percent < 0 || percent >= 100) {
       problems.thresholdPercent = "Enter a share from 0 to just under 100 percent.";
+    }
+  }
+  if (draft.kind === "ai_cost") {
+    const usd = numberOf(draft.thresholdUsd);
+    if (usd === null || usd <= 0 || usd > MAX_COST_USD) {
+      problems.thresholdUsd = `Enter an amount in US dollars above 0 and at most ${MAX_COST_USD.toLocaleString("en")}, such as 50 or 2.5.`;
+    }
+  }
+  if (draft.kind === "ai_failures") {
+    const percent = numberOf(draft.thresholdPercent);
+    if (percent === null || percent < 0 || percent >= 100) {
+      problems.thresholdPercent = "Enter a share from 0 to just under 100 percent.";
+    }
+    if (!wholeIn(draft.minCalls, 1, MAX_MIN_CALLS)) {
+      problems.minCalls = `Enter a whole number of calls from 1 to ${MAX_MIN_CALLS.toLocaleString("en")}.`;
+    }
+  }
+  if (isAiKind(draft.kind)) {
+    if (draft.model.trim().length > MAX_AI_FILTER_CHARS) {
+      problems.model = `A model has at most ${MAX_AI_FILTER_CHARS} characters.`;
+    }
+    if (draft.feature.trim().length > MAX_AI_FILTER_CHARS) {
+      problems.feature = `A feature has at most ${MAX_AI_FILTER_CHARS} characters.`;
     }
   }
   if (draft.kind === "metric_threshold") {
@@ -298,8 +348,11 @@ function fieldOfError(code: string, kind: RuleKind): FieldName | undefined {
     if (kind === "route_latency") return "thresholdMs";
     if (kind === "route_failures") return "thresholdPercent";
     if (kind === "metric_threshold") return "value";
+    if (kind === "ai_cost") return "thresholdUsd";
+    if (kind === "ai_failures") return "thresholdPercent";
     return "threshold";
   }
+  if (code === "invalid_window" && kind === "ai_cost") return "costWindow";
   const fields: Record<string, FieldName> = {
     invalid_name: "name",
     invalid_days: "days",
@@ -316,6 +369,8 @@ function fieldOfError(code: string, kind: RuleKind): FieldName | undefined {
     invalid_aggregate: "aggregate",
     invalid_direction: "direction",
     invalid_attribute: "attributeValue",
+    invalid_min_calls: "minCalls",
+    invalid_filter: "feature",
   };
   return fields[code];
 }
@@ -371,6 +426,23 @@ function settingsOf(draft: Draft): RuleSettings {
         attributeValue: attributeKey === null ? null : draft.attributeValue,
       };
     }
+    case "ai_cost":
+      return {
+        environment,
+        model: optional(draft.model),
+        feature: optional(draft.feature),
+        costWindow: draft.costWindow,
+        thresholdUsd: Number(draft.thresholdUsd),
+      };
+    case "ai_failures":
+      return {
+        environment,
+        model: optional(draft.model),
+        feature: optional(draft.feature),
+        windowMinutes: Number(draft.windowMinutes),
+        thresholdPercent: Number(draft.thresholdPercent),
+        minCalls: Number(draft.minCalls),
+      };
     default:
       return {};
   }
@@ -396,7 +468,17 @@ const KIND_HELP: Record<RuleKind, string> = {
     "Notifies above the threshold, then again after a full window at or below it. Windows below the minimum request count do not trigger or resolve alerts.",
   metric_threshold:
     "Notifies above or below the chosen value, then again after a full window without that condition. Calculated as on its chart. Empty windows do not trigger or resolve alerts.",
+  ai_cost:
+    "Notifies when the estimated cost goes above the amount, then again after an hour at or below it. The cost is an estimate from token counts at list prices, as on the AI page.",
+  ai_failures:
+    "Notifies above the threshold, then again after a full window at or below it. Windows below the minimum call count do not trigger or resolve alerts.",
 };
+
+const COST_WINDOW_ITEMS: { value: CostWindow; label: string }[] = [
+  { value: "1h", label: "The last hour" },
+  { value: "1d", label: "The last 24 hours" },
+  { value: "month", label: "The month to date" },
+];
 
 /** What a metric rule can read of each measure, as the metric's page calls it. */
 const AGGREGATE_LABEL: Record<Aggregate, string> = {
@@ -523,6 +605,10 @@ function useSuggestions(projectId: string, draft: Draft) {
     }),
     enabled: metricRule && known && keys.includes(attributeKey),
   });
+  const ai = useQuery({
+    ...aiReportQuery(projectId, PICKER_RANGE, environment, {}),
+    enabled: isAiKind(draft.kind),
+  });
   const pairs = recent.data?.routes ?? [];
   const service = draft.service.trim();
   return {
@@ -538,6 +624,9 @@ function useSuggestions(projectId: string, draft: Draft) {
           series.other || series.value === null ? [] : [series.value],
         )
       : [],
+    aiModels: ai.data?.filterOptions.models ?? [],
+    // Calls without a feature cannot be named in a rule: it watches all or one.
+    aiFeatures: (ai.data?.filterOptions.features ?? []).filter((feature) => feature !== ""),
   };
 }
 
@@ -838,6 +927,54 @@ function RuleForm({
             })}
             {textField("attributeValue", "Its value", {
               options: suggestions.values,
+            })}
+          </div>
+        </>
+      )}
+      {isAiKind(draft.kind) && (
+        <>
+          {environmentField}
+          {draft.kind === "ai_cost" ? (
+            <div className="grid gap-4 sm:grid-cols-2">
+              {textField("thresholdUsd", "Estimated cost above (US dollars)", {
+                numeric: "decimal",
+              })}
+              <SelectField
+                label="Over"
+                value={draft.costWindow}
+                items={COST_WINDOW_ITEMS}
+                onChange={(next) => {
+                  const found = COST_WINDOW_ITEMS.find((item) => item.value === next);
+                  if (found !== undefined) change({ costWindow: found.value });
+                }}
+                error={errorOf("costWindow")}
+                description={
+                  draft.costWindow === "month"
+                    ? "From midnight on the 1st, in the instance's timezone."
+                    : undefined
+                }
+              />
+            </div>
+          ) : (
+            <div className="grid gap-4 sm:grid-cols-2">
+              {textField("thresholdPercent", "Failed above (percent)", {
+                numeric: "decimal",
+              })}
+              {windowField}
+              {textField("minCalls", "At least (calls)", {
+                numeric: "numeric",
+                description: "Windows with fewer calls neither trigger nor resolve alerts.",
+              })}
+            </div>
+          )}
+          <div className="grid gap-4 sm:grid-cols-2">
+            {textField("model", "Model (optional)", {
+              placeholder: "All models",
+              options: suggestions.aiModels,
+            })}
+            {textField("feature", "Feature (optional)", {
+              placeholder: "All features",
+              options: suggestions.aiFeatures,
             })}
           </div>
         </>

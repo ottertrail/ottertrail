@@ -72,6 +72,7 @@ export const SCREEN_DOCS: Partial<Record<RoutePath, ScreenDocs>> = {
   "/projects/$projectId/metrics": { topic: "Metrics", path: "/monitoring/metrics/" },
   "/projects/$projectId/services": { topic: "Services", path: "/monitoring/services/" },
   "/projects/$projectId/databases": { topic: "Databases", path: "/monitoring/databases/" },
+  "/projects/$projectId/ai": { topic: "AI", path: "/monitoring/ai-usage/" },
   "/projects/$projectId/hosts": { topic: "Hosts", path: "/monitoring/hosts/" },
   "/projects/$projectId/uptime": { topic: "Uptime", path: "/uptime-and-alerts/checks/" },
   "/projects/$projectId/alerts": { topic: "Alerts", path: "/uptime-and-alerts/alert-rules/" },

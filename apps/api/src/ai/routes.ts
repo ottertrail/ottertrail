@@ -51,7 +51,7 @@ const FILTER_PROPERTIES = {
   service: { type: "string", pattern: SERVICE_PATTERN },
   provider: LABEL,
   model: LABEL,
-  // "" is the calls that name no feature, which the page shows as "Unlabelled".
+  // "" is the calls that name no feature, which the page shows as "Unlabeled".
   feature: { type: "string", pattern: `^[^\\u0000-\\u001F\\u007F]{0,${MAX_AI_LABEL_CHARS}}$` },
 };
 

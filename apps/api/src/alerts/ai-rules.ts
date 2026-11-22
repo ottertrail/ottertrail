@@ -160,8 +160,8 @@ function scopeText(settings: AiSettings): string {
       : [`the feature ${settings.feature}`]),
     ...(settings.model === null ? [] : [`the model ${settings.model}`]),
   ];
-  const unlabelled = settings.feature === "" ? " with no feature" : "";
-  return `${unlabelled}${parts.length === 0 ? "" : ` for ${parts.join(" and ")}`}`;
+  const unlabeled = settings.feature === "" ? " with no feature" : "";
+  return `${unlabeled}${parts.length === 0 ? "" : ` for ${parts.join(" and ")}`}`;
 }
 
 /** Said in every cost notification: the figure is not a bill. */
@@ -232,10 +232,9 @@ export function aiSubject(settings: AiSettings, reading: AiReading & { value: nu
 
 /** What a rule's history shows as its subject. */
 export function aiSubjectName(settings: AiSettings): string {
-  const filters = [
-    settings.feature === "" ? "Unlabelled" : settings.feature,
-    settings.model,
-  ].filter((item) => item !== null);
+  const filters = [settings.feature === "" ? "Unlabeled" : settings.feature, settings.model].filter(
+    (item) => item !== null,
+  );
   const name = isAiCost(settings) ? "AI cost" : "AI failures";
   return filters.length === 0 ? name : `${name} (${filters.join(", ")})`;
 }

@@ -51,7 +51,7 @@ export interface AiScope {
   ranges?: readonly { from: Date; to: Date }[] | undefined;
 }
 
-/** The report's filters, each exactly as stored; a feature of "" is the unlabelled calls. */
+/** The report's filters, each exactly as stored; a feature of "" is the unlabeled calls. */
 export interface AiFilters {
   service?: string | undefined;
   provider?: string | undefined;
@@ -221,7 +221,7 @@ export interface ModelRow extends AiFigures {
 }
 
 export interface FeatureRow extends AiFigures {
-  /** "" for calls with no feature ("Unlabelled"), and for the Other row. */
+  /** "" for calls with no feature ("Unlabeled"), and for the Other row. */
   feature: string;
   /** The features past the MAX_LISTED_FEATURES with the most calls, together. */
   other: boolean;
@@ -523,7 +523,7 @@ export interface AiLabels {
   providers: string[];
   /** At most MAX_LISTED_MODELS. */
   models: string[];
-  /** At most MAX_LISTED_FEATURES; "" is the unlabelled calls. */
+  /** At most MAX_LISTED_FEATURES; "" is the unlabeled calls. */
   features: string[];
 }
 

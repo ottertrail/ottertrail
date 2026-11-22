@@ -1,3 +1,4 @@
+import { type AiFilters, MAX_AI_LABEL } from "@/lib/ai-api";
 import { DEFAULT_ENVIRONMENT, DEFAULT_PERIOD, type PageRange } from "@/lib/analytics-api";
 import { DEFAULT_DATABASE_SORT, type DatabaseSort } from "@/lib/databases-api";
 import { isSeverity, isTraceId, type LogFilters } from "@/lib/logs-api";
@@ -274,4 +275,44 @@ export function metricChoicesFrom(search: { kind?: unknown; split?: unknown; sta
   const stats: readonly MetricStat[] = kind === undefined ? [] : METRIC_STATS[kind];
   const stat = stats.find((name) => name === search.stat);
   return { kind, split, stat };
+}
+
+/** The AI page's address: the days, environment, and its filters. */
+export interface AiSearch {
+  range: PageRange;
+  environment: string;
+  filters: AiFilters;
+}
+
+export const aiSearchOf = ({ range, environment, filters }: AiSearch) => ({
+  ...rangeSearch(range),
+  ...environmentSearch(environment),
+  ...(filters.service === undefined ? {} : { service: filters.service }),
+  ...(filters.provider === undefined ? {} : { provider: filters.provider }),
+  ...(filters.model === undefined ? {} : { model: filters.model }),
+  ...(filters.feature === undefined ? {} : { feature: filters.feature }),
+});
+
+/** A label the AI page filters by: as stored, up to 100 characters; a number comes back as text. */
+function aiLabel(value: unknown, { empty = false } = {}): string | undefined {
+  const found = typeof value === "number" ? String(value) : value;
+  if (typeof found !== "string" || found.length > MAX_AI_LABEL) return undefined;
+  // eslint-disable-next-line no-control-regex -- control characters are what it refuses
+  if (/[\u0000-\u001F\u007F]/u.test(found)) return undefined;
+  return found === "" && !empty ? undefined : found;
+}
+
+/** The AI page's filters from an address. `feature=` (empty) is the calls with no feature. */
+export function aiFiltersFrom(search: {
+  service?: unknown;
+  provider?: unknown;
+  model?: unknown;
+  feature?: unknown;
+}): AiFilters {
+  return {
+    service: searchValue(search.service, 256),
+    provider: aiLabel(search.provider),
+    model: aiLabel(search.model),
+    feature: aiLabel(search.feature, { empty: true }),
+  };
 }

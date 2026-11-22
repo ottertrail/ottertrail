@@ -399,7 +399,7 @@ describe("AI failures", () => {
     await sendCalls([
       { at: after(-3), failed: true },
       { at: after(-3) },
-      // A feature's calls are not the unlabelled ones.
+      // A feature's calls are not the unlabeled ones.
       ...times(5, { at: after(-3), feature: "support-chat" }),
     ]);
     expect(await evaluate(ruleId, AT)).toMatchObject({

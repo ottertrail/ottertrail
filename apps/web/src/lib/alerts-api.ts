@@ -20,6 +20,8 @@ export const RULE_KINDS = [
   "route_latency",
   "route_failures",
   "metric_threshold",
+  "ai_cost",
+  "ai_failures",
 ] as const;
 export type RuleKind = (typeof RULE_KINDS)[number];
 
@@ -35,6 +37,8 @@ export const KIND_LABEL: Record<RuleKind, string> = {
   route_latency: "Route latency",
   route_failures: "Route failures",
   metric_threshold: "Metric",
+  ai_cost: "AI cost",
+  ai_failures: "AI failures",
 };
 
 /** The kinds that watch traces and metrics. */
@@ -42,7 +46,12 @@ export const TELEMETRY_KINDS: readonly RuleKind[] = [
   "route_latency",
   "route_failures",
   "metric_threshold",
+  "ai_cost",
+  "ai_failures",
 ];
+
+/** The kinds that watch AI calls (docs/ai-usage.md, "Alerts"). */
+export const isAiKind = (kind: RuleKind) => kind === "ai_cost" || kind === "ai_failures";
 
 /**
  * The area a kind watches, besides uptime and alerts (docs/access.md): a
@@ -75,6 +84,18 @@ export const PERCENTILES = ["p95", "p99"] as const;
 export type Percentile = (typeof PERCENTILES)[number];
 export const DIRECTIONS = ["above", "below"] as const;
 export type Direction = (typeof DIRECTIONS)[number];
+
+/** The windows an AI cost rule adds up: the last hour, the last 24 hours, or the month so far. */
+export const COST_WINDOWS = ["1h", "1d", "month"] as const;
+export type CostWindow = (typeof COST_WINDOWS)[number];
+export const DEFAULT_COST_WINDOW: CostWindow = "1d";
+/** The highest cost an AI cost rule compares with, in US dollars. */
+export const MAX_COST_USD = 1_000_000_000;
+/** Calls an AI failures rule's window needs before it judges (default), and at most. */
+export const DEFAULT_MIN_CALLS = 20;
+export const MAX_MIN_CALLS = 1_000_000;
+/** The longest model or feature an AI rule names. */
+export const MAX_AI_FILTER_CHARS = 100;
 
 /** What a metric rule reads of each kind of metric, as its chart shows it; the first is the default. */
 export const AGGREGATES = {
@@ -109,6 +130,12 @@ export interface RuleSettings {
   host?: string | null;
   attributeKey?: string | null;
   attributeValue?: string | null;
+  /** AI rules: the cost rule's window and threshold in US dollars, both kinds' feature and model (null: all), and the failures rule's fewest calls. */
+  costWindow?: CostWindow;
+  thresholdUsd?: number;
+  feature?: string | null;
+  model?: string | null;
+  minCalls?: number;
 }
 
 export interface Rule {
@@ -209,7 +236,12 @@ const isSettings = (value: unknown): value is RuleSettings =>
   isOptionalNumber(value.value) &&
   isNullableText(value.host) &&
   isNullableText(value.attributeKey) &&
-  isNullableText(value.attributeValue);
+  isNullableText(value.attributeValue) &&
+  isOptionalOf(COST_WINDOWS)(value.costWindow) &&
+  isOptionalNumber(value.thresholdUsd) &&
+  isNullableText(value.feature) &&
+  isNullableText(value.model) &&
+  isOptionalNumber(value.minCalls);
 
 export const isRule = (value: unknown): value is Rule =>
   isRecord(value) &&

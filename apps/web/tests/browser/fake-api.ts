@@ -82,6 +82,7 @@ import type {
 import type { Check, CheckResults, IncidentList } from "../../src/lib/uptime-api.ts";
 import type { Activity, User, UserActivity, UserList } from "../../src/lib/users-api.ts";
 import { answerAccount, type FakeAccount, fakeAccount, sessionBody } from "./fake-account.ts";
+import { answerAi, type FakeAi, fakeAi } from "./fake-ai.ts";
 import { answerBackups, type FakeBackups, fakeBackups } from "./fake-backups.ts";
 import {
   answerNotifications,
@@ -262,6 +263,8 @@ export interface FakeApi {
   databases: (query: URLSearchParams) => DatabaseList | Response;
   /** Answers GET /api/projects/:id/databases/shapes/:shapeId; by default, fakeShape. */
   shape: (shapeId: string, query: URLSearchParams) => ShapeDetail | Response;
+  /** The AI page's routes (fake-ai.ts). */
+  ai: FakeAi;
   /** Answers GET /api/projects/:id/hosts; by default, fakeHosts. */
   hosts: (query: URLSearchParams) => HostList | Response;
   /** Answers GET /api/projects/:id/hosts/charts; by default, fakeHostCharts. */
@@ -3792,6 +3795,8 @@ async function answer(api: FakeApi, url: URL, init: RequestInit | undefined): Pr
   if (account !== null) return account;
   const backups = answerBackups(api.backups, url, init, api.access.role);
   if (backups !== null) return backups;
+  const ai = await answerAi(api.ai, url, api.access.areas.users !== "none");
+  if (ai !== null) return ai;
   const avatars = await answerAvatars(api, path, init);
   if (avatars !== null) return avatars;
   if (path === "/api/settings" && init?.method === "PATCH") {
@@ -4325,6 +4330,7 @@ export function installFakeApi(overrides: Partial<FakeApi> = {}): FakeApi {
     serviceChart: fakeServiceChart,
     databases: fakeDatabases,
     shape: fakeShape,
+    ai: fakeAi(),
     hosts: fakeHosts,
     hostCharts: fakeHostCharts,
     checks: fakeChecks(),
@@ -4633,7 +4639,13 @@ export function fakeWidget(id: WidgetId, query: URLSearchParams, api: FakeApi): 
   switch (id) {
     case "attention": {
       const errorKinds = ["error_new", "error_regressed", "error_spike"];
-      const telemetryKinds = ["route_latency", "route_failures", "metric_threshold"];
+      const telemetryKinds = [
+        "route_latency",
+        "route_failures",
+        "metric_threshold",
+        "ai_cost",
+        "ai_failures",
+      ];
       return {
         ...header,
         alerts: api.alerts.firing

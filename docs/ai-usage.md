@@ -1,6 +1,6 @@
 # AI usage tracking
 
-**Status: phase 1 is being built. The backend is built: detection and storage of AI calls, the price table, the report API, and the two alert rule kinds. The AI page and the alert form for the new kinds come next, on top of that API.**
+**Status: phase 1 is built: detection and storage of AI calls, the price table, the report API, the two alert rule kinds, the AI page (`/projects/<id>/ai`, [dashboard](dashboard.md#ai)), and the alert form for the new kinds ([dashboard](dashboard.md#813-alerts)). The docs site explains it at `/monitoring/ai-usage/`.**
 
 An app that calls language models pays per token, and its calls fail, stall, and get cut off in ways its other requests do not. This module shows the LLM calls an app makes: tokens, estimated cost, latency, and failures, per model, per feature, and per user, with the trace of each call one click away. It reads the spans the app already sends over OTLP ([telemetry](telemetry.md)); nothing of Ottertrail's runs in the app.
 
@@ -11,7 +11,7 @@ Made on 22 November 2026, all as the design proposed:
 1. **AI calls get their own ClickHouse table**, `ai_calls`, written beside the spans and kept as long as the project's events, not the 30 days of spans. Cost questions are asked by the month and the year, and a row is small next to the spans around it: each one is a paid API call.
 2. **Prompts and completions are never stored.** They are dropped at ingestion for every project, AI page or not ([telemetry](telemetry.md#ai-prompts-and-completions-are-not-stored), `apps/api/src/telemetry/ai-content.ts`). This module reads only token counts and names.
 3. **Prices come from a small hand-kept table in the repository** (`apps/api/src/ai/price-table.ts`), read from the providers' own price pages, each entry with its source and the day it was checked, updated each release. Per-project overrides come in phase 2. Prices are never fetched at run time: self-hosted instances must work offline.
-4. **A call's feature** is its `ottertrail.feature` attribute, else `gen_ai.agent.name`, else none ("Unlabelled").
+4. **A call's feature** is its `ottertrail.feature` attribute, else `gen_ai.agent.name`, else none ("Unlabeled").
 5. **Access:** the `monitoring` area at view. The breakdown by user, and the user of each call, also need `users` at view.
 
 ## Detection
@@ -159,12 +159,16 @@ Two rule kinds, evaluated by the worker with the telemetry rules, once a minute 
 | `ai_cost`     | `thresholdUsd` (above 0, at most 10^9), `costWindow` (`1h` the last hour, `1d` the last 24 hours (default), `month` the month so far, from midnight of its first day in the instance's timezone), and optionally `feature`, `model`, `environment` | The window's estimated cost is above the value | It stays at or below it for 60 minutes      |
 | `ai_failures` | `thresholdPercent` (0 to just under 100), `windowMinutes` (5 to 60, default 10), `minCalls` (1 to 10^6, default 20), and optionally `feature`, `model`, `environment`                                                                              | The window's failed share is above the share   | It stays at or below it for the same window |
 
-- **Scope:** `environment` is one environment, `production` when left out; `feature` and `model` (at most 100 characters each) narrow the rule to one of each, exactly as stored, or all when `null`. A `feature` of `""` is the calls that name none ("Unlabelled"), as the report's `feature=` is.
+- **Scope:** `environment` is one environment, `production` when left out; `feature` and `model` (at most 100 characters each) narrow the rule to one of each, exactly as stored, or all when `null`. A `feature` of `""` is the calls that name none ("Unlabeled"), as the report's `feature=` is.
 - **The window** ends a minute before the evaluation, as the telemetry rules' do.
 - **Kept hours.** A cost rule whose window holds 3 closed hours or more (the last 24 hours, and the month so far) does not read the whole window each minute: the cost, calls, and calls without a price of each closed hour (UTC hours that ended before the window's end) are kept in PostgreSQL (`ai_cost_windows` and `ai_cost_hours`, migration `0018_ai_cost_hours`; `apps/api/src/alerts/ai-cost-hours.ts`), and each evaluation reads from ClickHouse only the part of the hour the window starts in, the hours closed since the last evaluation, and the hour still open. They are added up again from scratch at the first evaluation after the instance's midnight, when the rule's settings change, and when the window no longer follows on from what is kept; a new month starts from nothing. The last hour's rule reads its window whole.
 - **No data:** a failures rule with fewer calls than its minimum does not judge the window. A cost rule always has a value: no calls cost 0.
 - **When saved,** a rule whose calls have not arrived in the last 24 hours is saved with a warning, as the telemetry rules are.
 - **Notifications:** `ai.cost`, `ai.cost_resolved`, `ai.failures`, `ai.failures_resolved` ([webhooks](webhooks.md)). Every cost message says the cost is an estimate from token counts at list prices, and how many calls of models without a price it leaves out. The link opens the AI page with the rule's environment, feature, and model (`/projects/:id/ai?env=…&feature=…&model=…`).
+
+## Sending calls
+
+Any instrumentation that follows the OpenTelemetry GenAI conventions sends calls this module reads. The docs site's page (`/monitoring/ai-usage/`) shows OpenTelemetry's own OpenAI instrumentations: `@opentelemetry/instrumentation-openai` for Node.js (openai 4.19 to 6, https://github.com/open-telemetry/opentelemetry-js-contrib/tree/main/packages/instrumentation-openai) and `opentelemetry-instrumentation-openai-v2` for Python (https://pypi.org/project/opentelemetry-instrumentation-openai-v2/), both checked on 22 November 2026.
 
 ## Getting the feature and the user onto a call
 
@@ -223,9 +227,9 @@ The Vercel AI SDK's `functionId` arrives as `gen_ai.agent.name`, which is the fe
    - dropping content attributes (done, its own fix: commit `2ac772d`);
    - AI call detection with aliases, and the `ai_calls` table with retention, deletion, and backups (built);
    - the bundled price table (built);
-   - the report API (built), then the AI page in the project sidebar, after Databases;
-   - the `ai_cost` and `ai_failures` alerts (built in the API; the form comes with the page);
-   - these docs, with the snippets above;
+   - the report API and the AI page in the project sidebar, after Databases ([dashboard](dashboard.md#ai); built);
+   - the `ai_cost` and `ai_failures` alerts, in the API and the Alerts page's form (built);
+   - these docs, with the snippets above, and the docs site's page `/monitoring/ai-usage/` (built);
    - tests against real ClickHouse with OpenTelemetry's own exporters (`ai-calls.test.ts`, `ai-report.test.ts`, `ai-alerts.test.ts`).
 2. **Phase 2:**
    - per-project price overrides in Settings, each with the day it applies from;
@@ -241,4 +245,5 @@ The Vercel AI SDK's `functionId` arrives as `gen_ai.agent.name`, which is the fe
 
 - `apps/api/tests/ai-calls.test.ts`: spans of each kind of sender through OpenTelemetry's protobuf and JSON exporters, stored as calls or not, the old and new names, the bounds; a retried batch one row; each call a unit of the budget, never a 413 for a batch the budget takes without them; a 503 that gives it back when the calls cannot be written, whether the spans were.
 - `apps/api/tests/ai-report.test.ts`: the price table's shape and matching, the arithmetic in JavaScript and in ClickHouse, the report's figures and each filter, the previous period, the chart and its Other line, the latest calls, access with and without `users`, and retention, project deletion, and the orphan sweep.
-- `apps/api/tests/ai-alerts.test.ts`: both kinds fired, resolved, and quiet below their minimum, the month's window across a timezone, the kept hours of the month and the last 24 hours against a full scan (a late call, midnight, a new month), the unlabelled feature, the worker's pass, and the rule routes' validation.
+- `apps/api/tests/ai-alerts.test.ts`: both kinds fired, resolved, and quiet below their minimum, the month's window across a timezone, the kept hours of the month and the last 24 hours against a full scan (a late call, midnight, a new month), the unlabeled feature, the worker's pass, and the rule routes' validation.
+- `apps/web/tests/browser/ai.test.tsx` and `ai-alerts.test.tsx`: the page and the alert form against the fake API (`fake-ai.ts`); `report-screens.test.tsx` the page at 390 and 1440 wide.

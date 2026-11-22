@@ -21,6 +21,7 @@ import {
   PanelLeftOpenIcon,
   ScrollTextIcon,
   ServerIcon,
+  SparklesIcon,
   SettingsIcon,
   StarIcon,
   StarOffIcon,
@@ -438,6 +439,20 @@ function ProjectMenu({ projectId }: { projectId: string }) {
               >
                 <DatabaseIcon />
                 <span>Databases</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          )}
+          {canOpen(me, "monitoring") && (
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                render={<Link to="/projects/$projectId/ai" params={{ projectId }} />}
+                isActive={
+                  matchRoute({ to: "/projects/$projectId/ai", params: { projectId } }) !== false
+                }
+                tooltip="AI"
+              >
+                <SparklesIcon />
+                <span>AI</span>
               </SidebarMenuButton>
             </SidebarMenuItem>
           )}

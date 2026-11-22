@@ -87,7 +87,7 @@ export interface AiCallRow {
   provider: string;
   model: string;
   operation: string;
-  /** "" when the span names none: "Unlabelled" in reports. */
+  /** "" when the span names none: "Unlabeled" in reports. */
   feature: string;
   /** "" for none. */
   user_id: string;

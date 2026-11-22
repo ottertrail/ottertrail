@@ -30,6 +30,7 @@ import {
 import { ProjectLayout } from "@/features/projects/project-layout";
 import { replayFiltersFrom } from "@/features/replays/search";
 import {
+  aiFiltersFrom,
   logFiltersFrom,
   metricChoicesFrom,
   metricFiltersFrom,
@@ -96,6 +97,7 @@ const DatabasesPage = lazyPage(
   () => import("@/features/telemetry/databases-page"),
   "DatabasesPage",
 );
+const AiPage = lazyPage(() => import("@/features/ai/ai-page"), "AiPage");
 const ErrorPage = lazyPage(() => import("@/features/errors/error-page"), "ErrorPage");
 const ErrorsPage = lazyPage(() => import("@/features/errors/errors-page"), "ErrorsPage");
 const EventPage = lazyPage(() => import("@/features/product/event-page"), "EventPage");
@@ -954,6 +956,37 @@ const queryShapeRoute = createRoute({
   }),
 });
 
+/** The LLM calls in traces: days, environment, and filters by service, provider, model, and feature. */
+const aiRoute = createRoute({
+  getParentRoute: () => projectRoute,
+  path: "/ai",
+  staticData: { title: "AI", access: "monitoring" },
+  validateSearch: (
+    search: ErrorSearchInput & {
+      service?: unknown;
+      provider?: unknown;
+      model?: unknown;
+      feature?: unknown;
+    },
+  ) => ({
+    ...rangeSearch(search),
+    ...environmentSearch(search),
+    ...aiFiltersFrom(search),
+  }),
+  component: withPage(AiPage, function AiRouteComponent() {
+    const { projectId } = aiRoute.useParams();
+    const { period, from, to, env, service, provider, model, feature } = aiRoute.useSearch();
+    return (
+      <AiPage
+        projectId={projectId}
+        range={rangeFrom({ period, from, to })}
+        environment={env ?? DEFAULT_ENVIRONMENT}
+        filters={{ service, provider, model, feature }}
+      />
+    );
+  }),
+});
+
 /** The hosts that sent host metrics: days and environment. */
 const hostsRoute = createRoute({
   getParentRoute: () => projectRoute,
@@ -1357,6 +1390,7 @@ const routeTree = rootRoute.addChildren([
       serviceRoute,
       databasesRoute,
       queryShapeRoute,
+      aiRoute,
       hostsRoute,
       hostRoute,
       uptimeRoute,

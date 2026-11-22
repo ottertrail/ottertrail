@@ -216,7 +216,7 @@ export interface MetricSettings {
 
 /**
  * An AI rule's calls: one environment's, of one feature and one model, or
- * all (null). A feature of "" is the calls that name none ("Unlabelled").
+ * all (null). A feature of "" is the calls that name none ("Unlabeled").
  */
 interface AiScope {
   environment: string;

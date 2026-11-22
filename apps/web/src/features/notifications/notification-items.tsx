@@ -10,6 +10,7 @@ import {
   CircleIcon,
   HardDriveIcon,
   ShieldAlertIcon,
+  SparklesIcon,
   UserRoundCheckIcon,
 } from "lucide-react";
 import type * as React from "react";
@@ -38,6 +39,7 @@ function iconOf(kind: string): { icon: typeof BugIcon; tone: string } {
   if (kind.startsWith("route.") || kind.startsWith("metric.")) {
     return { icon: ActivityIcon, tone: "text-warning" };
   }
+  if (kind.startsWith("ai.")) return { icon: SparklesIcon, tone: "text-warning" };
   if (kind === "alert.held_back") return { icon: BellOffIcon, tone: "text-ink-muted" };
   if (kind === "storage.low") return { icon: HardDriveIcon, tone: "text-warning" };
   return { icon: ArchiveRestoreIcon, tone: "text-ink-muted" };

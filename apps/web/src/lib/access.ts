@@ -43,7 +43,10 @@ export const AREA_LABELS: Record<Area, { name: string; pages: string }> = {
   errors: { name: "Errors", pages: "Errors and occurrences" },
   replays: { name: "Replays", pages: "Session replays, which show individual people" },
   users: { name: "Users", pages: "Identified end users and their activity" },
-  monitoring: { name: "Monitoring", pages: "Traces, logs, metrics, services, databases, hosts" },
+  monitoring: {
+    name: "Monitoring",
+    pages: "Traces, logs, metrics, services, databases, AI, hosts",
+  },
   uptime_alerts: { name: "Uptime and alerts", pages: "Uptime checks and alert rules" },
 };
 
