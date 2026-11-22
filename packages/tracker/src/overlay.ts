@@ -6,7 +6,9 @@
  *
  * It draws the project's heatmap for this page over the page itself, for
  * the signed-in owner who opened it (overlay-view.ts; docs/web-analytics.md,
- * "The overlay on your site"). It stores nothing on the device.
+ * "The overlay on your site"). It stores nothing on the device. "Save this
+ * view" loads s.js from beside it (snapshot.ts) to save a snapshot of the
+ * page for the Heatmaps screen.
  */
 import { type OverlayConfig, OVERLAY_PROPERTY } from "./overlay-names.ts";
 import { startOverlay } from "./overlay-view.ts";
@@ -30,6 +32,7 @@ try {
       document,
       fetch: (url, init) => fetch(url, init),
       ...(script?.nonce ? { nonce: script.nonce } : {}),
+      ...(script instanceof HTMLScriptElement && script.src ? { scriptUrl: script.src } : {}),
     });
   }
 } catch {

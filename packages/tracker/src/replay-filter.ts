@@ -75,6 +75,9 @@ const MEDIA_SOURCES = new Set(["img", "source", "video", "audio", "track", "imag
 export const BLOCK_ATTRIBUTE = "data-ottertrail-block";
 export const MASK_ATTRIBUTE = "data-ottertrail-mask";
 export const UNMASK_ATTRIBUTE = "data-ottertrail-unmask";
+/** The heatmaps' element name (heatmap-path.ts), kept only with keepNames. */
+const NAME_ATTRIBUTE = "data-ottertrail-name";
+const NAME_PATTERN = /^\s*[A-Za-z0-9][A-Za-z0-9 ._:/-]{0,63}\s*$/;
 
 /** The elements rrweb blocks (its blockSelector), and the filter too. */
 export function blockSelector(showMedia: boolean): string {
@@ -273,6 +276,11 @@ export interface FilterOptions {
    * node was recorded counts too. They add to the map's flags.
    */
   live?: (id: number) => number;
+  /**
+   * Keeps data-ottertrail-name, which heatmap keys start from: a saved
+   * heatmap view (snapshot-take.ts) finds elements by it. Replays drop it.
+   */
+  keepNames?: boolean;
 }
 
 type Json = Record<string, unknown>;
@@ -311,7 +319,13 @@ interface NodeInfo {
 
 export type ReplayFilter = (event: unknown) => Json | undefined;
 
-export function createFilter({ showText, showMedia, base, live }: FilterOptions): ReplayFilter {
+export function createFilter({
+  showText,
+  showMedia,
+  base,
+  live,
+  keepNames = false,
+}: FilterOptions): ReplayFilter {
   /** Every node let through since the last full snapshot. */
   let nodes = new Map<number, NodeInfo>();
 
@@ -353,6 +367,7 @@ export function createFilter({ showText, showMedia, base, live }: FilterOptions)
       return name === "value" ? undefined : value;
     }
     if (typeof value !== "string") return undefined;
+    if (keepNames && name === NAME_ATTRIBUTE) return NAME_PATTERN.test(value) ? value : undefined;
     if (name.startsWith("on") || name === "nonce" || name.startsWith("data-ottertrail-")) {
       return undefined;
     }
@@ -581,7 +596,9 @@ export function createFilter({ showText, showMedia, base, live }: FilterOptions)
       if (flags & BLOCK) return [];
       const out: Json = {};
       for (const [name, value] of Object.entries(change.attributes)) {
-        if (name.toLowerCase().startsWith("data-ottertrail-")) {
+        if (keepNames && name.toLowerCase() === NAME_ATTRIBUTE) {
+          out[name] = typeof value === "string" && NAME_PATTERN.test(value) ? value : null;
+        } else if (name.toLowerCase().startsWith("data-ottertrail-")) {
           // Markers are read above; the player has no use for them.
         } else if (value === null) {
           out[name] = null;

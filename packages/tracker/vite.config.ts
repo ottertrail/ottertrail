@@ -4,6 +4,10 @@ import { gunzipSync } from "node:zlib";
 import { defineConfig } from "vite-plus";
 import { playwright } from "vite-plus/test/browser-playwright";
 
+const RRWEB_BANNER =
+  "/*! rrweb, Copyright (c) 2018 Contributors (https://github.com/rrweb-io/rrweb/graphs/contributors), MIT License: https://github.com/rrweb-io/rrweb/blob/master/LICENSE */\n" +
+  "/*! base64-arraybuffer, Copyright (c) 2012 Niklas von Hertzen, MIT License: https://github.com/niklasvh/base64-arraybuffer/blob/master/LICENSE-MIT */";
+
 /** The scripts a site loads, each its own build: a script tag takes one file. */
 const scripts = {
   // The script tag's file.
@@ -15,22 +19,19 @@ const scripts = {
       "/*! web-vitals, Copyright 2020 Google LLC, Apache License 2.0: https://github.com/GoogleChrome/web-vitals/blob/main/LICENSE */",
   },
   // Session replay around errors, loaded by the tracker with data-replay="errors".
-  r: {
-    entry: "src/replay.ts",
-    banner:
-      "/*! rrweb, Copyright (c) 2018 Contributors (https://github.com/rrweb-io/rrweb/graphs/contributors), MIT License: https://github.com/rrweb-io/rrweb/blob/master/LICENSE */\n" +
-      "/*! base64-arraybuffer, Copyright (c) 2012 Niklas von Hertzen, MIT License: https://github.com/niklasvh/base64-arraybuffer/blob/master/LICENSE-MIT */",
-  },
+  r: { entry: "src/replay.ts", banner: RRWEB_BANNER },
   // Heatmap capture, loaded by the tracker with data-heatmaps="on".
   h: { entry: "src/heatmaps.ts" },
   // The heatmap overlay, loaded by the tracker on a page opened from the dashboard.
   o: { entry: "src/overlay.ts" },
+  // A saved heatmap view, loaded by o.js when the owner presses "Save this view".
+  s: { entry: "src/snapshot.ts", banner: RRWEB_BANNER },
 };
 
 export default defineConfig({
-  // `vp pack` builds five minified scripts: dist/tracker.js for a <script>
+  // `vp pack` builds six minified scripts: dist/tracker.js for a <script>
   // tag, and dist/v.js, dist/r.js, dist/h.js, and dist/o.js, which it loads
-  // from beside itself.
+  // from beside itself, and dist/s.js, which o.js loads from beside itself.
   pack: Object.entries(scripts).map(([name, script]) => ({
     entry: { [name]: script.entry },
     format: "iife" as const,
