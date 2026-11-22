@@ -25,7 +25,7 @@ import { dashboardReader, type DashboardQueryLimiter } from "../telemetry/dashbo
 import { DASHBOARD_SETTINGS } from "../telemetry/dashboard-query.ts";
 import { heatmapRangeOf } from "./dashboard-routes.ts";
 import { emptyOverlay, heatmapOverlay } from "./report.ts";
-import { MAX_SNAPSHOT_BYTES, readSnapshot, saveSnapshot } from "./snapshots.ts";
+import { MAX_SNAPSHOT_BYTES, readSnapshot, saveSnapshot, storablePath } from "./snapshots.ts";
 import { DEVICES, type HeatmapDevice } from "./store.ts";
 
 /**
@@ -378,7 +378,7 @@ export const heatmapOverlayRoutes: FastifyPluginCallback<{
     {
       bodyLimit: MAX_SNAPSHOT_BYTES,
       onRequest: limitedBy(saveLimiter),
-      preValidation: only("query", ["path"]),
+      preValidation: [only("query", ["path"]), storablePath],
       schema: {
         params: PARAMS_SCHEMA,
         querystring: {

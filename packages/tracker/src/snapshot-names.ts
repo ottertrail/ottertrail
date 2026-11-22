@@ -12,6 +12,11 @@ export const SNAPSHOT_PROPERTY = "ottertrailSnapshot";
  * (apps/api/src/heatmaps/snapshots.ts, MAX_SNAPSHOT_BYTES).
  */
 export const MAX_SNAPSHOT_BYTES = 5_000_000;
+/**
+ * The most objects and arrays its JSON may hold: about three per element,
+ * as rrweb writes a page (apps/api/src/heatmaps/snapshots.ts, MAX_SNAPSHOT_CONTAINERS).
+ */
+export const MAX_SNAPSHOT_CONTAINERS = 500_000;
 
 /** What taking a snapshot came to. */
 export type SnapshotResult =

@@ -5,7 +5,12 @@ import { afterAll, beforeAll, describe, expect, test } from "vite-plus/test";
 
 import { purgeDeletedProjects } from "../src/clickhouse/delete-events.ts";
 import { LOCAL_OBJECT_STORE } from "../src/config.ts";
-import { MAX_SNAPSHOT_BYTES, projectSnapshotPrefix } from "../src/heatmaps/snapshots.ts";
+import {
+  MAX_SNAPSHOT_BYTES,
+  MAX_SNAPSHOT_CONTAINERS,
+  projectSnapshotPrefix,
+  structureOf,
+} from "../src/heatmaps/snapshots.ts";
 import { s3ObjectStore } from "../src/storage/object-store.ts";
 import { PUBLIC_URL, signedInDashboard, signedInUser } from "./helpers/dashboard.ts";
 import { insertProject } from "./helpers/projects.ts";
@@ -151,6 +156,9 @@ const listOf = async (projectId: string, path = "/pricing", app = dashboard) =>
       { app },
     )
   ).json();
+
+/** Text as the bytes the pre-scan reads. */
+const text = (value: string) => new TextEncoder().encode(value);
 
 const keysOf = async (projectId: string) =>
   (
@@ -329,6 +337,53 @@ describe("saving a view from the overlay", () => {
     expect(await keysOf(project.id)).toHaveLength(1);
   });
 
+  test("objects are counted before parsing: a body of tiny objects is refused, a large real page is not", async () => {
+    const project = await newProject();
+    const session = await sessionFor(project.id);
+    const at = Date.now();
+    const meta = { type: 4, data: { href: SITE, width: 1280, height: 800 }, timestamp: at };
+    const page = (childNodes: unknown[]) => ({
+      type: 2,
+      data: { node: { type: 0, id: 1, childNodes }, initialOffset: { top: 0, left: 0 } },
+      timestamp: at + 50,
+    });
+    // 32 MiB of "{}," in one node: under 5 MB compressed, millions of objects once parsed.
+    const tiny = `{"v":1,"pageHeight":10,"events":[${JSON.stringify(meta)},${JSON.stringify(
+      page([]),
+    ).replace('"childNodes":[]', `"childNodes":[${"{},".repeat(10_000_000)}{}]`)}]}`;
+    const packed = gzipSync(tiny);
+    expect(packed.byteLength).toBeLessThan(MAX_SNAPSHOT_BYTES);
+    const refused = await save(project.id, session, packed);
+    expect([refused.statusCode, refused.json().error]).toEqual([413, "snapshot_too_large"]);
+    expect(refused.json().message).toMatch(/^This page is too large to save/);
+
+    // A very large real page: 80,000 elements, each with a class and a text node.
+    const rows = Array.from({ length: 80_000 }, (_, index) => ({
+      type: 2,
+      tagName: "div",
+      attributes: { class: "row" },
+      childNodes: [{ type: 3, textContent: `Row ${index}`, id: 2 * index + 3 }],
+      id: 2 * index + 2,
+    }));
+    const large = snapshot({ events: [meta, page(rows)] });
+    expect(large.byteLength).toBeLessThan(MAX_SNAPSHOT_BYTES);
+    expect(structureOf(gunzipSync(large)).containers).toBeGreaterThan(300_000);
+    expect((await save(project.id, session, large)).statusCode).toBe(201);
+  });
+
+  test("the pre-scan counts only outside strings, and stops past its limit", () => {
+    expect(structureOf(text('{"a":"{[,]}\\"","b":[1,2,{}]}'))).toEqual({
+      containers: 3,
+      values: 6,
+      over: false,
+    });
+    expect(structureOf(text("[".repeat(MAX_SNAPSHOT_CONTAINERS + 1))).over).toBe(true);
+    expect(structureOf(text("[]".repeat(10)), { containers: 5, values: 100 })).toMatchObject({
+      over: true,
+      containers: 6,
+    });
+  });
+
   test("the preflight answers the project's site only", async () => {
     const project = await newProject();
     const preflight = (origin: string) =>
@@ -382,6 +437,52 @@ describe("saving a view from the overlay", () => {
         payload,
       });
       expect(response.statusCode).toBe(400);
+    }
+  });
+});
+
+describe("paths PostgreSQL cannot store", () => {
+  test("a NUL or an unpaired surrogate is refused with 400 on every route that keeps a path", async () => {
+    const project = await newProject();
+    const session = await sessionFor(project.id);
+    const base = `/api/projects/${project.id}/heatmaps/snapshots`;
+    // In an address only a NUL gets through: invalid UTF-8 there reads as U+FFFD, which is stored.
+    for (const bad of ["/%00", "/a%00b"]) {
+      for (const [method, url] of [
+        ["GET", `${base}?path=${bad}`],
+        ["GET", `${base}/desktop?path=${bad}`],
+        ["GET", `${base}/desktop/player?path=${bad}&period=7d`],
+        ["GET", `${base}/desktop/heatmap?path=${bad}&period=7d`],
+        ["DELETE", `${base}/desktop?path=${bad}`],
+      ] as const) {
+        expect([url, (await dashboardCall(method, url)).statusCode]).toEqual([url, 400]);
+      }
+      const upload = await dashboard.app.inject({
+        method: "POST",
+        url: `/api/heatmap-overlay/${project.id}/snapshot?path=${bad}`,
+        headers: {
+          origin: SITE,
+          authorization: `Bearer ${session}`,
+          "content-type": "application/gzip",
+        },
+        payload: snapshot(),
+      });
+      expect([bad, upload.statusCode]).toEqual([bad, 400]);
+    }
+    // In a JSON body, a NUL and an unpaired surrogate both get through.
+    for (const path of ["/\u0000", "/a\ud800"]) {
+      const minted = await dashboard.app.inject({
+        method: "POST",
+        url: `/api/projects/${project.id}/heatmaps/overlay-link`,
+        headers: {
+          cookie: dashboard.cookie,
+          origin: PUBLIC_URL,
+          "content-type": "application/json",
+        },
+        // JSON.stringify writes both as \\u escapes, which JSON.parse reads back.
+        payload: JSON.stringify({ path }),
+      });
+      expect([path, minted.statusCode]).toEqual([path, 400]);
     }
   });
 });

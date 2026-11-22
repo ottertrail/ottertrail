@@ -262,5 +262,10 @@ describe("the snapshot", () => {
       ok: false,
       reason: "too_large",
     });
+    // Past the objects and arrays the API takes, too: it counts them before parsing.
+    expect(await takeSnapshot({ hide, maxContainers: 5 })).toEqual({
+      ok: false,
+      reason: "too_large",
+    });
   });
 });

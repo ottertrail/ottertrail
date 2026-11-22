@@ -15,7 +15,7 @@ import { dashboardReader, type DashboardQueryLimiter } from "../telemetry/dashbo
 import { DASHBOARD_SETTINGS } from "../telemetry/dashboard-query.ts";
 import { heatmapRangeOf } from "./dashboard-routes.ts";
 import { emptyOverlay, heatmapOverlay } from "./report.ts";
-import { deleteSnapshot, listSnapshots, snapshotKey } from "./snapshots.ts";
+import { deleteSnapshot, listSnapshots, snapshotKey, storablePath } from "./snapshots.ts";
 import { DEVICES, type HeatmapDevice } from "./store.ts";
 
 const UUID_PATTERN =
@@ -122,6 +122,8 @@ export const heatmapSnapshotRoutes: FastifyPluginCallback<{
   const canView = requireProjectAccess(db, { area: "web_analytics", level: "view" });
   const fromDashboard = requireTrustedOrigin(trustedOrigins);
   app.setErrorHandler(clickHouseErrorHandler);
+  // Every route here takes a path that a row keeps or is looked up by.
+  app.addHook("preValidation", storablePath);
 
   app.get<{ Params: { id: string }; Querystring: { path: string } }>(
     "/projects/:id/heatmaps/snapshots",

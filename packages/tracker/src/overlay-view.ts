@@ -73,7 +73,8 @@ export const MESSAGES: Record<Exclude<OverlayState, "ready" | "empty">, string> 
 /** What saving a view can come to (docs/web-analytics.md, "Saved views"). */
 export const SAVE_MESSAGES = {
   saved: (device: string) => `Saved. The Heatmaps screen now shows this page's ${device} view.`,
-  too_large: "This page is too large to save: over 5 MB compressed.",
+  too_large:
+    "This page is too large to save: over 5 MB compressed or about 150,000 elements. The overlay still shows its heatmap here.",
   no_storage: "Saving a view needs object storage on the Ottertrail server.",
   wrong_page:
     "This link was opened for another page. Open this page from the dashboard to save it.",

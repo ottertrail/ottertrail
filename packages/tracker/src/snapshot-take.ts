@@ -19,7 +19,11 @@ import { record as rrwebRecord } from "@rrweb/record";
 import { OVERLAY_TAG } from "./overlay-names.ts";
 import { blockSelector, createFilter, maskValue } from "./replay-filter.ts";
 import { gzip } from "./replay-pack.ts";
-import { MAX_SNAPSHOT_BYTES, type SnapshotResult } from "./snapshot-names.ts";
+import {
+  MAX_SNAPSHOT_BYTES,
+  MAX_SNAPSHOT_CONTAINERS,
+  type SnapshotResult,
+} from "./snapshot-names.ts";
 
 // rrweb's numbers (@rrweb/types).
 const FULL_SNAPSHOT = 2;
@@ -61,11 +65,27 @@ function withoutOverlay(node: unknown): void {
   for (const child of children) withoutOverlay(child);
 }
 
+/** Objects and arrays in JSON text, outside strings (the API's structureOf, in snapshots.ts). */
+function containersOf(text: string): number {
+  let count = 0;
+  let inString = false;
+  for (let i = 0; i < text.length; i += 1) {
+    const code = text.charCodeAt(i);
+    if (inString) {
+      if (code === 92) i += 1;
+      else if (code === 34) inString = false;
+    } else if (code === 34) inString = true;
+    else if (code === 123 || code === 91) count += 1;
+  }
+  return count;
+}
+
 export interface SnapshotOptions {
   /** The element to leave out: the overlay's own. */
   hide: Element;
-  /** For tests: a smaller cap. */
+  /** For tests: smaller caps. */
   maxBytes?: number;
+  maxContainers?: number;
   /** For tests: rrweb's record, or a stand-in. */
   record?: typeof rrwebRecord;
 }
@@ -74,6 +94,7 @@ export interface SnapshotOptions {
 export async function takeSnapshot({
   hide,
   maxBytes = MAX_SNAPSHOT_BYTES,
+  maxContainers = MAX_SNAPSHOT_CONTAINERS,
   record = rrwebRecord,
 }: SnapshotOptions): Promise<SnapshotResult> {
   if (typeof CompressionStream !== "function") return { ok: false, reason: "unsupported" };
@@ -128,13 +149,14 @@ export async function takeSnapshot({
       doc.body?.scrollHeight ?? 0,
       doc.documentElement.clientHeight,
     );
-    const body = await gzip(
-      JSON.stringify({
-        v: 1,
-        events: [meta, full, ...events.filter((event) => event !== meta && event !== full)],
-        pageHeight,
-      }),
-    );
+    const text = JSON.stringify({
+      v: 1,
+      events: [meta, full, ...events.filter((event) => event !== meta && event !== full)],
+      pageHeight,
+    });
+    // The API counts objects and arrays before it parses (MAX_SNAPSHOT_CONTAINERS).
+    if (containersOf(text) > maxContainers) return { ok: false, reason: "too_large" };
+    const body = await gzip(text);
     if (body.byteLength > maxBytes) return { ok: false, reason: "too_large" };
     return { ok: true, body, width };
   } catch {

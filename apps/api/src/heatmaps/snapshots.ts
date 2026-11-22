@@ -2,8 +2,10 @@ import { randomUUID } from "node:crypto";
 import { promisify } from "node:util";
 import { gunzip } from "node:zlib";
 
+import type { FastifyReply, FastifyRequest } from "fastify";
 import { type Kysely, sql } from "kysely";
 
+import { isStorableText } from "../collection/normalize.ts";
 import type { Database } from "../db/schema.ts";
 import type { ObjectStore } from "../storage/object-store.ts";
 import { deviceOf, type HeatmapDevice } from "./store.ts";
@@ -37,8 +39,20 @@ const newSnapshotKey = (projectId: string) =>
 
 /** The largest snapshot, compressed, in bytes (packages/tracker/src/snapshot-names.ts). */
 export const MAX_SNAPSHOT_BYTES = 5_000_000;
-/** The largest snapshot unpacked: far past a real page's, and bounded memory to check it. */
+/** The largest snapshot unpacked, in bytes of JSON text. */
 export const MAX_SNAPSHOT_TEXT_BYTES = 32 * 1024 * 1024;
+/**
+ * The most objects and arrays a snapshot's JSON may hold, and the most
+ * values in all (every object, array, and comma-separated entry). The text
+ * cap alone does not bound memory: 32 MiB of `{},` parses into millions of
+ * objects. rrweb writes about three containers per element (the node, its
+ * attributes, its children) and one per text node, so a very large page of
+ * 80,000 elements and as many text nodes comes to about 320,000; these
+ * leave room above that, and the pre-scan (structureOf) refuses a body past
+ * them before JSON.parse runs.
+ */
+export const MAX_SNAPSHOT_CONTAINERS = 500_000;
+export const MAX_SNAPSHOT_VALUES = 4_000_000;
 /** Events in a snapshot at most: its meta, its full snapshot, and the stylesheets it brought. */
 const MAX_EVENTS = 1000;
 
@@ -61,9 +75,59 @@ const isSide = (value: unknown, max: number): value is number =>
 const problem = (error: string, message: string) => ({ error, message });
 export const SNAPSHOT_TOO_LARGE = problem(
   "snapshot_too_large",
-  "The snapshot is over 5 MB compressed or 32 MiB unpacked.",
+  "This page is too large to save: over 5 MB compressed, 32 MiB unpacked, or about 150,000 elements (500,000 objects and lists). Its heatmap still shows over the live page with Open on your site.",
 );
+
+/**
+ * Counts the JSON's containers (objects and arrays) and values, outside
+ * strings, in one pass over its bytes; stops once either is past its limit.
+ * Only bytes of `{`, `[`, `,`, `"`, and `\\` matter, which never occur
+ * inside a multi-byte UTF-8 character.
+ */
+export function structureOf(
+  text: Uint8Array,
+  limits = { containers: MAX_SNAPSHOT_CONTAINERS, values: MAX_SNAPSHOT_VALUES },
+): { containers: number; values: number; over: boolean } {
+  let containers = 0;
+  let values = 0;
+  let inString = false;
+  for (let i = 0; i < text.length; i += 1) {
+    const byte = text[i];
+    if (inString) {
+      if (byte === 0x5c) i += 1; // a backslash escapes the next byte
+      else if (byte === 0x22) inString = false;
+    } else if (byte === 0x22) {
+      inString = true;
+    } else if (byte === 0x7b || byte === 0x5b) {
+      containers += 1;
+      values += 1;
+      if (containers > limits.containers) return { containers, values, over: true };
+    } else if (byte === 0x2c) {
+      values += 1;
+      if (values > limits.values) return { containers, values, over: true };
+    }
+  }
+  return { containers, values, over: false };
+}
+
+/** Checks run one at a time: each holds a parsed snapshot in memory. */
+let checking: Promise<unknown> = Promise.resolve();
 const NOT_A_SNAPSHOT = problem("invalid_snapshot", "The body is not a heatmap snapshot.");
+
+/**
+ * Refuses a `path` in the query that PostgreSQL cannot store (a NUL or an
+ * unpaired surrogate, isStorableText), with 400 before any database work:
+ * saved views keep the path in a row. A preValidation hook.
+ */
+export async function storablePath(request: FastifyRequest, reply: FastifyReply) {
+  const query: unknown = request.query;
+  const path =
+    typeof query === "object" && query !== null && "path" in query ? query.path : undefined;
+  if (typeof path !== "string" || isStorableText(path)) return undefined;
+  return reply
+    .code(400)
+    .send(problem("invalid_query", "path contains a NUL character or an unpaired surrogate."));
+}
 
 /** What the API knows of a snapshot once checked. */
 export interface SnapshotInfo {
@@ -83,13 +147,21 @@ export type ReadSnapshot =
  * rrweb's, with one Meta event (the viewport's width and height), one full
  * snapshot of a document, and otherwise only style events.
  */
-export async function readSnapshot(body: Uint8Array): Promise<ReadSnapshot> {
+export function readSnapshot(body: Uint8Array): Promise<ReadSnapshot> {
+  const turn = checking.then(() => checkSnapshot(body));
+  checking = turn.catch(() => undefined);
+  return turn;
+}
+
+async function checkSnapshot(body: Uint8Array): Promise<ReadSnapshot> {
   if (body.byteLength > MAX_SNAPSHOT_BYTES) {
     return { ok: false, status: 413, body: SNAPSHOT_TOO_LARGE };
   }
   let value: unknown;
   try {
     const text = await unzip(body, { maxOutputLength: MAX_SNAPSHOT_TEXT_BYTES });
+    // Counted before parsing: memory follows the objects, not the text.
+    if (structureOf(text).over) return { ok: false, status: 413, body: SNAPSHOT_TOO_LARGE };
     value = JSON.parse(text.toString("utf8"));
   } catch (error) {
     const tooLarge =

@@ -11,6 +11,7 @@ import { HEATMAP_RETENTION_DAYS } from "../clickhouse/migrations.ts";
 import type { Reader } from "../clickhouse/query.ts";
 import { clickHouseErrorHandler } from "../clickhouse/route-errors.ts";
 import { environmentOf } from "../collection/environment.ts";
+import { isStorableText } from "../collection/normalize.ts";
 import { type RateLimit, TokenBucketLimiter } from "../collection/rate-limiter.ts";
 import type { Database } from "../db/schema.ts";
 import { localDays } from "../reports/reports.ts";
@@ -61,7 +62,8 @@ function linkPathOf(body: unknown): string | null | undefined {
   return keys.length === 1 &&
     typeof path === "string" &&
     path.startsWith("/") &&
-    path.length <= 2048
+    path.length <= 2048 &&
+    isStorableText(path)
     ? path
     : undefined;
 }
