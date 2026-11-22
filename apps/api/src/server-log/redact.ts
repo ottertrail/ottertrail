@@ -18,10 +18,61 @@ export const MASK = "…";
  * Query parameters whose value is a secret wherever they appear: a
  * one-time token (Better Auth's email verification and reset links), a
  * project key (`/api/replays?key=`, a public key, masked anyway), an OAuth
- * code or state, a signature, a password, a session.
+ * code or state, a signature, a password, a session. Tested on the name
+ * after percent-decoding, as a server reads it, so `%74oken=` is masked too.
  */
-const SECRET_PARAMETER =
-  /([?&;](?:[^=&#\s"'<>]*?(?:token|secret|passw(?:or)?d|pwd|signature|sig|key|code|state|auth|session|credential)[^=&#\s"'<>]*)=)[^&#\s"'<>]*/gi;
+const SECRET_NAME =
+  /token|secret|passw(?:or)?d|pwd|signature|sig|key|code|state|auth|session|credential/i;
+
+/**
+ * A query parameter's separator and name in any text, up to its `=`. The
+ * name holds no separator, so each character is read once (linear time),
+ * and a parameter inside another's value (`?next=/cb?token=…`) is found.
+ */
+const PARAMETER_NAME = /[?&;]([^?&;=#\s"'<>]*)=/g;
+
+/** Where a parameter's value ends in any text. */
+const PARAMETER_END = /[&#\s"'<>]/g;
+
+/** A query parameter's name in a URL; its value runs to the next `&` or `#`. */
+const URL_PARAMETER_NAME = /[?&]([^?&=#]*)=/g;
+const URL_PARAMETER_END = /[&#]/g;
+
+/** A URL's personal-data parameters, as redactUrl lists them. */
+const PERSONAL_NAME = /^(?:search|q|user|userId|email|p\..*)$/is;
+
+/**
+ * A parameter's name as a server reads it: each `%XX` decoded on its own,
+ * so a malformed escape stays as it is and nothing throws. A byte above
+ * 0x7F becomes a Latin-1 character, which no ASCII name matches.
+ */
+function decodeName(name: string): string {
+  if (!name.includes("%")) return name;
+  return name.replace(/%([0-9a-f]{2})/gi, (_escape, hex: string) =>
+    String.fromCharCode(Number.parseInt(hex, 16)),
+  );
+}
+
+/**
+ * Masks the value of each parameter `names` finds whose decoded name
+ * `matches`, up to `end`. A masked value is not read again; another's is,
+ * for a parameter inside it.
+ */
+function maskParameters(text: string, names: RegExp, end: RegExp, matches: RegExp): string {
+  let masked = "";
+  let from = 0;
+  names.lastIndex = 0;
+  for (let found = names.exec(text); found; found = names.exec(text)) {
+    if (!matches.test(decodeName(found[1] ?? ""))) continue;
+    const start = found.index + found[0].length;
+    end.lastIndex = start;
+    const stop = end.exec(text)?.index ?? text.length;
+    masked += `${text.slice(from, start)}${MASK}`;
+    from = stop;
+    names.lastIndex = stop;
+  }
+  return masked + text.slice(from);
+}
 
 /**
  * The user and password in a URL: `postgres://ottertrail:…@postgres`, an
@@ -43,11 +94,11 @@ const SECRET_KEY = /\bsk_[0-9a-f]{32}\b/g;
 /** Masks secrets in any text: URLs with credentials or tokens, Authorization values, secret keys. */
 export function redactText(text: string): string {
   if (!/[@?&;]|bearer|basic|sk_/i.test(text)) return text;
-  return text
+  const masked = text
     .replace(URL_USERINFO, `$1${MASK}@`)
     .replace(AUTHORIZATION, `$1 ${MASK}`)
-    .replace(SECRET_KEY, `sk_${MASK}`)
-    .replace(SECRET_PARAMETER, `$1${MASK}`);
+    .replace(SECRET_KEY, `sk_${MASK}`);
+  return maskParameters(masked, PARAMETER_NAME, PARAMETER_END, SECRET_NAME);
 }
 
 /**
@@ -62,17 +113,18 @@ export function redactText(text: string): string {
  *   (the users, the reports, the logs, the heatmap pages) and the
  *   dashboard's `q=` (the Logs page);
  * - an `email=` anywhere;
- * - an event property filter's value (`p.<property>=`), which may be one too;
+ * - an event property filter's value (`p.<property>=`), which may be one too
+ *   (each name read after percent-decoding, as redactText's are);
  * - the token in Better Auth's reset link path (`/reset-password/:token`).
  *
  * Other parameters stay: periods, environments, services, routes, models,
  * features, and the names and IDs Ottertrail makes (traces, errors, checks).
  */
 export function redactUrl(url: string): string {
-  return redactText(url)
+  const masked = redactText(url)
     .replace(/(\/users\/)[^/?#]+/g, `$1${MASK}`)
-    .replace(/(\/reset-password\/)[^/?#]+/g, `$1${MASK}`)
-    .replace(/([?&](?:search|q|user|userId|email|p\.[^=&#]*)=)[^&#]*/gi, `$1${MASK}`);
+    .replace(/(\/reset-password\/)[^/?#]+/g, `$1${MASK}`);
+  return maskParameters(masked, URL_PARAMETER_NAME, URL_PARAMETER_END, PERSONAL_NAME);
 }
 
 /**

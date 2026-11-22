@@ -155,8 +155,22 @@ describe("masking", () => {
     ],
     ["an OAuth code and state", "/callback?code=c0de&state=st8", "/callback?code=…&state=…"],
     ["a password parameter", "/login?password=hunter2", "/login?password=…"],
+    ["a percent-encoded name", "/hook?%74oken=secret&x=1", "/hook?%74oken=…&x=1"],
+    ["an encoded capital", "/send?api_%4Bey=xyz", "/send?api_%4Bey=…"],
+    ["mixed-case escapes", "/a?%50a%73%53word=hunter2", "/a?%50a%73%53word=…"],
+    ["an encoded name after ;", "/a?x=1;%73ession=s1", "/a?x=1;%73ession=…"],
+    ["a malformed escape stays", "/a?%zztoken=t0k&b=%7", "/a?%zztoken=…&b=%7"],
+    ["a parameter inside another's value", "/go?next=/cb?token=t0k", "/go?next=/cb?token=…"],
   ])("%s", (_name, text, masked) => {
     expect(redactText(text)).toBe(masked);
+  });
+
+  test("an encoded name that only looks like one stays, and a long query takes linear time", () => {
+    expect(redactText("/a?%74ok=1&%6Ey=2&%E9=3")).toBe("/a?%74ok=1&%6Ey=2&%E9=3");
+    const long = `/a?${"%7".repeat(50_000)}${"?x".repeat(50_000)}=1`;
+    const started = performance.now();
+    expect(redactText(long)).toBe(long);
+    expect(performance.now() - started).toBeLessThan(500);
   });
 
   test("prose and plain URLs stay as they are", () => {
@@ -209,6 +223,9 @@ describe("masking", () => {
     ["/projects/p1/replays?user=alice%40x.com", "/projects/p1/replays?user=…"],
     ["/projects/p1/users?user=bob&env=staging", "/projects/p1/users?user=…&env=staging"],
     ["/projects/p1/errors?user=bob", "/projects/p1/errors?user=…"],
+    // The same names percent-encoded, as a server reads them.
+    ["/projects/p1/errors?%75ser=bob", "/projects/p1/errors?%75ser=…"],
+    ["/api/projects/p1/logs?%53EARCH=bob&period=1h", "/api/projects/p1/logs?%53EARCH=…&period=1h"],
     // Text a user typed: the Logs page's search, the logs' and reports' API.
     ["/projects/p1/logs?q=bob%40x.com&live=1", "/projects/p1/logs?q=…&live=1"],
     ["/api/projects/p1/logs?search=bob&period=1h", "/api/projects/p1/logs?search=…&period=1h"],
