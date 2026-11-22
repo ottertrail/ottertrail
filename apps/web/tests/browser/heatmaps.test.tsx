@@ -1123,3 +1123,166 @@ describe("open on your site", () => {
     expect(popup?.location.href).toBe("");
   });
 });
+
+/** A saved desktop view of /pricing, by the owner. */
+const SAVED = {
+  configured: true,
+  snapshots: [
+    {
+      device: "desktop" as const,
+      width: 1280,
+      height: 800,
+      pageHeight: 3200,
+      savedAt: "2026-11-15T07:30:00.000Z",
+      savedBy: "Ada Owner",
+    },
+  ],
+};
+
+/** The saved view's frame, standing in for the player page: messages from it, as the browser delivers them. */
+async function savedViewFrame() {
+  await expect.poll(() => document.querySelector("iframe[title^='Saved view']")).not.toBeNull();
+  const frame = document.querySelector<HTMLIFrameElement>("iframe[title^='Saved view']");
+  if (frame === null) throw new Error("No saved view frame");
+  const stand = document.createElement("iframe");
+  document.body.append(stand);
+  const player = stand.contentWindow;
+  if (player === null) throw new Error("No window for the fake player");
+  player.postMessage = () => undefined;
+  Object.defineProperty(frame, "contentWindow", { value: player });
+  const deliver = (data: unknown, origin = location.origin, source: Window | null = player) =>
+    window.dispatchEvent(new MessageEvent("message", { data, origin, source }));
+  return { frame, deliver };
+}
+
+describe("a saved view", () => {
+  test("without one, a line says how to save it, and no frame shows", async () => {
+    const api = installFakeApi();
+    renderApp(`${HEATMAPS}?path=%2Fpricing&device=desktop`);
+    await expect.element(ready()).toBeVisible();
+    await expect
+      .element(page.getByText(/press “Save this view”\.$/))
+      .toHaveTextContent(
+        "To see this heatmap over the page here, open it with “Open on your site” and press “Save this view”.",
+      );
+    expect(document.querySelector("iframe")).toBeNull();
+    expect(api.requests).toContain(
+      `/api/projects/${PROJECT.id}/heatmaps/snapshots?path=%2Fpricing`,
+    );
+    // The overlay's link names the page, so its session may save a view of it alone.
+    stubOpen();
+    await page.getByRole("button", { name: "Open on your site" }).click();
+    await expect
+      .poll(() => api.bodies.find((item) => item.path.endsWith("/heatmaps/overlay-link"))?.body)
+      .toEqual({ path: "/pricing" });
+    vi.restoreAllMocks();
+  });
+
+  test("without object storage nothing about it shows", async () => {
+    const api = installFakeApi({ heatmapSnapshots: () => ({ configured: false, snapshots: [] }) });
+    renderApp(`${HEATMAPS}?path=%2Fpricing&device=desktop`);
+    await expect.element(ready()).toBeVisible();
+    await expect.poll(() => api.requests.some((item) => item.includes("/snapshots?"))).toBe(true);
+    expect(document.querySelector("[data-slot=saved-by]")).toBeNull();
+    expect(document.querySelector("[data-slot=no-saved-view]")).toBeNull();
+  });
+
+  test("for all devices, no saved view shows: each is of one device", async () => {
+    installFakeApi({ heatmapSnapshots: () => SAVED });
+    renderApp(`${HEATMAPS}?path=%2Fpricing&device=all`);
+    await expect.element(ready()).toBeVisible();
+    expect(document.querySelector("[data-slot=saved-by]")).toBeNull();
+    expect(document.querySelector("[data-slot=no-saved-view]")).toBeNull();
+  });
+
+  test("with one, the heatmap over it in the player's frame, who saved it and when, and the elements it lacks", async () => {
+    installFakeApi({ heatmapSnapshots: () => SAVED });
+    renderApp(`${HEATMAPS}?path=%2Fpricing&device=desktop`);
+    await expect.element(ready()).toBeVisible();
+    await expect
+      .element(page.getByText(/^Saved 15 Nov 2026, 15:30 by Ada Owner at 1280 px wide\.$/))
+      .toBeVisible();
+    const { frame, deliver } = await savedViewFrame();
+    const src = new URL(frame.getAttribute("src") ?? "", location.origin);
+    expect(src.pathname).toBe(`/api/projects/${PROJECT.id}/heatmaps/snapshots/desktop/player`);
+    expect(Object.fromEntries(src.searchParams)).toMatchObject({
+      path: "/pricing",
+      period: "7d",
+      theme: "dark",
+    });
+    // As wide as the column, as tall as the saved viewport's shape.
+    expect(frame.style.aspectRatio).toBe("1280 / 800");
+    expect(frame.hasAttribute("sandbox")).toBe(false);
+
+    deliver({
+      type: "ottertrail:snapshot-missing",
+      missing: [{ label: "promo", element: "section>a", clicks: 12 }],
+      total: 3,
+      found: 9,
+    });
+    await expect.element(page.getByText("Not on this snapshot (3)")).toBeVisible();
+    await page.getByText("Not on this snapshot (3)").click();
+    const list = page.getByRole("list", { name: "Not on this snapshot" });
+    await expect.element(list).toHaveTextContent("promo (section>a)12 clicksand 2 more");
+    // Only from that frame, on this origin, in that shape.
+    deliver(
+      { type: "ottertrail:snapshot-missing", missing: [], total: 0, found: 0 },
+      "https://evil.example",
+    );
+    deliver(
+      { type: "ottertrail:snapshot-missing", missing: [], total: 0, found: 0 },
+      location.origin,
+      window,
+    );
+    deliver({ type: "ottertrail:snapshot-missing", missing: "<b>x</b>", total: 0, found: 0 });
+    await expect.element(page.getByText("Not on this snapshot (3)")).toBeVisible();
+  });
+
+  test("another device without one shows the line instead", async () => {
+    installFakeApi({ heatmapSnapshots: () => SAVED });
+    renderApp(`${HEATMAPS}?path=%2Fpricing&device=mobile`);
+    await expect.element(ready()).toBeVisible();
+    await expect.element(page.getByText(/press “Save this view”\.$/)).toBeVisible();
+    expect(document.querySelector("iframe[title^='Saved view']")).toBeNull();
+  });
+
+  test("Delete asks first, then removes it", async () => {
+    let saved = SAVED;
+    const deleted: string[] = [];
+    installFakeApi({
+      heatmapSnapshots: () => saved,
+      deleteHeatmapSnapshot: (device, query) => {
+        deleted.push(`${device} ${query.get("path") ?? ""}`);
+        saved = { configured: true, snapshots: [] };
+        return new Response(null, { status: 204 });
+      },
+    });
+    renderApp(`${HEATMAPS}?path=%2Fpricing&device=desktop`);
+    await expect.element(ready()).toBeVisible();
+    await page.getByRole("button", { name: "Delete", exact: true }).click();
+    const dialog = page.getByRole("dialog", { name: "Delete the saved view?" });
+    await expect.element(dialog).toBeVisible();
+    expect(dialog.element().textContent).toContain(
+      "The desktop view of /pricing is permanently deleted. The heatmap's data stays.",
+    );
+    expect(deleted).toEqual([]);
+    await dialog.getByRole("button", { name: "Delete", exact: true }).click();
+    await expect.element(dialog).not.toBeInTheDocument();
+    expect(deleted).toEqual(["desktop /pricing"]);
+    await expect.element(page.getByText(/press “Save this view”\.$/)).toBeVisible();
+    expect(document.querySelector("iframe[title^='Saved view']")).toBeNull();
+  });
+
+  test.each([390, 1440])("at %i wide, the view fits without sideways scrolling", async (width) => {
+    await page.viewport(width, 900);
+    installFakeApi({ heatmapSnapshots: () => SAVED });
+    renderApp(`${HEATMAPS}?path=%2Fpricing&device=desktop`);
+    await expect.element(ready()).toBeVisible();
+    const { frame } = await savedViewFrame();
+    const box = frame.getBoundingClientRect();
+    expect(box.right).toBeLessThanOrEqual(width);
+    expect(box.width).toBeGreaterThan(200);
+    expect(box.height).toBeLessThanOrEqual(900 * 0.75 + 1);
+    expectNoSidewaysScroll(width);
+  });
+});

@@ -1,9 +1,12 @@
 /**
- * dist/player.js: the script of the player page the API serves at
- * /api/projects/:id/replays/:replayId/player. Its body names the recording
- * and the error's time.
+ * dist/player.js: the script of the player pages the API serves. The
+ * replay player's (/api/projects/:id/replays/:replayId/player) body names
+ * the recording and the error's time; a saved heatmap view's
+ * (/api/projects/:id/heatmaps/snapshots/:device/player) names the
+ * snapshot and its heatmap (snapshot.ts).
  */
 import { startPlayer } from "./player.ts";
+import { startSnapshot } from "./snapshot.ts";
 
 function errorAtOf(text: string | undefined): number | null {
   if (text === undefined || !/^\d+$/.test(text)) return null;
@@ -11,16 +14,18 @@ function errorAtOf(text: string | undefined): number | null {
   return Number.isSafeInteger(value) ? value : null;
 }
 
-const { replayUrl, errorAt } = document.body.dataset;
-// Only a path on this origin: the page's own policy allows nothing else.
-if (replayUrl !== undefined && replayUrl.startsWith("/") && !replayUrl.startsWith("//")) {
-  startPlayer(document.body, {
-    replayUrl,
-    errorAt: errorAtOf(errorAt),
-    // The dashboard that frames this page (frame-ancestors 'self'): the
-    // parent window, on this page's own origin. Not framed: no messages.
-    peer: window.parent === window ? null : { window: window.parent, origin: location.origin },
-  });
+/** Only a path on this origin: the page's own policy allows nothing else. */
+const isOwnPath = (url: string | undefined): url is string =>
+  url !== undefined && url.startsWith("/") && !url.startsWith("//");
+
+const { replayUrl, errorAt, snapshotUrl, heatmapUrl } = document.body.dataset;
+// The dashboard that frames this page (frame-ancestors 'self'): the
+// parent window, on this page's own origin. Not framed: no messages.
+const peer = window.parent === window ? null : { window: window.parent, origin: location.origin };
+if (isOwnPath(snapshotUrl) && isOwnPath(heatmapUrl)) {
+  startSnapshot(document.body, { snapshotUrl, heatmapUrl, peer });
+} else if (isOwnPath(replayUrl)) {
+  startPlayer(document.body, { replayUrl, errorAt: errorAtOf(errorAt), peer });
 } else {
   const message = document.createElement("p");
   message.setAttribute("role", "alert");

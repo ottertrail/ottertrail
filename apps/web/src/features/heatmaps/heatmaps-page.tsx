@@ -58,6 +58,7 @@ import { elementName, elementTitle, formatPosition, formatShare } from "./format
 import { OpenOnSite } from "./open-on-site";
 import { ScrollReachChart, ScrollReachTable } from "./scroll-reach-chart";
 import { type DeviceChoice, type HeatmapsSearch, heatmapsSearchOf } from "./search";
+import { SnapshotSection } from "./snapshot-view";
 
 /** The device with the most pageviews of a page's answer for all devices; none without any. */
 function topDeviceOf(heatmap: Heatmap): HeatmapDevice | undefined {
@@ -380,7 +381,17 @@ function Loading() {
 }
 
 /** The figures, the scroll chart, and the two tables of one page. */
-function Report({ heatmap, projectId }: { heatmap: Heatmap; projectId: string }) {
+function Report({
+  heatmap,
+  projectId,
+  range,
+  environment,
+}: {
+  heatmap: Heatmap;
+  projectId: string;
+  range: PageRange;
+  environment: string;
+}) {
   const canManage = useAccess().can("projects");
   const { totals } = heatmap;
   // Scroll depth arrives when a visitor leaves the page: today's figures still grow.
@@ -477,6 +488,14 @@ function Report({ heatmap, projectId }: { heatmap: Heatmap; projectId: string })
           </p>
         )}
       </section>
+      <SnapshotSection
+        projectId={projectId}
+        path={heatmap.path}
+        device={heatmap.device ?? undefined}
+        range={range}
+        environment={environment}
+        timeZone={heatmap.timeZone}
+      />
       <ReportChart
         title="How far visitors scrolled"
         description="Each bar is the share of pageviews that reached that depth, from the top of the page (10%) to its bottom. The line across the bars is the average fold: how much of the page showed without scrolling."
@@ -686,7 +705,7 @@ export function HeatmapsPage({
         />
       );
   } else {
-    body = <Report heatmap={data} projectId={projectId} />;
+    body = <Report heatmap={data} projectId={projectId} range={range} environment={environment} />;
   }
 
   return (

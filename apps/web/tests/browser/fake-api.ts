@@ -27,7 +27,7 @@ import {
 } from "../../src/lib/errors-api.ts";
 import type { SavedFunnel } from "../../src/lib/funnels-api.ts";
 import type { GoalResult } from "../../src/lib/goals-api.ts";
-import type { Heatmap, HeatmapPages } from "../../src/lib/heatmaps-api.ts";
+import type { Heatmap, HeatmapPages, HeatmapSnapshots } from "../../src/lib/heatmaps-api.ts";
 import type { HostCharts, HostList } from "../../src/lib/hosts-api.ts";
 import type {
   LiveLogs,
@@ -208,6 +208,10 @@ export interface FakeApi {
   heatmap: (query: URLSearchParams) => Heatmap | Response | Promise<Heatmap | Response>;
   /** Answers POST /api/projects/:id/heatmaps/overlay-link; by default, OVERLAY_TOKEN. */
   overlayLink: () => { token: string; expiresAt: string } | Response;
+  /** Answers GET /api/projects/:id/heatmaps/snapshots; by default, none saved. */
+  heatmapSnapshots: (query: URLSearchParams) => HeatmapSnapshots | Response;
+  /** Answers DELETE /api/projects/:id/heatmaps/snapshots/:device; by default, 204. */
+  deleteHeatmapSnapshot: (device: string, query: URLSearchParams) => Response;
   /** Answers GET /api/projects/:id/events; by default, fakeProductEvents. */
   productEvents: (query: URLSearchParams) => ProductEvents | Response;
   /** Answers GET /api/projects/:id/events/:name; by default, fakeProductEvent. */
@@ -4007,6 +4011,14 @@ async function answer(api: FakeApi, url: URL, init: RequestInit | undefined): Pr
     const result = api.overlayLink();
     return result instanceof Response ? result : json(result);
   }
+  if (/^\/api\/projects\/[^/]+\/heatmaps\/snapshots$/.test(path)) {
+    const result = api.heatmapSnapshots(url.searchParams);
+    return result instanceof Response ? result : json(result);
+  }
+  const snapshotFor = /^\/api\/projects\/[^/]+\/heatmaps\/snapshots\/([a-z]+)$/.exec(path);
+  if (snapshotFor?.[1] !== undefined && init?.method === "DELETE") {
+    return api.deleteHeatmapSnapshot(snapshotFor[1], url.searchParams);
+  }
   if (/^\/api\/projects\/[^/]+\/heatmaps\/pages$/.test(path)) {
     const result = api.heatmapPages(url.searchParams);
     return result instanceof Response ? result : json(result);
@@ -4314,6 +4326,8 @@ export function installFakeApi(overrides: Partial<FakeApi> = {}): FakeApi {
     heatmapPages: fakeHeatmapPages,
     heatmap: fakeHeatmap,
     overlayLink: () => ({ token: OVERLAY_TOKEN, expiresAt: "2026-11-16T10:05:00.000Z" }),
+    heatmapSnapshots: () => ({ configured: true, snapshots: [] }),
+    deleteHeatmapSnapshot: () => new Response(null, { status: 204 }),
     productEvents: fakeProductEvents,
     productEvent: fakeProductEvent,
     funnel: fakeFunnel,

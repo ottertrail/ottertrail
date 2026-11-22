@@ -34,3 +34,15 @@ export function formatShare(value: number | null): string {
 export function formatPosition(x: number, y: number): string {
   return `${Math.round(x * 100)}% across, ${Math.round(y * 100)}% down`;
 }
+
+/** "22 Nov 2026, 15:04" in the instance's timezone. */
+export function formatSavedAt(iso: string, timeZone: string): string {
+  return new Intl.DateTimeFormat("en-GB", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZone,
+  }).format(new Date(iso));
+}

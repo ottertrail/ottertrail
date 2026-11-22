@@ -243,11 +243,89 @@ export const heatmapQuery = (
  * (docs/web-analytics.md, "The overlay on your site"). Made only when the
  * reader asks to open it.
  */
-export async function mintOverlayLink(projectId: string): Promise<{ token: string }> {
+export async function mintOverlayLink(projectId: string, path: string): Promise<{ token: string }> {
   return expectShape(
+    // The page it opens: the overlay may save a view of that page only.
     await apiRequest(`/api/projects/${encodeURIComponent(projectId)}/heatmaps/overlay-link`, {
       method: "POST",
+      body: { path },
     }),
     (value): value is { token: string } => isRecord(value) && isText(value.token),
+  );
+}
+
+/** One saved view of a page (docs/web-analytics.md, "Saved views"). */
+export interface HeatmapSnapshot {
+  device: HeatmapDevice;
+  /** The viewport it was saved at, in CSS pixels. */
+  width: number;
+  height: number;
+  pageHeight: number;
+  savedAt: string;
+  /** Who saved it; null once that user was removed. */
+  savedBy: string | null;
+}
+
+/** GET /api/projects/:id/heatmaps/snapshots?path=… */
+export interface HeatmapSnapshots {
+  /** Whether the server can keep saved views: it has an object store. */
+  configured: boolean;
+  snapshots: HeatmapSnapshot[];
+}
+
+const isSnapshot = (value: unknown): value is HeatmapSnapshot =>
+  isRecord(value) &&
+  isHeatmapDevice(value.device) &&
+  isNumber(value.width) &&
+  isNumber(value.height) &&
+  isNumber(value.pageHeight) &&
+  isText(value.savedAt) &&
+  isTextOrNull(value.savedBy);
+
+const isSnapshots = (value: unknown): value is HeatmapSnapshots =>
+  isRecord(value) && typeof value.configured === "boolean" && isListOf(value.snapshots, isSnapshot);
+
+export const heatmapSnapshotsKey = (projectId: string, path: string) =>
+  ["heatmaps", projectId, "snapshots", path] as const;
+
+/** The page's saved views, one per device class at most. */
+export const heatmapSnapshotsQuery = (projectId: string, path: string) =>
+  queryOptions({
+    queryKey: heatmapSnapshotsKey(projectId, path),
+    queryFn: async ({ signal }) =>
+      expectShape(
+        await apiRequest(
+          `/api/projects/${encodeURIComponent(projectId)}/heatmaps/snapshots?${new URLSearchParams({ path }).toString()}`,
+          { signal },
+        ),
+        isSnapshots,
+      ),
+  });
+
+/**
+ * The page that shows a saved view with the heatmap over it, for the
+ * report's range and environment: the replay player's, served by the API
+ * under its own Content Security Policy.
+ */
+export function snapshotPlayerSrc(
+  projectId: string,
+  device: HeatmapDevice,
+  path: string,
+  range: PageRange,
+  environment: string,
+): string {
+  const query = new URLSearchParams({ path, ...params(range, environment, undefined) });
+  return `/api/projects/${encodeURIComponent(projectId)}/heatmaps/snapshots/${device}/player?${query.toString()}`;
+}
+
+/** DELETE /api/projects/:id/heatmaps/snapshots/:device?path=… */
+export async function deleteHeatmapSnapshot(
+  projectId: string,
+  device: HeatmapDevice,
+  path: string,
+): Promise<void> {
+  await apiRequest(
+    `/api/projects/${encodeURIComponent(projectId)}/heatmaps/snapshots/${device}?${new URLSearchParams({ path }).toString()}`,
+    { method: "DELETE" },
   );
 }

@@ -97,7 +97,7 @@ export function OpenOnSite({
     popup.opener = null;
     setOpening(true);
     try {
-      const { token } = await mintOverlayLink(projectId);
+      const { token } = await mintOverlayLink(projectId, path);
       popup.location.href = overlayUrl(siteOrigin(hostname, local ? port.trim() : ""), path, token);
     } catch (error) {
       popup.close();
