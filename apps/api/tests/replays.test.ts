@@ -1,6 +1,7 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { gunzipSync, gzipSync } from "node:zlib";
 
+import { InsertQueryNode, type KyselyPlugin } from "kysely";
 import { afterAll, beforeAll, describe, expect, test } from "vite-plus/test";
 
 import { purgeDeletedProjects } from "../src/clickhouse/delete-events.ts";
@@ -294,6 +295,39 @@ describe("collecting a replay's chunks", () => {
   });
 });
 
+/** Fails the first insert into replays with this PostgreSQL code, as pg reports one. */
+function failingOnce(code: string): KyselyPlugin {
+  let failed = false;
+  return {
+    transformQuery: ({ node }) => {
+      if (!failed && InsertQueryNode.is(node) && node.into?.table.identifier.name === "replays") {
+        failed = true;
+        throw Object.assign(new Error(`a PostgreSQL error ${code}`), { code });
+      }
+      return node;
+    },
+    transformResult: async ({ result }) => result,
+  };
+}
+
+/** The IDs of a project's joined replays. */
+const insertedOf = async (projectId: string) =>
+  (
+    await dashboard.db
+      .selectFrom("replays")
+      .select("replay_id")
+      .where("project_id", "=", projectId)
+      .execute()
+  ).map((row) => row.replay_id);
+
+/** A new project with two whole replays sent. */
+const pair = async (name: string) => {
+  const project = await newProject(name);
+  const replays = [randomUUID(), randomUUID()];
+  for (const replay of replays) await sendRecording(project.public_key, replay);
+  return { project, replays };
+};
+
 describe("joining a replay's chunks", () => {
   test("a replay the store refuses waits for the next run; the rest of the batch is joined", async () => {
     const project = await newProject("Refused");
@@ -339,6 +373,60 @@ describe("joining a replay's chunks", () => {
       failed: 0,
     });
     expect((await joinedOf()).toSorted()).toEqual([refusedReplay, otherReplay].toSorted());
+  });
+
+  test("drops a recording whose times are not a clock's; the rest of the batch is joined", async () => {
+    const project = await newProject("Far future");
+    const [farOff, negative, other] = [randomUUID(), randomUUID(), randomUUID()];
+    const events = JSON.parse(RECORDING).events as { timestamp: number }[];
+    const at = (timestamp: number) =>
+      JSON.stringify({
+        v: 1,
+        events: events.map((event, index) => (index === 2 ? { ...event, timestamp } : event)),
+      });
+    await sendRecording(project.public_key, farOff, at(1e20));
+    await sendRecording(project.public_key, negative, at(-1));
+    await sendRecording(project.public_key, other);
+
+    const result = await joinReplays(dashboard.db, store, { onlyProjectId: project.id });
+    expect(result).toEqual({ joined: 1, dropped: 2, failed: 0 });
+    for (const replay of [farOff, negative]) {
+      expect(await chunkCount(project.id, replay)).toBe("0");
+      expect(await store.get(replayKeyOf(project.id, replay))).toBeNull();
+    }
+    expect(await chunkCount(project.id, other)).toBe("3");
+    expect(await store.get(replayKeyOf(project.id, other))).not.toBeNull();
+  });
+
+  test("one replay's error is its own: dropped when it is the data's, kept when it may pass", async () => {
+    // Out of range (22003): the same on every run, so dropped; the other is joined.
+    const data = await pair("Data error");
+    const errors: { dropped: boolean }[] = [];
+    const dropped = await joinReplays(dashboard.db.withPlugin(failingOnce("22003")), store, {
+      onlyProjectId: data.project.id,
+      onError: (_error, replay) => errors.push(replay),
+    });
+    expect(dropped).toEqual({ joined: 1, dropped: 1, failed: 0 });
+    expect(errors).toMatchObject([{ projectId: data.project.id, dropped: true }]);
+    const [joinedData] = await insertedOf(data.project.id);
+    const droppedData = data.replays.find((replay) => replay !== joinedData) ?? "";
+    expect(await chunkCount(data.project.id, droppedData)).toBe("0");
+    // Its object, written before the row was refused, went with it.
+    expect(await store.get(replayKeyOf(data.project.id, droppedData))).toBeNull();
+
+    // The connection lost (08006): its chunks wait, and the next run joins it.
+    const lost = await pair("Connection lost");
+    const failed = await joinReplays(dashboard.db.withPlugin(failingOnce("08006")), store, {
+      onlyProjectId: lost.project.id,
+    });
+    expect(failed).toMatchObject({ joined: 1, dropped: 0, failed: 1 });
+    expect(String(failed.firstError)).toContain("08006");
+    expect(await joinReplays(dashboard.db, store, { onlyProjectId: lost.project.id })).toEqual({
+      joined: 1,
+      dropped: 0,
+      failed: 0,
+    });
+    expect((await insertedOf(lost.project.id)).toSorted()).toEqual(lost.replays.toSorted());
   });
 
   test("joins a complete replay into one object, and deletes its chunks later", async () => {

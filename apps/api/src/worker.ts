@@ -170,7 +170,18 @@ let replaysFailing = false;
 const stopReplays = every(REPLAY_INTERVAL_MS, async () => {
   if (objectStore === null) return;
   try {
-    const { firstError, ...result } = await joinReplays(db, objectStore);
+    const { firstError, ...result } = await joinReplays(db, objectStore, {
+      onError: (error, { projectId, replayId, dropped }) => {
+        // A failure that waits for the next run is logged once, below.
+        if (dropped) {
+          log("error", "a session replay could not be joined and was dropped", {
+            projectId,
+            replayId,
+            err: String(error),
+          });
+        }
+      },
+    });
     const chunksDeleted = await deleteJoinedChunks(db);
     if (result.joined + result.dropped + chunksDeleted > 0) {
       log("info", "session replays joined", { ...result, chunksDeleted });
@@ -178,7 +189,7 @@ const stopReplays = every(REPLAY_INTERVAL_MS, async () => {
     // Replays the store refused wait for the next run; the others went on.
     if (result.failed > 0) {
       if (!replaysFailing) {
-        log("error", "the object store refused some session replays; they wait for the next run", {
+        log("error", "some session replays could not be joined; they wait for the next run", {
           failed: result.failed,
           err: String(firstError),
         });

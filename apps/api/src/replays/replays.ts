@@ -30,6 +30,14 @@ const MAX_REPLAY_JSON_BYTES = 64 * 1024 ** 2;
 export const REPLAY_IDLE_MS = 5 * 60_000;
 /** Chunks are kept this long after their replay is joined, past the tracker's retries. */
 export const CHUNK_KEEP_MS = 60 * 60_000;
+/**
+ * The times a recording's events may have, in epoch milliseconds: from
+ * 1970, as on a device whose clock was reset, to 2100. A visitor's clock may
+ * be wrong by years, which the join corrects (derive.ts), but past these a
+ * time is not a clock's, and the correction would not fit in PostgreSQL.
+ */
+export const EARLIEST_EVENT_TIME_MS = 0;
+export const LATEST_EVENT_TIME_MS = Date.UTC(2100, 0, 1);
 /** How long replays are kept: the shortest retention a project can choose for events. */
 export const REPLAY_RETENTION_DAYS = 30;
 
@@ -189,7 +197,8 @@ function checkRecording(text: string): { text: string; events: RecordedEvent[] }
     isRecord(event) &&
     typeof event.type === "number" &&
     typeof event.timestamp === "number" &&
-    Number.isFinite(event.timestamp);
+    event.timestamp >= EARLIEST_EVENT_TIME_MS &&
+    event.timestamp < LATEST_EVENT_TIME_MS;
   return events.length > 0 && events.every(isEvent)
     ? { text, events: events.filter(isEvent) }
     : null;
@@ -212,6 +221,11 @@ function checkRecording(text: string): { text: string; events: RecordedEvent[] }
  * A replay whose object the store refuses (Garage's bucket quota, a store
  * that is down) keeps its chunks and is tried again on the next run; the
  * others of the batch go on. `failed` counts them, with the first error.
+ * Any other error is one replay's alone too: one that will pass (PostgreSQL
+ * unreachable, a conflict between transactions) counts as failed, and its
+ * chunks wait; one of the replay's own data (PostgreSQL refusing a value, a
+ * recording the join cannot read) would fail on every run, so the replay is
+ * dropped, its chunks and any object deleted. `onError` hears of each.
  */
 export async function joinReplays(
   db: Kysely<Database>,
@@ -220,11 +234,17 @@ export async function joinReplays(
     now = new Date(),
     limit = 100,
     onlyProjectId,
+    onError = () => undefined,
   }: {
     now?: Date;
     limit?: number;
     /** One project's replays only (the development seed); every project's when left out. */
     onlyProjectId?: string;
+    /** Told of each replay an unexpected error failed (kept) or dropped. */
+    onError?: (
+      error: unknown,
+      replay: { projectId: string; replayId: string; dropped: boolean },
+    ) => void;
   } = {},
 ): Promise<{ joined: number; dropped: number; failed: number; firstError?: unknown }> {
   const idleSince = new Date(now.getTime() - REPLAY_IDLE_MS);
@@ -258,89 +278,136 @@ export async function joinReplays(
   let failed = 0;
   let firstError: unknown;
   for (const { project_id: projectId, replay_id: replayId } of candidates) {
-    const outcome = await db.transaction().execute(async (trx) => {
-      const project = await trx
-        .selectFrom("projects")
-        .select("id")
-        .where("id", "=", projectId)
-        .forShare()
-        .executeTakeFirst();
-      if (project === undefined) return "skipped"; // Deleted: its chunks went with it.
-      const chunks = await trx
-        .selectFrom("replay_chunks")
-        .select(["seq", "last", "cut", "data", "received_at"])
-        .where("project_id", "=", projectId)
-        .where("replay_id", "=", replayId)
-        .orderBy("seq")
-        .execute();
-      // Deleted since it was found: nothing to join.
-      if (chunks.length === 0) return "skipped";
-      const lastAt = chunks.findIndex((chunk) => chunk.last);
-      // Complete: chunks 0 to the last, none missing.
-      const complete =
-        lastAt !== -1 && chunks.slice(0, lastAt + 1).every((chunk, index) => chunk.seq === index);
-      const latest = chunks.reduce((time, chunk) => Math.max(time, chunk.received_at.getTime()), 0);
-      if (!complete && latest >= idleSince.getTime()) {
-        // A chunk may still come, as a retry: wait.
-        return "skipped";
-      }
-      // What came in order from the first chunk.
-      let inOrder = 0;
-      while (chunks[inOrder]?.seq === inOrder) inOrder += 1;
-      const kept = complete ? chunks.slice(0, lastAt + 1) : chunks.slice(0, inOrder);
-      const unpacked = kept.length === 0 ? null : unpack(kept.map((chunk) => chunk.data));
-      const closed = complete || unpacked === null ? unpacked : closeRecording(unpacked);
-      const recording = closed === null ? null : checkRecording(closed);
-      if (recording === null) {
-        // Not a recording, or nothing of one: once its last chunk came, or
-        // it went quiet, nothing more will make it one.
-        await trx
-          .deleteFrom("replay_chunks")
+    const objectKey = replayKeyOf(projectId, replayId);
+    const outcome = await db
+      .transaction()
+      .execute(async (trx) => {
+        const project = await trx
+          .selectFrom("projects")
+          .select("id")
+          .where("id", "=", projectId)
+          .forShare()
+          .executeTakeFirst();
+        if (project === undefined) return "skipped"; // Deleted: its chunks went with it.
+        const chunks = await trx
+          .selectFrom("replay_chunks")
+          .select(["seq", "last", "cut", "data", "received_at"])
           .where("project_id", "=", projectId)
           .where("replay_id", "=", replayId)
+          .orderBy("seq")
           .execute();
-        return "dropped";
-      }
-      const compressed = gzipSync(recording.text);
-      // What the list and the timeline show, worked out once, here.
-      const firstReceivedAt = kept.reduce(
-        (time, chunk) => (chunk.received_at < time ? chunk.received_at : time),
-        kept[0]?.received_at ?? now,
-      );
-      const details = deriveReplay(recording.events, firstReceivedAt);
-      const objectKey = replayKeyOf(projectId, replayId);
-      try {
-        await store.put(objectKey, compressed, "application/gzip");
-      } catch (error) {
-        // Nothing written: the chunks stay for the next run.
-        if (failed === 0) firstError = error;
-        return "failed";
-      }
-      await trx
-        .insertInto("replays")
-        .values({
-          project_id: projectId,
-          replay_id: replayId,
-          object_key: objectKey,
-          bytes: compressed.byteLength,
-          cut: !complete || kept.some((chunk) => chunk.cut),
-          started_at: details.startedAt,
-          ended_at: details.endedAt,
-          clock_offset_ms: details.clockOffsetMs,
-          pages: details.pages,
-          clicks: details.clicks,
-          page_changes: details.pageChanges,
-          timeline: JSON.stringify(details.timeline),
-        })
-        .onConflict((oc) => oc.columns(["project_id", "replay_id"]).doNothing())
-        .execute();
-      return "joined";
-    });
+        // Deleted since it was found: nothing to join.
+        if (chunks.length === 0) return "skipped";
+        const lastAt = chunks.findIndex((chunk) => chunk.last);
+        // Complete: chunks 0 to the last, none missing.
+        const complete =
+          lastAt !== -1 && chunks.slice(0, lastAt + 1).every((chunk, index) => chunk.seq === index);
+        const latest = chunks.reduce(
+          (time, chunk) => Math.max(time, chunk.received_at.getTime()),
+          0,
+        );
+        if (!complete && latest >= idleSince.getTime()) {
+          // A chunk may still come, as a retry: wait.
+          return "skipped";
+        }
+        // What came in order from the first chunk.
+        let inOrder = 0;
+        while (chunks[inOrder]?.seq === inOrder) inOrder += 1;
+        const kept = complete ? chunks.slice(0, lastAt + 1) : chunks.slice(0, inOrder);
+        const unpacked = kept.length === 0 ? null : unpack(kept.map((chunk) => chunk.data));
+        const closed = complete || unpacked === null ? unpacked : closeRecording(unpacked);
+        const recording = closed === null ? null : checkRecording(closed);
+        if (recording === null) {
+          // Not a recording, or nothing of one: once its last chunk came, or
+          // it went quiet, nothing more will make it one.
+          await trx
+            .deleteFrom("replay_chunks")
+            .where("project_id", "=", projectId)
+            .where("replay_id", "=", replayId)
+            .execute();
+          return "dropped";
+        }
+        const compressed = gzipSync(recording.text);
+        // What the list and the timeline show, worked out once, here.
+        const firstReceivedAt = kept.reduce(
+          (time, chunk) => (chunk.received_at < time ? chunk.received_at : time),
+          kept[0]?.received_at ?? now,
+        );
+        const details = deriveReplay(recording.events, firstReceivedAt);
+        try {
+          await store.put(objectKey, compressed, "application/gzip");
+        } catch (error) {
+          // Nothing written: the chunks stay for the next run.
+          if (failed === 0) firstError = error;
+          return "failed";
+        }
+        await trx
+          .insertInto("replays")
+          .values({
+            project_id: projectId,
+            replay_id: replayId,
+            object_key: objectKey,
+            bytes: compressed.byteLength,
+            cut: !complete || kept.some((chunk) => chunk.cut),
+            started_at: details.startedAt,
+            ended_at: details.endedAt,
+            clock_offset_ms: details.clockOffsetMs,
+            pages: details.pages,
+            clicks: details.clicks,
+            page_changes: details.pageChanges,
+            timeline: JSON.stringify(details.timeline),
+          })
+          .onConflict((oc) => oc.columns(["project_id", "replay_id"]).doNothing())
+          .execute();
+        return "joined";
+      })
+      .catch(async (error: unknown) => {
+        if (isTransient(error)) {
+          onError(error, { projectId, replayId, dropped: false });
+          if (failed === 0) firstError = error;
+          return "failed" as const;
+        }
+        try {
+          await store.delete([objectKey]);
+          await db
+            .deleteFrom("replay_chunks")
+            .where("project_id", "=", projectId)
+            .where("replay_id", "=", replayId)
+            .execute();
+        } catch (deleteError) {
+          // Dropped on a later run.
+          onError(deleteError, { projectId, replayId, dropped: false });
+          if (failed === 0) firstError = deleteError;
+          return "failed" as const;
+        }
+        onError(error, { projectId, replayId, dropped: true });
+        return "dropped" as const;
+      });
     if (outcome === "joined") joined += 1;
     if (outcome === "dropped") dropped += 1;
     if (outcome === "failed") failed += 1;
   }
   return failed === 0 ? { joined, dropped, failed } : { joined, dropped, failed, firstError };
+}
+
+/** PostgreSQL's classes of errors that are the data's: a value out of range, a broken constraint. */
+const DATA_ERROR_CLASSES = new Set(["22", "23"]);
+
+/**
+ * Whether an error may pass by the next run: anything but PostgreSQL
+ * refusing the replay's data (SQLSTATE classes 22 and 23) and errors of the
+ * join's own code (a RangeError or TypeError), which come back every time.
+ */
+function isTransient(error: unknown): boolean {
+  const code = isRecord(error) ? error.code : undefined;
+  if (typeof code === "string" && /^[0-9A-Z]{5}$/.test(code)) {
+    return !DATA_ERROR_CLASSES.has(code.slice(0, 2));
+  }
+  if (typeof code === "string") return true; // A system error: ECONNRESET, ETIMEDOUT, …
+  if (error instanceof RangeError || error instanceof TypeError || error instanceof SyntaxError) {
+    return false;
+  }
+  return true;
 }
 
 /** Deletes the chunks of replays joined more than CHUNK_KEEP_MS ago: past any retry. */
