@@ -399,6 +399,42 @@ describe("GET …/ai/calls/:callId", () => {
     });
   });
 
+  test("a call retried with a corrected time: its page shows the copy the list does", async () => {
+    // A moment of today in UTC, or of yesterday just after midnight: 3 seconds later is the same day.
+    const midnight = Math.floor(Date.now() / DAY) * DAY;
+    const first = Date.now() - midnight > MINUTE ? midnight + 1000 : midnight - 12 * HOUR;
+    const retried = (await insertProject(dashboard.db, { name: "Retried call" })).id;
+    const at = async (path: string) => {
+      const response = await dashboard.app.inject({
+        method: "GET",
+        url: `/api/projects/${retried}${path}`,
+        headers: { cookie: dashboard.cookie, origin: PUBLIC_URL },
+      });
+      expect(response.statusCode).toBe(200);
+      return response.json();
+    };
+    const row = {
+      ...rowAt(retried, 0),
+      timestamp: nanosText(BigInt(first) * 1_000_000n),
+      feature: "before",
+    };
+    await insertCalls([row]);
+    await insertCalls([
+      { ...row, timestamp: nanosText(BigInt(first + 3000) * 1_000_000n), feature: "after" },
+    ]);
+    const shown = { at: new Date(first + 3000).toISOString(), feature: "after" };
+    // With the first copy's time (an older link), the retry's, and none.
+    for (const query of [
+      `?at=${new Date(first).toISOString()}`,
+      `?at=${new Date(first + 3000).toISOString()}`,
+      "",
+    ]) {
+      expect((await at(`/ai/calls/${row.id}${query}`)).call).toMatchObject(shown);
+    }
+    const listed = await at("/ai/call-list?period=7d");
+    expect(listed.calls).toMatchObject([{ id: row.id, ...shown }]);
+  });
+
   test("a call the project does not have: 404", async () => {
     const response = await get(`/ai/calls/${randomUUID()}`);
     expect(response.statusCode).toBe(404);
@@ -422,7 +458,8 @@ describe("GET …/ai/conversations", () => {
       startedAt: new Date(PRODUCTION[0]?.occurredAt ?? 0).toISOString(),
       lastAt: new Date(PRODUCTION[2]?.occurredAt ?? 0).toISOString(),
       calls: 3,
-      inputTokens: 3000,
+      // All the input: the third call's 400 cache reads, counted apart (Anthropic's way), too.
+      inputTokens: 3400,
       outputTokens: 600,
       costUsd: expect.closeTo(
         calls.reduce((total: number, call: { costUsd: number }) => total + call.costUsd, 0),

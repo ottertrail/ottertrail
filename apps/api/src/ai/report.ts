@@ -112,6 +112,7 @@ const share = (part: number, whole: number) => (whole === 0 ? null : part / whol
 /** Calls, tokens, and cost of a set of calls. */
 export interface AiTotals {
   calls: number;
+  /** The input, cached tokens included, however each call counted them (all_input_tokens). */
   inputTokens: number;
   outputTokens: number;
   cacheReadTokens: number;
@@ -132,30 +133,33 @@ export interface AiTotals {
   noPriceModels: string[];
 }
 
+/**
+ * The input summed is all of it, cached tokens included, whichever way each
+ * call counted them (all_input_tokens, prices.ts): a call that counts them
+ * apart and one that counts them in add up alike.
+ */
 const SUMS = `count() AS calls,
-  sum(input_tokens) AS input_tokens, sum(output_tokens) AS output_tokens,
+  sum(all_input_tokens) AS all_input, sum(output_tokens) AS output_tokens,
   sum(cache_read_tokens) AS cache_read_tokens, sum(cache_write_tokens) AS cache_write_tokens,
   sum(reasoning_tokens) AS reasoning_tokens, sum(cost) AS cost,
-  sum(all_input_tokens) AS all_input,
   countIf(failed) AS failed, countIf(NOT priced) AS no_price`;
 
 interface SumsRow {
   calls: string;
-  input_tokens: string;
+  /** The input, cached tokens included, whichever way each call counted them. */
+  all_input: string;
   output_tokens: string;
   cache_read_tokens: string;
   cache_write_tokens: string;
   reasoning_tokens: string;
   cost: number;
-  /** The input, cached tokens included, whichever way each call counted them. */
-  all_input: string;
   failed: string;
   no_price: string;
 }
 
 function sumsOf(row: SumsRow | undefined) {
   const calls = count(row?.calls);
-  const inputTokens = count(row?.input_tokens);
+  const inputTokens = count(row?.all_input);
   const cacheReadTokens = count(row?.cache_read_tokens);
   const failed = count(row?.failed);
   return {
@@ -166,10 +170,8 @@ function sumsOf(row: SumsRow | undefined) {
     cacheWriteTokens: count(row?.cache_write_tokens),
     reasoningTokens: count(row?.reasoning_tokens),
     costUsd: calls === 0 ? 0 : (row?.cost ?? 0),
-    // Out of all the input, cached tokens included however each call counted
-    // them (input_includes_cache); at most 1 all the same.
-    cacheReadShare:
-      count(row?.all_input) === 0 ? null : Math.min(1, cacheReadTokens / count(row?.all_input)),
+    // Out of all the input; at most 1 all the same.
+    cacheReadShare: inputTokens === 0 ? null : Math.min(1, cacheReadTokens / inputTokens),
     failed,
     failedShare: share(failed, calls),
     noPriceCalls: count(row?.no_price),
@@ -669,7 +671,7 @@ export async function aiChart(
     target.costUsd[index] = calls === 0 ? 0 : row.cost;
     target.p95Ms[index] = calls === 0 ? null : ms(row.p95);
   };
-  const columns = `count() AS calls, sum(input_tokens + output_tokens) AS tokens, sum(cost) AS cost,
+  const columns = `count() AS calls, sum(all_input_tokens + output_tokens) AS tokens, sum(cost) AS cost,
     quantileTDigest(0.95)(duration_ns) AS p95`;
 
   const totalParams = new QueryParams();

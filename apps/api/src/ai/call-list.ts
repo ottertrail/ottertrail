@@ -337,12 +337,20 @@ export function callPriceOf(book: PriceBook, model: string, at: Date): CallPrice
   };
 }
 
+const DAY_MS = 86_400_000;
+/** Midnight UTC of a moment's day: the table's key holds the day (ClickHouse migration 0012). */
+const dayOf = (moment: number) => Math.floor(moment / DAY_MS) * DAY_MS;
+
 /**
- * One call of the project by its row ID: a minute either side of `at` when
- * known (the list's link sends it), else the whole `from` to `to`. Any
- * environment: the ID names one call. Without FINAL, which would merge
- * every row of the range first: a retry's copies are the same row, and
- * LIMIT 1 takes one.
+ * One call of the project by its row ID, the copy the list shows (FINAL:
+ * a retry with a corrected time is the same row, and its copies differ
+ * until they are merged). Read over whole UTC days, the key's, so FINAL
+ * reads the call's few granules (the key's day and ID), whatever copy's
+ * time is asked for: the days a minute either side of `at` when known (the
+ * list's link sends it); else, first, the days its copies are on within
+ * `from` to `to`, found without FINAL, which would merge every row of the
+ * range. Any environment: the ID names one call. A retry across midnight
+ * UTC is two rows: the later is taken.
  */
 export async function aiCallById(
   reader: Reader,
@@ -363,17 +371,42 @@ export async function aiCallById(
   },
   withUsers: boolean,
 ): Promise<{ call: AiCallItem; price: CallPrice | null } | null> {
+  let days: { from: Date; to: Date };
+  if (at === undefined) {
+    const params = new QueryParams();
+    const [found] = await queryRows<{ copies: string; first: string; last: string }>(
+      reader,
+      `SELECT count() AS copies,
+              toString(toUnixTimestamp64Milli(min(timestamp))) AS first,
+              toString(toUnixTimestamp64Milli(max(timestamp))) AS last
+       FROM ${AI_CALLS_TABLE}
+       WHERE project_id = ${params.add(projectId, "UUID")}
+         AND timestamp >= ${params.time(from)} AND timestamp < ${params.time(to)}
+         AND id = ${params.add(id, "String")}`,
+      params,
+      DASHBOARD_SETTINGS,
+    );
+    if (found === undefined || Number(found.copies) === 0) return null;
+    days = {
+      from: new Date(dayOf(Number(found.first))),
+      to: new Date(dayOf(Number(found.last)) + DAY_MS),
+    };
+  } else {
+    days = {
+      from: new Date(dayOf(at.getTime() - AROUND_MS)),
+      to: new Date(dayOf(at.getTime() + AROUND_MS) + DAY_MS),
+    };
+  }
   const params = new QueryParams();
-  const start = at === undefined ? from : new Date(at.getTime() - AROUND_MS);
-  const end = at === undefined ? to : new Date(at.getTime() + AROUND_MS);
   const [row] = await queryRows<CallRow>(
     reader,
     `SELECT ${CALL_COLUMNS}
      FROM (SELECT *, ${pricedColumns(params, prices)}
-           FROM ${AI_CALLS_TABLE}
+           FROM ${AI_CALLS_TABLE} FINAL
            WHERE project_id = ${params.add(projectId, "UUID")}
-             AND timestamp >= ${params.time(start)} AND timestamp < ${params.time(end)}
+             AND timestamp >= ${params.time(days.from)} AND timestamp < ${params.time(days.to)}
              AND id = ${params.add(id, "String")})
+     ORDER BY timestamp DESC
      LIMIT 1`,
     params,
     DASHBOARD_SETTINGS,
@@ -414,7 +447,8 @@ interface ConversationRow {
   first_ns: string;
   last_ns: string;
   calls: string;
-  input_tokens: string;
+  /** The input, cached tokens included, however each call counted them (report.ts). */
+  all_input: string;
   output_tokens: string;
   cost: number;
   no_price: string;
@@ -428,7 +462,7 @@ interface ConversationRow {
 const CONVERSATION_COLUMNS = `
   toString(toUnixTimestamp64Nano(min(timestamp))) AS first_ns,
   toString(toUnixTimestamp64Nano(max(timestamp))) AS last_ns,
-  count() AS calls, sum(input_tokens) AS input_tokens, sum(output_tokens) AS output_tokens,
+  count() AS calls, sum(all_input_tokens) AS all_input, sum(output_tokens) AS output_tokens,
   sum(cost) AS cost, countIf(NOT priced) AS no_price, sum(duration_ns) AS duration_ns,
   countIf(failed) AS failed`;
 
@@ -438,7 +472,7 @@ function figuresOf(row: ConversationRow): AiConversationFigures {
     startedAt: dateOfNs(row.first_ns),
     lastAt: dateOfNs(row.last_ns),
     calls,
-    inputTokens: count(row.input_tokens),
+    inputTokens: count(row.all_input),
     outputTokens: count(row.output_tokens),
     costUsd: calls === 0 ? 0 : row.cost,
     noPriceCalls: count(row.no_price),

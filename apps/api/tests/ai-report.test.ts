@@ -635,7 +635,8 @@ describe("the report", () => {
       format: "JSONEachRow",
     });
     const body = await report(`/projects/${old}/ai?period=90d`);
-    expect(body.totals).toMatchObject({ calls: 1, inputTokens: 10, cacheReadShare: 20 / 30 });
+    // The input is all 30, the cache reads with it, as the share counts it.
+    expect(body.totals).toMatchObject({ calls: 1, inputTokens: 30, cacheReadShare: 20 / 30 });
   });
 
   test("a project without calls: zeros, nulls, and received false", async () => {
