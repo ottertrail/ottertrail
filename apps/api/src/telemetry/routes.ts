@@ -304,135 +304,137 @@ export const telemetryRoutes: FastifyPluginCallback<TelemetryOptions> = (app, op
         onResponse: inFlight.finished,
         onRequestAbort: inFlight.finished,
       },
-      async (request, reply) => {
-        const project = projectOf.get(request);
-        if (project === undefined) {
-          throw new Error("the telemetry onRequest hook must find its project first");
-        }
-        const encoding = answerEncoding(request);
-        const sent = request.body ?? Buffer.alloc(0);
-
-        let body: Buffer;
-        if ((request.headers["content-encoding"] ?? "").toLowerCase() === "gzip") {
-          try {
-            body = await gunzipAsync(sent, { maxOutputLength: MAX_TELEMETRY_BODY_BYTES });
-          } catch (error) {
-            return error instanceof RangeError
-              ? fail(request, reply, 413, "The body is larger than 16 MiB once unpacked.")
-              : fail(request, reply, 400, "The body is not valid gzip.");
+      // The slot is held until the work settles, the insert included.
+      async (request, reply) =>
+        inFlight.run(request, async () => {
+          const project = projectOf.get(request);
+          if (project === undefined) {
+            throw new Error("the telemetry onRequest hook must find its project first");
           }
-        } else {
-          body = sent;
-        }
+          const encoding = answerEncoding(request);
+          const sent = request.body ?? Buffer.alloc(0);
 
-        // Counted, and paid for, before decoding: decoding allocates for
-        // every message, and costs the same whether records come of it or not.
-        let messageCount: number;
-        try {
-          messageCount = countMessages(signal.messages, body, encoding);
-        } catch (error) {
-          if (error instanceof TooManyMessagesError) {
+          let body: Buffer;
+          if ((request.headers["content-encoding"] ?? "").toLowerCase() === "gzip") {
+            try {
+              body = await gunzipAsync(sent, { maxOutputLength: MAX_TELEMETRY_BODY_BYTES });
+            } catch (error) {
+              return error instanceof RangeError
+                ? fail(request, reply, 413, "The body is larger than 16 MiB once unpacked.")
+                : fail(request, reply, 400, "The body is not valid gzip.");
+            }
+          } else {
+            body = sent;
+          }
+
+          // Counted, and paid for, before decoding: decoding allocates for
+          // every message, and costs the same whether records come of it or not.
+          let messageCount: number;
+          try {
+            messageCount = countMessages(signal.messages, body, encoding);
+          } catch (error) {
+            if (error instanceof TooManyMessagesError) {
+              return fail(
+                request,
+                reply,
+                413,
+                `A request decodes into at most ${MAX_MESSAGES} messages (records, attributes, values). Send smaller batches.`,
+              );
+            }
+            if (error instanceof MalformedError) return fail(request, reply, 400, error.message);
+            throw error;
+          }
+          const tooLarge = (cost: number) =>
+            fail(
+              request,
+              reply,
+              413,
+              `A request may cost at most ${budget.capacity} (one per record, or more for numerous or large attributes). This request costs ${cost}. Send smaller batches.`,
+            );
+          const tooMuch = (retryAfterSeconds: number) =>
+            fail(
+              request,
+              reply,
+              429,
+              `Too many records for this project. Retry after ${retryAfterSeconds} seconds.`,
+              retryAfterSeconds,
+            );
+          const prepaid = costBeforeDecoding(messageCount, body.length);
+          if (prepaid > budget.capacity) return tooLarge(prepaid);
+          const paid = budget.take(project.id, prepaid);
+          if (!paid.allowed) return tooMuch(paid.retryAfterSeconds);
+
+          // Neither a malformed request nor one refused below gets its
+          // decoding back: it was done.
+          let outcome: Outcome & { rows: TelemetryRows; errors: NewEvent[] };
+          const receivedAt = now();
+          try {
+            outcome = signal.normalize(decodeRequest(signal.messages, body, encoding), {
+              projectId: project.id,
+              receivedAtNs: BigInt(receivedAt) * 1_000_000n,
+              retentionDays,
+            });
+          } catch (error) {
+            if (error instanceof MalformedError || error instanceof RangeError) {
+              return fail(request, reply, 400, error.message);
+            }
+            throw error;
+          }
+
+          if (outcome.records > budget.capacity) {
             return fail(
               request,
               reply,
               413,
-              `A request decodes into at most ${MAX_MESSAGES} messages (records, attributes, values). Send smaller batches.`,
+              `A request holds at most ${budget.capacity} records. This request contains ${outcome.records}. Send smaller batches.`,
             );
           }
-          if (error instanceof MalformedError) return fail(request, reply, 400, error.message);
-          throw error;
-        }
-        const tooLarge = (cost: number) =>
-          fail(
-            request,
-            reply,
-            413,
-            `A request may cost at most ${budget.capacity} (one per record, or more for numerous or large attributes). This request costs ${cost}. Send smaller batches.`,
-          );
-        const tooMuch = (retryAfterSeconds: number) =>
-          fail(
-            request,
-            reply,
-            429,
-            `Too many records for this project. Retry after ${retryAfterSeconds} seconds.`,
-            retryAfterSeconds,
-          );
-        const prepaid = costBeforeDecoding(messageCount, body.length);
-        if (prepaid > budget.capacity) return tooLarge(prepaid);
-        const paid = budget.take(project.id, prepaid);
-        if (!paid.allowed) return tooMuch(paid.retryAfterSeconds);
-
-        // Neither a malformed request nor one refused below gets its
-        // decoding back: it was done.
-        let outcome: Outcome & { rows: TelemetryRows; errors: NewEvent[] };
-        const receivedAt = now();
-        try {
-          outcome = signal.normalize(decodeRequest(signal.messages, body, encoding), {
-            projectId: project.id,
-            receivedAtNs: BigInt(receivedAt) * 1_000_000n,
-            retentionDays,
-          });
-        } catch (error) {
-          if (error instanceof MalformedError || error instanceof RangeError) {
-            return fail(request, reply, 400, error.message);
+          // Each error event is one more row, in the events table: so a
+          // span's exceptions cannot multiply rows for free.
+          const base =
+            Math.max(
+              prepaid,
+              outcome.records,
+              Math.ceil((body.length + outcome.sharedBytes) / BYTES_PER_UNIT),
+            ) + outcome.errors.length;
+          if (base > budget.capacity) return tooLarge(base);
+          // Each AI call is one more too, in ai_calls, but never makes a
+          // request too large: a batch the budget could take without them is
+          // charged at most the whole budget, and waits for it (429, which
+          // exporters retry), rather than being refused for good (413).
+          const cost = Math.min(budget.capacity, base + (outcome.rows.ai_calls?.length ?? 0));
+          if (cost > prepaid) {
+            const rest = budget.take(project.id, cost - prepaid);
+            if (!rest.allowed) return tooMuch(rest.retryAfterSeconds);
           }
-          throw error;
-        }
+          try {
+            await Promise.all([
+              insertTelemetry(clickhouse, outcome.rows),
+              storeEvents(clickhouse, project.id, outcome.errors, {
+                receivedAt: new Date(receivedAt),
+              }),
+            ]);
+          } catch (error) {
+            // Not the sender's doing: all of it back.
+            budget.refund(project.id, cost);
+            request.log.error({ err: error }, "could not store telemetry");
+            return fail(request, reply, 503, "Telemetry was not stored. Retry later.", 5);
+          }
 
-        if (outcome.records > budget.capacity) {
-          return fail(
-            request,
-            reply,
-            413,
-            `A request holds at most ${budget.capacity} records. This request contains ${outcome.records}. Send smaller batches.`,
-          );
-        }
-        // Each error event is one more row, in the events table: so a
-        // span's exceptions cannot multiply rows for free.
-        const base =
-          Math.max(
-            prepaid,
-            outcome.records,
-            Math.ceil((body.length + outcome.sharedBytes) / BYTES_PER_UNIT),
-          ) + outcome.errors.length;
-        if (base > budget.capacity) return tooLarge(base);
-        // Each AI call is one more too, in ai_calls, but never makes a
-        // request too large: a batch the budget could take without them is
-        // charged at most the whole budget, and waits for it (429, which
-        // exporters retry), rather than being refused for good (413).
-        const cost = Math.min(budget.capacity, base + (outcome.rows.ai_calls?.length ?? 0));
-        if (cost > prepaid) {
-          const rest = budget.take(project.id, cost - prepaid);
-          if (!rest.allowed) return tooMuch(rest.retryAfterSeconds);
-        }
-        try {
-          await Promise.all([
-            insertTelemetry(clickhouse, outcome.rows),
-            storeEvents(clickhouse, project.id, outcome.errors, {
-              receivedAt: new Date(receivedAt),
-            }),
-          ]);
-        } catch (error) {
-          // Not the sender's doing: all of it back.
-          budget.refund(project.id, cost);
-          request.log.error({ err: error }, "could not store telemetry");
-          return fail(request, reply, 503, "Telemetry was not stored. Retry later.", 5);
-        }
-
-        const response =
-          outcome.refused === 0
-            ? {}
-            : {
-                partialSuccess: {
-                  [signal.rejectedField]: outcome.refused,
-                  errorMessage: outcome.message,
-                },
-              };
-        return reply
-          .code(200)
-          .type(CONTENT_TYPES[encoding])
-          .send(encodeMessage(signal.messages.response, response, encoding));
-      },
+          const response =
+            outcome.refused === 0
+              ? {}
+              : {
+                  partialSuccess: {
+                    [signal.rejectedField]: outcome.refused,
+                    errorMessage: outcome.message,
+                  },
+                };
+          return reply
+            .code(200)
+            .type(CONTENT_TYPES[encoding])
+            .send(encodeMessage(signal.messages.response, response, encoding));
+        }),
     );
   }
   done();

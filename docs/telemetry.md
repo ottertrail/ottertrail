@@ -44,7 +44,7 @@ As the specification has them, so exporters retry what may succeed later and dro
 
 Exporters retry 429, 502, 503, and 504, and nothing else.
 
-A request counts as in progress from when its key is checked until its answer is sent or its connection closes, whichever comes first. A client that disconnects while its records are being written gives its place back then; the write itself still finishes (`apps/api/src/collection/in-flight.ts`, tested in `telemetry.test.ts` with a client that hangs up while ClickHouse holds the insert).
+A request counts as in progress from when its key is checked until its work is done. Until its handler starts (the body still uploading, or refused before), that is when its answer is sent or its connection closes. After, it is when the handler finishes, its insert included, whether or not the answer could be sent: a client that disconnects while its records are being written keeps its place until the insert settles, so an exporter that times out and retries cannot pile a second body on the first. The limits bound memory, since each request holds its decoded body until then (`apps/api/src/collection/in-flight.ts`, tested in `telemetry.test.ts` with a client that hangs up while ClickHouse holds the insert).
 
 ## Stored straight in ClickHouse
 

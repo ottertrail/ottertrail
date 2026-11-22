@@ -324,7 +324,8 @@ const insertedOf = async (projectId: string) =>
 const pair = async (name: string) => {
   const project = await newProject(name);
   const replays = [randomUUID(), randomUUID()];
-  for (const replay of replays) await sendRecording(project.public_key, replay);
+  // One chunk each: the tests share the address's rate.
+  for (const replay of replays) await sendRecording(project.public_key, replay, RECORDING, 1);
   return { project, replays };
 };
 
@@ -384,9 +385,9 @@ describe("joining a replay's chunks", () => {
         v: 1,
         events: events.map((event, index) => (index === 2 ? { ...event, timestamp } : event)),
       });
-    await sendRecording(project.public_key, farOff, at(1e20));
-    await sendRecording(project.public_key, negative, at(-1));
-    await sendRecording(project.public_key, other);
+    await sendRecording(project.public_key, farOff, at(1e20), 1);
+    await sendRecording(project.public_key, negative, at(-1), 1);
+    await sendRecording(project.public_key, other, RECORDING, 1);
 
     const result = await joinReplays(dashboard.db, store, { onlyProjectId: project.id });
     expect(result).toEqual({ joined: 1, dropped: 2, failed: 0 });
@@ -394,7 +395,7 @@ describe("joining a replay's chunks", () => {
       expect(await chunkCount(project.id, replay)).toBe("0");
       expect(await store.get(replayKeyOf(project.id, replay))).toBeNull();
     }
-    expect(await chunkCount(project.id, other)).toBe("3");
+    expect(await chunkCount(project.id, other)).toBe("1");
     expect(await store.get(replayKeyOf(project.id, other))).not.toBeNull();
   });
 
@@ -427,6 +428,48 @@ describe("joining a replay's chunks", () => {
       failed: 0,
     });
     expect((await insertedOf(lost.project.id)).toSorted()).toEqual(lost.replays.toSorted());
+
+    // Node's coded errors are the join's own (ERR_OUT_OF_RANGE): dropped; a
+    // system error (ECONNRESET) may pass: kept.
+    for (const [code, outcome] of [
+      ["ERR_OUT_OF_RANGE", { joined: 1, dropped: 1, failed: 0 }],
+      ["ECONNRESET", { joined: 1, dropped: 0, failed: 1 }],
+    ] as const) {
+      const coded = await pair(code);
+      expect(
+        await joinReplays(dashboard.db.withPlugin(failingOnce(code)), store, {
+          onlyProjectId: coded.project.id,
+        }),
+      ).toMatchObject(outcome);
+    }
+  });
+
+  test("a replay another run recorded meanwhile is not dropped by a run that failed on it", async () => {
+    const project = await newProject("Overlapping runs");
+    const replay = randomUUID();
+    await sendRecording(project.public_key, replay, RECORDING, 1);
+    // While this run writes the object, another run joins the replay and
+    // commits; then this run's row is refused as the data's.
+    let other: Awaited<ReturnType<typeof joinReplays>> | undefined;
+    const overlapping: ObjectStore = {
+      put: async (objectKey, body, contentType) => {
+        other ??= await joinReplays(dashboard.db, store, { onlyProjectId: project.id });
+        await store.put(objectKey, body, contentType);
+      },
+      get: (objectKey) => store.get(objectKey),
+      delete: (keys) => store.delete(keys),
+      deletePrefix: (prefix) => store.deletePrefix(prefix),
+      close: () => undefined,
+    };
+    const result = await joinReplays(dashboard.db.withPlugin(failingOnce("22003")), overlapping, {
+      onlyProjectId: project.id,
+    });
+    expect(other).toEqual({ joined: 1, dropped: 0, failed: 0 });
+    expect(result).toEqual({ joined: 0, dropped: 0, failed: 0 });
+    // The other run's replay stands: its row, its object, and its chunks.
+    expect(await insertedOf(project.id)).toEqual([replay]);
+    expect(await store.get(replayKeyOf(project.id, replay))).not.toBeNull();
+    expect(await chunkCount(project.id, replay)).toBe("1");
   });
 
   test("joins a complete replay into one object, and deletes its chunks later", async () => {
@@ -532,7 +575,7 @@ describe("deleting a project's replays while one is joined", () => {
     const project = await newProject("Deleted while joining");
     const replay = randomUUID();
     const key = replayKeyOf(project.id, replay);
-    await sendRecording(project.public_key, replay);
+    expect(await sendRecording(project.public_key, replay)).toEqual([202, 202, 202]);
 
     // A store that holds this replay's upload until the test lets it go.
     let uploading!: () => void;

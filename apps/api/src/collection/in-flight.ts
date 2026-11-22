@@ -2,17 +2,24 @@ import type { FastifyReply, FastifyRequest } from "fastify";
 
 /**
  * The requests a route works on at once: at most `max` in the process, and
- * of those at most `maxPerProject` for one project.
+ * of those at most `maxPerProject` for one project. It bounds memory: a
+ * request holds its body, decoded, until its insert settles.
  *
- * A request's slot is given back exactly once, on whichever comes first:
- * its answer is sent (`onResponse`), it is aborted (`onRequestAbort`), or
- * its connection closes. The last matters: a client that disconnects after
- * sending the whole body, while the route still waits on ClickHouse, fires
- * neither hook in Fastify, and its slot would otherwise never come back.
+ * A request's slot is given back exactly once. Before its handler starts
+ * (the body still uploading, or refused by a hook), on whichever comes
+ * first: its answer is sent (`onResponse`), it is aborted
+ * (`onRequestAbort`), or its connection closes. Once the handler has
+ * started, only when the handler settles (`run`), whether or not its answer
+ * could be sent: a client that disconnects while its insert is held gives
+ * its slot back when the insert settles, not before, so a retry cannot
+ * stack another body on the one still held. (Fastify fires neither hook
+ * for a client that disconnects after sending the whole body.)
  */
 export class InFlight {
   /** Each request in progress, with its project once its key is found. */
   readonly #requests = new Map<FastifyRequest, string | null>();
+  /** The requests whose handler has started: only it gives their slots back. */
+  readonly #working = new WeakSet<FastifyRequest>();
   readonly #ofProject = new Map<string, number>();
   readonly #max: number;
   readonly #maxPerProject: number;
@@ -30,7 +37,7 @@ export class InFlight {
     if (this.#requests.size >= this.#max) return false;
     this.#requests.set(request, null);
     reply.raw.once("close", () => {
-      this.release(request);
+      this.#releaseIfIdle(request);
     });
     // Closed already, its close event is past: nobody waits for the answer.
     if (reply.raw.destroyed) this.release(request);
@@ -47,6 +54,16 @@ export class InFlight {
     return true;
   }
 
+  /** Runs a request's handler, its slot given back once the handler settles. */
+  async run<T>(request: FastifyRequest, work: () => Promise<T>): Promise<T> {
+    this.#working.add(request);
+    try {
+      return await work();
+    } finally {
+      this.release(request);
+    }
+  }
+
   /** Gives the request's slots back; a second call does nothing. */
   release(request: FastifyRequest): void {
     if (!this.#requests.has(request)) return;
@@ -58,8 +75,12 @@ export class InFlight {
     else this.#ofProject.set(projectId, left);
   }
 
-  /** Route hooks for `onResponse` and `onRequestAbort`. */
+  #releaseIfIdle(request: FastifyRequest): void {
+    if (!this.#working.has(request)) this.release(request);
+  }
+
+  /** Route hooks for `onResponse` and `onRequestAbort`: before the handler starts. */
   readonly finished = async (request: FastifyRequest): Promise<void> => {
-    this.release(request);
+    this.#releaseIfIdle(request);
   };
 }

@@ -885,41 +885,52 @@ describe("requests in progress", () => {
       await app.close();
     }
   });
-  test("a client that hangs up while its records are being written gives its slots back", async () => {
+  test("a client that hangs up while its records are being written holds its slots until the insert settles", async () => {
+    // A ClickHouse that holds each insert while `hold` is on, until the test lets it finish.
+    let hold = true;
+    let heldNow = 0;
+    let heldMost = 0;
     const waiting: (() => void)[] = [];
-    // A ClickHouse that holds every insert until the test lets it finish.
-    const held = {
-      insert: () =>
-        new Promise<void>((resolve) => {
+    const slow = {
+      insert: async () => {
+        if (!hold) return;
+        heldNow += 1;
+        heldMost = Math.max(heldMost, heldNow);
+        await new Promise<void>((resolve) => {
           waiting.push(resolve);
-        }),
+        });
+        heldNow -= 1;
+      },
     } as unknown as ClickHouseClient;
     const app = buildApp({
       db: dashboard.db,
-      telemetry: { clickhouse: held, maxInFlight: 2, maxInFlightPerProject: 1 },
+      telemetry: { clickhouse: slow, maxInFlight: 2, maxInFlightPerProject: 1 },
     });
     try {
       const project = await newProject("Hangs up");
       const hangUp = await hangingUpClient(app);
       const headers = { "content-type": PROTOBUF, authorization: `Bearer ${project.secretKey}` };
-      // More hang-ups than either limit: each would be refused if one before kept its slot.
+      const traces = () => protobufTraces([protobufSpan(randomHex(16), randomHex(8))]);
       for (let attempt = 0; attempt < 3; attempt += 1) {
+        hold = true;
         const before = waiting.length;
-        await hangUp(
-          "/v1/traces",
-          headers,
-          protobufTraces([protobufSpan(randomHex(16), randomHex(8))]),
-          () => waiting.length > before,
-        );
+        await hangUp("/v1/traces", headers, traces(), () => waiting.length > before);
+        // Its insert is still held, so its slot is too: a retry waits.
+        expect(
+          (await post("/v1/traces", traces(), { key: project.secretKey, app })).statusCode,
+        ).toBe(429);
+        // Once the insert settles, the slot is given back.
+        hold = false;
+        waiting.shift()?.();
+        await expect
+          .poll(
+            async () =>
+              (await post("/v1/traces", traces(), { key: project.secretKey, app })).statusCode,
+          )
+          .toBe(200);
       }
-      const before = waiting.length;
-      const next = post("/v1/traces", protobufTraces([protobufSpan(randomHex(16), randomHex(8))]), {
-        key: project.secretKey,
-        app,
-      });
-      await expect.poll(() => waiting.length).toBeGreaterThan(before);
-      for (const resolve of waiting) resolve();
-      expect((await next).statusCode).toBe(200);
+      // Never more work in progress than the project's limit.
+      expect(heldMost).toBe(1);
     } finally {
       for (const resolve of waiting) resolve();
       await app.close();

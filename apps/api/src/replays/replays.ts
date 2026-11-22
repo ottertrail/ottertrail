@@ -295,6 +295,8 @@ export async function joinReplays(
           .where("project_id", "=", projectId)
           .where("replay_id", "=", replayId)
           .orderBy("seq")
+          // Shared: a drop of this replay waits for this join (dropReplay).
+          .forShare()
           .execute();
         // Deleted since it was found: nothing to join.
         if (chunks.length === 0) return "skipped";
@@ -368,12 +370,7 @@ export async function joinReplays(
           return "failed" as const;
         }
         try {
-          await store.delete([objectKey]);
-          await db
-            .deleteFrom("replay_chunks")
-            .where("project_id", "=", projectId)
-            .where("replay_id", "=", replayId)
-            .execute();
+          if (!(await dropReplay(db, store, projectId, replayId))) return "skipped" as const;
         } catch (deleteError) {
           // Dropped on a later run.
           onError(deleteError, { projectId, replayId, dropped: false });
@@ -390,24 +387,66 @@ export async function joinReplays(
   return failed === 0 ? { joined, dropped, failed } : { joined, dropped, failed, firstError };
 }
 
+/**
+ * Deletes a replay's chunks and object, unless another join has recorded it
+ * meanwhile (overlapping runs). Its chunks are locked first: a join that
+ * holds them (FOR SHARE) commits before this reads the replays, and a join
+ * after this finds no chunks. False when there was nothing to drop.
+ */
+async function dropReplay(
+  db: Kysely<Database>,
+  store: ObjectStore,
+  projectId: string,
+  replayId: string,
+): Promise<boolean> {
+  return db.transaction().execute(async (trx) => {
+    const chunks = await trx
+      .selectFrom("replay_chunks")
+      .select("seq")
+      .where("project_id", "=", projectId)
+      .where("replay_id", "=", replayId)
+      .forUpdate()
+      .execute();
+    if (chunks.length === 0) return false;
+    const recorded = await trx
+      .selectFrom("replays")
+      .select("replay_id")
+      .where("project_id", "=", projectId)
+      .where("replay_id", "=", replayId)
+      .executeTakeFirst();
+    if (recorded !== undefined) return false;
+    await store.delete([replayKeyOf(projectId, replayId)]);
+    await trx
+      .deleteFrom("replay_chunks")
+      .where("project_id", "=", projectId)
+      .where("replay_id", "=", replayId)
+      .execute();
+    return true;
+  });
+}
+
 /** PostgreSQL's classes of errors that are the data's: a value out of range, a broken constraint. */
 const DATA_ERROR_CLASSES = new Set(["22", "23"]);
 
 /**
- * Whether an error may pass by the next run: anything but PostgreSQL
- * refusing the replay's data (SQLSTATE classes 22 and 23) and errors of the
- * join's own code (a RangeError or TypeError), which come back every time.
+ * Whether an error may pass by the next run. Not: errors of the join's own
+ * code (a RangeError, TypeError, or SyntaxError, or Node's coded errors
+ * such as ERR_OUT_OF_RANGE) and PostgreSQL refusing the replay's data
+ * (SQLSTATE classes 22 and 23), which come back every time. Transient: a
+ * system error (ECONNRESET, EPIPE, ETIMEDOUT), PostgreSQL's other classes
+ * (a lost connection, a conflict between transactions, a shutdown), and an
+ * error without a code (pg's "Connection terminated").
  */
 function isTransient(error: unknown): boolean {
-  const code = isRecord(error) ? error.code : undefined;
-  if (typeof code === "string" && /^[0-9A-Z]{5}$/.test(code)) {
-    return !DATA_ERROR_CLASSES.has(code.slice(0, 2));
-  }
-  if (typeof code === "string") return true; // A system error: ECONNRESET, ETIMEDOUT, …
   if (error instanceof RangeError || error instanceof TypeError || error instanceof SyntaxError) {
     return false;
   }
-  return true;
+  const code = isRecord(error) ? error.code : undefined;
+  if (code === undefined) return true;
+  if (typeof code !== "string") return false;
+  if (/^E[A-Z0-9]+$/.test(code)) return true;
+  if (/^[0-9A-Z]{5}$/.test(code)) return !DATA_ERROR_CLASSES.has(code.slice(0, 2));
+  return false;
 }
 
 /** Deletes the chunks of replays joined more than CHUNK_KEEP_MS ago: past any retry. */

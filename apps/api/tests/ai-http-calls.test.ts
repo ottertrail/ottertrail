@@ -502,13 +502,22 @@ describe("limits", () => {
     }
   });
 
-  test("a client that hangs up while its calls are being written gives its slots back", async () => {
+  test("a client that hangs up while its calls are being written holds its slots until the insert settles", async () => {
+    // A ClickHouse that holds each insert while `hold` is on, until the test lets it finish.
+    let hold = true;
+    let heldNow = 0;
+    let heldMost = 0;
     const waiting: (() => void)[] = [];
     const slow = {
-      insert: () =>
-        new Promise<void>((resolve) => {
+      insert: async () => {
+        if (!hold) return;
+        heldNow += 1;
+        heldMost = Math.max(heldMost, heldNow);
+        await new Promise<void>((resolve) => {
           waiting.push(resolve);
-        }),
+        });
+        heldNow -= 1;
+      },
     } as unknown as ClickHouseClient;
     const app = buildApp({
       db: dashboard.db,
@@ -519,21 +528,25 @@ describe("limits", () => {
       const project = await newProject("Hangs up");
       const auth = { authorization: `Bearer ${project.key}` };
       const hangUp = await hangingUpClient(app);
-      // More hang-ups than either limit: each would be refused if one before kept its slot.
+      const body = () => ({ v: 1, calls: [aiCall()] });
       for (let attempt = 0; attempt < 3; attempt += 1) {
+        hold = true;
         const before = waiting.length;
         await hangUp(
           "/api/ai-calls",
           { "content-type": "application/json", ...auth },
-          JSON.stringify({ v: 1, calls: [aiCall()] }),
+          JSON.stringify(body()),
           () => waiting.length > before,
         );
+        // Its insert is still held, so its slot is too: a retry waits.
+        expect((await send(body(), auth, app)).statusCode).toBe(429);
+        // Once the insert settles, the slot is given back.
+        hold = false;
+        waiting.shift()?.();
+        await expect.poll(async () => (await send(body(), auth, app)).statusCode).toBe(202);
       }
-      const before = waiting.length;
-      const next = send({ v: 1, calls: [aiCall()] }, auth, app);
-      await expect.poll(() => waiting.length).toBeGreaterThan(before);
-      for (const resolve of waiting) resolve();
-      expect((await next).statusCode).toBe(202);
+      // Never more work in progress than the project's limit.
+      expect(heldMost).toBe(1);
     } finally {
       for (const resolve of waiting) resolve();
       await app.close();

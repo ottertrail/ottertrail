@@ -280,129 +280,133 @@ export const aiCallIngestRoutes: FastifyPluginCallback<AiCallIngestOptions> = (
       onResponse: inFlight.finished,
       onRequestAbort: inFlight.finished,
     },
-    async (request, reply) => {
-      const project = projectOf.get(request);
-      if (project === undefined) {
-        throw new Error("the AI calls onRequest hook must find its project first");
-      }
-      const invalid = (message: string) =>
-        reply.code(400).send(problem("invalid_request", message));
-      const receivedAt = now();
-      const { release = "" } = request.body;
-      if (!isStorableText(release)) return invalid("release contains an unpaired surrogate.");
-      const environment = environmentOf(request.body.environment);
+    // The slot is held until the work settles, the insert included.
+    async (request, reply) =>
+      inFlight.run(request, async () => {
+        const project = projectOf.get(request);
+        if (project === undefined) {
+          throw new Error("the AI calls onRequest hook must find its project first");
+        }
+        const invalid = (message: string) =>
+          reply.code(400).send(problem("invalid_request", message));
+        const receivedAt = now();
+        const { release = "" } = request.body;
+        if (!isStorableText(release)) return invalid("release contains an unpaired surrogate.");
+        const environment = environmentOf(request.body.environment);
 
-      const rows: Omit<AiCallRow, "project_id">[] = [];
-      let tooOld = 0;
-      for (const [index, call] of request.body.calls.entries()) {
-        const texts = [
-          call.provider,
-          call.model,
-          call.operation ?? "",
-          call.errorType ?? "",
-          call.userId ?? "",
-          call.feature ?? "",
-          call.conversationId ?? "",
-          call.service ?? "",
-          ...(call.finishReasons ?? []),
-        ];
-        if (!texts.every(isStorableText)) {
-          return invalid(
-            `calls[${index}] contains a NUL character or an unpaired surrogate, which cannot be stored.`,
-          );
+        const rows: Omit<AiCallRow, "project_id">[] = [];
+        let tooOld = 0;
+        for (const [index, call] of request.body.calls.entries()) {
+          const texts = [
+            call.provider,
+            call.model,
+            call.operation ?? "",
+            call.errorType ?? "",
+            call.userId ?? "",
+            call.feature ?? "",
+            call.conversationId ?? "",
+            call.service ?? "",
+            ...(call.finishReasons ?? []),
+          ];
+          if (!texts.every(isStorableText)) {
+            return invalid(
+              `calls[${index}] contains a NUL character or an unpaired surrogate, which cannot be stored.`,
+            );
+          }
+          const provider = cleanLabel(call.provider);
+          const model = cleanLabel(call.model);
+          if (provider === "" || model === "") {
+            return invalid(`calls[${index}]: provider and model must not be blank.`);
+          }
+          const errorType = cleanLabel(call.errorType, MAX_AI_ERROR_TYPE_CHARS);
+          if (call.ok === true && errorType !== "") {
+            return invalid(`calls[${index}]: a call with an errorType failed; leave out ok.`);
+          }
+          const conversationId = call.conversationId?.trim() ?? "";
+          if (!conversationIdFits(conversationId)) {
+            return invalid(
+              `calls[${index}].conversationId is longer than ${MAX_CONVERSATION_ID_CHARS} characters.`,
+            );
+          }
+          if (call.spanId !== undefined && call.traceId === undefined) {
+            return invalid(`calls[${index}]: a spanId needs its traceId.`);
+          }
+          if (call.occurredAt > receivedAt + MAX_FUTURE_MS) {
+            return invalid(
+              `calls[${index}].occurredAt is in the future: check the server's clock.`,
+            );
+          }
+          if (receivedAt - call.occurredAt > MAX_EVENT_AGE_MS) {
+            tooOld += 1;
+            continue;
+          }
+          rows.push({
+            timestamp: nanosText(BigInt(call.occurredAt) * 1_000_000n),
+            // A UUID, never a span's 48 hex characters: no call sent here
+            // can replace one found in a span.
+            id: call.id.toLowerCase(),
+            trace_id: call.traceId?.toLowerCase() ?? "",
+            span_id: call.spanId?.toLowerCase() ?? "",
+            service: cleanLabel(call.service),
+            environment,
+            release,
+            provider,
+            model,
+            operation: cleanLabel(call.operation),
+            feature: cleanLabel(call.feature),
+            user_id: call.userId ?? "",
+            conversation_id: conversationIdOf(conversationId),
+            input_tokens: call.inputTokens ?? 0,
+            output_tokens: call.outputTokens ?? 0,
+            cache_read_tokens: call.cacheReadTokens ?? 0,
+            cache_write_tokens: call.cacheWriteTokens ?? 0,
+            reasoning_tokens: call.reasoningTokens ?? 0,
+            duration_ns: nanosOf(call.durationMs),
+            first_chunk_ns: call.firstChunkMs === undefined ? null : nanosOf(call.firstChunkMs),
+            failed: call.ok === false || errorType !== "",
+            error_type: errorType,
+            finish_reasons: (call.finishReasons ?? [])
+              .map((reason) => cleanLabel(reason, MAX_FINISH_REASON_CHARS).toLowerCase())
+              .filter((reason) => reason !== ""),
+          });
         }
-        const provider = cleanLabel(call.provider);
-        const model = cleanLabel(call.model);
-        if (provider === "" || model === "") {
-          return invalid(`calls[${index}]: provider and model must not be blank.`);
-        }
-        const errorType = cleanLabel(call.errorType, MAX_AI_ERROR_TYPE_CHARS);
-        if (call.ok === true && errorType !== "") {
-          return invalid(`calls[${index}]: a call with an errorType failed; leave out ok.`);
-        }
-        const conversationId = call.conversationId?.trim() ?? "";
-        if (!conversationIdFits(conversationId)) {
-          return invalid(
-            `calls[${index}].conversationId is longer than ${MAX_CONVERSATION_ID_CHARS} characters.`,
-          );
-        }
-        if (call.spanId !== undefined && call.traceId === undefined) {
-          return invalid(`calls[${index}]: a spanId needs its traceId.`);
-        }
-        if (call.occurredAt > receivedAt + MAX_FUTURE_MS) {
-          return invalid(`calls[${index}].occurredAt is in the future: check the server's clock.`);
-        }
-        if (receivedAt - call.occurredAt > MAX_EVENT_AGE_MS) {
-          tooOld += 1;
-          continue;
-        }
-        rows.push({
-          timestamp: nanosText(BigInt(call.occurredAt) * 1_000_000n),
-          // A UUID, never a span's 48 hex characters: no call sent here
-          // can replace one found in a span.
-          id: call.id.toLowerCase(),
-          trace_id: call.traceId?.toLowerCase() ?? "",
-          span_id: call.spanId?.toLowerCase() ?? "",
-          service: cleanLabel(call.service),
-          environment,
-          release,
-          provider,
-          model,
-          operation: cleanLabel(call.operation),
-          feature: cleanLabel(call.feature),
-          user_id: call.userId ?? "",
-          conversation_id: conversationIdOf(conversationId),
-          input_tokens: call.inputTokens ?? 0,
-          output_tokens: call.outputTokens ?? 0,
-          cache_read_tokens: call.cacheReadTokens ?? 0,
-          cache_write_tokens: call.cacheWriteTokens ?? 0,
-          reasoning_tokens: call.reasoningTokens ?? 0,
-          duration_ns: nanosOf(call.durationMs),
-          first_chunk_ns: call.firstChunkMs === undefined ? null : nanosOf(call.firstChunkMs),
-          failed: call.ok === false || errorType !== "",
-          error_type: errorType,
-          finish_reasons: (call.finishReasons ?? [])
-            .map((reason) => cleanLabel(reason, MAX_FINISH_REASON_CHARS).toLowerCase())
-            .filter((reason) => reason !== ""),
-        });
-      }
 
-      if (rows.length > budget.capacity) {
-        return reply
-          .code(413)
-          .send(
-            problem(
-              "payload_too_large",
-              `A batch may hold at most ${budget.capacity} calls. Send smaller batches.`,
-            ),
+        if (rows.length > budget.capacity) {
+          return reply
+            .code(413)
+            .send(
+              problem(
+                "payload_too_large",
+                `A batch may hold at most ${budget.capacity} calls. Send smaller batches.`,
+              ),
+            );
+        }
+        const spent = budget.take(project.id, rows.length);
+        if (!spent.allowed) {
+          return reply
+            .code(429)
+            .header("retry-after", String(spent.retryAfterSeconds))
+            .send(
+              problem(
+                "rate_limited",
+                `Too many calls. Retry after ${spent.retryAfterSeconds} seconds.`,
+              ),
+            );
+        }
+        try {
+          await insertRows(
+            clickhouse,
+            AI_CALLS_TABLE,
+            rows.map((row) => ({ project_id: project.id, ...row })),
           );
-      }
-      const spent = budget.take(project.id, rows.length);
-      if (!spent.allowed) {
-        return reply
-          .code(429)
-          .header("retry-after", String(spent.retryAfterSeconds))
-          .send(
-            problem(
-              "rate_limited",
-              `Too many calls. Retry after ${spent.retryAfterSeconds} seconds.`,
-            ),
-          );
-      }
-      try {
-        await insertRows(
-          clickhouse,
-          AI_CALLS_TABLE,
-          rows.map((row) => ({ project_id: project.id, ...row })),
-        );
-      } catch (error) {
-        // Not the sender's doing: the budget back, so its retries are not refused for it.
-        budget.refund(project.id, rows.length);
-        request.log.error({ err: error }, "could not store AI calls");
-        return storageUnavailable(reply);
-      }
-      return reply.code(202).send({ stored: rows.length, tooOld });
-    },
+        } catch (error) {
+          // Not the sender's doing: the budget back, so its retries are not refused for it.
+          budget.refund(project.id, rows.length);
+          request.log.error({ err: error }, "could not store AI calls");
+          return storageUnavailable(reply);
+        }
+        return reply.code(202).send({ stored: rows.length, tooOld });
+      }),
   );
 
   done();
