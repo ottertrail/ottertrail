@@ -985,6 +985,36 @@ describe("the review's fixes", () => {
     ).toEqual([]);
   });
 
+  test("a reset link used as its user changes their email is refused, without a deadlock", async () => {
+    const { email, userId } = await member();
+    await request(dashboard, email);
+    await runWorker(dashboard);
+    const token = tokenOf(linkIn(sink.messages.at(-1)?.raw ?? "", "/reset-password"));
+    // The use starts while the email change holds the account's row, and
+    // the change deletes the user's links and commits: the order a race
+    // could take, forced.
+    let pending: ReturnType<typeof useReset> | undefined;
+    await dashboard.db.transaction().execute(async (trx) => {
+      await trx
+        .selectFrom("dashboard_users")
+        .select("id")
+        .where("id", "=", userId)
+        .forUpdate()
+        .execute();
+      pending = useReset(dashboard, token);
+      // Long enough for the use to hash the password and reach the lock.
+      await new Promise((resolve) => setTimeout(resolve, 600));
+      await trx
+        .updateTable("dashboard_users")
+        .set({ email: `changed-${email}` })
+        .where("id", "=", userId)
+        .execute();
+      await trx.deleteFrom("dashboard_password_resets").where("user_id", "=", userId).execute();
+    });
+    if (pending === undefined) throw new Error("The use did not start");
+    expect((await pending).statusCode).toBe(404);
+  });
+
   test("making a reset link again drops the queued email of the earlier one", async () => {
     const { userId } = await member();
     await send(dashboard, "POST", `/api/members/${userId}/reset-link`, {

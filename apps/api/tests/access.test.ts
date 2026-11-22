@@ -565,8 +565,16 @@ describe("members, admins, and the one access check", () => {
         monitoring: "none",
         uptime_alerts: "manage",
       });
-      // The rule is a check rule now, so they see it, but not what it said before.
-      expect((await send(cookie, "GET", rules(`/${ruleId}`))).statusCode).toBe(200);
+      // The rule is a check rule now, so they see it, but not what it said before,
+      // nor when it last fired as an error rule.
+      const seen = await send(cookie, "GET", rules(`/${ruleId}`));
+      expect(seen.statusCode).toBe(200);
+      expect(seen.json().rule.lastFiredAt).toBeNull();
+      const listed = (await send(cookie, "GET", rules())).json().rules;
+      expect(listed.find((rule: { id: string }) => rule.id === ruleId)?.lastFiredAt).toBeNull();
+      expect(
+        (await send(dashboard.cookie, "GET", rules(`/${ruleId}`))).json().rule.lastFiredAt,
+      ).not.toBeNull();
       expect((await send(cookie, "GET", rules(`/${ruleId}/history`))).json().alerts).toEqual([]);
       const alerts = (await send(cookie, "GET", `/api/projects/${site.id}/alerts`)).json().alerts;
       expect(alerts.some((alert: { message: string }) => alert.message === secret)).toBe(false);

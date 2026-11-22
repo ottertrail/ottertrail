@@ -157,7 +157,16 @@ const ruleColumns = [
   "r.updated_at",
 ] as const;
 
-function ruleQuery(db: Kysely<Database> | Transaction<Database>, projectId: string) {
+/**
+ * A project's rules as `kinds`' readers see them: when a rule last fired
+ * counts only alerts fired under those kinds (alert_history.kind), as the
+ * history does, since a rule can change kind.
+ */
+function ruleQuery(
+  db: Kysely<Database> | Transaction<Database>,
+  projectId: string,
+  kinds: readonly RuleKind[],
+) {
   return db
     .selectFrom("alert_rules as r")
     .select(ruleColumns)
@@ -165,9 +174,10 @@ function ruleQuery(db: Kysely<Database> | Transaction<Database>, projectId: stri
       sql<string>`(select count(*) from alert_states s where s.rule_id = r.id and s.firing)`.as(
         "firing",
       ),
-      sql<Date | null>`(select max(h.fired_at) from alert_history h where h.rule_id = r.id)`.as(
-        "last_fired_at",
-      ),
+      sql<Date | null>`(
+        select max(h.fired_at) from alert_history h
+        where h.rule_id = r.id and h.kind = any(${[...kinds]}::text[])
+      )`.as("last_fired_at"),
     ])
     .where("r.project_id", "=", projectId);
 }
@@ -196,9 +206,16 @@ function ruleOf(row: RuleRow): Rule {
   };
 }
 
-/** A project's rules, oldest first. */
-export async function listRules(db: Kysely<Database>, projectId: string): Promise<Rule[]> {
-  const rows = await ruleQuery(db, projectId).orderBy("r.created_at").orderBy("r.id").execute();
+/** A project's rules, oldest first, as `kinds`' readers see them (ruleQuery). */
+export async function listRules(
+  db: Kysely<Database>,
+  projectId: string,
+  kinds: readonly RuleKind[],
+): Promise<Rule[]> {
+  const rows = await ruleQuery(db, projectId, kinds)
+    .orderBy("r.created_at")
+    .orderBy("r.id")
+    .execute();
   return rows.map(ruleOf);
 }
 
@@ -206,8 +223,9 @@ export async function findRule(
   db: Kysely<Database> | Transaction<Database>,
   projectId: string,
   ruleId: string,
+  kinds: readonly RuleKind[],
 ): Promise<Rule | null> {
-  const row = await ruleQuery(db, projectId).where("r.id", "=", ruleId).executeTakeFirst();
+  const row = await ruleQuery(db, projectId, kinds).where("r.id", "=", ruleId).executeTakeFirst();
   return row === undefined ? null : ruleOf(row);
 }
 
@@ -217,6 +235,8 @@ export async function createRule(
   projectId: string,
   values: RuleValues,
   now: Date,
+  /** The kinds whose alerts the answer's lastFiredAt counts: the reader's. */
+  kinds: readonly RuleKind[],
 ): Promise<{ rule: Rule } | { refused: "too_many" } | { problem: Problem }> {
   return db.transaction().execute(async (trx) => {
     // Adds to one project wait for each other here, so two at once
@@ -250,7 +270,7 @@ export async function createRule(
       })
       .returning("id")
       .executeTakeFirstOrThrow();
-    const rule = await findRule(trx, projectId, row.id);
+    const rule = await findRule(trx, projectId, row.id, kinds);
     if (rule === null) throw new Error("The rule just added is missing");
     return { rule };
   });
@@ -298,6 +318,8 @@ export async function updateRule(
   ruleId: string,
   values: RuleValues,
   now: Date,
+  /** The kinds whose alerts the answer's lastFiredAt counts: the reader's. */
+  kinds: readonly RuleKind[],
   { enabledSent = true }: { enabledSent?: boolean } = {},
 ): Promise<{ rule: Rule } | { problem: Problem } | null> {
   return db.transaction().execute(async (trx) => {
@@ -339,7 +361,7 @@ export async function updateRule(
       })
       .where("id", "=", ruleId)
       .execute();
-    const rule = await findRule(trx, projectId, ruleId);
+    const rule = await findRule(trx, projectId, ruleId, kinds);
     return rule === null ? null : { rule };
   });
 }

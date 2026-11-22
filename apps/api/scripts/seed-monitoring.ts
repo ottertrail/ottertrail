@@ -13,7 +13,7 @@ import type { Kysely } from "kysely";
 import { evaluateCertificates, evaluateCheckDown } from "../src/alerts/check-rules.ts";
 import { evaluateErrorRules } from "../src/alerts/error-rules.ts";
 import type { AlertContext } from "../src/alerts/fire.ts";
-import type { RuleKind, SettingsInput } from "../src/alerts/kinds.ts";
+import { RULE_KINDS, type RuleKind, type SettingsInput } from "../src/alerts/kinds.ts";
 import { createRule, ruleValuesOf } from "../src/alerts/rules.ts";
 import type { ClickHouseClient } from "../src/clickhouse/clickhouse.ts";
 import { insertRows } from "../src/clickhouse/insert.ts";
@@ -88,7 +88,7 @@ async function addRule(
 ): Promise<string> {
   const values = ruleValuesOf({ ...input, channelIds: [options.channelId] });
   if ("error" in values) throw new Error(`Rule "${input.name}": ${values.message}`);
-  const result = await createRule(options.db, options.projectId, values, at);
+  const result = await createRule(options.db, options.projectId, values, at, RULE_KINDS);
   if (!("rule" in result)) throw new Error(`Rule "${input.name}" was not added`);
   return result.rule.id;
 }

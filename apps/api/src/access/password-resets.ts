@@ -83,22 +83,34 @@ export async function usePasswordReset(
   if ((await validReset(db, token, now)) === undefined) return null;
   const passwordHash = await (await auth.$context).password.hash(password);
   return db.transaction().execute(async (trx) => {
-    const used = await trx
-      .deleteFrom("dashboard_password_resets")
+    // The users' rows are locked before the link's row, as an email change,
+    // a change of access, and making a link take them (user, then its
+    // links), so two of them never wait for each other in a circle.
+    const found = await trx
+      .selectFrom("dashboard_password_resets")
+      .select(["user_id", "created_by", "made_by_command", "emailed"])
       .where("token_hash", "=", hashToken(token))
-      .where("expires_at", ">", now)
-      .returning(["user_id", "created_by", "made_by_command", "emailed"])
       .executeTakeFirst();
-    if (used === undefined) return null;
+    if (found === undefined) return null;
     // A link a user made works only while they may still reset this user
     // as they are now: a maker since demoted, or a target since promoted,
     // makes it void. The rows are locked, so neither changes meanwhile.
     // A link from the command or an emailed request has no maker to check.
-    if (!used.made_by_command && !used.emailed) {
-      const maker = used.created_by === null ? null : await lockUser(trx, used.created_by);
-      const target = await lockUser(trx, used.user_id);
-      if (maker === null || target === null || !mayManage(maker, target)) return null;
-    }
+    const byMaker = !found.made_by_command && !found.emailed;
+    const maker =
+      byMaker && found.created_by !== null ? await lockUser(trx, found.created_by) : null;
+    const target = await lockUser(trx, found.user_id);
+    if (target === null) return null;
+    if (byMaker && (maker === null || !mayManage(maker, target))) return null;
+    // Used up now, unless something deleted or replaced it while this waited.
+    const used = await trx
+      .deleteFrom("dashboard_password_resets")
+      .where("token_hash", "=", hashToken(token))
+      .where("user_id", "=", found.user_id)
+      .where("expires_at", ">", now)
+      .returning("user_id")
+      .executeTakeFirst();
+    if (used === undefined) return null;
     const updated = await trx
       .updateTable("dashboard_accounts")
       .set({ password: passwordHash, updated_at: now })

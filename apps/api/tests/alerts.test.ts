@@ -7,7 +7,7 @@ import { evaluateCertificates, evaluateCheckDown } from "../src/alerts/check-rul
 import { ARRIVAL_LAG_MS, evaluateErrorRules, MAX_CATCH_UP_MS } from "../src/alerts/error-rules.ts";
 import { AlertEvaluator } from "../src/alerts/evaluator.ts";
 import { type AlertContext, flushHeldBack, RULE_HOURLY_CAP } from "../src/alerts/fire.ts";
-import type { RuleKind } from "../src/alerts/kinds.ts";
+import { RULE_KINDS, type RuleKind } from "../src/alerts/kinds.ts";
 import {
   endOrphanedCheckAlerts,
   findRule,
@@ -946,9 +946,16 @@ describe("a rule reads nothing from before it was on", () => {
     const ruleId = await insertRule("error_new", { environment: null }, later(-HOUR));
     await evaluateErrorRules(context, reader(), later(MINUTE));
     const toggle = async (enabled: boolean, at: Date) => {
-      const rule = await findRule(testDb.db, projectId, ruleId);
+      const rule = await findRule(testDb.db, projectId, ruleId, RULE_KINDS);
       if (rule === null) throw new Error("no rule");
-      await updateRule(testDb.db, projectId, ruleId, { ...valuesOfRule(rule), enabled }, at);
+      await updateRule(
+        testDb.db,
+        projectId,
+        ruleId,
+        { ...valuesOfRule(rule), enabled },
+        at,
+        RULE_KINDS,
+      );
     };
     await toggle(false, later(2 * MINUTE));
     await arrive(CART, later(3 * MINUTE), later(3 * MINUTE));

@@ -189,7 +189,7 @@ export const alertRoutes: FastifyPluginCallback<{
 
   /** The rule, if it exists and the user may see its kind; otherwise null, as a missing rule. */
   const visibleRule = async (access: ProjectAccess, ruleId: string) => {
-    const rule = await findRule(db, access.projectId, ruleId);
+    const rule = await findRule(db, access.projectId, ruleId, visibleKinds(access.user));
     return rule === null || !canSeeKind(access.user, rule.kind) ? null : rule;
   };
 
@@ -202,7 +202,9 @@ export const alertRoutes: FastifyPluginCallback<{
         timeZone,
         maxRules: MAX_RULES,
         hourlyCap: RULE_HOURLY_CAP,
-        rules: (await listRules(db, projectId)).filter((rule) => canSeeKind(user, rule.kind)),
+        rules: (await listRules(db, projectId, visibleKinds(user))).filter((rule) =>
+          canSeeKind(user, rule.kind),
+        ),
       };
     },
   );
@@ -228,7 +230,7 @@ export const alertRoutes: FastifyPluginCallback<{
       if (!mayUseKind(access.user, request.body.kind)) return reply.code(403).send(FORBIDDEN);
       const values = ruleValuesOf(request.body);
       if ("error" in values) return reply.code(400).send(values);
-      const created = await createRule(db, projectId, values, now());
+      const created = await createRule(db, projectId, values, now(), visibleKinds(access.user));
       if ("refused" in created) {
         return reply.code(409).send({
           error: "too_many_rules",
@@ -275,9 +277,17 @@ export const alertRoutes: FastifyPluginCallback<{
       }
       const values = ruleValuesOf(request.body, valuesOfRule(current));
       if ("error" in values) return reply.code(400).send(values);
-      const updated = await updateRule(db, projectId, current.id, values, now(), {
-        enabledSent: request.body.enabled !== undefined,
-      });
+      const updated = await updateRule(
+        db,
+        projectId,
+        current.id,
+        values,
+        now(),
+        visibleKinds(access.user),
+        {
+          enabledSent: request.body.enabled !== undefined,
+        },
+      );
       if (updated === null) return reply.code(404).send(NO_RULE);
       if ("problem" in updated) return reply.code(400).send(updated.problem);
       // Only a change of what it watches is looked for again.
