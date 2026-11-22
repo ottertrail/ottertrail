@@ -474,6 +474,10 @@ export class FaviconJob {
         project: id,
         err: String(error),
       });
+      // The site changed: the old site's favicon goes, as when its fetch fails.
+      if (faviconKey !== null && previous !== hostname) {
+        await this.#replace(store, id, hostname, faviconKey, null);
+      }
       return false;
     }
     return this.#replace(store, id, hostname, faviconKey, key);

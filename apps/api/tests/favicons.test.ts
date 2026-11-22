@@ -7,7 +7,7 @@ import { FaviconJob, faviconPolicy, fetchFavicon, iconLinksOf } from "../src/ava
 import { faviconKind } from "../src/avatars/images.ts";
 import { LOCAL_OBJECT_STORE } from "../src/config.ts";
 import { addressPolicy } from "../src/outbound/addresses.ts";
-import { s3ObjectStore } from "../src/storage/object-store.ts";
+import { type ObjectStore, s3ObjectStore } from "../src/storage/object-store.ts";
 import { signedInDashboard } from "./helpers/dashboard.ts";
 import { gif, ICO, ico, jpeg, png, SVG, webp } from "./helpers/images.ts";
 
@@ -235,10 +235,10 @@ describe("the worker's favicon job", () => {
     await dashboard?.close();
   });
 
-  const job = (withStore = true) =>
+  const job = (withStore: boolean | ObjectStore = true) =>
     new FaviconJob({
       db: dashboard.db,
-      store: withStore ? store : null,
+      store: withStore === true ? store : withStore === false ? null : withStore,
       ...LOCAL,
       log: (_level, msg) => logs.push(msg),
       now: () => now,
@@ -300,5 +300,50 @@ describe("the worker's favicon job", () => {
     expect(await row()).toEqual({ favicon_key: null, favicon_hostname: "other.example" });
     expect(await store.get(second.favicon_key ?? "")).toBeNull();
     expect(logs).toContain("no favicon for a project; it shows its initial");
+  });
+
+  test("a new first site whose favicon the store refuses: the old site's goes too", async () => {
+    routes = { "/favicon.ico": { type: "image/x-icon", body: ICO } };
+    const project = (
+      await dashboard.app.inject({
+        method: "POST",
+        url: "/api/projects",
+        headers: { cookie: dashboard.cookie, origin: "http://localhost:5173" },
+        payload: { name: "Cafe", allowedHostnames: ["cafe.example"] },
+      })
+    ).json().project;
+    const row = () =>
+      dashboard.db
+        .selectFrom("projects")
+        .select(["favicon_key", "favicon_hostname"])
+        .where("id", "=", project.id)
+        .executeTakeFirstOrThrow();
+    expect(await job().tick()).toEqual({ tried: 1, kept: 1 });
+    const first = await row();
+    expect(first.favicon_hostname).toBe("cafe.example");
+    expect(first.favicon_key).not.toBeNull();
+
+    // The same store, except that it refuses every new object.
+    const refusing: ObjectStore = {
+      put: () => Promise.reject(new Error("refused")),
+      get: (key) => store.get(key),
+      delete: (keys) => store.delete(keys),
+      deletePrefix: (prefix) => store.deletePrefix(prefix),
+      close: () => {},
+    };
+    // The same site: its favicon stays until a fetch succeeds.
+    now = new Date(now.getTime() + 8 * 24 * 3600 * 1000);
+    await job(refusing).tick();
+    expect(await row()).toEqual(first);
+
+    await dashboard.db
+      .updateTable("projects")
+      .set({ allowed_hostnames: ["bakery.example"] })
+      .where("id", "=", project.id)
+      .execute();
+    await job(refusing).tick();
+    expect(await row()).toEqual({ favicon_key: null, favicon_hostname: "bakery.example" });
+    expect(await store.get(first.favicon_key ?? "")).toBeNull();
+    expect(logs).toContain("the object store refused a favicon; it is tried again next week");
   });
 });
