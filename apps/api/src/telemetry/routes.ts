@@ -7,6 +7,7 @@ import type { FastifyPluginCallback, FastifyReply, FastifyRequest } from "fastif
 import { aiCallsOf } from "../ai/calls.ts";
 import type { ClickHouseClient } from "../clickhouse/clickhouse.ts";
 import { type NewEvent, storeEvents } from "../collection/event-store.ts";
+import { InFlight } from "../collection/in-flight.ts";
 import type { CollectingProject, ProjectKeyCache } from "../collection/project-keys.ts";
 import {
   EventBudget,
@@ -208,21 +209,8 @@ export const telemetryRoutes: FastifyPluginCallback<TelemetryOptions> = (app, op
   const budget = options.budget ?? telemetryBudget(options);
   /** The project each request's key names, found before its body is read. */
   const projectOf = new WeakMap<FastifyRequest, CollectingProject>();
-  /**
-   * Requests in progress, each counted once until its answer is sent or it
-   * is abandoned, with its project once its key is found.
-   */
-  const inFlight = new Map<FastifyRequest, string | null>();
-  const inFlightOf = new Map<string, number>();
-  const finished = async (request: FastifyRequest) => {
-    if (!inFlight.has(request)) return;
-    const projectId = inFlight.get(request) ?? null;
-    inFlight.delete(request);
-    if (projectId === null) return;
-    const left = (inFlightOf.get(projectId) ?? 1) - 1;
-    if (left === 0) inFlightOf.delete(projectId);
-    else inFlightOf.set(projectId, left);
-  };
+  /** Requests in progress (in-flight.ts). */
+  const inFlight = new InFlight(maxInFlight, maxInFlightPerProject);
 
   // Both encodings as bytes: protobuf needs them, and JSON is parsed only
   // once unpacked. The limit applies to the body as sent; a gzip body is
@@ -281,12 +269,9 @@ export const telemetryRoutes: FastifyPluginCallback<TelemetryOptions> = (app, op
     if (contentEncoding !== "gzip" && contentEncoding !== "identity") {
       return fail(request, reply, 415, "Send the body as it is, or with Content-Encoding: gzip.");
     }
-    if (inFlight.size >= maxInFlight) {
+    if (!inFlight.take(request, reply)) {
       return fail(request, reply, 503, "Too many requests are in progress. Try again shortly.", 1);
     }
-    // Taken before anything waits, so requests arriving together cannot
-    // all pass the check; given back when the answer is sent.
-    inFlight.set(request, null);
     let project;
     try {
       project = await projects.findBySecret(secretKey);
@@ -297,8 +282,7 @@ export const telemetryRoutes: FastifyPluginCallback<TelemetryOptions> = (app, op
     if (project === null) {
       return fail(request, reply, 401, "No project has this secret key.");
     }
-    const ofProject = inFlightOf.get(project.id) ?? 0;
-    if (ofProject >= maxInFlightPerProject) {
+    if (!inFlight.takeForProject(request, project.id)) {
       return fail(
         request,
         reply,
@@ -307,8 +291,6 @@ export const telemetryRoutes: FastifyPluginCallback<TelemetryOptions> = (app, op
         1,
       );
     }
-    inFlight.set(request, project.id);
-    inFlightOf.set(project.id, ofProject + 1);
     projectOf.set(request, project);
     return undefined;
   };
@@ -319,8 +301,8 @@ export const telemetryRoutes: FastifyPluginCallback<TelemetryOptions> = (app, op
       {
         bodyLimit: MAX_TELEMETRY_BODY_BYTES,
         onRequest,
-        onResponse: finished,
-        onRequestAbort: finished,
+        onResponse: inFlight.finished,
+        onRequestAbort: inFlight.finished,
       },
       async (request, reply) => {
         const project = projectOf.get(request);

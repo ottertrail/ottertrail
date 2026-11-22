@@ -5,6 +5,7 @@ import { insertRows } from "../clickhouse/insert.ts";
 import { AI_CALLS_TABLE } from "../clickhouse/migrations.ts";
 import { ENVIRONMENT_PATTERN, environmentOf, RELEASE_PATTERN } from "../collection/environment.ts";
 import { USER_ID_PATTERN } from "../collection/identity.ts";
+import { InFlight } from "../collection/in-flight.ts";
 import { isStorableText, MAX_EVENT_AGE_MS } from "../collection/normalize.ts";
 import type { CollectingProject, ProjectKeyCache } from "../collection/project-keys.ts";
 import {
@@ -198,18 +199,8 @@ export const aiCallIngestRoutes: FastifyPluginCallback<AiCallIngestOptions> = (
   const ipLimiter = new TokenBucketLimiter(options.ipLimit ?? DEFAULT_SERVER_IP_LIMIT, { now });
   /** The project each request's key names, found before its body is read. */
   const projectOf = new WeakMap<FastifyRequest, CollectingProject>();
-  /** Requests in progress, with their project once its key is found, as OTLP counts them. */
-  const inFlight = new Map<FastifyRequest, string | null>();
-  const inFlightOf = new Map<string, number>();
-  const finished = async (request: FastifyRequest) => {
-    if (!inFlight.has(request)) return;
-    const projectId = inFlight.get(request) ?? null;
-    inFlight.delete(request);
-    if (projectId === null) return;
-    const left = (inFlightOf.get(projectId) ?? 1) - 1;
-    if (left === 0) inFlightOf.delete(projectId);
-    else inFlightOf.set(projectId, left);
-  };
+  /** Requests in progress, counted as OTLP's are (in-flight.ts). */
+  const inFlight = new InFlight(maxInFlight, maxInFlightPerProject);
 
   app.setErrorHandler((error: FastifyError, request, reply) => {
     if (error.validation !== undefined || error.statusCode === 400) {
@@ -256,15 +247,12 @@ export const aiCallIngestRoutes: FastifyPluginCallback<AiCallIngestOptions> = (
             .header("retry-after", String(result.retryAfterSeconds))
             .send(problem("rate_limited", "Too many requests from this address."));
         }
-        if (inFlight.size >= maxInFlight) {
+        if (!inFlight.take(request, reply)) {
           return reply
             .code(503)
             .header("retry-after", "1")
             .send(problem("busy", "Too many requests are in progress. Try again shortly."));
         }
-        // Taken before anything waits, so requests arriving together cannot
-        // all pass the check; given back when the answer is sent.
-        inFlight.set(request, null);
         let project;
         try {
           project = await projects.findBySecret(secretKey);
@@ -275,8 +263,7 @@ export const aiCallIngestRoutes: FastifyPluginCallback<AiCallIngestOptions> = (
         if (project === null) {
           return reply.code(401).send(problem("unknown_key", "No project has this secret key."));
         }
-        const ofProject = inFlightOf.get(project.id) ?? 0;
-        if (ofProject >= maxInFlightPerProject) {
+        if (!inFlight.takeForProject(request, project.id)) {
           return reply
             .code(429)
             .header("retry-after", "1")
@@ -287,13 +274,11 @@ export const aiCallIngestRoutes: FastifyPluginCallback<AiCallIngestOptions> = (
               ),
             );
         }
-        inFlight.set(request, project.id);
-        inFlightOf.set(project.id, ofProject + 1);
         projectOf.set(request, project);
         return undefined;
       },
-      onResponse: finished,
-      onRequestAbort: finished,
+      onResponse: inFlight.finished,
+      onRequestAbort: inFlight.finished,
     },
     async (request, reply) => {
       const project = projectOf.get(request);

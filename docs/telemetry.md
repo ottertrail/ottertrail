@@ -44,6 +44,8 @@ As the specification has them, so exporters retry what may succeed later and dro
 
 Exporters retry 429, 502, 503, and 504, and nothing else.
 
+A request counts as in progress from when its key is checked until its answer is sent or its connection closes, whichever comes first. A client that disconnects while its records are being written gives its place back then; the write itself still finishes (`apps/api/src/collection/in-flight.ts`, tested in `telemetry.test.ts` with a client that hangs up while ClickHouse holds the insert).
+
 ## Stored straight in ClickHouse
 
 Decided on 18 November 2026. Analytics events then landed in PostgreSQL first, which confirmed them, and were copied to ClickHouse. Telemetry did not: it is the largest data Ottertrail takes, often many times a site's events, and writing it twice would double the cost of the busiest path. Events have gone straight to ClickHouse the same way since ([ClickHouse](clickhouse.md)). An OTLP request is confirmed once ClickHouse has written it (asynchronous inserts, waiting for the write), and while ClickHouse cannot take it the answer is 503, which every exporter retries, keeping the data in its queue meanwhile.

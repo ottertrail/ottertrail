@@ -9,6 +9,7 @@ import { type ClickHouseClient, createClickHouse } from "../src/clickhouse/click
 import { loadConfig } from "../src/config.ts";
 import { createDatabase } from "../src/db/database.ts";
 import { PUBLIC_URL, signedInDashboard } from "./helpers/dashboard.ts";
+import { hangingUpClient } from "./helpers/hang-up.ts";
 import { insertProject } from "./helpers/projects.ts";
 import { secretKeyOf } from "./helpers/telemetry.ts";
 
@@ -497,6 +498,44 @@ describe("limits", () => {
       waiting[2]?.();
       expect((await after).statusCode).toBe(202);
     } finally {
+      await app.close();
+    }
+  });
+
+  test("a client that hangs up while its calls are being written gives its slots back", async () => {
+    const waiting: (() => void)[] = [];
+    const slow = {
+      insert: () =>
+        new Promise<void>((resolve) => {
+          waiting.push(resolve);
+        }),
+    } as unknown as ClickHouseClient;
+    const app = buildApp({
+      db: dashboard.db,
+      telemetry: { clickhouse: slow },
+      aiCalls: { maxInFlight: 2, maxInFlightPerProject: 1 },
+    });
+    try {
+      const project = await newProject("Hangs up");
+      const auth = { authorization: `Bearer ${project.key}` };
+      const hangUp = await hangingUpClient(app);
+      // More hang-ups than either limit: each would be refused if one before kept its slot.
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        const before = waiting.length;
+        await hangUp(
+          "/api/ai-calls",
+          { "content-type": "application/json", ...auth },
+          JSON.stringify({ v: 1, calls: [aiCall()] }),
+          () => waiting.length > before,
+        );
+      }
+      const before = waiting.length;
+      const next = send({ v: 1, calls: [aiCall()] }, auth, app);
+      await expect.poll(() => waiting.length).toBeGreaterThan(before);
+      for (const resolve of waiting) resolve();
+      expect((await next).statusCode).toBe(202);
+    } finally {
+      for (const resolve of waiting) resolve();
       await app.close();
     }
   });

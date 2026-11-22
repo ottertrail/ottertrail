@@ -16,6 +16,7 @@ import {
 import { MAX_MESSAGES } from "../src/telemetry/wire.ts";
 import { signedInDashboard } from "./helpers/dashboard.ts";
 import { countEvents, storedEvents } from "./helpers/events.ts";
+import { hangingUpClient } from "./helpers/hang-up.ts";
 import { insertProject } from "./helpers/projects.ts";
 import {
   decodeResponse,
@@ -881,6 +882,46 @@ describe("requests in progress", () => {
       expect((await send(theirs.secretKey)).statusCode).toBe(200);
     } finally {
       open();
+      await app.close();
+    }
+  });
+  test("a client that hangs up while its records are being written gives its slots back", async () => {
+    const waiting: (() => void)[] = [];
+    // A ClickHouse that holds every insert until the test lets it finish.
+    const held = {
+      insert: () =>
+        new Promise<void>((resolve) => {
+          waiting.push(resolve);
+        }),
+    } as unknown as ClickHouseClient;
+    const app = buildApp({
+      db: dashboard.db,
+      telemetry: { clickhouse: held, maxInFlight: 2, maxInFlightPerProject: 1 },
+    });
+    try {
+      const project = await newProject("Hangs up");
+      const hangUp = await hangingUpClient(app);
+      const headers = { "content-type": PROTOBUF, authorization: `Bearer ${project.secretKey}` };
+      // More hang-ups than either limit: each would be refused if one before kept its slot.
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        const before = waiting.length;
+        await hangUp(
+          "/v1/traces",
+          headers,
+          protobufTraces([protobufSpan(randomHex(16), randomHex(8))]),
+          () => waiting.length > before,
+        );
+      }
+      const before = waiting.length;
+      const next = post("/v1/traces", protobufTraces([protobufSpan(randomHex(16), randomHex(8))]), {
+        key: project.secretKey,
+        app,
+      });
+      await expect.poll(() => waiting.length).toBeGreaterThan(before);
+      for (const resolve of waiting) resolve();
+      expect((await next).statusCode).toBe(200);
+    } finally {
+      for (const resolve of waiting) resolve();
       await app.close();
     }
   });
