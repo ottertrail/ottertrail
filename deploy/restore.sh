@@ -82,9 +82,18 @@ if [ -n "$from_s3" ]; then
   # whitespace trimmed; a value in a pair of single or double quotes is
   # what is inside them, and the rest of the line is dropped; an unquoted
   # value ends at " #", a comment. An `=` inside the value stays.
+  # Unquoted and double-quoted values are interpolated as Compose does:
+  # `${NAME}`, `$NAME`, and `${NAME:-default}` from this shell's exported
+  # environment, else from the same .env (where a value that refers on
+  # again is refused); `$$` is one `$`. A single-quoted value is literal.
+  # Any other form (`${NAME:?message}`, a `$` in a default) stops with a
+  # message saying to export the variable instead.
   env_file=$(dirname "$0")/.env
   # from_env_file: start
-  from_env_file() {
+  # The raw value of $1 in .env, in $value; $quote is ' for a single-quoted one.
+  env_file_value() {
+    value=
+    quote=
     [ -f "$env_file" ] || return 0
     line=$(tr -d '\r' < "$env_file" |
       grep -E "^[[:space:]]*(export[[:space:]]+)?$1[[:space:]]*=" | tail -n 1) || return 0
@@ -92,16 +101,78 @@ if [ -n "$from_s3" ]; then
     value=$(printf '%s\n' "${line#*=}" | sed 's/^[[:space:]]*//')
     case "$value" in
       \"*) value=${value#\"}; value=${value%%\"*} ;;
-      \'*) value=${value#\'}; value=${value%%\'*} ;;
+      \'*) value=${value#\'}; value=${value%%\'*}; quote=\' ;;
       *) value=$(printf '%s\n' "$value" | sed -e 's/[[:space:]]#.*$//' -e 's/[[:space:]]*$//') ;;
     esac
+  }
+  # Stops: $1's value uses $2, which this reader does not resolve.
+  unresolved() {
+    echo "$1 in .env uses $2, which restore.sh can't resolve. Export $1 in this shell, then run restore.sh again." >&2
+    exit 1
+  }
+  # The value of the variable named $1, for $2 in $3's value: the shell's
+  # exported environment first, as Compose takes it, else .env.
+  referenced() {
+    case "$1" in
+      '' | [!A-Za-z_]* | *[!A-Za-z0-9_]*) unresolved "$3" "$2" ;;
+    esac
+    if printenv "$1" > /dev/null; then
+      printenv "$1"
+      return 0
+    fi
+    env_file_value "$1"
+    case "$quote$value" in
+      \'*) ;;
+      *'$'*) unresolved "$3" "$2" ;;
+    esac
     printf '%s' "$value"
+  }
+  from_env_file() {
+    env_file_value "$1"
+    if [ -n "$quote" ]; then
+      printf '%s' "$value"
+      return 0
+    fi
+    rest=$value
+    resolved=
+    while :; do
+      case "$rest" in
+        *'$'*) ;;
+        *) break ;;
+      esac
+      resolved=$resolved${rest%%\$*}
+      rest=${rest#*\$}
+      case "$rest" in
+        '$'*) resolved=$resolved'$'; rest=${rest#?} ;;
+        '{'*'}'*)
+          inner=${rest#?}
+          inner=${inner%%\}*}
+          rest=${rest#*\}}
+          name=${inner%%:-*}
+          fallback=
+          [ "$name" = "$inner" ] || fallback=${inner#*:-}
+          case "$fallback" in
+            *'$'*) unresolved "$1" "\${$inner}" ;;
+          esac
+          found=$(referenced "$name" "\${$inner}" "$1") || exit 1
+          [ -n "$found" ] || found=$fallback
+          resolved=$resolved$found ;;
+        [A-Za-z_]*)
+          name=$(printf '%s\n' "$rest" | sed 's/^\([A-Za-z_][A-Za-z0-9_]*\).*$/\1/')
+          rest=${rest#"$name"}
+          found=$(referenced "$name" "\$$name" "$1") || exit 1
+          resolved=$resolved$found ;;
+        '{'*) unresolved "$1" "\$$rest" ;;
+        *) resolved=$resolved'$' ;;
+      esac
+    done
+    printf '%s' "$resolved$rest"
   }
   # from_env_file: end
   # Asks for each setting the environment and .env lack; a secret without echo.
   ask() {
     eval "value=\${$1:-}"
-    [ -n "$value" ] || value=$(from_env_file "$1")
+    [ -n "$value" ] || value=$(from_env_file "$1") || exit 1
     if [ -z "$value" ] && [ -n "${4:-}" ]; then
       value=$4
     fi

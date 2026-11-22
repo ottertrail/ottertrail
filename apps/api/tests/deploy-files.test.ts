@@ -297,22 +297,37 @@ describe("restore.sh reads the backup variables from the file beside it as Compo
     script.indexOf("  # from_env_file: end"),
   );
 
-  /** What restore.sh's reader returns for `name` from a file holding `text`. */
-  async function readValue(text: string, name: string): Promise<string> {
+  /**
+   * What restore.sh's reader returns for `name` from a file holding
+   * `text`, run with only PATH and `env` in its environment.
+   */
+  async function readValue(
+    text: string,
+    name: string,
+    env: Record<string, string> = {},
+  ): Promise<string> {
     const folder = await mkdtemp(join(tmpdir(), "ottertrail-env-reader-"));
     try {
       const file = join(folder, "settings");
       await writeFile(file, text);
-      const { stdout } = await promisify(execFile)("sh", [
-        "-c",
-        `env_file="$1"\n${reader}\nfrom_env_file "$2"`,
+      const { stdout } = await promisify(execFile)(
         "sh",
-        file,
-        name,
-      ]);
+        ["-c", `env_file="$1"\n${reader}\nfrom_env_file "$2"`, "sh", file, name],
+        { env: { PATH: process.env.PATH ?? "/usr/bin:/bin", ...env } },
+      );
       return stdout;
     } finally {
       await rm(folder, { recursive: true, force: true });
+    }
+  }
+
+  /** The message the reader stops with for `name`, or "" when it does not stop. */
+  async function refusal(text: string, name: string): Promise<string> {
+    try {
+      await readValue(text, name);
+      return "";
+    } catch (error) {
+      return String((error as { stderr?: unknown }).stderr);
     }
   }
 
@@ -344,8 +359,56 @@ describe("restore.sh reads the backup variables from the file beside it as Compo
     expect(await readValue("A=first\r\nB=b\r\nA=second\r\n", "A")).toBe("second");
   });
 
+  describe("interpolation, as Compose does it", () => {
+    const env = { S3_SECRET: "from-shell", EMPTY: "" };
+    test.each([
+      ["A=${S3_SECRET}", "from-shell"],
+      ["A=$S3_SECRET", "from-shell"],
+      ['A="${S3_SECRET}"', "from-shell"],
+      ["A=pre-${S3_SECRET}-post", "pre-from-shell-post"],
+      ["A=$S3_SECRET.x", "from-shell.x"],
+      ["A=${S3_SECRET:-fallback}", "from-shell"],
+      ["A=${UNSET:-fallback}", "fallback"],
+      ["A=${EMPTY:-fallback}", "fallback"],
+      ["A=${UNSET}", ""],
+      ["A=${IN_FILE}", "in-file"],
+      ["A=$IN_FILE", "in-file"],
+      ["A=${LITERAL}", "lit$eral"],
+      ["A=cost$$5", "cost$5"],
+      ["A=$$S3_SECRET", "$S3_SECRET"],
+      ["A=a$", "a$"],
+      ["A=a$ b", "a$ b"],
+      ["A='${S3_SECRET}'", "${S3_SECRET}"],
+      ["A='$S3_SECRET'", "$S3_SECRET"],
+    ])("%j reads as %j", async (line, expected) => {
+      const file = `IN_FILE=in-file\nLITERAL='lit$eral'\n${line}\n`;
+      expect(await readValue(file, "A", env)).toBe(expected);
+    });
+
+    test("the shell's environment wins over the file", async () => {
+      expect(await readValue("S3_SECRET=from-file\nA=${S3_SECRET}\n", "A", env)).toBe("from-shell");
+    });
+
+    test.each([
+      ["A=${S3_SECRET:?unset}", "${S3_SECRET:?unset}"],
+      ["A=${S3_SECRET:+set}", "${S3_SECRET:+set}"],
+      ["A=${UNSET:-$OTHER}", "${UNSET:-$OTHER}"],
+      ["A=${NO_END", "${NO_END"],
+      ["A=${CHAIN}", "${CHAIN}"],
+    ])("%j stops, saying to export the variable", async (line, form) => {
+      expect(await refusal(`CHAIN=$S3_SECRET\n${line}\n`, "A")).toBe(
+        `A in .env uses ${form}, which restore.sh can't resolve. Export A in this shell, then run restore.sh again.\n`,
+      );
+    });
+
+    test("restore.sh asks for nothing more once the reader stops", () => {
+      expect(script).toContain('value=$(from_env_file "$1") || exit 1');
+    });
+  });
+
   test("it never runs the file", async () => {
     expect(await readValue("A=$(echo ran)\nB=`echo ran`\n", "A")).toBe("$(echo ran)");
+    expect(await readValue("A=${B}\nB=`echo ran`\n", "A")).toBe("`echo ran`");
     expect(reader).not.toMatch(/\beval\b|^\s*\.\s|\bsource\b/m);
   });
 });
