@@ -11,6 +11,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { logQuery, type LogSummary, severityOf } from "@/lib/logs-api";
 import { cn } from "@/lib/utils";
 
+import { AiContentNote } from "./ai-content";
 import { AttributeTable } from "./attributes";
 import { formatPreciseMoment } from "./format";
 
@@ -182,6 +183,10 @@ export function LogRecordView({
           <pre className="max-h-96 overflow-auto rounded-lg bg-muted p-3 font-mono text-xs [overflow-wrap:anywhere] whitespace-pre-wrap text-ink">
             {query.data.log.body === "" ? "(empty body)" : query.data.log.body}
           </pre>
+          <AiContentNote
+            attributes={query.data.log.attributes}
+            eventName={query.data.log.eventName}
+          />
           <dl
             className={
               inWorkbench

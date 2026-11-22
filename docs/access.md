@@ -45,6 +45,8 @@ A member's access has two parts (`dashboard_member_access`, `dashboard_member_pr
 
 Replays and users are areas of their own because they show individual people.
 
+Monitoring shows span and log attributes as servers sent them, but never AI prompts or completions: the API drops them when it receives them ([telemetry](telemetry.md#ai-prompts-and-completions-are-not-stored)).
+
 Members never see project keys, project settings, notification channels (beyond their names, for choosing a rule's), the Members page, or the instance's settings.
 
 ### Presets

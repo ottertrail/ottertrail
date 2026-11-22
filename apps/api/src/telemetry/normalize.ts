@@ -7,6 +7,7 @@ import {
   RELEASE_PATTERN,
 } from "../collection/environment.ts";
 import type { NewEvent } from "../collection/event-store.ts";
+import { isAiContent, isAiContentEvent } from "./ai-content.ts";
 import {
   EXCEPTION_MESSAGE,
   EXCEPTION_STACKTRACE,
@@ -311,9 +312,14 @@ function sortedObject(map: Map<string, string>): Record<string, string> {
 /**
  * KeyValues as a map of text: at most MAX_ATTRIBUTES, keys cut to
  * MAX_KEY_CHARS, values to MAX_VALUE_BYTES. A repeated key keeps its last
- * value. `dropped` counts those left out.
+ * value. With `withoutAiContent`, AI prompts and completions are left out
+ * (ai-content.ts), a span's, span event's, span link's, or log record's.
+ * `dropped` counts those left out.
  */
-export function flattenAttributes(items: object[]): {
+export function flattenAttributes(
+  items: object[],
+  withoutAiContent = false,
+): {
   attributes: Record<string, string>;
   dropped: number;
 } {
@@ -321,6 +327,10 @@ export function flattenAttributes(items: object[]): {
   let dropped = 0;
   for (const item of items) {
     const key = cutChars(text(item, "key"), MAX_KEY_CHARS);
+    if (withoutAiContent && isAiContent(key)) {
+      dropped += 1;
+      continue;
+    }
     if (!attributes.has(key) && attributes.size >= MAX_ATTRIBUTES) {
       dropped += 1;
       continue;
@@ -462,6 +472,15 @@ function exceptionAttributesOf(items: object[]): ExceptionAttributes {
   return found;
 }
 
+/** A KeyValue's value as text, the last if repeated; "" when absent. */
+function attributeText(items: object[], key: string): string {
+  let found = "";
+  for (const item of items) {
+    if (text(item, "key") === key) found = valueText(message(item, "value"));
+  }
+  return found;
+}
+
 /** The resource's labels an error event takes. */
 function errorLabels(resource: Resource) {
   return {
@@ -511,7 +530,7 @@ export function normalizeTraces(
           refusals.add("spans that end before they start");
           continue;
         }
-        const { attributes, dropped } = flattenAttributes(messages(span, "attributes"));
+        const { attributes, dropped } = flattenAttributes(messages(span, "attributes"), true);
         const events = messages(span, "events");
         const links = messages(span, "links");
         const status = message(span, "status");
@@ -536,7 +555,7 @@ export function normalizeTraces(
             events.slice(0, MAX_SPAN_EVENTS).map((event) => ({
               time: uint64(event, "timeUnixNano").toString(),
               name: cutBytes(text(event, "name"), MAX_NAME_BYTES),
-              attributes: flattenAttributes(messages(event, "attributes")).attributes,
+              attributes: flattenAttributes(messages(event, "attributes"), true).attributes,
             })),
           ),
           dropped_events_count: Math.min(
@@ -548,7 +567,7 @@ export function normalizeTraces(
             links.slice(0, MAX_SPAN_LINKS).map((link) => ({
               traceId: optionalId(link, "traceId", 16),
               spanId: optionalId(link, "spanId", 8),
-              attributes: flattenAttributes(messages(link, "attributes")).attributes,
+              attributes: flattenAttributes(messages(link, "attributes"), true).attributes,
             })),
           ),
           dropped_links_count: Math.min(
@@ -627,7 +646,14 @@ export function normalizeLogs(
           continue;
         }
         const items = messages(record, "attributes");
-        const { attributes, dropped } = flattenAttributes(items);
+        const { attributes, dropped } = flattenAttributes(items, true);
+        const eventName = text(record, "eventName");
+        // A GenAI message event's body is its message: dropped, and counted
+        // with the attributes. Older SDKs name the event in an attribute.
+        const body = valueText(message(record, "body"));
+        const aiBody =
+          body !== "" &&
+          (isAiContentEvent(eventName) || isAiContentEvent(attributeText(items, "event.name")));
         const row: Omit<LogRow, "id" | "resource_attributes"> = {
           ...shared,
           timestamp: nanosText(at),
@@ -636,12 +662,12 @@ export function normalizeLogs(
           ),
           severity_number: enumValue(record, "severityNumber", 24),
           severity_text: label(text(record, "severityText")),
-          body: cutBytes(valueText(message(record, "body")), MAX_BODY_BYTES),
+          body: aiBody ? "" : cutBytes(body, MAX_BODY_BYTES),
           trace_id: optionalId(record, "traceId", 16),
           span_id: optionalId(record, "spanId", 8),
-          event_name: label(text(record, "eventName")),
+          event_name: label(eventName),
           attributes,
-          dropped_attributes_count: droppedCount(record, dropped),
+          dropped_attributes_count: droppedCount(record, aiBody ? dropped + 1 : dropped),
         };
         sharedBytes += resource.bytes;
         const rowId = contentId(resource, row);

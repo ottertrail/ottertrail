@@ -11,6 +11,7 @@ import { isTraceId } from "@/lib/logs-api";
 import { type SpanDetail, type SpanKind, spanQuery, type WaterfallSpan } from "@/lib/traces-api";
 
 import { formatWhole } from "../analytics/format";
+import { AiContentNote } from "./ai-content";
 import { AttributeTable } from "./attributes";
 import { formatDuration, formatOffset, formatPreciseMoment } from "./format";
 
@@ -157,6 +158,7 @@ export function SpanDetailCard({
                 <h4 className="text-sm font-medium text-ink">Attributes</h4>
                 <AttributeTable caption="Span attributes" attributes={query.data.span.attributes} />
                 <Dropped count={query.data.span.droppedAttributes} noun="attributes" />
+                <AiContentNote attributes={query.data.span.attributes} />
               </section>
               <section className="flex flex-col gap-2">
                 <h4 className="text-sm font-medium text-ink">Events</h4>

@@ -1,12 +1,16 @@
 import { describe, expect, test } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser/context";
 
+import type { SpanDetail } from "@/lib/traces-api";
+
 import {
   ERROR_FINGERPRINTS,
   FAKE_SPANS,
   FAKE_TRACE_ID,
   type FakeApi,
+  fakeLogRecord,
   fakeServerError,
+  fakeSpan,
   installFakeApi,
   LONG_BODY,
   noLogs,
@@ -16,6 +20,7 @@ import {
 import { renderApp } from "./render.tsx";
 
 const TRACES = `/projects/${PROJECT.id}/traces`;
+const AI_NOTE = "AI prompts and completions are removed before storing.";
 const TRACE = `${TRACES}/${FAKE_TRACE_ID}`;
 const LOGS = `/projects/${PROJECT.id}/logs`;
 
@@ -166,6 +171,7 @@ describe("a trace's page", () => {
     await expect
       .element(page.getByText("2 more attributes were dropped before storing."))
       .toBeVisible();
+    expect(page.getByText(AI_NOTE).query()).toBeNull();
     await expect
       .element(page.getByRole("list", { name: "Events, in the order sent" }))
       .toMatchTextContent(/exception\+165 ms from the span's start/);
@@ -191,6 +197,31 @@ describe("a trace's page", () => {
 
     await expect.poll(() => router.state.location.search).toEqual({ span: FAKE_SPANS.charge });
     await expect.element(page.getByRole("heading", { name: "Span: charge card" })).toBeVisible();
+  });
+
+  test("an AI span and an AI log record say their prompts and completions are removed", async () => {
+    installFakeApi({
+      span: (traceId, spanId) => ({
+        ...(fakeSpan(traceId, spanId) as SpanDetail),
+        attributes: { "gen_ai.request.model": "gpt-5", "gen_ai.usage.input_tokens": "120" },
+      }),
+      log: () =>
+        fakeLogRecord({
+          eventName: "gen_ai.user.message",
+          body: "",
+          attributes: { "gen_ai.system": "openai" },
+        }),
+    });
+    renderApp(TRACE);
+    await expect
+      .element(page.getByRole("table", { name: "Span attributes" }))
+      .toMatchTextContent(/gen_ai\.request\.modelgpt-5/);
+    await expect.element(page.getByText(AI_NOTE)).toBeVisible();
+
+    const list = page.getByRole("list", { name: "The trace's log records, oldest first" });
+    await list.getByRole("button", { name: /Payment declined/ }).click();
+    await expect.element(list.getByText("(empty body)")).toBeVisible();
+    await expect.element(list.getByText(AI_NOTE)).toBeVisible();
   });
 
   test("says plainly when no span of the trace is kept", async () => {
