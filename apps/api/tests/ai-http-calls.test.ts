@@ -101,6 +101,7 @@ describe("POST /api/ai-calls", () => {
       finishReasons: ["End_Turn"],
       userId: "user-42",
       feature: "  support-chat ",
+      conversationId: " conv_5Hx9-2026  ",
       service: "billing-api",
       traceId,
       spanId: "00f067aa0ba902b7",
@@ -135,6 +136,7 @@ describe("POST /api/ai-calls", () => {
       operation: "chat",
       feature: "support-chat",
       user_id: "user-42",
+      conversation_id: "conv_5Hx9-2026",
       input_tokens: "1200",
       output_tokens: "300",
       cache_read_tokens: "800",
@@ -154,6 +156,7 @@ describe("POST /api/ai-calls", () => {
       service: "",
       feature: "",
       user_id: "",
+      conversation_id: "",
       cache_read_tokens: "0",
       first_chunk_ns: null,
       finish_reasons: [],
@@ -165,11 +168,12 @@ describe("POST /api/ai-calls", () => {
     });
   });
 
-  test("an empty or blank operation, feature, service, error type, or finish reason is as left out", async () => {
+  test("an empty or blank operation, feature, conversation, service, error type, or finish reason is as left out", async () => {
     const project = await newProject("Empty");
     const call = aiCall({
       operation: "",
       feature: "   ",
+      conversationId: "  ",
       service: "",
       errorType: " ",
       finishReasons: ["", "stop"],
@@ -183,6 +187,7 @@ describe("POST /api/ai-calls", () => {
       {
         operation: "",
         feature: "",
+        conversation_id: "",
         service: "",
         error_type: "",
         failed: false,
@@ -260,6 +265,9 @@ describe("POST /api/ai-calls", () => {
     [{ userId: "" }, "an empty user ID"],
     [{ userId: "u".repeat(201) }, "a user ID over 200 characters"],
     [{ feature: "f".repeat(101) }, "a feature over 100 characters"],
+    [{ conversationId: "c".repeat(201) }, "a conversation ID over 200 characters"],
+    [{ conversationId: "conv\u0007" }, "a conversation ID with a control character"],
+    [{ conversationId: "conv\ud800" }, "a conversation ID with an unpaired surrogate"],
     [{ traceId: "xyz" }, "a trace ID that is not 32 hex characters"],
     [{ spanId: "00f067aa0ba902b7" }, "a span ID without its trace ID"],
     [{ finishReasons: Array.from({ length: 17 }, () => "stop") }, "17 finish reasons"],

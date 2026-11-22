@@ -547,4 +547,24 @@ export const CLICKHOUSE_MIGRATIONS: ClickHouseMigration[] = [
         min_age_to_force_merge_on_partition_only = 1`,
     ],
   },
+  {
+    name: "0009_ai_calls_conversation",
+    /**
+     * A call's conversation (docs/ai-usage.md, "Conversations"): the
+     * `gen_ai.conversation.id` of a span, or `conversationId` sent over
+     * HTTP (ai/calls.ts, ai/ingest-routes.ts). An ID the app chooses, at
+     * most 200 characters, no control characters; "" for none. Nothing
+     * else of a conversation is stored.
+     *
+     * A bloom filter finds one conversation's calls in a period, as
+     * trace_id's does a trace's spans. Nothing is live, so no backfill:
+     * older rows read "".
+     */
+    statements: (database) => [
+      `ALTER TABLE ${database}.${AI_CALLS_TABLE}
+         ADD COLUMN IF NOT EXISTS conversation_id String DEFAULT '' AFTER user_id`,
+      `ALTER TABLE ${database}.${AI_CALLS_TABLE}
+         ADD INDEX IF NOT EXISTS conversation_id_index conversation_id TYPE bloom_filter GRANULARITY 4`,
+    ],
+  },
 ];

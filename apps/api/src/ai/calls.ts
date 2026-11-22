@@ -34,6 +34,11 @@ export const MAX_TOKENS = 1_000_000_000;
 /** Finish reasons a call keeps, each cut to MAX_FINISH_REASON_CHARS. */
 export const MAX_FINISH_REASONS = 16;
 export const MAX_FINISH_REASON_CHARS = 64;
+/** A conversation's ID is at most this many characters; a longer one is none. */
+export const MAX_CONVERSATION_ID_CHARS = 200;
+/** A conversation's ID, trimmed: no control characters (C0, DEL, and C1), as a user ID. */
+export const CONVERSATION_ID_PATTERN = `^[^\\u0000-\\u001F\\u007F-\\u009F]{1,${MAX_CONVERSATION_ID_CHARS}}$`;
+const CONVERSATION_ID = new RegExp(CONVERSATION_ID_PATTERN);
 /** A time to the first chunk above a day is not one. */
 const MAX_FIRST_CHUNK_SECONDS = 86_400;
 
@@ -70,6 +75,7 @@ export const AI_ATTRIBUTES = {
   errorType: ["error.type"],
   feature: ["ottertrail.feature"],
   agent: ["gen_ai.agent.name"],
+  conversation: ["gen_ai.conversation.id"],
 } as const;
 
 /** One row of the ai_calls table (clickhouse/migrations.ts, 0008). */
@@ -91,6 +97,8 @@ export interface AiCallRow {
   feature: string;
   /** "" for none. */
   user_id: string;
+  /** The app's ID for the conversation (conversationIdOf); "" for none. */
+  conversation_id: string;
   input_tokens: number;
   output_tokens: number;
   cache_read_tokens: number;
@@ -155,6 +163,17 @@ function firstChunkNs(value: string | undefined): string | null {
 }
 
 /**
+ * A conversation's ID as stored: trimmed, 1 to MAX_CONVERSATION_ID_CHARS
+ * characters with no control characters; anything else is none (""), never
+ * cut, so two conversations cannot become one. An identifier the app
+ * chooses, stored like a feature's name: nothing else of the messages.
+ */
+export function conversationIdOf(value: string | undefined): string {
+  const id = value?.trim() ?? "";
+  return id.isWellFormed() && CONVERSATION_ID.test(id) ? id : "";
+}
+
+/**
  * The operations that are not a call to a model: agents, workflows, tools,
  * planning, and retrieval. Their tokens, when they carry any, are the
  * model calls' inside them.
@@ -210,6 +229,7 @@ export function aiCallOf(span: SpanRow): AiCallRow | null {
     operation: cleanLabel(first(attributes, AI_ATTRIBUTES.operation)),
     feature,
     user_id: userIdOf(attributes) ?? "",
+    conversation_id: conversationIdOf(first(attributes, AI_ATTRIBUTES.conversation)),
     input_tokens: count(AI_ATTRIBUTES.inputTokens),
     output_tokens: count(AI_ATTRIBUTES.outputTokens),
     cache_read_tokens: count(AI_ATTRIBUTES.cacheReadTokens),

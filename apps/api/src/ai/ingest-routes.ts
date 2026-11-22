@@ -19,8 +19,10 @@ import { DEFAULT_MAX_IN_FLIGHT, DEFAULT_MAX_IN_FLIGHT_PER_PROJECT } from "../tel
 import {
   type AiCallRow,
   cleanLabel,
+  conversationIdOf,
   MAX_AI_ERROR_TYPE_CHARS,
   MAX_AI_LABEL_CHARS,
+  MAX_CONVERSATION_ID_CHARS,
   MAX_FINISH_REASON_CHARS,
   MAX_FINISH_REASONS,
   MAX_TOKENS,
@@ -67,6 +69,8 @@ interface HttpAiCall {
   finishReasons?: string[];
   userId?: string;
   feature?: string;
+  /** The app's ID for the conversation the call is a turn of. */
+  conversationId?: string;
   service?: string;
   traceId?: string;
   spanId?: string;
@@ -119,6 +123,7 @@ const batchSchema = {
           },
           userId: { type: "string", maxLength: 200, pattern: USER_ID_PATTERN },
           feature: optionalTextOf(MAX_AI_LABEL_CHARS),
+          conversationId: optionalTextOf(MAX_CONVERSATION_ID_CHARS),
           service: optionalTextOf(MAX_AI_LABEL_CHARS),
           traceId: { type: "string", pattern: "^[0-9a-fA-F]{32}$" },
           spanId: { type: "string", pattern: "^[0-9a-fA-F]{16}$" },
@@ -310,6 +315,7 @@ export const aiCallIngestRoutes: FastifyPluginCallback<AiCallIngestOptions> = (
           call.errorType ?? "",
           call.userId ?? "",
           call.feature ?? "",
+          call.conversationId ?? "",
           call.service ?? "",
           ...(call.finishReasons ?? []),
         ];
@@ -352,6 +358,7 @@ export const aiCallIngestRoutes: FastifyPluginCallback<AiCallIngestOptions> = (
           operation: cleanLabel(call.operation),
           feature: cleanLabel(call.feature),
           user_id: call.userId ?? "",
+          conversation_id: conversationIdOf(call.conversationId),
           input_tokens: call.inputTokens ?? 0,
           output_tokens: call.outputTokens ?? 0,
           cache_read_tokens: call.cacheReadTokens ?? 0,

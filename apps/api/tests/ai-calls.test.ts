@@ -89,6 +89,7 @@ const SPANS: SpanCase[] = [
       "gen_ai.agent.name": "ignored-agent",
       "ottertrail.feature": "support-chat",
       "user.id": "user-42",
+      "gen_ai.conversation.id": "  conv_5Hx9-2026 ",
     },
   },
   {
@@ -103,6 +104,8 @@ const SPANS: SpanCase[] = [
       "gen_ai.response.finish_reasons": "stop",
       "gen_ai.agent.name": "support-bot",
       "enduser.id": "user-old",
+      // Longer than a conversation's ID may be: none, never cut into another's.
+      "gen_ai.conversation.id": "c".repeat(201),
     },
   },
   {
@@ -112,6 +115,7 @@ const SPANS: SpanCase[] = [
       "gen_ai.provider.name": "openai",
       "gen_ai.request.model": "text-embedding-3-small",
       "gen_ai.usage.input_tokens": 12,
+      "gen_ai.conversation.id": "c".repeat(200),
     },
   },
   {
@@ -129,6 +133,8 @@ const SPANS: SpanCase[] = [
       "gen_ai.agent.name": "summarizer",
       // Longer than a user ID may be: none.
       "user.id": "u".repeat(201),
+      // A control character: none.
+      "gen_ai.conversation.id": "conv\u0007one",
     },
   },
   // Not calls: an agent's span and a tool's carry the calls' tokens or none.
@@ -234,6 +240,8 @@ describe.each(["http/protobuf", "http/json"] as const)(
         // ottertrail.feature, before the agent's name.
         feature: "support-chat",
         user_id: "user-42",
+        // Trimmed, as a feature's name.
+        conversation_id: "conv_5Hx9-2026",
         input_tokens: "1200",
         output_tokens: "300",
         cache_read_tokens: "800",
@@ -251,6 +259,7 @@ describe.each(["http/protobuf", "http/json"] as const)(
         operation: "",
         feature: "support-bot",
         user_id: "user-old",
+        conversation_id: "",
         input_tokens: "90",
         output_tokens: "30",
         cache_read_tokens: "0",
@@ -264,6 +273,7 @@ describe.each(["http/protobuf", "http/json"] as const)(
         output_tokens: "0",
         feature: "",
         user_id: "",
+        conversation_id: "c".repeat(200),
       });
       expect(call("generate_content gemini")).toMatchObject({
         provider: "gcp.gemini",
@@ -275,6 +285,7 @@ describe.each(["http/protobuf", "http/json"] as const)(
         // A feature of only spaces and control characters is none: the agent's name instead.
         feature: "summarizer",
         user_id: "",
+        conversation_id: "",
       });
     });
 
