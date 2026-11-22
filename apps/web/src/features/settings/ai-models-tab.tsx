@@ -10,7 +10,7 @@ import {
 import * as React from "react";
 
 import { Missing } from "@/components/missing";
-import { PINNED } from "@/components/pinned-column";
+import { PINNED, PINNED_END } from "@/components/pinned-column";
 import { ScrollHint } from "@/components/scroll-hint";
 import { SettingsSection } from "@/components/settings-section";
 import { StatusBadge } from "@/components/status-badge";
@@ -734,7 +734,7 @@ function ModelsTable({
             <TableHead>Source</TableHead>
             <TableHead className="text-right">Calls ({list.callsDays} days)</TableHead>
             <TableHead>Price</TableHead>
-            <TableHead>
+            <TableHead className={PINNED_END}>
               <span className="sr-only">Actions</span>
             </TableHead>
           </TableRow>
@@ -744,7 +744,8 @@ function ModelsTable({
             const later = upcoming(model, list.now);
             return (
               <TableRow key={model.model}>
-                <TableCell className={cn("max-w-64 min-w-40", PINNED)}>
+                {/* Room for a whole Bedrock ID ("us.anthropic.…-v1:0") once the table has it. */}
+                <TableCell className={cn("max-w-64 min-w-40 @min-[96rem]:max-w-100", PINNED)}>
                   <TruncatedText text={model.model} className="font-mono text-sm" />
                 </TableCell>
                 <TableCell className="whitespace-nowrap">{model.provider}</TableCell>
@@ -760,7 +761,7 @@ function ModelsTable({
                 <TableCell className="text-right tabular-nums">
                   <PriceCell value={model.price?.cacheWrite} cache />
                 </TableCell>
-                <TableCell className="min-w-56 text-sm whitespace-normal">
+                <TableCell className="min-w-48 text-sm whitespace-normal">
                   {sourceText(model, timeZone)}
                   {(model.covers?.ids.length ?? 0) > 1 && (
                     <span className="block text-ink-subtle">Covers {coversText(model)}</span>
@@ -785,7 +786,7 @@ function ModelsTable({
                     <StatusBadge tone="good">Priced</StatusBadge>
                   )}
                 </TableCell>
-                <TableCell className="w-10">
+                <TableCell className={cn("w-10", PINNED_END)}>
                   <RowMenu model={model} onAction={onAction} />
                 </TableCell>
               </TableRow>
@@ -815,7 +816,7 @@ export function AiModelsTab({ timeZone }: InstanceTabProps) {
     <SettingsSection
       title="AI models"
       description="Prices are USD per million tokens. Changes apply to the AI page and AI cost alerts."
-      wide
+      wide="full"
     >
       {list.isPending && <TableSkeleton />}
       {list.isError && (
@@ -867,7 +868,7 @@ function ModelsList({
   const unpriced = list.models.filter((model) => model.price === null);
   const models = noPriceOnly ? unpriced : list.models;
   return (
-    <div className="flex flex-col gap-3">
+    <div className="@container flex flex-col gap-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <ToggleGroup
           value={[noPriceOnly ? NO_PRICE : "all"]}

@@ -46,15 +46,21 @@ export function SettingsSection<T>({
   headingRef?: React.Ref<HTMLHeadingElement>;
   /** The title's level in the page's outline: 3 under a heading of the page's own (a member's name). */
   headingLevel?: 2 | 3;
-  /** Content as wide as a table needs (a list, deliveries), rather than a form's measure. */
-  wide?: boolean;
+  /**
+   * Content as wide as a table needs (a list, deliveries), rather than a
+   * form's measure; `"full"` for a table of many columns, as wide as the page.
+   */
+  wide?: boolean | "full";
   children: React.ReactNode;
   className?: string;
 }) {
   const headingId = React.useId();
   const saveRef = React.useRef<HTMLButtonElement>(null);
   const Heading = `h${headingLevel}` as const;
-  const content = cn("flex flex-col gap-6", wide ? "max-w-5xl" : "max-w-2xl");
+  const content = cn(
+    "flex flex-col gap-6",
+    wide === "full" ? "min-w-0" : wide ? "max-w-5xl" : "max-w-2xl",
+  );
   const head = (
     <header className="flex max-w-2xl flex-col gap-1">
       <Heading

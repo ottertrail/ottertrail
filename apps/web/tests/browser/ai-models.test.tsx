@@ -393,14 +393,28 @@ describe("the AI models tab", () => {
     await expect.element(table()).toBeVisible();
   });
 
-  test("on a phone, the table scrolls inside itself with the model pinned", async () => {
+  test("on a phone, the table scrolls inside itself with the model and the menu pinned", async () => {
     await page.viewport(390, 844);
     installFakeApi();
     renderApp(TAB);
     await expect.element(table()).toBeVisible();
     expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(390);
-    const first = rowOf("claude-sonnet-4-6")?.cells[0] as HTMLElement;
-    expect(getComputedStyle(first).position).toBe("sticky");
+    const cells = rowOf("claude-sonnet-4-6")?.cells;
+    expect(getComputedStyle(cells?.[0] as HTMLElement).position).toBe("sticky");
+    expect(getComputedStyle(cells?.[cells.length - 1] as HTMLElement).position).toBe("sticky");
+  });
+
+  test("at 1440 wide, the table runs the page's width and fits without scrolling", async () => {
+    await page.viewport(1440, 900);
+    installFakeApi();
+    renderApp(TAB);
+    await expect.element(table()).toBeVisible();
+    const scroller = table().element().closest<HTMLElement>("[data-slot=table-container]");
+    const content = document.querySelector("[data-slot=app-content]");
+    expect(scroller?.scrollWidth).toBeLessThanOrEqual(scroller?.clientWidth ?? 0);
+    // Past the 64rem a table section is held to.
+    expect(scroller?.clientWidth).toBeGreaterThan(1024);
+    expect(content?.scrollWidth).toBeLessThanOrEqual(content?.clientWidth ?? 0);
   });
 });
 
