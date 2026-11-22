@@ -500,7 +500,7 @@ Browsers now freeze parts of the User-Agent so people are harder to fingerprint 
 
 A geolocation database maps IP address ranges to places. Ottertrail uses DB-IP's free [IP to City Lite](https://db-ip.com/db/download/ip-to-city-lite) database: licensed CC BY 4.0, updated monthly (usually on the 1st), in MMDB format, a binary search tree of address ranges. The API loads the whole file into memory (about 130 MB), at startup and again when the file is replaced and reads it with [mmdb-lib](https://github.com/runk/mmdb-lib) (MIT); a lookup takes microseconds and never leaves the server.
 
-- Country is close to a fact. Region and city are estimates: MaxMind, another provider, reports for US addresses about 80% accuracy for the region and about 66% for the city within 50 km ([source](https://support.maxmind.com/hc/en-us/articles/4407630607131)). Mobile networks, VPNs, and iCloud Private Relay show where traffic leaves the network, not where the person is.
+- Country is close to a fact. Region and city are estimates: MaxMind, another provider, reports that its GeoIP products place US addresses in the right region about 80% of the time, and in the right city within 50 km about 66% of the time ([source](https://support.maxmind.com/knowledge-base/articles/maxmind-geolocation-accuracy)). Mobile networks, VPNs, and iCloud Private Relay show where traffic leaves the network, not where the person is.
 - DB-IP Lite regions have English names only, not ISO codes, so `region` holds names such as `Bavaria`.
 - Private and local addresses (`127.0.0.1`, `192.168.x.x`) have no location. In local development every event has an empty location.
 

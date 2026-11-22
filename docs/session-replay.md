@@ -192,7 +192,7 @@ The tests: `packages/tracker/tests/script.test.ts` ("session replay after consen
 
 ### Only around errors
 
-The recorder records all the time into memory and sends nothing until an error. rrweb's documented way: a full snapshot every 30 seconds (`checkoutEveryNms`), and the buffer keeps the current and the previous stretch, so it always starts with a snapshot and covers 30 to 60 seconds before now. Older stretches are dropped.
+The recorder records all the time into memory and sends nothing until an error. One of rrweb's documented ways: a full snapshot every 30 seconds (`checkoutEveryNms`), and the buffer keeps the current and the previous stretch, so it always starts with a snapshot and covers 30 to 60 seconds before now. Older stretches are dropped.
 
 When the tracker reports an error ([errors](errors.md#1-capture)), the recorder keeps recording for 10 more seconds, to show what the error did to the page, then sends the buffer. The error event carries the replay's ID (`replayId`, a UUID made by the recorder), and so do later errors of the same page load while it is still recording. One replay per recording, and one recording per page load unless the page stops it and starts a new one ([waiting for consent](#waiting-for-consent)): errors after it was sent get none.
 
