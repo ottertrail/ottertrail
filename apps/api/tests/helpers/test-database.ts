@@ -1,4 +1,4 @@
-import { type Kysely, sql } from "kysely";
+import { type DatabaseIntrospector, type Kysely, sql } from "kysely";
 import { type MigrationResult, Migrator } from "kysely/migration";
 
 import { loadConfig } from "../../src/config.ts";
@@ -10,21 +10,62 @@ import { testName } from "./test-names.ts";
 
 /**
  * Test files run in parallel, each in its own schema. Kysely's migrator
- * checks for its bookkeeping table by listing every table in every schema,
- * and that listing fails ("schema … does not exist") if another file drops
- * its schema in the middle of it. Migrating holds this PostgreSQL advisory
- * lock shared and dropping holds it exclusively, so drops wait for listings.
+ * checks for its bookkeeping tables by listing every column of every table
+ * in every schema, which under a full run is both slow (a dozen test
+ * schemas of 50 tables each) and fragile: the listing fails ("schema … does
+ * not exist") if another file drops its schema in the middle of it.
+ *
+ * So a test schema's own migrations list only that schema (schemaScoped),
+ * and need no lock. Only a migration that lists every schema, as `vp run
+ * migrate` does (createTestDatabase's `asDeployed`), holds this PostgreSQL
+ * advisory lock exclusively; dropping a schema, or tables in one, holds it
+ * shared, so drops run side by side and wait only for such a listing.
+ * (Before, every migration held it shared and every drop exclusively: under
+ * load drops queued behind migrations and migrations behind drops, and a
+ * test that made a dashboard of its own waited seconds for the lock twice.)
  */
 const SCHEMA_LOCK = 4_281_708_001;
 
 /**
  * The time limit for a test that makes a schema of its own and moves it
- * back or forward (migrateTestDatabase). Moving waits for SCHEMA_LOCK, which
- * every other file's migrations hold while they run, so under a full parallel
- * run it can wait far longer than the default 15 seconds without anything
- * being wrong.
+ * back or forward (migrateTestDatabase): each move runs a dozen migrations
+ * or more, which a busy machine can take tens of seconds over.
  */
 export const MIGRATION_TEST_MS = 90_000;
+
+/**
+ * `db`, for Kysely's migrator, with an introspector that lists the tables
+ * of the connection's own schema (its search path, the test schema) only.
+ * The migrator reads nothing but their names and schemas.
+ */
+function schemaScoped(db: Kysely<Database>): Kysely<Database> {
+  const introspection: DatabaseIntrospector = {
+    getSchemas: () => db.introspection.getSchemas(),
+    getTables: async () => {
+      const { rows } = await sql<{ name: string; schema: string; kind: string }>`
+        select c.relname as name, n.nspname as schema, c.relkind as kind
+        from pg_catalog.pg_class c
+        join pg_catalog.pg_namespace n on n.oid = c.relnamespace
+        where n.nspname = current_schema() and c.relkind in ('r', 'v', 'p', 'f')
+      `.execute(db);
+      return rows.map((row) => ({
+        name: row.name,
+        schema: row.schema,
+        isView: row.kind === "v",
+        isForeign: row.kind === "f",
+        columns: [],
+      }));
+    },
+  };
+  return new Proxy(db, {
+    get(target, property) {
+      if (property === "introspection") return introspection;
+      // Kysely's methods read private fields: call them on the real instance.
+      const value: unknown = Reflect.get(target, property, target);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+}
 
 export interface TestDatabase {
   db: Kysely<Database>;
@@ -61,9 +102,10 @@ export async function createTestDatabase({
   }
 
   try {
-    await withSchemaLock(connectionString, "shared", () =>
-      asDeployed ? migrateToLatest(db) : migrateToLatest(db, { schema }),
-    );
+    // As deployed, Kysely lists every schema: no drop may run meanwhile.
+    await (asDeployed
+      ? withSchemaLock(connectionString, "exclusive", () => migrateToLatest(db))
+      : migrateToLatest(schemaScoped(db), { schema }));
   } catch (error) {
     await destroy();
     throw error;
@@ -72,11 +114,11 @@ export async function createTestDatabase({
 }
 
 /**
- * Drops a test schema, holding SCHEMA_LOCK exclusively, as other files'
- * migrators list every table while they run.
+ * Drops a test schema, holding SCHEMA_LOCK shared: never while a migration
+ * lists every schema (createTestDatabase's `asDeployed`).
  */
 export async function dropTestSchema(schema: string): Promise<void> {
-  await withSchemaLock(loadConfig().databaseUrl, "exclusive", (connection) =>
+  await withSchemaLock(loadConfig().databaseUrl, "shared", (connection) =>
     sql`drop schema if exists ${sql.id(schema)} cascade`.execute(connection),
   );
 }
@@ -85,19 +127,19 @@ export async function dropTestSchema(schema: string): Promise<void> {
  * Moves a test database to a migration, back or forward ("latest" for the
  * newest), for tests of migrations themselves, and returns what ran. Going
  * back drops tables, as destroy() drops a schema, so it holds SCHEMA_LOCK
- * exclusively too: other files' migrators list every table while they run.
+ * shared too.
  */
 export async function migrateTestDatabase(
   testDb: TestDatabase,
   target: string,
 ): Promise<MigrationResult[]> {
   const migrator = new Migrator({
-    db: testDb.db,
+    db: schemaScoped(testDb.db),
     provider: { getMigrations: () => Promise.resolve(migrations) },
     migrationTableSchema: testDb.schema,
   });
   let ran: MigrationResult[] = [];
-  await withSchemaLock(loadConfig().databaseUrl, "exclusive", async () => {
+  await withSchemaLock(loadConfig().databaseUrl, "shared", async () => {
     const { error, results = [] } =
       target === "latest" ? await migrator.migrateToLatest() : await migrator.migrateTo(target);
     if (error !== undefined) {

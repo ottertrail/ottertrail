@@ -57,6 +57,14 @@ export default defineConfig({
     // longer than the default five seconds. Fifteen still catches a hang.
     testTimeout: 15_000,
     hookTimeout: 30_000,
+    // The databases, not this machine's cores, set the pace: by default
+    // Vitest runs a file per core but one (13 on a 14-core Mac) against a
+    // development PostgreSQL and ClickHouse in a 7-CPU, 4 GB VM. Measured
+    // there with the dashboard's tests alongside, as `vp run ready` runs
+    // them: 5 files at once took about as long as 13 (170 s against 178 s),
+    // and the slowest test setups (a schema, a ClickHouse database, and a
+    // sign-in) went from 8 s to 4.5 s, well inside the limits above.
+    maxWorkers: 5,
     // Drops the test schemas and databases runs that were cut off left behind.
     globalSetup: ["tests/helpers/global-setup.ts"],
   },

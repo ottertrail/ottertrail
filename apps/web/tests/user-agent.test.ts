@@ -39,10 +39,16 @@ describe("parseUserAgent", () => {
       `${"Edg/".repeat(4_000)}${digits}`,
     ];
     for (const userAgent of hostile) {
-      const start = performance.now();
-      parseUserAgent(userAgent);
+      // The fastest of five: a busy machine (the full check runs the API's
+      // tests alongside) can pause any one run for longer than the limit.
+      let fastest = Infinity;
+      for (let run = 0; run < 5; run += 1) {
+        const start = performance.now();
+        parseUserAgent(userAgent);
+        fastest = Math.min(fastest, performance.now() - start);
+      }
       // The quadratic pattern took about 144 ms on the first; linear ones take well under 1.
-      expect(performance.now() - start).toBeLessThan(20);
+      expect(fastest).toBeLessThan(20);
     }
   });
 });
