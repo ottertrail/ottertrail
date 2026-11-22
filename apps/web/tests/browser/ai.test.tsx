@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "vite-plus/test";
 import { page } from "vite-plus/test/browser/context";
 
 import type { AiChart, AiReport } from "../../src/lib/ai-api.ts";
-import { AI_CALLS, fakeAi, fakeAiChart, fakeAiReport, noAiCalls } from "./fake-ai.ts";
+import { AI_CALLS, fakeAi, fakeAiCalls, fakeAiChart, fakeAiReport, noAiCalls } from "./fake-ai.ts";
 import { deferred, type FakeApi, installFakeApi, memberAccess, PROJECT } from "./fake-api.ts";
 import { renderApp } from "./render.tsx";
 
@@ -398,6 +398,38 @@ describe("the AI page", () => {
     await expect
       .poll(() => router.state.location.pathname)
       .toBe(`/projects/${PROJECT.id}/users/ada%40example.com`);
+  });
+
+  test("a call sent over HTTP without a trace has no trace link; with a trace alone, it opens", async () => {
+    const [first, second, third] = AI_CALLS;
+    if (first === undefined || second === undefined || third === undefined) {
+      throw new Error("the fixtures changed");
+    }
+    installFakeApi({
+      ai: {
+        ...fakeAi(),
+        calls: (query, users) => ({
+          ...fakeAiCalls(query, users),
+          calls: [
+            { ...first, traceId: "", spanId: "" },
+            { ...second, traceId: "", spanId: "" },
+            { ...third, spanId: "" },
+          ],
+        }),
+      },
+    });
+    const router = renderApp(AI);
+    await expect.element(page.getByRole("table", { name: LATEST })).toBeVisible();
+    expect(rowsOf(LATEST)).toHaveLength(3);
+    const links = page.getByRole("table", { name: LATEST }).getByRole("link", {
+      name: /^Open its trace/,
+    });
+    expect(links.elements()).toHaveLength(1);
+    await links.click();
+    await expect
+      .poll(() => router.state.location.pathname)
+      .toBe(`/projects/${PROJECT.id}/traces/${third.traceId}`);
+    expect(router.state.location.search).toEqual({ at: third.at });
   });
 
   test("without the Users area, one line says why calls by user are hidden", async () => {

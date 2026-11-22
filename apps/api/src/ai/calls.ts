@@ -33,7 +33,7 @@ export const MAX_AI_ERROR_TYPE_CHARS = MAX_ERROR_TYPE_CHARS;
 export const MAX_TOKENS = 1_000_000_000;
 /** Finish reasons a call keeps, each cut to MAX_FINISH_REASON_CHARS. */
 export const MAX_FINISH_REASONS = 16;
-const MAX_FINISH_REASON_CHARS = 64;
+export const MAX_FINISH_REASON_CHARS = 64;
 /** A time to the first chunk above a day is not one. */
 const MAX_FIRST_CHUNK_SECONDS = 86_400;
 
@@ -113,7 +113,7 @@ function first(attributes: Record<string, string>, names: readonly string[]): st
 }
 
 /** A name as a report lists it: no control characters, trimmed, at most `max` characters. */
-function cleanLabel(value: string | undefined, max = MAX_AI_LABEL_CHARS): string {
+export function cleanLabel(value: string | undefined, max = MAX_AI_LABEL_CHARS): string {
   return value === undefined ? "" : cutChars(label(value).trim(), max).trim();
 }
 

@@ -6,6 +6,7 @@ import type { Kysely } from "kysely";
 import { memberRoutes } from "./access/member-routes.ts";
 import { meRoutes } from "./access/routes.ts";
 import { accountRoutes } from "./account/routes.ts";
+import { aiCallIngestRoutes } from "./ai/ingest-routes.ts";
 import { aiModelRoutes } from "./ai/model-routes.ts";
 import { aiRoutes } from "./ai/routes.ts";
 import { alertRoutes } from "./alerts/routes.ts";
@@ -56,7 +57,7 @@ import { storageRoutes } from "./storage/routes.ts";
 import type { StorageSources } from "./storage/usage.ts";
 import { DashboardQueryLimiter } from "./telemetry/dashboard-limit.ts";
 import { telemetryDashboardRoutes } from "./telemetry/dashboard-routes.ts";
-import { type TelemetryOptions, telemetryRoutes } from "./telemetry/routes.ts";
+import { type TelemetryOptions, telemetryBudget, telemetryRoutes } from "./telemetry/routes.ts";
 import { trackerScriptRoutes } from "./tracker-script/routes.ts";
 import { uptimeRoutes } from "./uptime/routes.ts";
 
@@ -146,7 +147,9 @@ export interface AppOptions extends Omit<FastifyServerOptions, "logger"> {
    * ClickHouse: the dashboard's client unless `clickhouse` names another.
    * Not served without a ClickHouse client.
    */
-  telemetry?: Partial<Omit<TelemetryOptions, "projects" | "now">>;
+  telemetry?: Partial<Omit<TelemetryOptions, "projects" | "now" | "budget">>;
+  /** POST /api/ai-calls (ai/ingest-routes.ts): its limit per client address, which tests lower. */
+  aiCalls?: { ipLimit?: RateLimit };
   /**
    * Uptime checks (docs/uptime-alerts.md): whether they may reach private
    * addresses (UPTIME_ALLOW_PRIVATE_ADDRESSES, off by default), the
@@ -236,6 +239,7 @@ export function buildApp({
   replays = { limitBytes: DEFAULT_REPLAY_STORAGE_BYTES },
   heatmaps = {},
   telemetry = {},
+  aiCalls = {},
   uptime = {},
   notifications = {},
   storage = {},
@@ -307,11 +311,22 @@ export function buildApp({
   if (telemetryClickHouse !== undefined) {
     // At the root, not under /api: an exporter appends /v1/traces to the
     // address it is given (OTEL_EXPORTER_OTLP_ENDPOINT).
+    // One budget for OTLP and the AI calls sent over HTTP.
+    const budget = telemetryBudget(telemetry);
     app.register(telemetryRoutes, {
       ...telemetry,
       clickhouse: telemetryClickHouse,
       projects: projectKeys,
+      budget,
       retentionDays: telemetry.retentionDays ?? DEFAULT_TELEMETRY_RETENTION_DAYS,
+      ...(collection.now === undefined ? {} : { now: collection.now }),
+    });
+    app.register(aiCallIngestRoutes, {
+      prefix: "/api",
+      clickhouse: telemetryClickHouse,
+      projects: projectKeys,
+      budget,
+      ...(aiCalls.ipLimit === undefined ? {} : { ipLimit: aiCalls.ipLimit }),
       ...(collection.now === undefined ? {} : { now: collection.now }),
     });
   }

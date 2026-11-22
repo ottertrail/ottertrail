@@ -131,12 +131,27 @@ export interface TelemetryOptions {
   /** Spans, log records, and data points per project, and per instance (see BYTES_PER_UNIT). */
   projectLimit?: RateLimit;
   instanceLimit?: RateLimit;
+  /**
+   * The budget those limits make, when it is shared with POST
+   * /api/ai-calls (ai/ingest-routes.ts); made here from them when omitted.
+   */
+  budget?: EventBudget;
   /** Requests this process works on at once (DEFAULT_MAX_IN_FLIGHT). */
   maxInFlight?: number;
   /** Of those, one project's (DEFAULT_MAX_IN_FLIGHT_PER_PROJECT). */
   maxInFlightPerProject?: number;
   /** The clock, in milliseconds since 1970; tests fix it. */
   now?: () => number;
+}
+
+/** The telemetry budget: per project, inside the instance's. */
+export function telemetryBudget(
+  limits: Pick<TelemetryOptions, "projectLimit" | "instanceLimit">,
+): EventBudget {
+  return new EventBudget(
+    new TokenBucketLimiter(limits.projectLimit ?? TELEMETRY_PROJECT_LIMIT),
+    new TokenBucketLimiter(limits.instanceLimit ?? TELEMETRY_INSTANCE_LIMIT),
+  );
 }
 
 /** The encoding to answer in: the request's, or JSON when it named none OTLP uses. */
@@ -190,10 +205,7 @@ export const telemetryRoutes: FastifyPluginCallback<TelemetryOptions> = (app, op
     maxInFlightPerProject = DEFAULT_MAX_IN_FLIGHT_PER_PROJECT,
   } = options;
   const ipLimiter = new TokenBucketLimiter(options.ipLimit ?? DEFAULT_SERVER_IP_LIMIT);
-  const budget = new EventBudget(
-    new TokenBucketLimiter(options.projectLimit ?? TELEMETRY_PROJECT_LIMIT),
-    new TokenBucketLimiter(options.instanceLimit ?? TELEMETRY_INSTANCE_LIMIT),
-  );
+  const budget = options.budget ?? telemetryBudget(options);
   /** The project each request's key names, found before its body is read. */
   const projectOf = new WeakMap<FastifyRequest, CollectingProject>();
   /**

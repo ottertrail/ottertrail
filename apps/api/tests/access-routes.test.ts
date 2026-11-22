@@ -14,6 +14,7 @@ const PUBLIC_ROUTES = new Set([
   // Collection, with a project's public or secret key.
   "POST /api/events",
   "POST /api/server-events",
+  "POST /api/ai-calls",
   "POST /api/replays",
   "POST /api/heatmaps",
   "PUT /api/source-maps",

@@ -1,8 +1,8 @@
 # AI usage tracking
 
-**Status: phase 1 is built: detection and storage of AI calls, the price table, the report API, the two alert rule kinds, the AI page (`/projects/<id>/ai`, [dashboard](dashboard.md#ai)), the alert form for the new kinds ([dashboard](dashboard.md#813-alerts)), and the instance's own prices in Settings → AI models ([below](#prices)). The docs site explains it at `/monitoring/ai-usage/`.**
+**Status: phase 1 is built: detection and storage of AI calls, the price table, the report API, the two alert rule kinds, the AI page (`/projects/<id>/ai`, [dashboard](dashboard.md#ai)), the alert form for the new kinds ([dashboard](dashboard.md#813-alerts)), the instance's own prices in Settings → AI models ([below](#prices)), and, from phase 2, `POST /api/ai-calls` for apps without OpenTelemetry ([below](#sending-calls-over-http)). The docs site explains it at `/monitoring/ai-usage/`.**
 
-An app that calls language models pays per token, and its calls fail, stall, and get cut off in ways its other requests do not. This module shows the LLM calls an app makes: tokens, estimated cost, latency, and failures, per model, per feature, and per user, with the trace of each call one click away. It reads the spans the app already sends over OTLP ([telemetry](telemetry.md)); nothing of Ottertrail's runs in the app.
+An app that calls language models pays per token, and its calls fail, stall, and get cut off in ways its other requests do not. This module shows the LLM calls an app makes: tokens, estimated cost, latency, and failures, per model, per feature, and per user, with the trace of each call one click away. It reads the spans the app already sends over OTLP ([telemetry](telemetry.md)), or calls its server sends over HTTP; nothing of Ottertrail's runs in the app.
 
 ## Decisions
 
@@ -53,9 +53,9 @@ The user is the ID the tracker's `data-user-id` sends, so a call links to the Us
 
 ## Storage
 
-`ai_calls` (migration `0008_ai_calls`): project, start time, `id` (the trace and span IDs, the span's own row ID), trace and span IDs, service, environment, release, provider, model, operation, feature, user, the five token counts, duration, time to first chunk, failed, `error.type`, and finish reasons.
+`ai_calls` (migration `0008_ai_calls`): project, start time, `id` (the trace and span IDs, the span's own row ID; a call sent over HTTP, its UUID), trace and span IDs, service, environment, release, provider, model, operation, feature, user, the five token counts, duration, time to first chunk, failed, `error.type`, and finish reasons.
 
-- `ReplacingMergeTree`, `PARTITION BY toYYYYMM(timestamp)`, `ORDER BY (project_id, timestamp, id)`: every query filters by project first, then a period. A retried batch makes the same IDs, so it is the same rows.
+- `ReplacingMergeTree`, `PARTITION BY toYYYYMM(timestamp)`, `ORDER BY (project_id, timestamp, id)`: every query filters by project first, then a period. A retried batch makes the same IDs, so it is the same rows. A call sent over HTTP keeps the time its server sent, so its retry is the same row too ([below](#retries)).
 - **Written beside the span**, exactly as exception-derived error events are: the route writes the spans, the error events, and the AI calls before it answers 200 (asynchronous inserts, waiting for the write); if any insert fails, the budget is given back and the answer is 503, and the exporter's retry writes them all again.
 - **Kept as long as the project's events** ("Keep events" on the project, forever by default): retention deletes a project's AI calls older than its cut-off with its events (`deleteEventsBefore` in `apps/api/src/clickhouse/delete-events.ts`). No TTL.
 - **Deleted with the project,** found by the orphan sweep, and taken off the disk by `APPLY DELETED MASK`, as every other table ([ClickHouse](clickhouse.md#retention-and-deleting-a-project)). ClickHouse's backup covers it: `BACKUP DATABASE` takes every table.
@@ -191,6 +191,131 @@ Two rule kinds, evaluated by the worker with the telemetry rules, once a minute 
 
 Any instrumentation that follows the OpenTelemetry GenAI conventions sends calls this module reads. The docs site's page (`/monitoring/ai-usage/`) shows OpenTelemetry's own OpenAI instrumentations: `@opentelemetry/instrumentation-openai` for Node.js (openai 4.19 to 6, https://github.com/open-telemetry/opentelemetry-js-contrib/tree/main/packages/instrumentation-openai) and `opentelemetry-instrumentation-openai-v2` for Python (https://pypi.org/project/opentelemetry-instrumentation-openai-v2/), both checked on 22 November 2026.
 
+## Sending calls over HTTP
+
+For an app without OpenTelemetry: its server sends each call's names, token counts, and duration to `POST /api/ai-calls`, and the calls go into the same `ai_calls` table, so the AI page and the alert rules read them as they read calls found in spans. Code: `apps/api/src/ai/ingest-routes.ts`.
+
+```text
+POST /api/ai-calls
+Authorization: Bearer sk_…
+Content-Type: application/json
+
+{ "v": 1, "environment": "production", "release": "api@2.3.0",
+  "calls": [{ "id": "<UUID>", "occurredAt": 1794823396705, "provider": "openai", "model": "gpt-4o-mini",
+              "operation": "chat", "inputTokens": 1200, "outputTokens": 300, "durationMs": 1850,
+              "feature": "support-chat", "userId": "42" }] }
+```
+
+| Field                                                                                   | Required | Rule                                                                                                                                                                          |
+| --------------------------------------------------------------------------------------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `environment`, `release`                                                                | No       | For the whole batch, as server-side events take them ([web analytics](web-analytics.md#server-side-events)); `production` when left out                                       |
+| `id`                                                                                    | Yes      | A UUID the sender makes once per call: the call's row ID                                                                                                                      |
+| `occurredAt`                                                                            | Yes      | When the call started, in milliseconds since 1970                                                                                                                             |
+| `provider`, `model`                                                                     | Yes      | 1 to 100 characters, no control characters. The model is what prices the call ([Cost](#cost))                                                                                 |
+| `operation`                                                                             | No       | Such as `chat` or `embeddings`; "" when left out, as for a span without one                                                                                                   |
+| `inputTokens`, `outputTokens`, `cacheReadTokens`, `cacheWriteTokens`, `reasoningTokens` | No       | Whole numbers from 0 to 10^9; 0 when left out. Input counts cached tokens as OpenAI's API does, or apart from them as Anthropic's does: both are priced right ([Cost](#cost)) |
+| `durationMs`                                                                            | Yes      | 0 to 86,400,000 (a day), fractions allowed                                                                                                                                    |
+| `firstChunkMs`                                                                          | No       | Time to the first chunk of a streamed answer, in the same range                                                                                                               |
+| `ok`, `errorType`                                                                       | No       | A call failed if `ok` is `false` or it has an `errorType` (at most 200 characters); `ok: true` with an `errorType` is refused                                                 |
+| `finishReasons`                                                                         | No       | At most 16, of at most 64 characters, stored in lower case                                                                                                                    |
+| `userId`                                                                                | No       | 1 to 200 characters, no control characters: the ID the tracker's `data-user-id` sends, so the call links to the Users page                                                    |
+| `feature`                                                                               | No       | At most 100 characters: what `ottertrail.feature` sets on a span                                                                                                              |
+| `service`                                                                               | No       | At most 100 characters: the service filter on the AI page                                                                                                                     |
+| `traceId`, `spanId`                                                                     | No       | 32 and 16 hex characters, for an app that has traces too: the call's "Open its trace" link. A `spanId` needs its `traceId`                                                    |
+
+- **The project's secret key,** as server-side events and OTLP take it, checked before the body is read: a missing or malformed key gets 401 (`unauthorized`), an unknown one 401 (`unknown_key`) after the lookup. A public key never works. No CORS headers: a page cannot read the answers, and must never hold the key.
+- **Checked before any database work:** the schema, the text rules, and the times, cheapest first. Requests per IP address are limited as for server-side events (bursts of 600, then 50 a second).
+- **No prompts or completions.** The schema has no field for them, and fields it does not know are dropped (Fastify's `removeAdditional`, as for server-side events), so a prompt sent by mistake is never stored.
+- **Cost is not sent:** it is worked out from the tokens when the calls are read ([Cost](#cost)).
+- **The server's clock is trusted:** a call more than 5 minutes ahead is refused (400); one more than 24 hours old is counted in `tooOld` and not stored.
+- **Limits:** at most 1,000 calls and 1 MiB a request (a usual call is about 300 bytes). Each call costs one unit of the project's telemetry budget, the one OTLP spends ([telemetry](telemetry.md#limits)); a batch larger than the whole budget is refused (413).
+- **A batch is stored whole or not at all,** and the answer comes once ClickHouse has written it (an asynchronous insert, waiting for the write).
+
+| Status | Body `error`                   | Meaning                                                                           | Should the sender retry? |
+| ------ | ------------------------------ | --------------------------------------------------------------------------------- | ------------------------ |
+| 202    | none: `{ "stored", "tooOld" }` | Written to ClickHouse. `stored` counts the calls written, a retry's included      | No                       |
+| 400    | `invalid_request`              | The batch breaks a rule above                                                     | No: it will fail again   |
+| 401    | `unauthorized`, `unknown_key`  | No secret key, a malformed one, or one no project has                             | No                       |
+| 413    | `payload_too_large`            | Over 1 MiB, or more calls than the project's whole budget                         | No: send smaller batches |
+| 415    | `unsupported_media_type`       | Not `application/json`                                                            | No                       |
+| 429    | `rate_limited`                 | Too many requests from the address, or calls for the budget                       | Yes, after `Retry-After` |
+| 503    | `storage_unavailable`          | The key could not be looked up, or ClickHouse could not write; nothing was stored | Yes, after `Retry-After` |
+
+### Retries
+
+Retry on 429 and 503 with the same body. A call's row is its project, its `occurredAt`, and its `id`, which `ReplacingMergeTree` keeps once, so a retried call is one row, as long as the retry sends the same `id` and the same `occurredAt`: make both when the call is made, not when it is sent. Until ClickHouse merges the copies, the AI page's totals and the alert rules can count a retried call twice, as they can a retried span ([Known limits](#known-limits)); the latest calls never show a copy.
+
+### Examples
+
+```sh
+curl https://analytics.example.com/api/ai-calls \
+  -H "Authorization: Bearer $OTTERTRAIL_SECRET_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"v": 1, "calls": [{"id": "'"$(uuidgen)"'", "occurredAt": '"$(date +%s)000"',
+       "provider": "openai", "model": "gpt-4o-mini", "operation": "chat",
+       "inputTokens": 1200, "outputTokens": 300, "durationMs": 1850,
+       "feature": "support-chat", "userId": "42"}]}'
+```
+
+Node.js, after a call with the `openai` package:
+
+```ts
+import { randomUUID } from "node:crypto";
+
+const startedAt = Date.now();
+const completion = await openai.chat.completions.create({ model: "gpt-4o-mini", messages });
+const call = {
+  id: randomUUID(),
+  occurredAt: startedAt,
+  provider: "openai",
+  model: completion.model,
+  operation: "chat",
+  inputTokens: completion.usage?.prompt_tokens ?? 0,
+  outputTokens: completion.usage?.completion_tokens ?? 0,
+  cacheReadTokens: completion.usage?.prompt_tokens_details?.cached_tokens ?? 0,
+  durationMs: Date.now() - startedAt,
+  feature: "support-chat",
+  userId: user.id,
+};
+await fetch("https://analytics.example.com/api/ai-calls", {
+  method: "POST",
+  headers: {
+    Authorization: `Bearer ${process.env.OTTERTRAIL_SECRET_KEY}`,
+    "Content-Type": "application/json",
+  },
+  body: JSON.stringify({ v: 1, calls: [call] }),
+});
+```
+
+Python, with `requests`:
+
+```py
+import os, time, uuid
+import requests
+
+started_at = time.time()
+completion = client.chat.completions.create(model="gpt-4o-mini", messages=messages)
+requests.post(
+    "https://analytics.example.com/api/ai-calls",
+    headers={"Authorization": f"Bearer {os.environ['OTTERTRAIL_SECRET_KEY']}"},
+    json={"v": 1, "calls": [{
+        "id": str(uuid.uuid4()),
+        "occurredAt": int(started_at * 1000),
+        "provider": "openai",
+        "model": completion.model,
+        "operation": "chat",
+        "inputTokens": completion.usage.prompt_tokens,
+        "outputTokens": completion.usage.completion_tokens,
+        "durationMs": (time.time() - started_at) * 1000,
+        "feature": "support-chat",
+        "userId": str(user.id),
+    }]},
+    timeout=10,
+)
+```
+
+An app that makes many calls can gather them and send up to 1,000 at a time; a failed call can be sent with `"ok": false` and the error's type.
+
 ## Getting the feature and the user onto a call
 
 Auto-instrumented model spans are children of the app's own code, so an attribute set on the app's span does not reach them. OpenTelemetry's baggage span processors copy baggage onto every span started inside it: put `ottertrail.feature` and `user.id` in baggage around a feature's work, and allow only those two keys. Baggage also goes out in the headers of outgoing HTTP requests, the model provider's too, unless the baggage propagator is off: set `OTEL_PROPAGATORS=tracecontext`.
@@ -243,7 +368,8 @@ The Vercel AI SDK's `functionId` arrives as `gen_ai.agent.name`, which is the fe
 - **A dated price is a moment,** midnight of its day in the instance's timezone when it was set: changing the timezone afterwards does not move it, so it then starts at another hour of the new timezone's day.
 - **Rows on two IDs of one bundled entry** both cover the entry: a call without a row of its own takes the later start of the two.
 - **OpenInference spans** that name only `llm.*` attributes (no `gen_ai.*`) are not detected: set `OPENINFERENCE_ENABLE_GENAI_SEMCONV=true`.
-- **Calls older than the telemetry retention** cannot be sent: the traces route refuses spans older than `TELEMETRY_RETENTION_DAYS`, so a project's history starts when it starts sending.
+- **Calls older than the telemetry retention** cannot be sent: the traces route refuses spans older than `TELEMETRY_RETENTION_DAYS`, and `POST /api/ai-calls` calls more than a day old, so a project's history starts when it starts sending.
+- **A call sent over HTTP without a trace** has no "Open its trace" link on the AI page.
 
 ## Phases
 
@@ -257,7 +383,7 @@ The Vercel AI SDK's `functionId` arrives as `gen_ai.agent.name`, which is the fe
    - tests against real ClickHouse with OpenTelemetry's own exporters (`ai-calls.test.ts`, `ai-report.test.ts`, `ai-alerts.test.ts`);
    - the instance's own prices in Settings → AI models, from a day on or for all calls, and price as (built 22 November 2026; [Prices](#prices)).
 2. **Phase 2:**
-   - `POST /api/ai-calls` with the secret key, for apps without OpenTelemetry, into the same table;
+   - `POST /api/ai-calls` with the secret key, for apps without OpenTelemetry, into the same table (built 22 November 2026; [Sending calls over HTTP](#sending-calls-over-http));
    - an AI calls list in the Workbench pattern;
    - an `ai_latency` alert;
    - a cost widget on the Overview, and a user's AI cost on the user's page;
@@ -268,8 +394,9 @@ The Vercel AI SDK's `functionId` arrives as `gen_ai.agent.name`, which is the fe
 ## Tests
 
 - `apps/api/tests/ai-calls.test.ts`: spans of each kind of sender through OpenTelemetry's protobuf and JSON exporters, stored as calls or not, the old and new names, the bounds; a retried batch one row; each call a unit of the budget, never a 413 for a batch the budget takes without them; a 503 that gives it back when the calls cannot be written, whether the spans were.
+- `apps/api/tests/ai-http-calls.test.ts`: `POST /api/ai-calls`: every field stored, the key (missing, malformed, public, unknown) checked before the body, each rule refusing the whole batch, unknown fields such as a prompt dropped, 1,000 calls and 1 MiB, a call over a day old, a retried batch one row, each call a unit of the budget OTLP shares, the address's rate, a bad batch refused without a lookup, 503 with the budget given back, and the calls on the AI page and in a cost rule.
 - `apps/api/tests/ai-report.test.ts`: the price table's shape and matching, the arithmetic in JavaScript and in ClickHouse, the report's figures and each filter, the previous period, the chart and its Other line, the latest calls, access with and without `users`, and retention, project deletion, and the orphan sweep.
 - `apps/api/tests/ai-alerts.test.ts`: both kinds fired, resolved, and quiet below their minimum, the month's window across a timezone, the kept hours of the month and the last 24 hours against a full scan (a late call, midnight, a new month), the unlabeled feature, the worker's pass, and the rule routes' validation.
 - `apps/api/tests/ai-models.test.ts`: cost at read time with custom rows from a day, for all calls, price as (one level), on another ID of a bundled entry, exactly at a start, in a non-UTC timezone, and after a reset, ClickHouse against `priceAt`; kept hours marked stale and added up again after a change, and after a row changed past the routes; the list across the instance's projects only, and without ClickHouse; admins yes, members no; validation, the caps, a reset refused for a target, Origin, and the limit per user.
 - `apps/web/tests/browser/ai-models.test.tsx`: the tab, the No price filter, the search and paging, a model's sheet, Edit price from a date and for all calls, price as, Add model, Reset with its confirm, the states, and the AI page's link.
-- `apps/web/tests/browser/ai.test.tsx` and `ai-alerts.test.tsx`: the page and the alert form against the fake API (`fake-ai.ts`); `report-screens.test.tsx` the page at 390 and 1440 wide.
+- `apps/web/tests/browser/ai.test.tsx` and `ai-alerts.test.tsx`: the page and the alert form against the fake API (`fake-ai.ts`), and a call without a trace without its link; `report-screens.test.tsx` the page at 390 and 1440 wide.

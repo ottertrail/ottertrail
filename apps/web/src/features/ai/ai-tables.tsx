@@ -391,8 +391,9 @@ export function RecentCalls({ place }: { place: AiPlace }) {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {data.calls.map((call) => (
-                  <TableRow key={`${call.traceId}-${call.spanId}`}>
+                {data.calls.map((call, index) => (
+                  // A call sent over HTTP may have no trace (docs/ai-usage.md).
+                  <TableRow key={`${call.traceId}-${call.spanId}-${index}`}>
                     <TableCell className="pl-0 whitespace-nowrap tabular-nums">
                       {formatMoment(call.at, data.timeZone)}
                     </TableCell>
@@ -449,18 +450,23 @@ export function RecentCalls({ place }: { place: AiPlace }) {
                       <CallStatus call={call} />
                     </TableCell>
                     <TableCell className={PINNED_END}>
-                      <Link
-                        to="/projects/$projectId/traces/$traceId"
-                        params={{ projectId: place.projectId, traceId: call.traceId }}
-                        search={{ at: call.at, span: call.spanId }}
-                        className="text-sm whitespace-nowrap text-link hover:underline"
-                      >
-                        Open its trace
-                        <span className="sr-only">
-                          {" "}
-                          ({modelLabel(call.model)}, {formatMoment(call.at, data.timeZone)})
-                        </span>
-                      </Link>
+                      {call.traceId !== "" && (
+                        <Link
+                          to="/projects/$projectId/traces/$traceId"
+                          params={{ projectId: place.projectId, traceId: call.traceId }}
+                          search={{
+                            at: call.at,
+                            span: call.spanId === "" ? undefined : call.spanId,
+                          }}
+                          className="text-sm whitespace-nowrap text-link hover:underline"
+                        >
+                          Open its trace
+                          <span className="sr-only">
+                            {" "}
+                            ({modelLabel(call.model)}, {formatMoment(call.at, data.timeZone)})
+                          </span>
+                        </Link>
+                      )}
                     </TableCell>
                   </TableRow>
                 ))}
