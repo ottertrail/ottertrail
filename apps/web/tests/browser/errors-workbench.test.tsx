@@ -117,13 +117,32 @@ describe("the errors workbench", () => {
     await expect.element(summary()).toBeVisible();
   });
 
-  test("lists the keys in the filter bar, from 64rem", async () => {
+  test("lists the keys in the filter bar, from 64rem, where the bar has room", async () => {
+    await page.viewport(1920, 900);
     installFakeApi();
     renderApp(ERRORS);
 
     await expect
       .element(page.getByRole("list", { name: "Keyboard shortcuts" }))
       .toHaveTextContent("jkmoveeresolve or reopenEscclear");
+  });
+
+  test("at 1440 the key hints give way, so the filter bar stays one line", async () => {
+    await page.viewport(1440, 900);
+    installFakeApi();
+    renderApp(ERRORS);
+
+    await expect.element(list().getByRole("link", { name: /^TypeError/ })).toBeVisible();
+    await expect
+      .poll(() => document.querySelector<HTMLElement>("[data-slot=workbench-keys]")?.dataset.fits)
+      .toBe("false");
+    expect(page.getByRole("list", { name: "Keyboard shortcuts" }).elements()).toEqual([]);
+    const bar = document.querySelector("[data-slot=filter-bar]");
+    const tops = [...(bar?.children ?? [])]
+      .filter((item) => item instanceof HTMLElement && item.offsetHeight > 1)
+      .map((item) => item.getBoundingClientRect().top);
+    expect(Math.max(...tops) - Math.min(...tops)).toBeLessThan(8);
+    expectNoSidewaysScroll(1440);
   });
 
   test("on a narrow screen, a selection in the address opens the error's own page", async () => {
@@ -291,6 +310,7 @@ describe("the errors workbench, after review", () => {
   });
 
   test("e does nothing, and is not offered, without the right to resolve", async () => {
+    await page.viewport(1920, 900);
     const api = installFakeApi({ access: memberAccess({ errors: "view" }) });
     const router = renderApp(ERRORS);
     await expect

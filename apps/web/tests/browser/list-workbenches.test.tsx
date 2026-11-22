@@ -326,6 +326,8 @@ describe.each(SCREENS)("the $label workbench", (screen) => {
   };
 
   test("with nothing selected, sums up the list and says how to start", async () => {
+    // Wide enough for every screen's filters and its key hints on one line.
+    await page.viewport(1920, 900);
     installFakeApi(screen.overrides);
     const router = renderApp(screen.path);
 

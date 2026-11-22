@@ -431,12 +431,84 @@ function KeyHint({ keys, text }: { keys: string[]; text: string }) {
   );
 }
 
+/** A flex container's gap between items on one line, in pixels. */
+const columnGap = (element: HTMLElement) =>
+  Number.parseFloat(getComputedStyle(element).columnGap) || 0;
+
+/**
+ * Whether everything in the filter bar fits on one line with the hints at
+ * `hintsWidth`: the bar's items side by side, and in its last group (the
+ * range and the page's actions) everything but the hints themselves.
+ */
+function fitsOnOneLine(bar: HTMLElement, hints: HTMLElement, hintsWidth: number): boolean {
+  const style = getComputedStyle(bar);
+  const room =
+    bar.clientWidth -
+    (Number.parseFloat(style.paddingLeft) || 0) -
+    (Number.parseFloat(style.paddingRight) || 0);
+  const items = [...bar.children].filter(
+    (item): item is HTMLElement => item instanceof HTMLElement && item.offsetParent !== null,
+  );
+  let needed = Math.max(0, items.length - 1) * columnGap(bar);
+  for (const item of items) {
+    if (!item.contains(hints)) {
+      needed += item.getBoundingClientRect().width;
+      continue;
+    }
+    // The group that holds the hints: its other items, the hints, and the gaps between them.
+    const parts = [...item.children].filter(
+      (part): part is HTMLElement =>
+        part instanceof HTMLElement && part !== hints && part.offsetParent !== null,
+    );
+    needed += parts.reduce((sum, part) => sum + part.getBoundingClientRect().width, 0);
+    needed += hintsWidth + parts.length * columnGap(item);
+  }
+  // A pixel of slack for sub-pixel widths.
+  return needed <= room + 1;
+}
+
+/**
+ * The hints give way first: they show only while the filter bar fits on one
+ * line with them, so they never push it onto a second (docs/design-system.md,
+ * "Workbench"). Checked on each render of the page (a filter or period that
+ * changes the bar's items renders it again) and when the bar resizes. When
+ * they don't fit they stay laid out, invisible and out of the flow, so their
+ * width can be measured for the next check.
+ */
+function useFitsOnBar(ref: React.RefObject<HTMLUListElement | null>): boolean {
+  const [fits, setFits] = React.useState(true);
+  const check = React.useCallback(() => {
+    const hints = ref.current;
+    const bar = hints?.closest<HTMLElement>("[data-slot=filter-bar]");
+    // Under 64rem the hints are not shown at all: nothing to decide.
+    if (hints == null || bar == null || getComputedStyle(hints).display === "none") return;
+    setFits(fitsOnOneLine(bar, hints, hints.getBoundingClientRect().width));
+  }, [ref]);
+  React.useLayoutEffect(check);
+  React.useLayoutEffect(() => {
+    const bar = ref.current?.closest<HTMLElement>("[data-slot=filter-bar]");
+    if (bar == null) return undefined;
+    const observer = new ResizeObserver(check);
+    observer.observe(bar);
+    return () => observer.disconnect();
+  }, [ref, check]);
+  return fits;
+}
+
 export function WorkbenchKeyHints({ action }: { action?: Pick<WorkbenchAction, "key" | "label"> }) {
+  const ref = React.useRef<HTMLUListElement>(null);
+  const fits = useFitsOnBar(ref);
   return (
     <ul
+      ref={ref}
       aria-label="Keyboard shortcuts"
       data-slot="workbench-keys"
-      className="hidden items-center gap-3 text-xs text-ink-subtle min-[64rem]:flex"
+      data-fits={fits}
+      className={cn(
+        "hidden items-center gap-3 text-xs whitespace-nowrap text-ink-subtle min-[64rem]:flex",
+        // Inside the bar's corner, so nothing past its edge scrolls sideways.
+        !fits && "pointer-events-none invisible absolute top-0 right-0",
+      )}
     >
       <KeyHint keys={["j", "k"]} text="move" />
       {action !== undefined && <KeyHint keys={[action.key]} text={action.label} />}
