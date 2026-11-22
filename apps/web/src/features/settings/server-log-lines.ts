@@ -32,6 +32,10 @@ export interface ServerLine {
   request: { method: string; url: string; status: number | null; ms: number | null } | null;
   /** The line as the process wrote it, masked (redact.ts). */
   raw: Record<string, unknown>;
+  /** The line's JSON in lower case, made once, for the text filter. */
+  search: string;
+  /** About what the line holds in memory: its JSON's length, which the browser's cap counts. */
+  bytes: number;
 }
 
 const PINO_LEVELS: Record<number, LevelName> = {
@@ -107,6 +111,8 @@ export function parseLine(data: string, n: number): ServerLine | null {
     msg: typeof raw.msg === "string" ? raw.msg : "",
     request: requestOf(raw),
     raw,
+    search: JSON.stringify(raw).toLowerCase(),
+    bytes: data.length,
   };
 }
 
@@ -148,7 +154,7 @@ export function filterLines(lines: readonly ServerLine[], filters: LineFilters):
     (line) =>
       (filters.process === "all" || line.process === filters.process) &&
       levelRank(line.level) >= lowest &&
-      (text === "" || JSON.stringify(line.raw).toLowerCase().includes(text)),
+      (text === "" || line.search.includes(text)),
   );
 }
 

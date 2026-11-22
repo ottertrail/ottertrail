@@ -707,6 +707,7 @@ export function buildApp({
       prefix: "/api",
       db,
       auth: dashboard.auth,
+      trustedOrigins: dashboard.trustedOrigins,
       buffer: serverLog.buffer ?? new ServerLogBuffer(),
       level: log?.level ?? "silent",
       ...(serverLog.maxStreams === undefined ? {} : { maxStreams: serverLog.maxStreams }),

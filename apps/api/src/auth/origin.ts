@@ -43,3 +43,28 @@ export function requireTrustedOrigin(trustedOrigins: readonly string[]) {
     return undefined;
   };
 }
+
+/**
+ * A preHandler for dashboard reads a page on another site must not open,
+ * such as the Server log's stream, which holds one of a few places: a
+ * browser marks a same-origin GET with `Sec-Fetch-Site: same-origin`, and
+ * sends Origin only on some, so any other Sec-Fetch-Site, or an Origin
+ * that is not the dashboard's, is refused. A client that sends neither
+ * (curl, with the session's cookie) passes.
+ */
+export function requireSameOriginRead(trustedOrigins: readonly string[]) {
+  return async (request: FastifyRequest, reply: FastifyReply) => {
+    const site = request.headers["sec-fetch-site"];
+    const origin = request.headers.origin;
+    if (
+      (site !== undefined && site !== "same-origin") ||
+      (origin !== undefined && !isTrustedOrigin(origin, trustedOrigins))
+    ) {
+      return reply.code(403).send({
+        error: "untrusted_origin",
+        message: "This request must come from the dashboard.",
+      });
+    }
+    return undefined;
+  };
+}

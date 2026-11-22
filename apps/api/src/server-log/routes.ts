@@ -5,6 +5,7 @@ import type { Kysely } from "kysely";
 
 import { can, readUserAccess, requirePermission } from "../access/access.ts";
 import type { Auth } from "../auth/auth.ts";
+import { requireSameOriginRead } from "../auth/origin.ts";
 import { requireSession, toHeaders } from "../auth/routes.ts";
 import type { Database } from "../db/schema.ts";
 import type { ServerLogBuffer, ServerLogEntry } from "./buffer.ts";
@@ -15,7 +16,11 @@ export const SERVER_LOG_MAX_STREAMS = 5;
 export const SERVER_LOG_HEARTBEAT_MS = 15_000;
 /** How often an open stream checks its session and the owner's permission again. */
 export const SERVER_LOG_RECHECK_MS = 30_000;
-/** Past the lines kept, how much may pile up for a client that doesn't read before it is let go. */
+/**
+ * What may wait for a client at two heartbeats in a row, when the lines
+ * kept have had that long to go out; and, past the lines kept, at any moment.
+ * A client over either is let go, so a stalled reader holds little.
+ */
 const MAX_PENDING_BYTES = 1024 * 1024;
 
 /** Why the API closed a stream, in its last event: the dashboard says what to do. */
@@ -24,6 +29,8 @@ export type StreamEnd = "busy" | "access" | "slow";
 export interface ServerLogRouteOptions {
   db: Kysely<Database>;
   auth: Auth;
+  /** Origins dashboard requests may come from (Config.trustedOrigins). */
+  trustedOrigins: readonly string[];
   buffer: ServerLogBuffer;
   /** LOG_LEVEL: what the API writes at all. Below it, no line exists to show. */
   level: string;
@@ -70,6 +77,7 @@ export const serverLogRoutes: FastifyPluginCallback<ServerLogRouteOptions> = (
   {
     db,
     auth,
+    trustedOrigins,
     buffer,
     level,
     maxStreams = SERVER_LOG_MAX_STREAMS,
@@ -80,19 +88,21 @@ export const serverLogRoutes: FastifyPluginCallback<ServerLogRouteOptions> = (
 ) => {
   const signedIn = requireSession(auth);
   const owner = requirePermission(db, "settings");
-  /** Every open stream, and what closes it. */
+  const fromDashboard = requireSameOriginRead(trustedOrigins);
+  /** Every open stream, and what cuts it off. */
   const streams = new Map<ServerResponse, () => void>();
 
   app.addHook("preClose", (finish) => {
-    // Each close deletes its own entry, which a Map's iteration allows.
-    for (const close of streams.values()) close();
+    // Cut off, not ended: an end would wait for a stalled reader, and so
+    // would the close. Each deletes its own entry, which a Map's iteration allows.
+    for (const cut of streams.values()) cut();
     finish();
   });
 
   app.get<{ Querystring: { after?: string } }>(
     "/settings/server-log",
     {
-      preHandler: [signedIn, owner],
+      preHandler: [fromDashboard, signedIn, owner],
       schema: {
         querystring: {
           type: "object",
@@ -122,26 +132,29 @@ export const serverLogRoutes: FastifyPluginCallback<ServerLogRouteOptions> = (
       let unsubscribe: () => void = nothing;
       let heartbeat: ReturnType<typeof setInterval> | undefined;
       let recheck: ReturnType<typeof setInterval> | undefined;
-      const close = () => {
+      /** Ends the stream; `cut` drops what still waits for the client rather than wait for it. */
+      const close = (cut = false) => {
         if (closed) return;
         closed = true;
         unsubscribe();
         clearInterval(heartbeat);
         clearInterval(recheck);
         streams.delete(res);
-        res.end();
+        if (cut) res.destroy();
+        else res.end();
       };
+      /** Says why, then ends; a client that doesn't read is cut off, as it would never read why. */
       const end = (reason: StreamEnd) => {
         if (closed) return;
         res.write(event("end", `{"reason":"${reason}"}`));
-        close();
+        close(reason === "slow");
       };
       const write = (chunk: string) => {
         if (!closed) res.write(chunk);
       };
-      streams.set(res, close);
-      res.on("close", close);
-      res.on("error", close);
+      streams.set(res, () => close(true));
+      res.on("close", () => close());
+      res.on("error", () => close(true));
 
       write(
         event(
@@ -161,7 +174,15 @@ export const serverLogRoutes: FastifyPluginCallback<ServerLogRouteOptions> = (
         // The lines kept went out at once; past them, a client that doesn't read is let go.
         if (res.writableLength > buffer.maxBytes + MAX_PENDING_BYTES) end("slow");
       });
-      heartbeat = setInterval(() => write(": heartbeat\n\n"), heartbeatMs);
+      /** Whether more than MAX_PENDING_BYTES waited at the last heartbeat too. */
+      let behind = false;
+      heartbeat = setInterval(() => {
+        // Two heartbeats in a row over it: a slow line had time for the lines kept.
+        const over = res.writableLength > MAX_PENDING_BYTES;
+        if (over && behind) end("slow");
+        else write(": heartbeat\n\n");
+        behind = over;
+      }, heartbeatMs);
       const user = request.dashboardUser;
       recheck = setInterval(() => {
         void (async () => {

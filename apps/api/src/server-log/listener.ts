@@ -2,9 +2,12 @@ import { Client } from "pg";
 
 import { parseLogRecord, type ServerLogBuffer } from "./buffer.ts";
 import { redactRecord } from "./redact.ts";
-import { SERVER_LOG_CHANNEL } from "./relay.ts";
+import { CONNECTION_LIMITS, SERVER_LOG_CHANNEL } from "./relay.ts";
 
 const RETRY_MS = { first: 1000, max: 30_000 };
+
+/** How often the listening connection runs a no-op query, so a dead one is found and replaced. */
+export const LISTENER_PING_MS = 30_000;
 
 export interface ListenerOptions {
   connectionString: string;
@@ -12,6 +15,8 @@ export interface ListenerOptions {
   channel?: string;
   /** How the connection is named in pg_stat_activity. */
   applicationName?: string;
+  /** How often it checks the connection; tests lower it. */
+  pingMs?: number;
   /** The API's own log, for losing and getting back the connection. */
   log: { info(msg: string): void; warn(obj: object, msg: string): void };
 }
@@ -27,6 +32,7 @@ export class WorkerLogListener {
   readonly #options: ListenerOptions;
   #client: Client | null = null;
   #timer: ReturnType<typeof setTimeout> | undefined;
+  #ping: ReturnType<typeof setInterval> | undefined;
   #retryMs = RETRY_MS.first;
   #failing = false;
   #stopped = false;
@@ -49,6 +55,7 @@ export class WorkerLogListener {
   async stop(): Promise<void> {
     this.#stopped = true;
     clearTimeout(this.#timer);
+    clearInterval(this.#ping);
     const client = this.#client;
     this.#client = null;
     await client?.end().catch(() => undefined);
@@ -65,7 +72,10 @@ export class WorkerLogListener {
   }
 
   #lost(client: Client, error: unknown): void {
-    if (this.#client === client) this.#client = null;
+    if (this.#client === client) {
+      this.#client = null;
+      clearInterval(this.#ping);
+    }
     void client.end().catch(() => undefined);
     if (this.#stopped) return;
     if (!this.#failing) {
@@ -86,8 +96,13 @@ export class WorkerLogListener {
       connectionString,
       channel = SERVER_LOG_CHANNEL,
       applicationName = "ottertrail-server-log",
+      pingMs = LISTENER_PING_MS,
     } = this.#options;
-    const client = new Client({ connectionString, application_name: applicationName });
+    const client = new Client({
+      connectionString,
+      application_name: applicationName,
+      ...CONNECTION_LIMITS,
+    });
     client.on("notification", (message) => {
       if (message.channel === channel) this.#heard(message.payload);
     });
@@ -115,6 +130,13 @@ export class WorkerLogListener {
     }
     this.#client = client;
     this.#retryMs = RETRY_MS.first;
+    // TCP keepalive takes minutes to give up on a half-open connection; a
+    // query that fails or times out (query_timeout) finds it sooner.
+    clearInterval(this.#ping);
+    this.#ping = setInterval(() => {
+      client.query("select 1").catch((error: unknown) => onLost(error));
+    }, pingMs);
+    this.#ping.unref();
     if (this.#failing) {
       this.#failing = false;
       this.#options.log.info("the Server log hears the worker again");

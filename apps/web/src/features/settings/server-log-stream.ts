@@ -4,11 +4,18 @@ import { parseLine, type ServerLine } from "./server-log-lines";
 
 /** The stream (apps/api/src/server-log/routes.ts). */
 export const SERVER_LOG_URL = "/api/settings/server-log";
+/**
+ * Asked after the stream fails: an EventSource never shows a refusal's
+ * status, and this needs the same permission, so a 401 or 403 here means
+ * the session ended or the user is no longer the owner.
+ */
+const ACCESS_PROBE_URL = "/api/settings";
 
 /** The stream's pace and limits. Tests make them shorter. */
 export const SERVER_LOG_TIMING = {
-  /** The most lines the browser keeps; older ones go first. */
+  /** The most lines the browser keeps, and the most bytes of them; older ones go first. */
   maxLines: 5000,
+  maxBytes: 8 * 1024 * 1024,
   /** New lines are shown together, at most this often, so a burst is one render. */
   flushMs: 100,
   /** Waits before reconnecting, doubling from the first to the last. */
@@ -84,9 +91,16 @@ export function useServerLog({ enabled }: { enabled: boolean }): ServerLogStream
       pending = [];
       setLines((previous) => {
         const next = [...previous, ...arrived];
-        return next.length > SERVER_LOG_TIMING.maxLines
-          ? next.slice(next.length - SERVER_LOG_TIMING.maxLines)
-          : next;
+        let from = Math.max(0, next.length - SERVER_LOG_TIMING.maxLines);
+        let bytes = 0;
+        for (let index = next.length - 1; index >= from; index -= 1) {
+          bytes += next[index]?.bytes ?? 0;
+          if (bytes > SERVER_LOG_TIMING.maxBytes) {
+            from = index + 1;
+            break;
+          }
+        }
+        return from === 0 ? next : next.slice(from);
       });
     };
 
@@ -129,8 +143,8 @@ export function useServerLog({ enabled }: { enabled: boolean }): ServerLogStream
         }
       });
       opened.addEventListener("error", () => {
-        // The API went away (a restart) or never answered: this code retries,
-        // with its backoff, rather than the browser's own retry.
+        // The API went away (a restart), never answered, or refused: this code
+        // retries, with its backoff, rather than the browser's own retry.
         opened.close();
         if (stopped || source !== opened) return;
         source = null;
@@ -139,6 +153,18 @@ export function useServerLog({ enabled }: { enabled: boolean }): ServerLogStream
         retryMs.current = Math.min(wait * 2, SERVER_LOG_TIMING.retryMs.max);
         setConnection({ state: "reconnecting", inSeconds: Math.max(1, Math.round(wait / 1000)) });
         retryTimer = setTimeout(open, wait);
+        // A refusal for the session or the permission isn't a drop: retrying won't help.
+        void fetch(ACCESS_PROBE_URL, { credentials: "same-origin" }).then(
+          (response) => {
+            if (stopped || source !== null) return;
+            if (response.status === 401 || response.status === 403) {
+              clearTimeout(retryTimer);
+              setConnection({ state: "closed", reason: "access" });
+            }
+          },
+          // Unreachable: the API is restarting, and the retry goes on.
+          () => undefined,
+        );
       });
     };
 

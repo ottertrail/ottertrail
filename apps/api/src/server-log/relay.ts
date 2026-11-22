@@ -24,8 +24,26 @@ export const RELAY_LIMIT: RateLimit = { capacity: 100, refillPerSecond: 20 };
 /** Lines waiting while the connection opens; past it, lines are dropped and counted. */
 export const RELAY_MAX_QUEUE = 200;
 
-/** How long the relay waits after a failed connection before trying again. */
+/** How long the relay waits after a failed connection or notification before trying again. */
 const RETRY_MS = { first: 1000, max: 30_000 };
+
+/**
+ * The connection's limits, the listener's too: TCP keepalive finds a
+ * half-open connection, and a connect or a query gives up after 10 seconds
+ * rather than hang.
+ */
+export const CONNECTION_LIMITS = {
+  keepAlive: true,
+  connectionTimeoutMillis: 10_000,
+  query_timeout: 10_000,
+} as const;
+
+/** A queued payload; a count of dropped lines carries how many it stands for. */
+interface Queued {
+  payload: string;
+  /** For the count's own line: the lines it counts, which go back to the count if it is dropped too. */
+  counts?: number;
+}
 
 export interface RelayOptions {
   connectionString: string;
@@ -52,7 +70,7 @@ export class WorkerLogRelay {
   readonly #limiter: TokenBucketLimiter;
   readonly #maxQueue: number;
   readonly #now: () => number;
-  readonly #queue: string[] = [];
+  readonly #queue: Queued[] = [];
   #client: Client | null = null;
   #pumping: Promise<void> | null = null;
   #dropped = 0;
@@ -91,7 +109,7 @@ export class WorkerLogRelay {
       if (this.#dropped > 0) {
         this.#queue.push(this.#droppedLine());
       }
-      this.#queue.push(fitLine(record, NOTIFY_MAX_BYTES).text);
+      this.#queue.push({ payload: fitLine(record, NOTIFY_MAX_BYTES).text });
       this.#schedule();
     } catch {
       // Never the worker's problem: its stdout has the line.
@@ -121,22 +139,38 @@ export class WorkerLogRelay {
     });
   }
 
-  #droppedLine(): string {
+  #droppedLine(): Queued {
     const count = this.#dropped;
     this.#dropped = 0;
-    return JSON.stringify({
+    const payload = JSON.stringify({
       level: "warn",
       time: this.#now(),
       name: "worker",
       msg: `${count} worker ${count === 1 ? "line" : "lines"} didn't reach the Server log: the worker sends at most ${this.#limit.refillPerSecond} a second, and none while PostgreSQL is unreachable. docker compose logs worker has every line.`,
       dropped: count,
     });
+    return { payload, counts: count };
+  }
+
+  /** Counts a queued payload as dropped: a line as one, the count's own line as what it counted. */
+  #drop(item: Queued): void {
+    this.#dropped += item.counts ?? 1;
+  }
+
+  /** Waits before the next connection, doubling up to 30 seconds. */
+  #backOff(): void {
+    this.#retryAt = this.#now() + this.#retryMs;
+    this.#retryMs = Math.min(this.#retryMs * 2, RETRY_MS.max);
   }
 
   async #connect(): Promise<Client | null> {
     if (this.#client !== null) return this.#client;
     if (this.#now() < this.#retryAt) return null;
-    const client = new Client({ connectionString: this.#connectionString });
+    const client = new Client({
+      connectionString: this.#connectionString,
+      application_name: "ottertrail-server-log-relay",
+      ...CONNECTION_LIMITS,
+    });
     // Unheard, a lost connection's "error" would end the worker.
     client.on("error", () => {
       if (this.#client === client) this.#client = null;
@@ -148,11 +182,9 @@ export class WorkerLogRelay {
       await client.connect();
     } catch {
       await client.end().catch(() => undefined);
-      this.#retryAt = this.#now() + this.#retryMs;
-      this.#retryMs = Math.min(this.#retryMs * 2, RETRY_MS.max);
+      this.#backOff();
       return null;
     }
-    this.#retryMs = RETRY_MS.first;
     if (this.#closed) {
       await client.end().catch(() => undefined);
       return null;
@@ -166,18 +198,21 @@ export class WorkerLogRelay {
       const client = await this.#connect();
       if (client === null) {
         // Unreachable: what waits is dropped and counted, and goes out as one line later.
-        this.#dropped += this.#queue.length;
-        this.#queue.length = 0;
+        for (const item of this.#queue.splice(0)) this.#drop(item);
         return;
       }
-      const payload = this.#queue.shift();
-      if (payload === undefined) return;
+      const item = this.#queue.shift();
+      if (item === undefined) return;
       try {
-        await client.query("select pg_notify($1, $2)", [this.#channel, payload]);
+        await client.query("select pg_notify($1, $2)", [this.#channel, item.payload]);
+        this.#retryMs = RETRY_MS.first;
       } catch {
-        this.#dropped += 1;
+        // A notification that keeps failing waits as a failed connection does,
+        // rather than open a connection for each line queued.
+        this.#drop(item);
         if (this.#client === client) this.#client = null;
         await client.end().catch(() => undefined);
+        this.#backOff();
       }
     }
   }

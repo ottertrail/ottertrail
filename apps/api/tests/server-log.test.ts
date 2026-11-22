@@ -1,7 +1,8 @@
 import { randomBytes } from "node:crypto";
+import { connect } from "node:net";
 
 import { Client } from "pg";
-import { afterAll, beforeAll, describe, expect, test } from "vite-plus/test";
+import { afterAll, beforeAll, describe, expect, test, vi } from "vite-plus/test";
 
 import { buildApp, requestLogFields } from "../src/app.ts";
 import { loadConfig } from "../src/config.ts";
@@ -129,6 +130,17 @@ describe("masking", () => {
       "Authorization: Bearer …",
     ],
     ["a basic credential", "Basic dXNlcjpwYXNzd29yZA==", "Basic …"],
+    [
+      "a bearer token in lower case",
+      "authorization: bearer abcdef0123456789",
+      "authorization: bearer …",
+    ],
+    ["a basic credential in capitals", "BASIC dXNlcjpwYXNzMQ==", "BASIC …"],
+    [
+      "a password holding @",
+      "postgres://u:p@ss@db:5432/x and smtp://a@b:c@@mail:25",
+      "postgres://…@db:5432/x and smtp://…@mail:25",
+    ],
     ["a secret key in text", "key sk_0123456789abcdef0123456789abcdef refused", "key sk_… refused"],
     [
       "a token in a URL",
@@ -189,9 +201,35 @@ describe("masking", () => {
     ],
     // A dashboard user's avatar: their ID, as a site user's is.
     ["/api/avatars/users/u1/1f0e.png", "/api/avatars/users/…/1f0e.png"],
+    // A site user's ID in a query: the replays list's, and the dashboard's pages'.
+    [
+      "/api/projects/p1/replays/list?period=7d&userId=alice",
+      "/api/projects/p1/replays/list?period=7d&userId=…",
+    ],
+    ["/projects/p1/replays?user=alice%40x.com", "/projects/p1/replays?user=…"],
+    ["/projects/p1/users?user=bob&env=staging", "/projects/p1/users?user=…&env=staging"],
+    ["/projects/p1/errors?user=bob", "/projects/p1/errors?user=…"],
+    // Text a user typed: the Logs page's search, the logs' and reports' API.
+    ["/projects/p1/logs?q=bob%40x.com&live=1", "/projects/p1/logs?q=…&live=1"],
+    ["/api/projects/p1/logs?search=bob&period=1h", "/api/projects/p1/logs?search=…&period=1h"],
+    ["/api/projects/p1/analytics/list?search=%2Fcart", "/api/projects/p1/analytics/list?search=…"],
+    // An email anywhere.
+    ["/anything?email=ada%40example.com", "/anything?email=…"],
+    // What stays: periods, services, models, features, Ottertrail's own IDs.
+    [
+      "/api/projects/p1/ai?period=7d&model=gpt-5&feature=chat&service=web",
+      "/api/projects/p1/ai?period=7d&model=gpt-5&feature=chat&service=web",
+    ],
   ])("a request to %s", (url, masked) => {
     expect(redactUrl(url)).toBe(masked);
     expect(requestLogFields({ method: "GET", url })).toEqual({ method: "GET", url: masked });
+  });
+
+  test("masks the paths in a message as a request's URL", () => {
+    const { value } = redactRecord(
+      line("Route GET:/api/projects/p1/users/ada?userId=bob&token=t0k not found"),
+    );
+    expect(value.msg).toBe("Route GET:/api/projects/p1/users/…?userId=…&token=… not found");
   });
 
   test("masks every string of a line, deep, and says whether it changed", () => {
@@ -236,6 +274,8 @@ describe("masking", () => {
       serverLog: { buffer },
     });
     try {
+      // Fastify's own "Route … not found" line names the raw URL in its message.
+      await app.inject({ method: "GET", url: "/api/nowhere?userId=al1ce-id&q=typed-text" });
       await app.inject({
         method: "GET",
         url: "/api/health?token=tok3n-value",
@@ -259,11 +299,11 @@ describe("masking", () => {
       expect(text).not.toContain(secret);
     }
     const lines = written.map((item) => JSON.parse(item));
-    expect(lines.find((item) => item.msg === "incoming request")?.req).toEqual({
+    expect(lines.findLast((item) => item.msg === "incoming request")?.req).toEqual({
       method: "GET",
       url: "/api/health?token=…",
     });
-    expect(lines.find((item) => item.msg === "request completed")?.res).toEqual({
+    expect(lines.findLast((item) => item.msg === "request completed")?.res).toEqual({
       statusCode: 200,
       method: "GET",
       url: "/api/health?token=…",
@@ -271,14 +311,20 @@ describe("masking", () => {
     // The same lines are in the buffer, as the API's.
     expect(buffer.entries().map((entry) => entry.process)).toContain("api");
     expect(buffer.size).toBe(written.length);
+    expect(text).toContain("Route GET:/api/nowhere?userId=…&q=… not found");
   });
 });
 
 /** An open stream: its status, headers, and its events as they come. */
-async function openStream(baseUrl: string, cookie: string | null, query = "") {
+async function openStream(
+  baseUrl: string,
+  cookie: string | null,
+  query = "",
+  extraHeaders: Record<string, string> = {},
+) {
   const controller = new AbortController();
   const response = await fetch(`${baseUrl}/api/settings/server-log${query}`, {
-    headers: cookie === null ? {} : { cookie },
+    headers: { ...(cookie === null ? {} : { cookie }), ...extraHeaders },
     signal: controller.signal,
   });
   const events: { event: string; id?: string; data: string; comment?: boolean }[] = [];
@@ -448,6 +494,32 @@ describe("the stream route", () => {
     }
   });
 
+  test("a request from another site is refused: Sec-Fetch-Site, or an Origin not the dashboard's", async () => {
+    for (const headers of [
+      { "sec-fetch-site": "cross-site" },
+      { "sec-fetch-site": "same-site" },
+      { origin: "https://evil.example" },
+    ]) {
+      const response = await fetch(`${baseUrl}/api/settings/server-log`, {
+        headers: { cookie: dashboard.cookie, ...headers },
+      });
+      expect({ headers, status: response.status }).toEqual({ headers, status: 403 });
+      expect(await response.json()).toEqual({
+        error: "untrusted_origin",
+        message: "This request must come from the dashboard.",
+      });
+    }
+    const own = await openStream(baseUrl, dashboard.cookie, "", {
+      "sec-fetch-site": "same-origin",
+      origin: "http://localhost:5173",
+    });
+    try {
+      expect(own.response.status).toBe(200);
+    } finally {
+      own.close();
+    }
+  });
+
   test("a malformed after is refused before anything else", async () => {
     const response = await fetch(`${baseUrl}/api/settings/server-log?after=nope`, {
       headers: { cookie: dashboard.cookie },
@@ -481,6 +553,38 @@ describe("the stream route", () => {
     await until(() => stream.ended);
     expect(stream.events.at(-1)).toEqual({ event: "end", data: '{"reason":"access"}' });
   });
+
+  test("a client that stops reading is cut off, and its place freed", async () => {
+    const slowBuffer = new ServerLogBuffer();
+    const slow = await signedInDashboard({
+      serverLog: { buffer: slowBuffer, maxStreams: 1, heartbeatMs: 50 },
+    });
+    const url = new URL(await slow.app.listen({ host: "127.0.0.1", port: 0 }));
+    try {
+      // A raw connection that asks for the stream and never reads it.
+      const socket = connect(Number(url.port), url.hostname);
+      socket.pause();
+      socket.on("error", () => undefined);
+      socket.write(
+        `GET /api/settings/server-log HTTP/1.1\r\nHost: ${url.host}\r\nCookie: ${slow.cookie}\r\n\r\n`,
+      );
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      const big = "x".repeat(15_000);
+      let freed = false;
+      for (let round = 0; round < 40 && !freed; round += 1) {
+        for (let index = 0; index < 200; index += 1) slowBuffer.add("api", line(big));
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        const probe = await openStream(url.origin, slow.cookie);
+        await until(() => probe.ended || probe.events.some((item) => item.event === "ready"));
+        freed = probe.events.some((item) => item.event === "ready");
+        probe.close();
+      }
+      expect(freed).toBe(true);
+      socket.destroy();
+    } finally {
+      await slow.close();
+    }
+  }, 60_000);
 
   test("closing the app ends every open stream", async () => {
     const extraBuffer = new ServerLogBuffer();
@@ -597,7 +701,29 @@ describe("worker lines over NOTIFY", () => {
     }
     expect(performance.now() - started).toBeLessThan(50);
     await until(() => relay.dropped === 50);
+    // The count's own line, dropped too, adds the lines it counted, not one more.
+    for (let index = 0; index < 10; index += 1) {
+      relay.send({ level: "info", time: index, msg: "still nowhere" });
+      await until(() => relay.dropped === 51 + index);
+    }
+    expect(relay.dropped).toBe(60);
     await relay.close();
+  });
+
+  test("a notification that keeps failing waits before connecting again", async () => {
+    const connects = vi.spyOn(Client.prototype, "connect");
+    // An empty channel name: PostgreSQL refuses every pg_notify on it.
+    const relay = new WorkerLogRelay({ connectionString: databaseUrl, channel: "" });
+    try {
+      for (let index = 0; index < 20; index += 1) {
+        relay.send({ level: "info", time: index, msg: `refused ${index}` });
+      }
+      await until(() => relay.dropped === 20);
+      expect(connects).toHaveBeenCalledTimes(1);
+    } finally {
+      connects.mockRestore();
+      await relay.close();
+    }
   });
 
   test("a lost connection is opened again, and lines arrive after it", async () => {

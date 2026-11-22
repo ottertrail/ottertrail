@@ -438,6 +438,47 @@ describe("the connection", () => {
   });
 });
 
+describe("refused and bounded", () => {
+  test("a drop the API then refuses for the session shows the session ended, and stops retrying", async () => {
+    const api = installFakeApi();
+    renderApp(TAB);
+    await expect.poll(() => FakeEventSource.opened.length).toBe(1);
+    const source = latestSource();
+    source.hello();
+    source.line("api", warn("kept"));
+    source.ready();
+    await expect.element(connection()).toMatchTextContent(/^Live$/);
+
+    // The API restarted and the session is gone: the stream's retry would get 401.
+    api.signedIn = false;
+    source.fail();
+    await expect
+      .element(connection())
+      .toMatchTextContent(/Your session ended, or you're no longer the owner\./);
+    await expect.element(connection()).toMatchTextContent(/^Closed /);
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    expect(FakeEventSource.opened.length).toBeLessThanOrEqual(2);
+    const count = FakeEventSource.opened.length;
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    expect(FakeEventSource.opened).toHaveLength(count);
+    await expect.element(problems().getByText("kept")).toBeVisible();
+  });
+
+  test("the browser keeps at most maxBytes of lines, the oldest dropped", async () => {
+    SERVER_LOG_TIMING.maxBytes = 2000;
+    const source = await openWith([]);
+    await showAll().click();
+    for (let index = 1; index <= 40; index += 1) {
+      source.line("api", { level: 30, time: AT, msg: `line ${index} ${"x".repeat(100)}` });
+    }
+    await expect.poll(() => lineTexts().at(-1)).toMatch(/line 40 /);
+    const kept = lineTexts();
+    expect(kept.length).toBeLessThan(20);
+    expect(kept.length).toBeGreaterThan(5);
+    expect(kept[0]).not.toMatch(/line 1 /);
+  });
+});
+
 describe("the Server log fits", () => {
   for (const [width, height] of [
     [390, 844],

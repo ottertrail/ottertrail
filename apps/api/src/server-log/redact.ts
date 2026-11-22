@@ -23,22 +23,26 @@ export const MASK = "…";
 const SECRET_PARAMETER =
   /([?&;](?:[^=&#\s"'<>]*?(?:token|secret|passw(?:or)?d|pwd|signature|sig|key|code|state|auth|session|credential)[^=&#\s"'<>]*)=)[^&#\s"'<>]*/gi;
 
-/** The user and password in a URL: `postgres://ottertrail:…@postgres`, an SMTP_URL, a webhook with credentials. */
-const URL_USERINFO = /\b([a-z][a-z0-9+.-]*:\/\/)[^\s/?#@"'<>]+@/gi;
+/**
+ * The user and password in a URL: `postgres://ottertrail:…@postgres`, an
+ * SMTP_URL, a webhook with credentials. Up to the last `@` before the
+ * host, as URL parsers read it, so a password holding `@` is masked whole.
+ */
+const URL_USERINFO = /\b([a-z][a-z0-9+.-]*:\/\/)[^\s/?#"'<>]*@/gi;
 
 /**
  * An Authorization header's value, wherever it was copied: `Bearer sk_…`,
  * `Basic dXNlcjpwYXNz`. A credential holds a digit or one of `+/=_`, so
  * prose ("Basic authentication failed") stays as it is.
  */
-const AUTHORIZATION = /\b(Bearer|Basic)\s+(?=[A-Za-z0-9._~+/=-]*[0-9+/=_])[A-Za-z0-9._~+/=-]{8,}/g;
+const AUTHORIZATION = /\b(Bearer|Basic)\s+(?=[A-Za-z0-9._~+/=-]*[0-9+/=_])[A-Za-z0-9._~+/=-]{8,}/gi;
 
 /** A project's secret key (`sk_` and 32 hex characters, collection/project-keys.ts). */
 const SECRET_KEY = /\bsk_[0-9a-f]{32}\b/g;
 
 /** Masks secrets in any text: URLs with credentials or tokens, Authorization values, secret keys. */
 export function redactText(text: string): string {
-  if (!/[@?&;]|Bearer|Basic|sk_/.test(text)) return text;
+  if (!/[@?&;]|bearer|basic|sk_/i.test(text)) return text;
   return text
     .replace(URL_USERINFO, `$1${MASK}@`)
     .replace(AUTHORIZATION, `$1 ${MASK}`)
@@ -52,15 +56,35 @@ export function redactText(text: string): string {
  *
  * - a site user's ID in a path (`/projects/:id/users/:userId`), and a
  *   dashboard user's in an avatar's (`/api/avatars/users/:userId/…`);
- * - a search (`search=`), which may be a user's ID, name, or email;
+ * - a site user's ID in a query: the API's `userId=` (the replays list)
+ *   and `user=` (the dashboard's pages: Replays, Users, Errors, AI);
+ * - text a user typed, which may be a user's ID, name, or email: `search=`
+ *   (the users, the reports, the logs, the heatmap pages) and the
+ *   dashboard's `q=` (the Logs page);
+ * - an `email=` anywhere;
  * - an event property filter's value (`p.<property>=`), which may be one too;
  * - the token in Better Auth's reset link path (`/reset-password/:token`).
+ *
+ * Other parameters stay: periods, environments, services, routes, models,
+ * features, and the names and IDs Ottertrail makes (traces, errors, checks).
  */
 export function redactUrl(url: string): string {
   return redactText(url)
     .replace(/(\/users\/)[^/?#]+/g, `$1${MASK}`)
     .replace(/(\/reset-password\/)[^/?#]+/g, `$1${MASK}`)
-    .replace(/([?&](?:search|p\.[^=&#]*)=)[^&#]*/g, `$1${MASK}`);
+    .replace(/([?&](?:search|q|user|userId|email|p\.[^=&#]*)=)[^&#]*/gi, `$1${MASK}`);
+}
+
+/**
+ * The paths in a message, as redactUrl masks a request's URL: Fastify's
+ * "Route GET:/api/…?userId=… not found" names the raw URL in its text.
+ */
+export function redactMessage(text: string): string {
+  if (!text.includes("/")) return text;
+  return text.replace(
+    /(^|[\s:(=])(\/[^\s"'<>]*)/g,
+    (_match, before: string, path: string) => `${before}${redactUrl(path)}`,
+  );
 }
 
 /**
@@ -99,6 +123,11 @@ export function redactRecord(record: LogRecord): { value: LogRecord; changed: bo
     }
     return copy ?? value;
   };
-  const value = walk(record, 0);
-  return { value: isLogRecord(value) ? value : record, changed };
+  const walked = walk(record, 0);
+  const value = isLogRecord(walked) ? walked : record;
+  if (typeof value.msg === "string") {
+    const msg = redactMessage(value.msg);
+    if (msg !== value.msg) return { value: { ...value, msg }, changed: true };
+  }
+  return { value, changed };
 }
