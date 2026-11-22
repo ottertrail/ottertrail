@@ -515,32 +515,41 @@ export class AccountEmailSender {
     const { name } = await readInstanceSettings(db);
     let message: Omit<MailMessage, "to">;
     if (email.kind === "password_reset") {
-      const user = await db
-        .selectFrom("dashboard_users")
-        .select("id")
-        .where("email", "=", email.to)
-        .executeTakeFirst();
-      if (user === undefined) return "no_account";
       const bound = sealBinding(row.kind, row.to);
       const params = isRecord(row.params) ? row.params : {};
       const sealed = textOf(params, "sealedLink");
-      // A retry sends the link the first attempt made, so an email that
-      // arrives after a timeout still works.
-      let link = sealed === null ? null : sealer.open(sealed, bound);
-      if (link === null) {
+      // In one transaction with the account's row locked, found by the
+      // address: an email change that commits first leaves no account with
+      // it here, and one that comes after waits, then voids the link made
+      // here and drops this row (account/routes.ts). Either way no link
+      // that works reaches the old address.
+      const link = await db.transaction().execute(async (trx) => {
+        const user = await trx
+          .selectFrom("dashboard_users")
+          .select("id")
+          .where("email", "=", email.to)
+          .forUpdate()
+          .executeTakeFirst();
+        if (user === undefined) return null;
+        // A retry sends the link the first attempt made, so an email that
+        // arrives after a timeout still works.
+        const opened = sealed === null ? null : sealer.open(sealed, bound);
+        if (opened !== null) return opened;
         // Made now: it replaces the user's earlier emailed link.
-        const { token } = await createPasswordReset(db, user.id, {
+        const { token } = await createPasswordReset(trx, user.id, {
           madeBy: "email",
           ttlMs: EMAILED_RESET_TTL_MS,
           now: now(),
         });
-        link = resetLink(publicUrl, token);
-        await db
+        const made = resetLink(publicUrl, token);
+        await trx
           .updateTable("account_emails")
-          .set({ params: JSON.stringify({ sealedLink: sealer.seal(link, bound) }) })
+          .set({ params: JSON.stringify({ sealedLink: sealer.seal(made, bound) }) })
           .where("id", "=", row.id)
           .execute();
-      }
+        return made;
+      });
+      if (link === null) return "no_account";
       message = accountEmailMessage(
         { kind: "password_reset", to: email.to, params: { link } },
         name,

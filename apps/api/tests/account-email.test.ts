@@ -908,6 +908,83 @@ describe("the review's fixes", () => {
     ]);
   });
 
+  test("changing the email voids an owner's reset link, emailed or copied", async () => {
+    const preview = (token: string) =>
+      send(dashboard, "POST", "/api/reset-password/preview", { payload: { token } });
+    // Emailed, and already sent: nothing in the queue says where it went.
+    const emailedTo = await member();
+    const emailed = await send(dashboard, "POST", `/api/members/${emailedTo.userId}/reset-link`, {
+      cookie: dashboard.cookie,
+      payload: { email: true },
+    });
+    await runWorker(dashboard);
+    const sent = tokenOf(linkIn(sink.messages.at(-1)?.raw ?? "", "/reset-password"));
+    expect(sent).toBe(tokenOf(emailed.json().url));
+    // Only copied: it goes too (docs/access.md).
+    const copiedFor = await member();
+    const copied = await send(dashboard, "POST", `/api/members/${copiedFor.userId}/reset-link`, {
+      cookie: dashboard.cookie,
+      payload: { email: false },
+    });
+    const copiedToken = tokenOf(copied.json().url);
+    expect((await preview(sent)).statusCode).toBe(200);
+    expect((await preview(copiedToken)).statusCode).toBe(200);
+
+    for (const user of [emailedTo, copiedFor]) {
+      const changed = await send(dashboard, "POST", "/api/account/email", {
+        cookie: user.cookie,
+        payload: { email: `moved-${user.email}`, password: PASSWORD },
+      });
+      expect(changed.statusCode).toBe(200);
+    }
+    for (const token of [sent, copiedToken]) {
+      expect((await preview(token)).statusCode).toBe(404);
+      expect((await useReset(dashboard, token)).statusCode).toBe(404);
+    }
+  });
+
+  test("a reset request the worker takes as the email changes sends no working link to the old address", async () => {
+    const { email, userId } = await member();
+    await request(dashboard, email);
+    const [row] = await takeDueAccountEmails(dashboard.db, { limit: 5 });
+    if (row === undefined) throw new Error("Nothing queued");
+    const sender = new AccountEmailSender({
+      db: dashboard.db,
+      mailer: sinkMailer(),
+      sealer,
+      publicUrl: PUBLIC_URL,
+    });
+    // The worker starts while the email change holds the account's row,
+    // and the change commits: the order a race could take, forced.
+    let pending: Promise<unknown> | undefined;
+    await dashboard.db.transaction().execute(async (trx) => {
+      await trx
+        .selectFrom("dashboard_users")
+        .select("id")
+        .where("id", "=", userId)
+        .forUpdate()
+        .execute();
+      pending = sender.deliver(row);
+      // Long enough for the worker to reach the lock (or, unlocked, to read the account).
+      await new Promise((resolve) => setTimeout(resolve, 400));
+      await trx
+        .updateTable("dashboard_users")
+        .set({ email: `raced-${email}` })
+        .where("id", "=", userId)
+        .execute();
+      await trx.deleteFrom("dashboard_password_resets").where("user_id", "=", userId).execute();
+    });
+    expect(await pending).toBe("no_account");
+    expect(sink.messages).toEqual([]);
+    expect(
+      await dashboard.db
+        .selectFrom("dashboard_password_resets")
+        .selectAll()
+        .where("user_id", "=", userId)
+        .execute(),
+    ).toEqual([]);
+  });
+
   test("making a reset link again drops the queued email of the earlier one", async () => {
     const { userId } = await member();
     await send(dashboard, "POST", `/api/members/${userId}/reset-link`, {

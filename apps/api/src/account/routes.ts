@@ -201,10 +201,13 @@ export const accountRoutes: FastifyPluginCallback<{
             .returning(["id", "name", "email"])
             .executeTakeFirst();
           if (changed === undefined) return undefined;
+          // Every reset link goes, not only "Forgot password?"'s: an owner's
+          // or admin's may have been emailed to the old address too, and once
+          // sent nothing records it. The user, signed in with their password,
+          // needs none, and an owner or admin can make a new one.
           await trx
             .deleteFrom("dashboard_password_resets")
             .where("user_id", "=", user.id)
-            .where("emailed", "=", true)
             .execute();
           await dropQueuedAccountEmails(trx, "reset_link", old.email);
           await dropQueuedAccountEmails(trx, "password_reset", old.email);
