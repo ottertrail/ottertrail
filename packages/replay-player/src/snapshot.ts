@@ -162,8 +162,16 @@ export function startSnapshot(root: HTMLElement, options: SnapshotOptions): Snap
       UNSAFE_replayCanvas: false,
     });
     replayer = player;
-    // Every event at once: the full snapshot and the stylesheets it brought.
-    player.pause(1);
+    // Every event at once, wherever rrweb stamped it: the Meta event comes
+    // before the page is serialized, the full snapshot and the stylesheets
+    // it brought after. Paused past the last, they all apply now, and the
+    // Replayer's own first build (a timer) then finds the page built.
+    const first = recording.events[0]?.timestamp ?? 0;
+    const last = recording.events.at(-1)?.timestamp ?? first;
+    player.pause(last - first + 1);
+    // Past that timer: a later build would erase the listeners below.
+    await new Promise((done) => setTimeout(done, 20));
+    if (destroyed) return;
     message.remove();
     const frame = player.iframe;
     const page = frame.contentDocument;
@@ -174,10 +182,8 @@ export function startSnapshot(root: HTMLElement, options: SnapshotOptions): Snap
       return;
     }
 
-    // The view scrolls, as the page did; a link or a form in it does nothing.
+    // The view scrolls, as the page did.
     player.enableInteract();
-    page.addEventListener("click", still, true);
-    page.addEventListener("submit", still, true);
 
     const canvas = doc.createElement("canvas");
     canvas.className = "ot-heat";
@@ -256,9 +262,23 @@ export function startSnapshot(root: HTMLElement, options: SnapshotOptions): Snap
       cancelAnimationFrame(frameRequest);
       frameRequest = requestAnimationFrame(draw);
     };
-    pageWindow.addEventListener("scroll", drawSoon, { passive: true, capture: true });
-    // Stylesheets, fonts, and images arriving move the elements.
-    pageWindow.addEventListener("load", resolve);
+    /**
+     * The view's listeners: a link or a form in it does nothing, scrolling
+     * redraws, and stylesheets, fonts, and images arriving move the
+     * elements. Added again whenever rrweb builds the page again, as its
+     * build (document.open) erases them.
+     */
+    const listen = () => {
+      page.addEventListener("click", still, true);
+      page.addEventListener("submit", still, true);
+      pageWindow.addEventListener("scroll", drawSoon, { passive: true, capture: true });
+      pageWindow.addEventListener("load", resolve);
+    };
+    listen();
+    player.on("fullsnapshot-rebuilded", () => {
+      listen();
+      resolve();
+    });
     const timers = SETTLE_MS.map((ms) => setTimeout(resolve, ms));
     cleanups.push(() => {
       resized.disconnect();

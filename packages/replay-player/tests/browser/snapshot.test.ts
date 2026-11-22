@@ -25,8 +25,13 @@ const element = (
 ) => ({ type: 2, tagName, attributes, childNodes, id });
 const text = (id: number, textContent: string) => ({ type: 3, textContent, id });
 
-/** A saved view as s.js writes it: a page with a named hero, a button, and a script. */
-function snapshot() {
+/**
+ * A saved view as s.js writes it: a page with a named hero, a button, a
+ * form, and a script. `apart` spaces the events as rrweb stamps them on a
+ * real page: the Meta event first, the full snapshot once the page is
+ * serialized, then the constructed stylesheets it brought.
+ */
+function snapshot({ apart = false } = {}) {
   return {
     v: 1,
     pageHeight: 1600,
@@ -38,7 +43,7 @@ function snapshot() {
       },
       {
         type: 2,
-        timestamp: AT,
+        timestamp: apart ? AT + 50 : AT,
         data: {
           initialOffset: { top: 0, left: 0 },
           node: {
@@ -59,11 +64,27 @@ function snapshot() {
                   ]),
                   element(11, "div", { style: "height:1400px" }, [
                     element(12, "button", { onclick: attack("onclick") }, [text(13, "Buy")]),
+                    element(14, "form", { action: "https://example.com/subscribe" }, [
+                      element(15, "button", { type: "submit" }, [text(16, "Subscribe")]),
+                    ]),
                   ]),
                 ]),
               ]),
             ],
           },
+        },
+      },
+      // A constructed stylesheet the page adopted: the hero's link turns red.
+      {
+        type: 3,
+        timestamp: apart ? AT + 62 : AT,
+        data: {
+          source: 15,
+          id: 1,
+          styleIds: [1],
+          styles: [
+            { styleId: 1, rules: [{ rule: "main a { color: rgb(255, 0, 0); }", index: 0 }] },
+          ],
         },
       },
     ],
@@ -121,6 +142,10 @@ afterEach(() => {
 });
 
 function mount(answers: { snapshot?: Response; heatmap?: Response } = {}) {
+  return mountWith(answers);
+}
+
+function mountWith(answers: { snapshot?: Response; heatmap?: Response }) {
   const root = document.createElement("div");
   root.style.cssText = "width:800px;height:600px";
   document.body.append(root);
@@ -183,5 +208,39 @@ describe("a saved view", () => {
     await view?.ready;
     expect(root.querySelector("[role=alert]")?.textContent).toBe(SNAPSHOT_NOT_AVAILABLE);
     expect(root.querySelector("iframe")).toBeNull();
+  });
+});
+
+describe("a saved view with events apart, as rrweb stamps a real page", () => {
+  test("is built once, its stylesheets applied, links and forms blocked, and redrawn on scroll", async () => {
+    const { root, messages } = mount({ snapshot: json(snapshot({ apart: true })) });
+    await view?.ready;
+    // Past the Replayer's own first build (a timer of 1 ms): nothing may undo what follows.
+    await new Promise((done) => setTimeout(done, 100));
+    const frame = root.querySelector("iframe");
+    const page = frame?.contentDocument;
+    const pageWindow = frame?.contentWindow;
+    if (page === null || page === undefined || pageWindow === null || pageWindow === undefined) {
+      throw new Error("no view");
+    }
+    const anchor = page.querySelector("main a") as HTMLAnchorElement;
+    expect(pageWindow.getComputedStyle(anchor).color).toBe("rgb(255, 0, 0)");
+
+    const click = new MouseEvent("click", { bubbles: true, cancelable: true });
+    anchor.dispatchEvent(click);
+    expect(click.defaultPrevented).toBe(true);
+    const submit = new SubmitEvent("submit", { bubbles: true, cancelable: true });
+    page.querySelector("form")?.dispatchEvent(submit);
+    expect(submit.defaultPrevented).toBe(true);
+
+    // The elements resolve: only the footer's link is missing.
+    await vi.waitFor(() => expect(messages.at(-1)).toMatchObject({ total: 1, found: 2 }));
+
+    // Scrolling the view draws the canvas again, at the new position.
+    const canvas = root.querySelector<HTMLCanvasElement>("canvas.ot-heat");
+    const before = canvas?.toDataURL();
+    pageWindow.scrollTo(0, 400);
+    pageWindow.dispatchEvent(new Event("scroll"));
+    await vi.waitFor(() => expect(canvas?.toDataURL()).not.toBe(before));
   });
 });
