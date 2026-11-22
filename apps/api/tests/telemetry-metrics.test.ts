@@ -5,6 +5,7 @@ import { afterAll, beforeAll, describe, expect, test } from "vite-plus/test";
 import {
   bucketsOf,
   MAX_SERIES,
+  metricWindow,
   quantileOfBuckets,
   SPARKLINE_BUCKETS,
   SPLIT_LINES,
@@ -411,6 +412,70 @@ describe("GET /api/projects/:id/metrics/chart", () => {
       ["a", 5],
       ["b", 7],
     ]);
+  });
+
+  test("a delta up-down counter: its changes in the bucket, added up, in charts, sparklines, and rules", async () => {
+    const project = await newProject("Delta up-down");
+    await sendMetrics(project.secretKey, [
+      {
+        service: "web",
+        metrics: [
+          // Changes: +5 and -2 in 10:00–10:05, +4 in 10:05–10:10.
+          {
+            name: "queue.depth",
+            ...sum(DELTA, false, [
+              { time: "10:01:00", start: "10:00:00", value: 5 },
+              { time: "10:03:00", start: "10:01:00", value: -2 },
+              { time: "10:07:00", start: "10:03:00", value: 4 },
+            ]),
+          },
+          // The same as levels: still the last value.
+          {
+            name: "queue.level",
+            ...sum(CUMULATIVE, false, [
+              { time: "10:01:00", start: "09:00:00", value: 5 },
+              { time: "10:03:00", start: "09:00:00", value: 3 },
+              { time: "10:07:00", start: "09:00:00", value: 7 },
+            ]),
+          },
+        ],
+      },
+    ]);
+    const [delta] = (await chart(project.id, "queue.depth", "updown")).series;
+    expect(valuesAt(delta, "sum", ["09:55", "10:00", "10:05"])).toEqual([null, 3, 4]);
+    const [cumulative] = (await chart(project.id, "queue.level", "updown")).series;
+    expect(valuesAt(cumulative, "sum", ["10:00", "10:05"])).toEqual([3, 7]);
+
+    // A sparkline's hour from 10:00, as its chart reads it.
+    const hour = 10;
+    const sparkline = async (name: string) =>
+      (
+        await getJson(
+          project.id,
+          `/metrics/sparkline?${DAY}&name=${encodeURIComponent(name)}&kind=updown`,
+        )
+      ).values[hour];
+    expect(await sparkline("queue.depth")).toBe(7);
+    expect(await sparkline("queue.level")).toBe(7);
+
+    // A metric rule's window from 10:00: the delta series' changes in it. A
+    // level counts only while fresh (its last point at most 2 minutes before
+    // the end); a change counts wherever it falls.
+    const window = async (name: string, end: string) =>
+      (
+        await metricWindow(
+          dashboard.reader,
+          { projectId: project.id, environment: "production" },
+          { name, kind: "updown" },
+          new Date(Number(at("10:00:00") / MS)),
+          new Date(Number(at(end) / MS)),
+          new Date(Number(at(end) / MS)),
+        )
+      ).values;
+    expect(await window("queue.depth", "10:08:00")).toEqual({ sum: 7 });
+    expect(await window("queue.level", "10:08:00")).toEqual({ sum: 7 });
+    expect(await window("queue.depth", "10:10:00")).toEqual({ sum: 7 });
+    expect(await window("queue.level", "10:10:00")).toEqual({ sum: null });
   });
 
   test("a sparse sender's increases spread over the buckets between its points", async () => {

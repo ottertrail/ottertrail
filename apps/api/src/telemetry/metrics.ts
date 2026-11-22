@@ -297,7 +297,7 @@ export interface ChartSeries {
   volume: number;
   /**
    * Per kind: gauge avg, min, max; updown sum (of each series' last
-   * value); counter rate (per second); histogram p50, p95, p99, and rate
+   * value, or a delta series' net change in the bucket); counter rate (per second); histogram p50, p95, p99, and rate
    * (observations per second).
    */
   values: Record<string, (number | null)[]>;
@@ -626,17 +626,20 @@ async function chartIn(
     fold =
       "sum(total_value) AS total_value, sum(points) AS points, min(low) AS low, max(high) AS high";
   } else if (options.kind === "updown") {
-    // Each series' last value in the bucket, added up; with freshMs, only
-    // the series whose last point is that close to the bucket's end.
+    // Each cumulative series' last value in the bucket, and each delta
+    // series' points added up (its net change: a delta series never says
+    // its level), then added up; with freshMs, only the cumulative series
+    // whose last point is that close to the bucket's end.
     const fresh =
       freshMs === undefined
         ? ""
-        : `HAVING last_ns >= least(${firstNs} + (bucket + 1) * ${stepNs}, ${params.add(ns(buckets.endMs), "Int64")})
+        : `HAVING delta OR last_ns >= least(${firstNs} + (bucket + 1) * ${stepNs}, ${params.add(ns(buckets.endMs), "Int64")})
                    - ${params.add(ns(freshMs), "Int64")}`;
     perValue = `
       SELECT label, bucket, sum(last_value) AS total, sum(points) AS vol
       FROM (
-        SELECT label, ${bucketOf("t_ns")} AS bucket, argMax(value, t_ns) AS last_value,
+        SELECT label, ${bucketOf("t_ns")} AS bucket, max(is_delta) AS delta,
+               if(delta, sum(value), argMax(value, t_ns)) AS last_value,
                count() AS points, max(t_ns) AS last_ns
         FROM (${rows}) WHERE t_ns >= ${fromNs}
         GROUP BY series, label, bucket
