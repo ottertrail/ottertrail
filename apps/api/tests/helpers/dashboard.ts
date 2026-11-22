@@ -50,6 +50,7 @@ export async function signedInDashboard({
   avatars,
   aiModels,
   logStream,
+  serverLog,
 }: {
   timeZone?: string;
   now?: () => Date;
@@ -87,6 +88,8 @@ export async function signedInDashboard({
   aiModels?: AppOptions["aiModels"];
   /** Where the API's log goes, at info and above; off when omitted. */
   logStream?: { write(line: string): void };
+  /** The Server log's buffer and its stream's limits (tests/server-log.test.ts). */
+  serverLog?: AppOptions["serverLog"];
 } = {}) {
   const testDb = await createTestDatabase();
   const testClickHouse = await createTestClickHouse().catch(async (error: unknown) => {
@@ -136,6 +139,7 @@ export async function signedInDashboard({
     ...(avatars === undefined ? {} : { avatars }),
     ...(aiModels === undefined ? {} : { aiModels }),
     ...(logStream === undefined ? {} : { log: { level: "info", stream: logStream } }),
+    ...(serverLog === undefined ? {} : { serverLog }),
   });
   const link = await createSetupToken(testDb.db);
   await app.inject({

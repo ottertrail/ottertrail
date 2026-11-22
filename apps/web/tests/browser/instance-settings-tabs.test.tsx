@@ -30,7 +30,7 @@ afterEach(async () => {
 });
 
 describe("the tabs each role sees", () => {
-  test("the owner has General, Location data, Storage, AI models, Backups and Notification channels, General first", async () => {
+  test("the owner has General, Location data, Storage, AI models, Backups, Notification channels and Server log, General first", async () => {
     installFakeApi();
     const router = renderApp("/projects");
     await workspaceMenu().getByRole("link", { name: "Settings" }).click();
@@ -43,6 +43,7 @@ describe("the tabs each role sees", () => {
       "AI models",
       "Backups",
       "Notification channels",
+      "Server log",
     ]);
     await expect.element(panel().getByRole("heading", { name: "Instance" })).toBeVisible();
     expect(currentPath(router)).toBe("/settings");
@@ -259,7 +260,14 @@ describe("the Settings page fits", () => {
     [390, 844],
     [1440, 900],
   ] as const) {
-    for (const tab of ["general", "location-data", "storage", "ai-models", "channels"]) {
+    for (const tab of [
+      "general",
+      "location-data",
+      "storage",
+      "ai-models",
+      "channels",
+      "server-log",
+    ]) {
       test(`at ${width} wide, the ${tab} tab: the tab row scrolls inside itself, nothing else sideways`, async () => {
         await page.viewport(width, height);
         installFakeApi();

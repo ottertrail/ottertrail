@@ -7,10 +7,14 @@ import { DEVELOPMENT_AUTH_SECRET, loadConfig } from "./config.ts";
 import { createDatabase } from "./db/database.ts";
 import { LiveLocationData } from "./enrichment/reload.ts";
 import { smtpMailer } from "./notifications/email.ts";
+import { ServerLogBuffer } from "./server-log/buffer.ts";
+import { WorkerLogListener } from "./server-log/listener.ts";
 import { s3ObjectStore } from "./storage/object-store.ts";
 import { storageSourcesOf } from "./storage/usage.ts";
 
 const config = loadConfig();
+// The Settings page's Server log: this process's lines and the worker's, in memory only.
+const serverLogBuffer = new ServerLogBuffer();
 const db = createDatabase({
   connectionString: config.databaseUrl,
   // Only after startup, when `app` exists: an idle connection ending.
@@ -42,6 +46,7 @@ const { data: locationData, messages: locationMessages } = await LiveLocationDat
 const app = buildApp({
   db,
   log: { level: config.logLevel },
+  serverLog: { buffer: serverLogBuffer },
   collection: {
     locate: locationData.locate,
     isDataCenter: locationData.isDataCenter,
@@ -100,10 +105,18 @@ locationData.start({
   info: (msg) => app.log.info(msg),
   warn: (msg) => app.log.warn(msg),
 });
+// The worker's lines, over PostgreSQL's NOTIFY (server-log/relay.ts), on a connection of their own.
+const workerLog = new WorkerLogListener({
+  connectionString: config.databaseUrl,
+  buffer: serverLogBuffer,
+  log: app.log,
+});
+workerLog.start();
 
 // Close database connections after the server stops accepting requests.
 app.addHook("onClose", async () => {
   locationData.stop();
+  await workerLog.stop();
   await db.destroy();
   await clickhouse.close();
   objectStore?.close();

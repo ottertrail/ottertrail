@@ -49,6 +49,10 @@
  *   each project's retention (retention/retention.ts),
  *   and taking deleted rows off ClickHouse's disk.
  *
+ * - Each log line also goes to the API, for the Settings page's Server log:
+ *   a NOTIFY on a connection of its own, at most 20 lines a second, never
+ *   stored (server-log/relay.ts).
+ *
  * All are safe to repeat and to run in two workers at once (uptime checks
  * and deliveries are taken with FOR UPDATE SKIP LOCKED), so plain timers
  * are enough; a job queue comes with work that needs one.
@@ -81,6 +85,8 @@ import { addressPolicy, systemLookup } from "./outbound/addresses.ts";
 import { linkReplays } from "./replays/link.ts";
 import { deleteExpiredReplays, deleteJoinedChunks, joinReplays } from "./replays/replays.ts";
 import { deleteExpiredEvents } from "./retention/retention.ts";
+import { redactRecord } from "./server-log/redact.ts";
+import { WorkerLogRelay } from "./server-log/relay.ts";
 import { probeOpenAdminApi } from "./storage/garage-admin.ts";
 import { s3ObjectStore } from "./storage/object-store.ts";
 import { storageSourcesOf } from "./storage/usage.ts";
@@ -101,6 +107,8 @@ export const PURGE_INTERVAL_MS = 60 * 1000;
 export const REPLAY_INTERVAL_MS = 10_000;
 
 const config = loadConfig();
+// Before anything logs: the Server log's copy of each line, to the API.
+const relay = new WorkerLogRelay({ connectionString: config.databaseUrl });
 const db = createDatabase({
   connectionString: config.databaseUrl,
   maxConnections: 3,
@@ -112,9 +120,15 @@ const db = createDatabase({
 const clickhouse = createClickHouse(config.clickhouse);
 const objectStore = config.objectStore === null ? null : s3ObjectStore(config.objectStore);
 
-/** One JSON line per message, like the API's log. */
+/**
+ * One JSON line per message, like the API's log, with secrets masked
+ * (server-log/redact.ts); and the same line to the Server log, which never
+ * fails or slows this.
+ */
 function log(level: "info" | "warn" | "error", msg: string, fields: Record<string, unknown> = {}) {
-  console.log(JSON.stringify({ level, time: Date.now(), name: "worker", msg, ...fields }));
+  const { value } = redactRecord({ level, time: Date.now(), name: "worker", msg, ...fields });
+  console.log(JSON.stringify(value));
+  relay.send(value);
 }
 
 let stopping = false;
@@ -467,6 +481,7 @@ async function shutdown(signal: NodeJS.Signals) {
   await clickhouse.close();
   objectStore?.close();
   await db.destroy();
+  await relay.close();
 }
 
 for (const signal of ["SIGINT", "SIGTERM"] as const) {

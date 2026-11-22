@@ -20,6 +20,7 @@ import { BackupsTab } from "./backups-tab";
 import { LocationDataTab } from "./location-data-card";
 import { NotificationChannels } from "./notification-channels";
 import { type InstanceTabProps, SectionFailed, SectionSkeleton } from "./section-states";
+import { SERVER_LOG_TAB, ServerLogTab } from "./server-log-tab";
 import { StorageTab } from "./storage-tab";
 
 interface InstanceTab {
@@ -72,6 +73,12 @@ const INSTANCE_TABS: readonly InstanceTab[] = [
     label: "Notification channels",
     permission: "channels",
     render: ({ timeZone }) => <NotificationChannels timeZone={timeZone} />,
+  },
+  {
+    value: SERVER_LOG_TAB,
+    label: "Server log",
+    permission: "settings",
+    render: (props) => <ServerLogTab {...props} />,
   },
 ];
 
@@ -224,7 +231,7 @@ function PageSkeleton() {
 /**
  * The instance's settings: /settings (docs/access.md), as tabs, the chosen
  * one in `?tab=`. The owner has General (the name and timezone), Location
- * data, and Backups; the owner and admins have Storage (what fills the
+ * data, Backups, and the Server log; the owner and admins have Storage (what fills the
  * disk), AI models (the instance's prices), and the notification channels.
  * Members do not see the page.
  */

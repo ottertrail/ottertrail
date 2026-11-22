@@ -308,7 +308,11 @@ ClickHouse refuses inserts while less than 5% of its disk is free: `min_free_dis
 
 A server sends them to the instance's address over OTLP/HTTP, with its project's secret key ([telemetry](telemetry.md#receiving)); Caddy passes `/v1/traces`, `/v1/logs`, and `/v1/metrics` to the API like every other path, and nothing needs to be set. ClickHouse keeps them `TELEMETRY_RETENTION_DAYS`, 30 by default (1 to 365), and drops whole days past it on its own. After changing it, run `docker compose up -d`, as for an [update](#updating): `migrate` applies it to ClickHouse's tables, and the API, which refuses records older than it, restarts with it.
 
-Containers keep at most 50 MB of logs each (`docker compose logs api` shows them). The API and the worker log one JSON object per line.
+### Logs
+
+Each container's output goes to Docker's `json-file` log driver, at most 10 MB a file and 5 files (`x-logging` in the Compose file): 50 MB per container, the oldest dropped first. `docker compose logs api` shows them (or `worker`, `postgres`, `clickhouse`, `garage`, `caddy`), and `-f` follows. They are lost when a container is recreated, as `docker compose up -d` does after an update or a changed setting. The API and the worker log one JSON object per line, the API at `LOG_LEVEL` (`info` by default) and the worker at info, warnings, and errors, with secrets and personal data masked ([dashboard](dashboard.md#server-log)).
+
+The Settings page's **Server log** tab, for the owner, shows the API's and the worker's lines live in the dashboard ([dashboard](dashboard.md#server-log)). It stores nothing: the API keeps its latest 2,000 lines in memory, since it started, and the worker sends its lines to the API with PostgreSQL's `NOTIFY`. It never reads Docker's socket, so the databases', Garage's, and Caddy's logs stay in `docker compose logs`. Caddy compresses every answer but the tab's stream (`@compressible` in the Caddyfile), whose lines go out as they come; behind another proxy, turn off its buffering and compression for `/api/settings/server-log` (the API sends `X-Accel-Buffering: no` and `Cache-Control: no-store, no-transform`).
 
 ### Uptime checks
 

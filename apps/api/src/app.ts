@@ -48,6 +48,10 @@ import { replayPlayerScriptRoute, replayRoutes } from "./replays/dashboard-route
 import { replayCollectionRoutes } from "./replays/routes.ts";
 import { reportRoutes } from "./reports/routes.ts";
 import { healthRoutes } from "./routes/health.ts";
+import { ServerLogBuffer } from "./server-log/buffer.ts";
+import { serverLogDestination } from "./server-log/destination.ts";
+import { redactUrl } from "./server-log/redact.ts";
+import { serverLogRoutes } from "./server-log/routes.ts";
 import { settingsRoutes } from "./settings/routes.ts";
 import { SourceMapCache } from "./source-maps/resolve.ts";
 import { sourceMapRoutes, sourceMapUploadRoutes } from "./source-maps/routes.ts";
@@ -70,8 +74,22 @@ export interface AppOptions extends Omit<FastifyServerOptions, "logger"> {
    * `clickhouse` names another. Not served without a ClickHouse client.
    */
   collection?: Omit<CollectionOptions, "db" | "clickhouse"> & { clickhouse?: ClickHouseClient };
-  /** Logging; off when omitted. Tests pass a stream to read the log. */
+  /**
+   * Logging; off when omitted. Tests pass a stream to read the log; it
+   * goes to stdout otherwise. Every line is masked first (server-log/redact.ts).
+   */
   log?: { level: string; stream?: { write(line: string): void } };
+  /**
+   * The Server log (server-log/): the buffer the API's lines go into, with
+   * the worker's from server-log/listener.ts, and the stream route's
+   * limits, which tests lower. Omitted, the route streams an empty buffer.
+   */
+  serverLog?: {
+    buffer?: ServerLogBuffer;
+    maxStreams?: number;
+    heartbeatMs?: number;
+    recheckMs?: number;
+  };
   /**
    * Dashboard sign-in (src/auth/auth.ts) and the instance's public URL.
    * Without it the API serves only health, and event collection when
@@ -208,15 +226,29 @@ export interface AppOptions extends Omit<FastifyServerOptions, "logger"> {
 /**
  * What a request log line records about a request: method and URL only.
  * Fastify's default also records the client's IP address and port, and an
- * IP address is personal data that Ottertrail never keeps. A site's user ID
- * is personal data too, so a user's path and a user search are masked:
- * logs are kept apart from the project's retention and deletion.
+ * IP address is personal data that Ottertrail never keeps. Never headers,
+ * so Authorization and Cookie never reach a log. A site's user ID is
+ * personal data too, so a user's path, a user search, and event property
+ * filters are masked, as are tokens and keys in the URL (redactUrl): logs
+ * are kept apart from the project's retention and deletion, and the
+ * Server log shows them in the dashboard.
  */
 export function requestLogFields(request: { method: string; url: string }) {
-  const url = request.url
-    .replace(/(\/users\/)[^/?#]+/, "$1…")
-    .replace(/([?&]search=)[^&#]*/, "$1…");
-  return { method: request.method, url };
+  return { method: request.method, url: redactUrl(request.url) };
+}
+
+/**
+ * What "request completed" records: the status, and the request's method
+ * and URL as requestLogFields records them, so the line reads alone.
+ */
+export function responseLogFields(reply: {
+  statusCode: number;
+  request?: { method: string; url: string };
+}) {
+  return {
+    statusCode: reply.statusCode,
+    ...(reply.request === undefined ? {} : requestLogFields(reply.request)),
+  };
 }
 
 /** Heatmaps' collection limits, without the overlay's. */
@@ -247,6 +279,7 @@ export function buildApp({
   backups = {},
   avatars = {},
   aiModels = {},
+  serverLog = {},
   trackerScriptPath,
   dashboardPath,
   replayPlayerPath,
@@ -261,8 +294,10 @@ export function buildApp({
         ? false
         : {
             level: log.level,
-            ...(log.stream === undefined ? {} : { stream: log.stream }),
-            serializers: { req: requestLogFields },
+            // pino's custom destination: masked, then to stdout (or the
+            // test's stream) and into the Server log's buffer.
+            stream: serverLogDestination(log.stream ?? process.stdout, serverLog.buffer),
+            serializers: { req: requestLogFields, res: responseLogFields },
           },
   });
   app.register(healthRoutes, { prefix: "/api" });
@@ -667,6 +702,16 @@ export function buildApp({
       clickhouse: dashboard.clickhouse,
       auth: dashboard.auth,
       ...(dashboard.now === undefined ? {} : { now: dashboard.now }),
+    });
+    app.register(serverLogRoutes, {
+      prefix: "/api",
+      db,
+      auth: dashboard.auth,
+      buffer: serverLog.buffer ?? new ServerLogBuffer(),
+      level: log?.level ?? "silent",
+      ...(serverLog.maxStreams === undefined ? {} : { maxStreams: serverLog.maxStreams }),
+      ...(serverLog.heartbeatMs === undefined ? {} : { heartbeatMs: serverLog.heartbeatMs }),
+      ...(serverLog.recheckMs === undefined ? {} : { recheckMs: serverLog.recheckMs }),
     });
   }
   return app;

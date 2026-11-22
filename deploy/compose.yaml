@@ -258,7 +258,7 @@ services:
     environment:
       OTTERTRAIL_DOMAIN: ${OTTERTRAIL_DOMAIN:?set OTTERTRAIL_DOMAIN in .env}
     labels:
-      ottertrail.config.caddyfile: "4174046c37ba"
+      ottertrail.config.caddyfile: "bbed7980361e"
     ports:
       - "80:80"
       - "443:443"
@@ -299,11 +299,14 @@ configs:
   # Caddy gets and renews the HTTPS certificate for the instance's domain,
   # redirects HTTP to HTTPS, and passes every request to the API. It
   # replaces any X-Forwarded-For a client sends with the client's real
-  # address, which the API reads (TRUST_PROXY=1).
+  # address, which the API reads (TRUST_PROXY=1). It compresses every
+  # answer but the Settings page's Server log, a stream of events, whose
+  # lines would wait in the compressor; Caddy passes each event on at once.
   caddyfile:
     content: |
       {$$OTTERTRAIL_DOMAIN} {
-      	encode zstd gzip
+      	@compressible not path /api/settings/server-log
+      	encode @compressible zstd gzip
       	reverse_proxy api:3000
       }
 

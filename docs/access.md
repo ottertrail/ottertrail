@@ -14,7 +14,7 @@ It is built in two parts:
 
 Each dashboard user has one role (`dashboard_users.role`):
 
-- **Owner.** Exactly one per instance; a partial unique index allows no second. The owner can do everything: the instance's settings (name, timezone, and automatic location data updates, with the location data's status), scheduled backups and the backup key, handing ownership to another user, and everything an admin can do, including to admins.
+- **Owner.** Exactly one per instance; a partial unique index allows no second. The owner can do everything: the instance's settings (name, timezone, and automatic location data updates, with the location data's status), scheduled backups and the backup key, the Server log, handing ownership to another user, and everything an admin can do, including to admins.
 - **Admin.** Everything except the instance's settings and anything that touches the owner:
   - every project and area;
   - creating, changing, and deleting projects;
@@ -96,6 +96,7 @@ Fastify checks a route's parameters and body before the access check runs, so a 
 | `PATCH /api/settings/storage` (the channels that get storage warnings)                                                                                                                | `channels`                          |
 | `GET /api/settings/ai-models`, `PUT …/price`, `PUT …/price-as`, `POST …/reset` (the AI model prices)                                                                                  | `projects`                          |
 | `/api/settings/backups…` (ten routes: settings, Test connection, Back up now, Test restore, the list, the key, its file, saved, replace)                                              | `settings` (the owner)              |
+| `GET /api/settings/server-log` (the Server log's stream, [dashboard](dashboard.md#server-log))                                                                                        | `settings` (the owner)              |
 | `POST /api/settings/backups/key`, `…/key/file`, and a `PATCH` that turns backups off                                                                                                  | `settings` and the current password |
 | `/api/channels…` (all eight), `POST /api/channels/email-test` (a test email to the user's own address)                                                                                | `channels`                          |
 | `GET /api/projects/:id`                                                                                                                                                               | The project                         |
@@ -175,7 +176,7 @@ These need no session, and declare nothing: health, collection with a project's 
 - A page the user cannot open shows "You don't have access" (`NoAccess`). Each project route names what it needs (`staticData.access` in `router.tsx`), and `ProjectLayout` checks it.
 - Opening a project, or the home page, goes to the project's overview when the user has one of its areas (uptime and alerts, errors, monitoring, web analytics, product analytics), and otherwise to the first area the user has, in the menu's order. The overview shows only the widgets of the user's areas ([dashboard](dashboard.md#overview)).
 - The project list hides "New project" and allowed sites from members.
-- The Settings page's General, Location data, and Backups tabs show to the owner, and its Storage, AI models, and Notification channels tabs to the owner and admins. A member gets "You don't have access". The workspace menu's Members link, to `/settings/members`, shows to the owner and admins.
+- The Settings page's General, Location data, Backups, and Server log tabs show to the owner, and its Storage, AI models, and Notification channels tabs to the owner and admins. A member gets "You don't have access". The workspace menu's Members link, to `/settings/members`, shows to the owner and admins.
 - Where one area's page links into another, the link shows only when the user has that area: an error's user, trace, and replay; a user's errors, replays, and AI usage (which needs monitoring); a replay's error and user; the alert rules on an error's page; "Add an alert rule" on the monitoring pages; links to the project's settings.
 - Buttons that change something show only with manage: Resolve and Reopen; adding, editing, pausing, and deleting checks and rules (the rules' switches are disabled); saving, renaming, and deleting funnels; adding and deleting goals.
 
@@ -359,6 +360,10 @@ The setup command stays. The setup page has:
 ### Scheduled backups
 
 The Backups tab's routes (`apps/api/src/backups/routes.ts`) need `settings`: admins and members get 403. Changes check Origin, and bodies are checked before any database work. Where backups go is the worker's `BACKUP_S3_*`, which the API never reads: no route can change it. The backup key is returned only by `POST /api/settings/backups/key` and `…/key/file`, with the current password in the body and `Cache-Control: no-store`, and each logs that the key was shown or downloaded, with the user's ID, never the key. Those two, and turning backups off, need the current password (the shared limiter in `auth/password-tries.ts`), and each notifies the storage-warning channels (`backups.changed`) and, with SMTP, emails the owner (`backup_changed` in the account email queue). `key/replace` writes only over the key it read, so two at once cannot each show a different key. Test connection (10 in 10 minutes), Back up now, and Test restore (3 an hour each) are limited per user ([deployment](deployment.md#scheduled-backups)).
+
+### Server log
+
+`GET /api/settings/server-log` needs `settings`: admins and members get 403, and anyone signed out 401. It shows the API's and the worker's log lines, which name projects, routes, and errors across the whole instance, so it is the owner's alone. An open stream checks the session and the permission again every 30 seconds and closes when either is gone, so signing out, a deleted session, or handing over ownership ends it within that time. Secrets and personal data are masked in the logger before a line reaches stdout or the stream ([dashboard](dashboard.md#server-log)). In the hosted service ([multi-tenancy](multi-tenancy.md)) it shows one deployment's lines for every organization, so it becomes the operator's, not an organization owner's; that change is the one permission this route checks.
 
 ## Known limits
 
