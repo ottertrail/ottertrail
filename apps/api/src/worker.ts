@@ -35,9 +35,12 @@
  *   differs, and notifying the channels the "Storage warnings" setting
  *   names when a storage warning starts or ends (storage/warning-job.ts).
  * - Every 30 seconds: the scheduled backup when its daily time is due, an
- *   owner's "Back up now" or "Test restore", and the one retry of a failed
- *   backup (backups/job.ts): each backup encrypted and uploaded to S3, one
- *   at a time in any number of workers.
+ *   owner's "Back up now", "Test restore", or "Test connection", and the
+ *   one retry of a failed backup (backups/job.ts): each backup encrypted
+ *   and uploaded to the S3 bucket BACKUP_S3_* names, one at a time in any
+ *   number of workers. Only the worker reads BACKUP_S3_*: it reports the
+ *   destination, without the secret, and the folder's listing to
+ *   PostgreSQL for the Backups tab.
  * - Every minute: fetching the favicon of projects whose first allowed
  *   site changed, or was last fetched a week ago, as their default icon,
  *   with the object store only (avatars/favicons.ts).
@@ -62,7 +65,7 @@ import {
   queueOrphanedProjects,
   removeDeletedRows,
 } from "./clickhouse/delete-events.ts";
-import { loadConfig } from "./config.ts";
+import { loadBackupS3, loadConfig } from "./config.ts";
 import { createDatabase } from "./db/database.ts";
 import {
   LocationDataJob,
@@ -376,16 +379,16 @@ const storage = new StorageWarningJob({
 const stopStorage = every(STORAGE_CHECK_INTERVAL_MS, () => storage.tick());
 
 /**
- * Scheduled backups: the destination's secret and the backup key are
- * sealed with a key from AUTH_SECRET, as the API seals them; a separate
- * destination follows the uptime checks' address rules.
+ * Scheduled backups, to the bucket BACKUP_S3_* names: read here only, never
+ * by the API. A problem with them is logged and shown on the Backups tab,
+ * and stops only the backups. The backup key is sealed with a key from
+ * AUTH_SECRET, as the API seals it.
  */
+const backupDestination = loadBackupS3(process.env, config.objectStore);
 const backups = new BackupJob({
   db,
-  objectStore: config.objectStore,
-  stackGarage: config.garage !== null,
+  destination: backupDestination,
   secrets: new BackupSecrets(config.authSecret),
-  rules: { policy, lookup: systemLookup },
   sources: backupSourcesOf(config, clickhouse),
   version: OTTERTRAIL_VERSION,
   log,
@@ -479,6 +482,12 @@ log("info", "worker started", {
   locationDataCheckIntervalMs: UPDATE_CHECK_INTERVAL_MS,
   storageCheckIntervalMs: STORAGE_CHECK_INTERVAL_MS,
   clickhouseBackupPath: config.clickhouseBackupPath,
+  backupDestination:
+    backupDestination === null
+      ? "not set"
+      : "problem" in backupDestination
+        ? "invalid"
+        : `${backupDestination.bucket}/${backupDestination.prefix}`,
   garageAdmin:
     config.garage === null ? "not the stack's Garage" : config.garage.adminToken !== null,
 });

@@ -27,7 +27,8 @@ x-app: &app
   image: ghcr.io/ottertrail/ottertrail:${OTTERTRAIL_VERSION:-0.2.0}
   restart: unless-stopped
   logging: *logging
-  environment:
+  # Anchored too: the worker adds its own variables to these.
+  environment: &app-environment
     NODE_ENV: production
     DATABASE_URL: postgres://ottertrail:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/ottertrail
     CLICKHOUSE_URL: http://clickhouse:8123
@@ -229,6 +230,20 @@ services:
       - geo-data:/app/data/geo
       - clickhouse-backups:/app/data/backups
     group_add: ["101"]
+    # Where scheduled backups go: a bucket of their own, with a key only
+    # the worker holds, so a key the internet-facing API holds can't
+    # delete them (docs/deployment.md, "Scheduled backups"). Not in the
+    # environment above: the API never gets them. Unset, backups can't be
+    # turned on; partly set or invalid, the worker logs why and the
+    # Backups tab shows it.
+    environment:
+      <<: *app-environment
+      BACKUP_S3_ENDPOINT: ${BACKUP_S3_ENDPOINT:-}
+      BACKUP_S3_REGION: ${BACKUP_S3_REGION:-}
+      BACKUP_S3_BUCKET: ${BACKUP_S3_BUCKET:-}
+      BACKUP_S3_PREFIX: ${BACKUP_S3_PREFIX:-}
+      BACKUP_S3_ACCESS_KEY_ID: ${BACKUP_S3_ACCESS_KEY_ID:-}
+      BACKUP_S3_SECRET_ACCESS_KEY: ${BACKUP_S3_SECRET_ACCESS_KEY:-}
     # On shutdown the worker lets running uptime checks finish and records
     # them: up to 30 seconds each, past Compose's default 10.
     stop_grace_period: 45s

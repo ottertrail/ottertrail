@@ -1,23 +1,18 @@
 import type { Kysely, Transaction } from "kysely";
+import { z } from "zod";
 
-import type { ObjectStoreConfig } from "../config.ts";
+import type { BackupS3Config } from "../config.ts";
 import type { Database } from "../db/schema.ts";
-import type { BackupSecrets } from "./secrets.ts";
 
 /**
- * Scheduled backups' settings (backup_settings, migration 0014), and where
- * backups go (docs/deployment.md, "Backups"):
- *
- * - When the object store (OBJECT_STORE_*, which holds replays and source
- *   maps) is an off-site S3-compatible store, backups reuse its connection,
- *   in a bucket and folder the owner picks.
- * - When it is the stack's own Garage (on the server's own disk, so not a
- *   backup), or there is none, backups need a separate destination: an
- *   endpoint, region, bucket, folder, access key, and secret.
- *
- * Which applies follows from the configuration, the same test the Storage
- * page uses for "the stack's Garage" (config.ts, parseGarage: the URL's
- * host is the Compose service `garage`, or in development the local one).
+ * Scheduled backups' settings (backup_settings, migrations 0014 and 0020;
+ * docs/deployment.md, "Scheduled backups"). The owner's part is on the
+ * Backups tab: on or off, the time of day, the days to keep, and the
+ * backup key. Where backups go is the worker's: BACKUP_S3_* in its
+ * environment (config.ts, parseBackupS3), which the API never reads. The
+ * worker reports what it has here, without the secret: the destination or
+ * what is wrong with it, Test connection's result, and the folder's
+ * listing (backups/job.ts).
  */
 
 export const DEFAULT_PREFIX = "ottertrail-backups";
@@ -40,37 +35,11 @@ export const REGION_PATTERN = "^[A-Za-z0-9_-]{1,64}$";
 /** An access key ID: visible characters, no spaces. */
 export const ACCESS_KEY_PATTERN = "^[\\x21-\\x7E]{1,128}$";
 export const MAX_SECRET = 256;
-export const MAX_ENDPOINT = 300;
-
-/** Whether backups reuse the object store's connection, and why not when they don't. */
-export type DestinationMode =
-  | { mode: "object_store"; store: ObjectStoreConfig }
-  | {
-      mode: "separate";
-      /** The object store is the stack's Garage, on this server's disk; or there is none. */
-      reason: "stack_garage" | "none";
-    };
-
-export function destinationModeOf(
-  objectStore: ObjectStoreConfig | null,
-  stackGarage: boolean,
-): DestinationMode {
-  if (objectStore === null) return { mode: "separate", reason: "none" };
-  if (stackGarage) return { mode: "separate", reason: "stack_garage" };
-  return { mode: "object_store", store: objectStore };
-}
 
 export interface BackupSettings {
   enabled: boolean;
   timeOfDay: string;
   keepDays: number;
-  /** Null: the object store's bucket, when backups reuse its connection. */
-  bucket: string | null;
-  prefix: string;
-  endpoint: string | null;
-  region: string | null;
-  accessKeyId: string | null;
-  secretSealed: string | null;
   keySealed: string | null;
   keyRecipient: string | null;
   keyCreatedAt: Date | null;
@@ -82,6 +51,75 @@ export interface BackupSettings {
   disabledBy: string | null;
   backupRequestedAt: Date | null;
   testRestoreRequestedAt: Date | null;
+  /** What the worker last reported: its destination, or what is wrong with it. */
+  destination: DestinationReport | null;
+  destinationProblem: string | null;
+  destinationReportedAt: Date | null;
+  connectionTestRequestedAt: Date | null;
+  connectionTest: StoredConnectionTest | null;
+  connectionTestedAt: Date | null;
+  backupList: StoredBackupList | null;
+  backupListedAt: Date | null;
+}
+
+/** The destination's non-secret parts, as the worker reports them. */
+const destinationReportSchema = z.object({
+  endpoint: z.string(),
+  region: z.string(),
+  bucket: z.string(),
+  prefix: z.string(),
+  accessKeyId: z.string(),
+});
+
+export type DestinationReport = z.infer<typeof destinationReportSchema>;
+
+export function reportOf(destination: Destination): DestinationReport {
+  return {
+    endpoint: destination.url,
+    region: destination.region,
+    bucket: destination.bucket,
+    prefix: destination.prefix,
+    accessKeyId: destination.accessKeyId,
+  };
+}
+
+/** Test connection's result: each step (backups/s3.ts, testConnection), or why none could run. */
+const connectionTestSchema = z.object({
+  ok: z.boolean(),
+  steps: z.array(
+    z.object({
+      step: z.enum(["put", "list", "get", "delete"]),
+      status: z.enum(["ok", "failed", "skipped"]),
+      error: z.string().optional(),
+    }),
+  ),
+  /** Why no step ran: no destination, or a problem with it. */
+  error: z.string().optional(),
+});
+
+export type StoredConnectionTest = z.infer<typeof connectionTestSchema>;
+
+const placeSchema = { bucket: z.string(), prefix: z.string() };
+
+/** The folder's backups, newest first, or why they could not be listed. */
+const backupListSchema = z.discriminatedUnion("ok", [
+  z.object({
+    ok: z.literal(true),
+    ...placeSchema,
+    backups: z.array(
+      z.object({ name: z.string(), at: z.string(), bytes: z.number(), complete: z.boolean() }),
+    ),
+  }),
+  z.object({ ok: z.literal(false), ...placeSchema, error: z.string() }),
+]);
+
+export type StoredBackupList = z.infer<typeof backupListSchema>;
+
+/** A JSON column the worker wrote, or null when it is empty or not of its shape. */
+function parsed<T>(schema: z.ZodType<T>, value: unknown): T | null {
+  if (value === null) return null;
+  const result = schema.safeParse(value);
+  return result.success ? result.data : null;
 }
 
 export async function readBackupSettings(
@@ -95,12 +133,6 @@ export async function readBackupSettings(
     enabled: row.enabled,
     timeOfDay: row.time_of_day,
     keepDays: row.keep_days,
-    bucket: row.bucket,
-    prefix: row.prefix,
-    endpoint: row.endpoint,
-    region: row.region,
-    accessKeyId: row.access_key_id,
-    secretSealed: row.secret_sealed,
     keySealed: row.key_sealed,
     keyRecipient: row.key_recipient,
     keyCreatedAt: row.key_created_at,
@@ -112,101 +144,20 @@ export async function readBackupSettings(
     disabledBy: row.disabled_by,
     backupRequestedAt: row.backup_requested_at,
     testRestoreRequestedAt: row.test_restore_requested_at,
+    // The three JSON columns are written by the worker alone (backups/job.ts).
+    destination: parsed(destinationReportSchema, row.destination),
+    destinationProblem: row.destination_problem,
+    destinationReportedAt: row.destination_reported_at,
+    connectionTestRequestedAt: row.connection_test_requested_at,
+    connectionTest: parsed(connectionTestSchema, row.connection_test),
+    connectionTestedAt: row.connection_tested_at,
+    backupList: parsed(backupListSchema, row.backup_list),
+    backupListedAt: row.backup_listed_at,
   };
 }
 
-/** Where backups go, with the keys to sign for it. */
-export interface Destination {
-  /** Its S3 endpoint, an origin. */
-  url: string;
-  region: string;
-  bucket: string;
-  /** The folder backups go under, never empty. */
-  prefix: string;
-  accessKeyId: string;
-  secretAccessKey: string;
-  /**
-   * Whether the endpoint came from the dashboard rather than the server's
-   * environment: its requests then follow the outbound address rules
-   * (backups/s3.ts), as webhooks do.
-   */
-  fromDashboard: boolean;
-  /** The object store's bucket when backups share its connection: backups never touch its other keys. */
-  objectStoreBucket: string | null;
-}
-
-/** What a destination is made from: the saved settings, or a form's unsaved values. */
-export interface DestinationFields {
-  bucket: string | null;
-  prefix: string;
-  endpoint: string | null;
-  region: string | null;
-  accessKeyId: string | null;
-  /** The secret itself, when a form sends one. */
-  secretAccessKey?: string | null;
-  /** The saved secret, used when the form sends none. */
-  secretSealed: string | null;
-}
-
-/**
- * The destination, or why there is none yet, in words the Backups tab
- * shows: what is missing, and what to do.
- */
-export function destinationOf(
-  mode: DestinationMode,
-  fields: DestinationFields,
-  secrets: BackupSecrets,
-): Destination | { problem: string } {
-  const prefix = fields.prefix;
-  if (!new RegExp(PREFIX_PATTERN).test(prefix)) {
-    return { problem: "Choose a backup folder, such as ottertrail-backups." };
-  }
-  if (mode.mode === "object_store") {
-    const bucket = fields.bucket ?? mode.store.bucket;
-    if (bucket === mode.store.bucket && overlapsObjects(prefix)) {
-      return { problem: OVERLAP_PROBLEM };
-    }
-    return {
-      url: mode.store.url,
-      region: mode.store.region,
-      bucket,
-      prefix,
-      accessKeyId: mode.store.accessKeyId,
-      secretAccessKey: mode.store.secretAccessKey,
-      fromDashboard: false,
-      objectStoreBucket: mode.store.bucket,
-    };
-  }
-  const { endpoint, region, bucket, accessKeyId } = fields;
-  if (endpoint === null || region === null || bucket === null || accessKeyId === null) {
-    return {
-      problem: "Set the endpoint, region, bucket, and access key in Settings > Backups, then save.",
-    };
-  }
-  let secret = fields.secretAccessKey ?? null;
-  if (secret === null || secret === "") {
-    if (fields.secretSealed === null) {
-      return { problem: "Enter the destination's secret access key on the Backups tab." };
-    }
-    secret = secrets.openSecret(fields.secretSealed, endpoint, accessKeyId);
-    if (secret === null) {
-      return {
-        problem:
-          "The saved secret access key can't be read: AUTH_SECRET, the endpoint, or the access key changed. Enter it again in Settings > Backups and save.",
-      };
-    }
-  }
-  return {
-    url: endpoint,
-    region,
-    bucket,
-    prefix,
-    accessKeyId,
-    secretAccessKey: secret,
-    fromDashboard: true,
-    objectStoreBucket: null,
-  };
-}
+/** Where backups go, with the keys to sign for it: the worker's BACKUP_S3_*. */
+export type Destination = BackupS3Config;
 
 /**
  * Where the object store keeps its objects (replays/replays.ts,
@@ -226,17 +177,3 @@ export function overlapsObjects(prefix: string): boolean {
 
 export const OVERLAP_PROBLEM =
   "This folder overlaps session replays, source maps, or avatars. Choose a separate folder, such as ottertrail-backups.";
-
-/**
- * An endpoint as the form sends it, as an origin; null when it is not an
- * http(s) URL without a user, path, query, or fragment.
- */
-export function endpointOrigin(raw: string): string | null {
-  const url = URL.parse(raw.trim());
-  if (url === null || (url.protocol !== "https:" && url.protocol !== "http:")) return null;
-  if (url.username !== "" || url.password !== "") return null;
-  if ((url.pathname !== "/" && url.pathname !== "") || url.search !== "" || url.hash !== "") {
-    return null;
-  }
-  return url.origin;
-}

@@ -81,6 +81,26 @@ describe("deploy/compose.yaml works on its own, as a release download", () => {
     }
   });
 
+  test("only the worker gets the backup destination, optional, beside the shared settings", () => {
+    const names = [
+      "BACKUP_S3_ENDPOINT",
+      "BACKUP_S3_REGION",
+      "BACKUP_S3_BUCKET",
+      "BACKUP_S3_PREFIX",
+      "BACKUP_S3_ACCESS_KEY_ID",
+      "BACKUP_S3_SECRET_ACCESS_KEY",
+    ];
+    const worker = serviceBlock(compose, "worker");
+    expect(worker).toContain("    environment:\n      <<: *app-environment\n");
+    for (const name of names) expect(worker).toContain(`      ${name}: \${${name}:-}\n`);
+    // Not in the settings the API and migrate get, nor in any other service.
+    expect(compose.replace(worker, "")).not.toContain("BACKUP_S3_");
+    expect(compose).toContain("  environment: &app-environment\n");
+    // example.env lists them, commented out.
+    const example = readFileSync(join(deploy, "example.env"), "utf8");
+    for (const name of names) expect(example).toMatch(new RegExp(`^# ${name}=`, "m"));
+  });
+
   test("Caddy reads the domain from its environment, so a new domain recreates it", () => {
     // $$ is a literal dollar sign for Compose: Caddy reads {$OTTERTRAIL_DOMAIN}.
     expect(inlineConfig("caddyfile").split("\n")[0]).toBe("{$$OTTERTRAIL_DOMAIN} {");

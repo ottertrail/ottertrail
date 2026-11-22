@@ -88,7 +88,7 @@ The body, version 1:
 | `alert.held_back`           | A rule held notifications back after sending 20 in an hour; says how many, once the hour ends |
 | `storage.low`               | A storage warning starts, or becomes critical                                                 |
 | `storage.recovered`         | A storage warning ends                                                                        |
-| `backups.changed`           | The owner showed or downloaded the backup key, changed where backups go, or turned them off   |
+| `backups.changed`           | The owner showed or downloaded the backup key, or turned backups off                          |
 | `test`                      | Someone sends a test from the Settings page                                                   |
 
 Alert rules ([step 3](uptime-alerts.md#step-3-alert-rules-as-built), [step 4](uptime-alerts.md#step-4-alerts-on-telemetry-as-built) for the route and metric types, and [AI usage](ai-usage.md#alerts) for the AI types) send all but `test` and the storage types. The worker's storage check sends `storage.low` and `storage.recovered` to the channels chosen under "Storage warnings" in the instance's Settings ([deployment](deployment.md#storage-warnings)). A receiver should ignore a type it does not know.

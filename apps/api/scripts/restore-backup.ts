@@ -23,48 +23,31 @@
  *
  * Where the backups are comes from the environment, never the command
  * line: BACKUP_S3_ENDPOINT, BACKUP_S3_REGION, BACKUP_S3_BUCKET,
- * BACKUP_S3_PREFIX (the folder), BACKUP_S3_ACCESS_KEY_ID, and
- * BACKUP_S3_SECRET_ACCESS_KEY. Exits 1 on any failure, saying why.
+ * BACKUP_S3_PREFIX (the folder, ottertrail-backups when unset),
+ * BACKUP_S3_ACCESS_KEY_ID, and BACKUP_S3_SECRET_ACCESS_KEY: the worker's
+ * own variables, read and checked as the worker reads them (config.ts,
+ * parseBackupS3). Exits 1 on any failure, saying why.
  */
 import { readFile } from "node:fs/promises";
 
 import { BackupError, testRestore, verifiedManifest } from "../src/backups/run.ts";
 import { backupClient, listBackups, s3ErrorText } from "../src/backups/s3.ts";
-import { endpointOrigin, type Destination } from "../src/backups/settings.ts";
-import { addressPolicy, systemLookup } from "../src/outbound/addresses.ts";
-
-const NAMES = {
-  endpoint: "BACKUP_S3_ENDPOINT",
-  region: "BACKUP_S3_REGION",
-  bucket: "BACKUP_S3_BUCKET",
-  prefix: "BACKUP_S3_PREFIX",
-  accessKeyId: "BACKUP_S3_ACCESS_KEY_ID",
-  secretAccessKey: "BACKUP_S3_SECRET_ACCESS_KEY",
-} as const;
+import type { Destination } from "../src/backups/settings.ts";
+import { BACKUP_S3_VARIABLES, loadBackupS3 } from "../src/config.ts";
 
 function fail(message: string): never {
   console.error(message);
   process.exit(1);
 }
 
-const read = (name: string) => process.env[name]?.trim() ?? "";
-
 function destinationFromEnvironment(): Destination {
-  const missing = Object.values(NAMES).filter((name) => read(name) === "");
-  if (missing.length > 0) fail(`Set ${missing.join(", ")} (restore.sh asks for them).`);
-  const url = endpointOrigin(read(NAMES.endpoint));
-  if (url === null) fail(`${NAMES.endpoint} must use http:// or https:// without a path.`);
-  return {
-    url,
-    region: read(NAMES.region),
-    bucket: read(NAMES.bucket),
-    prefix: read(NAMES.prefix).replace(/^\/+|\/+$/g, ""),
-    accessKeyId: read(NAMES.accessKeyId),
-    secretAccessKey: process.env[NAMES.secretAccessKey] ?? "",
-    // The operator's own settings, on the server: no address rules.
-    fromDashboard: false,
-    objectStoreBucket: null,
-  };
+  // No object store to keep clear of: restoring only reads.
+  const destination = loadBackupS3(process.env, null);
+  if (destination === null) {
+    fail(`Set ${BACKUP_S3_VARIABLES.join(", ")} (restore.sh asks for them).`);
+  }
+  if ("problem" in destination) fail(destination.problem);
+  return destination;
 }
 
 /** The key in an age identity file: its one line that is not a comment. */
@@ -90,10 +73,7 @@ const gib = (bytes: number) => `${(bytes / 1024 ** 3).toFixed(2)} GiB`;
 const args = process.argv.slice(2).filter((arg) => arg !== "--");
 const [command, ...rest] = args;
 const destination = destinationFromEnvironment();
-const client = backupClient(destination, {
-  policy: addressPolicy({ allowPrivate: true }),
-  lookup: systemLookup,
-});
+const client = backupClient(destination);
 
 try {
   if (command === "list") {

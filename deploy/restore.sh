@@ -24,9 +24,11 @@
 # part against the manifest (dist/restore-backup.mjs), then restores it as
 # below and deletes the downloaded files. The
 # destination comes from BACKUP_S3_ENDPOINT, BACKUP_S3_REGION,
-# BACKUP_S3_BUCKET, BACKUP_S3_PREFIX (the folder), BACKUP_S3_ACCESS_KEY_ID,
-# and BACKUP_S3_SECRET_ACCESS_KEY, or it asks for each one missing; the key
-# file from --key or BACKUP_KEY_FILE. Nothing secret goes on a command line.
+# BACKUP_S3_BUCKET, BACKUP_S3_PREFIX (the folder, ottertrail-backups when
+# unset), BACKUP_S3_ACCESS_KEY_ID, and BACKUP_S3_SECRET_ACCESS_KEY: the
+# worker's own variables. Each is taken from this shell's environment, else
+# from the .env beside this script, else it asks for it. The key file comes
+# from --key or BACKUP_KEY_FILE. Nothing secret goes on a command line.
 #
 # It first unpacks and checks the object backup (every file against its
 # manifest, and that the bucket answers), so a broken backup or an
@@ -74,9 +76,31 @@ if [ -n "$from_s3" ]; then
     latest | [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9][0-9][0-9][0-9][0-9]Z) ;;
     *) echo "Invalid backup name: $wanted (use 2026-11-17T030000Z or latest)" >&2; exit 1 ;;
   esac
-  # Asks for each setting the environment lacks; a secret without echo.
+  # A variable's value in the .env beside this script, as Compose reads it
+  # for the worker: the last line that sets it, without one pair of quotes
+  # around it, or a comment after an unquoted value. Read, never run.
+  env_file=$(dirname "$0")/.env
+  from_env_file() {
+    [ -f "$env_file" ] || return 0
+    line=$(grep -E "^[[:space:]]*(export[[:space:]]+)?$1=" "$env_file" | tail -n 1) || return 0
+    value=${line#*=}
+    case "$value" in
+      \"*\") value=${value#\"}; value=${value%\"} ;;
+      \'*\') value=${value#\'}; value=${value%\'} ;;
+      *)
+        value=${value%%[[:space:]]#*}
+        value=$(printf '%s' "$value" | sed 's/[[:space:]]*$//')
+        ;;
+    esac
+    printf '%s' "$value"
+  }
+  # Asks for each setting the environment and .env lack; a secret without echo.
   ask() {
     eval "value=\${$1:-}"
+    [ -n "$value" ] || value=$(from_env_file "$1")
+    if [ -z "$value" ] && [ -n "${4:-}" ]; then
+      value=$4
+    fi
     if [ -z "$value" ]; then
       if [ ! -t 0 ]; then
         echo "Set $1 or run in a terminal to enter it." >&2
@@ -91,8 +115,8 @@ if [ -n "$from_s3" ]; then
       else
         read -r value
       fi
-      eval "$1=\$value"
     fi
+    eval "$1=\$value"
     # The variable that $1 names, for the one-off container's -e.
     # shellcheck disable=SC2163
     export "$1"
@@ -100,7 +124,7 @@ if [ -n "$from_s3" ]; then
   ask BACKUP_S3_ENDPOINT "S3 endpoint, such as https://<account>.r2.cloudflarestorage.com"
   ask BACKUP_S3_REGION "Region (auto for Cloudflare R2)"
   ask BACKUP_S3_BUCKET "Bucket"
-  ask BACKUP_S3_PREFIX "Folder in bucket (Settings > Backups)"
+  ask BACKUP_S3_PREFIX "Folder in bucket" "" ottertrail-backups
   ask BACKUP_S3_ACCESS_KEY_ID "Access key ID"
   ask BACKUP_S3_SECRET_ACCESS_KEY "Secret access key" secret
   if [ -z "$key_file" ]; then

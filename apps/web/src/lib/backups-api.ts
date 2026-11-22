@@ -4,9 +4,10 @@ import { apiRequest, expectShape } from "./api";
 
 /**
  * Scheduled backups (GET /api/settings/backups and its routes;
- * docs/deployment.md, "Backups"), for the owner only. The destination's
- * secret is never in an answer; the backup key only from its own route,
- * fetched when the owner asks to see it, and never cached.
+ * docs/deployment.md, "Backups"), for the owner only. Where backups go is
+ * the worker's BACKUP_S3_*: the answer holds what the worker reported,
+ * never the secret. The backup key comes only from its own route, fetched
+ * when the owner asks to see it, and never cached.
  */
 
 export interface BackupRun {
@@ -28,27 +29,45 @@ export interface BackupSettings {
   /** "HH:MM" in the instance's timezone. */
   timeOfDay: string;
   keepDays: number;
-  bucket: string | null;
-  prefix: string;
-  endpoint: string | null;
-  region: string | null;
-  accessKeyId: string | null;
-  /** Whether a secret is saved, and whether the server can still read it; never the secret. */
-  secret: "none" | "saved" | "unreadable";
   /** Since when, and by whom, backups are off; null while on, or never turned on. */
   disabledAt: string | null;
   disabledBy: string | null;
 }
 
+/** The destination's parts the worker reports: never its secret. */
+export interface DestinationConfig {
+  endpoint: string;
+  region: string;
+  bucket: string;
+  /** The folder backups go under. */
+  prefix: string;
+  accessKeyId: string;
+}
+
+export interface ConnectionStep {
+  step: "put" | "list" | "get" | "delete";
+  status: "ok" | "failed" | "skipped";
+  error?: string;
+}
+
+export interface ConnectionTest {
+  ok: boolean;
+  steps: ConnectionStep[];
+  /** Why no step ran: no destination, or a problem with it. */
+  error?: string;
+}
+
 export interface Backups {
   settings: BackupSettings;
-  destination:
-    | {
-        mode: "object_store";
-        reason: "off_site";
-        objectStore: { endpoint: string; bucket: string };
-      }
-    | { mode: "separate"; reason: "stack_garage" | "none"; objectStore: null };
+  /** What the worker last reported of its BACKUP_S3_*, and when; all null before it has. */
+  destination: {
+    reportedAt: string | null;
+    config: DestinationConfig | null;
+    /** What is wrong with the variables, in words. */
+    problem: string | null;
+  };
+  /** Test connection: asked for and not yet run, and the last result. */
+  connectionTest: { requested: boolean; testedAt: string | null; result: ConnectionTest | null };
   key: {
     state: "none" | "ready" | "unreadable";
     recipient: string | null;
@@ -69,6 +88,8 @@ export interface Backups {
     retryAt: string | null;
     backupRequested: boolean;
     testRestoreRequested: boolean;
+    /** When the worker last listed the folder. */
+    listedAt: string | null;
   };
 }
 
@@ -77,6 +98,30 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 const isText = (value: unknown) => typeof value === "string";
 const isTextOrNull = (value: unknown) => value === null || typeof value === "string";
 const isNumberOrNull = (value: unknown) => value === null || typeof value === "number";
+
+const isDestinationConfig = (value: unknown): value is DestinationConfig | null =>
+  value === null ||
+  (isRecord(value) &&
+    isText(value.endpoint) &&
+    isText(value.region) &&
+    isText(value.bucket) &&
+    isText(value.prefix) &&
+    isText(value.accessKeyId));
+
+const isConnectionTest = (value: unknown): value is ConnectionTest =>
+  isRecord(value) &&
+  typeof value.ok === "boolean" &&
+  (value.error === undefined || isText(value.error)) &&
+  Array.isArray(value.steps) &&
+  value.steps.every(
+    (step) =>
+      isRecord(step) &&
+      (step.step === "put" ||
+        step.step === "list" ||
+        step.step === "get" ||
+        step.step === "delete") &&
+      (step.status === "ok" || step.status === "failed" || step.status === "skipped"),
+  );
 
 const isRun = (value: unknown): value is BackupRun | null =>
   value === null ||
@@ -93,24 +138,22 @@ const isRun = (value: unknown): value is BackupRun | null =>
 
 const isBackups = (value: unknown): value is Backups => {
   if (!isRecord(value)) return false;
-  const { settings, destination, key, status } = value;
+  const { settings, destination, connectionTest, key, status } = value;
   return (
     isRecord(settings) &&
     typeof settings.enabled === "boolean" &&
     isText(settings.timeOfDay) &&
     typeof settings.keepDays === "number" &&
-    isTextOrNull(settings.bucket) &&
-    isText(settings.prefix) &&
-    isTextOrNull(settings.endpoint) &&
-    isTextOrNull(settings.region) &&
-    isTextOrNull(settings.accessKeyId) &&
-    (settings.secret === "none" ||
-      settings.secret === "saved" ||
-      settings.secret === "unreadable") &&
     isTextOrNull(settings.disabledAt) &&
     isTextOrNull(settings.disabledBy) &&
     isRecord(destination) &&
-    (destination.mode === "object_store" || destination.mode === "separate") &&
+    isTextOrNull(destination.reportedAt) &&
+    isDestinationConfig(destination.config) &&
+    isTextOrNull(destination.problem) &&
+    isRecord(connectionTest) &&
+    typeof connectionTest.requested === "boolean" &&
+    isTextOrNull(connectionTest.testedAt) &&
+    (connectionTest.result === null || isConnectionTest(connectionTest.result)) &&
     isRecord(key) &&
     (key.state === "none" || key.state === "ready" || key.state === "unreadable") &&
     isTextOrNull(key.recipient) &&
@@ -126,7 +169,8 @@ const isBackups = (value: unknown): value is Backups => {
     isTextOrNull(status.overdueSince) &&
     isTextOrNull(status.retryAt) &&
     typeof status.backupRequested === "boolean" &&
-    typeof status.testRestoreRequested === "boolean"
+    typeof status.testRestoreRequested === "boolean" &&
+    isTextOrNull(status.listedAt)
   );
 };
 
@@ -137,19 +181,12 @@ export const backupsQuery = () =>
       expectShape(await apiRequest("/api/settings/backups", { signal }), isBackups),
   });
 
-/** What the form saves: a separate destination's fields only when it has one. */
+/** What the form saves. */
 export interface BackupChanges {
   enabled?: boolean;
   timeOfDay?: string;
   keepDays?: number;
-  bucket?: string | null;
-  prefix?: string;
-  endpoint?: string | null;
-  region?: string | null;
-  accessKeyId?: string | null;
-  /** Only when typed: left out, the saved one stays. */
-  secretAccessKey?: string;
-  /** Needed to change the destination or turn backups off. */
+  /** Needed to turn backups off. */
   currentPassword?: string;
 }
 
@@ -160,38 +197,11 @@ export async function updateBackups(changes: BackupChanges): Promise<Backups> {
   );
 }
 
-export interface ConnectionStep {
-  step: "put" | "list" | "get" | "delete";
-  status: "ok" | "failed" | "skipped";
-  error?: string;
-}
-
-export interface ConnectionTest {
-  ok: boolean;
-  steps: ConnectionStep[];
-}
-
-const isConnectionTest = (value: unknown): value is ConnectionTest =>
-  isRecord(value) &&
-  typeof value.ok === "boolean" &&
-  Array.isArray(value.steps) &&
-  value.steps.every(
-    (step) =>
-      isRecord(step) &&
-      (step.step === "put" ||
-        step.step === "list" ||
-        step.step === "get" ||
-        step.step === "delete") &&
-      (step.status === "ok" || step.status === "failed" || step.status === "skipped"),
-  );
-
-/** Test connection, with the form's values (saved or not); the secret only when typed. */
-export async function testConnection(
-  fields: Omit<BackupChanges, "enabled" | "timeOfDay" | "keepDays">,
-): Promise<ConnectionTest> {
+/** Test connection: the worker runs it on its next tick, with its own variables. */
+export async function testConnection(): Promise<Backups> {
   return expectShape(
-    await apiRequest("/api/settings/backups/test-connection", { method: "POST", body: fields }),
-    isConnectionTest,
+    await apiRequest("/api/settings/backups/test-connection", { method: "POST", body: {} }),
+    isBackups,
   );
 }
 
@@ -277,25 +287,29 @@ export interface ListedBackup {
   complete: boolean;
 }
 
+/** The folder's backups as the worker last listed them, or why it couldn't; nothing before it has. */
 export type BackupList =
-  | { ok: true; bucket: string; prefix: string; backups: ListedBackup[] }
-  | { ok: false; error: string };
+  | { listedAt: null }
+  | { listedAt: string; ok: true; bucket: string; prefix: string; backups: ListedBackup[] }
+  | { listedAt: string; ok: false; bucket: string; prefix: string; error: string };
 
 const isList = (value: unknown): value is BackupList =>
   isRecord(value) &&
-  ((value.ok === false && isText(value.error)) ||
-    (value.ok === true &&
+  (value.listedAt === null ||
+    (isText(value.listedAt) &&
       isText(value.bucket) &&
       isText(value.prefix) &&
-      Array.isArray(value.backups) &&
-      value.backups.every(
-        (item) =>
-          isRecord(item) &&
-          isText(item.name) &&
-          isText(item.at) &&
-          typeof item.bytes === "number" &&
-          typeof item.complete === "boolean",
-      )));
+      ((value.ok === false && isText(value.error)) ||
+        (value.ok === true &&
+          Array.isArray(value.backups) &&
+          value.backups.every(
+            (item) =>
+              isRecord(item) &&
+              isText(item.name) &&
+              isText(item.at) &&
+              typeof item.bytes === "number" &&
+              typeof item.complete === "boolean",
+          )))));
 
 export const backupListQuery = () =>
   queryOptions({

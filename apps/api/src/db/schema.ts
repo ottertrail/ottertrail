@@ -649,22 +649,13 @@ export interface FirstSeenRebuildsTable {
   requested_at: ColumnType<Date, Date | undefined, Date>;
 }
 
-/** Scheduled backups' settings: one row (migration 0014; backups/settings.ts). */
+/** Scheduled backups' settings: one row (migrations 0014 and 0020; backups/settings.ts). */
 export interface BackupSettingsTable {
   id: ColumnType<boolean, never, never>;
   enabled: boolean;
   /** "HH:MM" in the instance's timezone. */
   time_of_day: string;
   keep_days: number;
-  /** Null: the object store's own bucket, when backups reuse its connection. */
-  bucket: string | null;
-  prefix: string;
-  /** A separate destination's S3 endpoint; null when backups reuse the object store's. */
-  endpoint: string | null;
-  region: string | null;
-  access_key_id: string | null;
-  /** The separate destination's secret, sealed (backups/secrets.ts). Never returned. */
-  secret_sealed: string | null;
   /** The backup key, an age X25519 identity, sealed (backups/secrets.ts). */
   key_sealed: string | null;
   /** Its public half ("age1…"), which each backup is encrypted to. */
@@ -683,6 +674,21 @@ export interface BackupSettingsTable {
   disabled_by: string | null;
   backup_requested_at: Date | null;
   test_restore_requested_at: Date | null;
+  /**
+   * What the worker last reported about BACKUP_S3_* (migration 0020): the
+   * destination without its secret ({ endpoint, region, bucket, prefix,
+   * accessKeyId }), or the problem with it in words, and when.
+   */
+  destination: ColumnType<unknown, string | null, string | null>;
+  destination_problem: string | null;
+  destination_reported_at: Date | null;
+  /** Test connection, asked for on the tab; the worker runs it and stores its steps. */
+  connection_test_requested_at: Date | null;
+  connection_test: ColumnType<unknown, string | null, string | null>;
+  connection_tested_at: Date | null;
+  /** The folder's backups as the worker last listed them, or why it could not. */
+  backup_list: ColumnType<unknown, string | null, string | null>;
+  backup_listed_at: Date | null;
   updated_at: ColumnType<Date, Date | undefined, Date>;
 }
 

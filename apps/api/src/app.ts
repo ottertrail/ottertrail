@@ -14,7 +14,6 @@ import { passwordTryLimiter } from "./auth/password-tries.ts";
 import { betterAuthRoutes, setupRoutes } from "./auth/routes.ts";
 import { avatarRoutes } from "./avatars/routes.ts";
 import { backupRoutes } from "./backups/routes.ts";
-import type { OutboundRules } from "./backups/s3.ts";
 import { BackupSecrets } from "./backups/secrets.ts";
 import type { ClickHouseClient } from "./clickhouse/clickhouse.ts";
 import { ProjectKeyCache } from "./collection/project-keys.ts";
@@ -24,7 +23,6 @@ import {
   DEFAULT_REPLAY_STORAGE_BYTES,
   DEFAULT_SOURCE_MAP_STORAGE_BYTES,
   DEFAULT_TELEMETRY_RETENTION_DAYS,
-  type ObjectStoreConfig,
 } from "./config.ts";
 import { dashboardAppRoutes, sendsHsts } from "./dashboard-app/routes.ts";
 import type { Database } from "./db/schema.ts";
@@ -40,7 +38,7 @@ import type { Mailer } from "./notifications/email.ts";
 import { inboxRoutes } from "./notifications/inbox-routes.ts";
 import { LinkSealer } from "./notifications/link-sealer.ts";
 import { channelRoutes } from "./notifications/routes.ts";
-import { addressPolicy, type Lookup, systemLookup } from "./outbound/addresses.ts";
+import { addressPolicy, type Lookup } from "./outbound/addresses.ts";
 import { overviewRoutes } from "./overview/routes.ts";
 import { productRoutes } from "./product/routes.ts";
 import { projectRoutes } from "./projects/routes.ts";
@@ -180,17 +178,13 @@ export interface AppOptions extends Omit<FastifyServerOptions, "logger"> {
     Pick<StorageSources, "objectStore" | "garage" | "readDisk" | "telemetryRetentionDays">
   >;
   /**
-   * Scheduled backups' routes (backups/routes.ts): the object store's
-   * connection, which backups reuse unless it is the stack's own Garage,
-   * the AUTH_SECRET their stored secrets are sealed with (the link secret
-   * when omitted), the outbound rules a separate endpoint follows, and
-   * the per-user limits, which tests lower.
+   * Scheduled backups' routes (backups/routes.ts): the AUTH_SECRET the
+   * backup key is sealed with (the link secret when omitted), and the
+   * per-user limits, which tests lower. Where backups go is the worker's
+   * alone (BACKUP_S3_*).
    */
   backups?: {
-    objectStore?: ObjectStoreConfig | null;
-    stackGarage?: boolean;
     authSecret?: string;
-    rules?: OutboundRules;
     testConnectionLimit?: RateLimit;
     backupNowLimit?: RateLimit;
     testRestoreLimit?: RateLimit;
@@ -625,18 +619,14 @@ export function buildApp({
       auth: dashboard.auth,
       trustedOrigins: dashboard.trustedOrigins,
       publicUrl: dashboard.publicUrl,
-      // The key, the destination, and turning backups off need the current password.
+      // The key, and turning backups off, need the current password.
       passwordTries,
       emailConfigured: notifications.emailConfigured ?? false,
       sealer,
-      objectStore: backups.objectStore ?? null,
-      stackGarage: backups.stackGarage ?? false,
       // Without either secret (a test that only lists routes), one for this process alone.
       secrets: new BackupSecrets(
         backups.authSecret ?? notifications.linkSecret ?? randomBytes(32).toString("hex"),
       ),
-      // A separate destination follows the rules uptime checks and webhooks do.
-      rules: backups.rules ?? { policy, lookup: uptime.lookup ?? systemLookup },
       ...(backups.testConnectionLimit === undefined
         ? {}
         : { testConnectionLimit: backups.testConnectionLimit }),

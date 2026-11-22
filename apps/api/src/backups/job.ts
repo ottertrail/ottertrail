@@ -1,13 +1,20 @@
+import type { S3Client } from "@aws-sdk/client-s3";
 import type { Kysely } from "kysely";
 
-import type { ObjectStoreConfig } from "../config.ts";
 import type { Database } from "../db/schema.ts";
 import { readInstanceSettings } from "../settings/settings.ts";
 import { applyRetention, BackupError, type BackupSources, runBackup, testRestore } from "./run.ts";
-import { backupClient, type OutboundRules, s3ErrorText } from "./s3.ts";
+import { backupClient, listBackups, s3ErrorText, testConnection } from "./s3.ts";
 import { dueSlot } from "./schedule.ts";
 import type { BackupSecrets } from "./secrets.ts";
-import { destinationModeOf, destinationOf, readBackupSettings } from "./settings.ts";
+import {
+  type Destination,
+  type DestinationReport,
+  readBackupSettings,
+  reportOf,
+  type StoredBackupList,
+  type StoredConnectionTest,
+} from "./settings.ts";
 import {
   failStaleRuns,
   finishRun,
@@ -24,12 +31,17 @@ import {
 /**
  * The worker's backups (docs/deployment.md, "Backups"), every BACKUP_TICK_MS:
  *
- * 1. Marks a run whose worker stopped (no heartbeat for 10 minutes) as failed.
- * 2. Takes one piece of work, in this order: a Test restore the owner asked
+ * 1. Reports its destination (BACKUP_S3_*, without the secret) or what is
+ *    wrong with it to PostgreSQL, for the Backups tab, when that changed
+ *    or an hour after it last did; and runs a Test connection the owner
+ *    asked for, storing each step's result. On its first tick, and after
+ *    each run and Test connection, it stores the folder's listing.
+ * 2. Marks a run whose worker stopped (no heartbeat for 10 minutes) as failed.
+ * 3. Takes one piece of work, in this order: a Test restore the owner asked
  *    for, a "Back up now", the daily time when it is due, or the one retry
  *    of a failed backup an hour after it failed. Only one runs at a time,
  *    in any number of workers (state.ts).
- * 3. Runs it (run.ts), touching its heartbeat each minute, and records how
+ * 4. Runs it (run.ts), touching its heartbeat each minute, and records how
  *    it ended. A failed backup is tried once more RETRY_AFTER_MS later,
  *    not again and again; after a backup that worked, retention deletes
  *    the folder's backups past the days to keep.
@@ -42,6 +54,12 @@ import {
 export const BACKUP_TICK_MS = 30_000;
 /** A failed backup is tried once more after this. */
 export const RETRY_AFTER_MS = 60 * 60 * 1000;
+/** An unchanged destination is reported again this long after the last report: a heartbeat. */
+export const REPORT_EVERY_MS = 60 * 60 * 1000;
+
+/** Without BACKUP_S3_*: what a run and Test connection say. */
+export const NO_DESTINATION =
+  "No backup destination. Set the BACKUP_S3_* variables in the server's .env, then restart the worker.";
 
 export type BackupLog = (
   level: "info" | "warn" | "error",
@@ -56,11 +74,12 @@ interface Work {
 
 export interface BackupJobOptions {
   db: Kysely<Database>;
-  /** The object store (OBJECT_STORE_*), and whether it is the stack's own Garage. */
-  objectStore: ObjectStoreConfig | null;
-  stackGarage: boolean;
+  /**
+   * Where backups go: the worker's BACKUP_S3_* (config.ts, loadBackupS3);
+   * the problem with them, in words; or null when none is set.
+   */
+  destination: Destination | { problem: string } | null;
   secrets: BackupSecrets;
-  rules: OutboundRules;
   sources: BackupSources;
   version: string;
   log: BackupLog;
@@ -75,6 +94,8 @@ export class BackupJob {
   readonly #heartbeatMs: number;
   #abort = new AbortController();
   #failing = false;
+  /** Whether this worker stored the listing yet: once on start, then after changes. */
+  #listed = false;
 
   constructor(options: BackupJobOptions) {
     this.#options = options;
@@ -106,6 +127,9 @@ export class BackupJob {
   async #take(): Promise<Work | null> {
     const { db } = this.#options;
     if (this.#abort.signal.aborted) return null;
+    await this.#report();
+    const tested = await this.#testConnection();
+    if (!this.#listed || tested) await this.#storeListing();
     const now = this.#now();
     const stale = await failStaleRuns(db, now);
     if (stale > 0) this.#options.log("warn", "worker stopped; backup run marked failed");
@@ -154,7 +178,145 @@ export class BackupJob {
     });
     if (claimed === null) return null;
     await this.#run(claimed.id, claimed.work);
+    // A backup and its retention change the folder.
+    if (!this.#abort.signal.aborted) await this.#storeListing();
     return claimed.work;
+  }
+
+  /** The destination's non-secret parts, or the problem in words. */
+  #reportNow(): { destination: DestinationReport | null; problem: string | null } {
+    const { destination } = this.#options;
+    if (destination === null) return { destination: null, problem: null };
+    if ("problem" in destination) return { destination: null, problem: destination.problem };
+    return { destination: reportOf(destination), problem: null };
+  }
+
+  /**
+   * Writes what this worker has to PostgreSQL when it differs from what is
+   * there (another worker's, or nothing yet), or REPORT_EVERY_MS after it
+   * was last written. Of several workers, the last write wins.
+   */
+  async #report(): Promise<void> {
+    const { db } = this.#options;
+    const now = this.#now();
+    const report = this.#reportNow();
+    const saved = await readBackupSettings(db);
+    const same =
+      saved.destinationProblem === report.problem &&
+      sameDestination(saved.destination, report.destination);
+    if (
+      same &&
+      saved.destinationReportedAt !== null &&
+      now.getTime() - saved.destinationReportedAt.getTime() < REPORT_EVERY_MS
+    ) {
+      return;
+    }
+    await db
+      .updateTable("backup_settings")
+      .set({
+        destination: report.destination === null ? null : JSON.stringify(report.destination),
+        destination_problem: report.problem,
+        destination_reported_at: now,
+      })
+      .execute();
+    if (!same && report.problem !== null) {
+      this.#options.log("error", "the backup destination is invalid: backups can't run", {
+        problem: report.problem,
+      });
+    }
+  }
+
+  /** A client for the destination, or why there is none. */
+  #client(): { destination: Destination; client: S3Client } | { problem: string } {
+    const { destination } = this.#options;
+    if (destination === null) return { problem: NO_DESTINATION };
+    if ("problem" in destination) return { problem: destination.problem };
+    return { destination, client: backupClient(destination) };
+  }
+
+  /** Runs the Test connection the owner asked for, if any; true when it ran. */
+  async #testConnection(): Promise<boolean> {
+    const { db } = this.#options;
+    const settings = await readBackupSettings(db);
+    if (settings.connectionTestRequestedAt === null) return false;
+    const target = this.#client();
+    let result: StoredConnectionTest;
+    if ("problem" in target) {
+      result = { ok: false, steps: [], error: target.problem };
+    } else {
+      try {
+        const steps = await testConnection(
+          target.client,
+          target.destination.bucket,
+          target.destination.prefix,
+          AbortSignal.any([this.#abort.signal, AbortSignal.timeout(30_000)]),
+        );
+        result = { ok: steps.every((step) => step.status === "ok"), steps };
+      } finally {
+        target.client.destroy();
+      }
+    }
+    await db
+      .updateTable("backup_settings")
+      .set({
+        connection_test: JSON.stringify(result),
+        connection_tested_at: this.#now(),
+        connection_test_requested_at: null,
+      })
+      .execute();
+    this.#options.log(result.ok ? "info" : "warn", "backup test connection ran", {
+      ok: result.ok,
+    });
+    return true;
+  }
+
+  /**
+   * Stores the folder's backups as listed now, or why they could not be
+   * listed; nothing without a destination.
+   */
+  async #storeListing(): Promise<void> {
+    const { db } = this.#options;
+    this.#listed = true;
+    const target = this.#client();
+    let list: StoredBackupList | null = null;
+    if (!("problem" in target)) {
+      const { bucket, prefix } = target.destination;
+      try {
+        const backups = await listBackups(
+          target.client,
+          bucket,
+          prefix,
+          AbortSignal.any([this.#abort.signal, AbortSignal.timeout(20_000)]),
+        );
+        list = {
+          ok: true,
+          bucket,
+          prefix,
+          backups: backups.map((backup) => ({
+            name: backup.name,
+            at: backup.at.toISOString(),
+            bytes: backup.bytes,
+            complete: backup.complete,
+          })),
+        };
+      } catch (error) {
+        list = {
+          ok: false,
+          bucket,
+          prefix,
+          error: `Couldn't list backups: ${s3ErrorText(error, "list")}`,
+        };
+      } finally {
+        target.client.destroy();
+      }
+    }
+    await db
+      .updateTable("backup_settings")
+      .set({
+        backup_list: list === null ? null : JSON.stringify(list),
+        backup_listed_at: list === null ? null : this.#now(),
+      })
+      .execute();
   }
 
   async #run(id: string, work: Work): Promise<void> {
@@ -215,21 +377,12 @@ export class BackupJob {
     }
   }
 
-  /** The destination and its client for the saved settings, or why there is none. */
+  /** The saved settings, with the destination and its client, or why there is none. */
   async #destination() {
-    const { db, objectStore, stackGarage, secrets, rules } = this.#options;
-    const settings = await readBackupSettings(db);
-    const destination = destinationOf(
-      destinationModeOf(objectStore, stackGarage),
-      { ...settings, secretAccessKey: null },
-      secrets,
-    );
-    if ("problem" in destination) return { settings, problem: destination.problem };
-    try {
-      return { settings, destination, client: backupClient(destination, rules) };
-    } catch (error) {
-      return { settings, problem: `Can't use destination: ${s3ErrorText(error)}` };
-    }
+    const settings = await readBackupSettings(this.#options.db);
+    const target = this.#client();
+    if ("problem" in target) return { settings, problem: target.problem };
+    return { settings, ...target, problem: undefined };
   }
 
   async #backup(
@@ -336,4 +489,16 @@ export class BackupJob {
       client.destroy();
     }
   }
+}
+
+/** Whether two reports name the same destination: PostgreSQL's JSON may order keys its own way. */
+function sameDestination(a: DestinationReport | null, b: DestinationReport | null): boolean {
+  if (a === null || b === null) return a === b;
+  return (
+    a.endpoint === b.endpoint &&
+    a.region === b.region &&
+    a.bucket === b.bucket &&
+    a.prefix === b.prefix &&
+    a.accessKeyId === b.accessKeyId
+  );
 }

@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  ArrowUpRightIcon,
   DownloadIcon,
   EyeIcon,
   EyeOffIcon,
@@ -40,6 +41,7 @@ import {
   confirmKeySaved,
   type ConnectionStep,
   type ConnectionTest,
+  type DestinationConfig,
   fetchBackupKey,
   fetchBackupKeyFile,
   replaceKey,
@@ -47,6 +49,7 @@ import {
   testRestore,
   updateBackups,
 } from "@/lib/backups-api";
+import { DOCS_URL } from "@/lib/docs";
 import { formatBytes } from "@/lib/source-maps-api";
 
 import { formatMoment, formatSpan } from "../uptime/format";
@@ -55,14 +58,19 @@ import { type InstanceTabProps, SectionFailed, SectionSkeleton } from "./section
 /**
  * The Backups tab of the instance's Settings (`?tab=backups`), for the
  * owner only (docs/dashboard.md, "Backups"): the last backup and the next,
- * Back up now and Test restore, the backups in the bucket; the schedule
- * and the destination, one form under the save rule, with Test connection;
- * and the backup key, shown on request, with a reminder until the owner
- * says it is saved.
+ * Back up now and Test restore, the backups in the bucket as the worker
+ * last listed them; the schedule, one form under the save rule, with the
+ * destination the worker reported (its BACKUP_S3_*, read only) and Test
+ * connection; and the backup key, shown on request, with a reminder until
+ * the owner says it is saved.
  */
 
 /** While the worker has work under way or asked for, the tab reads the status again this often. */
 const POLL_MS = 5000;
+
+const BACKUPS_DOCS_URL = `${DOCS_URL}/self-hosting/backups/`;
+
+const code = (text: string) => <code className="font-mono">{text}</code>;
 
 const sentence = (text: string) => (/[.!?]$/.test(text.trim()) ? text.trim() : `${text.trim()}.`);
 
@@ -107,11 +115,11 @@ function StatusRow({ label, children }: { label: string; children: React.ReactNo
   );
 }
 
-/** The backups in the destination's folder, newest first. */
-function BucketList({ timeZone, refreshKey }: { timeZone: string; refreshKey: string }) {
-  // A backup that finished (and retention after it), or another folder, changes the list.
+/** The backups in the destination's folder, newest first, as the worker last listed them. */
+function BucketList({ timeZone, listedAt }: { timeZone: string; listedAt: string | null }) {
+  // The worker lists the folder again after each run and Test connection: a new time, a new list.
   const list = useQuery({
-    queryKey: [...backupListQuery().queryKey, refreshKey],
+    queryKey: [...backupListQuery().queryKey, listedAt ?? ""],
     queryFn: backupListQuery().queryFn,
   });
   if (list.isPending) {
@@ -121,14 +129,12 @@ function BucketList({ timeZone, refreshKey }: { timeZone: string; refreshKey: st
       </p>
     );
   }
-  if (list.isError || !list.data.ok) {
+  if (list.isError) {
     return (
       <Alert variant="destructive">
         <OctagonAlertIcon />
-        <AlertTitle>Couldn't list backups</AlertTitle>
-        <AlertDescription>
-          {list.isError ? list.error.message : list.data.ok ? "" : sentence(list.data.error)}
-        </AlertDescription>
+        <AlertTitle>Couldn't load backups</AlertTitle>
+        <AlertDescription>{list.error.message}</AlertDescription>
         <AlertAction>
           <Button type="button" variant="outline" size="sm" onClick={() => void list.refetch()}>
             Retry
@@ -137,11 +143,27 @@ function BucketList({ timeZone, refreshKey }: { timeZone: string; refreshKey: st
       </Alert>
     );
   }
-  const { backups, bucket, prefix } = list.data;
+  const listed = list.data;
+  if (listed.listedAt === null) {
+    return <p className="text-sm text-ink-subtle">Not listed yet.</p>;
+  }
+  const asOf = formatMoment(listed.listedAt, timeZone);
+  if (!listed.ok) {
+    return (
+      <Alert variant="destructive">
+        <OctagonAlertIcon />
+        <AlertTitle>Couldn't list backups</AlertTitle>
+        <AlertDescription className="text-pretty">
+          {sentence(listed.error)} As of {asOf}.
+        </AlertDescription>
+      </Alert>
+    );
+  }
+  const { backups, bucket, prefix } = listed;
   if (backups.length === 0) {
     return (
       <p className="text-sm text-ink-subtle">
-        No backups in {bucket}/{prefix} yet.
+        No backups in {bucket}/{prefix} as of {asOf}.
       </p>
     );
   }
@@ -172,7 +194,7 @@ function BucketList({ timeZone, refreshKey }: { timeZone: string; refreshKey: st
         </TableBody>
       </Table>
       <p className="text-sm text-ink-subtle">
-        In {bucket}/{prefix}. Incomplete backups can't be restored.
+        In {bucket}/{prefix}, as of {asOf}. Incomplete backups can't be restored.
       </p>
     </div>
   );
@@ -322,10 +344,7 @@ function StatusSection({ data, timeZone }: { data: Backups; timeZone: string }) 
       {settings.enabled && (
         <section aria-label="Backups in the bucket" className="flex flex-col gap-2">
           <h3 className="text-sm font-medium text-ink">In the bucket</h3>
-          <BucketList
-            timeZone={timeZone}
-            refreshKey={`${status.lastSuccess?.startedAt ?? ""}|${settings.bucket ?? ""}|${settings.prefix}`}
-          />
+          <BucketList timeZone={timeZone} listedAt={status.listedAt} />
         </section>
       )}
     </SettingsSection>
@@ -336,13 +355,6 @@ interface Values {
   enabled: boolean;
   timeOfDay: string;
   keepDays: string;
-  bucket: string;
-  prefix: string;
-  endpoint: string;
-  region: string;
-  accessKeyId: string;
-  /** Typed only to save a new one: the saved secret is never shown. */
-  secretAccessKey: string;
 }
 
 function valuesOf(data: Backups): Values {
@@ -351,30 +363,6 @@ function valuesOf(data: Backups): Values {
     enabled: settings.enabled,
     timeOfDay: settings.timeOfDay,
     keepDays: String(settings.keepDays),
-    bucket: settings.bucket ?? "",
-    prefix: settings.prefix,
-    endpoint: settings.endpoint ?? "",
-    region: settings.region ?? "",
-    accessKeyId: settings.accessKeyId ?? "",
-    secretAccessKey: "",
-  };
-}
-
-const orNull = (text: string) => (text.trim() === "" ? null : text.trim());
-
-/** The destination's fields as the API takes them: a separate one's only when it has one. */
-function destinationFields(values: Values, separate: boolean) {
-  return {
-    bucket: orNull(values.bucket),
-    prefix: values.prefix.trim(),
-    ...(separate
-      ? {
-          endpoint: orNull(values.endpoint),
-          region: orNull(values.region),
-          accessKeyId: orNull(values.accessKeyId),
-          ...(values.secretAccessKey === "" ? {} : { secretAccessKey: values.secretAccessKey }),
-        }
-      : {}),
   };
 }
 
@@ -391,49 +379,144 @@ function ConnectionResult({ result }: { result: ConnectionTest }) {
       <p className="text-sm font-medium text-ink">
         {result.ok ? "Connection works." : "Connection failed."}
       </p>
-      <ul aria-label="Test connection steps" className="flex flex-col gap-1.5">
-        {result.steps.map((step) => (
-          <li key={step.step} className="flex flex-col gap-0.5">
-            <span className="flex flex-wrap items-center gap-2 text-sm text-ink">
-              <StatusBadge
-                tone={
-                  step.status === "ok" ? "good" : step.status === "failed" ? "critical" : "neutral"
-                }
-              >
-                {step.status === "ok" ? "Worked" : step.status === "failed" ? "Failed" : "Skipped"}
-              </StatusBadge>
-              {STEP_TEXT[step.step]}
-            </span>
-            {step.error !== undefined && (
-              <span className="text-sm text-pretty text-destructive">{step.error}</span>
-            )}
-          </li>
-        ))}
-      </ul>
+      {result.error !== undefined && (
+        <p className="text-sm text-pretty text-destructive">{sentence(result.error)}</p>
+      )}
+      {result.steps.length > 0 && (
+        <ul aria-label="Test connection steps" className="flex flex-col gap-1.5">
+          {result.steps.map((step) => (
+            <li key={step.step} className="flex flex-col gap-0.5">
+              <span className="flex flex-wrap items-center gap-2 text-sm text-ink">
+                <StatusBadge
+                  tone={
+                    step.status === "ok"
+                      ? "good"
+                      : step.status === "failed"
+                        ? "critical"
+                        : "neutral"
+                  }
+                >
+                  {step.status === "ok"
+                    ? "Worked"
+                    : step.status === "failed"
+                      ? "Failed"
+                      : "Skipped"}
+                </StatusBadge>
+                {STEP_TEXT[step.step]}
+              </span>
+              {step.error !== undefined && (
+                <span className="text-sm text-pretty text-destructive">{step.error}</span>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }
 
-/** Why the destination is what it is, in words: the copy rule's what and why. */
-function DestinationText({ data }: { data: Backups }) {
-  const { destination } = data;
-  if (destination.mode === "object_store") {
-    return (
-      <p className="text-sm text-pretty text-ink-subtle">
-        Uses the object store ({new URL(destination.objectStore.endpoint).host}).
-      </p>
-    );
-  }
+const DESTINATION_ROWS: [keyof DestinationConfig, string][] = [
+  ["endpoint", "Endpoint"],
+  ["bucket", "Bucket"],
+  ["prefix", "Folder"],
+  ["region", "Region"],
+  ["accessKeyId", "Access key ID"],
+];
+
+/**
+ * Where backups go, read only: the worker's BACKUP_S3_* as it last
+ * reported them, or what is missing or wrong, with Test connection.
+ */
+function DestinationBlock({ data, timeZone }: { data: Backups; timeZone: string }) {
+  const queryClient = useQueryClient();
+  const { destination, connectionTest } = data;
+  const test = useMutation({
+    mutationFn: testConnection,
+    onSuccess: (updated) => queryClient.setQueryData(backupsQuery().queryKey, updated),
+  });
+  const config = destination.config;
+  const pending = connectionTest.requested;
+
   return (
-    <p className="text-sm text-pretty text-ink-subtle">
-      {destination.reason === "stack_garage"
-        ? "The object store is on this server, so back up to an S3-compatible bucket elsewhere."
-        : "Use an S3-compatible bucket."}
-    </p>
+    <section aria-label="Destination" className="flex flex-col gap-3">
+      <h3 className="text-sm font-medium text-ink">Destination</h3>
+      {config !== null ? (
+        <dl className="flex flex-col gap-3">
+          {DESTINATION_ROWS.map(([field, label]) => (
+            <StatusRow key={field} label={label}>
+              <span className="[overflow-wrap:anywhere]">{config[field]}</span>
+            </StatusRow>
+          ))}
+          {destination.reportedAt !== null && (
+            <StatusRow label="Reported">
+              <span className="tabular-nums">{formatMoment(destination.reportedAt, timeZone)}</span>
+            </StatusRow>
+          )}
+        </dl>
+      ) : destination.problem !== null ? (
+        <Alert variant="destructive">
+          <OctagonAlertIcon />
+          <AlertTitle>Backup destination invalid</AlertTitle>
+          <AlertDescription className="text-pretty">
+            {sentence(destination.problem)} Then restart the worker.
+          </AlertDescription>
+        </Alert>
+      ) : (
+        <p className="text-sm text-pretty text-ink-subtle">
+          Set the {code("BACKUP_S3_*")} variables in the server&apos;s {code(".env")} and restart
+          the worker.{" "}
+          <a
+            href={BACKUPS_DOCS_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-0.5 text-ink underline underline-offset-4"
+          >
+            Backups docs
+            <ArrowUpRightIcon aria-hidden="true" className="size-3" />
+            <span className="sr-only">(opens in a new tab)</span>
+          </a>
+        </p>
+      )}
+      {config !== null && (
+        <div className="flex flex-col gap-3">
+          <div>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={test.isPending || pending}
+              onClick={() => test.mutate()}
+            >
+              {pending ? "Testing…" : "Test connection"}
+            </Button>
+          </div>
+          <div aria-live="polite" className="flex flex-col gap-2">
+            {pending ? (
+              <p className="text-sm text-ink-subtle">Test connection starts within a minute.</p>
+            ) : (
+              connectionTest.result !== null && (
+                <>
+                  <ConnectionResult result={connectionTest.result} />
+                  {connectionTest.testedAt !== null && (
+                    <p className="text-sm text-ink-subtle">
+                      Tested {formatMoment(connectionTest.testedAt, timeZone)}.
+                    </p>
+                  )}
+                </>
+              )
+            )}
+            {test.isError && (
+              <p role="alert" className="text-sm text-destructive">
+                {test.error.message}
+              </p>
+            )}
+          </div>
+        </div>
+      )}
+    </section>
   );
 }
 
-/** The schedule and the destination: one form, with its Save bar and Test connection. */
+/** The schedule: one form, with its Save bar; and the destination the worker reported. */
 function SettingsForm({
   data,
   timeZone,
@@ -445,67 +528,37 @@ function SettingsForm({
 }) {
   const queryClient = useQueryClient();
   const form = useDirtyForm(valuesOf(data), {
-    normalize: {
-      keepDays: (days) => Number(days),
-      bucket: (text) => text.trim(),
-      prefix: (text) => text.trim(),
-      endpoint: (text) => text.trim(),
-      region: (text) => text.trim(),
-      accessKeyId: (text) => text.trim(),
-    },
+    normalize: { keepDays: (days) => Number(days) },
   });
   React.useEffect(() => onDirty(form.dirty), [onDirty, form.dirty]);
-  const separate = data.destination.mode === "separate";
-  // Not a field of the form: typed to confirm a save, never saved, and emptied after.
+  // Not a field of the form: typed to confirm turning off, never saved, and emptied after.
   const [password, setPassword] = React.useState("");
-  const changedDestination =
-    form.values.secretAccessKey !== "" ||
-    (["bucket", "prefix", "endpoint", "region", "accessKeyId"] as const).some(
-      (field) => form.values[field].trim() !== form.initial[field].trim(),
-    );
   const turningOff = form.initial.enabled && !form.values.enabled;
-  const needsPassword = changedDestination || turningOff;
   const save = useMutation({
     mutationFn: (values: Values) => {
       const changes: BackupChanges = {
         enabled: values.enabled,
         timeOfDay: values.timeOfDay,
         keepDays: Number(values.keepDays),
-        ...destinationFields(values, separate),
-        ...(needsPassword ? { currentPassword: password } : {}),
+        ...(turningOff ? { currentPassword: password } : {}),
       };
       return updateBackups(changes);
     },
     onSuccess: (updated, values) => {
       setPassword("");
-      // The secret field empties once saved: it is never shown again.
-      form.setValues((previous) =>
-        previous.secretAccessKey === values.secretAccessKey
-          ? { ...previous, secretAccessKey: "" }
-          : previous,
-      );
-      form.saved({ ...values, secretAccessKey: "" });
+      form.saved(values);
       queryClient.setQueryData(backupsQuery().queryKey, updated);
     },
-  });
-  const test = useMutation({
-    mutationFn: (values: Values) => testConnection(destinationFields(values, separate)),
   });
   const ids = {
     enabled: React.useId(),
     time: React.useId(),
     keep: React.useId(),
-    bucket: React.useId(),
-    prefix: React.useId(),
-    endpoint: React.useId(),
-    region: React.useId(),
-    accessKey: React.useId(),
-    secret: React.useId(),
-    secretHint: React.useId(),
     password: React.useId(),
   };
   const { values } = form;
-  const secret = data.settings.secret;
+  // Off, backups turn on only with a destination the worker reported.
+  const destinationReady = data.destination.config !== null && data.destination.problem === null;
 
   return (
     <SettingsSection
@@ -525,7 +578,7 @@ function SettingsForm({
           id={ids.enabled}
           name="enabled"
           checked={values.enabled}
-          disabled={save.isPending}
+          disabled={save.isPending || (!form.initial.enabled && !destinationReady)}
           onCheckedChange={(checked) => form.set("enabled", checked)}
         />
       </div>
@@ -561,127 +614,7 @@ function SettingsForm({
           <FieldDescription>Older backups are deleted, except the newest one.</FieldDescription>
         </Field>
       </FieldGroup>
-
-      <fieldset className="flex flex-col gap-4">
-        <legend className="mb-2 text-sm font-medium text-ink">Destination</legend>
-        <DestinationText data={data} />
-        <FieldGroup className="sm:grid sm:grid-cols-2 sm:gap-4">
-          {separate && (
-            <Field className="sm:col-span-2">
-              <FieldLabel htmlFor={ids.endpoint}>Endpoint</FieldLabel>
-              <Input
-                id={ids.endpoint}
-                name="endpoint"
-                type="url"
-                inputMode="url"
-                autoComplete="off"
-                spellCheck={false}
-                placeholder="https://s3.eu-central-1.amazonaws.com"
-                value={values.endpoint}
-                onChange={(event) => form.set("endpoint", event.target.value)}
-              />
-            </Field>
-          )}
-          {separate && (
-            <Field>
-              <FieldLabel htmlFor={ids.region}>Region</FieldLabel>
-              <Input
-                id={ids.region}
-                name="region"
-                autoComplete="off"
-                spellCheck={false}
-                placeholder="us-east-1"
-                value={values.region}
-                onChange={(event) => form.set("region", event.target.value)}
-              />
-              <FieldDescription>auto for R2.</FieldDescription>
-            </Field>
-          )}
-          <Field>
-            <FieldLabel htmlFor={ids.bucket}>Bucket</FieldLabel>
-            <Input
-              id={ids.bucket}
-              name="bucket"
-              autoComplete="off"
-              spellCheck={false}
-              value={values.bucket}
-              onChange={(event) => form.set("bucket", event.target.value)}
-            />
-          </Field>
-          <Field>
-            <FieldLabel htmlFor={ids.prefix}>Folder</FieldLabel>
-            <Input
-              id={ids.prefix}
-              name="prefix"
-              autoComplete="off"
-              spellCheck={false}
-              required
-              value={values.prefix}
-              onChange={(event) => form.set("prefix", event.target.value)}
-            />
-          </Field>
-          {separate && (
-            <Field>
-              <FieldLabel htmlFor={ids.accessKey}>Access key ID</FieldLabel>
-              <Input
-                id={ids.accessKey}
-                name="accessKeyId"
-                autoComplete="off"
-                spellCheck={false}
-                value={values.accessKeyId}
-                onChange={(event) => form.set("accessKeyId", event.target.value)}
-              />
-            </Field>
-          )}
-          {separate && (
-            <Field>
-              <FieldLabel htmlFor={ids.secret}>Secret access key</FieldLabel>
-              <Input
-                id={ids.secret}
-                name="secretAccessKey"
-                type="password"
-                autoComplete="new-password"
-                spellCheck={false}
-                placeholder={secret === "saved" ? "Saved" : undefined}
-                aria-describedby={ids.secretHint}
-                value={values.secretAccessKey}
-                onChange={(event) => form.set("secretAccessKey", event.target.value)}
-              />
-              <FieldDescription
-                id={ids.secretHint}
-                className={secret === "unreadable" ? "text-warning" : undefined}
-              >
-                {secret === "saved"
-                  ? "Leave empty to keep the saved secret."
-                  : secret === "unreadable"
-                    ? "AUTH_SECRET changed, so the saved secret can't be read. Enter it again."
-                    : "Hidden after saving."}
-              </FieldDescription>
-            </Field>
-          )}
-        </FieldGroup>
-        <div className="flex flex-col gap-3">
-          <div className="flex flex-wrap items-center gap-3">
-            <Button
-              type="button"
-              variant="outline"
-              disabled={test.isPending}
-              onClick={() => test.mutate(values)}
-            >
-              {test.isPending ? "Testing…" : "Test connection"}
-            </Button>
-          </div>
-          <div aria-live="polite">
-            {test.isSuccess && <ConnectionResult result={test.data} />}
-            {test.isError && (
-              <p role="alert" className="text-sm text-destructive">
-                {test.error.message}
-              </p>
-            )}
-          </div>
-        </div>
-      </fieldset>
-      {needsPassword && (
+      {turningOff && (
         <Field>
           <FieldLabel htmlFor={ids.password}>Current password</FieldLabel>
           <Input
@@ -695,6 +628,7 @@ function SettingsForm({
           />
         </Field>
       )}
+      <DestinationBlock data={data} timeZone={timeZone} />
     </SettingsSection>
   );
 }
@@ -857,17 +791,19 @@ function KeySection({ data, timeZone }: { data: Backups; timeZone: string }) {
 
 /**
  * The Backups tab, for the owner. `onDirty` reports unsaved changes to the
- * schedule and destination: the tab's "Unsaved" mark and the leave guard
- * follow it.
+ * schedule: the tab's "Unsaved" mark and the leave guard follow it.
  */
 export function BackupsTab({ timeZone, onDirty }: InstanceTabProps) {
   const backups = useQuery({
     ...backupsQuery(),
-    // While the worker has work under way or asked for, the status follows it.
+    // While the worker has work under way or asked for (Test connection too), the status follows it.
     refetchInterval: (query) => {
       const status = query.state.data?.status;
       return status !== undefined &&
-        (status.running !== null || status.backupRequested || status.testRestoreRequested)
+        (status.running !== null ||
+          status.backupRequested ||
+          status.testRestoreRequested ||
+          query.state.data?.connectionTest.requested === true)
         ? POLL_MS
         : false;
     },

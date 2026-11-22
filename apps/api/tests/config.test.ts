@@ -17,7 +17,9 @@ import {
   LOCAL_CLICKHOUSE,
   LOCAL_DATABASE_URL,
   LOCAL_OBJECT_STORE,
+  loadBackupS3,
   loadConfig,
+  parseBackupS3,
 } from "../src/config.ts";
 
 /** An SMTP server's URL with a password, built at run time so no secret scanner mistakes it for one. */
@@ -429,5 +431,113 @@ describe("loadConfig", () => {
         );
       }
     });
+  });
+});
+
+describe("the backup destination (BACKUP_S3_*)", () => {
+  const SECRET = "b".repeat(40);
+  const FULL = {
+    BACKUP_S3_ENDPOINT: "https://account.r2.cloudflarestorage.com/",
+    BACKUP_S3_REGION: "auto",
+    BACKUP_S3_BUCKET: "acme-backups",
+    BACKUP_S3_PREFIX: "/instance-1/",
+    BACKUP_S3_ACCESS_KEY_ID: "AKIA1",
+    BACKUP_S3_SECRET_ACCESS_KEY: SECRET,
+  };
+
+  test("is none when all are unset or empty, as compose.yaml passes them", () => {
+    expect(parseBackupS3({}, null)).toBeNull();
+    expect(
+      parseBackupS3(
+        Object.fromEntries(Object.keys(FULL).map((name) => [name, ""])),
+        LOCAL_OBJECT_STORE,
+      ),
+    ).toBeNull();
+  });
+
+  test("reads all six, the endpoint as an origin and the folder without slashes", () => {
+    expect(parseBackupS3(FULL, null)).toEqual({
+      url: "https://account.r2.cloudflarestorage.com",
+      region: "auto",
+      bucket: "acme-backups",
+      prefix: "instance-1",
+      accessKeyId: "AKIA1",
+      secretAccessKey: SECRET,
+    });
+    // The folder defaults to ottertrail-backups.
+    expect(parseBackupS3({ ...FULL, BACKUP_S3_PREFIX: "" }, null)?.prefix).toBe(
+      "ottertrail-backups",
+    );
+  });
+
+  test("partly set names what is missing; the region has no default", () => {
+    expect(() =>
+      parseBackupS3({ ...FULL, BACKUP_S3_REGION: "", BACKUP_S3_SECRET_ACCESS_KEY: "" }, null),
+    ).toThrow(
+      "Set BACKUP_S3_REGION, BACKUP_S3_SECRET_ACCESS_KEY too: backups need the endpoint, region, bucket, access key ID, and secret access key.",
+    );
+    expect(() => parseBackupS3({ BACKUP_S3_PREFIX: "backups" }, null)).toThrow(ConfigError);
+  });
+
+  test("refuses invalid values, never repeating the endpoint or a key", () => {
+    const refused: [Record<string, string>, RegExp][] = [
+      [{ BACKUP_S3_ENDPOINT: "ftp://storage.example.com" }, /must be an http\(s\) URL/],
+      [{ BACKUP_S3_ENDPOINT: "https://storage.example.com/bucket" }, /without a path/],
+      [{ BACKUP_S3_ENDPOINT: "https://id:hunter2@storage.example.com" }, /Keep keys out/],
+      [{ BACKUP_S3_REGION: "us east" }, /BACKUP_S3_REGION must be/],
+      [{ BACKUP_S3_BUCKET: "Not_A_Bucket" }, /not a valid bucket name/],
+      [{ BACKUP_S3_PREFIX: "a/../b" }, /BACKUP_S3_PREFIX must be a folder/],
+      [{ BACKUP_S3_PREFIX: "x".repeat(201) }, /BACKUP_S3_PREFIX must be a folder/],
+      [{ BACKUP_S3_ACCESS_KEY_ID: "has space" }, /BACKUP_S3_ACCESS_KEY_ID must be/],
+      [{ BACKUP_S3_SECRET_ACCESS_KEY: "s".repeat(257) }, /up to 256 characters/],
+    ];
+    for (const [change, message] of refused) {
+      let thrown: unknown;
+      try {
+        parseBackupS3({ ...FULL, ...change }, null);
+      } catch (error) {
+        thrown = error;
+      }
+      expect({ change, refused: thrown instanceof ConfigError }).toEqual({ change, refused: true });
+      const text = (thrown as Error).message;
+      expect(text).toMatch(message);
+      expect(text).not.toContain("hunter2");
+      expect(text).not.toContain(SECRET);
+    }
+  });
+
+  test("in the object store's own bucket, the folder may not overlap its objects", () => {
+    const shared = {
+      ...FULL,
+      BACKUP_S3_ENDPOINT: LOCAL_OBJECT_STORE.url,
+      BACKUP_S3_BUCKET: LOCAL_OBJECT_STORE.bucket,
+    };
+    for (const prefix of ["replays", "replays/backups", "source-maps/x", "avatars"]) {
+      expect(() =>
+        parseBackupS3({ ...shared, BACKUP_S3_PREFIX: prefix }, LOCAL_OBJECT_STORE),
+      ).toThrow(/overlaps session replays, source maps, or avatars/);
+    }
+    // A folder of its own, another bucket, or no object store, is fine.
+    expect(
+      parseBackupS3({ ...shared, BACKUP_S3_PREFIX: "replays-backups" }, LOCAL_OBJECT_STORE),
+    ).not.toBeNull();
+    expect(
+      parseBackupS3(
+        { ...shared, BACKUP_S3_BUCKET: "other-bucket", BACKUP_S3_PREFIX: "replays" },
+        LOCAL_OBJECT_STORE,
+      ),
+    ).not.toBeNull();
+    expect(parseBackupS3({ ...shared, BACKUP_S3_PREFIX: "replays" }, null)).not.toBeNull();
+  });
+
+  test("the worker's load turns a problem into words, and the API's config never reads them", () => {
+    expect(loadBackupS3({ BACKUP_S3_BUCKET: "acme-backups" }, null)).toEqual({
+      problem: expect.stringMatching(/^Set BACKUP_S3_ENDPOINT, BACKUP_S3_REGION, /),
+    });
+    expect(loadBackupS3(FULL, null)).toMatchObject({ bucket: "acme-backups" });
+    expect(loadBackupS3({}, null)).toBeNull();
+    // Invalid, they don't stop the API: loadConfig ignores them.
+    expect(() => loadConfig({ BACKUP_S3_ENDPOINT: "ftp://x" })).not.toThrow();
+    expect(JSON.stringify(loadConfig(FULL))).not.toContain(SECRET);
   });
 });

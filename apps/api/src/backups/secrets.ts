@@ -4,46 +4,27 @@ import { generateX25519Identity, identityToRecipient } from "age-encryption";
 
 import { Sealer } from "../auth/sealer.ts";
 
-/** What each sealed value is bound to (the GCM additional data). */
-const SECRET_BINDING = "backups: secret access key";
+/** What the sealed key is bound to (the GCM additional data). */
 const KEY_BINDING = "backups: backup key";
 
 /**
- * The backups' two stored secrets, sealed with a key derived from
- * AUTH_SECRET (auth/sealer.ts), as queued account email links are:
+ * The backup key, an age X25519 identity ("AGE-SECRET-KEY-1…"), sealed
+ * with a key derived from AUTH_SECRET (auth/sealer.ts), as queued account
+ * email links are. The owner can view and download it (backups/routes.ts),
+ * and the worker opens it to sign each manifest and to check a backup
+ * (Test restore). Backups are encrypted to its public half, the recipient
+ * ("age1…"), which is not secret.
  *
- * - a separate destination's secret access key, which the API and the
- *   worker open to sign S3 requests and never return;
- * - the backup key, an age X25519 identity ("AGE-SECRET-KEY-1…"), which
- *   the owner can view and download (backups/routes.ts), and which the
- *   worker opens to check a backup (Test restore). Backups are encrypted
- *   to its public half, the recipient ("age1…"), which is not secret.
- *
- * Whoever has a database dump and AUTH_SECRET can open both; with a
- * dump alone, neither. A changed AUTH_SECRET makes both unreadable: the
- * Backups tab then asks for the secret again and offers a new key.
+ * Whoever has a database dump and AUTH_SECRET can open it; with a dump
+ * alone, no one. A changed AUTH_SECRET makes it unreadable: the Backups
+ * tab then offers a new key. The destination's keys are not here: they
+ * are the worker's BACKUP_S3_* (config.ts).
  */
 export class BackupSecrets {
   readonly #sealer: Sealer;
 
   constructor(authSecret: string) {
     this.#sealer = new Sealer(authSecret, "ottertrail stored secrets v1");
-  }
-
-  /**
-   * Seals the secret bound to the endpoint and access key it belongs to:
-   * moved to another endpoint or key, it does not open.
-   */
-  sealSecret(secret: string, endpoint: string, accessKeyId: string): string {
-    return this.#sealer.seal(secret, `${SECRET_BINDING}\n${endpoint}|${accessKeyId}`);
-  }
-
-  /**
-   * The secret access key, or null when AUTH_SECRET changed since it was
-   * saved, or it was saved for another endpoint or access key.
-   */
-  openSecret(sealed: string, endpoint: string, accessKeyId: string): string | null {
-    return this.#sealer.open(sealed, `${SECRET_BINDING}\n${endpoint}|${accessKeyId}`);
   }
 
   sealKey(identity: string): string {

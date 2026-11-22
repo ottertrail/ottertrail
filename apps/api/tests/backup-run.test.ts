@@ -1,7 +1,8 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { copyFile, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
-import { createServer } from "node:http";
+import { createServer, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -15,7 +16,7 @@ import { sql } from "kysely";
 import { afterAll, beforeAll, describe, expect, test } from "vite-plus/test";
 
 import { decrypted, encrypted } from "../src/backups/archive.ts";
-import { BackupJob, RETRY_AFTER_MS } from "../src/backups/job.ts";
+import { BackupJob, NO_DESTINATION, REPORT_EVERY_MS, RETRY_AFTER_MS } from "../src/backups/job.ts";
 import {
   applyRetention,
   BackupError,
@@ -32,7 +33,6 @@ import { clickHouseDataBytes } from "../src/backups/sources.ts";
 import { WORKER_STOPPED } from "../src/backups/state.ts";
 import { identifier } from "../src/clickhouse/clickhouse.ts";
 import { LOCAL_OBJECT_STORE } from "../src/config.ts";
-import { addressPolicy, systemLookup } from "../src/outbound/addresses.ts";
 import { backupObjects, checkObjectBackup } from "../src/storage/object-backup.ts";
 import { s3Client, s3ObjectStore } from "../src/storage/object-store.ts";
 import { storageSourcesOf } from "../src/storage/usage.ts";
@@ -62,7 +62,6 @@ import { testName } from "./helpers/test-names.ts";
 type Dashboard = Awaited<ReturnType<typeof signedInDashboard>>;
 
 const GiB = 1024 ** 3;
-const RULES = { policy: addressPolicy({ allowPrivate: true }), lookup: systemLookup };
 const run = testName();
 
 let dashboard: Dashboard;
@@ -83,8 +82,6 @@ function destination(prefix: string): Destination {
     prefix,
     accessKeyId: LOCAL_OBJECT_STORE.accessKeyId,
     secretAccessKey: LOCAL_OBJECT_STORE.secretAccessKey,
-    fromDashboard: true,
-    objectStoreBucket: null,
   };
 }
 
@@ -173,7 +170,7 @@ describe("a whole backup to an S3 destination", () => {
   let name = "";
 
   test("uploads the three parts and the manifest, each encrypted, and leaves no local file", async () => {
-    const client = backupClient(destination(prefix), RULES);
+    const client = backupClient(destination(prefix));
     const steps: string[] = [];
     try {
       const result = await runBackup({
@@ -389,22 +386,28 @@ describe("a whole backup to an S3 destination", () => {
       expect(unasked.stderr).toContain("Confirm in a terminal or add --yes");
       expect(await readFile(log, "utf8")).not.toContain("restore-backup.mjs download");
 
+      // This time from the .env beside it, as the worker's are: quoted, commented, or not.
+      await writeFile(
+        join(folder, ".env"),
+        [
+          "AUTH_SECRET=not-used-here",
+          "# Scheduled backups",
+          `BACKUP_S3_ENDPOINT=${LOCAL_OBJECT_STORE.url}`,
+          `BACKUP_S3_REGION="${LOCAL_OBJECT_STORE.region}"`,
+          `BACKUP_S3_BUCKET='${LOCAL_OBJECT_STORE.bucket}'`,
+          `BACKUP_S3_PREFIX=${prefix} # the folder`,
+          `BACKUP_S3_ACCESS_KEY_ID=${LOCAL_OBJECT_STORE.accessKeyId}`,
+          `export BACKUP_S3_SECRET_ACCESS_KEY=${LOCAL_OBJECT_STORE.secretAccessKey}`,
+          "",
+        ].join("\n"),
+      );
       const result = spawnSync(
         "sh",
         [join(folder, "restore.sh"), "--from-s3", "--yes", "--key", keyFile],
         {
           encoding: "utf8",
           input: "",
-          env: {
-            ...process.env,
-            COMPOSE: `${process.execPath} ${fake}`,
-            BACKUP_S3_ENDPOINT: LOCAL_OBJECT_STORE.url,
-            BACKUP_S3_REGION: LOCAL_OBJECT_STORE.region,
-            BACKUP_S3_BUCKET: LOCAL_OBJECT_STORE.bucket,
-            BACKUP_S3_PREFIX: prefix,
-            BACKUP_S3_ACCESS_KEY_ID: LOCAL_OBJECT_STORE.accessKeyId,
-            BACKUP_S3_SECRET_ACCESS_KEY: LOCAL_OBJECT_STORE.secretAccessKey,
-          },
+          env: { ...process.env, COMPOSE: `${process.execPath} ${fake}` },
         },
       );
       expect({ status: result.status, failed: /failed/i.test(result.stderr) }).toEqual({
@@ -459,7 +462,7 @@ describe("a whole backup to an S3 destination", () => {
         encrypted: { bytes: sealed.length, sha256: sha256(sealed) },
       });
     }
-    const client = backupClient(destination(prefix), RULES);
+    const client = backupClient(destination(prefix));
     const folder = await mkdtemp(join(tmpdir(), "ottertrail-forged-"));
     try {
       for (const mac of [undefined, "hmac-sha256:" + "0".repeat(64), real.mac]) {
@@ -532,7 +535,7 @@ describe("a whole backup to an S3 destination", () => {
     const folder = await mkdtemp(join(tmpdir(), "ottertrail-partial-"));
     const partKey = `${prefix}/${name}/objects.tar.age`;
     const original = await getBytes(partKey);
-    const client = backupClient(destination(prefix), RULES);
+    const client = backupClient(destination(prefix));
     try {
       // The last part is damaged: the first two were decrypted and written before it failed.
       const damaged = Buffer.from(original);
@@ -556,7 +559,7 @@ describe("a whole backup to an S3 destination", () => {
   }, 120_000);
 
   test("Test restore checks every checksum, and catches a damaged part", async () => {
-    const client = backupClient(destination(prefix), RULES);
+    const client = backupClient(destination(prefix));
     try {
       const checked = await testRestore({
         client,
@@ -618,7 +621,7 @@ describe("a whole backup to an S3 destination", () => {
 describe("before a backup", () => {
   test("too little free disk refuses it, saying how much it needs, and uploads nothing", async () => {
     const prefix = `test-backups/${run}/full-disk`;
-    const client = backupClient(destination(prefix), RULES);
+    const client = backupClient(destination(prefix));
     try {
       const attempt = runBackup({
         // 6 GiB free of 100: under 7% would be left.
@@ -642,7 +645,7 @@ describe("before a backup", () => {
 describe("a bucket shared with the object store", () => {
   test("a backup folder overlapping the store's objects is refused before anything runs", async () => {
     const prefix = `replays/${run}/backups`;
-    const client = backupClient(destination(prefix), RULES);
+    const client = backupClient(destination(prefix));
     try {
       await expect(
         runBackup({
@@ -691,7 +694,7 @@ describe("a bucket shared with the object store", () => {
 describe("an interrupted run", () => {
   test("an abort during ClickHouse's backup stops it, and deletes its file and what was uploaded", async () => {
     const prefix = `test-backups/${run}/aborted`;
-    const client = backupClient(destination(prefix), RULES);
+    const client = backupClient(destination(prefix));
     const controller = new AbortController();
     const zips: string[] = [];
     const files = containerClickHouseFiles(containers);
@@ -739,7 +742,7 @@ describe("an interrupted run", () => {
         Key: `${prefix}/2020-01-01T000000Z/clickhouse.zip.age`,
       }),
     );
-    const client = backupClient(destination(prefix), RULES);
+    const client = backupClient(destination(prefix));
     try {
       // The disk check refuses it right after the clean-up.
       await expect(
@@ -795,7 +798,7 @@ describe("retention", () => {
     await put(`${prefix}-other/2026-11-01T030000Z/manifest.json`);
     await put(`test-backups/${run}/2026-11-01T030000Z/manifest.json`);
 
-    const client = backupClient(destination(prefix), RULES);
+    const client = backupClient(destination(prefix));
     try {
       const deleted = await applyRetention(client, destination(prefix), 7, now);
       expect(deleted.toSorted()).toEqual([
@@ -834,10 +837,8 @@ describe("the worker's backups", () => {
   function job(jobSources: BackupSources = sources()) {
     return new BackupJob({
       db: dashboard.db,
-      objectStore: null,
-      stackGarage: false,
+      destination: destination(prefix),
       secrets,
-      rules: RULES,
       sources: jobSources,
       version: OTTERTRAIL_VERSION,
       log: (level, msg) => void logs.push({ level, msg }),
@@ -851,16 +852,6 @@ describe("the worker's backups", () => {
       .set({
         enabled: true,
         time_of_day: "02:30",
-        prefix,
-        endpoint: LOCAL_OBJECT_STORE.url,
-        region: LOCAL_OBJECT_STORE.region,
-        bucket: LOCAL_OBJECT_STORE.bucket,
-        access_key_id: LOCAL_OBJECT_STORE.accessKeyId,
-        secret_sealed: secrets.sealSecret(
-          LOCAL_OBJECT_STORE.secretAccessKey,
-          LOCAL_OBJECT_STORE.url,
-          LOCAL_OBJECT_STORE.accessKeyId,
-        ),
         key_sealed: secrets.sealKey(key.identity),
         key_recipient: key.recipient,
         key_created_at: clock,
@@ -1047,10 +1038,8 @@ describe("the worker's backups", () => {
     clock = new Date();
     const worker = new BackupJob({
       db: dashboard.db,
-      objectStore: null,
-      stackGarage: false,
+      destination: destination(prefix),
       secrets,
-      rules: RULES,
       sources: { ...sources(), dumpPostgres: () => endless },
       version: OTTERTRAIL_VERSION,
       log: () => undefined,
@@ -1104,6 +1093,275 @@ describe("the worker's backups", () => {
     expect(row.error).toMatch(/^The worker stopped while this ran/);
   });
 });
+
+describe("the worker's report to the Backups tab", () => {
+  const prefix = `test-backups/${run}/report`;
+  const secrets = new BackupSecrets(TEST_AUTH_SECRET);
+  let own: Dashboard;
+  let clock = new Date("2026-11-20T10:00:00Z");
+  const logs: { level: string; msg: string; fields?: Record<string, unknown> }[] = [];
+
+  /** A worker with `target` as its BACKUP_S3_*, backups off: it only reports, tests, and lists. */
+  function worker(target: ConstructorParameters<typeof BackupJob>[0]["destination"]) {
+    return new BackupJob({
+      db: own.db,
+      destination: target,
+      secrets,
+      sources: sources(),
+      version: OTTERTRAIL_VERSION,
+      log: (level, msg, fields) => void logs.push({ level, msg, ...(fields ? { fields } : {}) }),
+      now: () => clock,
+    });
+  }
+
+  const row = () => own.db.selectFrom("backup_settings").selectAll().executeTakeFirstOrThrow();
+
+  beforeAll(async () => {
+    own = await signedInDashboard();
+    await put(`${prefix}/2026-11-19T020000Z/manifest.json`, "{}");
+    await put(`${prefix}/2026-11-19T020000Z/postgres.dump.age`, "xx");
+    await put(`${prefix}/2026-11-20T020000Z/postgres.dump.age`, "xxx");
+  });
+  afterAll(() => own?.close());
+
+  test("reports the destination without its secret on start, then hourly, and lists the folder", async () => {
+    const job = worker(destination(prefix));
+    expect(await job.tick()).toBeNull();
+    const first = await row();
+    expect(first.destination).toEqual({
+      endpoint: LOCAL_OBJECT_STORE.url,
+      region: LOCAL_OBJECT_STORE.region,
+      bucket: LOCAL_OBJECT_STORE.bucket,
+      prefix,
+      accessKeyId: LOCAL_OBJECT_STORE.accessKeyId,
+    });
+    expect(JSON.stringify(first)).not.toContain(LOCAL_OBJECT_STORE.secretAccessKey);
+    expect(first.destination_problem).toBeNull();
+    expect(first.destination_reported_at).toEqual(clock);
+    // On start, the folder's listing, newest first: a folder without a manifest is not whole.
+    expect(first.backup_listed_at).toEqual(clock);
+    expect(first.backup_list).toEqual({
+      ok: true,
+      bucket: LOCAL_OBJECT_STORE.bucket,
+      prefix,
+      backups: [
+        { name: "2026-11-20T020000Z", at: "2026-11-20T02:00:00.000Z", bytes: 3, complete: false },
+        { name: "2026-11-19T020000Z", at: "2026-11-19T02:00:00.000Z", bytes: 4, complete: true },
+      ],
+    });
+
+    // Unchanged, it is not written again within the hour.
+    const reportedAt = clock;
+    clock = new Date(clock.getTime() + REPORT_EVERY_MS - 60_000);
+    await job.tick();
+    expect((await row()).destination_reported_at).toEqual(reportedAt);
+    clock = new Date(reportedAt.getTime() + REPORT_EVERY_MS);
+    await job.tick();
+    expect((await row()).destination_reported_at).toEqual(clock);
+    // The listing is not read again on each tick.
+    expect((await row()).backup_listed_at).toEqual(reportedAt);
+  });
+
+  test("another worker's different report is replaced at once: the last write wins", async () => {
+    await own.db
+      .updateTable("backup_settings")
+      .set({ destination: null, destination_problem: "Set BACKUP_S3_REGION too." })
+      .execute();
+    await worker(destination(prefix)).tick();
+    expect((await row()).destination_problem).toBeNull();
+    expect((await row()).destination).toMatchObject({ prefix });
+  });
+
+  test("a configuration problem is reported in words and logged, and Test connection says it", async () => {
+    logs.length = 0;
+    clock = new Date(clock.getTime() + 60_000);
+    const problem =
+      "Set BACKUP_S3_REGION too: backups need the endpoint, region, bucket, access key ID, and secret access key.";
+    const job = worker({ problem });
+    await own.db
+      .updateTable("backup_settings")
+      .set({ connection_test_requested_at: clock })
+      .execute();
+    await job.tick();
+    const reported = await row();
+    expect(reported).toMatchObject({
+      destination: null,
+      destination_problem: problem,
+      destination_reported_at: clock,
+      connection_test_requested_at: null,
+      connection_tested_at: clock,
+      connection_test: { ok: false, steps: [], error: problem },
+      // Nothing to list.
+      backup_list: null,
+      backup_listed_at: null,
+    });
+    expect(logs).toContainEqual({
+      level: "error",
+      msg: "the backup destination is invalid: backups can't run",
+      fields: { problem },
+    });
+    // Logged once, not on every tick.
+    await job.tick();
+    expect(logs.filter((line) => line.level === "error")).toHaveLength(1);
+  });
+
+  test("no destination is no report, and a run says what to set", async () => {
+    clock = new Date(clock.getTime() + 60_000);
+    await own.db
+      .updateTable("backup_settings")
+      .set({ connection_test_requested_at: clock })
+      .execute();
+    await worker(null).tick();
+    expect(await row()).toMatchObject({
+      destination: null,
+      destination_problem: null,
+      destination_reported_at: clock,
+      connection_test: { ok: false, steps: [], error: NO_DESTINATION },
+    });
+  });
+
+  test("Test connection runs with the worker's own variables, stores each step, and lists again", async () => {
+    clock = new Date(clock.getTime() + 60_000);
+    await own.db
+      .updateTable("backup_settings")
+      .set({ connection_test_requested_at: clock, backup_list: null, backup_listed_at: null })
+      .execute();
+    const job = worker(destination(prefix));
+    // Not its first tick: the listing comes from the test.
+    await job.tick();
+    expect(await row()).toMatchObject({
+      connection_test_requested_at: null,
+      connection_tested_at: clock,
+      connection_test: {
+        ok: true,
+        steps: [
+          { step: "put", status: "ok" },
+          { step: "list", status: "ok" },
+          { step: "get", status: "ok" },
+          { step: "delete", status: "ok" },
+        ],
+      },
+      backup_listed_at: clock,
+    });
+    // The test file is gone again.
+    const listed = await listBackups(s3, LOCAL_OBJECT_STORE.bucket, prefix);
+    expect(listed.map((backup) => backup.name)).toEqual([
+      "2026-11-20T020000Z",
+      "2026-11-19T020000Z",
+    ]);
+  });
+
+  test("Test connection says which step failed, in plain words", async () => {
+    clock = new Date(clock.getTime() + 60_000);
+    await own.db
+      .updateTable("backup_settings")
+      .set({ connection_test_requested_at: clock })
+      .execute();
+    await worker({ ...destination(prefix), secretAccessKey: "not-the-secret" }).tick();
+    const { connection_test: result } = await row();
+    const steps = (result as { steps: { status: string; error?: string }[] }).steps;
+    expect((result as { ok: boolean }).ok).toBe(false);
+    expect(steps[0]?.status).toBe("failed");
+    expect(steps[0]?.error).toMatch(/Secret access key mismatch|Unknown access key|Access denied/i);
+    expect(steps.slice(1).map((step) => step.status)).toEqual(["skipped", "skipped", "skipped"]);
+    // The listing failed too, and says so.
+    expect((await row()).backup_list).toMatchObject({ ok: false, prefix });
+  });
+
+  test("Test connection reports a refused permission on the step it refused", async () => {
+    const stand = await startRefusingS3("DELETE");
+    try {
+      clock = new Date(clock.getTime() + 60_000);
+      await own.db
+        .updateTable("backup_settings")
+        .set({ connection_test_requested_at: clock })
+        .execute();
+      await worker({
+        url: stand.url,
+        region: "auto",
+        bucket: "backups",
+        prefix: "x",
+        accessKeyId: "AKIA1",
+        secretAccessKey: "secret-for-the-stand-in",
+      }).tick();
+      const { connection_test: result } = await row();
+      const steps = (result as { steps: { status: string; error?: string }[] }).steps;
+      expect(steps.map((step) => step.status)).toEqual(["ok", "ok", "ok", "failed"]);
+      expect(steps[3]?.error).toBe(
+        "Access denied (AccessDenied). Give this key permission to delete objects in the backup folder.",
+      );
+    } finally {
+      await stand.close();
+    }
+  });
+});
+
+/**
+ * A stand-in S3 endpoint that answers PutObject, ListObjectsV2, and
+ * GetObject, and refuses `refuse` (a method) with AccessDenied, as S3 does
+ * for a key without that permission.
+ */
+async function startRefusingS3(
+  refuse: string,
+): Promise<{ url: string; close: () => Promise<void> }> {
+  const objects = new Map<string, Buffer>();
+  const server: Server = createServer((request, response) => {
+    const chunks: Buffer[] = [];
+    request.on("data", (chunk: Buffer) => chunks.push(chunk));
+    request.on("end", () => {
+      const url = new URL(request.url ?? "/", "http://s3");
+      if (request.method === refuse) {
+        response.writeHead(403, { "content-type": "application/xml" });
+        response.end(
+          '<?xml version="1.0" encoding="UTF-8"?><Error><Code>AccessDenied</Code><Message>Access Denied</Message></Error>',
+        );
+        return;
+      }
+      const [, bucket = "", ...rest] = url.pathname.split("/");
+      const keyName = decodeURIComponent(rest.join("/"));
+      if (request.method === "PUT") {
+        objects.set(keyName, Buffer.concat(chunks));
+        response.writeHead(200, { etag: '"etag"' });
+        response.end();
+      } else if (request.method === "GET" && keyName === "") {
+        const prefix = url.searchParams.get("prefix") ?? "";
+        const contents = [...objects.keys()]
+          .filter((name) => name.startsWith(prefix))
+          .map(
+            (name) =>
+              `<Contents><Key>${name}</Key><Size>${objects.get(name)?.length ?? 0}</Size></Contents>`,
+          )
+          .join("");
+        response.writeHead(200, { "content-type": "application/xml" });
+        response.end(
+          `<?xml version="1.0" encoding="UTF-8"?><ListBucketResult><Name>${bucket}</Name><Prefix>${prefix}</Prefix><IsTruncated>false</IsTruncated>${contents}</ListBucketResult>`,
+        );
+      } else if (request.method === "GET") {
+        const body = objects.get(keyName);
+        if (body === undefined) {
+          response.writeHead(404, { "content-type": "application/xml" });
+          response.end("<Error><Code>NoSuchKey</Code><Message>No such key</Message></Error>");
+        } else {
+          response.writeHead(200, { "content-length": body.length, "content-type": "text/plain" });
+          response.end(body);
+        }
+      } else if (request.method === "DELETE") {
+        objects.delete(keyName);
+        response.writeHead(204);
+        response.end();
+      } else {
+        response.writeHead(405);
+        response.end();
+      }
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const { port } = server.address() as AddressInfo;
+  return {
+    url: `http://127.0.0.1:${port}`,
+    close: () => new Promise<void>((resolve) => server.close(() => resolve())),
+  };
+}
 
 const API = join(import.meta.dirname, "..");
 const DEPLOY = join(API, "..", "..", "deploy");

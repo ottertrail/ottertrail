@@ -8,40 +8,18 @@ import { requireTrustedOrigin } from "../auth/origin.ts";
 import { passwordTryLimiter } from "../auth/password-tries.ts";
 import { requireSession, signedInUser } from "../auth/routes.ts";
 import { type RateLimit, TokenBucketLimiter } from "../collection/rate-limiter.ts";
-import type { ObjectStoreConfig } from "../config.ts";
 import type { Database } from "../db/schema.ts";
 import { enqueueAccountEmail } from "../notifications/account-emails.ts";
 import { notifyIn } from "../notifications/deliveries.ts";
 import type { LinkSealer } from "../notifications/link-sealer.ts";
-import { AddressNotAllowedError, refusedKind } from "../outbound/addresses.ts";
 import { readInstanceSettings } from "../settings/settings.ts";
 import { readWarningChannels } from "../storage/warning-state.ts";
-import {
-  backupClient,
-  listBackups,
-  type OutboundRules,
-  s3ErrorText,
-  testConnection,
-} from "./s3.ts";
 import { nextDue, overdueSlot } from "./schedule.ts";
 import { type BackupSecrets, keyFileName, keyFileText, makeBackupKey } from "./secrets.ts";
 import {
-  ACCESS_KEY_PATTERN,
   type BackupSettings,
-  BUCKET_PATTERN,
-  destinationModeOf,
-  destinationOf,
-  type DestinationFields,
-  endpointOrigin,
-  MAX_ENDPOINT,
   MAX_KEEP_DAYS,
-  MAX_PREFIX,
-  MAX_SECRET,
-  OVERLAP_PROBLEM,
-  overlapsObjects,
-  PREFIX_PATTERN,
   readBackupSettings,
-  REGION_PATTERN,
   TIME_PATTERN,
 } from "./settings.ts";
 import { latestRuns, type Run } from "./state.ts";
@@ -76,7 +54,6 @@ function within(
 export const BACKUP_ACTIONS = {
   key_shown: "showed the backup key",
   key_downloaded: "downloaded the backup key",
-  destination_changed: "changed where backups go",
   turned_off: "turned backups off",
 } as const;
 
@@ -111,44 +88,33 @@ function runView(run: Run | null) {
   };
 }
 
-const DESTINATION_FIELDS = {
-  bucket: { anyOf: [{ type: "string", pattern: BUCKET_PATTERN }, { type: "null" }] },
-  prefix: { type: "string", pattern: PREFIX_PATTERN, maxLength: MAX_PREFIX },
-  endpoint: {
-    anyOf: [{ type: "string", minLength: 1, maxLength: MAX_ENDPOINT }, { type: "null" }],
-  },
-  region: { anyOf: [{ type: "string", pattern: REGION_PATTERN }, { type: "null" }] },
-  accessKeyId: { anyOf: [{ type: "string", pattern: ACCESS_KEY_PATTERN }, { type: "null" }] },
-  secretAccessKey: { type: "string", minLength: 1, maxLength: MAX_SECRET },
-} as const;
-
-/** What the form sends; every field optional, and null clears a separate destination's field. */
-interface DestinationBody {
-  bucket?: string | null;
-  prefix?: string;
-  endpoint?: string | null;
-  region?: string | null;
-  accessKeyId?: string | null;
-  secretAccessKey?: string;
-}
-
-interface SettingsBody extends DestinationBody {
+interface SettingsBody {
   enabled?: boolean;
   timeOfDay?: string;
   keepDays?: number;
-  /** Needed to change the destination or turn backups off. */
+  /** Needed to turn backups off. */
   currentPassword?: string;
 }
 
-const SEPARATE_ONLY = ["endpoint", "region", "accessKeyId", "secretAccessKey"] as const;
+/** Turning backups on without a destination the worker reported. */
+export const NO_DESTINATION_REPORTED =
+  "No backup destination. Set the BACKUP_S3_* variables in the server's .env, restart the worker, then turn backups on.";
+
+/** Why backups can't be turned on, or Test connection asked for: null when they can. */
+function destinationMissing(settings: BackupSettings): string | null {
+  if (settings.destinationProblem !== null) {
+    return `The worker's BACKUP_S3_* variables have a problem: ${settings.destinationProblem}`;
+  }
+  return settings.destination === null ? NO_DESTINATION_REPORTED : null;
+}
 
 /**
  * GET    /api/settings/backups                  settings, destination, key, and status
  * PATCH  /api/settings/backups                  the settings; the first turn-on makes the key
- * POST   /api/settings/backups/test-connection  put, list, get, and delete on the folder
+ * POST   /api/settings/backups/test-connection  Test connection (the worker runs it)
  * POST   /api/settings/backups/run              Back up now (the worker runs it)
  * POST   /api/settings/backups/test-restore     Test restore (the worker runs it)
- * GET    /api/settings/backups/list             the backups in the destination's folder
+ * GET    /api/settings/backups/list             the folder's backups, as the worker listed them
  * POST   /api/settings/backups/key              the backup key, to view { password } (logged)
  * POST   /api/settings/backups/key/file         the backup key as a file { password } (logged)
  * POST   /api/settings/backups/key/saved        the owner saved the key: the reminder goes
@@ -156,14 +122,14 @@ const SEPARATE_ONLY = ["endpoint", "region", "accessKeyId", "secretAccessKey"] a
  *
  * The Backups tab of the instance's Settings, for the owner only
  * (docs/access.md): the `settings` permission. Changes check Origin;
- * bodies are checked before any database work. The destination's secret
- * is never in an answer; the key only in the two key routes, which log
- * that it was shown (not the key). Test connection, Back up now, and Test
- * restore are limited per user.
+ * bodies are checked before any database work. Where backups go is the
+ * worker's BACKUP_S3_* (config.ts), which this process never reads: the
+ * tab shows what the worker reported (backups/job.ts). The key is only in
+ * the two key routes, which log that it was shown (not the key). Test
+ * connection, Back up now, and Test restore are limited per user.
  *
  * A stolen session must not take or stop the backups quietly: showing or
- * downloading the key, changing the destination, and turning backups off
- * need the current password (from the app's one limiter for password
+ * downloading the key, and turning backups off, need the current password (from the app's one limiter for password
  * tries, auth/password-tries.ts), and each sends `backups.changed` to the
  * channels that get storage warnings, and an account email to the owner
  * when SMTP is set up.
@@ -172,11 +138,7 @@ export const backupRoutes: FastifyPluginCallback<{
   db: Kysely<Database>;
   auth: Auth;
   trustedOrigins: readonly string[];
-  /** The object store (OBJECT_STORE_*), and whether it is the stack's own Garage. */
-  objectStore: ObjectStoreConfig | null;
-  stackGarage: boolean;
   secrets: BackupSecrets;
-  rules: OutboundRules;
   testConnectionLimit?: RateLimit;
   backupNowLimit?: RateLimit;
   testRestoreLimit?: RateLimit;
@@ -194,10 +156,7 @@ export const backupRoutes: FastifyPluginCallback<{
     db,
     auth,
     trustedOrigins,
-    objectStore,
-    stackGarage,
     secrets,
-    rules,
     testConnectionLimit = DEFAULT_TEST_CONNECTION_LIMIT,
     backupNowLimit = DEFAULT_BACKUP_NOW_LIMIT,
     testRestoreLimit = DEFAULT_TEST_RESTORE_LIMIT,
@@ -212,7 +171,6 @@ export const backupRoutes: FastifyPluginCallback<{
   const signedIn = requireSession(auth);
   const fromDashboard = requireTrustedOrigin(trustedOrigins);
   const owner = requirePermission(db, "settings");
-  const mode = destinationModeOf(objectStore, stackGarage);
   const limits = {
     testConnection: new TokenBucketLimiter(testConnectionLimit),
     backupNow: new TokenBucketLimiter(backupNowLimit),
@@ -322,34 +280,21 @@ export const backupRoutes: FastifyPluginCallback<{
         enabled: settings.enabled,
         timeOfDay: settings.timeOfDay,
         keepDays: settings.keepDays,
-        bucket: settings.bucket ?? (mode.mode === "object_store" ? mode.store.bucket : null),
-        prefix: settings.prefix,
-        endpoint: settings.endpoint,
-        region: settings.region,
-        accessKeyId: settings.accessKeyId,
-        // Only whether one is saved, and whether this server can still read it: never the secret.
-        secret:
-          settings.secretSealed === null
-            ? ("none" as const)
-            : secrets.openSecret(
-                  settings.secretSealed,
-                  settings.endpoint ?? "",
-                  settings.accessKeyId ?? "",
-                ) === null
-              ? ("unreadable" as const)
-              : ("saved" as const),
         /** Since when, and by whom, backups are off; null while on, or never turned on. */
         disabledAt: settings.enabled ? null : iso(settings.disabledAt),
         disabledBy: settings.enabled ? null : settings.disabledBy,
       },
-      destination:
-        mode.mode === "object_store"
-          ? {
-              mode: mode.mode,
-              reason: "off_site" as const,
-              objectStore: { endpoint: mode.store.url, bucket: mode.store.bucket },
-            }
-          : { mode: mode.mode, reason: mode.reason, objectStore: null },
+      // What the worker last reported of its BACKUP_S3_*, never the secret.
+      destination: {
+        reportedAt: iso(settings.destinationReportedAt),
+        config: settings.destination,
+        problem: settings.destinationProblem,
+      },
+      connectionTest: {
+        requested: settings.connectionTestRequestedAt !== null,
+        testedAt: iso(settings.connectionTestedAt),
+        result: settings.connectionTest,
+      },
       key: {
         state: keyState(settings),
         recipient: settings.keyRecipient,
@@ -367,75 +312,10 @@ export const backupRoutes: FastifyPluginCallback<{
         retryAt: settings.enabled ? iso(settings.retryAt) : null,
         backupRequested: settings.backupRequestedAt !== null,
         testRestoreRequested: settings.testRestoreRequestedAt !== null,
+        /** When the worker last listed the folder (GET …/list). */
+        listedAt: iso(settings.backupListedAt),
       },
     };
-  }
-
-  /** A body's destination fields over the saved ones; a 400's body when they don't fit. */
-  function fieldsOf(
-    saved: BackupSettings,
-    body: DestinationBody,
-  ): { fields: DestinationFields } | { refused: { error: string; message: string } } {
-    if (mode.mode === "object_store" && SEPARATE_ONLY.some((field) => body[field] != null)) {
-      return {
-        refused: {
-          error: "not_used",
-          message: "Backups use OBJECT_STORE_URL. Set only the bucket and folder.",
-        },
-      };
-    }
-    let endpoint = body.endpoint === undefined ? saved.endpoint : body.endpoint;
-    if (body.endpoint !== undefined && body.endpoint !== null) {
-      endpoint = endpointOrigin(body.endpoint);
-      if (endpoint === null) {
-        return {
-          refused: {
-            error: "invalid_endpoint",
-            message: "Use an http:// or https:// endpoint without a path.",
-          },
-        };
-      }
-      const host = new URL(endpoint).hostname.replace(/^\[|\]$/g, "");
-      const kind = refusedKind(host, rules.policy);
-      if (kind !== null && /^[\d.:a-fA-F]+$/.test(host)) {
-        return {
-          refused: {
-            error: "address_not_allowed",
-            message: new AddressNotAllowedError(host, host, kind, "backups").message,
-          },
-        };
-      }
-    }
-    const accessKeyId = body.accessKeyId === undefined ? saved.accessKeyId : body.accessKeyId;
-    // The saved secret goes only with the endpoint and key it was saved for.
-    const sameKey = endpoint === saved.endpoint && accessKeyId === saved.accessKeyId;
-    const fields = {
-      bucket: body.bucket === undefined ? saved.bucket : body.bucket,
-      prefix: body.prefix ?? saved.prefix,
-      endpoint,
-      region: body.region === undefined ? saved.region : body.region,
-      accessKeyId,
-      secretAccessKey: body.secretAccessKey ?? null,
-      secretSealed: sameKey ? saved.secretSealed : null,
-    };
-    // A separate destination in the object store's own bucket may not overlap its objects either.
-    if (
-      objectStore !== null &&
-      mode.mode === "separate" &&
-      fields.endpoint === objectStore.url &&
-      fields.bucket === objectStore.bucket &&
-      overlapsObjects(fields.prefix)
-    ) {
-      return { refused: { error: "folder_overlaps_objects", message: OVERLAP_PROBLEM } };
-    }
-    if (
-      mode.mode === "object_store" &&
-      (fields.bucket ?? mode.store.bucket) === mode.store.bucket &&
-      overlapsObjects(fields.prefix)
-    ) {
-      return { refused: { error: "folder_overlaps_objects", message: OVERLAP_PROBLEM } };
-    }
-    return { fields };
   }
 
   app.get("/settings/backups", { preHandler: [signedIn, owner] }, async () => view());
@@ -454,7 +334,6 @@ export const backupRoutes: FastifyPluginCallback<{
             enabled: { enum: [true, false] },
             timeOfDay: { type: "string", pattern: TIME_PATTERN },
             keepDays: { type: "integer", minimum: 1, maximum: MAX_KEEP_DAYS },
-            ...DESTINATION_FIELDS,
             currentPassword: PASSWORD,
           },
         },
@@ -463,28 +342,14 @@ export const backupRoutes: FastifyPluginCallback<{
     async (request, reply) => {
       const body = request.body;
       const saved = await readBackupSettings(db);
-      const merged = fieldsOf(saved, body);
-      if ("refused" in merged) return reply.code(400).send(merged.refused);
       const enabled = body.enabled ?? saved.enabled;
-      const f = merged.fields;
-      const destinationChanged =
-        f.secretAccessKey !== null ||
-        (f.bucket ?? null) !== (saved.bucket ?? null) ||
-        f.prefix !== saved.prefix ||
-        f.endpoint !== saved.endpoint ||
-        f.region !== saved.region ||
-        f.accessKeyId !== saved.accessKeyId;
       const turnedOff = saved.enabled && !enabled;
-      const actions: BackupAction[] = [
-        ...(destinationChanged ? (["destination_changed"] as const) : []),
-        ...(turnedOff ? (["turned_off"] as const) : []),
-      ];
-      if (enabled) {
-        const destination = destinationOf(mode, merged.fields, secrets);
-        if ("problem" in destination) {
-          return reply
-            .code(400)
-            .send({ error: "destination_incomplete", message: destination.problem });
+      const actions: BackupAction[] = turnedOff ? ["turned_off"] : [];
+      // Turning on needs a destination the worker reported; saving the time while on does not.
+      if (enabled && !saved.enabled) {
+        const missing = destinationMissing(saved);
+        if (missing !== null) {
+          return reply.code(409).send({ error: "no_destination", message: missing });
         }
       }
       if (actions.length > 0 && !(await passwordConfirmed(request, reply, body.currentPassword))) {
@@ -499,27 +364,12 @@ export const backupRoutes: FastifyPluginCallback<{
       const user = signedInUser(request);
       await db.transaction().execute(async (trx) => {
         const current = await readBackupSettings(trx, { lock: true });
-        const secret = merged.fields.secretAccessKey;
         await trx
           .updateTable("backup_settings")
           .set({
             enabled,
             ...(body.timeOfDay === undefined ? {} : { time_of_day: body.timeOfDay }),
             ...(body.keepDays === undefined ? {} : { keep_days: body.keepDays }),
-            bucket: merged.fields.bucket,
-            prefix: merged.fields.prefix,
-            endpoint: merged.fields.endpoint,
-            region: merged.fields.region,
-            access_key_id: merged.fields.accessKeyId,
-            // A new endpoint or key without a new secret clears the old one (fieldsOf).
-            secret_sealed:
-              secret === null || secret === undefined
-                ? merged.fields.secretSealed
-                : secrets.sealSecret(
-                    secret,
-                    merged.fields.endpoint ?? "",
-                    merged.fields.accessKeyId ?? "",
-                  ),
             // Off is a state the tab and the Storage page show: since when, and by whom.
             ...(turnedOff ? { disabled_at: at, disabled_by: user.name } : {}),
             ...(enabled ? { disabled_at: null, disabled_by: null } : {}),
@@ -545,42 +395,24 @@ export const backupRoutes: FastifyPluginCallback<{
     },
   );
 
-  app.post<{ Body: DestinationBody }>(
+  app.post(
     "/settings/backups/test-connection",
-    {
-      preHandler: [fromDashboard, signedIn, owner],
-      schema: {
-        body: { type: "object", additionalProperties: false, properties: DESTINATION_FIELDS },
-      },
-    },
+    { preHandler: [fromDashboard, signedIn, owner] },
     async (request, reply) => {
+      const settings = await readBackupSettings(db);
+      const missing = destinationMissing(settings);
+      if (missing !== null) {
+        return reply.code(409).send({ error: "no_destination", message: missing });
+      }
       if (!within(limits.testConnection, "Test connection", request, reply)) return reply;
-      const saved = await readBackupSettings(db);
-      const merged = fieldsOf(saved, request.body);
-      if ("refused" in merged) return reply.code(400).send(merged.refused);
-      const destination = destinationOf(mode, merged.fields, secrets);
-      if ("problem" in destination) {
-        return reply
-          .code(400)
-          .send({ error: "destination_incomplete", message: destination.problem });
-      }
-      let client;
-      try {
-        client = backupClient(destination, rules);
-      } catch (error) {
-        return reply.code(400).send({ error: "address_not_allowed", message: s3ErrorText(error) });
-      }
-      try {
-        const steps = await testConnection(
-          client,
-          destination.bucket,
-          destination.prefix,
-          AbortSignal.timeout(30_000),
-        );
-        return { ok: steps.every((step) => step.status === "ok"), steps };
-      } finally {
-        client.destroy();
-      }
+      // The worker takes it on its next tick, with its own BACKUP_S3_*.
+      await db
+        .updateTable("backup_settings")
+        .set({ connection_test_requested_at: now() })
+        .where("connection_test_requested_at", "is", null)
+        .execute();
+      request.log.info("backup test connection requested");
+      return view();
     },
   );
 
@@ -630,40 +462,10 @@ export const backupRoutes: FastifyPluginCallback<{
 
   app.get("/settings/backups/list", { preHandler: [signedIn, owner] }, async () => {
     const settings = await readBackupSettings(db);
-    const destination = destinationOf(mode, { ...settings, secretAccessKey: null }, secrets);
-    if ("problem" in destination) return { ok: false as const, error: destination.problem };
-    let client;
-    try {
-      client = backupClient(destination, rules);
-    } catch (error) {
-      return { ok: false as const, error: s3ErrorText(error) };
+    if (settings.backupList === null || settings.backupListedAt === null) {
+      return { listedAt: null };
     }
-    try {
-      const backups = await listBackups(
-        client,
-        destination.bucket,
-        destination.prefix,
-        AbortSignal.timeout(20_000),
-      );
-      return {
-        ok: true as const,
-        bucket: destination.bucket,
-        prefix: destination.prefix,
-        backups: backups.map((backup) => ({
-          name: backup.name,
-          at: backup.at.toISOString(),
-          bytes: backup.bytes,
-          complete: backup.complete,
-        })),
-      };
-    } catch (error) {
-      return {
-        ok: false as const,
-        error: `Couldn't list backups: ${s3ErrorText(error, "list")}`,
-      };
-    } finally {
-      client.destroy();
-    }
+    return { listedAt: settings.backupListedAt.toISOString(), ...settings.backupList };
   });
 
   /** The key, opened; or the answer that says why there is none to show. */

@@ -17,9 +17,10 @@ const docsLink = (topic: string) =>
   page.getByRole("link", { name: `${topic} docs (opens in a new tab)`, exact: true });
 
 /** The page's links that leave for the docs site. */
+/** The docs links on screen: a settings tab not chosen stays mounted, hidden, with its own. */
 const docsLinks = () =>
-  [...document.querySelectorAll<HTMLAnchorElement>("a")].filter((link) =>
-    link.href.startsWith(DOCS),
+  [...document.querySelectorAll<HTMLAnchorElement>("a")].filter(
+    (link) => link.href.startsWith(DOCS) && link.checkVisibility(),
   );
 
 /** The page's title, the header's h1. */

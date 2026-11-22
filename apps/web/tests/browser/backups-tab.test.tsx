@@ -4,8 +4,10 @@ import { page } from "vite-plus/test/browser/context";
 import { ADMIN_ACCESS, installFakeApi } from "./fake-api.ts";
 import {
   BACKUPS_FAILED,
-  BACKUPS_REUSED,
-  BACKUPS_SEPARATE,
+  BACKUPS_INVALID,
+  BACKUPS_KEY_UNSAVED,
+  BACKUPS_ON,
+  BACKUPS_READY,
   FAKE_KEY,
   FAKE_PASSWORD,
   fakeBackups,
@@ -14,10 +16,11 @@ import { renderApp } from "./render.tsx";
 
 /*
  * The Backups tab (features/settings/backups-tab.tsx), for the owner: its
- * states (off, a reused destination, a separate one, the key not yet
- * saved, a failed backup), the schedule and destination under the save
- * rule, Test connection, Back up now, and the key's view, copy, and
- * download. The API's side is apps/api/tests/backups.test.ts.
+ * states (off without a destination, a configuration problem, a reported
+ * destination, the key not yet saved, a failed backup), the schedule under
+ * the save rule, Test connection asked of the worker, the listing's time,
+ * Back up now, and the key's view, copy, and download. The API's side is
+ * apps/api/tests/backups.test.ts.
  */
 
 afterEach(async () => {
@@ -29,30 +32,38 @@ const BACKUPS_TAB = "/settings?tab=backups";
 const panel = () => page.getByRole("tabpanel", { name: "Backups" });
 const status = () => panel().getByRole("region", { name: "Backups" });
 const form = () => page.getByRole("form", { name: "Schedule and destination" });
+const destination = () => form().getByRole("region", { name: "Destination" });
 const keySection = () => panel().getByRole("region", { name: "Backup key" });
 const save = () => page.getByRole("button", { name: "Save backup settings" });
+const toggle = () => form().getByRole("switch", { name: "Back up every day" });
 
 describe("the Backups tab's states", () => {
-  test("off: says how to turn backups on, asks for a destination, and has no key yet", async () => {
+  test("no destination: the switch is off and disabled, and one line says what to set", async () => {
     installFakeApi();
     renderApp(BACKUPS_TAB);
 
     await expect.element(page.getByRole("tab", { name: "Backups", selected: true })).toBeVisible();
     await expect.element(status().getByText(/^Backups are off\.$/)).toBeVisible();
+    await expect.element(toggle()).not.toBeChecked();
+    await expect.element(toggle()).toBeDisabled();
     await expect
-      .element(form().getByRole("switch", { name: "Back up every day" }))
-      .not.toBeChecked();
-    await expect.element(form().getByText(/^Use an S3-compatible bucket/)).toBeVisible();
-    for (const name of [
-      "Endpoint",
-      "Region",
-      "Bucket",
-      "Folder",
-      "Access key ID",
-      "Secret access key",
-    ]) {
-      await expect.element(form().getByLabelText(name, { exact: true })).toBeVisible();
-    }
+      .element(
+        destination().getByText(
+          "Set the BACKUP_S3_* variables in the server's .env and restart the worker.",
+          { exact: false },
+        ),
+      )
+      .toBeVisible();
+    const docs = destination().getByRole("link", { name: /^Backups docs/ });
+    await expect
+      .element(docs)
+      .toHaveAttribute("href", "https://docs.ottertrail.app/self-hosting/backups/");
+    await expect.element(docs).toHaveAttribute("target", "_blank");
+    // Nothing to test yet, and no destination fields to type in.
+    await expect
+      .element(destination().getByRole("button", { name: "Test connection" }))
+      .not.toBeInTheDocument();
+    await expect.element(form().getByRole("textbox", { name: "Bucket" })).not.toBeInTheDocument();
     await expect.element(form().getByLabelText("Time of day")).toHaveValue("03:00");
     await expect.element(form().getByText("Asia/Singapore", { exact: true })).toBeVisible();
     await expect.element(status().getByRole("button", { name: "Back up now" })).toBeDisabled();
@@ -61,25 +72,73 @@ describe("the Backups tab's states", () => {
       .toBeVisible();
   });
 
-  test("a reused off-site object store: a bucket and folder only, and the last backup", async () => {
-    installFakeApi({ backups: fakeBackups({ view: BACKUPS_REUSED }) });
+  test("a configuration problem: the worker's words, and the switch disabled", async () => {
+    installFakeApi({ backups: fakeBackups({ view: BACKUPS_INVALID }) });
     renderApp(BACKUPS_TAB);
 
+    await expect.element(destination().getByText("Backup destination invalid")).toBeVisible();
     await expect
-      .element(form().getByText(/^Uses the object store \(acct\.r2\.cloudflarestorage\.com\)/))
+      .element(
+        destination().getByText(
+          "Set BACKUP_S3_REGION too: backups need the endpoint, region, bucket, access key ID, and secret access key. Then restart the worker.",
+        ),
+      )
       .toBeVisible();
-    await expect.element(form().getByLabelText("Bucket")).toHaveValue("acme-backups");
-    await expect.element(form().getByLabelText("Endpoint")).not.toBeInTheDocument();
-    await expect.element(form().getByLabelText("Secret access key")).not.toBeInTheDocument();
+    await expect.element(toggle()).toBeDisabled();
+  });
+
+  test("a reported destination: its parts as text, when the worker reported, and the switch on offer", async () => {
+    const api = installFakeApi({ backups: fakeBackups({ view: BACKUPS_READY }) });
+    renderApp(BACKUPS_TAB);
+
+    for (const [label, value] of [
+      ["Endpoint", "https://s3.eu-central-1.amazonaws.com"],
+      ["Bucket", "acme-backups"],
+      ["Folder", "ottertrail-backups"],
+      ["Region", "eu-central-1"],
+      ["Access key ID", "AKIAEXAMPLE"],
+      // 03:30 UTC is 11:30 in Singapore.
+      ["Reported", "20 Nov 2026, 11:30"],
+    ]) {
+      await expect.element(destination().getByText(label, { exact: true })).toBeVisible();
+      await expect.element(destination().getByText(value, { exact: true })).toBeVisible();
+    }
+    // Read only: no field holds them.
+    await expect.element(destination().getByRole("textbox")).not.toBeInTheDocument();
+    await expect.element(toggle()).toBeEnabled();
+    await toggle().click();
+    // Turning on needs no password.
+    await expect.element(form().getByLabelText("Current password")).not.toBeInTheDocument();
+    await save().click();
+    await expect.element(form().getByText("No unsaved changes")).toBeVisible();
+    expect(api.bodies.find((body) => body.path === "/api/settings/backups")?.body).toEqual({
+      enabled: true,
+      timeOfDay: "03:00",
+      keepDays: 14,
+    });
+    // Turning on made the key: the reminder shows.
+    await expect.element(keySection().getByText("Save the key off this server")).toBeVisible();
+  });
+
+  test("on: the last backup, the next, and the backups in the bucket as of the worker's listing", async () => {
+    installFakeApi({ backups: fakeBackups({ view: BACKUPS_ON }) });
+    renderApp(BACKUPS_TAB);
+
     // 19:00 UTC is 03:00 in Singapore.
     await expect.element(status().getByText("Succeeded")).toBeVisible();
     await expect.element(status().getByText("20 Nov 2026, 03:04")).toBeVisible();
     await expect.element(status().getByText("1.5 GB, took 4 min")).toBeVisible();
     await expect.element(status().getByText("21 Nov 2026, 03:00")).toBeVisible();
-    // The backups in the bucket.
     const table = status().getByRole("table", { name: "Backups in the bucket" });
     await expect.element(table.getByRole("row")).toHaveLength(3);
     await expect.element(table.getByText("20 Nov 2026, 03:00")).toBeVisible();
+    await expect
+      .element(
+        status().getByText(
+          "In acme-backups/ottertrail-backups, as of 20 Nov 2026, 03:04. Incomplete backups can't be restored.",
+        ),
+      )
+      .toBeVisible();
     // The key was saved: no reminder.
     await expect.element(keySection().getByText("Confirmed")).toBeVisible();
     await expect
@@ -87,23 +146,37 @@ describe("the Backups tab's states", () => {
       .not.toBeInTheDocument();
   });
 
-  test("a separate destination, as the stack's Garage is on this disk; the secret never shown", async () => {
-    installFakeApi({ backups: fakeBackups({ view: BACKUPS_SEPARATE }) });
+  test("a listing that failed says why, and when; one not made yet says so", async () => {
+    installFakeApi({
+      backups: fakeBackups({
+        view: BACKUPS_ON,
+        list: {
+          listedAt: "2026-11-19T19:04:13.000Z",
+          ok: false,
+          bucket: "acme-backups",
+          prefix: "ottertrail-backups",
+          error:
+            "Couldn't list backups: Bucket not found (NoSuchBucket). Check the name or create it.",
+        },
+      }),
+    });
     renderApp(BACKUPS_TAB);
-
-    await expect.element(form().getByText(/^The object store is on this server/)).toBeVisible();
     await expect
-      .element(form().getByLabelText("Endpoint"))
-      .toHaveValue("https://s3.eu-central-1.amazonaws.com");
-    await expect.element(form().getByLabelText("Access key ID")).toHaveValue("AKIAEXAMPLE");
-    const secret = form().getByLabelText("Secret access key");
-    await expect.element(secret).toHaveValue("");
-    await expect.element(secret).toHaveAttribute("type", "password");
-    await expect.element(form().getByText(/^Leave empty to keep the saved secret/)).toBeVisible();
+      .element(status().getByText("Couldn't list backups", { exact: true }))
+      .toBeVisible();
+    await expect
+      .element(status().getByText(/Check the name or create it\. As of 20 Nov 2026, 03:04\.$/))
+      .toBeVisible();
+  });
+
+  test("a folder not listed yet says so", async () => {
+    installFakeApi({ backups: fakeBackups({ view: BACKUPS_ON, list: { listedAt: null } }) });
+    renderApp(BACKUPS_TAB);
+    await expect.element(status().getByText("Not listed yet.")).toBeVisible();
   });
 
   test("the key not yet saved: a reminder that stays until the owner confirms", async () => {
-    const api = installFakeApi({ backups: fakeBackups({ view: BACKUPS_SEPARATE }) });
+    const api = installFakeApi({ backups: fakeBackups({ view: BACKUPS_KEY_UNSAVED }) });
     renderApp(BACKUPS_TAB);
 
     const reminder = keySection().getByText("Save the key off this server");
@@ -156,76 +229,50 @@ describe("the Backups tab's states", () => {
   });
 });
 
-describe("the schedule and destination", () => {
-  test("Save waits for a change, sends only what the destination takes, and empties the secret", async () => {
-    const api = installFakeApi();
+describe("the schedule", () => {
+  test("Save waits for a change, and sends only the schedule", async () => {
+    const api = installFakeApi({ backups: fakeBackups({ view: BACKUPS_ON }) });
     renderApp(BACKUPS_TAB);
 
     await expect.element(save()).toBeVisible();
     await expect.element(save()).toHaveAttribute("aria-disabled", "true");
-    await form().getByRole("switch", { name: "Back up every day" }).click();
+    await form().getByLabelText("Days to keep").fill("30");
     await expect.element(form().getByText("Unsaved changes")).toBeVisible();
     await expect
       .element(page.getByRole("tab", { name: /^Backups\s*, unsaved changes$/ }))
       .toBeVisible();
     // Undone: Save waits again.
-    await form().getByRole("switch", { name: "Back up every day" }).click();
+    await form().getByLabelText("Days to keep").fill("14");
     await expect.element(form().getByText("No unsaved changes")).toBeVisible();
 
-    await form().getByRole("switch", { name: "Back up every day" }).click();
-    await form().getByLabelText("Endpoint").fill("https://s3.eu-central-1.amazonaws.com");
-    await form().getByLabelText("Region").fill("eu-central-1");
-    await form().getByLabelText("Bucket").fill("acme-backups");
-    await form().getByLabelText("Access key ID").fill("AKIAEXAMPLE");
-    await form().getByLabelText("Secret access key").fill("the-secret");
-    // A new destination needs the current password.
-    await form().getByLabelText("Current password").fill(FAKE_PASSWORD);
     await form().getByLabelText("Days to keep").fill("30");
+    await form().getByLabelText("Time of day").fill("02:30");
     await save().click();
-
     await expect.element(form().getByText("No unsaved changes")).toBeVisible();
-    await expect.element(form().getByLabelText("Secret access key")).toHaveValue("");
-    await expect.element(form().getByText(/^Leave empty to keep the saved secret/)).toBeVisible();
     expect(api.bodies.find((body) => body.path === "/api/settings/backups")?.body).toEqual({
       enabled: true,
-      timeOfDay: "03:00",
+      timeOfDay: "02:30",
       keepDays: 30,
-      bucket: "acme-backups",
-      prefix: "ottertrail-backups",
-      endpoint: "https://s3.eu-central-1.amazonaws.com",
-      region: "eu-central-1",
-      accessKeyId: "AKIAEXAMPLE",
-      secretAccessKey: "the-secret",
-      currentPassword: FAKE_PASSWORD,
     });
-    // The password field goes once saved.
-    await expect.element(form().getByLabelText("Current password")).not.toBeInTheDocument();
-    // Turning on made the key: the reminder shows.
-    await expect.element(keySection().getByText("Save the key off this server")).toBeVisible();
   });
 
-  test("a reused destination saves no endpoint or keys", async () => {
-    const api = installFakeApi({ backups: fakeBackups({ view: BACKUPS_REUSED }) });
+  test("leaving with unsaved changes asks first", async () => {
+    installFakeApi({ backups: fakeBackups({ view: BACKUPS_ON }) });
     renderApp(BACKUPS_TAB);
-    await expect.element(form().getByLabelText("Current password")).not.toBeInTheDocument();
-    await form().getByLabelText("Folder").fill("instance-1");
-    await form().getByLabelText("Current password").fill(FAKE_PASSWORD);
-    await save().click();
-    await expect.element(form().getByText("No unsaved changes")).toBeVisible();
-    expect(api.bodies.find((body) => body.path === "/api/settings/backups")?.body).toEqual({
-      enabled: true,
-      timeOfDay: "03:00",
-      keepDays: 14,
-      bucket: "acme-backups",
-      prefix: "instance-1",
-      currentPassword: FAKE_PASSWORD,
-    });
+    await form().getByLabelText("Days to keep").fill("7");
+    await page
+      .getByRole("navigation", { name: "Instance" })
+      .getByRole("link", { name: "Projects" })
+      .click();
+    await expect.element(page.getByRole("dialog", { name: "Leave without saving?" })).toBeVisible();
   });
+});
 
-  test("Test connection tries the form's values and says which step failed", async () => {
+describe("Test connection", () => {
+  test("asks the worker, shows it pending, then each step and when it ran", async () => {
     const api = installFakeApi({
       backups: fakeBackups({
-        view: BACKUPS_SEPARATE,
+        view: BACKUPS_ON,
         connection: {
           ok: false,
           steps: [
@@ -243,45 +290,57 @@ describe("the schedule and destination", () => {
       }),
     });
     renderApp(BACKUPS_TAB);
-    await form().getByLabelText("Bucket").fill("other-bucket");
-    await form().getByRole("button", { name: "Test connection" }).click();
+    await destination().getByRole("button", { name: "Test connection" }).click();
 
-    await expect.element(form().getByText("Connection failed.")).toBeVisible();
-    const steps = form().getByRole("list", { name: "Test connection steps" });
+    // Pending until the worker takes it.
+    await expect
+      .element(destination().getByText("Test connection starts within a minute."))
+      .toBeVisible();
+    await expect.element(destination().getByRole("button", { name: "Testing…" })).toBeDisabled();
+    expect(api.requests).toContain("/api/settings/backups/test-connection");
+    // The tab reads the status again every 5 seconds while it waits.
+    await expect
+      .element(destination().getByText("Connection failed."), { timeout: 8000 })
+      .toBeVisible();
+    const steps = destination().getByRole("list", { name: "Test connection steps" });
     await expect.element(steps.getByRole("listitem")).toHaveLength(4);
     await expect.element(steps.getByText("Worked")).toHaveLength(3);
     await expect.element(steps.getByText(/permission to delete objects/)).toBeVisible();
-    // The unsaved bucket was tested, without a secret: the saved one is used.
-    expect(
-      api.bodies.find((body) => body.path === "/api/settings/backups/test-connection")?.body,
-    ).toEqual({
-      bucket: "other-bucket",
-      prefix: "ottertrail-backups",
-      endpoint: "https://s3.eu-central-1.amazonaws.com",
-      region: "eu-central-1",
-      accessKeyId: "AKIAEXAMPLE",
-    });
+    // 04:00 UTC is noon in Singapore.
+    await expect.element(destination().getByText("Tested 20 Nov 2026, 12:00.")).toBeVisible();
+    await expect
+      .element(destination().getByRole("button", { name: "Test connection" }))
+      .toBeEnabled();
     // Testing changed nothing saved.
-    await expect.element(form().getByText("Unsaved changes")).toBeVisible();
-  });
+    await expect.element(form().getByText("No unsaved changes")).toBeVisible();
+  }, 15_000);
 
-  test("leaving with unsaved changes asks first", async () => {
-    installFakeApi({ backups: fakeBackups({ view: BACKUPS_REUSED }) });
+  test("a refusal from the API says why", async () => {
+    installFakeApi({
+      backups: fakeBackups({
+        view: BACKUPS_ON,
+        connection: new Response(
+          JSON.stringify({
+            error: "rate_limited",
+            message: "Test connection limit reached. Retry in 60 seconds.",
+          }),
+          { status: 429, headers: { "content-type": "application/json" } },
+        ),
+      }),
+    });
     renderApp(BACKUPS_TAB);
-    await form().getByLabelText("Days to keep").fill("7");
-    await page
-      .getByRole("navigation", { name: "Instance" })
-      .getByRole("link", { name: "Projects" })
-      .click();
-    await expect.element(page.getByRole("dialog", { name: "Leave without saving?" })).toBeVisible();
+    await destination().getByRole("button", { name: "Test connection" }).click();
+    await expect
+      .element(destination().getByText("Test connection limit reached. Retry in 60 seconds."))
+      .toBeVisible();
   });
 });
 
 describe("turning backups off", () => {
   test("needs the password, and then shows since when and by whom they are off", async () => {
-    const api = installFakeApi({ backups: fakeBackups({ view: BACKUPS_REUSED }) });
+    const api = installFakeApi({ backups: fakeBackups({ view: BACKUPS_ON }) });
     renderApp(BACKUPS_TAB);
-    await form().getByRole("switch", { name: "Back up every day" }).click();
+    await toggle().click();
     await expect.element(form().getByLabelText("Current password")).toBeVisible();
     await form().getByLabelText("Current password").fill(FAKE_PASSWORD);
     await save().click();
@@ -294,12 +353,14 @@ describe("turning backups off", () => {
       enabled: false,
       currentPassword: FAKE_PASSWORD,
     });
+    // The password field goes once saved.
+    await expect.element(form().getByLabelText("Current password")).not.toBeInTheDocument();
   });
 });
 
 describe("Back up now and the key", () => {
   test("Back up now asks the worker, and says so", async () => {
-    const api = installFakeApi({ backups: fakeBackups({ view: BACKUPS_REUSED }) });
+    const api = installFakeApi({ backups: fakeBackups({ view: BACKUPS_ON }) });
     renderApp(BACKUPS_TAB);
     await status().getByRole("button", { name: "Back up now" }).click();
     await expect.element(status().getByText("Backup starts within a minute.")).toBeVisible();
@@ -309,7 +370,7 @@ describe("Back up now and the key", () => {
   });
 
   test("the key is fetched only on Show, copied, hidden, and downloaded as a file", async () => {
-    const api = installFakeApi({ backups: fakeBackups({ view: BACKUPS_REUSED }) });
+    const api = installFakeApi({ backups: fakeBackups({ view: BACKUPS_ON }) });
     const writeText = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue(undefined);
     renderApp(BACKUPS_TAB);
 
@@ -354,7 +415,9 @@ describe("the Backups tab fits", () => {
       installFakeApi({ backups: fakeBackups({ view: BACKUPS_FAILED }) });
       renderApp(BACKUPS_TAB);
       await expect.element(status().getByText("Last backup failed")).toBeVisible();
-      await expect.element(form().getByLabelText("Endpoint")).toBeVisible();
+      await expect
+        .element(destination().getByText("https://s3.eu-central-1.amazonaws.com"))
+        .toBeVisible();
       expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(width);
       const content = document.querySelector("[data-slot=app-content]");
       expect(content?.scrollWidth).toBeLessThanOrEqual(content?.clientWidth ?? 0);

@@ -1,8 +1,4 @@
 import { createHash, randomUUID } from "node:crypto";
-import type { LookupAddress, LookupOptions } from "node:dns";
-import http from "node:http";
-import https from "node:https";
-import { isIP } from "node:net";
 import { Readable } from "node:stream";
 import { buffer } from "node:stream/consumers";
 
@@ -20,13 +16,6 @@ import {
   UploadPartCommand,
 } from "@aws-sdk/client-s3";
 
-import {
-  type AddressPolicy,
-  AddressNotAllowedError,
-  type Lookup,
-  refusedKind,
-  resolveTarget,
-} from "../outbound/addresses.ts";
 import { codeOf } from "../outbound/request.ts";
 import type { Destination } from "./settings.ts";
 
@@ -67,54 +56,12 @@ export function backupTime(name: string): Date | null {
 export const PART_BYTES = 16 * 1024 * 1024;
 export const MAX_PARTS = 10_000;
 
-/** The outbound address rules and the resolver, for an endpoint typed on the dashboard. */
-export interface OutboundRules {
-  policy: AddressPolicy;
-  lookup: Lookup;
-}
-
-type LookupCallback = (
-  error: NodeJS.ErrnoException | null,
-  address: string | LookupAddress[],
-  family?: number,
-) => void;
-
 /**
- * A connection lookup that resolves the endpoint's host with the outbound
- * resolver and refuses an address the rules refuse (loopback, private,
- * metadata services, UPTIME_DENY_ADDRESSES), as webhooks do, checked on
- * every connection the client opens.
+ * The S3 client for a destination. The destination is the operator's own
+ * BACKUP_S3_* (config.ts), as OBJECT_STORE_URL is: no outbound address
+ * rules apply.
  */
-function guardedLookup({ policy, lookup }: OutboundRules) {
-  return (hostname: string, options: LookupOptions, callback: LookupCallback) => {
-    const host = isIP(hostname) === 6 ? `[${hostname}]` : hostname;
-    resolveTarget(new URL(`http://${host}/`), { lookup, policy, who: "backups" }).then(
-      (target) => {
-        if (options.all === true) callback(null, [target]);
-        else callback(null, target.address, target.family);
-      },
-      (error: NodeJS.ErrnoException) => callback(error, ""),
-    );
-  };
-}
-
-/**
- * The S3 client for a destination. One typed on the dashboard follows the
- * outbound address rules: an IP address the rules refuse is refused here,
- * and a host name is checked on each connection.
- */
-export function backupClient(destination: Destination, rules: OutboundRules): S3Client {
-  const agents: { httpAgent?: http.Agent; httpsAgent?: https.Agent } = {};
-  if (destination.fromDashboard) {
-    const host = new URL(destination.url).hostname.replace(/^\[|\]$/g, "");
-    if (isIP(host) !== 0) {
-      const kind = refusedKind(host, rules.policy);
-      if (kind !== null) throw new AddressNotAllowedError(host, host, kind, "backups");
-    }
-    const lookup = guardedLookup(rules);
-    agents.httpAgent = new http.Agent({ keepAlive: true, lookup });
-    agents.httpsAgent = new https.Agent({ keepAlive: true, lookup });
-  }
+export function backupClient(destination: Destination): S3Client {
   return new S3Client({
     endpoint: destination.url,
     region: destination.region,
@@ -131,7 +78,6 @@ export function backupClient(destination: Destination, rules: OutboundRules): S3
       // Between bytes, not for the whole request: a large part may take minutes.
       requestTimeout: 120_000,
       throwOnRequestTimeout: true,
-      ...agents,
     },
     // Parts are buffers, so the SDK can send one again.
     maxAttempts: 4,
@@ -450,7 +396,6 @@ const DNS_CODES = new Set(["ENOTFOUND", "EAI_AGAIN", "ENODATA", "ESERVFAIL", "EC
  * key: S3's errors name none.
  */
 export function s3ErrorText(error: unknown, verb = "use"): string {
-  if (error instanceof AddressNotAllowedError) return error.message;
   if (error instanceof S3ServiceException) {
     const status = error.$metadata.httpStatusCode;
     const code = error.name;
@@ -464,7 +409,7 @@ export function s3ErrorText(error: unknown, verb = "use"): string {
       case "InvalidAccessKeyId":
         return "Unknown access key ID (InvalidAccessKeyId). Check it.";
       case "SignatureDoesNotMatch":
-        return "Secret access key mismatch (SignatureDoesNotMatch). Enter it again.";
+        return "Secret access key mismatch (SignatureDoesNotMatch). Check the secret access key.";
       case "AuthorizationHeaderMalformed":
       case "PermanentRedirect":
       case "IllegalLocationConstraintException":

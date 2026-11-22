@@ -18,7 +18,12 @@ export interface FakeBackups {
   list: BackupList | Response;
   /** GET /api/settings/backups/key: the key, shown only when asked. */
   key: BackupKey;
-  /** POST /api/settings/backups/test-connection. */
+  /**
+   * What the worker stores once it has taken a Test connection: given, the
+   * request is answered as pending, and the next read of the settings has
+   * this result, as if the worker ran it in between. A Response stands for
+   * the API's refusal.
+   */
   connection: ConnectionTest | Response;
 }
 
@@ -31,22 +36,30 @@ export const FAKE_KEY: BackupKey = {
   createdAt: "2026-11-18T02:00:00.000Z",
 };
 
-/** Backups off, never turned on, with no object store: a separate destination is asked for. */
+/** What a worker with BACKUP_S3_* reports. */
+export const REPORTED: Backups["destination"] = {
+  reportedAt: "2026-11-20T03:30:00.000Z",
+  config: {
+    endpoint: "https://s3.eu-central-1.amazonaws.com",
+    region: "eu-central-1",
+    bucket: "acme-backups",
+    prefix: "ottertrail-backups",
+    accessKeyId: "AKIAEXAMPLE",
+  },
+  problem: null,
+};
+
+/** Backups off, never turned on, and no destination: the worker has no BACKUP_S3_*. */
 export const BACKUPS_OFF: Backups = {
   settings: {
     enabled: false,
     timeOfDay: "03:00",
     keepDays: 14,
-    bucket: null,
-    prefix: "ottertrail-backups",
-    endpoint: null,
-    region: null,
-    accessKeyId: null,
-    secret: "none",
     disabledAt: null,
     disabledBy: null,
   },
-  destination: { mode: "separate", reason: "none", objectStore: null },
+  destination: { reportedAt: "2026-11-20T03:30:00.000Z", config: null, problem: null },
+  connectionTest: { requested: false, testedAt: null, result: null },
   key: { state: "none", recipient: null, createdAt: null, savedAt: null },
   status: {
     now: "2026-11-20T04:00:00.000Z",
@@ -59,8 +72,23 @@ export const BACKUPS_OFF: Backups = {
     retryAt: null,
     backupRequested: false,
     testRestoreRequested: false,
+    listedAt: null,
   },
 };
+
+/** Off, and the worker's BACKUP_S3_* have a problem. */
+export const BACKUPS_INVALID: Backups = {
+  ...BACKUPS_OFF,
+  destination: {
+    reportedAt: "2026-11-20T03:30:00.000Z",
+    config: null,
+    problem:
+      "Set BACKUP_S3_REGION too: backups need the endpoint, region, bucket, access key ID, and secret access key.",
+  },
+};
+
+/** Off, with a destination reported: ready to turn on. */
+export const BACKUPS_READY: Backups = { ...BACKUPS_OFF, destination: REPORTED };
 
 /** A backup that worked at 03:00 Singapore time on 20 November. */
 export const GOOD_RUN: BackupRun = {
@@ -75,14 +103,10 @@ export const GOOD_RUN: BackupRun = {
   error: null,
 };
 
-/** On, reusing an off-site object store's connection, the key saved, the last backup good. */
-export const BACKUPS_REUSED: Backups = {
-  settings: { ...BACKUPS_OFF.settings, enabled: true, bucket: "acme-backups", secret: "none" },
-  destination: {
-    mode: "object_store",
-    reason: "off_site",
-    objectStore: { endpoint: "https://acct.r2.cloudflarestorage.com", bucket: "acme-files" },
-  },
+/** On, the key saved, the last backup good, the folder listed after it. */
+export const BACKUPS_ON: Backups = {
+  ...BACKUPS_READY,
+  settings: { ...BACKUPS_OFF.settings, enabled: true },
   key: {
     state: "ready",
     recipient: FAKE_KEY.recipient,
@@ -94,36 +118,21 @@ export const BACKUPS_REUSED: Backups = {
     lastBackup: GOOD_RUN,
     lastSuccess: GOOD_RUN,
     nextDueAt: "2026-11-20T19:00:00.000Z",
+    listedAt: "2026-11-19T19:04:13.000Z",
   },
 };
 
-/** On, to a separate destination (the stack's Garage holds replays), the key not yet saved. */
-export const BACKUPS_SEPARATE: Backups = {
-  settings: {
-    ...BACKUPS_OFF.settings,
-    enabled: true,
-    bucket: "acme-backups",
-    endpoint: "https://s3.eu-central-1.amazonaws.com",
-    region: "eu-central-1",
-    accessKeyId: "AKIAEXAMPLE",
-    secret: "saved",
-  },
-  destination: { mode: "separate", reason: "stack_garage", objectStore: null },
-  key: {
-    state: "ready",
-    recipient: FAKE_KEY.recipient,
-    createdAt: FAKE_KEY.createdAt,
-    savedAt: null,
-  },
-  status: { ...BACKUPS_REUSED.status },
+/** On, the key not yet saved. */
+export const BACKUPS_KEY_UNSAVED: Backups = {
+  ...BACKUPS_ON,
+  key: { ...BACKUPS_ON.key, savedAt: null },
 };
 
-/** The separate destination's last backup failed; the worker tries once more. */
+/** The last backup failed; the worker tries once more. */
 export const BACKUPS_FAILED: Backups = {
-  ...BACKUPS_SEPARATE,
-  key: { ...BACKUPS_SEPARATE.key, savedAt: "2026-11-18T02:10:00.000Z" },
+  ...BACKUPS_ON,
   status: {
-    ...BACKUPS_SEPARATE.status,
+    ...BACKUPS_ON.status,
     lastBackup: {
       ...GOOD_RUN,
       startedAt: "2026-11-20T19:00:00.000Z",
@@ -142,6 +151,7 @@ export const BACKUPS_FAILED: Backups = {
 };
 
 export const FAKE_LIST: BackupList = {
+  listedAt: "2026-11-19T19:04:13.000Z",
   ok: true,
   bucket: "acme-backups",
   prefix: "ottertrail-backups",
@@ -183,6 +193,11 @@ export function fakeBackups(overrides: Partial<FakeBackups> = {}): FakeBackups {
 
 /** The signed-in owner's password, as the fake checks it. */
 export const FAKE_PASSWORD = "correct horse battery";
+const NO_DESTINATION = {
+  error: "no_destination",
+  message:
+    "No backup destination. Set the BACKUP_S3_* variables in the server's .env, restart the worker, then turn backups on.",
+};
 const PASSWORD_NEEDED = { error: "password_required", message: "Enter your current password." };
 const WRONG_PASSWORD = {
   error: "wrong_password",
@@ -222,11 +237,14 @@ export function answerBackups(
   };
 
   if (path === "/api/settings/backups" && method === "PATCH") {
-    const { secretAccessKey, currentPassword, ...fields } = isRecord(body) ? body : {};
+    const { currentPassword, ...fields } = isRecord(body) ? body : {};
     const enabled = "enabled" in fields ? fields.enabled === true : current.settings.enabled;
     const turnedOff = current.settings.enabled && !enabled;
-    // As the API: turning off needs the password (so does a changed destination, not checked here).
+    // As the API: turning off needs the password, and turning on a destination the worker reported.
     if (turnedOff && currentPassword === undefined) return json(PASSWORD_NEEDED, 400);
+    if (enabled && !current.settings.enabled && current.destination.config === null) {
+      return json(NO_DESTINATION, 409);
+    }
     if (currentPassword !== undefined && currentPassword !== FAKE_PASSWORD) {
       return json(WRONG_PASSWORD, 403);
     }
@@ -235,7 +253,6 @@ export function answerBackups(
       settings: {
         ...current.settings,
         ...fields,
-        secret: typeof secretAccessKey === "string" ? "saved" : current.settings.secret,
         disabledAt: enabled ? null : turnedOff ? current.status.now : current.settings.disabledAt,
         disabledBy: enabled ? null : turnedOff ? "Test Owner" : current.settings.disabledBy,
       },
@@ -252,11 +269,27 @@ export function answerBackups(
       status: { ...current.status, nextDueAt: enabled ? "2026-11-20T19:00:00.000Z" : null },
     });
   }
-  if (path === "/api/settings/backups") return json(current);
+  if (path === "/api/settings/backups") {
+    // A Test connection asked for: the worker ran it before this read.
+    if (current.connectionTest.requested && !(backups.connection instanceof Response)) {
+      backups.view = {
+        ...current,
+        connectionTest: {
+          requested: false,
+          testedAt: current.status.now,
+          result: backups.connection,
+        },
+      };
+      return json(backups.view);
+    }
+    return json(current);
+  }
   if (path === "/api/settings/backups/test-connection") {
-    return backups.connection instanceof Response
-      ? backups.connection.clone()
-      : json(backups.connection);
+    if (backups.connection instanceof Response) return backups.connection.clone();
+    return replace({
+      ...current,
+      connectionTest: { ...current.connectionTest, requested: true },
+    });
   }
   if (path === "/api/settings/backups/run") {
     return replace({ ...current, status: { ...current.status, backupRequested: true } });

@@ -1,12 +1,10 @@
-import { createServer, type Server } from "node:http";
-import type { AddressInfo } from "node:net";
-
 import { identityToRecipient } from "age-encryption";
+import { sql } from "kysely";
 import { afterAll, beforeAll, describe, expect, test } from "vite-plus/test";
 
+import { NO_DESTINATION_REPORTED } from "../src/backups/routes.ts";
 import { BackupSecrets } from "../src/backups/secrets.ts";
-import { LOCAL_OBJECT_STORE } from "../src/config.ts";
-import { addressPolicy, systemLookup } from "../src/outbound/addresses.ts";
+import type { DestinationReport } from "../src/backups/settings.ts";
 import {
   OWNER,
   PUBLIC_URL,
@@ -14,30 +12,51 @@ import {
   signedInUser,
   TEST_AUTH_SECRET,
 } from "./helpers/dashboard.ts";
-import { testName } from "./helpers/test-names.ts";
+import {
+  createTestDatabase,
+  MIGRATION_TEST_MS,
+  migrateTestDatabase,
+} from "./helpers/test-database.ts";
 
 /**
  * The Backups tab's routes (backups/routes.ts; docs/access.md): the owner
- * only, Origin on changes, bodies checked first; the destination's
- * secret sealed and never returned; the backup key made once, sealed,
- * shown and downloaded only on request (both logged, without the key);
- * Test connection's steps; and the per-user limits. Backups themselves
- * are in backup-run.test.ts.
+ * only, Origin on changes, bodies checked first; no destination fields,
+ * since where backups go is the worker's BACKUP_S3_*, and the tab shows
+ * what the worker reported; turning on refused without a reported
+ * destination; the backup key made once, sealed, shown and downloaded only
+ * on request (both logged, without the key); Test connection asked of the
+ * worker; the listing the worker stored; and the per-user limits. The
+ * worker's side (its report, Test connection, the listing, and the
+ * backups themselves) is in backup-run.test.ts.
  */
 
 type Dashboard = Awaited<ReturnType<typeof signedInDashboard>>;
 
-/** The dev Garage as a separate destination: the off-site store's stand-in in tests. */
-const GARAGE = {
-  endpoint: LOCAL_OBJECT_STORE.url,
-  region: LOCAL_OBJECT_STORE.region,
-  bucket: LOCAL_OBJECT_STORE.bucket,
-  accessKeyId: LOCAL_OBJECT_STORE.accessKeyId,
-  secretAccessKey: LOCAL_OBJECT_STORE.secretAccessKey,
+/** What a worker with BACKUP_S3_* set reports: never the secret. */
+const REPORTED: DestinationReport = {
+  endpoint: "https://s3.eu-central-1.amazonaws.com",
+  region: "eu-central-1",
+  bucket: "acme-backups",
+  prefix: "ottertrail-backups",
+  accessKeyId: "AKIAEXAMPLE",
 };
 
-/** Loopback allowed: the dev Garage is on 127.0.0.1. Metadata services are refused regardless. */
-const LOOPBACK_RULES = { policy: addressPolicy({ allowPrivate: true }), lookup: systemLookup };
+/** Writes the worker's report, as backups/job.ts does. */
+async function report(
+  dashboard: Dashboard,
+  value: { destination: DestinationReport } | { problem: string } | null,
+  at = new Date(),
+): Promise<void> {
+  await dashboard.db
+    .updateTable("backup_settings")
+    .set({
+      destination:
+        value !== null && "destination" in value ? JSON.stringify(value.destination) : null,
+      destination_problem: value !== null && "problem" in value ? value.problem : null,
+      destination_reported_at: at,
+    })
+    .execute();
+}
 
 function call(
   dashboard: Dashboard,
@@ -61,20 +80,16 @@ function call(
   });
 }
 
-describe("a separate destination (no object store)", () => {
+describe("the Backups tab's routes", () => {
   let dashboard: Dashboard;
   const log: string[] = [];
-  const prefix = `test-backups/${testName()}`;
 
   beforeAll(async () => {
     dashboard = await signedInDashboard({
       timeZone: "Europe/Berlin",
       backups: {
-        objectStore: null,
-        stackGarage: false,
         authSecret: TEST_AUTH_SECRET,
-        rules: LOOPBACK_RULES,
-        testConnectionLimit: { capacity: 4, refillPerSecond: 0.0001 },
+        testConnectionLimit: { capacity: 3, refillPerSecond: 0.0001 },
         backupNowLimit: { capacity: 2, refillPerSecond: 0.0001 },
       },
       logStream: { write: (line) => void log.push(line) },
@@ -97,7 +112,7 @@ describe("a separate destination (no object store)", () => {
     const routes: ["GET" | "PATCH" | "POST", string, unknown?][] = [
       ["GET", "/api/settings/backups"],
       ["PATCH", "/api/settings/backups", { keepDays: 7 }],
-      ["POST", "/api/settings/backups/test-connection", {}],
+      ["POST", "/api/settings/backups/test-connection"],
       ["POST", "/api/settings/backups/run"],
       ["POST", "/api/settings/backups/test-restore"],
       ["GET", "/api/settings/backups/list"],
@@ -121,25 +136,23 @@ describe("a separate destination (no object store)", () => {
     );
   });
 
-  test("off by default, asking for a separate destination, with nothing saved", async () => {
+  test("off by default, with no destination reported and nothing listed", async () => {
     const body = (await call(dashboard, "GET", "/api/settings/backups")).json();
     expect(body.settings).toEqual({
       enabled: false,
       timeOfDay: "03:00",
       keepDays: 14,
-      bucket: null,
-      prefix: "ottertrail-backups",
-      endpoint: null,
-      region: null,
-      accessKeyId: null,
-      secret: "none",
       disabledAt: null,
       disabledBy: null,
     });
-    expect(body.destination).toEqual({ mode: "separate", reason: "none", objectStore: null });
+    expect(body.destination).toEqual({ reportedAt: null, config: null, problem: null });
+    expect(body.connectionTest).toEqual({ requested: false, testedAt: null, result: null });
     expect(body.key).toEqual({ state: "none", recipient: null, createdAt: null, savedAt: null });
     expect(body.status.nextDueAt).toBeNull();
     expect(body.status.lastBackup).toBeNull();
+    expect(body.status.listedAt).toBeNull();
+    const list = await call(dashboard, "GET", "/api/settings/backups/list");
+    expect(list.json()).toEqual({ listedAt: null });
   });
 
   test("changes need the dashboard's Origin", async () => {
@@ -152,134 +165,110 @@ describe("a separate destination (no object store)", () => {
   });
 
   test("bodies are checked before anything is saved", async () => {
-    const refused: [unknown, string?][] = [
-      [{}],
-      [{ timeOfDay: "25:00" }],
-      [{ timeOfDay: "3:00" }],
-      [{ keepDays: 0 }],
-      [{ keepDays: 366 }],
-      [{ keepDays: 2.5 }],
-      [{ enabled: "true" }],
-      [{ enabled: null }],
-      [{ prefix: "" }],
-      [{ prefix: "/backups" }],
-      [{ prefix: "backups/" }],
-      [{ prefix: "a/../b" }],
-      [{ prefix: "x".repeat(201) }],
-      [{ bucket: "Not_A_Bucket" }],
-      [{ region: "us east" }],
-      [{ accessKeyId: "has space" }],
-      [{ secretAccessKey: "" }],
-      [{ secretAccessKey: "s".repeat(257) }],
-      [{ endpoint: "ftp://storage.example.com" }, "invalid_endpoint"],
-      [{ endpoint: "https://storage.example.com/bucket" }, "invalid_endpoint"],
-      [{ endpoint: "https://user:pass@storage.example.com" }, "invalid_endpoint"],
-      [{ endpoint: "http://169.254.169.254" }, "address_not_allowed"],
-      [{ enabled: true }, "destination_incomplete"],
-      [{ enabled: true, ...GARAGE, secretAccessKey: undefined }, "destination_incomplete"],
+    const refused: unknown[] = [
+      {},
+      { timeOfDay: "25:00" },
+      { timeOfDay: "3:00" },
+      { keepDays: 0 },
+      { keepDays: 366 },
+      { keepDays: 2.5 },
+      { enabled: "true" },
+      { enabled: null },
     ];
     const answers = [];
-    for (const [body, error] of refused) {
+    for (const body of refused) {
       const response = await call(dashboard, "PATCH", "/api/settings/backups", { body });
-      const answer: { error?: string } = response.json();
-      answers.push({
-        body,
-        status: response.statusCode,
-        error: error === undefined ? null : answer.error,
-      });
+      answers.push({ body, status: response.statusCode });
     }
-    expect(answers).toEqual(
-      refused.map(([body, error]) => ({ body, status: 400, error: error ?? null })),
-    );
+    expect(answers).toEqual(refused.map((body) => ({ body, status: 400 })));
     const row = await dashboard.db
       .selectFrom("backup_settings")
       .selectAll()
       .executeTakeFirstOrThrow();
-    expect(row).toMatchObject({ enabled: false, keep_days: 14, endpoint: null, key_sealed: null });
+    expect(row).toMatchObject({ enabled: false, keep_days: 14, key_sealed: null });
   });
 
-  test("Back up now and Test restore wait for backups to be on", async () => {
+  test("turning on is refused until the worker reports a destination, saying what to do", async () => {
+    const none = await call(dashboard, "PATCH", "/api/settings/backups", {
+      body: { enabled: true },
+    });
+    expect(none.statusCode).toBe(409);
+    expect(none.json()).toEqual({ error: "no_destination", message: NO_DESTINATION_REPORTED });
+
+    await report(dashboard, { problem: "Set BACKUP_S3_REGION too." });
+    const invalid = await call(dashboard, "PATCH", "/api/settings/backups", {
+      body: { enabled: true },
+    });
+    expect(invalid.statusCode).toBe(409);
+    expect(invalid.json().message).toBe(
+      "The worker's BACKUP_S3_* variables have a problem: Set BACKUP_S3_REGION too.",
+    );
+    const view = (await call(dashboard, "GET", "/api/settings/backups")).json();
+    expect(view.destination).toMatchObject({
+      config: null,
+      problem: "Set BACKUP_S3_REGION too.",
+    });
+    expect(view.destination.reportedAt).not.toBeNull();
+    // The schedule saves while off, without a destination.
+    const time = await call(dashboard, "PATCH", "/api/settings/backups", {
+      body: { timeOfDay: "02:30", keepDays: 7 },
+    });
+    expect(time.statusCode).toBe(200);
+    expect(time.json().settings).toMatchObject({ enabled: false, timeOfDay: "02:30", keepDays: 7 });
+    const row = await dashboard.db
+      .selectFrom("backup_settings")
+      .select(["enabled", "key_sealed"])
+      .executeTakeFirstOrThrow();
+    expect(row).toEqual({ enabled: false, key_sealed: null });
+  });
+
+  test("Back up now, Test restore, and Test connection wait for backups and a destination", async () => {
+    await report(dashboard, null);
     const run = await call(dashboard, "POST", "/api/settings/backups/run");
     expect(run.statusCode).toBe(409);
     expect(run.json().error).toBe("backups_off");
     const restore = await call(dashboard, "POST", "/api/settings/backups/test-restore");
     expect(restore.statusCode).toBe(409);
+    const connection = await call(dashboard, "POST", "/api/settings/backups/test-connection");
+    expect(connection.statusCode).toBe(409);
+    expect(connection.json()).toEqual({
+      error: "no_destination",
+      message: NO_DESTINATION_REPORTED,
+    });
     const key = await call(dashboard, "POST", "/api/settings/backups/key", {
       body: { password: OWNER.password },
     });
     expect(key.statusCode).toBe(404);
   });
 
-  test("turning backups on saves the destination, seals the secret, and makes the key once", async () => {
-    const response = await call(dashboard, "PATCH", "/api/settings/backups", {
-      body: { enabled: true, timeOfDay: "02:30", keepDays: 7, prefix, ...GARAGE },
-    });
-    // A new destination needs the current password.
-    expect(response.statusCode).toBe(400);
-    expect(response.json().error).toBe("password_required");
-    const wrong = await call(dashboard, "PATCH", "/api/settings/backups", {
-      body: { enabled: true, prefix, ...GARAGE, currentPassword: "not it" },
-    });
-    expect(wrong.statusCode).toBe(403);
-    expect(wrong.json().error).toBe("wrong_password");
+  test("with a reported destination, turning on makes the key once, and shows the destination", async () => {
+    await report(dashboard, { destination: REPORTED });
     const saved = await call(dashboard, "PATCH", "/api/settings/backups", {
-      body: {
-        enabled: true,
-        timeOfDay: "02:30",
-        keepDays: 7,
-        prefix,
-        ...GARAGE,
-        currentPassword: OWNER.password,
-      },
+      body: { enabled: true },
     });
+    // Turning on needs no password: only off does.
     expect(saved.statusCode).toBe(200);
-    const response2 = saved;
-    const text = response2.body;
-    const body = response2.json();
-    // The secret is never in an answer: only that one is saved.
-    expect(text).not.toContain(GARAGE.secretAccessKey);
-    expect(body.settings).toMatchObject({
-      enabled: true,
-      timeOfDay: "02:30",
-      keepDays: 7,
-      prefix,
-      endpoint: GARAGE.endpoint,
-      bucket: GARAGE.bucket,
-      accessKeyId: GARAGE.accessKeyId,
-      secret: "saved",
-    });
+    const body = saved.json();
+    expect(body.settings).toMatchObject({ enabled: true, timeOfDay: "02:30", keepDays: 7 });
+    expect(body.destination.config).toEqual(REPORTED);
+    expect(body.destination.problem).toBeNull();
     expect(body.key.state).toBe("ready");
     expect(body.key.recipient).toMatch(/^age1[0-9a-z]+$/);
     expect(body.key.savedAt).toBeNull();
     expect(body.status.nextDueAt).not.toBeNull();
 
-    // Sealed at rest: neither the secret nor the key is in the row.
+    // Sealed at rest: the key is not in the row.
     const row = await dashboard.db
       .selectFrom("backup_settings")
       .selectAll()
       .executeTakeFirstOrThrow();
-    expect(row.secret_sealed).toMatch(/^v1\./);
-    expect(row.secret_sealed).not.toContain(GARAGE.secretAccessKey);
     expect(row.key_sealed).toMatch(/^v1\./);
     expect(JSON.stringify(row)).not.toContain("AGE-SECRET-KEY");
-    const secrets = new BackupSecrets(TEST_AUTH_SECRET);
-    expect(secrets.openSecret(row.secret_sealed ?? "", GARAGE.endpoint, GARAGE.accessKeyId)).toBe(
-      GARAGE.secretAccessKey,
-    );
-    // Sealed for this endpoint and key only.
-    expect(
-      secrets.openSecret(row.secret_sealed ?? "", "https://evil.example", GARAGE.accessKeyId),
-    ).toBeNull();
-    expect(secrets.openSecret(row.secret_sealed ?? "", GARAGE.endpoint, "AKIAOTHER")).toBeNull();
-    // Another AUTH_SECRET opens neither.
+    // Another AUTH_SECRET can't open it.
     const other = new BackupSecrets("another-secret-of-at-least-32-characters!!");
-    expect(
-      other.openSecret(row.secret_sealed ?? "", GARAGE.endpoint, GARAGE.accessKeyId),
-    ).toBeNull();
     expect(other.openKey(row.key_sealed ?? "")).toBeNull();
 
-    // Off and on again: the same key.
-    // Turning off needs the password too.
+    // Turning off needs the password.
     const off = await call(dashboard, "PATCH", "/api/settings/backups", {
       body: { enabled: false },
     });
@@ -289,12 +278,18 @@ describe("a separate destination (no object store)", () => {
     });
     expect(turnedOff.json().settings).toMatchObject({ enabled: false, disabledBy: OWNER.name });
     expect(turnedOff.json().settings.disabledAt).not.toBeNull();
+    // Off and on again: the same key.
     const again = (
       await call(dashboard, "PATCH", "/api/settings/backups", { body: { enabled: true } })
     ).json();
     expect(again.key.recipient).toBe(body.key.recipient);
-    // A save without a secret keeps the saved one.
-    expect(again.settings.secret).toBe("saved");
+    // While on, the schedule saves even if the worker now reports a problem.
+    await report(dashboard, { problem: "Set BACKUP_S3_BUCKET too." });
+    const time = await call(dashboard, "PATCH", "/api/settings/backups", {
+      body: { timeOfDay: "03:15" },
+    });
+    expect(time.statusCode).toBe(200);
+    await report(dashboard, { destination: REPORTED });
   });
 
   test("the key is shown and downloaded on request, logged without the key", async () => {
@@ -332,7 +327,6 @@ describe("a separate destination (no object store)", () => {
     expect(lines).toContain("backup key shown");
     expect(lines).toContain("backup key downloaded");
     expect(lines).not.toContain(key);
-    expect(lines).not.toContain(GARAGE.secretAccessKey);
   });
 
   test("the reminder stays until the owner says the key is saved", async () => {
@@ -347,80 +341,102 @@ describe("a separate destination (no object store)", () => {
     expect(replace.json().error).toBe("key_readable");
   });
 
-  test("Test connection puts, lists, reads, and deletes on the folder", async () => {
-    const response = await call(dashboard, "POST", "/api/settings/backups/test-connection", {
-      body: { prefix: `${prefix}/connection` },
+  test("Test connection asks the worker, pending until it stores the steps", async () => {
+    const asked = await call(dashboard, "POST", "/api/settings/backups/test-connection");
+    expect(asked.statusCode).toBe(200);
+    expect(asked.json().connectionTest).toEqual({
+      requested: true,
+      testedAt: null,
+      result: null,
     });
-    expect(response.statusCode).toBe(200);
-    expect(response.json()).toEqual({
-      ok: true,
-      steps: [
-        { step: "put", status: "ok" },
-        { step: "list", status: "ok" },
-        { step: "get", status: "ok" },
-        { step: "delete", status: "ok" },
-      ],
-    });
-  });
+    const first = await dashboard.db
+      .selectFrom("backup_settings")
+      .select("connection_test_requested_at")
+      .executeTakeFirstOrThrow();
+    expect(first.connection_test_requested_at).not.toBeNull();
+    // Asked again while pending: still the one request.
+    expect(
+      (await call(dashboard, "POST", "/api/settings/backups/test-connection")).statusCode,
+    ).toBe(200);
+    const second = await dashboard.db
+      .selectFrom("backup_settings")
+      .select("connection_test_requested_at")
+      .executeTakeFirstOrThrow();
+    expect(second.connection_test_requested_at).toEqual(first.connection_test_requested_at);
 
-  test("Test connection says which step failed, in plain words", async () => {
-    const wrong = await call(dashboard, "POST", "/api/settings/backups/test-connection", {
-      body: { secretAccessKey: "not-the-secret" },
+    // The worker ran it (backups/job.ts): the tab shows each step.
+    const steps = [
+      { step: "put", status: "ok" },
+      { step: "list", status: "ok" },
+      { step: "get", status: "ok" },
+      {
+        step: "delete",
+        status: "failed",
+        error:
+          "Access denied (AccessDenied). Give this key permission to delete objects in the backup folder.",
+      },
+    ];
+    const testedAt = new Date("2026-11-20T10:00:00Z");
+    await dashboard.db
+      .updateTable("backup_settings")
+      .set({
+        connection_test: JSON.stringify({ ok: false, steps }),
+        connection_tested_at: testedAt,
+        connection_test_requested_at: null,
+      })
+      .execute();
+    const view = (await call(dashboard, "GET", "/api/settings/backups")).json();
+    expect(view.connectionTest).toEqual({
+      requested: false,
+      testedAt: testedAt.toISOString(),
+      result: { ok: false, steps },
     });
-    expect(wrong.statusCode).toBe(200);
-    const body = wrong.json();
-    expect(body.ok).toBe(false);
-    expect(body.steps[0].status).toBe("failed");
-    expect(body.steps[0].error).toMatch(
-      /Secret access key mismatch|Unknown access key|Access denied/i,
-    );
-    expect(body.steps.slice(1).map((step: { status: string }) => step.status)).toEqual([
-      "skipped",
-      "skipped",
-      "skipped",
-    ]);
-  });
-
-  test("Test connection reports a refused permission on the step it refused", async () => {
-    const s3 = await startRefusingS3("DELETE");
-    try {
-      const response = await call(dashboard, "POST", "/api/settings/backups/test-connection", {
-        body: {
-          endpoint: s3.url,
-          region: "auto",
-          bucket: "backups",
-          accessKeyId: "AKIA1",
-          secretAccessKey: "secret-for-the-stand-in",
-        },
-      });
-      const body = response.json();
-      expect(body.ok).toBe(false);
-      expect(body.steps.map((step: { status: string }) => step.status)).toEqual([
-        "ok",
-        "ok",
-        "ok",
-        "failed",
-      ]);
-      expect(body.steps[3].error).toBe(
-        "Access denied (AccessDenied). Give this key permission to delete objects in the backup folder.",
-      );
-    } finally {
-      await s3.close();
-    }
   });
 
   test("Test connection is limited per user", async () => {
-    // Three ran above, of four.
-    const fourth = await call(dashboard, "POST", "/api/settings/backups/test-connection", {
-      body: { prefix: `${prefix}/connection` },
+    // Two ran above, of three.
+    expect(
+      (await call(dashboard, "POST", "/api/settings/backups/test-connection")).statusCode,
+    ).toBe(200);
+    const fourth = await call(dashboard, "POST", "/api/settings/backups/test-connection");
+    expect(fourth.statusCode).toBe(429);
+    expect(fourth.json().error).toBe("rate_limited");
+    expect(fourth.headers["retry-after"]).toBeDefined();
+  });
+
+  test("the list is the worker's last listing, with when it was listed", async () => {
+    const listedAt = new Date("2026-11-20T03:05:00Z");
+    const listing = {
+      ok: true,
+      bucket: REPORTED.bucket,
+      prefix: REPORTED.prefix,
+      backups: [
+        { name: "2026-11-20T020000Z", at: "2026-11-20T02:00:00.000Z", bytes: 1234, complete: true },
+      ],
+    };
+    await dashboard.db
+      .updateTable("backup_settings")
+      .set({ backup_list: JSON.stringify(listing), backup_listed_at: listedAt })
+      .execute();
+    const list = await call(dashboard, "GET", "/api/settings/backups/list");
+    expect(list.json()).toEqual({ listedAt: listedAt.toISOString(), ...listing });
+    const view = (await call(dashboard, "GET", "/api/settings/backups")).json();
+    expect(view.status.listedAt).toBe(listedAt.toISOString());
+
+    const failed = {
+      ok: false,
+      bucket: REPORTED.bucket,
+      prefix: REPORTED.prefix,
+      error: "Couldn't list backups: Bucket not found (NoSuchBucket). Check the name or create it.",
+    };
+    await dashboard.db
+      .updateTable("backup_settings")
+      .set({ backup_list: JSON.stringify(failed) })
+      .execute();
+    expect((await call(dashboard, "GET", "/api/settings/backups/list")).json()).toEqual({
+      listedAt: listedAt.toISOString(),
+      ...failed,
     });
-    expect(fourth.statusCode).toBe(200);
-    const fifth = await call(dashboard, "POST", "/api/settings/backups/test-connection", {
-      body: { prefix: `${prefix}/connection` },
-    });
-    expect(fifth.statusCode).toBe(429);
-    expect(fifth.json().error).toBe("rate_limited");
-    expect(fifth.headers["retry-after"]).toBeDefined();
   });
 
   test("Back up now and Test restore ask the worker, limited per user", async () => {
@@ -445,14 +461,10 @@ describe("a separate destination (no object store)", () => {
     const before = (await call(dashboard, "GET", "/api/settings/backups")).json();
     await dashboard.db
       .updateTable("backup_settings")
-      .set({
-        key_sealed: other.sealKey("AGE-SECRET-KEY-1NOTREAL"),
-        secret_sealed: other.sealSecret("x", GARAGE.endpoint, GARAGE.accessKeyId),
-      })
+      .set({ key_sealed: other.sealKey("AGE-SECRET-KEY-1NOTREAL") })
       .execute();
     const body = (await call(dashboard, "GET", "/api/settings/backups")).json();
     expect(body.key.state).toBe("unreadable");
-    expect(body.settings.secret).toBe("unreadable");
     const shown = await call(dashboard, "POST", "/api/settings/backups/key", {
       body: { password: OWNER.password },
     });
@@ -467,51 +479,9 @@ describe("a separate destination (no object store)", () => {
 });
 
 describe("guarded actions", () => {
-  test("a new endpoint or access key drops the saved secret: it is never sent elsewhere", async () => {
-    const dashboard = await signedInDashboard({
-      backups: {
-        objectStore: null,
-        stackGarage: false,
-        authSecret: TEST_AUTH_SECRET,
-        rules: LOOPBACK_RULES,
-      },
-    });
-    try {
-      const prefix = `test-backups/${testName()}`;
-      const saved = await call(dashboard, "PATCH", "/api/settings/backups", {
-        body: { enabled: true, prefix, ...GARAGE, currentPassword: OWNER.password },
-      });
-      expect(saved.statusCode).toBe(200);
-      // Test connection to another endpoint, without a secret: the saved one is not used.
-      const elsewhere = await call(dashboard, "POST", "/api/settings/backups/test-connection", {
-        body: { endpoint: "https://elsewhere.example" },
-      });
-      expect(elsewhere.statusCode).toBe(400);
-      expect(elsewhere.json().message).toMatch(/^Enter the destination's secret access key/);
-      // Saving another access key without a secret clears the saved one.
-      const otherKey = await call(dashboard, "PATCH", "/api/settings/backups", {
-        body: { enabled: false, accessKeyId: "AKIAOTHER", currentPassword: OWNER.password },
-      });
-      expect(otherKey.statusCode).toBe(200);
-      expect(otherKey.json().settings.secret).toBe("none");
-      const row = await dashboard.db
-        .selectFrom("backup_settings")
-        .select("secret_sealed")
-        .executeTakeFirstOrThrow();
-      expect(row.secret_sealed).toBeNull();
-    } finally {
-      await dashboard.close();
-    }
-  });
-
   test("each one notifies the storage-warning channels and emails the owner", async () => {
     const dashboard = await signedInDashboard({
-      backups: {
-        objectStore: null,
-        stackGarage: false,
-        authSecret: TEST_AUTH_SECRET,
-        rules: LOOPBACK_RULES,
-      },
+      backups: { authSecret: TEST_AUTH_SECRET },
       notifications: { emailConfigured: true },
     });
     try {
@@ -529,11 +499,9 @@ describe("guarded actions", () => {
         .insertInto("storage_warning_channels")
         .values({ channel_id: channel.id })
         .execute();
-      const prefix = `test-backups/${testName()}`;
-      await call(dashboard, "PATCH", "/api/settings/backups", {
-        body: { enabled: true, prefix, ...GARAGE, currentPassword: OWNER.password },
-      });
-      // Not guarded: the time of day alone.
+      await report(dashboard, { destination: REPORTED });
+      // Not guarded: turning on, and the time of day.
+      await call(dashboard, "PATCH", "/api/settings/backups", { body: { enabled: true } });
       await call(dashboard, "PATCH", "/api/settings/backups", { body: { timeOfDay: "04:00" } });
       await call(dashboard, "POST", "/api/settings/backups/key", {
         body: { password: OWNER.password },
@@ -555,10 +523,10 @@ describe("guarded actions", () => {
         .execute();
       expect(
         deliveries.map((d) => (d.payload as { subject: { action: string } }).subject.action),
-      ).toEqual(["destination_changed", "key_shown", "key_downloaded", "turned_off"]);
+      ).toEqual(["key_shown", "key_downloaded", "turned_off"]);
       expect(deliveries.every((d) => d.event_type === "backups.changed")).toBe(true);
       expect(deliveries[0]?.payload).toMatchObject({
-        message: "Ada Owner changed where backups go.",
+        message: "Ada Owner showed the backup key.",
         url: `${PUBLIC_URL}/settings?tab=backups`,
       });
       // And the inbox, once each, for the owner (the Backups tab is theirs).
@@ -570,7 +538,6 @@ describe("guarded actions", () => {
         .execute();
       expect(inbox).toEqual(
         [
-          "Ada Owner changed where backups go",
           "Ada Owner showed the backup key",
           "Ada Owner downloaded the backup key",
           "Ada Owner turned backups off",
@@ -582,7 +549,6 @@ describe("guarded actions", () => {
         .where("kind", "=", "backup_changed")
         .execute();
       expect(emails.map((email) => (email.params as { action: string }).action)).toEqual([
-        "changed where backups go",
         "showed the backup key",
         "downloaded the backup key",
         "turned backups off",
@@ -608,14 +574,7 @@ describe("guarded actions", () => {
   });
 
   test("of two key replacements at once, one wins and the other is refused", async () => {
-    const dashboard = await signedInDashboard({
-      backups: {
-        objectStore: null,
-        stackGarage: false,
-        authSecret: TEST_AUTH_SECRET,
-        rules: LOOPBACK_RULES,
-      },
-    });
+    const dashboard = await signedInDashboard({ backups: { authSecret: TEST_AUTH_SECRET } });
     try {
       const other = new BackupSecrets("another-secret-of-at-least-32-characters!!");
       await dashboard.db
@@ -641,217 +600,70 @@ describe("guarded actions", () => {
   });
 });
 
-describe("the destination follows the object store", () => {
-  test("an off-site object store's connection is reused: a bucket and folder only", async () => {
-    const store = {
-      url: "https://account.r2.cloudflarestorage.com",
-      region: "auto",
-      bucket: "ottertrail-files",
-      accessKeyId: "AKIAEXAMPLE",
-      secretAccessKey: "not-a-real-secret",
-    };
-    const dashboard = await signedInDashboard({
-      backups: { objectStore: store, stackGarage: false, authSecret: TEST_AUTH_SECRET },
-    });
-    try {
-      const body = (await call(dashboard, "GET", "/api/settings/backups")).json();
-      expect(body.destination).toEqual({
-        mode: "object_store",
-        reason: "off_site",
-        objectStore: { endpoint: store.url, bucket: store.bucket },
-      });
-      // The store's own bucket by default, under a folder of its own.
-      expect(body.settings.bucket).toBe(store.bucket);
-      expect(JSON.stringify(body)).not.toContain(store.secretAccessKey);
-      const refused = await call(dashboard, "PATCH", "/api/settings/backups", {
-        body: { enabled: true, endpoint: "https://s3.example.com", accessKeyId: "x" },
-      });
-      expect(refused.statusCode).toBe(400);
-      expect(refused.json().error).toBe("not_used");
-      const saved = await call(dashboard, "PATCH", "/api/settings/backups", {
-        body: {
-          enabled: true,
-          bucket: "ottertrail-backups",
-          prefix: "instance-1",
-          currentPassword: OWNER.password,
-        },
-      });
-      expect(saved.statusCode).toBe(200);
-      expect(saved.json().settings).toMatchObject({
-        bucket: "ottertrail-backups",
-        prefix: "instance-1",
-      });
-    } finally {
-      await dashboard.close();
-    }
-  });
-
-  test("a folder overlapping the store's replays or source maps, in its bucket, is refused", async () => {
-    const store = {
-      url: "https://account.r2.cloudflarestorage.com",
-      region: "auto",
-      bucket: "ottertrail-files",
-      accessKeyId: "AKIAEXAMPLE",
-      secretAccessKey: "not-a-real-secret",
-    };
-    const dashboard = await signedInDashboard({
-      backups: { objectStore: store, stackGarage: false, authSecret: TEST_AUTH_SECRET },
-    });
-    try {
-      for (const prefix of [
-        "replays",
-        "replays/backups",
-        "source-maps",
-        "source-maps/x/y",
-        "avatars",
-        "avatars/backups",
-      ]) {
-        const refused = await call(dashboard, "PATCH", "/api/settings/backups", {
-          body: { prefix, currentPassword: OWNER.password },
-        });
-        expect([prefix, refused.statusCode, refused.json().error]).toEqual([
-          prefix,
-          400,
-          "folder_overlaps_objects",
-        ]);
-      }
-      // Another bucket, or a folder of its own, is fine.
-      for (const body of [
-        { bucket: "other-bucket", prefix: "replays" },
-        { bucket: store.bucket, prefix: "replays-backups" },
-      ]) {
-        const fine = await call(dashboard, "PATCH", "/api/settings/backups", {
-          body: { ...body, currentPassword: OWNER.password },
-        });
-        expect(fine.statusCode).toBe(200);
-      }
-    } finally {
-      await dashboard.close();
-    }
-  });
-
-  test("a host name that resolves to loopback or a metadata address is refused on connection", async () => {
-    // The real rules (private addresses refused), with names resolved by a stand-in resolver.
-    const names: Record<string, string> = {
-      "internal.example": "127.0.0.1",
-      "metadata.example": "169.254.169.254",
-    };
-    const dashboard = await signedInDashboard({
-      backups: {
-        objectStore: null,
-        stackGarage: false,
-        authSecret: TEST_AUTH_SECRET,
-        rules: {
-          policy: addressPolicy({ allowPrivate: false }),
-          lookup: async (host) => [{ address: names[host] ?? "203.0.113.9", family: 4 }],
-        },
-      },
-    });
-    try {
-      for (const host of Object.keys(names)) {
-        const response = await call(dashboard, "POST", "/api/settings/backups/test-connection", {
-          body: {
-            endpoint: `http://${host}:3900`,
-            region: "auto",
-            bucket: "backups",
-            prefix: "x",
-            accessKeyId: "AKIA1",
-            secretAccessKey: "secret-for-the-test",
-          },
-        });
-        expect(response.statusCode).toBe(200);
-        const [put] = response.json().steps;
-        expect(put).toEqual({
-          step: "put",
-          status: "failed",
-          error: `${host} resolves to an address backups may not reach.`,
-        });
-      }
-    } finally {
-      await dashboard.close();
-    }
-  });
-
-  test("the stack's own Garage is the same disk: a separate destination, saying why", async () => {
-    const dashboard = await signedInDashboard({
-      backups: { objectStore: LOCAL_OBJECT_STORE, stackGarage: true, authSecret: TEST_AUTH_SECRET },
-    });
-    try {
-      const body = (await call(dashboard, "GET", "/api/settings/backups")).json();
-      expect(body.destination).toEqual({
-        mode: "separate",
-        reason: "stack_garage",
-        objectStore: null,
-      });
-    } finally {
-      await dashboard.close();
-    }
-  });
-});
-
-/**
- * A stand-in S3 endpoint that answers PutObject, ListObjectsV2, and
- * GetObject, and refuses `refuse` (a method) with AccessDenied, as S3 does
- * for a key without that permission.
- */
-async function startRefusingS3(
-  refuse: string,
-): Promise<{ url: string; close: () => Promise<void> }> {
-  const objects = new Map<string, Buffer>();
-  const server: Server = createServer((request, response) => {
-    const chunks: Buffer[] = [];
-    request.on("data", (chunk: Buffer) => chunks.push(chunk));
-    request.on("end", () => {
-      const url = new URL(request.url ?? "/", "http://s3");
-      if (request.method === refuse) {
-        response.writeHead(403, { "content-type": "application/xml" });
-        response.end(
-          '<?xml version="1.0" encoding="UTF-8"?><Error><Code>AccessDenied</Code><Message>Access Denied</Message></Error>',
-        );
-        return;
-      }
-      const [, bucket = "", ...rest] = url.pathname.split("/");
-      const key = decodeURIComponent(rest.join("/"));
-      if (request.method === "PUT") {
-        objects.set(key, Buffer.concat(chunks));
-        response.writeHead(200, { etag: '"etag"' });
-        response.end();
-      } else if (request.method === "GET" && key === "") {
-        const prefix = url.searchParams.get("prefix") ?? "";
-        const contents = [...objects.keys()]
-          .filter((name) => name.startsWith(prefix))
-          .map(
-            (name) =>
-              `<Contents><Key>${name}</Key><Size>${objects.get(name)?.length ?? 0}</Size></Contents>`,
-          )
-          .join("");
-        response.writeHead(200, { "content-type": "application/xml" });
-        response.end(
-          `<?xml version="1.0" encoding="UTF-8"?><ListBucketResult><Name>${bucket}</Name><Prefix>${prefix}</Prefix><IsTruncated>false</IsTruncated>${contents}</ListBucketResult>`,
-        );
-      } else if (request.method === "GET") {
-        const body = objects.get(key);
-        if (body === undefined) {
-          response.writeHead(404, { "content-type": "application/xml" });
-          response.end("<Error><Code>NoSuchKey</Code><Message>No such key</Message></Error>");
-        } else {
-          response.writeHead(200, { "content-length": body.length, "content-type": "text/plain" });
-          response.end(body);
+describe("migration 0020", () => {
+  test(
+    "drops the destination 0014 saved, and adds the worker's report, both ways",
+    { timeout: MIGRATION_TEST_MS },
+    async () => {
+      const testDb = await createTestDatabase();
+      try {
+        await migrateTestDatabase(testDb, "0019_ai_model_prices");
+        // A database with 0014's columns, a destination saved on the tab.
+        await sql`
+          update backup_settings set enabled = true, bucket = 'acme-backups',
+            prefix = 'instance-1', endpoint = 'https://s3.example.com', region = 'auto',
+            access_key_id = 'AKIA1', secret_sealed = 'v1.sealed', keep_days = 7
+        `.execute(testDb.db);
+        await migrateTestDatabase(testDb, "latest");
+        const columns = await sql<{ column_name: string }>`
+          select column_name from information_schema.columns
+          where table_schema = ${testDb.schema} and table_name = 'backup_settings'
+        `.execute(testDb.db);
+        const names = columns.rows.map((row) => row.column_name);
+        for (const gone of ["bucket", "prefix", "endpoint", "region", "access_key_id"]) {
+          expect(names).not.toContain(gone);
         }
-      } else if (request.method === "DELETE") {
-        objects.delete(key);
-        response.writeHead(204);
-        response.end();
-      } else {
-        response.writeHead(405);
-        response.end();
+        expect(names).not.toContain("secret_sealed");
+        for (const added of [
+          "destination",
+          "destination_problem",
+          "destination_reported_at",
+          "connection_test_requested_at",
+          "connection_test",
+          "connection_tested_at",
+          "backup_list",
+          "backup_listed_at",
+        ]) {
+          expect(names).toContain(added);
+        }
+        // The rest of the row stays.
+        const row = await testDb.db
+          .selectFrom("backup_settings")
+          .select(["enabled", "keep_days", "destination", "destination_problem"])
+          .executeTakeFirstOrThrow();
+        expect(row).toEqual({
+          enabled: true,
+          keep_days: 7,
+          destination: null,
+          destination_problem: null,
+        });
+        // A report is a destination or a problem, never both.
+        await expect(
+          testDb.db
+            .updateTable("backup_settings")
+            .set({ destination: JSON.stringify({ bucket: "x" }), destination_problem: "x" })
+            .execute(),
+        ).rejects.toThrow(/backup_settings_destination_check/);
+        // And back: 0014's columns, with the default folder.
+        await migrateTestDatabase(testDb, "0019_ai_model_prices");
+        const back = await sql<{ prefix: string; bucket: string | null }>`
+          select prefix, bucket from backup_settings
+        `.execute(testDb.db);
+        expect(back.rows).toEqual([{ prefix: "ottertrail-backups", bucket: null }]);
+        await migrateTestDatabase(testDb, "latest");
+      } finally {
+        await testDb.destroy();
       }
-    });
-  });
-  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-  const { port } = server.address() as AddressInfo;
-  return {
-    url: `http://127.0.0.1:${port}`,
-    close: () => new Promise<void>((resolve) => server.close(() => resolve())),
-  };
-}
+    },
+  );
+});

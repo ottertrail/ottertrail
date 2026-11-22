@@ -2,6 +2,16 @@ import { isIP } from "node:net";
 
 import { z } from "zod";
 
+import {
+  ACCESS_KEY_PATTERN,
+  BUCKET_PATTERN,
+  DEFAULT_PREFIX,
+  MAX_PREFIX,
+  MAX_SECRET,
+  overlapsObjects,
+  PREFIX_PATTERN,
+  REGION_PATTERN,
+} from "./backups/settings.ts";
 import { parseAddressRange } from "./outbound/addresses.ts";
 
 const LOG_LEVELS = ["fatal", "error", "warn", "info", "debug", "trace", "silent"] as const;
@@ -351,6 +361,130 @@ function parseGarage(env: NodeJS.ProcessEnv, store: ObjectStoreConfig | null): G
     );
   }
   return { adminUrl: `${url.protocol}//${url.hostname}:${GARAGE_ADMIN_PORT}`, adminToken };
+}
+
+/**
+ * Where the worker's scheduled backups go (docs/deployment.md, "Scheduled
+ * backups"): an S3-compatible bucket of their own, from BACKUP_S3_*. Only
+ * the worker reads these, and restore-backup.ts the same names: the API
+ * never holds the backup key's bucket credentials.
+ */
+export interface BackupS3Config {
+  /** Its S3 endpoint, an origin. */
+  url: string;
+  region: string;
+  bucket: string;
+  /** The folder backups go under, never empty. */
+  prefix: string;
+  accessKeyId: string;
+  secretAccessKey: string;
+}
+
+/** The variables, in the order the docs and errors name them. */
+export const BACKUP_S3_VARIABLES = [
+  "BACKUP_S3_ENDPOINT",
+  "BACKUP_S3_REGION",
+  "BACKUP_S3_BUCKET",
+  "BACKUP_S3_PREFIX",
+  "BACKUP_S3_ACCESS_KEY_ID",
+  "BACKUP_S3_SECRET_ACCESS_KEY",
+] as const;
+
+/**
+ * The backup destination from BACKUP_S3_*: null when none is set; a
+ * ConfigError when some are set but not all that are needed, or one is
+ * invalid. BACKUP_S3_PREFIX defaults to "ottertrail-backups". In the
+ * object store's own bucket, the folder may not overlap its objects
+ * (replays/, source-maps/, avatars/). Errors never repeat the endpoint or
+ * a key.
+ */
+export function parseBackupS3(
+  env: NodeJS.ProcessEnv,
+  objectStore: ObjectStoreConfig | null,
+): BackupS3Config | null {
+  const read = (name: (typeof BACKUP_S3_VARIABLES)[number]) => env[name]?.trim() ?? "";
+  if (BACKUP_S3_VARIABLES.every((name) => read(name) === "")) return null;
+  const missing = BACKUP_S3_VARIABLES.filter(
+    (name) => name !== "BACKUP_S3_PREFIX" && read(name) === "",
+  );
+  if (missing.length > 0) {
+    throw new ConfigError(
+      `Set ${missing.join(", ")} too: backups need the endpoint, region, bucket, access key ID, and secret access key.`,
+    );
+  }
+  const endpoint = URL.parse(read("BACKUP_S3_ENDPOINT"));
+  if (endpoint === null || (endpoint.protocol !== "http:" && endpoint.protocol !== "https:")) {
+    throw new ConfigError("BACKUP_S3_ENDPOINT must be an http(s) URL");
+  }
+  if (endpoint.username !== "" || endpoint.password !== "") {
+    throw new ConfigError(
+      "Keep keys out of BACKUP_S3_ENDPOINT. Use BACKUP_S3_ACCESS_KEY_ID and BACKUP_S3_SECRET_ACCESS_KEY.",
+    );
+  }
+  if (
+    (endpoint.pathname !== "/" && endpoint.pathname !== "") ||
+    endpoint.search !== "" ||
+    endpoint.hash !== ""
+  ) {
+    throw new ConfigError(
+      "BACKUP_S3_ENDPOINT must be the endpoint without a path, such as https://<account ID>.r2.cloudflarestorage.com. The bucket goes in BACKUP_S3_BUCKET.",
+    );
+  }
+  const region = read("BACKUP_S3_REGION");
+  if (!new RegExp(REGION_PATTERN).test(region)) {
+    throw new ConfigError(
+      `BACKUP_S3_REGION must be letters, digits, hyphens, and underscores (auto for Cloudflare R2), received "${region}"`,
+    );
+  }
+  const bucket = read("BACKUP_S3_BUCKET");
+  if (!new RegExp(BUCKET_PATTERN).test(bucket)) {
+    throw new ConfigError(`BACKUP_S3_BUCKET is not a valid bucket name, received "${bucket}"`);
+  }
+  const prefix = read("BACKUP_S3_PREFIX").replace(/^\/+|\/+$/g, "") || DEFAULT_PREFIX;
+  if (prefix.length > MAX_PREFIX || !new RegExp(PREFIX_PATTERN).test(prefix)) {
+    throw new ConfigError(
+      `BACKUP_S3_PREFIX must be a folder of letters, digits, dots, hyphens, and underscores, with slashes between names, up to ${MAX_PREFIX} characters, received "${prefix.slice(0, MAX_PREFIX)}"`,
+    );
+  }
+  const accessKeyId = read("BACKUP_S3_ACCESS_KEY_ID");
+  if (!new RegExp(ACCESS_KEY_PATTERN).test(accessKeyId)) {
+    throw new ConfigError(
+      "BACKUP_S3_ACCESS_KEY_ID must be up to 128 visible characters without spaces",
+    );
+  }
+  const secretAccessKey = env.BACKUP_S3_SECRET_ACCESS_KEY ?? "";
+  if (secretAccessKey.length > MAX_SECRET) {
+    throw new ConfigError(`BACKUP_S3_SECRET_ACCESS_KEY must be up to ${MAX_SECRET} characters`);
+  }
+  if (
+    objectStore !== null &&
+    endpoint.origin === objectStore.url &&
+    bucket === objectStore.bucket &&
+    overlapsObjects(prefix)
+  ) {
+    throw new ConfigError(
+      "BACKUP_S3_PREFIX overlaps session replays, source maps, or avatars in the object store's bucket. Choose a separate folder, such as ottertrail-backups.",
+    );
+  }
+  return { url: endpoint.origin, region, bucket, prefix, accessKeyId, secretAccessKey };
+}
+
+/**
+ * The worker's backup destination: as parseBackupS3, with a configuration
+ * problem as its message instead of an error, since the worker does other
+ * jobs and must not stop over this one. It reports the problem to the
+ * Backups tab (backups/job.ts).
+ */
+export function loadBackupS3(
+  env: NodeJS.ProcessEnv,
+  objectStore: ObjectStoreConfig | null,
+): BackupS3Config | { problem: string } | null {
+  try {
+    return parseBackupS3(env, objectStore);
+  } catch (error) {
+    if (error instanceof ConfigError) return { problem: error.message };
+    throw error;
+  }
 }
 
 /** The default: 1 GiB of compressed source maps. */
