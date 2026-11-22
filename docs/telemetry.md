@@ -265,7 +265,7 @@ In ClickHouse, in the columns' expressions, in one implementation. The first 4,0
 
 Known limits:
 
-- **A backslash before a quote** is read as escaping it, as MySQL-style strings do. Standard SQL strings (PostgreSQL's by default) end at the quote even after a backslash, so in `WHERE path = 'C:\' AND kind = 'x'` the string runs on to the next quote, and the shape is `WHERE path = ?x'`, from there on unlike the same query with another path.
+- **A backslash before a quote** is read as escaping it, as MySQL does unless `NO_BACKSLASH_ESCAPES` is set. Standard SQL strings (PostgreSQL's by default) end at the quote even after a backslash, so in `WHERE path = 'C:\' AND kind = 'x'` the string runs on to the next quote, and the shape is `WHERE path = ?x?`, from there on unlike the same query with a path that does not end in a backslash.
 - **Double quotes are left alone:** they hold names in standard SQL, so a database that also takes double-quoted strings keeps those in the shape.
 - **Case is kept:** `select` and `SELECT` are two shapes.
 
