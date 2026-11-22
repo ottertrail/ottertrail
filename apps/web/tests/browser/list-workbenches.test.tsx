@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "vite-plus/test";
 import { type Locator, page, userEvent } from "vite-plus/test/browser/context";
 
+import { aiCallId } from "./fake-ai-calls.ts";
 import {
   ALERT_RULE_IDS,
   FAKE_SPANS,
@@ -16,7 +17,7 @@ import { renderApp } from "./render.tsx";
 
 /*
  * The lists as workbenches (docs/design-system.md, "Workbench"): Replays,
- * Traces, Logs, Users, Uptime, and Alerts. For each: the summary while
+ * Traces, Logs, Users, Uptime, Alerts, and AI calls. For each: the summary while
  * nothing is selected, the selection in the address, the keys and where
  * focus goes, j after the selected item leaves the list, links in the
  * detail that stay on the workbench, the item's own page on a narrow
@@ -126,6 +127,13 @@ interface Screen {
 
 const traceId = (i: number) => (i === 0 ? FAKE_TRACE_ID : i.toString(16).padStart(32, "0"));
 const logId = (i: number) => i.toString(16).padStart(32, "0");
+
+/** When each of the first three AI calls started, as its detail writes it (Singapore). */
+const CALL_STARTS = [
+  "16 Nov 2026, 15:38:12.345",
+  "16 Nov 2026, 15:36:51.020",
+  "16 Nov 2026, 15:34:00.500",
+];
 
 const SCREENS: Screen[] = [
   {
@@ -315,6 +323,34 @@ const SCREENS: Screen[] = [
       address: `${P}/alerts?rule=abababab-abab-4bab-8bab-000000000099`,
       name: "All rules",
       search: {},
+    },
+  },
+  {
+    label: "AI calls",
+    path: `${P}/ai/calls`,
+    param: "call",
+    ids: [aiCallId(0), aiCallId(1), aiCallId(2)],
+    shows: (id) => CALL_STARTS[Number(id.slice(-1))] ?? id,
+    heading: "This period",
+    hint: /^Select a call, or press/,
+    field: async () => page.getByRole("searchbox", { name: "User ID" }),
+    pageOf: (id) => `${P}/ai/calls/${id}`,
+    openPage: "Open the call's page",
+    leave: {
+      // Call 1 is GPT-5 mini's: Claude Sonnet's list leaves it out.
+      act: async () => {
+        await page.getByRole("combobox", { name: "Model" }).click();
+        await page.getByRole("option", { name: "claude-sonnet-4-6" }).click();
+        await expect.poll(() => rowOf(aiCallId(1))).toBeNull();
+        await expect.element(page.getByRole("combobox", { name: "Model" })).toHaveFocus();
+      },
+      next: aiCallId(0),
+    },
+    // The call's conversation opens in the Conversations view, on the same page.
+    paneLink: {
+      address: `${P}/ai/calls?call=${aiCallId(0)}`,
+      name: "Open the conversation chat-41",
+      search: { view: "conversations", conversation: "chat-41" },
     },
   },
 ];

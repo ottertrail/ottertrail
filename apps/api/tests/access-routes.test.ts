@@ -189,6 +189,10 @@ const EXPECTED: Record<string, string> = {
   "GET /api/projects/:id/ai": "monitoring:view",
   "GET /api/projects/:id/ai/chart": "monitoring:view",
   "GET /api/projects/:id/ai/calls": "monitoring:view",
+  "GET /api/projects/:id/ai/call-list": "monitoring:view",
+  "GET /api/projects/:id/ai/calls/:callId": "monitoring:view",
+  "GET /api/projects/:id/ai/conversations": "monitoring:view",
+  "GET /api/projects/:id/ai/conversations/:conversationId": "monitoring:view",
 
   "GET /api/projects/:id/checks": "uptime_alerts:view",
   "POST /api/projects/:id/checks": "uptime_alerts:manage",

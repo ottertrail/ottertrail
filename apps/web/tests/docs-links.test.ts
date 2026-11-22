@@ -37,6 +37,7 @@ const EXPECTED: Record<string, [topic: string, path: string]> = {
   "/projects/$projectId/services": ["Services", "/monitoring/services/"],
   "/projects/$projectId/databases": ["Databases", "/monitoring/databases/"],
   "/projects/$projectId/ai": ["AI", "/monitoring/ai-usage/"],
+  "/projects/$projectId/ai/calls": ["AI calls", "/monitoring/ai-usage/#the-calls-list"],
   "/projects/$projectId/hosts": ["Hosts", "/monitoring/hosts/"],
   "/projects/$projectId/uptime": ["Uptime", "/uptime-and-alerts/checks/"],
   "/projects/$projectId/alerts": ["Alerts", "/uptime-and-alerts/alert-rules/"],
@@ -47,6 +48,11 @@ const EXPECTED: Record<string, [topic: string, path: string]> = {
   "/projects/$projectId/errors/$fingerprint": ["Error", "/errors/resolving/#the-groups-page"],
   "/projects/$projectId/replays/$replayId": ["Replay", "/session-replay/error-replays/#the-player"],
   "/projects/$projectId/traces/$traceId": ["Trace", "/monitoring/traces/#a-trace"],
+  "/projects/$projectId/ai/calls/$callId": ["AI call", "/monitoring/ai-usage/#the-calls-list"],
+  "/projects/$projectId/ai/conversations/$conversationId": [
+    "Conversation",
+    "/monitoring/ai-usage/#conversations",
+  ],
   "/projects/$projectId/metrics/$name": ["Metric", "/monitoring/metrics/#a-metrics-charts"],
   "/projects/$projectId/services/$service": [
     "Service",

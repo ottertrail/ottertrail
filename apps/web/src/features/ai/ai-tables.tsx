@@ -34,6 +34,7 @@ import { MISSING } from "@/lib/missing";
 import { formatConversion, formatWhole } from "../analytics/format";
 import { aiSearchOf, environmentSearch } from "../telemetry/search";
 import { formatMoment } from "../users/format";
+import { aiCallsSearchOf } from "./calls-search";
 import { featureLabel, formatMs, formatTokens, formatUsd, isCutOff, modelLabel } from "./format";
 
 /** Where the page is: what a filter link keeps, and adds its filter to. */
@@ -329,9 +330,19 @@ export function RecentCalls({ place }: { place: AiPlace }) {
   const headingId = React.useId();
   return (
     <section aria-labelledby={headingId} className="flex min-w-0 flex-col gap-2 border-t pt-5">
-      <h2 id={headingId} className="text-sm font-medium text-ink">
-        Latest calls
-      </h2>
+      <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+        <h2 id={headingId} className="text-sm font-medium text-ink">
+          Latest calls
+        </h2>
+        <Link
+          to="/projects/$projectId/ai/calls"
+          params={{ projectId: place.projectId }}
+          search={aiCallsSearchOf(place)}
+          className="text-sm text-link hover:underline"
+        >
+          All calls
+        </Link>
+      </div>
       {calls.isError && (
         <Alert variant="destructive">
           <OctagonAlertIcon />

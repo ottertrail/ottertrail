@@ -82,6 +82,7 @@ import type {
 import type { Check, CheckResults, IncidentList } from "../../src/lib/uptime-api.ts";
 import type { Activity, User, UserActivity, UserList } from "../../src/lib/users-api.ts";
 import { answerAccount, type FakeAccount, fakeAccount, sessionBody } from "./fake-account.ts";
+import { answerAiCalls, type FakeAiCalls, fakeAiCalls } from "./fake-ai-calls.ts";
 import { answerAiModels, type FakeAiModels, fakeAiModels } from "./fake-ai-models.ts";
 import { answerAi, type FakeAi, fakeAi } from "./fake-ai.ts";
 import { answerBackups, type FakeBackups, fakeBackups } from "./fake-backups.ts";
@@ -268,6 +269,8 @@ export interface FakeApi {
   shape: (shapeId: string, query: URLSearchParams) => ShapeDetail | Response;
   /** The AI page's routes (fake-ai.ts). */
   ai: FakeAi;
+  /** The AI calls list's routes (fake-ai-calls.ts). */
+  aiCalls: FakeAiCalls;
   /** Answers GET /api/projects/:id/hosts; by default, fakeHosts. */
   hosts: (query: URLSearchParams) => HostList | Response;
   /** Answers GET /api/projects/:id/hosts/charts; by default, fakeHostCharts. */
@@ -3802,6 +3805,8 @@ async function answer(api: FakeApi, url: URL, init: RequestInit | undefined): Pr
   if (aiModels !== null) return aiModels;
   const ai = await answerAi(api.ai, url, api.access.areas.users !== "none");
   if (ai !== null) return ai;
+  const aiCalls = await answerAiCalls(api.aiCalls, url, api.access.areas.users !== "none");
+  if (aiCalls !== null) return aiCalls;
   const avatars = await answerAvatars(api, path, init);
   if (avatars !== null) return avatars;
   if (path === "/api/settings" && init?.method === "PATCH") {
@@ -4337,6 +4342,7 @@ export function installFakeApi(overrides: Partial<FakeApi> = {}): FakeApi {
     databases: fakeDatabases,
     shape: fakeShape,
     ai: fakeAi(),
+    aiCalls: fakeAiCalls(),
     hosts: fakeHosts,
     hostCharts: fakeHostCharts,
     checks: fakeChecks(),

@@ -1,6 +1,6 @@
 # AI usage tracking
 
-**Status: phase 1 is built: detection and storage of AI calls, the price table, the report API, the AI cost and failures alert rule kinds, the AI page (`/projects/<id>/ai`, [dashboard](dashboard.md#ai)), the alert form for the new kinds ([dashboard](dashboard.md#813-alerts)), and the instance's own prices in Settings → AI models ([below](#prices)). From phase 2, `POST /api/ai-calls` for apps without OpenTelemetry ([below](#sending-calls-over-http)), the `ai_latency` rule kind, and the Overview's AI cost widget ([below](#the-overviews-ai-cost-widget)) are built. The docs site explains it at `/monitoring/ai-usage/`.**
+**Status: phase 1 is built: detection and storage of AI calls, the price table, the report API, the AI cost and failures alert rule kinds, the AI page (`/projects/<id>/ai`, [dashboard](dashboard.md#ai)), the alert form for the new kinds ([dashboard](dashboard.md#813-alerts)), and the instance's own prices in Settings → AI models ([below](#prices)). From phase 2, `POST /api/ai-calls` for apps without OpenTelemetry ([below](#sending-calls-over-http)), the `ai_latency` rule kind, the Overview's AI cost widget ([below](#the-overviews-ai-cost-widget)), the list of calls in the Workbench pattern, and conversations grouped by `gen_ai.conversation.id` ([below](#the-calls-list)) are built. The docs site explains it at `/monitoring/ai-usage/`.**
 
 An app that calls language models pays per token, and its calls fail, stall, and get cut off in ways its other requests do not. This module shows the LLM calls an app makes: tokens, estimated cost, latency, and failures, per model, per feature, and per user, with the trace of each call one click away. It reads the spans the app already sends over OTLP ([telemetry](telemetry.md)), or calls its server sends over HTTP; nothing of Ottertrail's runs in the app.
 
@@ -41,19 +41,21 @@ Each value is read from the first of its names the span has, so the current name
 | Error               | `error.type`; the call failed if it has one or its span's status is Error                                                         |
 | Feature             | `ottertrail.feature`, else `gen_ai.agent.name`                                                                                    |
 | User                | `user.id`, else `enduser.id`, by the rule error events use: 1 to 200 characters, no control characters                            |
+| Conversation        | `gen_ai.conversation.id`, trimmed: 1 to 200 characters, no control characters                                                     |
 
 The user is the ID the tracker's `data-user-id` sends, so a call links to the Users page ([known users](web-analytics.md#known-users)).
 
 ### Limits
 
 - **Names:** the model, provider, operation, and feature lose control characters, are trimmed, and are cut to 100 characters; `error.type` to 200; at most 16 finish reasons of 64 characters.
+- **Conversation ID:** trimmed; one longer than 200 characters or with a control character is none, never cut, so two conversations cannot become one. It is an ID the app chooses: nothing else of the messages is read.
 - **Token counts:** a whole number from 0 to 10^9. Anything else (negative, fractional, larger) is left out of that call, as 0, and the call is kept; the batch never fails for it.
 - **Lists:** a breakdown lists the 2,000 models and the 500 features with the most calls in the period; the rest are one "Other" row. The chart splits into the 10 that cost the most, and "Other".
 - **Budget:** each AI call costs one more unit of the project's telemetry budget, as an exception that becomes an error event does ([telemetry](telemetry.md#limits)), but never makes a request too large: a request is refused as too large (413, which exporters drop) only when it costs more than the whole budget without its AI calls, and one that the calls take past it costs the whole budget, waiting for it with a 429 that exporters retry. A 503 gives all of it back.
 
 ## Storage
 
-`ai_calls` (migration `0008_ai_calls`): project, start time, `id` (the trace and span IDs, the span's own row ID; a call sent over HTTP, its UUID), trace and span IDs, service, environment, release, provider, model, operation, feature, user, the five token counts, duration, time to first chunk, failed, `error.type`, and finish reasons.
+`ai_calls` (migration `0008_ai_calls`): project, start time, `id` (the trace and span IDs, the span's own row ID; a call sent over HTTP, its UUID), trace and span IDs, service, environment, release, provider, model, operation, feature, user, the five token counts, duration, time to first chunk, failed, `error.type`, and finish reasons. Migration `0009_ai_calls_conversation` adds `conversation_id` ("" for none), with a bloom filter index that finds one conversation's calls in a period; older rows read "".
 
 - `ReplacingMergeTree`, `PARTITION BY toYYYYMM(timestamp)`, `ORDER BY (project_id, timestamp, id)`: every query filters by project first, then a period. A retried batch makes the same IDs, so it is the same rows. A call sent over HTTP keeps the time its server sent, so its retry is the same row too ([below](#retries)).
 - **Written beside the span**, exactly as exception-derived error events are: the route writes the spans, the error events, and the AI calls before it answers 200 (asynchronous inserts, waiting for the write); if any insert fails, the budget is given back and the answer is 503, and the exporter's retry writes them all again.
@@ -228,12 +230,13 @@ Content-Type: application/json
 | `finishReasons`                                                                         | No       | At most 16, of at most 64 characters, stored in lower case                                                                                                                    |
 | `userId`                                                                                | No       | 1 to 200 characters, no control characters: the ID the tracker's `data-user-id` sends, so the call links to the Users page                                                    |
 | `feature`                                                                               | No       | At most 100 characters: what `ottertrail.feature` sets on a span                                                                                                              |
+| `conversationId`                                                                        | No       | At most 200 characters, no control characters, trimmed: what `gen_ai.conversation.id` sets on a span ([Conversations](#conversations))                                        |
 | `service`                                                                               | No       | At most 100 characters: the service filter on the AI page                                                                                                                     |
 | `traceId`, `spanId`                                                                     | No       | 32 and 16 hex characters, for an app that has traces too: the call's "Open its trace" link. A `spanId` needs its `traceId`                                                    |
 
 - **The project's secret key,** as server-side events and OTLP take it, looked up before the body is read, as OTLP does (cached, unknown keys too): a missing or malformed key gets 401 (`unauthorized`), an unknown one 401 (`unknown_key`), and neither body is read. A public key never works. No CORS headers: a page cannot read the answers, and must never hold the key.
 - **Before the body is read,** cheapest first: the key's form, requests per IP address (an IPv6 address by its /64; bursts of 600, then 50 a second, as for server-side events), the requests in progress (8 per API process, 4 of them one project's, as OTLP's: 503 `busy` or 429 past them), and the key. Then the schema, the text rules, and the times.
-- **Optional names may be empty:** `operation`, `feature`, `service`, `errorType`, and a finish reason that is "" or only spaces are as left out, as on a span.
+- **Optional names may be empty:** `operation`, `feature`, `conversationId`, `service`, `errorType`, and a finish reason that is "" or only spaces are as left out, as on a span.
 - **No prompts or completions.** The schema has no field for them, and fields it does not know are dropped (Fastify's `removeAdditional`, as for server-side events), so a prompt sent by mistake is never stored.
 - **Cost is not sent:** it is worked out from the tokens when the calls are read ([Cost](#cost)).
 - **The server's clock is trusted:** a call more than 5 minutes ahead is refused (400); one more than 24 hours old is counted in `tooOld` and not stored.
@@ -365,6 +368,31 @@ finally:
 
 The Vercel AI SDK's `functionId` arrives as `gen_ai.agent.name`, which is the feature when `ottertrail.feature` is not set.
 
+A conversation's ID travels the same way: put `gen_ai.conversation.id` in baggage around a conversation's turn, and allow that key too.
+
+## The calls list
+
+Every call of a period, one at a time, and the conversations they make, on the AI page's calls list (`/projects/<id>/ai/calls`, [dashboard](dashboard.md#ai-calls)). Four project routes (`apps/api/src/ai/call-routes.ts`, queries in `apps/api/src/ai/call-list.ts`), each behind `requireProjectAccess` for `monitoring` at view; a call's user, and the `user` filter, need `users` at view too (without it, users are `null`, `usersHidden` is `true`, and a request with `user` is refused with 403, so no one finds a user's calls by guessing their ID):
+
+```text
+GET /api/projects/:id/ai/call-list?…the report's filters…&user=…&conversation=…&status=failed&before=…
+GET /api/projects/:id/ai/calls/:callId?at=…
+GET /api/projects/:id/ai/conversations?…the same filters, no conversation…
+GET /api/projects/:id/ai/conversations/:conversationId?…the same filters…
+```
+
+- **The list:** newest first, 100 a page, with a cursor (`before`, the last call's start in nanoseconds and its ID) to the next while there are more. Read with `FINAL`, so a retried call is listed once; `FINAL` merges every row of the range it reads, so the day before the page's end is read first, and the rest of the period only when that day does not fill the page. Each call carries every stored field and its estimated cost (`null` without a price). The answer also has the period's `totals` with the filters (calls, estimated cost, failed and its share, calls without a price), read without `FINAL` as the AI page's totals are, so the two pages give the same figures for the same calls, and what the filter bar offers, as the report answers it.
+- **One call:** by its row ID, a minute either side of `at` (its start, which the list's links send), or, without `at`, over the last 366 days; any environment, since the ID names one call. The answer adds where its price comes from (`price`: `built_in` with the day it was checked, `custom` with the row's model when it is on another ID and the day it starts, or `price_as` with the model it takes; the prices per million tokens; `null` without a price), worked out with `priceAt` at the call's time, as the cost is, and whether its trace is still kept (`traceKept`: it has a trace ID and started within the spans' retention, `traceRetentionDays`). An unknown ID answers 404 `no_such_call`.
+- **Filters:** those of the report (`service`, `provider`, `model`, `feature`), the user (`user`, as stored), the conversation, and `status=failed`. Each value as stored, each a parameter.
+
+### Conversations
+
+A conversation is the calls that share a `conversation_id` ([Detection](#detection), or `conversationId` [over HTTP](#sending-calls-over-http)). Calls without one are in no conversation.
+
+- **The list:** the period's conversations with the filters, by their last call, newest first, at most 1,000: first the IDs of the 1,000 with the latest calls (a `GROUP BY` without `FINAL`, since a copy does not move a conversation's last call), then their figures with `FINAL`. `more` says when others were left out. Each: its ID, first and last call, calls (turns), input and output tokens, estimated cost, calls without a price, the durations added up, failed calls, the user of most of its calls, and up to five features and models.
+- **What the filters do:** the model, feature, service, provider, and user narrow the calls a conversation is made of; `status=failed` keeps the conversations with a failed call, all their calls counted.
+- **One conversation:** its calls in the period with the filters (but `status`), oldest first, at most 500, each once (`FINAL`), and its figures counted whole.
+
 ## Known limits
 
 - **Cost is an estimate.** It is tokens times the built-in list prices, or the prices set in Settings → AI models. With the built-in prices it leaves out batch discounts, negotiated prices, regional and US-only surcharges, higher prices past a prompt length, Anthropic's 1-hour cache writes (spans do not say which cache was used: the 5-minute price is taken), per-request fees such as web search, and price changes the table does not have yet. The page must say so.
@@ -379,6 +407,11 @@ The Vercel AI SDK's `functionId` arrives as `gen_ai.agent.name`, which is the fe
 - **OpenInference spans** that name only `llm.*` attributes (no `gen_ai.*`) are not detected: set `OPENINFERENCE_ENABLE_GENAI_SEMCONV=true`.
 - **Calls older than the telemetry retention** cannot be sent: the traces route refuses spans older than `TELEMETRY_RETENTION_DAYS`, and `POST /api/ai-calls` calls more than a day old, so a project's history starts when it starts sending.
 - **A call sent over HTTP without a trace** has no "Open its trace" link on the AI page.
+- **The calls list's totals and its rows can differ** until a retried call's copies merge: the totals read without `FINAL`, as the AI page's, the rows with it.
+- **A conversation is its calls in the period:** one that started before the period shows only its later turns, and its figures cover those. Choose a longer period to see it whole.
+- **At most 1,000 conversations** a period, those with the latest calls, and 500 calls of one conversation; past them the pages say so.
+- **The conversation filter has no field to type in:** it is set by a link (a call's conversation, a conversation's calls) and shown as a chip that removes it. The Conversations view finds conversations.
+- **A conversation's ID is the app's:** Ottertrail does not check that calls sharing one belong together, and an ID over 200 characters is dropped, so those calls are in no conversation.
 
 ## Phases
 
@@ -393,18 +426,20 @@ The Vercel AI SDK's `functionId` arrives as `gen_ai.agent.name`, which is the fe
    - the instance's own prices in Settings → AI models, from a day on or for all calls, and price as (built 22 November 2026; [Prices](#prices)).
 2. **Phase 2:**
    - `POST /api/ai-calls` with the secret key, for apps without OpenTelemetry, into the same table (built 22 November 2026; [Sending calls over HTTP](#sending-calls-over-http));
-   - an AI calls list in the Workbench pattern;
+   - an AI calls list in the Workbench pattern (built 22 November 2026; [The calls list](#the-calls-list));
    - an `ai_latency` alert (built 22 November 2026; [Alerts](#alerts));
    - a cost widget on the Overview (built 22 November 2026; [above](#the-overviews-ai-cost-widget));
    - a user's AI cost on the user's page;
    - comparing the totals with the token metrics;
-   - grouping by `gen_ai.conversation.id`;
+   - grouping by `gen_ai.conversation.id` (built 22 November 2026; [Conversations](#conversations));
    - an AI access area, if owners want finance people to see costs without the traces.
 
 ## Tests
 
 - `apps/api/tests/ai-calls.test.ts`: spans of each kind of sender through OpenTelemetry's protobuf and JSON exporters, stored as calls or not, the old and new names, the bounds; a retried batch one row; each call a unit of the budget, never a 413 for a batch the budget takes without them; a 503 that gives it back when the calls cannot be written, whether the spans were.
 - `apps/api/tests/ai-http-calls.test.ts`: `POST /api/ai-calls`: every field stored, the key (missing, malformed, public, unknown) checked before the body, each rule refusing the whole batch, unknown fields such as a prompt dropped, 1,000 calls and 1 MiB, a call over a day old, empty optional names as left out, a retried batch one row, each call a unit of the budget OTLP shares, the address's rate by IPv6 /64, the requests in progress, an unknown key's body never parsed, 503 when the key cannot be looked up and when ClickHouse cannot write, with the budget given back, and the calls on the AI page and in a cost rule.
+- `apps/api/tests/ai-call-list.test.ts`: the calls list's routes: every field, each filter and the environment, paging past the first day with each call once, one call with its price's source and whether its trace is kept, the totals and cost against the AI page's, conversations from spans and from calls over HTTP, their filters, one conversation's calls, the 1,000 bound, and access with and without `users`. `ai-calls.test.ts` and `ai-http-calls.test.ts` cover the conversation ID's rules.
+- `apps/web/tests/browser/ai-calls.test.tsx` and `list-workbenches.test.tsx`: the calls list and the Conversations view against the fake API (`fake-ai-calls.ts`).
 - `apps/api/tests/ai-report.test.ts`: the price table's shape and matching, the arithmetic in JavaScript and in ClickHouse, the report's figures and each filter, the previous period, the chart and its Other line, the latest calls, access with and without `users`, and retention, project deletion, and the orphan sweep.
 - `apps/api/tests/ai-alerts.test.ts`: the three kinds fired, the cost and latency kinds resolved, the failures and latency kinds quiet below their minimum, the month's window across a timezone, the kept hours of the month and the last 24 hours against a full scan (a late call, midnight, a new month), the unlabeled feature, the worker's pass, and the rule routes' validation.
 - `apps/api/tests/ai-models.test.ts`: cost at read time with custom rows from a day, for all calls, price as (one level), on another ID of a bundled entry, exactly at a start, in a non-UTC timezone, and after a reset, ClickHouse against `priceAt`; kept hours marked stale and added up again after a change, and after a row changed past the routes; the list across the instance's projects only, and without ClickHouse; admins yes, members no; validation, the caps, a reset refused for a target, Origin, and the limit per user.

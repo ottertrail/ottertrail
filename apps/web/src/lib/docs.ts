@@ -77,6 +77,10 @@ export const SCREEN_DOCS: Partial<Record<RoutePath, ScreenDocs>> = {
   "/projects/$projectId/services": { topic: "Services", path: "/monitoring/services/" },
   "/projects/$projectId/databases": { topic: "Databases", path: "/monitoring/databases/" },
   "/projects/$projectId/ai": { topic: "AI", path: "/monitoring/ai-usage/" },
+  "/projects/$projectId/ai/calls": {
+    topic: "AI calls",
+    path: "/monitoring/ai-usage/#the-calls-list",
+  },
   "/projects/$projectId/hosts": { topic: "Hosts", path: "/monitoring/hosts/" },
   "/projects/$projectId/uptime": { topic: "Uptime", path: "/uptime-and-alerts/checks/" },
   "/projects/$projectId/alerts": { topic: "Alerts", path: "/uptime-and-alerts/alert-rules/" },
@@ -103,6 +107,14 @@ export const SCREEN_DOCS: Partial<Record<RoutePath, ScreenDocs>> = {
     path: "/session-replay/error-replays/#the-player",
   },
   "/projects/$projectId/traces/$traceId": { topic: "Trace", path: "/monitoring/traces/#a-trace" },
+  "/projects/$projectId/ai/calls/$callId": {
+    topic: "AI call",
+    path: "/monitoring/ai-usage/#the-calls-list",
+  },
+  "/projects/$projectId/ai/conversations/$conversationId": {
+    topic: "Conversation",
+    path: "/monitoring/ai-usage/#conversations",
+  },
   "/projects/$projectId/metrics/$name": {
     topic: "Metric",
     path: "/monitoring/metrics/#a-metrics-charts",

@@ -78,47 +78,48 @@ Fastify checks a route's parameters and body before the access check runs, so a 
 
 ### Each route's need
 
-| Route                                                                                                                                                        | Needs                               |
-| ------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------- |
-| `GET /api/me`, `GET /api/projects`                                                                                                                           | Signed in                           |
-| `PATCH /api/account`, `POST /api/account/email`, `POST /api/account/password` (the user's own account)                                                       | Signed in                           |
-| `GET`, `DELETE /api/account/sessions`, `DELETE /api/account/sessions/:id` (the user's own sessions)                                                          | Signed in                           |
-| `GET /api/starred-projects`, `PUT`, `DELETE /api/starred-projects/:projectId` (the user's own stars; `PUT` also checks the project, as below)                | Signed in                           |
-| `GET /api/notifications`, `GET …/unread-count`, `PATCH …/:notificationId`, `POST …/read-all` (the user's own inbox, [below](#notifications))                 | Signed in                           |
-| `PUT`, `DELETE /api/account/avatar` (the user's own avatar, [below](#avatars))                                                                               | Signed in                           |
-| `GET /api/avatars/instance/:file`, `…/users/:userId/:file`, `…/projects/:projectId/:file` (a project's also checks the project, [below](#avatars))           | Signed in                           |
-| `PUT`, `DELETE /api/settings/avatar` (the instance's icon)                                                                                                   | `settings` (the owner)              |
-| `GET`, `PATCH /api/settings`, `GET /api/settings/location-data`                                                                                              | `settings` (the owner)              |
-| `/api/members…`, `/api/invitations…` (seven routes)                                                                                                          | `members`                           |
-| `POST /api/members/:userId/ownership`                                                                                                                        | `ownership` (the owner)             |
-| `POST /api/projects`, `GET /api/client-address` (the requester's own address, for blocked addresses)                                                         | `projects`                          |
-| `GET /api/settings/storage` (what fills the disk, and the storage warnings)                                                                                  | `projects`                          |
-| `PATCH /api/settings/storage` (the channels that get storage warnings)                                                                                       | `channels`                          |
-| `GET /api/settings/ai-models`, `PUT …/price`, `PUT …/price-as`, `POST …/reset` (the AI model prices)                                                         | `projects`                          |
-| `/api/settings/backups…` (ten routes: settings, Test connection, Back up now, Test restore, the list, the key, its file, saved, replace)                     | `settings` (the owner)              |
-| `POST /api/settings/backups/key`, `…/key/file`, and a `PATCH` that turns backups off                                                                         | `settings` and the current password |
-| `/api/channels…` (all eight), `POST /api/channels/email-test` (a test email to the user's own address)                                                       | `channels`                          |
-| `GET /api/projects/:id`                                                                                                                                      | The project                         |
-| `PATCH`, `DELETE /api/projects/:id`, `POST …/public-key`, `POST …/secret-key`, `DELETE …/replays`, `POST …/spam-visits/preview`, `POST …/spam-visits/delete` | `projects`                          |
-| `PUT`, `DELETE /api/projects/:id/avatar` (the project's icon)                                                                                                | `projects`                          |
-| `…/analytics`, `…/analytics/list`, `…/speed`, `…/heatmaps`, `…/heatmaps/pages`, `POST …/heatmaps/overlay-link`                                               | `web_analytics` view                |
-| `GET /api/heatmap-overlay/:projectId/heatmap` (an overlay session token, no cookie)                                                                          | `web_analytics` view                |
-| `…/events`, `…/events/:name`, `…/funnel`, `…/retention`, `GET …/goals`, `GET …/funnels`                                                                      | `product_analytics` view            |
-| `POST`, `DELETE …/goals`, `POST`, `PUT`, `DELETE …/funnels`                                                                                                  | `product_analytics` manage          |
-| `GET …/errors`, `GET …/errors/:fingerprint`, `GET …/source-maps`, `…/source-maps/files`                                                                      | `errors` view                       |
-| `PATCH …/errors/:fingerprint`, `PUT …/errors/:fingerprint/assignee`, `GET …/error-assignees`, `DELETE …/source-maps`                                         | `errors` manage                     |
-| `GET …/replays`, `…/replays/list`, `…/replays/:replayId`, `…/timeline`, `…/player`                                                                           | `replays` view                      |
-| `…/users`, `…/users/:userId`                                                                                                                                 | `users` view                        |
-| `…/traces…`, `…/logs…`, `…/metrics…`, `…/services…`, `…/databases…`, `…/hosts…`                                                                              | `monitoring` view                   |
-| `…/ai`, `…/ai/chart`, `…/ai/calls` (the AI page, [AI usage](ai-usage.md#the-report))                                                                         | `monitoring` view                   |
-| `GET …/checks…`, `GET …/alert-rules…`, `…/alerts`, `…/alerts/firing`, `…/alert-channels`                                                                     | `uptime_alerts` view                |
-| `POST`, `PATCH`, `DELETE …/checks…` and `…/alert-rules…`                                                                                                     | `uptime_alerts` manage              |
-| `GET`, `PUT`, `DELETE …/overview/layout` (the user's own layout)                                                                                             | The project                         |
-| `…/overview/attention`, `…/overview/uptime`                                                                                                                  | `uptime_alerts` view                |
-| `…/overview/errors`                                                                                                                                          | `errors` view                       |
-| `…/overview/services`, `…/overview/ai-cost`                                                                                                                  | `monitoring` view                   |
-| `…/overview/speed`, `…/overview/traffic`, `…/overview/sources`                                                                                               | `web_analytics` view                |
-| `…/overview/main-goal`, `…/overview/goals`, `…/overview/users`                                                                                               | `product_analytics` view            |
+| Route                                                                                                                                                                                 | Needs                               |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------- |
+| `GET /api/me`, `GET /api/projects`                                                                                                                                                    | Signed in                           |
+| `PATCH /api/account`, `POST /api/account/email`, `POST /api/account/password` (the user's own account)                                                                                | Signed in                           |
+| `GET`, `DELETE /api/account/sessions`, `DELETE /api/account/sessions/:id` (the user's own sessions)                                                                                   | Signed in                           |
+| `GET /api/starred-projects`, `PUT`, `DELETE /api/starred-projects/:projectId` (the user's own stars; `PUT` also checks the project, as below)                                         | Signed in                           |
+| `GET /api/notifications`, `GET …/unread-count`, `PATCH …/:notificationId`, `POST …/read-all` (the user's own inbox, [below](#notifications))                                          | Signed in                           |
+| `PUT`, `DELETE /api/account/avatar` (the user's own avatar, [below](#avatars))                                                                                                        | Signed in                           |
+| `GET /api/avatars/instance/:file`, `…/users/:userId/:file`, `…/projects/:projectId/:file` (a project's also checks the project, [below](#avatars))                                    | Signed in                           |
+| `PUT`, `DELETE /api/settings/avatar` (the instance's icon)                                                                                                                            | `settings` (the owner)              |
+| `GET`, `PATCH /api/settings`, `GET /api/settings/location-data`                                                                                                                       | `settings` (the owner)              |
+| `/api/members…`, `/api/invitations…` (seven routes)                                                                                                                                   | `members`                           |
+| `POST /api/members/:userId/ownership`                                                                                                                                                 | `ownership` (the owner)             |
+| `POST /api/projects`, `GET /api/client-address` (the requester's own address, for blocked addresses)                                                                                  | `projects`                          |
+| `GET /api/settings/storage` (what fills the disk, and the storage warnings)                                                                                                           | `projects`                          |
+| `PATCH /api/settings/storage` (the channels that get storage warnings)                                                                                                                | `channels`                          |
+| `GET /api/settings/ai-models`, `PUT …/price`, `PUT …/price-as`, `POST …/reset` (the AI model prices)                                                                                  | `projects`                          |
+| `/api/settings/backups…` (ten routes: settings, Test connection, Back up now, Test restore, the list, the key, its file, saved, replace)                                              | `settings` (the owner)              |
+| `POST /api/settings/backups/key`, `…/key/file`, and a `PATCH` that turns backups off                                                                                                  | `settings` and the current password |
+| `/api/channels…` (all eight), `POST /api/channels/email-test` (a test email to the user's own address)                                                                                | `channels`                          |
+| `GET /api/projects/:id`                                                                                                                                                               | The project                         |
+| `PATCH`, `DELETE /api/projects/:id`, `POST …/public-key`, `POST …/secret-key`, `DELETE …/replays`, `POST …/spam-visits/preview`, `POST …/spam-visits/delete`                          | `projects`                          |
+| `PUT`, `DELETE /api/projects/:id/avatar` (the project's icon)                                                                                                                         | `projects`                          |
+| `…/analytics`, `…/analytics/list`, `…/speed`, `…/heatmaps`, `…/heatmaps/pages`, `POST …/heatmaps/overlay-link`                                                                        | `web_analytics` view                |
+| `GET /api/heatmap-overlay/:projectId/heatmap` (an overlay session token, no cookie)                                                                                                   | `web_analytics` view                |
+| `…/events`, `…/events/:name`, `…/funnel`, `…/retention`, `GET …/goals`, `GET …/funnels`                                                                                               | `product_analytics` view            |
+| `POST`, `DELETE …/goals`, `POST`, `PUT`, `DELETE …/funnels`                                                                                                                           | `product_analytics` manage          |
+| `GET …/errors`, `GET …/errors/:fingerprint`, `GET …/source-maps`, `…/source-maps/files`                                                                                               | `errors` view                       |
+| `PATCH …/errors/:fingerprint`, `PUT …/errors/:fingerprint/assignee`, `GET …/error-assignees`, `DELETE …/source-maps`                                                                  | `errors` manage                     |
+| `GET …/replays`, `…/replays/list`, `…/replays/:replayId`, `…/timeline`, `…/player`                                                                                                    | `replays` view                      |
+| `…/users`, `…/users/:userId`                                                                                                                                                          | `users` view                        |
+| `…/traces…`, `…/logs…`, `…/metrics…`, `…/services…`, `…/databases…`, `…/hosts…`                                                                                                       | `monitoring` view                   |
+| `…/ai`, `…/ai/chart`, `…/ai/calls` (the AI page, [AI usage](ai-usage.md#the-report))                                                                                                  | `monitoring` view                   |
+| `…/ai/call-list`, `…/ai/calls/:callId`, `…/ai/conversations…` (the AI calls list, [AI usage](ai-usage.md#the-calls-list)); a call's user and the `user` filter also need `users` view | `monitoring` view                   |
+| `GET …/checks…`, `GET …/alert-rules…`, `…/alerts`, `…/alerts/firing`, `…/alert-channels`                                                                                              | `uptime_alerts` view                |
+| `POST`, `PATCH`, `DELETE …/checks…` and `…/alert-rules…`                                                                                                                              | `uptime_alerts` manage              |
+| `GET`, `PUT`, `DELETE …/overview/layout` (the user's own layout)                                                                                                                      | The project                         |
+| `…/overview/attention`, `…/overview/uptime`                                                                                                                                           | `uptime_alerts` view                |
+| `…/overview/errors`                                                                                                                                                                   | `errors` view                       |
+| `…/overview/services`, `…/overview/ai-cost`                                                                                                                                           | `monitoring` view                   |
+| `…/overview/speed`, `…/overview/traffic`, `…/overview/sources`                                                                                                                        | `web_analytics` view                |
+| `…/overview/main-goal`, `…/overview/goals`, `…/overview/users`                                                                                                                        | `product_analytics` view            |
 
 `GET /api/projects/:id/alert-channels` lists the instance's channels by ID, name, and kind only, for the rule form. A rule may name any of the instance's channels.
 

@@ -18,6 +18,7 @@ import { AppLayout } from "@/app";
 import { NoAccess } from "@/components/no-access";
 import { AuthPending, PagePending, RouteError, RouteNotFound } from "@/components/route-states";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { aiCallFiltersFrom, aiCallsViewFrom, isCallId } from "@/features/ai/calls-search";
 import { type DeviceChoice, isDeviceChoice, pathFrom } from "@/features/heatmaps/search";
 import { ProductLayout } from "@/features/product/product-layout";
 import {
@@ -98,6 +99,9 @@ const DatabasesPage = lazyPage(
   "DatabasesPage",
 );
 const AiPage = lazyPage(() => import("@/features/ai/ai-page"), "AiPage");
+const AiCallsPage = lazyPage(() => import("@/features/ai/calls-page"), "AiCallsPage");
+const AiCallPage = lazyPage(() => import("@/features/ai/call-view"), "CallPage");
+const AiConversationPage = lazyPage(() => import("@/features/ai/call-view"), "ConversationPage");
 const ErrorPage = lazyPage(() => import("@/features/errors/error-page"), "ErrorPage");
 const ErrorsPage = lazyPage(() => import("@/features/errors/errors-page"), "ErrorsPage");
 const EventPage = lazyPage(() => import("@/features/product/event-page"), "EventPage");
@@ -987,6 +991,133 @@ const aiRoute = createRoute({
   }),
 });
 
+/** What the AI calls pages' addresses hold: the days, environment, and the list's filters. */
+type AiCallsSearchInput = ErrorSearchInput & {
+  service?: unknown;
+  provider?: unknown;
+  model?: unknown;
+  feature?: unknown;
+  user?: unknown;
+  conversation?: unknown;
+  status?: unknown;
+};
+
+function aiCallsSearch(search: AiCallsSearchInput) {
+  const filters = aiCallFiltersFrom(search);
+  return {
+    ...rangeSearch(search),
+    ...environmentSearch(search),
+    service: filters.service,
+    provider: filters.provider,
+    model: filters.model,
+    feature: filters.feature,
+    user: filters.user,
+    status: filters.failed === true ? ("failed" as const) : undefined,
+    conversation: filters.conversation,
+  };
+}
+
+/** The filters an AI calls page's address holds, for the page. */
+const aiCallFilters = (search: ReturnType<typeof aiCallsSearch>) => ({
+  service: search.service,
+  provider: search.provider,
+  model: search.model,
+  feature: search.feature,
+  user: search.user,
+  conversation: search.conversation,
+  failed: search.status === "failed" ? true : undefined,
+});
+
+/**
+ * The AI calls (docs/ai-usage.md, "The calls list"): days, environment,
+ * the list's filters, the view (every call, or their conversations), and
+ * the workbench's selected call and when it ran. In the Conversations
+ * view, `conversation` is the selected conversation.
+ */
+const aiCallsRoute = createRoute({
+  getParentRoute: () => projectRoute,
+  path: "/ai/calls",
+  staticData: { title: "AI calls", access: "monitoring" },
+  validateSearch: (
+    search: AiCallsSearchInput & { view?: unknown; call?: unknown; at?: unknown },
+  ) => {
+    const view = aiCallsViewFrom(search.view);
+    return {
+      ...aiCallsSearch(search),
+      view: view === "conversations" ? view : undefined,
+      call: view === "calls" && isCallId(search.call) ? search.call : undefined,
+      at: isMoment(search.at) ? search.at : undefined,
+    };
+  },
+  component: withPage(AiCallsPage, function AiCallsRouteComponent() {
+    const { projectId } = aiCallsRoute.useParams();
+    const search = aiCallsRoute.useSearch();
+    return (
+      <AiCallsPage
+        projectId={projectId}
+        range={rangeFrom(search)}
+        environment={search.env ?? DEFAULT_ENVIRONMENT}
+        filters={aiCallFilters(search)}
+        view={aiCallsViewFrom(search.view)}
+        at={search.at}
+      />
+    );
+  }),
+});
+
+/** One AI call: when it ran (`at`), and the list it came from, for the way back. */
+const aiCallRoute = createRoute({
+  getParentRoute: () => projectRoute,
+  path: "/ai/calls/$callId",
+  staticData: { title: "AI call", access: "monitoring" },
+  validateSearch: (search: AiCallsSearchInput & { at?: unknown }) => ({
+    ...aiCallsSearch(search),
+    at: isMoment(search.at) ? search.at : undefined,
+  }),
+  component: withPage(AiCallPage, function AiCallRouteComponent() {
+    const { projectId, callId } = aiCallRoute.useParams();
+    const search = aiCallRoute.useSearch();
+    return (
+      <AiCallPage
+        place={{
+          projectId,
+          range: rangeFrom(search),
+          environment: search.env ?? DEFAULT_ENVIRONMENT,
+          filters: aiCallFilters(search),
+        }}
+        callId={callId}
+        at={search.at}
+      />
+    );
+  }),
+});
+
+/** One conversation's calls: the days, environment, and filters of the list it came from. */
+const aiConversationRoute = createRoute({
+  getParentRoute: () => projectRoute,
+  path: "/ai/conversations/$conversationId",
+  staticData: { title: "Conversation", access: "monitoring" },
+  validateSearch: (search: AiCallsSearchInput) => ({
+    ...aiCallsSearch(search),
+    conversation: undefined,
+  }),
+  component: withPage(AiConversationPage, function AiConversationRouteComponent() {
+    const { projectId, conversationId } = aiConversationRoute.useParams();
+    const search = aiConversationRoute.useSearch();
+    return (
+      <AiConversationPage
+        place={{
+          projectId,
+          range: rangeFrom(search),
+          environment: search.env ?? DEFAULT_ENVIRONMENT,
+          filters: aiCallFilters(search),
+        }}
+        conversationId={conversationId}
+      />
+    );
+  }),
+});
+
 /** The hosts that sent host metrics: days and environment. */
 const hostsRoute = createRoute({
   getParentRoute: () => projectRoute,
@@ -1395,6 +1526,9 @@ const routeTree = rootRoute.addChildren([
       databasesRoute,
       queryShapeRoute,
       aiRoute,
+      aiCallsRoute,
+      aiCallRoute,
+      aiConversationRoute,
       hostsRoute,
       hostRoute,
       uptimeRoute,

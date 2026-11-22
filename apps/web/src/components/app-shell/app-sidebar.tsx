@@ -447,7 +447,12 @@ function ProjectMenu({ projectId }: { projectId: string }) {
               <SidebarMenuButton
                 render={<Link to="/projects/$projectId/ai" params={{ projectId }} />}
                 isActive={
-                  matchRoute({ to: "/projects/$projectId/ai", params: { projectId } }) !== false
+                  // Its calls and conversations too.
+                  matchRoute({
+                    to: "/projects/$projectId/ai",
+                    params: { projectId },
+                    fuzzy: true,
+                  }) !== false
                 }
                 tooltip="AI"
               >

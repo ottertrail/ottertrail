@@ -4,6 +4,7 @@ import { ArrowUpRightIcon, OctagonAlertIcon, SparklesIcon } from "lucide-react";
 
 import { ButtonAnchor } from "@/components/button-anchor";
 import { ButtonLink } from "@/components/button-link";
+import { PageActions } from "@/components/page-header";
 import { type Stat, StatStrip } from "@/components/stat-strip";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -39,6 +40,7 @@ import { ChoiceFilter } from "../telemetry/filters";
 import { aiSearchOf } from "../telemetry/search";
 import { AiTrend } from "./ai-chart";
 import { type AiPlace, FailuresTable, FiguresTable, RecentCalls, UsersTable } from "./ai-tables";
+import { aiCallsSearchOf } from "./calls-search";
 import { featureLabel, formatMs, formatTokens, formatUsd, MIN_CALLS_FOR_CHANGE } from "./format";
 
 /** A filter's choices: the values the period offers, each with its label. */
@@ -236,6 +238,18 @@ export function AiPage({
 
   return (
     <div className="flex flex-col">
+      {data?.received === true && (
+        <PageActions>
+          <ButtonLink
+            variant="outline"
+            to="/projects/$projectId/ai/calls"
+            params={{ projectId }}
+            search={aiCallsSearchOf({ range, environment, filters })}
+          >
+            All calls
+          </ButtonLink>
+        </PageActions>
+      )}
       <ReportFilterBar
         label="Period, environment, and filters"
         range={range}

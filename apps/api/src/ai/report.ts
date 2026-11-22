@@ -82,8 +82,11 @@ function conditions(params: QueryParams, scope: AiScope, filters: AiFilters): st
   return parts.join(" AND ");
 }
 
-/** The scope's calls, each with its cost and whether it is priced. */
-function pricedCalls(
+/**
+ * The scope's calls, each with its cost and whether it is priced: what
+ * every figure of cost reads, the list of calls too (call-list.ts).
+ */
+export function pricedCalls(
   params: QueryParams,
   scope: AiScope,
   filters: AiFilters,
