@@ -241,7 +241,7 @@ function sentPage(page: HeatmapPage): Queued["pageOf"] {
 
 /**
  * Starts recording the config's pageviews. Returns the controls the
- * tracker calls (navigated) and, for tests, flush() and stop().
+ * tracker calls (navigated, stop) and, for tests, flush().
  */
 export function startCapture(config: HeatmapConfig, options: CaptureOptions) {
   const { window: win, document: doc } = options;
@@ -254,7 +254,10 @@ export function startCapture(config: HeatmapConfig, options: CaptureOptions) {
   let failures = 0;
   /** After a failed send, nothing is sent before this time, as the tracker waits. */
   let retryAt = 0;
-  /** After a 403 (heatmaps off, an unknown key, another site): nothing more this page load. */
+  /**
+   * After a 403 (heatmaps off, an unknown key, another site), or stop():
+   * nothing more this page load.
+   */
   let stopped = false;
 
   // The current pageview's state.
@@ -879,7 +882,11 @@ export function startCapture(config: HeatmapConfig, options: CaptureOptions) {
       }
     },
     flush,
+    // Nothing more is recorded or sent, by fetch or beacon, and the queue goes.
     stop: () => {
+      stopped = true;
+      queue = [];
+      page = null;
       win.removeEventListener("pointerdown", onPointerDown, { capture: true });
       win.removeEventListener("click", onClick, { capture: true });
       win.removeEventListener("scroll", onScroll);

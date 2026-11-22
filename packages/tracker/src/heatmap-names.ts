@@ -35,4 +35,9 @@ export interface HeatmapConfig {
 export interface HeatmapCapture {
   /** A new pageview began (the path changed, or a page came back from the cache). */
   navigated: () => void;
+  /**
+   * Stops for the rest of the page load and drops what was not sent: the
+   * page turned out to be the owner's, opened for the heatmap overlay.
+   */
+  stop: () => void;
 }

@@ -286,7 +286,7 @@ describe("the image holds every tracker script the API serves", () => {
     expect(built).toContain("tracker.js");
     expect(served).toEqual(expect.arrayContaining(["v.js", "r.js", "h.js", "o.js"]));
     expect(built).toEqual(expect.arrayContaining(served));
-    expect([...copied].sort()).toEqual([...built].sort());
+    expect(copied.toSorted()).toEqual(built.toSorted());
   });
 });
 

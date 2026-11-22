@@ -34,7 +34,7 @@ try {
       fetch: (url, init) => fetch(url, init),
       beacon: (url, body) => navigator.sendBeacon(url, body),
     });
-    config.register({ navigated: capture.navigated });
+    config.register({ navigated: capture.navigated, stop: capture.stop });
   }
 } catch {
   // Never break the page the tracker runs on.

@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vite-plus/test";
 
 import { ENGAGEMENT, MAX_ENGAGED_MS } from "../src/engagement.ts";
-import { HEATMAP_PROPERTY, type HeatmapConfig } from "../src/heatmap-names.ts";
+import { HEATMAP_PROPERTY, type HeatmapCapture, type HeatmapConfig } from "../src/heatmap-names.ts";
 import { type OverlayConfig, OVERLAY_PROPERTY } from "../src/overlay-names.ts";
 import { type Recorder, REPLAY_PROPERTY, type ReplayConfig } from "../src/replay-names.ts";
 import type { QueuedEvent } from "../src/tracker.ts";
@@ -1399,7 +1399,7 @@ describe("heatmaps", () => {
     const config = heatmapConfig(page);
     expect(config?.page()).toMatchObject({ url: "https://example.com/pricing", at: start + 1000 });
     const navigated = vi.fn<() => void>();
-    config?.register({ navigated });
+    config?.register({ navigated, stop: vi.fn<() => void>() });
 
     random.mockReturnValue(0.9);
     page.window.location.href = "https://example.com/about";
@@ -1606,6 +1606,67 @@ describe("the heatmap overlay", () => {
     expect(page.added.map((element) => element.src)).toEqual([
       "https://analytics.example.com/o.js",
     ]);
+  });
+
+  test("a real link answered after the 5-second wait: r.js and h.js, already started, stop too", async () => {
+    vi.spyOn(Math, "random").mockReturnValue(0);
+    const page = opened("/", { attributes: { vitals: "off", heatmaps: "on", replay: "errors" } });
+    await runScript();
+    // No answer in 5 seconds: the page load counts, and the scripts load.
+    await vi.advanceTimersByTimeAsync(5001);
+    await page.settle();
+    expect(page.added.map((element) => element.src)).toEqual([
+      "https://analytics.example.com/o.js",
+      "https://analytics.example.com/r.js",
+      "https://analytics.example.com/h.js",
+    ]);
+    const started = fakeRecorder("8a1c4d2e-0f3b-4c5d-9e6f-7a8b9c0d1e2f");
+    replayConfig(page)?.register(started);
+    const capture = { navigated: vi.fn<() => void>(), stop: vi.fn<() => void>() };
+    heatmapConfig(page)?.register(capture);
+    const sent = page.events.length;
+
+    // Then the answer: a real link, late.
+    expect(configOf(page).settled(true)).toBe(false);
+    expect(started.stop).toHaveBeenCalledTimes(1);
+    expect(capture.stop).toHaveBeenCalledTimes(1);
+    page.fire("error", new FakeErrorEvent({ message: "boom", error: new Error("boom") }));
+    // The page's consent tool cannot start a new recording either.
+    page.window.ottertrail?.replay(true);
+    expect(started.again).not.toHaveBeenCalled();
+    page.window.location.href = "https://example.com/next";
+    page.window.history.pushState();
+    await vi.advanceTimersByTimeAsync(60_000);
+    await leave(page);
+    expect(page.events).toHaveLength(sent);
+  });
+
+  test("a real link answered while r.js and h.js load: each stops as it runs", async () => {
+    vi.spyOn(Math, "random").mockReturnValue(0);
+    const page = opened("/", { attributes: { vitals: "off", heatmaps: "on", replay: "errors" } });
+    await runScript();
+    await vi.advanceTimersByTimeAsync(5001);
+    expect(configOf(page).settled(true)).toBe(false);
+    const loaded = fakeRecorder("x");
+    replayConfig(page)?.register(loaded);
+    expect(loaded.stop).toHaveBeenCalledTimes(1);
+    const capture = { navigated: vi.fn<() => void>(), stop: vi.fn<() => void>() };
+    heatmapConfig(page)?.register(capture);
+    expect(capture.stop).toHaveBeenCalledTimes(1);
+  });
+
+  test("a late real link with an older h.js, without stop(), still mutes the tracker", async () => {
+    vi.spyOn(Math, "random").mockReturnValue(0);
+    const page = opened("/", { attributes: { vitals: "off", heatmaps: "on" } });
+    await runScript();
+    await vi.advanceTimersByTimeAsync(5001);
+    await page.settle();
+    heatmapConfig(page)?.register({ navigated: vi.fn<() => void>() } as unknown as HeatmapCapture);
+    const sent = page.events.length;
+    expect(() => configOf(page).settled(true)).not.toThrow();
+    page.window.ottertrail?.track("signup");
+    await leave(page);
+    expect(page.events).toHaveLength(sent);
   });
 
   test("back from the back/forward cache after a release: a new pageview, as for any visitor", async () => {

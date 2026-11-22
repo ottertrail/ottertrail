@@ -258,8 +258,9 @@ const REAL = Symbol.for("ottertrail.tracker");
     /**
      * o.js's answer, once; true when it came in time, before the tracker
      * stopped waiting. A real link that comes late still mutes the rest
-     * of the page load: what was sent stays sent, nothing more is, and
-     * scripts that have not loaded never do.
+     * of the page load: what was sent stays sent, nothing more is, the
+     * replay recorder and heatmap capture that started stop and drop what
+     * they hold, and scripts that have not loaded never do.
      */
     const settle = (overlayShown: boolean) => {
       if (shown !== undefined) return false;
@@ -269,6 +270,14 @@ const REAL = Symbol.for("ottertrail.tracker");
       if (shown) {
         held.length = 0;
         tracker.discard();
+        // Collectors that already started stop too, and drop what they hold.
+        replayWanted = false;
+        recorder?.stop();
+        try {
+          heatmaps?.stop();
+        } catch {
+          // An older h.js without stop(), from the browser's cache.
+        }
       } else {
         unpause(true);
       }
@@ -479,6 +488,8 @@ const REAL = Symbol.for("ottertrail.tracker");
         page: () => heatmapPage,
         register: (capture) => {
           heatmaps = capture;
+          // h.js ran after a late real link: it stops at once.
+          if (shown) capture.stop();
         },
       };
       whenSending(() => load("h.js", HEATMAP_PROPERTY, config));
@@ -493,7 +504,8 @@ const REAL = Symbol.for("ottertrail.tracker");
       // Unknown: a page's script may pass anything. Only true starts.
       replay: (on: unknown) => {
         try {
-          if (on !== true) {
+          // On the owner's page, opened for the overlay, nothing records.
+          if (on !== true || shown) {
             replayWanted = false;
             recorder?.stop();
           } else if (!replayDeclared) {

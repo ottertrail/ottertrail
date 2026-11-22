@@ -684,6 +684,28 @@ describe("sending", () => {
     expect(heat.sent).toHaveLength(1);
   });
 
+  test("stop() drops what is queued and sends nothing more, by fetch or beacon", async () => {
+    document.body.innerHTML = LAYOUT;
+    vi.useFakeTimers();
+    cleanups.push(() => vi.useRealTimers());
+    const heat = capture();
+    click(element("#go"));
+    await vi.advanceTimersByTimeAsync(BATCHED);
+    expect(heat.sent).toHaveLength(1);
+    click(element("#go"));
+    scrollTo(400);
+    heat.started.stop();
+    click(element("#go"));
+    heat.started.navigated();
+    click(element("#go"));
+    await vi.advanceTimersByTimeAsync(60_000);
+    hide();
+    window.dispatchEvent(new Event("pagehide"));
+    await heat.started.flush();
+    await heat.settle();
+    expect(heat.sent).toHaveLength(1);
+  });
+
   test("retries the same records, with the same IDs, after a 503", async () => {
     document.body.innerHTML = LAYOUT;
     vi.useFakeTimers();
