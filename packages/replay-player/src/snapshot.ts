@@ -94,7 +94,8 @@ async function getJson(
 export function startSnapshot(root: HTMLElement, options: SnapshotOptions): SnapshotView {
   const doc = root.ownerDocument;
   const style = doc.createElement("style");
-  style.textContent = `${rrwebStyle}\n${PLAYER_CSS}\n.ot-heat { position: absolute; left: 0; top: 0; pointer-events: none; }`;
+  // A snapshot has no mouse: rrweb's cursor would sit in the top left corner.
+  style.textContent = `${rrwebStyle}\n${PLAYER_CSS}\n.ot-heat { position: absolute; left: 0; top: 0; pointer-events: none; }\n.replayer-mouse { display: none; }`;
   doc.head.append(style);
 
   const shell = doc.createElement("div");

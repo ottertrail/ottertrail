@@ -176,6 +176,9 @@ describe("a saved view", () => {
     (page?.querySelector("button") as HTMLButtonElement | null)?.click();
     await new Promise((done) => setTimeout(done, 50));
     expect(window.ottertrailPwned).toBeUndefined();
+    // No mouse cursor: a snapshot has no mouse.
+    const cursor = root.querySelector<HTMLElement>(".replayer-mouse");
+    expect(cursor === null || getComputedStyle(cursor).display === "none").toBe(true);
     // The canvas over the frame, as large as the saved viewport.
     const canvas = root.querySelector<HTMLCanvasElement>("canvas.ot-heat");
     expect(canvas?.style.width).toBe("800px");
