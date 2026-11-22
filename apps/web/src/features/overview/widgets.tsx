@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { ArrowDownIcon, ArrowUpIcon, MinusIcon } from "lucide-react";
+import { ArrowDownIcon, ArrowUpIcon, ArrowUpRightIcon, MinusIcon } from "lucide-react";
 import type * as React from "react";
 
 import { BreakdownTable } from "@/components/breakdown-table";
@@ -19,6 +19,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { formatUsd, MIN_CALLS_FOR_CHANGE } from "@/features/ai/format";
 import {
   type Change,
   formatConversion,
@@ -35,6 +36,7 @@ import { formatDuration } from "@/features/telemetry/format";
 import { CAUSE_TEXT, formatMoment, formatMs, formatUptime } from "@/features/uptime/format";
 import { useAccess } from "@/lib/access";
 import { type ChangeCounts, shownChange } from "@/lib/change";
+import { AI_DOCS_URL } from "@/lib/docs";
 import { goalStepText } from "@/lib/goals-api";
 import { MISSING } from "@/lib/missing";
 import {
@@ -660,6 +662,114 @@ export function ServicesWidget(props: WidgetProps) {
               <WidgetNote>
                 Changes compare with the previous period.
                 {data.more ? " Quieter services are on the Services page." : ""}
+              </WidgetNote>
+            </div>
+          );
+        }}
+      </WidgetState>
+    </WidgetFrame>
+  );
+}
+
+// The estimated cost of AI calls.
+export function AiCostWidget(props: WidgetProps) {
+  const query = useWidget("ai-cost", props);
+  const { projectId, period } = props;
+  const title = widgetTitle("ai-cost");
+  return (
+    <WidgetFrame
+      id="ai-cost"
+      title={title}
+      arrange={props.arrange}
+      link={
+        <Link to="/projects/$projectId/ai" params={{ projectId }} className={headLink}>
+          AI
+        </Link>
+      }
+    >
+      <WidgetState title={title} query={query}>
+        {(data) => {
+          if (!data.received) {
+            return (
+              <WidgetEmpty
+                title="No AI calls yet"
+                action={
+                  <a
+                    href={AI_DOCS_URL}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className={`${headLink} inline-flex items-center gap-0.5`}
+                  >
+                    How to send AI calls
+                    <ArrowUpRightIcon aria-hidden="true" className="size-3.5" />
+                    <span className="sr-only">(opens in a new tab)</span>
+                  </a>
+                }
+              >
+                Send traces with a GenAI instrumentation to see what your AI calls cost.
+              </WidgetEmpty>
+            );
+          }
+          const counts = { current: data.calls, previous: data.previousCalls };
+          const unpriced = data.noPriceCalls;
+          return (
+            <div className="flex flex-col gap-3">
+              <StatStrip
+                label="AI cost"
+                stats={[
+                  {
+                    label: "Estimated cost (USD)",
+                    value: formatUsd(data.costUsd),
+                    change: relativeChange(data.costUsd, data.previousCostUsd),
+                    before: formatUsd(data.previousCostUsd),
+                    counts,
+                  },
+                  {
+                    label: "Calls",
+                    value: formatCount(data.calls),
+                    change: relativeChange(data.calls, data.previousCalls),
+                    before: formatWhole(data.previousCalls),
+                    counts,
+                  },
+                ]}
+                minCount={MIN_CALLS_FOR_CHANGE}
+                className="lg:grid-cols-2"
+              />
+              {data.calls === 0 ? (
+                <p className="text-sm text-ink-subtle">No AI calls in {periodPhrase(period)}.</p>
+              ) : (
+                data.models.length > 0 && (
+                  <BreakdownTable
+                    title="Models"
+                    headingLevel={3}
+                    caption="The models that cost the most, the costliest first"
+                    nameHeading="Model"
+                    figureHeadings={["Est. cost", "Calls"]}
+                    rows={data.models.map((row) => ({
+                      key: row.model,
+                      title: row.model,
+                      label: (
+                        <Link
+                          to="/projects/$projectId/ai"
+                          params={{ projectId }}
+                          search={{ model: row.model }}
+                          className="hover:text-link hover:underline"
+                        >
+                          {row.model}
+                        </Link>
+                      ),
+                      bar: row.costUsd,
+                      figures: [formatUsd(row.costUsd), formatWhole(row.calls)],
+                    }))}
+                    empty=""
+                    layout="stack"
+                  />
+                )
+              )}
+              <WidgetNote>
+                Cost is an estimate from token counts and model prices.
+                {unpriced > 0 &&
+                  ` ${formatWhole(unpriced)} ${unpriced === 1 ? "call" : "calls"} had no price and ${unpriced === 1 ? "is" : "are"} not in it.`}
               </WidgetNote>
             </div>
           );

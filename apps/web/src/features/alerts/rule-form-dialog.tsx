@@ -281,7 +281,7 @@ function problemsOf(draft: Draft): Partial<Record<FieldName, string>> {
       problems.minRequests = `Enter a whole number of requests from 1 to ${MAX_MIN_REQUESTS.toLocaleString("en")}.`;
     }
   }
-  if (draft.kind === "route_latency") {
+  if (draft.kind === "route_latency" || draft.kind === "ai_latency") {
     const ms = numberOf(draft.thresholdMs);
     if (ms === null || ms <= 0 || ms > MAX_THRESHOLD_MS) {
       problems.thresholdMs = `Enter a duration above 0 and at most ${MAX_THRESHOLD_MS.toLocaleString("en")} milliseconds.`;
@@ -304,6 +304,8 @@ function problemsOf(draft: Draft): Partial<Record<FieldName, string>> {
     if (percent === null || percent < 0 || percent >= 100) {
       problems.thresholdPercent = "Enter a share from 0 to just under 100 percent.";
     }
+  }
+  if (draft.kind === "ai_failures" || draft.kind === "ai_latency") {
     if (!wholeIn(draft.minCalls, 1, MAX_MIN_CALLS)) {
       problems.minCalls = `Enter a whole number of calls from 1 to ${MAX_MIN_CALLS.toLocaleString("en")}.`;
     }
@@ -350,6 +352,7 @@ function fieldOfError(code: string, kind: RuleKind): FieldName | undefined {
     if (kind === "metric_threshold") return "value";
     if (kind === "ai_cost") return "thresholdUsd";
     if (kind === "ai_failures") return "thresholdPercent";
+    if (kind === "ai_latency") return "thresholdMs";
     return "threshold";
   }
   if (code === "invalid_window" && kind === "ai_cost") return "costWindow";
@@ -443,6 +446,15 @@ function settingsOf(draft: Draft): RuleSettings {
         thresholdPercent: Number(draft.thresholdPercent),
         minCalls: Number(draft.minCalls),
       };
+    case "ai_latency":
+      return {
+        environment,
+        model: optional(draft.model),
+        feature: optional(draft.feature),
+        windowMinutes: Number(draft.windowMinutes),
+        thresholdMs: Number(draft.thresholdMs),
+        minCalls: Number(draft.minCalls),
+      };
     default:
       return {};
   }
@@ -472,6 +484,8 @@ const KIND_HELP: Record<RuleKind, string> = {
     "Notifies when the estimated cost goes above the amount, then again after an hour at or below it. The cost is an estimate from token counts and model prices, as on the AI page.",
   ai_failures:
     "Notifies above the threshold, then again after a full window at or below it. Windows below the minimum call count do not trigger or resolve alerts.",
+  ai_latency:
+    "Notifies when the 95th percentile duration of AI calls is above the threshold, then again after a full window at or below it. Windows below the minimum call count do not trigger or resolve alerts.",
 };
 
 const COST_WINDOW_ITEMS: { value: CostWindow; label: string }[] = [
@@ -957,9 +971,13 @@ function RuleForm({
             </div>
           ) : (
             <div className="grid gap-4 sm:grid-cols-2">
-              {textField("thresholdPercent", "Failed above (percent)", {
-                numeric: "decimal",
-              })}
+              {draft.kind === "ai_latency"
+                ? textField("thresholdMs", "95th percentile above (milliseconds)", {
+                    numeric: "decimal",
+                  })
+                : textField("thresholdPercent", "Failed above (percent)", {
+                    numeric: "decimal",
+                  })}
               {windowField}
               {textField("minCalls", "At least (calls)", {
                 numeric: "numeric",

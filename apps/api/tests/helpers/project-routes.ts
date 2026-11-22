@@ -51,6 +51,7 @@ const OVERVIEW_WIDGETS = [
   "errors",
   "uptime",
   "services",
+  "ai-cost",
   "speed",
   "main-goal",
   "traffic",

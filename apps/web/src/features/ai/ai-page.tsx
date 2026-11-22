@@ -20,7 +20,7 @@ import { WhenAllowed } from "@/components/when-allowed";
 import { type AiFilters, type AiReport, aiReportQuery } from "@/lib/ai-api";
 import { DEFAULT_ENVIRONMENT, type PageRange } from "@/lib/analytics-api";
 import { ApiError } from "@/lib/api";
-import { DOCS_URL } from "@/lib/docs";
+import { AI_DOCS_URL } from "@/lib/docs";
 import { MISSING } from "@/lib/missing";
 
 import {
@@ -39,17 +39,11 @@ import { ChoiceFilter } from "../telemetry/filters";
 import { aiSearchOf } from "../telemetry/search";
 import { AiTrend } from "./ai-chart";
 import { type AiPlace, FailuresTable, FiguresTable, RecentCalls, UsersTable } from "./ai-tables";
-import { featureLabel, formatMs, formatTokens, formatUsd } from "./format";
+import { featureLabel, formatMs, formatTokens, formatUsd, MIN_CALLS_FOR_CHANGE } from "./format";
 
 /** A filter's choices: the values the period offers, each with its label. */
 const choices = (values: readonly string[] | undefined, label = (value: string) => value) =>
   (values ?? []).map((value) => ({ value, label: label(value) }));
-
-/** The docs page on sending AI calls. */
-const AI_DOCS_URL = `${DOCS_URL}/monitoring/ai-usage/`;
-
-/** The fewest calls, in this period or the one before, a change rests on (lib/change.ts). */
-const MIN_CALLS_FOR_CHANGE = 20;
 
 const hasFilters = (filters: AiFilters) =>
   Object.values(filters).some((value) => value !== undefined);

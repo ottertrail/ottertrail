@@ -4651,6 +4651,7 @@ export function fakeWidget(id: WidgetId, query: URLSearchParams, api: FakeApi): 
         "metric_threshold",
         "ai_cost",
         "ai_failures",
+        "ai_latency",
       ];
       return {
         ...header,
@@ -4748,6 +4749,21 @@ export function fakeWidget(id: WidgetId, query: URLSearchParams, api: FakeApi): 
             p95Us: 2_000_000,
             previous: { requests: 35, failed: 0, p95Us: 1_900_000 },
           },
+        ],
+      };
+    case "ai-cost":
+      return {
+        ...header,
+        received: true,
+        costUsd: 48.27,
+        calls: 1840,
+        noPriceCalls: 12,
+        previousCostUsd: 41.1,
+        previousCalls: 1620,
+        models: [
+          { model: "claude-sonnet-4-6", costUsd: 39.8, calls: 910 },
+          { model: "gpt-5-mini", costUsd: 7.9, calls: 870 },
+          { model: "text-embedding-3-small", costUsd: 0.57, calls: 48 },
         ],
       };
     case "speed":

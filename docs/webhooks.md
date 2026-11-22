@@ -85,6 +85,8 @@ The body, version 1:
 | `ai.cost_resolved`          | It stays at or below it for 60 minutes                                                        |
 | `ai.failures`               | The failed share of AI calls over the window is above the rule's percentage                   |
 | `ai.failures_resolved`      | It stays at or below it for the same window                                                   |
+| `ai.latency`                | The 95th-percentile duration of AI calls over the window is above the rule's threshold        |
+| `ai.latency_resolved`       | It stays at or below it for the same window                                                   |
 | `alert.held_back`           | A rule held notifications back after sending 20 in an hour; says how many, once the hour ends |
 | `storage.low`               | A storage warning starts, or becomes critical                                                 |
 | `storage.recovered`         | A storage warning ends                                                                        |
@@ -372,6 +374,10 @@ A request failed when its span's status is Error. `route.failures_resolved` has 
 #### `ai.failures` and `ai.failures_resolved`
 
 The subject has `type` `ai_failures`, `environment`, `feature`, `model`, `calls`, `windowMinutes`, `failed`, `failedPercent` (rounded to 3 decimals), and `thresholdPercent`, and the message reads `Shop: 15% of AI calls for the model claude-sonnet-4-6 in production failed over the last 10 minutes, above the rule's 10%: 3 of 20 calls.` A call failed when its span's status is Error or it has an `error.type`.
+
+#### `ai.latency` and `ai.latency_resolved`
+
+The subject has `type` `ai_latency`, `environment`, `feature`, `model`, `calls`, `windowMinutes`, `percentile` (always `p95`), `valueMs` (rounded to 3 decimals), and `thresholdMs`, and the message reads `Shop: the 95th percentile duration of AI calls for the model claude-sonnet-4-6 in production was 2 s over the last 10 minutes, above the rule's 1.5 s, across 20 calls.` `ai.latency_resolved` has the same subject, and a message such as `Shop: the 95th percentile duration of AI calls in production stayed at or below 1.5 s for 10 minutes: 100 ms over the last 10 minutes, across 10 calls.`
 
 #### `alert.held_back`
 

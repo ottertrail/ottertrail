@@ -34,6 +34,7 @@ import {
   type Aggregate,
   aiCostSettingsStored,
   aiFailureSettingsStored,
+  aiLatencySettingsStored,
   type FailureSettings,
   failureSettingsOf,
   isRuleKind,
@@ -50,8 +51,8 @@ import {
  * Telemetry rules (docs/uptime-alerts.md, "Alerts on telemetry"): a
  * route's latency or failed share, and a metric above or below a value,
  * each over its window; and AI rules (ai-rules.ts; docs/ai-usage.md): the
- * estimated cost of AI calls, or their failed share. Each rule is due once
- * a minute; the worker takes due rules from PostgreSQL with FOR UPDATE
+ * estimated cost of AI calls, their failed share, or their 95th-percentile
+ * duration. Each rule is due once a minute; the worker takes due rules from PostgreSQL with FOR UPDATE
  * SKIP LOCKED (takeDueRules),
  * so each is evaluated by one worker however many run, and evaluates
  * them from the same computations as the dashboard's pages: the Services
@@ -301,6 +302,7 @@ function settingsOfRule(rule: TelemetryRule): Settings {
   if (rule.kind === "route_failures") return failureSettingsOf(rule.settings);
   if (rule.kind === "ai_cost") return aiCostSettingsStored(rule.settings);
   if (rule.kind === "ai_failures") return aiFailureSettingsStored(rule.settings);
+  if (rule.kind === "ai_latency") return aiLatencySettingsStored(rule.settings);
   return metricSettingsStored(rule.settings);
 }
 

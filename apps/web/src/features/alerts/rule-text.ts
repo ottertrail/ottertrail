@@ -79,6 +79,10 @@ export function watchesText(rule: Rule, checks: readonly Pick<Check, "id" | "nam
     const fewest = `at least ${(settings.minCalls ?? 20).toLocaleString("en")} calls`;
     return `More than ${number(settings.thresholdPercent ?? 0)}% of AI calls${aiScopeText(settings)} fail over ${window}, with ${fewest}, in ${environment}`;
   }
+  if (rule.kind === "ai_latency") {
+    const fewest = `at least ${(settings.minCalls ?? 20).toLocaleString("en")} calls`;
+    return `The 95th percentile duration of AI calls${aiScopeText(settings)} is above ${number(settings.thresholdMs ?? 0)} ms over ${window}, with ${fewest}, in ${environment}`;
+  }
   if (rule.kind === "metric_threshold") {
     const filters = [
       ...((settings.host ?? null) === null ? [] : [` on host ${settings.host ?? ""}`]),

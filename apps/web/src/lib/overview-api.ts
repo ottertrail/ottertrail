@@ -18,6 +18,7 @@ export const WIDGETS = [
   { id: "errors", area: "errors", title: "New and returning errors" },
   { id: "uptime", area: "uptime_alerts", title: "Uptime and response time" },
   { id: "services", area: "monitoring", title: "Server requests, failures and p95" },
+  { id: "ai-cost", area: "monitoring", title: "AI cost" },
   { id: "speed", area: "web_analytics", title: "Page speed" },
   { id: "main-goal", area: "product_analytics", title: "Main goal" },
   { id: "traffic", area: "web_analytics", title: "Traffic" },
@@ -135,6 +136,19 @@ export interface ServicesWidget extends WidgetHeader {
   received: boolean;
 }
 
+export interface AiCostWidget extends WidgetHeader {
+  /** Whether the project has any AI call at all. */
+  received: boolean;
+  /** Estimated, in US dollars: calls of models without a price add nothing. */
+  costUsd: number;
+  calls: number;
+  noPriceCalls: number;
+  previousCostUsd: number;
+  previousCalls: number;
+  /** The models that cost the most, the costliest first. */
+  models: { model: string; costUsd: number; calls: number }[];
+}
+
 export interface SpeedDevice {
   deviceType: string | null;
   loads: number;
@@ -218,6 +232,7 @@ export interface WidgetData {
   errors: ErrorsWidget;
   uptime: UptimeWidget;
   services: ServicesWidget;
+  "ai-cost": AiCostWidget;
   speed: SpeedWidget;
   "main-goal": MainGoalWidget;
   traffic: TrafficWidget;
@@ -347,6 +362,19 @@ const SHAPES: { [K in WidgetId]: (value: unknown) => boolean } = {
           list,
           (item): item is ServicesWidget["services"][number] =>
             isServiceFigures(item) && has(item, { service: isText, previous: isServiceFigures }),
+        ),
+    }),
+  "ai-cost": (value) =>
+    has(value, {
+      received: isBoolean,
+      costUsd: isNumber,
+      calls: isNumber,
+      noPriceCalls: isNumber,
+      previousCostUsd: isNumber,
+      previousCalls: isNumber,
+      models: (list) =>
+        isListOf(list, (item): item is AiCostWidget["models"][number] =>
+          has(item, { model: isText, costUsd: isNumber, calls: isNumber }),
         ),
     }),
   speed: (value) =>

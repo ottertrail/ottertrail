@@ -19,6 +19,7 @@ const ALL_TITLES = [
   "New and returning errors",
   "Uptime and response time",
   "Server requests, failures and p95",
+  "AI cost",
   "Page speed",
   "Main goal",
   "Traffic",
@@ -49,6 +50,7 @@ describe("the project overview", () => {
     await expect
       .element(widget("Server requests, failures and p95").getByText("182 ms"))
       .toBeVisible();
+    await expect.element(widget("AI cost").getByText("$48.27")).toBeVisible();
     await expect
       .element(widget("Page speed").getByText("Too few page loads to rate"))
       .toBeVisible();
@@ -116,16 +118,17 @@ describe("edit mode", () => {
 
     const up = page.getByRole("button", { name: "Move Traffic up" });
     await up.click();
-    await expect.element(page.getByText("Traffic moved to 6 of 10.")).toBeVisible();
+    await expect.element(page.getByText("Traffic moved to 7 of 11.")).toBeVisible();
     // Focus stays on the button that moved it.
     await expect.element(up).toHaveFocus();
-    await expect.poll(() => api.layout?.order.indexOf("traffic")).toBe(5);
+    await expect.poll(() => api.layout?.order.indexOf("traffic")).toBe(6);
 
     await page.getByRole("button", { name: "Done" }).click();
     expect(shownTitles()).toEqual([
       "Needs attention now",
       "Uptime and response time",
       "Server requests, failures and p95",
+      "AI cost",
       "Page speed",
       "Traffic",
       "Main goal",
@@ -157,6 +160,7 @@ describe("what a member sees", () => {
     renderApp(OVERVIEW);
     await expect.element(widget("Traffic").getByText("765")).toBeVisible();
     expect(shownTitles()).toEqual(["Page speed", "Traffic", "Top sources and pages"]);
+    expect(page.getByRole("region", { name: "AI cost" }).elements()).toEqual([]);
     const asked = api.requests
       .filter((path) => path.includes("/overview/") && !path.includes("/layout"))
       .map((path) => path.split("/overview/")[1]?.split("?")[0]);
@@ -267,14 +271,14 @@ describe("saving the layout", () => {
     // The first save is held back by the API; the second is asked for meanwhile.
     await up.click();
     await up.click();
-    await expect.element(page.getByText("Traffic moved to 5 of 10.")).toBeVisible();
+    await expect.element(page.getByText("Traffic moved to 6 of 11.")).toBeVisible();
     held.resolve();
 
-    await expect.poll(() => api.layout?.order.indexOf("traffic")).toBe(4);
+    await expect.poll(() => api.layout?.order.indexOf("traffic")).toBe(5);
     const saves = api.bodies.filter((body) => body.path.endsWith("/overview/layout"));
     await expect.poll(() => saves.length).toBe(2);
     // The page still shows the second move once the first save's answer is in.
-    await expect.poll(() => shownTitles().indexOf("Traffic")).toBe(4);
+    await expect.poll(() => shownTitles().indexOf("Traffic")).toBe(5);
   });
 
   test("a widget the dashboard does not know is left out, and the rest still show", async () => {
@@ -305,6 +309,70 @@ describe("changes and states", () => {
     // Visitors are gated on visitors, not on the few pageviews.
     await expect.element(traffic.getByText("Up 12% from 683")).toBeInTheDocument();
     await expect.element(traffic.getByText("New: none in the period before")).toBeInTheDocument();
+  });
+
+  test("AI cost: the estimate against the period before, the costliest models, and the calls without a price", async () => {
+    installFakeApi();
+    renderApp(OVERVIEW);
+    const ai = widget("AI cost");
+    await expect.element(ai.getByText("$48.27")).toBeVisible();
+    await expect.element(ai.getByText("Up 17% from $41.10")).toBeInTheDocument();
+    await expect.element(ai.getByText("1,840")).toBeVisible();
+    const models = [...ai.element().querySelectorAll("tbody tr")].map(
+      (row) => row.querySelector("td")?.textContent,
+    );
+    expect(models).toEqual(["claude-sonnet-4-6", "gpt-5-mini", "text-embedding-3-small"]);
+    await expect
+      .element(ai.getByRole("link", { name: "gpt-5-mini" }))
+      .toHaveAttribute("href", `/projects/${PROJECT.id}/ai?model=gpt-5-mini`);
+    await expect
+      .element(
+        ai.getByText(
+          "Cost is an estimate from token counts and model prices. 12 calls had no price and are not in it.",
+        ),
+      )
+      .toBeVisible();
+    await expect.element(ai.getByRole("link", { name: "AI", exact: true })).toBeVisible();
+  });
+
+  test("AI cost: few calls show no change; a project without AI calls links to the docs", async () => {
+    let received = true;
+    installFakeApi({
+      widget: (id, query, api) => {
+        const answer = fakeWidget(id, query, api);
+        if (id !== "ai-cost" || typeof answer !== "object" || answer === null) return answer;
+        return received
+          ? { ...answer, calls: 12, previousCalls: 9, noPriceCalls: 0 }
+          : {
+              ...answer,
+              received: false,
+              costUsd: 0,
+              calls: 0,
+              noPriceCalls: 0,
+              previousCostUsd: 0,
+              previousCalls: 0,
+              models: [],
+            };
+      },
+    });
+    renderApp(OVERVIEW);
+    const ai = widget("AI cost");
+    await expect.element(ai.getByText("$48.27")).toBeVisible();
+    // Below 20 calls in both periods, a percentage would mislead.
+    expect(ai.getByText(/from \$41\.10/).elements()).toEqual([]);
+    await expect
+      .element(ai.getByText("Cost is an estimate from token counts and model prices."))
+      .toBeVisible();
+
+    unmountAll();
+    received = false;
+    renderApp(`${OVERVIEW}?period=30d`);
+    await expect.element(widget("AI cost").getByText("No AI calls yet")).toBeVisible();
+    const docs = widget("AI cost").getByRole("link", { name: /How to send AI calls/ });
+    await expect
+      .element(docs)
+      .toHaveAttribute("href", "https://docs.ottertrail.app/monitoring/ai-usage/");
+    await expect.element(docs).toHaveAttribute("target", "_blank");
   });
 
   test("retention leaves out a week in progress, and says so", async () => {

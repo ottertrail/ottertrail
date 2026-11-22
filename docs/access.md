@@ -116,7 +116,7 @@ Fastify checks a route's parameters and body before the access check runs, so a 
 | `GET`, `PUT`, `DELETE …/overview/layout` (the user's own layout)                                                                                             | The project                         |
 | `…/overview/attention`, `…/overview/uptime`                                                                                                                  | `uptime_alerts` view                |
 | `…/overview/errors`                                                                                                                                          | `errors` view                       |
-| `…/overview/services`                                                                                                                                        | `monitoring` view                   |
+| `…/overview/services`, `…/overview/ai-cost`                                                                                                                  | `monitoring` view                   |
 | `…/overview/speed`, `…/overview/traffic`, `…/overview/sources`                                                                                               | `web_analytics` view                |
 | `…/overview/main-goal`, `…/overview/goals`, `…/overview/users`                                                                                               | `product_analytics` view            |
 
@@ -131,7 +131,7 @@ A rule shows what it watches: an error rule shows error groups and messages, a t
 | `check_down`, `certificate_expiring`                  | Nothing more      |
 | `error_new`, `error_regressed`, `error_spike`         | `errors` view     |
 | `route_latency`, `route_failures`, `metric_threshold` | `monitoring` view |
-| `ai_cost`, `ai_failures`                              | `monitoring` view |
+| `ai_cost`, `ai_failures`, `ai_latency`                | `monitoring` view |
 
 - Creating a rule, or changing one to another kind, of a kind the user may not see answers 403.
 - The rule list, the alerts, and the firing alerts hold only the kinds the user may see. A rule of another kind answers as a missing rule (404 `rule_not_found`) to reading it, its history, changing it, and deleting it.

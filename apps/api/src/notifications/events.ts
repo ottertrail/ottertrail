@@ -9,7 +9,7 @@
  * docs/uptime-alerts.md, alerts/) send the check, certificate, and error
  * ones, and `alert.held_back` when a rule's hourly cap held notifications
  * back; telemetry alerts (step 4) send the route and metric ones, and AI
- * alerts (docs/ai-usage.md) the AI cost and failure ones. The
+ * alerts (docs/ai-usage.md) the AI cost, failure, and latency ones. The
  * worker's storage check sends the storage ones, about the instance
  * rather than a project (storage/warning-job.ts); `backups.changed` says
  * the owner's backup key was shown or downloaded, where backups go
@@ -35,6 +35,8 @@ export const EVENT_TYPES = [
   "ai.cost_resolved",
   "ai.failures",
   "ai.failures_resolved",
+  "ai.latency",
+  "ai.latency_resolved",
   "alert.held_back",
   "storage.low",
   "storage.recovered",

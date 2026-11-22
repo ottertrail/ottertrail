@@ -7,6 +7,8 @@ import {
   requireProjectAccess,
   userAccessOf,
 } from "../access/access.ts";
+import { readPriceBook } from "../ai/custom-prices.ts";
+import { aiModels, aiTotals, hasAiCalls } from "../ai/report.ts";
 import { DEFAULT_CERTIFICATE_DAYS } from "../alerts/kinds.ts";
 import { visibleKinds } from "../alerts/routes.ts";
 import { firingAlerts } from "../alerts/rules.ts";
@@ -71,6 +73,8 @@ const QUERY = {
 
 /** Rows a widget's list shows. */
 const TOP_ROWS = 5;
+/** Models the AI cost widget lists, those that cost the most. */
+const TOP_AI_MODELS = 3;
 
 const DAY_MS = 86_400_000;
 
@@ -429,6 +433,37 @@ export const overviewRoutes: FastifyPluginCallback<{
       services,
       more,
       received: services.length > 0 || (await hasAnyRow(reader, "spans", range.projectId)),
+    };
+  });
+
+  // The estimated cost of AI calls against the period before, and the models
+  // that cost the most, as the AI page counts them (ai/report.ts).
+  widget("ai-cost", "monitoring", async (range, { reader }) => {
+    const scope = {
+      projectId: range.projectId,
+      environment: range.environment,
+      from: range.from,
+      to: range.to,
+      prices: await readPriceBook(db),
+    };
+    const [totals, previous, models, received] = await Promise.all([
+      aiTotals(reader, scope, {}),
+      aiTotals(reader, { ...scope, from: range.previous.from, to: range.previous.to }, {}),
+      aiModels(reader, scope, {}),
+      hasAiCalls(reader, range.projectId),
+    ]);
+    return {
+      received,
+      costUsd: totals.costUsd,
+      calls: totals.calls,
+      noPriceCalls: totals.noPriceCalls,
+      previousCostUsd: previous.costUsd,
+      previousCalls: previous.calls,
+      // By cost (aiModels), without the Other row and the models without a price.
+      models: models
+        .filter((row) => !row.other && row.costUsd > 0)
+        .slice(0, TOP_AI_MODELS)
+        .map(({ model, costUsd, calls }) => ({ model, costUsd, calls })),
     };
   });
 

@@ -100,6 +100,10 @@ export function inboxTitle(payload: NotificationPayload): string {
       return `Failing AI calls: ${rule}`;
     case "ai.failures_resolved":
       return `AI failures normal: ${rule}`;
+    case "ai.latency":
+      return `Slow AI calls: ${rule}`;
+    case "ai.latency_resolved":
+      return `AI latency normal: ${rule}`;
     case "alert.held_back": {
       const held = typeof subject.held === "number" ? subject.held : 0;
       return `${text(subject.name)} held back ${held} ${held === 1 ? "alert" : "alerts"}`;

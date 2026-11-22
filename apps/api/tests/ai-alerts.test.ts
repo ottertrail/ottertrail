@@ -23,7 +23,8 @@ import { encodeProtobuf, keyValues, secretKeyOf } from "./helpers/telemetry.ts";
 /**
  * AI alert rules (docs/ai-usage.md, "Alerts"; alerts/ai-rules.ts): the
  * estimated cost of a window above a value, for one feature or model or
- * all, and the failed share of a window's calls above a share with a
+ * all, the failed share of a window's calls above a share, and their
+ * 95th-percentile duration above a number of milliseconds, both with a
  * minimum of calls; each fired, resolved after its time back, and quiet
  * without data, from calls sent over OTLP; the worker's pass; and the
  * rule routes' checks.
@@ -116,6 +117,8 @@ interface Call {
   output?: number;
   feature?: string;
   failed?: boolean;
+  /** 500 when left out. */
+  durationMs?: number;
 }
 
 const SONNET = "claude-sonnet-4-6";
@@ -130,7 +133,7 @@ async function sendCalls(calls: Call[]) {
       name: "chat",
       kind: 3,
       startTimeUnixNano: String(start),
-      endTimeUnixNano: String(start + 500_000_000n),
+      endTimeUnixNano: String(start + BigInt(call.durationMs ?? 500) * 1_000_000n),
       attributes: keyValues({
         "gen_ai.operation.name": "chat",
         "gen_ai.provider.name": "anthropic",
@@ -431,6 +434,76 @@ describe("AI failures", () => {
   });
 });
 
+const latencyRule = (overrides: object) =>
+  insertRule("ai_latency", {
+    environment: "production",
+    feature: null,
+    model: null,
+    windowMinutes: 10,
+    thresholdMs: 1500,
+    minCalls: 20,
+    ...overrides,
+  });
+
+describe("AI latency", () => {
+  test("fires above the 95th percentile, for one model; not below the minimum of calls", async () => {
+    const ruleId = await latencyRule({ model: SONNET });
+    await sendCalls([
+      ...times(19, { at: after(-5), durationMs: 2000 }),
+      // Another model's slow calls do not count.
+      ...times(10, { at: after(-5), model: "gpt-5.4-mini", durationMs: 9000 }),
+    ]);
+    expect(await evaluate(ruleId, AT)).toMatchObject({
+      outcome: "none",
+      reading: { value: null, calls: 19 },
+    });
+    await sendCalls([{ at: after(-4), durationMs: 2000 }]);
+    expect(await evaluate(ruleId, AT)).toMatchObject({
+      outcome: "sent",
+      reading: { value: 2000, calls: 20 },
+    });
+    expect((await sent())[0]).toMatchObject({
+      type: "ai.latency",
+      message:
+        "Shop: the 95th percentile duration of AI calls for the model claude-sonnet-4-6 in production was 2 s over the last 10 minutes, above the rule's 1.5 s, across 20 calls.",
+      url: `${PUBLIC}/projects/${projectId}/ai?env=%22production%22&model=%22claude-sonnet-4-6%22`,
+      subject: {
+        type: "ai_latency",
+        model: SONNET,
+        feature: null,
+        windowMinutes: 10,
+        calls: 20,
+        percentile: "p95",
+        valueMs: 2000,
+        thresholdMs: 1500,
+      },
+    });
+  });
+
+  test("resolves once at or below the threshold for the window", async () => {
+    const ruleId = await latencyRule({ minCalls: 5 });
+    await sendCalls([
+      ...times(5, { at: after(-5), durationMs: 4000 }),
+      // One fast call a minute from then on.
+      ...Array.from({ length: 25 }, (_, index) => ({ at: after(6 + index), durationMs: 100 })),
+    ]);
+    expect((await evaluate(ruleId, AT)).outcome).toBe("sent");
+    expect(await evaluate(ruleId, after(12))).toMatchObject({
+      outcome: "waiting",
+      reading: { value: 100, calls: 5 },
+    });
+    expect((await evaluate(ruleId, after(21))).outcome).toBe("waiting");
+    expect((await evaluate(ruleId, after(22))).outcome).toBe("sent");
+    expect((await sent()).map((payload) => payload.type)).toEqual([
+      "ai.latency",
+      "ai.latency_resolved",
+    ]);
+    expect((await sent())[1]?.message).toBe(
+      "Shop: the 95th percentile duration of AI calls in production stayed at or below 1.5 s for 10 minutes: 100 ms over the last 10 minutes, across 10 calls.",
+    );
+  });
+});
+
 function api(method: "POST" | "GET", path: string, payload?: object) {
   return dashboard.app.inject({
     method,
@@ -493,6 +566,25 @@ describe("the rule routes", () => {
       },
       warning: null,
     });
+    const latency = await api("POST", rules(), {
+      kind: "ai_latency",
+      settings: { thresholdMs: 2000, feature: "support-chat" },
+      channelIds: [channelId],
+    });
+    expect(latency.json()).toMatchObject({
+      rule: {
+        name: "AI latency",
+        settings: {
+          environment: "production",
+          feature: "support-chat",
+          model: null,
+          windowMinutes: 10,
+          thresholdMs: 2000,
+          minCalls: 20,
+        },
+      },
+      warning: null,
+    });
   });
 
   test("refuse settings the AI kinds do not take", async () => {
@@ -515,6 +607,16 @@ describe("the rule routes", () => {
     ).toBe("FST_ERR_VALIDATION");
     expect(
       await refused({ kind: "ai_failures", settings: { thresholdPercent: 5, windowMinutes: 61 } }),
+    ).toBe("FST_ERR_VALIDATION");
+    expect(await refused({ kind: "ai_latency", settings: {} })).toBe("invalid_threshold");
+    expect(await refused({ kind: "ai_latency", settings: { thresholdMs: 3_600_001 } })).toBe(
+      "FST_ERR_VALIDATION",
+    );
+    expect(await refused({ kind: "ai_latency", settings: { thresholdMs: 500, minCalls: 0 } })).toBe(
+      "FST_ERR_VALIDATION",
+    );
+    expect(
+      await refused({ kind: "ai_latency", settings: { thresholdMs: 500, windowMinutes: 4 } }),
     ).toBe("FST_ERR_VALIDATION");
   });
 });

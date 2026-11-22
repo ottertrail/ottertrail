@@ -5,6 +5,12 @@ import { formatDuration } from "../telemetry/format";
 
 /** How the AI page writes its numbers and names. */
 
+/**
+ * The fewest calls, in this period or the one before, a change rests on
+ * (lib/change.ts): the AI page's and the Overview's AI cost widget's.
+ */
+export const MIN_CALLS_FOR_CHANGE = 20;
+
 const cents = new Intl.NumberFormat("en-US", {
   style: "currency",
   currency: "USD",

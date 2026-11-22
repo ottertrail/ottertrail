@@ -1,7 +1,7 @@
 import { type Kysely, sql } from "kysely";
 
 import { readPriceBook } from "../ai/custom-prices.ts";
-import { aiSeen, aiWindow } from "../ai/report.ts";
+import { aiLatencyWindow, aiSeen, aiWindow } from "../ai/report.ts";
 import type { Reader } from "../clickhouse/query.ts";
 import type { Database } from "../db/schema.ts";
 import type { Subject } from "../notifications/events.ts";
@@ -11,30 +11,37 @@ import { type AlertContext, dashboardLink } from "./fire.ts";
 import {
   type AiCostSettings,
   type AiFailureSettings,
+  type AiLatencySettings,
   COST_CLEAR_MINUTES,
   type CostWindow,
 } from "./kinds.ts";
 
 /**
  * AI alert rules (docs/ai-usage.md, "Alerts"): the estimated cost of a
- * window above a value, and the failed share of a window's calls above a
- * share. The worker evaluates them with the telemetry rules
+ * window above a value, the failed share of a window's calls above a
+ * share, and their 95th-percentile duration above a number of
+ * milliseconds. The worker evaluates them with the telemetry rules
  * (telemetry-rules.ts), once a minute each, from the same figures as the
  * AI page (ai/report.ts, aiWindow), read without FINAL. This file holds
  * what is theirs: the window, the reading, and the words.
  */
 
-export type AiSettings = AiCostSettings | AiFailureSettings;
+export type AiSettings = AiCostSettings | AiFailureSettings | AiLatencySettings;
 
 export const isAiCost = (settings: object): settings is AiCostSettings => "costWindow" in settings;
+export const isAiLatency = (settings: object): settings is AiLatencySettings =>
+  "minCalls" in settings && "thresholdMs" in settings;
 export const isAiFailures = (settings: object): settings is AiFailureSettings =>
-  "minCalls" in settings;
+  "minCalls" in settings && "thresholdPercent" in settings;
 export const isAiRule = (settings: object): settings is AiSettings =>
-  isAiCost(settings) || isAiFailures(settings);
+  isAiCost(settings) || isAiFailures(settings) || isAiLatency(settings);
 
 /** What an AI rule read of its window. */
 export interface AiReading {
-  /** Estimated US dollars, or a failed share 0 to 100; null: too few calls (a failures rule). */
+  /**
+   * Estimated US dollars, a failed share 0 to 100, or a 95th-percentile
+   * duration in milliseconds; null: too few calls (a failures or latency rule).
+   */
   value: number | null;
   calls: number;
   failed: number;
@@ -63,7 +70,7 @@ const HOUR_MS = 3_600_000;
  * The window an AI rule reads at `at`, ending `lagMs` before it, as the
  * telemetry rules' do: a cost rule's last hour, last 24 hours, or month so
  * far (from midnight of its first day, in the instance's timezone); a
- * failures rule's last minutes.
+ * failures or latency rule's last minutes.
  */
 export async function aiWindowAt(
   db: Kysely<Database>,
@@ -83,9 +90,9 @@ export async function aiWindowAt(
 }
 
 /**
- * Reads an AI rule's window at `at`: a failures rule's from ClickHouse, a
- * cost rule's closed hours from what it keeps (ai-cost-hours.ts) and the
- * rest from ClickHouse.
+ * Reads an AI rule's window at `at`: a failures or latency rule's from
+ * ClickHouse, a cost rule's closed hours from what it keeps
+ * (ai-cost-hours.ts) and the rest from ClickHouse.
  */
 export async function readAi(
   db: Kysely<Database>,
@@ -96,6 +103,21 @@ export async function readAi(
   lagMs: number,
 ): Promise<AiReading> {
   const window = await aiWindowAt(db, settings, at, lagMs);
+  if (isAiLatency(settings)) {
+    const read = await aiLatencyWindow(
+      reader,
+      { projectId: rule.projectId, environment: settings.environment, ...window },
+      filtersOf(settings),
+    );
+    const enough = read.calls > 0 && read.calls >= settings.minCalls;
+    return {
+      calls: read.calls,
+      failed: read.failed,
+      noPriceCalls: read.noPriceCalls,
+      ...window,
+      value: enough ? read.p95Ms : null,
+    };
+  }
   const read = isAiCost(settings)
     ? await costOverWindow(db, reader, rule, settings, window, {
         at,
@@ -125,12 +147,18 @@ const filtersOf = (settings: AiSettings) => ({
 
 /** Whether a value is above the rule's threshold. */
 export function aiBreaches(settings: AiSettings, value: number): boolean {
-  return isAiCost(settings) ? value > settings.thresholdUsd : value > settings.thresholdPercent;
+  if (isAiCost(settings)) return value > settings.thresholdUsd;
+  return isAiLatency(settings) ? value > settings.thresholdMs : value > settings.thresholdPercent;
 }
 
 /** How long a firing AI rule's value must stay on the right side before the alert resolves. */
 export function aiClearMinutes(settings: AiSettings): number {
   return isAiCost(settings) ? COST_CLEAR_MINUTES : settings.windowMinutes;
+}
+
+/** Milliseconds as a message shows them: "812 ms", "1.25 s" (as a route rule's). */
+function durationText(ms: number): string {
+  return ms >= 1000 ? `${numberText(ms / 1000)} s` : `${numberText(ms)} ms`;
 }
 
 /** A number as a message shows it: 4 significant digits, grouped. */
@@ -193,6 +221,14 @@ export function aiMessage(
       : `${project}: ${what} was ${value} over ${window}, above the rule's ${threshold}.${estimateText(reading)}`;
   }
   const window = minutes(settings.windowMinutes);
+  if (isAiLatency(settings)) {
+    const value = durationText(reading.value);
+    const threshold = durationText(settings.thresholdMs);
+    const across = `across ${callsText(reading.calls)}`;
+    return resolved
+      ? `${project}: the 95th percentile duration of AI calls${scopeText(settings)} ${where} stayed at or below ${threshold} for ${window}: ${value} over the last ${window}, ${across}.`
+      : `${project}: the 95th percentile duration of AI calls${scopeText(settings)} ${where} was ${value} over the last ${window}, above the rule's ${threshold}, ${across}.`;
+  }
   const share = `${numberText(reading.value)}%`;
   const threshold = `${numberText(settings.thresholdPercent)}%`;
   const failed = `${whole(reading.failed)} of ${callsText(reading.calls)}`;
@@ -222,6 +258,16 @@ export function aiSubject(settings: AiSettings, reading: AiReading & { value: nu
       estimated: true,
     };
   }
+  if (isAiLatency(settings)) {
+    return {
+      type: "ai_latency",
+      ...scope,
+      windowMinutes: settings.windowMinutes,
+      percentile: "p95",
+      valueMs: rounded(reading.value, 3),
+      thresholdMs: settings.thresholdMs,
+    };
+  }
   return {
     type: "ai_failures",
     ...scope,
@@ -237,7 +283,11 @@ export function aiSubjectName(settings: AiSettings): string {
   const filters = [settings.feature === "" ? "Unlabeled" : settings.feature, settings.model].filter(
     (item) => item !== null,
   );
-  const name = isAiCost(settings) ? "AI cost" : "AI failures";
+  const name = isAiCost(settings)
+    ? "AI cost"
+    : isAiLatency(settings)
+      ? "AI latency"
+      : "AI failures";
   return filters.length === 0 ? name : `${name} (${filters.join(", ")})`;
 }
 

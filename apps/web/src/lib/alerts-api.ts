@@ -22,6 +22,7 @@ export const RULE_KINDS = [
   "metric_threshold",
   "ai_cost",
   "ai_failures",
+  "ai_latency",
 ] as const;
 export type RuleKind = (typeof RULE_KINDS)[number];
 
@@ -39,6 +40,7 @@ export const KIND_LABEL: Record<RuleKind, string> = {
   metric_threshold: "Metric",
   ai_cost: "AI cost",
   ai_failures: "AI failures",
+  ai_latency: "AI latency",
 };
 
 /** The kinds that watch traces and metrics. */
@@ -48,10 +50,12 @@ export const TELEMETRY_KINDS: readonly RuleKind[] = [
   "metric_threshold",
   "ai_cost",
   "ai_failures",
+  "ai_latency",
 ];
 
 /** The kinds that watch AI calls (docs/ai-usage.md, "Alerts"). */
-export const isAiKind = (kind: RuleKind) => kind === "ai_cost" || kind === "ai_failures";
+export const isAiKind = (kind: RuleKind) =>
+  kind === "ai_cost" || kind === "ai_failures" || kind === "ai_latency";
 
 /**
  * The area a kind watches, besides uptime and alerts (docs/access.md): a
@@ -91,7 +95,7 @@ export type CostWindow = (typeof COST_WINDOWS)[number];
 export const DEFAULT_COST_WINDOW: CostWindow = "1d";
 /** The highest cost an AI cost rule compares with, in US dollars. */
 export const MAX_COST_USD = 1_000_000_000;
-/** Calls an AI failures rule's window needs before it judges (default), and at most. */
+/** Calls an AI failures or latency rule's window needs before it judges (default), and at most. */
 export const DEFAULT_MIN_CALLS = 20;
 export const MAX_MIN_CALLS = 1_000_000;
 /** The longest model or feature an AI rule names. */

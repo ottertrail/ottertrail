@@ -43,6 +43,7 @@ import {
 
 import { periodDays } from "./format";
 import {
+  AiCostWidget,
   AttentionWidget,
   ErrorsWidget,
   GoalsWidget,
@@ -61,6 +62,7 @@ const WIDGET_COMPONENTS: Record<WidgetId, (props: WidgetProps) => React.ReactNod
   errors: ErrorsWidget,
   uptime: UptimeWidget,
   services: ServicesWidget,
+  "ai-cost": AiCostWidget,
   speed: SpeedWidget,
   "main-goal": MainGoalWidget,
   traffic: TrafficWidget,

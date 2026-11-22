@@ -8,7 +8,7 @@ import { renderApp } from "./render.tsx";
 
 /**
  * The AI alert rules in the dashboard (docs/ai-usage.md, "Alerts"): the
- * form's fields for AI cost and AI failures, checked as the API checks
+ * form's fields for AI cost, AI failures, and AI latency, checked as the API checks
  * them, the body they send, how the rule list says what they watch, and
  * the labels and icons of their notifications.
  */
@@ -191,6 +191,59 @@ describe("the rule form's AI kinds", () => {
       .toBeVisible();
   });
 
+  test("AI latency: checks the duration and the fewest calls, and sends its settings", async () => {
+    const api = installFakeApi();
+    renderApp(ALERTS);
+    await page.getByRole("button", { name: "Add rule" }).click();
+    const form = dialog("Add an alert rule");
+    await choose(form, "When", "AI latency");
+    await expect
+      .element(form.getByText(/^Notifies when the 95th percentile duration of AI calls/))
+      .toBeVisible();
+    await expect.element(form.getByLabelText("At least (calls)")).toHaveValue("20");
+    await expect.element(form.getByLabelText("In the last (minutes)")).toHaveValue("10");
+    expect(form.getByLabelText("Failed above (percent)").elements()).toEqual([]);
+
+    await form.getByLabelText("95th percentile above (milliseconds)").fill("0");
+    await form.getByLabelText("At least (calls)").fill("0");
+    await form.getByRole("checkbox", { name: /On call/ }).click();
+    await form.getByRole("button", { name: "Add rule" }).click();
+    await expect
+      .element(form.getByText("Enter a duration above 0 and at most 3,600,000 milliseconds."))
+      .toBeVisible();
+    await expect
+      .element(form.getByText("Enter a whole number of calls from 1 to 1,000,000."))
+      .toBeVisible();
+    expect(api.bodies).toEqual([]);
+
+    await form.getByLabelText("95th percentile above (milliseconds)").fill("8000");
+    await form.getByLabelText("At least (calls)").fill("10");
+    await form.getByLabelText("Model (optional)").fill("gpt-5-mini");
+    await form.getByRole("button", { name: "Add rule" }).click();
+
+    await expect.element(form).not.toBeInTheDocument();
+    expect(api.bodies.at(-1)?.body).toEqual({
+      name: "",
+      kind: "ai_latency",
+      settings: {
+        environment: null,
+        model: "gpt-5-mini",
+        feature: null,
+        windowMinutes: 10,
+        thresholdMs: 8000,
+        minCalls: 10,
+      },
+      channelIds: [EMAIL.id],
+    });
+    await expect
+      .element(
+        page.getByText(
+          "The 95th percentile duration of AI calls of the model gpt-5-mini is above 8,000 ms over 10 minutes, with at least 10 calls, in production",
+        ),
+      )
+      .toBeVisible();
+  });
+
   test("the rule list says what each AI rule watches, and editing one shows its settings", async () => {
     installFakeApi({
       alerts: {
@@ -258,6 +311,7 @@ describe("the rule form's AI kinds", () => {
     await expect.element(page.getByRole("option", { name: "Check down" })).toBeVisible();
     expect(page.getByRole("option", { name: "AI cost" }).elements()).toEqual([]);
     expect(page.getByRole("option", { name: "AI failures" }).elements()).toEqual([]);
+    expect(page.getByRole("option", { name: "AI latency" }).elements()).toEqual([]);
   });
 });
 
@@ -275,6 +329,8 @@ describe("AI notifications", () => {
             { ...first, id: "ai-2", type: "ai.cost_resolved", status: "sent", lastError: null },
             { ...first, id: "ai-3", type: "ai.failures", status: "sent", lastError: null },
             { ...first, id: "ai-4", type: "ai.failures_resolved", status: "sent", lastError: null },
+            { ...first, id: "ai-5", type: "ai.latency", status: "sent", lastError: null },
+            { ...first, id: "ai-6", type: "ai.latency_resolved", status: "sent", lastError: null },
           ],
         },
       },
@@ -287,7 +343,14 @@ describe("AI notifications", () => {
     await expect.element(table).toBeVisible();
     expect(
       [...table.element().querySelectorAll("tbody tr")].map((row) => row.children[1]?.textContent),
-    ).toEqual(["AI cost", "AI cost back under", "AI failures", "AI failures over"]);
+    ).toEqual([
+      "AI cost",
+      "AI cost back under",
+      "AI failures",
+      "AI failures over",
+      "AI latency",
+      "AI latency over",
+    ]);
   });
 
   test("the inbox marks AI alerts with their own icon, and their recovery as fine again", async () => {

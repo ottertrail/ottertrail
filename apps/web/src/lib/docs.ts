@@ -3,6 +3,9 @@ import type { RegisteredRouter } from "@tanstack/react-router";
 /** The docs site: the one place its address is kept. */
 export const DOCS_URL = "https://docs.ottertrail.app";
 
+/** The docs page on sending AI calls: the AI page's and the Overview's AI cost widget's empty states. */
+export const AI_DOCS_URL = `${DOCS_URL}/monitoring/ai-usage/`;
+
 /** A screen's page on the docs site, and what the page header's Docs link calls it. */
 export interface DocsPage {
   /**

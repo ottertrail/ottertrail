@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, test } from "vite-plus/test";
 
 import { ALL_AREAS, type Areas } from "../src/access/areas.ts";
+import { costOf, priceOf } from "../src/ai/prices.ts";
 import { purgeDeletedProjects, retryFirstSeenRebuilds } from "../src/clickhouse/delete-events.ts";
 import { insertRows } from "../src/clickhouse/insert.ts";
 import type { NewEvent } from "../src/collection/event-store.ts";
@@ -13,8 +14,8 @@ import { PUBLIC_URL, signedInDashboard, signedInUser } from "./helpers/dashboard
 
 /**
  * The project overview (docs/dashboard.md, "Overview"): each widget's
- * numbers on a small set of events, spans, checks, and alerts, worked out
- * by hand in the comments; who reaches which widget; and each user's own
+ * numbers on a small set of events, spans, AI calls, checks, and alerts,
+ * worked out by hand in the comments; who reaches which widget; and each user's own
  * layout.
  *
  * The instance is in UTC, and the clock stands at noon today: "7d" is the
@@ -42,6 +43,7 @@ const WIDGET_AREAS = {
   errors: "errors",
   uptime: "uptime_alerts",
   services: "monitoring",
+  "ai-cost": "monitoring",
   speed: "web_analytics",
   "main-goal": "product_analytics",
   traffic: "web_analytics",
@@ -144,6 +146,30 @@ const span = (
   scope_version: "",
 });
 
+/** An AI call, as the ai_calls table holds it. */
+const aiCall = (
+  timestamp: Date,
+  model: string,
+  inputTokens: number,
+  environment = "production",
+) => ({
+  project_id: site.id,
+  timestamp: timestamp.toISOString().replace("T", " ").replace("Z", ""),
+  id: randomUUID(),
+  environment,
+  model,
+  input_tokens: inputTokens,
+  duration_ns: 1_000_000_000,
+});
+const SONNET = "claude-sonnet-4-6";
+const MINI = "gpt-5.4-mini";
+/** What `input` tokens of a model cost, with no output. */
+function inputCost(model: string, input: number): number {
+  const price = priceOf(model);
+  if (price === null) throw new Error(`no price for ${model}`);
+  return costOf(price, { input, output: 0, cacheRead: 0, cacheWrite: 0 });
+}
+
 const ERROR_A = {
   type: "TypeError",
   message: "x is undefined",
@@ -217,6 +243,18 @@ beforeAll(async () => {
     span("web", at(8, "10:00"), 40),
     span("billing", at(1, "10:03"), 2000),
     span("web", at(1, "10:04"), 5, { kind: "client" }),
+  ]);
+
+  // AI calls: two of Sonnet and one of a mini model yesterday, one of a
+  // model without a price; one in staging (not counted); one of Sonnet
+  // eight days ago (the period before).
+  await insertRows(dashboard.reader.client, "ai_calls", [
+    aiCall(at(1, "10:00"), SONNET, 1_000_000),
+    aiCall(at(1, "10:01"), SONNET, 1_000_000),
+    aiCall(at(1, "10:02"), MINI, 1_000_000),
+    aiCall(at(1, "10:03"), "llama3.3:70b", 1_000_000),
+    aiCall(at(1, "10:04"), SONNET, 9_000_000, "staging"),
+    aiCall(at(8, "10:00"), SONNET, 500_000),
   ]);
 });
 
@@ -319,6 +357,36 @@ describe("each widget's numbers", () => {
             previous: { requests: 0, failed: 0, p95Us: null },
           },
         ],
+      }),
+    );
+  });
+
+  test("AI cost: the estimated cost and calls against the period before, the models that cost the most", async () => {
+    const answer = await widget("ai-cost");
+    expect(answer).toEqual(
+      expect.objectContaining({
+        received: true,
+        costUsd: expect.closeTo(2 * inputCost(SONNET, 1_000_000) + inputCost(MINI, 1_000_000), 9),
+        calls: 4,
+        noPriceCalls: 1,
+        previousCostUsd: expect.closeTo(inputCost(SONNET, 500_000), 9),
+        previousCalls: 1,
+        // The model without a price costs nothing here, and is not listed.
+        models: [
+          { model: SONNET, costUsd: expect.closeTo(2 * inputCost(SONNET, 1_000_000), 9), calls: 2 },
+          { model: MINI, costUsd: expect.closeTo(inputCost(MINI, 1_000_000), 9), calls: 1 },
+        ],
+      }),
+    );
+    // A project without AI calls says so.
+    expect(await widget("ai-cost", { projectId: other.id })).toEqual(
+      expect.objectContaining({
+        received: false,
+        costUsd: 0,
+        calls: 0,
+        models: [],
+        previousCostUsd: 0,
+        previousCalls: 0,
       }),
     );
   });
@@ -568,6 +636,7 @@ describe("who reaches which widget", () => {
       errors: 403,
       uptime: 403,
       services: 403,
+      "ai-cost": 403,
       speed: 200,
       "main-goal": 403,
       traffic: 200,
@@ -731,6 +800,7 @@ describe("each user's own layout", () => {
       "errors",
       "uptime",
       "services",
+      "ai-cost",
       "speed",
       "main-goal",
       "traffic",

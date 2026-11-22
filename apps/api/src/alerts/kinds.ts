@@ -25,6 +25,7 @@ export const RULE_KINDS = [
   "metric_threshold",
   "ai_cost",
   "ai_failures",
+  "ai_latency",
 ] as const;
 
 export type RuleKind = (typeof RULE_KINDS)[number];
@@ -98,6 +99,12 @@ export const KIND_INFO: Record<
     fires: "ai.failures",
     resolves: "ai.failures_resolved",
   },
+  ai_latency: {
+    label: "AI latency",
+    source: "telemetry",
+    fires: "ai.latency",
+    resolves: "ai.latency_resolved",
+  },
 };
 
 /** The kinds the worker evaluates from spans and metrics (alerts/telemetry-rules.ts). */
@@ -154,7 +161,7 @@ export const COST_WINDOWS = ["1h", "1d", "month"] as const;
 export type CostWindow = (typeof COST_WINDOWS)[number];
 /** The highest cost an AI cost rule compares with, in US dollars. */
 export const MAX_COST_USD = 1_000_000_000;
-/** Calls an AI failures rule's window needs before it judges (default), and at most. */
+/** Calls an AI failures or latency rule's window needs before it judges (default), and at most. */
 export const DEFAULT_MIN_CALLS = 20;
 export const MAX_MIN_CALLS = 1_000_000;
 /** How long an AI cost rule's cost stays at or below its value before the alert resolves. */
@@ -235,6 +242,13 @@ export interface AiFailureSettings extends AiScope {
   /** Fewer calls in the window: the rule does not judge it (as no data). */
   minCalls: number;
 }
+export interface AiLatencySettings extends AiScope {
+  windowMinutes: number;
+  /** Fires when the calls' 95th-percentile duration is above this many milliseconds. */
+  thresholdMs: number;
+  /** Fewer calls in the window: the rule does not judge it (as no data). */
+  minCalls: number;
+}
 
 export type RuleSettings =
   | CheckDownSettings
@@ -246,7 +260,8 @@ export type RuleSettings =
   | FailureSettings
   | MetricSettings
   | AiCostSettings
-  | AiFailureSettings;
+  | AiFailureSettings
+  | AiLatencySettings;
 
 /** What the API takes as settings: every kind's fields, each optional. */
 export interface SettingsInput {
@@ -352,6 +367,7 @@ export function settingsOf(
   }
   if (kind === "metric_threshold") return metricSettingsOf(pick, windowMinutes);
   if (kind === "ai_failures") return aiFailureSettingsOf(pick, windowMinutes);
+  if (kind === "ai_latency") return aiLatencySettingsOf(pick, windowMinutes);
   const threshold = pick("threshold") ?? DEFAULT_THRESHOLD;
   if (!Number.isInteger(threshold) || threshold < 1 || threshold > MAX_THRESHOLD) {
     return {
@@ -586,6 +602,33 @@ function aiFailureSettingsOf(pick: Picker, windowMinutes: number): AiFailureSett
       message: "The threshold is a share of calls from 0 to just under 100 percent.",
     };
   }
+  const minCalls = minCallsOf(pick);
+  if (typeof minCalls !== "number") return minCalls;
+  return { ...scope, windowMinutes, thresholdPercent, minCalls };
+}
+
+function aiLatencySettingsOf(pick: Picker, windowMinutes: number): AiLatencySettings | Problem {
+  const scope = aiScopeOf(pick);
+  if ("error" in scope) return scope;
+  const thresholdMs = pick("thresholdMs");
+  if (
+    thresholdMs === undefined ||
+    !Number.isFinite(thresholdMs) ||
+    thresholdMs <= 0 ||
+    thresholdMs > MAX_THRESHOLD_MS
+  ) {
+    return {
+      error: "invalid_threshold",
+      message: `The threshold is a duration above 0 and at most ${MAX_THRESHOLD_MS.toLocaleString("en")} milliseconds.`,
+    };
+  }
+  const minCalls = minCallsOf(pick);
+  if (typeof minCalls !== "number") return minCalls;
+  return { ...scope, windowMinutes, thresholdMs, minCalls };
+}
+
+/** An AI rule's fewest calls, 20 by default; or the problem. */
+function minCallsOf(pick: Picker): number | Problem {
   const minCalls = pick("minCalls") ?? DEFAULT_MIN_CALLS;
   if (!Number.isInteger(minCalls) || minCalls < 1 || minCalls > MAX_MIN_CALLS) {
     return {
@@ -593,7 +636,7 @@ function aiFailureSettingsOf(pick: Picker, windowMinutes: number): AiFailureSett
       message: `The fewest calls is a whole number from 1 to ${MAX_MIN_CALLS.toLocaleString("en")}.`,
     };
   }
-  return { ...scope, windowMinutes, thresholdPercent, minCalls };
+  return minCalls;
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -638,6 +681,7 @@ export function storedSettings(kind: RuleKind, value: unknown): RuleSettings {
   if (kind === "metric_threshold") return metricSettingsStored(value);
   if (kind === "ai_cost") return aiCostSettingsStored(value);
   if (kind === "ai_failures") return aiFailureSettingsStored(value);
+  if (kind === "ai_latency") return aiLatencySettingsStored(value);
   return spikeSettingsOf(value);
 }
 
@@ -664,6 +708,17 @@ export function aiFailureSettingsStored(value: unknown): AiFailureSettings {
     ...aiScopeStored(stored),
     windowMinutes: numberOr(stored.windowMinutes, DEFAULT_WINDOW_MINUTES),
     thresholdPercent: numberOr(stored.thresholdPercent, 100),
+    minCalls: numberOr(stored.minCalls, DEFAULT_MIN_CALLS),
+  };
+}
+
+/** A stored "AI latency" rule's settings (the API wrote them). */
+export function aiLatencySettingsStored(value: unknown): AiLatencySettings {
+  const stored = storedRecord(value);
+  return {
+    ...aiScopeStored(stored),
+    windowMinutes: numberOr(stored.windowMinutes, DEFAULT_WINDOW_MINUTES),
+    thresholdMs: numberOr(stored.thresholdMs, MAX_THRESHOLD_MS),
     minCalls: numberOr(stored.minCalls, DEFAULT_MIN_CALLS),
   };
 }

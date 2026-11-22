@@ -15,6 +15,7 @@ export const WIDGETS = [
   { id: "errors", area: "errors" },
   { id: "uptime", area: "uptime_alerts" },
   { id: "services", area: "monitoring" },
+  { id: "ai-cost", area: "monitoring" },
   { id: "speed", area: "web_analytics" },
   { id: "main-goal", area: "product_analytics" },
   { id: "traffic", area: "web_analytics" },
