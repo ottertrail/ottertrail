@@ -284,6 +284,11 @@ export interface AlertHistoryTable {
   id: ColumnType<string, string | undefined, never>;
   rule_id: ColumnType<string, string, never>;
   project_id: ColumnType<string, string, never>;
+  /**
+   * The rule's kind when it fired (0021): who may read the alert goes by
+   * it, since a rule can change kind and keep its history.
+   */
+  kind: ColumnType<string, string, never>;
   subject: string;
   subject_name: string;
   fired_at: Date;

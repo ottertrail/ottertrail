@@ -406,16 +406,17 @@ describe("members, admins, and the one access check", () => {
       });
       checkRule = await create({ kind: "check_down" });
       // An alert of each kind, firing, as the worker would leave them.
-      for (const [ruleId, message] of [
-        [errorRule, "New error: No account for jane.doe@example.com"],
-        [routeRule, "GET /orders/{id} in checkout is slow"],
-        [checkRule, "Shop: the check is down."],
+      for (const [ruleId, kind, message] of [
+        [errorRule, "error_new", "New error: No account for jane.doe@example.com"],
+        [routeRule, "route_latency", "GET /orders/{id} in checkout is slow"],
+        [checkRule, "check_down", "Shop: the check is down."],
       ] as const) {
         const history = await dashboard.db
           .insertInto("alert_history")
           .values({
             rule_id: ruleId,
             project_id: site.id,
+            kind,
             subject: ruleId,
             subject_name: "Subject",
             fired_at: new Date(),
@@ -532,6 +533,48 @@ describe("members, admins, and the one access check", () => {
       // Nothing of the service arrived: the warning says so to those who read monitoring.
       expect(created.json().warning).not.toBeNull();
       expect((await send(monitoring.cookie, "GET", rules(`/${errorRule}`))).statusCode).toBe(404);
+    });
+
+    test("an error rule changed into a check rule keeps its error alerts from check-only readers", async () => {
+      const ruleId = (
+        await send(dashboard.cookie, "POST", rules(), {
+          kind: "error_new",
+          name: "Becomes a check rule",
+          channelIds: [channelId],
+        })
+      ).json().rule.id as string;
+      const secret = "New error: No account for john.roe@example.com";
+      await dashboard.db
+        .insertInto("alert_history")
+        .values({
+          rule_id: ruleId,
+          project_id: site.id,
+          kind: "error_new",
+          subject: "fingerprint",
+          subject_name: "TypeError",
+          fired_at: new Date(),
+          message: secret,
+        })
+        .execute();
+      const changed = await send(dashboard.cookie, "PATCH", rules(`/${ruleId}`), {
+        kind: "check_down",
+      });
+      expect(changed.statusCode).toBe(200);
+      const { cookie } = await member("alerts-after-change@example.com", {
+        errors: "none",
+        monitoring: "none",
+        uptime_alerts: "manage",
+      });
+      // The rule is a check rule now, so they see it, but not what it said before.
+      expect((await send(cookie, "GET", rules(`/${ruleId}`))).statusCode).toBe(200);
+      expect((await send(cookie, "GET", rules(`/${ruleId}/history`))).json().alerts).toEqual([]);
+      const alerts = (await send(cookie, "GET", `/api/projects/${site.id}/alerts`)).json().alerts;
+      expect(alerts.some((alert: { message: string }) => alert.message === secret)).toBe(false);
+      // Those who may read errors still see it in the rule's history, as an error alert.
+      expect(
+        (await send(dashboard.cookie, "GET", rules(`/${ruleId}/history`))).json().alerts,
+      ).toEqual([expect.objectContaining({ kind: "error_new", message: secret })]);
+      await send(dashboard.cookie, "DELETE", rules(`/${ruleId}`));
     });
   });
 

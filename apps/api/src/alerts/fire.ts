@@ -56,6 +56,7 @@ interface LockedRule {
   project_name: string;
   name: string;
   kind: string;
+  settings: unknown;
   channel_ids: string[];
   enabled: boolean;
   cap_window_start: Date | null;
@@ -71,6 +72,7 @@ async function lockRule(trx: Transaction<Database>, ruleId: string): Promise<Loc
       "project_id",
       "name",
       "kind",
+      "settings",
       "channel_ids",
       "enabled",
       "cap_window_start",
@@ -88,6 +90,25 @@ async function lockRule(trx: Transaction<Database>, ruleId: string): Promise<Loc
     .executeTakeFirst();
   return { ...row, project_name: project?.name ?? "" };
 }
+
+/**
+ * What an evaluation read of a rule: its kind and settings. An alert goes
+ * ahead only while the locked rule still has them, so a rule changed to
+ * watch something else meanwhile (updateRule forgets its states) gets no
+ * alert, or firing state, for what it watched before, which no later
+ * evaluation would look at, and so never resolve.
+ */
+export interface RuleRead {
+  kind: string;
+  settings: unknown;
+}
+
+/** Whether the locked rule is on, and still the one the evaluation read. */
+const stillWatching = (rule: LockedRule, read: RuleRead) =>
+  rule.enabled &&
+  rule.kind === read.kind &&
+  // Both read from one jsonb value, whose keys come out in one order.
+  JSON.stringify(rule.settings) === JSON.stringify(read.settings);
 
 /** Who sees a rule's alerts in the inbox: alerts, and the area its kind watches (docs/access.md). */
 function inboxAreas(rule: LockedRule) {
@@ -176,6 +197,8 @@ export type Outcome = "sent" | "held" | "skipped";
 
 export interface FireInput extends Message {
   ruleId: string;
+  /** The rule as the evaluation read it. */
+  rule: RuleRead;
   /** The state's subject: a check's ID, a fingerprint, or "" for a spike rule. */
   subjectKey: string;
   /** What the history shows for the subject, such as a check's name. */
@@ -207,13 +230,13 @@ export type Guard = (trx: Transaction<Database>) => Promise<boolean>;
  * Fires an alert for one rule and subject, unless it already fired for
  * the same key (firing now, or, for `once`, ever). A firing alert for
  * another key is ended without a notification first. Nothing happens for
- * a rule deleted or turned off meanwhile.
+ * a rule deleted, turned off, or changed meanwhile.
  */
 export async function fire(context: AlertContext, input: FireInput): Promise<Outcome> {
   const key = input.key ?? "";
   return context.db.transaction().execute(async (trx) => {
     const rule = await lockRule(trx, input.ruleId);
-    if (rule === null || !rule.enabled) return "skipped";
+    if (rule === null || !stillWatching(rule, input.rule)) return "skipped";
     if (input.still !== undefined && !(await input.still(trx))) return "skipped";
     const state = await trx
       .selectFrom("alert_states")
@@ -238,6 +261,7 @@ export async function fire(context: AlertContext, input: FireInput): Promise<Out
       .values({
         rule_id: rule.id,
         project_id: rule.project_id,
+        kind: rule.kind,
         subject: input.subjectKey,
         subject_name: cut(input.subjectName, 300),
         fired_at: input.at,
@@ -265,6 +289,8 @@ export async function fire(context: AlertContext, input: FireInput): Promise<Out
 
 export interface ResolveInput extends Message {
   ruleId: string;
+  /** The rule as the evaluation read it. */
+  rule: RuleRead;
   subjectKey: string;
   /** Whether it is still resolved, read again in the transaction. */
   still?: Guard | undefined;
@@ -277,7 +303,7 @@ export interface ResolveInput extends Message {
 export async function resolve(context: AlertContext, input: ResolveInput): Promise<Outcome> {
   return context.db.transaction().execute(async (trx) => {
     const rule = await lockRule(trx, input.ruleId);
-    if (rule === null || !rule.enabled) return "skipped";
+    if (rule === null || !stillWatching(rule, input.rule)) return "skipped";
     if (input.still !== undefined && !(await input.still(trx))) return "skipped";
     const state = await trx
       .selectFrom("alert_states")

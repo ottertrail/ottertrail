@@ -681,12 +681,16 @@ describe("who reaches which widget", () => {
       ).json().rule.id as string;
     const errorRule = await rule({ kind: "error_new", name: "New errors" });
     const checkRule = await rule({ kind: "check_down", name: "API down" });
-    for (const ruleId of [errorRule, checkRule]) {
+    for (const [ruleId, kind] of [
+      [errorRule, "error_new"],
+      [checkRule, "check_down"],
+    ] as const) {
       const history = await dashboard.db
         .insertInto("alert_history")
         .values({
           rule_id: ruleId,
           project_id: site.id,
+          kind,
           subject: ruleId,
           subject_name: "Subject",
           fired_at: NOW,

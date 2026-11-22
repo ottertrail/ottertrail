@@ -383,6 +383,7 @@ describe("what makes items", () => {
     const at = new Date();
     const down = {
       ruleId: rule.id,
+      rule: { kind: "check_down", settings: {} },
       subjectKey: "check-1",
       subjectName: "Checkout API",
       type: "check.down" as const,
@@ -440,6 +441,7 @@ describe("what makes items", () => {
       { db: dashboard.db, publicUrl: PUBLIC_URL },
       {
         ruleId: rule.id,
+        rule: { kind: "error_new", settings: {} },
         subjectKey: CART_GROUP,
         subjectName: "TypeError",
         once: true,

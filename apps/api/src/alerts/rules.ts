@@ -516,7 +516,7 @@ export async function listHistory(
     ruleId?: string;
     before?: string | undefined;
     limit: number;
-    /** Only alerts of rules of these kinds: those the user may see (docs/access.md). */
+    /** Only alerts fired under these kinds: those the user may see (docs/access.md). */
     kinds: readonly RuleKind[];
   },
 ): Promise<{ alerts: HistoryEntry[]; next: string | null }> {
@@ -527,7 +527,7 @@ export async function listHistory(
       "h.id",
       "h.rule_id",
       "r.name as rule_name",
-      "r.kind",
+      "h.kind",
       "h.subject",
       "h.subject_name",
       "h.fired_at",
@@ -536,7 +536,10 @@ export async function listHistory(
       "h.notification_id",
     ])
     .where("h.project_id", "=", projectId)
-    .where("r.kind", "in", [...kinds])
+    // By the kind each alert fired under: a rule changed to another kind
+    // keeps its history, which may name what the new kind's readers may
+    // not see.
+    .where("h.kind", "in", [...kinds])
     .where("h.fired_at", ">=", sql<Date>`now() - make_interval(days => ${HISTORY_RETENTION_DAYS})`);
   if (ruleId !== undefined) query = query.where("h.rule_id", "=", ruleId);
   if (before !== undefined) {
@@ -601,6 +604,10 @@ export async function firingAlerts(
     ])
     .where("r.project_id", "=", projectId)
     .where("r.kind", "in", [...kinds])
+    // A change of kind forgets the rule's states (updateRule), and firing
+    // checks the rule still watches what was read (fire.ts): the open
+    // alert's own kind is checked as well.
+    .where((eb) => eb.or([eb("h.kind", "is", null), eb("h.kind", "in", [...kinds])]))
     .where("r.enabled", "=", true)
     .where("s.firing", "=", true)
     .orderBy("s.since")

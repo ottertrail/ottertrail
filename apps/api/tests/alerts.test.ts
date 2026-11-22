@@ -762,6 +762,7 @@ describe("checks deleted or recovered while an evaluation runs", () => {
       .values({
         rule_id: ruleId,
         project_id: projectId,
+        kind: "check_down",
         subject: gone,
         subject_name: "Gone",
         fired_at: NOW,
@@ -777,6 +778,84 @@ describe("checks deleted or recovered while an evaluation runs", () => {
     expect(await testDb.db.selectFrom("alert_states").selectAll().execute()).toEqual([]);
     const [entry] = await historyOf(ruleId);
     expect(entry?.resolved_at).toEqual(later(MINUTE));
+    expect(await sent()).toEqual([]);
+  });
+});
+
+/**
+ * Runs `evaluate` while the rule's row is locked, as a save holds it,
+ * then changes the rule to `values` in the locking transaction and
+ * commits: the evaluation read the rule as it was, and fires after.
+ */
+async function changedDuring<T>(
+  ruleId: string,
+  evaluate: () => Promise<T>,
+  values: { kind?: RuleKind; settings: object },
+): Promise<T> {
+  let pending: Promise<T> | undefined;
+  await testDb.db.transaction().execute(async (trx) => {
+    await trx.selectFrom("alert_rules").select("id").where("id", "=", ruleId).forUpdate().execute();
+    pending = evaluate();
+    // Long enough for the evaluation to read the rule and reach the lock.
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    await trx
+      .updateTable("alert_rules")
+      .set({ ...values, settings: JSON.stringify(values.settings), updated_at: later(1) })
+      .where("id", "=", ruleId)
+      .execute();
+  });
+  if (pending === undefined) throw new Error("The evaluation did not start");
+  return pending;
+}
+
+const firingStates = (ruleId: string) =>
+  testDb.db
+    .selectFrom("alert_states")
+    .select("subject")
+    .where("rule_id", "=", ruleId)
+    .where("firing", "=", true)
+    .execute();
+
+describe("a rule changed while an evaluation runs", () => {
+  test("a check rule moved to another check leaves no alert firing for the first", async () => {
+    const first = await insertCheck({
+      name: "First",
+      url: "https://first.example/",
+      state: "down",
+    });
+    const second = await insertCheck({
+      name: "Second",
+      url: "https://second.example/",
+      state: "down",
+    });
+    const ruleId = await insertRule("check_down", { checkId: first.id });
+    const counts = await changedDuring(ruleId, () => evaluateCheckDown(context, {}, NOW), {
+      settings: { checkId: second.id },
+    });
+    expect(counts).toEqual({ sent: 0, held: 0, skipped: 1 });
+    expect(await firingStates(ruleId)).toEqual([]);
+    expect(await sent()).toEqual([]);
+
+    // The next evaluation fires for the check the rule watches now, as a check alert.
+    await evaluateCheckDown(context, {}, later(MINUTE));
+    expect(await firingStates(ruleId)).toEqual([{ subject: second.id }]);
+    expect((await historyOf(ruleId)).map((entry) => entry.kind)).toEqual(["check_down"]);
+  });
+
+  test("a spike rule changed into a check rule leaves no spike firing", async () => {
+    const ruleId = await insertRule("error_spike", {
+      environment: null,
+      fingerprint: null,
+      windowMinutes: 5,
+      threshold: 1,
+    });
+    await arrive(CART, later(MINUTE), later(MINUTE));
+    await changedDuring(ruleId, () => evaluateErrorRules(context, reader(), later(2 * MINUTE)), {
+      kind: "check_down",
+      settings: { checkId: null },
+    });
+    expect(await firingStates(ruleId)).toEqual([]);
+    expect(await historyOf(ruleId)).toEqual([]);
     expect(await sent()).toEqual([]);
   });
 });

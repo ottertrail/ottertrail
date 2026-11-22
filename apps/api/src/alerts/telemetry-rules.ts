@@ -720,6 +720,7 @@ async function judge(
       subjectName: subjectName(settings),
       type: KIND_INFO[rule.kind].fires,
       message: messageOf(rule.projectName, settings, read, false),
+      rule: { kind: rule.kind, settings: rule.settings },
       still: unchanged(rule),
       ...message,
     });
@@ -741,6 +742,7 @@ async function judge(
     subjectKey: "",
     type: resolves,
     message: messageOf(rule.projectName, settings, read, true),
+    rule: { kind: rule.kind, settings: rule.settings },
     still: unchanged(rule),
     ...message,
   });

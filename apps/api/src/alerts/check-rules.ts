@@ -92,6 +92,8 @@ export async function evaluateCheckDown(
     )
     .select([
       "r.id as rule_id",
+      "r.kind as rule_kind",
+      "r.settings as rule_settings",
       "p.id as project_id",
       "p.name as project_name",
       "c.id as check_id",
@@ -124,6 +126,7 @@ export async function evaluateCheckDown(
       row.state === "down"
         ? await fire(context, {
             ruleId: row.rule_id,
+            rule: { kind: row.rule_kind, settings: row.rule_settings },
             subjectKey: row.check_id,
             subjectName: row.name,
             type: "check.down",
@@ -135,6 +138,7 @@ export async function evaluateCheckDown(
           })
         : await resolve(context, {
             ruleId: row.rule_id,
+            rule: { kind: row.rule_kind, settings: row.rule_settings },
             subjectKey: row.check_id,
             type: "check.up",
             message:
@@ -178,6 +182,8 @@ export async function evaluateCertificates(
     )
     .select([
       "r.id as rule_id",
+      "r.kind as rule_kind",
+      "r.settings as rule_settings",
       sql<number | null>`(r.settings->>'days')::int`.as("days"),
       "p.id as project_id",
       "p.name as project_name",
@@ -219,6 +225,7 @@ export async function evaluateCertificates(
       counts[
         await fire(context, {
           ruleId: row.rule_id,
+          rule: { kind: row.rule_kind, settings: row.rule_settings },
           subjectKey: row.check_id,
           subjectName: row.name,
           key: expires.toISOString(),
@@ -234,6 +241,7 @@ export async function evaluateCertificates(
       counts[
         await resolve(context, {
           ruleId: row.rule_id,
+          rule: { kind: row.rule_kind, settings: row.rule_settings },
           subjectKey: row.check_id,
           type: "certificate.renewed",
           message:

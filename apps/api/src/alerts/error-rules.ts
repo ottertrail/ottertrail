@@ -8,7 +8,15 @@ import { resolutions, statusOf } from "../errors/errors.ts";
 import { DASHBOARD_SETTINGS } from "../telemetry/dashboard-query.ts";
 import { ERROR } from "../visits/visits.ts";
 import type { Counts } from "./check-rules.ts";
-import { type AlertContext, cut, dashboardLink, fire, resolve, setClearSince } from "./fire.ts";
+import {
+  type AlertContext,
+  cut,
+  dashboardLink,
+  fire,
+  resolve,
+  type RuleRead,
+  setClearSince,
+} from "./fire.ts";
 import {
   isRuleKind,
   newErrorSettingsOf,
@@ -71,6 +79,8 @@ interface ErrorRule {
   settings: unknown;
   /** When it was created or turned on: it reads nothing that arrived before. */
   activeSince: Date;
+  /** Its kind and settings as read, which an alert checks again (fire.ts). */
+  read: RuleRead;
 }
 
 /** The groups whose occurrences arrived in the window, per environment. */
@@ -346,6 +356,7 @@ async function windowAlerts(
       counts[
         await fire(context, {
           ruleId: rule.id,
+          rule: rule.read,
           subjectKey: row.fingerprint,
           subjectName: errorText(row.type, row.message),
           once: true,
@@ -389,6 +400,7 @@ async function windowAlerts(
       counts[
         await fire(context, {
           ruleId: rule.id,
+          rule: rule.read,
           subjectKey: fingerprint,
           subjectName: errorText(row.type, row.message),
           key: resolution.resolvedAt.toISOString(),
@@ -547,6 +559,7 @@ async function evaluateSpikes(
       counts[
         await fire(context, {
           ruleId: rule.id,
+          rule: rule.read,
           subjectKey: "",
           subjectName: fingerprint === null ? `Errors${where}` : errorText(type, message),
           type: "error.spike",
@@ -563,6 +576,7 @@ async function evaluateSpikes(
         counts[
           await resolve(context, {
             ruleId: rule.id,
+            rule: rule.read,
             subjectKey: "",
             type: "error.spike_resolved",
             message: `${project.name}: ${what} stayed below the threshold of ${threshold} for ${minutes(windowMinutes)}: ${count} in the last ${minutes(windowMinutes)}.`,
@@ -623,6 +637,7 @@ export async function evaluateErrorRules(
       kind: row.kind,
       settings: row.settings,
       activeSince: row.active_since,
+      read: { kind: row.kind, settings: row.settings },
     });
     byProject.set(row.project_id, list);
   }
