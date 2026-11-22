@@ -109,6 +109,7 @@ Fastify checks a route's parameters and body before the access check runs, so a 
 | `GET …/replays`, `…/replays/list`, `…/replays/:replayId`, `…/timeline`, `…/player`                                                                           | `replays` view                      |
 | `…/users`, `…/users/:userId`                                                                                                                                 | `users` view                        |
 | `…/traces…`, `…/logs…`, `…/metrics…`, `…/services…`, `…/databases…`, `…/hosts…`                                                                              | `monitoring` view                   |
+| `…/ai`, `…/ai/chart`, `…/ai/calls` (the AI page, [AI usage](ai-usage.md#the-report))                                                                         | `monitoring` view                   |
 | `GET …/checks…`, `GET …/alert-rules…`, `…/alerts`, `…/alerts/firing`, `…/alert-channels`                                                                     | `uptime_alerts` view                |
 | `POST`, `PATCH`, `DELETE …/checks…` and `…/alert-rules…`                                                                                                     | `uptime_alerts` manage              |
 | `GET`, `PUT`, `DELETE …/overview/layout` (the user's own layout)                                                                                             | The project                         |
@@ -129,6 +130,7 @@ A rule shows what it watches: an error rule shows error groups and messages, a t
 | `check_down`, `certificate_expiring`                  | Nothing more      |
 | `error_new`, `error_regressed`, `error_spike`         | `errors` view     |
 | `route_latency`, `route_failures`, `metric_threshold` | `monitoring` view |
+| `ai_cost`, `ai_failures`                              | `monitoring` view |
 
 - Creating a rule, or changing one to another kind, of a kind the user may not see answers 403.
 - The rule list, the alerts, and the firing alerts hold only the kinds the user may see. A rule of another kind answers as a missing rule (404 `rule_not_found`) to reading it, its history, changing it, and deleting it.
@@ -140,6 +142,7 @@ Some answers show less to a user without another area:
 - `GET /api/projects` and `GET /api/projects/:id` answer only the ID, name, creation time, and last event to users without the `projects` permission: no keys and no settings, among them the blocked addresses and blocked referrers ([web analytics](web-analytics.md#blocked-addresses)). The list holds only the projects the user may reach.
 - The analytics page's answer has no goals without `product_analytics`.
 - The heatmap reports answer the project's allowed hostnames (`siteHostnames`) to users with Web analytics, for "Open on your site": the addresses of the project's own sites, not its keys or other settings.
+- The AI page's breakdown by user, and the user of each of its latest calls, go only to users with `users`: otherwise `users` is null and `usersHidden` true ([AI usage](ai-usage.md#the-report)).
 - The overview's signed-in users widget names the newest users only to users with `users` (`newest` is null otherwise). Its firing alerts hold only the kinds the user may see, as the Alerts page's do.
 - An error's occurrences and a user's events carry no replay, and a user's page no replays, without `replays`.
 - The replay and source map overviews (`GET …/replays`, `GET …/source-maps`) leave out `instance`, what all projects store together against the instance's limit, for users without the `projects` permission.

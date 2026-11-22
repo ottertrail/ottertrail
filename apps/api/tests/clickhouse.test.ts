@@ -68,7 +68,7 @@ describe("ClickHouse migrations", () => {
     expect(table?.create_table_query).toMatch(/fsync_part_directory = 1/);
   });
 
-  test("create the telemetry tables with their order and TTL, uptime's results, first-seen times, and heatmaps", async () => {
+  test("create the telemetry tables with their order and TTL, uptime's results, first-seen times, heatmaps, and AI calls", async () => {
     const result = await ch().client.query({
       query: `SELECT name, sorting_key FROM system.tables
               WHERE database = {database:String} AND name != 'schema_migrations'
@@ -77,6 +77,8 @@ describe("ClickHouse migrations", () => {
       format: "JSONEachRow",
     });
     expect(await result.json()).toEqual([
+      // By project, then time, as spans; kept as long as events (0008).
+      { name: "ai_calls", sorting_key: "project_id, timestamp, id" },
       { name: "check_results", sorting_key: "project_id, check_id, timestamp" },
       { name: "events", sorting_key: "project_id, toDate(occurred_at), event_id" },
       // By project, day, page, then device (0006).
@@ -92,6 +94,28 @@ describe("ClickHouse migrations", () => {
       // The materialized view that fills user_first_seen as events are stored.
       { name: "user_first_seen_mv", sorting_key: "" },
     ]);
+  });
+
+  test("create ai_calls by month, with no TTL, merged as the telemetry tables, written to disk as events", async () => {
+    const result = await ch().client.query({
+      query: `SELECT engine, partition_key, create_table_query FROM system.tables
+              WHERE database = {database:String} AND name = 'ai_calls'`,
+      query_params: { database: ch().database },
+      format: "JSONEachRow",
+    });
+    const [table] = await result.json<{
+      engine: string;
+      partition_key: string;
+      create_table_query: string;
+    }>();
+    expect(table).toMatchObject({
+      engine: "ReplacingMergeTree",
+      partition_key: "toYYYYMM(timestamp)",
+    });
+    expect(table?.create_table_query).not.toMatch(/TTL/);
+    expect(table?.create_table_query).toMatch(/min_age_to_force_merge_seconds = 3600/);
+    expect(table?.create_table_query).toMatch(/min_age_to_force_merge_on_partition_only = 1/);
+    expect(table?.create_table_query).toMatch(/fsync_after_insert = 1/);
   });
 
   test("running them again changes nothing", async () => {

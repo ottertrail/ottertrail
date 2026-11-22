@@ -6,6 +6,7 @@ import type { Kysely } from "kysely";
 import { memberRoutes } from "./access/member-routes.ts";
 import { meRoutes } from "./access/routes.ts";
 import { accountRoutes } from "./account/routes.ts";
+import { aiRoutes } from "./ai/routes.ts";
 import { alertRoutes } from "./alerts/routes.ts";
 import type { Auth } from "./auth/auth.ts";
 import { passwordTryLimiter } from "./auth/password-tries.ts";
@@ -470,6 +471,14 @@ export function buildApp({
       clickhouse: telemetry.clickhouse ?? dashboard.clickhouse,
       auth: dashboard.auth,
       retentionDays: telemetry.retentionDays ?? DEFAULT_TELEMETRY_RETENTION_DAYS,
+      limiter,
+      ...(dashboard.now === undefined ? {} : { now: dashboard.now }),
+    });
+    app.register(aiRoutes, {
+      prefix: "/api",
+      db,
+      clickhouse: telemetry.clickhouse ?? dashboard.clickhouse,
+      auth: dashboard.auth,
       limiter,
       ...(dashboard.now === undefined ? {} : { now: dashboard.now }),
     });

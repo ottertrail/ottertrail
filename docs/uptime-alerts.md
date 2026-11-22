@@ -241,6 +241,10 @@ Decided differently from the design, or settled where it said nothing:
 - **The Services page and a metric's page** gained the addresses alerts link to: a service shown alone with its route marked (saying so when the list does not hold the service, or the route is past the 100 busiest), and a metric's chart narrowed to a host or an attribute value. Neither page offers a control for those filters yet; the address sets them.
 - **The form's pickers** are text fields with suggestions, so a service, route, metric, host, or attribute value that has not reported can be typed, and saved with the warning.
 
+### AI rules
+
+Added on 22 November 2026 with AI usage tracking: `ai_cost`, the estimated cost of a project's AI calls over the last hour, the last 24 hours, or the month so far above a value, and `ai_failures`, their failed share over a window above a share, each optionally for one feature or model. They are telemetry rules: taken, bounded, judged, and recorded as above, and they need `monitoring` at view. Their settings, windows, and notifications are in [AI usage](ai-usage.md#alerts).
+
 ### Not done in step 4
 
 - Alerts on matching log lines, and on data that stops arriving.

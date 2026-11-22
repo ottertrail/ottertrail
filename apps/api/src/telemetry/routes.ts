@@ -4,6 +4,7 @@ import { gunzip } from "node:zlib";
 
 import type { FastifyPluginCallback, FastifyReply, FastifyRequest } from "fastify";
 
+import { aiCallsOf } from "../ai/calls.ts";
 import type { ClickHouseClient } from "../clickhouse/clickhouse.ts";
 import { type NewEvent, storeEvents } from "../collection/event-store.ts";
 import type { CollectingProject, ProjectKeyCache } from "../collection/project-keys.ts";
@@ -93,7 +94,7 @@ const SIGNALS: Signal[] = [
     rejectedField: "rejectedSpans",
     normalize: (request, context) => {
       const { rows, ...outcome } = normalizeTraces(request, context);
-      return { ...outcome, rows: { spans: rows } };
+      return { ...outcome, rows: { spans: rows, ai_calls: aiCallsOf(rows) } };
     },
   },
   {
@@ -172,9 +173,10 @@ function fail(
  * MAX_MESSAGES), which pays the budgets for decoding it. Then it is decoded
  * and turned into rows; records the tables cannot take are refused and
  * counted in partial_success; the rest of its cost is paid, with a unit
- * more for each exception that becomes an error event (exceptions.ts). The
- * budgets are apart from events'. The answer is sent once ClickHouse has
- * written the rows and the error events (asynchronous inserts, waiting for
+ * more for each exception that becomes an error event (exceptions.ts) and
+ * each span that is an AI call (ai/calls.ts), the AI calls' units up to
+ * the whole budget. The budgets are apart from events'. The answer is sent once ClickHouse has written the rows, the
+ * error events, and the AI calls (asynchronous inserts, waiting for
  * them), and is 503 while it cannot, which exporters retry: a retry writes
  * the same rows and events again, which ClickHouse keeps once.
  */
@@ -393,13 +395,18 @@ export const telemetryRoutes: FastifyPluginCallback<TelemetryOptions> = (app, op
         }
         // Each error event is one more row, in the events table: so a
         // span's exceptions cannot multiply rows for free.
-        const cost =
+        const base =
           Math.max(
             prepaid,
             outcome.records,
             Math.ceil((body.length + outcome.sharedBytes) / BYTES_PER_UNIT),
           ) + outcome.errors.length;
-        if (cost > budget.capacity) return tooLarge(cost);
+        if (base > budget.capacity) return tooLarge(base);
+        // Each AI call is one more too, in ai_calls, but never makes a
+        // request too large: a batch the budget could take without them is
+        // charged at most the whole budget, and waits for it (429, which
+        // exporters retry), rather than being refused for good (413).
+        const cost = Math.min(budget.capacity, base + (outcome.rows.ai_calls?.length ?? 0));
         if (cost > prepaid) {
           const rest = budget.take(project.id, cost - prepaid);
           if (!rest.allowed) return tooMuch(rest.retryAfterSeconds);

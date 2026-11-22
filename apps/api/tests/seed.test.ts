@@ -281,6 +281,29 @@ describe("every page has something to show", () => {
     expect(charts.charts.some((chart: Json) => chart.lines.length > 0)).toBe(true);
   });
 
+  test("AI usage: models with and without a price, features, an agent's calls, users, failures", async () => {
+    const report: Json = await get("/ai?period=7d");
+    expect(report.totals.calls).toBeGreaterThan(100);
+    expect(report.totals.costUsd).toBeGreaterThan(0);
+    expect(report.totals.noPriceModels).toEqual(["llama3.3:70b"]);
+    expect(report.models.map((row: Json) => row.model).toSorted()).toEqual([
+      "claude-sonnet-4-6",
+      "gpt-5.4-mini",
+      "llama3.3:70b",
+      "text-embedding-3-small",
+    ]);
+    expect(report.features.map((row: Json) => row.feature).toSorted()).toEqual([
+      "",
+      "product-search",
+      "review-summarizer",
+      "support-chat",
+    ]);
+    expect(report.users.length).toBeGreaterThan(0);
+    // Rate limits on the assistant, timeouts on search: drawn, so at least one of them.
+    expect(report.failures.length).toBeGreaterThan(0);
+    expect(report.totals.failedShare).toBeLessThan(0.1);
+  });
+
   test("the report charts: several metrics of each kind, a search incident, hosts from low to high", async () => {
     // Every kind has more than one metric, and every listed metric a sparkline with a line.
     const { metrics }: Json = await get("/metrics?period=7d");

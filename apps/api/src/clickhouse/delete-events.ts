@@ -8,7 +8,12 @@ import { replayPrefix } from "../replays/replays.ts";
 import { projectPrefix } from "../source-maps/source-maps.ts";
 import type { ObjectStore } from "../storage/object-store.ts";
 import { type ClickHouseClient, identifier } from "./clickhouse.ts";
-import { firstSeenSelect, TELEMETRY_TABLES, USER_FIRST_SEEN } from "./migrations.ts";
+import {
+  AI_CALLS_TABLE,
+  firstSeenSelect,
+  TELEMETRY_TABLES,
+  USER_FIRST_SEEN,
+} from "./migrations.ts";
 import { clickHouseTime, QueryParams, queryRows, type Reader, runCommand } from "./query.ts";
 
 /**
@@ -27,7 +32,8 @@ function chunks<T>(items: readonly T[]): T[][] {
 
 /**
  * Every table that holds a project's rows: events, traces, logs, metrics,
- * check results, its signed-in users' first-seen times, and its heatmaps.
+ * check results, its signed-in users' first-seen times, its heatmaps, and
+ * its AI calls.
  */
 const PROJECT_TABLES = [
   "events",
@@ -35,6 +41,7 @@ const PROJECT_TABLES = [
   "check_results",
   USER_FIRST_SEEN,
   "heatmaps",
+  AI_CALLS_TABLE,
 ] as const;
 
 /**
@@ -68,8 +75,10 @@ async function deleteWhere(
 }
 
 /**
- * Deletes each project's events that happened before its cut-off, a
- * thousand projects per statement, and returns how many rows each had.
+ * Deletes each project's events, and its AI calls, that happened before
+ * its cut-off, a thousand projects per statement, and returns how many
+ * rows each had (both tables together). AI calls are kept as long as
+ * events (docs/ai-usage.md).
  */
 export async function deleteEventsBefore(
   db: Kysely<Database>,
@@ -98,6 +107,16 @@ export async function deleteEventsBefore(
       params,
     );
     for (const [projectId, count] of deleted) counts.set(projectId, count);
+    const aiCalls = await deleteWhere(
+      clickhouse,
+      AI_CALLS_TABLE,
+      `project_id IN ${ids}
+       AND timestamp < transform(project_id, ${ids}, ${befores}, toDateTime64(0, 3, 'UTC'))`,
+      params,
+    );
+    for (const [projectId, count] of aiCalls) {
+      counts.set(projectId, (counts.get(projectId) ?? 0) + count);
+    }
     await rebuildFirstSeen(db, clickhouse, [...deleted.keys()], room);
   }
   return counts;
@@ -270,7 +289,7 @@ async function removeDeletedRowsOf(
 }
 
 /**
- * Deletes the events, traces, logs, metrics, check results, and heatmaps of every deleted project
+ * Deletes the events, traces, logs, metrics, check results, heatmaps, and AI calls of every deleted project
  * (project_deletions) from ClickHouse, and its files from the object store (its source maps,
  * session replays, icon, and favicon), then
  * forgets the deletions. A deletion stays until both have confirmed, so an
@@ -331,7 +350,7 @@ export interface OrphanSweep {
 
 /**
  * Finds projects that ClickHouse holds rows of (events, traces, logs,
- * metrics, check results, heatmaps) but PostgreSQL no longer
+ * metrics, check results, heatmaps, AI calls) but PostgreSQL no longer
  * knows, and asks purgeDeletedProjects() to delete them (project_deletions).
  * A deletion can miss ClickHouse's copy: a restore puts back a ClickHouse
  * backup made before the project was deleted, or an insert that timed out

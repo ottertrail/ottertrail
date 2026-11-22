@@ -92,6 +92,14 @@ export function inboxTitle(payload: NotificationPayload): string {
       return `Threshold crossed: ${rule}`;
     case "metric.threshold_resolved":
       return `Back to normal: ${rule}`;
+    case "ai.cost":
+      return `AI cost over limit: ${rule}`;
+    case "ai.cost_resolved":
+      return `AI cost back under limit: ${rule}`;
+    case "ai.failures":
+      return `Failing AI calls: ${rule}`;
+    case "ai.failures_resolved":
+      return `AI failures normal: ${rule}`;
     case "alert.held_back": {
       const held = typeof subject.held === "number" ? subject.held : 0;
       return `${text(subject.name)} held back ${held} ${held === 1 ? "alert" : "alerts"}`;
@@ -105,7 +113,7 @@ export function inboxTitle(payload: NotificationPayload): string {
 /** The areas a project item needs by default: alerts, and the area the alert watches. */
 export function defaultAreas(type: string): Area[] {
   if (type.startsWith("error.")) return ["uptime_alerts", "errors"];
-  if (type.startsWith("route.") || type.startsWith("metric.")) {
+  if (type.startsWith("route.") || type.startsWith("metric.") || type.startsWith("ai.")) {
     return ["uptime_alerts", "monitoring"];
   }
   return ["uptime_alerts"];

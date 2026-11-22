@@ -17,6 +17,7 @@ import * as backups from "./0014_backups.ts";
 import * as projectStars from "./0015_project_stars.ts";
 import * as notifications from "./0016_notifications.ts";
 import * as avatars from "./0017_avatars.ts";
+import * as aiCostHours from "./0018_ai_cost_hours.ts";
 
 /**
  * Every migration, in order. Kysely runs them by name, alphabetically, and
@@ -43,4 +44,5 @@ export const migrations: Record<string, Migration> = {
   "0015_project_stars": projectStars,
   "0016_notifications": notifications,
   "0017_avatars": avatars,
+  "0018_ai_cost_hours": aiCostHours,
 };

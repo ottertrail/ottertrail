@@ -181,6 +181,9 @@ const EXPECTED: Record<string, string> = {
   "GET /api/projects/:id/databases/shapes/:shapeId": "monitoring:view",
   "GET /api/projects/:id/hosts": "monitoring:view",
   "GET /api/projects/:id/hosts/charts": "monitoring:view",
+  "GET /api/projects/:id/ai": "monitoring:view",
+  "GET /api/projects/:id/ai/chart": "monitoring:view",
+  "GET /api/projects/:id/ai/calls": "monitoring:view",
 
   "GET /api/projects/:id/checks": "uptime_alerts:view",
   "POST /api/projects/:id/checks": "uptime_alerts:manage",

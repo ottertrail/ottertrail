@@ -1082,7 +1082,237 @@ export function buildTelemetry(rng: Random, now: Date, userIds: readonly string[
     ...appMetrics(rng, nowMs, requests, calls, orders, jobs, web, worker),
     ...hostMetrics(rng, nowMs, [...hosts, "db-1"]),
   ];
+  traces.push(...aiTraces(nowMs, today, userIds, (at) => web(at, "app-1")));
   return { traces, logs, metrics };
+}
+
+/**
+ * The AI calls are drawn from a generator of their own, so the rest of the
+ * data is what it was without them.
+ */
+const AI_SEED = 20_261_122;
+
+/** A model the demo shop calls, and roughly what one call of each feature uses. */
+interface DemoModel {
+  provider: string;
+  model: string;
+  /** The model the answer names: a dated snapshot, as providers answer. */
+  responseModel: string;
+}
+
+const SONNET: DemoModel = {
+  provider: "anthropic",
+  model: "claude-sonnet-4-6",
+  responseModel: "claude-sonnet-4-6",
+};
+const MINI: DemoModel = {
+  provider: "openai",
+  model: "gpt-5.4-mini",
+  responseModel: "gpt-5.4-mini",
+};
+const EMBEDDING: DemoModel = {
+  provider: "openai",
+  model: "text-embedding-3-small",
+  responseModel: "text-embedding-3-small",
+};
+/** A self-hosted model: no price, so it shows in the page's "no price" count. */
+const LOCAL: DemoModel = {
+  provider: "ollama",
+  model: "llama3.3:70b",
+  responseModel: "llama3.3:70b",
+};
+
+/**
+ * TRACE_DAYS of the web service's AI features, for the AI page
+ * (docs/ai-usage.md), as OpenTelemetry's GenAI instrumentations send them:
+ * the support assistant (a chat call, streamed, sometimes cut off or rate
+ * limited), product search (an embedding, then a short chat call), review
+ * summaries (an agent span around two chat calls, named by
+ * gen_ai.agent.name, which the AI page counts as calls, not the agent), and
+ * a local model's tagging calls with no feature. About 30 of the shop's
+ * requests a day, in one OTLP request per day.
+ */
+function aiTraces(
+  nowMs: number,
+  today: number,
+  userIds: readonly string[],
+  webAt: (at: number) => Resource,
+): object[] {
+  const rng = seededRandom(AI_SEED);
+  const requests: object[] = [];
+  const scope = { name: "@opentelemetry/instrumentation-genai", version: "0.3.0" };
+  for (let daysAgo = TRACE_DAYS - 1; daysAgo >= 0; daysAgo -= 1) {
+    const dayStart = today - daysAgo * DAY_MS;
+    const spans = new Batch<object>();
+    // Few beside the shop's 800 requests a day: the Traces chart's p95 of
+    // root spans stays the shop's, and its incident stands out.
+    const count = Math.round(30 * rng.normal(1, 0.08));
+    for (let index = 0; index < count; index += 1) {
+      const at =
+        dayStart +
+        rng.weighted(HOURLY.map((weight, hour) => [hour, weight] as const)) * 3_600_000 +
+        rng.next() * 3_600_000;
+      if (at > nowMs - 60_000) continue;
+      const resource = webAt(at);
+      const trace = new Trace(rng, spans);
+      const userId = userIds.length > 0 && rng.chance(0.6) ? rng.pick(userIds) : undefined;
+      const feature = rng.weighted([
+        ["support-chat", 50],
+        ["product-search", 30],
+        ["review-summary", 12],
+        ["tagging", 8],
+      ] as const);
+      const route = {
+        "support-chat": "/api/assistant",
+        "product-search": "/api/search",
+        "review-summary": "/api/products/:slug/summary",
+        tagging: "/api/admin/tags",
+      }[feature];
+      const serverId = rng.hex(8);
+      let cursor = at + rng.logNormal(3, 0.3);
+      const call = (
+        model: DemoModel,
+        input: {
+          operation: string;
+          inputTokens: number;
+          outputTokens: number;
+          durationMs: number;
+          parent: string;
+          feature?: string;
+          agent?: string;
+          cacheRead?: number;
+          cacheWrite?: number;
+          firstChunkMs?: number;
+          finish?: string;
+          error?: string;
+        },
+      ) => {
+        trace.span(resource, scope, {
+          name: `${input.operation} ${model.model}`,
+          kind: CLIENT,
+          start: cursor,
+          durationMs: input.durationMs,
+          parent: input.parent,
+          attributes: {
+            "gen_ai.operation.name": input.operation,
+            "gen_ai.provider.name": model.provider,
+            "gen_ai.request.model": model.model,
+            "gen_ai.response.model": input.error === undefined ? model.responseModel : undefined,
+            "gen_ai.usage.input_tokens": input.error === undefined ? input.inputTokens : undefined,
+            "gen_ai.usage.output_tokens":
+              input.error === undefined && input.operation !== "embeddings"
+                ? input.outputTokens
+                : undefined,
+            "gen_ai.usage.cache_read.input_tokens": input.cacheRead,
+            "gen_ai.usage.cache_write.input_tokens": input.cacheWrite,
+            "gen_ai.response.time_to_first_chunk":
+              input.firstChunkMs === undefined ? undefined : input.firstChunkMs / 1000,
+            "gen_ai.response.finish_reasons":
+              input.finish === undefined ? undefined : JSON.stringify([input.finish]),
+            "ottertrail.feature": input.feature,
+            "gen_ai.agent.name": input.agent,
+            "user.id": userId,
+            "error.type": input.error,
+            "server.address": `api.${model.provider}.com`,
+          },
+          ...(input.error === undefined ? {} : { error: input.error }),
+        });
+        cursor += input.durationMs + 1;
+      };
+      if (feature === "support-chat") {
+        const limited = rng.chance(0.05);
+        const prompt = Math.round(rng.logNormal(2600, 0.4));
+        const cached = rng.chance(0.7) ? Math.round(prompt * 0.8) : 0;
+        call(SONNET, {
+          operation: "chat",
+          parent: serverId,
+          feature,
+          inputTokens: prompt,
+          outputTokens: Math.round(rng.logNormal(380, 0.5)),
+          cacheRead: cached,
+          cacheWrite: cached === 0 ? Math.round(prompt * 0.8) : 0,
+          durationMs: limited ? rng.logNormal(180, 0.3) : rng.logNormal(4200, 0.4),
+          firstChunkMs: limited ? undefined : rng.logNormal(620, 0.3),
+          finish: limited ? undefined : rng.chance(0.04) ? "max_tokens" : "end_turn",
+          ...(limited ? { error: "rate_limit_error" } : {}),
+        });
+      } else if (feature === "product-search") {
+        call(EMBEDDING, {
+          operation: "embeddings",
+          parent: serverId,
+          feature,
+          inputTokens: Math.round(rng.logNormal(14, 0.4)),
+          outputTokens: 0,
+          durationMs: rng.logNormal(90, 0.3),
+        });
+        const timedOut = rng.chance(0.06);
+        call(MINI, {
+          operation: "chat",
+          parent: serverId,
+          feature,
+          inputTokens: Math.round(rng.logNormal(900, 0.3)),
+          outputTokens: Math.round(rng.logNormal(60, 0.4)),
+          durationMs: timedOut ? 10_000 : rng.logNormal(700, 0.4),
+          finish: timedOut ? undefined : rng.chance(0.02) ? "length" : "stop",
+          ...(timedOut ? { error: "timeout" } : {}),
+        });
+      } else if (feature === "review-summary") {
+        // The agent's own span: not a model call, so not counted twice.
+        const agentId = rng.hex(8);
+        const agentStart = cursor;
+        cursor += 2;
+        for (let step = 0; step < 2; step += 1) {
+          call(MINI, {
+            operation: "chat",
+            parent: agentId,
+            agent: "review-summarizer",
+            inputTokens: Math.round(rng.logNormal(3400, 0.3)),
+            outputTokens: Math.round(rng.logNormal(220, 0.3)),
+            durationMs: rng.logNormal(1800, 0.3),
+            finish: "stop",
+          });
+        }
+        trace.span(resource, scope, {
+          id: agentId,
+          name: "invoke_agent review-summarizer",
+          kind: INTERNAL,
+          start: agentStart,
+          durationMs: cursor - agentStart,
+          parent: serverId,
+          attributes: {
+            "gen_ai.operation.name": "invoke_agent",
+            "gen_ai.provider.name": "openai",
+            "gen_ai.agent.name": "review-summarizer",
+          },
+        });
+      } else {
+        call(LOCAL, {
+          operation: "chat",
+          parent: serverId,
+          inputTokens: Math.round(rng.logNormal(400, 0.3)),
+          outputTokens: Math.round(rng.logNormal(30, 0.3)),
+          durationMs: rng.logNormal(2500, 0.3),
+          finish: "stop",
+        });
+      }
+      trace.span(resource, SCOPES.http, {
+        id: serverId,
+        name: `POST ${route}`,
+        kind: SERVER,
+        start: at,
+        durationMs: cursor - at + rng.logNormal(2, 0.3),
+        attributes: {
+          "http.request.method": "POST",
+          "http.route": route,
+          "url.path": route,
+          "http.response.status_code": 200,
+          "user.id": userId,
+        },
+      });
+    }
+    if (spans.count > 0) requests.push(spans.request("resourceSpans", "scopeSpans", "spans"));
+  }
+  return requests;
 }
 
 /** Points every `step` over the last METRIC_DAYS, up to now. */

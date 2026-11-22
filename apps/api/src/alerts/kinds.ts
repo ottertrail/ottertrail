@@ -23,6 +23,8 @@ export const RULE_KINDS = [
   "route_latency",
   "route_failures",
   "metric_threshold",
+  "ai_cost",
+  "ai_failures",
 ] as const;
 
 export type RuleKind = (typeof RULE_KINDS)[number];
@@ -84,6 +86,18 @@ export const KIND_INFO: Record<
     fires: "metric.threshold",
     resolves: "metric.threshold_resolved",
   },
+  ai_cost: {
+    label: "AI cost",
+    source: "telemetry",
+    fires: "ai.cost",
+    resolves: "ai.cost_resolved",
+  },
+  ai_failures: {
+    label: "AI failures",
+    source: "telemetry",
+    fires: "ai.failures",
+    resolves: "ai.failures_resolved",
+  },
 };
 
 /** The kinds the worker evaluates from spans and metrics (alerts/telemetry-rules.ts). */
@@ -134,6 +148,19 @@ export const AGGREGATES = {
 } as const satisfies Record<MetricKind, readonly string[]>;
 export type Aggregate = (typeof AGGREGATES)[MetricKind][number];
 const ALL_AGGREGATES = [...new Set(Object.values(AGGREGATES).flat())];
+
+/** The windows an AI cost rule adds up: the last hour, the last 24 hours, or the month so far. */
+export const COST_WINDOWS = ["1h", "1d", "month"] as const;
+export type CostWindow = (typeof COST_WINDOWS)[number];
+/** The highest cost an AI cost rule compares with, in US dollars. */
+export const MAX_COST_USD = 1_000_000_000;
+/** Calls an AI failures rule's window needs before it judges (default), and at most. */
+export const DEFAULT_MIN_CALLS = 20;
+export const MAX_MIN_CALLS = 1_000_000;
+/** How long an AI cost rule's cost stays at or below its value before the alert resolves. */
+export const COST_CLEAR_MINUTES = 60;
+/** The longest model or feature an AI rule names: what ai_calls holds (ai/calls.ts). */
+export const MAX_AI_FILTER_CHARS = 100;
 
 /** Each kind's settings, as stored and answered. null: all (checks, environments, groups). */
 export interface CheckDownSettings {
@@ -187,6 +214,28 @@ export interface MetricSettings {
   attributeValue: string | null;
 }
 
+/**
+ * An AI rule's calls: one environment's, of one feature and one model, or
+ * all (null). A feature of "" is the calls that name none ("Unlabelled").
+ */
+interface AiScope {
+  environment: string;
+  feature: string | null;
+  model: string | null;
+}
+export interface AiCostSettings extends AiScope {
+  costWindow: CostWindow;
+  /** Fires when the window's estimated cost is above this, in US dollars. */
+  thresholdUsd: number;
+}
+export interface AiFailureSettings extends AiScope {
+  windowMinutes: number;
+  /** Fires when the failed share is above this, 0 to 100. */
+  thresholdPercent: number;
+  /** Fewer calls in the window: the rule does not judge it (as no data). */
+  minCalls: number;
+}
+
 export type RuleSettings =
   | CheckDownSettings
   | CertificateSettings
@@ -195,7 +244,9 @@ export type RuleSettings =
   | SpikeSettings
   | LatencySettings
   | FailureSettings
-  | MetricSettings;
+  | MetricSettings
+  | AiCostSettings
+  | AiFailureSettings;
 
 /** What the API takes as settings: every kind's fields, each optional. */
 export interface SettingsInput {
@@ -219,6 +270,11 @@ export interface SettingsInput {
   host?: string | null | undefined;
   attributeKey?: string | null | undefined;
   attributeValue?: string | null | undefined;
+  costWindow?: string | undefined;
+  thresholdUsd?: number | undefined;
+  feature?: string | null | undefined;
+  model?: string | null | undefined;
+  minCalls?: number | undefined;
 }
 
 /** The fields Fastify's schema takes in `settings`, for every kind; settingsOf checks each kind's. */
@@ -250,6 +306,11 @@ export const SETTINGS_SCHEMA = {
     host: { type: ["string", "null"], maxLength: MAX_FILTER_CHARS },
     attributeKey: { type: ["string", "null"], maxLength: MAX_KEY_CHARS },
     attributeValue: { type: ["string", "null"], maxLength: MAX_FILTER_CHARS },
+    costWindow: { type: "string", enum: [...COST_WINDOWS] },
+    thresholdUsd: { type: "number", exclusiveMinimum: 0, maximum: MAX_COST_USD },
+    feature: { type: ["string", "null"], maxLength: MAX_AI_FILTER_CHARS },
+    model: { type: ["string", "null"], maxLength: MAX_AI_FILTER_CHARS },
+    minCalls: { type: "integer", minimum: 1, maximum: MAX_MIN_CALLS },
   },
 } as const;
 
@@ -283,12 +344,14 @@ export function settingsOf(
   }
   if (kind === "error_new") return { environment: environmentOf(pick("environment")) };
   if (kind === "error_regressed") return {};
+  if (kind === "ai_cost") return aiCostSettingsOf(pick);
   const windowMinutes = windowOf(pick("windowMinutes"));
   if (typeof windowMinutes !== "number") return windowMinutes;
   if (kind === "route_latency" || kind === "route_failures") {
     return routeSettingsOf(kind, pick, windowMinutes);
   }
   if (kind === "metric_threshold") return metricSettingsOf(pick, windowMinutes);
+  if (kind === "ai_failures") return aiFailureSettingsOf(pick, windowMinutes);
   const threshold = pick("threshold") ?? DEFAULT_THRESHOLD;
   if (!Number.isInteger(threshold) || threshold < 1 || threshold > MAX_THRESHOLD) {
     return {
@@ -466,6 +529,73 @@ function metricSettingsOf(pick: Picker, windowMinutes: number): MetricSettings |
   };
 }
 
+/** An AI rule's environment, feature, and model; or the problem. */
+function aiScopeOf(pick: Picker): AiScope | Problem {
+  // "" is the calls that name no feature, as the AI page's feature= is; null is all.
+  const feature = pick("feature") ?? null;
+  const model = optionalText(pick("model"));
+  if (
+    (feature !== null && feature.length > MAX_AI_FILTER_CHARS) ||
+    (model !== null && model.length > MAX_AI_FILTER_CHARS)
+  ) {
+    return {
+      error: "invalid_filter",
+      message: `A feature or a model has at most ${MAX_AI_FILTER_CHARS} characters.`,
+    };
+  }
+  return { environment: telemetryEnvironmentOf(pick("environment")), feature, model };
+}
+
+function aiCostSettingsOf(pick: Picker): AiCostSettings | Problem {
+  const scope = aiScopeOf(pick);
+  if ("error" in scope) return scope;
+  const costWindow = COST_WINDOWS.find((item) => item === (pick("costWindow") ?? "1d"));
+  if (costWindow === undefined) {
+    return {
+      error: "invalid_window",
+      message: "Choose the last hour, the last 24 hours, or the month so far.",
+    };
+  }
+  const thresholdUsd = pick("thresholdUsd");
+  if (
+    thresholdUsd === undefined ||
+    !Number.isFinite(thresholdUsd) ||
+    thresholdUsd <= 0 ||
+    thresholdUsd > MAX_COST_USD
+  ) {
+    return {
+      error: "invalid_threshold",
+      message: `The threshold is an amount in US dollars above 0 and at most ${MAX_COST_USD.toLocaleString("en")}.`,
+    };
+  }
+  return { ...scope, costWindow, thresholdUsd };
+}
+
+function aiFailureSettingsOf(pick: Picker, windowMinutes: number): AiFailureSettings | Problem {
+  const scope = aiScopeOf(pick);
+  if ("error" in scope) return scope;
+  const thresholdPercent = pick("thresholdPercent");
+  if (
+    thresholdPercent === undefined ||
+    !Number.isFinite(thresholdPercent) ||
+    thresholdPercent < 0 ||
+    thresholdPercent >= 100
+  ) {
+    return {
+      error: "invalid_threshold",
+      message: "The threshold is a share of calls from 0 to just under 100 percent.",
+    };
+  }
+  const minCalls = pick("minCalls") ?? DEFAULT_MIN_CALLS;
+  if (!Number.isInteger(minCalls) || minCalls < 1 || minCalls > MAX_MIN_CALLS) {
+    return {
+      error: "invalid_min_calls",
+      message: `The fewest calls is a whole number from 1 to ${MAX_MIN_CALLS.toLocaleString("en")}.`,
+    };
+  }
+  return { ...scope, windowMinutes, thresholdPercent, minCalls };
+}
+
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
@@ -506,7 +636,36 @@ export function storedSettings(kind: RuleKind, value: unknown): RuleSettings {
   if (kind === "route_latency") return latencySettingsOf(value);
   if (kind === "route_failures") return failureSettingsOf(value);
   if (kind === "metric_threshold") return metricSettingsStored(value);
+  if (kind === "ai_cost") return aiCostSettingsStored(value);
+  if (kind === "ai_failures") return aiFailureSettingsStored(value);
   return spikeSettingsOf(value);
+}
+
+const aiScopeStored = (stored: Record<string, unknown>): AiScope => ({
+  environment: textOrNull(stored.environment) ?? DEFAULT_ENVIRONMENT,
+  feature: textOrNull(stored.feature),
+  model: textOrNull(stored.model),
+});
+
+/** A stored "AI cost" rule's settings (the API wrote them). */
+export function aiCostSettingsStored(value: unknown): AiCostSettings {
+  const stored = storedRecord(value);
+  return {
+    ...aiScopeStored(stored),
+    costWindow: COST_WINDOWS.find((item) => item === stored.costWindow) ?? "1d",
+    thresholdUsd: numberOr(stored.thresholdUsd, MAX_COST_USD),
+  };
+}
+
+/** A stored "AI failures" rule's settings (the API wrote them). */
+export function aiFailureSettingsStored(value: unknown): AiFailureSettings {
+  const stored = storedRecord(value);
+  return {
+    ...aiScopeStored(stored),
+    windowMinutes: numberOr(stored.windowMinutes, DEFAULT_WINDOW_MINUTES),
+    thresholdPercent: numberOr(stored.thresholdPercent, 100),
+    minCalls: numberOr(stored.minCalls, DEFAULT_MIN_CALLS),
+  };
 }
 
 const routeScopeOf = (stored: Record<string, unknown>): RouteScope => ({

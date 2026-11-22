@@ -6,6 +6,19 @@ import { MAX_NOTIFICATION_URL, type Subject } from "../notifications/events.ts";
 import { HOST_KEY } from "../telemetry/hosts.ts";
 import { metricSeen, metricWindow } from "../telemetry/metrics.ts";
 import { requestsSeen, routeWindows, type WindowStats } from "../telemetry/services.ts";
+import {
+  aiBreaches,
+  aiClearMinutes,
+  aiLink,
+  aiMessage,
+  aiNotSeenMessage,
+  aiRuleSeen,
+  type AiSettings,
+  aiSubject,
+  aiSubjectName,
+  isAiRule,
+  readAi,
+} from "./ai-rules.ts";
 import type { Counts } from "./check-rules.ts";
 import {
   type AlertContext,
@@ -19,6 +32,8 @@ import {
 } from "./fire.ts";
 import {
   type Aggregate,
+  aiCostSettingsStored,
+  aiFailureSettingsStored,
   type FailureSettings,
   failureSettingsOf,
   isRuleKind,
@@ -34,8 +49,10 @@ import {
 /**
  * Telemetry rules (docs/uptime-alerts.md, "Alerts on telemetry"): a
  * route's latency or failed share, and a metric above or below a value,
- * each over its window. Each rule is due once a minute; the worker takes
- * due rules from PostgreSQL with FOR UPDATE SKIP LOCKED (takeDueRules),
+ * each over its window; and AI rules (ai-rules.ts; docs/ai-usage.md): the
+ * estimated cost of AI calls, or their failed share. Each rule is due once
+ * a minute; the worker takes due rules from PostgreSQL with FOR UPDATE
+ * SKIP LOCKED (takeDueRules),
  * so each is evaluated by one worker however many run, and evaluates
  * them from the same computations as the dashboard's pages: the Services
  * page's counts (telemetry/services.ts, routeWindows) and a metric's
@@ -264,6 +281,9 @@ export interface Reading {
   failed?: number;
   /** A metric's unit, as its latest series named it. */
   unit?: string;
+  /** An AI rule's calls in the window, those failed, and those of models without a price. */
+  calls?: number;
+  noPriceCalls?: number;
   from: Date;
   to: Date;
 }
@@ -274,16 +294,31 @@ export function windowAt(at: Date, windowMinutes: number): { from: Date; to: Dat
   return { from: new Date(to.getTime() - windowMinutes * 60_000), to };
 }
 
-type Settings = LatencySettings | FailureSettings | MetricSettings;
+type Settings = LatencySettings | FailureSettings | MetricSettings | AiSettings;
 
 function settingsOfRule(rule: TelemetryRule): Settings {
   if (rule.kind === "route_latency") return latencySettingsOf(rule.settings);
   if (rule.kind === "route_failures") return failureSettingsOf(rule.settings);
+  if (rule.kind === "ai_cost") return aiCostSettingsStored(rule.settings);
+  if (rule.kind === "ai_failures") return aiFailureSettingsStored(rule.settings);
   return metricSettingsStored(rule.settings);
 }
 
+type RouteSettings = LatencySettings | FailureSettings;
+
 const isMetric = (settings: Settings): settings is MetricSettings => "metric" in settings;
 const isLatency = (settings: Settings): settings is LatencySettings => "thresholdMs" in settings;
+
+/** An AI rule's window at `at`, as the AI page reads it (ai-rules.ts). */
+async function readAiRule(
+  context: AlertContext,
+  reader: Reader,
+  rule: TelemetryRule,
+  settings: AiSettings,
+  at: Date,
+): Promise<Reading> {
+  return readAi(context.db, reader, rule, settings, at, TELEMETRY_LAG_MS);
+}
 
 /** A metric rule's window at `at`, as its chart reads it. */
 async function readMetric(
@@ -369,6 +404,7 @@ async function readRoutes(
 
 /** Whether a value is on the wrong side of the rule's threshold. */
 function breaches(settings: Settings, value: number): boolean {
+  if (isAiRule(settings)) return aiBreaches(settings, value);
   if (isMetric(settings)) {
     return settings.direction === "above" ? value > settings.value : value < settings.value;
   }
@@ -419,7 +455,7 @@ const AGGREGATE_TEXT: Record<Aggregate, string> = {
 /** The longest route, host, or attribute value a message or subject quotes. */
 const QUOTE_CHARS = 300;
 
-const routeWhat = (settings: LatencySettings | FailureSettings) =>
+const routeWhat = (settings: RouteSettings) =>
   settings.route === null
     ? `requests of ${settings.service}`
     : `${cut(settings.route, QUOTE_CHARS)} in ${settings.service}`;
@@ -440,6 +476,7 @@ const metricWhat = (settings: MetricSettings) =>
 
 /** What a rule's history shows as its subject. */
 function subjectName(settings: Settings): string {
+  if (isAiRule(settings)) return aiSubjectName(settings);
   if (isMetric(settings)) return `${settings.metric} (${settings.aggregate})`;
   return settings.route === null ? settings.service : `${settings.service} ${settings.route}`;
 }
@@ -456,6 +493,7 @@ export function telemetryLink(
   projectId: string,
   settings: Settings,
 ): string {
+  if (isAiRule(settings)) return aiLink(context, projectId, settings);
   const first = (candidates: (() => string)[]): string => {
     for (const candidate of candidates) {
       const url = candidate();
@@ -498,6 +536,14 @@ const rounded = (value: number) => Number(value.toFixed(3));
 
 /** The notification's subject: what it watches, the value, the threshold, the window, the requests. */
 function subjectOf(settings: Settings, reading: Reading & { value: number }): Subject {
+  if (isAiRule(settings)) {
+    return aiSubject(settings, {
+      ...reading,
+      calls: reading.calls ?? 0,
+      failed: reading.failed ?? 0,
+      noPriceCalls: reading.noPriceCalls ?? 0,
+    });
+  }
   if (isMetric(settings)) {
     return {
       type: "metric",
@@ -547,6 +593,19 @@ function messageOf(
   reading: Reading & { value: number },
   resolved: boolean,
 ): string {
+  if (isAiRule(settings)) {
+    return aiMessage(
+      project,
+      settings,
+      {
+        ...reading,
+        calls: reading.calls ?? 0,
+        failed: reading.failed ?? 0,
+        noPriceCalls: reading.noPriceCalls ?? 0,
+      },
+      resolved,
+    );
+  }
   const window = minutes(settings.windowMinutes);
   const where = `in ${settings.environment}`;
   if (isMetric(settings)) {
@@ -605,9 +664,13 @@ export async function evaluateTelemetryRule(
   at: Date,
 ): Promise<RuleResult> {
   const settings = settingsOfRule(rule);
-  const reading = isMetric(settings)
-    ? await readMetric(reader, rule, settings, at)
-    : (await readRoutes(reader, rule.projectId, settings.environment, [{ rule, settings }], at))[0];
+  const reading = isAiRule(settings)
+    ? await readAiRule(context, reader, rule, settings, at)
+    : isMetric(settings)
+      ? await readMetric(reader, rule, settings, at)
+      : (
+          await readRoutes(reader, rule.projectId, settings.environment, [{ rule, settings }], at)
+        )[0];
   if (reading === undefined) throw new Error("A route rule's batch read nothing");
   return judge(context, rule, settings, reading, at);
 }
@@ -665,7 +728,8 @@ async function judge(
     await setClearSince(context.db, rule.id, "", at);
     return { reading, outcome: "waiting" };
   }
-  if (at.getTime() - state.clear_since.getTime() < settings.windowMinutes * 60_000) {
+  const clearMinutes = isAiRule(settings) ? aiClearMinutes(settings) : settings.windowMinutes;
+  if (at.getTime() - state.clear_since.getTime() < clearMinutes * 60_000) {
     return { reading, outcome: "waiting" };
   }
   const resolves = KIND_INFO[rule.kind].resolves;
@@ -698,16 +762,16 @@ export interface PassOptions {
   stopping?: () => boolean;
 }
 
-/** A project's work in a pass: its route rules per environment, then each metric rule. */
+/** A project's work in a pass: its route rules per environment, then each metric and AI rule. */
 function stepsOf(rules: readonly TelemetryRule[]) {
-  const routes = new Map<
-    string,
-    { rule: TelemetryRule; settings: LatencySettings | FailureSettings }[]
-  >();
+  const routes = new Map<string, { rule: TelemetryRule; settings: RouteSettings }[]>();
   const metrics: { rule: TelemetryRule; settings: MetricSettings }[] = [];
+  const ai: { rule: TelemetryRule; settings: AiSettings }[] = [];
   for (const rule of rules) {
     const settings = settingsOfRule(rule);
-    if (isMetric(settings)) {
+    if (isAiRule(settings)) {
+      ai.push({ rule, settings });
+    } else if (isMetric(settings)) {
       metrics.push({ rule, settings });
     } else {
       const group = routes.get(settings.environment) ?? [];
@@ -715,7 +779,7 @@ function stepsOf(rules: readonly TelemetryRule[]) {
       routes.set(settings.environment, group);
     }
   }
-  return { routes: [...routes], metrics };
+  return { routes: [...routes], metrics, ai };
 }
 
 /**
@@ -768,7 +832,7 @@ export async function evaluateTelemetryPass(
       }
       // The budget is real time, whatever clock the evaluation reads (tests fix theirs).
       const reader = readerOf(projectId, Date.now() + budgetMs);
-      const { routes, metrics } = stepsOf(projectRules);
+      const { routes, metrics, ai } = stepsOf(projectRules);
       const steps = [
         ...routes.map(([environment, group]) => ({
           rules: group.map((item) => item.rule),
@@ -790,6 +854,14 @@ export async function evaluateTelemetryPass(
           run: async () => {
             const at = now();
             const reading = await readMetric(reader, rule, settings, at);
+            return [{ rule, result: await judge(context, rule, settings, reading, at) }];
+          },
+        })),
+        ...ai.map(({ rule, settings }) => ({
+          rules: [rule],
+          run: async () => {
+            const at = now();
+            const reading = await readAiRule(context, reader, rule, settings, at);
             return [{ rule, result: await judge(context, rule, settings, reading, at) }];
           },
         })),
@@ -855,6 +927,10 @@ export async function notSeenWarning(
   const scope = { projectId, environment: settings.environment };
   const where = `in ${settings.environment} in the last 24 hours`;
   try {
+    if (isAiRule(settings)) {
+      const seen = await aiRuleSeen(reader, projectId, settings, from, now);
+      return seen ? null : notSeen(aiNotSeenMessage(settings));
+    }
     if (isMetric(settings)) {
       const seen = await metricSeen(
         reader,

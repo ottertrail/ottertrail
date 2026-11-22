@@ -15,6 +15,9 @@ export interface ClickHouseMigration {
 /** The tables of traces, logs, and metrics (docs/telemetry.md). */
 export const TELEMETRY_TABLES = ["spans", "logs", "metric_points", "metric_histograms"] as const;
 
+/** The AI calls among the spans (0008; docs/ai-usage.md), kept as long as events. */
+export const AI_CALLS_TABLE = "ai_calls";
+
 /** Each signed-in user's first event per project and environment (0004). */
 export const USER_FIRST_SEEN = "user_first_seen";
 
@@ -479,6 +482,69 @@ export const CLICKHOUSE_MIGRATIONS: ClickHouseMigration[] = [
      */
     statements: (database) => [
       `ALTER TABLE ${database}.heatmaps ADD COLUMN IF NOT EXISTS dead Bool DEFAULT 0 AFTER rage`,
+    ],
+  },
+  {
+    name: "0008_ai_calls",
+    /**
+     * AI calls (docs/ai-usage.md): one row per span that is a call to a
+     * model, written beside the span when a traces request is stored
+     * (ai/calls.ts). Token counts, not content: prompts and completions
+     * are dropped before (telemetry/ai-content.ts).
+     *
+     * - Ordered by project, then time, then ID, as spans: every query
+     *   filters by project first, then a period.
+     * - ReplacingMergeTree keeps one row per ID, the span's trace and span
+     *   IDs, so a request retried after a lost answer is stored once. The
+     *   AI page's totals and breakdowns, and the alert rules, read without
+     *   FINAL, as the Services page does; its recent calls read with it.
+     * - Partitioned by month, with no TTL: kept as long as the project's
+     *   events ("Keep events"), which retention deletes with them
+     *   (clickhouse/delete-events.ts), not the 30 days of spans. Cost is
+     *   asked about by the month and the year, and a row is small.
+     * - A partition's parts are merged into one once all are an hour old,
+     *   as the telemetry tables' are (0002), and an insert returns once it
+     *   is on disk, as events' do.
+     * - Cost is not stored: the API works it out from the tokens when it
+     *   reads them (ai/prices.ts), so a corrected price applies to past calls.
+     * - feature: `ottertrail.feature`, else `gen_ai.agent.name`, else "".
+     *   user_id: as an error event's, "" for none.
+     * - first_chunk_ns: the time to the first chunk of a streamed answer;
+     *   null when not reported.
+     */
+    statements: (database) => [
+      `CREATE TABLE IF NOT EXISTS ${database}.${AI_CALLS_TABLE} (
+        project_id UUID,
+        timestamp DateTime64(9, 'UTC'),
+        id String,
+        trace_id String,
+        span_id String,
+        service LowCardinality(String),
+        environment LowCardinality(String),
+        release LowCardinality(String),
+        provider LowCardinality(String),
+        model LowCardinality(String),
+        operation LowCardinality(String),
+        feature LowCardinality(String),
+        user_id String,
+        input_tokens UInt64,
+        output_tokens UInt64,
+        cache_read_tokens UInt64,
+        cache_write_tokens UInt64,
+        reasoning_tokens UInt64,
+        duration_ns UInt64,
+        first_chunk_ns Nullable(UInt64),
+        failed Bool,
+        error_type LowCardinality(String),
+        finish_reasons Array(LowCardinality(String))
+      )
+      ENGINE = ReplacingMergeTree
+      PARTITION BY toYYYYMM(timestamp)
+      ORDER BY (project_id, timestamp, id)
+      SETTINGS non_replicated_deduplication_window = 1000,
+        fsync_after_insert = 1, fsync_part_directory = 1,
+        min_age_to_force_merge_seconds = ${FORCE_MERGE_SECONDS},
+        min_age_to_force_merge_on_partition_only = 1`,
     ],
   },
 ];

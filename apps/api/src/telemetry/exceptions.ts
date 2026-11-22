@@ -100,8 +100,11 @@ export function exceptionEventId(projectId: string, identity: readonly string[])
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
-/** The user's ID: `user.id`, else the older `enduser.id`, when it is one a browser could send. */
-function userIdOf(attributes: Record<string, string>): string | undefined {
+/**
+ * The user's ID: `user.id`, else the older `enduser.id`, when it is one a
+ * browser could send. An AI call takes its user the same way (ai/calls.ts).
+ */
+export function userIdOf(attributes: Record<string, string>): string | undefined {
   const sent = attributes["user.id"] ?? attributes["enduser.id"];
   return sent !== undefined && USER_ID.test(sent) ? sent : undefined;
 }

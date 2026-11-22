@@ -81,13 +81,17 @@ The body, version 1:
 | `route.failures_resolved`   | It stays at or below it for the same window                                                   |
 | `metric.threshold`          | A metric, read as its chart reads it, is above (or below) the rule's value over the window    |
 | `metric.threshold_resolved` | It is back on the right side for the same window                                              |
+| `ai.cost`                   | The estimated cost of AI calls over the rule's window is above its value                      |
+| `ai.cost_resolved`          | It stays at or below it for 60 minutes                                                        |
+| `ai.failures`               | The failed share of AI calls over the window is above the rule's percentage                   |
+| `ai.failures_resolved`      | It stays at or below it for the same window                                                   |
 | `alert.held_back`           | A rule held notifications back after sending 20 in an hour; says how many, once the hour ends |
 | `storage.low`               | A storage warning starts, or becomes critical                                                 |
 | `storage.recovered`         | A storage warning ends                                                                        |
 | `backups.changed`           | The owner showed or downloaded the backup key, changed where backups go, or turned them off   |
 | `test`                      | Someone sends a test from the Settings page                                                   |
 
-Alert rules ([step 3](uptime-alerts.md#step-3-alert-rules-as-built), and [step 4](uptime-alerts.md#step-4-alerts-on-telemetry-as-built) for the route and metric types) send all but `test` and the storage types. The worker's storage check sends `storage.low` and `storage.recovered` to the channels chosen under "Storage warnings" in the instance's Settings ([deployment](deployment.md#storage-warnings)). A receiver should ignore a type it does not know.
+Alert rules ([step 3](uptime-alerts.md#step-3-alert-rules-as-built), [step 4](uptime-alerts.md#step-4-alerts-on-telemetry-as-built) for the route and metric types, and [AI usage](ai-usage.md#alerts) for the AI types) send all but `test` and the storage types. The worker's storage check sends `storage.low` and `storage.recovered` to the channels chosen under "Storage warnings" in the instance's Settings ([deployment](deployment.md#storage-warnings)). A receiver should ignore a type it does not know.
 
 ### Example bodies
 
@@ -331,6 +335,43 @@ A request failed when its span's status is Error. `route.failures_resolved` has 
 ```
 
 `metricKind` is `gauge`, `counter`, `updown`, or `histogram`; `aggregate` is what the rule reads of it, as the metric's chart does: `avg`, `min`, or `max` (a gauge), `rate` (a counter, per second), `sum` (an up-down counter), or `p50`, `p95`, or `p99` (a histogram); `direction` is `above` or `below`; `value` is the window's, unrounded, and `unit` the metric's, as the series with the most points in the window names it. A rule narrowed to an attribute value has `attributeKey` and `attributeValue`, and its message says so ("where queue is emails"). The link opens the metric's page with its kind, environment, and filters. `metric.threshold_resolved` has the same subject, and a message such as `Shop: the 95th percentile of http.server.request.duration on host web-1 in production stayed at or above 2 ms for 10 minutes: 38.5 ms over the last 10 minutes.` A message leaves out a unit of `1` and an annotation in braces such as `{request}`.
+
+#### `ai.cost` and `ai.cost_resolved`
+
+```json
+{
+  "version": 1,
+  "id": "7c1e9b2a-4d3f-4a8e-b6c5-2f0e1d9a8b74",
+  "type": "ai.cost",
+  "time": "2026-11-22T09:31:00.000Z",
+  "project": {
+    "id": "0d6e5f80-0c4f-4b8e-9d3a-3f8f6a1c2b7e",
+    "name": "Shop"
+  },
+  "subject": {
+    "type": "ai_cost",
+    "environment": "production",
+    "feature": "support-chat",
+    "model": null,
+    "calls": 1840,
+    "costWindow": "1d",
+    "costUsd": 61.25,
+    "thresholdUsd": 50,
+    "noPriceCalls": 12,
+    "estimated": true,
+    "ruleId": "5a2c7e10-3b4d-4e6f-8a9b-0c1d2e3f4a5b",
+    "ruleName": "Support chat spend"
+  },
+  "message": "Shop: the estimated AI cost for the feature support-chat in production was $61.25 over the last 24 hours, above the rule's $50. The cost is an estimate, from token counts at list prices. 12 calls of models without a price are not counted.",
+  "url": "https://analytics.example.com/projects/0d6e5f80-0c4f-4b8e-9d3a-3f8f6a1c2b7e/ai?env=%22production%22&feature=%22support-chat%22"
+}
+```
+
+`costWindow` is `1h`, `1d`, or `month` (the month so far, in the instance's timezone); `costUsd` is the window's estimated cost in US dollars, rounded to 6 decimals; `noPriceCalls` the calls of models the price table does not have, whose cost it leaves out; `estimated` is always true. `feature` and `model` are null for a rule on all of them. `ai.cost_resolved` has the same subject, and a message such as `Shop: the estimated AI cost in production stayed at or below $50 for 60 minutes: $41.9 over the last 24 hours. The cost is an estimate, from token counts at list prices.`
+
+#### `ai.failures` and `ai.failures_resolved`
+
+The subject has `type` `ai_failures`, `environment`, `feature`, `model`, `calls`, `windowMinutes`, `failed`, `failedPercent` (rounded to 3 decimals), and `thresholdPercent`, and the message reads `Shop: 15% of AI calls for the model claude-sonnet-4-6 in production failed over the last 10 minutes, above the rule's 10%: 3 of 20 calls.` A call failed when its span's status is Error or it has an `error.type`.
 
 #### `alert.held_back`
 

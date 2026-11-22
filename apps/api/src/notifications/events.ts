@@ -8,7 +8,8 @@
  * The event types, as webhooks name them. Alert rules (step 3 of
  * docs/uptime-alerts.md, alerts/) send the check, certificate, and error
  * ones, and `alert.held_back` when a rule's hourly cap held notifications
- * back; telemetry alerts (step 4) send the route and metric ones. The
+ * back; telemetry alerts (step 4) send the route and metric ones, and AI
+ * alerts (docs/ai-usage.md) the AI cost and failure ones. The
  * worker's storage check sends the storage ones, about the instance
  * rather than a project (storage/warning-job.ts); `backups.changed` says
  * the owner's backup key was shown or downloaded, where backups go
@@ -30,6 +31,10 @@ export const EVENT_TYPES = [
   "route.failures_resolved",
   "metric.threshold",
   "metric.threshold_resolved",
+  "ai.cost",
+  "ai.cost_resolved",
+  "ai.failures",
+  "ai.failures_resolved",
   "alert.held_back",
   "storage.low",
   "storage.recovered",

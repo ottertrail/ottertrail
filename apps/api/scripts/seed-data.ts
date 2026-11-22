@@ -1,3 +1,8 @@
+import { readFileSync } from "node:fs";
+import { gzipSync } from "node:zlib";
+
+import type { Kysely } from "kysely";
+
 /**
  * Development demo data (`vp run seed`, scripts/seed.ts): a project named
  * "Demo shop" whose every dashboard page has something to show. It is
@@ -16,11 +21,7 @@
  * channel of the instance's, which it adds once and reuses: an email
  * channel to an address that cannot receive mail.
  */
-import { readFileSync } from "node:fs";
-import { gzipSync } from "node:zlib";
-
-import type { Kysely } from "kysely";
-
+import { aiCallsOf } from "../src/ai/calls.ts";
 import type { ClickHouseClient } from "../src/clickhouse/clickhouse.ts";
 import { purgeDeletedProjects } from "../src/clickhouse/delete-events.ts";
 import { insertRows } from "../src/clickhouse/insert.ts";
@@ -344,6 +345,7 @@ export async function seedDemo(options: SeedOptions): Promise<SeedResult> {
     retentionDays: options.telemetryRetentionDays,
   };
   let spans = 0;
+  let aiCalls = 0;
   let logs = 0;
   let metricPoints = 0;
   const serverErrors: Arrived[] = [];
@@ -353,8 +355,10 @@ export async function seedDemo(options: SeedOptions): Promise<SeedResult> {
   for (const request of telemetry.traces) {
     const outcome = normalizeTraces(request, context);
     refused(outcome.message);
-    await insertTelemetry(clickhouse, { spans: outcome.rows });
+    const ai = aiCallsOf(outcome.rows);
+    await insertTelemetry(clickhouse, { spans: outcome.rows, ai_calls: ai });
     spans += outcome.rows.length;
+    aiCalls += ai.length;
     serverErrors.push(...arrived(outcome.errors));
   }
   for (const request of telemetry.logs) {
@@ -375,7 +379,7 @@ export async function seedDemo(options: SeedOptions): Promise<SeedResult> {
   }
   await storeArrived(clickhouse, projectId, serverErrors);
   log(
-    `Stored ${spans.toLocaleString("en")} spans, ${logs.toLocaleString("en")} log records, ${metricPoints.toLocaleString("en")} metric points, and ${serverErrors.length} server exceptions.`,
+    `Stored ${spans.toLocaleString("en")} spans (${aiCalls.toLocaleString("en")} AI calls), ${logs.toLocaleString("en")} log records, ${metricPoints.toLocaleString("en")} metric points, and ${serverErrors.length} server exceptions.`,
   );
 
   // When the latest event happened, as collection records it.

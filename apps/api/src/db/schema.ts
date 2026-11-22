@@ -224,6 +224,25 @@ export interface AlertRulesTable {
 }
 
 /** Whether a rule fires for one subject (a check, a fingerprint, or '' for a spike rule). */
+/** What an AI cost rule's closed hours were added up for (0018; alerts/ai-cost-hours.ts). */
+export interface AiCostWindowsTable {
+  rule_id: string;
+  settings_key: string;
+  filled_from: Date;
+  filled_until: Date;
+  recomputed_at: Date;
+}
+
+/** One closed hour of an AI cost rule's window, with calls. */
+export interface AiCostHoursTable {
+  rule_id: string;
+  hour: Date;
+  cost_usd: number;
+  /** bigint: read back as text. */
+  calls: ColumnType<string, number, number>;
+  no_price_calls: ColumnType<string, number, number>;
+}
+
 export interface AlertStatesTable {
   rule_id: string;
   subject: string;
@@ -720,6 +739,8 @@ export interface Database {
   notification_deliveries: NotificationDeliveriesTable;
   alert_rules: AlertRulesTable;
   alert_states: AlertStatesTable;
+  ai_cost_windows: AiCostWindowsTable;
+  ai_cost_hours: AiCostHoursTable;
   alert_history: AlertHistoryTable;
   alert_evaluations: AlertEvaluationsTable;
   alert_error_groups: AlertErrorGroupsTable;
