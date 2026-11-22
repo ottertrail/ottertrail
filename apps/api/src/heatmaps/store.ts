@@ -42,6 +42,8 @@ export interface NewHeatmapRecord {
   viewportHeight: number;
   pageHeight: number;
   rage: boolean;
+  /** Nothing on the page responded to the click within a second. */
+  dead?: boolean;
   /** A scroll row's deepest share of the page reached, 0 to 1; 0 for a click. */
   depth: number;
   /** A scroll row's share of the page visible without scrolling, at first; 0 for a click. */
@@ -88,6 +90,7 @@ export function toHeatmapRow(
     viewport_height: record.viewportHeight,
     page_height: record.pageHeight,
     rage: record.rage,
+    dead: record.dead === true,
     depth,
     fold: scroll ? thousandths(record.fold ?? 0) : 0,
     dropped,

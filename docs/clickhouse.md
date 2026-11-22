@@ -118,7 +118,7 @@ Every other ClickHouse table (`spans`, `logs`, `metric_points`, `metric_histogra
 
 ## Heatmaps
 
-`heatmaps` (ClickHouse migration 0006) holds the clicks and scroll depths of sampled pageviews ([web analytics](web-analytics.md#heatmaps)), straight from `POST /api/heatmaps`, acknowledged once written, as events are:
+`heatmaps` (ClickHouse migration 0006, `dead` added by 0007) holds the clicks and scroll depths of sampled pageviews ([web analytics](web-analytics.md#heatmaps)), straight from `POST /api/heatmaps`, acknowledged once written, as events are:
 
 | Column                                             | Meaning                                                                                                                                             |
 | -------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -132,6 +132,7 @@ Every other ClickHouse table (`spans`, `logs`, `metric_points`, `metric_histogra
 | `x`, `y`                                           | Where in its element a click fell, in thousandths                                                                                                   |
 | `viewport_width`, `viewport_height`, `page_height` | In CSS pixels                                                                                                                                       |
 | `rage`                                             | A rage click                                                                                                                                        |
+| `dead`                                             | A dead click: nothing on the page responded within a second (migration 0007; 0 for rows before it and for scroll rows)                              |
 | `depth`, `fold`, `dropped`                         | A scroll row's deepest share of the page and its fold as it first showed, in thousandths, and the pageview's clicks past the 100 sent; 0 for clicks |
 | `version`                                          | A scroll row's `depth` × 65,536 + `dropped`; 0 for clicks                                                                                           |
 

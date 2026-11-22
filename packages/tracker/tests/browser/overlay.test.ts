@@ -114,7 +114,7 @@ function heatmap(overrides: Record<string, unknown> = {}) {
     firstDay: "2026-10-22",
     lastDay: "2026-11-20",
     clipped: false,
-    totals: { pageviews: 12, clicks: 9, rageClicks: 1 },
+    totals: { pageviews: 12, clicks: 9, rageClicks: 1, deadClicks: 2 },
     devices: [{ device: "desktop", pageviews: 12 }],
     reach: Array.from({ length: 20 }, (_, index) => ({
       depth: (index + 1) * 5,
@@ -245,6 +245,7 @@ describe("the overlay", () => {
                   element: cta.element,
                   clicks: 5,
                   rageClicks: 0,
+                  deadClicks: 2,
                   cells: [[2, 3, 5]],
                 },
                 {
@@ -279,7 +280,7 @@ describe("the overlay", () => {
       "footer > a:3: 2 clicks",
     ]);
     expect(view.root().querySelector(".totals")?.textContent).toBe(
-      "12 pageviews · 9 clicks · 1 rage click",
+      "12 pageviews · 9 clicks · 1 rage click · 2 dead clicks",
     );
     // The page changes: the element goes, and is listed (looked for again within a second).
     element("#cta").remove();

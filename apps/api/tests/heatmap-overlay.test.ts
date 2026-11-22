@@ -390,11 +390,12 @@ describe("reading the overlay", () => {
       pageview(0.6),
       pageview(1),
       pageview(0.5, { device: "mobile", viewportWidth: 390 }),
-      // Three on the call to action: two in one cell, one rage click elsewhere.
+      // Three on the call to action: two in one cell, one rage click elsewhere
+      // that was also a dead click; a dead click on the menu.
       click({ x: 0.2, y: 0.4 }),
       click({ x: 0.24, y: 0.49 }),
-      click({ x: 0.99, y: 1, rage: true }),
-      click({ label: "", element: "body>header>nav>a:2", x: 0.5, y: 0.5 }),
+      click({ x: 0.99, y: 1, rage: true, dead: true }),
+      click({ label: "", element: "body>header>nav>a:2", x: 0.5, y: 0.5, dead: true }),
       click({ device: "mobile", viewportWidth: 390 }),
       click({ path: "/other" }),
       click({ environment: "staging" }),
@@ -431,7 +432,7 @@ describe("reading the overlay", () => {
       period: "30d",
       environment: "production",
       clipped: false,
-      totals: { pageviews: 3, clicks: 4, rageClicks: 1 },
+      totals: { pageviews: 3, clicks: 4, rageClicks: 1, deadClicks: 2 },
       devices: [
         { device: "desktop", pageviews: 3 },
         { device: "mobile", pageviews: 1 },
@@ -442,6 +443,7 @@ describe("reading the overlay", () => {
           element: "section>a",
           clicks: 3,
           rageClicks: 1,
+          deadClicks: 1,
           cells: [
             [1, 3, 2],
             [7, 7, 1],
@@ -452,6 +454,7 @@ describe("reading the overlay", () => {
           element: "body>header>nav>a:2",
           clicks: 1,
           rageClicks: 0,
+          deadClicks: 1,
           cells: [[4, 4, 1]],
         },
       ],

@@ -2703,6 +2703,7 @@ export function heatmapFixture(overrides: Partial<Heatmap> = {}): Heatmap {
       pageviews: 400,
       clicks: 1_250,
       rageClicks: 18,
+      deadClicks: 52,
       droppedClicks: 0,
       medianDepth: 0.64,
       reachedBottom: 0.33,
@@ -2715,6 +2716,7 @@ export function heatmapFixture(overrides: Partial<Heatmap> = {}): Heatmap {
         clicks: 500,
         share: 0.4,
         rageClicks: 0,
+        deadClicks: 0,
         x: 0.5,
         y: 0.5,
       },
@@ -2724,6 +2726,7 @@ export function heatmapFixture(overrides: Partial<Heatmap> = {}): Heatmap {
         clicks: 250,
         share: 0.2,
         rageClicks: 15,
+        deadClicks: 40,
         x: 0.48,
         y: 0.3,
       },
@@ -2733,6 +2736,7 @@ export function heatmapFixture(overrides: Partial<Heatmap> = {}): Heatmap {
         clicks: 5,
         share: 0.004,
         rageClicks: 3,
+        deadClicks: 0,
         x: 0.1,
         y: 0.9,
       },
@@ -2740,6 +2744,10 @@ export function heatmapFixture(overrides: Partial<Heatmap> = {}): Heatmap {
     hotspots: [
       { label: null, element: "body>main>section:2>div>button", rageClicks: 15, x: 0.48, y: 0.3 },
       { label: null, element: "*>div>ul>li:3>a", rageClicks: 3, x: 0.1, y: 0.9 },
+    ],
+    deadHotspots: [
+      { label: null, element: "body>main>section:2>div>button", deadClicks: 40, x: 0.5, y: 0.35 },
+      { label: "team-photo", element: "section:3>img", deadClicks: 12, x: 0.4, y: 0.6 },
     ],
     ...overrides,
   };
@@ -2753,6 +2761,7 @@ export function emptyHeatmap(overrides: Partial<Heatmap> = {}): Heatmap {
       pageviews: 0,
       clicks: 0,
       rageClicks: 0,
+      deadClicks: 0,
       droppedClicks: 0,
       medianDepth: null,
       reachedBottom: null,
@@ -2763,6 +2772,7 @@ export function emptyHeatmap(overrides: Partial<Heatmap> = {}): Heatmap {
     },
     elements: [],
     hotspots: [],
+    deadHotspots: [],
     ...overrides,
   });
 }

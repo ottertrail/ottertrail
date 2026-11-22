@@ -134,7 +134,7 @@ async function stored(projectId: string) {
   const params = new QueryParams();
   return queryRows<Record<string, unknown>>(
     dashboard.reader,
-    `SELECT record_id, kind, path, device, label, element, x, y, depth, dropped, fold, rage, environment, release,
+    `SELECT record_id, kind, path, device, label, element, x, y, depth, dropped, fold, rage, dead, environment, release,
             viewport_width, viewport_height, page_height
      FROM heatmaps FINAL WHERE project_id = ${params.add(projectId, "UUID")}
      ORDER BY occurred_at, kind DESC, record_id`,
@@ -145,7 +145,7 @@ async function stored(projectId: string) {
 describe("POST /api/heatmaps", () => {
   test("stores clicks and scroll depth: the page's path, the element, thousandths", async () => {
     const project = await newProject();
-    const response = await send(project.public_key, [click({ rage: true }), scroll()], {
+    const response = await send(project.public_key, [click({ rage: true, dead: true }), scroll()], {
       origin: `https://${SITE}`,
     });
     expect(response.statusCode).toBe(202);
@@ -161,6 +161,7 @@ describe("POST /api/heatmaps", () => {
         element: "",
         depth: 500,
         rage: false,
+        dead: false,
         environment: "production",
         release: "",
       }),
@@ -174,6 +175,7 @@ describe("POST /api/heatmaps", () => {
         y: 500,
         depth: 0,
         rage: true,
+        dead: true,
         viewport_width: 1280,
         viewport_height: 800,
         page_height: 3200,
@@ -308,6 +310,11 @@ describe("POST /api/heatmaps", () => {
       ["a fold over 1", [scroll({ fold: 1.2 })]],
       ["a scroll without fold", [scroll({ fold: undefined })]],
       ["a click with dropped clicks", [click({ dropped: 3 })]],
+      ["a dead flag that is a word", [click({ dead: "yes" })]],
+      ["a dead flag that is a number", [click({ dead: 2 })]],
+      ["a dead flag that is an object", [click({ dead: {} })]],
+      ["a scroll with a dead flag", [scroll({ dead: true })]],
+      ["a scroll with a rage flag", [scroll({ rage: true })]],
       ["dropped over 65,535", [scroll({ dropped: 65_536 })]],
     ];
     for (const [name, records] of refused) {
@@ -582,14 +589,15 @@ describe("the reports", () => {
       pageview(0.5, 800, { fold: 0.1, dropped: 7 }),
       pageview(0.75, 1600, { fold: 0.2 }),
       pageview(1, 1600, { fold: 0.2 }),
-      // Three clicks on the call to action, one a rage click, and one on the menu.
+      // Three clicks on the call to action, one a rage click that was also
+      // a dead click, and one dead click on the menu.
       row({ ...cta, x: 0.2, y: 0.4 }),
       row({ ...cta, x: 0.4, y: 0.6 }),
-      row({ ...cta, x: 0.6, y: 0.5, rage: true }),
-      row({ element: "body>header>nav>a:2", x: 0.5, y: 0.5 }),
+      row({ ...cta, x: 0.6, y: 0.5, rage: true, dead: true }),
+      row({ element: "body>header>nav>a:2", x: 0.5, y: 0.5, dead: true }),
       // On a phone: one pageview and a click, left out by device=desktop.
       pageview(0.1, 700, { device: "mobile", viewportWidth: 390 }),
-      row({ ...cta, device: "mobile", viewportWidth: 390, rage: true }),
+      row({ ...cta, device: "mobile", viewportWidth: 390, rage: true, dead: true }),
       // Another page, another environment, and too old for the period.
       pageview(0.5, 800, { path: "/" }),
       pageview(0.5, 800, { path: "/", environment: "staging" }),
@@ -623,7 +631,7 @@ describe("the reports", () => {
     ]);
   });
 
-  test("one page's report: scroll reach, the fold, the most-clicked elements, rage hotspots, totals", async () => {
+  test("one page's report: scroll reach, the fold, the most-clicked elements, rage and dead hotspots, totals", async () => {
     const response = await get(projectId, "?period=7d&path=%2Fpricing&device=desktop");
     expect(response.statusCode).toBe(200);
     const body = response.json();
@@ -639,6 +647,7 @@ describe("the reports", () => {
         pageviews: 4,
         clicks: 4,
         rageClicks: 1,
+        deadClicks: 2,
         // Halfway between 0.5 and 0.75.
         medianDepth: 0.625,
         reachedBottom: 0.25,
@@ -656,12 +665,25 @@ describe("the reports", () => {
           clicks: 3,
           share: 0.75,
           rageClicks: 1,
+          deadClicks: 1,
           x: 0.4,
           y: 0.5,
         },
-        { label: null, element: "body>header>nav>a:2", clicks: 1, share: 0.25, rageClicks: 0 },
+        {
+          label: null,
+          element: "body>header>nav>a:2",
+          clicks: 1,
+          share: 0.25,
+          rageClicks: 0,
+          deadClicks: 1,
+        },
       ],
       hotspots: [{ label: "hero-cta", element: "section>a", rageClicks: 1, x: 0.6, y: 0.5 }],
+      // One each, then by name: the unnamed menu link first.
+      deadHotspots: [
+        { label: null, element: "body>header>nav>a:2", deadClicks: 1, x: 0.5, y: 0.5 },
+        { label: "hero-cta", element: "section>a", deadClicks: 1, x: 0.6, y: 0.5 },
+      ],
     });
     expect(body.scroll.reach).toEqual([
       { depth: 10, pageviews: 4, share: 1 },
@@ -678,8 +700,9 @@ describe("the reports", () => {
 
     // All devices: the phone's pageview and rage click too.
     const all = (await get(projectId, "?period=7d&path=%2Fpricing")).json();
-    expect(all.totals).toMatchObject({ pageviews: 5, clicks: 5, rageClicks: 2 });
+    expect(all.totals).toMatchObject({ pageviews: 5, clicks: 5, rageClicks: 2, deadClicks: 3 });
     expect(all.hotspots).toEqual([expect.objectContaining({ label: "hero-cta", rageClicks: 2 })]);
+    expect(all.deadHotspots[0]).toMatchObject({ label: "hero-cta", deadClicks: 2 });
   });
 
   test("a page without data has empty figures, not errors", async () => {
@@ -688,12 +711,14 @@ describe("the reports", () => {
       pageviews: 0,
       clicks: 0,
       rageClicks: 0,
+      deadClicks: 0,
       medianDepth: null,
       reachedBottom: null,
       droppedClicks: 0,
     });
     expect(body.scroll.averageFold).toBeNull();
     expect(body.elements).toEqual([]);
+    expect(body.deadHotspots).toEqual([]);
   });
 
   test("reads at most the 90 days kept, and says so", async () => {

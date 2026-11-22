@@ -1,6 +1,6 @@
 /**
  * Heatmap capture (h.js) in headless Chromium: what a click and a scroll
- * depth send, rage clicks, the caps, sending, and, run as the tracker
+ * depth send, rage clicks, dead clicks, the caps, sending, and, run as the tracker
  * loads it, single-page navigation and the privacy test: a page full of
  * planted values, clicked and typed into, and none of them in what leaves.
  */
@@ -9,6 +9,8 @@ import { userEvent } from "vite-plus/test/browser/context";
 
 import {
   type CaptureOptions,
+  DEAD_WINDOW_MS,
+  FLUSH_DELAY_MS,
   type HeatmapBatch,
   type HeatmapRecord,
   MAX_BATCH_BYTES,
@@ -21,6 +23,8 @@ import {
 import { type HeatmapConfig, HEATMAP_PROPERTY, type HeatmapPage } from "../../src/heatmap-names.ts";
 
 const ENDPOINT = "https://analytics.example.com/api/heatmaps";
+/** A click is held for the dead-click window, then waits to batch. */
+const BATCHED = DEAD_WINDOW_MS + FLUSH_DELAY_MS;
 const PAGE: HeatmapPage = { url: "https://example.com/pricing", at: 1_000 };
 
 interface Sent {
@@ -64,7 +68,10 @@ function capture({
   trusted = true,
   respond,
   beacons = true,
+  endpoint = ENDPOINT,
 }: {
+  /** Where h.js sends: its origin is the instance's, whose requests are not a response. */
+  endpoint?: string;
   page?: HeatmapPage | null;
   status?: number;
   trusted?: boolean;
@@ -78,7 +85,7 @@ function capture({
   let current = page;
   let clock = 10_000;
   const config: HeatmapConfig = {
-    endpoint: ENDPOINT,
+    endpoint,
     key: "pk_test",
     environment: "staging",
     page: () => current,
@@ -316,6 +323,280 @@ describe("a click", () => {
   });
 });
 
+/** Longer than the dead-click window, in real time. */
+const pastWindow = () => new Promise((resolve) => setTimeout(resolve, DEAD_WINDOW_MS + 300));
+
+/** The clicks sent, as [element, dead]. */
+const deadness = (records: Received[]) =>
+  records.flatMap((record) =>
+    record.type === "click" ? [[record.element, record.dead === true] as const] : [],
+  );
+
+const DEAD_PAGE = `
+  <main style="height:4000px">
+    <p id="words" style="width:200px">Just words</p>
+    <img id="picture" width="40" height="40" src="data:image/gif;base64,R0lGODlhAQABAAAAACw=">
+    <button id="act" style="width:80px;height:20px">Act</button>
+    <a id="link" href="/elsewhere" style="display:inline-block;width:80px;height:20px">Elsewhere</a>
+    <input id="field" style="width:80px">
+    <canvas id="drawing" width="40" height="40"></canvas>
+  </main>`;
+
+/** What a button's handler does: each is the page responding. */
+const RESPONSES: [string, (button: HTMLElement) => void][] = [
+  ["toggles a class", (button) => button.classList.toggle("on")],
+  ["sets an attribute", (button) => button.setAttribute("aria-expanded", "true")],
+  ["adds an element", () => document.body.append(document.createElement("div"))],
+  ["changes text", (button) => button.firstChild?.replaceWith("Done")],
+  ["starts a request", () => void fetch(`${location.href}#request`).catch(() => undefined)],
+  ["navigates with pushState", () => history.pushState(null, "", "/plans/team")],
+  ["scrolls the page", () => window.scrollTo(0, 600)],
+];
+
+describe("dead clicks", () => {
+  test.each([
+    ["plain text", "#words", "body>main>p"],
+    ["an image with no handler", "#picture", "body>main>img"],
+  ])("a click on %s that nothing responds to is dead", async (_name, selector, path) => {
+    document.body.innerHTML = DEAD_PAGE;
+    const heat = capture();
+    click(element(selector));
+    await pastWindow();
+    hide();
+    await heat.settle();
+    expect(deadness(heat.records())).toEqual([[path, true]]);
+  });
+
+  test.each(RESPONSES)("a click whose handler %s is not dead", async (_name, respond) => {
+    document.body.innerHTML = DEAD_PAGE;
+    const button = element("#act");
+    button.addEventListener("click", () => respond(button));
+    const heat = capture();
+    click(button);
+    await pastWindow();
+    hide();
+    await heat.settle();
+    expect(deadness(heat.records())).toEqual([["body>main>button", false]]);
+  });
+
+  test("a form control's refusal (invalid) is a response", async () => {
+    document.body.innerHTML = `<form><input id="required" required style="width:80px"><button id="send" type="button" style="width:80px;height:20px">Send</button></form>`;
+    const field = element("#required") as HTMLInputElement;
+    element("#send").addEventListener("click", () => field.checkValidity());
+    const heat = capture();
+    click(element("#send"));
+    await pastWindow();
+    hide();
+    await heat.settle();
+    expect(deadness(heat.records())).toEqual([["body>form>button", false]]);
+  });
+
+  test("clicks on a link, a form control, or while text is selected are never dead", async () => {
+    document.body.innerHTML = DEAD_PAGE;
+    const heat = capture();
+    click(element("#link"));
+    await userEvent.click(element("#field"));
+    click(element("#drawing"));
+    // The visitor selected the words, then clicked them.
+    const range = document.createRange();
+    range.selectNodeContents(element("#words"));
+    getSelection()?.removeAllRanges();
+    getSelection()?.addRange(range);
+    click(element("#words"));
+    getSelection()?.removeAllRanges();
+    await pastWindow();
+    hide();
+    await heat.settle();
+    expect(deadness(heat.records())).toEqual([
+      ["body>main>a", false],
+      ["body>main>input", false],
+      ["body>main>canvas", false],
+      ["body>main>p", false],
+    ]);
+  });
+
+  test("a response on the press, before the click, counts (menus and tabs act on pointerdown)", async () => {
+    document.body.innerHTML = DEAD_PAGE;
+    const button = element("#act");
+    button.addEventListener("pointerdown", () => button.classList.add("open"));
+    const heat = capture();
+    // The real sequence: pointerdown, mousedown, pointerup, mouseup, click.
+    await userEvent.click(button);
+    await pastWindow();
+    hide();
+    await heat.settle();
+    expect(deadness(heat.records())).toEqual([["body>main>button", false]]);
+  });
+
+  test("a double click on text, which selects a word, can still be dead", async () => {
+    document.body.innerHTML = DEAD_PAGE;
+    const heat = capture();
+    await userEvent.dblClick(element("#words"));
+    await pastWindow();
+    hide();
+    await heat.settle();
+    expect(deadness(heat.records())).toEqual([
+      ["body>main>p", true],
+      ["body>main>p", true],
+    ]);
+  });
+
+  test("a change inside an open shadow root is a response", async () => {
+    document.body.innerHTML = `<div id="host" style="display:block;width:100px;height:30px"></div>`;
+    const root = element("#host").attachShadow({ mode: "open" });
+    root.innerHTML = '<button id="inner" style="width:80px;height:20px">Open</button><span></span>';
+    const inner = root.querySelector("#inner") as HTMLElement;
+    inner.addEventListener("click", () => root.querySelector("span")?.append("Opened"));
+    const heat = capture();
+    click(inner);
+    await pastWindow();
+    hide();
+    await heat.settle();
+    expect(deadness(heat.records())).toEqual([["body>div", false]]);
+  });
+
+  test("requests to the instance itself, beacons, and requests started before the click do not count", async () => {
+    document.body.innerHTML = DEAD_PAGE;
+    // The instance is this test server: a request to it is h.js's or the tracker's own.
+    const own = element("#act");
+    own.addEventListener(
+      "click",
+      () => void fetch(`${location.origin}/?own`).catch(() => undefined),
+    );
+    const beacon = element("#picture");
+    beacon.addEventListener("click", () => navigator.sendBeacon(`${location.href}?beacon`, "x"));
+    const heat = capture({ endpoint: `${location.origin}/api/heatmaps` });
+    click(own);
+    await pastWindow();
+    click(beacon);
+    await pastWindow();
+    // Started before the click, it finishes while the click is held: not the click's doing.
+    const earlier = fetch(`${location.href}?earlier`).catch(() => undefined);
+    click(element("#words"));
+    await earlier;
+    await pastWindow();
+    hide();
+    await heat.settle();
+    // The requests were made, so their entries could have counted.
+    expect(performance.getEntriesByType("resource").map((entry) => entry.name)).toEqual(
+      expect.arrayContaining([`${location.origin}/?own`, `${location.href}?earlier`]),
+    );
+    expect(deadness(heat.records())).toEqual([
+      ["body>main>button", true],
+      ["body>main>img", true],
+      ["body>main>p", true],
+    ]);
+  });
+
+  test("changes inside Ottertrail's own overlay are not the page responding", async () => {
+    document.body.innerHTML = `${DEAD_PAGE}<ottertrail-heatmap><span></span></ottertrail-heatmap>`;
+    const overlay = element("ottertrail-heatmap");
+    element("#act").addEventListener("click", () => {
+      overlay.setAttribute("style", "display:block");
+      overlay.append(document.createElement("span"));
+      document.body.append(document.createElement("ottertrail-heatmap"));
+    });
+    const heat = capture();
+    click(element("#act"));
+    await pastWindow();
+    hide();
+    await heat.settle();
+    expect(deadness(heat.records())).toEqual([["body>main>button", true]]);
+  });
+
+  test("a page hidden or left within the window sends the click without the flag", async () => {
+    document.body.innerHTML = DEAD_PAGE;
+    const heat = capture();
+    click(element("#words"));
+    hide();
+    await pastWindow();
+    window.dispatchEvent(new Event("pagehide"));
+    await heat.settle();
+    // Sent once, as the page hid; nothing more when the window ends.
+    expect(deadness(heat.records())).toEqual([["body>main>p", false]]);
+  });
+
+  test("a click can be a rage click and a dead click, and the order of clicks is kept", async () => {
+    document.body.innerHTML = DEAD_PAGE;
+    const heat = capture();
+    for (const _ of [0, 1, 2]) {
+      click(element("#words"));
+      heat.tick(200);
+    }
+    // A link, settled at once, still goes after the clicks before it.
+    click(element("#link"));
+    await pastWindow();
+    hide();
+    await heat.settle();
+    const clicks = heat.records().filter((record) => record.type === "click");
+    expect(
+      clicks.map((record) => [
+        record.type === "click" && record.element,
+        record.type === "click" && record.rage === true,
+        record.type === "click" && record.dead === true,
+      ]),
+    ).toEqual([
+      ["body>main>p", false, true],
+      ["body>main>p", false, true],
+      ["body>main>p", true, true],
+      ["body>main>a", false, false],
+    ]);
+  });
+
+  test("the observers run only while a click is held, and disconnect after the window", async () => {
+    document.body.innerHTML = DEAD_PAGE;
+    const observe = vi.spyOn(MutationObserver.prototype, "observe");
+    const disconnect = vi.spyOn(MutationObserver.prototype, "disconnect");
+    const requestsObserved = vi.spyOn(PerformanceObserver.prototype, "observe");
+    const requestsDisconnected = vi.spyOn(PerformanceObserver.prototype, "disconnect");
+    cleanups.push(() => vi.restoreAllMocks());
+    const heat = capture();
+    const listen = vi.spyOn(window, "addEventListener");
+    const unlisten = vi.spyOn(window, "removeEventListener");
+    // Nothing watched before a click.
+    expect(observe).not.toHaveBeenCalled();
+    expect(requestsObserved).not.toHaveBeenCalled();
+    // Two clicks held at once share one watch.
+    click(element("#words"));
+    click(element("#picture"));
+    expect(observe).toHaveBeenCalledTimes(1);
+    expect(requestsObserved).toHaveBeenCalledTimes(1);
+    expect(disconnect).not.toHaveBeenCalled();
+    await pastWindow();
+    expect(disconnect).toHaveBeenCalledTimes(1);
+    expect(requestsDisconnected).toHaveBeenCalledTimes(1);
+    // Every listener added for the window is removed.
+    const added = (spy: typeof listen | typeof unlisten) =>
+      spy.mock.calls
+        .map(([type]) => type)
+        .filter((type) => ["scroll", "hashchange", "popstate", "invalid", "toggle"].includes(type));
+    expect(added(listen)).toEqual(["scroll", "hashchange", "popstate", "invalid", "toggle"]);
+    expect(added(unlisten)).toEqual(added(listen));
+    // A change after the window counts for nothing.
+    document.body.append(document.createElement("div"));
+    hide();
+    await heat.settle();
+    expect(deadness(heat.records())).toEqual([
+      ["body>main>p", true],
+      ["body>main>img", true],
+    ]);
+  });
+
+  test("an in-app navigation by the tracker settles the clicks held, as responded", async () => {
+    document.body.innerHTML = DEAD_PAGE;
+    const heat = capture();
+    click(element("#words"));
+    heat.setPage({ url: "https://example.com/next", at: 20_000 });
+    heat.started.navigated();
+    await pastWindow();
+    hide();
+    await heat.settle();
+    expect(deadness(heat.records())).toEqual([["body>main>p", false]]);
+    // Still the page it was made on.
+    expect(heat.records().find((record) => record.type === "click")?.url).toBe(PAGE.url);
+  });
+});
+
 describe("scroll depth", () => {
   test("is sent once when the page is hidden, again only when deeper, with the same ID", async () => {
     document.body.innerHTML = LAYOUT;
@@ -380,7 +661,7 @@ describe("sending", () => {
     const heat = capture();
     click(element("#go"));
     expect(heat.fetch).not.toHaveBeenCalled();
-    await vi.advanceTimersByTimeAsync(5000);
+    await vi.advanceTimersByTimeAsync(BATCHED);
     expect(heat.sent.map((batch) => batch.via)).toEqual(["fetch"]);
     expect(heat.sent[0]?.body).toMatchObject({ v: 1, key: "pk_test", environment: "staging" });
     click(element("#go"));
@@ -395,7 +676,7 @@ describe("sending", () => {
     cleanups.push(() => vi.useRealTimers());
     const heat = capture({ status: 403 });
     click(element("#go"));
-    await vi.advanceTimersByTimeAsync(5000);
+    await vi.advanceTimersByTimeAsync(BATCHED);
     click(element("#go"));
     hide();
     await vi.advanceTimersByTimeAsync(60_000);
@@ -409,7 +690,7 @@ describe("sending", () => {
     cleanups.push(() => vi.useRealTimers());
     const heat = capture({ status: 503 });
     click(element("#go"));
-    await vi.advanceTimersByTimeAsync(5000);
+    await vi.advanceTimersByTimeAsync(BATCHED);
     heat.tick(2000);
     await vi.advanceTimersByTimeAsync(2000);
     expect(heat.sent.length).toBeGreaterThanOrEqual(2);
@@ -553,7 +834,7 @@ describe("review fixes", () => {
     cleanups.push(() => vi.useRealTimers());
     const heat = capture({ beacons: false });
     click(element("#go"));
-    await vi.advanceTimersByTimeAsync(5000);
+    await vi.advanceTimersByTimeAsync(BATCHED);
     expect(heat.fetch.mock.calls[0]?.[1].keepalive).not.toBe(true);
     click(element("#go"));
     hide();
@@ -575,7 +856,7 @@ describe("review fixes", () => {
       },
     });
     click(element("#go"));
-    await vi.advanceTimersByTimeAsync(5000);
+    await vi.advanceTimersByTimeAsync(BATCHED);
     hide();
     window.dispatchEvent(new Event("pagehide"));
     await heat.settle();
@@ -719,7 +1000,7 @@ describe("limits", () => {
         (responses.shift() ?? (() => Promise.resolve({ status: 202, headers: new Headers() })))(),
     });
     click(element("#go"));
-    await vi.advanceTimersByTimeAsync(5000);
+    await vi.advanceTimersByTimeAsync(BATCHED);
     expect(heat.sent).toHaveLength(1);
     // A click while the send is out sets a batching timer.
     click(element("#cta"));
@@ -953,6 +1234,7 @@ describe("privacy", () => {
             "x",
             "y",
             "rage",
+            "dead",
             "depth",
             "fold",
             "dropped",

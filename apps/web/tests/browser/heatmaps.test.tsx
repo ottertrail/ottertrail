@@ -141,6 +141,7 @@ describe("the heatmaps page", () => {
       ["Pageviews with heatmap data", "400"],
       ["Clicks", "1,250"],
       ["Rage clicks", "18"],
+      ["Dead clicks", "52"],
       ["Median scroll depth", "64%"],
     ]);
     await expect.element(page.getByText("33% reached the bottom")).toBeVisible();
@@ -251,9 +252,9 @@ describe("the heatmaps page", () => {
     await expect.element(ready()).toBeVisible();
 
     expect(tableRows("Elements of the page, most clicks first")).toEqual([
-      ["hero-cta", "500", "40%", "0"],
-      ["… > section:2 > div > buttonRage clicks", "250", "20%", "15"],
-      ["… > ul > li:3 > aRage clicks", "5", "<1%", "3"],
+      ["hero-cta", "500", "40%", "0", "0"],
+      ["… > section:2 > div > buttonRage clicks", "250", "20%", "15", "40"],
+      ["… > ul > li:3 > aRage clicks", "5", "<1%", "3", "0"],
     ]);
     const table = page.getByRole("table", { name: "Elements of the page, most clicks first" });
     const rows = [...table.element().querySelectorAll("tbody tr")];
@@ -287,6 +288,45 @@ describe("the heatmaps page", () => {
     const beside = section("Elements with rage clicks, most first")?.getBoundingClientRect();
     expect(beside?.top).toBe(elements?.top);
     expect(beside?.left).toBeGreaterThan(elements?.right ?? Infinity);
+  });
+
+  test("switches the hotspots to dead clicks, with what a dead click is", async () => {
+    installFakeApi();
+    renderApp(HEATMAPS);
+    await expect
+      .element(page.getByRole("table", { name: "Elements with rage clicks, most first" }))
+      .toBeVisible();
+    const rage = page.getByRole("button", { name: "Rage clicks", exact: true });
+    const dead = page.getByRole("button", { name: "Dead clicks", exact: true });
+    await expect.element(rage).toHaveAttribute("aria-pressed", "true");
+    await dead.click();
+    await expect.element(dead).toHaveAttribute("aria-pressed", "true");
+    const table = page.getByRole("table", { name: "Elements with dead clicks, most first" });
+    await expect.element(table).toBeVisible();
+    expect(tableRows("Elements with dead clicks, most first")).toEqual([
+      ["… > section:2 > div > button", "40", "50%, 35%"],
+      ["team-photo", "12", "40%, 60%"],
+    ]);
+    await expect
+      .element(
+        page.getByText("Elements where nothing on the page responded within a second of a click."),
+      )
+      .toBeVisible();
+    await expect.element(table.getByText("50% across, 35% down")).toBeInTheDocument();
+    await rage.click();
+    await expect
+      .element(page.getByRole("table", { name: "Elements with rage clicks, most first" }))
+      .toBeVisible();
+  });
+
+  test("says when no element had dead clicks", async () => {
+    installFakeApi({ heatmap: (query) => ({ ...fakeHeatmap(query), deadHotspots: [] }) });
+    renderApp(HEATMAPS);
+    await expect.element(ready()).toBeVisible();
+    await page.getByRole("button", { name: "Dead clicks", exact: true }).click();
+    await expect
+      .element(page.getByText("No dead clicks on this page in this period."))
+      .toBeVisible();
   });
 
   test("says when no element had rage clicks", async () => {
@@ -459,12 +499,22 @@ describe("the heatmaps page", () => {
           pageviews: 0,
           clicks: 12,
           rageClicks: 0,
+          deadClicks: 0,
           droppedClicks: 0,
           medianDepth: null,
           reachedBottom: null,
         },
         elements: [
-          { label: "hero-cta", element: "a", clicks: 12, share: 1, rageClicks: 0, x: 0.5, y: 0.5 },
+          {
+            label: "hero-cta",
+            element: "a",
+            clicks: 12,
+            share: 1,
+            rageClicks: 0,
+            deadClicks: 0,
+            x: 0.5,
+            y: 0.5,
+          },
         ],
       }),
     });
@@ -475,6 +525,7 @@ describe("the heatmaps page", () => {
       ["Pageviews with heatmap data", "0"],
       ["Clicks", "12"],
       ["Rage clicks", "0"],
+      ["Dead clicks", "0"],
       ["Median scroll depth", "–"],
     ]);
     expect(page.getByText(/^No heatmap data/).elements()).toEqual([]);
@@ -780,6 +831,12 @@ describe("the heatmaps page", () => {
     expect(getComputedStyle(ready().element()).display).toBe("block");
     const chart = document.querySelector("[data-slot=scroll-reach-chart]");
     expect(chart?.scrollWidth).toBeLessThanOrEqual(chart?.clientWidth ?? 0);
+    // The dead-click hotspots stack too.
+    await page.getByRole("button", { name: "Dead clicks", exact: true }).click();
+    const dead = page.getByRole("table", { name: "Elements with dead clicks, most first" });
+    await expect.element(dead).toBeVisible();
+    expect(getComputedStyle(dead.element()).display).toBe("block");
+    expectNoSidewaysScroll(390);
   });
 
   test("at 1440 wide: nothing scrolls sideways", async () => {

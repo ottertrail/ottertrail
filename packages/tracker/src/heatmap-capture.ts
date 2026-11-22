@@ -6,14 +6,24 @@
  * What a click sends: the element's structural path (standard tag names and
  * their places among siblings), the site's own data-ottertrail-name nearest
  * to it, where in the element it fell as fractions, the viewport and page
- * sizes, the device class, whether it was a rage click, and its minute.
- * Nothing else about the element or the page is ever read: no text, no
- * values, no IDs, classes, links, sources, or other attributes. Clicks in
- * an element the site blocks or masks for replays (data-ottertrail-block,
- * data-ottertrail-mask) are not recorded at all.
+ * sizes, the device class, whether it was a rage click or a dead click,
+ * and its minute. Nothing else about the element or the page is ever read:
+ * no text, no values, no IDs, classes, links, sources, or other attributes.
+ * Clicks in an element the site blocks or masks for replays
+ * (data-ottertrail-block, data-ottertrail-mask) are not recorded at all.
+ *
+ * A dead click is one after which nothing on the page responded within
+ * DEAD_WINDOW_MS of its press: each click is held until then before it is
+ * queued. What counts as a response is only that something happened (the
+ * DOM changed, the address changed, a request started, the page scrolled,
+ * a popover or details element toggled, a form refused its input), never
+ * what: no mutation or event is read further, and of a request only its
+ * address is compared with the instance's origin, its kind with beacon and
+ * ping, and its start time with the press's.
  */
 import type { HeatmapConfig, HeatmapPage } from "./heatmap-names.ts";
 import { describe, deviceOf, type Device } from "./heatmap-path.ts";
+import { OVERLAY_TAG } from "./overlay-names.ts";
 import { randomId } from "./random-id.ts";
 import { backoffMs, MAX_ATTEMPTS } from "./tracker.ts";
 import { outcomeForStatus } from "./transport.ts";
@@ -43,6 +53,8 @@ export const RAGE_CLICKS = 3;
 export const RAGE_WINDOW_MS = 1000;
 /** … and this close together, in CSS pixels. */
 export const RAGE_DISTANCE_PX = 30;
+/** A click is dead when nothing on the page responds within this long. */
+export const DEAD_WINDOW_MS = 1000;
 /** The API's largest viewport side, page height, and dropped-click count. */
 const MAX_VIEWPORT_PX = 16_384;
 const MAX_PAGE_PX = 1_000_000;
@@ -91,6 +103,30 @@ export function targetOf(node: EventTarget | null): Element | null {
   return element.closest(INTERACTIVE) ?? element;
 }
 
+/**
+ * Clicks on these, or inside them, are never dead: a link responds by
+ * leaving, and a form control by taking focus or input, which may change
+ * nothing in the DOM. Matched by tag and attribute presence only.
+ */
+const NEVER_DEAD =
+  "a[href],input,textarea,select,option,label,[contenteditable]:not([contenteditable=false]),[popovertarget],[commandfor],video,audio,canvas,embed,object";
+
+/** What a DOM change is watched for, in the document and in open shadow roots. */
+const WATCHED: MutationObserverInit = {
+  subtree: true,
+  childList: true,
+  attributes: true,
+  characterData: true,
+};
+
+/** Whether a node is o.js's overlay, or inside it: its changes are not the page responding. */
+const isOverlay = (node: Node) =>
+  ((node instanceof Element ? node : node.parentElement)?.closest(OVERLAY_TAG) ?? null) !== null;
+
+/** Whether a DOM change is the page's own, not the overlay's. */
+const responded = (record: MutationRecord) =>
+  !isOverlay(record.target) && ![...record.addedNodes, ...record.removedNodes].some(isOverlay);
+
 const round3 = (value: number) => Math.round(Math.min(1, Math.max(0, value)) * 1000) / 1000;
 const clampPx = (value: number, max: number) => Math.min(max, Math.max(1, Math.round(value)));
 const toMinute = (time: number) => Math.floor(time / TIME_STEP_MS) * TIME_STEP_MS;
@@ -122,6 +158,7 @@ interface ClickRecord {
   x: number;
   y: number;
   rage?: true;
+  dead?: true;
   vw: number;
   vh: number;
   ph: number;
@@ -145,6 +182,18 @@ interface ScrollRecord {
 }
 
 export type HeatmapRecord = ClickRecord | ScrollRecord;
+
+/** A click held until it is known whether the page responded (startCapture). */
+interface Held {
+  record: Omit<ClickRecord, "page"> & { pageOf: { url: string; referrer?: string | undefined } };
+  /** When it happened, as performance.now(): resource timing's clock. */
+  at: number;
+  /** The page's address then. */
+  href: string;
+  settled: boolean;
+  dead: boolean;
+  timer: ReturnType<typeof setTimeout> | undefined;
+}
 
 /** A record waiting to be sent, with its page beside it. */
 type Queued = (Omit<ClickRecord, "page"> | Omit<ScrollRecord, "page">) & {
@@ -224,6 +273,31 @@ export function startCapture(config: HeatmapConfig, options: CaptureOptions) {
   let rage = createRageDetector();
   /** A measurement waiting for the next frame: a navigation that comes first cancels it. */
   let frame: number | undefined;
+
+  /**
+   * Clicks held for DEAD_WINDOW_MS, in order: each is queued once it is
+   * settled and every click before it is too.
+   */
+  let held: Held[] = [];
+  /** The observers, while a held click is unsettled or a press waits for its click. */
+  let watching:
+    | { mutations: MutationObserver; requests: PerformanceObserver | undefined }
+    | undefined;
+  /**
+   * The latest press (pointerdown), as performance.now(), and whether the
+   * page responded since: many menus, selects, and tabs act on the press,
+   * before the click. Watched until its click, or for DEAD_WINDOW_MS.
+   */
+  let press: { at: number; responded: boolean } | undefined;
+  let pressTimer: ReturnType<typeof setTimeout> | undefined;
+  /** Requests to the instance itself (h.js's own sends, the tracker's) are not the page responding. */
+  const ownOrigin = (() => {
+    try {
+      return new URL(config.endpoint, win.location.href).origin;
+    } catch {
+      return "";
+    }
+  })();
 
   const pageHeight = () =>
     clampPx(
@@ -420,6 +494,173 @@ export function startCapture(config: HeatmapConfig, options: CaptureOptions) {
     else schedule(FLUSH_DELAY_MS);
   };
 
+  /** Queues the held clicks that are settled, up to the first that is not, in order. */
+  const release = () => {
+    let first = held[0];
+    while (first?.settled === true) {
+      held.shift();
+      push(first.dead ? { ...first.record, dead: true } : first.record);
+      first = held[0];
+    }
+    if (press === undefined && !held.some((click) => !click.settled)) unwatch();
+  };
+
+  /**
+   * The page responded: the held clicks are not dead, or, with `since`,
+   * those made at or before it (a request that started then).
+   */
+  const responds = (since = Infinity) => {
+    try {
+      for (const click of held) if (click.at <= since) click.settled = true;
+      if (press !== undefined && press.at <= since) press.responded = true;
+      release();
+    } catch {
+      // Never break the page.
+    }
+  };
+
+  /**
+   * Requests the page started, other than to the instance, and other than
+   * beacons and pings (analytics leaving): the clicks before them responded.
+   */
+  const requested = (entries: PerformanceEntryList) => {
+    const starts = entries
+      .filter(
+        (entry) =>
+          !entry.name.startsWith(`${ownOrigin}/`) &&
+          !("initiatorType" in entry && ["beacon", "ping"].includes(String(entry.initiatorType))),
+      )
+      .map((entry) => entry.startTime);
+    if (starts.length > 0) responds(Math.max(...starts));
+  };
+
+  /** The events that mean the page responded, listened to in the capture phase. */
+  const RESPONSES = ["scroll", "hashchange", "popstate", "invalid", "toggle"];
+  const anyResponse = () => responds();
+
+  /**
+   * Watches the page for any response while a click is held or a press
+   * waits for its click: that something happened, never what. Also inside
+   * the open shadow roots the event went through (a closed one cannot be
+   * seen). Stopped as soon as nothing is waiting.
+   */
+  const watch = (event: Event) => {
+    if (watching === undefined) {
+      const mutations = new MutationObserver((records) => {
+        try {
+          if (records.some(responded)) responds();
+        } catch {
+          // Never break the page.
+        }
+      });
+      mutations.observe(doc, WATCHED);
+      let requests: PerformanceObserver | undefined;
+      try {
+        const observer = new PerformanceObserver((list) => {
+          try {
+            requested(list.getEntries());
+          } catch {
+            // Never break the page.
+          }
+        });
+        observer.observe({ type: "resource" });
+        requests = observer;
+      } catch {
+        // No resource timing: requests are not seen.
+      }
+      // In the capture phase: a scroll inside an element, and a form control's
+      // invalid event, do not bubble.
+      for (const type of RESPONSES) {
+        win.addEventListener(type, anyResponse, { capture: true, passive: true });
+      }
+      watching = { mutations, requests };
+    }
+    for (const node of event.composedPath()) {
+      if (node instanceof ShadowRoot) watching.mutations.observe(node, WATCHED);
+    }
+  };
+
+  const unwatch = () => {
+    if (watching === undefined) return;
+    watching.mutations.disconnect();
+    watching.requests?.disconnect();
+    for (const type of RESPONSES) win.removeEventListener(type, anyResponse, { capture: true });
+    watching = undefined;
+  };
+
+  /** Responses the observers saw but have not called back with yet, where the browser can say. */
+  const catchUp = () => {
+    if (watching === undefined) return;
+    const { mutations, requests } = watching;
+    if (typeof mutations.takeRecords === "function" && mutations.takeRecords().some(responded)) {
+      responds();
+    }
+    if (requests !== undefined && typeof requests.takeRecords === "function") {
+      requested(requests.takeRecords());
+    }
+  };
+
+  /**
+   * Holds a click's record, then queues it, flagged dead if nothing
+   * responded within DEAD_WINDOW_MS of its press (or of the click, without
+   * one).
+   */
+  const hold = (record: Held["record"], event: Event, neverDead: boolean) => {
+    const clickAt = win.performance.now();
+    const pressed = press !== undefined && clickAt - press.at < DEAD_WINDOW_MS ? press : undefined;
+    // The press is this click's: it waits no longer on its own.
+    clearTimeout(pressTimer);
+    press = undefined;
+    const click: Held = {
+      record,
+      at: pressed?.at ?? clickAt,
+      href: win.location.href,
+      settled: neverDead || pressed?.responded === true,
+      dead: false,
+      timer: undefined,
+    };
+    if (!click.settled) watch(event);
+    held.push(click);
+    if (click.settled) {
+      release();
+      return;
+    }
+    click.timer = setTimeout(
+      () => {
+        try {
+          catchUp();
+          // A change of address the page made without a history event still responds.
+          click.dead = !click.settled && win.location.href === click.href;
+        } catch {
+          // Never break the page.
+        } finally {
+          click.settled = true;
+          release();
+        }
+      },
+      Math.max(0, click.at + DEAD_WINDOW_MS - clickAt),
+    );
+  };
+
+  /** A press: watched from now, since the page may respond before its click. */
+  const onPointerDown = (event: PointerEvent) => {
+    try {
+      if (page === null || stopped || !trusted(event) || event.button !== 0 || isPrivate(event)) {
+        return;
+      }
+      watch(event);
+      clearTimeout(pressTimer);
+      press = { at: win.performance.now(), responded: false };
+      // No click came (a drag, a press held): stop watching for it.
+      pressTimer = setTimeout(() => {
+        press = undefined;
+        release();
+      }, DEAD_WINDOW_MS);
+    } catch {
+      // Never break the page.
+    }
+  };
+
   async function flush(): Promise<void> {
     if (sending || queue.length === 0 || stopped) return;
     cancelTimer();
@@ -508,6 +749,8 @@ export function startCapture(config: HeatmapConfig, options: CaptureOptions) {
    */
   const exit = () => {
     try {
+      // Clicks still held go without a flag: whether the page would have responded is unknown.
+      responds();
       queueScroll({ remeasure: true });
       if (stopped || now() < retryAt) return;
       cancelTimer();
@@ -574,20 +817,30 @@ export function startCapture(config: HeatmapConfig, options: CaptureOptions) {
       const vw = clampPx(win.innerWidth, MAX_VIEWPORT_PX);
       const at = now();
       const isRage = rage(at, event.clientX, event.clientY);
-      push({
-        id: newId(),
-        type: "click",
-        at: toMinute(at),
-        pageOf: sentPage(page),
-        ...describe(element),
-        x: round3((event.clientX - box.left) / box.width),
-        y: round3((event.clientY - box.top) / box.height),
-        ...(isRage ? { rage: true as const } : {}),
-        vw,
-        vh: clampPx(win.innerHeight, MAX_VIEWPORT_PX),
-        ph: pageHeight(),
-        device: deviceOf(vw),
-      });
+      // A link, a form control, a media or canvas element, or a single click
+      // ending a text selection: never dead. A double or triple click's own
+      // selection does not count, so a burst on text can still be dead.
+      const neverDead =
+        (event.detail === 1 && win.getSelection()?.type === "Range") ||
+        event.composedPath().some((node) => node instanceof Element && node.matches(NEVER_DEAD));
+      hold(
+        {
+          id: newId(),
+          type: "click",
+          at: toMinute(at),
+          pageOf: sentPage(page),
+          ...describe(element),
+          x: round3((event.clientX - box.left) / box.width),
+          y: round3((event.clientY - box.top) / box.height),
+          ...(isRage ? { rage: true as const } : {}),
+          vw,
+          vh: clampPx(win.innerHeight, MAX_VIEWPORT_PX),
+          ph: pageHeight(),
+          device: deviceOf(vw),
+        },
+        event,
+        neverDead,
+      );
     } catch {
       // Never break the page.
     }
@@ -605,6 +858,7 @@ export function startCapture(config: HeatmapConfig, options: CaptureOptions) {
     if (doc.visibilityState === "hidden") exit();
   };
 
+  win.addEventListener("pointerdown", onPointerDown, { capture: true, passive: true });
   win.addEventListener("click", onClick, { capture: true, passive: true });
   win.addEventListener("scroll", onScroll, { passive: true });
   doc.addEventListener("visibilitychange", onHidden);
@@ -615,6 +869,8 @@ export function startCapture(config: HeatmapConfig, options: CaptureOptions) {
     navigated: () => {
       try {
         // The page being left sends the depth it last measured, then the new one starts at 0.
+        // A new path is the page responding to the clicks still held.
+        responds();
         cancelFrame();
         queueScroll({ remeasure: false });
         open({ navigated: true });
@@ -624,12 +880,18 @@ export function startCapture(config: HeatmapConfig, options: CaptureOptions) {
     },
     flush,
     stop: () => {
+      win.removeEventListener("pointerdown", onPointerDown, { capture: true });
       win.removeEventListener("click", onClick, { capture: true });
       win.removeEventListener("scroll", onScroll);
       doc.removeEventListener("visibilitychange", onHidden);
       win.removeEventListener("pagehide", exit);
       cancelTimer();
       cancelFrame();
+      for (const click of held) clearTimeout(click.timer);
+      clearTimeout(pressTimer);
+      held = [];
+      press = undefined;
+      unwatch();
     },
   };
 }

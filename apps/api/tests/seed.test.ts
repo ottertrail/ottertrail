@@ -143,7 +143,7 @@ describe("every page has something to show", () => {
     expect(JSON.stringify(activity)).toContain("pageview");
   });
 
-  test("heatmaps: the main pages, clicks on the calls to action and the menu, rage clicks on checkout", async () => {
+  test("heatmaps: the main pages, clicks on the calls to action and the menu, rage and dead clicks on checkout", async () => {
     const { pages, heatmaps }: Json = await get("/heatmaps/pages?period=30d");
     expect(heatmaps).toBe(true);
     expect(pages.map((page: Json) => page.path)).toEqual(
@@ -160,8 +160,14 @@ describe("every page has something to show", () => {
     const checkout: Json = await get("/heatmaps?period=30d&path=%2Fcheckout");
     expect(checkout.hotspots[0]).toMatchObject({ label: "checkout-continue" });
     expect(checkout.totals.rageClicks).toBeGreaterThan(10);
+    expect(checkout.deadHotspots[0]).toMatchObject({ label: "checkout-continue" });
+    expect(checkout.totals.deadClicks).toBeGreaterThan(10);
+    expect(home.deadHotspots).toEqual([
+      expect.objectContaining({ label: null, element: "body>main>section:3>img" }),
+    ]);
     const pricing: Json = await get("/heatmaps?period=30d&path=%2Fpricing");
     expect(pricing.totals.rageClicks).toBe(0);
+    expect(pricing.totals.deadClicks).toBe(0);
   });
 
   test("speed: mobile noticeably slower than desktop", async () => {

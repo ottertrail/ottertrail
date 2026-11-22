@@ -91,6 +91,7 @@ interface IncomingRecord {
   x?: number;
   y?: number;
   rage?: boolean;
+  dead?: boolean;
   depth?: number;
   fold?: number;
   dropped?: number;
@@ -157,6 +158,7 @@ const batchSchema = {
           x: fraction,
           y: fraction,
           rage: { type: "boolean" },
+          dead: { type: "boolean" },
           depth: fraction,
           fold: fraction,
           dropped: { type: "integer", minimum: 0, maximum: MAX_DROPPED },
@@ -218,9 +220,10 @@ function recordProblem(record: IncomingRecord): string | null {
       record.label !== undefined ||
       record.x !== undefined ||
       record.y !== undefined ||
-      record.rage !== undefined
+      record.rage !== undefined ||
+      record.dead !== undefined
     ) {
-      return "is a scroll record: element, label, x, y, and rage are only for clicks.";
+      return "is a scroll record: element, label, x, y, rage, and dead are only for clicks.";
     }
   }
   if (record.device !== deviceOf(record.vw)) {
@@ -451,6 +454,7 @@ export const heatmapCollectionRoutes: FastifyPluginCallback<{
           viewportHeight: record.vh,
           pageHeight: record.ph,
           rage: record.rage === true,
+          dead: record.dead === true,
           depth: record.depth ?? 0,
           fold: record.fold ?? 0,
           dropped: record.dropped ?? 0,

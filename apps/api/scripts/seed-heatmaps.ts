@@ -9,7 +9,9 @@
  * site's own names where a real site would add data-ottertrail-name, and
  * how far down people read. On the checkout page, "Continue to payment"
  * is the button whose script fails (the seeded checkout error): many of its
- * clicks come in bursts, the rage clicks.
+ * clicks come in bursts, the rage clicks, and nothing responds to them,
+ * the dead clicks. A picture on the home page that looks like a link but
+ * is not gets dead clicks too.
  */
 import { HEATMAP_RETENTION_DAYS } from "../src/clickhouse/migrations.ts";
 import type { NewEvent } from "../src/collection/event-store.ts";
@@ -27,6 +29,8 @@ interface Element {
   rate: number;
   /** A broken button: its clicks come in bursts of rage clicks this often. */
   rage?: number;
+  /** Nothing on the page responds to a click on it: each is a dead click. */
+  dead?: true;
 }
 
 interface Layout {
@@ -57,7 +61,7 @@ const LAYOUTS: Record<string, Layout> = {
       { label: "featured", element: "section>ul>li>a", rate: 0.12 },
       { label: "featured", element: "section>ul>li:2>a", rate: 0.08 },
       { label: "featured", element: "section>ul>li:3>a", rate: 0.05 },
-      { element: "body>main>section:3>img", rate: 0.04 },
+      { element: "body>main>section:3>img", rate: 0.04, dead: true },
       { element: "body>footer>div>a:3", rate: 0.02 },
     ],
   },
@@ -193,6 +197,8 @@ export function buildHeatmaps(
             x: round3(x + rng.normal(0, 0.02)),
             y: round3(y + rng.normal(0, 0.03)),
             rage: click >= 2,
+            // The broken button's bursts did nothing either.
+            dead: target.dead === true || burst > 1,
             depth: 0,
           });
           at += burst > 1 ? rng.int(150, 300) : rng.int(3000, 20_000);

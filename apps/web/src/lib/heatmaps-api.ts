@@ -48,6 +48,8 @@ export interface HeatmapElement {
   /** Of the page's clicks, 0 to 1. */
   share: number;
   rageClicks: number;
+  /** Clicks after which nothing on the page responded within a second. */
+  deadClicks: number;
   /** Where in the element the clicks fell, on average, 0 to 1. */
   x: number;
   y: number;
@@ -57,6 +59,15 @@ export interface HeatmapHotspot {
   label: string | null;
   element: string;
   rageClicks: number;
+  x: number;
+  y: number;
+}
+
+export interface HeatmapDeadHotspot {
+  label: string | null;
+  element: string;
+  deadClicks: number;
+  /** Where in the element the dead clicks fell, on average, 0 to 1. */
   x: number;
   y: number;
 }
@@ -72,6 +83,7 @@ export interface Heatmap extends HeatmapRange {
     pageviews: number;
     clicks: number;
     rageClicks: number;
+    deadClicks: number;
     /** Clicks not recorded because a pageview passed 100 clicks. */
     droppedClicks: number;
     /** Shares of the page's height, 0 to 1. */
@@ -89,6 +101,8 @@ export interface Heatmap extends HeatmapRange {
   elements: HeatmapElement[];
   /** Most rage clicks first, at most 20. */
   hotspots: HeatmapHotspot[];
+  /** Most dead clicks first, at most 20. */
+  deadHotspots: HeatmapDeadHotspot[];
 }
 
 const isNumberOrNull = (value: unknown): value is number | null =>
@@ -121,6 +135,7 @@ const isElement = (value: unknown): value is HeatmapElement =>
   isNumber(value.clicks) &&
   isNumber(value.share) &&
   isNumber(value.rageClicks) &&
+  isNumber(value.deadClicks) &&
   isPosition(value);
 
 const isHotspot = (value: unknown): value is HeatmapHotspot =>
@@ -128,6 +143,13 @@ const isHotspot = (value: unknown): value is HeatmapHotspot =>
   isTextOrNull(value.label) &&
   isText(value.element) &&
   isNumber(value.rageClicks) &&
+  isPosition(value);
+
+const isDeadHotspot = (value: unknown): value is HeatmapDeadHotspot =>
+  isRecord(value) &&
+  isTextOrNull(value.label) &&
+  isText(value.element) &&
+  isNumber(value.deadClicks) &&
   isPosition(value);
 
 const isReach = (value: unknown): value is Heatmap["scroll"]["reach"][number] =>
@@ -147,6 +169,7 @@ const isHeatmap = (value: unknown): value is Heatmap =>
   isNumber(value.totals.pageviews) &&
   isNumber(value.totals.clicks) &&
   isNumber(value.totals.rageClicks) &&
+  isNumber(value.totals.deadClicks) &&
   isNumber(value.totals.droppedClicks) &&
   isNumberOrNull(value.totals.medianDepth) &&
   isNumberOrNull(value.totals.reachedBottom) &&
@@ -154,7 +177,8 @@ const isHeatmap = (value: unknown): value is Heatmap =>
   isListOf(value.scroll.reach, isReach) &&
   isNumberOrNull(value.scroll.averageFold) &&
   isListOf(value.elements, isElement) &&
-  isListOf(value.hotspots, isHotspot);
+  isListOf(value.hotspots, isHotspot) &&
+  isListOf(value.deadHotspots, isDeadHotspot);
 
 /** The range, environment, and device as the API's query parameters. */
 const params = (range: PageRange, environment: string, device: HeatmapDevice | undefined) => ({

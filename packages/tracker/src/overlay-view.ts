@@ -18,7 +18,7 @@
  * (textContent, fillText), never parsed as HTML.
  */
 import { type Device, deviceOf, NAME_ATTRIBUTE, resolveKeys } from "./heatmap-path.ts";
-import type { OverlayConfig } from "./overlay-names.ts";
+import { type OverlayConfig, OVERLAY_TAG } from "./overlay-names.ts";
 
 export const PERIODS = [
   { value: "7d", label: "Last 7 days", days: 7 },
@@ -69,13 +69,14 @@ export interface OverlayElement {
   element: string;
   clicks: number;
   rageClicks: number;
+  deadClicks: number;
   cells: [number, number, number][];
 }
 
 export interface OverlayData {
   firstDay: string;
   lastDay: string;
-  totals: { pageviews: number; clicks: number; rageClicks: number };
+  totals: { pageviews: number; clicks: number; rageClicks: number; deadClicks: number };
   reach: { depth: number; share: number }[];
   elements: OverlayElement[];
 }
@@ -99,6 +100,7 @@ export function parseOverlay(value: unknown): OverlayData | null {
       pageviews: whole(value.totals.pageviews),
       clicks: whole(value.totals.clicks),
       rageClicks: whole(value.totals.rageClicks),
+      deadClicks: whole(value.totals.deadClicks),
     },
     reach: reach.filter(isRecord).map((step) => ({
       depth: Math.min(100, whole(step.depth)),
@@ -109,6 +111,7 @@ export function parseOverlay(value: unknown): OverlayData | null {
       element: text(item.element, 512),
       clicks: whole(item.clicks),
       rageClicks: whole(item.rageClicks),
+      deadClicks: whole(item.deadClicks),
       cells: (Array.isArray(item.cells) ? item.cells.slice(0, MAX_CELLS) : [])
         .filter((cell): cell is unknown[] => Array.isArray(cell))
         .map((cell): [number, number, number] => [
@@ -230,7 +233,7 @@ export function startOverlay(config: OverlayConfig, options: OverlayOptions) {
   let exchanging: Promise<Exchanged> | undefined;
 
   // The host: a custom element, fixed over the page, letting every pointer event through.
-  const host = doc.createElement("ottertrail-heatmap");
+  const host = doc.createElement(OVERLAY_TAG);
   const hostStyle: [string, string][] = [
     ["all", "initial"],
     ["position", "fixed"],
@@ -479,11 +482,12 @@ export function startOverlay(config: OverlayConfig, options: OverlayOptions) {
 
   const showTotals = () => {
     if (data === null) return;
-    const { pageviews, clicks, rageClicks } = data.totals;
+    const { pageviews, clicks, rageClicks, deadClicks } = data.totals;
     totals.textContent = [
       plural(pageviews, "pageview", "pageviews"),
       plural(clicks, "click", "clicks"),
       plural(rageClicks, "rage click", "rage clicks"),
+      plural(deadClicks, "dead click", "dead clicks"),
     ].join(" · ");
     totals.hidden = false;
   };
@@ -562,8 +566,13 @@ export function startOverlay(config: OverlayConfig, options: OverlayOptions) {
       if (box.width <= 0 || box.height <= 0) continue;
       if (box.bottom < 0 || box.top > height || box.right < 0 || box.left > width) continue;
       context.lineWidth = 1;
+      // Rage clicks red, dead clicks amber, the rest blue.
       context.strokeStyle =
-        item.rageClicks > 0 ? "rgba(220, 38, 38, 0.9)" : "rgba(37, 99, 235, 0.6)";
+        item.rageClicks > 0
+          ? "rgba(220, 38, 38, 0.9)"
+          : item.deadClicks > 0
+            ? "rgba(217, 119, 6, 0.9)"
+            : "rgba(37, 99, 235, 0.6)";
       context.strokeRect(box.left + 0.5, box.top + 0.5, box.width - 1, box.height - 1);
       for (const [column, row, clicks] of item.cells) {
         const heat = clicks / most;
@@ -580,16 +589,21 @@ export function startOverlay(config: OverlayConfig, options: OverlayOptions) {
         context.fill();
       }
       // The element's clicks, as text drawn on the canvas.
-      const label =
-        item.rageClicks > 0
-          ? `${formatWhole(item.clicks)} · ${formatWhole(item.rageClicks)} rage`
-          : formatWhole(item.clicks);
+      const label = [
+        formatWhole(item.clicks),
+        ...(item.rageClicks > 0 ? [`${formatWhole(item.rageClicks)} rage`] : []),
+        ...(item.deadClicks > 0 ? [`${formatWhole(item.deadClicks)} dead`] : []),
+      ].join(" · ");
       context.font = "600 11px system-ui, sans-serif";
       const labelWidth = context.measureText(label).width + 8;
       const labelX = Math.max(0, Math.min(box.left, width - labelWidth));
       const labelY = Math.max(0, box.top - 16);
       context.fillStyle =
-        item.rageClicks > 0 ? "rgba(185, 28, 28, 0.95)" : "rgba(24, 24, 27, 0.85)";
+        item.rageClicks > 0
+          ? "rgba(185, 28, 28, 0.95)"
+          : item.deadClicks > 0
+            ? "rgba(146, 64, 14, 0.95)"
+            : "rgba(24, 24, 27, 0.85)";
       context.fillRect(labelX, labelY, labelWidth, 16);
       context.fillStyle = "#fff";
       context.textBaseline = "middle";

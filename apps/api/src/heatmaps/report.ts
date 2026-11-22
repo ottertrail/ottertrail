@@ -20,7 +20,7 @@ import { DEVICES, type HeatmapDevice, UNITS } from "./store.ts";
 export const HEATMAP_PAGES = 100;
 /** Elements a report lists, most clicks first. */
 export const HEATMAP_ELEMENTS = 100;
-/** Rage-click hotspots a report lists. */
+/** Rage-click hotspots a report lists, and dead-click hotspots. */
 export const HEATMAP_HOTSPOTS = 20;
 /** Scroll reach is counted at every tenth of the page: 10%, 20% … 100%. */
 export const REACH_STEPS = [10, 20, 30, 40, 50, 60, 70, 80, 90, 100] as const;
@@ -50,6 +50,7 @@ export interface HeatmapElement {
   /** Of the page's clicks, 0 to 1. */
   share: number;
   rageClicks: number;
+  deadClicks: number;
   /** Where in the element the clicks fell, on average, 0 to 1. */
   x: number;
   y: number;
@@ -61,6 +62,8 @@ export interface HeatmapReport {
     pageviews: number;
     clicks: number;
     rageClicks: number;
+    /** Clicks after which nothing on the page responded within a second. */
+    deadClicks: number;
     /** The median pageview's deepest share of the page, 0 to 1; null without pageviews. */
     medianDepth: number | null;
     /** The share of pageviews that reached the bottom; null without pageviews. */
@@ -79,6 +82,14 @@ export interface HeatmapReport {
   };
   elements: HeatmapElement[];
   hotspots: { label: string | null; element: string; rageClicks: number; x: number; y: number }[];
+  /** The elements with dead clicks, most first, and where in them those clicks fell. */
+  deadHotspots: {
+    label: string | null;
+    element: string;
+    deadClicks: number;
+    x: number;
+    y: number;
+  }[];
 }
 
 const count = (raw: unknown) => Number(raw ?? 0);
@@ -166,17 +177,32 @@ export async function heatmapReport(
   const deviceParams = new QueryParams();
   const elementParams = new QueryParams();
   const hotspotParams = new QueryParams();
+  const deadParams = new QueryParams();
   // Thousandths: depth 1000 is the bottom of the page.
   const reach = REACH_STEPS.map(
     (step) => `countIf(kind = 'scroll' AND depth >= ${(step * UNITS) / 100}) AS reach_${step}`,
   ).join(",\n");
 
-  const [[summary], devices, elements, hotspots] = await Promise.all([
+  /** The elements with clicks flagged `flag` (rage, dead), most first. */
+  const spots = (flag: "rage" | "dead", params: QueryParams) =>
+    queryRows<Record<string, unknown>>(
+      reader,
+      `SELECT label, element, count() AS flagged, avg(x) / ${UNITS} AS x, avg(y) / ${UNITS} AS y
+       FROM heatmaps FINAL
+       WHERE ${onPage(params)} AND kind = 'click' AND ${flag}
+       GROUP BY label, element
+       ORDER BY flagged DESC, label, element
+       LIMIT ${HEATMAP_HOTSPOTS}`,
+      params,
+    );
+
+  const [[summary], devices, elements, hotspots, deadHotspots] = await Promise.all([
     queryRows<Record<string, unknown>>(
       reader,
       `SELECT countIf(kind = 'scroll') AS pageviews,
               countIf(kind = 'click') AS clicks,
               countIf(kind = 'click' AND rage) AS rage_clicks,
+              countIf(kind = 'click' AND dead) AS dead_clicks,
               quantileExactInclusiveIf(0.5)(depth, kind = 'scroll') / ${UNITS} AS median_depth,
               countIf(kind = 'scroll' AND depth >= ${UNITS}) AS bottom,
               avgIf(fold, kind = 'scroll') / ${UNITS} AS fold,
@@ -198,7 +224,7 @@ export async function heatmapReport(
     queryRows<Record<string, unknown>>(
       reader,
       `SELECT label, element, count() AS clicks, countIf(rage) AS rage_clicks,
-              avg(x) / ${UNITS} AS x, avg(y) / ${UNITS} AS y
+              countIf(dead) AS dead_clicks, avg(x) / ${UNITS} AS x, avg(y) / ${UNITS} AS y
        FROM heatmaps FINAL
        WHERE ${onPage(elementParams)} AND kind = 'click'
        GROUP BY label, element
@@ -206,16 +232,8 @@ export async function heatmapReport(
        LIMIT ${HEATMAP_ELEMENTS}`,
       elementParams,
     ),
-    queryRows<Record<string, unknown>>(
-      reader,
-      `SELECT label, element, count() AS rage_clicks, avg(x) / ${UNITS} AS x, avg(y) / ${UNITS} AS y
-       FROM heatmaps FINAL
-       WHERE ${onPage(hotspotParams)} AND kind = 'click' AND rage
-       GROUP BY label, element
-       ORDER BY rage_clicks DESC, label, element
-       LIMIT ${HEATMAP_HOTSPOTS}`,
-      hotspotParams,
-    ),
+    spots("rage", hotspotParams),
+    spots("dead", deadParams),
   ]);
 
   const pageviews = count(summary?.pageviews);
@@ -229,6 +247,7 @@ export async function heatmapReport(
       pageviews,
       clicks,
       rageClicks: count(summary?.rage_clicks),
+      deadClicks: count(summary?.dead_clicks),
       medianDepth: some ? round(fraction(summary?.median_depth) ?? 0) : null,
       reachedBottom: some ? round(share(count(summary?.bottom), pageviews)) : null,
       droppedClicks: count(summary?.dropped),
@@ -246,13 +265,21 @@ export async function heatmapReport(
       clicks: count(row.clicks),
       share: round(share(count(row.clicks), clicks)),
       rageClicks: count(row.rage_clicks),
+      deadClicks: count(row.dead_clicks),
       x: round(Number(row.x)),
       y: round(Number(row.y)),
     })),
     hotspots: hotspots.map((row) => ({
       label: labelOf(row.label),
       element: String(row.element),
-      rageClicks: count(row.rage_clicks),
+      rageClicks: count(row.flagged),
+      x: round(Number(row.x)),
+      y: round(Number(row.y)),
+    })),
+    deadHotspots: deadHotspots.map((row) => ({
+      label: labelOf(row.label),
+      element: String(row.element),
+      deadClicks: count(row.flagged),
       x: round(Number(row.x)),
       y: round(Number(row.y)),
     })),
@@ -267,6 +294,7 @@ export function emptyReport(): HeatmapReport {
       pageviews: 0,
       clicks: 0,
       rageClicks: 0,
+      deadClicks: 0,
       medianDepth: null,
       reachedBottom: null,
       droppedClicks: 0,
@@ -277,6 +305,7 @@ export function emptyReport(): HeatmapReport {
     },
     elements: [],
     hotspots: [],
+    deadHotspots: [],
   };
 }
 
@@ -297,7 +326,7 @@ export const OVERLAY_REACH_STEPS = Array.from({ length: 20 }, (_, index) => (ind
  * cells; the share of pageviews that reached each 5% of the page.
  */
 export interface HeatmapOverlay {
-  totals: { pageviews: number; clicks: number; rageClicks: number };
+  totals: { pageviews: number; clicks: number; rageClicks: number; deadClicks: number };
   devices: { device: HeatmapDevice; pageviews: number }[];
   /** For each twentieth of the page, the share of pageviews that reached it, 0 to 1. */
   reach: { depth: number; share: number }[];
@@ -306,6 +335,7 @@ export interface HeatmapOverlay {
     element: string;
     clicks: number;
     rageClicks: number;
+    deadClicks: number;
     /** [column, row, clicks]: columns and rows 0 to 7, from the element's top left. */
     cells: [number, number, number][];
   }[];
@@ -340,6 +370,7 @@ export async function heatmapOverlay(
       `SELECT countIf(kind = 'scroll') AS pageviews,
               countIf(kind = 'click') AS clicks,
               countIf(kind = 'click' AND rage) AS rage_clicks,
+              countIf(kind = 'click' AND dead) AS dead_clicks,
               ${reach}
        FROM heatmaps FINAL
        WHERE ${onPage(summaryParams)}`,
@@ -356,7 +387,8 @@ export async function heatmapOverlay(
     ),
     queryRows<Record<string, unknown>>(
       reader,
-      `SELECT label, element, count() AS clicks, countIf(rage) AS rage_clicks
+      `SELECT label, element, count() AS clicks, countIf(rage) AS rage_clicks,
+              countIf(dead) AS dead_clicks
        FROM heatmaps FINAL
        WHERE ${onPage(elementParams)} AND kind = 'click'
        GROUP BY label, element
@@ -393,6 +425,7 @@ export async function heatmapOverlay(
       pageviews,
       clicks: count(summary?.clicks),
       rageClicks: count(summary?.rage_clicks),
+      deadClicks: count(summary?.dead_clicks),
     },
     devices: devices
       .filter((row) => DEVICES.includes(row.device))
@@ -406,6 +439,7 @@ export async function heatmapOverlay(
       element: String(row.element),
       clicks: count(row.clicks),
       rageClicks: count(row.rage_clicks),
+      deadClicks: count(row.dead_clicks),
       cells: cellsOf.get(`${String(row.label)}\u0000${String(row.element)}`) ?? [],
     })),
   };
@@ -414,7 +448,7 @@ export async function heatmapOverlay(
 /** An overlay with nothing in it: for a range wholly before the 90 days kept. */
 export function emptyOverlay(): HeatmapOverlay {
   return {
-    totals: { pageviews: 0, clicks: 0, rageClicks: 0 },
+    totals: { pageviews: 0, clicks: 0, rageClicks: 0, deadClicks: 0 },
     devices: [],
     reach: OVERLAY_REACH_STEPS.map((depth) => ({ depth, share: 0 })),
     elements: [],

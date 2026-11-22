@@ -470,4 +470,15 @@ export const CLICKHOUSE_MIGRATIONS: ClickHouseMigration[] = [
         min_age_to_force_merge_on_partition_only = 1`,
     ],
   },
+  {
+    name: "0007_heatmap_dead_clicks",
+    /**
+     * Whether a click was a dead click: nothing on the page responded within
+     * a second (docs/web-analytics.md, "Heatmaps"). Rows already stored, and
+     * scroll rows, are 0.
+     */
+    statements: (database) => [
+      `ALTER TABLE ${database}.heatmaps ADD COLUMN IF NOT EXISTS dead Bool DEFAULT 0 AFTER rage`,
+    ],
+  },
 ];

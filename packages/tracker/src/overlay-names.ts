@@ -4,6 +4,9 @@
  * it in the tracker.
  */
 
+/** The element o.js draws in, over the page: h.js ignores its changes. */
+export const OVERLAY_TAG = "ottertrail-heatmap";
+
 /** The property the tracker sets on o.js's script element: an OverlayConfig. */
 export const OVERLAY_PROPERTY = "ottertrailOverlay";
 

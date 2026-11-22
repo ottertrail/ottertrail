@@ -359,8 +359,8 @@ function Loading() {
   return (
     <div className="flex flex-col gap-6" aria-busy="true" aria-label="Loading">
       <Skeleton className="h-5 w-48" />
-      <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-        {Array.from({ length: 4 }, (_, index) => (
+      <div className="grid grid-cols-2 gap-4 sm:grid-cols-4 lg:grid-cols-5">
+        {Array.from({ length: 5 }, (_, index) => (
           // oxlint-disable-next-line react/no-array-index-key
           <div key={index} className="flex flex-col gap-2">
             <Skeleton className="h-3 w-28" />
@@ -386,12 +386,14 @@ function Report({ heatmap, projectId }: { heatmap: Heatmap; projectId: string })
   // Scroll depth arrives when a visitor leaves the page: today's figures still grow.
   // As of when the report appeared: a day that ends while it is open is not worth re-rendering for.
   const [openedAt] = React.useState(() => new Date());
+  const [spots, setSpots] = React.useState<"rage" | "dead">("rage");
   const today = dayIn(heatmap.timeZone, openedAt);
   const delayed = heatmap.firstDay <= today && today <= heatmap.lastDay;
   const stats: Stat[] = [
     { label: "Pageviews with heatmap data", value: formatWhole(totals.pageviews) },
     { label: "Clicks", value: formatWhole(totals.clicks) },
     { label: "Rage clicks", value: formatWhole(totals.rageClicks) },
+    { label: "Dead clicks", value: formatWhole(totals.deadClicks) },
     {
       label: "Median scroll depth",
       value: totals.medianDepth === null ? MISSING : formatShare(totals.medianDepth),
@@ -503,7 +505,7 @@ function Report({ heatmap, projectId }: { heatmap: Heatmap; projectId: string })
             }
             caption="Elements of the page, most clicks first"
             nameHeading="Element"
-            figureHeadings={["Clicks", "Share", "Rage clicks"]}
+            figureHeadings={["Clicks", "Share", "Rage clicks", "Dead clicks"]}
             rows={heatmap.elements.map((item) => ({
               key: `${item.label ?? ""}\u0000${item.element}`,
               label: (
@@ -524,19 +526,35 @@ function Report({ heatmap, projectId }: { heatmap: Heatmap; projectId: string })
                 formatWhole(item.clicks),
                 formatShare(item.share),
                 formatWhole(item.rageClicks),
+                formatWhole(item.deadClicks),
               ],
             }))}
             empty="No clicks on this page in this period."
             layout="stack"
           />
           <BreakdownTable
-            title="Rage-click hotspots"
+            title="Hotspots"
             headingLevel={2}
-            description="Elements clicked again and again in quick succession, often because they did not respond."
-            caption="Elements with rage clicks, most first"
+            views={{
+              value: spots,
+              onValueChange: (value) => setSpots(value === "dead" ? "dead" : "rage"),
+              items: [
+                { value: "rage", label: "Rage clicks" },
+                { value: "dead", label: "Dead clicks" },
+              ],
+            }}
+            description={
+              spots === "rage"
+                ? "Elements clicked again and again in quick succession, often because they did not respond."
+                : "Elements where nothing on the page responded within a second of a click."
+            }
+            caption={`Elements with ${spots} clicks, most first`}
             nameHeading="Element"
-            figureHeadings={["Rage clicks", "Spot (x, y)"]}
-            rows={heatmap.hotspots.map((item) => ({
+            figureHeadings={[spots === "rage" ? "Rage clicks" : "Dead clicks", "Spot (x, y)"]}
+            rows={(spots === "rage"
+              ? heatmap.hotspots.map((item) => ({ ...item, count: item.rageClicks }))
+              : heatmap.deadHotspots.map((item) => ({ ...item, count: item.deadClicks }))
+            ).map((item) => ({
               key: `${item.label ?? ""}\u0000${item.element}`,
               label: (
                 <span className={item.label === null ? "font-mono text-xs" : undefined}>
@@ -547,9 +565,9 @@ function Report({ heatmap, projectId }: { heatmap: Heatmap; projectId: string })
               // A name, or the path's last steps, leaves the rest of the path out.
               shortened:
                 elementTitle(item.label, item.element) !== elementName(item.label, item.element),
-              bar: item.rageClicks,
+              bar: item.count,
               figures: [
-                formatWhole(item.rageClicks),
+                formatWhole(item.count),
                 <span key="spot" title={formatPosition(item.x, item.y)}>
                   <span aria-hidden="true">
                     {Math.round(item.x * 100)}%, {Math.round(item.y * 100)}%
@@ -558,7 +576,7 @@ function Report({ heatmap, projectId }: { heatmap: Heatmap; projectId: string })
                 </span>,
               ],
             }))}
-            empty="No rage clicks on this page in this period."
+            empty={`No ${spots} clicks on this page in this period.`}
             layout="stack"
           />
         </div>
