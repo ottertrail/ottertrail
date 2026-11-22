@@ -255,6 +255,16 @@ describe("the AI calls list", () => {
     await expect.element(page.getByText("No AI call with this ID")).toBeVisible();
   });
 
+  test("without the Users area, a user filter from a link is refused, and its chip removes it", async () => {
+    installFakeApi({ access: memberAccess({ monitoring: "view" }) });
+    const router = renderApp(`${CALLS}?user=user_8f2a`);
+    await expect.element(page.getByText("The AI calls could not load")).toBeVisible();
+    await page.getByRole("button", { name: "Remove the filter user user_8f2a" }).click();
+    await expect.poll(() => search(router).user).toBeUndefined();
+    await expect.element(region("AI calls", "summary")).toBeVisible();
+    expect(page.getByRole("button", { name: /Remove the filter user/ }).elements()).toEqual([]);
+  });
+
   test("without the Users area: no user filter, and no call names its user", async () => {
     installFakeApi({ access: memberAccess({ monitoring: "view" }) });
     renderApp(`${CALLS}?call=${aiCallId(0)}`);

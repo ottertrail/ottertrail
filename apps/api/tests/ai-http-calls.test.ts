@@ -196,6 +196,23 @@ describe("POST /api/ai-calls", () => {
     ]);
   });
 
+  test("a conversation ID's length is counted in characters once trimmed, as a span's", async () => {
+    const project = await newProject("Conversation lengths");
+    const authorization = `Bearer ${project.key}`;
+    // 200 emoji are 400 UTF-16 units, 200 characters; 199 and two spaces are 199 once trimmed.
+    const emoji = aiCall({ conversationId: "💬".repeat(200) });
+    const padded = aiCall({ conversationId: ` ${"c".repeat(199)} ` });
+    expect((await send({ v: 1, calls: [emoji, padded] }, { authorization })).statusCode).toBe(202);
+    const rows = new Map((await storedCalls(project.id)).map((row) => [row.id, row]));
+    expect(rows.get(emoji.id)?.conversation_id).toBe("💬".repeat(200));
+    expect(rows.get(padded.id)?.conversation_id).toBe("c".repeat(199));
+    const over = await send(
+      { v: 1, calls: [aiCall({ conversationId: "💬".repeat(201) })] },
+      { authorization },
+    );
+    expect(over.statusCode).toBe(400);
+  });
+
   test("a retried batch is the same rows: its id and time are the key", async () => {
     const project = await newProject("Retries");
     const calls = [aiCall(), aiCall()];

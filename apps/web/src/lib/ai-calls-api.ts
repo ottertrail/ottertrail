@@ -77,14 +77,31 @@ interface ListLabels {
   usersHidden: boolean;
 }
 
-/** GET /api/projects/:id/ai/call-list */
-export interface AiCallPage extends ListLabels {
+/** GET /api/projects/:id/ai/call-list, its first page: the calls, totals, and filter options. */
+export interface AiCallFirstPage extends ListLabels {
   pageSize: number;
   /** The period's calls with the filters, counted whole. */
   totals: AiCallTotals;
   calls: AiListedCall[];
   next: string | null;
 }
+
+/** A later page (with `before`): only its calls; the first page's figures stand. */
+export interface AiCallLaterPage extends Omit<
+  AiCallFirstPage,
+  "totals" | "environments" | "services" | "filterOptions" | "received"
+> {
+  totals: null;
+  environments: null;
+  services: null;
+  filterOptions: null;
+  received: null;
+}
+
+export type AiCallPage = AiCallFirstPage | AiCallLaterPage;
+
+/** Whether a page is the list's first, which holds the totals and filter options. */
+export const isFirstPage = (page: AiCallPage): page is AiCallFirstPage => page.totals !== null;
 
 export interface AiCallPrice {
   source: "built_in" | "custom" | "price_as";
@@ -212,9 +229,15 @@ const isTotals = (value: unknown): value is AiCallTotals =>
 
 const isPage = (value: unknown): value is AiCallPage =>
   isRecord(value) &&
-  hasLabels(value) &&
+  (value.totals === null
+    ? isAnswered(value) &&
+      isBoolean(value.usersHidden) &&
+      value.environments === null &&
+      value.services === null &&
+      value.filterOptions === null &&
+      value.received === null
+    : hasLabels(value) && isTotals(value.totals)) &&
   isNumber(value.pageSize) &&
-  isTotals(value.totals) &&
   isListOf(value.calls, isCall) &&
   isTextOrNull(value.next);
 

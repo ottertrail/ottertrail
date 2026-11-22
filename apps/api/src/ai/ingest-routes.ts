@@ -19,6 +19,7 @@ import { DEFAULT_MAX_IN_FLIGHT, DEFAULT_MAX_IN_FLIGHT_PER_PROJECT } from "../tel
 import {
   type AiCallRow,
   cleanLabel,
+  conversationIdFits,
   conversationIdOf,
   MAX_AI_ERROR_TYPE_CHARS,
   MAX_AI_LABEL_CHARS,
@@ -123,7 +124,8 @@ const batchSchema = {
           },
           userId: { type: "string", maxLength: 200, pattern: USER_ID_PATTERN },
           feature: optionalTextOf(MAX_AI_LABEL_CHARS),
-          conversationId: optionalTextOf(MAX_CONVERSATION_ID_CHARS),
+          // Its length is checked once trimmed (below), as a span's is.
+          conversationId: optionalTextOf(MAX_CONVERSATION_ID_CHARS * 4),
           service: optionalTextOf(MAX_AI_LABEL_CHARS),
           traceId: { type: "string", pattern: "^[0-9a-fA-F]{32}$" },
           spanId: { type: "string", pattern: "^[0-9a-fA-F]{16}$" },
@@ -333,6 +335,12 @@ export const aiCallIngestRoutes: FastifyPluginCallback<AiCallIngestOptions> = (
         if (call.ok === true && errorType !== "") {
           return invalid(`calls[${index}]: a call with an errorType failed; leave out ok.`);
         }
+        const conversationId = call.conversationId?.trim() ?? "";
+        if (!conversationIdFits(conversationId)) {
+          return invalid(
+            `calls[${index}].conversationId is longer than ${MAX_CONVERSATION_ID_CHARS} characters.`,
+          );
+        }
         if (call.spanId !== undefined && call.traceId === undefined) {
           return invalid(`calls[${index}]: a spanId needs its traceId.`);
         }
@@ -358,7 +366,7 @@ export const aiCallIngestRoutes: FastifyPluginCallback<AiCallIngestOptions> = (
           operation: cleanLabel(call.operation),
           feature: cleanLabel(call.feature),
           user_id: call.userId ?? "",
-          conversation_id: conversationIdOf(call.conversationId),
+          conversation_id: conversationIdOf(conversationId),
           input_tokens: call.inputTokens ?? 0,
           output_tokens: call.outputTokens ?? 0,
           cache_read_tokens: call.cacheReadTokens ?? 0,

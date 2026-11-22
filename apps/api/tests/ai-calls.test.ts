@@ -12,7 +12,7 @@ import {
 } from "@opentelemetry/sdk-trace";
 import { afterAll, beforeAll, describe, expect, test } from "vite-plus/test";
 
-import { aiCallsOf, isAiCall, MAX_TOKENS } from "../src/ai/calls.ts";
+import { aiCallsOf, conversationIdOf, isAiCall, MAX_TOKENS } from "../src/ai/calls.ts";
 import { buildApp } from "../src/app.ts";
 import { createClickHouse } from "../src/clickhouse/clickhouse.ts";
 import { loadConfig } from "../src/config.ts";
@@ -312,6 +312,14 @@ const chatSpan = (start: bigint) => ({
 });
 
 describe("detection", () => {
+  test("a conversation's ID: trimmed, then 1 to 200 characters, counted in code points", () => {
+    expect(conversationIdOf("💬".repeat(200))).toBe("💬".repeat(200));
+    expect(conversationIdOf("💬".repeat(201))).toBe("");
+    expect(conversationIdOf(` ${"c".repeat(199)}  `)).toBe("c".repeat(199));
+    expect(conversationIdOf(` ${"c".repeat(201)} `)).toBe("");
+    expect(conversationIdOf("conv\u0085")).toBe("");
+  });
+
   test.each([
     ["chat", true],
     ["generate_content", true],

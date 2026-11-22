@@ -36,9 +36,16 @@ export const MAX_FINISH_REASONS = 16;
 export const MAX_FINISH_REASON_CHARS = 64;
 /** A conversation's ID is at most this many characters; a longer one is none. */
 export const MAX_CONVERSATION_ID_CHARS = 200;
-/** A conversation's ID, trimmed: no control characters (C0, DEL, and C1), as a user ID. */
+/**
+ * A conversation's ID, trimmed: no control characters (C0, DEL, and C1),
+ * as a user ID; its length in code points, as Ajv counts a schema's.
+ */
 export const CONVERSATION_ID_PATTERN = `^[^\\u0000-\\u001F\\u007F-\\u009F]{1,${MAX_CONVERSATION_ID_CHARS}}$`;
-const CONVERSATION_ID = new RegExp(CONVERSATION_ID_PATTERN);
+const CONVERSATION_ID = new RegExp(CONVERSATION_ID_PATTERN, "u");
+const CONVERSATION_ID_LENGTH = new RegExp(`^[\\s\\S]{0,${MAX_CONVERSATION_ID_CHARS}}$`, "u");
+
+/** Whether a trimmed conversation ID is at most MAX_CONVERSATION_ID_CHARS code points long. */
+export const conversationIdFits = (id: string) => CONVERSATION_ID_LENGTH.test(id);
 /** A time to the first chunk above a day is not one. */
 const MAX_FIRST_CHUNK_SECONDS = 86_400;
 

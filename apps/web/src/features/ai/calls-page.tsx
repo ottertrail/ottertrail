@@ -57,7 +57,8 @@ import { NARROW_WORKBENCH, PHONE, useMediaQuery } from "@/hooks/use-media-query"
 import {
   type AiCallFilters,
   aiCallListQuery,
-  type AiCallPage,
+  type AiCallFirstPage,
+  isFirstPage,
   type AiConversationList,
   type AiConversationRow,
   aiConversationsQuery,
@@ -198,7 +199,7 @@ const noPriceLine = (calls: number) =>
     : `${formatWhole(calls)} ${calls === 1 ? "call had" : "calls had"} no price and ${calls === 1 ? "is" : "are"} not in the cost. `;
 
 /** With nothing selected: the period's calls with the filters, counted whole by the API. */
-function CallsSummary({ first }: { first: AiCallPage }) {
+function CallsSummary({ first }: { first: AiCallFirstPage }) {
   const { totals } = first;
   const stats: Stat[] = [
     { label: "Calls", value: formatWhole(totals.calls) },
@@ -367,23 +368,26 @@ function ConversationTable({
 }
 
 /**
- * The Calls view's conversation filter, set from a call or a conversation
- * (a link): its ID, and a button that removes it.
+ * A filter set by a link with no field of its own: the Calls view's
+ * conversation (from a call or a conversation), or a user for a reader
+ * without the Users area. Its value, and a button that removes it.
  */
-function ConversationChip({
-  conversationId,
+function FilterChip({
+  text,
+  removeLabel,
   onRemove,
 }: {
-  conversationId: string;
+  text: string;
+  removeLabel: string;
   onRemove: () => void;
 }) {
   return (
     <span className="inline-flex h-7 max-w-64 min-w-0 items-center gap-1 rounded-4xl bg-muted pr-1 pl-3 text-sm text-ink">
-      <TruncatedText text={`Conversation ${conversationId}`} className="min-w-0" />
+      <TruncatedText text={text} className="min-w-0" />
       <button
         type="button"
         className="inline-flex size-5 shrink-0 items-center justify-center rounded-4xl text-ink-subtle hover:bg-accent hover:text-ink focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none"
-        aria-label={`Remove the filter conversation ${conversationId}`}
+        aria-label={removeLabel}
         onClick={onRemove}
       >
         <XIcon aria-hidden="true" className="size-3.5" />
@@ -534,7 +538,9 @@ export function AiCallsPage({
 
   if (notFound(list.error) || notFound(conversations.error)) return <NoSuchProject />;
 
-  const first = callsView ? list.data?.pages[0] : conversations.data;
+  const firstPage = list.data?.pages[0];
+  const firstCalls = firstPage !== undefined && isFirstPage(firstPage) ? firstPage : undefined;
+  const first = callsView ? firstCalls : conversations.data;
   const options = first?.filterOptions;
   const usersHidden = first?.usersHidden ?? true;
 
@@ -602,6 +608,14 @@ export function AiCallsPage({
                 className="w-32"
               />
             )}
+            {/* A user filter from a link stays removable for a reader without the Users area, whose list it refuses. */}
+            {filters.user !== undefined && usersHidden && (
+              <FilterChip
+                text={`User ${filters.user}`}
+                removeLabel={`Remove the filter user ${filters.user}`}
+                onRemove={() => filter({ user: undefined })}
+              />
+            )}
             {!usersHidden && (
               <TextFilter
                 label="User ID"
@@ -631,8 +645,9 @@ export function AiCallsPage({
               ))}
             </ToggleGroup>
             {callsView && filters.conversation !== undefined && (
-              <ConversationChip
-                conversationId={filters.conversation}
+              <FilterChip
+                text={`Conversation ${filters.conversation}`}
+                removeLabel={`Remove the filter conversation ${filters.conversation}`}
                 onRemove={() => filter({ conversation: undefined })}
               />
             )}
@@ -676,7 +691,7 @@ export function AiCallsPage({
   );
 
   if (callsView) {
-    const page = list.data?.pages[0];
+    const page = firstCalls;
     if (page === undefined) return null;
     const filtered = narrowed(filters) || filters.conversation !== undefined;
     const guidance = (

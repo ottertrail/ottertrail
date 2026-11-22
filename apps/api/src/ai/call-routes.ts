@@ -243,14 +243,17 @@ export const aiCallListRoutes: FastifyPluginCallback<{
       if (ready === null) return reply;
       const { range, scope, filters, withUsers } = ready;
       const reader = readerOf(reply);
+      // A later page (Load older calls) is only its calls: the first page's
+      // totals and filter options stand for the whole list.
+      const later = before !== undefined;
       const [page, totals, labels] = await Promise.all([
         listAiCalls(reader, scope, filters, { before, withUsers }),
-        aiCallTotals(reader, scope, filters),
-        labelsOf(reply, scope),
+        later ? null : aiCallTotals(reader, scope, filters),
+        later ? null : labelsOf(reply, scope),
       ]);
       return {
         ...answered(range),
-        ...labels,
+        ...(labels ?? { environments: null, services: null, filterOptions: null, received: null }),
         usersHidden: !withUsers,
         pageSize: CALLS_PAGE_SIZE,
         totals,

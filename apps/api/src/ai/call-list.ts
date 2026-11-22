@@ -328,9 +328,11 @@ export function callPriceOf(book: PriceBook, model: string, at: Date): CallPrice
 }
 
 /**
- * One call of the project by its row ID, each once (FINAL): a minute
- * either side of `at` when known (the list's link sends it), else the
- * whole `from` to `to`. Any environment: the ID names one call.
+ * One call of the project by its row ID: a minute either side of `at` when
+ * known (the list's link sends it), else the whole `from` to `to`. Any
+ * environment: the ID names one call. Without FINAL, which would merge
+ * every row of the range first: a retry's copies are the same row, and
+ * LIMIT 1 takes one.
  */
 export async function aiCallById(
   reader: Reader,
@@ -358,7 +360,7 @@ export async function aiCallById(
     reader,
     `SELECT ${CALL_COLUMNS}
      FROM (SELECT *, ${pricedColumns(params, prices)}
-           FROM ${AI_CALLS_TABLE} FINAL
+           FROM ${AI_CALLS_TABLE}
            WHERE project_id = ${params.add(projectId, "UUID")}
              AND timestamp >= ${params.time(start)} AND timestamp < ${params.time(end)}
              AND id = ${params.add(id, "String")})

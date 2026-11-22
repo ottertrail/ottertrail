@@ -220,6 +220,22 @@ function listOf(fake: FakeAiCalls, query: URLSearchParams, usersVisible: boolean
   const page = calls.slice(start, start + fake.pageSize);
   const more = start + fake.pageSize < calls.length;
   const failed = calls.filter((item) => item.failed).length;
+  if (before !== null) {
+    // As the API: a later page is only its calls.
+    return {
+      ...RANGE,
+      environment: query.get("environment") ?? "production",
+      environments: null,
+      services: null,
+      filterOptions: null,
+      received: null,
+      usersHidden: !usersVisible,
+      pageSize: fake.pageSize,
+      totals: null,
+      calls: page,
+      next: more ? (page.at(-1)?.id ?? null) : null,
+    };
+  }
   return {
     ...labelsOf(fake, query, usersVisible),
     pageSize: fake.pageSize,

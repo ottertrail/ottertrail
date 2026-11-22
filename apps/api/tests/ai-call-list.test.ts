@@ -309,10 +309,17 @@ describe("GET …/ai/call-list", () => {
     const seen: string[] = [];
     let next: string | null = null;
     let pages = 0;
+    const answers: object[] = [];
     do {
       const response: {
         statusCode: number;
-        json: () => { calls: { id: string }[]; next: string | null };
+        json: () => {
+          calls: { id: string }[];
+          next: string | null;
+          totals: object | null;
+          received: boolean | null;
+          filterOptions: object | null;
+        };
       } = await dashboard.app.inject({
         method: "GET",
         url: `/api/projects/${paged}/ai/call-list?period=7d${next === null ? "" : `&before=${next}`}`,
@@ -324,8 +331,16 @@ describe("GET …/ai/call-list", () => {
       next = body.next;
       pages += 1;
       expect(body.calls.length).toBe(pages < 3 ? CALLS_PAGE_SIZE : 50);
+      answers.push(body);
     } while (next !== null);
     expect(pages).toBe(3);
+    // Only the first page counts the totals and the filter options: later ones skip them.
+    const later = { totals: null, received: null, filterOptions: null };
+    expect(answers).toMatchObject([
+      { totals: { calls: expect.any(Number) }, received: true },
+      later,
+      later,
+    ]);
     expect(seen).toEqual(rows.map((row) => row.id));
   });
 });
