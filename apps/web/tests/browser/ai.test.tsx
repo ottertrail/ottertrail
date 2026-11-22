@@ -4,6 +4,7 @@ import { page } from "vite-plus/test/browser/context";
 import type { AiChart, AiReport } from "../../src/lib/ai-api.ts";
 import { AI_CALLS, fakeAi, fakeAiCalls, fakeAiChart, fakeAiReport, noAiCalls } from "./fake-ai.ts";
 import { deferred, type FakeApi, installFakeApi, memberAccess, PROJECT } from "./fake-api.ts";
+import { unmountAll } from "./mounted.ts";
 import { renderApp } from "./render.tsx";
 
 /**
@@ -460,7 +461,7 @@ describe("the AI page", () => {
   });
 
   test("without the Users area, one line says why calls by user are hidden", async () => {
-    const api = installFakeApi({ access: memberAccess({ monitoring: "view" }) });
+    const api = installFakeApi({ access: memberAccess({ ai: "view" }) });
     renderApp(AI);
     await expect.element(page.getByRole("table", { name: LATEST })).toBeVisible();
     await expect
@@ -482,17 +483,35 @@ describe("the AI page", () => {
     expect(api.requests.some((request) => request.includes("/users"))).toBe(false);
   });
 
-  test("the sidebar shows AI only with the Monitoring area", async () => {
-    installFakeApi({ access: memberAccess({ errors: "view" }) });
+  test("the sidebar shows AI only with the AI area, apart from monitoring", async () => {
+    installFakeApi({ access: memberAccess({ errors: "view", monitoring: "view" }) });
     renderApp(`/projects/${PROJECT.id}/errors`);
-    await expect.element(projectMenu().getByRole("link", { name: "Errors" })).toBeVisible();
+    await expect.element(projectMenu().getByRole("link", { name: "Traces" })).toBeVisible();
     await expect
       .element(projectMenu().getByRole("link", { name: "AI", exact: true }))
       .not.toBeInTheDocument();
 
-    installFakeApi({ access: memberAccess({ monitoring: "view" }) });
+    unmountAll();
+    installFakeApi({ access: memberAccess({ ai: "view" }) });
     renderApp(AI);
     await expect.element(page.getByRole("table", { name: MODELS })).toBeVisible();
+    await expect
+      .element(projectMenu().getByRole("link", { name: "AI", exact: true }))
+      .toBeVisible();
+    expect(projectMenu().getByRole("link", { name: "Traces" }).elements()).toEqual([]);
+  });
+
+  test("without monitoring, the latest calls have no trace links", async () => {
+    installFakeApi({ access: memberAccess({ ai: "view" }) });
+    renderApp(AI);
+    await expect.element(page.getByRole("table", { name: LATEST })).toBeVisible();
+    expect(page.getByRole("link", { name: /Open its trace/ }).elements()).toEqual([]);
+  });
+
+  test("monitoring alone does not open the AI page", async () => {
+    installFakeApi({ access: memberAccess({ monitoring: "view" }) });
+    renderApp(AI);
+    await expect.element(page.getByText("You don't have access")).toBeVisible();
   });
 
   test("a page the member's areas leave out says so", async () => {
@@ -527,7 +546,7 @@ describe("the AI page's states", () => {
 
   test("a member who cannot change the project gets the docs alone", async () => {
     installFakeApi({
-      access: memberAccess({ monitoring: "view" }),
+      access: memberAccess({ ai: "view" }),
       ai: { ...fakeAi(), report: noAiCalls },
     });
     renderApp(AI);

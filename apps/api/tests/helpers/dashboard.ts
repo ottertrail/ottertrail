@@ -186,6 +186,7 @@ const NO_AREAS: Areas = {
   replays: "none",
   users: "none",
   monitoring: "none",
+  ai: "none",
   uptime_alerts: "none",
 };
 

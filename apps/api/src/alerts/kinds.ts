@@ -771,13 +771,18 @@ export function checkIdOf(settings: RuleSettings): string | null {
   return "checkId" in settings ? settings.checkId : null;
 }
 
+/** The kinds that watch AI calls (docs/ai-usage.md, "Alerts"). */
+export const AI_KINDS: readonly RuleKind[] = ["ai_cost", "ai_failures", "ai_latency"];
+
 /**
  * The area a kind's subject belongs to, besides uptime and alerts
- * (docs/access.md): an error rule shows error groups and messages, a
- * telemetry rule services, routes, and metrics. A user sees, creates, and
- * changes a rule only with this area at view; check rules need none.
+ * (docs/access.md): an error rule shows error groups and messages, an AI
+ * rule models and features, another telemetry rule services, routes, and
+ * metrics. A user sees, creates, and changes a rule only with this area at
+ * view; check rules need none.
  */
-export function sourceAreaOf(kind: RuleKind): "errors" | "monitoring" | null {
+export function sourceAreaOf(kind: RuleKind): "errors" | "monitoring" | "ai" | null {
+  if (AI_KINDS.includes(kind)) return "ai";
   const { source } = KIND_INFO[kind];
   return source === "errors" ? "errors" : source === "telemetry" ? "monitoring" : null;
 }

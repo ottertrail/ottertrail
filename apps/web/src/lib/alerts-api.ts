@@ -61,10 +61,11 @@ export const isAiKind = (kind: RuleKind) =>
  * The area a kind watches, besides uptime and alerts (docs/access.md): a
  * user sees and adds such rules only with it. Check rules need none.
  */
-export function kindArea(kind: RuleKind): "errors" | "monitoring" | null {
+export function kindArea(kind: RuleKind): "errors" | "monitoring" | "ai" | null {
   if (kind === "error_new" || kind === "error_regressed" || kind === "error_spike") {
     return "errors";
   }
+  if (isAiKind(kind)) return "ai";
   return TELEMETRY_KINDS.includes(kind) ? "monitoring" : null;
 }
 

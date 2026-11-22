@@ -438,7 +438,7 @@ export const overviewRoutes: FastifyPluginCallback<{
 
   // The estimated cost of AI calls against the period before, and the models
   // that cost the most, as the AI page counts them (ai/report.ts).
-  widget("ai-cost", "monitoring", async (range, { reader }) => {
+  widget("ai-cost", "ai", async (range, { reader }) => {
     const scope = {
       projectId: range.projectId,
       environment: range.environment,

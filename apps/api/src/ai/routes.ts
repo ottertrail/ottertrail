@@ -125,7 +125,7 @@ const answered = (range: TelemetryRange) => ({
  *     (the latest 50 calls, with their trace and span)
  *
  * The AI page (docs/ai-usage.md, "The report"; report.ts). Each runs
- * requireProjectAccess for monitoring at view, and reads only the project
+ * requireProjectAccess for the AI area at view, and reads only the project
  * it found. The breakdown by user, and the user of each call, need users
  * at view too: without it, `users` is null and `usersHidden` true, and a
  * `user` filter (one end user's calls, the user page's AI section) is
@@ -148,7 +148,7 @@ export const aiRoutes: FastifyPluginCallback<{
   done,
 ) => {
   const signedIn = requireSession(auth);
-  const canView = requireProjectAccess(db, { area: "monitoring", level: "view" });
+  const canView = requireProjectAccess(db, { area: "ai", level: "view" });
   const readerOf = (reply: FastifyReply) => dashboardReader(clickhouse, limiter, reply);
   app.setErrorHandler(clickHouseErrorHandler);
 

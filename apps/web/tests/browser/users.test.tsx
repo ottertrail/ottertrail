@@ -334,13 +334,20 @@ describe("a user's AI usage", () => {
     expect(document.querySelector("main")?.textContent).not.toMatch(/\bAI\b/);
   });
 
-  test("nothing, and no request, without the monitoring area", async () => {
-    const api = installFakeApi({ access: memberAccess({ users: "view" }) });
+  test("nothing, and no request, without the AI area, even with monitoring", async () => {
+    const api = installFakeApi({ access: memberAccess({ users: "view", monitoring: "view" }) });
     renderApp(`${USERS}/ada`);
 
     await expect.element(page.getByRole("list", { name: /^Activity on/ }).first()).toBeVisible();
     expect(section().query()).toBeNull();
     expect(aiRequests(api)).toEqual([]);
+  });
+
+  test("shows with the AI and Users areas, without monitoring", async () => {
+    installFakeApi({ access: memberAccess({ users: "view", ai: "view" }) });
+    renderApp(`${USERS}/ada`);
+
+    await expect.element(section().getByRole("link", { name: "AI page" })).toBeVisible();
   });
 
   test("says when it could not load, and retries", async () => {

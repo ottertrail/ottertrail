@@ -250,7 +250,7 @@ function Properties({ properties }: { properties: Record<string, unknown> }) {
  * One known user with the loading, missing, and failed states: when first
  * and last seen, and what they did, newest first, by day in the timezone
  * set in Settings. Only events that carry the user's ID: anonymous browsing
- * before a sign-in is not theirs for sure. With monitoring, their AI usage
+ * before a sign-in is not theirs for sure. With the AI area, their AI usage
  * (user-ai.tsx). On the user's own page, and in
  * the Users workbench beside the list, where `actions` links to the page
  * and a missing user's link clears the selection instead.
@@ -388,7 +388,7 @@ export function UserView({
               />
             </WhenAllowed>
           )}
-          <WhenAllowed area="monitoring">
+          <WhenAllowed area="ai">
             <UserAi projectId={projectId} userId={userId} environment={environment} />
           </WhenAllowed>
           {days.map((day) => (

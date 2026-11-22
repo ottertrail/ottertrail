@@ -47,7 +47,7 @@ const WIDGET_AREAS = {
   errors: "errors",
   uptime: "uptime_alerts",
   services: "monitoring",
-  "ai-cost": "monitoring",
+  "ai-cost": "ai",
   speed: "web_analytics",
   "main-goal": "product_analytics",
   traffic: "web_analytics",
@@ -104,6 +104,7 @@ const member = (email: string, areas: Partial<Areas>, projects: string[] = [site
         replays: "none",
         users: "none",
         monitoring: "none",
+        ai: "none",
         uptime_alerts: "none",
         ...areas,
       },
@@ -602,6 +603,17 @@ describe("each widget's numbers", () => {
   });
 });
 
+/** Whether a member reaches the services and AI cost widgets, and their layout. */
+const reach = async (cookie: string) => ({
+  services: (await send("GET", `/api/projects/${site.id}/overview/services`, { cookie }))
+    .statusCode,
+  "ai-cost": (await send("GET", `/api/projects/${site.id}/overview/ai-cost`, { cookie }))
+    .statusCode,
+  layout: (await send("GET", `/api/projects/${site.id}/overview/layout`, { cookie }))
+    .json()
+    .widgets.map((item: { id: string }) => item.id),
+});
+
 describe("who reaches which widget", () => {
   test("each widget's route needs its area: 403 without it, 404 on a project not granted", async () => {
     const { cookie } = await member("nothing@example.com", {});
@@ -656,6 +668,17 @@ describe("who reaches which widget", () => {
       "traffic",
       "sources",
     ]);
+  });
+
+  test("AI cost needs the AI area, apart from monitoring's services", async () => {
+    const ai = await member("overview-ai@example.com", { ai: "view" });
+    expect(await reach(ai.cookie)).toEqual({ services: 403, "ai-cost": 200, layout: ["ai-cost"] });
+    const monitoring = await member("overview-monitoring@example.com", { monitoring: "view" });
+    expect(await reach(monitoring.cookie)).toEqual({
+      services: 200,
+      "ai-cost": 403,
+      layout: ["services"],
+    });
   });
 
   test("the users widget names no user without the users area", async () => {

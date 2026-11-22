@@ -116,6 +116,7 @@ export async function readUserAccess(
     replays: row.replays ?? "none",
     users: row.users ?? "none",
     monitoring: row.monitoring ?? "none",
+    ai: row.ai ?? "none",
     uptime_alerts: row.uptime_alerts ?? "none",
   };
   if (row.grant_user_id === null) {

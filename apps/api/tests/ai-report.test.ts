@@ -269,6 +269,7 @@ const member = (email: string, areas: Record<string, string>) =>
         replays: "none",
         users: "none",
         monitoring: "none",
+        ai: "none",
         uptime_alerts: "none",
         ...areas,
       },
@@ -726,8 +727,8 @@ describe("the latest calls", () => {
 });
 
 describe("access", () => {
-  test("monitoring at view; without users, no breakdown by user, no user on a call, and no user filter", async () => {
-    const watcher = await member("ai-monitoring@example.com", { monitoring: "view" });
+  test("AI at view; without users, no breakdown by user, no user on a call, and no user filter", async () => {
+    const watcher = await member("ai-only@example.com", { ai: "view" });
     const body = await report(`/projects/${projectId}/ai?period=7d`, watcher.cookie);
     expect(body).toMatchObject({ users: null, usersHidden: true, totals: { calls: 7 } });
     const { calls, usersHidden } = await report(
@@ -747,17 +748,18 @@ describe("access", () => {
       expect(filtered.statusCode).toBe(403);
     }
 
-    const both = await member("ai-users@example.com", { monitoring: "view", users: "view" });
+    const both = await member("ai-users@example.com", { ai: "view", users: "view" });
     expect((await report(`/projects/${projectId}/ai?period=7d`, both.cookie)).users).toHaveLength(
       2,
     );
   });
 
   test.each(["", "/chart", "/calls"])(
-    "…/ai%s: 403 without monitoring, 401 signed out, 404 elsewhere",
+    "…/ai%s: 403 without AI (monitoring is not enough), 401 signed out, 404 elsewhere",
     async (suffix) => {
       const outsider = await member(`ai-none${suffix.replace("/", "-")}@example.com`, {
         users: "view",
+        monitoring: "view",
       });
       expect((await get(`/projects/${projectId}/ai${suffix}`, outsider.cookie)).statusCode).toBe(
         403,

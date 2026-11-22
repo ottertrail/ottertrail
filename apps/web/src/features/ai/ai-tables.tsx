@@ -20,6 +20,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { useAccess } from "@/lib/access";
 import {
   type AiCall,
   aiCallsQuery,
@@ -342,12 +343,14 @@ function CallStatus({ call }: { call: AiCall }) {
 
 /**
  * The latest 50 calls, newest first, each opening its span on its trace's
- * page. Its own request: it loads, fails, and retries apart from the report.
+ * page for users with monitoring (traces are monitoring's, docs/access.md).
+ * Its own request: it loads, fails, and retries apart from the report.
  */
 export function RecentCalls({ place }: { place: AiPlace }) {
   const calls = useQuery(
     aiCallsQuery(place.projectId, place.range, place.environment, place.filters),
   );
+  const canTrace = useAccess().canUse("monitoring");
   const { data } = calls;
   const headingId = React.useId();
   return (
@@ -418,9 +421,11 @@ export function RecentCalls({ place }: { place: AiPlace }) {
                   <TableHead className="text-right">Est. cost</TableHead>
                   <TableHead className="text-right">Duration</TableHead>
                   <TableHead>Status</TableHead>
-                  <TableHead className={PINNED_END}>
-                    <span className="sr-only">Trace</span>
-                  </TableHead>
+                  {canTrace && (
+                    <TableHead className={PINNED_END}>
+                      <span className="sr-only">Trace</span>
+                    </TableHead>
+                  )}
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -482,25 +487,27 @@ export function RecentCalls({ place }: { place: AiPlace }) {
                     <TableCell>
                       <CallStatus call={call} />
                     </TableCell>
-                    <TableCell className={PINNED_END}>
-                      {call.traceId !== "" && (
-                        <Link
-                          to="/projects/$projectId/traces/$traceId"
-                          params={{ projectId: place.projectId, traceId: call.traceId }}
-                          search={{
-                            at: call.at,
-                            span: call.spanId === "" ? undefined : call.spanId,
-                          }}
-                          className="text-sm whitespace-nowrap text-link hover:underline"
-                        >
-                          Open its trace
-                          <span className="sr-only">
-                            {" "}
-                            ({modelLabel(call.model)}, {formatMoment(call.at, data.timeZone)})
-                          </span>
-                        </Link>
-                      )}
-                    </TableCell>
+                    {canTrace && (
+                      <TableCell className={PINNED_END}>
+                        {call.traceId !== "" && (
+                          <Link
+                            to="/projects/$projectId/traces/$traceId"
+                            params={{ projectId: place.projectId, traceId: call.traceId }}
+                            search={{
+                              at: call.at,
+                              span: call.spanId === "" ? undefined : call.spanId,
+                            }}
+                            className="text-sm whitespace-nowrap text-link hover:underline"
+                          >
+                            Open its trace
+                            <span className="sr-only">
+                              {" "}
+                              ({modelLabel(call.model)}, {formatMoment(call.at, data.timeZone)})
+                            </span>
+                          </Link>
+                        )}
+                      </TableCell>
+                    )}
                   </TableRow>
                 ))}
               </TableBody>

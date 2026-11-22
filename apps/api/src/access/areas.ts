@@ -13,6 +13,7 @@ export const AREAS = [
   "replays",
   "users",
   "monitoring",
+  "ai",
   "uptime_alerts",
 ] as const;
 export type Area = (typeof AREAS)[number];
@@ -25,6 +26,7 @@ export const AREA_LEVELS: Record<Area, readonly AreaLevel[]> = {
   replays: ["none", "view"],
   users: ["none", "view"],
   monitoring: ["none", "view"],
+  ai: ["none", "view"],
   uptime_alerts: ["none", "view", "manage"],
 };
 
@@ -36,6 +38,7 @@ export interface Areas {
   replays: "none" | "view";
   users: "none" | "view";
   monitoring: "none" | "view";
+  ai: "none" | "view";
   uptime_alerts: AreaLevel;
 }
 
@@ -47,6 +50,7 @@ export const ALL_AREAS: Areas = {
   replays: "view",
   users: "view",
   monitoring: "view",
+  ai: "view",
   uptime_alerts: "manage",
 };
 
@@ -59,6 +63,7 @@ export const PRESETS = {
     replays: "none",
     users: "none",
     monitoring: "view",
+    ai: "view",
     uptime_alerts: "view",
   },
   engineering: {
@@ -68,6 +73,7 @@ export const PRESETS = {
     replays: "view",
     users: "none",
     monitoring: "view",
+    ai: "view",
     uptime_alerts: "manage",
   },
   marketing: {
@@ -77,6 +83,7 @@ export const PRESETS = {
     replays: "none",
     users: "none",
     monitoring: "none",
+    ai: "none",
     uptime_alerts: "none",
   },
 } as const satisfies Record<string, Areas>;

@@ -21,6 +21,7 @@ import * as aiCostHours from "./0018_ai_cost_hours.ts";
 import * as aiModelPrices from "./0019_ai_model_prices.ts";
 import * as backupDestinationEnv from "./0020_backup_destination_env.ts";
 import * as alertHistoryKind from "./0021_alert_history_kind.ts";
+import * as aiArea from "./0022_ai_area.ts";
 
 /**
  * Every migration, in order. Kysely runs them by name, alphabetically, and
@@ -51,4 +52,5 @@ export const migrations: Record<string, Migration> = {
   "0019_ai_model_prices": aiModelPrices,
   "0020_backup_destination_env": backupDestinationEnv,
   "0021_alert_history_kind": alertHistoryKind,
+  "0022_ai_area": aiArea,
 };

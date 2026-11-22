@@ -220,6 +220,7 @@ describe("the Members page", () => {
             replays: "view",
             users: "view",
             monitoring: "view",
+            ai: "view",
             uptime_alerts: "manage",
           },
         },
@@ -231,7 +232,7 @@ describe("the Members page", () => {
     await tab(/^Invitations/).click();
     await expect.poll(() => rowsOf("Pending invitations")[0]?.[0]).toBe("leo@example.com");
     expect(rowsOf("Pending invitations")[0]?.[2]).toBe(
-      "Web analytics, Product analytics, Errors, Replays, Users, Monitoring, Uptime and alerts · 1 project",
+      "Web analytics, Product analytics, Errors, Replays, Users, Monitoring, AI, Uptime and alerts · 1 project",
     );
     expect(document.body.textContent).not.toContain("new-invite-token");
   });
@@ -459,6 +460,31 @@ describe("the Members page", () => {
       path: "/api/members/user-3",
       body: { role: "member", access: { projects: [PROJECT.id], areas: expect.any(Object) } },
     });
+  });
+
+  test("AI is an area of its own, after Monitoring: AI costs without the traces", async () => {
+    const api = installFakeApi();
+    renderApp(MEMBERS);
+    await act("Mia Member", "Change access");
+    const legends = [...accessForm().element().querySelectorAll("fieldset fieldset legend")].map(
+      (legend) => legend.firstChild?.textContent,
+    );
+    expect(legends.slice(legends.indexOf("Monitoring"), legends.indexOf("Monitoring") + 2)).toEqual(
+      ["Monitoring", "AI"],
+    );
+    await expect.element(accessForm().getByRole("radio", { name: "View AI" })).toBeChecked();
+    await accessForm().getByRole("radio", { name: "None Monitoring" }).click();
+    await expect.element(accessForm().getByRole("radio", { name: /^Custom/ })).toBeChecked();
+    await saveAccess().click();
+    await expect.element(sheet("Mia Member")).not.toBeInTheDocument();
+    expect(api.bodies.at(-1)).toMatchObject({
+      method: "PATCH",
+      path: "/api/members/user-3",
+      body: { access: { areas: { monitoring: "none", ai: "view" } } },
+    });
+    await expect
+      .poll(() => rowsOf("Members")[2]?.[2])
+      .toBe("Web analytics, Product analytics, Errors, AI, Uptime and alerts · All projects");
   });
 
   test("leaving the page with unsaved access asks first", async () => {

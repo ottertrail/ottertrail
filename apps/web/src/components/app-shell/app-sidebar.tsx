@@ -442,7 +442,7 @@ function ProjectMenu({ projectId }: { projectId: string }) {
               </SidebarMenuButton>
             </SidebarMenuItem>
           )}
-          {canOpen(me, "monitoring") && (
+          {canOpen(me, "ai") && (
             <SidebarMenuItem>
               <SidebarMenuButton
                 render={<Link to="/projects/$projectId/ai" params={{ projectId }} />}

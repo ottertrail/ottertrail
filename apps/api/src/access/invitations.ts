@@ -39,6 +39,7 @@ function accessOf(row: InvitationRow): MemberAccess | null {
           replays: row.replays,
           users: row.users,
           monitoring: row.monitoring,
+          ai: row.ai,
           uptime_alerts: row.uptime_alerts,
         },
       };
@@ -64,6 +65,7 @@ const NO_AREAS = {
   replays: "none",
   users: "none",
   monitoring: "none",
+  ai: "none",
   uptime_alerts: "none",
 } as const;
 

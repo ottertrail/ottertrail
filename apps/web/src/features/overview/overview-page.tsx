@@ -83,7 +83,7 @@ function NothingHere({ projectId }: { projectId: string }) {
         </EmptyMedia>
         <EmptyTitle>Nothing on your overview</EmptyTitle>
         <EmptyDescription>
-          The overview sums up errors, uptime, monitoring, and analytics, and your access covers
+          The overview sums up errors, uptime, monitoring, AI, and analytics, and your access covers
           none of them.
           {pages.length > 0 ? " These pages are open to you:" : " Ask an admin if you need access."}
         </EmptyDescription>

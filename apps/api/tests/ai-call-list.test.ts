@@ -520,8 +520,12 @@ describe("GET …/ai/conversations", () => {
   });
 });
 
-/** A member who views monitoring, with or without the users area. */
-const member = (email: string, users: "none" | "view") =>
+/** A member who views AI (or only monitoring), with or without the users area. */
+const member = (
+  email: string,
+  users: "none" | "view",
+  { ai = "view", monitoring = "none" }: { ai?: "none" | "view"; monitoring?: "none" | "view" } = {},
+) =>
   signedInUser(dashboard, {
     name: email,
     email,
@@ -533,7 +537,8 @@ const member = (email: string, users: "none" | "view") =>
         errors: "none",
         replays: "none",
         users,
-        monitoring: "view",
+        monitoring,
+        ai,
         uptime_alerts: "none",
       },
     },
@@ -541,7 +546,7 @@ const member = (email: string, users: "none" | "view") =>
 
 describe("access", () => {
   test("without the users area: no call names its user, and no user filter", async () => {
-    const { cookie } = await member("monitoring@example.com", "none");
+    const { cookie } = await member("ai-only@example.com", "none");
     const body = await ok("/ai/call-list?period=7d", cookie);
     expect(body.usersHidden).toBe(true);
     expect(body.calls.every((call: { userId: string | null }) => call.userId === null)).toBe(true);
@@ -565,5 +570,20 @@ describe("access", () => {
     const body = await ok("/ai/call-list?period=7d&user=u1", cookie);
     expect(body.usersHidden).toBe(false);
     expect(body.calls).toHaveLength(3);
+  });
+
+  test("monitoring without AI reaches none of the calls", async () => {
+    const { cookie } = await member("monitoring@example.com", "view", {
+      ai: "none",
+      monitoring: "view",
+    });
+    for (const path of [
+      "/ai/call-list?period=7d",
+      `/ai/calls/${PRODUCTION[0]?.id}`,
+      "/ai/conversations?period=7d",
+      "/ai/conversations/c-1?period=7d",
+    ]) {
+      expect((await get(path, cookie)).statusCode).toBe(403);
+    }
   });
 });

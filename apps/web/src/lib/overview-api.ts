@@ -18,7 +18,7 @@ export const WIDGETS = [
   { id: "errors", area: "errors", title: "New and returning errors" },
   { id: "uptime", area: "uptime_alerts", title: "Uptime and response time" },
   { id: "services", area: "monitoring", title: "Server requests, failures and p95" },
-  { id: "ai-cost", area: "monitoring", title: "AI cost" },
+  { id: "ai-cost", area: "ai", title: "AI cost" },
   { id: "speed", area: "web_analytics", title: "Page speed" },
   { id: "main-goal", area: "product_analytics", title: "Main goal" },
   { id: "traffic", area: "web_analytics", title: "Traffic" },

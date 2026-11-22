@@ -243,7 +243,7 @@ Decided differently from the design, or settled where it said nothing:
 
 ### AI rules
 
-Added on 22 November 2026 with AI usage tracking: `ai_cost`, the estimated cost of a project's AI calls over the last hour, the last 24 hours, or the month so far above a value, `ai_failures`, their failed share over a window above a share, and `ai_latency` (added later the same day), their 95th-percentile duration over a window above a number of milliseconds, each optionally for one feature or model. They are telemetry rules: taken, bounded, judged, and recorded as above, and they need `monitoring` at view. Their settings, windows, and notifications are in [AI usage](ai-usage.md#alerts).
+Added on 22 November 2026 with AI usage tracking: `ai_cost`, the estimated cost of a project's AI calls over the last hour, the last 24 hours, or the month so far above a value, `ai_failures`, their failed share over a window above a share, and `ai_latency` (added later the same day), their 95th-percentile duration over a window above a number of milliseconds, each optionally for one feature or model. They are telemetry rules: taken, bounded, judged, and recorded as above, and they need `ai` at view (not `monitoring`, [access](access.md#alert-rules-and-the-areas-they-watch)). Their settings, windows, and notifications are in [AI usage](ai-usage.md#alerts).
 
 ### Not done in step 4
 

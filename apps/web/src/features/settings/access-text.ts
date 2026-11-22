@@ -5,7 +5,8 @@ export const PRESET_LABEL: Record<Preset, { name: string; about: string }> = {
   viewer: { name: "Viewer", about: "View everything except replays and users." },
   engineering: {
     name: "Engineering",
-    about: "Manage errors, uptime, and alerts. View monitoring, replays, and both analytics areas.",
+    about:
+      "Manage errors, uptime, and alerts. View monitoring, AI, replays, and both analytics areas.",
   },
   marketing: {
     name: "Marketing",

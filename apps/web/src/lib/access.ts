@@ -17,6 +17,7 @@ export const AREAS = [
   "replays",
   "users",
   "monitoring",
+  "ai",
   "uptime_alerts",
 ] as const;
 export type Area = (typeof AREAS)[number];
@@ -33,6 +34,7 @@ export const AREA_LEVELS: Record<Area, readonly AreaLevel[]> = {
   replays: ["none", "view"],
   users: ["none", "view"],
   monitoring: ["none", "view"],
+  ai: ["none", "view"],
   uptime_alerts: ["none", "view", "manage"],
 };
 
@@ -45,8 +47,9 @@ export const AREA_LABELS: Record<Area, { name: string; pages: string }> = {
   users: { name: "Users", pages: "Identified end users and their activity" },
   monitoring: {
     name: "Monitoring",
-    pages: "Traces, logs, metrics, services, databases, AI, hosts",
+    pages: "Traces, logs, metrics, services, databases, hosts",
   },
+  ai: { name: "AI", pages: "AI calls, their costs, and conversations" },
   uptime_alerts: { name: "Uptime and alerts", pages: "Uptime checks and alert rules" },
 };
 
@@ -59,6 +62,7 @@ export const PRESETS = {
     replays: "none",
     users: "none",
     monitoring: "view",
+    ai: "view",
     uptime_alerts: "view",
   },
   engineering: {
@@ -68,6 +72,7 @@ export const PRESETS = {
     replays: "view",
     users: "none",
     monitoring: "view",
+    ai: "view",
     uptime_alerts: "manage",
   },
   marketing: {
@@ -77,6 +82,7 @@ export const PRESETS = {
     replays: "none",
     users: "none",
     monitoring: "none",
+    ai: "none",
     uptime_alerts: "none",
   },
 } as const satisfies Record<string, Areas>;
@@ -180,6 +186,7 @@ export const AREA_PAGES = [
   ["errors", "/projects/$projectId/errors"],
   ["replays", "/projects/$projectId/replays"],
   ["monitoring", "/projects/$projectId/traces"],
+  ["ai", "/projects/$projectId/ai"],
   ["uptime_alerts", "/projects/$projectId/uptime"],
   ["product_analytics", "/projects/$projectId/product/events"],
 ] as const;
@@ -192,6 +199,7 @@ export const OVERVIEW_AREAS: readonly Area[] = [
   "uptime_alerts",
   "errors",
   "monitoring",
+  "ai",
   "web_analytics",
   "product_analytics",
 ];

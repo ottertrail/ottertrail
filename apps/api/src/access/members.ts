@@ -66,6 +66,7 @@ export async function listMembers(db: Kysely<Database>): Promise<Member[]> {
       "a.replays",
       "a.users",
       "a.monitoring",
+      "a.ai",
       "a.uptime_alerts",
     ])
     .execute();
@@ -93,6 +94,7 @@ export async function listMembers(db: Kysely<Database>): Promise<Member[]> {
                 replays: row.replays ?? "none",
                 users: row.users ?? "none",
                 monitoring: row.monitoring ?? "none",
+                ai: row.ai ?? "none",
                 uptime_alerts: row.uptime_alerts ?? "none",
               },
             };

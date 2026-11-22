@@ -39,7 +39,7 @@ const rowOf = (key: string, label: string, row: AiModelRow | AiFeatureRow) => ({
  * never what was asked or answered. Nothing at all for a project that has
  * never had an AI call, nor while that is not known yet; one line when
  * this user had none. Shown only with
- * the monitoring area (the caller checks), and on a page that already
+ * the AI area (the caller checks), and on a page that already
  * needs the users area, which the filter needs too.
  */
 export function UserAi({

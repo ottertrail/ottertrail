@@ -964,7 +964,7 @@ const queryShapeRoute = createRoute({
 const aiRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: "/ai",
-  staticData: { title: "AI", access: "monitoring" },
+  staticData: { title: "AI", access: "ai" },
   validateSearch: (
     search: ErrorSearchInput & {
       service?: unknown;
@@ -1037,7 +1037,7 @@ const aiCallFilters = (search: ReturnType<typeof aiCallsSearch>) => ({
 const aiCallsRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: "/ai/calls",
-  staticData: { title: "AI calls", access: "monitoring" },
+  staticData: { title: "AI calls", access: "ai" },
   validateSearch: (
     search: AiCallsSearchInput & { view?: unknown; call?: unknown; at?: unknown },
   ) => {
@@ -1069,7 +1069,7 @@ const aiCallsRoute = createRoute({
 const aiCallRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: "/ai/calls/$callId",
-  staticData: { title: "AI call", access: "monitoring" },
+  staticData: { title: "AI call", access: "ai" },
   validateSearch: (search: AiCallsSearchInput & { at?: unknown }) => ({
     ...aiCallsSearch(search),
     at: isMoment(search.at) ? search.at : undefined,
@@ -1096,7 +1096,7 @@ const aiCallRoute = createRoute({
 const aiConversationRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: "/ai/conversations/$conversationId",
-  staticData: { title: "Conversation", access: "monitoring" },
+  staticData: { title: "Conversation", access: "ai" },
   validateSearch: (search: AiCallsSearchInput) => ({
     ...aiCallsSearch(search),
     conversation: undefined,

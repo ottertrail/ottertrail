@@ -12,7 +12,7 @@ Made on 22 November 2026, all as the design proposed:
 2. **Prompts and completions are never stored.** They are dropped at ingestion for every project, AI page or not ([telemetry](telemetry.md#ai-prompts-and-completions-are-not-stored), `apps/api/src/telemetry/ai-content.ts`). This module reads only token counts and names.
 3. **Prices come from a small hand-kept table in the repository** (`apps/api/src/ai/price-table.ts`), read from the providers' own price pages, each entry with its source and the day it was checked, updated each release. The owner and admins set the instance's own prices over it in Settings → AI models ([Prices](#prices)). Prices are never fetched at run time: self-hosted instances must work offline.
 4. **A call's feature** is its `ottertrail.feature` attribute, else `gen_ai.agent.name`, else none ("Unlabeled").
-5. **Access:** the `monitoring` area at view. The breakdown by user, and the user of each call, also need `users` at view.
+5. **Access:** the `ai` area at view, apart from monitoring, so someone can see AI costs without seeing traces ([access](access.md)). The breakdown by user, and the user of each call, also need `users` at view; a call's link to its trace needs `monitoring` at view.
 
 ## Detection
 
@@ -118,7 +118,7 @@ Each needs `projects` (`requirePermission`), and the changes the dashboard's `Or
 
 ## The report
 
-Three project routes (`apps/api/src/ai/routes.ts`, queries in `apps/api/src/ai/report.ts`), each behind `requireProjectAccess` for `monitoring` at view:
+Three project routes (`apps/api/src/ai/routes.ts`, queries in `apps/api/src/ai/report.ts`), each behind `requireProjectAccess` for `ai` at view:
 
 ```text
 GET /api/projects/:id/ai?period=7d|from=…&to=…&environment=…&service=…&provider=…&model=…&feature=…&user=…
@@ -181,7 +181,7 @@ Series = { costUsd: number[]; tokens: number[]; calls: number[]; p95Ms: (number 
 
 ## Alerts
 
-Three rule kinds, evaluated by the worker with the telemetry rules, once a minute each, from the same figures as the page (`apps/api/src/alerts/ai-rules.ts`), read without `FINAL` ([uptime and alerts](uptime-alerts.md#step-4-alerts-on-telemetry-as-built)). All need `monitoring` at view to see, create, or change, as telemetry rules do ([access](access.md#alert-rules-and-the-areas-they-watch)).
+Three rule kinds, evaluated by the worker with the telemetry rules, once a minute each, from the same figures as the page (`apps/api/src/alerts/ai-rules.ts`), read without `FINAL` ([uptime and alerts](uptime-alerts.md#step-4-alerts-on-telemetry-as-built)). All need `ai` at view to see, create, or change, and their alerts in the inbox need it too ([access](access.md#alert-rules-and-the-areas-they-watch)); monitoring alone is not enough.
 
 | Kind          | Settings (`POST …/alert-rules`, `settings`)                                                                                                                                                                                                        | Fires when                                                   | Resolves when                               |
 | ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ | ------------------------------------------- |
@@ -199,13 +199,13 @@ Three rule kinds, evaluated by the worker with the telemetry rules, once a minut
 
 ## The Overview's AI cost widget
 
-The project Overview ([dashboard](dashboard.md#the-widgets)) has an AI cost widget after the services one: the estimated cost of the period's AI calls and their number, each against the period before, with the AI page's minimum of 20 calls before a change shows, and the three models that cost the most. Its route, `GET /api/projects/:id/overview/ai-cost`, needs `monitoring` at view, as the AI page does; a user without it neither sees the widget nor gets its numbers (403). It reuses the report's queries (`aiTotals` for both periods, `aiModels`, `hasAiCalls`) at the instance's prices, in the Overview's environment, with no filters. It answers `received` (any AI call at all), `costUsd`, `calls`, `noPriceCalls`, `previousCostUsd`, `previousCalls`, and `models` (`model`, `costUsd`, `calls`; the breakdown's Other row and models that cost nothing are left out). The widget says "Cost is an estimate from token counts and model prices." and how many calls had no price; its links to the AI page (the head's, and each model's, filtered by it) keep the Overview's period and environment. Without any AI call it says "No AI calls yet" and links to the docs site's page on sending them.
+The project Overview ([dashboard](dashboard.md#the-widgets)) has an AI cost widget after the services one: the estimated cost of the period's AI calls and their number, each against the period before, with the AI page's minimum of 20 calls before a change shows, and the three models that cost the most. Its route, `GET /api/projects/:id/overview/ai-cost`, needs `ai` at view, as the AI page does; a user without it neither sees the widget nor gets its numbers (403). It reuses the report's queries (`aiTotals` for both periods, `aiModels`, `hasAiCalls`) at the instance's prices, in the Overview's environment, with no filters. It answers `received` (any AI call at all), `costUsd`, `calls`, `noPriceCalls`, `previousCostUsd`, `previousCalls`, and `models` (`model`, `costUsd`, `calls`; the breakdown's Other row and models that cost nothing are left out). The widget says "Cost is an estimate from token counts and model prices." and how many calls had no price; its links to the AI page (the head's, and each model's, filtered by it) keep the Overview's period and environment. Without any AI call it says "No AI calls yet" and links to the docs site's page on sending them.
 
 ## A user's AI usage
 
 A user's page and the Users workbench's detail pane (`UserView`, [dashboard](dashboard.md#users)) have an "AI in the last 30 days" section after Replays: the user's calls, estimated cost, input and output tokens, failed share, and 95th-percentile duration, then the three models and the three features that cost them the most, from `GET …/ai?period=30d&user=…` in the page's environment (`apps/web/src/features/users/user-ai.tsx`). The user page has no period of its own, so the section takes the last 30 days. It says "Cost is an estimate from token counts and model prices." and how many calls had no price, and links to the user's calls on the calls list ("AI calls", [below](#the-calls-list), filtered by the user, over the same days and environment) and to the AI page ("AI page"), which has no user filter.
 
-- **Access:** shown only with `monitoring` at view, which the AI routes need; without it there is no section and no request. The page itself needs `users`, which the `user` filter needs too.
+- **Access:** shown only with `ai` at view, which the AI routes need; without it there is no section and no request. The page itself needs `users`, which the `user` filter needs too.
 - **Most projects have no AI calls:** while the project has never had one (`received` false), and while that is not known yet, the section shows nothing at all. With AI calls but none from this user in the period, it says "No AI calls from this user in the last 30 days."
 - **Failure:** "The AI usage could not load", with Retry.
 
@@ -387,7 +387,7 @@ A conversation's ID travels the same way: put `gen_ai.conversation.id` in baggag
 
 ## The calls list
 
-Every call of a period, one at a time, and the conversations they make, on the AI page's calls list (`/projects/<id>/ai/calls`, [dashboard](dashboard.md#ai-calls)). Four project routes (`apps/api/src/ai/call-routes.ts`, queries in `apps/api/src/ai/call-list.ts`), each behind `requireProjectAccess` for `monitoring` at view; a call's user, and the `user` filter, need `users` at view too (without it, users are `null`, `usersHidden` is `true`, and a request with `user` is refused with 403, so no one finds a user's calls by guessing their ID):
+Every call of a period, one at a time, and the conversations they make, on the AI page's calls list (`/projects/<id>/ai/calls`, [dashboard](dashboard.md#ai-calls)). Four project routes (`apps/api/src/ai/call-routes.ts`, queries in `apps/api/src/ai/call-list.ts`), each behind `requireProjectAccess` for `ai` at view; a call's user, and the `user` filter, need `users` at view too (without it, users are `null`, `usersHidden` is `true`, and a request with `user` is refused with 403, so no one finds a user's calls by guessing their ID):
 
 ```text
 GET /api/projects/:id/ai/call-list?…the report's filters…&user=…&conversation=…&status=failed&before=…
@@ -447,7 +447,7 @@ A conversation is the calls that share a `conversation_id` ([Detection](#detecti
    - a user's AI usage on the user's page (built 22 November 2026; [above](#a-users-ai-usage));
    - comparing the totals with the token metrics;
    - grouping by `gen_ai.conversation.id` (built 22 November 2026; [Conversations](#conversations));
-   - an AI access area, if owners want finance people to see costs without the traces.
+   - an AI access area, so finance people can see costs without the traces (built 22 November 2026, [access](access.md)).
 
 ## Tests
 
@@ -460,5 +460,5 @@ A conversation is the calls that share a `conversation_id` ([Detection](#detecti
 - `apps/api/tests/ai-models.test.ts`: cost at read time with custom rows from a day, for all calls, price as (one level), on another ID of a bundled entry, exactly at a start, in a non-UTC timezone, and after a reset, ClickHouse against `priceAt`; kept hours marked stale and added up again after a change, and after a row changed past the routes; the list across the instance's projects only, and without ClickHouse; admins yes, members no; validation, the caps, a reset refused for a target, Origin, and the limit per user.
 - `apps/web/tests/browser/ai-models.test.tsx`: the tab, the No price filter, the search and paging, a model's sheet, Edit price from a date and for all calls, price as, Add model, Reset with its confirm, the states, and the AI page's link.
 - `apps/web/tests/browser/ai.test.tsx` and `ai-alerts.test.tsx`: the page and the alert form against the fake API (`fake-ai.ts`), and a call without a trace without its link; `report-screens.test.tsx` the page at 390 and 1440 wide.
-- `apps/web/tests/browser/users.test.tsx`: a user's AI section with its figures, models, and features, the line for no calls in the period, nothing without `monitoring` (and no request) or for a project without AI calls, the failure and Retry, and its fit at 390 and 1440 wide, on the page and beside the list.
+- `apps/web/tests/browser/users.test.tsx`: a user's AI section with its figures, models, and features, the line for no calls in the period, nothing without `ai` (and no request, even with `monitoring`) or for a project without AI calls, the failure and Retry, and its fit at 390 and 1440 wide, on the page and beside the list.
 - `apps/api/tests/overview.test.ts` and `apps/web/tests/browser/overview.test.tsx`: the AI cost widget's figures against the period before, its models, its access, the change hidden below 20 calls, and the state without AI calls.

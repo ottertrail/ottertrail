@@ -110,6 +110,12 @@ function canSeeKind(user: UserAccess, kind: RuleKind): boolean {
   return area === null || canUse(user, area, "view");
 }
 
+/** Whether the user reads the telemetry a kind watches: monitoring, or AI for an AI rule. */
+function canSeeTelemetry(user: UserAccess, kind: RuleKind): boolean {
+  const area = sourceAreaOf(kind);
+  return (area === "monitoring" || area === "ai") && canUse(user, area, "view");
+}
+
 /** Whether a kind sent in a request is one the user may use; the schema refuses unknown kinds first. */
 const mayUseKind = (user: UserAccess, kind: string | undefined) =>
   isRuleKind(kind) && canSeeKind(user, kind);
@@ -167,8 +173,8 @@ export const alertRoutes: FastifyPluginCallback<{
 
   /**
    * The rule as answered, with why a telemetry rule may not fire yet, if it
-   * may not. The warning says whether a service, route, or metric reported,
-   * so only those who may read monitoring get it.
+   * may not. The warning says whether a service, route, metric, or AI call
+   * reported, so only those who may read the kind's area get it.
    */
   const saved = async (
     rule: Rule,
@@ -176,7 +182,7 @@ export const alertRoutes: FastifyPluginCallback<{
     reply: Parameters<typeof dashboardReader>[2],
   ) => ({
     rule,
-    warning: canUse(access.user, "monitoring", "view")
+    warning: canSeeTelemetry(access.user, rule.kind)
       ? await notSeenWarning(
           dashboardReader(clickhouse, limiter, reply),
           access.projectId,

@@ -199,6 +199,14 @@ describe("the AI calls list", () => {
       .toHaveAttribute("href", `${CALLS}?conversation=chat-41`);
   });
 
+  test("without monitoring, a call's trace ID shows as text, with no link", async () => {
+    installFakeApi({ access: memberAccess({ ai: "view" }) });
+    renderApp(`${CALLS}?call=${aiCallId(0)}`);
+    const detail = region("AI calls", "selected");
+    await expect.element(detail.getByText("5c1d0e9f8a7b6c5d4e3f2a1b0c9d8e7f")).toBeVisible();
+    expect(detail.getByRole("link", { name: "Open its trace" }).elements()).toEqual([]);
+  });
+
   test("a call's trace past the spans' retention, one without a trace, and one without a price", async () => {
     installFakeApi();
     const router = renderApp(`${CALLS}?call=${aiCallId(5)}`);
@@ -256,7 +264,7 @@ describe("the AI calls list", () => {
   });
 
   test("without the Users area, a user filter from a link is refused, and its chip removes it", async () => {
-    installFakeApi({ access: memberAccess({ monitoring: "view" }) });
+    installFakeApi({ access: memberAccess({ ai: "view" }) });
     const router = renderApp(`${CALLS}?user=user_8f2a`);
     await expect.element(page.getByText("The AI calls could not load")).toBeVisible();
     await page.getByRole("button", { name: "Remove the filter user user_8f2a" }).click();
@@ -266,7 +274,7 @@ describe("the AI calls list", () => {
   });
 
   test("without the Users area: no user filter, and no call names its user", async () => {
-    installFakeApi({ access: memberAccess({ monitoring: "view" }) });
+    installFakeApi({ access: memberAccess({ ai: "view" }) });
     renderApp(`${CALLS}?call=${aiCallId(0)}`);
     const detail = region("AI calls", "selected");
     await expect.element(detail.getByRole("heading", { name: "claude-sonnet-4-6" })).toBeVisible();

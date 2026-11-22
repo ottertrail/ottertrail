@@ -167,6 +167,19 @@ describe("what a member sees", () => {
     expect([...new Set(asked)].toSorted()).toEqual(["sources", "speed", "traffic"]);
   });
 
+  test("AI cost with the AI area, and not with monitoring alone", async () => {
+    installFakeApi({ access: memberAccess({ ai: "view" }) });
+    renderApp(OVERVIEW);
+    await expect.element(widget("AI cost").getByText("$48.27")).toBeVisible();
+    expect(shownTitles()).toEqual(["AI cost"]);
+
+    unmountAll();
+    installFakeApi({ access: memberAccess({ monitoring: "view" }) });
+    renderApp(OVERVIEW);
+    await expect.element(widget("Server requests, failures and p95")).toBeVisible();
+    expect(shownTitles()).toEqual(["Server requests, failures and p95"]);
+  });
+
   test("with none of the overview's areas: a short state that points to their pages", async () => {
     installFakeApi({ access: memberAccess({ replays: "view" }) });
     renderApp(OVERVIEW);

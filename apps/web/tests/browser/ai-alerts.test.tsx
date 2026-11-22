@@ -303,15 +303,24 @@ describe("the rule form's AI kinds", () => {
       .toMatchTextContent(/^The last hour/);
   });
 
-  test("a member without Monitoring is not offered the AI kinds", async () => {
-    installFakeApi({ access: memberAccess({ uptime_alerts: "manage" }) });
+  test("a member without AI is not offered the AI kinds, even with Monitoring", async () => {
+    installFakeApi({ access: memberAccess({ uptime_alerts: "manage", monitoring: "view" }) });
     renderApp(ALERTS);
     await page.getByRole("button", { name: "Add rule" }).click();
     await dialog("Add an alert rule").getByRole("combobox", { name: "When" }).click();
-    await expect.element(page.getByRole("option", { name: "Check down" })).toBeVisible();
+    await expect.element(page.getByRole("option", { name: "Route latency" })).toBeVisible();
     expect(page.getByRole("option", { name: "AI cost" }).elements()).toEqual([]);
     expect(page.getByRole("option", { name: "AI failures" }).elements()).toEqual([]);
     expect(page.getByRole("option", { name: "AI latency" }).elements()).toEqual([]);
+  });
+
+  test("a member with AI, without Monitoring, is offered the AI kinds and no other telemetry", async () => {
+    installFakeApi({ access: memberAccess({ uptime_alerts: "manage", ai: "view" }) });
+    renderApp(ALERTS);
+    await page.getByRole("button", { name: "Add rule" }).click();
+    await dialog("Add an alert rule").getByRole("combobox", { name: "When" }).click();
+    await expect.element(page.getByRole("option", { name: "AI cost" })).toBeVisible();
+    expect(page.getByRole("option", { name: "Route latency" }).elements()).toEqual([]);
   });
 });
 

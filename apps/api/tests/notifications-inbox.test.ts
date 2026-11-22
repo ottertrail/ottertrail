@@ -35,6 +35,7 @@ const NONE: Areas = {
   replays: "none",
   users: "none",
   monitoring: "none",
+  ai: "none",
   uptime_alerts: "none",
 };
 
@@ -422,6 +423,51 @@ describe("what makes items", () => {
         link: `/projects/${project.id}/uptime/check-1`,
       },
     ]);
+  });
+
+  test("an AI rule's alert needs AI too, not monitoring", async () => {
+    const project = await insertProject(dashboard.db, { name: "Assistant" });
+    const ai = await member("ai-alerts@example.com", { uptime_alerts: "view", ai: "view" }, [
+      project.id,
+    ]);
+    const monitoring = await member(
+      "monitoring-alerts@example.com",
+      { uptime_alerts: "view", monitoring: "view" },
+      [project.id],
+    );
+    const rule = await dashboard.db
+      .insertInto("alert_rules")
+      .values({
+        project_id: project.id,
+        name: "Spend",
+        kind: "ai_cost",
+        settings: JSON.stringify({ thresholdUsd: 25 }),
+        channel_ids: [],
+      })
+      .returning("id")
+      .executeTakeFirstOrThrow();
+    await fire(
+      { db: dashboard.db, publicUrl: PUBLIC_URL },
+      {
+        ruleId: rule.id,
+        rule: { kind: "ai_cost", settings: { thresholdUsd: 25 } },
+        subjectKey: "cost",
+        subjectName: "AI cost",
+        type: "ai.cost",
+        message: "Assistant: AI calls cost $30 in the last day.",
+        url: `${PUBLIC_URL}/projects/${project.id}/ai`,
+        subject: { type: "ai", ruleName: "Spend" },
+        at: new Date(),
+      },
+    );
+    const row = await dashboard.db
+      .selectFrom("notifications")
+      .select(["title", "areas"])
+      .where("project_id", "=", project.id)
+      .executeTakeFirstOrThrow();
+    expect(row).toEqual({ title: "AI cost over limit: Spend", areas: ["uptime_alerts", "ai"] });
+    expect(await titles(ai.cookie)).toEqual(["AI cost over limit: Spend"]);
+    expect(await titles(monitoring.cookie)).toEqual([]);
   });
 
   test("an error rule's alert needs errors too; a test send makes none", async () => {

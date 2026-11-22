@@ -621,7 +621,7 @@ describe("the AI page's no-price line", () => {
   });
 
   test("is plain text for a member", async () => {
-    installFakeApi({ access: memberAccess({ monitoring: "view" }) });
+    installFakeApi({ access: memberAccess({ ai: "view" }) });
     renderApp(`/projects/${PROJECT.id}/ai`);
     await expect
       .element(

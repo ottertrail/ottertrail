@@ -117,9 +117,10 @@ export function inboxTitle(payload: NotificationPayload): string {
 /** The areas a project item needs by default: alerts, and the area the alert watches. */
 export function defaultAreas(type: string): Area[] {
   if (type.startsWith("error.")) return ["uptime_alerts", "errors"];
-  if (type.startsWith("route.") || type.startsWith("metric.") || type.startsWith("ai.")) {
+  if (type.startsWith("route.") || type.startsWith("metric.")) {
     return ["uptime_alerts", "monitoring"];
   }
+  if (type.startsWith("ai.")) return ["uptime_alerts", "ai"];
   return ["uptime_alerts"];
 }
 

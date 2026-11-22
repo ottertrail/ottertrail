@@ -387,6 +387,7 @@ describe("members, admins, and the one access check", () => {
     let channelId: string;
     let errorRule: string;
     let routeRule: string;
+    let aiRule: string;
     let checkRule: string;
 
     beforeAll(async () => {
@@ -404,11 +405,13 @@ describe("members, admins, and the one access check", () => {
         kind: "route_latency",
         settings: { service: "checkout", thresholdMs: 500 },
       });
+      aiRule = await create({ kind: "ai_cost", settings: { thresholdUsd: 25 } });
       checkRule = await create({ kind: "check_down" });
       // An alert of each kind, firing, as the worker would leave them.
       for (const [ruleId, kind, message] of [
         [errorRule, "error_new", "New error: No account for jane.doe@example.com"],
         [routeRule, "route_latency", "GET /orders/{id} in checkout is slow"],
+        [aiRule, "ai_cost", "AI calls cost $30 in production in the last day"],
         [checkRule, "check_down", "Shop: the check is down."],
       ] as const) {
         const history = await dashboard.db
@@ -437,15 +440,16 @@ describe("members, admins, and the one access check", () => {
       }
     });
 
-    test("a member without errors or monitoring sees, creates, and changes check rules only", async () => {
+    test("a member without errors, monitoring, or AI sees, creates, and changes check rules only", async () => {
       const { cookie } = await member("alerts-only@example.com", {
         errors: "none",
         monitoring: "none",
+        ai: "none",
         uptime_alerts: "manage",
       });
       const listed = (await send(cookie, "GET", rules())).json().rules;
       expect(listed.map((rule: { id: string }) => rule.id)).toEqual([checkRule]);
-      for (const ruleId of [errorRule, routeRule]) {
+      for (const ruleId of [errorRule, routeRule, aiRule]) {
         for (const [method, path, payload] of [
           ["GET", `/${ruleId}`],
           ["GET", `/${ruleId}/history`],
@@ -466,6 +470,7 @@ describe("members, admins, and the one access check", () => {
         { kind: "error_spike", settings: { threshold: 5, windowMinutes: 10 } },
         { kind: "route_latency", settings: { service: "checkout", thresholdMs: 500 } },
         { kind: "metric_threshold", settings: { metric: "m", metricKind: "gauge", value: 1 } },
+        { kind: "ai_cost", settings: { thresholdUsd: 25 } },
       ]) {
         const response = await send(cookie, "POST", rules(), { ...body, channelIds: [channelId] });
         expect({ kind: body.kind, status: response.statusCode, body: response.json() }).toEqual({
@@ -498,6 +503,7 @@ describe("members, admins, and the one access check", () => {
       const errors = await member("alerts-errors@example.com", {
         errors: "view",
         monitoring: "none",
+        ai: "none",
         uptime_alerts: "manage",
       });
       const listed = (await send(errors.cookie, "GET", rules())).json().rules;
@@ -522,6 +528,7 @@ describe("members, admins, and the one access check", () => {
       const monitoring = await member("alerts-monitoring@example.com", {
         errors: "none",
         monitoring: "view",
+        ai: "none",
         uptime_alerts: "manage",
       });
       const created = await send(monitoring.cookie, "POST", rules(), {
@@ -533,6 +540,53 @@ describe("members, admins, and the one access check", () => {
       // Nothing of the service arrived: the warning says so to those who read monitoring.
       expect(created.json().warning).not.toBeNull();
       expect((await send(monitoring.cookie, "GET", rules(`/${errorRule}`))).statusCode).toBe(404);
+      // AI rules belong to the AI area, not monitoring.
+      expect((await send(monitoring.cookie, "GET", rules(`/${aiRule}`))).statusCode).toBe(404);
+      expect(
+        (
+          await send(monitoring.cookie, "POST", rules(), {
+            kind: "ai_cost",
+            settings: { thresholdUsd: 25 },
+            channelIds: [channelId],
+          })
+        ).json(),
+      ).toEqual(FORBIDDEN);
+    });
+
+    test("AI at view adds AI rules, their alerts, and the warning, without monitoring", async () => {
+      const { cookie } = await member("alerts-ai@example.com", {
+        errors: "none",
+        monitoring: "none",
+        ai: "view",
+        uptime_alerts: "manage",
+      });
+      const listed = (await send(cookie, "GET", rules())).json().rules;
+      const kinds = new Set(listed.map((rule: { kind: string }) => rule.kind));
+      expect(kinds).toEqual(new Set(["ai_cost", "certificate_expiring", "check_down"]));
+      expect((await send(cookie, "GET", rules(`/${aiRule}/history`))).statusCode).toBe(200);
+      const alerts = (await send(cookie, "GET", `/api/projects/${site.id}/alerts`)).json().alerts;
+      expect(alerts.map((alert: { message: string }) => alert.message).toSorted()).toEqual([
+        "AI calls cost $30 in production in the last day",
+        "Shop: the check is down.",
+      ]);
+      const created = await send(cookie, "POST", rules(), {
+        kind: "ai_latency",
+        settings: { thresholdMs: 5000 },
+        channelIds: [channelId],
+      });
+      expect(created.statusCode).toBe(201);
+      // No AI call arrived: the warning says so to those who read AI.
+      expect(created.json().warning).not.toBeNull();
+      expect(
+        (
+          await send(cookie, "POST", rules(), {
+            kind: "route_latency",
+            settings: { service: "checkout", thresholdMs: 500 },
+            channelIds: [channelId],
+          })
+        ).json(),
+      ).toEqual(FORBIDDEN);
+      await send(dashboard.cookie, "DELETE", rules(`/${created.json().rule.id}`));
     });
 
     test("an error rule changed into a check rule keeps its error alerts from check-only readers", async () => {
@@ -563,6 +617,7 @@ describe("members, admins, and the one access check", () => {
       const { cookie } = await member("alerts-after-change@example.com", {
         errors: "none",
         monitoring: "none",
+        ai: "none",
         uptime_alerts: "manage",
       });
       // The rule is a check rule now, so they see it, but not what it said before,
@@ -744,6 +799,126 @@ test(
       await migrateTestDatabase(testDb, "0005_replay_details");
       const left = await testDb.db.selectFrom("dashboard_users").select("email").execute();
       expect(left).toEqual([{ email: "owner@example.com" }]);
+      await migrateTestDatabase(testDb, "latest");
+    } finally {
+      await testDb.destroy();
+    }
+  },
+);
+
+test(
+  "0022 gives members and invitations AI at their monitoring level, and AI alerts in the inbox need AI",
+  { timeout: MIGRATION_TEST_MS },
+  async () => {
+    const testDb = await createTestDatabase();
+    try {
+      const { db } = testDb;
+      await migrateTestDatabase(testDb, "0021_alert_history_kind");
+      const users = await db
+        .insertInto("dashboard_users")
+        .values([
+          { name: "Owner", email: "owner@example.com", role: "owner" },
+          { name: "Watcher", email: "watcher@example.com", role: "member" },
+          { name: "Marketer", email: "marketer@example.com", role: "member" },
+        ])
+        .returning(["id", "email"])
+        .execute();
+      const idOf = (email: string) => users.find((user) => user.email === email)?.id ?? "";
+      await db
+        .insertInto("dashboard_member_access")
+        .values([
+          { user_id: idOf("watcher@example.com"), all_projects: true, monitoring: "view" },
+          { user_id: idOf("marketer@example.com"), all_projects: true, web_analytics: "view" },
+        ])
+        .execute();
+      const expiresAt = new Date(Date.now() + 86_400_000);
+      await db
+        .insertInto("dashboard_invitations")
+        .values([
+          {
+            token_hash: Buffer.from("watching"),
+            email: "invited-watcher@example.com",
+            role: "member",
+            monitoring: "view",
+            invited_by: idOf("owner@example.com"),
+            expires_at: expiresAt,
+          },
+          {
+            token_hash: Buffer.from("marketing"),
+            email: "invited-marketer@example.com",
+            role: "member",
+            web_analytics: "view",
+            invited_by: idOf("owner@example.com"),
+            expires_at: expiresAt,
+          },
+        ])
+        .execute();
+      await db
+        .insertInto("notifications")
+        .values([
+          {
+            kind: "ai.cost",
+            permission: "projects",
+            areas: ["uptime_alerts", "monitoring"],
+            title: "AI cost over limit: Spend",
+            link: "/alerts",
+          },
+          {
+            kind: "route.latency",
+            permission: "projects",
+            areas: ["uptime_alerts", "monitoring"],
+            title: "Slow route: Checkout",
+            link: "/alerts",
+          },
+        ])
+        .execute();
+
+      await migrateTestDatabase(testDb, "latest");
+      const access = await db
+        .selectFrom("dashboard_member_access")
+        .innerJoin("dashboard_users", "dashboard_users.id", "dashboard_member_access.user_id")
+        .select(["dashboard_users.email", "monitoring", "ai"])
+        .orderBy("dashboard_users.email")
+        .execute();
+      expect(access).toEqual([
+        { email: "marketer@example.com", monitoring: "none", ai: "none" },
+        { email: "watcher@example.com", monitoring: "view", ai: "view" },
+      ]);
+      const invitations = await db
+        .selectFrom("dashboard_invitations")
+        .select(["email", "monitoring", "ai"])
+        .orderBy("email")
+        .execute();
+      expect(invitations).toEqual([
+        { email: "invited-marketer@example.com", monitoring: "none", ai: "none" },
+        { email: "invited-watcher@example.com", monitoring: "view", ai: "view" },
+      ]);
+      const items = await db
+        .selectFrom("notifications")
+        .select(["kind", "areas"])
+        .orderBy("kind")
+        .execute();
+      expect(items).toEqual([
+        { kind: "ai.cost", areas: ["uptime_alerts", "ai"] },
+        { kind: "route.latency", areas: ["uptime_alerts", "monitoring"] },
+      ]);
+      await expect(
+        db
+          .updateTable("dashboard_member_access")
+          .set({ ai: "manage" as "view" })
+          .where("user_id", "=", idOf("watcher@example.com"))
+          .execute(),
+      ).rejects.toThrow(/dashboard_member_access_ai_check/);
+
+      // Rolling back puts AI alerts back under monitoring and drops the column.
+      await migrateTestDatabase(testDb, "0021_alert_history_kind");
+      expect(
+        await db
+          .selectFrom("notifications")
+          .select(["kind", "areas"])
+          .where("kind", "=", "ai.cost")
+          .execute(),
+      ).toEqual([{ kind: "ai.cost", areas: ["uptime_alerts", "monitoring"] }]);
       await migrateTestDatabase(testDb, "latest");
     } finally {
       await testDb.destroy();

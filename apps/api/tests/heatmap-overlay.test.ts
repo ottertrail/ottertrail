@@ -371,6 +371,7 @@ describe("exchanging a link", () => {
         replays: "none",
         users: "none",
         monitoring: "none",
+        ai: "none",
         uptime_alerts: "none",
       },
     });
@@ -518,6 +519,7 @@ describe("reading the overlay", () => {
         replays: "none",
         users: "none",
         monitoring: "none",
+        ai: "none",
         uptime_alerts: "none",
       },
     });
@@ -537,6 +539,7 @@ describe("reading the overlay", () => {
         replays: "none",
         users: "none",
         monitoring: "none",
+        ai: "none",
         uptime_alerts: "none",
       },
     });

@@ -491,6 +491,7 @@ interface AreaColumns {
   replays: ColumnType<"none" | "view", "none" | "view" | undefined, "none" | "view">;
   users: ColumnType<"none" | "view", "none" | "view" | undefined, "none" | "view">;
   monitoring: ColumnType<"none" | "view", "none" | "view" | undefined, "none" | "view">;
+  ai: ColumnType<"none" | "view", "none" | "view" | undefined, "none" | "view">;
   uptime_alerts: ColumnType<AreaLevel, AreaLevel | undefined, AreaLevel>;
 }
 

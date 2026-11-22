@@ -2303,6 +2303,7 @@ const ALL_AREAS: Record<Area, AreaLevel> = {
   replays: "view",
   users: "view",
   monitoring: "view",
+  ai: "view",
   uptime_alerts: "manage",
 };
 
@@ -2321,6 +2322,7 @@ export function memberAccess(
     replays: "none",
     users: "none",
     monitoring: "none",
+    ai: "none",
     uptime_alerts: "none",
   };
   return { role: "member", projects, areas: { ...none, ...areas } };
@@ -4651,21 +4653,16 @@ export function fakeWidget(id: WidgetId, query: URLSearchParams, api: FakeApi): 
   switch (id) {
     case "attention": {
       const errorKinds = ["error_new", "error_regressed", "error_spike"];
-      const telemetryKinds = [
-        "route_latency",
-        "route_failures",
-        "metric_threshold",
-        "ai_cost",
-        "ai_failures",
-        "ai_latency",
-      ];
+      const telemetryKinds = ["route_latency", "route_failures", "metric_threshold"];
+      const aiKinds = ["ai_cost", "ai_failures", "ai_latency"];
       return {
         ...header,
         alerts: api.alerts.firing
           .filter(
             (alert) =>
               (!errorKinds.includes(alert.kind) || canSee(api, "errors")) &&
-              (!telemetryKinds.includes(alert.kind) || canSee(api, "monitoring")),
+              (!telemetryKinds.includes(alert.kind) || canSee(api, "monitoring")) &&
+              (!aiKinds.includes(alert.kind) || canSee(api, "ai")),
           )
           .map(({ ruleId, ruleName, kind, subjectName, since, message }) => ({
             ruleId,

@@ -27,6 +27,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { WhenAllowed } from "@/components/when-allowed";
+import { useAccess } from "@/lib/access";
 import {
   type AiCallPrice,
   aiCallQuery,
@@ -223,6 +224,7 @@ export function CallView({
 }) {
   const { projectId } = place;
   const query = useQuery(aiCallQuery(projectId, callId, at));
+  const canTrace = useAccess().canUse("monitoring");
   if (query.error instanceof ApiError && query.error.status === 404) {
     if (query.error.code !== "no_such_call") return <NoSuchProject />;
     return (
@@ -378,6 +380,9 @@ export function CallView({
       <Section title="Trace">
         {call.traceId === "" ? (
           <p className="text-sm text-ink-muted">Sent over HTTP without a trace.</p>
+        ) : !canTrace ? (
+          // Traces are monitoring's: without it, the ID shows as text (docs/access.md).
+          <p className="font-mono text-xs break-all text-ink-subtle">{call.traceId}</p>
         ) : query.data.traceKept ? (
           <div className="flex flex-col gap-1">
             <Link

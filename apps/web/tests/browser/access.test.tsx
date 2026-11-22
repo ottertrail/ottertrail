@@ -29,6 +29,10 @@ describe("a member's dashboard shows only what they may use", () => {
     ]) {
       await expect.element(projectMenu().getByRole("link", { name })).not.toBeInTheDocument();
     }
+    // AI is an area of its own.
+    await expect
+      .element(projectMenu().getByRole("link", { name: "AI", exact: true }))
+      .not.toBeInTheDocument();
   });
 
   test("a page outside the member's areas says so, and the project opens on its overview", async () => {

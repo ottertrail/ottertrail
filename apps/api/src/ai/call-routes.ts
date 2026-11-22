@@ -129,7 +129,7 @@ const USERS_NEEDED = {
  *     (one conversation's calls in the period, in order, and its figures)
  *
  * The AI calls list (docs/ai-usage.md, "The calls list"; call-list.ts).
- * Each runs requireProjectAccess for monitoring at view, as the AI page's
+ * Each runs requireProjectAccess for the AI area at view, as the AI page's
  * routes do, and reads only the project it found. A call's user, and the
  * `user` filter, need users at view too: without it, users are null,
  * `usersHidden` is true, and a request with `user` is refused (403), so a
@@ -156,7 +156,7 @@ export const aiCallListRoutes: FastifyPluginCallback<{
   done,
 ) => {
   const signedIn = requireSession(auth);
-  const canView = requireProjectAccess(db, { area: "monitoring", level: "view" });
+  const canView = requireProjectAccess(db, { area: "ai", level: "view" });
   const readerOf = (reply: FastifyReply) => dashboardReader(clickhouse, limiter, reply);
   app.setErrorHandler(clickHouseErrorHandler);
 
