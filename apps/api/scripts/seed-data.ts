@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { gzipSync } from "node:zlib";
 
-import type { Kysely } from "kysely";
+import { type Kysely, sql } from "kysely";
 
 /**
  * Development demo data (`vp run seed`, scripts/seed.ts): a project named
@@ -469,9 +469,14 @@ export async function seedDemo(options: SeedOptions): Promise<SeedResult> {
       if (outcome !== "stored") log(`A replay was not stored: ${outcome}.`);
     }
     replays = (await joinReplays(db, store, { now, onlyProjectId: projectId })).joined;
+    // Now by PostgreSQL's clock, not the seed's start or this machine's: the
+    // replays' rows were made since, due at once (next_link_at defaults to
+    // the database's now()). A database in a VM whose clock runs a few
+    // milliseconds ahead would leave the latest replays not yet due, and so
+    // never linked to their errors.
+    const { rows } = await sql<{ now: Date }>`select now() as now`.execute(db);
     await linkReplays(db, reader, {
-      // Now, not the seed's start: the replays' rows were made since, due at once.
-      now: new Date(),
+      now: rows[0]?.now ?? new Date(),
       onlyProjectId: projectId,
     });
   }
