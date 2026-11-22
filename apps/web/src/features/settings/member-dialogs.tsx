@@ -386,6 +386,8 @@ export function AccessSheet({
     mutationFn: (values: { choice: AccessChoice }) => changeMember(member.id, values.choice),
     onSuccess: (_, values) => {
       form.saved(values);
+      // The sheet closes: anything typed while the request ran goes with it.
+      form.discard();
       void queryClient.invalidateQueries({ queryKey: membersKey });
       onSaved();
       onOpenChange(false);

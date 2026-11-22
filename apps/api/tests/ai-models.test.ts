@@ -518,7 +518,12 @@ describe("the list", () => {
     expect(byModel.get(SONNET)).toMatchObject({
       calls: expect.any(Number),
       source: "built_in",
-      builtIn: { label: "Claude Sonnet 4.6", checked: sonnet.checked },
+      builtIn: {
+        label: "Claude Sonnet 4.6",
+        checked: sonnet.checked,
+        source: sonnet.source,
+        notes: sonnet.notes ?? null,
+      },
       price: { input: sonnet.input, output: sonnet.output },
     });
     expect(byModel.get("list-snapshot")).toMatchObject({

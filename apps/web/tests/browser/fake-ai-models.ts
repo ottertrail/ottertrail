@@ -13,12 +13,20 @@ export interface FakeAiModels {
   changes: { path: string; body: unknown }[];
   /** Answers a change with this instead, once (an API refusal). */
   refuseNext: Response | null;
+  /** While set, the list waits for it: a test holds the read after a change back. */
+  holdList: Promise<void> | null;
 }
 
 const SONNET: Rates = { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 };
 const MINI: Rates = { input: 0.25, output: 2, cacheRead: 0.025, cacheWrite: null };
 
-const builtIn = (label: string, rates: Rates) => ({ label, checked: "2026-11-22", rates });
+const builtIn = (label: string, rates: Rates, notes: string | null = null) => ({
+  label,
+  checked: "2026-11-22",
+  source: "https://pricing.example.com/models",
+  notes,
+  rates,
+});
 
 const model = (fields: Partial<AiModel> & Pick<AiModel, "model" | "provider">): AiModel => ({
   label: null,
@@ -49,7 +57,11 @@ export const AI_MODELS: AiModelList = {
       calls: 12_000,
       price: SONNET,
       source: "built_in",
-      builtIn: builtIn("Claude Sonnet 4.6", SONNET),
+      builtIn: builtIn(
+        "Claude Sonnet 4.6",
+        SONNET,
+        "Prompts over 200K input tokens: 2x input, 1.5x output.",
+      ),
       covers: { ids: ["claude-sonnet-4-6"], prefixes: [] },
     }),
     model({
@@ -110,8 +122,35 @@ export const AI_MODELS: AiModelList = {
   ],
 };
 
+/** The fixture with `count` more built-in models after it, never called, for paging. */
+export function manyAiModels(count: number): AiModelList {
+  const list = structuredClone(AI_MODELS);
+  for (let index = 1; index <= count; index += 1) {
+    const name = `fixture-model-${String(index).padStart(3, "0")}`;
+    const rates: Rates = { input: 1, output: 2, cacheRead: null, cacheWrite: null };
+    list.models.push(
+      model({
+        model: name,
+        provider: "fixture",
+        label: `Fixture ${index}`,
+        price: rates,
+        source: "built_in",
+        builtIn: builtIn(`Fixture ${index}`, rates),
+        covers: { ids: [name], prefixes: [] },
+      }),
+    );
+  }
+  return list;
+}
+
 export function fakeAiModels(overrides: Partial<FakeAiModels> = {}): FakeAiModels {
-  return { list: structuredClone(AI_MODELS), changes: [], refuseNext: null, ...overrides };
+  return {
+    list: structuredClone(AI_MODELS),
+    changes: [],
+    refuseNext: null,
+    holdList: null,
+    ...overrides,
+  };
 }
 
 const json = (body: unknown, status = 200) =>
@@ -163,13 +202,14 @@ export function answerAiModels(
   url: URL,
   init: RequestInit | undefined,
   role: string,
-): Response | null {
+): Response | Promise<Response> | null {
   const path = url.pathname;
   if (!path.startsWith("/api/settings/ai-models")) return null;
   if (role === "member") return json(FORBIDDEN, 403);
   const method = init?.method ?? "GET";
   if (path === "/api/settings/ai-models" && method === "GET") {
-    return fake.list instanceof Response ? fake.list.clone() : json(fake.list);
+    const answer = () => (fake.list instanceof Response ? fake.list.clone() : json(fake.list));
+    return fake.holdList === null ? answer() : fake.holdList.then(answer);
   }
   const body: unknown =
     typeof init?.body === "string" && init.body !== "" ? JSON.parse(init.body) : {};

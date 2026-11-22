@@ -47,7 +47,14 @@ export interface AiModel {
   } | null;
   /** The built-in entry a price on this model covers; null: it covers this model only. */
   covers: { ids: string[]; prefixes: string[] } | null;
-  builtIn: { label: string; checked: string; rates: Rates } | null;
+  /** The bundled price, the provider's page it was read from, and what it leaves out. */
+  builtIn: {
+    label: string;
+    checked: string;
+    source: string;
+    notes: string | null;
+    rates: Rates;
+  } | null;
   prices: CustomRates[];
   priceAs: { provider: string; model: string; updatedAt: string; updatedBy: string | null } | null;
 }
@@ -103,6 +110,8 @@ const isModel = (value: unknown): value is AiModel =>
     (isRecord(value.builtIn) &&
       isText(value.builtIn.label) &&
       isText(value.builtIn.checked) &&
+      isText(value.builtIn.source) &&
+      isTextOrNull(value.builtIn.notes) &&
       isRates(value.builtIn.rates))) &&
   isListOf(value.prices, isCustomRates) &&
   (value.priceAs === null ||

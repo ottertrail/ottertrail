@@ -225,11 +225,11 @@ Plus the full state. A region that refreshes keeps its last data, dimmed, and sa
 
 Every screen takes one of three patterns, by what it is for. The blocks live in `apps/web/src/components/`, and each takes the [data states](#data-states) above. The approved mockups behind them were the Console (reports) and Workbench (lists and settings) directions.
 
-| Kind of screen   | Pattern           | Screens                                                                                                 |
-| ---------------- | ----------------- | ------------------------------------------------------------------------------------------------------- |
-| Report           | Console           | Overview, Web analytics, Speed, Heatmaps, Product analytics, Services, Databases, AI, Hosts, Metrics    |
-| List with detail | Workbench         | Errors, Replays, Traces, Logs, Users, Uptime, Alerts                                                    |
-| Settings         | Tabs and Save bar | Project settings, instance Settings, Account settings, Members (tables, with a sheet for Change access) |
+| Kind of screen   | Pattern           | Screens                                                                                                                                              |
+| ---------------- | ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Report           | Console           | Overview, Web analytics, Speed, Heatmaps, Product analytics, Services, Databases, AI, Hosts, Metrics                                                 |
+| List with detail | Workbench         | Errors, Replays, Traces, Logs, Users, Uptime, Alerts                                                                                                 |
+| Settings         | Tabs and Save bar | Project settings, instance Settings, Account settings, Members (tables, with a sheet for Change access), AI models (a table, with a sheet per model) |
 
 ### The shell
 
@@ -289,9 +289,9 @@ A list on the left and the selected item on the right (`workbench.tsx`), on shad
 
 ### Clickable rows
 
-A row that is one item opening one thing takes a click anywhere on it: the Workbench lists (Errors, Replays, Traces, Users, Uptime, Alerts; on Logs the record's button already spans the row), the projects list, the Members page's members (each opening Change access, where the viewer may change them), the report tables whose rows each open a page (Metrics, Hosts, a database's query shapes, a service's routes), and a trace's spans, each row choosing its span. `clickableRow()` (`components/clickable-row.ts`) gives a `TableRow` its props; `ROW_LINK` marks the name the row stands for.
+A row that is one item opening one thing takes a click anywhere on it: the Workbench lists (Errors, Replays, Traces, Users, Uptime, Alerts; on Logs the record's button already spans the row), the projects list, the Members page's members (each opening Change access, where the viewer may change them), the AI models table's models (each opening its price), the report tables whose rows each open a page (Metrics, Hosts, a database's query shapes, a service's routes), and a trace's spans, each row choosing its span. `clickableRow()` (`components/clickable-row.ts`) gives a `TableRow` its props; `ROW_LINK` marks the name the row stands for.
 
-- **The name stays the control.** The row's name is the real link or button, which the keyboard and screen readers use; the row's click is a mouse convenience that focuses and clicks the name, so it does exactly what the name does (selects in a workbench, opens the page under 64rem, opens Change access on Members), and Tab carries on from that row. The row takes no role and no tab stop.
+- **The name stays the control.** The row's name is the real link or button, which the keyboard and screen readers use; the row's click is a mouse convenience that focuses and clicks the name, so it does exactly what the name does (selects in a workbench, opens the page under 64rem, opens Change access on Members, opens a model's price on AI models), and Tab carries on from that row. The row takes no role and no tab stop.
 - **The row's own controls act alone.** A click on a link, button, switch, field or label in the row (Uptime's edit, pause and delete, Alerts' on or off switch, the traces and alert-rule icons on Services, the projects list's Settings) does only its own action. A control that only shows a tooltip (a route's status-classes bar) carries `data-row-passthrough`: a click on it is the row's, and it takes the row's pointer. A click inside a dialog or menu the row opened does nothing to the row, though React passes it up through the portal.
 - **New tabs.** Cmd or Ctrl on the row, or a middle click, opens the name's link in a new tab (`window.open`; whether the tab opens in front is the browser's choice) and leaves the list and its selection as they were. Shift (which extends a text selection) and Alt do nothing to the row. A name that is a button (Logs) has no page to open apart, so the row stays as it is.
 - **Text selection.** A click that ends a drag selecting text in the row does not select the row. A double or triple click on a word acts on its first click: in a workbench that only selects the row, but in a row that opens a page (projects, hosts, query shapes, routes, metrics) it opens the page. To copy from such a row, drag over the text, or copy it from the item's page.

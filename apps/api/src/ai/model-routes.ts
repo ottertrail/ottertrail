@@ -110,8 +110,17 @@ interface ModelRow {
    * a price covers only this model.
    */
   covers: { ids: string[]; prefixes: string[] } | null;
-  /** The bundled table's price, with the day it was checked. */
-  builtIn: { label: string; checked: string; rates: Rates } | null;
+  /**
+   * The bundled table's price, with the page it was read from, the day it
+   * was checked there, and what it leaves out (a longer prompt's price).
+   */
+  builtIn: {
+    label: string;
+    checked: string;
+    source: string;
+    notes: string | null;
+    rates: Rates;
+  } | null;
   /** The instance's own prices, all calls first, then by start. */
   prices: {
     effectiveFrom: string | null;
@@ -200,7 +209,13 @@ function modelRows(
       builtIn:
         entry === null
           ? null
-          : { label: entry.label, checked: entry.checked, rates: ratesOf(entry) },
+          : {
+              label: entry.label,
+              checked: entry.checked,
+              source: entry.source,
+              notes: entry.notes ?? null,
+              rates: ratesOf(entry),
+            },
       prices: own.flatMap((row) =>
         row.rates === null
           ? []
