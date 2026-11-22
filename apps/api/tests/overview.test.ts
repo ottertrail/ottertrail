@@ -4,7 +4,11 @@ import { afterAll, beforeAll, describe, expect, test } from "vite-plus/test";
 
 import { ALL_AREAS, type Areas } from "../src/access/areas.ts";
 import { costOf, priceOf } from "../src/ai/prices.ts";
-import { purgeDeletedProjects, retryFirstSeenRebuilds } from "../src/clickhouse/delete-events.ts";
+import {
+  purgeDeletedProjects,
+  rebuildFirstSeen,
+  retryFirstSeenRebuilds,
+} from "../src/clickhouse/delete-events.ts";
 import { insertRows } from "../src/clickhouse/insert.ts";
 import type { NewEvent } from "../src/collection/event-store.ts";
 import { completeOrder, WIDGET_IDS } from "../src/overview/layout.ts";
@@ -870,6 +874,42 @@ describe("first-seen times", () => {
     await send("DELETE", `/api/projects/${project.id}`, { payload: { confirmName: "First seen" } });
     await purgeDeletedProjects(dashboard.db, dashboard.reader.client);
     expect(await firstSeen()).toEqual([]);
+  });
+
+  test("a user first seen while a rebuild runs keeps their first-seen time", async () => {
+    const project = await createProject("First seen, during a rebuild");
+    await dashboard.store(project.id, [
+      event("pageview", at(1, "09:00"), { path: "/", visitorId: "1", userId: "early" }),
+    ]);
+    const firstSeenOf = async () => {
+      const result = await dashboard.reader.client.query({
+        query: `SELECT user_id, minMerge(first_seen) AS first_seen FROM user_first_seen
+                WHERE project_id = {project:UUID} GROUP BY user_id ORDER BY user_id`,
+        query_params: { project: project.id },
+        format: "JSONEachRow",
+      });
+      return result.json<{ user_id: string; first_seen: string }>();
+    };
+    const roomy = { freeRatio: async () => 0.5 };
+    // Stored after the rebuild read the events and before it deleted the old
+    // rows: the view writes "newcomer"'s row, which the delete then takes.
+    const afterSnapshot = async () => {
+      await dashboard.store(project.id, [
+        event("pageview", at(0, "08:00"), { path: "/", visitorId: "2", userId: "newcomer" }),
+        event("pageview", at(0, "08:30"), { path: "/", visitorId: "1", userId: "early" }),
+      ]);
+      expect((await firstSeenOf()).map((row) => row.user_id)).toEqual(["early", "newcomer"]);
+    };
+    expect(
+      await rebuildFirstSeen(dashboard.db, dashboard.reader.client, [project.id], {
+        ...roomy,
+        afterSnapshot,
+      }),
+    ).toBe("rebuilt");
+    expect(await firstSeenOf()).toEqual([
+      { user_id: "early", first_seen: time(at(1, "09:00")) },
+      { user_id: "newcomer", first_seen: time(at(0, "08:00")) },
+    ]);
   });
 
   test("short of disk, a rebuild removes nothing, is marked, and runs once there is room", async () => {

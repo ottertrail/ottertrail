@@ -509,6 +509,13 @@ describe("POST /v1/metrics", () => {
       ]),
     );
     const histograms = await storedRows(dashboard.reader.client, "metric_histograms", project.id);
+    // Each row carries when the request arrived, by the API's clock (ClickHouse migration 0011).
+    const arrivals = [...points, ...histograms].map((row) =>
+      new Date(`${String(row.received_at).replace(" ", "T")}Z`).getTime(),
+    );
+    expect(new Set(arrivals).size).toBe(1);
+    expect(Date.now() - (arrivals[0] ?? 0)).toBeGreaterThanOrEqual(0);
+    expect(Date.now() - (arrivals[0] ?? 0)).toBeLessThan(60_000);
     expect(histograms).toEqual([
       expect.objectContaining({
         name: "http.duration",

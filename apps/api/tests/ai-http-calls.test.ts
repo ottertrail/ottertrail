@@ -91,6 +91,7 @@ async function newProject(name: string) {
 describe("POST /api/ai-calls", () => {
   test("stores calls in ai_calls, as spans' calls are, with the batch's environment and release", async () => {
     const project = await newProject("Stored");
+    const sentAt = Date.now();
     const at = Date.now() - 5000;
     const traceId = randomBytes(16).toString("hex").toUpperCase();
     const full = aiCall({
@@ -123,9 +124,14 @@ describe("POST /api/ai-calls", () => {
 
     const rows = await storedCalls(project.id);
     const byId = new Map(rows.map((row) => [row.id, row]));
+    // When the request arrived, by the API's clock, not when the call happened.
+    const arrived = new Date(`${String(byId.get(full.id)?.received_at).replace(" ", "T")}Z`);
+    expect(arrived.getTime()).toBeGreaterThanOrEqual(sentAt);
+    expect(arrived.getTime()).toBeLessThanOrEqual(Date.now());
     expect(byId.get(full.id)).toEqual({
       project_id: project.id,
       timestamp: new Date(at).toISOString().replace("T", " ").replace("Z", "000000"),
+      received_at: expect.stringMatching(/^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d\.\d{3}$/),
       id: full.id,
       trace_id: traceId.toLowerCase(),
       span_id: "00f067aa0ba902b7",
@@ -139,6 +145,8 @@ describe("POST /api/ai-calls", () => {
       user_id: "user-42",
       conversation_id: "conv_5Hx9-2026",
       input_tokens: "1200",
+      // Anthropic's API counts cached tokens apart from the input.
+      input_includes_cache: false,
       output_tokens: "300",
       cache_read_tokens: "800",
       cache_write_tokens: "40",
@@ -150,6 +158,8 @@ describe("POST /api/ai-calls", () => {
       finish_reasons: ["end_turn"],
     });
     expect(byId.get(failed.id)).toMatchObject({
+      received_at: byId.get(full.id)?.received_at,
+      input_includes_cache: true,
       failed: true,
       error_type: "RateLimitError",
       trace_id: "",
@@ -225,6 +235,61 @@ describe("POST /api/ai-calls", () => {
     // Merged, every copy is gone.
     await dashboard.reader.client.command({ query: "OPTIMIZE TABLE ai_calls FINAL" });
     expect(await storedCalls(project.id, false)).toHaveLength(2);
+  });
+
+  test("a retry with a corrected time on the same day is the same row: the key holds the day", async () => {
+    const project = await newProject("Retries, corrected time");
+    // Noon UTC today, or just before now when it is earlier, then 3 seconds later.
+    const noon = new Date(`${new Date().toISOString().slice(0, 10)}T12:00:00.000Z`).getTime();
+    const at = Math.min(noon, Date.now() - 10_000);
+    const call = aiCall({ occurredAt: at });
+    const authorization = `Bearer ${project.key}`;
+    expect((await send({ v: 1, calls: [call] }, { authorization })).statusCode).toBe(202);
+    const retry = { ...call, occurredAt: at + 3000 };
+    expect((await send({ v: 1, calls: [retry] }, { authorization })).statusCode).toBe(202);
+    const rows = await storedCalls(project.id);
+    expect(rows).toHaveLength(1);
+    // The copy written last is the one kept.
+    expect(rows[0]?.timestamp).toBe(
+      new Date(at + 3000).toISOString().replace("T", " ").replace("Z", "000000"),
+    );
+  });
+
+  test("whether the input holds the cached tokens: as sent, else by the provider", async () => {
+    const project = await newProject("Cached input");
+    const cached = { inputTokens: 1000, cacheReadTokens: 500 };
+    const cases = [
+      [aiCall({ ...cached, provider: "anthropic" }), false],
+      [aiCall({ ...cached, provider: "openai", model: "gpt-5-mini" }), true],
+      [
+        aiCall({ ...cached, provider: "aws.bedrock", model: "us.anthropic.claude-sonnet-4-6" }),
+        false,
+      ],
+      [aiCall({ ...cached, provider: "aws.bedrock", model: "openai.gpt-5.5" }), true],
+      [aiCall({ ...cached, provider: "gcp.vertex_ai", model: "claude-sonnet-4-6" }), false],
+      [aiCall({ ...cached, provider: "gcp.vertex_ai", model: "gemini-2.5-pro" }), true],
+      [aiCall({ ...cached, provider: "anthropic", inputIncludesCache: true }), true],
+      [aiCall({ ...cached, provider: "openai", inputIncludesCache: false }), false],
+      // Less input than cached cannot hold it, whatever the sender says.
+      [
+        aiCall({
+          inputTokens: 10,
+          cacheReadTokens: 20,
+          provider: "openai",
+          inputIncludesCache: true,
+        }),
+        false,
+      ],
+    ] as const;
+    const response = await send(
+      { v: 1, calls: cases.map(([call]) => call) },
+      { authorization: `Bearer ${project.key}` },
+    );
+    expect(response.statusCode).toBe(202);
+    const rows = new Map((await storedCalls(project.id)).map((row) => [row.id, row]));
+    expect(cases.map(([call]) => rows.get(call.id)?.input_includes_cache)).toEqual(
+      cases.map(([, includes]) => includes),
+    );
   });
 
   test("needs the project's secret key, checked before the body is read", async () => {

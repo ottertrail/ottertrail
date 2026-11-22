@@ -207,6 +207,7 @@ describe.each(["http/protobuf", "http/json"] as const)(
     test("model calls are stored beside their spans, old and new names read; agents, tools, and others are not", async () => {
       const project = await newProject(`AI calls ${protocol}`);
       const spans = await recordSpans();
+      const sentAt = Date.now();
       expect((await exported(spans, project.key, protocol)).error).toBeUndefined();
 
       expect(await storedRows(dashboard.reader.client, "spans", project.id)).toHaveLength(
@@ -224,9 +225,17 @@ describe.each(["http/protobuf", "http/json"] as const)(
       );
       const call = (name: string) => calls.find((row) => byName.get(String(row.span_id)) === name);
       const chat = spans.find((span) => span.name === "chat claude-sonnet-4-6");
+      // When the request arrived, by the API's clock, as its spans have it.
+      const spanRows = await storedRows(dashboard.reader.client, "spans", project.id);
+      const arrival = call("chat claude-sonnet-4-6")?.received_at;
+      expect(spanRows.map((row) => row.received_at)).toEqual(spanRows.map(() => arrival));
+      const arrived = new Date(`${String(arrival).replace(" ", "T")}Z`).getTime();
+      expect(arrived).toBeGreaterThanOrEqual(sentAt);
+      expect(arrived).toBeLessThanOrEqual(Date.now());
       expect(call("chat claude-sonnet-4-6")).toEqual({
         project_id: project.id,
         timestamp: expect.any(String),
+        received_at: arrival,
         id: `${chat?.spanContext().traceId}${chat?.spanContext().spanId}`,
         trace_id: chat?.spanContext().traceId,
         span_id: chat?.spanContext().spanId,
@@ -243,6 +252,8 @@ describe.each(["http/protobuf", "http/json"] as const)(
         // Trimmed, as a feature's name.
         conversation_id: "conv_5Hx9-2026",
         input_tokens: "1200",
+        // The GenAI conventions count cached tokens in the input.
+        input_includes_cache: true,
         output_tokens: "300",
         cache_read_tokens: "800",
         cache_write_tokens: "100",

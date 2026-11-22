@@ -181,7 +181,17 @@ function itemOf(row: CallRow, withUsers: boolean): AiCallItem {
   };
 }
 
-/** The scope's rows below the cursor, newest first, each once (FINAL); `limit` of them. */
+/**
+ * The scope's rows below the cursor, newest first, each once (FINAL);
+ * `limit` of them. The table is keyed by day, not time (ClickHouse
+ * migration 0012), so a retry with a corrected time is the same row, and
+ * FINAL keeps the copy written last. The time conditions still read whole
+ * days: ClickHouse picks the granules by the key's day, and with FINAL
+ * applies a condition on a column outside the key only after the copies
+ * are merged (its min-max index on the partition column is not used
+ * then), so every page sees the same copy, at the same time, and a call is
+ * listed once across pages and windows.
+ */
 function pageRows(
   reader: Reader,
   scope: AiScope,

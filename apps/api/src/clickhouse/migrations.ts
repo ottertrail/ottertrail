@@ -18,6 +18,36 @@ export const TELEMETRY_TABLES = ["spans", "logs", "metric_points", "metric_histo
 /** The AI calls among the spans (0008; docs/ai-usage.md), kept as long as events. */
 export const AI_CALLS_TABLE = "ai_calls";
 
+/** The columns ai_calls has since 0011, which 0012 copies. */
+const AI_CALL_COLUMNS = [
+  "project_id",
+  "timestamp",
+  "received_at",
+  "id",
+  "trace_id",
+  "span_id",
+  "service",
+  "environment",
+  "release",
+  "provider",
+  "model",
+  "operation",
+  "feature",
+  "user_id",
+  "conversation_id",
+  "input_tokens",
+  "input_includes_cache",
+  "output_tokens",
+  "cache_read_tokens",
+  "cache_write_tokens",
+  "reasoning_tokens",
+  "duration_ns",
+  "first_chunk_ns",
+  "failed",
+  "error_type",
+  "finish_reasons",
+].join(", ");
+
 /** Each signed-in user's first event per project and environment (0004). */
 export const USER_FIRST_SEEN = "user_first_seen";
 
@@ -493,7 +523,8 @@ export const CLICKHOUSE_MIGRATIONS: ClickHouseMigration[] = [
      * are dropped before (telemetry/ai-content.ts).
      *
      * - Ordered by project, then time, then ID, as spans: every query
-     *   filters by project first, then a period.
+     *   filters by project first, then a period. Since 0012, by project,
+     *   then day, then ID, as events.
      * - ReplacingMergeTree keeps one row per ID, the span's trace and span
      *   IDs, so a request retried after a lost answer is stored once. The
      *   AI page's totals and breakdowns, and the alert rules, read without
@@ -565,6 +596,128 @@ export const CLICKHOUSE_MIGRATIONS: ClickHouseMigration[] = [
          ADD COLUMN IF NOT EXISTS conversation_id String DEFAULT '' AFTER user_id`,
       `ALTER TABLE ${database}.${AI_CALLS_TABLE}
          ADD INDEX IF NOT EXISTS conversation_id_index conversation_id TYPE bloom_filter GRANULARITY 4`,
+    ],
+  },
+  {
+    name: "0010_telemetry_fsync",
+    /**
+     * An insert into spans, logs, or metrics returns only once its data is
+     * on disk, as events', heatmaps', and AI calls' do (0001, 0006, 0008):
+     * the OTLP routes answer 200 when the insert returns, so telemetry only
+     * in the operating system's cache when the power went would otherwise
+     * be lost after the exporter heard it was stored. Asynchronous inserts
+     * gather many requests into one part, so the cost stays small.
+     */
+    statements: (database) =>
+      TELEMETRY_TABLES.map(
+        (table) =>
+          `ALTER TABLE ${database}.${table} MODIFY SETTING
+             fsync_after_insert = 1, fsync_part_directory = 1`,
+      ),
+  },
+  {
+    name: "0011_received_at",
+    /**
+     * When each span, metric row, and AI call arrived: the time the API
+     * received its request (telemetry/store.ts, ai/ingest-routes.ts), as
+     * events' received_at, never a DEFAULT, so a row written without one
+     * reads 1970. Nothing is live, so no backfill: older rows read 1970
+     * too. Logs have theirs since 0005, ClickHouse's clock as it writes
+     * the record, which the live view compares with ClickHouse's own clock.
+     *
+     * An AI call also says whether its input count holds its cached tokens
+     * (`input_includes_cache`, ai/calls.ts; docs/ai-usage.md, "Cost"): rows
+     * already stored take what the cost used to assume, input at least the
+     * cached tokens.
+     */
+    statements: (database) => [
+      ...(["spans", "metric_points", "metric_histograms"] as const).map(
+        (table) =>
+          `ALTER TABLE ${database}.${table}
+             ADD COLUMN IF NOT EXISTS received_at DateTime64(3, 'UTC') AFTER timestamp`,
+      ),
+      `ALTER TABLE ${database}.${AI_CALLS_TABLE}
+         ADD COLUMN IF NOT EXISTS received_at DateTime64(3, 'UTC') AFTER timestamp,
+         ADD COLUMN IF NOT EXISTS input_includes_cache Bool
+           DEFAULT input_tokens >= cache_read_tokens + cache_write_tokens AFTER input_tokens`,
+    ],
+  },
+  {
+    name: "0012_ai_calls_by_day",
+    /**
+     * ai_calls keyed by project, then day, then ID, as events are (0001):
+     * a call sent over HTTP again with a corrected time is the same row
+     * unless its two times fall either side of midnight UTC. Ordered by
+     * time (0008), such a retry was a second row.
+     *
+     * ClickHouse cannot change a sorting key's columns, so the table is made
+     * again and the rows copied: a new table, the copy, an exchange of the
+     * two (one step in an Atomic database), and the old table dropped. Safe
+     * to run again after a failure part way: the first statement drops what
+     * a failed run left under the new name, which after the exchange is the
+     * old table, and the copy then reads the new one. Run it with the API
+     * stopped, as every migration: a call written to the old table between
+     * the copy and the exchange is not copied.
+     */
+    statements: (database) => [
+      `DROP TABLE IF EXISTS ${database}.${AI_CALLS_TABLE}_by_day`,
+      `CREATE TABLE ${database}.${AI_CALLS_TABLE}_by_day (
+        project_id UUID,
+        timestamp DateTime64(9, 'UTC'),
+        received_at DateTime64(3, 'UTC'),
+        id String,
+        trace_id String,
+        span_id String,
+        service LowCardinality(String),
+        environment LowCardinality(String),
+        release LowCardinality(String),
+        provider LowCardinality(String),
+        model LowCardinality(String),
+        operation LowCardinality(String),
+        feature LowCardinality(String),
+        user_id String,
+        conversation_id String DEFAULT '',
+        input_tokens UInt64,
+        input_includes_cache Bool
+          DEFAULT input_tokens >= cache_read_tokens + cache_write_tokens,
+        output_tokens UInt64,
+        cache_read_tokens UInt64,
+        cache_write_tokens UInt64,
+        reasoning_tokens UInt64,
+        duration_ns UInt64,
+        first_chunk_ns Nullable(UInt64),
+        failed Bool,
+        error_type LowCardinality(String),
+        finish_reasons Array(LowCardinality(String)),
+        INDEX conversation_id_index conversation_id TYPE bloom_filter GRANULARITY 4
+      )
+      ENGINE = ReplacingMergeTree
+      PARTITION BY toYYYYMM(timestamp)
+      ORDER BY (project_id, toDate(timestamp), id)
+      SETTINGS non_replicated_deduplication_window = 1000,
+        fsync_after_insert = 1, fsync_part_directory = 1,
+        min_age_to_force_merge_seconds = ${FORCE_MERGE_SECONDS},
+        min_age_to_force_merge_on_partition_only = 1`,
+      `INSERT INTO ${database}.${AI_CALLS_TABLE}_by_day (${AI_CALL_COLUMNS})
+       SELECT ${AI_CALL_COLUMNS} FROM ${database}.${AI_CALLS_TABLE}`,
+      `EXCHANGE TABLES ${database}.${AI_CALLS_TABLE} AND ${database}.${AI_CALLS_TABLE}_by_day`,
+      `DROP TABLE ${database}.${AI_CALLS_TABLE}_by_day`,
+    ],
+  },
+  {
+    name: "0013_events_received_at_index",
+    /**
+     * A minmax index on events' arrival, as logs have one (0005): a
+     * project's first-seen rebuild adds back the users of the events that
+     * arrived while it ran (clickhouse/delete-events.ts, rebuildFirstSeen),
+     * and the index skips the granules that arrived before. Events arrive
+     * roughly in day order, so old days' granules have old arrivals.
+     */
+    statements: (database) => [
+      `ALTER TABLE ${database}.events
+         ADD INDEX IF NOT EXISTS received_at_index received_at TYPE minmax GRANULARITY 1`,
+      `ALTER TABLE ${database}.events
+         MATERIALIZE INDEX received_at_index SETTINGS mutations_sync = 1`,
     ],
   },
 ];

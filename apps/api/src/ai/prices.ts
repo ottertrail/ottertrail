@@ -102,19 +102,27 @@ export interface TokenCounts {
   output: number;
   cacheRead: number;
   cacheWrite: number;
+  /**
+   * Whether `input` holds the cached tokens too (the ai_calls column,
+   * ai/calls.ts, inputIncludesCache); when left out, it does unless it is
+   * smaller than them.
+   */
+  inputIncludesCache?: boolean;
 }
 
 /**
  * The estimated cost of one call's tokens at a price, in US dollars:
  * cache reads and writes at their own prices, the rest of the input at the
  * input price, and the output (reasoning included) at the output price.
- * The conventions count cached tokens in the input, so the rest is the
- * input less both; a sender whose input is smaller than its cached tokens
- * counts them apart (as Anthropic's API does), so all of its input is the rest.
+ * The rest is the input less both when the input holds them (the GenAI
+ * conventions, OpenAI's API), else all of the input (Anthropic's API):
+ * each call says which (inputIncludesCache). An input smaller than its
+ * cached tokens never holds them. pricedColumns works out the same in SQL.
  */
 export function costOf(price: Rates, tokens: TokenCounts): number {
   const cached = tokens.cacheRead + tokens.cacheWrite;
-  const base = tokens.input >= cached ? tokens.input - cached : tokens.input;
+  const includes = (tokens.inputIncludesCache ?? true) && tokens.input >= cached;
+  const base = includes ? tokens.input - cached : tokens.input;
   return (
     (base * price.input +
       tokens.cacheRead * (price.cacheRead ?? price.input) +
@@ -403,7 +411,9 @@ const timelineAt = (froms: string, slots: string) =>
 /**
  * SQL columns over an ai_calls row, for a SELECT list: `price_entry`, the
  * slot that prices it (0: none), `cost`, its estimated cost in US dollars
- * (0 without a price), and `priced`, whether it has one. The prices go in
+ * (0 without a price), `priced`, whether it has one, and
+ * `all_input_tokens`, its input with the cached tokens, however the call
+ * counted them (the cache-read share's whole). The prices go in
  * as query parameters, never as SQL text. A sum of these is the cost of
  * the calls summed.
  *
@@ -443,14 +453,16 @@ export function pricedColumns(params: QueryParams, book: PriceBook = BUNDLED_BOO
   }
   // ClickHouse answers 0 for index 0: no entry, no price.
   const at = (values: number[]) => `${params.add(values, "Array(Float64)")}[price_entry]`;
-  // The input less what was read from and written to a cache; all of it
-  // when it is smaller, from a sender that counts cached tokens apart (costOf).
-  const base = `if(input_tokens >= cache_read_tokens + cache_write_tokens,
+  // The input less what was read from and written to a cache when it holds
+  // them, else all of it (costOf); never below 0, as the columns are unsigned.
+  const base = `if(input_includes_cache AND input_tokens >= cache_read_tokens + cache_write_tokens,
     input_tokens - cache_read_tokens - cache_write_tokens, input_tokens)`;
   return `${entry} AS price_entry,
     (${base} * ${at(arrays.input)}
       + cache_read_tokens * ${at(arrays.cacheRead)}
       + cache_write_tokens * ${at(arrays.cacheWrite)}
       + output_tokens * ${at(arrays.output)}) / 1000000 AS cost,
-    price_entry > 0 AS priced`;
+    price_entry > 0 AS priced,
+    if(input_includes_cache, input_tokens,
+      input_tokens + cache_read_tokens + cache_write_tokens) AS all_input_tokens`;
 }

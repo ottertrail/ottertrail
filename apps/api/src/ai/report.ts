@@ -136,6 +136,7 @@ const SUMS = `count() AS calls,
   sum(input_tokens) AS input_tokens, sum(output_tokens) AS output_tokens,
   sum(cache_read_tokens) AS cache_read_tokens, sum(cache_write_tokens) AS cache_write_tokens,
   sum(reasoning_tokens) AS reasoning_tokens, sum(cost) AS cost,
+  sum(all_input_tokens) AS all_input,
   countIf(failed) AS failed, countIf(NOT priced) AS no_price`;
 
 interface SumsRow {
@@ -146,6 +147,8 @@ interface SumsRow {
   cache_write_tokens: string;
   reasoning_tokens: string;
   cost: number;
+  /** The input, cached tokens included, whichever way each call counted them. */
+  all_input: string;
   failed: string;
   no_price: string;
 }
@@ -163,8 +166,10 @@ function sumsOf(row: SumsRow | undefined) {
     cacheWriteTokens: count(row?.cache_write_tokens),
     reasoningTokens: count(row?.reasoning_tokens),
     costUsd: calls === 0 ? 0 : (row?.cost ?? 0),
-    // At most 1: a sender may count cache reads apart from the input (prices.ts, costOf).
-    cacheReadShare: inputTokens === 0 ? null : Math.min(1, cacheReadTokens / inputTokens),
+    // Out of all the input, cached tokens included however each call counted
+    // them (input_includes_cache); at most 1 all the same.
+    cacheReadShare:
+      count(row?.all_input) === 0 ? null : Math.min(1, cacheReadTokens / count(row?.all_input)),
     failed,
     failedShare: share(failed, calls),
     noPriceCalls: count(row?.no_price),

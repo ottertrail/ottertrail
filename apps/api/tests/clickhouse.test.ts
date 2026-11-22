@@ -4,7 +4,7 @@ import { afterAll, beforeAll, describe, expect, test } from "vite-plus/test";
 
 import { createClickHouse } from "../src/clickhouse/clickhouse.ts";
 import { migrateClickHouse } from "../src/clickhouse/migrate.ts";
-import { CLICKHOUSE_MIGRATIONS } from "../src/clickhouse/migrations.ts";
+import { CLICKHOUSE_MIGRATIONS, TELEMETRY_TABLES } from "../src/clickhouse/migrations.ts";
 import { loadConfig } from "../src/config.ts";
 import { createTestClickHouse, type TestClickHouse } from "./helpers/test-clickhouse.ts";
 
@@ -52,6 +52,8 @@ describe("ClickHouse migrations", () => {
     });
     expect(await indexes.json()).toEqual([
       { name: "error_fingerprint_index", type: "bloom_filter" },
+      // For a first-seen rebuild's events that arrived while it ran (0013).
+      { name: "received_at_index", type: "minmax" },
       { name: "user_id_index", type: "bloom_filter" },
     ]);
   });
@@ -77,8 +79,8 @@ describe("ClickHouse migrations", () => {
       format: "JSONEachRow",
     });
     expect(await result.json()).toEqual([
-      // By project, then time, as spans; kept as long as events (0008).
-      { name: "ai_calls", sorting_key: "project_id, timestamp, id" },
+      // By project, then day, as events; kept as long as them (0008, 0012).
+      { name: "ai_calls", sorting_key: "project_id, toDate(timestamp), id" },
       { name: "check_results", sorting_key: "project_id, check_id, timestamp" },
       { name: "events", sorting_key: "project_id, toDate(occurred_at), event_id" },
       // By project, day, page, then device (0006).
@@ -116,6 +118,48 @@ describe("ClickHouse migrations", () => {
     expect(table?.create_table_query).toMatch(/min_age_to_force_merge_seconds = 3600/);
     expect(table?.create_table_query).toMatch(/min_age_to_force_merge_on_partition_only = 1/);
     expect(table?.create_table_query).toMatch(/fsync_after_insert = 1/);
+    expect(table?.create_table_query).toMatch(/fsync_part_directory = 1/);
+    const indexes = await ch().client.query({
+      query: `SELECT name FROM system.data_skipping_indices
+              WHERE database = {database:String} AND table = 'ai_calls'`,
+      query_params: { database: ch().database },
+      format: "JSONEachRow",
+    });
+    expect(await indexes.json()).toEqual([{ name: "conversation_id_index" }]);
+  });
+
+  test("make every insert into traces, logs, and metrics wait until it is on disk (0010)", async () => {
+    const result = await ch().client.query({
+      query: `SELECT name, create_table_query FROM system.tables
+              WHERE database = {database:String} AND name IN {tables:Array(String)} ORDER BY name`,
+      query_params: { database: ch().database, tables: [...TELEMETRY_TABLES] },
+      format: "JSONEachRow",
+    });
+    const tables = await result.json<{ name: string; create_table_query: string }>();
+    expect(tables.map((table) => table.name)).toEqual(TELEMETRY_TABLES.toSorted());
+    for (const table of tables) {
+      expect(table.create_table_query).toMatch(/fsync_after_insert = 1/);
+      expect(table.create_table_query).toMatch(/fsync_part_directory = 1/);
+    }
+  });
+
+  test("give spans, metrics, and AI calls their arrival, with no default (0011)", async () => {
+    const result = await ch().client.query({
+      query: `SELECT table, type, default_kind FROM system.columns
+              WHERE database = {database:String} AND name = 'received_at' ORDER BY table`,
+      query_params: { database: ch().database },
+      format: "JSONEachRow",
+    });
+    expect(await result.json()).toEqual([
+      { table: "ai_calls", type: "DateTime64(3, 'UTC')", default_kind: "" },
+      { table: "events", type: "DateTime64(3, 'UTC')", default_kind: "" },
+      { table: "heatmaps", type: "DateTime64(3, 'UTC')", default_kind: "" },
+      // ClickHouse's clock as it writes the record, for the live view (0005).
+      { table: "logs", type: "DateTime64(9, 'UTC')", default_kind: "DEFAULT" },
+      { table: "metric_histograms", type: "DateTime64(3, 'UTC')", default_kind: "" },
+      { table: "metric_points", type: "DateTime64(3, 'UTC')", default_kind: "" },
+      { table: "spans", type: "DateTime64(3, 'UTC')", default_kind: "" },
+    ]);
   });
 
   test("running them again changes nothing", async () => {
@@ -229,6 +273,92 @@ describe("migration 0005 after a failure part way", () => {
         format: "JSONEachRow",
       });
       expect(await result.json()).toEqual([{ received: "2026-11-16 12:00:01.000000000" }]);
+    } finally {
+      await admin.command({ query: `DROP DATABASE IF EXISTS ${scratch}` });
+      await admin.close();
+    }
+  });
+});
+
+describe("ai_calls keyed by day (migration 0012)", () => {
+  test("on a database with 0008 and 0009, copies every call, and a rerun after a failure copies them again", async () => {
+    const admin = createClickHouse(loadConfig().clickhouse, { database: "default" });
+    const scratch = `${ch().database}_r12`;
+    const project = randomUUID();
+    const call = (id: string, overrides: Record<string, unknown> = {}) => ({
+      project_id: project,
+      timestamp: "2026-11-16 12:00:00.000000000",
+      id,
+      provider: "anthropic",
+      model: "claude-sonnet-4-6",
+      conversation_id: `conversation-${id}`,
+      input_tokens: 1000,
+      cache_read_tokens: 500,
+      ...overrides,
+    });
+    const rows = async () => {
+      const result = await admin.query({
+        query: `SELECT id, conversation_id, input_includes_cache, toString(received_at) AS received
+                FROM ${scratch}.ai_calls FINAL ORDER BY id`,
+        format: "JSONEachRow",
+      });
+      return result.json();
+    };
+    try {
+      await migrateClickHouse(
+        admin,
+        scratch,
+        CLICKHOUSE_MIGRATIONS.filter((migration) => migration.name < "0010"),
+      );
+      await admin.insert({
+        table: `${scratch}.ai_calls`,
+        // Counted apart (less input than cached), and in.
+        values: [call("a", { input_tokens: 10 }), call("b")],
+        format: "JSONEachRow",
+      });
+      await migrateClickHouse(admin, scratch);
+      const copied = [
+        {
+          id: "a",
+          conversation_id: "conversation-a",
+          input_includes_cache: false,
+          received: "1970-01-01 00:00:00.000",
+        },
+        {
+          id: "b",
+          conversation_id: "conversation-b",
+          input_includes_cache: true,
+          received: "1970-01-01 00:00:00.000",
+        },
+      ];
+      expect(await rows()).toEqual(copied);
+      const keys = await admin.query({
+        query: `SELECT name, sorting_key FROM system.tables
+                WHERE database = {database:String} AND name LIKE 'ai_calls%'`,
+        query_params: { database: scratch },
+        format: "JSONEachRow",
+      });
+      expect(await keys.json()).toEqual([
+        { name: "ai_calls", sorting_key: "project_id, toDate(timestamp), id" },
+      ]);
+
+      // A run stopped after the exchange, the old table not dropped: run again, it ends the same.
+      await admin.command({
+        query: `CREATE TABLE ${scratch}.ai_calls_by_day AS ${scratch}.ai_calls`,
+      });
+      const migration = CLICKHOUSE_MIGRATIONS.find((item) => item.name === "0012_ai_calls_by_day");
+      for (const statement of migration?.statements(scratch) ?? []) {
+        await admin.command({ query: statement });
+      }
+      expect(await rows()).toEqual(copied);
+
+      // A retry with a corrected time on the same day is one row under FINAL.
+      await admin.insert({
+        table: `${scratch}.ai_calls`,
+        values: [call("b", { timestamp: "2026-11-16 12:00:03.000000000" })],
+        format: "JSONEachRow",
+      });
+      expect(await rows()).toHaveLength(2);
     } finally {
       await admin.command({ query: `DROP DATABASE IF EXISTS ${scratch}` });
       await admin.close();

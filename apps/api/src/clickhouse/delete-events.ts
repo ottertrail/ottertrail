@@ -126,9 +126,8 @@ export async function deleteEventsBefore(
  * Works the projects' first-seen times out again from the events they
  * still have, after old events were deleted: a user whose early events are
  * gone is first seen at their earliest event kept, and a user with none
- * left is forgotten (docs/clickhouse.md, "First-seen times"). An event
- * stored meanwhile is counted by both the view and the copy, which a min
- * ignores. Also after a project's spam visits are deleted (spam/delete-visits.ts).
+ * left is forgotten (docs/clickhouse.md, "First-seen times"). Also after a
+ * project's spam visits are deleted (spam/delete-visits.ts).
  *
  * The new rows are worked out first, into a temporary table of a session
  * of its own: the read of every signed-in event, the step that can time
@@ -137,6 +136,16 @@ export async function deleteEventsBefore(
  * rows. The table cannot be swapped in one step (it has no partition per
  * project), so if that last copy fails, the projects have no first-seen
  * times until the next rebuild, and the view adds every user seen meanwhile.
+ *
+ * Events keep arriving meanwhile. The view writes a row for each as it is
+ * stored, and the delete takes the rows of the whole project, so a user
+ * first seen in an event the snapshot did not read would lose their row.
+ * So once the copy is in, the users of the events that arrived from
+ * ARRIVAL_MARGIN_MS before the rebuild started are added again, read
+ * after the delete (events' received_at, with its minmax index): an event
+ * the snapshot missed was received after then, since an insert gives up
+ * after the client's 2 minutes. A user counted by both, or by the view
+ * too, is the same time again, which a min ignores.
  *
  * ClickHouse refuses inserts while less than 5% of its disk is free
  * (deploy/clickhouse/config.d/ottertrail.xml), which would refuse that
@@ -152,7 +161,7 @@ export async function rebuildFirstSeen(
   db: Kysely<Database>,
   clickhouse: ClickHouseClient,
   projectIds: string[],
-  { freeRatio = () => clickHouseFreeRatio(clickhouse) }: RoomCheck = {},
+  { freeRatio = () => clickHouseFreeRatio(clickhouse), afterSnapshot }: RebuildOptions = {},
 ): Promise<"rebuilt" | "deferred"> {
   if (projectIds.length === 0) return "rebuilt";
   // Only projects PostgreSQL still knows: a deleted one's rows go with its purge.
@@ -166,16 +175,37 @@ export async function rebuildFirstSeen(
   const params = new QueryParams();
   const ids = params.add(projectIds, "Array(UUID)");
   const table = identifier(USER_FIRST_SEEN);
+  // Taken before the snapshot reads: every event it misses was received after this.
+  const arrivedFrom = params.time(new Date(Date.now() - ARRIVAL_MARGIN_MS));
   await runCommand(reader, `CREATE TEMPORARY TABLE rebuilt AS ${table} ENGINE = Memory`);
   await runCommand(
     reader,
     `INSERT INTO rebuilt ${firstSeenSelect(null, `project_id IN ${ids}`)}`,
     params,
   );
+  await afterSnapshot?.();
   await runCommand(reader, `DELETE FROM ${table} WHERE project_id IN ${ids}`, params);
   await runCommand(reader, `INSERT INTO ${table} SELECT * FROM rebuilt`);
+  await runCommand(
+    reader,
+    `INSERT INTO ${table} ${firstSeenSelect(null, `project_id IN ${ids} AND received_at >= ${arrivedFrom}`)}`,
+    params,
+  );
   await db.deleteFrom("first_seen_rebuilds").where("project_id", "in", projectIds).execute();
   return "rebuilt";
+}
+
+/**
+ * How long before a first-seen rebuild starts an event it adds back may
+ * have been received: an insert gives up after the ClickHouse client's
+ * 2 minutes (clickhouse/clickhouse.ts), and the rest allows for the API's
+ * and the worker's clocks to differ.
+ */
+export const ARRIVAL_MARGIN_MS = 10 * 60_000;
+
+/** A rebuild's room check, and for tests, a step between its snapshot and its delete. */
+export interface RebuildOptions extends RoomCheck {
+  afterSnapshot?: () => Promise<void>;
 }
 
 /**

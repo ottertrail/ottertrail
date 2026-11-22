@@ -352,6 +352,22 @@ describe("the price table", () => {
     expect(
       costOf(price, { input: 50_000, output: 0, cacheRead: 600_000, cacheWrite: 100_000 }),
     ).toBeCloseTo((50_000 * 3 + 600_000 * 0.3 + 100_000 * 3.75) / 1e6, 12);
+    // Counted apart with more uncached input than cached (Anthropic's API):
+    // 1,000 uncached at 3 and 500 cache reads at 0.30, nothing taken off.
+    const anthropic = { input: 1000, output: 0, cacheRead: 500, cacheWrite: 0 };
+    expect(costOf(price, { ...anthropic, inputIncludesCache: false })).toBeCloseTo(0.00315, 12);
+    // The same counts with the cache inside the input: 500 uncached.
+    expect(costOf(price, { ...anthropic, inputIncludesCache: true })).toBeCloseTo(0.00165, 12);
+    // A count said to hold its cache but smaller than it cannot: counted apart.
+    expect(
+      costOf(price, {
+        input: 10,
+        output: 0,
+        cacheRead: 20,
+        cacheWrite: 0,
+        inputIncludesCache: true,
+      }),
+    ).toBeCloseTo((10 * 3 + 20 * 0.3) / 1e6, 12);
   });
 
   test("ClickHouse works out the same cost, matching exactly, then by the longest prefix", async () => {
@@ -402,7 +418,18 @@ describe("the price table", () => {
       output_tokens: tokens.output,
       cache_read_tokens: tokens.cacheRead,
       cache_write_tokens: tokens.cacheWrite,
+      ...(tokens.inputIncludesCache === undefined
+        ? {}
+        : { input_includes_cache: tokens.inputIncludesCache }),
     });
+    // More uncached input than cached, counted apart, as Anthropic's API does.
+    const apart = {
+      input: 1000,
+      output: 0,
+      cacheRead: 500,
+      cacheWrite: 0,
+      inputIncludesCache: false,
+    };
     const tokens = { input: 1_000_000, output: 1_000_000, cacheRead: 400_000, cacheWrite: 100_000 };
     const exclusive = { input: 100_000, output: 1000, cacheRead: 400_000, cacheWrite: 100_000 };
     await dashboard.reader.client.insert({
@@ -414,6 +441,7 @@ describe("the price table", () => {
         row("d", "model-c", tokens),
         // Cached tokens counted apart from the input.
         row("e", "model-a", exclusive),
+        row("f", "model-a", apart),
       ],
       format: "JSONEachRow",
     });
@@ -431,6 +459,7 @@ describe("the price table", () => {
       ["c", 1],
       ["d", 0],
       ["e", 1],
+      ["f", 1],
     ]);
     expect(rows.map((item) => item.cost)).toEqual([
       expect.closeTo(costOf(a as ModelPrice, tokens), 9),
@@ -439,7 +468,10 @@ describe("the price table", () => {
       0,
       // 100,000 at 2, 400,000 at 0.5, 100,000 at 2 (no write price), 1,000 at 8.
       expect.closeTo((100_000 * 2 + 400_000 * 0.5 + 100_000 * 2 + 1000 * 8) / 1e6, 9),
+      // 1,000 at 2 and 500 at 0.5: the input is all uncached.
+      expect.closeTo(costOf(a as ModelPrice, apart), 12),
     ]);
+    expect(costOf(a as ModelPrice, apart)).toBeCloseTo((1000 * 2 + 500 * 0.5) / 1e6, 12);
     expect(costOf(a as ModelPrice, exclusive)).toBeCloseTo(
       (100_000 * 2 + 400_000 * 0.5 + 100_000 * 2 + 1000 * 8) / 1e6,
       9,
@@ -596,14 +628,14 @@ describe("the report", () => {
           model: MINI,
           environment: "production",
           input_tokens: 10,
-          // Counted apart from the input, by its sender: the share stops at 1.
+          // Counted apart from the input, by its sender: the share is of all 30.
           cache_read_tokens: 20,
         },
       ],
       format: "JSONEachRow",
     });
     const body = await report(`/projects/${old}/ai?period=90d`);
-    expect(body.totals).toMatchObject({ calls: 1, inputTokens: 10, cacheReadShare: 1 });
+    expect(body.totals).toMatchObject({ calls: 1, inputTokens: 10, cacheReadShare: 20 / 30 });
   });
 
   test("a project without calls: zeros, nulls, and received false", async () => {

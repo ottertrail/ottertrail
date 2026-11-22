@@ -306,6 +306,20 @@ describe("GET …/ai/call-list", () => {
     await insertCalls(rows);
     // A copy of a row, before the merge.
     await insertCalls(rows.slice(0, 10));
+    // Retries with a corrected time, 3 seconds later on the same UTC day (the
+    // table's key holds the day, not the time): around the first page's end,
+    // and the first day's window, each still one call, at its later time.
+    const corrected = (row: (typeof rows)[number]) => {
+      const [date, clock] = row.timestamp.split(" ");
+      const ms = new Date(`${date}T${clock?.slice(0, 12)}Z`).getTime() + 3000;
+      return { ...row, timestamp: nanosText(BigInt(ms) * 1_000_000n) };
+    };
+    await insertCalls(
+      [...rows.slice(55, 65), ...rows.slice(95, 105)]
+        .map((row) => [row, corrected(row)] as const)
+        .filter(([row, retry]) => retry.timestamp.slice(0, 10) === row.timestamp.slice(0, 10))
+        .map(([, retry]) => retry),
+    );
     const seen: string[] = [];
     let next: string | null = null;
     let pages = 0;

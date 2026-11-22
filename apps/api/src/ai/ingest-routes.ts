@@ -3,6 +3,7 @@ import type { FastifyError, FastifyPluginCallback, FastifyReply, FastifyRequest 
 import type { ClickHouseClient } from "../clickhouse/clickhouse.ts";
 import { insertRows } from "../clickhouse/insert.ts";
 import { AI_CALLS_TABLE } from "../clickhouse/migrations.ts";
+import { clickHouseTime } from "../clickhouse/query.ts";
 import { ENVIRONMENT_PATTERN, environmentOf, RELEASE_PATTERN } from "../collection/environment.ts";
 import { USER_ID_PATTERN } from "../collection/identity.ts";
 import { InFlight } from "../collection/in-flight.ts";
@@ -22,6 +23,8 @@ import {
   cleanLabel,
   conversationIdFits,
   conversationIdOf,
+  inputIncludesCache,
+  inputIncludesCacheByDefault,
   MAX_AI_ERROR_TYPE_CHARS,
   MAX_AI_LABEL_CHARS,
   MAX_CONVERSATION_ID_CHARS,
@@ -60,6 +63,8 @@ interface HttpAiCall {
   model: string;
   operation?: string;
   inputTokens?: number;
+  /** Whether inputTokens holds the cached tokens; by the provider when left out (calls.ts). */
+  inputIncludesCache?: boolean;
   outputTokens?: number;
   cacheReadTokens?: number;
   cacheWriteTokens?: number;
@@ -110,6 +115,7 @@ const batchSchema = {
           model: textOf(MAX_AI_LABEL_CHARS),
           operation: optionalTextOf(MAX_AI_LABEL_CHARS),
           inputTokens: TOKENS,
+          inputIncludesCache: { type: "boolean" },
           outputTokens: TOKENS,
           cacheReadTokens: TOKENS,
           cacheWriteTokens: TOKENS,
@@ -357,6 +363,12 @@ export const aiCallIngestRoutes: FastifyPluginCallback<AiCallIngestOptions> = (
             user_id: call.userId ?? "",
             conversation_id: conversationIdOf(conversationId),
             input_tokens: call.inputTokens ?? 0,
+            input_includes_cache: inputIncludesCache(
+              call.inputIncludesCache ?? inputIncludesCacheByDefault(provider, model),
+              call.inputTokens ?? 0,
+              call.cacheReadTokens ?? 0,
+              call.cacheWriteTokens ?? 0,
+            ),
             output_tokens: call.outputTokens ?? 0,
             cache_read_tokens: call.cacheReadTokens ?? 0,
             cache_write_tokens: call.cacheWriteTokens ?? 0,
@@ -397,7 +409,11 @@ export const aiCallIngestRoutes: FastifyPluginCallback<AiCallIngestOptions> = (
           await insertRows(
             clickhouse,
             AI_CALLS_TABLE,
-            rows.map((row) => ({ project_id: project.id, ...row })),
+            rows.map((row) => ({
+              project_id: project.id,
+              received_at: clickHouseTime(new Date(receivedAt)),
+              ...row,
+            })),
           );
         } catch (error) {
           // Not the sender's doing: the budget back, so its retries are not refused for it.

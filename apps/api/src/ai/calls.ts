@@ -107,6 +107,8 @@ export interface AiCallRow {
   /** The app's ID for the conversation (conversationIdOf); "" for none. */
   conversation_id: string;
   input_tokens: number;
+  /** Whether input_tokens holds the cached tokens too (inputIncludesCache). */
+  input_includes_cache: boolean;
   output_tokens: number;
   cache_read_tokens: number;
   cache_write_tokens: number;
@@ -116,6 +118,44 @@ export interface AiCallRow {
   failed: boolean;
   error_type: string;
   finish_reasons: string[];
+}
+
+/**
+ * Whether a call's input count holds its cached tokens (docs/ai-usage.md,
+ * "Cost"), as `stated`: a span's by the GenAI conventions, which say the
+ * input SHOULD include cache reads and writes (OpenLLMetry's Anthropic
+ * instrumentation adds them in); a call sent over HTTP as its sender says,
+ * else by its provider (inputIncludesCacheByDefault). An input smaller
+ * than its cached tokens cannot hold them, whatever is stated: it counts
+ * them apart, as Anthropic's API does.
+ */
+export function inputIncludesCache(
+  stated: boolean,
+  input: number,
+  cacheRead: number,
+  cacheWrite: number,
+): boolean {
+  return stated && input >= cacheRead + cacheWrite;
+}
+
+/**
+ * Whether a provider's own API counts cached tokens in the input, for a
+ * call sent over HTTP that does not say: Anthropic's API counts them apart
+ * (`input_tokens` beside `cache_read_input_tokens` and
+ * `cache_creation_input_tokens`), and so do Claude on Vertex AI, which
+ * answers in Anthropic's form, and Amazon Bedrock's Converse and
+ * InvokeModel (`inputTokens` is "only the non-cached input tokens"), but
+ * for its OpenAI models' Responses API, which counts them in, as OpenAI's
+ * own API (`prompt_tokens_details.cached_tokens`) and Gemini's
+ * (`cachedContentTokenCount`) do. Every other provider: counted in.
+ */
+export function inputIncludesCacheByDefault(provider: string, model: string): boolean {
+  const name = provider.toLowerCase();
+  const id = model.toLowerCase();
+  if (name === "anthropic") return false;
+  if (name === "aws.bedrock") return id.includes("openai.");
+  if (name === "gcp.vertex_ai") return !id.includes("claude");
+  return true;
 }
 
 /** The first of `names` the attributes have, as sent; undefined when none. */
@@ -218,6 +258,9 @@ export function aiCallOf(span: SpanRow): AiCallRow | null {
   const { attributes } = span;
   if (!isAiCall(attributes)) return null;
   const count = (names: readonly string[]) => tokens(first(attributes, names)) ?? 0;
+  const input = count(AI_ATTRIBUTES.inputTokens);
+  const cacheRead = count(AI_ATTRIBUTES.cacheReadTokens);
+  const cacheWrite = count(AI_ATTRIBUTES.cacheWriteTokens);
   const errorType = cleanLabel(first(attributes, AI_ATTRIBUTES.errorType), MAX_AI_ERROR_TYPE_CHARS);
   const feature =
     cleanLabel(first(attributes, AI_ATTRIBUTES.feature)) ||
@@ -237,10 +280,11 @@ export function aiCallOf(span: SpanRow): AiCallRow | null {
     feature,
     user_id: userIdOf(attributes) ?? "",
     conversation_id: conversationIdOf(first(attributes, AI_ATTRIBUTES.conversation)),
-    input_tokens: count(AI_ATTRIBUTES.inputTokens),
+    input_tokens: input,
+    input_includes_cache: inputIncludesCache(true, input, cacheRead, cacheWrite),
     output_tokens: count(AI_ATTRIBUTES.outputTokens),
-    cache_read_tokens: count(AI_ATTRIBUTES.cacheReadTokens),
-    cache_write_tokens: count(AI_ATTRIBUTES.cacheWriteTokens),
+    cache_read_tokens: cacheRead,
+    cache_write_tokens: cacheWrite,
     reasoning_tokens: count(AI_ATTRIBUTES.reasoningTokens),
     duration_ns: span.duration_ns,
     first_chunk_ns: firstChunkNs(first(attributes, AI_ATTRIBUTES.firstChunk)),

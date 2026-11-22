@@ -409,7 +409,7 @@ export const telemetryRoutes: FastifyPluginCallback<TelemetryOptions> = (app, op
           }
           try {
             await Promise.all([
-              insertTelemetry(clickhouse, outcome.rows),
+              insertTelemetry(clickhouse, outcome.rows, { receivedAt: new Date(receivedAt) }),
               storeEvents(clickhouse, project.id, outcome.errors, {
                 receivedAt: new Date(receivedAt),
               }),
