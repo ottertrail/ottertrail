@@ -377,7 +377,7 @@ The subject has `type` `ai_failures`, `environment`, `feature`, `model`, `calls`
 
 #### `ai.latency` and `ai.latency_resolved`
 
-The subject has `type` `ai_latency`, `environment`, `feature`, `model`, `calls`, `windowMinutes`, `percentile` (always `p95`), `valueMs` (rounded to 3 decimals), and `thresholdMs`, and the message reads `Shop: the 95th percentile duration of AI calls for the model claude-sonnet-4-6 in production was 2 s over the last 10 minutes, above the rule's 1.5 s, across 20 calls.` `ai.latency_resolved` has the same subject, and a message such as `Shop: the 95th percentile duration of AI calls in production stayed at or below 1.5 s for 10 minutes: 100 ms over the last 10 minutes, across 10 calls.`
+The subject has `type` `ai_latency`, `environment`, `feature`, `model`, `calls`, `windowMinutes`, `percentile` (always `p95`), `valueMs` (rounded to 3 decimals), and `thresholdMs`, and the message reads `Shop: the 95th percentile duration of AI calls for the model claude-sonnet-4-6 in production was 2 s over the last 10 minutes, above the rule's 1.5 s, across 20 calls.` `ai.latency_resolved` has the same subject, and a message such as `Shop: the 95th percentile duration of AI calls in production stayed at or below 1.5 s for 10 minutes: 100 ms over the last 10 minutes, across 24 calls.`
 
 #### `alert.held_back`
 

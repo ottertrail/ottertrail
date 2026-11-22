@@ -33,8 +33,10 @@ import {
 import { deviceLabel, formatVital, type Rating, rate } from "@/features/speed/format";
 import { RatingBadge } from "@/features/speed/rating";
 import { formatDuration } from "@/features/telemetry/format";
+import { environmentSearch } from "@/features/telemetry/search";
 import { CAUSE_TEXT, formatMoment, formatMs, formatUptime } from "@/features/uptime/format";
 import { useAccess } from "@/lib/access";
+import { DEFAULT_PERIOD } from "@/lib/analytics-api";
 import { type ChangeCounts, shownChange } from "@/lib/change";
 import { AI_DOCS_URL } from "@/lib/docs";
 import { goalStepText } from "@/lib/goals-api";
@@ -674,15 +676,25 @@ export function ServicesWidget(props: WidgetProps) {
 // The estimated cost of AI calls.
 export function AiCostWidget(props: WidgetProps) {
   const query = useWidget("ai-cost", props);
-  const { projectId, period } = props;
+  const { projectId, period, environment } = props;
   const title = widgetTitle("ai-cost");
+  // The AI page over the Overview's days and environment, as the widget counts them.
+  const aiSearch = {
+    ...(period === DEFAULT_PERIOD ? {} : { period }),
+    ...environmentSearch(environment),
+  };
   return (
     <WidgetFrame
       id="ai-cost"
       title={title}
       arrange={props.arrange}
       link={
-        <Link to="/projects/$projectId/ai" params={{ projectId }} className={headLink}>
+        <Link
+          to="/projects/$projectId/ai"
+          params={{ projectId }}
+          search={aiSearch}
+          className={headLink}
+        >
           AI
         </Link>
       }
@@ -706,7 +718,8 @@ export function AiCostWidget(props: WidgetProps) {
                   </a>
                 }
               >
-                Send traces with a GenAI instrumentation to see what your AI calls cost.
+                Send traces with a GenAI instrumentation, or send calls over HTTP, to see what your
+                AI calls cost.
               </WidgetEmpty>
             );
           }
@@ -752,7 +765,7 @@ export function AiCostWidget(props: WidgetProps) {
                         <Link
                           to="/projects/$projectId/ai"
                           params={{ projectId }}
-                          search={{ model: row.model }}
+                          search={{ ...aiSearch, model: row.model }}
                           className="hover:text-link hover:underline"
                         >
                           {row.model}

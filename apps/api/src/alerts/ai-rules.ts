@@ -112,8 +112,8 @@ export async function readAi(
     const enough = read.calls > 0 && read.calls >= settings.minCalls;
     return {
       calls: read.calls,
-      failed: read.failed,
-      noPriceCalls: read.noPriceCalls,
+      failed: 0,
+      noPriceCalls: 0,
       ...window,
       value: enough ? read.p95Ms : null,
     };

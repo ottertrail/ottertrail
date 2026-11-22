@@ -735,28 +735,25 @@ export async function aiWindow(
   };
 }
 
-/** The calls of one window with a rule's filters, and their 95th-percentile duration (an AI latency rule). */
+/** How many calls one window has with a rule's filters, and their 95th-percentile duration (an AI latency rule). */
 export async function aiLatencyWindow(
   reader: Reader,
   scope: AiScope,
   filters: AiFilters,
-): Promise<AiWindow & { p95Ms: number | null }> {
+): Promise<{ calls: number; p95Ms: number | null }> {
   const params = new QueryParams();
-  const [row] = await queryRows<SumsRow & { p95: number | null }>(
+  // No prices: only the count and the percentile.
+  const [row] = await queryRows<{ calls: string; p95: number | null }>(
     reader,
-    `SELECT ${SUMS}, quantileTDigest(0.95)(duration_ns) AS p95
-     FROM (${pricedCalls(params, scope, filters)}) LIMIT 1`,
+    `SELECT count() AS calls, quantileTDigest(0.95)(duration_ns) AS p95
+     FROM ${AI_CALLS_TABLE}
+     WHERE ${conditions(params, scope, filters)}
+     LIMIT 1`,
     params,
     DASHBOARD_SETTINGS,
   );
-  const sums = sumsOf(row);
-  return {
-    calls: sums.calls,
-    failed: sums.failed,
-    costUsd: sums.costUsd,
-    noPriceCalls: sums.noPriceCalls,
-    p95Ms: sums.calls === 0 ? null : ms(row?.p95),
-  };
+  const calls = count(row?.calls);
+  return { calls, p95Ms: calls === 0 ? null : ms(row?.p95) };
 }
 
 /** One UTC hour's calls of an AI cost rule's window: what alerts/ai-cost-hours.ts keeps. */

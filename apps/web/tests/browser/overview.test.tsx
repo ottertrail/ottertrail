@@ -335,6 +335,21 @@ describe("changes and states", () => {
     await expect.element(ai.getByRole("link", { name: "AI", exact: true })).toBeVisible();
   });
 
+  test("AI cost: its links keep the Overview's period and environment", async () => {
+    installFakeApi();
+    renderApp(`${OVERVIEW}?period=30d&env=staging`);
+    const ai = widget("AI cost");
+    await expect
+      .element(ai.getByRole("link", { name: "gpt-5-mini" }))
+      .toHaveAttribute(
+        "href",
+        `/projects/${PROJECT.id}/ai?period=30d&env=staging&model=gpt-5-mini`,
+      );
+    await expect
+      .element(ai.getByRole("link", { name: "AI", exact: true }))
+      .toHaveAttribute("href", `/projects/${PROJECT.id}/ai?period=30d&env=staging`);
+  });
+
   test("AI cost: few calls show no change; a project without AI calls links to the docs", async () => {
     let received = true;
     installFakeApi({
@@ -368,6 +383,13 @@ describe("changes and states", () => {
     received = false;
     renderApp(`${OVERVIEW}?period=30d`);
     await expect.element(widget("AI cost").getByText("No AI calls yet")).toBeVisible();
+    await expect
+      .element(
+        widget("AI cost").getByText(
+          "Send traces with a GenAI instrumentation, or send calls over HTTP, to see what your AI calls cost.",
+        ),
+      )
+      .toBeVisible();
     const docs = widget("AI cost").getByRole("link", { name: /How to send AI calls/ });
     await expect
       .element(docs)
