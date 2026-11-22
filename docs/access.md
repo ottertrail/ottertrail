@@ -46,7 +46,7 @@ A member's access has two parts (`dashboard_member_access`, `dashboard_member_pr
 
 Replays and users are areas of their own because they show individual people.
 
-AI is apart from monitoring so that someone can see AI costs without seeing traces, logs, or services (migration 0022 gave each member and pending invitation AI at their monitoring level). A call's link to its trace needs monitoring too. AI model prices are instance settings (`projects`), not part of the area.
+AI is apart from monitoring so that someone can see AI costs without monitoring (migration 0022 gave each member and pending invitation AI at their monitoring level). The AI area shows AI calls, including the calling service's name, the release, and the trace and span IDs as text. Traces, logs, metrics, and the other services need monitoring, and so does a call's link to its trace. AI model prices are instance settings (`projects`), not part of the area.
 
 Monitoring shows span and log attributes as servers sent them, but never AI prompts or completions: the API drops them when it receives them ([telemetry](telemetry.md#ai-prompts-and-completions-are-not-stored)).
 
@@ -391,6 +391,7 @@ The Backups tab's routes (`apps/api/src/backups/routes.ts`) need `settings`: adm
 - The Sessions tab's "Last active" is when Better Auth last renewed the session's row, at most once a day, not the session's last request.
 - `GET …/replays/list?userId=` lets a member with replays filter replays by an end user's ID, and so find whether that user has any, without the users area.
 - The people offered as an error's assignee (`GET …/error-assignees`) are named to anyone with errors at manage on the project, including people they would not otherwise see on the Members page: their name and ID, no email or role.
+- Inbox items made before migration 0022 that sum up what an AI rule held back (`alert.held_back`) still need monitoring, not AI. The inbox row keeps no rule ID, and its title and link do not tell an AI rule from a route or metric rule, so the migration cannot move them. New ones need AI.
 - A notification's title is written when it is made: a member who sees the item later reads what it said then (an error's message, a check's name), as the alert history does.
 
 ## Rolling back

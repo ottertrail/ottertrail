@@ -12,7 +12,7 @@ Made on 22 November 2026, all as the design proposed:
 2. **Prompts and completions are never stored.** They are dropped at ingestion for every project, AI page or not ([telemetry](telemetry.md#ai-prompts-and-completions-are-not-stored), `apps/api/src/telemetry/ai-content.ts`). This module reads only token counts and names.
 3. **Prices come from a small hand-kept table in the repository** (`apps/api/src/ai/price-table.ts`), read from the providers' own price pages, each entry with its source and the day it was checked, updated each release. The owner and admins set the instance's own prices over it in Settings → AI models ([Prices](#prices)). Prices are never fetched at run time: self-hosted instances must work offline.
 4. **A call's feature** is its `ottertrail.feature` attribute, else `gen_ai.agent.name`, else none ("Unlabeled").
-5. **Access:** the `ai` area at view, apart from monitoring, so someone can see AI costs without seeing traces ([access](access.md)). The breakdown by user, and the user of each call, also need `users` at view; a call's link to its trace needs `monitoring` at view.
+5. **Access:** the `ai` area at view, apart from monitoring ([access](access.md)). It shows AI calls, including the calling service's name and the trace ID as text; traces, logs, metrics, and the other services need `monitoring`. The breakdown by user, and the user of each call, also need `users` at view; a call's link to its trace needs `monitoring` at view.
 
 ## Detection
 
@@ -447,7 +447,7 @@ A conversation is the calls that share a `conversation_id` ([Detection](#detecti
    - a user's AI usage on the user's page (built 22 November 2026; [above](#a-users-ai-usage));
    - comparing the totals with the token metrics;
    - grouping by `gen_ai.conversation.id` (built 22 November 2026; [Conversations](#conversations));
-   - an AI access area, so finance people can see costs without the traces (built 22 November 2026, [access](access.md)).
+   - an AI access area, so finance people can see costs without monitoring (built 22 November 2026, [access](access.md)).
 
 ## Tests
 
