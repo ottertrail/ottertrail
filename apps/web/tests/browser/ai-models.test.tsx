@@ -249,7 +249,7 @@ describe("the AI models tab", () => {
     await sonnet.getByLabelText("Input", { exact: true }).fill("3.00");
     await expect.element(savePrice("claude-sonnet-4-6")).toHaveAttribute("aria-disabled", "true");
     await sonnet.getByLabelText("Input", { exact: true }).fill("2.5");
-    await sonnet.getByLabelText("From", { exact: true }).fill("2026-11-01");
+    await sonnet.getByLabelText("From", { exact: true }).fill("01/11/2026");
     await savePrice("claude-sonnet-4-6").click();
     await expect.element(sonnet).not.toBeInTheDocument();
     expect(lastChange(api)).toEqual({

@@ -2,6 +2,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { LoaderCircleIcon, OctagonAlertIcon, PlusIcon } from "lucide-react";
 import * as React from "react";
 
+import { DateField } from "@/components/date-field";
 import { SettingsSection } from "@/components/settings-section";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -273,8 +274,8 @@ function checkFilters(
   | { ok: true; filters: SpamFilters }
   | { ok: false; problems: Partial<Record<FilterField, string>> } {
   const problems: Partial<Record<FilterField, string>> = {};
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(draft.from)) problems.from = "Choose the first day.";
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(draft.to)) problems.to = "Choose the last day.";
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(draft.from)) problems.from = "Enter the first day as DD/MM/YYYY.";
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(draft.to)) problems.to = "Enter the last day as DD/MM/YYYY.";
   if (problems.from === undefined && problems.to === undefined) {
     if (draft.to > today) problems.to = "The period cannot end after today.";
     else if (draft.from > draft.to) problems.to = "The last day must not be before the first.";
@@ -353,6 +354,46 @@ function FilterInput({
   );
 }
 
+/** A day filter: typed day first or picked on the calendar (`DateField`), with its hint or problem. */
+function FilterDay({
+  field,
+  label,
+  hint,
+  problem,
+  value,
+  max,
+  onChange,
+}: {
+  field: "from" | "to";
+  label: string;
+  hint: string;
+  problem: string | undefined;
+  value: string;
+  max: string;
+  onChange: (day: string) => void;
+}) {
+  const id = `spam-filter-${field}`;
+  return (
+    <Field data-invalid={problem !== undefined || undefined} className="min-w-0">
+      <FieldLabel htmlFor={id}>{label}</FieldLabel>
+      <DateField
+        id={id}
+        label={label}
+        value={value}
+        max={max}
+        invalid={problem !== undefined}
+        describedBy={problem === undefined ? `${id}-hint` : `${id}-error`}
+        onChange={onChange}
+      />
+      {problem === undefined ? (
+        <FieldDescription id={`${id}-hint`}>{hint}</FieldDescription>
+      ) : (
+        <FieldError id={`${id}-error`}>{problem}</FieldError>
+      )}
+    </Field>
+  );
+}
+
 /**
  * Deleting spam that got in: the filters, "Count visits" with what would
  * go, then a confirmation that asks for the number of visits typed. An
@@ -390,10 +431,12 @@ function DeleteSpam({ project }: { project: Project }) {
   const counted = preview.data !== undefined && preview.data.key === key ? preview.data : null;
   const [deleted, setDeleted] = React.useState<SpamCounts | null>(null);
 
-  const set = (field: FilterField) => (event: React.ChangeEvent<HTMLInputElement>) => {
-    setDraft((previous) => ({ ...previous, [field]: event.target.value }));
+  const setValue = (field: FilterField, value: string) => {
+    setDraft((previous) => ({ ...previous, [field]: value }));
     setDeleted(null);
   };
+  const set = (field: FilterField) => (event: React.ChangeEvent<HTMLInputElement>) =>
+    setValue(field, event.target.value);
 
   const deletable =
     counted !== null &&
@@ -426,25 +469,23 @@ function DeleteSpam({ project }: { project: Project }) {
         }}
       >
         <div className="grid gap-4 sm:grid-cols-2">
-          <FilterInput
+          <FilterDay
             field="from"
             label="First day"
             hint={`In the instance's timezone, ${timeZone}.`}
             problem={problems.from}
-            type="date"
             max={today}
             value={draft.from}
-            onChange={set("from")}
+            onChange={(day) => setValue("from", day)}
           />
-          <FilterInput
+          <FilterDay
             field="to"
             label="Last day"
             hint={`At most ${MAX_PERIOD_DAYS} days in all.`}
             problem={problems.to}
-            type="date"
             max={today}
             value={draft.to}
-            onChange={set("to")}
+            onChange={(day) => setValue("to", day)}
           />
           <FilterInput
             field="referrer"

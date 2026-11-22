@@ -302,6 +302,54 @@ describe("deleting spam", () => {
   });
 });
 
+const firstDay = () => page.getByRole("textbox", { name: "First day" });
+const lastDay = () => page.getByRole("textbox", { name: "Last day" });
+const referrer = () => page.getByRole("textbox", { name: "Referrer domain (optional)" });
+/** A day on the open calendar, by its day as the field writes it. */
+const calendarDay = (day: string) =>
+  document.querySelector<HTMLElement>(`[data-slot=popover-content] button[data-day="${day}"]`);
+
+describe("the days to delete", () => {
+  test("typed day first, or picked on the calendar; never the browser's date field", async () => {
+    const api = installFakeApi();
+    renderApp(SPAM);
+    await expect.element(firstDay()).toBeVisible();
+    expect(document.querySelectorAll('input[type="date"]')).toHaveLength(0);
+    await expect.element(firstDay()).toHaveAttribute("placeholder", "DD/MM/YYYY");
+
+    // Typed: the slashes come by themselves.
+    await firstDay().fill("10112026");
+    await expect.element(firstDay()).toHaveValue("10/11/2026");
+    await lastDay().fill("12/11/2026");
+
+    // Picked: the calendar opens on the field's month; a day fills it and closes.
+    await page.getByRole("button", { name: "First day: open the calendar" }).click();
+    // The calendar's code loads the first time.
+    await expect.poll(() => calendarDay("11/11/2026")).not.toBeNull();
+    // As it opens, focus is on the chosen day.
+    await expect.poll(() => document.activeElement?.getAttribute("data-day")).toBe("10/11/2026");
+    calendarDay("11/11/2026")?.click();
+    await expect.element(firstDay()).toHaveValue("11/11/2026");
+    await expect.poll(() => document.querySelector("[data-slot=popover-content]")).toBeNull();
+
+    // Counting needs a filter besides the days.
+    await referrer().fill("spam.example");
+    await page.getByRole("button", { name: "Count visits" }).click();
+    await expect
+      .poll(() => api.bodies.at(-1)?.body)
+      .toMatchObject({ from: "2026-11-11", to: "2026-11-12" });
+  });
+
+  test("a half-typed day is refused with the format to use", async () => {
+    installFakeApi();
+    renderApp(SPAM);
+    await firstDay().fill("1011");
+    await referrer().fill("spam.example");
+    await page.getByRole("button", { name: "Count visits" }).click();
+    await expect.element(page.getByText("Enter the first day as DD/MM/YYYY.")).toBeVisible();
+  });
+});
+
 describe("the tab fits", () => {
   for (const [width, height] of [
     [390, 844],

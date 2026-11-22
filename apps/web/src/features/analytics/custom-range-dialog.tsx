@@ -2,6 +2,7 @@ import * as React from "react";
 import type { DateRange } from "react-day-picker";
 import { enGB } from "react-day-picker/locale";
 
+import { DayInput } from "@/components/day-input";
 import { Button } from "@/components/ui/button";
 import { Calendar } from "@/components/ui/calendar";
 import {
@@ -14,75 +15,9 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Field, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field";
-import { Input } from "@/components/ui/input";
 import { MAX_RANGE_DAYS, rangeProblem } from "@/lib/analytics-api";
 
-import {
-  DAY_PLACEHOLDER,
-  DAY_TEXT_LENGTH,
-  dateOf,
-  dayFromText,
-  dayOf,
-  dayText,
-  maskDay,
-} from "./day-text";
-
-/**
- * One typed day: digits only, the slashes come by themselves (maskDay). The
- * field's text and cursor are set within the same event that changed them,
- * so no keystroke is lost however fast they come.
- */
-function DayInput({
-  id,
-  text,
-  onTextChange,
-  onBlur,
-  invalid,
-  describedBy,
-}: {
-  id: string;
-  text: string;
-  onTextChange: (text: string) => void;
-  onBlur: () => void;
-  invalid: boolean;
-  describedBy: string | undefined;
-}) {
-  return (
-    <Input
-      id={id}
-      value={text}
-      onChange={(event) => {
-        const input = event.currentTarget;
-        const masked = maskDay(input.value, input.selectionStart ?? input.value.length);
-        // Before React renders: the text then already matches, so React
-        // leaves the field, and its cursor, alone.
-        input.value = masked.text;
-        input.setSelectionRange(masked.cursor, masked.cursor);
-        onTextChange(masked.text);
-      }}
-      onKeyDown={(event) => {
-        // Backspace right after a slash deletes the digit before it, and
-        // Delete right before one the digit after it: the slash alone would
-        // only come back.
-        const input = event.currentTarget;
-        const at = input.selectionStart ?? 0;
-        if (at !== input.selectionEnd) return;
-        if (event.key === "Backspace" && input.value[at - 1] === "/") {
-          input.setSelectionRange(at - 1, at - 1);
-        } else if (event.key === "Delete" && input.value[at] === "/") {
-          input.setSelectionRange(at + 1, at + 1);
-        }
-      }}
-      onBlur={onBlur}
-      placeholder={DAY_PLACEHOLDER}
-      inputMode="numeric"
-      autoComplete="off"
-      required
-      aria-invalid={invalid || undefined}
-      aria-describedby={describedBy}
-    />
-  );
-}
+import { DAY_PLACEHOLDER, DAY_TEXT_LENGTH, dateOf, dayFromText, dayOf, dayText } from "./day-text";
 
 /**
  * Chosen days for the page: a first and a last day, both included, in the
@@ -203,7 +138,8 @@ export function CustomRangeDialog({
                 onTextChange={(text) => typed("from", text)}
                 onBlur={() => setChecked((state) => ({ ...state, from: true }))}
                 invalid={shownProblem !== null && (from === null || to !== null)}
-                describedBy={describedBy}
+                aria-describedby={describedBy}
+                required
               />
             </Field>
             <Field>
@@ -214,7 +150,8 @@ export function CustomRangeDialog({
                 onTextChange={(text) => typed("to", text)}
                 onBlur={() => setChecked((state) => ({ ...state, to: true }))}
                 invalid={shownProblem !== null && from !== null}
-                describedBy={describedBy}
+                aria-describedby={describedBy}
+                required
               />
             </Field>
           </FieldGroup>

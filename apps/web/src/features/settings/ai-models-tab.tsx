@@ -11,6 +11,7 @@ import {
 import * as React from "react";
 
 import { clickableRow, ROW_LINK } from "@/components/clickable-row";
+import { DateField } from "@/components/date-field";
 import { Missing } from "@/components/missing";
 import { PINNED } from "@/components/pinned-column";
 import { ScrollHint } from "@/components/scroll-hint";
@@ -282,7 +283,7 @@ function problemsOf(
     if (problem !== null) problems[field] = problem;
   }
   if (draft.applies === "from" && !/^\d{4}-\d{2}-\d{2}$/.test(draft.from)) {
-    problems.from = "Choose the first day the price applies.";
+    problems.from = "Enter the first day the price applies, as DD/MM/YYYY.";
   }
   if (adding) {
     if (draft.provider.trim() === "") problems.provider = "Enter the provider, such as openai.";
@@ -650,14 +651,14 @@ function ModelSheet({
                 {draft.applies === "from" && (
                   <Field data-invalid={errorOf("from") !== null || undefined} className="ps-7">
                     <FieldLabel htmlFor={fieldId("from")}>From</FieldLabel>
-                    <Input
+                    <DateField
                       id={fieldId("from")}
-                      type="date"
+                      label="From"
                       value={draft.from}
                       className="max-w-44"
-                      aria-invalid={errorOf("from") !== null || undefined}
-                      aria-describedby={describedBy("from", true)}
-                      onChange={(event) => change({ from: event.target.value })}
+                      invalid={errorOf("from") !== null}
+                      describedBy={describedBy("from", true)}
+                      onChange={(from) => change({ from })}
                     />
                     {errorText("from") ?? (
                       <FieldDescription id={`${fieldId("from")}-hint`}>
