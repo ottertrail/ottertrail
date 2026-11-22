@@ -22,6 +22,7 @@ const EXPECTED: Record<string, [topic: string, path: string]> = {
   ],
   "/settings?tab=storage": ["Storage settings", "/self-hosting/storage/"],
   "/settings?tab=backups": ["Backups settings", "/self-hosting/backups/#the-backups-tab"],
+  "/settings?tab=server-log": ["Server log", "/self-hosting/server-log/"],
   "/settings?tab=ai-models": ["AI models settings", "/monitoring/ai-usage/#prices"],
   "/settings?tab=channels": ["Notification channels settings", "/uptime-and-alerts/channels/"],
   "/projects/$projectId/overview": ["Overview", "/introduction/overview/"],

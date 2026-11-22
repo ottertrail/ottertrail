@@ -61,6 +61,7 @@ export const SCREEN_DOCS: Partial<Record<RoutePath, ScreenDocs>> = {
       backups: { topic: "Backups settings", path: "/self-hosting/backups/#the-backups-tab" },
       "ai-models": { topic: "AI models settings", path: "/monitoring/ai-usage/#prices" },
       channels: { topic: "Notification channels settings", path: "/uptime-and-alerts/channels/" },
+      "server-log": { topic: "Server log", path: "/self-hosting/server-log/" },
     },
   },
   // A project's reports and lists.
