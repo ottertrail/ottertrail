@@ -264,6 +264,32 @@ describe("storage: Garage's admin API, the free-disk floor, and backup.sh", () =
   });
 });
 
+describe("the image holds every tracker script the API serves", () => {
+  const root = join(import.meta.dirname, "../../..");
+  const dockerfile = readFileSync(join(root, "Dockerfile"), "utf8");
+  /** The tracker files the runtime image copies into ./tracker/. */
+  const copied = (dockerfile.match(/^COPY --from=build (.+) \.\/tracker\/$/m)?.[1] ?? "")
+    .split(/\s+/)
+    .map((path) => path.replace("/src/packages/tracker/dist/", ""));
+  /** The scripts the tracker's build makes, one per key of its `scripts`. */
+  const trackerConfig = readFileSync(join(root, "packages/tracker/vite.config.ts"), "utf8");
+  const built = [...trackerConfig.matchAll(/^ {2}(\w+): \{\s*entry: "/gm)].map(
+    ([, name]) => `${name}.js`,
+  );
+  /** The files the API's script routes read from beside the tracker. */
+  const routes = readFileSync(join(import.meta.dirname, "../src/tracker-script/routes.ts"), "utf8");
+  const served = [...routes.matchAll(/join\(dirname\(scriptPath\), "([\w.-]+)"\)/g)].map(
+    ([, name]) => name,
+  );
+
+  test("the build makes each script the API serves, and the image copies each", () => {
+    expect(built).toContain("tracker.js");
+    expect(served).toEqual(expect.arrayContaining(["v.js", "r.js", "h.js", "o.js"]));
+    expect(built).toEqual(expect.arrayContaining(served));
+    expect([...copied].sort()).toEqual([...built].sort());
+  });
+});
+
 describe("restore.sh reads the backup variables from the file beside it as Compose does", () => {
   const script = readFileSync(join(deploy, "restore.sh"), "utf8");
   const reader = script.slice(

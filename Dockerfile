@@ -54,8 +54,10 @@ RUN apt-get update \
 COPY --from=build /src/apps/api/dist ./dist
 COPY --from=build /src/apps/web/dist ./dashboard
 # The tracker, and beside it what it loads: v.js to measure Web Vitals,
-# r.js to record session replays around errors, and h.js for heatmaps.
-COPY --from=build /src/packages/tracker/dist/tracker.js /src/packages/tracker/dist/v.js /src/packages/tracker/dist/r.js /src/packages/tracker/dist/h.js ./tracker/
+# r.js to record session replays around errors, h.js for heatmaps, and
+# o.js for the heatmap overlay on a page opened from the dashboard. Every
+# script packages/tracker/vite.config.ts builds (deploy-files.test.ts).
+COPY --from=build /src/packages/tracker/dist/tracker.js /src/packages/tracker/dist/v.js /src/packages/tracker/dist/r.js /src/packages/tracker/dist/h.js /src/packages/tracker/dist/o.js ./tracker/
 # The session replay player, which the dashboard's player page loads.
 COPY --from=build /src/packages/replay-player/dist/player.js /src/packages/replay-player/dist/THIRD_PARTY_LICENSES.txt ./replay-player/
 COPY LICENSE THIRD_PARTY_NOTICES.md ./
