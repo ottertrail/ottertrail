@@ -407,7 +407,7 @@ export const aiCallIngestRoutes: FastifyPluginCallback<AiCallIngestOptions> = (
         const { calls } = request.body as Partial<HttpAiBatch>;
         for (const call of Array.isArray(calls) ? calls : []) {
           if (typeof call?.errorType === "string") {
-            call.errorType = call.errorType.replaceAll(/ {2,}/g, " ").trim();
+            call.errorType = call.errorType.replaceAll(/^ +| +$/g, "").replaceAll(/ {2,}/g, " ");
           }
         }
         return undefined;
