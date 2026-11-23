@@ -12,7 +12,7 @@ import type { Database } from "../db/schema.ts";
  * fragment. The overlay script (o.js) exchanges it, once, for a session
  * token, which it keeps in memory and sends as `Authorization: Bearer` with
  * each read. Both are 32 random bytes, kept only as their SHA-256 hash, and
- * bound to the user, the project, the scope `heatmap:read`, and the
+ * bound to the user, the project, the scope `heatmap:overlay`, and the
  * dashboard session that made it: signing out, a password reset, or that
  * session's end ends them too (a foreign key, and a check of the session's
  * expiry on each use). A token is
@@ -20,7 +20,8 @@ import type { Database } from "../db/schema.ts";
  * about a guess through its timing.
  *
  * A link may name the page it was made for; its session may then save a
- * view of that page, and of no other (heatmaps/snapshots.ts).
+ * view of that page, and of no other, when its user is the owner or an
+ * admin (heatmaps/snapshots.ts).
  *
  * Neither grants anything by itself: every read and save checks the
  * user's role and grants again, through the same check as the dashboard's
@@ -36,8 +37,11 @@ export const OVERLAY_SESSION_TTL_MS = 30 * 60 * 1000;
  * unknown tokens. They cannot authorize reads.
  */
 export const OVERLAY_TOKEN_KEEP_MS = 24 * 60 * 60 * 1000;
-/** Allows heatmap reads and saving a view only of the link's page. */
-export const OVERLAY_SCOPE = "heatmap:read";
+/**
+ * Allows heatmap reads, and saving a view of the link's page only: the
+ * save route also needs the owner or an admin.
+ */
+export const OVERLAY_SCOPE = "heatmap:overlay";
 /** A token as newToken() writes it: 32 bytes in base64url, 43 characters. */
 export const OVERLAY_TOKEN_PATTERN = "^[A-Za-z0-9_-]{43}$";
 const TOKEN = new RegExp(OVERLAY_TOKEN_PATTERN);
@@ -197,18 +201,27 @@ export async function overlaySessionUser(
   return row?.user_id ?? null;
 }
 
-/** The page a session may save a view of (its link's), or null; checked after requireOverlayAccess. */
+/**
+ * The page a session may save a view of (its link's), or null: checked as
+ * overlaySessionUser checks the session, not only after it, so a session
+ * that ended meanwhile saves nothing.
+ */
 export async function overlaySessionPath(
   db: Kysely<Database>,
   token: string,
   projectId: string,
+  now: Date,
 ): Promise<string | null> {
   const row = await db
-    .selectFrom("heatmap_overlay_tokens")
-    .select("path")
-    .where("token_hash", "=", hashToken(token))
-    .where("kind", "=", "session")
-    .where("project_id", "=", projectId)
+    .selectFrom("heatmap_overlay_tokens as t")
+    .innerJoin("dashboard_sessions as s", "s.id", "t.session_id")
+    .select("t.path")
+    .where("t.token_hash", "=", hashToken(token))
+    .where("t.kind", "=", "session")
+    .where("t.scope", "=", OVERLAY_SCOPE)
+    .where("t.project_id", "=", projectId)
+    .where("t.expires_at", ">", now)
+    .where("s.expires_at", ">", now)
     .executeTakeFirst();
   return row?.path ?? null;
 }

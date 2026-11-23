@@ -99,7 +99,7 @@ type ViewQuery = RangeQuery & { path: string };
  *                                                                       the page that shows it, in a frame of the dashboard
  *   GET    /api/projects/:id/heatmaps/snapshots/:device/heatmap?path=…&period=…&environment=…
  *                                                                       the heatmap it draws: the overlay's answer, for the dashboard's range
- *   DELETE /api/projects/:id/heatmaps/snapshots/:device?path=…          deletes it (from the dashboard's origin)
+ *   DELETE /api/projects/:id/heatmaps/snapshots/:device?path=…          deletes it (the owner and admins, from the dashboard's origin)
  *
  * The player page is the replay player's (packages/replay-player), with
  * its Content Security Policy: a snapshot is untrusted HTML as a replay
@@ -120,6 +120,8 @@ export const heatmapSnapshotRoutes: FastifyPluginCallback<{
 ) => {
   const signedIn = requireSession(auth);
   const canView = requireProjectAccess(db, { area: "web_analytics", level: "view" });
+  // Saving, replacing, and deleting a saved view is the owner's and admins'.
+  const canManage = requireProjectAccess(db, { permission: "projects" });
   const fromDashboard = requireTrustedOrigin(trustedOrigins);
   app.setErrorHandler(clickHouseErrorHandler);
   // Every route here takes a path that a row keeps or is looked up by.
@@ -241,7 +243,7 @@ export const heatmapSnapshotRoutes: FastifyPluginCallback<{
   app.delete<{ Params: { id: string; device: HeatmapDevice }; Querystring: { path: string } }>(
     "/projects/:id/heatmaps/snapshots/:device",
     {
-      preHandler: [fromDashboard, signedIn, canView],
+      preHandler: [fromDashboard, signedIn, canManage],
       schema: { params: VIEW_PARAMS, querystring: PATH_QUERY },
     },
     async (request, reply) => {

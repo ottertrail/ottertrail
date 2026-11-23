@@ -585,7 +585,7 @@ export interface HeatmapOverlayTokensTable {
   /** The dashboard session that made it: it ends with that session. */
   session_id: ColumnType<string, string, never>;
   project_id: ColumnType<string, string, never>;
-  scope: ColumnType<"heatmap:read", "heatmap:read", never>;
+  scope: ColumnType<"heatmap:overlay", "heatmap:overlay", never>;
   expires_at: ColumnType<Date, Date, never>;
   /** When a link was exchanged; null until then, and always for a session. */
   used_at: ColumnType<Date | null, never, Date>;

@@ -179,7 +179,7 @@ describe("minting a link", () => {
       .where("project_id", "=", project.id)
       .execute();
     expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({ kind: "link", scope: "heatmap:read", used_at: null });
+    expect(rows[0]).toMatchObject({ kind: "link", scope: "heatmap:overlay", used_at: null });
     expect(rows[0]?.token_hash.equals(sha256(token))).toBe(true);
     // Nothing in the row is the token itself.
     expect(JSON.stringify(rows)).not.toContain(token);
@@ -235,7 +235,7 @@ describe("minting a link", () => {
           user_id: userId,
           session_id: sessionId,
           project_id: project.id,
-          scope: "heatmap:read",
+          scope: "heatmap:overlay",
           expires_at: ancient,
         },
         {
@@ -244,7 +244,7 @@ describe("minting a link", () => {
           user_id: userId,
           session_id: sessionId,
           project_id: project.id,
-          scope: "heatmap:read",
+          scope: "heatmap:overlay",
           expires_at: recent,
         },
       ])
@@ -283,7 +283,11 @@ describe("exchanging a link", () => {
       .selectAll()
       .where("token_hash", "=", sha256(session.token))
       .executeTakeFirstOrThrow();
-    expect(row).toMatchObject({ kind: "session", project_id: project.id, scope: "heatmap:read" });
+    expect(row).toMatchObject({
+      kind: "session",
+      project_id: project.id,
+      scope: "heatmap:overlay",
+    });
     expect(row.expires_at.getTime()).toBeGreaterThanOrEqual(before + OVERLAY_SESSION_TTL_MS);
     expect(row.expires_at.getTime()).toBeLessThanOrEqual(Date.now() + OVERLAY_SESSION_TTL_MS);
 
@@ -350,7 +354,24 @@ describe("exchanging a link", () => {
       expect(refused.headers["cache-control"]).toBe("no-store");
     }
     // Any port, as collection: hostnames have none.
-    expect((await exchange(link, { origin: "http://www.example.com:8080" })).statusCode).toBe(200);
+    expect((await exchange(link, { origin: "https://www.example.com:8080" })).statusCode).toBe(200);
+  });
+
+  test("only over https, but over http on localhost and 127.0.0.1, on any port", async () => {
+    const project = await newProject(["example.com", "localhost", "127.0.0.1"]);
+    const link = await linkFor(project.id);
+    const plain = await exchange(link, { origin: "http://example.com" });
+    expect([plain.statusCode, plain.json().error]).toEqual([403, "origin_not_allowed"]);
+    expect(plain.headers["access-control-allow-origin"]).toBeUndefined();
+    // Not used up by the refusal.
+    expect((await exchange(link, { origin: "http://localhost:5173" })).statusCode).toBe(200);
+    const local = await exchange(await linkFor(project.id), { origin: "http://127.0.0.1:8080" });
+    expect(local.statusCode).toBe(200);
+    const token = `Bearer ${local.json().token}`;
+    expect((await read(project.id, token, { origin: "http://127.0.0.1:8080" })).statusCode).toBe(
+      200,
+    );
+    expect((await read(project.id, token, { origin: "http://example.com" })).statusCode).toBe(403);
   });
 
   test("a user who lost access meanwhile gets no session", async () => {
@@ -582,7 +603,7 @@ describe("reading the overlay", () => {
     // The key in the query is not a parameter at all.
     expect(
       (
-        await read(project.id, null, {
+        await read(project.id, `Bearer ${"A".repeat(43)}`, {
           query: `path=%2Fpricing&device=desktop&key=${publicKey}`,
           cookie: dashboard.cookie,
         })
@@ -598,6 +619,13 @@ describe("reading the overlay", () => {
     expect(
       (await read(project.id, null, { query: `path=%2Fpricing&device=desktop&token=${session}` }))
         .statusCode,
+    ).toBe(401);
+    expect(
+      (
+        await read(project.id, `Bearer ${"A".repeat(43)}`, {
+          query: `path=%2Fpricing&device=desktop&token=${session}`,
+        })
+      ).statusCode,
     ).toBe(400);
   });
 
@@ -674,10 +702,37 @@ describe("limits", () => {
     const limited = await exchange(await linkFor(project.id), { app });
     expect(limited.statusCode).toBe(429);
     expect(Number(limited.headers["retry-after"])).toBeGreaterThan(0);
+    const unknown = `Bearer ${"A".repeat(43)}`;
     for (let index = 0; index < 2; index += 1) {
-      expect((await read(project.id, null, { app })).statusCode).toBe(401);
+      expect((await read(project.id, unknown, { app })).statusCode).toBe(401);
     }
-    expect((await read(project.id, null, { app })).statusCode).toBe(429);
+    expect((await read(project.id, unknown, { app })).statusCode).toBe(429);
+  });
+
+  test("junk from a script on the page cannot use up the owner's exchanges and reads", async () => {
+    const app = appWith({
+      overlayExchangeLimit: { capacity: 1, refillPerSecond: 0.001 },
+      overlayReadLimit: { capacity: 1, refillPerSecond: 0.001 },
+    });
+    const project = await newProject();
+    for (let index = 0; index < 40; index += 1) {
+      await exchange("short", { app });
+      await exchange(undefined, { app, body: "not json" });
+      await read(project.id, "Bearer nope", { app });
+      await read(project.id, null, { app });
+    }
+    // Their own bucket is empty by now.
+    expect((await exchange("short", { app })).statusCode).toBe(429);
+    // Minted on this app: the shared app's links per user are this file's other tests'.
+    const link = await app.inject({
+      method: "POST",
+      url: `/api/projects/${project.id}/heatmaps/overlay-link`,
+      headers: { cookie: dashboard.cookie, origin: PUBLIC_URL },
+    });
+    const session = await exchange(link.json().token, { app });
+    expect(session.statusCode).toBe(200);
+    const answer = await read(project.id, `Bearer ${session.json().token}`, { app });
+    expect(answer.statusCode).toBe(200);
   });
 
   test("malformed requests are refused before any database work", async () => {
@@ -880,6 +935,8 @@ describe("refusals before any database work", () => {
     });
     extraApps.push(app);
     await app.ready();
+    // A token of the right form spends the exchange's bucket; this one is unknown.
+    expect((await exchange("A".repeat(43), { app })).statusCode).toBe(410);
     queries = 0;
     const malformed = await exchange("short", { app });
     expect(malformed.statusCode).toBe(400);

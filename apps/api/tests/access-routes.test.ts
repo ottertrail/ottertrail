@@ -142,10 +142,10 @@ const EXPECTED: Record<string, string> = {
   "GET /api/projects/:id/heatmaps/snapshots/:device": "web_analytics:view",
   "GET /api/projects/:id/heatmaps/snapshots/:device/player": "web_analytics:view",
   "GET /api/projects/:id/heatmaps/snapshots/:device/heatmap": "web_analytics:view",
-  "DELETE /api/projects/:id/heatmaps/snapshots/:device": "web_analytics:view",
+  "DELETE /api/projects/:id/heatmaps/snapshots/:device": "project:permission:projects",
   // An overlay session token in place of the cookie, checked by the same rules.
   "GET /api/heatmap-overlay/:projectId/heatmap": "overlay:web_analytics:view",
-  "POST /api/heatmap-overlay/:projectId/snapshot": "overlay:web_analytics:view",
+  "POST /api/heatmap-overlay/:projectId/snapshot": "overlay:project:permission:projects",
 
   "GET /api/projects/:id/events": "product_analytics:view",
   "GET /api/projects/:id/events/:name": "product_analytics:view",

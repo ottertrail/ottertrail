@@ -3,12 +3,14 @@ import type { Kysely } from "kysely";
 
 import {
   bearerToken,
+  can,
   checkProjectAccess,
   type ProjectAccess,
   requireOverlayAccess,
 } from "../access/access.ts";
 import {
   findOverlayLink,
+  isOverlayToken,
   overlaySessionPath,
   OVERLAY_TOKEN_PATTERN,
   startOverlaySession,
@@ -25,7 +27,13 @@ import { dashboardReader, type DashboardQueryLimiter } from "../telemetry/dashbo
 import { DASHBOARD_SETTINGS } from "../telemetry/dashboard-query.ts";
 import { heatmapRangeOf } from "./dashboard-routes.ts";
 import { emptyOverlay, heatmapOverlay } from "./report.ts";
-import { MAX_SNAPSHOT_BYTES, readSnapshot, saveSnapshot, storablePath } from "./snapshots.ts";
+import {
+  MAX_SNAPSHOT_BYTES,
+  readSnapshot,
+  saveSnapshot,
+  SNAPSHOT_TOO_LARGE,
+  storablePath,
+} from "./snapshots.ts";
 import { DEVICES, type HeatmapDevice } from "./store.ts";
 
 /**
@@ -38,6 +46,12 @@ export const DEFAULT_OVERLAY_EXCHANGE_LIMIT: RateLimit = { capacity: 10, refillP
 export const DEFAULT_OVERLAY_READ_LIMIT: RateLimit = { capacity: 60, refillPerSecond: 1 };
 /** Saved views per client address: a burst of 10, then one every 10 seconds. */
 export const DEFAULT_OVERLAY_SAVE_LIMIT: RateLimit = { capacity: 10, refillPerSecond: 1 / 10 };
+/**
+ * Requests whose token, Origin, or size has the wrong form, per client
+ * address, in a bucket of their own: a script on the owner's page cannot
+ * use up the owner's exchanges, reads, or saves with junk.
+ */
+export const DEFAULT_OVERLAY_MALFORMED_LIMIT: RateLimit = { capacity: 30, refillPerSecond: 1 };
 /** The periods the overlay offers, in days back from today. */
 export const OVERLAY_PERIODS = ["7d", "30d", "90d"] as const;
 /** The exchange's body is a token in JSON: far below a kilobyte. */
@@ -58,9 +72,10 @@ const LINK_SPENT = problem(
 );
 const ORIGIN_REFUSED = problem(
   "origin_not_allowed",
-  "The overlay only opens on the project's allowed hostnames.",
+  "The overlay only opens on the project's allowed hostnames, over https (or http on localhost).",
 );
 const NO_ACCESS = problem("no_access", "Your account cannot view this project's heatmaps.");
+const NO_TOKEN = problem("invalid_token", "Send the overlay's session token as Bearer.");
 const LINK_UNKNOWN = problem("link_unknown", "No overlay link has this token.");
 const WRONG_PAGE = problem(
   "wrong_page",
@@ -89,29 +104,41 @@ function only(part: "body" | "query", names: readonly string[]) {
   };
 }
 
-/** The hostname of the request's Origin, or null without one a browser would send. */
+/** Plain http only for a site on this computer, on any port: elsewhere, https. */
+const LOCAL_HOSTNAMES = new Set(["localhost", "127.0.0.1"]);
+
+/**
+ * The request's Origin and its hostname, or null without one the overlay
+ * opens on: https, or http on localhost or 127.0.0.1. The overlay's own
+ * rule: collection (collection/normalize.ts) takes either scheme.
+ */
 function originOf(request: FastifyRequest): { origin: string; hostname: string } | null {
   const origin = request.headers.origin;
   if (origin === undefined) return null;
   const hostname = originHostname(origin);
-  return hostname === null ? null : { origin, hostname };
+  if (hostname === null) return null;
+  const secure = origin.toLowerCase().startsWith("https:");
+  return secure || LOCAL_HOSTNAMES.has(hostname) ? { origin, hostname } : null;
+}
+
+/** Charges the client address in `bucket`; a 429 when it is empty. */
+function charge(bucket: TokenBucketLimiter, request: FastifyRequest, reply: FastifyReply) {
+  const result = bucket.take(clientKey(request.ip));
+  if (result.allowed) return undefined;
+  return reply
+    .code(429)
+    .header("retry-after", String(result.retryAfterSeconds))
+    .send(
+      problem(
+        "rate_limited",
+        `Too many requests. Retry after ${result.retryAfterSeconds} seconds.`,
+      ),
+    );
 }
 
 /** Refuses a client address past its limit (429), before anything else is done. */
 function limitedBy(bucket: TokenBucketLimiter) {
-  return async (request: FastifyRequest, reply: FastifyReply) => {
-    const result = bucket.take(clientKey(request.ip));
-    if (result.allowed) return undefined;
-    return reply
-      .code(429)
-      .header("retry-after", String(result.retryAfterSeconds))
-      .send(
-        problem(
-          "rate_limited",
-          `Too many requests. Retry after ${result.retryAfterSeconds} seconds.`,
-        ),
-      );
-  };
+  return async (request: FastifyRequest, reply: FastifyReply) => charge(bucket, request, reply);
 }
 
 /** The access requireOverlayAccess set: the read always runs it. */
@@ -155,6 +182,7 @@ export const heatmapOverlayRoutes: FastifyPluginCallback<{
   exchangeLimit?: RateLimit;
   readLimit?: RateLimit;
   saveLimit?: RateLimit;
+  malformedLimit?: RateLimit;
   /** The clock that decides "today" for the period; tests fix it. */
   now?: () => Date;
 }> = (app, options, done) => {
@@ -164,20 +192,47 @@ export const heatmapOverlayRoutes: FastifyPluginCallback<{
   );
   const readLimiter = new TokenBucketLimiter(options.readLimit ?? DEFAULT_OVERLAY_READ_LIMIT);
   const saveLimiter = new TokenBucketLimiter(options.saveLimit ?? DEFAULT_OVERLAY_SAVE_LIMIT);
+  const malformedLimiter = new TokenBucketLimiter(
+    options.malformedLimit ?? DEFAULT_OVERLAY_MALFORMED_LIMIT,
+  );
   /** Requests from an origin on the project's allowed hostnames: their answers carry CORS. */
   const allowed = new WeakMap<FastifyRequest, string>();
   const canView = requireOverlayAccess(db, { area: "web_analytics", level: "view" });
+  // Saving, replacing, and deleting saved views is the owner's and admins'.
+  const canSave = requireOverlayAccess(db, { permission: "projects" });
+
+  /**
+   * Charges a request with a Bearer of the overlay token's form to
+   * `bucket`, and refuses one without (401), charged to the malformed
+   * bucket. No database work.
+   */
+  const bearerFirst =
+    (bucket: TokenBucketLimiter) => async (request: FastifyRequest, reply: FastifyReply) => {
+      if (bearerToken(request.headers.authorization) !== null) {
+        return charge(bucket, request, reply);
+      }
+      return charge(malformedLimiter, request, reply) ?? reply.code(401).send(NO_TOKEN);
+    };
 
   // text/plain, so the exchange is a "simple" request without a preflight.
   for (const type of ["text/plain", "application/json"]) {
     app.addContentTypeParser(
       type,
       { parseAs: "string", bodyLimit: MAX_BODY_BYTES },
-      (_request, body, parsed) => {
+      (request, body, parsed) => {
         try {
           parsed(null, JSON.parse(String(body)));
         } catch {
-          parsed(Object.assign(new Error("The body is not valid JSON"), { statusCode: 400 }));
+          // Junk: the malformed bucket's, as a token of the wrong form is.
+          const limited = !malformedLimiter.take(clientKey(request.ip)).allowed;
+          parsed(
+            Object.assign(
+              new Error(limited ? "Too many requests." : "The body is not valid JSON"),
+              {
+                statusCode: limited ? 429 : 400,
+              },
+            ),
+          );
         }
       },
     );
@@ -212,9 +267,7 @@ export const heatmapOverlayRoutes: FastifyPluginCallback<{
       const origin = originOf(request);
       if (origin === null) return reply.code(403).send(ORIGIN_REFUSED);
       if (needsToken && bearerToken(request.headers.authorization) === null) {
-        return reply
-          .code(401)
-          .send(problem("invalid_token", "Send the overlay's session token as Bearer."));
+        return reply.code(401).send(NO_TOKEN);
       }
       const project = await db
         .selectFrom("projects")
@@ -232,8 +285,18 @@ export const heatmapOverlayRoutes: FastifyPluginCallback<{
     "/heatmap-overlay/session",
     {
       bodyLimit: MAX_BODY_BYTES,
-      onRequest: limitedBy(exchangeLimiter),
-      preValidation: only("body", ["token"]),
+      // After the small body is read: a token of the token's form spends the
+      // exchange's bucket, anything else the malformed one.
+      preValidation: [
+        async (request, reply) => {
+          const body: unknown = request.body;
+          const token =
+            typeof body === "object" && body !== null ? Reflect.get(body, "token") : undefined;
+          const wellFormed = typeof token === "string" && isOverlayToken(token);
+          return charge(wellFormed ? exchangeLimiter : malformedLimiter, request, reply);
+        },
+        only("body", ["token"]),
+      ],
       schema: {
         body: {
           type: "object",
@@ -271,6 +334,8 @@ export const heatmapOverlayRoutes: FastifyPluginCallback<{
         expiresAt: session.expiresAt.toISOString(),
         // Whether "Save this view" can work: saved views need the object store.
         snapshots: store !== null,
+        // Whether this user may save one: the owner and admins only. The save checks again.
+        canSave: can(checked.access.user, "projects"),
       };
     },
   );
@@ -304,7 +369,7 @@ export const heatmapOverlayRoutes: FastifyPluginCallback<{
   }>(
     readPath,
     {
-      onRequest: limitedBy(readLimiter),
+      onRequest: bearerFirst(readLimiter),
       preValidation: only("query", ["path", "device", "period", "environment"]),
       schema: {
         params: PARAMS_SCHEMA,
@@ -377,7 +442,25 @@ export const heatmapOverlayRoutes: FastifyPluginCallback<{
     savePath,
     {
       bodyLimit: MAX_SNAPSHOT_BYTES,
-      onRequest: limitedBy(saveLimiter),
+      // Before the body is read, and without database work: the Origin's
+      // form, the Bearer's, and the size the request declares.
+      onRequest: async (request, reply) => {
+        const length = Number(request.headers["content-length"] ?? Number.NaN);
+        let refused: { status: number; body: { error: string; message: string } } | null = null;
+        if (originOf(request) === null) refused = { status: 403, body: ORIGIN_REFUSED };
+        else if (bearerToken(request.headers.authorization) === null) {
+          refused = { status: 401, body: NO_TOKEN };
+        } else if (!Number.isSafeInteger(length) || length < 1) {
+          refused = {
+            status: 411,
+            body: problem("length_required", "Send the snapshot with a Content-Length."),
+          };
+        } else if (length > MAX_SNAPSHOT_BYTES) refused = { status: 413, body: SNAPSHOT_TOO_LARGE };
+        if (refused === null) return charge(saveLimiter, request, reply);
+        return (
+          charge(malformedLimiter, request, reply) ?? reply.code(refused.status).send(refused.body)
+        );
+      },
       preValidation: [only("query", ["path"]), storablePath],
       schema: {
         params: PARAMS_SCHEMA,
@@ -388,7 +471,7 @@ export const heatmapOverlayRoutes: FastifyPluginCallback<{
           properties: { path: { type: "string", minLength: 1, maxLength: 2048, pattern: "^/" } },
         },
       },
-      preHandler: [fromProjectSite({ needsToken: true }), canView],
+      preHandler: [fromProjectSite({ needsToken: true }), canSave],
     },
     async (request, reply) => {
       const access = accessOf(request);
@@ -401,7 +484,7 @@ export const heatmapOverlayRoutes: FastifyPluginCallback<{
       // The session's own page, from its link: never another page of the site.
       const token = bearerToken(request.headers.authorization) ?? "";
       const { path } = request.query;
-      if ((await overlaySessionPath(db, token, access.projectId)) !== path) {
+      if ((await overlaySessionPath(db, token, access.projectId, new Date())) !== path) {
         return reply.code(403).send(WRONG_PAGE);
       }
       const read = await readSnapshot(request.body);

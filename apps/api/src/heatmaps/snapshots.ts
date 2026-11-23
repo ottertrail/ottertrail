@@ -53,6 +53,12 @@ export const MAX_SNAPSHOT_TEXT_BYTES = 32 * 1024 * 1024;
  */
 export const MAX_SNAPSHOT_CONTAINERS = 500_000;
 export const MAX_SNAPSHOT_VALUES = 4_000_000;
+/**
+ * The deepest nesting of objects and arrays: rrweb rebuilds a page by
+ * recursion, about two levels per element (the node and its children), so
+ * this allows pages over 200 elements deep, far past real ones.
+ */
+export const MAX_SNAPSHOT_DEPTH = 500;
 /** Events in a snapshot at most: its meta, its full snapshot, and the stylesheets it brought. */
 const MAX_EVENTS = 1000;
 
@@ -77,19 +83,29 @@ export const SNAPSHOT_TOO_LARGE = problem(
   "snapshot_too_large",
   "This page is too large to save: over 5 MB compressed, 32 MiB unpacked, or about 150,000 elements (500,000 objects and lists). Its heatmap still shows over the live page with Open on your site.",
 );
+export const SNAPSHOT_TOO_DEEP = problem(
+  "snapshot_too_deep",
+  "This page nests its elements too deeply to save: over 500 levels of objects and lists. Its heatmap still shows over the live page with Open on your site.",
+);
 
 /**
- * Counts the JSON's containers (objects and arrays) and values, outside
- * strings, in one pass over its bytes; stops once either is past its limit.
- * Only bytes of `{`, `[`, `,`, `"`, and `\\` matter, which never occur
- * inside a multi-byte UTF-8 character.
+ * Counts the JSON's containers (objects and arrays) and values, and its
+ * depth, outside strings, in one pass over its bytes; stops once one is
+ * past its limit (`deep` when the depth). Only bytes of `{`, `[`, `}`, `]`,
+ * `,`, `"`, and `\\` matter, which never occur inside a multi-byte UTF-8
+ * character.
  */
 export function structureOf(
   text: Uint8Array,
-  limits = { containers: MAX_SNAPSHOT_CONTAINERS, values: MAX_SNAPSHOT_VALUES },
-): { containers: number; values: number; over: boolean } {
+  limits = {
+    containers: MAX_SNAPSHOT_CONTAINERS,
+    values: MAX_SNAPSHOT_VALUES,
+    depth: MAX_SNAPSHOT_DEPTH,
+  },
+): { containers: number; values: number; over: boolean; deep: boolean } {
   let containers = 0;
   let values = 0;
+  let depth = 0;
   let inString = false;
   for (let i = 0; i < text.length; i += 1) {
     const byte = text[i];
@@ -101,13 +117,17 @@ export function structureOf(
     } else if (byte === 0x7b || byte === 0x5b) {
       containers += 1;
       values += 1;
-      if (containers > limits.containers) return { containers, values, over: true };
+      depth += 1;
+      if (depth > limits.depth) return { containers, values, over: true, deep: true };
+      if (containers > limits.containers) return { containers, values, over: true, deep: false };
+    } else if (byte === 0x7d || byte === 0x5d) {
+      depth -= 1;
     } else if (byte === 0x2c) {
       values += 1;
-      if (values > limits.values) return { containers, values, over: true };
+      if (values > limits.values) return { containers, values, over: true, deep: false };
     }
   }
-  return { containers, values, over: false };
+  return { containers, values, over: false, deep: false };
 }
 
 /** Checks run one at a time: each holds a parsed snapshot in memory. */
@@ -160,8 +180,11 @@ async function checkSnapshot(body: Uint8Array): Promise<ReadSnapshot> {
   let value: unknown;
   try {
     const text = await unzip(body, { maxOutputLength: MAX_SNAPSHOT_TEXT_BYTES });
-    // Counted before parsing: memory follows the objects, not the text.
-    if (structureOf(text).over) return { ok: false, status: 413, body: SNAPSHOT_TOO_LARGE };
+    // Counted before parsing: memory follows the objects, not the text, and
+    // the player's rebuild recurses as deep as the JSON nests.
+    const structure = structureOf(text);
+    if (structure.deep) return { ok: false, status: 400, body: SNAPSHOT_TOO_DEEP };
+    if (structure.over) return { ok: false, status: 413, body: SNAPSHOT_TOO_LARGE };
     value = JSON.parse(text.toString("utf8"));
   } catch (error) {
     const tooLarge =

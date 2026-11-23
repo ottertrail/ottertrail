@@ -3,11 +3,13 @@ import { gunzipSync, gzipSync } from "node:zlib";
 
 import { afterAll, beforeAll, describe, expect, test } from "vite-plus/test";
 
+import { overlaySessionPath } from "../src/access/overlay-tokens.ts";
 import { purgeDeletedProjects } from "../src/clickhouse/delete-events.ts";
 import { LOCAL_OBJECT_STORE } from "../src/config.ts";
 import {
   MAX_SNAPSHOT_BYTES,
   MAX_SNAPSHOT_CONTAINERS,
+  MAX_SNAPSHOT_DEPTH,
   projectSnapshotPrefix,
   structureOf,
 } from "../src/heatmaps/snapshots.ts";
@@ -92,14 +94,14 @@ function snapshot({
   );
 }
 
-async function sessionFor(
+async function exchangeFor(
   projectId: string,
   {
     app = dashboard,
     cookie,
     path = "/pricing",
   }: { app?: Dashboard; cookie?: string; path?: string | null } = {},
-): Promise<string> {
+) {
   const minted = await app.app.inject({
     method: "POST",
     url: `/api/projects/${projectId}/heatmaps/overlay-link`,
@@ -114,7 +116,14 @@ async function sessionFor(
     payload: JSON.stringify({ token: minted.json().token }),
   });
   expect(exchanged.statusCode).toBe(200);
-  return exchanged.json().token;
+  return exchanged.json();
+}
+
+async function sessionFor(
+  projectId: string,
+  options: { app?: Dashboard; cookie?: string; path?: string | null } = {},
+): Promise<string> {
+  return (await exchangeFor(projectId, options)).token;
 }
 
 function save(
@@ -267,26 +276,102 @@ describe("saving a view from the overlay", () => {
     expect(await keysOf(project.id)).toEqual([]);
   });
 
-  test("a member needs Web analytics; losing it fails the next save", async () => {
+  test("only the owner and admins save a view; a member's session says it cannot", async () => {
     const project = await newProject();
     const member = await signedInUser(dashboard, {
       name: "Analyst",
       email: `analyst-${randomUUID()}@example.com`,
       grants: { projects: [project.id], areas: { web_analytics: "view" } },
     });
-    const session = await sessionFor(project.id, { cookie: member.cookie });
-    expect((await save(project.id, session)).statusCode).toBe(201);
-    expect((await listOf(project.id)).snapshots[0].savedBy).toBe("Analyst");
+    const memberSession = await exchangeFor(project.id, { cookie: member.cookie });
+    expect(memberSession).toMatchObject({ snapshots: true, canSave: false });
+    const refused = await save(project.id, memberSession.token);
+    expect([refused.statusCode, refused.json().error]).toEqual([403, "forbidden"]);
+    expect(await keysOf(project.id)).toEqual([]);
+
+    const admin = await signedInUser(dashboard, {
+      name: "Admin",
+      email: `admin-${randomUUID()}@example.com`,
+      role: "admin",
+    });
+    const adminSession = await exchangeFor(project.id, { cookie: admin.cookie });
+    expect(adminSession.canSave).toBe(true);
+    expect((await exchangeFor(project.id)).canSave).toBe(true);
+    expect((await save(project.id, adminSession.token)).statusCode).toBe(201);
+    expect((await listOf(project.id)).snapshots[0].savedBy).toBe("Admin");
+    // Made a member meanwhile, with no projects granted: the next save is refused.
     await dashboard.db
-      .updateTable("dashboard_member_access")
-      .set({ web_analytics: "none" })
-      .where("user_id", "=", member.userId)
+      .updateTable("dashboard_users")
+      .set({ role: "member" })
+      .where("id", "=", admin.userId)
       .execute();
-    const refused = await save(project.id, session);
-    expect(refused.statusCode).toBe(403);
+    expect((await save(project.id, adminSession.token)).statusCode).toBe(404);
     // The user removed: the view stays, saved by no one known.
-    await dashboard.db.deleteFrom("dashboard_users").where("id", "=", member.userId).execute();
+    await dashboard.db.deleteFrom("dashboard_users").where("id", "=", admin.userId).execute();
     expect((await listOf(project.id)).snapshots[0].savedBy).toBeNull();
+  });
+
+  test("a session's page is its own only while the session and its dashboard session last", async () => {
+    const project = await newProject();
+    const session = await sessionFor(project.id);
+    const now = new Date();
+    expect(await overlaySessionPath(dashboard.db, session, project.id, now)).toBe("/pricing");
+    const later = new Date(now.getTime() + 31 * 60_000);
+    expect(await overlaySessionPath(dashboard.db, session, project.id, later)).toBeNull();
+    const { session_id: sessionId } = await dashboard.db
+      .selectFrom("heatmap_overlay_tokens")
+      .select("session_id")
+      .where("kind", "=", "session")
+      .where("project_id", "=", project.id)
+      .executeTakeFirstOrThrow();
+    const { expires_at: ends } = await dashboard.db
+      .selectFrom("dashboard_sessions")
+      .select("expires_at")
+      .where("id", "=", sessionId)
+      .executeTakeFirstOrThrow();
+    // Past the dashboard session's end, though the overlay's 30 minutes are not.
+    expect(await overlaySessionPath(dashboard.db, session, project.id, ends)).toBeNull();
+  });
+
+  test("refuses a page nested too deeply for the player to rebuild", async () => {
+    const project = await newProject();
+    const session = await sessionFor(project.id);
+    const at = Date.now();
+    let node: unknown = { type: 3, textContent: "deep", id: 1000 };
+    for (let id = 999; id >= 2; id -= 1) {
+      node = { type: 2, tagName: "div", attributes: {}, childNodes: [node], id };
+    }
+    const deep = snapshot({
+      events: [
+        { type: 4, data: { href: SITE, width: 1280, height: 800 }, timestamp: at },
+        { type: 2, data: { node: { type: 0, id: 1, childNodes: [node] } }, timestamp: at },
+      ],
+    });
+    const refused = await save(project.id, session, deep);
+    expect([refused.statusCode, refused.json().error]).toEqual([400, "snapshot_too_deep"]);
+    expect(await keysOf(project.id)).toEqual([]);
+  });
+
+  test("checks the Origin's form, the Bearer's, and the declared size before reading the body", async () => {
+    const project = await newProject();
+    const session = await sessionFor(project.id);
+    const post = (headers: Record<string, string>) =>
+      dashboard.app.inject({
+        method: "POST",
+        url: `/api/heatmap-overlay/${project.id}/snapshot?path=%2Fpricing`,
+        headers: { "content-type": "application/gzip", ...headers },
+        // Past the body limit: read first, it would be refused as too large (413).
+        payload: Buffer.alloc(MAX_SNAPSHOT_BYTES + 1),
+      });
+    const bearer = `Bearer ${session}`;
+    expect((await post({ origin: SITE })).statusCode).toBe(401);
+    expect((await post({ authorization: bearer })).statusCode).toBe(403);
+    // Plain http, except on this computer.
+    expect((await post({ origin: "http://example.com", authorization: bearer })).statusCode).toBe(
+      403,
+    );
+    const declared = await post({ origin: SITE, authorization: bearer });
+    expect([declared.statusCode, declared.json().error]).toEqual([413, "snapshot_too_large"]);
   });
 
   test("refuses what is not a snapshot (400), too large (413), or another type (415)", async () => {
@@ -376,9 +461,14 @@ describe("saving a view from the overlay", () => {
       containers: 3,
       values: 6,
       over: false,
+      deep: false,
     });
     expect(structureOf(text("[".repeat(MAX_SNAPSHOT_CONTAINERS + 1))).over).toBe(true);
-    expect(structureOf(text("[]".repeat(10)), { containers: 5, values: 100 })).toMatchObject({
+    expect(structureOf(text("[".repeat(MAX_SNAPSHOT_DEPTH + 1)))).toMatchObject({ deep: true });
+    expect(structureOf(text("[]".repeat(MAX_SNAPSHOT_DEPTH + 1))).deep).toBe(false);
+    expect(
+      structureOf(text("[]".repeat(10)), { containers: 5, values: 100, depth: 500 }),
+    ).toMatchObject({
       over: true,
       containers: 6,
     });
@@ -531,6 +621,25 @@ describe("saved views in the dashboard", () => {
       totals: { pageviews: 0, clicks: 0 },
       elements: [],
     });
+  });
+
+  test("only the owner and admins delete one; members still see it", async () => {
+    const project = await newProject();
+    await save(project.id, await sessionFor(project.id));
+    const member = await signedInUser(dashboard, {
+      name: "Viewer",
+      email: `viewer-${randomUUID()}@example.com`,
+      grants: { projects: [project.id], areas: { web_analytics: "view" } },
+    });
+    const url = `/api/projects/${project.id}/heatmaps/snapshots/desktop?path=%2Fpricing`;
+    expect((await listOf(project.id)).snapshots).toHaveLength(1);
+    const listed = await dashboardCall("GET", url.replace("/desktop", ""), {
+      cookie: member.cookie,
+    });
+    expect(listed.json().snapshots).toHaveLength(1);
+    const refused = await dashboardCall("DELETE", url, { cookie: member.cookie });
+    expect([refused.statusCode, refused.json().error]).toEqual([403, "forbidden"]);
+    expect(await keysOf(project.id)).toHaveLength(1);
   });
 
   test("delete removes the row and the object, from the dashboard's origin only", async () => {
