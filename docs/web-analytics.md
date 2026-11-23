@@ -359,7 +359,7 @@ A delete takes at most 10,000 visits; past that it refuses, deleting nothing (40
 
 ## 3. The tracker
 
-`packages/tracker` builds `dist/tracker.js`, the script a site adds to its pages: about 12.0 KB, 5.1 KB gzipped. It loads `dist/v.js` (3.7 KB gzipped) from beside itself to measure [Web Vitals](#web-vitals), `dist/r.js` (29 KB gzipped) to record [session replays](session-replay.md) when the page asks for them, `dist/h.js` (4.8 KB gzipped) for [heatmaps](#heatmaps) when the page asks for them, and `dist/o.js` (7.9 KB gzipped) on a page opened from the dashboard to show its [heatmap overlay](#the-overlay-on-your-site). `o.js` loads `dist/s.js` (28 KB gzipped, nearly all of it rrweb) only when the owner presses "Save this view" ([saved views](#saved-views)).
+`packages/tracker` builds `dist/tracker.js`, the script a site adds to its pages: about 12.2 KB, 5.2 KB gzipped. It loads `dist/v.js` (3.7 KB gzipped) from beside itself to measure [Web Vitals](#web-vitals), `dist/r.js` (29 KB gzipped) to record [session replays](session-replay.md) when the page asks for them, `dist/h.js` (4.8 KB gzipped) for [heatmaps](#heatmaps) when the page asks for them, and `dist/o.js` (8.0 KB gzipped) on a page opened from the dashboard to show its [heatmap overlay](#the-overlay-on-your-site). `o.js` loads `dist/s.js` (28 KB gzipped, nearly all of it rrweb) only when the owner presses "Save this view" ([saved views](#saved-views)).
 
 ```html
 <script
@@ -1056,9 +1056,9 @@ It draws again, at most once a frame, when anything scrolls or the window or pag
 - **The fragment** is never sent to a server, and browsers strip it from `Referer`. The tracker removes it from the address and the history entry as it starts.
 - **Scripts of the page can read the link and the session.** The overlay runs inside the site's own page, beside the site's other scripts, and nothing in a page can keep a secret from a script that runs there first or changes what the overlay relies on. Ottertrail narrows what a script can get without trying:
   - A script that runs before the tracker (which is deferred) can read the link from the address.
-  - The tracker never puts the link on a DOM node, where a `MutationObserver` could read it as `o.js` is added. The `o.js` element carries only a function, which hands the link over once, and only while `o.js` itself is the running script (`document.currentScript`). A script that calls it at any other time gets nothing. `s.js` hands its snapshot function back to `o.js` the same way.
+  - The tracker never puts the link on a DOM node, where a `MutationObserver` could read it as `o.js` is added. The `o.js` element carries only a function, which hands the link over once, and only while `o.js` itself is the running script. It asks the browser through `Document.prototype`'s own `currentScript` getter, taken when the tracker starts, so a later script that shadows `document.currentScript` to point at the `o.js` element gets nothing either. A script that calls it at any other time gets nothing. `s.js` hands its snapshot function back to `o.js` the same way.
   - `o.js` sends its requests with the page's `fetch` as the tracker found it when it started, so a script that wraps `fetch` after that never sees the link or the session.
-  - A script that ran before the tracker, or that replaces `document.currentScript` or `fetch` before the tracker starts, can still read the link or the session, and act as the overlay with them.
+  - A script that ran before the tracker, or that replaces `Document.prototype`'s `currentScript` getter or `fetch` before the tracker starts, can still read the link or the session, and act as the overlay with them.
 
   Single use limits what a stolen link can do: either the owner used it first, or the owner's overlay fails visibly ("already used").
 

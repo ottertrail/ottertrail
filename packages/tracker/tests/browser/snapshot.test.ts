@@ -65,7 +65,7 @@ function fakeApi({
 /** Opens the overlay; its closed shadow root, caught as it is attached. */
 function open(
   api = fakeApi(),
-  extra: { loadSnapshot?: () => Promise<TakeSnapshot>; nonce?: string } = {},
+  extra: { loadSnapshot?: () => Promise<TakeSnapshot>; nonce?: string; scriptUrl?: string } = {},
 ) {
   const states: OverlayState[] = [];
   const spy = vi.spyOn(Element.prototype, "attachShadow");
@@ -123,15 +123,29 @@ describe("the Save control", () => {
     expect(script.nonce).toBe("n0nce");
     const handoff = Reflect.get(script, SNAPSHOT_PROPERTY) as SnapshotConfig;
     expect(typeof handoff.ready).toBe("function");
-    // Another script of the page cannot hand over a function of its own.
+    // Another script of the page cannot hand over a function of its own,
+    // even one that shadows document.currentScript to look like s.js.
     handoff.ready(async () => ({ ok: false, reason: "failed" }));
-    // s.js as it runs: it hands back the function that takes the snapshot.
     Object.defineProperty(document, "currentScript", { configurable: true, get: () => script });
     try {
-      handoff.ready((hide) => takeSnapshot({ hide }));
+      handoff.ready(async () => ({ ok: false, reason: "failed" }));
     } finally {
       Reflect.deleteProperty(document, "currentScript");
     }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(view.api.calls.filter((call) => call.url.includes("/snapshot?"))).toHaveLength(0);
+  });
+
+  test("s.js, as it runs, hands back the function that takes the snapshot", async () => {
+    Reflect.set(window, "ottertrailTestTake", ((hide) =>
+      takeSnapshot({ hide })) satisfies TakeSnapshot);
+    cleanups.push(() => Reflect.deleteProperty(window, "ottertrailTestTake"));
+    // tests/browser/fixtures/s.js stands in for s.js, beside this "o.js".
+    const view = open(fakeApi(), {
+      scriptUrl: `${location.origin}/tests/browser/fixtures/o.js`,
+    });
+    await settled(view, "ready");
+    view.save()?.click();
     await vi.waitFor(() => expect(view.said()?.textContent).toBe(SAVE_MESSAGES.saved("desktop")));
     expect(view.api.calls.filter((call) => call.url.includes("/snapshot?"))).toHaveLength(1);
   });

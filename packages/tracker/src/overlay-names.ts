@@ -13,6 +13,20 @@ export const OVERLAY_TAG = "ottertrail-heatmap";
 export const OVERLAY_PROPERTY = "ottertrailOverlay";
 /** Gives the config once, and only to o.js as it runs (document.currentScript is its element). */
 export type OverlayHandoff = () => OverlayConfig | undefined;
+
+/**
+ * Reads document.currentScript through Document.prototype's own getter,
+ * taken now: a later script that shadows the property on `document`
+ * (Object.defineProperty) cannot make another element look current.
+ */
+export function currentScriptReader(doc: Document): () => unknown {
+  const getter =
+    typeof Document === "function"
+      ? // oxlint-disable-next-line typescript/unbound-method -- called below with `doc` as `this`
+        Object.getOwnPropertyDescriptor(Document.prototype, "currentScript")?.get
+      : undefined;
+  return getter === undefined ? () => doc.currentScript : () => getter.call(doc) as unknown;
+}
 export interface OverlayConfig {
   /** The instance's origin (the tag's data-host). */
   host: string;

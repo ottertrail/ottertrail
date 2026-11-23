@@ -13,7 +13,7 @@ import {
   type OverlayElement,
   parseOverlay,
 } from "./overlay-draw.ts";
-import { type OverlayConfig, OVERLAY_TAG } from "./overlay-names.ts";
+import { currentScriptReader, type OverlayConfig, OVERLAY_TAG } from "./overlay-names.ts";
 import { type SnapshotConfig, SNAPSHOT_PROPERTY, type TakeSnapshot } from "./snapshot-names.ts";
 
 export { elementName, parseOverlay } from "./overlay-draw.ts";
@@ -130,6 +130,8 @@ export interface OverlayOptions {
   nonce?: string;
   /** For tests: called with each new state. */
   onState?: (state: OverlayState) => void;
+  /** document.currentScript as o.js read it when it started (currentScriptReader). */
+  currentScript?: () => unknown;
   /** o.js's own address: s.js is loaded from beside it. */
   scriptUrl?: string;
   /** For tests: loads s.js, which hands back the function that takes a snapshot. */
@@ -151,6 +153,7 @@ type Exchanged =
 /** Starts the overlay on this page. Returns its controls, for o.js and tests. */
 export function startOverlay(config: OverlayConfig, options: OverlayOptions) {
   const { window: win, document: doc } = options;
+  const currentScript = options.currentScript ?? currentScriptReader(doc);
   const api = new URL("/api/heatmap-overlay/", config.host).href;
   const pagePath = win.location.pathname;
   let link: string | null = config.token;
@@ -569,7 +572,7 @@ export function startOverlay(config: OverlayConfig, options: OverlayOptions) {
       // Only s.js, as it runs, hands back its function.
       const handoff: SnapshotConfig = {
         ready: (take) => {
-          if (doc.currentScript === script) resolve(take);
+          if (currentScript() === script) resolve(take);
         },
       };
       Reflect.set(script, SNAPSHOT_PROPERTY, handoff);

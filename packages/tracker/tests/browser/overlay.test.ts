@@ -542,7 +542,31 @@ describe("the overlay", () => {
 });
 
 /** Runs a script of src/ as the page's script element `script` would. */
+/**
+ * Takes the tracker's handoff as o.js does, while the element really is
+ * the running script: it runs once as an inline script that takes it. The
+ * handoff checks the browser's own currentScript, which run() below cannot
+ * fake, so o.js then gets what was taken.
+ */
+function takeHandoff(script: HTMLScriptElement) {
+  const handoff: unknown = Reflect.get(script, OVERLAY_PROPERTY);
+  if (typeof handoff !== "function") return;
+  let taken: unknown;
+  Reflect.set(window, "ottertrailTake", () => {
+    taken = handoff();
+  });
+  const src = script.getAttribute("src");
+  script.removeAttribute("src");
+  script.textContent = "window.ottertrailTake()";
+  document.body.append(script);
+  script.remove();
+  if (src !== null) script.setAttribute("src", src);
+  Reflect.deleteProperty(window, "ottertrailTake");
+  Reflect.set(script, OVERLAY_PROPERTY, () => taken);
+}
+
 async function run(script: HTMLScriptElement, file: string) {
+  if (file === "overlay.ts") takeHandoff(script);
   Object.defineProperty(document, "currentScript", { configurable: true, get: () => script });
   try {
     await import(/* @vite-ignore */ `../../src/${file}?overlay=${Date.now()}`);
@@ -616,6 +640,16 @@ describe("opened from the dashboard, with the tracker", () => {
     const handoff: unknown = Reflect.get(overlayScript, OVERLAY_PROPERTY);
     expect(typeof handoff).toBe("function");
     expect(typeof handoff === "function" ? handoff() : "missing").toBeUndefined();
+    // Nor to one that shadows document.currentScript to look like o.js.
+    Object.defineProperty(document, "currentScript", {
+      configurable: true,
+      get: () => overlayScript,
+    });
+    try {
+      expect(typeof handoff === "function" ? handoff() : "missing").toBeUndefined();
+    } finally {
+      Reflect.deleteProperty(document, "currentScript");
+    }
 
     await run(overlayScript, "overlay.ts");
     expect(Reflect.get(overlayScript, OVERLAY_PROPERTY)).toBeUndefined();

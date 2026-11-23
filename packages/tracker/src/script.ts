@@ -19,7 +19,12 @@ import {
   HEATMAP_PROPERTY,
 } from "./heatmap-names.ts";
 import { watchNavigation } from "./navigation.ts";
-import { type OverlayConfig, type OverlayHandoff, OVERLAY_PROPERTY } from "./overlay-names.ts";
+import {
+  currentScriptReader,
+  type OverlayConfig,
+  type OverlayHandoff,
+  OVERLAY_PROPERTY,
+} from "./overlay-names.ts";
 import { randomId } from "./random-id.ts";
 import { type Recorder, REPLAY_PROPERTY, type ReplayConfig } from "./replay-names.ts";
 import { cleanSignature, cleanUserId } from "./sanitize.ts";
@@ -85,6 +90,8 @@ const REAL = Symbol.for("ottertrail.tracker");
 
 (() => {
   try {
+    // As the tracker starts, before later scripts can shadow it.
+    const currentScript = currentScriptReader(document);
     if (window.ottertrail !== undefined && Reflect.get(window.ottertrail, REAL) === true) {
       console.warn("Ottertrail: duplicate tracker ignored. Remove the extra script tag.");
       return;
@@ -229,7 +236,7 @@ const REAL = Symbol.for("ottertrail.tracker");
           ...(typeof fetch === "function" ? { fetch: fetch.bind(window) } : {}),
         };
         const handoff: OverlayHandoff = () => {
-          if (added === undefined || document.currentScript !== added) return undefined;
+          if (added === undefined || currentScript() !== added) return undefined;
           const given = config;
           config = undefined;
           return given;
