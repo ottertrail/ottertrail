@@ -254,6 +254,22 @@ describe("exceptions on spans", () => {
     ]).errors;
     expect(other?.eventId).not.toBe(first?.eventId);
   });
+
+  test("an ID never changes for the same input, so retries stay one event", () => {
+    const identity = [
+      "span",
+      "0af7651916cd43dd8448eb211c80319c",
+      "b7ad6b7169203331",
+      "0",
+      "1700000000000000000",
+      "TypeError",
+      "boom",
+    ];
+    expect(exceptionEventId("11111111-2222-3333-4444-555555555555", identity)).toBe(
+      "60320fb8-0510-866a-812d-925d1ba6f551",
+    );
+    expect(exceptionEventId("p", [])).toBe("148de9c5-a7a4-8d19-a56c-d9ae1a554bf6");
+  });
 });
 
 describe("exceptions in log records", () => {
