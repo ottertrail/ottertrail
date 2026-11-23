@@ -4,7 +4,11 @@ import Fastify from "fastify";
 import { afterAll, beforeAll, describe, expect, test } from "vite-plus/test";
 
 import type { IngestActivity } from "../src/activity/activity.ts";
-import { aiCallIngestRoutes, MAX_AI_CALLS_PER_BATCH } from "../src/ai/ingest-routes.ts";
+import {
+  aiCallIngestRoutes,
+  MAX_AI_CALLS_PER_BATCH,
+  tidyErrorType,
+} from "../src/ai/ingest-routes.ts";
 import { evaluateTelemetryRule, telemetryRules } from "../src/alerts/telemetry-rules.ts";
 import { buildApp } from "../src/app.ts";
 import { type ClickHouseClient, createClickHouse } from "../src/clickhouse/clickhouse.ts";
@@ -470,6 +474,19 @@ describe("POST /api/ai-calls", () => {
     expect(rows.get(choices.id)?.finish_reasons).toHaveLength(16);
     expect(rows.get(failed.id)).toMatchObject({ failed: true, error_type: "Too Many Requests" });
     expect(rows.get(untidy.id)?.error_type).toBe("Rate limit");
+  });
+
+  test("an error type's spaces are tidied in linear time; a long run is refused at once", async () => {
+    expect(tidyErrorType("  Rate   limit  ")).toBe("Rate limit");
+    expect(tidyErrorType("Timeout\t")).toBe("Timeout\t");
+    expect(tidyErrorType("    ")).toBe("");
+    // 500,000 spaces between two letters: a backtracking trim took minutes.
+    const long = `a${" ".repeat(500_000)}b`;
+    const started = performance.now();
+    expect(tidyErrorType(long)).toBe(long);
+    const response = await send({ v: 1, calls: [aiCall({ errorType: long })] });
+    expect(response.statusCode).toBe(400);
+    expect(performance.now() - started).toBeLessThan(1000);
   });
 
   test("takes JSON types as sent: null is never false, nor text a number", async () => {

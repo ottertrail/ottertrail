@@ -227,6 +227,21 @@ function typeProblem(value: unknown, schema: TypedSchema, path: string): string 
   return null;
 }
 
+/**
+ * An error type with its spaces at the ends removed and runs of them made
+ * one, in linear time: a backtracking regex over a long run of spaces
+ * would block the event loop. One longer than the schema allows is left
+ * as it is, for the schema to refuse.
+ */
+export function tidyErrorType(value: string): string {
+  if (value.length > MAX_HTTP_ERROR_TYPE_CHARS) return value;
+  let start = 0;
+  let end = value.length;
+  while (start < end && value.charCodeAt(start) === 32) start += 1;
+  while (end > start && value.charCodeAt(end - 1) === 32) end -= 1;
+  return value.slice(start, end).replaceAll(/ {2,}/g, " ");
+}
+
 function problem(code: string, message: string) {
   return { error: code, message };
 }
@@ -406,9 +421,7 @@ export const aiCallIngestRoutes: FastifyPluginCallback<AiCallIngestOptions> = (
         // sender's slip: tidied, not refused. Other whitespace still is.
         const { calls } = request.body as Partial<HttpAiBatch>;
         for (const call of Array.isArray(calls) ? calls : []) {
-          if (typeof call?.errorType === "string") {
-            call.errorType = call.errorType.replaceAll(/^ +| +$/g, "").replaceAll(/ {2,}/g, " ");
-          }
+          if (typeof call?.errorType === "string") call.errorType = tidyErrorType(call.errorType);
         }
         return undefined;
       },
