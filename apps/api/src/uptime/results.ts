@@ -13,19 +13,12 @@ import type { Buckets } from "../telemetry/metrics.ts";
 import type { CheckOutcome } from "./request.ts";
 
 /**
- * Check results in ClickHouse (check_results, clickhouse/migrations.ts): the worker
- * writes one per run, and a check's page reads its response times and
- * latest failures. Every query names the project first, then the check,
- * as the table is ordered.
+ * Store check runs in ClickHouse (check_results, clickhouse/migrations.ts). Filter queries by
+ * project then check to match table ordering.
  */
 
-/** How long ClickHouse keeps results (the table's TTL). */
 export const RESULT_RETENTION_DAYS = 90;
 
-/**
- * One run's outcome as a row of check_results. Exported for the
- * development seed (scripts/seed-data.ts), which writes many at once.
- */
 export function resultRow(
   check: { id: string; projectId: string },
   outcome: CheckOutcome,
@@ -43,7 +36,7 @@ export function resultRow(
   };
 }
 
-/** Writes one run's outcome: an asynchronous insert, waiting for the write, as events are. */
+/** Wait for the asynchronous insert to be written before returning. */
 export async function storeResult(
   clickhouse: ClickHouseClient,
   check: { id: string; projectId: string },
@@ -53,15 +46,12 @@ export async function storeResult(
   await insertRows(clickhouse, "check_results", [resultRow(check, outcome, at)]);
 }
 
-/** A check's response times over a range, in buckets, with how many runs failed. */
 export interface ResponseChart {
-  /** The first bucket's start. */
   start: Date;
   stepSeconds: number;
   buckets: number;
-  /** The average response time of the runs that got an answer, per bucket; null where none did. */
+  /** Average answered runs only; null when none answered. */
   responseMs: (number | null)[];
-  /** Runs in the range, and how many of them failed. */
   runs: number;
   failures: number;
 }
@@ -117,7 +107,6 @@ export async function responseChart(
   };
 }
 
-/** A run that failed, as a check's page lists it. */
 export interface Failure {
   at: Date;
   statusCode: number | null;
@@ -126,7 +115,6 @@ export interface Failure {
   detail: string;
 }
 
-/** Failures listed on a check's page: the latest. */
 export const MAX_FAILURES = 20;
 
 /** A check's latest failed runs in [from, to), newest first. */

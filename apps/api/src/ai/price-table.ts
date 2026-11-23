@@ -1,13 +1,9 @@
 import type { ModelPrice } from "./prices.ts";
 
 /**
- * The price table (ai/prices.ts): US dollars per million tokens, standard
- * pay-as-you-go prices, each read from the provider's own page on the day
- * `checked` says (AWS's from its Price List API, us-east-1, on demand).
- * Never guessed: a model whose price or ID could not be confirmed on the
- * provider's pages is left out. Dated snapshots are listed one by one, as
- * the providers' model pages name them. Check each source again for every
- * release, and update `checked`.
+ * Standard pay-as-you-go US dollars per million tokens, verified against each provider's source
+ * on `checked` (AWS Price List API: us-east-1, on demand). Omit unverified IDs or prices.
+ * Recheck sources and update `checked` each release (ai/prices.ts).
  */
 export const PRICE_TABLE: readonly ModelPrice[] = [
   {

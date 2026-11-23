@@ -8,14 +8,11 @@ import type { CheckCause } from "../db/schema.ts";
 import { AddressNotAllowedError, NoAddressError, type ResolvedAddress } from "./addresses.ts";
 
 /**
- * The request machinery uptime checks (uptime/request.ts) and webhooks
- * (notifications/webhook.ts) share: one request pinned to an address the
- * rules allowed (addresses.ts), and the sentence for a request that
- * failed. Each caller resolves and checks the host first, with
- * resolveTarget, then sends to the address it returned.
+ * Share pinned requests between uptime checks (uptime/request.ts) and webhooks
+ * (notifications/webhook.ts). Callers must first use resolveTarget to check the address
+ * (addresses.ts).
  */
 
-/** Why a request failed, in the words uptime checks record (CheckCause). */
 export type FailureCause = Exclude<CheckCause, "status" | "word" | "redirects">;
 
 const DNS_CODES = new Set([
@@ -31,7 +28,6 @@ const DNS_CODES = new Set([
   "ETIMEOUT",
 ]);
 
-/** Node's and OpenSSL's codes for a certificate or handshake that failed. */
 function isTlsCode(code: string): boolean {
   return (
     code === "EPROTO" ||
@@ -50,7 +46,6 @@ export const codeOf = (error: unknown) =>
     ? error.code
     : "";
 
-/** The cause and sentence of an error a request threw. */
 export function classifyRequestError(error: unknown): { cause: FailureCause; detail: string } {
   if (error instanceof AddressNotAllowedError) return { cause: "address", detail: error.message };
   const code = codeOf(error);
@@ -100,11 +95,8 @@ export interface PinnedRequest {
 }
 
 /**
- * Sends one request to `target`, the checked address: the host name stays
- * in the URL, so the Host header and TLS's server name (SNI) and
- * certificate check use it, while the connection's lookup answers with the
- * checked address and nothing else. Resolves with the answer once its
- * headers arrive; redirects are the caller's to follow or not.
+ * Pin the connection to the checked address while retaining the hostname for Host, SNI, and
+ * certificate validation. Resolve on headers; callers decide whether to follow redirects.
  */
 export function pinnedRequest(
   url: URL,
@@ -123,7 +115,7 @@ export function pinnedRequest(
       url,
       {
         method,
-        // A connection of its own each time: never one opened to another address.
+        // Use a fresh connection so it cannot reuse another address.
         agent: false,
         lookup: pinned,
         signal,

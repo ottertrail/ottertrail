@@ -1,7 +1,6 @@
 /**
- * The status codes a check counts as up: a list of codes and ranges, such
- * as "200-399" (the default) or "200, 204, 300-302". Stored as written
- * here (formatStatuses), with no spaces.
+ * Store status lists without spaces (formatStatuses), for example "200-399" or
+ * "200,204,300-302".
  */
 export interface StatusRange {
   from: number;
@@ -10,10 +9,9 @@ export interface StatusRange {
 
 export const DEFAULT_STATUSES = "200-399";
 
-/** At most this many codes and ranges in one list. */
 export const MAX_STATUS_PARTS = 10;
 
-/** The ranges a list names, or null when it is not one: codes from 100 to 599, each range low to high. */
+/** Reject codes outside 100 to 599 and descending ranges. */
 export function parseStatuses(text: string): StatusRange[] | null {
   const parts = text.split(",").map((part) => part.trim());
   if (parts.length === 0 || parts.length > MAX_STATUS_PARTS) return null;
@@ -29,7 +27,6 @@ export function parseStatuses(text: string): StatusRange[] | null {
   return ranges;
 }
 
-/** "200-399,418": a list as it is stored and shown. */
 export function formatStatuses(ranges: readonly StatusRange[]): string {
   return ranges
     .map((range) => (range.from === range.to ? String(range.from) : `${range.from}-${range.to}`))

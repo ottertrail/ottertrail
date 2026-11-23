@@ -48,7 +48,6 @@ const PARAMS = {
 /** A label as a filter: what the rows can hold (ai/calls.ts), with no control characters. */
 const LABEL = { type: "string", pattern: `^[^\\u0000-\\u001F\\u007F]{1,${MAX_AI_LABEL_CHARS}}$` };
 
-/** The report's filters: the period and environment, and each label exactly as stored. */
 const FILTER_PROPERTIES = {
   ...RANGE_PROPERTIES,
   service: { type: "string", pattern: SERVICE_PATTERN },
@@ -68,7 +67,6 @@ type AiQuery = RangeQuery & {
   user?: string;
 };
 
-/** The access requireProjectAccess set: these routes always run it. */
 function accessOf(request: { projectAccess: ProjectAccess | null }): ProjectAccess {
   if (request.projectAccess === null) {
     throw new Error("requireProjectAccess must run before this route");
@@ -84,10 +82,7 @@ const filtersOf = (query: AiQuery) => ({
   user: query.user,
 });
 
-/**
- * Whether the request filters by a user without users at view: refused
- * (403), as an alert of another area is, rather than answered for everyone.
- */
+/** Refuse user filters without users view access (403); never fall back to all users. */
 const userRefused = (request: { query: AiQuery; projectAccess: ProjectAccess | null }) =>
   request.query.user !== undefined && !canUse(accessOf(request).user, "users", "view");
 
@@ -116,24 +111,10 @@ const answered = (range: TelemetryRange) => ({
 });
 
 /**
- * GET /api/projects/:id/ai[?period=7d|from=…&to=…&environment=…&service=…&provider=…&model=…&feature=…&user=…]
- *     (totals, the previous period's totals, breakdowns by model, feature, and user,
- *     failures by error.type, and what the filters offer)
- * GET /api/projects/:id/ai/chart[?…the same…&split=model|feature]
- *     (cost, tokens, calls, and the 95th-percentile duration per time bucket, split)
- * GET /api/projects/:id/ai/calls[?…the same…]
- *     (the latest 50 calls, with their trace and span)
- *
- * The AI page (docs/ai-usage.md, "The report"; report.ts). Each runs
- * requireProjectAccess for the AI area at view, and reads only the project
- * it found. The breakdown by user, and the user of each call, need users
- * at view too: without it, `users` is null and `usersHidden` true, and a
- * `user` filter (one end user's calls, the user page's AI section) is
- * refused with 403.
- *
- * AI calls are kept as long as the project's events, so the range is not
- * cut to the 30 days of spans. Cost is worked out at the instance's
- * prices of now (custom-prices.ts), read for each request.
+ * AI report routes (docs/ai-usage.md, "The report"; report.ts). requireProjectAccess scopes
+ * each route to AI view access. Without users view access, hide user breakdowns and call users,
+ * and refuse user filters with 403. Calls follow project event retention. Read current custom
+ * prices for each request (custom-prices.ts).
  */
 export const aiRoutes: FastifyPluginCallback<{
   db: Kysely<Database>;
@@ -152,7 +133,6 @@ export const aiRoutes: FastifyPluginCallback<{
   const readerOf = (reply: FastifyReply) => dashboardReader(clickhouse, limiter, reply);
   app.setErrorHandler(clickHouseErrorHandler);
 
-  /** The request's days, in the instance's timezone; or the reason they are refused. */
   async function rangeOf(
     request: { query: AiQuery; projectAccess: ProjectAccess | null },
     moment: Date,

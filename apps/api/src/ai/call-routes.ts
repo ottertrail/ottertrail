@@ -39,7 +39,6 @@ const UUID_PATTERN =
 /** A label as a filter: what the rows can hold (ai/calls.ts), with no control characters. */
 const LABEL = { type: "string", pattern: `^[^\\u0000-\\u001F\\u007F]{1,${MAX_AI_LABEL_CHARS}}$` };
 
-/** The list's filters: the AI page's (routes.ts), a user, a conversation, and the failed calls. */
 const FILTER_PROPERTIES = {
   ...RANGE_PROPERTIES,
   service: { type: "string", pattern: SERVICE_PATTERN },
@@ -63,7 +62,6 @@ type ListQuery = RangeQuery & {
   before?: string;
 };
 
-/** An ISO time in UTC, as the dashboard sends a call's start. */
 const MOMENT_PATTERN = "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,9})?Z$";
 
 /** A call with no time to look around is looked for this far back. */
@@ -119,21 +117,9 @@ const USERS_NEEDED = {
 };
 
 /**
- * GET /api/projects/:id/ai/call-list[?…the AI page's filters…&user=…&conversation=…&status=failed&before=…]
- *     (the calls, newest first, a page at a time, and the period's totals)
- * GET /api/projects/:id/ai/calls/:callId[?at=…]
- *     (one call, every stored field, and where its price comes from)
- * GET /api/projects/:id/ai/conversations[?…the same filters…]
- *     (the period's conversations, by their last call)
- * GET /api/projects/:id/ai/conversations/:conversationId[?…the same filters…]
- *     (one conversation's calls in the period, in order, and its figures)
- *
- * The AI calls list (docs/ai-usage.md, "The calls list"; call-list.ts).
- * Each runs requireProjectAccess for the AI area at view, as the AI page's
- * routes do, and reads only the project it found. A call's user, and the
- * `user` filter, need users at view too: without it, users are null,
- * `usersHidden` is true, and a request with `user` is refused (403), so a
- * user's calls cannot be found by their ID.
+ * AI call routes (docs/ai-usage.md, "The calls list"; call-list.ts). requireProjectAccess
+ * scopes every route to AI view access. User fields and filters also require users view access;
+ * refuse unauthorized user filters with 403 to prevent ID lookups.
  */
 export const aiCallListRoutes: FastifyPluginCallback<{
   db: Kysely<Database>;
@@ -182,7 +168,6 @@ export const aiCallListRoutes: FastifyPluginCallback<{
     };
   }
 
-  /** The request's range, scope, and filters; or the answer that refuses it. */
   async function prepared(
     request: { query: ListQuery; projectAccess: ProjectAccess | null },
     reply: FastifyReply,
@@ -206,7 +191,6 @@ export const aiCallListRoutes: FastifyPluginCallback<{
     };
   }
 
-  /** What the filter bar offers, as the AI page's report answers it (routes.ts). */
   async function labelsOf(reply: FastifyReply, scope: AiScope) {
     const reader = readerOf(reply);
     const [labels, received] = await Promise.all([
@@ -243,8 +227,7 @@ export const aiCallListRoutes: FastifyPluginCallback<{
       if (ready === null) return reply;
       const { range, scope, filters, withUsers } = ready;
       const reader = readerOf(reply);
-      // A later page (Load older calls) is only its calls: the first page's
-      // totals and filter options stand for the whole list.
+      // Later pages reuse the first page's totals and filter options.
       const later = before !== undefined;
       const [page, totals, labels] = await Promise.all([
         listAiCalls(reader, scope, filters, { before, withUsers }),
@@ -301,7 +284,7 @@ export const aiCallListRoutes: FastifyPluginCallback<{
         withUsers,
       );
       if (found === null) {
-        // Not "not_found", which the access check answers for an unknown project.
+        // Distinguish a missing call from the access check's unknown-project response.
         return reply.code(404).send({ error: "no_such_call", message: "No AI call has this ID." });
       }
       const keptFrom = moment.getTime() - traceRetentionDays * 86_400_000;
@@ -309,7 +292,7 @@ export const aiCallListRoutes: FastifyPluginCallback<{
         timeZone,
         usersHidden: !withUsers,
         traceRetentionDays,
-        // Its trace's spans are kept no longer than this: older, the trace is gone.
+        // Older calls outlive their trace spans.
         traceKept: found.call.traceId !== "" && found.call.at.getTime() >= keptFrom,
         call: found.call,
         price: found.price,

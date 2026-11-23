@@ -16,18 +16,13 @@ import {
 } from "./kinds.ts";
 
 /**
- * A project's alert rules in PostgreSQL (docs/uptime-alerts.md, "Alerts"):
- * what each watches and where it sends, its alerts firing now, and its
- * history. Deleting a check or a channel takes it out of the rules that
- * named it (forgetCheck, forgetChannel), in the transaction that deletes it.
+ * Deleting checks or channels updates affected rules in the same transaction (forgetCheck,
+ * forgetChannel; docs/uptime-alerts.md, "Alerts").
  */
 
-/** Days an alert stays in the history. */
 export const HISTORY_RETENTION_DAYS = 90;
-/** Alerts a page of the history holds at most. */
 export const MAX_HISTORY_PAGE = 100;
 
-/** A rule as the API answers it. */
 export interface Rule {
   id: string;
   name: string;
@@ -37,7 +32,6 @@ export interface Rule {
   enabled: boolean;
   /** Why the server turned it off, such as its last channel being deleted. */
   disabledReason: string | null;
-  /** Subjects it is firing for now. */
   firing: number;
   /** A telemetry rule whose evaluations fail: why the last one did, and since when they have. */
   evaluationError: { message: string; since: Date } | null;
@@ -46,7 +40,6 @@ export interface Rule {
   updatedAt: Date;
 }
 
-/** What a user sets on a rule; every field optional on a change. */
 export interface RuleInput {
   name?: string | undefined;
   kind?: string | undefined;
@@ -55,7 +48,6 @@ export interface RuleInput {
   enabled?: boolean | undefined;
 }
 
-/** A rule's values, checked, as stored. */
 export interface RuleValues {
   name: string;
   kind: RuleKind;
@@ -67,11 +59,7 @@ export interface RuleValues {
 // eslint-disable-next-line no-control-regex -- control characters are what it refuses
 const CONTROL = /[\u0000-\u001F\u007F]/u;
 
-/**
- * The values a rule would have with `input` over `base` (none for a new
- * rule), each checked; or the first problem. Whether its channels and
- * check exist is checked when it is saved (saveProblem).
- */
+/** Validate merged values. Check channel and check existence on save (saveProblem). */
 export function ruleValuesOf(input: RuleInput, base?: RuleValues): RuleValues | Problem {
   const kind = input.kind ?? base?.kind;
   if (!isRuleKind(kind)) {
@@ -105,11 +93,7 @@ export const valuesOfRule = (rule: Rule): RuleValues => ({
   enabled: rule.enabled,
 });
 
-/**
- * Why a rule cannot be saved in this project: a channel the instance does
- * not have, or a check of another project (or none). Locks what it found
- * until the transaction ends, so a deletion waits for the save.
- */
+/** Lock referenced channels and checks until commit so deletion waits for the save. */
 async function saveProblem(
   trx: Transaction<Database>,
   projectId: string,
@@ -158,9 +142,8 @@ const ruleColumns = [
 ] as const;
 
 /**
- * A project's rules as `kinds`' readers see them: when a rule last fired
- * counts only alerts fired under those kinds (alert_history.kind), as the
- * history does, since a rule can change kind.
+ * Count lastFiredAt only under kinds the reader can access. A rule may retain history from
+ * another kind.
  */
 function ruleQuery(
   db: Kysely<Database> | Transaction<Database>,
@@ -229,7 +212,6 @@ export async function findRule(
   return row === undefined ? null : ruleOf(row);
 }
 
-/** Adds a rule; refused when the project has MAX_RULES, or with the problem saveProblem finds. */
 export async function createRule(
   db: Kysely<Database>,
   projectId: string,
@@ -239,8 +221,7 @@ export async function createRule(
   kinds: readonly RuleKind[],
 ): Promise<{ rule: Rule } | { refused: "too_many" } | { problem: Problem }> {
   return db.transaction().execute(async (trx) => {
-    // Adds to one project wait for each other here, so two at once
-    // cannot both find room for the last rule.
+    // Serialize additions per project so concurrent saves cannot exceed the rule cap.
     await trx
       .selectFrom("projects")
       .select("id")
@@ -277,9 +258,8 @@ export async function createRule(
 }
 
 /**
- * Forgets a rule's alerts: its states, and its open alerts end now, with
- * no notification. For a rule turned off, or one that watches something
- * else now; its history stays.
+ * Clear states and silently end open alerts when a rule is disabled or retargeted. Keep
+ * history.
  */
 async function forgetStates(trx: Transaction<Database>, ruleIds: string[], at: Date) {
   if (ruleIds.length === 0) return;
@@ -303,14 +283,9 @@ async function forgetStates(trx: Transaction<Database>, ruleIds: string[], at: D
 }
 
 /**
- * Changes a rule. Turning it off, or changing its kind or settings,
- * forgets its alerts (forgetStates): turned on again, it starts from what
- * is true then, and error rules read nothing that arrived before
- * (active_since). Turning it on clears the reason the server turned it
- * off. A rule the server turned off (its check or last channel deleted)
- * is turned on again by a save that fixes it, unless the save says
- * `enabled` itself (`enabledSent`): the save could only succeed with a
- * check that exists and a channel.
+ * Disabling or retargeting clears alert states (forgetStates). Re-enabling starts fresh; error
+ * rules ignore older arrivals (active_since). A save that fixes an automatically disabled rule
+ * re-enables it unless `enabled` was explicitly sent (`enabledSent`).
  */
 export async function updateRule(
   db: Kysely<Database>,
@@ -352,8 +327,8 @@ export async function updateRule(
         enabled,
         ...(enabled ? { disabled_reason: null } : {}),
         ...(watchesElse || (enabled && !current.enabled) ? { active_since: now } : {}),
-        // A telemetry rule watching something else, or back on, is due at once,
-        // and its old failures no longer say anything about it.
+        // Retargeted or re-enabled rules are due immediately; clear failures from the old
+        // configuration.
         ...(watchesElse || enabled !== current.enabled
           ? { next_evaluation_at: null, evaluation_error: null, evaluation_failing_since: null }
           : {}),
@@ -366,7 +341,6 @@ export async function updateRule(
   });
 }
 
-/** An object's JSON with its keys sorted, so two orders of the same keys compare equal. */
 function sortedJson(value: unknown): string {
   if (typeof value !== "object" || value === null) return JSON.stringify(value);
   return JSON.stringify(
@@ -394,16 +368,9 @@ export const CHANNELS_DELETED_REASON =
   "Disabled because its last channel was deleted. Choose a channel to enable the rule again.";
 
 /**
- * A check is being deleted, in `trx`, before the check itself: rules that
- * watch only it are turned off, with the reason; every rule's alerts
- * about it end, without a notification, and their states go.
- *
- * It locks first: the project's rules (in ID order), then the check. The
- * order is the one firing uses (rule, then check: fire.ts), so neither
- * waits for the other in a circle. An alert being fired for the check
- * finishes first and its state is forgotten here, or waits and then finds
- * no check; a rule being saved with this check finishes first and is
- * turned off here, or waits and then finds no check.
+ * Before deleting a check, disable rules that watch only it and silently clear its alerts and
+ * states in `trx`. Lock project rules in ID order before the check, matching firing (fire.ts),
+ * to avoid deadlocks and races with saves.
  */
 export async function forgetCheck(
   trx: Transaction<Database>,
@@ -461,12 +428,8 @@ export async function forgetCheck(
 }
 
 /**
- * A channel is being deleted, in `trx`, before the channel itself: every
- * rule drops it, and a rule left with no channel is turned off, with the
- * reason, its alerts ended. It locks first: the rules that name it (in
- * ID order, as firing locks a rule before its channels), then the
- * channel, so a rule being saved with it finishes first and is changed
- * here, or waits and then finds no channel.
+ * Before deleting a channel, remove it from rules and disable any left with no channels, ending
+ * their alerts in `trx`. Lock rules in ID order before the channel, matching firing and saves.
  */
 export async function forgetChannel(
   trx: Transaction<Database>,
@@ -506,7 +469,6 @@ export async function forgetChannel(
   );
 }
 
-/** One alert, as the history lists it. */
 export interface HistoryEntry {
   id: string;
   ruleId: string;
@@ -558,9 +520,8 @@ export async function listHistory(
       "h.notification_id",
     ])
     .where("h.project_id", "=", projectId)
-    // By the kind each alert fired under: a rule changed to another kind
-    // keeps its history, which may name what the new kind's readers may
-    // not see.
+    // Filter by the alert's original kind: a rule can retain history from a kind the reader
+    // cannot access.
     .where("h.kind", "in", [...kinds])
     .where("h.fired_at", ">=", sql<Date>`now() - make_interval(days => ${HISTORY_RETENTION_DAYS})`);
   if (ruleId !== undefined) query = query.where("h.rule_id", "=", ruleId);
@@ -594,7 +555,6 @@ export async function listHistory(
   };
 }
 
-/** An alert firing now. */
 export interface FiringAlert {
   ruleId: string;
   ruleName: string;
@@ -626,9 +586,8 @@ export async function firingAlerts(
     ])
     .where("r.project_id", "=", projectId)
     .where("r.kind", "in", [...kinds])
-    // A change of kind forgets the rule's states (updateRule), and firing
-    // checks the rule still watches what was read (fire.ts): the open
-    // alert's own kind is checked as well.
+    // Also check the open alert's kind, alongside the rule and settings checks (updateRule;
+    // fire.ts).
     .where((eb) => eb.or([eb("h.kind", "is", null), eb("h.kind", "in", [...kinds])]))
     .where("r.enabled", "=", true)
     .where("s.firing", "=", true)
@@ -648,13 +607,9 @@ export async function firingAlerts(
 }
 
 /**
- * Deletes alerts older than HISTORY_RETENTION_DAYS, except those still
- * firing, and the old states of check rules and new-error rules, which
- * only guard against firing twice within an evaluation's reach. A
- * regressed-error rule's state guards its group for as long as the
- * resolution it fired for stands, so it is kept until the resolution
- * changes or goes (forgetRegressions; and here, when it no longer
- * matches). Returns how many alerts were deleted.
+ * Keep firing alerts when pruning history. Keep regression states until their resolution
+ * changes (forgetRegressions); other states need only cover the evaluation's reach. Return the
+ * number of deleted alerts.
  */
 export async function pruneHistory(db: Kysely<Database>, now: Date): Promise<number> {
   const cutoff = sql<Date>`${now}::timestamptz - make_interval(days => ${HISTORY_RETENTION_DAYS})`;
@@ -694,9 +649,8 @@ export async function pruneHistory(db: Kysely<Database>, now: Date): Promise<num
 }
 
 /**
- * A group's resolution changed or was removed: the regressed-error
- * rules' states for it, which guard only the resolution they fired for,
- * go, so the next regression after the new resolution fires.
+ * Clear regression guards when a resolution changes or disappears so a later regression can
+ * fire.
  */
 export async function forgetRegressions(
   db: Kysely<Database>,
@@ -719,10 +673,8 @@ export async function forgetRegressions(
 }
 
 /**
- * Ends, without a notification, the firing alerts of check rules whose
- * check no longer exists: a deletion normally ends them (forgetCheck),
- * and this catches any left behind, since the evaluation only looks at
- * checks that exist. Returns how many it ended.
+ * Silently end check alerts left behind by deletion. Normal deletion uses forgetCheck;
+ * evaluation cannot find deleted checks.
  */
 export async function endOrphanedCheckAlerts(db: Kysely<Database>, at: Date): Promise<number> {
   return db.transaction().execute(async (trx) => {

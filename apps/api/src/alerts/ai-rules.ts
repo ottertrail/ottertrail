@@ -17,13 +17,8 @@ import {
 } from "./kinds.ts";
 
 /**
- * AI alert rules (docs/ai-usage.md, "Alerts"): the estimated cost of a
- * window above a value, the failed share of a window's calls above a
- * share, and their 95th-percentile duration above a number of
- * milliseconds. The worker evaluates them with the telemetry rules
- * (telemetry-rules.ts), once a minute each, from the same figures as the
- * AI page (ai/report.ts, aiWindow), read without FINAL. This file holds
- * what is theirs: the window, the reading, and the words.
+ * AI rules use the AI page's figures without FINAL (ai/report.ts). They run with telemetry
+ * rules once a minute (telemetry-rules.ts; docs/ai-usage.md, "Alerts").
  */
 
 export type AiSettings = AiCostSettings | AiFailureSettings | AiLatencySettings;
@@ -36,11 +31,10 @@ export const isAiFailures = (settings: object): settings is AiFailureSettings =>
 export const isAiRule = (settings: object): settings is AiSettings =>
   isAiCost(settings) || isAiFailures(settings) || isAiLatency(settings);
 
-/** What an AI rule read of its window. */
 export interface AiReading {
   /**
-   * Estimated US dollars, a failed share 0 to 100, or a 95th-percentile
-   * duration in milliseconds; null: too few calls (a failures or latency rule).
+   * US dollars, failed calls as 0 to 100 percent, or p95 duration in milliseconds. Null when a
+   * failures or latency rule has too few calls.
    */
   value: number | null;
   calls: number;
@@ -67,10 +61,8 @@ async function localStarts(db: Kysely<Database>, at: Date): Promise<{ month: Dat
 const HOUR_MS = 3_600_000;
 
 /**
- * The window an AI rule reads at `at`, ending `lagMs` before it, as the
- * telemetry rules' do: a cost rule's last hour, last 24 hours, or month so
- * far (from midnight of its first day, in the instance's timezone); a
- * failures or latency rule's last minutes.
+ * End the window `lagMs` before `at`. Cost windows use the last hour, last 24 hours, or month
+ * to date in the instance's timezone. Failures and latency use the configured minutes.
  */
 export async function aiWindowAt(
   db: Kysely<Database>,
@@ -90,9 +82,8 @@ export async function aiWindowAt(
 }
 
 /**
- * Reads an AI rule's window at `at`: a failures or latency rule's from
- * ClickHouse, a cost rule's closed hours from what it keeps
- * (ai-cost-hours.ts) and the rest from ClickHouse.
+ * Read failures and latency from ClickHouse. Cost rules use cached closed hours
+ * (ai-cost-hours.ts) and read the rest from ClickHouse.
  */
 export async function readAi(
   db: Kysely<Database>,
@@ -145,7 +136,6 @@ const filtersOf = (settings: AiSettings) => ({
   ...(settings.model === null ? {} : { model: settings.model }),
 });
 
-/** Whether a value is above the rule's threshold. */
 export function aiBreaches(settings: AiSettings, value: number): boolean {
   if (isAiCost(settings)) return value > settings.thresholdUsd;
   return isAiLatency(settings) ? value > settings.thresholdMs : value > settings.thresholdPercent;
@@ -194,7 +184,7 @@ function scopeText(settings: AiSettings): string {
   return `${unlabeled}${parts.length === 0 ? "" : ` for ${parts.join(" and ")}`}`;
 }
 
-/** Said in every cost notification: the figure is not a bill. */
+/** Cost notifications must say the estimate is not a bill. */
 function estimateText(reading: AiReading): string {
   const unpriced =
     reading.noPriceCalls === 0
@@ -203,7 +193,6 @@ function estimateText(reading: AiReading): string {
   return ` The cost is an estimate, from token counts and model prices.${unpriced}`;
 }
 
-/** The message when an AI rule fires, or resolves. */
 export function aiMessage(
   project: string,
   settings: AiSettings,
@@ -239,7 +228,6 @@ export function aiMessage(
 
 const rounded = (value: number, digits: number) => Number(value.toFixed(digits));
 
-/** The notification's subject: what the rule watches, the value, the threshold, the window. */
 export function aiSubject(settings: AiSettings, reading: AiReading & { value: number }): Subject {
   const scope = {
     environment: settings.environment,
@@ -278,7 +266,6 @@ export function aiSubject(settings: AiSettings, reading: AiReading & { value: nu
   };
 }
 
-/** What a rule's history shows as its subject. */
 export function aiSubjectName(settings: AiSettings): string {
   const filters = [settings.feature === "" ? "Unlabeled" : settings.feature, settings.model].filter(
     (item) => item !== null,
@@ -291,7 +278,6 @@ export function aiSubjectName(settings: AiSettings): string {
   return filters.length === 0 ? name : `${name} (${filters.join(", ")})`;
 }
 
-/** The AI page, with the rule's environment, feature, and model. */
 export function aiLink(context: AlertContext, projectId: string, settings: AiSettings): string {
   return dashboardLink(context.publicUrl, `/projects/${projectId}/ai`, {
     env: settings.environment,
@@ -300,7 +286,6 @@ export function aiLink(context: AlertContext, projectId: string, settings: AiSet
   });
 }
 
-/** Whether a call the rule would count arrived from `from` to `to`. */
 export async function aiRuleSeen(
   reader: Reader,
   projectId: string,

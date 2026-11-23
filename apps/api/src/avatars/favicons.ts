@@ -18,22 +18,14 @@ import { newFaviconKey } from "./avatars.ts";
 import { CONTENT_TYPES, faviconKind, type ImageKind } from "./images.ts";
 
 /**
- * A project's default icon: its first allowed site's favicon (docs/dashboard.md,
- * "Avatars"), fetched by the worker, never by viewers' browsers, so no
- * dashboard page asks another site for anything. The requests follow the
- * outbound address rules (outbound/) with private addresses always
- * refused (faviconPolicy), pinned to the checked address, with every
- * redirect checked again, all within one 10-second budget.
+ * Fetch favicons in the worker so dashboard viewers never contact project sites
+ * (docs/dashboard.md, "Avatars"). Follow outbound address rules, always rejecting private
+ * addresses and checking every redirect. Share one 10-second budget across all requests.
  *
- * The worker reads the site's home page (512 KiB at most; links are
- * looked for in its first 64 KiB, up to `</head>`), takes the best
- * `<link rel="icon" | "shortcut icon" | "apple-touch-icon">` (an Apple
- * touch icon first, then the largest PNG, then the others), and falls back
- * to /favicon.ico. An icon is kept only when its bytes are a PNG (at most
- * 1024×1024 by what it declares), ICO, JPEG, WebP, or GIF (each held to
- * the same size), at most 256 KiB: never SVG. A
- * failure leaves the initial, is logged, and is tried again next week, or
- * when the project's first site changes.
+ * Read up to 512 KiB of HTML and scan its first 64 KiB through </head>. Prefer Apple touch
+ * icons, then PNGs by size, then other icons; fall back to /favicon.ico. Accept PNG, ICO, JPEG,
+ * WebP, or GIF up to 256 KiB and 1024×1024 pixels. Retry failures next week or when the first
+ * allowed site changes.
  */
 
 export const MAX_PAGE_BYTES = 512 * 1024;
@@ -46,13 +38,9 @@ export const FAVICON_TIMEOUT_MS = 10_000;
 /** How much of the page is searched for icon links: they are in its head. */
 export const MAX_SCANNED_HTML = 64 * 1024;
 export const MAX_FAVICON_REDIRECTS = 3;
-/** Links tried from the page, before /favicon.ico. */
 const MAX_CANDIDATES = 3;
-/** How often a project's favicon is fetched again. */
 export const FAVICON_REFRESH_MS = 7 * 24 * 60 * 60 * 1000;
-/** How often the worker looks for projects due. */
 export const FAVICON_TICK_MS = 60_000;
-/** Projects fetched per look. */
 const BATCH = 5;
 
 const USER_AGENT = `Ottertrail/${OTTERTRAIL_VERSION} (favicons)`;
@@ -145,11 +133,7 @@ async function guardedGet(
 const isSpace = (char: string) =>
   char === " " || char === "\t" || char === "\n" || char === "\r" || char === "\f";
 
-/**
- * A tag's attributes, by lower-case name, from the text between its name
- * and its `>`: one pass, each character read once, so no page can make
- * it slow.
- */
+/** Scan attributes once so untrusted pages cannot cause excessive parsing time. */
 function attributesOf(body: string): Map<string, string> {
   const attributes = new Map<string, string>();
   const end = body.length;
@@ -176,7 +160,6 @@ function attributesOf(body: string): Map<string, string> {
         value = body.slice(valueStart, at);
       }
     } else if (at === nameStart) {
-      // Neither a name nor a value here: step past the character.
       at += 1;
     }
     if (name !== "" && !attributes.has(name)) attributes.set(name, value);
@@ -185,10 +168,8 @@ function attributesOf(body: string): Map<string, string> {
 }
 
 /**
- * The page's `<link>` and `<base>` tags, in order, each as its name and
- * attributes: the first MAX_SCANNED_HTML characters only, up to
- * `</head>`. A linear scan with indexOf, never a regular expression over
- * the page: a page of `<link<link<link…` without `>` costs one pass.
+ * Scan at most MAX_SCANNED_HTML characters through </head>. Use a linear scan so repeated
+ * unterminated <link tags cannot cause excessive parsing time.
  */
 function headTagsOf(html: string): { name: "link" | "base"; attributes: Map<string, string> }[] {
   const text = html.slice(0, MAX_SCANNED_HTML);
@@ -238,10 +219,8 @@ function largestSize(sizes: string): number {
 }
 
 /**
- * The icons a page links to, best first, as absolute http(s) URLs: Apple
- * touch icons, then PNG icons by size, then the other icons. SVG icons
- * are left out. Relative addresses resolve against the page's URL (or its
- * `<base href>`).
+ * Prefer Apple touch icons, then PNGs by size, then other http(s) icons. Ignore SVG. Resolve
+ * relative URLs against <base href> or the page URL.
  */
 export function iconLinksOf(html: string, pageUrl: URL): URL[] {
   const tags = headTagsOf(html);
@@ -281,9 +260,8 @@ const reasonOf = (error: unknown) => (error instanceof Error ? error.message : "
 export type FetchedFavicon = { bytes: Uint8Array; kind: ImageKind; url: URL };
 
 /**
- * The site's favicon at `site` (its home page's URL), or why there is
- * none. Never throws: a refused address, a timeout, and a bad image are
- * all "none" with a reason, for the log.
+ * Return a failure reason for logs instead of throwing, including on refused addresses,
+ * timeouts, and invalid images.
  */
 export async function fetchFavicon(
   site: URL,
@@ -339,14 +317,11 @@ export async function fetchFavicon(
 }
 
 /**
- * The address rules favicon requests follow: the uptime checks' deny list
- * and the metadata services, and never a private, loopback, or other
- * internal address, whatever UPTIME_ALLOW_PRIVATE_ADDRESSES says. A
- * project's sites are public; that setting is for checks of the
- * instance's own network.
+ * Always refuse private addresses for public site favicons. Apply the uptime deny list and
+ * metadata restrictions; UPTIME_ALLOW_PRIVATE_ADDRESSES applies only to checks.
  */
 export function faviconPolicy(config: {
-  /** Ignored here: it lets checks, not favicons, reach private addresses. */
+  /** Private-address opt-in applies only to uptime checks. */
   uptimeAllowPrivateAddresses?: boolean;
   uptimeDenyAddresses: readonly string[];
 }): AddressPolicy {
@@ -358,10 +333,8 @@ export interface FaviconLog {
 }
 
 /**
- * The worker's favicon job: every FAVICON_TICK_MS, a few projects whose
- * favicon is due (never tried, tried a week ago, or their first allowed
- * site changed) are taken, marked as tried in the same statement (so two
- * workers never take one), and fetched.
+ * Claim and mark due projects in one statement so workers cannot fetch the same project
+ * concurrently.
  */
 export class FaviconJob {
   readonly #db: Kysely<Database>;
@@ -394,10 +367,8 @@ export class FaviconJob {
     this.#siteOf = siteOf;
   }
 
-  /** Takes the projects due and fetches each; how many were fetched and kept. */
   async tick(): Promise<{ tried: number; kept: number }> {
     const store = this.#store;
-    // Without an object store, favicons are off: the initial stays.
     if (store === null) return { tried: 0, kept: 0 };
     const now = this.#now();
     const before = new Date(now.getTime() - FAVICON_REFRESH_MS);
@@ -425,7 +396,7 @@ export class FaviconJob {
     `.execute(this.#db);
     let kept = 0;
     for (const project of rows) {
-      // One project's failure (the database, the store) leaves the others to run.
+      // Let other projects proceed after a database or store failure.
       try {
         if (await this.#fetchFor(store, project)) kept += 1;
       } catch (error) {
@@ -458,8 +429,7 @@ export class FaviconJob {
         hostname,
         reason: result.reason,
       });
-      // Another site's favicon would be wrong: the old one goes. The same
-      // site's stays until a fetch succeeds.
+      // Keep the same site's cached favicon on failure; discard it when the site changes.
       if (faviconKey !== null && previous !== hostname) {
         await this.#replace(store, id, hostname, faviconKey, null);
       }
@@ -474,7 +444,7 @@ export class FaviconJob {
         project: id,
         err: String(error),
       });
-      // The site changed: the old site's favicon goes, as when its fetch fails.
+      // Discard the old site's favicon even when storage fails.
       if (faviconKey !== null && previous !== hostname) {
         await this.#replace(store, id, hostname, faviconKey, null);
       }
@@ -483,7 +453,7 @@ export class FaviconJob {
     return this.#replace(store, id, hostname, faviconKey, key);
   }
 
-  /** Points the project at `key` (null for none) while its site is still `hostname`, then deletes the old object. */
+  /** Replace the key only if the site still matches, then delete the unused object. */
   async #replace(
     store: ObjectStore,
     id: string,
@@ -502,7 +472,7 @@ export class FaviconJob {
       )
       .returning("id")
       .executeTakeFirst();
-    // Deleted, or its site changed meanwhile: the new one is not used.
+    // Delete the new object if the project disappeared or its site changed.
     const unused = updated === undefined ? key : old;
     if (unused !== null) {
       try {

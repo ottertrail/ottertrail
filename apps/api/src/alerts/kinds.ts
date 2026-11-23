@@ -9,10 +9,8 @@ import { METRIC_KINDS, type MetricKind } from "../telemetry/metrics.ts";
 import { MAX_KEY_CHARS, MAX_NAME_BYTES } from "../telemetry/normalize.ts";
 
 /**
- * The kinds of alert rule (docs/uptime-alerts.md, "Alerts"), each with its
- * settings and the notifications it sends: checks, errors, and (step 4)
- * telemetry. Everything else (the API's schema, the rule's checks, the
- * dashboard's labels) reads this one list.
+ * Shared rule definitions for API validation and dashboard labels (docs/uptime-alerts.md,
+ * "Alerts").
  */
 export const RULE_KINDS = [
   "check_down",
@@ -33,7 +31,6 @@ export type RuleKind = (typeof RULE_KINDS)[number];
 export const isRuleKind = (value: unknown): value is RuleKind =>
   RULE_KINDS.some((kind) => kind === value);
 
-/** What each kind is called, what feeds it, and what it sends on firing and resolving. */
 export const KIND_INFO: Record<
   RuleKind,
   {
@@ -110,7 +107,6 @@ export const KIND_INFO: Record<
 /** The kinds the worker evaluates from spans and metrics (alerts/telemetry-rules.ts). */
 export const TELEMETRY_KINDS = RULE_KINDS.filter((kind) => KIND_INFO[kind].source === "telemetry");
 
-/** Rules a project may have. */
 export const MAX_RULES = 50;
 export const MAX_RULE_NAME = 100;
 /** Channels a rule sends to at most: as many as an instance may have. */
@@ -128,19 +124,12 @@ export const MAX_MIN_REQUESTS = 1_000_000;
 /** The highest latency threshold: an hour, in milliseconds. */
 export const MAX_THRESHOLD_MS = 3_600_000;
 /**
- * The longest window a route rule reads, until a per-minute rollup of
- * requests exists: a route rule reads every span of its project in the
- * window (spans are ordered by project and time, not service), and 30
- * minutes of a project of 100,000 requests a minute is 3.5 million rows
- * (docs/uptime-alerts.md, step 4).
+ * Cap route windows until per-minute rollups exist: each query reads all project spans in the
+ * window. See docs/uptime-alerts.md, step 4.
  */
 export const MAX_ROUTE_WINDOW_MINUTES = 30;
-/**
- * The longest route, host, or attribute value a rule names: it goes into
- * the notification's link, which has at most 2,048 characters.
- */
+/** Limit values used in notification links, which allow at most 2,048 characters. */
 export const MAX_FILTER_CHARS = 1000;
-/** The largest value, either side of 0, a metric rule compares with. */
 export const MAX_METRIC_VALUE = 1e15;
 export const PERCENTILES = ["p95", "p99"] as const;
 export type Percentile = (typeof PERCENTILES)[number];
@@ -156,10 +145,8 @@ export const AGGREGATES = {
 export type Aggregate = (typeof AGGREGATES)[MetricKind][number];
 const ALL_AGGREGATES = [...new Set(Object.values(AGGREGATES).flat())];
 
-/** The windows an AI cost rule adds up: the last hour, the last 24 hours, or the month so far. */
 export const COST_WINDOWS = ["1h", "1d", "month"] as const;
 export type CostWindow = (typeof COST_WINDOWS)[number];
-/** The highest cost an AI cost rule compares with, in US dollars. */
 export const MAX_COST_USD = 1_000_000_000;
 /** Calls an AI failures or latency rule's window needs before it judges (default), and at most. */
 export const DEFAULT_MIN_CALLS = 20;
@@ -199,11 +186,9 @@ interface RouteScope {
 }
 export interface LatencySettings extends RouteScope {
   percentile: Percentile;
-  /** Fires above this many milliseconds. */
   thresholdMs: number;
 }
 export interface FailureSettings extends RouteScope {
-  /** Fires when the failed share is above this, 0 to 100. */
   thresholdPercent: number;
 }
 export interface MetricSettings {
@@ -664,7 +649,6 @@ export function spikeSettingsOf(value: unknown): SpikeSettings {
   };
 }
 
-/** A stored rule's settings, read back as its kind has them (the API wrote them). */
 export function storedSettings(kind: RuleKind, value: unknown): RuleSettings {
   const stored = storedRecord(value);
   if (kind === "check_down") return { checkId: textOrNull(stored.checkId) };
@@ -691,7 +675,6 @@ const aiScopeStored = (stored: Record<string, unknown>): AiScope => ({
   model: textOrNull(stored.model),
 });
 
-/** A stored "AI cost" rule's settings (the API wrote them). */
 export function aiCostSettingsStored(value: unknown): AiCostSettings {
   const stored = storedRecord(value);
   return {
@@ -701,7 +684,6 @@ export function aiCostSettingsStored(value: unknown): AiCostSettings {
   };
 }
 
-/** A stored "AI failures" rule's settings (the API wrote them). */
 export function aiFailureSettingsStored(value: unknown): AiFailureSettings {
   const stored = storedRecord(value);
   return {
@@ -712,7 +694,6 @@ export function aiFailureSettingsStored(value: unknown): AiFailureSettings {
   };
 }
 
-/** A stored "AI latency" rule's settings (the API wrote them). */
 export function aiLatencySettingsStored(value: unknown): AiLatencySettings {
   const stored = storedRecord(value);
   return {
@@ -731,7 +712,6 @@ const routeScopeOf = (stored: Record<string, unknown>): RouteScope => ({
   minRequests: numberOr(stored.minRequests, DEFAULT_MIN_REQUESTS),
 });
 
-/** A stored "route latency" rule's settings (the API wrote them). */
 export function latencySettingsOf(value: unknown): LatencySettings {
   const stored = storedRecord(value);
   return {
@@ -741,13 +721,11 @@ export function latencySettingsOf(value: unknown): LatencySettings {
   };
 }
 
-/** A stored "route failures" rule's settings (the API wrote them). */
 export function failureSettingsOf(value: unknown): FailureSettings {
   const stored = storedRecord(value);
   return { ...routeScopeOf(stored), thresholdPercent: numberOr(stored.thresholdPercent, 100) };
 }
 
-/** A stored "metric" rule's settings (the API wrote them). */
 export function metricSettingsStored(value: unknown): MetricSettings {
   const stored = storedRecord(value);
   const metricKind = METRIC_KINDS.find((item) => item === stored.metricKind) ?? "gauge";
@@ -766,7 +744,6 @@ export function metricSettingsStored(value: unknown): MetricSettings {
   };
 }
 
-/** The check a rule watches, if it names one. */
 export function checkIdOf(settings: RuleSettings): string | null {
   return "checkId" in settings ? settings.checkId : null;
 }
@@ -775,11 +752,8 @@ export function checkIdOf(settings: RuleSettings): string | null {
 export const AI_KINDS: readonly RuleKind[] = ["ai_cost", "ai_failures", "ai_latency"];
 
 /**
- * The area a kind's subject belongs to, besides uptime and alerts
- * (docs/access.md): an error rule shows error groups and messages, an AI
- * rule models and features, another telemetry rule services, routes, and
- * metrics. A user sees, creates, and changes a rule only with this area at
- * view; check rules need none.
+ * Require view access to the subject's area as well as uptime and alerts (docs/access.md).
+ * Check rules need no additional area.
  */
 export function sourceAreaOf(kind: RuleKind): "errors" | "monitoring" | "ai" | null {
   if (AI_KINDS.includes(kind)) return "ai";

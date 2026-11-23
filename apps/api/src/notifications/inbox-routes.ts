@@ -24,16 +24,8 @@ const NOT_FOUND = {
 } as const;
 
 /**
- * GET   /api/notifications?filter=all|unread&before=<id>&limit=30
- *       the user's items, newest first, a page at a time, with the unread count
- * GET   /api/notifications/unread-count     what the bell polls
- * PATCH /api/notifications/:notificationId  { "read": true | false }
- * POST  /api/notifications/read-all         marks every item read
- *
- * The signed-in user's own inbox (inbox.ts): every user has one, so each
- * route needs only a session, and shows and changes only the items the
- * user's access reaches now (access/access.ts, reachOf). Changes need the
- * dashboard's origin; queries and bodies are checked before anything else.
+ * Inbox routes (inbox.ts). Check current access with reachOf on every read and change
+ * (access/access.ts). Changes require the dashboard's origin.
  */
 export const inboxRoutes: FastifyPluginCallback<{
   db: Kysely<Database>;

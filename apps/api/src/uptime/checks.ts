@@ -7,34 +7,28 @@ import type { CheckOutcome } from "./request.ts";
 import { DEFAULT_STATUSES, formatStatuses, parseStatuses } from "./statuses.ts";
 
 /**
- * A project's uptime checks in PostgreSQL (docs/uptime-alerts.md): what
- * each asks and expects, its state, and its incidents. The worker takes
- * due checks (takeDueChecks), runs them (request.ts), and records each
- * outcome (recordOutcome), the one place a check's state changes.
+ * recordOutcome owns check state transitions (docs/uptime-alerts.md). The worker claims checks
+ * here and runs them through request.ts.
  */
 
-/** How often a check may run, in seconds: every 1, 2, 5, 10, 15, 30, or 60 minutes. */
 export const INTERVALS = [60, 120, 300, 600, 900, 1800, 3600] as const;
 export const DEFAULT_INTERVAL = 300;
 export const DEFAULT_TIMEOUT = 10;
 export const MAX_TIMEOUT = 30;
 export const DEFAULT_FAILURES_BEFORE_DOWN = 2;
 export const MAX_FAILURES_BEFORE_DOWN = 5;
-/** Checks a project may have. */
 export const MAX_CHECKS = 50;
 export const MAX_NAME = 100;
 export { MAX_URL };
 export const MAX_WORD = 200;
 /**
- * A new or resumed check's first run comes at a random moment within its
- * interval, at most this far off, so checks set up together do not all
- * fire at once, and an hourly check still answers within minutes.
+ * Spread initial runs to avoid bursts when checks are created together. Cap the delay so hourly
+ * checks still run within minutes.
  */
 export const MAX_FIRST_RUN_DELAY_SECONDS = 300;
 
 export type CheckState = "pending" | "up" | "down";
 
-/** A check as the API answers it. */
 export interface Check {
   id: string;
   name: string;
@@ -92,7 +86,6 @@ export function checkOf(row: CheckRow): Check {
   };
 }
 
-/** What a member sets on a check; every field is optional on a change. */
 export interface CheckInput {
   name?: string | undefined;
   url?: string | undefined;
@@ -110,12 +103,10 @@ export type { Problem };
 // eslint-disable-next-line no-control-regex -- control characters are what it refuses
 const CONTROL = /[\u0000-\u001F\u007F]/u;
 
-/** The URL a check may request, or why not: http or https, a host, no user or password. */
 export function checkUrlOf(text: string): URL | Problem {
   return outboundUrlOf(text, { label: "A check's URL", example: "https://example.com/health" });
 }
 
-/** A check's stored values, after defaults; or the first problem with them. */
 export interface CheckValues {
   name: string;
   url: string;
@@ -128,11 +119,7 @@ export interface CheckValues {
   failuresBeforeDown: number;
 }
 
-/**
- * The values a check would have with `input` over `base` (its current
- * values, or none for a new check), each checked; or the first problem.
- * Fastify's schema has already checked the types and bounds it can.
- */
+/** Validate merged input after Fastify checks basic types and bounds. */
 export function checkValuesOf(input: CheckInput, base?: CheckValues): CheckValues | Problem {
   const urlText = input.url ?? base?.url;
   if (urlText === undefined) {
@@ -236,7 +223,6 @@ const columnsOf = (values: CheckValues) => ({
   failures_before_down: values.failuresBeforeDown,
 });
 
-/** When a new or resumed check first runs: a random moment within its interval, at most 5 minutes off. */
 export function firstRunAt(now: Date, intervalSeconds: number, random = Math.random): Date {
   const spread = Math.min(intervalSeconds, MAX_FIRST_RUN_DELAY_SECONDS) * 1000;
   return new Date(now.getTime() + Math.floor(random() * spread));
@@ -277,8 +263,7 @@ export async function createCheck(
   now: Date,
 ): Promise<{ check: Check } | { refused: "too_many" }> {
   return db.transaction().execute(async (trx) => {
-    // Adds to one project wait for each other here, so two at once
-    // cannot both find room for the last check.
+    // Serialize additions per project so concurrent saves cannot exceed the check cap.
     await trx
       .selectFrom("projects")
       .select("id")
@@ -306,7 +291,6 @@ export async function createCheck(
   });
 }
 
-/** Ends a check's open incident, if it has one, at `at`. */
 async function closeIncident(trx: Transaction<Database>, checkId: string, at: Date) {
   return trx
     .updateTable("uptime_incidents")
@@ -318,12 +302,9 @@ async function closeIncident(trx: Transaction<Database>, checkId: string, at: Da
 }
 
 /**
- * Changes a check's values, and pauses or resumes it. A changed interval
- * or a resumed check is due again at a random moment soon. Pausing ends
- * an open incident and forgets the state: nothing is known of the check
- * while it does not run, and it starts again as pending. A changed URL
- * does the same, and forgets the old URL's certificate; a run of the old
- * URL still under way is not recorded (recordOutcome).
+ * Pausing or changing URL silently ends incidents and resets state to pending. A URL change
+ * also clears its certificate and invalidates old in-flight results (recordOutcome). Resuming
+ * or changing interval schedules a jittered run.
  */
 export async function updateCheck(
   db: Kysely<Database>,
@@ -345,7 +326,7 @@ export async function updateCheck(
     const pausing = paused === true && !row.paused;
     const resuming = paused === false && row.paused;
     const rescheduled = resuming || values.intervalSeconds !== row.interval_seconds;
-    // Another URL is another check: what was known of the old one does not carry over.
+    // A new URL invalidates the old URL's state.
     const moved = values.url !== row.url;
     if (pausing || moved) await closeIncident(trx, checkId, now);
     const updated = await trx
@@ -374,9 +355,8 @@ export async function updateCheck(
 }
 
 /**
- * Deletes a check with its incidents; false when the project has none
- * with this ID. Alert rules that watch only it are turned off, and alerts
- * about it end (alerts/rules.ts, forgetCheck), in the same transaction.
+ * Disable check-specific rules and end alerts in the same transaction as deletion
+ * (alerts/rules.ts, forgetCheck).
  */
 export async function deleteCheck(
   db: Kysely<Database>,
@@ -395,7 +375,6 @@ export async function deleteCheck(
   });
 }
 
-/** A due check, as the worker runs it. */
 export type DueCheck = Pick<
   CheckRow,
   | "id"
@@ -416,11 +395,9 @@ export type DueCheck = Pick<
   taken_at: Date;
 };
 
-/** Due checks one statement looks at, before the per-project limit picks among them. */
 const DUE_CANDIDATES = 1000;
 
 export interface TakeOptions {
-  /** Checks to take at most. */
   limit: number;
   /** Checks one project may have running at once, those already running included. */
   perProject: number;
@@ -431,18 +408,10 @@ export interface TakeOptions {
 }
 
 /**
- * Takes up to `limit` due checks, at most `perProject` running at once for
- * any one project, oldest due first, and moves each one's next due time
- * on by whole intervals past now, keeping its place in the interval, in
- * the same statement: the worker commits that before any request, so a
- * crash during one skips that run instead of repeating it, and the check
- * is due again one interval later. FOR UPDATE SKIP LOCKED: two workers at
- * once never take the same check.
- *
- * Time is PostgreSQL's, not the worker's: a worker whose clock jumped
- * ahead cannot push checks into the future. A next due time further
- * ahead than one interval, as a clock that jumped back leaves, is brought
- * back to one interval from now first.
+ * Claim checks with FOR UPDATE SKIP LOCKED and advance next_due_at before requests, so workers
+ * cannot duplicate runs and crashes skip only one run. Enforce per-project concurrency. Advance
+ * by whole intervals to keep cadence. Use PostgreSQL time to avoid worker clock skew; bring
+ * times over one interval ahead back within range.
  */
 export async function takeDueChecks(
   db: Kysely<Database>,
@@ -495,10 +464,7 @@ export async function takeDueChecks(
   return rows;
 }
 
-/**
- * A check going down or coming back up: what recordOutcome returns, for
- * whatever acts on it (the worker's alert rules, alerts/evaluator.ts).
- */
+/** Report transitions to alert rules (alerts/evaluator.ts). */
 export interface StateChange {
   checkId: string;
   projectId: string;
@@ -513,13 +479,9 @@ export interface StateChange {
 }
 
 /**
- * Records one run's outcome on its check, and changes the check's state
- * when it should (unless a later run or a URL change came first): down
- * after failuresBeforeDown failures in a row, with
- * an incident from the first of them; up again after one success, which
- * ends the incident. Each time down is one incident. The one place a
- * check's state changes; it returns the change, or null when there was
- * none (nothing is recorded for a check paused or deleted meanwhile).
+ * Go down after failuresBeforeDown consecutive failures, dating the incident from the first.
+ * Recover after one success. Ignore paused, deleted, stale, or retargeted checks. Return only
+ * state transitions.
  */
 export async function recordOutcome(
   db: Kysely<Database>,

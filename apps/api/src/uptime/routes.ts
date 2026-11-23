@@ -62,7 +62,7 @@ const CHECK_PARAMS = {
   },
 };
 
-/** The fields a check takes; bounds a little past the real ones, which checkValuesOf words. */
+/** Leave room for checkValuesOf to return specific validation errors. */
 const CHECK_FIELDS = {
   name: { type: "string", maxLength: MAX_NAME * 2 },
   url: { type: "string", maxLength: MAX_URL * 2 },
@@ -87,12 +87,10 @@ const PERIOD_QUERY = {
   },
 };
 
-/** How long a check's host may take to resolve when it is saved. */
 const SAVE_LOOKUP_MS = 5000;
 
 const DAY_MS = 86_400_000;
 
-/** The access requireProjectAccess set: these routes always run it. */
 function accessOf(request: { projectAccess: ProjectAccess | null }): ProjectAccess {
   if (request.projectAccess === null) {
     throw new Error("requireProjectAccess must run before this route");
@@ -106,21 +104,9 @@ const NO_CHECK: Problem = {
 };
 
 /**
- * GET    /api/projects/:id/checks
- * POST   /api/projects/:id/checks                  { "url": "https://example.com/health", … }
- * GET    /api/projects/:id/checks/:checkId
- * PATCH  /api/projects/:id/checks/:checkId         { "paused": true } or any of the fields
- * DELETE /api/projects/:id/checks/:checkId
- * GET    /api/projects/:id/checks/:checkId/results[?period=7d|from=…&to=…]
- * GET    /api/projects/:id/checks/:checkId/incidents[?period=…]
- *
- * A project's uptime checks (docs/uptime-alerts.md): the list with each
- * check's state and uptime over the last 24 hours, 7 days, and 30 days;
- * changes, which need the dashboard's origin; and a check's page: its
- * response times and latest failures (ClickHouse, with the dashboard's
- * query settings and limit), its uptime over the
- * period, and its incidents (PostgreSQL). Like every project route, each
- * runs requireProjectAccess first, and reads only the project it found.
+ * Uptime routes (docs/uptime-alerts.md). requireProjectAccess scopes every route; changes
+ * require the dashboard's origin. Read response times and failures from ClickHouse with
+ * dashboard query limits, and uptime and incidents from PostgreSQL.
  */
 export const uptimeRoutes: FastifyPluginCallback<{
   db: Kysely<Database>;
@@ -155,9 +141,8 @@ export const uptimeRoutes: FastifyPluginCallback<{
   app.setErrorHandler(clickHouseErrorHandler);
 
   /**
-   * Why a check's URL may not be saved: its host resolves to an address
-   * checks may not reach. A host that does not resolve (yet) is saved,
-   * and its runs fail with a DNS cause until it does.
+   * Refuse prohibited check addresses. Save unresolved hosts; checks fail with a DNS cause
+   * until resolution works.
    */
   async function addressProblem(
     url: string,
@@ -170,7 +155,8 @@ export const uptimeRoutes: FastifyPluginCallback<{
       return null;
     } catch (error) {
       if (error instanceof AddressNotAllowedError) {
-        // The answer names the address only when it was typed; the log keeps it.
+        // Show addresses only when the user supplied a literal IP; keep resolved addresses in
+        // logs.
         log.info(
           { host: error.host, address: error.address, kind: error.kind },
           "an uptime check's address was refused",
@@ -183,7 +169,6 @@ export const uptimeRoutes: FastifyPluginCallback<{
     }
   }
 
-  /** The checks with their uptime over the last 24 hours, 7 days, and 30 days. */
   async function withUptime(projectId: string, checks: Check[]) {
     const moment = now();
     const ago = (days: number) => ({
@@ -301,7 +286,6 @@ export const uptimeRoutes: FastifyPluginCallback<{
     },
   );
 
-  /** The check and the period's days, or the answer that refuses them. */
   async function checkAndRange(request: {
     params: { checkId: string };
     query: RangeQuery;

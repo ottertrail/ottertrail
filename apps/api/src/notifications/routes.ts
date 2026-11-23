@@ -43,7 +43,6 @@ import {
 } from "./deliveries.ts";
 import { EMAIL_TIMEOUT_MS, type Mailer, mailError } from "./email.ts";
 
-/** Test emails per user: 5 per 10 minutes. */
 export const DEFAULT_TEST_EMAIL_LIMIT: RateLimit = { capacity: 5, refillPerSecond: 5 / 600 };
 
 const UUID_PATTERN =
@@ -55,7 +54,7 @@ const PARAMS = {
   properties: { channelId: { type: "string", pattern: UUID_PATTERN } },
 };
 
-/** The fields a channel takes; bounds a little past the real ones, which channelValuesOf words. */
+/** Leave room for channelValuesOf to return specific validation errors. */
 const CHANNEL_FIELDS = {
   name: { type: "string", maxLength: MAX_CHANNEL_NAME * 2 },
   addresses: {
@@ -66,12 +65,10 @@ const CHANNEL_FIELDS = {
   url: { type: "string", maxLength: MAX_URL * 2 },
 };
 
-/** Channel changes are small: a name, 20 addresses, or a URL. */
 const BODY_LIMIT = 32 * 1024;
 
 const DEFAULT_DELIVERY_PAGE = 20;
 
-/** How long a webhook's host may take to resolve when it is saved. */
 const SAVE_LOOKUP_MS = 5000;
 
 const view = (channel: Channel) => ({ channel });
@@ -84,25 +81,10 @@ const NO_CHANNEL: Problem = {
 };
 
 /**
- * GET    /api/channels
- * POST   /api/channels                         { "kind": "webhook", "url": "https://…", "name": … }
- * GET    /api/channels/:channelId
- * PATCH  /api/channels/:channelId              { "name": …, "addresses": […] or "url": … }
- * DELETE /api/channels/:channelId
- * GET    /api/channels/:channelId/secret       a webhook's secret
- * POST   /api/channels/:channelId/secret       a new one, answered once
- * POST   /api/channels/:channelId/test         a test notification
- * GET    /api/channels/:channelId/deliveries[?before=<delivery ID>&limit=20]
- * POST   /api/channels/email-test             a test email to the signed-in user, sent at once
- *
- * The instance's notification channels (channels.ts; docs/uptime-alerts.md).
- * Every route needs the owner or an admin (docs/access.md); changes need
- * the dashboard's origin too. A webhook's secret is served only by its
- * own route (not the list or a
- * channel's answers, so it stays out of the dashboard's cache until
- * asked for). A webhook's URL is resolved when it is saved, and refused
- * when its host resolves to an address the uptime checks' rules refuse;
- * the worker checks again on every delivery.
+ * Channel routes (channels.ts; docs/uptime-alerts.md). Require channel management access
+ * (docs/access.md) and the dashboard's origin for changes. Serve secrets only on their own
+ * route to keep them out of dashboard caches. Check webhook addresses on save and again on each
+ * delivery.
  */
 export const channelRoutes: FastifyPluginCallback<{
   db: Kysely<Database>;
@@ -144,10 +126,8 @@ export const channelRoutes: FastifyPluginCallback<{
   const testEmails = new TokenBucketLimiter(testEmailLimit);
 
   /**
-   * A test email to the signed-in user's own address, through the
-   * instance's SMTP server, sent while the request waits so the page can
-   * say how it went: the server's refusal in mailError's words, which
-   * never hold SMTP_URL. Not queued, and not a channel's delivery.
+   * Send test email during the request so the page can show the outcome. mailError hides
+   * SMTP_URL. Keep it outside queued channel deliveries.
    */
   app.post(
     "/channels/email-test",
@@ -197,9 +177,8 @@ export const channelRoutes: FastifyPluginCallback<{
   );
 
   /**
-   * Why a webhook's URL may not be saved: its host resolves to an address
-   * webhooks may not reach. A host that does not resolve (yet) is saved;
-   * its deliveries fail until it does.
+   * Refuse prohibited webhook addresses. Save unresolved hosts; deliveries fail until DNS
+   * works.
    */
   async function addressProblem(
     url: string,
@@ -217,7 +196,8 @@ export const channelRoutes: FastifyPluginCallback<{
       return null;
     } catch (error) {
       if (error instanceof AddressNotAllowedError) {
-        // The answer names the address only when it was typed; the log keeps it.
+        // Show addresses only when the user supplied a literal IP; keep resolved addresses in
+        // logs.
         log.info(
           { host: error.host, address: error.address, kind: error.kind },
           "a webhook's address was refused",
@@ -288,7 +268,7 @@ export const channelRoutes: FastifyPluginCallback<{
           type: "object",
           additionalProperties: false,
           minProperties: 1,
-          // A kind is taken only to refuse a change of it in words (channelValuesOf).
+          // Accept kind here so channelValuesOf can explain why changing it is refused.
           properties: { kind: { type: "string", enum: ["email", "webhook"] }, ...CHANNEL_FIELDS },
         },
       },
@@ -338,7 +318,6 @@ export const channelRoutes: FastifyPluginCallback<{
       const secret = await secretOf(db, request.params.channelId);
       if (secret === undefined) return reply.code(404).send(NO_CHANNEL);
       if (secret === null) return reply.code(400).send(NOT_A_WEBHOOK);
-      // Not kept by the browser or a proxy.
       return reply.header("cache-control", "no-store").send({ secret });
     },
   );

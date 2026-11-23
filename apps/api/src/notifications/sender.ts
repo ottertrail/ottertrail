@@ -14,13 +14,10 @@ import {
 import { type Mailer, sendEmail } from "./email.ts";
 import { sendWebhook } from "./webhook.ts";
 
-/** Deliveries one worker sends at once. */
 export const MAX_SENDING = 10;
 
-/** How often the worker looks for due deliveries. */
 export const DELIVERY_TICK_MS = 2000;
 
-/** How often deliveries past their 30 days are deleted. */
 export const PRUNE_INTERVAL_MS = 60 * 60 * 1000;
 
 export interface SenderOptions {
@@ -40,11 +37,8 @@ export interface SenderOptions {
 }
 
 /**
- * Sends due deliveries: each tick takes as many as there is room for
- * (MAX_SENDING at once), each one's attempt already counted and its next
- * attempt moved on (takeDueDeliveries), and sends them without waiting:
- * a slow webhook holds only its own place. Each outcome is recorded by
- * recordAttempt, which retries a failure later or gives it up.
+ * Start due deliveries without waiting so a slow webhook uses only its own slot.
+ * takeDueDeliveries advances attempts first; recordAttempt schedules retries or gives up.
  */
 export class DeliverySender {
   readonly #options: SenderOptions;
@@ -54,12 +48,10 @@ export class DeliverySender {
     this.#options = options;
   }
 
-  /** Deliveries in flight. */
   get sending(): number {
     return this.#sending.size;
   }
 
-  /** Takes the deliveries due now and starts them; returns how many it started. */
   async tick(): Promise<number> {
     const { db, maxSending = MAX_SENDING, now } = this.#options;
     const due = await takeDueDeliveries(db, {
@@ -77,7 +69,6 @@ export class DeliverySender {
     return due.length;
   }
 
-  /** Waits for every delivery in flight, as on shutdown. */
   async drain(): Promise<void> {
     while (this.#sending.size > 0) await Promise.allSettled(this.#sending);
   }
@@ -131,7 +122,7 @@ export class DeliverySender {
       },
     );
     if (!result.ok && result.refused !== undefined) {
-      // The dashboard sees only that the host is refused; the address and its kind are logged here.
+      // Log refused addresses privately; dashboard errors hide them.
       log?.("info", "a webhook's address was refused", {
         delivery: delivery.id,
         channel: delivery.channelId,

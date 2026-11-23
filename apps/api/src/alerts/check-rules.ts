@@ -11,16 +11,10 @@ import {
 import { DEFAULT_CERTIFICATE_DAYS } from "./kinds.ts";
 
 /**
- * Check rules (docs/uptime-alerts.md, "Alerts"): "check down" and
- * "certificate expiring", evaluated from what PostgreSQL holds about the
- * checks. The worker calls them for one check as soon as recordOutcome
- * reports a change or a run records a new certificate, and for every
- * check each minute (down) and each hour (certificates): a change the
- * worker stopped before acting on is caught up then, and since alerts fire
- * only when their state differs, nothing goes twice.
+ * Evaluate check changes immediately, then catch missed changes each minute (down) or hour
+ * (certificates). State comparisons prevent duplicate alerts (docs/uptime-alerts.md, "Alerts").
  */
 
-/** Which checks to look at: all, a project's, or one. */
 export interface CheckScope {
   projectId?: string | undefined;
   checkId?: string | undefined;
@@ -39,11 +33,8 @@ const checkLink = (context: AlertContext, projectId: string, checkId: string) =>
   dashboardLink(context.publicUrl, `/projects/${projectId}/uptime/${checkId}`);
 
 /**
- * A guard (fire.ts) that reads the check again, FOR SHARE, after the
- * rule's lock: the alert goes ahead only while the check still exists and
- * still has what the evaluation read (its state, whether it is paused,
- * its certificate's expiry). A check deleted, recovered, or renewed
- * meanwhile is left to the next evaluation.
+ * Lock the check FOR SHARE after the rule lock (fire.ts). Skip alerts if the check was deleted,
+ * paused, recovered, or renewed since evaluation.
  */
 function checkStill(
   checkId: string,
@@ -65,14 +56,12 @@ function checkStill(
   };
 }
 
-/** Counts what a pass did, for the worker's log and the tests. */
 export type Counts = Record<Outcome, number>;
 const counted = (): Counts => ({ sent: 0, held: 0, skipped: 0 });
 
 /**
- * Fires "check down" rules for watched checks that are down and not yet
- * alerted, and resolves them for checks that are no longer down (up
- * again, paused, or with a new URL). Only rules that are on.
+ * Evaluate enabled check-down rules. Pausing a check or changing its URL also resolves its
+ * alert.
  */
 export async function evaluateCheckDown(
   context: AlertContext,
@@ -113,7 +102,6 @@ export async function evaluateCheckDown(
     ])
     .where("r.enabled", "=", true)
     .where("r.kind", "=", "check_down")
-    // Only where the alert's state and the check's differ.
     .where(sql<boolean>`(c.state = 'down') <> coalesce(s.firing, false)`);
   if (scope.projectId !== undefined) query = query.where("r.project_id", "=", scope.projectId);
   if (scope.checkId !== undefined) query = query.where("c.id", "=", scope.checkId);
@@ -155,14 +143,11 @@ export async function evaluateCheckDown(
   return counts;
 }
 
-/** A day as "YYYY-MM-DD" in UTC. */
 const dayOf = (moment: Date) => moment.toISOString().slice(0, 10);
 
 /**
- * Fires "certificate expiring" rules for watched checks whose certificate
- * expires within the rule's days, once per certificate (its expiry), and
- * resolves them when the expiry moves past the window (renewed), or the
- * check no longer has one (paused, or a new URL).
+ * Fire once per certificate expiry within the rule's window. Resolve when renewal moves it
+ * outside the window or the check loses its certificate.
  */
 export async function evaluateCertificates(
   context: AlertContext,

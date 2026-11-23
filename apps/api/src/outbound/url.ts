@@ -1,17 +1,13 @@
-/** The longest URL a check or a webhook may have. */
 export const MAX_URL = 2048;
 
-/** A refused value: a code and a sentence the dashboard shows as it is. */
 export interface Problem {
   error: string;
   message: string;
 }
 
 /**
- * The URL an uptime check or a webhook may request, or why not: http or
- * https, a host, no user name or password (they would be stored as plain
- * text), at most MAX_URL characters. The fragment is dropped. Its host's
- * addresses are checked separately (addresses.ts, resolveTarget).
+ * Reject credentials because URLs are stored in plain text. Allow http(s) URLs up to MAX_URL
+ * characters and drop fragments. Check host addresses separately (addresses.ts, resolveTarget).
  */
 export function outboundUrlOf(
   text: string,

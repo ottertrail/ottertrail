@@ -16,7 +16,6 @@ import type { NotificationPayload } from "./events.ts";
 /** How long one message may take, from connecting to the server's last answer. */
 export const EMAIL_TIMEOUT_MS = 20_000;
 
-/** The longest subject line, in characters. */
 export const MAX_SUBJECT = 200;
 
 export const NOT_SET_UP_ERROR =
@@ -30,22 +29,17 @@ export interface MailMessage {
   html?: string;
 }
 
-/** Sends a message; throws Nodemailer's error when it fails. */
 export interface Mailer {
   send(message: MailMessage, signal: AbortSignal): Promise<{ accepted: number }>;
   close(): void;
 }
 
 /**
- * A mailer for the configured SMTP server. Over smtp:// with a user name
- * and password, STARTTLS is required, so the password never crosses the
- * network in plain text; smtps:// starts with TLS. Without a port,
- * smtps:// uses 465 and smtp:// 587. Tests trust their own certificate
- * (`ca`).
+ * Require STARTTLS for smtp:// credentials to protect the password; smtps:// starts with TLS.
+ * Default ports are 587 and 465 respectively. Tests may supply `ca`.
  */
 export function smtpMailer(config: EmailConfig, { ca }: { ca?: string } = {}): Mailer {
-  // Each option is set here, not handed over as a URL: Nodemailer would
-  // read options from the URL's query string over these.
+  // Pass explicit options; URL query options could override them in Nodemailer.
   const url = new URL(config.smtpUrl);
   const secure = url.protocol === "smtps:";
   const host = url.hostname.startsWith("[") ? url.hostname.slice(1, -1) : url.hostname;
@@ -63,7 +57,7 @@ export function smtpMailer(config: EmailConfig, { ca }: { ca?: string } = {}): M
       greetingTimeout: 10_000,
       socketTimeout: EMAIL_TIMEOUT_MS,
       dnsTimeout: 5_000,
-      // Never log: the transport's log would carry the password.
+      // Disable transport logs because they contain the password.
       logger: false,
       debug: false,
       ...(ca === undefined ? {} : { tls: { ca } }),
@@ -101,11 +95,9 @@ function timeText(iso: string, timeZone: string): string {
   return `${text} (${timeZone})`;
 }
 
-/** A line with no line breaks or other control characters. */
 // eslint-disable-next-line no-control-regex -- control characters are what it replaces
 export const oneLine = (text: string) => text.replace(/[\u0000-\u001F\u007F]+/gu, " ").trim();
 
-/** A notification as an email: the subject starts with the instance's name. */
 export function emailOf(
   payload: NotificationPayload,
   instance: { name: string; timeZone: string },
@@ -126,7 +118,7 @@ export function emailOf(
   return { subject, text };
 }
 
-/** Nodemailer's error, in a sentence safe to show: it never holds SMTP_URL. */
+/** Never include SMTP_URL in errors shown to users. */
 export function mailError(error: unknown, signal?: AbortSignal): string {
   if (signal?.aborted === true) {
     return `The SMTP server did not finish within ${EMAIL_TIMEOUT_MS / 1000} seconds.`;

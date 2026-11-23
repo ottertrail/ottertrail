@@ -26,47 +26,26 @@ import {
 } from "./kinds.ts";
 
 /**
- * Error rules (docs/uptime-alerts.md, "Alerts"): new, regressed, and
- * spiking errors, evaluated by the worker every minute from the error
- * list's own data in ClickHouse (errors/errors.ts), for browser and
- * server errors alike. Each project's rules are evaluated together:
+ * Evaluate new, regressed, and spiking errors each minute (docs/uptime-alerts.md, "Alerts";
+ * errors/errors.ts). Page arrivals per project by first arrival, so late occurrences are still
+ * seen. Cache first arrivals in alert_error_groups to avoid repeated full-history reads for
+ * common fingerprints.
  *
- * - "New" and "regressed" read the error groups whose occurrences arrived
- *   since the project's last evaluation: one query over the arrivals,
- *   kept to the days an arrival can have happened on (the table's
- *   project and day order), a page of MAX_WINDOW_GROUPS groups at a time
- *   in the order of their first arrival. A group's history is then read
- *   only when PostgreSQL does not know it yet (alert_error_groups): the
- *   bloom filter on the fingerprint skips the parts without it, which
- *   helps for a rare group but not for a frequent one, present in nearly
- *   every part, so each group's first arrival is looked up in ClickHouse
- *   once and kept. Arrivals, not occurrence times: an error that happened
- *   a while ago but arrives now is still seen once.
- * - "Spike" counts each rule's window (5 to 60 minutes), all the
- *   project's spike rules in one query, evaluated apart from the others,
- *   so a failure of one does not silence the other.
- *
- * Every query filters by project first, takes its values as parameters,
- * and runs with the dashboard's time and memory limits
- * (DASHBOARD_SETTINGS). The evaluation reads up to ARRIVAL_LAG_MS ago, so
- * an insert still under way when it runs is read the next minute; after
- * a gap (a worker that was stopped) it starts where it ended, but reads
- * at most MAX_CATCH_UP_MS, so a long outage does not end in a flood. A
- * rule reads nothing that arrived before it was created or turned on
- * (active_since).
+ * Batch spike rules into a separate query so failure cannot silence arrival rules. Filter by
+ * project, parameterize values, and use DASHBOARD_SETTINGS. Leave ARRIVAL_LAG_MS for inserts to
+ * finish and cap catch-up at MAX_CATCH_UP_MS to avoid a flood after downtime. Ignore arrivals
+ * before active_since.
  */
 
-/** How far behind now the arrivals read end: inserts take a moment to land. */
+/** Leave time for inserts to finish before reading arrivals. */
 export const ARRIVAL_LAG_MS = 30_000;
 /** The longest stretch of arrivals one evaluation reads, after a gap. */
 export const MAX_CATCH_UP_MS = 60 * 60 * 1000;
-/** Error groups (per environment) in a page of arrivals. */
 export const MAX_WINDOW_GROUPS = 1000;
 /** Pages of arrivals one evaluation reads; the rest wait for the next minute. */
 export const MAX_PAGES = 5;
 /** Fingerprints per history query, so a query's parameters stay small. */
 const CHUNK = 200;
-/** The longest error message a notification quotes. */
 const MESSAGE_CHARS = 200;
 
 const ERROR_KINDS: RuleKind[] = ["error_new", "error_regressed", "error_spike"];
@@ -83,7 +62,6 @@ interface ErrorRule {
   read: RuleRead;
 }
 
-/** The groups whose occurrences arrived in the window, per environment. */
 interface Arrival {
   fingerprint: string;
   environment: string;
@@ -102,10 +80,8 @@ export interface ArrivalKey {
 }
 
 /**
- * A page of the groups whose occurrences arrived in (from, until], per
- * environment, in the order of their first arrival in it, then
- * fingerprint and environment, after `after`. Ties are common (one batch
- * shares one arrival time), hence the whole key.
+ * Page arrivals in (from, until] by first arrival, fingerprint, and environment. Batches share
+ * arrival times, so the cursor needs all three fields.
  */
 async function arrivals(
   reader: Reader,
@@ -126,9 +102,8 @@ async function arrivals(
     message: string;
   }>(
     reader,
-    // An event is at most a day old when it arrives (collection/normalize.ts),
-    // and a server's clock at most a few minutes ahead: the occurrence time
-    // keeps the read to the days such arrivals can be on.
+    // Events arrive at most a day late (collection/normalize.ts), with a few minutes of clock
+    // skew. Bound occurrence time to those days.
     `SELECT error_fingerprint AS fingerprint,
             environment,
             min(received_at) AS first_arrival,
@@ -169,17 +144,14 @@ async function arrivals(
   };
 }
 
-/** How much one evaluation reads of a project's arrivals: groups per page, and pages. */
 export interface PageLimits {
   pageSize: number;
   maxPages: number;
 }
 
 /**
- * When each of these groups first arrived, per environment: from
- * PostgreSQL's alert_error_groups for the (fingerprint, environment)
- * pairs it knows, from ClickHouse's whole history for the fingerprints
- * with a pair it does not, which are then kept there.
+ * Cache each group's first arrival in PostgreSQL (alert_error_groups). Read ClickHouse history
+ * only for unknown (fingerprint, environment) pairs.
  */
 async function firstArrivals(
   db: Kysely<Database>,
@@ -246,10 +218,8 @@ async function firstArrivals(
 }
 
 /**
- * Each spike rule's count over its window up to `at`, with its window's
- * latest error type, message, and environment. Retries are counted once
- * by their event ID, so the query needs no FINAL, and PREWHERE reads the
- * other columns only for the rows in the longest window.
+ * Count retries once by event ID, avoiding FINAL. PREWHERE limits other columns to the longest
+ * spike window.
  */
 async function spikeCounts(
   reader: Reader,
@@ -308,19 +278,16 @@ const errorsLink = (context: AlertContext, projectId: string, env: string | null
 
 const minutes = (count: number) => (count === 1 ? "1 minute" : `${count} minutes`);
 
-/** What a project's evaluation did. */
 export interface ErrorPass {
   projectId: string;
   from: Date;
   until: Date;
-  /** Pages of arrivals read. */
   pages: number;
   /** More groups arrived than one evaluation reads: the rest wait for the next. */
   deferred: boolean;
   counts: Counts;
 }
 
-/** New and regressed errors among one page of arrivals. */
 async function windowAlerts(
   context: AlertContext,
   reader: Reader,
@@ -380,8 +347,8 @@ async function windowAlerts(
   const resolved = await resolutions(context.db, projectId, [
     ...new Set(rows.map((row) => row.fingerprint)),
   ]);
-  // The latest occurrence among the arrivals, in any environment: a
-  // status belongs to the project (errors/errors.ts).
+  // Use the latest occurrence across environments because status belongs to the project
+  // (errors/errors.ts).
   const latest = new Map<string, Arrival>();
   for (const row of rows) {
     const known = latest.get(row.fingerprint);
@@ -395,7 +362,7 @@ async function windowAlerts(
       continue;
     }
     for (const rule of regressedRules) {
-      // What arrived before the rule existed (or was turned on) is not its to tell.
+      // Ignore arrivals from before the rule was created or enabled.
       if (row.lastArrival <= rule.activeSince) continue;
       counts[
         await fire(context, {
@@ -443,8 +410,7 @@ async function evaluateWindow(
     .selectAll()
     .where("project_id", "=", project.id)
     .executeTakeFirst();
-  // A missing cursor, or one from before the rules were on (no error rule
-  // was, for a while), starts where the earliest of them came on.
+  // Start at the earliest active rule when the cursor is missing or predates all active rules.
   const activeSince = Math.min(...rules.map((rule) => rule.activeSince.getTime()));
   const from = new Date(
     Math.max(
@@ -453,8 +419,7 @@ async function evaluateWindow(
       until.getTime() - MAX_CATCH_UP_MS,
     ),
   );
-  // The last group read is a place within the arrivals since `from`: it
-  // holds only while `from` is the cursor's time.
+  // The group cursor is valid only for its original `from` time.
   let after: ArrivalKey | null =
     cursor !== undefined &&
     cursor.errors_until.getTime() === from.getTime() &&
@@ -506,7 +471,6 @@ async function evaluateWindow(
   return { from, until, pages, deferred };
 }
 
-/** Spike rules: each one's window counted now, fired or resolved. */
 async function evaluateSpikes(
   context: AlertContext,
   reader: Reader,
@@ -591,11 +555,8 @@ async function evaluateSpikes(
 }
 
 /**
- * Evaluates the error rules that are on, of every project or one, at
- * `at`: one project after another, so the worker's queries are few at a
- * time. New and regressed errors, and spikes, are evaluated apart: a
- * failure of one (a query past its limits) is logged, and the other goes
- * on. A project's arrivals that failed are read again the next minute.
+ * Evaluate projects sequentially to limit concurrent queries. Evaluate arrivals and spikes
+ * separately so either can survive the other's failure. Retry failed arrivals next minute.
  */
 export async function evaluateErrorRules(
   context: AlertContext,

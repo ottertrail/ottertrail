@@ -8,17 +8,14 @@ import { type CheckOutcome, type RequestOptions, runRequest } from "./request.ts
 import { storeResult } from "./results.ts";
 import { parseStatuses } from "./statuses.ts";
 
-/** Requests one worker runs at once. */
 export const MAX_RUNNING = 20;
 
 /**
- * Requests of one project one worker runs at once: half the places, so
- * one project's slow checks (50 of them, against a server that never
- * answers, each waiting its 30 seconds) leave room for the others'.
+ * Reserve half the slots for other projects so one project's slow checks cannot fill the
+ * worker.
  */
 export const MAX_RUNNING_PER_PROJECT = 10;
 
-/** How often the worker looks for due checks. */
 export const CHECK_TICK_MS = 2000;
 
 /** A check taken this long after it was due is late: the worker logs that it is behind. */
@@ -53,19 +50,12 @@ export interface SchedulerOptions {
 }
 
 /**
- * Runs due uptime checks: each tick takes as many as there is room for
- * (MAX_RUNNING at once, MAX_RUNNING_PER_PROJECT of one project), each
- * one's next due time already moved on (takeDueChecks), and starts their
- * requests without waiting for them. A slow check holds only its own
- * place: the others run while there are places, and when slow checks
- * fill them all, the rest wait and run late, which the worker logs once
- * while it lasts. Each outcome is recorded on the check in PostgreSQL
- * first (its state and incidents), then written to ClickHouse.
+ * Start claimed checks without waiting, enforcing global and per-project limits. Log backlog
+ * once while it lasts. Record outcomes in PostgreSQL before writing ClickHouse results.
  */
 export class CheckScheduler {
   readonly #options: SchedulerOptions;
   readonly #running = new Set<Promise<void>>();
-  /** Runs in flight, by project. */
   readonly #byProject = new Map<string, number>();
   #resultsFailing = false;
   #late = false;
@@ -74,12 +64,10 @@ export class CheckScheduler {
     this.#options = options;
   }
 
-  /** Requests in flight. */
   get running(): number {
     return this.#running.size;
   }
 
-  /** Takes the checks due now and starts them; returns how many it started. */
   async tick(): Promise<number> {
     const {
       db,
@@ -126,7 +114,6 @@ export class CheckScheduler {
     return due.length;
   }
 
-  /** Waits for every request in flight, as on shutdown. */
   async drain(): Promise<void> {
     while (this.#running.size > 0) await Promise.allSettled(this.#running);
   }
@@ -147,7 +134,7 @@ export class CheckScheduler {
       { policy, lookup, ca },
     );
     if (outcome.refused !== undefined) {
-      // The member sees only that the host is refused; the address and its kind are logged here.
+      // Log refused addresses privately; dashboard errors hide them.
       log?.("info", "an uptime check's address was refused", {
         check: check.id,
         project: check.project_id,

@@ -17,34 +17,17 @@ import {
   takeDueRules,
 } from "./telemetry-rules.ts";
 
-/** How often the worker evaluates alert rules. */
 export const ALERT_TICK_MS = 60_000;
 /** How often every certificate is looked at again, besides when a run sees a new one. */
 export const CERTIFICATE_INTERVAL_MS = 60 * 60 * 1000;
-/** How often alerts past their 90 days are deleted. */
 export const HISTORY_PRUNE_INTERVAL_MS = 60 * 60 * 1000;
 
 /**
- * The worker's alert rules (docs/uptime-alerts.md, "Alerts"):
- *
- * - onStateChange and onCertificate act on one check as soon as the
- *   checker records a change, so a check's alert goes out within seconds.
- * - tick, every minute: check-down rules for every check (catching up a
- *   change the worker stopped before acting on, and ending, silently, any
- *   alert left firing for a check that no longer exists), error rules, the
- *   summaries of what rules' hourly caps held back, and assignees told of
- *   their regressed errors (errors/assignments.ts); every hour,
- *   certificates (whose window moves with time), and the history's and
- *   the notifications inbox's pruning (90 days each).
- *
- * - telemetryTick, every few seconds on a loop of its own: the route
- *   latency, route failures, and metric rules due (each once a minute,
- *   taken by one worker), a few projects at a time (telemetry-rules.ts).
- *   Each rule's outcome is recorded on it; one that fails is logged once,
- *   when it starts failing, and again when it works. stop() lets the
- *   rules running finish and starts no more.
- *
- * Each step logs its own failure and lets the others go on.
+ * Coordinate check, error, telemetry, and AI rules (docs/uptime-alerts.md, "Alerts"). Check
+ * callbacks run immediately; tick catches missed changes and handles error rules and hourly
+ * cleanup. Telemetry runs on a separate loop, a few projects at a time (telemetry-rules.ts).
+ * Each step logs failures independently. stop() lets running rules finish and prevents new
+ * evaluations.
  */
 export class AlertEvaluator {
   readonly #context: AlertContext;
@@ -73,8 +56,8 @@ export class AlertEvaluator {
     this.#reader = { client: clickhouse };
     this.#now = now;
     this.#telemetry = {
-      // A project's queries end by its budget: each one's time limit is cut
-      // to what is left, and the signal closes any still running then.
+      // Limit each query to the project's remaining budget; abort any still running when it
+      // expires.
       readerOf: (_projectId, deadline) => ({
         client: clickhouse,
         deadline,
@@ -84,7 +67,7 @@ export class AlertEvaluator {
     };
   }
 
-  /** The worker is stopping: telemetry rules not started yet are not started. */
+  /** Let running telemetry rules finish; start no more. */
   stop(): void {
     this.#stopping = true;
   }
@@ -93,7 +76,6 @@ export class AlertEvaluator {
     this.#context.log?.("error", `alert rules: ${step} failed`, { err: String(error) });
   }
 
-  /** A check went down or came back up: its check-down rules, now. */
   async onStateChange(change: Pick<StateChange, "checkId" | "projectId">): Promise<void> {
     try {
       await evaluateCheckDown(
@@ -106,7 +88,6 @@ export class AlertEvaluator {
     }
   }
 
-  /** A run recorded a new certificate expiry: the check's certificate rules, now. */
   async onCertificate(check: { checkId: string; projectId: string }): Promise<void> {
     try {
       await evaluateCertificates(this.#context, check, this.#now());
@@ -115,11 +96,7 @@ export class AlertEvaluator {
     }
   }
 
-  /**
-   * The telemetry rules due now: taken (by this worker only), evaluated a
-   * few projects at a time, and each one's outcome recorded on it.
-   * Returns each rule's result.
-   */
+  /** Claim due rules for this worker and evaluate a few projects at a time. */
   async telemetryTick(): Promise<PassResult[]> {
     if (this.#stopping) return [];
     let results: PassResult[] = [];
@@ -164,7 +141,6 @@ export class AlertEvaluator {
     return results;
   }
 
-  /** One minute's evaluation. */
   async tick(): Promise<void> {
     const at = this.#now();
     try {
@@ -192,9 +168,8 @@ export class AlertEvaluator {
     } catch (error) {
       this.#failed("held-back summaries", error);
     }
-    // The arrivals since the last pass, as the error rules read them: after
-    // a start or a gap, at most the last MAX_CATCH_UP_MS (telling is once
-    // per resolution, so reading some again tells nobody twice).
+    // After startup or a gap, read at most MAX_CATCH_UP_MS of arrivals. Notifications are
+    // deduplicated per resolution.
     const until = at.getTime() - ARRIVAL_LAG_MS;
     const from = Math.max(this.#regressionsThrough ?? 0, until - MAX_CATCH_UP_MS);
     if (from < until) {
@@ -208,7 +183,7 @@ export class AlertEvaluator {
         this.#failed("telling assignees of regressions", error);
       }
     }
-    // Each clean-up apart, hourly: one that fails is tried again next minute, alone.
+    // Retry each failed hourly cleanup next minute without repeating successful ones.
     if (at.getTime() - this.#prunedAt >= HISTORY_PRUNE_INTERVAL_MS) {
       try {
         const pruned = await pruneHistory(this.#context.db, at);

@@ -62,7 +62,7 @@ const RULE_PARAMS = {
   },
 };
 
-/** A rule's fields; bounds a little past the real ones where ruleValuesOf words them. */
+/** Leave room for ruleValuesOf to return specific validation errors. */
 const RULE_FIELDS = {
   name: { type: "string", maxLength: MAX_RULE_NAME * 2 },
   kind: { type: "string", enum: [...RULE_KINDS] },
@@ -84,7 +84,6 @@ const PAGE_QUERY = {
   },
 };
 
-/** A rule is a name, a few settings, and up to 20 channel IDs. */
 const BODY_LIMIT = 16 * 1024;
 const DEFAULT_PAGE = 20;
 
@@ -93,7 +92,6 @@ const NO_RULE: Problem = {
   message: "The project has no alert rule with this ID.",
 };
 
-/** The access requireProjectAccess set: these routes always run it. */
 function accessOf(request: { projectAccess: ProjectAccess | null }): ProjectAccess {
   if (request.projectAccess === null) {
     throw new Error("requireProjectAccess must run before this route");
@@ -101,22 +99,17 @@ function accessOf(request: { projectAccess: ProjectAccess | null }): ProjectAcce
   return request.projectAccess;
 }
 
-/**
- * Whether the user may see rules of this kind: uptime and alerts (the
- * route checks it), and the area the kind watches (docs/access.md).
- */
+/** Require uptime and alerts plus view access to the kind's area (docs/access.md). */
 function canSeeKind(user: UserAccess, kind: RuleKind): boolean {
   const area = sourceAreaOf(kind);
   return area === null || canUse(user, area, "view");
 }
 
-/** Whether the user reads the telemetry a kind watches: monitoring, or AI for an AI rule. */
 function canSeeTelemetry(user: UserAccess, kind: RuleKind): boolean {
   const area = sourceAreaOf(kind);
   return (area === "monitoring" || area === "ai") && canUse(user, area, "view");
 }
 
-/** Whether a kind sent in a request is one the user may use; the schema refuses unknown kinds first. */
 const mayUseKind = (user: UserAccess, kind: string | undefined) =>
   isRuleKind(kind) && canSeeKind(user, kind);
 
@@ -125,29 +118,12 @@ export const visibleKinds = (user: UserAccess) =>
   RULE_KINDS.filter((kind) => canSeeKind(user, kind));
 
 /**
- * GET    /api/projects/:id/alert-rules
- * POST   /api/projects/:id/alert-rules                 { "kind": "check_down", "channelIds": […], … }
- * GET    /api/projects/:id/alert-rules/:ruleId
- * PATCH  /api/projects/:id/alert-rules/:ruleId         any fields, or { "enabled": false }
- * DELETE /api/projects/:id/alert-rules/:ruleId
- * GET    /api/projects/:id/alert-rules/:ruleId/history[?before=<alert ID>&limit=20]
- * GET    /api/projects/:id/alerts[?before=<alert ID>&limit=20]   the project's alerts
- * GET    /api/projects/:id/alerts/firing
- * GET    /api/projects/:id/alert-channels                the instance's channels, by name only
- *
- * A project's alert rules (rules.ts; docs/uptime-alerts.md, "Alerts"):
- * at most 50, each sending to one or more of the instance's channels. A
- * rule's channels must exist and its check must be the project's (400
- * otherwise). A telemetry rule whose service, route, or metric has not
- * reported in the last days is saved, with a `warning` saying so: it may
- * be set up before the app is deployed. Changes need the dashboard's
- * origin. Like every project
- * route, each runs requireProjectAccess first, and reads only the
- * project it found.
+ * Project alert routes (rules.ts; docs/uptime-alerts.md, "Alerts"). A missing telemetry source
+ * produces a warning so rules can be saved before deployment. Changes require the dashboard's
+ * origin; requireProjectAccess scopes every route.
  */
 export const alertRoutes: FastifyPluginCallback<{
   db: Kysely<Database>;
-  /** Where a telemetry rule's service or metric is looked for. */
   clickhouse: ClickHouseClient;
   auth: Auth;
   trustedOrigins: readonly string[];
@@ -172,9 +148,8 @@ export const alertRoutes: FastifyPluginCallback<{
   const fromDashboard = requireTrustedOrigin(trustedOrigins);
 
   /**
-   * The rule as answered, with why a telemetry rule may not fire yet, if it
-   * may not. The warning says whether a service, route, metric, or AI call
-   * reported, so only those who may read the kind's area get it.
+   * Warnings reveal whether a source reported, so return them only to readers of the kind's
+   * area.
    */
   const saved = async (
     rule: Rule,
@@ -193,7 +168,7 @@ export const alertRoutes: FastifyPluginCallback<{
       : null,
   });
 
-  /** The rule, if it exists and the user may see its kind; otherwise null, as a missing rule. */
+  /** Hide rules of inaccessible kinds with the same response as missing rules. */
   const visibleRule = async (access: ProjectAccess, ruleId: string) => {
     const rule = await findRule(db, access.projectId, ruleId, visibleKinds(access.user));
     return rule === null || !canSeeKind(access.user, rule.kind) ? null : rule;
@@ -277,7 +252,6 @@ export const alertRoutes: FastifyPluginCallback<{
       const { projectId } = access;
       const current = await visibleRule(access, request.params.ruleId);
       if (current === null) return reply.code(404).send(NO_RULE);
-      // Another kind needs its own area too.
       if (request.body.kind !== undefined && !mayUseKind(access.user, request.body.kind)) {
         return reply.code(403).send(FORBIDDEN);
       }
@@ -355,9 +329,8 @@ export const alertRoutes: FastifyPluginCallback<{
   );
 
   /**
-   * The instance's channels by name, for choosing a rule's: never their
-   * addresses, URLs, or secrets, which only the Settings page shows to
-   * those who manage channels (docs/access.md).
+   * Expose channel names only. Addresses, URLs, and secrets require channel management access
+   * (docs/access.md).
    */
   app.get<{ Params: { id: string } }>(
     "/projects/:id/alert-channels",

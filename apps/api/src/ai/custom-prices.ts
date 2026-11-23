@@ -4,20 +4,14 @@ import type { Database } from "../db/schema.ts";
 import { type CustomPrice, type PriceBook, priceBookOf, priceOf, type Rates } from "./prices.ts";
 
 /**
- * The instance's own AI model prices (docs/ai-usage.md, "Prices"; the
- * ai_model_prices table, migration 0019), which Settings → AI models
- * changes: read into a price book for each report and alert evaluation,
- * and changed here. Every change marks the kept hours of the AI cost
- * rules stale (alerts/ai-cost-hours.ts), so their next evaluation adds
- * the hours up again at the new prices.
+ * Custom AI prices (ai_model_prices, migration 0019; docs/ai-usage.md, "Prices"). Read a price
+ * book for each report and alert evaluation. Changes invalidate cached AI cost hours
+ * (alerts/ai-cost-hours.ts).
  */
 
-/** The highest price per million tokens the instance takes, in US dollars. */
 export const MAX_PRICE_USD = 10_000;
-/** Decimals a price may have. */
 export const PRICE_DECIMALS = 6;
 
-/** A custom row as the Settings tab shows it. */
 export interface CustomPriceRow extends CustomPrice {
   updatedAt: Date;
   /** Who last changed it; null once that user is deleted. */
@@ -75,7 +69,6 @@ export async function readCustomPrices(db: Kysely<Database>): Promise<CustomPric
   });
 }
 
-/** The prices reports and alerts use now: the bundled table and the instance's rows. */
 export async function readPriceBook(db: Kysely<Database>): Promise<PriceBook> {
   return priceBookOf(await readCustomPrices(db));
 }
@@ -84,7 +77,6 @@ export async function readPriceBook(db: Kysely<Database>): Promise<PriceBook> {
 export const MAX_CUSTOM_ROWS = 1000;
 export const MAX_ROWS_PER_MODEL = 100;
 
-/** Why a change is refused. */
 export type PriceProblem =
   | { problem: "too_many_prices" }
   | { problem: "too_many_model_prices" }
@@ -102,10 +94,8 @@ class Refused extends Error {
 }
 
 /**
- * Runs a change in a transaction with the table locked against other
- * changes (so two cannot make a chain between them, or pass the caps
- * together), then checks the caps, then marks the kept hours stale.
- * A refusal rolls it all back.
+ * Lock the table while changing prices and checking caps to prevent concurrent chains or cap
+ * overruns. Invalidate cached hours in the same transaction; roll back on refusal.
  */
 async function change(
   db: Kysely<Database>,
@@ -137,13 +127,9 @@ async function change(
 }
 
 /**
- * Marks every AI cost rule's kept hours as added up for other prices:
- * the next evaluation of each adds its window up again from ClickHouse
- * at the prices of then. The hours are not deleted: an evaluation that
- * read the old prices while this ran still sums the hours it kept at
- * them. The price book's fingerprint is in what the hours were kept for
- * too (ai-cost-hours.ts), so that evaluation's own write is added up
- * again at the next.
+ * Mark cached hours stale without deleting them, so an evaluation using old prices can still
+ * read its hours. The price fingerprint forces a rebuild even if that evaluation writes after
+ * invalidation (ai-cost-hours.ts).
  */
 async function staleKeptHours(trx: Transaction<Database>): Promise<void> {
   await trx.updateTable("ai_cost_windows").set({ settings_key: "" }).execute();
@@ -157,10 +143,8 @@ const ratesColumns = (rates: Rates) => ({
 });
 
 /**
- * Sets a model's price: from `effectiveFrom` on, replacing the model's
- * row from that moment if it has one, so calls before it keep the price
- * they had; or, with null, for all its calls, replacing every row it has
- * (its dated prices and its `price as` too).
+ * A dated price replaces the row at `effectiveFrom` and preserves earlier prices. Null replaces
+ * all rows, including dated prices and `price as`.
  */
 export async function setModelPrice(
   db: Kysely<Database>,
@@ -203,7 +187,6 @@ export async function setModelPrice(
   });
 }
 
-/** The models priced as `model`. */
 async function pricedAs(trx: Transaction<Database>, model: string): Promise<string[]> {
   const rows = await trx
     .selectFrom("ai_model_prices")
@@ -215,11 +198,8 @@ async function pricedAs(trx: Transaction<Database>, model: string): Promise<stri
 }
 
 /**
- * Prices a model as another, for all its calls, in place of a price for
- * all calls it had; its dated prices stay and win from their starts.
- * Refused when the target has no price (bundled or its own), and, one
- * level only, when the target is itself priced as another or another
- * model is priced as this one.
+ * Keep dated prices when setting `price as`; they take precedence from their starts. Require a
+ * priced target and reject chains in either direction.
  */
 export async function setPriceAs(
   db: Kysely<Database>,
@@ -270,9 +250,8 @@ export async function setPriceAs(
 }
 
 /**
- * Removes every row of a model: it goes back to the bundled price, or to
- * none. Refused while other models are priced as it: they would lose
- * their price when it has no bundled one.
+ * Reset to the bundled price or none. Refuse while another model uses this one as its price
+ * source.
  */
 export async function resetModel(
   db: Kysely<Database>,

@@ -17,65 +17,49 @@ import {
 import { type InboxOptions, recordFromPayload } from "./inbox.ts";
 
 /**
- * Deliveries (docs/uptime-alerts.md, "Where alerts go"): a notification is
- * a row per channel in notification_deliveries, written before anything
- * is sent (notify). The worker takes due rows (takeDueDeliveries), sends
- * them (sender.ts), and records each attempt (recordAttempt). Retries wait
- * longer each time and give up after about an hour; rows are kept 30
- * days (pruneDeliveries).
+ * Queue one delivery per channel before sending (docs/uptime-alerts.md, "Where alerts go"). The
+ * worker retries for about an hour; keep rows for 30 days (pruneDeliveries).
  */
 
 /**
- * How long to wait after each failed attempt before the next: 30 seconds,
- * then 1, 2, 5, 10, 20, and 20 minutes; the attempt after the last wait
- * is the last. About an hour from the first attempt to the last.
+ * Retry after 30 seconds, then 1, 2, 5, 10, 20, and 20 minutes. Stop after the next attempt,
+ * about an hour after the first.
  */
 export const RETRY_DELAYS_SECONDS = [30, 60, 120, 300, 600, 1200, 1200] as const;
 export const MAX_ATTEMPTS = RETRY_DELAYS_SECONDS.length + 1;
 
 /**
- * How long the last attempt holds its delivery: if no outcome is recorded
- * by then (the worker stopped mid-send), it is recorded as failed. Longer
- * than any send takes (webhook.ts, email.ts).
+ * Fail the final attempt if its worker never records an outcome. Allow longer than any send
+ * (webhook.ts, email.ts).
  */
 export const LAST_ATTEMPT_LEASE_SECONDS = 60;
 
-/** Deliveries a channel takes in an hour; past it they are recorded as failed. */
 export const CHANNEL_HOURLY_CAP = 60;
 
-/** Test sends a channel takes in a minute. */
 export const TEST_SENDS_PER_MINUTE = 5;
 
-/** Days a delivery is kept, and the dashboard lists. */
 export const DELIVERY_RETENTION_DAYS = 30;
 
-/** The longest error kept with a delivery. */
 export const MAX_ERROR = 300;
 
-/** Deliveries a page of the list holds at most. */
 export const MAX_DELIVERY_PAGE = 100;
 
 const CAPPED_ERROR = `Not sent: this channel had ${CHANNEL_HOURLY_CAP} deliveries in the last hour, which is its limit.`;
 const INTERRUPTED_ERROR = "The last attempt did not finish. The worker stopped during delivery.";
 
-/** A sentence short enough to keep, on one line. */
 export function errorText(text: string): string {
   // eslint-disable-next-line no-control-regex -- control characters are what it replaces
   const line = text.replace(/[\u0000-\u001F\u007F]+/gu, " ").trim();
   return line.length <= MAX_ERROR ? line : `${line.slice(0, MAX_ERROR - 1)}…`;
 }
 
-/** What step 3's alert rules (and the test send) hand to notify. */
 export interface NotifyInput {
   /** The channels to send to; unknown ones are skipped. */
   channelIds: readonly string[];
   type: EventType;
   project: { id: string; name: string } | null;
-  /** What it is about, such as `{ type: "check", id, name }`. */
   subject: Subject;
-  /** One or two sentences on what happened. */
   message: string;
-  /** The dashboard's page about it: an absolute URL. */
   url: string;
   /** When it happened; now when left out. */
   time?: Date | undefined;
@@ -92,7 +76,7 @@ export interface Recorded {
   deliveries: { id: string; channelId: string; status: DeliveryStatus }[];
 }
 
-/** Throws on input no caller should send: step 3 builds it, not a dashboard user. */
+/** Validate internal callers before queueing. */
 function payloadFor(input: NotifyInput): NotificationPayload {
   if (!isEventType(input.type)) throw new Error(`Unknown event type: ${String(input.type)}`);
   const message = input.message.trim();
@@ -119,13 +103,9 @@ function payloadFor(input: NotifyInput): NotificationPayload {
 }
 
 /**
- * Writes one delivery per channel in `channelIds` that exists, in the
- * transaction the caller holds the channels' rows in: pending and due
- * now, or refused when the channel had CHANNEL_HOURLY_CAP deliveries in
- * the last hour. Test sends have their own limit and do not count, and
- * neither do refusals, so a flood that goes on does not keep a channel
- * closed. A channel's first refusal in an hour is a failed row; later
- * ones only count on it (`refused`), so a flood does not fill the table.
+ * Queue existing channels under the caller's channel locks. Test sends and refusals do not
+ * count toward CHANNEL_HOURLY_CAP, so sustained traffic cannot keep a channel closed. Record
+ * the first refusal per hour as a failed row; count later refusals on it to bound table growth.
  */
 async function recordDeliveries(
   trx: Transaction<Database>,
@@ -203,28 +183,22 @@ async function lockChannels(trx: Transaction<Database>, ids: readonly string[]):
 }
 
 /**
- * Records a notification for some channels: one delivery each, which the
- * worker sends within seconds and retries for about an hour. This is what
- * alert rules (step 3 of docs/uptime-alerts.md) call. Returns the
- * notification's ID and each delivery, `failed` at once where the
- * channel's hourly cap was reached.
+ * Queue alert notifications (step 3 of docs/uptime-alerts.md). Return failed deliveries
+ * immediately for channels at their hourly cap.
  */
 export async function notify(db: Kysely<Database>, input: NotifyInput): Promise<Recorded> {
   return db.transaction().execute(async (trx) => notifyIn(trx, input));
 }
 
 /**
- * notify, in a transaction the caller holds: alert rules record the
- * notification with the alert's state and history, so either all of it
- * is written or none of it, and a restart sends nothing twice. The
- * dashboard's inbox gets one item for it (inbox.ts), in the same
- * transaction.
+ * Write the notification, alert state, history, and inbox item in the caller's transaction to
+ * avoid partial writes or duplicate sends after restart (inbox.ts).
  */
 export async function notifyIn(trx: Transaction<Database>, input: NotifyInput): Promise<Recorded> {
   const payload = payloadFor(input);
   const ids = await lockChannels(trx, input.channelIds);
   const recorded = await recordDeliveries(trx, ids, payload);
-  // The inbox shows it too, whether or not the rule or warning has channels.
+  // Create an inbox item even when there are no channels.
   if (input.inbox !== null) await recordFromPayload(trx, payload, input.inbox ?? {});
   return recorded;
 }
@@ -255,7 +229,6 @@ export async function sendTest(
   });
 }
 
-/** A delivery the worker took, with its channel as it is now. */
 export interface DueDelivery {
   id: string;
   channelId: string;
@@ -269,12 +242,9 @@ export interface DueDelivery {
 }
 
 /**
- * Takes up to `limit` due deliveries, each one's attempt counted and its
- * next attempt moved on in the same statement, before anything is sent: a
- * delivery the worker stops sending is tried again after its wait, and
- * never by two workers at once (FOR UPDATE SKIP LOCKED). A delivery whose
- * last attempt never recorded an outcome is recorded as failed first, so
- * one that stops the worker each time is not tried for ever.
+ * Claim deliveries with FOR UPDATE SKIP LOCKED and advance attempts before sending, so a crash
+ * allows retry and workers cannot send concurrently. Fail abandoned final attempts first to
+ * prevent endless retries.
  */
 export async function takeDueDeliveries(
   db: Kysely<Database>,
@@ -283,8 +253,8 @@ export async function takeDueDeliveries(
   if (limit <= 0) return [];
   const at = sql`coalesce(${now ?? null}::timestamptz, now())`;
   const delays = [...RETRY_DELAYS_SECONDS, LAST_ATTEMPT_LEASE_SECONDS];
-  // One transaction, so both statements read one now(); and the take
-  // never touches a delivery past its last attempt, whatever the clock.
+  // Use one transaction so both statements share now() and cannot take an expired final
+  // attempt.
   const rows = await db.transaction().execute(async (trx) => {
     await sql`
       update notification_deliveries
@@ -322,7 +292,7 @@ export async function takeDueDeliveries(
   for (const row of rows) {
     const payload = payloadOf(row.payload);
     if (payload === null) {
-      // Written by notify, so never; a row that is not one fails rather than loops.
+      // Fail malformed stored payloads instead of retrying forever.
       await recordAttempt(
         db,
         { id: row.id, attempt: row.attempts },
@@ -348,11 +318,8 @@ export async function takeDueDeliveries(
 export type AttemptOutcome = { ok: true } | { ok: false; error: string; final?: boolean };
 
 /**
- * Records an attempt's outcome: sent; failed for good after the last
- * attempt or a final failure; or failed this time, to be tried again at
- * the time takeDueDeliveries set. Only the attempt that took the delivery
- * records it, so a late one never overwrites a newer outcome. Returns the
- * delivery's status, or null when it was not recorded.
+ * Record only the claimed attempt so late completions cannot overwrite newer outcomes. Retry
+ * unless the last attempt or a final failure ends delivery; null means nothing was recorded.
  */
 export async function recordAttempt(
   db: Kysely<Database>,
@@ -389,7 +356,6 @@ export async function pruneDeliveries(db: Kysely<Database>, now?: Date): Promise
   return Number(result.numDeletedRows);
 }
 
-/** A delivery as the dashboard lists it. */
 export interface Delivery {
   id: string;
   notificationId: string;

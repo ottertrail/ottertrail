@@ -6,38 +6,28 @@ import { type EventType, MAX_MESSAGE, type Subject } from "../notifications/even
 import { isRuleKind, sourceAreaOf } from "./kinds.ts";
 
 /**
- * Firing and resolving alerts (docs/uptime-alerts.md, "Alerts"): each
- * change of an alert's state, its history, and its notification are
- * written in one transaction, with the rule's row locked, so two workers
- * or a restart never send one twice, and a crash before the commit leaves
- * the alert to the next evaluation. A rule sends at most RULE_HOURLY_CAP
- * notifications an hour; past it they are held back, counted, and kept
- * in the history, and one message says how many when the hour is over
- * (flushHeldBack).
+ * Write state, history, and notification in one transaction under the rule lock to prevent
+ * duplicate sends (docs/uptime-alerts.md, "Alerts"). Above RULE_HOURLY_CAP, keep alerts in
+ * history and send one summary after the hour (flushHeldBack).
  */
 
-/** Notifications a rule sends in an hour; past it, they are held back. */
 export const RULE_HOURLY_CAP = 20;
 const HOUR_MS = 60 * 60 * 1000;
 
-/** Where the dashboard is, for the links in notifications, and the clock. */
 export interface AlertContext {
   db: Kysely<Database>;
-  /** The instance's address (PUBLIC_URL). */
   publicUrl: string;
   log?:
     | ((level: "info" | "error", msg: string, fields?: Record<string, unknown>) => void)
     | undefined;
 }
 
-/** Text cut to `max` characters, on one line, with an ellipsis when cut. */
 export function cut(text: string, max: number): string {
   // eslint-disable-next-line no-control-regex -- control characters are what it replaces
   const line = text.replace(/[\u0000-\u001F\u007F]+/gu, " ").trim();
   return line.length <= max ? line : `${line.slice(0, max - 1)}…`;
 }
 
-/** A dashboard link: the path under the instance's address, with a query. */
 export function dashboardLink(
   publicUrl: string,
   path: string,
@@ -92,18 +82,14 @@ async function lockRule(trx: Transaction<Database>, ruleId: string): Promise<Loc
 }
 
 /**
- * What an evaluation read of a rule: its kind and settings. An alert goes
- * ahead only while the locked rule still has them, so a rule changed to
- * watch something else meanwhile (updateRule forgets its states) gets no
- * alert, or firing state, for what it watched before, which no later
- * evaluation would look at, and so never resolve.
+ * Recheck the rule's kind and settings under its lock. An edit may have cleared its states;
+ * firing the old settings could leave an alert no future evaluation resolves.
  */
 export interface RuleRead {
   kind: string;
   settings: unknown;
 }
 
-/** Whether the locked rule is on, and still the one the evaluation read. */
 const stillWatching = (rule: LockedRule, read: RuleRead) =>
   rule.enabled &&
   rule.kind === read.kind &&
@@ -118,7 +104,6 @@ function inboxAreas(rule: LockedRule) {
   };
 }
 
-/** What a notification says, before the rule's name and project are added. */
 interface Message {
   type: EventType;
   message: string;
@@ -127,7 +112,6 @@ interface Message {
   at: Date;
 }
 
-/** The message summing up what a rule held back in its hour. */
 async function sendSummary(trx: Transaction<Database>, rule: LockedRule, at: Date, url: string) {
   const held = rule.cap_held;
   await notifyIn(trx, {
@@ -146,10 +130,8 @@ async function sendSummary(trx: Transaction<Database>, rule: LockedRule, at: Dat
 }
 
 /**
- * Sends a notification within the rule's hourly cap, or holds it back and
- * counts it; returns the notification's ID, or null when held back. When
- * an hour has passed since the first notification counted, the count
- * starts again, after the summary of what was held back, if anything was.
+ * Apply the hourly cap. When the hour ends, summarize held notifications before resetting the
+ * count. Return null for a held notification.
  */
 async function sendCapped(
   trx: Transaction<Database>,
@@ -197,11 +179,9 @@ export type Outcome = "sent" | "held" | "skipped";
 
 export interface FireInput extends Message {
   ruleId: string;
-  /** The rule as the evaluation read it. */
   rule: RuleRead;
   /** The state's subject: a check's ID, a fingerprint, or "" for a spike rule. */
   subjectKey: string;
-  /** What the history shows for the subject, such as a check's name. */
   subjectName: string;
   /**
    * What it fires for: it fires again only for another key (a
@@ -218,11 +198,8 @@ export interface FireInput extends Message {
 }
 
 /**
- * Reads again, in the alert's transaction and after the rule's lock, what
- * the evaluation read before it, such as the check (with FOR SHARE): the
- * alert goes ahead only when it is still true. Locks follow one order,
- * the rule, then what it watches, as deleting a check takes them
- * (rules.ts, forgetCheck).
+ * Recheck the subject inside the alert transaction. Lock the rule before its subject, matching
+ * check deletion (rules.ts, forgetCheck).
  */
 export type Guard = (trx: Transaction<Database>) => Promise<boolean>;
 
@@ -289,17 +266,13 @@ export async function fire(context: AlertContext, input: FireInput): Promise<Out
 
 export interface ResolveInput extends Message {
   ruleId: string;
-  /** The rule as the evaluation read it. */
   rule: RuleRead;
   subjectKey: string;
   /** Whether it is still resolved, read again in the transaction. */
   still?: Guard | undefined;
 }
 
-/**
- * Resolves a firing alert: its state stops firing, its history records
- * when, and a notification says so. Skipped when it is not firing.
- */
+/** Resolve only firing alerts, recording the time and sending a notification. */
 export async function resolve(context: AlertContext, input: ResolveInput): Promise<Outcome> {
   return context.db.transaction().execute(async (trx) => {
     const rule = await lockRule(trx, input.ruleId);
@@ -337,10 +310,8 @@ export async function resolve(context: AlertContext, input: ResolveInput): Promi
 }
 
 /**
- * Sends the summary of each rule whose hour of notifications is over with
- * some held back, and starts its count again. Run every minute, so the
- * summary goes out within a minute of the hour's end even when the rule
- * has nothing more to send. Returns how many summaries were sent.
+ * Send held-notification summaries once their hour ends. Run every minute so quiet rules also
+ * send their summary.
  */
 export async function flushHeldBack(context: AlertContext, at: Date): Promise<number> {
   const due = await context.db

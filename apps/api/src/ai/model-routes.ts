@@ -34,7 +34,6 @@ import { MAX_LISTED_MODELS } from "./report.ts";
 /** Price changes per user, across the three change routes: 30, then one every 10 seconds. */
 export const DEFAULT_AI_MODEL_CHANGE_LIMIT: RateLimit = { capacity: 30, refillPerSecond: 1 / 10 };
 
-/** How far back the list counts each model's calls. */
 export const CALLS_DAYS = 30;
 const DAY_MS = 86_400_000;
 
@@ -67,10 +66,8 @@ interface PriceAsBody {
   priceAs: { provider: string; model: string };
 }
 
-/** As matching uses it: trimmed, in lower case. */
 const keyOf = (name: string) => name.trim().toLowerCase();
 
-/** Whether a price has at most PRICE_DECIMALS decimals. */
 const exactEnough = (value: number) => Number(value.toFixed(PRICE_DECIMALS)) === value;
 
 const INVALID_PRICE = problem(
@@ -80,13 +77,12 @@ const INVALID_PRICE = problem(
 const INVALID_NAME = problem("invalid_name", "Enter a provider and a model ID.");
 const INVALID_DAY = problem("invalid_day", "Enter a date that exists, such as 2026-12-01.");
 
-/** A day that exists in the calendar (the pattern takes 2026-02-31). */
+/** Reject impossible dates the pattern accepts, such as 2026-02-31. */
 function realDay(day: string): boolean {
   const date = new Date(`${day}T00:00:00Z`);
   return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === day;
 }
 
-/** A model's row of the list. */
 interface ModelRow {
   model: string;
   provider: string;
@@ -121,7 +117,6 @@ interface ModelRow {
     notes: string | null;
     rates: Rates;
   } | null;
-  /** The instance's own prices, all calls first, then by start. */
   prices: {
     effectiveFrom: string | null;
     rates: Rates;
@@ -165,7 +160,6 @@ async function callsByModel(
 
 const by = (row: CustomPriceRow) => row.updatedBy?.name ?? null;
 
-/** The list: every model called in the period, every bundled entry, and every model with rows. */
 function modelRows(
   custom: readonly CustomPriceRow[],
   /** null: the calls could not be counted (ClickHouse is down). */
@@ -241,7 +235,6 @@ function modelRows(
   return rows.toSorted((a, b) => (b.calls ?? 0) - (a.calls ?? 0) || a.model.localeCompare(b.model));
 }
 
-/** A refused change's status and answer. */
 function refusalOf(refusal: PriceProblem): [number, object] {
   if (refusal.problem === "others_priced_as_this") {
     return [
@@ -297,19 +290,9 @@ function refuse(reply: FastifyReply, refusal: PriceProblem) {
 }
 
 /**
- * The instance's AI model prices (docs/ai-usage.md, "Prices";
- * custom-prices.ts), for the owner and admins (`projects`,
- * docs/access.md):
- *
- *   GET  /api/settings/ai-models            every model the instance's apps called in
- *                                           the last 30 days, and the bundled ones,
- *                                           with each one's price and where it comes from
- *   PUT  /api/settings/ai-models/price      a model's price, from a day on or for all calls
- *   PUT  /api/settings/ai-models/price-as   price a model as another, for all calls
- *   POST /api/settings/ai-models/reset      remove a model's own rows
- *
- * The changes need the dashboard's Origin, are limited per user, and
- * clear the AI cost rules' kept hours. US dollars only.
+ * AI price settings for the owner and admins (docs/ai-usage.md, "Prices"; docs/access.md).
+ * Changes require the dashboard's Origin, share a per-user limit, and invalidate cached AI cost
+ * hours. Prices use US dollars.
  */
 export const aiModelRoutes: FastifyPluginCallback<{
   db: Kysely<Database>;
@@ -338,7 +321,6 @@ export const aiModelRoutes: FastifyPluginCallback<{
   const changes = new TokenBucketLimiter(changeLimit ?? DEFAULT_AI_MODEL_CHANGE_LIMIT);
   app.setErrorHandler(clickHouseErrorHandler);
 
-  /** Spends one of the user's changes; false once the 429 is sent. */
   function allowed(request: FastifyRequest, reply: FastifyReply): boolean {
     const taken = changes.take(signedInUser(request).id);
     if (taken.allowed) return true;
@@ -360,7 +342,7 @@ export const aiModelRoutes: FastifyPluginCallback<{
       db.selectFrom("projects").select("id").execute(),
       readCustomPrices(db),
     ]);
-    // Without ClickHouse the prices still list and stay editable: only the counts are missing.
+    // Keep prices editable when ClickHouse cannot supply call counts.
     let calls: Map<string, { provider: string; calls: number }> | null = null;
     try {
       calls = await callsByModel(

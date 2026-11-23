@@ -59,7 +59,6 @@ const fileParam = (pattern: string) => ({ type: "string", pattern }) as const;
 const PNG_FILE = `^${UUID}\\.png$`;
 const PROJECT_FILE = `^(${UUID}\\.png|favicon-${UUID}\\.(png|ico|jpg|webp|gif))$`;
 
-/** A PNG within the limits, sent as one: anything else answers 400. */
 async function pngBody(request: FastifyRequest, reply: FastifyReply) {
   const type = (request.headers["content-type"] ?? "").split(";")[0]?.trim().toLowerCase();
   const body = request.body;
@@ -70,24 +69,9 @@ async function pngBody(request: FastifyRequest, reply: FastifyReply) {
 }
 
 /**
- * Avatars (avatars.ts; docs/access.md, "Avatars"):
- *
- *   PUT    /api/settings/avatar          the instance's icon (the owner)
- *   DELETE /api/settings/avatar
- *   PUT    /api/account/avatar           the signed-in user's own avatar
- *   DELETE /api/account/avatar
- *   PUT    /api/projects/:id/avatar      a project's icon (the owner and admins)
- *   DELETE /api/projects/:id/avatar
- *   GET    /api/avatars/instance/:file                 any signed-in user
- *   GET    /api/avatars/users/:userId/:file            any signed-in user
- *   GET    /api/avatars/projects/:projectId/:file      users who reach the project
- *
- * An upload is the PNG itself as the body (Content-Type: image/png), at
- * most MAX_AVATAR_BYTES, MAX_AVATAR_PIXELS wide and high: anything else
- * answers 400 before the store or the avatar's row is touched. The image
- * is stored under a new name, the row is pointed at it, then the old one
- * is deleted (a failure there is logged). Without an object store, the
- * changes answer 409. A GET serves only an avatar some row points to now.
+ * Avatar routes (avatars.ts; docs/access.md, "Avatars"). Validate PNG bytes before touching
+ * storage or rows. Store the new image before replacing the row's key, then delete the old
+ * object. Without storage, changes return 409. Serve only keys still referenced by a row.
  */
 export const avatarRoutes: FastifyPluginCallback<{
   db: Kysely<Database>;
@@ -103,8 +87,7 @@ export const avatarRoutes: FastifyPluginCallback<{
   const manageProject = requireProjectAccess(db, { permission: "projects" });
   const uploads = new TokenBucketLimiter(uploadLimit ?? DEFAULT_AVATAR_UPLOAD_LIMIT);
 
-  // Every body here is bytes, whatever it says it is: the check below
-  // refuses all but a PNG, with one answer.
+  // Parse all bodies as bytes so pngBody returns the same error for invalid uploads.
   app.removeAllContentTypeParsers();
   app.addContentTypeParser(
     "*",
@@ -204,7 +187,6 @@ export const avatarRoutes: FastifyPluginCallback<{
     return result === null ? { avatarUrl: null } : result;
   });
 
-  /** A project's icon and what the dashboard shows: the icon, else the site's favicon. */
   async function projectAvatar(projectId: string) {
     const row = await db
       .selectFrom("projects")

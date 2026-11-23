@@ -48,59 +48,32 @@ import {
 } from "./kinds.ts";
 
 /**
- * Telemetry rules (docs/uptime-alerts.md, "Alerts on telemetry"): a
- * route's latency or failed share, and a metric above or below a value,
- * each over its window; and AI rules (ai-rules.ts; docs/ai-usage.md): the
- * estimated cost of AI calls, their failed share, or their 95th-percentile
- * duration. Each rule is due once a minute; the worker takes due rules from PostgreSQL with FOR UPDATE
- * SKIP LOCKED (takeDueRules),
- * so each is evaluated by one worker however many run, and evaluates
- * them from the same computations as the dashboard's pages: the Services
- * page's counts (telemetry/services.ts, routeWindows) and a metric's
- * chart, as one bucket covering the window (telemetry/metrics.ts,
- * metricWindow).
+ * Evaluate telemetry and AI rules once a minute using dashboard calculations
+ * (telemetry/services.ts, routeWindows; telemetry/metrics.ts, metricWindow; ai-rules.ts). Claim
+ * rules with FOR UPDATE SKIP LOCKED (takeDueRules) to avoid duplicate evaluation
+ * (docs/uptime-alerts.md, "Alerts on telemetry"; docs/ai-usage.md).
  *
- * - **Bounds:** every query filters by project first, takes every value
- *   as a parameter, reads only the window (a metric also the time before
- *   it that a counter's first step needs), and runs with the dashboard's
- *   limits, read-only, so a query whose reader is aborted stops. A
- *   project's due route rules of one environment are read in one query
- *   over the longest of their windows (at most 30 minutes); each metric
- *   rule in its own. At most TELEMETRY_CONCURRENCY projects are evaluated
- *   at once, each within PROJECT_BUDGET_MS: every query's time limit is
- *   cut to what is left of it, and rules not reached are recorded as
- *   failed and taken again the next minute. A rule that fails is recorded
- *   on the rule (recordEvaluation) and the others go on.
- * - **The window** ends TELEMETRY_LAG_MS before the evaluation: metrics
- *   are exported every minute by default, so the last minute's points may
- *   not have arrived yet; a counter's step that ends after the window still
- *   counts the part inside it.
- * - **Firing and resolving:** a rule fires when the window's value is on
- *   the wrong side of its threshold (above it, or below it for a metric
- *   rule that says below), and resolves once the value has been back on
- *   the right side at every evaluation for a whole window, so a value
- *   that hovers at the threshold does not flap.
- * - **No data** (no point of the metric, or fewer requests than the rule's
- *   minimum) never fires, and never counts toward resolving: a firing
- *   alert stays firing through it, and its time back on the right side
- *   starts again once data is back. Changing the rule, or turning it off,
- *   ends the alert without a notification (rules.ts).
+ * Queries filter by project, parameterize values, and use dashboard read-only limits. Batch
+ * route rules per project and environment over their longest window, at most 30 minutes. Read
+ * metric rules separately, including the earlier point needed for counter steps. Limit
+ * concurrent projects to TELEMETRY_CONCURRENCY and each project to PROJECT_BUDGET_MS; record
+ * failures for rules beyond the budget and retry next minute.
+ *
+ * End windows TELEMETRY_LAG_MS before evaluation to allow metric exports to arrive. Count the
+ * part of a counter step inside the window even if it ends later. Resolve only after a full
+ * window of good evaluations to prevent flapping. No data or too few requests neither fires nor
+ * resolves; restart the recovery timer when data returns. Edits and disabling silently end
+ * alerts (rules.ts).
  */
 
-/** Projects evaluated at once by one worker. */
 export const TELEMETRY_CONCURRENCY = 4;
-/** How often the worker looks for due telemetry rules. */
 export const TELEMETRY_TICK_MS = 5_000;
-/** How often each rule is due. */
 export const EVALUATION_INTERVAL_MS = 60_000;
-/** Due rules one look takes at most. */
 export const MAX_DUE_RULES = 200;
-/** How far behind the evaluation a rule's window ends. */
 export const TELEMETRY_LAG_MS = 60_000;
 /** How long one project's due rules may take in a pass: each query gets what is left. */
 export const PROJECT_BUDGET_MS = 20_000;
 
-/** A telemetry rule as the worker reads it. */
 export interface TelemetryRule {
   id: string;
   projectId: string;
@@ -152,13 +125,9 @@ export async function telemetryRules(
 }
 
 /**
- * Takes up to `limit` due telemetry rules (never evaluated since added or
- * changed, or due by `at`), oldest due first, returned by project, then
- * the rule's age, and moves each one's next
- * evaluation a minute on in the same statement, keeping its place in the
- * minute (or a minute from `at`, after a gap): committed before the
- * evaluation, so a second worker never takes the same rule that minute,
- * and a worker that stops mid-way leaves the rule to the next minute.
+ * Claim due rules and advance their next evaluation before reading telemetry. Preserve minute
+ * cadence, or schedule a minute after `at` following a gap. A crash leaves rules due next
+ * minute; other workers cannot claim the same evaluation.
  */
 export async function takeDueRules(
   db: Kysely<Database>,
@@ -218,7 +187,7 @@ export async function takeDueRules(
     );
 }
 
-/** Rules taken but not evaluated (the worker is stopping): due again at once, for any worker. */
+/** Release unstarted rules immediately on shutdown so another worker can claim them. */
 export async function releaseRules(db: Kysely<Database>, ruleIds: string[]): Promise<void> {
   if (ruleIds.length === 0) return;
   await db
@@ -228,10 +197,8 @@ export async function releaseRules(db: Kysely<Database>, ruleIds: string[]): Pro
     .execute();
 }
 
-/** The longest reason recorded for a failed evaluation. */
 const MAX_REASON = 300;
 
-/** Why an evaluation failed, in words the Alerts page shows. */
 export function reasonOf(error: unknown): string {
   if (error instanceof DeadlineError) {
     return "The project's rules reached their time limit for this minute before this rule could be read.";
@@ -241,10 +208,8 @@ export function reasonOf(error: unknown): string {
 }
 
 /**
- * Records how a rule's evaluation went: a failure keeps its reason and
- * since when the rule has failed; a success clears both. Returns whether
- * the rule just started failing ("failing") or works again ("recovered"),
- * for a log line once per outage, or null when nothing changed.
+ * Keep failure reason and onset until recovery. Return failing or recovered only on transitions
+ * so logs emit once per outage.
  */
 export async function recordEvaluation(
   db: Kysely<Database>,
@@ -273,7 +238,6 @@ export async function recordEvaluation(
   return rows[0]?.started === true ? "failing" : null;
 }
 
-/** What a rule's window read. */
 export interface Reading {
   /** The value compared with the threshold; null: no data, or too few requests. */
   value: number | null;
@@ -289,7 +253,6 @@ export interface Reading {
   to: Date;
 }
 
-/** The window a rule reads when evaluated at `at`. */
 export function windowAt(at: Date, windowMinutes: number): { from: Date; to: Date } {
   const to = new Date(at.getTime() - TELEMETRY_LAG_MS);
   return { from: new Date(to.getTime() - windowMinutes * 60_000), to };
@@ -311,7 +274,6 @@ type RouteSettings = LatencySettings | FailureSettings;
 const isMetric = (settings: Settings): settings is MetricSettings => "metric" in settings;
 const isLatency = (settings: Settings): settings is LatencySettings => "thresholdMs" in settings;
 
-/** An AI rule's window at `at`, as the AI page reads it (ai-rules.ts). */
 async function readAiRule(
   context: AlertContext,
   reader: Reader,
@@ -322,7 +284,6 @@ async function readAiRule(
   return readAi(context.db, reader, rule, settings, at, TELEMETRY_LAG_MS);
 }
 
-/** A metric rule's window at `at`, as its chart reads it. */
 async function readMetric(
   reader: Reader,
   rule: TelemetryRule,
@@ -355,7 +316,6 @@ async function readMetric(
   };
 }
 
-/** A route rule's reading from its window's counts. */
 function routeReading(
   settings: LatencySettings | FailureSettings,
   stats: WindowStats,
@@ -375,8 +335,8 @@ function routeReading(
 }
 
 /**
- * Route rules of one project and environment, at `at`: one read of the
- * longest of their windows, each rule counted over its own (routeWindows).
+ * Read each environment's longest route window once, counting each rule over its own window
+ * (routeWindows).
  */
 async function readRoutes(
   reader: Reader,
@@ -404,7 +364,6 @@ async function readRoutes(
   );
 }
 
-/** Whether a value is on the wrong side of the rule's threshold. */
 function breaches(settings: Settings, value: number): boolean {
   if (isAiRule(settings)) return aiBreaches(settings, value);
   if (isMetric(settings)) {
@@ -434,9 +393,8 @@ export function durationText(ms: number): string {
 const percentText = (value: number) => `${numberText(value)}%`;
 
 /**
- * A unit as a message shows it, such as " ms" or " By": none for "1",
- * none, or an annotation in braces such as "{request}", which names what
- * is counted rather than a unit ("17 request" would not read).
+ * Omit dimensionless units ("1"), missing units, and annotations such as "{request}" from
+ * messages.
  */
 function unitText(unit: string | undefined): string {
   const text = unit ?? "";
@@ -476,7 +434,6 @@ function filtersText(settings: MetricSettings): string {
 const metricWhat = (settings: MetricSettings) =>
   `${AGGREGATE_TEXT[settings.aggregate]} of ${settings.metric}${filtersText(settings)}`;
 
-/** What a rule's history shows as its subject. */
 function subjectName(settings: Settings): string {
   if (isAiRule(settings)) return aiSubjectName(settings);
   if (isMetric(settings)) return `${settings.metric} (${settings.aggregate})`;
@@ -484,11 +441,8 @@ function subjectName(settings: Settings): string {
 }
 
 /**
- * The page about what a rule watches: the service on the Services page,
- * its route marked, or the metric's page with its filters. A filter that
- * would take the address past a notification's limit is left out of it
- * (the message still names it), the longest first; past the limit even
- * without them, the link is the project's Services or Metrics page.
+ * Drop the longest filters first when a notification link exceeds its limit. Keep them in the
+ * message. Fall back to the project's Services or Metrics page if needed.
  */
 export function telemetryLink(
   context: AlertContext,
@@ -536,7 +490,6 @@ export function telemetryLink(
 
 const rounded = (value: number) => Number(value.toFixed(3));
 
-/** The notification's subject: what it watches, the value, the threshold, the window, the requests. */
 function subjectOf(settings: Settings, reading: Reading & { value: number }): Subject {
   if (isAiRule(settings)) {
     return aiSubject(settings, {
@@ -588,7 +541,6 @@ function subjectOf(settings: Settings, reading: Reading & { value: number }): Su
   };
 }
 
-/** The message when a rule fires, or resolves. */
 function messageOf(
   project: string,
   settings: Settings,
@@ -637,7 +589,6 @@ function messageOf(
     : `${project}: ${share} of ${routeWhat(settings)} ${where} failed over the last ${window}, above the rule's ${threshold}: ${failed}.`;
 }
 
-/** The rule is still the one read: not changed, so not watching something else, since. */
 const unchanged =
   (rule: TelemetryRule): Guard =>
   async (trx: Transaction<Database>) => {
@@ -649,16 +600,11 @@ const unchanged =
     return row?.updated_at.getTime() === rule.updatedAt.getTime();
   };
 
-/** What one rule's evaluation did: its reading, and what it sent, if anything. */
 export interface RuleResult {
   reading: Reading;
   outcome: Outcome | "cleared" | "waiting" | "none";
 }
 
-/**
- * Evaluates one rule at `at`: reads its window (a route rule as a batch
- * of one), then acts on it (judge).
- */
 export async function evaluateTelemetryRule(
   context: AlertContext,
   reader: Reader,
@@ -677,10 +623,6 @@ export async function evaluateTelemetryRule(
   return judge(context, rule, settings, reading, at);
 }
 
-/**
- * Acts on a rule's reading at `at`: fires, starts or stops the time it
- * has been back on the right side, or resolves.
- */
 async function judge(
   context: AlertContext,
   rule: TelemetryRule,
@@ -697,7 +639,7 @@ async function judge(
   const firing = state?.firing === true;
   const { value } = reading;
   if (value === null) {
-    // No data: never fires, and the time back on the right side starts again.
+    // No data cannot fire or advance recovery; reset the recovery timer.
     if (firing && state.clear_since !== null) {
       await setClearSince(context.db, rule.id, "", null);
     }
@@ -749,7 +691,6 @@ async function judge(
   return { reading, outcome };
 }
 
-/** One rule's evaluation in a pass: what it did, or why it failed. */
 export type PassResult =
   | { rule: TelemetryRule; result: RuleResult }
   | { rule: TelemetryRule; error: unknown };
@@ -758,15 +699,12 @@ export interface PassOptions {
   /** The reader for one project's queries; `deadline` is when its budget ends. */
   readerOf: (projectId: string, deadline: number) => Reader;
   now?: () => Date;
-  /** Projects evaluated at once. */
   concurrency?: number;
-  /** How long one project's rules may take. */
   budgetMs?: number;
   /** Whether the worker is stopping: no rule starts once it is. */
   stopping?: () => boolean;
 }
 
-/** A project's work in a pass: its route rules per environment, then each metric and AI rule. */
 function stepsOf(rules: readonly TelemetryRule[]) {
   const routes = new Map<string, { rule: TelemetryRule; settings: RouteSettings }[]>();
   const metrics: { rule: TelemetryRule; settings: MetricSettings }[] = [];
@@ -787,13 +725,9 @@ function stepsOf(rules: readonly TelemetryRule[]) {
 }
 
 /**
- * Evaluates the rules taken (takeDueRules), a project at a time, at most
- * `concurrency` projects at once. A project's route rules of one
- * environment are read in one query, its metric rules one by one, each
- * group at its own time; all its queries end by its budget. A failure
- * (a query past its limits or the budget) is recorded in the results of
- * the rules it was for, and the others go on. Once `stopping`, nothing
- * more starts: the rules not reached are returned in `released`.
+ * Batch route rules per environment and read metric rules individually, within each project's
+ * budget. Limit concurrent projects to `concurrency`. Record each failed step on its rules and
+ * continue. On shutdown, return unstarted rules in `released`.
  */
 export async function evaluateTelemetryPass(
   context: AlertContext,
@@ -834,7 +768,7 @@ export async function evaluateTelemetryPass(
         released.push(...projectRules);
         continue;
       }
-      // The budget is real time, whatever clock the evaluation reads (tests fix theirs).
+      // Measure budget with real time even when tests fix the evaluation clock.
       const reader = readerOf(projectId, Date.now() + budgetMs);
       const { routes, metrics, ai } = stepsOf(projectRules);
       const steps = [
@@ -884,7 +818,6 @@ export async function evaluateTelemetryPass(
   return { results, released };
 }
 
-/** How many notifications a pass sent, held back, or skipped. */
 export function countsOf(results: readonly PassResult[]): Counts {
   const counts: Counts = { sent: 0, held: 0, skipped: 0 };
   for (const item of results) {
@@ -895,10 +828,10 @@ export function countsOf(results: readonly PassResult[]): Counts {
   return counts;
 }
 
-/** How far back a rule's service, route, or metric is looked for when it is saved: a day. */
+/** Allow rules before deployment by checking for matching data over the last day. */
 export const SEEN_MS = 86_400_000;
 
-/** Why a rule just saved may not fire: what it watches has not reported, or that could not be checked. */
+/** Warn when a source has not reported or could not be checked. */
 export interface SaveWarning {
   reason: "not_seen" | "not_checked";
   message: string;
@@ -907,9 +840,8 @@ export interface SaveWarning {
 const notSeen = (message: string): SaveWarning => ({ reason: "not_seen", message });
 
 /**
- * Why a telemetry rule may never fire: what it watches has not reported in
- * the last day (it may not be deployed yet), or that could not be
- * checked. null when it has. The rule is saved either way.
+ * Save rules even when their source has not reported in the last day or the check failed.
+ * Return null when matching data exists.
  */
 export async function notSeenWarning(
   reader: Reader,

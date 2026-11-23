@@ -8,25 +8,18 @@ import type { Database, NotificationChannelsTable } from "../db/schema.ts";
 import { outboundUrlOf, type Problem } from "../outbound/url.ts";
 
 /**
- * The instance's notification channels (docs/uptime-alerts.md, "Where
- * alerts go"): an email list or a webhook, at most MAX_CHANNELS. Every
- * project's alert rules can use them. A webhook's URL follows the uptime
- * checks' address rules (outbound/), checked when it is saved and on
- * every delivery; its secret is made here and replaced on demand.
+ * Notification channels (docs/uptime-alerts.md, "Where alerts go"). Apply outbound address
+ * rules when saving webhooks and on each delivery. Generate secrets here and rotate on demand.
  */
 
 export const MAX_CHANNELS = 20;
 export const MAX_CHANNEL_NAME = 100;
 export const MAX_ADDRESSES = 20;
-/** The longest address, as setup takes it (auth/routes.ts). */
 export const MAX_ADDRESS = 320;
 
 export type ChannelKind = "email" | "webhook";
 
-/**
- * A channel as the API answers it: whether a webhook has a secret, not
- * the secret itself, which only its own route serves (secretOf).
- */
+/** Expose only whether a secret exists; serve its value through secretOf. */
 export interface Channel {
   id: string;
   name: string;
@@ -55,7 +48,6 @@ export function channelOf(row: ChannelRow): Channel {
   };
 }
 
-/** What a dashboard user sets on a channel; every field but `kind` may change later. */
 export interface ChannelInput {
   name?: string | undefined;
   kind?: ChannelKind | undefined;
@@ -63,7 +55,6 @@ export interface ChannelInput {
   url?: string | undefined;
 }
 
-/** A channel's values, checked. */
 export type ChannelValues =
   | { kind: "email"; name: string; addresses: string[] }
   | { kind: "webhook"; name: string; url: string };
@@ -111,10 +102,8 @@ export function addressesOf(list: readonly string[]): string[] | Problem {
 }
 
 /**
- * The values a channel would have with `input` over `base` (its current
- * values, or none for a new channel), each checked; or the first problem.
- * Fastify's schema has already checked the types and bounds it can. A
- * channel's kind never changes.
+ * Fastify checks basic types and bounds first. Validate merged values here and reject kind
+ * changes.
  */
 export function channelValuesOf(
   input: ChannelInput,
@@ -167,7 +156,6 @@ export function channelValuesOf(
   return { ...values, name };
 }
 
-/** A channel's values, to apply a change to. */
 export function valuesOfChannel(channel: Channel): ChannelValues {
   return channel.kind === "email"
     ? { kind: "email", name: channel.name, addresses: channel.addresses ?? [] }
@@ -193,14 +181,13 @@ export async function findChannel(db: Kysely<Database>, id: string): Promise<Cha
   return row === undefined ? null : channelOf(row);
 }
 
-/** Adds a channel, unless the instance has MAX_CHANNELS already; a webhook gets its secret. */
 export async function createChannel(
   db: Kysely<Database>,
   values: ChannelValues,
   now: Date,
 ): Promise<{ channel: Channel } | { refused: "too_many" }> {
   return db.transaction().execute(async (trx) => {
-    // The one settings row: two saves at once count one after the other.
+    // Serialize channel saves on the settings row to enforce the cap.
     await trx.selectFrom("instance_settings").select("id").forUpdate().executeTakeFirst();
     const { count } = await trx
       .selectFrom("notification_channels")
@@ -224,7 +211,6 @@ export async function createChannel(
   });
 }
 
-/** Changes a channel's name, addresses, or URL; null when it does not exist. */
 export async function updateChannel(
   db: Kysely<Database>,
   id: string,
@@ -247,10 +233,7 @@ export async function updateChannel(
   return row === undefined ? null : channelOf(row);
 }
 
-/**
- * A webhook's signing secret, for any signed-in user who asks: null for
- * an email channel, undefined when there is no such channel.
- */
+/** Return null for email channels and undefined for missing channels. */
 export async function secretOf(
   db: Kysely<Database>,
   id: string,
@@ -263,7 +246,6 @@ export async function secretOf(
   return row?.webhook_secret;
 }
 
-/** Replaces a webhook's secret, and answers it once; null when there is no such webhook. */
 export async function rotateSecret(
   db: Kysely<Database>,
   id: string,
@@ -280,15 +262,14 @@ export async function rotateSecret(
   return row === undefined ? null : { channel: channelOf(row), secret };
 }
 
-/** Deletes a channel and its deliveries, and takes it out of alert rules; whether there was one. */
 export async function deleteChannel(
   db: Kysely<Database>,
   id: string,
   now: Date = new Date(),
 ): Promise<boolean> {
   return db.transaction().execute(async (trx) => {
-    // Rules drop it first, in the same transaction: a rule left with no
-    // channel is turned off, with the reason (alerts/rules.ts).
+    // Update rules in the same transaction; disable any left without channels
+    // (alerts/rules.ts).
     await forgetChannel(trx, id, now);
     const result = await trx
       .deleteFrom("notification_channels")

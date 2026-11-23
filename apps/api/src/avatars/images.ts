@@ -1,7 +1,6 @@
 /**
- * What an avatar's bytes are, read from the bytes alone (never from a
- * Content-Type or a file name): uploads must be PNGs, and a site's favicon
- * one of a few raster formats. SVG is never accepted: it can hold script.
+ * Detect formats from bytes, ignoring Content-Type and filenames. Uploads require PNG; favicons
+ * allow several raster formats. Reject SVG because it can contain script.
  */
 
 const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
@@ -11,10 +10,7 @@ const startsWith = (bytes: Uint8Array, prefix: readonly number[], at = 0) =>
 
 const ascii = (text: string) => Array.from({ length: text.length }, (_, at) => text.charCodeAt(at));
 
-/**
- * A PNG's width and height from its IHDR chunk, which must come first;
- * null when the bytes are not a PNG.
- */
+/** Read PNG dimensions from the first IHDR chunk; null for invalid bytes. */
 export function pngSize(bytes: Uint8Array): { width: number; height: number } | null {
   // The signature, then the first chunk: length 13, type IHDR, width, height.
   if (!startsWith(bytes, PNG_SIGNATURE) || bytes.length < 33) return null;
@@ -23,7 +19,6 @@ export function pngSize(bytes: Uint8Array): { width: number; height: number } | 
   return { width: view.getUint32(16), height: view.getUint32(20) };
 }
 
-/** Whether `bytes` are a PNG at most `max` pixels wide and high (and at least 1). */
 export function isPngWithin(bytes: Uint8Array, max: number): boolean {
   const size = pngSize(bytes);
   return (
@@ -42,7 +37,6 @@ export const CONTENT_TYPES: Record<ImageKind, string> = {
   gif: "image/gif",
 };
 
-/** The largest favicon kept, in pixels each way, in every format. */
 export const MAX_FAVICON_PIXELS = 1024;
 
 type Size = { width: number; height: number };
@@ -50,10 +44,7 @@ type Size = { width: number; height: number };
 const viewOf = (bytes: Uint8Array) =>
   new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
 
-/**
- * A JPEG's size from its first start-of-frame marker (SOF0 to SOF15, not
- * DHT, JPG, or DAC), walking the segments before it; null when there is none.
- */
+/** Read the first JPEG frame size (SOF0 to SOF15, excluding DHT, JPG, DAC); null if absent. */
 function jpegSize(bytes: Uint8Array): Size | null {
   const view = viewOf(bytes);
   let at = 2;
@@ -78,7 +69,6 @@ function jpegSize(bytes: Uint8Array): Size | null {
   return null;
 }
 
-/** A GIF's logical screen size. */
 function gifSize(bytes: Uint8Array): Size | null {
   if (bytes.length < 10) return null;
   const view = viewOf(bytes);
@@ -112,9 +102,8 @@ function webpSize(bytes: Uint8Array): Size | null {
 }
 
 /**
- * The largest image an ICO holds: every directory entry's width and height
- * (0 meaning 256), and an embedded PNG's own IHDR. Null when the directory
- * is empty or cut off, or an embedded PNG's size cannot be read.
+ * Check every ICO entry and embedded PNG. Entry size 0 means 256. Reject empty or truncated
+ * directories and unreadable PNG dimensions.
  */
 function icoSize(bytes: Uint8Array): Size | null {
   const view = viewOf(bytes);
@@ -138,7 +127,6 @@ function icoSize(bytes: Uint8Array): Size | null {
   return { width, height };
 }
 
-/** Whether a size was read and is 1 to MAX_FAVICON_PIXELS each way. */
 const within = (size: Size | null) =>
   size !== null &&
   size.width >= 1 &&
@@ -147,10 +135,8 @@ const within = (size: Size | null) =>
   size.height <= MAX_FAVICON_PIXELS;
 
 /**
- * A favicon's format by its magic bytes: PNG, ICO, JPEG, WebP, or GIF,
- * and only when its width and height can be read and are at most
- * MAX_FAVICON_PIXELS (a small file can declare a huge image, which would
- * freeze the tabs that draw it). Null for anything else, SVG and HTML among them.
+ * Accept raster favicons only with readable dimensions up to MAX_FAVICON_PIXELS. Small files
+ * can declare huge images that freeze the dashboard.
  */
 export function faviconKind(bytes: Uint8Array): ImageKind | null {
   if (startsWith(bytes, PNG_SIGNATURE)) return within(pngSize(bytes)) ? "png" : null;

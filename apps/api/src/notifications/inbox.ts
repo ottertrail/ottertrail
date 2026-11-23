@@ -6,38 +6,22 @@ import type { Database, InboxPermission } from "../db/schema.ts";
 import type { NotificationPayload } from "./events.ts";
 
 /**
- * The notifications inbox (docs/dashboard.md, "Notifications"): the bell
- * in the dashboard's header and the Notifications page.
+ * Write one inbox item per event in the same transaction as its source (deliveries.ts,
+ * notifyIn; errors/assignments.ts; docs/dashboard.md, "Notifications"). Store reads separately
+ * in notification_reads; a missing row means unread.
  *
- * One row per thing that happened (`notifications`), written in the
- * transaction that records it: an alert firing or resolving and the
- * instance's storage and backup notices, beside their channel deliveries
- * (deliveries.ts, notifyIn), and an error assigned or regressed
- * (errors/assignments.ts). Each user's reads are rows of their own
- * (`notification_reads`); no row is unread.
- *
- * Who sees a row is decided when it is read, never when it is written:
- * its project, the areas it needs at view, the instance permission it
- * needs, and for a personal item its one user, against the reader's
- * access as it is now (access/access.ts, reachOf). So a member who loses
- * a project or an area stops seeing its items on the next request, one
- * granted it sees them, and nothing is copied per user. Items from before
- * the reader's account was made are left out, so a new member does not
- * start with 90 days of unread alerts. At a few thousand rows over 90
- * days and dozens of users, the filter reads the newest rows by the
- * `created_at` index and checks each, which costs little.
+ * Check current access on every read (access/access.ts, reachOf) so revoked grants hide
+ * existing items immediately. Exclude items from before the account was created. No per-user
+ * copies are needed.
  */
 
-/** Days an item is kept; the worker deletes older ones. */
 export const INBOX_RETENTION_DAYS = 90;
-/** Items a page holds at most, and by default. */
 export const MAX_INBOX_PAGE = 100;
 export const DEFAULT_INBOX_PAGE = 30;
-/** The unread count stops at this: the bell shows 9+ long before. */
+/** Cap count queries; the bell displays 9+ before reaching this limit. */
 export const MAX_UNREAD_COUNT = 1000;
 const MAX_TITLE = 300;
 
-/** A title on one line, at most MAX_TITLE characters. */
 export function titleText(text: string): string {
   // eslint-disable-next-line no-control-regex -- control characters are what it replaces
   const line = text.replace(/[\u0000-\u001F\u007F]+/gu, " ").trim();
@@ -52,13 +36,11 @@ export function linkPath(url: string): string {
 
 const text = (value: unknown) => (typeof value === "string" ? value : "");
 
-/** "TypeError: x is undefined", or the type alone. */
 export function errorTitle(type: string, message: string): string {
   if (message === "") return type === "" ? "An error" : type;
   return `${type === "" ? "Error" : type}: ${message}`;
 }
 
-/** A short title for a channel notification, from its type and subject. */
 export function inboxTitle(payload: NotificationPayload): string {
   const { subject } = payload;
   const rule = text(subject.ruleName);
@@ -124,15 +106,14 @@ export function defaultAreas(type: string): Area[] {
   return ["uptime_alerts"];
 }
 
-/** What notifyIn adds to the inbox, besides what the payload says. */
 export interface InboxOptions {
   /** The title; inboxTitle's when left out. */
   title?: string | undefined;
   /** The areas a reader needs at view; defaultAreas's when left out. */
   areas?: readonly Area[] | undefined;
   /**
-   * Who sees an instance item: "projects" (the owner and admins, as the
-   * Storage tab) by default, or "settings" (the owner, as the Backups tab).
+   * Default to projects permission for instance items (Storage). Use settings for owner-only
+   * items (Backups).
    */
   permission?: InboxPermission | undefined;
 }
@@ -140,11 +121,8 @@ export interface InboxOptions {
 type Db = Kysely<Database> | Transaction<Database>;
 
 /**
- * The inbox row mirroring a channel notification, in the caller's
- * transaction: once per notification (its ID is the row's source). An
- * instance item (no project) is for the owner and admins, as the Storage
- * tab is, or for the owner alone (options.permission). Nothing for a
- * project that no longer exists.
+ * Deduplicate by notification ID in the caller's transaction. Instance items need projects
+ * permission by default, or options.permission. Skip deleted projects.
  */
 export async function recordFromPayload(
   db: Db,
@@ -184,7 +162,6 @@ export async function recordPersonal(
     userId: string;
     areas: readonly Area[];
     title: string;
-    /** The dashboard's path. */
     link: string;
     at?: Date | undefined;
   },
@@ -206,9 +183,8 @@ export async function recordPersonal(
 }
 
 /**
- * The condition that a row (aliased `n`) is one `reach` may see now: its
- * project reached, its areas held, its permission held, its user the
- * reader or nobody, made since the reader's account and within 90 days.
+ * Apply current project, area, instance permission, and personal-user access to rows aliased
+ * `n`. Include only items within 90 days and since account creation.
  */
 function visibleTo(reach: Reach, now: Date): Expression<SqlBool> {
   const projects = reach.projects === "all" ? null : [...reach.projects];
@@ -228,7 +204,6 @@ const isUnread = (userId: string) => sql<SqlBool>`not exists (
   select 1 from notification_reads r where r.user_id = ${userId} and r.notification_id = n.id
 )`;
 
-/** An item as the dashboard lists it. */
 export interface InboxItem {
   id: string;
   kind: string;
@@ -297,7 +272,6 @@ export async function listInbox(
   };
 }
 
-/** How many of the reader's items are unread, up to MAX_UNREAD_COUNT. */
 export async function unreadCount(
   db: Kysely<Database>,
   reach: Reach,
@@ -318,10 +292,7 @@ export async function unreadCount(
   return Number(row.count);
 }
 
-/**
- * Marks one of the reader's items read or unread. False when the reader
- * may not see it, or it does not exist: the two answer alike.
- */
+/** Return false for both inaccessible and missing items. */
 export async function markItem(
   db: Kysely<Database>,
   reach: Reach,
@@ -352,7 +323,6 @@ export async function markItem(
   return true;
 }
 
-/** Marks every item the reader may see read; how many were unread. */
 export async function markAllRead(
   db: Kysely<Database>,
   reach: Reach,
@@ -373,7 +343,6 @@ export async function markAllRead(
   return Number(result.numInsertedOrUpdatedRows ?? 0n);
 }
 
-/** Deletes items older than INBOX_RETENTION_DAYS, with their reads; how many. */
 export async function pruneInbox(db: Kysely<Database>, now?: Date): Promise<number> {
   const at = sql`coalesce(${now ?? null}::timestamptz, now())`;
   const result = await db

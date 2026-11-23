@@ -14,18 +14,14 @@ import { classifyRequestError, pinnedRequest, untilAborted } from "../outbound/r
 import { type StatusRange, statusMatches } from "./statuses.ts";
 
 /**
- * One uptime check's request (docs/uptime-alerts.md): the URL's host is
- * resolved and its addresses checked (outbound/addresses.ts), the request
- * connects to the checked address without resolving again
- * (outbound/request.ts), each redirect is checked the same way, at most MAX_REDIRECTS of them, and the body is
- * read up to MAX_BODY_BYTES when a word is looked for. One timeout covers
- * it all: resolving, connecting, redirects, and the body.
+ * Pin requests to checked addresses and recheck every redirect (outbound/;
+ * docs/uptime-alerts.md). One timeout covers DNS, connections, redirects, and body reads. Read
+ * up to MAX_BODY_BYTES for word checks.
  */
 
-/** Redirects followed before the check fails. */
 export const MAX_REDIRECTS = 5;
 
-/** The most of a body read to look for the word: 1 MB. */
+/** Read at most 1 MB when checking body text. */
 export const MAX_BODY_BYTES = 1024 * 1024;
 
 const REDIRECTS = new Set([301, 302, 303, 307, 308]);
@@ -33,7 +29,6 @@ const REDIRECTS = new Set([301, 302, 303, 307, 308]);
 /** Says what is asking, so a site can tell checks from visitors in its logs. */
 const USER_AGENT = "Ottertrail-Uptime/1";
 
-/** What a check asks for and expects. */
 export interface CheckRequest {
   url: string;
   method: "GET" | "HEAD";
@@ -44,16 +39,13 @@ export interface CheckRequest {
   wordMode: "present" | "absent";
 }
 
-/** What the request found. */
 export interface CheckOutcome {
   up: boolean;
   /** The last answer's status; null when nothing answered. */
   statusCode: number | null;
   /** From the start to the last answer's headers, redirects included; to the failure when none came. */
   responseMs: number;
-  /** Why it failed; null when up. */
   cause: CheckCause | null;
-  /** A short sentence on what happened, shown with a failure. */
   detail: string;
   /** When the certificate of the first HTTPS answer expires; null without one. */
   tlsExpiresAt: Date | null;
@@ -71,7 +63,6 @@ export interface RequestOptions {
   ca?: string | Buffer | undefined;
 }
 
-/** A failure the request itself found, with its cause. */
 class CheckFailure extends Error {
   readonly cause: CheckCause;
   readonly statusCode: number | null;
@@ -86,13 +77,11 @@ class TimeoutError extends Error {
   override name = "TimeoutError";
 }
 
-/** The cause and sentence of an error the request threw. */
 export function classify(error: unknown): { cause: CheckCause; detail: string } {
   if (error instanceof CheckFailure) return { cause: error.cause, detail: error.message };
   return classifyRequestError(error);
 }
 
-/** The headers every check sends. */
 const HEADERS = { "user-agent": USER_AGENT, accept: "*/*", connection: "close" };
 
 /** The body's first `limit` bytes as text; the rest is never read. */
@@ -109,7 +98,8 @@ function readBody(response: IncomingMessage, limit: number): Promise<string> {
       chunks.push(chunk);
       size += chunk.length;
       if (size >= limit) {
-        // Settled first: destroying the answer then reports it cut off, which is no failure here.
+        // Settle before destroying the response so the resulting truncation is not reported as
+        // failure.
         done();
         response.destroy();
       }
@@ -121,7 +111,6 @@ function readBody(response: IncomingMessage, limit: number): Promise<string> {
   });
 }
 
-/** Runs one check's request and says whether it was up, and if not, why. */
 export async function runRequest(
   check: CheckRequest,
   { policy, lookup = systemLookup, ca }: RequestOptions,

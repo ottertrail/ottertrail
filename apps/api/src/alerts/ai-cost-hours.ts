@@ -7,23 +7,13 @@ import type { Database } from "../db/schema.ts";
 import type { AiCostSettings } from "./kinds.ts";
 
 /**
- * An AI cost rule's window without rereading it every minute
- * (docs/ai-usage.md, "Alerts"): the cost of each closed hour of the window
- * is kept in PostgreSQL (ai_cost_hours, migration 0018), and each
- * evaluation reads from ClickHouse only what is not closed: the part of
- * the hour the window starts in, the hours closed since the last
- * evaluation (once), and the hour still open. An hour is closed once it
- * has ended before the window's end, which is already the arrival lag
- * before the evaluation (TELEMETRY_LAG_MS).
+ * Cache closed hours in PostgreSQL (ai_cost_hours, migration 0018) to avoid rereading the full
+ * window each minute (docs/ai-usage.md, "Alerts"). ClickHouse supplies partial hours and newly
+ * closed hours. Hours close before the window end, which includes TELEMETRY_LAG_MS.
  *
- * A call that arrives late, for an hour already closed, is not in the kept
- * total: the hours are added up again from scratch once a day, at the
- * first evaluation after the instance's midnight, when the rule's
- * settings or the prices change (Settings → AI models clears them), and
- * when the window no longer follows on from the
- * hours kept (the clock went back, or the rule was not evaluated for its
- * whole window). Likewise a call retention deletes from a closed hour
- * stays counted until then.
+ * Rebuild daily after the instance's midnight, when settings or prices change, or when the
+ * window no longer follows the cached hours. Late arrivals and retention changes affect cached
+ * totals only after a rebuild.
  */
 
 const HOUR_MS = 3_600_000;
@@ -39,10 +29,8 @@ const filtersOf = (settings: AiCostSettings) => ({
 });
 
 /**
- * What the kept hours were added up for: a change starts them again. The
- * prices are in it (the price book's fingerprint), so hours kept at
- * prices since changed are added up again, even by an evaluation that
- * read the old ones while the change cleared them (ai/custom-prices.ts).
+ * Include the price book fingerprint so an evaluation using old prices cannot leave cached
+ * hours valid after a price change (ai/custom-prices.ts).
  */
 const keyOf = (settings: AiCostSettings, prices: PriceBook) =>
   JSON.stringify([
@@ -61,11 +49,9 @@ const add = (a: AiWindow, b: AiWindow): AiWindow => ({
 });
 
 /**
- * The calls of an AI cost rule's window, `from` to `to`: the closed hours
- * from what is kept (adding the hours closed since), the rest from
- * ClickHouse. `dayStart` is the instance's midnight of the evaluation's
- * day: kept hours added up before it are added up again. `failed` is not
- * kept (a cost rule does not read it): 0 for the closed hours.
+ * Use cached closed hours and read the rest from ClickHouse. Rebuild hours cached before
+ * `dayStart` (the instance's midnight). Closed hours report `failed: 0`; cost rules do not use
+ * it.
  */
 export async function costOverWindow(
   db: Kysely<Database>,

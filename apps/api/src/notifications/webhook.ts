@@ -13,15 +13,11 @@ import { OTTERTRAIL_VERSION } from "../version.ts";
 import type { NotificationPayload } from "./events.ts";
 
 /**
- * A webhook's request (docs/webhooks.md): a JSON POST, signed with the
- * channel's secret, sent to the address the uptime checks' rules allow
- * (outbound/), resolved again on every delivery and pinned, so DNS cannot
- * point it elsewhere between the check and the connection. Any 2xx
- * answer counts as delivered; a redirect is not followed; the answer's
- * body is never read.
+ * Sign JSON POSTs and pin each delivery to a freshly checked address (outbound/;
+ * docs/webhooks.md) to prevent DNS rebinding. Accept any 2xx response, ignore its body, and
+ * never follow redirects.
  */
 
-/** A webhook's time to answer, from resolving its host to the answer's headers. */
 export const WEBHOOK_TIMEOUT_MS = 10_000;
 
 export const USER_AGENT = `Ottertrail/${OTTERTRAIL_VERSION} (webhooks)`;
@@ -93,7 +89,6 @@ export async function sendWebhook(
       },
     });
     const status = response.statusCode ?? 0;
-    // The answer's body is not read.
     response.destroy();
     if (status >= 200 && status < 300) return { ok: true, status };
     if (status >= 300 && status < 400) {

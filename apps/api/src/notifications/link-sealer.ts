@@ -1,15 +1,10 @@
 import { Sealer } from "../auth/sealer.ts";
 
 /**
- * Seals the links queued account emails carry (account-emails.ts), so a
- * dump of the database taken while one waits holds no working invitation
- * or reset link: AES-256-GCM, with a key derived from AUTH_SECRET by HKDF
- * (auth/sealer.ts). Whoever has AUTH_SECRET as well can open them;
- * changing AUTH_SECRET makes the queued ones unreadable, and those emails
- * are given up.
- *
- * A sealed link is bound to its email's kind and address (the GCM
- * additional data), so it cannot be moved to another row.
+ * Seal queued invitation and reset links with AES-256-GCM using an HKDF key from AUTH_SECRET
+ * (auth/sealer.ts; account-emails.ts). A database dump alone cannot open them. Changing
+ * AUTH_SECRET makes queued links unreadable and their emails are abandoned. Bind links to email
+ * kind and address to prevent moving them between rows.
  */
 export class LinkSealer extends Sealer {
   constructor(secret: string) {
@@ -17,5 +12,4 @@ export class LinkSealer extends Sealer {
   }
 }
 
-/** What a sealed link is bound to: its email's kind and address. */
 export const sealBinding = (kind: string, to: string) => `${kind}\n${to}`;

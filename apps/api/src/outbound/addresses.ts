@@ -2,15 +2,9 @@ import { promises as dns } from "node:dns";
 import { BlockList, isIP } from "node:net";
 
 /**
- * The addresses the instance's own requests may not reach: uptime checks
- * and webhooks (docs/uptime-alerts.md, "Requests a check must not make").
- * Each is a request the instance makes to an address a dashboard user
- * types in, so it must not reach what is behind the instance: its own
- * databases, a cloud's metadata service, or the private network.
- *
- * Every address a host resolves to is checked, and the request is refused
- * when any one is not allowed. The request then connects to the checked
- * address and never resolves the host again (request.ts).
+ * Protect uptime checks and webhooks from reaching internal services (docs/uptime-alerts.md,
+ * "Requests a check must not make"). Reject the host if any resolved address is refused. Pin
+ * the connection to a checked address without resolving again (request.ts).
  */
 
 /** What kind of address one is, when checks may not reach it; null for a public address. */
@@ -27,9 +21,8 @@ export type AddressKind =
   | "denied";
 
 /**
- * The kinds UPTIME_ALLOW_PRIVATE_ADDRESSES lets through, for a self-hosted
- * install that checks its own network. Link-local stays refused: it holds
- * the cloud's metadata service (169.254.169.254), which no check needs.
+ * UPTIME_ALLOW_PRIVATE_ADDRESSES permits checks on the instance's network. Always refuse
+ * link-local addresses, including metadata at 169.254.169.254.
  */
 const PRIVATE_KINDS: ReadonlySet<AddressKind> = new Set([
   "loopback",
@@ -100,10 +93,9 @@ const IPV6_LISTS = KINDS.map((kind) => [kind, blockListOf(kind, "ipv6")] as cons
 const GLOBAL_UNICAST = new BlockList();
 GLOBAL_UNICAST.addSubnet("2000::", 3, "ipv6");
 
-/** The colon-separated groups of one side of an IPv6 address's "::". */
 const groupsOf = (part: string) => (part === "" ? [] : part.split(":"));
 
-/** An IPv6 address as its 16 bytes; it must be valid (isIP 6). */
+/** Requires a valid IPv6 address (isIP 6). */
 export function ipv6Bytes(address: string): number[] {
   let text = address;
   const bytes: number[] = [];
@@ -144,7 +136,6 @@ export function embeddedIpv4(address: string): string | null {
   return null;
 }
 
-/** An address without brackets or an IPv6 zone ("fe80::1%en0"). */
 function bare(address: string): string {
   const unbracketed =
     address.startsWith("[") && address.endsWith("]") ? address.slice(1, -1) : address;
@@ -197,7 +188,6 @@ for (const address of METADATA_ADDRESSES) {
 
 const familyOf = (ip: string) => (isIP(ip) === 6 ? "ipv6" : "ipv4");
 
-/** The settings the rules follow. */
 export interface AddressPolicy {
   /** UPTIME_ALLOW_PRIVATE_ADDRESSES: loopback, private, unique-local, and shared addresses allowed. */
   allowPrivate: boolean;
@@ -270,16 +260,11 @@ const KIND_TEXT: Record<AddressKind, string> = {
   denied: "an address this instance refuses",
 };
 
-/** What makes the request, as refusals name it: "checks", "webhooks", "backups", or "favicons". */
 export type Requester = "checks" | "webhooks" | "backups" | "favicons";
 
 /**
- * A host that resolves to an address checks (or webhooks) may not reach.
- * For a host name, the message names neither the address nor its kind: a
- * member could otherwise learn the instance's internal names and
- * addresses (its containers' among them) one refusal at a time. The
- * address and kind stay on the error for the server's log. An IP address
- * the member typed is named, with its kind: it tells them nothing new.
+ * Hide resolved addresses and their kinds from users to prevent discovery of internal services.
+ * Keep both for server logs. Literal IPs may be named because the user supplied them.
  */
 export class AddressNotAllowedError extends Error {
   override name = "AddressNotAllowedError";
@@ -301,7 +286,6 @@ export class AddressNotAllowedError extends Error {
   }
 }
 
-/** One address a host resolves to. */
 export interface ResolvedAddress {
   address: string;
   family: 4 | 6;
@@ -314,17 +298,9 @@ export interface ResolvedAddress {
 export type Lookup = (hostname: string, signal?: AbortSignal) => Promise<ResolvedAddress[]>;
 
 /**
- * Resolves with a DNS resolver of its own (c-ares), not the system's
- * getaddrinfo: getaddrinfo runs on libuv's four threads, which a few
- * checks on a host whose name server never answers would hold for
- * seconds, past their own timeouts, while every other check and the
- * worker's own database connections waited behind them. c-ares needs no
- * thread, and its queries end when the check's signal fires.
- *
- * It asks the name servers the system is set up with (/etc/resolv.conf)
- * for A and AAAA records, and does not read /etc/hosts: names only
- * /etc/hosts knows, localhost among them, do not resolve. IPv4 addresses
- * come first, so the request connects to one when there is one.
+ * Use cancellable c-ares queries to avoid blocking libuv's four getaddrinfo threads and
+ * delaying other checks or database connections. Query system name servers (/etc/resolv.conf);
+ * /etc/hosts is ignored, including localhost entries. Prefer IPv4 when available.
  */
 export function resolverLookup({
   servers,
@@ -351,7 +327,7 @@ export function resolverLookup({
           : []),
       ];
       if (addresses.length > 0) return addresses;
-      // Neither answered with an address: say why, preferring a reason over "no such record".
+      // Prefer a DNS failure reason over ENODATA.
       const reasons = [v4, v6].flatMap((result) =>
         result.status === "rejected" ? [result.reason] : [],
       );
@@ -369,18 +345,14 @@ const codeOf = (error: unknown) =>
 
 export const systemLookup: Lookup = resolverLookup();
 
-/** A host with no address at all: a DNS failure. */
 export class NoAddressError extends Error {
   override name = "NoAddressError";
   readonly code = "ENOTFOUND";
 }
 
 /**
- * The address to connect to for a URL's host: the host itself when it is
- * an IP address (no DNS at all), else the first address it resolves to,
- * once every one of them has been checked. Throws AddressNotAllowedError
- * when any is refused, and the resolver's error (or NoAddressError) when
- * it fails.
+ * Check every resolved address before returning the first. Literal IPs skip DNS. Throw
+ * AddressNotAllowedError for refused addresses, or the DNS error (NoAddressError when empty).
  */
 export async function resolveTarget(
   url: URL,

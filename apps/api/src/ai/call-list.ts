@@ -12,24 +12,15 @@ import { BUNDLED_BOOK, type PriceBook, priceAt, pricedColumns, type Rates } from
 import { type AiFilters, type AiScope, pricedCalls } from "./report.ts";
 
 /**
- * The AI calls list and its conversations (docs/ai-usage.md, "The calls
- * list"): the calls of a period one page at a time, newest first; one
- * call with its price; the period's conversations, by their last call; and
- * one conversation's calls in order. What is shown call by call reads with
- * FINAL, so a retried call is listed once, as the AI page's latest calls
- * are; the totals read without it, as the AI page's do, so the two agree.
- * Every query filters by project first, then the period, and passes every
- * value as a parameter. Cost is worked out from the tokens at the
- * instance's prices (report.ts, pricedCalls); it is never stored.
+ * Read individual calls with FINAL so retries appear once; totals use the AI report's
+ * aggregation without FINAL. Filter by project and time, and parameterize values. Compute costs
+ * at read time (report.ts; docs/ai-usage.md, "The calls list").
  */
 
-/** Calls a page of the list holds. */
 export const CALLS_PAGE_SIZE = 100;
 /** Conversations the Conversations view lists: the ones with the latest calls. */
 export const MAX_CONVERSATIONS = 1000;
-/** A conversation's calls its detail lists, oldest first. */
 export const MAX_CONVERSATION_CALLS = 500;
-/** Features and models a conversation's row names. */
 const MAX_NAMES = 5;
 /** How far back a page is looked for first: FINAL reads every row of its range. */
 const FIRST_WINDOW_MS = 86_400_000;
@@ -40,7 +31,6 @@ const AROUND_MS = 60_000;
 export interface AiCallFilters extends AiFilters {
   /** One user's calls (needs the users area: call-routes.ts). */
   user?: string | undefined;
-  /** One conversation's calls. */
   conversation?: string | undefined;
   /** Only the failed calls; in the Conversations view, the conversations with a failed call. */
   failed?: boolean | undefined;
@@ -61,7 +51,6 @@ export function callCursorOf(text: string | undefined): Cursor | undefined | nul
   return ns > MAX_NS ? null : { ns, id: text.slice(dash + 1) };
 }
 
-/** The conditions past the AI page's filters, each value a parameter. */
 function extraOf(
   params: QueryParams,
   filters: AiCallFilters,
@@ -84,9 +73,7 @@ const ms = (value: unknown) => {
 };
 const isTrue = (value: number | boolean) => value === true || value === 1;
 
-/** One call, as the list and its detail show it. */
 export interface AiCallItem {
-  /** The row's ID: what selects it, with `at`. */
   id: string;
   traceId: string;
   spanId: string;
@@ -182,15 +169,9 @@ function itemOf(row: CallRow, withUsers: boolean): AiCallItem {
 }
 
 /**
- * The scope's rows below the cursor, newest first, each once (FINAL);
- * `limit` of them. The table is keyed by day, not time (ClickHouse
- * migration 0012), so a retry with a corrected time is the same row, and
- * FINAL keeps the copy written last. The time conditions still read whole
- * days: ClickHouse picks the granules by the key's day, and with FINAL
- * applies a condition on a column outside the key only after the copies
- * are merged (its min-max index on the partition column is not used
- * then), so every page sees the same copy, at the same time, and a call is
- * listed once across pages and windows.
+ * Read whole UTC days with FINAL because the key uses day and ID (ClickHouse migration 0012).
+ * Merge copies before filtering time so retries with corrected times appear consistently across
+ * pages and windows.
  */
 function pageRows(
   reader: Reader,
@@ -213,11 +194,8 @@ function pageRows(
 }
 
 /**
- * A page of the scope's calls, newest first, below `before`: at most
- * CALLS_PAGE_SIZE, and the cursor to the next when there are more. Read
- * with FINAL, which merges every row of the range it reads before the
- * first is sent, so the day before the page's end is read first, and the
- * rest of the range only when that day does not fill the page.
+ * Read the last day first because FINAL merges its full range. Expand to the remaining range
+ * only if needed to fill CALLS_PAGE_SIZE.
  */
 export async function listAiCalls(
   reader: Reader,
@@ -252,7 +230,6 @@ export async function listAiCalls(
   };
 }
 
-/** The list's totals: what the summary shows, counted whole. */
 export interface AiCallTotals {
   calls: number;
   /** Estimated, in US dollars: calls of models without a price add nothing. */
@@ -264,11 +241,7 @@ export interface AiCallTotals {
   noPriceCalls: number;
 }
 
-/**
- * The scope's calls with the filters, counted whole, without FINAL, as
- * the AI page's totals are (report.ts, aiTotals): the same calls give the
- * same figures on both pages.
- */
+/** Match AI report totals by aggregating without FINAL (report.ts, aiTotals). */
 export async function aiCallTotals(
   reader: Reader,
   scope: AiScope,
@@ -296,7 +269,6 @@ export async function aiCallTotals(
   };
 }
 
-/** Where a call's price comes from, as Settings → AI models names it. */
 export interface CallPrice {
   source: "built_in" | "custom" | "price_as";
   /** US dollars per million tokens; a null cache price is charged as input. */
@@ -309,7 +281,6 @@ export interface CallPrice {
   effectiveFrom: Date | null;
 }
 
-/** The price `book` gives a call of `model` at `at`, and where it comes from; null for none. */
 export function callPriceOf(book: PriceBook, model: string, at: Date): CallPrice | null {
   const found = priceAt(book, model, at);
   if (found === null) return null;
@@ -342,15 +313,10 @@ const DAY_MS = 86_400_000;
 const dayOf = (moment: number) => Math.floor(moment / DAY_MS) * DAY_MS;
 
 /**
- * One call of the project by its row ID, the copy the list shows (FINAL:
- * a retry with a corrected time is the same row, and its copies differ
- * until they are merged). Read over whole UTC days, the key's, so FINAL
- * reads the call's few granules (the key's day and ID), whatever copy's
- * time is asked for: the days a minute either side of `at` when known (the
- * list's link sends it); else, first, the days its copies are on within
- * `from` to `to`, found without FINAL, which would merge every row of the
- * range. Any environment: the ID names one call. A retry across midnight
- * UTC is two rows: the later is taken.
+ * Read whole UTC days with FINAL to find the same copy as the list (ClickHouse migration 0012).
+ * With `at`, search days within a minute either side; otherwise find candidate days without
+ * FINAL first to avoid merging the full range. Ignore environment. Retries across midnight
+ * produce two rows; take the later one.
  */
 export async function aiCallById(
   reader: Reader,
@@ -416,19 +382,16 @@ export async function aiCallById(
   return { call, price: callPriceOf(prices, call.model, call.at) };
 }
 
-/** A conversation's figures: its calls in the period, with the filters. */
 export interface AiConversationFigures {
   /** The first call's start and the last call's. */
   startedAt: Date;
   lastAt: Date;
-  /** Calls: a turn is a call. */
   calls: number;
   inputTokens: number;
   outputTokens: number;
   /** Estimated: calls of models without a price add nothing. */
   costUsd: number;
   noPriceCalls: number;
-  /** The calls' durations added up. */
   durationMs: number;
   failed: number;
 }
@@ -482,14 +445,9 @@ function figuresOf(row: ConversationRow): AiConversationFigures {
 }
 
 /**
- * The period's conversations with the filters, by their last call, newest
- * first: at most MAX_CONVERSATIONS, and whether more were left out. The
- * calls without a conversation ID are not in any. The filters narrow the
- * calls a conversation is made of; "failed" keeps the conversations with
- * a failed call, all their calls counted. Bounded in two steps: the IDs of
- * the conversations with the latest calls (without FINAL: a copy does not
- * move a conversation's last call), then their figures, each call once
- * (FINAL).
+ * Select at most MAX_CONVERSATIONS by latest call without FINAL, then read their figures with
+ * FINAL. Filters narrow each conversation; "failed" selects conversations but counts all their
+ * calls. Exclude calls without a conversation ID.
  */
 export async function aiConversations(
   reader: Reader,
@@ -538,10 +496,8 @@ export async function aiConversations(
 }
 
 /**
- * One conversation's calls in the period with the filters, oldest first,
- * each once (FINAL): at most MAX_CONVERSATION_CALLS, with its figures
- * counted whole. Every call of it, failed or not: "failed" chooses
- * conversations, not their calls.
+ * List up to MAX_CONVERSATION_CALLS oldest first with FINAL; count totals over the full
+ * conversation. "failed" selects conversations and still includes successful calls.
  */
 export async function aiConversation(
   reader: Reader,
