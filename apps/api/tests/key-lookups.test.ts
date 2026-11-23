@@ -1,3 +1,6 @@
+import { EventEmitter } from "node:events";
+
+import type { FastifyReply, FastifyRequest } from "fastify";
 import { describe, expect, test } from "vite-plus/test";
 
 import type { CollectingProject, ProjectKeyCache } from "../src/collection/project-keys.ts";
@@ -11,7 +14,11 @@ import { BUSY, SecretKeyLookups } from "../src/telemetry/key-lookups.ts";
 function fakeCache(cached: Record<string, CollectingProject | null> = {}) {
   const held: { key: string; finish: (project: CollectingProject | null) => void }[] = [];
   let queries = 0;
+  let generation = 0;
   const projects = {
+    get generation() {
+      return generation;
+    },
     peekSecret: (key: string) => cached[key],
     findBySecret: async (key: string) => {
       queries += 1;
@@ -20,7 +27,15 @@ function fakeCache(cached: Record<string, CollectingProject | null> = {}) {
       });
     },
   } as unknown as ProjectKeyCache;
-  return { projects, held, queries: () => queries };
+  return {
+    projects,
+    held,
+    queries: () => queries,
+    /** As ProjectKeyCache.forgetProject does to its generation. */
+    forget: () => {
+      generation += 1;
+    },
+  };
 }
 
 const PROJECT = { id: "0b0e5f1e-8a4e-4e43-9b0a-1f0c5d3e7a11" } as CollectingProject;
@@ -92,5 +107,41 @@ describe("secret-key lookups", () => {
     held[2]?.finish(null);
     expect(await retry).toBeNull();
     expect(queries()).toBe(3);
+  });
+
+  test("a request after keys were forgotten never joins a lookup started before", async () => {
+    const { projects, held, queries, forget } = fakeCache();
+    const lookups = new SecretKeyLookups();
+    const before = lookups.find(projects, "sk_1", "a");
+    // A rotated or deleted key: the lookup under way may read the old row.
+    forget();
+    const after = lookups.find(projects, "sk_1", "b");
+    expect(queries()).toBe(2);
+    const old = { id: "7c1d2e3f-4a5b-4c6d-8e7f-901a2b3c4d5e" } as CollectingProject;
+    held[0]?.finish(old);
+    held[1]?.finish(null);
+    expect(await before).toBe(old);
+    expect(await after).toBeNull();
+  });
+
+  test("a request already gone takes no lookup and no place", async () => {
+    const { projects, queries } = fakeCache();
+    const lookups = new SecretKeyLookups({ max: 1, maxPerAddress: 1 });
+    const gone = new AbortController();
+    gone.abort();
+    expect(await lookups.find(projects, "sk_1", "a", gone.signal)).toBe(BUSY);
+    // Closed before findFor added its listener: its close had already fired.
+    const raw = Object.assign(new EventEmitter(), { destroyed: true });
+    const closed = await lookups.findFor(
+      projects,
+      "sk_2",
+      { ip: "192.0.2.1" } as FastifyRequest,
+      { raw } as unknown as FastifyReply,
+    );
+    expect(closed).toBe(BUSY);
+    expect([queries(), lookups.waiting]).toEqual([0, 0]);
+    // The address and the place are free.
+    void lookups.find(projects, "sk_3", "a");
+    expect(queries()).toBe(1);
   });
 });

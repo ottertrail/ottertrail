@@ -201,6 +201,15 @@ export class ProjectKeyCache {
         };
   }
 
+  /**
+   * Changes whenever keys are forgotten: a lookup started under an older
+   * generation may answer with a row since replaced or deleted
+   * (telemetry/key-lookups.ts shares lookups only within one).
+   */
+  get generation(): number {
+    return this.#forgotten;
+  }
+
   /** Invalidate replaced or deleted keys before the next request. */
   forget(publicKey: string) {
     this.#forgotten += 1;

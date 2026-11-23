@@ -19,6 +19,8 @@ type Found = CollectingProject | null | typeof BUSY;
 
 interface Lookup {
   address: string;
+  /** The cache's generation when it started: shared only within it. */
+  generation: number;
   /** Requests waiting on it that have not disconnected. */
   sharers: number;
   result: Promise<Found>;
@@ -81,9 +83,13 @@ export class SecretKeyLookups {
     address: string,
     gone?: AbortSignal,
   ): Promise<Found> {
+    // Gone already: no lookup, and no place taken.
+    if (gone?.aborted === true) return BUSY;
     const cached = projects.peekSecret(secretKey);
     if (cached !== undefined) return cached;
     let lookup = this.#pending.get(secretKey);
+    // One started before keys were forgotten may answer with an old row: start another.
+    if (lookup !== undefined && lookup.generation !== projects.generation) lookup = undefined;
     if (lookup === undefined) {
       if ((this.#addresses.get(address) ?? 0) >= this.#maxPerAddress) return BUSY;
       if (this.#running >= this.#max && this.#waiting.length >= this.#maxWaiting) return BUSY;
@@ -115,6 +121,8 @@ export class SecretKeyLookups {
       gone.abort();
     };
     reply.raw.once("close", disconnected);
+    // Closed before the listener was added: its close has already fired.
+    if (reply.raw.destroyed) gone.abort();
     try {
       return await this.find(projects, secretKey, clientKey(request.ip), gone.signal);
     } finally {
@@ -123,7 +131,13 @@ export class SecretKeyLookups {
   }
 
   #start(projects: ProjectKeyCache, secretKey: string, address: string): Lookup {
-    const lookup: Lookup = { address, sharers: 0, result: Promise.resolve(BUSY), cancel: null };
+    const lookup: Lookup = {
+      address,
+      generation: projects.generation,
+      sharers: 0,
+      result: Promise.resolve(BUSY),
+      cancel: null,
+    };
     this.#addresses.set(address, (this.#addresses.get(address) ?? 0) + 1);
     this.#pending.set(secretKey, lookup);
     lookup.result = (async (): Promise<Found> => {

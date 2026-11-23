@@ -119,6 +119,16 @@ describe("ProjectKeyCache", () => {
     expect(cache.peekSecret(unknown)).toBeUndefined();
   });
 
+  test("its generation changes whenever keys are forgotten", () => {
+    const cache = new ProjectKeyCache(db());
+    const first = cache.generation;
+    cache.forget(madeUpKey());
+    expect(cache.generation).not.toBe(first);
+    const second = cache.generation;
+    cache.forgetProject("0b0e5f1e-8a4e-4e43-9b0a-1f0c5d3e7a11");
+    expect(cache.generation).not.toBe(second);
+  });
+
   test("concurrent misses for one key make one query", async () => {
     const project = await newProject();
     const { db: database, counted } = counting();
