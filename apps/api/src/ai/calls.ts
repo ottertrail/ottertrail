@@ -74,7 +74,30 @@ export const AI_ATTRIBUTES = {
    */
   agent: ["gen_ai.agent.name", "ai.telemetry.functionId"],
   conversation: ["gen_ai.conversation.id"],
+  rpcMethod: ["rpc.method"],
 } as const;
+
+/**
+ * Bedrock API methods whose `inputTokens` leave out cache reads and writes. OpenTelemetry's
+ * botocore instrumentation copies them into `gen_ai.usage.input_tokens` and names the method in
+ * `rpc.method` (docs/ai-usage.md, "Cost").
+ */
+const BEDROCK_CACHE_APART_METHODS: ReadonlySet<string> = new Set(["Converse", "ConverseStream"]);
+
+/**
+ * A span's input holds the cached tokens, as the GenAI conventions say, except a Bedrock
+ * Converse span from OpenTelemetry's botocore instrumentation. Spans without `rpc.method` keep the
+ * conventions' rule.
+ */
+export function spanInputIncludesCache(attributes: Record<string, string>): boolean {
+  const provider = first(attributes, AI_ATTRIBUTES.provider)?.trim().toLowerCase();
+  const method = first(attributes, AI_ATTRIBUTES.rpcMethod);
+  return !(
+    provider === "aws.bedrock" &&
+    method !== undefined &&
+    BEDROCK_CACHE_APART_METHODS.has(method)
+  );
+}
 
 /** ai_calls schema: clickhouse/migrations.ts, 0008. */
 export interface AiCallRow {
@@ -271,7 +294,12 @@ export function aiCallOf(span: SpanRow): AiCallRow | null {
     user_id: userIdOf(attributes) ?? "",
     conversation_id: conversationIdOf(first(attributes, AI_ATTRIBUTES.conversation)),
     input_tokens: input,
-    input_includes_cache: inputIncludesCache(true, input, cacheRead, cacheWrite),
+    input_includes_cache: inputIncludesCache(
+      spanInputIncludesCache(attributes),
+      input,
+      cacheRead,
+      cacheWrite,
+    ),
     output_tokens: count(AI_ATTRIBUTES.outputTokens),
     // GenAI counts include reasoning. OpenLLMetry and Vercel add Gemini thoughts; OpenTelemetry
     // Vertex AI reports none.

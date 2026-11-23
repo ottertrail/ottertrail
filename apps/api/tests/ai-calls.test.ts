@@ -468,6 +468,63 @@ describe("detection", () => {
     ]);
   });
 
+  test("a Bedrock Converse span from botocore counts its cached tokens apart; other spans hold them", () => {
+    const now = nowNs();
+    const spanOf = (attributes: Record<string, string | number>) => ({
+      traceId: hex(16),
+      spanId: hex(8),
+      name: "chat",
+      startTimeUnixNano: String(now - 2_000_000n),
+      endTimeUnixNano: String(now - 1_000_000n),
+      attributes: keyValues({
+        "gen_ai.operation.name": "chat",
+        "gen_ai.request.model": "us.anthropic.claude-sonnet-4-6",
+        "gen_ai.usage.input_tokens": 1000,
+        "gen_ai.usage.cache_read.input_tokens": 500,
+        ...attributes,
+      }),
+    });
+    // As OpenTelemetry's botocore instrumentation sets them.
+    const botocore = { "gen_ai.system": "aws.bedrock", "rpc.system": "aws-api" };
+    const { rows } = normalizeTraces(
+      {
+        resourceSpans: [
+          {
+            scopeSpans: [
+              {
+                spans: [
+                  spanOf({ ...botocore, "rpc.method": "Converse" }),
+                  // The older cache write name, which botocore still sends, is read too.
+                  spanOf({
+                    ...botocore,
+                    "rpc.method": "ConverseStream",
+                    "gen_ai.usage.cache_creation.input_tokens": 200,
+                  }),
+                  spanOf({ "gen_ai.provider.name": "aws.bedrock", "rpc.method": "Converse" }),
+                  // InvokeModel and spans without rpc.method keep the conventions' rule.
+                  spanOf({ ...botocore, "rpc.method": "InvokeModel" }),
+                  spanOf({ "gen_ai.system": "aws.bedrock" }),
+                  spanOf({ "gen_ai.provider.name": "openai", "rpc.method": "Converse" }),
+                ],
+              },
+            ],
+          },
+        ],
+      },
+      { projectId: "0b0e5f1e-8a4e-4e43-9b0a-1f0c5d3e7a11", receivedAtNs: now, retentionDays: 30 },
+    );
+    const calls = aiCallsOf(rows);
+    expect(calls.map((call) => call.input_includes_cache)).toEqual([
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+    ]);
+    expect(calls[1]?.cache_write_tokens).toBe(200);
+  });
+
   test.each([
     ["anthropic", "claude-sonnet-4-6", false],
     ["aws.bedrock", "us.anthropic.claude-sonnet-4-6", false],
