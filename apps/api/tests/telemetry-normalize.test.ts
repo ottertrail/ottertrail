@@ -33,8 +33,11 @@ import { TRACE_PROTO } from "../src/telemetry/proto/trace.ts";
 import { MalformedError } from "../src/telemetry/read.ts";
 import {
   countJsonContainers,
+  countMessages,
   countProtobufMessages,
   decodeRequest,
+  ELEMENTS_PER_MESSAGE,
+  MAX_MESSAGES,
   TooManyMessagesError,
 } from "../src/telemetry/wire.ts";
 import { encodeProtobuf, keyValues } from "./helpers/telemetry.ts";
@@ -834,7 +837,7 @@ describe("counting messages before decoding", () => {
     }
   });
 
-  test("protobuf: each element of a list of numbers counts, packed or not", () => {
+  test(`protobuf: a list of numbers counts a message per ${ELEMENTS_PER_MESSAGE} elements, packed or not`, () => {
     const bounds = Array.from({ length: 100 }, (_, index) => index + 0.5);
     const counts = Array.from({ length: 101 }, (_, index) => String(index * 300));
     const request = metrics([
@@ -847,7 +850,9 @@ describe("counting messages before decoding", () => {
     ]);
     const packed = encodeProtobuf(METRICS_MESSAGES, request);
     const objects = objectsIn(decodeRequest(METRICS_MESSAGES, packed, "protobuf"));
-    expect(countProtobufMessages(METRICS_MESSAGES.request, packed)).toBe(objects + 201);
+    expect(countProtobufMessages(METRICS_MESSAGES.request, packed)).toBe(
+      objects + Math.ceil(201 / ELEMENTS_PER_MESSAGE),
+    );
     // A point with its counts sent unpacked: field 6, fixed64, a tag each.
     const histogramPoint = METRICS_MESSAGES.request.lookupType(
       "opentelemetry.proto.metrics.v1.HistogramDataPoint",
@@ -856,7 +861,9 @@ describe("counting messages before decoding", () => {
       .uint32((3 << 3) | 1)
       .fixed64(1);
     for (const count of counts) raw.uint32((6 << 3) | 1).fixed64(Number(count));
-    expect(countProtobufMessages(histogramPoint, raw.finish())).toBe(1 + 101);
+    expect(countProtobufMessages(histogramPoint, raw.finish())).toBe(
+      1 + Math.ceil(101 / ELEMENTS_PER_MESSAGE),
+    );
   });
 
   test("protobuf: past the limit, or not protobuf", () => {
@@ -886,10 +893,54 @@ describe("counting messages before decoding", () => {
 
   test("JSON: each other value in an array counts too", () => {
     const text = '{"a": [1, "x,]", true , null, [2.5e3]], "b": {"c": 7}, "d": []}';
-    // 5 objects and arrays, and 5 array elements that are neither.
-    expect(countJsonContainers(Buffer.from(text))).toBe(10);
+    // 5 objects and arrays, and 5 array elements that are neither, at a quarter each.
+    expect(countJsonContainers(Buffer.from(text))).toBe(5 + Math.ceil(5 / ELEMENTS_PER_MESSAGE));
     const bounds = JSON.stringify({ explicitBounds: Array.from({ length: 1000 }, () => 1) });
-    expect(() => countJsonContainers(Buffer.from(bounds), 1000)).toThrow(TooManyMessagesError);
+    expect(countJsonContainers(Buffer.from(bounds), 252)).toBe(252);
+    expect(() => countJsonContainers(Buffer.from(bounds), 251)).toThrow(TooManyMessagesError);
+  });
+
+  test("a Collector's batch of 8,192 histogram points with 64 bounds fits, in both encodings", () => {
+    const explicitBounds = Array.from({ length: 64 }, (_, index) => 2 ** index);
+    const bucketCounts = Array.from({ length: 65 }, (_, index) => String(index));
+    const request = metrics([
+      {
+        name: "http.server.duration",
+        histogram: {
+          aggregationTemporality: 2,
+          dataPoints: Array.from({ length: 8192 }, (_, index) => ({
+            timeUnixNano: String(NOW - SECOND),
+            count: "2080",
+            explicitBounds,
+            bucketCounts,
+            attributes: keyValues({ "http.route": `/r/${index}`, "http.method": "GET" }),
+          })),
+        },
+      },
+    ]);
+    for (const [body, encoding] of [
+      [encodeProtobuf(METRICS_MESSAGES, request), "protobuf"],
+      [Buffer.from(JSON.stringify(request)), "json"],
+    ] as const) {
+      expect(countMessages(METRICS_MESSAGES, body, encoding)).toBeLessThan(MAX_MESSAGES / 2);
+    }
+    const { histograms, refused } = normalizeMetrics(request, context);
+    expect([histograms.length, refused]).toEqual([8192, 0]);
+  });
+
+  test("16 MiB of one-byte counts is refused, in both encodings", () => {
+    const buckets = METRICS_MESSAGES.request.lookupType(
+      "opentelemetry.proto.metrics.v1.ExponentialHistogramDataPoint.Buckets",
+    );
+    // Field 2, packed varints: every zero byte is a count.
+    const zeros = new Uint8Array(16 * 1024 * 1024 - 8);
+    const packed = protobuf.Writer.create()
+      .uint32((2 << 3) | 2)
+      .bytes(zeros)
+      .finish();
+    expect(() => countProtobufMessages(buckets, packed)).toThrow(TooManyMessagesError);
+    const json = Buffer.from(`{"bucketCounts":[${"0,".repeat(8 * 1024 * 1024 - 16)}0]}`);
+    expect(() => countJsonContainers(json)).toThrow(TooManyMessagesError);
   });
 });
 

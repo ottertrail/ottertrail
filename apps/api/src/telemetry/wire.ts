@@ -7,14 +7,21 @@ import { MalformedError } from "./read.ts";
 
 /**
  * The messages one request may decode into (records, attributes, their
- * values, and what holds them), and the elements of its lists of numbers
- * (a histogram's bounds and counts). Decoding allocates for each, and an empty
+ * values, and what holds them). Decoding allocates for each, and an empty
  * one costs two bytes, so 16 MiB of them would take gigabytes; this many
  * take about as long and as much memory as decoding a large real batch
  * (20,000 spans of 20 attributes, about 820,000 messages). A Collector's
  * default batch, 8,192 spans, is about a third of it.
  */
 export const MAX_MESSAGES = 1_000_000;
+
+/**
+ * Elements of a list of numbers (a histogram's bounds and counts) count as
+ * a message per this many: decoded, one takes about 32 bytes, a message
+ * about 120. So 4 million fit, a Collector's batch of 8,192 points with 64
+ * bounds about 1.1 million; 16 MiB of one-byte varints, 16 million, do not.
+ */
+export const ELEMENTS_PER_MESSAGE = 4;
 
 /** A request holds more than MAX_MESSAGES messages: the answer is 413. */
 export class TooManyMessagesError extends Error {
@@ -92,15 +99,21 @@ export function countProtobufMessages(
     }
     throw malformed();
   };
-  const add = (elements: number) => {
-    count += elements;
-    if (count > max) throw new TooManyMessagesError(`more than ${max} messages`);
+  let elements = 0;
+  const total = () => count + Math.ceil(elements / ELEMENTS_PER_MESSAGE);
+  const add = (messages: number) => {
+    count += messages;
+    if (total() > max) throw new TooManyMessagesError(`more than ${max} messages`);
+  };
+  const addElements = (found: number) => {
+    elements += found;
+    if (total() > max) throw new TooManyMessagesError(`more than ${max} messages`);
   };
   // Each open message: its type, and where it ends.
   const open: { type: protobuf.Type; end: number }[] = [{ type, end: body.length }];
   for (;;) {
     const current = open.at(-1);
-    if (current === undefined) return count;
+    if (current === undefined) return total();
     if (position === current.end) {
       open.pop();
       continue;
@@ -118,12 +131,12 @@ export function countProtobufMessages(
         open.push({ type: counted.message, end });
         continue;
       }
-      if (counted?.size === null) add(1);
+      if (counted?.size === null) addElements(1);
       else if (counted?.size === 0) {
         let varints = 0;
         for (let at = position; at < end; at += 1) if ((body[at] ?? 0) < 0x80) varints += 1;
-        add(varints);
-      } else if (counted !== undefined) add(Math.ceil(length / counted.size));
+        addElements(varints);
+      } else if (counted !== undefined) addElements(Math.ceil(length / counted.size));
       position = end;
       continue;
     }
@@ -133,7 +146,7 @@ export function countProtobufMessages(
     // Groups (3, 4) are not in OTLP; 6 and 7 are not wire types.
     else throw malformed();
     // A repeated scalar's element, sent unpacked.
-    if (counted !== undefined && !("message" in counted)) add(1);
+    if (counted !== undefined && !("message" in counted)) addElements(1);
     if (position > current.end) throw malformed();
   }
 }
@@ -150,7 +163,8 @@ const WHITESPACE = new Set([0x20, 0x09, 0x0a, 0x0d]);
 /**
  * The objects, arrays, and other array elements a JSON body parses into,
  * counted from its bytes without parsing: each { and [ outside a string,
- * and each value in an array that is neither. UTF-8 never puts these bytes
+ * and each value in an array that is neither, at ELEMENTS_PER_MESSAGE to
+ * one. UTF-8 never puts these bytes
  * inside another character. Throws TooManyMessagesError past `max`.
  */
 export function countJsonContainers(body: Uint8Array, max = MAX_MESSAGES): number {
@@ -160,9 +174,10 @@ export function countJsonContainers(body: Uint8Array, max = MAX_MESSAGES): numbe
   const arrays: boolean[] = [];
   // Whether the next value starts an element of an array.
   let element = false;
-  const add = () => {
-    count += 1;
-    if (count > max) throw new TooManyMessagesError(`more than ${max} objects and arrays`);
+  let elements = 0;
+  const total = () => count + Math.ceil(elements / ELEMENTS_PER_MESSAGE);
+  const check = () => {
+    if (total() > max) throw new TooManyMessagesError(`more than ${max} objects and arrays`);
   };
   for (let index = 0; index < body.length; index += 1) {
     const byte = body[index] ?? 0;
@@ -175,7 +190,8 @@ export function countJsonContainers(body: Uint8Array, max = MAX_MESSAGES): numbe
     const starts = element;
     element = false;
     if (byte === OPEN_BRACE || byte === OPEN_BRACKET) {
-      add();
+      count += 1;
+      check();
       arrays.push(byte === OPEN_BRACKET);
       element = byte === OPEN_BRACKET;
     } else if (byte === CLOSE_BRACE || byte === CLOSE_BRACKET) {
@@ -184,13 +200,14 @@ export function countJsonContainers(body: Uint8Array, max = MAX_MESSAGES): numbe
       element = arrays.at(-1) === true;
     } else if (starts) {
       // A string, number, true, false, or null in an array.
-      add();
+      elements += 1;
+      check();
       if (byte === QUOTE) inString = true;
     } else if (byte === QUOTE) {
       inString = true;
     }
   }
-  return count;
+  return total();
 }
 
 /** What a body decodes into, counted before decoding it: see the two functions above. */
