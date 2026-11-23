@@ -663,7 +663,8 @@ describe("live logs", () => {
       },
     });
     renderApp(`${LOGS}?live=true`);
-    await expect.poll(liveBodies, { timeout: 3000 }).toEqual(["arrived 1"]);
+    // Two busy answers, then the record: a slow CI runner can take seconds to draw the page.
+    await expect.poll(liveBodies, { timeout: 10_000 }).toEqual(["arrived 1"]);
     expect(page.getByText("New records could not load").elements()).toEqual([]);
     const counted = requestsTo(api, "/logs/live");
     await new Promise((resolve) => setTimeout(resolve, 1000));

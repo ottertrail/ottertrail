@@ -101,7 +101,7 @@ describe("an alert email", () => {
   test("signs in after STARTTLS, and a wrong password fails without repeating it", async () => {
     const mailer = smtpMailer(
       {
-        smtpUrl: `smtp://${LOGIN.user}:${encodeURIComponent(LOGIN.pass)}@localhost:${guarded.port}`,
+        smtpUrl: `smtp://${LOGIN.user}:${encodeURIComponent(LOGIN.pass)}@127.0.0.1:${guarded.port}`,
         from: "alerts@example.com",
       },
       { ca: guarded.certificate.cert },
@@ -117,7 +117,7 @@ describe("an alert email", () => {
     const wrong = `${LOGIN.pass}-wrong`;
     const refused = smtpMailer(
       {
-        smtpUrl: `smtp://${LOGIN.user}:${encodeURIComponent(wrong)}@localhost:${guarded.port}`,
+        smtpUrl: `smtp://${LOGIN.user}:${encodeURIComponent(wrong)}@127.0.0.1:${guarded.port}`,
         from: "alerts@example.com",
       },
       { ca: guarded.certificate.cert },
@@ -139,7 +139,7 @@ describe("an alert email", () => {
   test("never sends the password over a connection without TLS", async () => {
     // The open sink offers no STARTTLS: with a password to send, the mailer stops there.
     const mailer = smtpMailer({
-      smtpUrl: `smtp://${LOGIN.user}:${encodeURIComponent(LOGIN.pass)}@localhost:${open.port}`,
+      smtpUrl: `smtp://${LOGIN.user}:${encodeURIComponent(LOGIN.pass)}@127.0.0.1:${open.port}`,
       from: "alerts@example.com",
     });
     try {
@@ -155,7 +155,7 @@ describe("an alert email", () => {
     // Config refuses a query string; were one to reach the mailer, it is not read:
     // requireTLS=false would let the password go over a connection without TLS.
     const mailer = smtpMailer({
-      smtpUrl: `smtp://${LOGIN.user}:${encodeURIComponent(LOGIN.pass)}@localhost:${open.port}?requireTLS=false&ignoreTLS=true`,
+      smtpUrl: `smtp://${LOGIN.user}:${encodeURIComponent(LOGIN.pass)}@127.0.0.1:${open.port}?requireTLS=false&ignoreTLS=true`,
       from: "alerts@example.com",
     });
     try {
