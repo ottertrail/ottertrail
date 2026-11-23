@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 
+import protobuf from "protobufjs";
 import { describe, expect, test } from "vite-plus/test";
 
 import {
@@ -699,6 +700,34 @@ describe("normalizeMetrics", () => {
     expect(result.message).toContain(`more than ${MAX_HISTOGRAM_BOUNDS} bucket bounds`);
   });
 
+  test("a histogram's lists are measured before any element is converted", () => {
+    const result = normalizeMetrics(
+      metrics([
+        {
+          name: "h",
+          histogram: {
+            dataPoints: [
+              {
+                timeUnixNano: String(NOW - SECOND),
+                explicitBounds: junk(MAX_HISTOGRAM_BOUNDS + 1),
+                bucketCounts: junk(MAX_HISTOGRAM_BOUNDS + 2),
+              },
+              {
+                timeUnixNano: String(NOW - SECOND),
+                explicitBounds: junk(2),
+                bucketCounts: junk(2),
+              },
+            ],
+          },
+        },
+      ]),
+      context,
+    );
+    expect(result.refused).toBe(2);
+    expect(result.message).toContain(`more than ${MAX_HISTOGRAM_BOUNDS} bucket bounds`);
+    expect(result.message).toContain("bucket counts do not match their bounds");
+  });
+
   test("a histogram count of 2^63 or more is refused, so a chart never sees it wrap", () => {
     const result = normalizeMetrics(
       metrics([
@@ -736,6 +765,11 @@ describe("normalizeMetrics", () => {
 });
 
 /** Objects in a decoded request: one per message, as the counters count them. */
+/** A list of `length` values no number can be read from. */
+function junk(length: number): string[] {
+  return Array.from({ length }, () => "not a number");
+}
+
 function objectsIn(value: unknown): number {
   if (Array.isArray(value)) return value.reduce((sum: number, item) => sum + objectsIn(item), 0);
   if (typeof value !== "object" || value === null || value instanceof Uint8Array) return 0;
@@ -800,6 +834,31 @@ describe("counting messages before decoding", () => {
     }
   });
 
+  test("protobuf: each element of a list of numbers counts, packed or not", () => {
+    const bounds = Array.from({ length: 100 }, (_, index) => index + 0.5);
+    const counts = Array.from({ length: 101 }, (_, index) => String(index * 300));
+    const request = metrics([
+      {
+        name: "h",
+        histogram: {
+          dataPoints: [{ timeUnixNano: "1", explicitBounds: bounds, bucketCounts: counts }],
+        },
+      },
+    ]);
+    const packed = encodeProtobuf(METRICS_MESSAGES, request);
+    const objects = objectsIn(decodeRequest(METRICS_MESSAGES, packed, "protobuf"));
+    expect(countProtobufMessages(METRICS_MESSAGES.request, packed)).toBe(objects + 201);
+    // A point with its counts sent unpacked: field 6, fixed64, a tag each.
+    const histogramPoint = METRICS_MESSAGES.request.lookupType(
+      "opentelemetry.proto.metrics.v1.HistogramDataPoint",
+    );
+    const raw = protobuf.Writer.create()
+      .uint32((3 << 3) | 1)
+      .fixed64(1);
+    for (const count of counts) raw.uint32((6 << 3) | 1).fixed64(Number(count));
+    expect(countProtobufMessages(histogramPoint, raw.finish())).toBe(1 + 101);
+  });
+
   test("protobuf: past the limit, or not protobuf", () => {
     const body = encodeProtobuf(TRACE_MESSAGES, traceRequest);
     const total = countProtobufMessages(TRACE_MESSAGES.request, body);
@@ -823,6 +882,14 @@ describe("counting messages before decoding", () => {
     const text = JSON.stringify({ a: [{ b: '{[\\"[{' }, []], c: "}" });
     expect(countJsonContainers(Buffer.from(text))).toBe(4);
     expect(() => countJsonContainers(Buffer.from(text), 3)).toThrow(TooManyMessagesError);
+  });
+
+  test("JSON: each other value in an array counts too", () => {
+    const text = '{"a": [1, "x,]", true , null, [2.5e3]], "b": {"c": 7}, "d": []}';
+    // 5 objects and arrays, and 5 array elements that are neither.
+    expect(countJsonContainers(Buffer.from(text))).toBe(10);
+    const bounds = JSON.stringify({ explicitBounds: Array.from({ length: 1000 }, () => 1) });
+    expect(() => countJsonContainers(Buffer.from(bounds), 1000)).toThrow(TooManyMessagesError);
   });
 });
 

@@ -815,10 +815,19 @@ export function normalizeMetrics(
               refusals.add("data points without a value");
               continue;
             }
-            const bounds = list(point, "explicitBounds").map((bound) =>
-              doubleOf(bound, "explicitBounds"),
-            );
-            const counts = list(point, "bucketCounts").map((count) => {
+            // Lengths first: converting millions of elements would exhaust the heap.
+            const sentBounds = list(point, "explicitBounds");
+            const sentCounts = list(point, "bucketCounts");
+            if (sentBounds.length > MAX_HISTOGRAM_BOUNDS) {
+              refusals.add(`histograms with more than ${MAX_HISTOGRAM_BOUNDS} bucket bounds`);
+              continue;
+            }
+            if (sentCounts.length !== 0 && sentCounts.length !== sentBounds.length + 1) {
+              refusals.add("histograms whose bucket counts do not match their bounds");
+              continue;
+            }
+            const bounds = sentBounds.map((bound) => doubleOf(bound, "explicitBounds"));
+            const counts = sentCounts.map((count) => {
               const value = int64Of(count, "bucketCounts");
               if (value < 0n || value > MAX_UINT64) {
                 throw new MalformedError(
@@ -827,15 +836,8 @@ export function normalizeMetrics(
               }
               return value.toString();
             });
-            if (
-              (counts.length !== 0 && counts.length !== bounds.length + 1) ||
-              !bounds.every(Number.isFinite)
-            ) {
+            if (!bounds.every(Number.isFinite)) {
               refusals.add("histograms whose bucket counts do not match their bounds");
-              continue;
-            }
-            if (bounds.length > MAX_HISTOGRAM_BOUNDS) {
-              refusals.add(`histograms with more than ${MAX_HISTOGRAM_BOUNDS} bucket bounds`);
               continue;
             }
             const total = uint64(point, "count");
