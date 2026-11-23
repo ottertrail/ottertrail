@@ -10,38 +10,28 @@ import { type Buckets, bucketSeconds, bucketsOf } from "./metrics.ts";
 import { ROUTE, SERVICES_FINAL } from "./services.ts";
 
 /**
- * The dashboard's Databases page and a query shape's page
- * (docs/telemetry.md, "Databases"): the database calls inside traces,
- * grouped by database and query shape, with their calls, time spent,
- * durations, and failures over the period.
- *
- * A database call is a span of kind CLIENT with a database system
- * attribute; ClickHouse works out its system, database, and query shape
- * when the span is written (db-shape.ts). Spans are read without
- * FINAL, as the Services pages read them (SERVICES_FINAL): a retried span
- * counts twice until its day is merged, which the spans table forces
- * within about an hour of the day's last insert.
+ * Database calls are CLIENT spans with a database system attribute. Materialized columns supply
+ * system, database, and shape (db-shape.ts; docs/telemetry.md, "Databases"). Reads omit FINAL
+ * (SERVICES_FINAL); retries count until daily merges, forced within about an hour of the day's
+ * last insert.
  */
 
-/** Databases listed, those with the most time spent; past this, the page says it was cut. */
+/** Keeps databases with the most time spent; reports truncation. */
 export const MAX_DATABASES = 50;
-/** Query shapes listed per database, the first by the chosen order. */
+/** Per database, in the selected order. */
 export const MAX_SHAPES = 200;
-/** The services named per shape; serviceCount says how many there are. */
+/** serviceCount includes services omitted by this cap. */
 export const MAX_SHAPE_SERVICES = 10;
-/** The slowest calls a shape's page lists. */
 export const SLOWEST_CALLS = 20;
-/** The latest calls a shape's page looks up the routes of. */
+/** Latest calls sampled for request routes. */
 export const ROUTE_SAMPLE = 1000;
-/** Routes and services listed on a shape's page. */
 export const MAX_CALLERS = 50;
-/** How long before a call its request may have started, at most, to be found. */
+/** Maximum request start lead before a database call. */
 const REQUEST_LEAD_MS = 3_600_000;
 
 export const DATABASE_SORTS = ["time", "p95", "calls", "failures"] as const;
 export type DatabaseSort = (typeof DATABASE_SORTS)[number];
 
-/** Which calls to read: a project's, in one environment, in [from, to), and of one shape when given. */
 export interface CallScope {
   projectId: string;
   environment: string;
@@ -50,15 +40,8 @@ export interface CallScope {
 }
 
 /**
- * The database calls in scope: their time, trace, span, service, status,
- * duration, system, database, and query shape, from the columns ClickHouse
- * worked out when each span was written (db-shape.ts, migration 0003):
- * `shape_kind` 1 to 3 for SHAPE_KINDS, and `shape_id`, which names the
- * shape in an address.
- *
- * PREWHERE reads the project's spans of the range that are database
- * calls (and of the shape, when one is named) from these narrow columns
- * before anything else.
+ * PREWHERE filters narrow materialized columns before reading other fields (db-shape.ts, migration
+ * 0003). shape_kind 1 to 3 maps to SHAPE_KINDS.
  */
 export function databaseCalls(
   params: QueryParams,
@@ -80,21 +63,21 @@ export function databaseCalls(
 export interface CallStats {
   calls: number;
   failed: number;
-  /** The time all the calls took, added up, in microseconds. */
+  /** Sum of call durations, in microseconds. */
   totalUs: number;
-  /** Calls per second over the period's seconds before now; null for a period with none. */
+  /** Uses elapsed seconds before now; null if none. */
   perSecond: number | null;
-  /** Interpolated between the two nearest durations, as the Services page's. */
+  /** Interpolates between neighboring durations, as Services does. */
   p50Us: number;
   p95Us: number;
   p99Us: number;
-  /** Up to MAX_SHAPE_SERVICES of the services that made the calls, by name. */
+  /** Up to MAX_SHAPE_SERVICES, sorted by name. */
   services: string[];
   serviceCount: number;
 }
 
 export interface ShapeSummary extends CallStats {
-  /** A hash of the system, database, kind, and shape, as decimal text: the shape page's address. */
+  /** Decimal hash of system, database, kind, and shape, used in the page URL. */
   id: string;
   kind: ShapeKind;
   shape: string;
@@ -104,7 +87,7 @@ export interface DatabaseSummary extends CallStats {
   system: string;
   /** '' when the calls name none. */
   database: string;
-  /** All its shapes in the range: more than `shapes` holds when it was cut. */
+  /** Includes shapes omitted by the cap. */
   shapeCount: number;
   shapes: ShapeSummary[];
 }
@@ -130,7 +113,6 @@ interface ListRow extends StatsRow {
 
 const kindOf = (value: number | string): ShapeKind => SHAPE_KINDS[Number(value) - 1] ?? "operation";
 
-/** The seconds of the range before now, for calls per second. */
 function secondsOf(range: Pick<TelemetryRange, "from" | "to">, now: Date): number {
   const end = Math.min(range.to.getTime(), now.getTime());
   return Math.max(0, end - range.from.getTime()) / 1000;
@@ -152,7 +134,7 @@ function statsOf(row: StatsRow, seconds: number): CallStats {
   };
 }
 
-/** What each sort orders a database's shapes by, largest first. Constants, never input. */
+/** Descending sort expressions. Constants only. */
 const SORT_KEYS: Record<DatabaseSort, string> = {
   time: "total_ns DESC",
   p95: "durations[2] DESC",
@@ -160,17 +142,14 @@ const SORT_KEYS: Record<DatabaseSort, string> = {
   failures: "failed DESC, calls DESC",
 };
 
-/** The aggregates of each group of calls (StatsRow). */
 const STATS_COLUMNS = `count() AS calls, countIf(status_code = 'error') AS failed,
   sum(duration_ns) AS total_ns,
   quantilesExactInclusive(0.5, 0.95, 0.99)(duration_ns) AS durations,
   groupUniqArray(${MAX_SHAPE_SERVICES})(service) AS services, uniq(service) AS service_count`;
 
 /**
- * Each database of the range (system and name), the MAX_DATABASES with
- * the most time spent, with its MAX_SHAPES first shapes by `sort`, in one
- * read: GROUPING SETS for the databases and their shapes at once, then
- * window functions rank the databases by time and each one's shapes.
+ * Ranks databases by time spent and shapes by `sort` in one read, using GROUPING SETS and window
+ * functions.
  */
 export async function listDatabases(
   reader: Reader,
@@ -180,12 +159,10 @@ export async function listDatabases(
   { final = SERVICES_FINAL }: { final?: boolean } = {},
 ): Promise<{
   databases: DatabaseSummary[];
-  /** More than MAX_DATABASES databases: the list holds those with the most time spent. */
+  /** Keeps the MAX_DATABASES with most time spent. */
   truncated: boolean;
   environments: string[];
-  /** Whether the project has sent any span at all. */
   received: boolean;
-  /** The seconds calls per second are counted over. */
   seconds: number;
 }> {
   const params = new QueryParams();
@@ -259,17 +236,15 @@ export async function listDatabases(
   };
 }
 
-/** Every database call of the range together, in time buckets: the Databases page's charts. */
 export interface DatabasesTrend {
-  /** The first bucket's start. */
   start: Date;
   stepSeconds: number;
   buckets: number;
-  /** The whole range, counted as the Databases page counts it: the buckets add up to these. */
+  /** Buckets sum to these totals, matching the database list. */
   totals: { calls: number; failed: number; totalUs: number; perSecond: number | null };
-  /** Per bucket: the calls, the failed ones, and the time they took, added up, in microseconds. */
+  /** Per-bucket counts and summed durations in microseconds. */
   counts: { calls: number[]; failed: number[]; totalUs: number[] };
-  /** Calls per second, over the bucket's seconds within the range and before now. */
+  /** Uses bucket seconds within the range and before now. */
   perSecond: (number | null)[];
 }
 
@@ -283,14 +258,8 @@ interface TrendRow {
 }
 
 /**
- * Every database call of the project's environment over the range, in
- * the buckets a metric's chart would have (bucketsOf), and over the whole
- * range, in one read (GROUPING SETS ((), (bucket))): the calls, failed
- * calls, and time spent. Only counts and sums, so the read keeps one row
- * per bucket, not each call's duration. A call later than the last
- * bucket counts in the last, so the buckets add up to the totals, which
- * are the Databases page's databases added up. Read without FINAL, as the
- * list is (SERVICES_FINAL).
+ * GROUPING SETS reads totals and buckets together with one aggregate row per bucket. Late calls
+ * join the last bucket so sums agree. Omits FINAL (SERVICES_FINAL).
  */
 export async function databasesTrend(
   reader: Reader,
@@ -360,30 +329,28 @@ export async function databasesTrend(
   };
 }
 
-/** One of a shape's slowest calls: where it is on the trace page. */
 export interface SlowCall {
   traceId: string;
   spanId: string;
   /** ISO, to the millisecond. */
   start: string;
-  /** Nanoseconds since 1970, as text: the span's key. */
+  /** Nanoseconds since 1970, used for span lookup. */
   startNs: string;
   durationUs: number;
   service: string;
   failed: boolean;
 }
 
-/** A route of the requests that made a shape's calls, from its latest calls. */
 export interface ShapeCaller {
   service: string;
-  /** null: no request of the service was found in the call's trace, such as a background job's. */
+  /** Null if no request span matched the trace and service, e.g. a background job. */
   route: string | null;
   calls: number;
 }
 
 export interface ShapeDetail {
   id: string;
-  /** null: no call of the shape in the range. */
+  /** Null without calls in the range. */
   shape: {
     kind: ShapeKind;
     text: string;
@@ -393,22 +360,21 @@ export interface ShapeDetail {
   start: Date;
   stepSeconds: number;
   buckets: number;
-  /** The whole range, counted as the Databases page counts it: the buckets add up to these. */
+  /** Buckets sum to these totals, matching the database list. */
   totals: CallStats;
   counts: { calls: number[]; failed: number[] };
-  /** Calls per second, over the bucket's seconds within the range and before now. */
+  /** Uses bucket seconds within the range and before now. */
   perSecond: (number | null)[];
   /** 0 to 1; null without a call. */
   failedShare: (number | null)[];
   /** In microseconds; null without a call. */
   durations: { p50Us: (number | null)[]; p95Us: (number | null)[]; p99Us: (number | null)[] };
-  /** The services that made its calls, most calls first, with their numbers. */
+  /** Most calls first. */
   services: (Omit<CallStats, "services" | "serviceCount"> & { service: string })[];
   servicesTruncated: boolean;
   slowest: SlowCall[];
-  /** The routes of the requests of up to ROUTE_SAMPLE latest calls. */
+  /** Routes sampled from the latest ROUTE_SAMPLE calls. */
   callers: ShapeCaller[];
-  /** How many calls the callers were found from. */
   sampled: number;
 }
 
@@ -426,18 +392,11 @@ interface ShapeRow extends StatsRow {
 }
 
 /**
- * One shape's calls over the range: in the buckets a metric's chart would
- * have (bucketsOf), over the whole range, and per service, in one read
- * (GROUPING SETS ((), (bucket), (service))), with its SLOWEST_CALLS slowest
- * calls in the whole range's row. A call later than the last bucket counts
- * in the last, so the buckets add up to the totals, which are the
- * Databases page's for the same range.
+ * GROUPING SETS reads buckets, totals, and per-service stats together. Late calls join the last
+ * bucket so sums agree with the database list.
  *
- * Then the routes that called it: its ROUTE_SAMPLE latest calls, read
- * only from the latest buckets that hold that many (so a second read
- * normalizes a few buckets' calls, not the range's), and the requests
- * (server spans) of the same trace and service, found by trace ID within
- * the hour before those calls.
+ * Samples ROUTE_SAMPLE calls from the latest buckets containing that many, avoiding normalizing
+ * the full range. Request spans match trace and service within the hour before the calls.
  */
 export async function shapeDetail(
   reader: Reader,
@@ -556,10 +515,7 @@ export async function shapeDetail(
   };
 }
 
-/**
- * Where the latest ROUTE_SAMPLE calls are: the start of the latest
- * buckets that hold that many, or of the first; null for none.
- */
+/** Earliest bucket needed for ROUTE_SAMPLE latest calls, or null without calls. */
 function latestBuckets(buckets: Buckets, calls: readonly number[]): Date | null {
   let seen = 0;
   for (let index = calls.length - 1; index >= 0; index -= 1) {
@@ -570,19 +526,12 @@ function latestBuckets(buckets: Buckets, calls: readonly number[]): Date | null 
 }
 
 /**
- * The routes of the requests that made a shape's latest calls: the
- * ROUTE_SAMPLE latest from `since` (latestBuckets), then for each, the
- * earliest server span of its trace and service, found by trace ID (the
- * bloom filter) between an hour before the earliest call and the latest.
- * A call without one counts under no route.
+ * Matches each sampled call to the earliest server span of its trace and service, from an hour
+ * before the earliest call to the latest. Unmatched calls have no route.
  *
- * The sample is read without read-in-order: PREWHERE on db_shape_id
- * leaves only the shape's rows, a few buckets' for a busy shape, so
- * sorting them costs little, where newest first over many unmerged parts
- * kept a block of every part in memory. A shape with fewer calls than
- * the sample is read over the whole range: its rows are found from the
- * db_shape_id column alone (50 calls in a week of 6 million spans: 4 to
- * 28 ms).
+ * PREWHERE on db_shape_id bounds sorting to one shape. Read-in-order over unmerged parts held a
+ * block from every part in memory. Sparse shapes scan the full range's db_shape_id column (50
+ * calls in 6 million weekly spans: 4 to 28 ms).
  */
 async function callersOf(
   reader: Reader,

@@ -15,31 +15,23 @@ import {
 import { type LogSummary, logsOfTrace } from "./logs.ts";
 
 /**
- * The dashboard's traces (docs/telemetry.md, "The dashboard"): a project's
- * traces by their root spans, a trace's spans and logs, and one span's
- * detail. Every query filters by project first, then time, so it reads one
- * project's days; a trace's spans are found by the bloom filter on trace_id.
+ * Queries filter by project and time; trace_id's bloom filter finds spans (docs/telemetry.md, "The
+ * dashboard").
  */
 
-/** Root spans a page of the list holds. */
 export const TRACES_PAGE_SIZE = 100;
-/** Spans a trace's page reads; past this, it says how many more there are. */
+/** Excess spans are counted for the truncation notice. */
 export const MAX_TRACE_SPANS = 2000;
-/** A trace is looked for this far either side of a known time, such as an error's. */
+/** Search radius around a known time, such as an error occurrence. */
 const AROUND_MS = 24 * 3_600_000;
 /**
- * Failed spans are looked for this far either side of the range, both for
- * "with errors" and for each row's Error badge, so the two agree: spans of
- * a trace may start before its root (clocks differ) or after it ends
- * (work it queued).
+ * Shared by the error filter and badges. Clock skew can put spans before their root; queued work
+ * can start after it ends.
  */
 const TRACE_SLACK_MS = 3_600_000;
-/**
- * "With errors" keeps the traces of at most this many failed spans, the
- * latest in the range: the set ClickHouse builds for it stays bounded.
- */
+/** Caps the failed-span set ClickHouse builds, keeping the latest. */
 export const MAX_FAILED_SPANS = 10_000;
-/** A span's time may be up to an hour ahead (normalize.ts), so a trace's window reaches that far. */
+/** Matches the one-hour future timestamp allowance in normalize.ts. */
 const AHEAD_MS = 3_600_000;
 
 export type SpanKind = "unspecified" | "internal" | "server" | "client" | "producer" | "consumer";
@@ -47,26 +39,24 @@ export type SpanStatus = "unset" | "ok" | "error";
 
 export interface TraceFilters {
   service?: string | undefined;
-  /** Part of the root span's name, any case. */
+  /** Case-insensitive substring of the root name. */
   name?: string | undefined;
-  /** Only traces with a span whose status is error. */
   errors: boolean;
-  /** The root span at least this long. */
   minDurationMs?: number | undefined;
   before?: Cursor | undefined;
 }
 
 export interface TraceSummary {
   traceId: string;
-  /** The root span's. */
+  /** Root span ID. */
   spanId: string;
   service: string;
   name: string;
   start: Date;
   durationUs: number;
-  /** A span of the trace has status error. */
+  /** True if any span has error status. */
   error: boolean;
-  /** The trace's spans, with its root, in the range and an hour either side. */
+  /** Includes spans within the range plus an hour either side. */
   spans: number;
 }
 
@@ -82,12 +72,8 @@ interface RootRow {
 }
 
 /**
- * Root spans (no parent) in the range, newest first, a page at a time:
- * TRACES_PAGE_SIZE, and the cursor to the next page when there may be
- * more. Read without FINAL, in key order, so a page reads only as far
- * back as it needs; copies of a retried span are dropped
- * (dashboard-query.ts, newestPage). A trace whose root was not received
- * is not listed; a trace with two roots is listed twice.
+ * Pages in reverse key order without FINAL; newestPage drops retries (dashboard-query.ts). Missing
+ * roots hide traces; two roots list a trace twice.
  */
 export async function listTraces(
   reader: Reader,
@@ -98,7 +84,7 @@ export async function listTraces(
   next: string | null;
   environments: string[];
   services: string[];
-  /** Whether the project has sent any span at all: false shows how to send them. */
+  /** False shows setup instructions. */
   received: boolean;
 }> {
   const params = new QueryParams();
@@ -142,9 +128,8 @@ export async function listTraces(
 }
 
 /**
- * The trace IDs with a failed span in the window, the latest
- * MAX_FAILED_SPANS: what "with errors" keeps, and what the chart counts as
- * a trace with errors. Duplicates do not matter to IN, so no FINAL.
+ * Shared by the error filter and chart, capped at MAX_FAILED_SPANS. IN ignores duplicates, so
+ * FINAL is unnecessary.
  */
 function failedTraces(
   params: QueryParams,
@@ -162,7 +147,6 @@ function failedTraces(
            LIMIT ${limit})`;
 }
 
-/** The list's conditions on root spans, which its chart shares: the project first, then the range. */
 function rootConditions(
   params: QueryParams,
   range: TelemetryRange,
@@ -192,40 +176,29 @@ function rootConditions(
   return conditions;
 }
 
-/** The Traces page's charts: traces per time bucket, those with errors, and the 95th-percentile duration. */
 export interface TraceChart {
-  /** The first bucket's start. */
   start: Date;
-  /** Each bucket's start, on the clock of the instance's timezone (listChartBuckets). */
+  /** Bucket starts in the instance timezone (listChartBuckets). */
   bucketStarts: Date[];
   stepSeconds: number;
   buckets: number;
-  /** Root spans per bucket, as the list counts traces. */
+  /** Counts root spans. */
   traces: number[];
-  /** Of those, the traces "With errors only" keeps. */
+  /** Uses the "With errors only" filter. */
   failed: number[];
-  /** The 95th percentile of the roots' durations, in microseconds; null without a trace. */
+  /** Root duration in microseconds; null without traces. */
   p95Us: (number | null)[];
-  /** Every trace counted, and those with errors. */
   total: { traces: number; failed: number };
   /**
-   * More failed spans than MAX_FAILED_SPANS in the window: errors are
-   * counted among the latest of them, so older traces with errors count as
-   * without.
+   * Errors beyond the latest MAX_FAILED_SPANS are omitted, so older failed traces may count as
+   * successful.
    */
   failedCapped: boolean;
 }
 
 /**
- * The list's traces over the range, in time buckets (listChartBuckets),
- * in one read of root spans with the list's filters: how many, how many
- * with errors exactly as "With errors only" finds them (a failed span,
- * the root's own included, among the latest MAX_FAILED_SPANS of the
- * window), whether that cap was reached, and the exact 95th percentile of
- * their durations. Read without FINAL, as the Services page and its charts
- * are: this adds up every root span of the period, the read FINAL was
- * measured to fail on, so a retried root counts twice until its day is
- * merged (docs/telemetry.md, "How the pages read").
+ * Shares list filters and the MAX_FAILED_SPANS cap. Reads without FINAL to bound memory; retries
+ * count until daily merges (docs/telemetry.md, "How the pages read").
  */
 export async function traceChart(
   reader: Reader,
@@ -288,7 +261,6 @@ export async function traceChart(
   return chart;
 }
 
-/** Where failed spans count: the range, an hour either side. */
 function failureWindow(range: TelemetryRange): { from: Date; to: Date } {
   return {
     from: new Date(range.from.getTime() - TRACE_SLACK_MS),
@@ -296,10 +268,7 @@ function failureWindow(range: TelemetryRange): { from: Date; to: Date } {
   };
 }
 
-/**
- * How many spans each listed trace has, and how many failed, in the same
- * window "with errors" looks in. The bloom filter on trace_id finds them.
- */
+/** Uses the same window as the error filter; trace_id's bloom filter finds spans. */
 async function spanCounts(
   reader: Reader,
   projectId: string,
@@ -325,7 +294,7 @@ async function spanCounts(
   );
 }
 
-/** Where a trace is looked for: around a known time, or all the time telemetry is kept. */
+/** Searches around a known time, or across retention if absent. */
 export function traceWindow(
   now: Date,
   retentionDays: number,
@@ -336,42 +305,40 @@ export function traceWindow(
   if (around === undefined) return { from: kept, to: latest };
   const from = new Date(Math.max(kept.getTime(), around.getTime() - AROUND_MS));
   const to = new Date(Math.min(latest.getTime(), around.getTime() + AROUND_MS));
-  // A time outside what is kept: an empty window, so nothing is read.
+  // Times outside retention yield an empty window.
   return to < from ? { from, to: from } : { from, to };
 }
 
 export interface WaterfallSpan {
   spanId: string;
-  /** "" for a root; a parent not among the spans read leaves the span at the top level. */
+  /** "" for roots. Missing parents leave spans at the top level. */
   parentSpanId: string;
   name: string;
   service: string;
   kind: SpanKind;
   status: SpanStatus;
-  /** Its start, in nanoseconds since 1970, as text: what finds its detail. */
+  /** Nanoseconds since 1970, used for detail lookup. */
   startNs: string;
-  /** From the trace's first span's start. */
+  /** Relative to the trace's first span. */
   offsetUs: number;
   durationUs: number;
 }
 
 export interface TraceDetail {
   traceId: string;
-  /** The first span's start; null with no span. */
+  /** First span start; null without spans. */
   start: Date | null;
-  /** From the first span's start to the last span's end. */
+  /** First span start to last span end. */
   durationUs: number;
-  /** The first MAX_TRACE_SPANS by start. */
+  /** Earliest MAX_TRACE_SPANS by start. */
   spans: WaterfallSpan[];
-  /** The trace's spans in the window, all of them: more than `spans` holds when it was cut. */
+  /** Includes spans omitted by the cap. */
   totalSpans: number;
-  /** Oldest first, as summaries. */
+  /** Oldest first. */
   logs: LogSummary[];
-  /** More log records than `logs` holds. */
   logsTruncated: boolean;
 }
 
-/** One trace's spans, as a waterfall, and its log records, within `window`. */
 export async function traceDetail(
   reader: Reader,
   projectId: string,
@@ -446,9 +413,9 @@ export async function traceDetail(
 
 export interface SpanEvent {
   name: string;
-  /** null when the sender gave no time. */
+  /** Null if the sender omitted time. */
   time: Date | null;
-  /** From the span's start; null without a time. */
+  /** Relative to span start; null without time. */
   offsetUs: number | null;
   attributes: Record<string, string>;
 }
@@ -474,7 +441,7 @@ export interface SpanDetail {
   durationUs: number;
   attributes: Record<string, string>;
   resourceAttributes: Record<string, string>;
-  /** Attributes, events, and links the sender or Ottertrail dropped (docs/telemetry.md, "Limits"). */
+  /** Includes sender and Ottertrail drops (docs/telemetry.md, "Limits"). */
   droppedAttributes: number;
   events: SpanEvent[];
   droppedEvents: number;
@@ -489,7 +456,6 @@ const isObject = (value: unknown): value is Record<string, unknown> =>
 const isRecordOfText = (value: unknown): value is Record<string, string> =>
   isObject(value) && Object.values(value).every((item) => typeof item === "string");
 
-/** A span's events, from the JSON its row keeps (normalize.ts); nothing that is not as written there. */
 function eventsOf(json: string, startNs: bigint): SpanEvent[] {
   const parsed: unknown = JSON.parse(json);
   if (!Array.isArray(parsed)) return [];
@@ -520,10 +486,7 @@ function linksOf(json: string): SpanLink[] {
   });
 }
 
-/**
- * One span, found by its row's key: the project, its start (from the
- * trace's waterfall), and its ID. null when no such span is kept.
- */
+/** Looks up (project, start, ID). Returns null when no span is retained. */
 export async function spanDetail(
   reader: Reader,
   projectId: string,

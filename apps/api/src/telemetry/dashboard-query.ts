@@ -7,13 +7,9 @@ import { localDays } from "../reports/reports.ts";
 import { type RangeQuery, requestDays } from "../reports/routes.ts";
 import { dayIn } from "../visitors/visitor-ids.ts";
 
-/**
- * What the dashboard's telemetry pages share: the range they read,
- * the cursor they page back with, and times as ClickHouse gives them
- * (docs/telemetry.md, "The dashboard").
- */
+/** Shared telemetry reads (docs/telemetry.md, "The dashboard"). */
 
-/** Whole days in the instance's timezone, in one environment, cut to what telemetry keeps. */
+/** Whole days in the instance timezone, clipped to retention. */
 export interface TelemetryRange {
   projectId: string;
   environment: string;
@@ -21,18 +17,14 @@ export interface TelemetryRange {
   /** "YYYY-MM-DD", both included. */
   firstDay: string;
   lastDay: string;
-  /** Start of firstDay, before the retention's cut: where a chart's time buckets are counted from. */
+  /** Unclipped day start anchors chart buckets. */
   dayStart: Date;
-  /** Start of firstDay, or the oldest time telemetry is kept from, whichever is later. */
+  /** Clipped to the oldest retained time. */
   from: Date;
-  /** End of lastDay. */
   to: Date;
 }
 
-/**
- * The days a request asks for, in the instance's timezone, cut to
- * the last `retentionDays` before `now`; or why they are refused.
- */
+/** Clips requested days to `retentionDays` before `now`, using the instance timezone. */
 export async function telemetryRange(
   db: Kysely<Database>,
   query: RangeQuery,
@@ -60,24 +52,20 @@ export async function telemetryRange(
   };
 }
 
-/**
- * Where a page of a newest-first list ends: the last row's time, in
- * nanoseconds since 1970, and its ID. The next page starts below it.
- */
+/** Next page starts below this (nanoseconds since 1970, ID) pair. */
 export interface Cursor {
   ns: bigint;
   id: string;
 }
 
-/** "1795003200123456789-<hex ID>": a span's ID is 48 hex digits, a log record's 32. */
+/** Span IDs have 48 hex digits; log IDs have 32. */
 export const CURSOR_PATTERN = "^[0-9]{1,19}-[0-9a-f]{32,48}$";
 
 export const cursorText = (cursor: Cursor) => `${cursor.ns.toString()}-${cursor.id}`;
 
-/** The largest nanosecond count ClickHouse's Int64 holds. */
 export const MAX_NS = 9_223_372_036_854_775_807n;
 
-/** A cursor sent back by the dashboard (CURSOR_PATTERN); null when its time is out of range. */
+/** Returns null for out-of-range time and undefined for absent input. */
 export function cursorOf(text: string | undefined): Cursor | undefined | null {
   if (text === undefined) return undefined;
   const [ns = "", id = ""] = text.split("-");
@@ -85,59 +73,41 @@ export function cursorOf(text: string | undefined): Cursor | undefined | null {
   return time > MAX_NS ? null : { ns: time, id };
 }
 
-/** A trace ID as stored: 32 hex digits, lower case. Any case is accepted. */
+/** Accepts either case; stored IDs are lowercase. */
 export const TRACE_ID_PATTERN = "^[0-9a-fA-F]{32}$";
 export const SPAN_ID_PATTERN = "^[0-9a-fA-F]{16}$";
 
-/** A service's name as a filter: what the rows can hold, with no control characters. */
 export const SERVICE_PATTERN = "^[^\\u0000-\\u001F\\u007F]{1,256}$";
 
 const NANOS_PER_MS = 1_000_000n;
 
-/** A moment in nanoseconds since 1970 (as text, from ClickHouse), as a Date. */
+/** Input is nanoseconds since 1970. */
 export const dateOfNs = (ns: string | bigint) => new Date(Number(BigInt(ns) / NANOS_PER_MS));
 
-/** Nanoseconds as microseconds, as the dashboard shows durations: µs keep sub-millisecond spans. */
+/** Microseconds preserve sub-millisecond durations. */
 export const microseconds = (ns: string | bigint) => Number(BigInt(ns)) / 1000;
 
-/** The tables the dashboard's telemetry pages read. */
 export type TelemetryTable = "spans" | "logs" | "metric_points" | "metric_histograms";
 
-/**
- * Settings of every query the telemetry pages make: a query that runs
- * past 15 seconds or 300 MB ends, and the page says to narrow it; large
- * groupings and sorts spill to disk before that.
- */
+/** Bounds queries at 15 seconds and 300 MB. Large groupings and sorts spill to disk first. */
 export const DASHBOARD_SETTINGS = {
   max_execution_time: 15,
-  /** 300 MB a query: past it, the page says to narrow the range, as after a timeout. */
   max_memory_usage: "300000000",
-  /**
-   * Past 100 MB, a GROUP BY or a sort goes on in parts on disk instead of
-   * failing: slower, but a period with a million span names still answers.
-   */
+  /** Spills GROUP BY and sorts to disk after 100 MB. */
   max_bytes_before_external_group_by: "100000000",
   max_bytes_before_external_sort: "100000000",
   /**
-   * Read-only, settings still changeable: these queries only read (a
-   * grouping or sort spilled to disk is still a read). ClickHouse stops a
-   * query whose HTTP connection closes only when it is read-only, and the
-   * client sends its queries as POST with readonly 0 unless told; with
-   * readonly 2, a query ends when the API closes its request, as when the
-   * browser gives up or the reader's signal fires (Reader.signal).
+   * ClickHouse cancels disconnected HTTP queries only in read-only mode. Mode 2 still permits
+   * query settings; the client defaults to 0 for POST.
    */
   readonly: "2",
   cancel_http_readonly_queries_on_client_close: 1,
 } as const;
 
 /**
- * One page of a newest-first list read without FINAL (traces.ts, logs.ts).
- * FINAL merges every row of the range before the first can be sent, so a
- * page would read the whole range; without it, ClickHouse reads the
- * project's rows in key order, newest first, and stops at the LIMIT. A
- * retry stored twice has the same (timestamp, id), so its copies sit next
- * to each other and are dropped here. The query fetches FETCH(size) rows,
- * more than a page, so a page stays full despite copies.
+ * FINAL would merge the whole range before returning a page. Read in reverse key order with a
+ * LIMIT instead, then drop adjacent retry copies with the same (timestamp, id). Overfetch to keep
+ * pages full after deduplication.
  */
 export const fetchFor = (size: number) => size * 2 + 1;
 
@@ -152,7 +122,7 @@ export function newestPage<Row extends { id: string }>(
   });
   const page = unique.slice(0, size);
   const last = page.at(-1);
-  // More rows than a page, or a full fetch that copies shrank: there may be older ones.
+  // A full fetch may hide older rows even if duplicates leave fewer than a page.
   const more = unique.length > size || rows.length >= fetchFor(size);
   return {
     page,
@@ -160,32 +130,29 @@ export function newestPage<Row extends { id: string }>(
   };
 }
 
-/** The rows below the cursor, newest first: a condition on (timestamp, id). */
 export function belowCursor(params: QueryParams, cursor: Cursor | undefined): string {
   if (cursor === undefined) return "";
   const time = `fromUnixTimestamp64Nano(${params.add(cursor.ns.toString(), "Int64")}, 'UTC')`;
-  // The first part lets the primary key skip newer parts; the tuple breaks ties.
+  // The time condition skips newer parts; the tuple breaks ties.
   return `AND timestamp <= ${time} AND (timestamp, id) < (${time}, ${params.add(cursor.id, "String")})`;
 }
 
 /**
- * The environments and services one or more tables have in the range,
- * from their rows' labels: environments with the most rows first, then the
- * one shown and production even without, so the page can always switch
- * back; the shown environment's services, most rows first.
+ * Ranks labels by row count. Includes the selected environment and production even without rows so
+ * users can switch back.
  */
 export async function labelsInRange(
   reader: Reader,
   tables: TelemetryTable | readonly TelemetryTable[],
   range: TelemetryRange,
-  /** A condition on each table's rows, such as only root spans for the traces list. */
+  /** Additional row filter, such as root spans only. */
   extra = "",
 ): Promise<{ environments: string[]; services: string[] }> {
   const params = new QueryParams();
   const project = params.add(range.projectId, "UUID");
   const from = params.time(range.from);
   const to = params.time(range.to);
-  // Table names are constants, never input.
+  // Table names are constants.
   const reads = (typeof tables === "string" ? [tables] : tables).map(
     (table) =>
       `SELECT environment, service
@@ -215,7 +182,7 @@ export async function labelsInRange(
   return { environments, services };
 }
 
-/** Whether the project has any row in the tables: whether it has sent any at all, within the retention. */
+/** Checks for any data within retention. */
 export async function hasAnyRow(
   reader: Reader,
   tables: TelemetryTable | readonly TelemetryTable[],
@@ -235,13 +202,10 @@ export async function hasAnyRow(
   return rows.length > 0;
 }
 
-/** The most buckets a list's chart has (the Logs and Traces pages), so each bar stays a few pixels wide. */
+/** Keeps list chart bars a few pixels wide. */
 export const LIST_CHART_BUCKETS = 120;
 
-/**
- * Bucket lengths a list's chart takes, in seconds: whole minutes and hours
- * that divide a day, and whole days.
- */
+/** Seconds; subday steps divide a day. */
 const LIST_CHART_STEPS = [
   60, 120, 300, 600, 900, 1800, 3600, 7200, 10_800, 21_600, 43_200, 86_400, 172_800, 259_200,
   345_600, 604_800,
@@ -251,7 +215,7 @@ const DAY_SECONDS = 86_400;
 
 const WALL_FORMATS = new Map<string, Intl.DateTimeFormat>();
 
-/** A moment's wall clock in `timeZone`: its day ("YYYY-MM-DD") and minutes since midnight. */
+/** Returns local day and minutes since midnight. */
 function wallClock(ms: number, timeZone: string): { day: string; minutes: number } {
   let format = WALL_FORMATS.get(timeZone);
   if (format === undefined) {
@@ -273,23 +237,17 @@ function wallClock(ms: number, timeZone: string): { day: string; minutes: number
   };
 }
 
-/** Milliseconds since 1970 of a day's wall-clock time read as UTC. */
 const asUtc = (day: string, minutes: number) => Date.parse(`${day}T00:00:00Z`) + minutes * 60_000;
 
-/** A moment's offset from UTC in `timeZone`, in milliseconds. */
 const offsetAt = (ms: number, timeZone: string) => {
   const wall = wallClock(ms, timeZone);
   return asUtc(wall.day, wall.minutes) - (ms - (ms % 60_000));
 };
 
-/**
- * The first moment a day's wall-clock time happens in `timeZone`: the
- * earlier of two when the clock repeats it (the hour after a change back);
- * null when the clock skips it (the hour a change forward jumps over).
- */
+/** Uses the first occurrence of repeated wall time; returns null for skipped time. */
 function zonedTime(day: string, minutes: number, timeZone: string): number | null {
   const wanted = asUtc(day, minutes);
-  // The offsets a few hours either side: one change a day at most, so one of them holds.
+  // At most one offset change per day, so offsets a few hours either side cover it.
   const offsets = new Set([
     offsetAt(wanted - 14 * 3_600_000, timeZone),
     offsetAt(wanted + 14 * 3_600_000, timeZone),
@@ -304,9 +262,8 @@ function zonedTime(day: string, minutes: number, timeZone: string): number | nul
 }
 
 /**
- * The first moment at or after a day's wall-clock time, within `span`
- * minutes: the time itself, or, when the clock skips it, the moment the
- * clock jumps to. null when the clock skips the whole span.
+ * For skipped wall time, uses the next valid moment within `span` minutes; null if the whole span
+ * is skipped.
  */
 function firstMoment(day: string, minutes: number, span: number, timeZone: string) {
   for (let minute = minutes; minute < minutes + span && minute < 1440; minute += 1) {
@@ -316,47 +273,26 @@ function firstMoment(day: string, minutes: number, span: number, timeZone: strin
   return null;
 }
 
-/** "YYYY-MM-DD" plus `days`. */
 export const addDays = (day: string, days: number) =>
   new Date(Date.parse(`${day}T00:00:00Z`) + days * 86_400_000).toISOString().slice(0, 10);
 
-/**
- * A list's chart's time buckets: their starts, on the clock of the
- * instance's timezone, and how a row finds its bucket.
- */
 export interface ListChartBuckets {
-  /** The buckets' length on the clock; one across a daylight saving change is shorter or longer. */
+  /** Wall-clock length; elapsed time varies across daylight saving changes. */
   stepSeconds: number;
-  /** Each bucket's start, in milliseconds since 1970, rising. */
+  /** Milliseconds since 1970, strictly increasing. */
   starts: number[];
-  /**
-   * A row's bucket, in SQL: its place in `starts`, the last start at or
-   * before its moment, so every row of the range is in exactly one.
-   */
+  /** SQL finds the last start at or before the row, placing each row exactly once. */
   bucketSql: (params: QueryParams) => string;
 }
 
 /**
- * The buckets of a list's chart over a range, in the instance's timezone:
- * the shortest step of LIST_CHART_STEPS that keeps them within
- * LIST_CHART_BUCKETS over the span on the local clock: a range of several
- * days its whole span, so its chart keeps one step at every time of day,
- * and one day (today) the part up to now, so its first hours are not a few
- * wide bars. The buckets run up to the end of the range or now, whichever
- * is sooner. A step shorter than a day starts each bucket on the clock's
- * marks (midnight, 06:00, 12:00 for 6 hours) whatever the date's offset; a
- * step of days starts each on a midnight,
- * counted from the range's first day. A mark the clock skips (a change
- * forward, or a midnight some zones skip) starts at the first moment that
- * exists after it, and a slot the clock skips whole has no bucket, so the
- * bucket before it is shorter; a mark the clock repeats (a change back)
- * starts at its first occurrence, so the bucket that holds the repeated
- * time is longer. Rows are placed by their moment, not by their wall
- * clock (bucketSql), so none falls outside a bucket and none counts
- * twice. Today at noon is 72 buckets of 10 minutes; a past day, 96 of 15
- * minutes; 7 days, about 80 of 2 hours; 30 days, 120 of 6 hours; 90 days,
- * 90 of a day; 12 months, about 92 of 4 days. A bucket wholly before the
- * retention's cut is left out.
+ * Uses the shortest LIST_CHART_STEPS step within LIST_CHART_BUCKETS, aligned to the instance's
+ * wall clock. Multi-day ranges use their full span for a stable step; today uses elapsed time.
+ * Stops at the range end or now, excluding buckets wholly before retention.
+ *
+ * Skipped marks start at the next valid moment; fully skipped slots have no bucket. Repeated marks
+ * use their first occurrence. Assign rows by instant so clock changes cannot skip or double-count
+ * them.
  */
 export function listChartBuckets(
   range: Pick<TelemetryRange, "from" | "to" | "timeZone" | "firstDay" | "lastDay">,
@@ -364,7 +300,7 @@ export function listChartBuckets(
 ): ListChartBuckets {
   const fromMs = range.from.getTime();
   const endMs = Math.max(fromMs, Math.min(range.to.getTime(), now.getTime()));
-  // The span on the local clock, so a day an hour longer does not change the step.
+  // Choose steps by wall-clock span so daylight saving does not change the step.
   const end =
     range.firstDay === range.lastDay
       ? wallClock(endMs, range.timeZone)
@@ -389,22 +325,21 @@ export function listChartBuckets(
   } else {
     const days = step / DAY_SECONDS;
     for (let group = 0; addDays(range.firstDay, group * days) <= range.lastDay; group += 1) {
-      // Midnight, or the first moment after it on a day whose clock skips midnight.
+      // Some timezones skip midnight.
       const start = firstMoment(addDays(range.firstDay, group * days), 0, 1440, timeZone);
       if (start !== null) candidates.push(start);
     }
   }
-  // Rising, each once: a slot whose start the clock carried into the next slot's is no bucket.
+  // Skip duplicate starts caused by clocks jumping across whole slots.
   const rising = candidates.filter((start, at) => at === 0 || start > (candidates[at - 1] ?? 0));
   const starts = rising.filter((start, at) => {
     const next = rising[at + 1] ?? range.to.getTime();
     return start < endMs && next > fromMs;
   });
   const bucketSql = (params: QueryParams) => {
-    // A row later than the last bucket (a clock ahead of now) counts in it.
+    // Future rows go in the last bucket.
     const moment = `toUnixTimestamp64Milli(least(timestamp,
       fromUnixTimestamp64Milli(${params.add(Math.max(fromMs, endMs - 1), "Int64")}, 'UTC')))`;
-    // The last start at or before the row's moment: starts rise, so a count of those.
     return `greatest(0, arrayCount(start -> start <= ${moment}, ${params.add(starts, "Array(Int64)")}) - 1)`;
   };
   return { stepSeconds: step, starts, bucketSql };

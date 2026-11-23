@@ -15,36 +15,23 @@ import {
 } from "./metrics.ts";
 
 /**
- * The dashboard's Hosts pages (docs/telemetry.md, "Hosts"): the machines
- * an OpenTelemetry Collector's host metrics receiver reports on, told
- * apart by their resource's `host.name`, with their latest CPU, memory,
- * filesystem, and load; and one host's charts over the period.
- *
- * Only the receiver's metrics count: those of an instrumentation scope it
- * names (RECEIVER_SCOPES). An app's SDK may send metrics of the same names
- * under the same host.name; they are not the host's.
- *
- * Every chart comes from the metric tables as metrics.ts reads them,
- * filtered by the host's name: rates from cumulative sums with resets,
- * gauges, up-down counters. A utilization metric (a gauge of shares from
- * 0 to 1) is preferred when the receiver sends it; it is off by default,
- * so the shares are otherwise worked out from the default metrics.
+ * Host metrics must come from RECEIVER_SCOPES; SDKs may send identical metric and host names
+ * (docs/telemetry.md, "Hosts"). Charts use metrics.ts, filtered by host.name. Prefer utilization
+ * gauges when available; the receiver disables them by default, so fall back to shares calculated
+ * from default metrics.
  */
 
-/** The resource attribute that names a host (OpenTelemetry's semantic conventions). */
 export const HOST_KEY = "host.name";
 
 /**
- * The start of the scope name each of the host metrics receiver's scrapers
- * sends under: "otelcol/hostmetricsreceiver/cpu" in older releases (v0.80.0),
- * the scraper's Go package path now (".../internal/scraper/cpuscraper").
+ * Collector v0.80.0 uses otelcol/hostmetricsreceiver/cpu; other versions use scraper Go package
+ * paths such as .../internal/scraper/cpuscraper.
  */
 export const RECEIVER_SCOPES = [
   "otelcol/hostmetricsreceiver/",
   "github.com/open-telemetry/opentelemetry-collector-contrib/receiver/hostmetricsreceiver/",
 ] as const;
 
-/** The metrics the pages read, as the host metrics receiver names them. */
 export const HOST_METRICS = {
   cpuTime: "system.cpu.time",
   cpuUtilization: "system.cpu.utilization",
@@ -59,10 +46,10 @@ export const HOST_METRICS = {
   load15m: "system.cpu.load_average.15m",
 } as const;
 
-/** Any of these from a resource with a host.name, in the receiver's scope, makes it a host. */
+/** A host needs a host.name resource, receiver scope, and one of these metrics. */
 const HOST_METRIC_NAMES: readonly string[] = Object.values(HOST_METRICS);
 
-/** What the list's latest values read: neither network, disk, nor the longer load averages. */
+/** Latest-value reads exclude network, disk, and longer load averages. */
 const LIST_METRIC_NAMES: readonly string[] = [
   HOST_METRICS.cpuTime,
   HOST_METRICS.cpuUtilization,
@@ -73,11 +60,7 @@ const LIST_METRIC_NAMES: readonly string[] = [
   HOST_METRICS.load1m,
 ];
 
-/**
- * Attribute keys, the receiver's first, then the semantic conventions'
- * (which the receiver may move to), then older names: the first a point
- * has is read.
- */
+/** First present key wins: receiver names, semantic conventions, then older names. */
 const CPU_STATE_KEYS = ["state", "cpu.mode", "system.cpu.state"];
 const MEMORY_STATE_KEYS = ["state", "system.memory.state"];
 const FILESYSTEM_STATE_KEYS = ["state", "system.filesystem.state"];
@@ -89,50 +72,41 @@ const MODE_KEYS = ["mode", "system.filesystem.mode"];
 const NETWORK_DIRECTION_KEYS = ["direction", "network.io.direction"];
 const DISK_DIRECTION_KEYS = ["direction", "disk.io.direction"];
 
-/** A filesystem mounted read-only, such as a snap's squashfs: always full, never filling. */
+/** Read-only mounts, such as squashfs, stay full and are excluded. */
 const READ_ONLY = "ro";
 
-/** Memory states that are parts of other states (the kernel's slab is within used or cached). */
+/** Slab is already included in used or cached memory. */
 const MEMORY_PARTS = ["slab_reclaimable", "slab_unreclaimable"];
 
-/** Hosts the list holds, by name; past this, it says it was cut. */
+/** Keeps the first hosts by name; reports truncation. */
 export const MAX_HOSTS = 500;
-/** A host that sent nothing for this long is stale. */
 export const STALE_MS = 5 * 60_000;
 /**
- * The list's latest values come from each host's points in this long
- * before its last one: a counter needs two points, and the host's last
- * point may be another scraper's, one interval after the CPU's, so up to
- * 7.5 minutes between scrapes still gives a CPU share.
+ * Counters need two points; scraper timing can differ. This window supports up to 7.5 minutes
+ * between scrapes.
  */
 export const LATEST_WINDOW_MS = 15 * 60_000;
 
 export interface HostSummary {
   host: string;
   lastSeen: Date;
-  /**
-   * Nothing from it in the STALE_MS before now; null when the period ended
-   * before now, which says nothing about the host now.
-   */
+  /** No points within STALE_MS; null for historical periods. */
   stale: boolean | null;
-  /** 0 to 100, or null when it sent nothing to work it out from. */
+  /** 0 to 100; null without enough data. */
   cpuPercent: number | null;
   memoryPercent: number | null;
-  /** The fullest filesystem's used share (read-only ones left out), and its mount point. */
+  /** Fullest writable filesystem and its mount point. */
   filesystemPercent: number | null;
   filesystemMount: string | null;
-  /** The 1-minute load average. */
   load1m: number | null;
 }
 
-/** Only the host metrics receiver's series (RECEIVER_SCOPES). */
 function receiverScope(params: QueryParams): string {
   return `(${RECEIVER_SCOPES.map(
     (prefix) => `startsWith(scope_name, ${params.add(prefix, "String")})`,
   ).join(" OR ")})`;
 }
 
-/** The project's rows of host metrics `names` in the environment, from the receiver, in a time condition. */
 function hostRows(
   params: QueryParams,
   range: TelemetryRange,
@@ -151,7 +125,7 @@ const inRange = (params: QueryParams, range: TelemetryRange) =>
 
 const hostOf = (params: QueryParams) => `resource_attributes[${params.add(HOST_KEY, "String")}]`;
 
-/** Whether a host last seen then is stale now; null when the range ended before now. */
+/** Returns null for historical ranges. */
 export function staleness(range: TelemetryRange, lastSeen: Date | null, now: Date): boolean | null {
   if (range.to.getTime() <= now.getTime()) return null;
   return lastSeen === null || now.getTime() - lastSeen.getTime() > STALE_MS;
@@ -161,31 +135,21 @@ interface LatestRow {
   host: string;
   name: string;
   mount: string;
-  /** A share from 0 to 1, or a load; null when it cannot be worked out. */
+  /** Share (0 to 1) or load; null without enough data. */
   value: number | null;
 }
 
-/** A latest share as a percentage. */
 const percent = (row: LatestRow | undefined) =>
   row === undefined || row.value === null ? null : row.value * 100;
 
 /**
- * The hosts that sent host metrics in the range, by name, each with when
- * it was last seen and its latest values:
+ * CPU uses non-idle utilization, falling back to non-idle time between the last two points of one
+ * run without a reset. Memory uses used utilization or used bytes over all states except slab.
+ * Filesystems use utilization or used bytes over all states; read-only mounts are excluded. Load
+ * uses the latest 1-minute average.
  *
- * - CPU busy: from system.cpu.utilization's latest point of each series,
- *   the share of the states that are not idle; else from system.cpu.time,
- *   each series' increase between its last two points (one run, no
- *   reset), the share of the time not idle;
- * - memory: system.memory.utilization's `used`; else system.memory.usage's
- *   `used` over all its states but the slab's, which are parts of others;
- * - the fullest filesystem: per mount point, system.filesystem.utilization
- *   (its `used` state when it has states), else system.filesystem.usage's
- *   `used` over all its states; the highest, read-only mounts left out;
- * - load: system.cpu.load_average.1m's latest point.
- *
- * Latest values read each host's last LATEST_WINDOW_MS of the range, FINAL,
- * so a retried point is not taken for the point before it.
+ * Reads each host's last LATEST_WINDOW_MS with FINAL so retries cannot become the previous counter
+ * point.
  */
 export async function listHosts(
   reader: Reader,
@@ -193,10 +157,10 @@ export async function listHosts(
   now: Date,
 ): Promise<{
   hosts: HostSummary[];
-  /** More than MAX_HOSTS hosts: the list holds the first by name. */
+  /** Keeps the first MAX_HOSTS by name. */
   truncated: boolean;
   environments: string[];
-  /** Whether the project has sent any host metric with a host name at all: false shows how to. */
+  /** False shows setup instructions. */
   received: boolean;
 }> {
   const params = new QueryParams();
@@ -213,7 +177,7 @@ export async function listHosts(
       params,
       DASHBOARD_SETTINGS,
     ),
-    // The names and scopes are constants, never input.
+    // Names and scopes are constants.
     labelsInRange(
       reader,
       "metric_points",
@@ -228,7 +192,6 @@ export async function listHosts(
     latest.find((row) => row.host === hostName && row.name === name);
   const hosts = listed.map((row): HostSummary => {
     const lastSeen = dateOfNs(row.last_ns);
-    /** The utilization metric's row when it has a value, else the fallback's. */
     const preferred = (utilization: string, fallback: string) => {
       const first = valueOf(row.host, utilization);
       return first !== undefined && first.value !== null ? first : valueOf(row.host, fallback);
@@ -253,7 +216,6 @@ export async function listHosts(
   };
 }
 
-/** Whether the project has any host metric from a named host, within the retention. */
 async function anyHost(reader: Reader, projectId: string): Promise<boolean> {
   const params = new QueryParams();
   const rows = await queryRows<{ found: number }>(
@@ -271,9 +233,8 @@ async function anyHost(reader: Reader, projectId: string): Promise<boolean> {
 }
 
 /**
- * Each host's window, [LATEST_WINDOW_MS before its last point, just after
- * it], within the range, in milliseconds; overlapping windows merged, so
- * the condition on time names each stretch once.
+ * Merges overlapping host windows, each from LATEST_WINDOW_MS before its last point through that
+ * point's millisecond.
  */
 export function latestWindows(
   range: TelemetryRange,
@@ -282,7 +243,7 @@ export function latestWindows(
   const windows = lastMs
     .map((last) => ({
       startMs: Math.max(range.from.getTime(), last - LATEST_WINDOW_MS),
-      // The last point's time in nanoseconds may lie within its millisecond.
+      // Include nanosecond timestamps within the last millisecond.
       endMs: last + 1,
     }))
     .toSorted((a, b) => a.startMs - b.startMs);
@@ -299,13 +260,8 @@ export function latestWindows(
 }
 
 /**
- * Each listed host's latest values, one row per host and metric (the
- * fullest mount point's for filesystems), as listHosts describes them.
- *
- * The time condition is each host's own window (latestWindows), as ranges
- * of the sorting key, so a host that stopped early in a long period reads
- * its last minutes, not the period between; then each row is kept only
- * within its own host's window.
+ * Time-key ranges cover each host's last minutes, even if it stopped early. Then filter each row
+ * to its own host's window (latestWindows).
  */
 async function latestValues(
   reader: Reader,
@@ -337,12 +293,8 @@ async function latestValues(
   const cpus = `(${name("cpuTime")}, ${name("cpuUtilization")})`;
   return queryRows<LatestRow>(
     reader,
-    // Per series: its last two points, latest first; the increase between
-    // them when they are of one run and did not go down (a delta point's
-    // value is its increase). Then per state: a CPU's series each apart
-    // (one per CPU), any other metric's latest across its series, so the
-    // old and new series of an upgraded Collector count once. Then per
-    // host, metric, and mount point.
+    // Use two points per series for rates. Keep CPUs separate, but take other metrics' latest
+    // series per state so Collector upgrades do not double-count.
     `SELECT host, name, mount,
             multiIf(
               name = ${name("cpuUtilization")}, (total - idle_total) / nullIf(total, 0),
@@ -401,11 +353,11 @@ async function latestValues(
   );
 }
 
-/** One line of a host's chart: a value per bucket, null where nothing arrived. */
+/** One value per bucket; null without points. */
 export interface HostLine {
-  /** What it stands for ("idle", "/", "receive", a load average's metric), or null for points without one. */
+  /** State, mount, direction, or load metric; null when absent. */
   value: string | null;
-  /** Values past the chart's eight lines, added up (metrics.ts, SPLIT_LINES). */
+  /** Low-volume values fold into "other" within eight lines (metrics.ts, SPLIT_LINES). */
   other: boolean;
   values: (number | null)[];
 }
@@ -426,18 +378,18 @@ export interface HostChart {
   id: HostChartId;
   /** "%" (0 to 100), "By", "By/s", or "{thread}". */
   unit: string;
-  /** The metrics it was worked out from; empty when the host sent none of them. */
+  /** Source metrics; empty if none arrived. */
   metrics: string[];
   lines: HostLine[];
-  /** A metric had more series than a chart reads (metrics.ts, MAX_SERIES). */
+  /** A metric exceeded MAX_SERIES (metrics.ts). */
   capped: boolean;
 }
 
 export interface HostCharts {
   host: string;
-  /** null: no host metric from it in the range. */
+  /** Null without host metrics in the range. */
   lastSeen: Date | null;
-  /** As HostSummary's: null when the range ended before now. */
+  /** Null for historical ranges, as in HostSummary. */
   stale: boolean | null;
   start: Date;
   stepSeconds: number;
@@ -447,11 +399,10 @@ export interface HostCharts {
 
 type Values = (number | null)[];
 
-/** Per bucket, `f` of the bucket's index. */
 const perBucket = (count: number, f: (index: number) => number | null): Values =>
   Array.from({ length: count }, (_, index) => f(index));
 
-/** The sum of the lines' values at a bucket; null when none has one. */
+/** Returns null if no line has a value. */
 function sumAt(lines: readonly ChartSeries[], measure: string, index: number): number | null {
   let total: number | null = null;
   for (const line of lines) {
@@ -461,7 +412,7 @@ function sumAt(lines: readonly ChartSeries[], measure: string, index: number): n
   return total;
 }
 
-/** `part` over `whole` at each bucket, as a percentage; null without a whole above 0. */
+/** Returns percentages; null without a positive whole. */
 function percentOf(
   count: number,
   part: (index: number) => number | null,
@@ -480,34 +431,19 @@ const lineOf = (series: ChartSeries, values: Values): HostLine => ({
   values,
 });
 
-/** Whether any of the charts read fewer series than the metric has. */
 const capped = (...charts: MetricChart[]) => charts.some((chart) => chart.seriesCapped);
 
-/** The chart's metric, when it had any point. */
 const metricsOf = (chart: MetricChart) => (chart.series.length === 0 ? [] : [chart.name]);
 
 const named = (chart: MetricChart, value: string) =>
   chart.series.filter((series) => !series.other && series.value === value);
 
 /**
- * One host's charts over the range, in the buckets metrics.ts uses, each
- * from metricChart with the host's filter, in one query each (`single`):
- *
- * - cpu: the busy share, 100 less idle's share of all states: of the
- *   average utilization per state (system.cpu.utilization), else of the
- *   time per second per state (system.cpu.time's rates, all CPUs added up);
- * - cpuStates: each state's share of the same;
- * - memoryPercent: system.memory.utilization's `used` (its average), else
- *   system.memory.usage's `used` over its states but the slab's;
- * - memoryBytes: system.memory.usage's `used`;
- * - filesystem: per mount point, read-only mounts left out,
- *   system.filesystem.utilization (its average; its `used` state when it
- *   has states), else system.filesystem.usage's `used` over all its states;
- * - network and disk: bytes per second by direction (system.network.io,
- *   system.disk.io), all interfaces or disks added up;
- * - load: the 1, 5, and 15-minute load averages, each bucket's average.
- *
- * At most 10 chart queries and one for when the host was last seen.
+ * Uses metricChart's single-query mode with the host filter. CPU is 100 minus idle share, from
+ * utilization or summed CPU-time rates. Memory excludes slab from totals. Filesystems exclude
+ * read-only mounts and prefer utilization to usage shares. Network and disk sum byte rates across
+ * interfaces or disks; load averages each bucket. At most 10 chart queries plus one last-seen
+ * query.
  */
 export async function hostCharts(
   reader: Reader,
@@ -656,8 +592,7 @@ export async function hostCharts(
 
   async function filesystem(): Promise<HostChart> {
     const readOnly = { keys: MODE_KEYS, value: READ_ONLY };
-    // The receiver's utilization has no states; with states, as the
-    // semantic conventions have it, only `used` is the share used.
+    // Receiver utilization has no states. If states are present, only used is the used share.
     const utilization = await chartOf({
       name: HOST_METRICS.filesystemUtilization,
       kind: "gauge",
@@ -694,7 +629,6 @@ export async function hostCharts(
         exclude: readOnly,
       }),
     ]);
-    // Lines of the two charts are matched by their mount point (or both "other").
     const lines = usedChart.series.flatMap((used) => {
       const whole = wholeChart.series.find(
         (line) => line.other === used.other && line.value === used.value,
@@ -737,7 +671,6 @@ export async function hostCharts(
 
   async function load(): Promise<HostChart> {
     const names = [HOST_METRICS.load1m, HOST_METRICS.load5m, HOST_METRICS.load15m];
-    // The three in one query, a line per metric's name, shortest first.
     const chart = await chartOf({ name: HOST_METRICS.load1m, kind: "gauge", names });
     const lines = names.flatMap((name) => {
       const series = chart.series.find((line) => !line.other && line.value === name);

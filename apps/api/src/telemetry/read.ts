@@ -1,23 +1,15 @@
 import { Buffer } from "node:buffer";
 
 /**
- * Reading an OTLP request, decoded from either encoding into the same
- * shape: field names in lowerCamelCase, as OTLP's JSON has them.
- *
- * - From protobuf (wire.ts), 64-bit numbers arrive as bigint and bytes
- *   as Buffers.
- * - From JSON, 64-bit numbers arrive as decimal strings or numbers, trace
- *   and span IDs as hex, other bytes as base64, enums as numbers, and
- *   fields the definitions do not have are ignored.
- *
- * A value of the wrong type throws MalformedError: the request is not
- * OTLP, and the answer is 400.
+ * Both encodings use lowerCamelCase fields. Protobuf uses bigint and Buffers; JSON uses decimal
+ * strings or numbers for 64-bit integers, hex IDs, base64 bytes, and numeric enums. Unknown fields
+ * are ignored. Wrong types cause a 400.
  */
 export class MalformedError extends Error {
   override name = "MalformedError";
 }
 
-/** An own property, so a key such as "__proto__" never reads the prototype. */
+/** Only own properties, so "__proto__" cannot read the prototype. */
 function get(from: object, key: string): unknown {
   if (!Object.hasOwn(from, key)) return undefined;
   const value: unknown = Reflect.get(from, key);
@@ -28,7 +20,7 @@ function isObject(value: unknown): value is object {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/** A nested message; undefined when absent. */
+/** Returns undefined when absent. */
 export function message(from: object, key: string): object | undefined {
   const value = get(from, key);
   if (value === undefined || value === null) return undefined;
@@ -36,7 +28,7 @@ export function message(from: object, key: string): object | undefined {
   return value;
 }
 
-/** A repeated field of messages; empty when absent. */
+/** Returns an empty list when absent. */
 export function messages(from: object, key: string): object[] {
   return list(from, key).map((item) => {
     if (!isObject(item)) throw new MalformedError(`${key} holds something not an object`);
@@ -44,7 +36,7 @@ export function messages(from: object, key: string): object[] {
   });
 }
 
-/** A repeated field; empty when absent. */
+/** Returns an empty list when absent. */
 export function list(from: object, key: string): unknown[] {
   const value = get(from, key);
   if (value === undefined || value === null) return [];
@@ -68,7 +60,7 @@ export function bool(from: object, key: string): boolean {
 
 const INTEGER = /^-?\d{1,20}$/;
 
-/** A 64-bit integer: bigint (protobuf), a decimal string, or a whole number (JSON). */
+/** Accepts bigint, decimal strings, and whole numbers. */
 export function int64Of(value: unknown, key: string): bigint {
   if (typeof value === "bigint") return value;
   if (typeof value === "number" && Number.isInteger(value)) return BigInt(value);
@@ -76,13 +68,13 @@ export function int64Of(value: unknown, key: string): bigint {
   throw new MalformedError(`${key} is not an integer`);
 }
 
-/** A 64-bit integer field; 0 when absent. */
+/** Defaults to 0 when absent. */
 export function int64(from: object, key: string): bigint {
   const value = get(from, key);
   return value === undefined || value === null ? 0n : int64Of(value, key);
 }
 
-/** A 32-bit integer or an enum, as a number; 0 when absent. */
+/** Accepts integers and enums. Defaults to 0 when absent. */
 export function int32(from: object, key: string): number {
   const value = get(from, key);
   if (value === undefined || value === null) return 0;
@@ -91,7 +83,7 @@ export function int32(from: object, key: string): number {
   throw new MalformedError(`${key} is not an integer`);
 }
 
-/** A double: a number, or in JSON "NaN", "Infinity", "-Infinity", or a numeric string. */
+/** Accepts numbers and numeric strings, including "NaN", "Infinity", and "-Infinity". */
 export function doubleOf(value: unknown, key: string): number {
   if (typeof value === "number") return value;
   if (typeof value === "string") {
@@ -104,19 +96,18 @@ export function doubleOf(value: unknown, key: string): number {
   throw new MalformedError(`${key} is not a number`);
 }
 
-/** A double field; undefined when absent (OTLP's optional sum, min, and max). */
+/** Returns undefined for absent OTLP sum, min, and max fields. */
 export function double(from: object, key: string): number | undefined {
   const value = get(from, key);
   return value === undefined || value === null ? undefined : doubleOf(value, key);
 }
 
-/** Whether the field is present: which member of a oneof was sent. */
+/** Tests which oneof member was sent. */
 export function has(from: object, key: string): boolean {
   const value = get(from, key);
   return value !== undefined && value !== null;
 }
 
-/** The raw value of a field, for a oneof read by its member. */
 export function field(from: object, key: string): unknown {
   return get(from, key);
 }
@@ -125,8 +116,8 @@ const HEX = /^(?:[0-9a-fA-F]{2})*$/;
 const BASE64 = /^[A-Za-z0-9+/_-]*={0,2}$/;
 
 /**
- * A trace or span ID as lower-case hex: `length` bytes, or "" when absent
- * or empty. OTLP's JSON sends these in hex, protobuf as bytes.
+ * Returns lowercase hex of `length` bytes, or "" when absent or empty. JSON uses hex; protobuf
+ * uses bytes.
  */
 export function id(from: object, key: string, length: number): string {
   const value = get(from, key);
@@ -145,7 +136,7 @@ export function id(from: object, key: string, length: number): string {
   return hex;
 }
 
-/** An unsigned 64-bit integer field, such as a count; 0 when absent. */
+/** Defaults to 0 when absent. */
 export function uint64(from: object, key: string): bigint {
   const value = int64(from, key);
   if (value < 0n || value > 0xffff_ffff_ffff_ffffn) {
@@ -154,7 +145,7 @@ export function uint64(from: object, key: string): bigint {
   return value;
 }
 
-/** A bytes value other than an ID: a Buffer (protobuf), or base64 (JSON). */
+/** Accepts protobuf bytes or JSON base64. IDs use hex instead. */
 export function bytesOf(value: unknown, key: string): Buffer {
   if (value instanceof Uint8Array)
     return Buffer.from(value.buffer, value.byteOffset, value.byteLength);

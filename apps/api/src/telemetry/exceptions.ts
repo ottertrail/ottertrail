@@ -7,45 +7,35 @@ import { fingerprint } from "../errors/fingerprint.ts";
 import { ERROR } from "../visits/visits.ts";
 
 /**
- * A server's exceptions, received over OTLP, as error events: the rows the
- * browser's errors are (docs/telemetry.md, "Exceptions join the error
- * list"; docs/errors.md). normalize.ts finds them, on spans (events named
- * "exception") and in log records (with exception.type or
- * exception.message), and this builds each one's event.
+ * Converts OTLP span exception events and logs with exception.type or exception.message to error
+ * events (docs/telemetry.md, "Exceptions join the error list"; docs/errors.md).
  */
 
-/** At most this many of a span's exception events become errors: the first. */
+/** Only the first exceptions become error events. */
 export const MAX_EXCEPTIONS_PER_SPAN = 10;
 
-/**
- * The limits the API holds a browser's error to (collection/routes.ts), so
- * a server's fits what a browser's may hold.
- */
+/** Matches browser error limits (collection/routes.ts). */
 export const MAX_ERROR_TYPE_CHARS = 200;
 export const MAX_ERROR_MESSAGE_CHARS = 2000;
 export const MAX_ERROR_STACK_CHARS = 16_000;
 
-/** The attributes OpenTelemetry's semantic conventions give an exception. */
 export const EXCEPTION_TYPE = "exception.type";
 export const EXCEPTION_MESSAGE = "exception.message";
 export const EXCEPTION_STACKTRACE = "exception.stacktrace";
 
-/** An exception's attributes as sent, before they are cut. */
+/** Uncut attributes as sent. */
 export interface ExceptionAttributes {
   type?: string;
   message?: string;
   stacktrace?: string;
 }
 
-/** What one exception's event is made of. */
 export interface ExceptionSource {
   projectId: string;
-  /** The resource's, as the telemetry rows have them (normalize.ts). */
   service: string;
   environment: string;
   /** "" for none. */
   release: string;
-  /** The span's or log record's attributes: its route and its user. */
   attributes: Record<string, string>;
   exception: ExceptionAttributes;
   /** When it happened, in nanoseconds since 1970. */
@@ -54,41 +44,34 @@ export interface ExceptionSource {
   /** In hex, as the spans table has them; "" for none. */
   traceId: string;
   spanId: string;
-  /** What tells this exception from every other of the project: its ID is made from them. */
+  /** Project-scoped identity used to derive a stable event ID. */
   identity: string[];
 }
 
 const USER_ID = new RegExp(USER_ID_PATTERN);
-/** Control characters: none in a type, a path, or a user ID. */
+/** Types, paths, and user IDs cannot contain control characters. */
 // eslint-disable-next-line no-control-regex -- control characters are what it removes
 const CONTROL = /[\u0000-\u001F\u007F-\u009F]/g;
-/** As in a browser's message and stack: tabs and line feeds stay. */
+/** Preserves tabs and line feeds, as browser messages and stacks do. */
 // eslint-disable-next-line no-control-regex -- control characters are what it removes
 const CONTROL_BUT_LINES = /[\u0000-\u0008\u000B-\u001F\u007F-\u009F]/g;
 
-/** Text cut to `max` UTF-16 units, with no unpaired surrogate. */
+/** Cuts at UTF-16 boundaries without leaving an unpaired surrogate. */
 function cut(value: string, max: number): string {
   return (value.length <= max ? value : value.slice(0, max)).toWellFormed();
 }
 
-/**
- * A value without the characters `remove` matches, cut to `max`: cut to
- * four times that first, as values come uncut, up to a request's size.
- */
+/** Bounds regex work by cutting untrusted input to four times `max` first. */
 function cleaned(value: string | undefined, remove: RegExp, max: number): string {
   return cut(cut(value ?? "", max * 4).replace(remove, ""), max);
 }
 
-/** Whether the attributes make an exception: a type or a message, as the conventions require. */
+/** OpenTelemetry requires a type or message. */
 export function isException(exception: ExceptionAttributes): boolean {
   return (exception.type ?? "") !== "" || (exception.message ?? "") !== "";
 }
 
-/**
- * A UUID from a SHA-256 of the project and the exception's identity, with
- * the version nibble 8 and the RFC 4122 variant bits: a retried request makes
- * the same ID, so the events table keeps the event once.
- */
+/** Hashes project and identity into a UUID (version 8, RFC 4122 variant) so retries deduplicate. */
 export function exceptionEventId(projectId: string, identity: readonly string[]): string {
   const bytes = createHash("sha256")
     .update([projectId, ...identity].join("\n"), "utf8")
@@ -100,15 +83,14 @@ export function exceptionEventId(projectId: string, identity: readonly string[])
 }
 
 /**
- * The user's ID: `user.id`, else the older `enduser.id`, when it is one a
- * browser could send. An AI call takes its user the same way (ai/calls.ts).
+ * Uses user.id, then enduser.id, with browser user ID limits. AI calls use the same rule
+ * (ai/calls.ts).
  */
 export function userIdOf(attributes: Record<string, string>): string | undefined {
   const sent = attributes["user.id"] ?? attributes["enduser.id"];
   return sent !== undefined && USER_ID.test(sent) ? sent : undefined;
 }
 
-/** One exception's error event. */
 export function exceptionEvent(source: ExceptionSource): NewEvent {
   const type = cleaned(source.exception.type, CONTROL, MAX_ERROR_TYPE_CHARS).trim() || "Error";
   const message = cleaned(source.exception.message, CONTROL_BUT_LINES, MAX_ERROR_MESSAGE_CHARS);

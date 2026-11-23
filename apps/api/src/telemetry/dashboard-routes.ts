@@ -69,13 +69,12 @@ import { listTraces, spanDetail, traceChart, traceDetail, traceWindow } from "./
 const UUID_PATTERN =
   "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$";
 
-/** A moment as the dashboard sends it: an ISO 8601 time in UTC, such as an error's occurrence. */
+/** UTC ISO 8601 timestamps, including up to 9 fractional digits. */
 const MOMENT_PATTERN = "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,9})?Z$";
 
-/** How far back the alert form's route suggestions look: a day. */
 const RECENT_ROUTES_MS = 86_400_000;
 
-/** The longest minimum duration a filter takes: a day, in milliseconds. */
+/** Milliseconds; caps the filter at one day. */
 const MAX_MIN_DURATION_MS = 86_400_000;
 
 const PARAMS = {
@@ -112,7 +111,7 @@ const LOG_PARAMS = {
   },
 };
 
-/** A time in nanoseconds since 1970, as a span's or log record's key holds it. */
+/** Nanoseconds since 1970, matching span and log keys. */
 const NS_QUERY = (name: string) => ({
   type: "object",
   required: [name],
@@ -120,7 +119,7 @@ const NS_QUERY = (name: string) => ({
   properties: { [name]: { type: "string", pattern: "^[0-9]{1,19}$" } },
 });
 
-/** The access requireProjectAccess set: these routes always run it. */
+/** All routes run requireProjectAccess before this. */
 function accessOf(request: { projectAccess: ProjectAccess | null }): ProjectAccess {
   if (request.projectAccess === null) {
     throw new Error("requireProjectAccess must run before this route");
@@ -153,11 +152,10 @@ type ServiceChartQuery = RangeQuery & { service: string; route?: string };
 
 type DatabasesQuery = RangeQuery & { sort?: DatabaseSort };
 
-/** A query shape's ID: a UInt64 hash, as decimal text. */
+/** UInt64 hash as decimal text. */
 const SHAPE_ID_PATTERN = "^[0-9]{1,20}$";
 const MAX_UINT64 = 18_446_744_073_709_551_615n;
 
-/** The range's parameters alone, for the lists that take nothing else. */
 const RANGE_QUERY = { type: "object", additionalProperties: false, properties: RANGE_PROPERTIES };
 
 type LogsQuery = RangeQuery & {
@@ -170,7 +168,6 @@ type LogsQuery = RangeQuery & {
 
 type LiveQuery = Omit<LogsQuery, "before" | "period" | "from" | "to"> & { after?: string };
 
-/** The log search's filters, which its chart and the live view take too. */
 const LOG_FILTER_PROPERTIES = {
   service: { type: "string", pattern: SERVICE_PATTERN },
   severity: { type: "string", enum: Object.keys(SEVERITIES) },
@@ -178,7 +175,6 @@ const LOG_FILTER_PROPERTIES = {
   traceId: { type: "string", pattern: TRACE_ID_PATTERN },
 };
 
-/** The traces list's period and filters, which its chart takes too. */
 const TRACE_FILTER_PROPERTIES = {
   ...RANGE_PROPERTIES,
   service: { type: "string", pattern: SERVICE_PATTERN },
@@ -196,59 +192,21 @@ const BAD_SEARCH = {
 };
 
 /**
- * GET /api/projects/:id/traces[?period=7d|from=…&to=…&environment=…&service=…&name=…&errors=true&minDuration=<ms>&before=<cursor>]
- * GET /api/projects/:id/traces/chart[?period=…&environment=…&service=…&name=…&errors=true&minDuration=<ms>]
- *     (the list's traces per time bucket, those with errors, and the 95th-percentile duration)
- * GET /api/projects/:id/traces/:traceId[?at=<ISO time>]
- *     (looked for a day either side of `at` when given, else in all the telemetry kept)
- * GET /api/projects/:id/traces/:traceId/spans/:spanId?start=<ns since 1970>
- * GET /api/projects/:id/logs[?period=…&environment=…&service=…&severity=warn&search=…&traceId=…&before=<cursor>]
- *     (summaries: the body cut to 1,000 characters)
- * GET /api/projects/:id/logs/volume[?period=…&environment=…&service=…&severity=…&search=…&traceId=…]
- *     (the search's records per time bucket and severity range)
- * GET /api/projects/:id/logs/live[?environment=…&service=…&severity=…&search=…&traceId=…&after=<cursor>]
- *     (records that arrived after the cursor, an arrival in ns since 1970, in the last few
- *     minutes: the live view's poll, one a process at a time)
- * GET /api/projects/:id/logs/:logId?time=<ns since 1970>
- *     (one whole record: body, attributes, resource attributes)
- * GET /api/projects/:id/metrics[?period=…&environment=…]
- * GET /api/projects/:id/metrics/chart?name=…&kind=gauge|counter|updown|histogram[&split=<attribute key>&host=<host.name>&attr=<key>&attrValue=<value>&period=…&environment=…]
- *     (host: one host's series only; attr and attrValue: one attribute value's points only)
- * GET /api/projects/:id/metrics/sparkline?name=…&kind=gauge|counter|updown|histogram[&period=…&environment=…]
- *     (one listed metric in at most 30 buckets: its chart's default line; periods of up to 7 days)
- * GET /api/projects/:id/services[?period=…&environment=…]
- * GET /api/projects/:id/services/trend[?period=…&environment=…]
- *     (every service's requests together, in time buckets)
- * GET /api/projects/:id/services/chart?service=<name>[&route=<route>&period=…&environment=…]
- *     (one service's requests, or one route's, over the period, in time buckets)
- * GET /api/projects/:id/services/routes[?environment=…]
- *     (up to 200 distinct services and routes of the last 24 hours, for the alert form)
- * GET /api/projects/:id/databases[?period=…&environment=…&sort=time|p95|calls|failures]
- *     (each database's calls and its query shapes, the first 200 by the sort)
- * GET /api/projects/:id/databases/trend[?period=…&environment=…]
- *     (every database call together, in time buckets)
- * GET /api/projects/:id/databases/shapes/:shapeId[?period=…&environment=…]
- *     (one query shape over the period: charts, services, slowest calls, routes)
- * GET /api/projects/:id/hosts[?period=…&environment=…]
- * GET /api/projects/:id/hosts/charts?host=<host.name>[&period=…&environment=…]
- *
- * The Traces, Logs, Metrics, Services, Databases, and Hosts pages
- * (traces.ts, logs.ts, metrics.ts, services.ts, databases.ts, hosts.ts). Like every project
- * route, each runs requireProjectAccess first, and reads only the project
- * it found.
+ * Project telemetry reads. Each route runs requireProjectAccess and reads only that project
+ * (traces.ts, logs.ts, metrics.ts, services.ts, databases.ts, hosts.ts).
  */
 export const telemetryDashboardRoutes: FastifyPluginCallback<{
   db: Kysely<Database>;
   clickhouse: ClickHouseClient;
   auth: Auth;
-  /** Days telemetry is kept (TELEMETRY_RETENTION_DAYS): nothing older is read. */
+  /** Excludes older data (TELEMETRY_RETENTION_DAYS). */
   retentionDays: number;
   now?: () => Date;
-  /** Queries in flight on this process (dashboard-limit.ts); tests pass a smaller one. */
+  /** Process-wide query limit (dashboard-limit.ts). */
   limiter?: DashboardQueryLimiter;
-  /** Of those, the places the Metrics list's sparklines may hold (SPARKLINE_PLACES). */
+  /** Caps sparklines within the shared query pool (SPARKLINE_PLACES). */
   sparklineLimiter?: DashboardQueryLimiter;
-  /** The live view's polls in flight on this process, in front of `limiter` (liveReader). */
+  /** Live polls acquire this pool before `limiter` (liveReader). */
   liveLimiter?: DashboardQueryLimiter;
 }> = (
   app,
@@ -270,7 +228,6 @@ export const telemetryDashboardRoutes: FastifyPluginCallback<{
     dashboardReader(clickhouse, limiter, reply);
   app.setErrorHandler(clickHouseErrorHandler);
 
-  /** The request's days, in the instance's timezone, from the oldest kept; or the reason it is refused. */
   const rangeOf = (request: { query: RangeQuery; projectAccess: ProjectAccess | null }) =>
     telemetryRange(db, request.query, accessOf(request), now(), retentionDays);
 
@@ -372,7 +329,7 @@ export const telemetryDashboardRoutes: FastifyPluginCallback<{
         traceId,
         traceWindow(now(), retentionDays, at),
       );
-      // A trace with nothing kept is an answer, not an error: the page says so.
+      // An empty trace is a valid result the page can display.
       return { timeZone, retentionDays, ...detail };
     },
   );
@@ -403,7 +360,7 @@ export const telemetryDashboardRoutes: FastifyPluginCallback<{
         start,
       );
       if (span === null) {
-        // Not "not_found", which the access check answers for an unknown project.
+        // Reserve "not_found" for an unknown project from the access check.
         return reply.code(404).send({
           error: "no_span",
           message: "No span with this ID is stored. It may be past its retention period.",
@@ -529,7 +486,7 @@ export const telemetryDashboardRoutes: FastifyPluginCallback<{
       }
       const log = await logDetail(readerOf(reply), projectId, request.params.logId, time);
       if (log === null) {
-        // Not "not_found", which the access check answers for an unknown project.
+        // Reserve "not_found" for an unknown project from the access check.
         return reply.code(404).send({
           error: "no_log",
           message: "No log record with this ID is stored. It may be past its retention period.",
@@ -562,8 +519,7 @@ export const telemetryDashboardRoutes: FastifyPluginCallback<{
           additionalProperties: false,
           properties: {
             ...RANGE_PROPERTIES,
-            // As ingestion stores them: a name cut to 1,024 bytes (so at most
-            // as many characters), a key to 256 characters.
+            // Ingestion caps names at 1,024 bytes and keys at 256 characters.
             name: { type: "string", maxLength: MAX_NAME_BYTES },
             kind: { type: "string", enum: METRIC_KINDS },
             split: { type: "string", minLength: 1, maxLength: MAX_KEY_CHARS },
@@ -698,7 +654,7 @@ export const telemetryDashboardRoutes: FastifyPluginCallback<{
           properties: {
             ...RANGE_PROPERTIES,
             service: { type: "string", pattern: SERVICE_PATTERN },
-            // A route is its http.route attribute (a value, at most 4 KB) or its span's name.
+            // Routes come from http.route (at most 4 KB) or the span name.
             route: { type: "string", minLength: 1, maxLength: MAX_VALUE_BYTES },
           },
         },
@@ -848,7 +804,7 @@ export const telemetryDashboardRoutes: FastifyPluginCallback<{
           additionalProperties: false,
           properties: {
             ...RANGE_PROPERTIES,
-            // As ingestion stores an attribute's value: at most 4 KB (so at most as many characters).
+            // Ingestion caps attribute values at 4 KB, which also bounds character count.
             host: { type: "string", minLength: 1, maxLength: MAX_VALUE_BYTES },
           },
         },

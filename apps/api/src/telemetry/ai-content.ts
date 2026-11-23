@@ -1,13 +1,9 @@
 /**
- * AI prompts and completions, which Ottertrail never stores
- * (docs/telemetry.md, "AI prompts and completions are not stored"):
- * the attributes several AI instrumentations record them in, by default
- * in some (the Vercel AI SDK, OpenLLMetry, OpenInference), and the GenAI
- * log events whose body holds a message. normalize.ts leaves them out of
- * spans, span events, span links, and log records, and counts them as
- * dropped. It applies to every project and cannot be turned off.
+ * Never store AI prompts or completions (docs/telemetry.md, "AI prompts and completions
+ * are not stored"). normalize.ts drops and counts content in spans, events, links,
+ * and logs for every project. This cannot be disabled.
  *
- * Every name is taken from its library's own conventions or source:
+ * Attribute names come from library conventions and source:
  * - OpenTelemetry GenAI: https://github.com/open-telemetry/semantic-conventions-genai/blob/main/docs/registry/attributes/gen-ai.md
  *   and, for the deprecated names and events,
  *   https://github.com/open-telemetry/semantic-conventions/blob/main/docs/registry/attributes/gen-ai.md
@@ -21,13 +17,12 @@
  * - OpenInference (Arize): https://github.com/Arize-ai/openinference/blob/main/spec/attributes/semantic-conventions.md
  *   and what its settings hide: https://github.com/Arize-ai/openinference/blob/main/spec/configuration/trace-config.md
  *
- * Kept, for the AI usage page: token counts (gen_ai.usage.*,
+ * Keep AI usage metadata: token counts (gen_ai.usage.*,
  * llm.token_count.*, ai.usage.*), model, provider, and operation names,
  * finish reasons, error.type, gen_ai.agent.name, gen_ai.tool.name,
  * gen_ai.conversation.id, and IDs such as gen_ai.tool.call.id.
  */
 
-/** Attributes dropped by their exact name. */
 const EXACT = [
   // OpenTelemetry GenAI.
   "gen_ai.input.messages",
@@ -78,7 +73,7 @@ const EXACT = [
   "reranker.query",
 ];
 
-/** Attributes dropped with every attribute under them: "x" drops "x" and "x.…". */
+/** Drops the name and all children: "x" also drops "x.…". */
 const TREES = [
   // OpenTelemetry GenAI.
   "gen_ai.memory",
@@ -106,19 +101,14 @@ const TREES = [
 ];
 
 /**
- * Attributes dropped when the part after them is a number, as in
- * OpenLLMetry's gen_ai.prompt.0.content and gen_ai.completion.0.tool_calls.0.arguments,
- * but for a finish reason (gen_ai.completion.0.finish_reason). Names such
- * as gen_ai.prompt.name and gen_ai.prompt.version are kept.
+ * Drops numeric children such as gen_ai.prompt.0.content and
+ * gen_ai.completion.0.tool_calls.0.arguments. Keeps gen_ai.completion.0.finish_reason,
+ * gen_ai.prompt.name, and gen_ai.prompt.version.
  */
 const INDEXED = ["gen_ai.prompt", "gen_ai.completion"];
 const FINISH_REASON = ".finish_reason";
 
-/**
- * GenAI log events whose body is a message (OpenTelemetry's semantic
- * conventions up to v1.36.0), and the one that holds a call's messages in
- * its attributes: their body is dropped too.
- */
+/** GenAI message events through OpenTelemetry v1.36.0. Their bodies also contain content to drop. */
 const CONTENT_EVENTS = new Set([
   "gen_ai.system.message",
   "gen_ai.user.message",
@@ -134,7 +124,7 @@ const INDEXED_SET = new Set(INDEXED);
 
 const isDigit = (code: number) => code >= 0x30 && code <= 0x39;
 
-/** Whether an attribute holds AI prompt or completion content, by its name alone. */
+/** Checks attribute names without reading their values. */
 export function isAiContent(key: string): boolean {
   if (EXACT_SET.has(key)) return true;
   for (let dot = key.indexOf("."); dot !== -1; dot = key.indexOf(".", dot + 1)) {
@@ -147,7 +137,6 @@ export function isAiContent(key: string): boolean {
   return false;
 }
 
-/** Whether a log event's body is AI prompt or completion content, by the event's name. */
 export function isAiContentEvent(name: string): boolean {
   return CONTENT_EVENTS.has(name);
 }

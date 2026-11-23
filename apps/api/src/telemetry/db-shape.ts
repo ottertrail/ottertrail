@@ -1,16 +1,10 @@
 /**
- * A database call's system, database, and query shape, worked out by
- * ClickHouse when a span is written: MATERIALIZED columns of `spans`
- * (migration 0003_database_call_columns), as metrics' `series` is, so the
- * Databases pages read small columns instead of normalizing every
- * statement of a period (docs/telemetry.md, "Databases").
- *
- * The SQL here is part of that migration: a migration never changes once
- * run, so a change to these rules is a new migration that redefines the
- * columns (MODIFY COLUMN … MATERIALIZED) and materializes them again.
+ * MATERIALIZED spans columns let Databases pages read shapes without normalizing every statement
+ * (migration 0003_database_call_columns; docs/telemetry.md, "Databases"). Changing these rules
+ * requires a new migration to MODIFY COLUMN … MATERIALIZED and materialize existing rows again.
  */
 
-/** The attributes read, the first one a span has winning (docs/telemetry.md, "Databases"). */
+/** First present attribute wins (docs/telemetry.md, "Databases"). */
 export const ATTRIBUTES = {
   system: ["db.system.name", "db.system"],
   database: ["db.namespace", "db.name", "db.redis.database_index", "db.elasticsearch.cluster.name"],
@@ -26,25 +20,18 @@ export const ATTRIBUTES = {
   text: ["db.query.text", "db.statement"],
 } as const;
 
-/** A shape's displayed length, in characters; its ID hashes it whole. */
+/** Display limit in characters; the ID hashes the full shape. */
 export const MAX_SHAPE_CHARS = 1000;
-/**
- * How much of a query's text is normalized, in characters. Ingestion
- * already cuts an attribute's value to 4 KB, so this only bounds rows
- * written some other way.
- */
+/** Bounds rows written outside ingestion, which already caps attribute values at 4 KB. */
 export const MAX_TEXT_CHARS = 4096;
 
-/** Where a shape comes from: `db_shape_kind` 1, 2, and 3; 0 for a span that is no database call. */
+/** Maps to db_shape_kind 1, 2, 3; 0 means no database call. */
 export const SHAPE_KINDS = ["summary", "query", "operation"] as const;
 export type ShapeKind = (typeof SHAPE_KINDS)[number];
 
-/** A placeholder in a list: `?`, `$?` (a numbered one, after step 4), `@name`, or `:name`. */
+/** Includes numbered placeholders normalized to `$?`. */
 const PLACEHOLDER = String.raw`(?:\$?\?|@\w+|:\w+)`;
-/**
- * What a row of values may hold: a placeholder, a function call without
- * nested parentheses (`now()`, `lower(?)`), or NULL, DEFAULT, TRUE, FALSE.
- */
+/** Allows placeholders, unnested function calls, NULL, DEFAULT, TRUE, and FALSE. */
 const ROW_VALUE = String.raw`(?:${PLACEHOLDER}|\w+ ?\([^()]*\)|(?i:null|default|true|false))`;
 const ROW = String.raw`\( ?${ROW_VALUE}(?: ?, ?${ROW_VALUE})* ?\)`;
 const IN_LIST = String.raw`\( ?${PLACEHOLDER}(?: ?, ?${PLACEHOLDER})* ?(?:\)|,? ?$)`;
@@ -93,14 +80,12 @@ export const NORMALIZE_STEPS: readonly { pattern: string; replacement: string }[
   { pattern: String.raw`\)(?: ?, ?${ROW})+`, replacement: ")" },
 ];
 
-/** A ClickHouse string literal. */
 export const sqlString = (text: string) =>
   `'${text.replaceAll("\\", "\\\\").replaceAll("'", "\\'")}'`;
 
-/** A span attribute's value. Names are constants. */
+/** Names are constants. */
 const attributeValue = (name: string) => `attributes[${sqlString(name)}]`;
 
-/** The first of `names` a span's attributes have, else ''. */
 function firstAttribute(names: readonly string[]): string {
   const value = attributeValue;
   const last = names.at(-1);
@@ -109,7 +94,7 @@ function firstAttribute(names: readonly string[]): string {
   return tests.length === 0 ? value(last) : `multiIf(${tests.join(", ")}, ${value(last)})`;
 }
 
-/** The SQL that normalizes `text` (NORMALIZE_STEPS), trimmed, whole: up to MAX_TEXT_CHARS of input. */
+/** Normalizes at most MAX_TEXT_CHARS of input and trims the result. */
 export function normalizedText(text: string): string {
   let sql = `substringUTF8(${text}, 1, ${MAX_TEXT_CHARS})`;
   for (const step of NORMALIZE_STEPS) {
@@ -119,21 +104,13 @@ export function normalizedText(text: string): string {
 }
 
 /**
- * The columns' definitions, for ALTER TABLE spans ADD COLUMN. None holds
- * a branch around a regular expression: with short-circuit evaluation,
- * ClickHouse copies a lazily worked out branch's input, and 100,000 texts
- * of 4 KB passed 300 MB that way. So the text is normalized only when no
- * summary is sent (the input is '' otherwise, which costs nothing), and a
- * span that is no database call gets '' and 0 by arithmetic, not `if`.
+ * Avoid conditional branches around regexes: ClickHouse copies lazy branch inputs, and 100,000
+ * texts of 4 KB exceeded 300 MB. Normalize empty text when a summary exists; use arithmetic to
+ * give non-database spans '' and 0.
  *
- * - `db_system`: '' for a span that is no database call (not CLIENT, or
- *   without a system attribute).
- * - `db_shape_kind`: 1 summary, 2 query text, 3 operation and collection
- *   (or the span's name); 0 for no database call.
- * - `db_shape`: the shape as shown, cut to MAX_SHAPE_CHARS.
- * - `db_shape_id`: a hash of the system, database, kind, and the whole
- *   shape, so two long queries that differ past the cut stay apart; 0 for
- *   no database call.
+ * db_shape_kind: 1 summary, 2 query, 3 operation and collection (or span name), 0 no call.
+ * db_shape is capped at MAX_SHAPE_CHARS. db_shape_id hashes system, database, kind, and the full
+ * shape so differences past the display limit remain distinct.
  */
 export function databaseCallColumns(): string[] {
   const summary = firstAttribute(ATTRIBUTES.summary);
@@ -150,7 +127,6 @@ export function databaseCallColumns(): string[] {
   ];
 }
 
-/** The columns' names, in the order they are added. */
 export const DATABASE_CALL_COLUMNS = [
   "db_system",
   "db_namespace",

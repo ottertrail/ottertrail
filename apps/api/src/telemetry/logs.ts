@@ -13,22 +13,16 @@ import {
 } from "./dashboard-query.ts";
 
 /**
- * The dashboard's log search (docs/telemetry.md, "The dashboard"): a
- * project's log records, newest first, by period, environment, service,
- * severity, words in the body, and trace. Every query filters by project
- * first, then time; the words use the text index on `body`, a trace the
- * bloom filter on `trace_id` (clickhouse/migrations.ts).
+ * Filters by project and time before using the body text index or trace_id bloom filter
+ * (clickhouse/migrations.ts; docs/telemetry.md, "The dashboard").
  */
 
-/** Records a page of the search holds. */
 export const LOGS_PAGE_SIZE = 50;
-/** Records a trace's page reads. */
 export const MAX_TRACE_LOGS = 500;
 
 /**
- * The lowest severity number of each OpenTelemetry severity range (TRACE
- * 1 to 4, DEBUG 5 to 8, …, FATAL 21 to 24). A minimum leaves out records
- * that name no severity (0).
+ * OpenTelemetry severity minima: TRACE 1, DEBUG 5, through FATAL 21. A minimum excludes
+ * unspecified severity (0).
  */
 export const SEVERITIES = {
   trace: 1,
@@ -41,21 +35,17 @@ export const SEVERITIES = {
 export type Severity = keyof typeof SEVERITIES;
 
 /**
- * Characters of a body a list shows. A body may hold 64 KB, and a record
- * 128 attributes of 4 KB: lists send a summary with the body cut to this,
- * and a record's whole content comes when it is opened (logDetail).
+ * Lists truncate bodies to avoid sending up to 64 KB plus 128 attributes of 4 KB per row.
+ * logDetail returns full content.
  */
 export const SUMMARY_BODY_CHARS = 1000;
 
-/** Words a search may hold, and how long it may be. */
 export const MAX_SEARCH_WORDS = 8;
 export const MAX_SEARCH_LENGTH = 200;
 
 /**
- * The words of a search as the text index cuts a body into them
- * (tokenizer splitByNonAlpha): runs of ASCII letters and digits, and of
- * any characters beyond ASCII; every other ASCII character separates. So
- * a word never holds LIKE's special characters (%, _, and backslash).
+ * Matches splitByNonAlpha tokens: ASCII letters/digits and non-ASCII characters. Tokens exclude
+ * LIKE metacharacters (%, _, backslash).
  */
 export function searchWords(search: string): string[] {
   const words = search.split(/[^A-Za-z0-9\u{80}-\u{10FFFF}]+/u);
@@ -65,26 +55,22 @@ export function searchWords(search: string): string[] {
 export interface LogFilters {
   service?: string | undefined;
   severity?: Severity | undefined;
-  /** Words the body holds, all of them. */
+  /** Requires all words. */
   search?: string | undefined;
   traceId?: string | undefined;
   before?: Cursor | undefined;
 }
 
-/** A record as lists show it: what a row needs, and the start of its body. */
 export interface LogSummary {
   id: string;
   time: Date;
-  /** Its time in nanoseconds since 1970, as text: what finds its detail. */
+  /** Nanoseconds since 1970, used to find record detail. */
   timeNs: string;
-  /** 0 when the sender named none; 1 to 24 as OpenTelemetry numbers them. */
+  /** OpenTelemetry severity 1 to 24; 0 if unspecified. */
   severityNumber: number;
   severityText: string;
-  /** The first SUMMARY_BODY_CHARS characters. */
   body: string;
-  /** The body is longer than `body`. */
   bodyTruncated: boolean;
-  /** null without one. */
   traceId: string | null;
   spanId: string | null;
   eventName: string;
@@ -92,7 +78,6 @@ export interface LogSummary {
   environment: string;
 }
 
-/** A whole record, when one is opened. */
 export interface LogRecord extends Omit<LogSummary, "bodyTruncated"> {
   observedTime: Date;
   release: string;
@@ -115,8 +100,8 @@ interface SummaryRow {
   environment: string;
 }
 
-// The body is cut by ClickHouse, so the API never holds a whole one for a
-// list. Not "AS body": the alias would stand for the column in lengthUTF8.
+// Cut bodies in ClickHouse to bound API memory. An AS body alias would replace the input to
+// lengthUTF8 too.
 const SUMMARY_COLUMNS = `id, toString(toUnixTimestamp64Nano(timestamp)) AS time_ns,
   severity_number, severity_text, substringUTF8(body, 1, ${SUMMARY_BODY_CHARS}) AS body_start,
   lengthUTF8(body) > ${SUMMARY_BODY_CHARS} AS body_cut, trace_id, span_id, event_name, service,
@@ -139,12 +124,7 @@ function summaryOf(row: SummaryRow): LogSummary {
   };
 }
 
-/**
- * The conditions the search, its chart, and the live view share: the
- * project first, then the time (a range of when records happened, or none
- * for the live view, which adds its own), then the environment and
- * filters.
- */
+/** Shared filters for search, chart, and live view. The live view supplies its own time window. */
 function filterConditions(
   params: QueryParams,
   scope: { projectId: string; environment: string; from?: Date; to?: Date },
@@ -166,8 +146,8 @@ function filterConditions(
   if (filters.traceId !== undefined) {
     conditions.push(`trace_id = ${params.add(filters.traceId, "String")}`);
   }
-  // Each word, in any case, anywhere in the body: ClickHouse 26.8 reads the
-  // text index for ILIKE '%word%' (docs/telemetry.md, "How the pages read").
+  // ClickHouse 26.8 uses the text index for ILIKE '%word%' (docs/telemetry.md, "How the pages
+  // read").
   for (const word of searchWords(filters.search ?? "")) {
     conditions.push(`body ILIKE ${params.add(`%${word}%`, "String")}`);
   }
@@ -175,10 +155,8 @@ function filterConditions(
 }
 
 /**
- * Log records in the range, newest first, LOGS_PAGE_SIZE at a time, with
- * the cursor to the next page when there may be more. Read without FINAL,
- * in key order, so a page reads only as far back as it needs; copies of a
- * retried record are dropped (dashboard-query.ts, newestPage).
+ * Reads in reverse key order without FINAL to stop after a page. newestPage drops retry copies
+ * (dashboard-query.ts).
  */
 export async function searchLogs(
   reader: Reader,
@@ -189,7 +167,7 @@ export async function searchLogs(
   next: string | null;
   environments: string[];
   services: string[];
-  /** Whether the project has sent any log record at all: false shows how to send them. */
+  /** False shows setup instructions. */
   received: boolean;
 }> {
   const params = new QueryParams();
@@ -217,7 +195,7 @@ export async function searchLogs(
   };
 }
 
-/** A trace's log records within `window`, oldest first: the first MAX_TRACE_LOGS, as summaries. */
+/** Returns the first MAX_TRACE_LOGS within `window`, oldest first. */
 export async function logsOfTrace(
   reader: Reader,
   projectId: string,
@@ -225,7 +203,7 @@ export async function logsOfTrace(
   window: { from: Date; to: Date },
 ): Promise<{ logs: LogSummary[]; logsTruncated: boolean }> {
   const params = new QueryParams();
-  // FINAL: a trace's records are few, found by the bloom filter on trace_id.
+  // FINAL is bounded here: trace_id's bloom filter finds a small set.
   const rows = await queryRows<SummaryRow>(
     reader,
     `SELECT ${SUMMARY_COLUMNS}
@@ -244,10 +222,7 @@ export async function logsOfTrace(
   };
 }
 
-/**
- * One whole record, found by its row's key: the project, its time (from
- * the list), and its ID. null when no such record is kept.
- */
+/** Looks up (project, time, ID). Returns null when no record is retained. */
 export async function logDetail(
   reader: Reader,
   projectId: string,
@@ -307,7 +282,7 @@ export async function logDetail(
   };
 }
 
-/** A record's severity range, or "none" when the sender named none (0). */
+/** "none" means unspecified severity (0). */
 export const SEVERITY_LEVELS = [
   "none",
   "trace",
@@ -319,29 +294,20 @@ export const SEVERITY_LEVELS = [
 ] as const satisfies readonly ("none" | Severity)[];
 export type SeverityLevel = (typeof SEVERITY_LEVELS)[number];
 
-/** The Logs page's chart: records per time bucket and severity range. */
 export interface LogVolume {
-  /** The first bucket's start. */
   start: Date;
-  /** Each bucket's start, on the clock of the instance's timezone (listChartBuckets). */
+  /** Bucket starts in the instance timezone (listChartBuckets). */
   bucketStarts: Date[];
   stepSeconds: number;
   buckets: number;
-  /** Per severity range, a count per bucket. */
   counts: Record<SeverityLevel, number[]>;
-  /** Every record counted, all buckets and ranges together. */
   total: number;
 }
 
 /**
- * The records the search would find in the range, counted per time bucket
- * (listChartBuckets) and severity range, in one read: the project first,
- * then the range, then the search's own filters. Read without FINAL, as
- * the Traces chart and the Services page are (docs/telemetry.md, "How the
- * pages read"): a count reads every row of the range, the read FINAL was
- * measured to fail on for spans, so a retried record counts twice until
- * its day is merged, which the logs table forces within about an hour of
- * the day's last insert.
+ * Uses search filters and listChartBuckets. Reads without FINAL to bound memory
+ * (docs/telemetry.md, "How the pages read"). Retry copies count until daily merges, forced within
+ * about an hour of the day's last insert.
  */
 export async function logVolume(
   reader: Reader,
@@ -403,58 +369,34 @@ export async function logVolume(
   };
 }
 
-/** Records one poll of the live view sends at most: past it, the poll skips ahead to the newest. */
+/** When arrivals exceed this cap, polls skip to the newest records. */
 export const LIVE_PAGE_SIZE = 200;
-/** How far back the live view looks for arrivals: a cursor older than this is a gap. */
+/** Older cursors produce a gap. */
 export const LIVE_WINDOW_MS = 5 * 60_000;
-/**
- * How long after its arrival a record is first sent to the live view. A
- * record's arrival is ClickHouse's clock as it writes the batch, and the
- * batch shows once its part is committed, a moment later: reading only up
- * to this long ago leaves the commit time to finish first.
- */
+/** Leaves time for a batch part to commit after ClickHouse assigns its arrival time. */
 export const LIVE_SETTLE_MS = 2000;
-/**
- * How far before its cursor each poll reads again: a part that became
- * visible later than LIVE_SETTLE_MS after its rows' arrival (a slow
- * commit, an index being built) is still found, and the page drops the
- * records it already holds, by ID.
- */
+/** Rereads late commits and index builds beyond LIVE_SETTLE_MS. The page deduplicates by ID. */
 export const LIVE_REREAD_MS = 10_000;
 
-/** One poll of the live view. */
 export interface LiveLogs {
-  /** Newest arrival first; one copy of each record ID. */
+  /** Newest arrival first, deduplicated by record ID. */
   logs: LogSummary[];
-  /**
-   * Where the next poll starts, in nanoseconds since 1970: the arrival
-   * this poll read up to (LIVE_SETTLE_MS before ClickHouse's now).
-   */
+  /** Nanoseconds since 1970, LIVE_SETTLE_MS before ClickHouse's now. */
   cursor: string;
-  /** Records that arrived after the cursor but were not sent: more than a page came at once. */
+  /** Arrivals after the cursor omitted by the page cap. */
   skipped: number;
-  /**
-   * The cursor was older than LIVE_WINDOW_MS: what arrived from `from` to
-   * `to` is not read, and the poll started again at the window's start.
-   */
+  /** Cursor exceeded LIVE_WINDOW_MS; the poll restarted at the window start. */
   gap: { from: Date; to: Date } | null;
 }
 
 /**
- * The live view's poll: records of the environment and filters that
- * arrived after `after` (an arrival, in nanoseconds since 1970), less
- * LIVE_REREAD_MS, up to LIVE_SETTLE_MS before ClickHouse's now, the newest
- * LIVE_PAGE_SIZE first. When more than a page arrived after the cursor,
- * the older ones are skipped and counted: the page shows the newest, not a
- * backlog it would take many polls to read. A cursor older than
- * LIVE_WINDOW_MS is a gap: the poll reads from the window's start and says
- * what it left out. Without a cursor, it starts at the window's start. The
- * project first, then the arrival, which the minmax index on received_at
- * reads; records are kept for `retentionDays` by when they happened, which
- * bounds the time too. Two reads: ClickHouse's clock, then the records
- * with a count of those after the cursor. Read without FINAL: a retry is
- * written again with a later arrival, which FINAL could not join anyway,
- * so a poll drops a second row with an ID, and the page an ID it holds.
+ * Polls by ClickHouse arrival time, rereading LIVE_REREAD_MS before `after` and stopping
+ * LIVE_SETTLE_MS before now. Sends the newest LIVE_PAGE_SIZE records and counts skipped arrivals.
+ * Absent or expired cursors restart at LIVE_WINDOW_MS.
+ *
+ * Reads ClickHouse's clock, then project records via the received_at minmax index, also bounded by
+ * occurrence-time retention. FINAL cannot join retries with different arrivals; the poll and page
+ * deduplicate by record ID.
  */
 export async function liveLogs(
   reader: Reader,
@@ -477,10 +419,8 @@ export async function liveLogs(
     after !== undefined && after < windowStart
       ? { from: dateOfNs(after), to: dateOfNs(windowStart) }
       : null;
-  // Read from: the cursor, or the window's start when there is none or it is too old.
   const since = after === undefined || gap !== null ? windowStart : after;
   const reread = since - BigInt(LIVE_REREAD_MS) * ms;
-  // The re-read reaches no further back than the window's start.
   const readFrom =
     after === undefined || gap !== null ? since : reread < windowStart ? windowStart : reread;
 
@@ -516,9 +456,8 @@ export async function liveLogs(
     seen.add(row.id);
     return true;
   });
-  // Skipped: the records that arrived after the cursor, less those this poll sent.
   const arrived = Number(rows[0]?.after_cursor ?? 0);
-  // Records, not rows: a retried record's copies count once, as the count above does.
+  // Count unique record IDs, matching the arrival count above.
   const sentNew = new Set(
     rows.filter((row) => BigInt(row.received_ns) > since).map((row) => row.id),
   ).size;
@@ -526,9 +465,9 @@ export async function liveLogs(
   return {
     logs: unique.map(summaryOf),
     cursor: upper > since ? upper.toString() : since.toString(),
-    // A fresh start shows the newest page of the window; nothing is missed but what came before.
+    // Fresh starts skip only arrivals before the displayed page.
     skipped: after === undefined || gap !== null ? 0 : Math.max(0, arrived - sentNew),
-    // After a gap, a window fuller than a page leaves out its older part too.
+    // A full page after a gap can also omit older records within the window.
     gap:
       gap === null
         ? null

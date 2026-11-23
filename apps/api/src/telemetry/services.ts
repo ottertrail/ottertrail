@@ -8,43 +8,28 @@ import {
 import { bucketSeconds, bucketsOf } from "./metrics.ts";
 
 /**
- * The dashboard's Services page and a service's or route's page
- * (docs/telemetry.md, "How services are counted"): for each service, and
- * each route of its server spans, the requests in the range, the share
- * that failed, the median, 95th, and 99th-percentile duration, and the
- * requests by status class; and one service or route over the range, in
- * time buckets.
- *
- * A request is a span of kind SERVER. Its route is its `http.route`
- * attribute, else its name. Spans are read without FINAL (SERVICES_FINAL):
- * a retried span counts twice, on the list and the charts alike (so the
- * two agree), until its day is merged. ClickHouse merges when it decides,
- * so the spans table forces it within about an hour of the day's last
- * insert (FORCE_MERGE_SECONDS, migration 0002 in clickhouse/migrations.ts).
+ * Requests are SERVER spans; routes use http.route or span name (docs/telemetry.md, "How services
+ * are counted"). Lists and charts omit FINAL (SERVICES_FINAL), so retries count until daily
+ * merges, forced within about an hour of the day's last insert (FORCE_MERGE_SECONDS, migration
+ * 0002 in clickhouse/migrations.ts).
  */
 
 /**
- * Whether the Services pages read FINAL. They do not: on a busy project
- * with many unmerged parts, FINAL's merge passed the 300 MB a query
- * may use (measured in docs/telemetry.md, "How services are counted").
+ * FINAL exceeded the 300 MB query limit on busy unmerged parts (docs/telemetry.md, "How services
+ * are counted").
  */
 export const SERVICES_FINAL = false;
 
-/** A request's status class, from its HTTP status code; "none" without one in 200–599. */
+/** "none" covers absent status codes and codes outside 200 to 599. */
 export const STATUS_CLASSES = ["2xx", "3xx", "4xx", "5xx", "none"] as const;
 export type StatusClass = (typeof STATUS_CLASSES)[number];
 export type StatusCounts = Record<StatusClass, number>;
 
-/**
- * A request's HTTP status code: `http.response.status_code`, else the
- * older `http.status_code`.
- */
 const STATUS_CODE =
   "if(attributes['http.response.status_code'] != '', attributes['http.response.status_code'], attributes['http.status_code'])";
-/** Its class as a digit, 2 to 5; 0 for no code, or one that is not a number from 200 to 599. */
+/** 0 means absent, nonnumeric, or outside 200 to 599. */
 const STATUS_DIGIT = `transform(intDiv(toUInt32OrZero(${STATUS_CODE}), 100), [2, 3, 4, 5], [2, 3, 4, 5], 0)`;
 
-/** Each class's count, as columns s2 … s5 and s0 of a grouped query. */
 const STATUS_COLUMNS =
   "countIf(status_class = 2) AS s2, countIf(status_class = 3) AS s3, countIf(status_class = 4) AS s4, countIf(status_class = 5) AS s5, countIf(status_class = 0) AS s0";
 
@@ -64,34 +49,34 @@ const statusesOf = (row: StatusRow): StatusCounts => ({
   none: Number(row.s0),
 });
 
-/** Routes listed per service, those with the most requests; routeCount says how many there are. */
+/** Keeps the busiest routes; routeCount includes omitted routes. */
 export const MAX_ROUTES = 100;
-/** Services listed, by name; past this, the page says it was cut. */
+/** Keeps the first services by name; reports truncation. */
 export const MAX_SERVICES = 200;
 
 export interface RouteStats {
   requests: number;
   failed: number;
-  /** Interpolated between the two nearest durations (quantileExactInclusive), as the Speed page's p75. */
+  /** Interpolates neighboring durations (quantileExactInclusive), as Speed's p75 does. */
   p50Us: number;
   p95Us: number;
   p99Us: number;
-  /** The requests by status class; they add up to `requests`. */
+  /** Counts sum to requests. */
   statuses: StatusCounts;
 }
 
 export interface ServiceSummary extends RouteStats {
   service: string;
-  /** All its routes in the range: more than `routes` holds when it was cut. */
+  /** Includes routes omitted by the cap. */
   routeCount: number;
   routes: (RouteStats & { route: string })[];
 }
 
 interface CountRow extends StatusRow {
   service: string;
-  /** A hash of the service and route, as text; the second query finds the route's name and durations by it. */
+  /** Hash avoids grouping by long route names; the second query resolves names and durations. */
   route_id: string;
-  /** "1" for the service's own row, which adds up all its routes (UInt64, as text). */
+  /** "1" marks the service total (UInt64 as text). */
   whole: string;
   requests: string;
   failed: string;
@@ -100,34 +85,27 @@ interface CountRow extends StatusRow {
 
 interface DurationRow {
   service: string;
-  /** null: the service's own row; a route's ID only for the routes listed. */
+  /** Null for the service total; IDs only for listed routes. */
   route_id: string | null;
   route: string;
   durations: number[];
 }
 
-/** A request's route: its `http.route` attribute, else its name. */
 export const ROUTE = "if(attributes['http.route'] != '', attributes['http.route'], name)";
 
-/** Which requests to read: a project's, in one environment, in [from, to), optionally one service's and route's. */
 export interface SpanScope {
   projectId: string;
   environment: string;
   from: Date;
   to: Date;
   service?: string | undefined;
-  /** null or undefined: every route of the service. */
+  /** Null or undefined selects all routes. */
   route?: string | null | undefined;
 }
 
 /**
- * The requests in scope (each once only with `final`): their time,
- * service, route, status, status class (STATUS_DIGIT), and duration. The
- * Services page and a service's or route's charts count from this.
- *
- * PREWHERE reads the project's rows of the range, and of the service when
- * one is named, before anything else: a span's attributes, for its route
- * and status code, are read only for those.
+ * PREWHERE reads project, time, and service before attributes needed for route and status.
+ * Deduplicates only with `final`.
  */
 export function serverSpans(
   params: QueryParams,
@@ -150,43 +128,29 @@ export function serverSpans(
       }`;
 }
 
-/** One service's, or one route's, requests over a window. */
 export interface WindowStats {
   requests: number;
   failed: number;
-  /** null without a request. Interpolated, as the Services page's. */
+  /** Null without requests; interpolated as in Services. */
   p95Us: number | null;
   p99Us: number | null;
 }
 
-/** A route rule's requests: one service's, of one route or all (null). */
 export interface RouteTarget {
   service: string;
   route: string | null;
 }
 
-/** A target over its own window, which ends where the read does. */
+/** Each target's window ends at the read cutoff. */
 export interface WindowTarget extends RouteTarget {
   from: Date;
 }
 
 /**
- * The requests of each target (a service, or one of its routes) in its
- * window, all ending at `to`, of one environment, all in one read of the
- * longest window: how many,
- * how many failed, and their 95th and 99th percentile duration, counted
- * as the Services page counts them (a SERVER span; its route its
- * `http.route`, else its name), each target with its own -If combinators.
- *
- * PREWHERE keeps the read to the targets' services before anything else
- * is read; a span's attributes, for its route, are read only for those,
- * and only when a target names a route.
- *
- * Read without FINAL (`final` false, as the alert rules read it): a
- * retried copy counts twice in the window until its day is merged (forced
- * within about an hour of the day's last insert, migration 0002), which
- * barely moves a share or a percentile, and FINAL's merge of every part
- * of a busy window costs far more (docs/uptime-alerts.md, step 4).
+ * Reads all target windows together using -If combinators. PREWHERE filters services before
+ * attributes, and attributes are needed only for route targets. Without FINAL, retries count until
+ * daily merges (forced within about an hour of the day's last insert, migration 0002). This barely
+ * affects shares or percentiles and avoids costly merges (docs/uptime-alerts.md, step 4).
  */
 export async function routeWindows(
   reader: Reader,
@@ -202,7 +166,7 @@ export async function routeWindows(
     `timestamp >= ${params.time(target.from)} AND service = ${params.add(target.service, "String")}${
       target.route === null ? "" : ` AND route = ${params.add(target.route, "String")}`
     }`;
-  // The aliases are built from the index, never from input.
+  // Aliases use indices, never input.
   const columns = targets.map((target, index) => {
     const where = condition(target);
     return `countIf(${where}) AS r${index},
@@ -237,12 +201,7 @@ export async function routeWindows(
   });
 }
 
-/**
- * Whether any request of the service (and route) arrived in [from, to):
- * first whether the service sent any span at all, from the narrow columns
- * only; then, for a route, one of its requests, its spans' attributes read
- * only for the service's.
- */
+/** Checks narrow service columns first, then reads attributes only for route targets. */
 export async function requestsSeen(
   reader: Reader,
   scope: SpanScope & { service: string },
@@ -279,14 +238,11 @@ export async function requestsSeen(
   return rows.length > 0;
 }
 
-/** Routes a project's services had in a period: what the alert form suggests. */
 export const MAX_RECENT_ROUTES = 200;
 
 /**
- * Up to MAX_RECENT_ROUTES distinct (service, route) pairs of the server
- * spans in [from, to) and one environment, for the alert form's
- * suggestions: DISTINCT with a LIMIT stops reading once it has them, so a
- * busy day costs a little of its spans, not the Services page's counts.
+ * DISTINCT with LIMIT stops after MAX_RECENT_ROUTES suggestions, avoiding a full Services-page
+ * aggregation.
  */
 export async function recentRoutes(
   reader: Reader,
@@ -320,18 +276,14 @@ export async function listServices(
   { final = SERVICES_FINAL }: { final?: boolean } = {},
 ): Promise<{
   services: ServiceSummary[];
-  /** More than MAX_SERVICES services: the list holds the first by name. */
+  /** Keeps the first MAX_SERVICES by name. */
   truncated: boolean;
   environments: string[];
-  /** Whether the project has sent any span at all. */
   received: boolean;
 }> {
   const spans = (params: QueryParams) => serverSpans(params, range, { final });
-  // First counts alone, by a hash of each route rather than its name, so
-  // a service with a million span names costs a million small groups:
-  // each service once (grouping by service alone), then each of its
-  // routes; LIMIT BY keeps the service's row and its busiest routes. `uniq`
-  // counts a service's routes (exactly up to 65,536, then approximately).
+  // Hash route names to bound group size. LIMIT BY keeps service totals and busiest routes. uniq
+  // is exact through 65,536 routes, then approximate.
   const countParams = new QueryParams();
   const [rows, labels] = await Promise.all([
     queryRows<CountRow>(
@@ -351,9 +303,8 @@ export async function listServices(
     ),
     labelsInRange(reader, "spans", range, "AND kind = 'server'"),
   ]);
-  // Then the names and durations, exactly, of each service and of the
-  // routes listed only: every other route's spans share one group per
-  // service, so the groups are a few hundred however many routes there are.
+  // Resolve names and exact durations only for listed routes. Group all other routes together per
+  // service to bound aggregate memory.
   const listed = rows.filter((row) => row.whole !== "1").map((row) => row.route_id);
   const durationParams = new QueryParams();
   const durations =
@@ -384,7 +335,7 @@ export async function listServices(
     return {
       requests: Number(row.requests),
       failed: Number(row.failed),
-      // Nanoseconds, interpolated, so not whole: microseconds as the other pages give durations.
+      // Interpolated nanoseconds may be fractional; convert to microseconds.
       p50Us: p50 / 1000,
       p95Us: p95 / 1000,
       p99Us: p99 / 1000,
@@ -418,24 +369,21 @@ export async function listServices(
   };
 }
 
-/** A service's or route's requests over the range, in time buckets (bucketsOf, as a metric's chart). */
 export interface ServiceChart {
   service: string;
-  /** null: every route of the service. */
+  /** Null selects all routes. */
   route: string | null;
-  /** The first bucket's start. */
   start: Date;
   stepSeconds: number;
   buckets: number;
-  /** The whole range, counted as the Services page counts it: the buckets add up to these. */
+  /** Buckets sum to these totals, matching the Services list. */
   totals: RouteStats;
-  /** Per bucket: the requests, the failed ones, and the requests of each status class. */
   counts: { requests: number[]; failed: number[]; statuses: Record<StatusClass, number[]> };
-  /** Each class's requests per second, over the bucket's seconds within the range and before now. */
+  /** Uses bucket seconds within the range and before now. */
   perSecond: Record<StatusClass, (number | null)[]>;
-  /** The failed share, 0 to 1; null without a request. */
+  /** 0 to 1; null without requests. */
   failedShare: (number | null)[];
-  /** The percentiles of the bucket's durations, in microseconds; null without a request. */
+  /** Microseconds; null without requests. */
   durations: { p50Us: (number | null)[]; p95Us: (number | null)[]; p99Us: (number | null)[] };
 }
 
@@ -451,13 +399,8 @@ interface ChartRow extends StatusRow {
 const EMPTY_STATUSES: StatusCounts = { "2xx": 0, "3xx": 0, "4xx": 0, "5xx": 0, none: 0 };
 
 /**
- * One service's requests, or one of its routes', over the range, in the
- * buckets a metric's chart would have (bucketsOf), and over the whole
- * range, in one read: GROUPING SETS ((), (bucket)), each with the same
- * counts and exact percentiles as the Services page. A span later than the
- * last bucket (a clock ahead, or past the 300 buckets) counts in the last,
- * so the buckets add up to the totals, and the totals are the Services
- * page's for the same range.
+ * GROUPING SETS reads buckets and totals together. Late spans join the last bucket so sums match
+ * the Services list, including spans past the 300-bucket cap.
  */
 export async function serviceChart(
   reader: Reader,
@@ -473,15 +416,11 @@ export async function serviceChart(
   };
 }
 
-/** Every service's requests together over the range: the Services page's charts above its list. */
 export type ServicesTrend = Omit<ServiceChart, "service" | "route">;
 
 /**
- * Every server span of the project's environment over the range, in the
- * buckets of a service's chart (bucketsOf), in one read, counted as the
- * Services page counts them: the totals are the sum of the page's
- * services, copies of a retried span included until its day is merged
- * (SERVICES_FINAL), so the charts and the list agree.
+ * Uses the same buckets and counting rules as Services, including unmerged retries
+ * (SERVICES_FINAL), so chart and list totals agree.
  */
 export async function servicesTrend(
   reader: Reader,
@@ -492,7 +431,6 @@ export async function servicesTrend(
   return requestChart(reader, range, null, now, final);
 }
 
-/** The requests of one service or route (or of all services, for null) over the range, in buckets. */
 async function requestChart(
   reader: Reader,
   range: TelemetryRange,
@@ -557,7 +495,7 @@ async function requestChart(
     const requests = Number(row.requests);
     const [p50 = 0, p95 = 0, p99 = 0] = row.durations;
     if (String(row.whole) === "1") {
-      // The whole range: an empty read still has this row, with no request.
+      // The total row exists even when the read is empty.
       totals = {
         requests,
         failed: Number(row.failed),
@@ -606,30 +544,23 @@ async function requestChart(
   };
 }
 
-/** Nanoseconds as microseconds; null without a request. */
 const durationOf = (requests: number, ns: number) => (requests === 0 ? null : ns / 1000);
 
-/** Services the overview lists: the busiest. */
+/** Keeps the busiest services. */
 export const OVERVIEW_SERVICES = 5;
 
-/** One service's requests over a period and the period before, for the overview. */
 export interface ServiceTotals {
   service: string;
   requests: number;
   failed: number;
-  /** null without a request. Interpolated, as the Services page's. */
+  /** Null without requests; interpolated as in Services. */
   p95Us: number | null;
   previous: { requests: number; failed: number; p95Us: number | null };
 }
 
 /**
- * The busiest services' requests, failed requests, and 95th-percentile
- * duration in [from, to), each with the same for [previousFrom,
- * previousTo), counted as the Services page counts them (a SERVER span,
- * read without FINAL), in one read of both periods. Lighter than the
- * Services page: no routes, so a span's attributes are never read, and
- * only the columns the figures need. At most OVERVIEW_SERVICES, those with
- * the most requests in the period; `more` says whether others had any.
+ * Reads current and previous periods together, without FINAL. Omits routes to avoid reading
+ * attributes. Keeps the busiest OVERVIEW_SERVICES; `more` reports others.
  */
 export async function serviceTotals(
   reader: Reader,

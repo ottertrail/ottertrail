@@ -8,60 +8,44 @@ import {
 } from "./dashboard-query.ts";
 
 /**
- * The dashboard's metrics (docs/telemetry.md, "The dashboard"): the
- * metrics a project sent in a period, and one metric as a chart over the
- * period, in time buckets, optionally split by one attribute.
- *
- * A series is one combination of a metric's service, scope, attributes,
- * resource attributes, and temporality (a histogram's also its bounds):
- * the `series` column, a hash worked out when the row is written
- * (clickhouse/migrations.ts). Rates and histogram steps are worked out per
- * series in ClickHouse, with window functions over the series ordered by
- * time, then added up per bucket and per value of the split attribute.
- * The metric tables are ordered by project, then name, then time, so a
- * chart reads only its metric's rows.
+ * Series hashes include service, scope, attributes, resource attributes, and temporality;
+ * histograms also include bounds (clickhouse/migrations.ts). Compute rates and histogram
+ * differences per series before aggregating buckets and split values. Sort keys (project, name,
+ * time) limit reads to one metric (docs/telemetry.md, "The dashboard").
  */
 
 /**
- * What a metric is, as the dashboard names it: a gauge, a monotonic sum
- * (a counter), a sum that goes up and down (an up-down counter), or a
- * histogram with explicit buckets.
+ * Counters are monotonic sums; up-down counters are nonmonotonic sums; histograms use explicit
+ * buckets.
  */
 export const METRIC_KINDS = ["gauge", "counter", "updown", "histogram"] as const;
 export type MetricKind = (typeof METRIC_KINDS)[number];
 
-/** Metrics the list holds; past this, it says it was cut. */
+/** Reports truncation past this cap. */
 export const MAX_METRICS = 1000;
-/** Series a chart reads, those with the most points; past this, it says it was cut. */
+/** Keeps the series with most points; reports truncation. */
 export const MAX_SERIES = 1000;
 /**
- * Lines a split chart draws: with more values than this, the values with
- * the least volume fold into one "other" line, so there are at most this
- * many lines with it (the design system's eight chart colors).
+ * Matches eight design-system chart colors. Low-volume values fold into one "other" line within
+ * this cap.
  */
 export const SPLIT_LINES = 8;
-/** Time buckets a chart has at most. */
 export const MAX_BUCKETS = 300;
-/** Bucket lengths, in seconds: the shortest that keeps a chart within MAX_BUCKETS. */
+/** Seconds; choose the shortest step within MAX_BUCKETS. */
 const STEPS_SECONDS = [
   60, 120, 300, 600, 900, 1800, 3600, 7200, 10_800, 21_600, 43_200, 86_400, 172_800, 604_800,
 ];
-/**
- * How far before the range a chart reads, at least, so the first point of
- * a cumulative series in the range has the point before it.
- */
+/** Reads a previous point for the first cumulative point in range. */
 const MIN_LOOKBACK_MS = 3_600_000;
-/** Services a metric of the list names; serviceCount says how many there are. */
+/** serviceCount includes services omitted by this cap. */
 const LIST_SERVICES = 10;
-/** Attribute keys a chart offers to split by. */
 const MAX_SPLIT_KEYS = 100;
 
 const NANOS_PER_MS = 1_000_000n;
 
-/** Milliseconds since 1970 as nanoseconds, as text for an Int64 parameter. */
+/** Nanosecond text for Int64 parameters. */
 const ns = (ms: number) => (BigInt(ms) * NANOS_PER_MS).toString();
 
-/** Each kind's rows: its table, and the condition that picks them. */
 const KIND_ROWS: Record<MetricKind, { table: string; condition: string }> = {
   gauge: { table: "metric_points", condition: "kind = 'gauge'" },
   counter: { table: "metric_points", condition: "kind = 'sum' AND monotonic" },
@@ -72,28 +56,24 @@ const KIND_ROWS: Record<MetricKind, { table: string; condition: string }> = {
 export interface MetricSummary {
   name: string;
   kind: MetricKind;
-  /** The unit its latest point named, such as "ms" or "By"; "" when none. */
+  /** Latest point's unit, e.g. "ms" or "By"; "" if absent. */
   unit: string;
-  /** Up to LIST_SERVICES of the services sending it, by name. */
+  /** Up to LIST_SERVICES, sorted by name. */
   services: string[];
   serviceCount: number;
   lastSeen: Date;
 }
 
-/**
- * The metrics with points in the range and environment, by name, each
- * with its kind, unit, services, and when it was last seen. Read without
- * FINAL: a retried copy does not change any of these.
- */
+/** Omits FINAL because retries cannot change names, units, services, or last-seen times. */
 export async function listMetrics(
   reader: Reader,
   range: TelemetryRange,
 ): Promise<{
   metrics: MetricSummary[];
-  /** More than MAX_METRICS metrics: the list holds the first by name. */
+  /** Keeps the first MAX_METRICS by name. */
   truncated: boolean;
   environments: string[];
-  /** Whether the project has sent any metric at all: false shows how to send them. */
+  /** False shows setup instructions. */
   received: boolean;
 }> {
   const params = new QueryParams();
@@ -148,26 +128,20 @@ export async function listMetrics(
   };
 }
 
-/** A chart's time buckets: `count` of `stepMs` each, from `firstMs`, the last cut at `endMs`. */
+/** The last bucket is clipped at endMs. */
 export interface Buckets {
   firstMs: number;
   stepMs: number;
   count: number;
-  /** The range's start (after the retention's cut): the first bucket's seconds count from here. */
+  /** Clipped range start; first-bucket seconds count from here. */
   fromMs: number;
-  /** The range's end, or now when sooner: no bucket reaches past it. */
+  /** Range end or now, whichever is earlier. */
   endMs: number;
 }
 
 /**
- * The buckets of a range: the shortest step that keeps them within
- * `maxBuckets` (MAX_BUCKETS for a chart), counted from the start of the range's first day so they
- * fall on whole minutes and hours of the instance's time, from the
- * range's start (or the retention's) to its end or now, whichever is sooner.
- * A range of several days takes its step from all of it, to its end, so
- * its chart keeps one step at every time of day (7 days are hourly at
- * 00:10 as at 23:50); a range of one day takes it from the part up to now,
- * so today's chart is not a few wide buckets in its first hours.
+ * Aligns buckets to the first day's start. Multi-day ranges use the full span for a stable step;
+ * today uses elapsed time for finer early buckets. Clips to retention and now.
  */
 export function bucketsOf(
   range: Pick<TelemetryRange, "dayStart" | "from" | "to" | "firstDay" | "lastDay">,
@@ -190,7 +164,7 @@ export function bucketsOf(
   throw new Error("unreachable: the last step always returns");
 }
 
-/** The seconds of a bucket within the range: the first and last may be cut short. */
+/** First and last buckets may be partial. */
 export function bucketSeconds(buckets: Buckets, index: number): number {
   const start = Math.max(buckets.fromMs, buckets.firstMs + index * buckets.stepMs);
   const end = Math.min(buckets.endMs, buckets.firstMs + (index + 1) * buckets.stepMs);
@@ -198,12 +172,9 @@ export function bucketSeconds(buckets: Buckets, index: number): number {
 }
 
 /**
- * The value at quantile `q` (0 to 1) of a histogram's buckets: the bucket
- * the rank `q × total` falls in, and a straight line across it between its
- * lower and upper bound. Bucket i holds values in (bounds[i-1], bounds[i]];
- * the first starts at the minimum when known (else 0, or its bound when
- * that is not above 0), the last, which has no upper bound, ends at the
- * maximum when known, else at its lower bound. null without any count.
+ * Interpolates rank q × total (q from 0 to 1) within (bounds[i-1], bounds[i]]. The first bucket
+ * starts at known min, else 0 or a nonpositive upper bound. The unbounded last bucket ends at
+ * known max, else its lower bound. Returns null for zero count.
  */
 export function quantileOfBuckets(
   bounds: readonly number[],
@@ -238,46 +209,33 @@ export function quantileOfBuckets(
 export interface ChartOptions {
   name: string;
   kind: MetricKind;
-  /** An attribute key: one line per value of it. */
   split?: string | undefined;
   /**
-   * Instead of `split`, several keys that name one thing (the Collector's
-   * `state` and the semantic conventions' `cpu.mode`): each point's line is
-   * the value of the first of them it has. The chart's `split` is the first.
+   * First present key supplies the split value, e.g. state or cpu.mode. The chart names the first
+   * key as its split.
    */
   splitAny?: readonly string[] | undefined;
-  /** Only the series whose resource has this attribute value, such as one host's (hosts.ts). */
+  /** Filters resource attributes, e.g. host.name (hosts.ts). */
   resource?: { key: string; value: string } | undefined;
-  /**
-   * Only the points whose first present key of `keys` has this value, such
-   * as a state of "used"; with `orMissing`, also the points with none of them.
-   */
+  /** Matches the first present key; orMissing also accepts points without any listed key. */
   attribute?: { keys: readonly string[]; value: string; orMissing?: boolean } | undefined;
-  /** Leaves out the points whose first present key of `keys` has this value, such as a mode of "ro". */
+  /** Excludes points whose first present key matches, e.g. mode ro. */
   exclude?: { keys: readonly string[]; value: string } | undefined;
-  /** Only the series of an instrumentation scope whose name starts with one of these. */
   scopePrefixes?: readonly string[] | undefined;
-  /**
-   * Gauges only: several metrics in one chart, one line per metric's name
-   * (in place of `name` and a split), such as the three load averages.
-   */
+  /** Gauges only: one line per metric name, replacing name and split. */
   names?: readonly string[] | undefined;
   /**
-   * One query instead of two: the series are ranked inside the chart's
-   * query, so `keys` and `unit` stay empty. For pages that read many small
-   * charts, such as a host's (hosts.ts). Not for histograms.
+   * Ranks series within one query for small charts (hosts.ts). Leaves keys and unit empty.
+   * Excludes histograms.
    */
   single?: boolean | undefined;
-  /** Series read at most, those with the most points: MAX_SERIES unless given (a sparkline reads fewer). */
+  /** Keeps the most populated series; defaults to MAX_SERIES. */
   maxSeries?: number | undefined;
-  /** Histograms only: the percentiles alone, without the observations per second (a sparkline draws none). */
+  /** Histograms only: skips observation rates, as needed for sparklines. */
   percentilesOnly?: boolean | undefined;
 }
 
-/**
- * The value of the first of `keys` a point's attributes have, else NULL.
- * The keys go in as query parameters.
- */
+/** First present attribute or NULL. Keys are query parameters. */
 export function firstAttribute(params: QueryParams, keys: readonly string[]): string {
   if (keys.length === 0) return "CAST(NULL AS Nullable(String))";
   const branches = keys.map((key) => {
@@ -287,18 +245,20 @@ export function firstAttribute(params: QueryParams, keys: readonly string[]): st
   return `multiIf(${branches.join(", ")}, NULL)`;
 }
 
-/** One line's values per bucket; null where the bucket has no point. */
+/** Null buckets have no points. */
 export interface ChartSeries {
-  /** The split attribute's value; null without a split, or for points without the attribute. */
+  /** Null without a split or when the split attribute is absent. */
   value: string | null;
-  /** The values with the least volume, folded into one line. */
+  /** Combines the lowest-volume split values. */
   other: boolean;
-  /** What ranks the lines: points (gauges, up-down counters), the increase (counters), observations (histograms). */
+  /**
+   * Ranks by points for gauges/up-down counters, increase for counters, observations for
+   * histograms.
+   */
   volume: number;
   /**
-   * Per kind: gauge avg, min, max; updown sum (of each series' last
-   * value, or a delta series' net change in the bucket); counter rate (per second); histogram p50, p95, p99, and rate
-   * (observations per second).
+   * Gauge: avg/min/max. Updown: last cumulative values or net delta change. Counter: rate/second.
+   * Histogram: p50/p95/p99 and observations/second.
    */
   values: Record<string, (number | null)[]>;
 }
@@ -307,23 +267,19 @@ export interface MetricChart {
   name: string;
   kind: MetricKind;
   unit: string;
-  /** The first bucket's start. */
   start: Date;
   stepSeconds: number;
   buckets: number;
   split: string | null;
-  /** The attribute keys the metric's series have, to split by. */
   keys: string[];
   series: ChartSeries[];
-  /** Series read: at most MAX_SERIES. */
   seriesCount: number;
-  /** More series than MAX_SERIES: those with the fewest points were left out. */
+  /** Omits series with the fewest points past MAX_SERIES. */
   seriesCapped: boolean;
-  /** A histogram's series left out of the percentiles: other bounds than the most common, or no bucket counts. */
+  /** Histogram series excluded for missing counts or bounds differing from the most common set. */
   skippedSeries: number;
-  /** A histogram's bounds, as the percentiles read them. */
   bounds: number[];
-  /** Whether a histogram's series have bucket counts to work percentiles out from. */
+  /** True if bucket counts permit histogram percentiles. */
   percentiles: boolean;
 }
 
@@ -333,11 +289,10 @@ interface SeriesRow {
   series_unit: string;
   keys: string[];
   series_bounds?: number[];
-  /** UInt64, as text: the most bucket counts a point of the series has. */
+  /** Maximum bucket count array length in the series (UInt64 as text). */
   series_buckets?: string;
 }
 
-/** What each kind's lines hold. */
 const MEASURES: Record<MetricKind, string[]> = {
   gauge: ["avg", "min", "max"],
   updown: ["sum"],
@@ -346,27 +301,15 @@ const MEASURES: Record<MetricKind, string[]> = {
 };
 
 /**
- * One metric over the range, in buckets (bucketsOf), as ChartSeries:
+ * Reads FINAL to deduplicate points, keeping the MAX_SERIES with most points. Gauges use
+ * avg/min/max; up-down counters sum last values.
  *
- * - gauge: the average, minimum, and maximum of the points in each bucket;
- * - up-down counter: the sum of each series' last value in each bucket;
- * - counter (a monotonic sum): its rate per second. A cumulative series'
- *   increase is the change from its previous point; a value below the
- *   previous one is a reset, and the new value is the increase; a start
- *   time after the previous point starts the series again (each start time
- *   is its own run of points, so two writers sharing a series apart from
- *   their start do not mix), and the value counts since that start, when
- *   known. Each increase is spread over the buckets its interval covers,
- *   in proportion to the overlap. A delta value counts in its point's
- *   bucket. A bucket's rate is its increases over its seconds;
- * - histogram: the 50th, 95th, and 99th percentiles of the observations
- *   in each bucket (quantileOfBuckets), from each series' bucket counts
- *   (a cumulative point's difference from the previous one, as for
- *   counters; a delta point's as they are), in the point's bucket; and the
- *   observations per second, from the counts, as a counter's rate.
+ * Cumulative counters use differences, treating decreases as resets. Start times separate writer
+ * runs. Spread increases across overlapping buckets; delta points count in their own bucket. Rates
+ * divide by bucket seconds.
  *
- * Reads FINAL, so a retried point counts once; at most MAX_SERIES series,
- * those with the most points.
+ * Histograms use bucket-count differences for cumulative points and raw counts for delta points.
+ * quantileOfBuckets computes p50/p95/p99; observation rates follow counter rules.
  */
 export async function metricChart(
   reader: Reader,
@@ -381,17 +324,13 @@ export async function metricChart(
   });
 }
 
-/** Whose points a chart reads: a project's, in one environment, its series ranked from `from`. */
 interface ChartScope {
   projectId: string;
   environment: string;
   from: Date;
 }
 
-/**
- * The rows of a metric that a chart reads, from `from` to before `until`:
- * the sorting key's prefix (project, name, time), then the chart's filters.
- */
+/** Filters sorting-key prefix (project, name, time) before chart filters. */
 export function metricFilter(
   params: QueryParams,
   scope: { projectId: string; environment: string },
@@ -441,10 +380,8 @@ export function metricFilter(
 }
 
 /**
- * A chart over `buckets`, reading points before `untilMs` (which may be
- * past the last bucket, so a counter's step that ends after it still
- * counts its part inside), and from `lookbackMs` before the first bucket,
- * so the first point of a cumulative series has the one before it.
+ * Reads lookbackMs before the first bucket for cumulative differences, and through untilMs so
+ * steps ending later still contribute their overlap.
  */
 async function chartIn(
   reader: Reader,
@@ -459,10 +396,8 @@ async function chartIn(
     untilMs: number;
     lookbackMs: number;
     /**
-     * Up-down counters: a series counts in a bucket's total only when its
-     * last point there is within this much of the bucket's end, so series
-     * that stopped (pods replaced in a deploy) do not add to those that
-     * took over.
+     * Exclude cumulative series whose last point is too old, so replaced pods do not add to
+     * replacements.
      */
     freshMs?: number | undefined;
   },
@@ -493,12 +428,10 @@ async function chartIn(
   };
   if (buckets.count === 0) return empty;
 
-  /** The metric's rows, from `from`, before `untilMs`. */
   const metricRows = (params: QueryParams, from: Date) =>
     metricFilter(params, range, options, from, new Date(untilMs));
 
-  // The series with the most points in the range. No FINAL: copies only weigh the ranking.
-  // A single-query chart ranks them inside its own query instead (below).
+  // Retries affect only ranking, so no FINAL. Single-query charts rank within their query.
   const selectParams = new QueryParams();
   const found = single
     ? []
@@ -519,8 +452,7 @@ async function chartIn(
   const keys = [...new Set(listed.flatMap((row) => row.keys))]
     .toSorted((a, b) => a.localeCompare(b))
     .slice(0, MAX_SPLIT_KEYS);
-  // Percentiles need one set of bounds: the one with the most points among
-  // series with bucket counts. Every series counts in the rate.
+  // Percentiles use the most populated bounds set with counts. Rates include all series.
   let withBuckets: SeriesRow[] = [];
   let bounds: number[] = [];
   if (histogram) {
@@ -561,7 +493,6 @@ async function chartIn(
   const lookNs = params.add(ns(lookFrom.getTime()), "Int64");
   const firstNs = params.add(ns(buckets.firstMs), "Int64");
   const stepNs = params.add(ns(buckets.stepMs), "Int64");
-  /** The bucket a moment in nanoseconds falls in. */
   const bucketOf = (moment: string) => `intDiv(${moment} - ${firstNs}, ${stepNs})`;
   const percentileSeries = params.add(
     withBuckets.map((row) => row.series_key),
@@ -574,7 +505,7 @@ async function chartIn(
         listed.map((row) => row.series_key),
         "Array(String)",
       )}`;
-  /** The series' points, deduplicated, from the lookback on, with `columns`. */
+  /** FINAL deduplicates points, including the lookback. */
   const rowsWith = (columns: string, only = seriesListed) =>
     `SELECT series, ${label} AS label, temporality = 'delta' AS is_delta,
             toUnixTimestamp64Nano(timestamp) AS t_ns,
@@ -583,11 +514,8 @@ async function chartIn(
      FROM ${table} FINAL
      WHERE ${metricRows(params, lookFrom)} AND ${only}`;
   const rows = rowsWith(histogram ? "toInt64(count) AS n" : "value");
-  // Per series and start time, by time: the point before (none: 0), whether
-  // this point starts the run with a start known within what was read (the
-  // value counts from it), and whether it has nothing before it to count
-  // from. Then each step's interval: from the point before, or the start,
-  // to this point; a delta point's is the point itself.
+  // Separate series by start time. Each step spans the previous point or known run start through
+  // this point; delta steps have no duration.
   const steps = (lagged: string, increase: string, source = rows) => `
     SELECT *, ${bucketOf("greatest(s_ns, " + fromNs + ")")} AS first_bucket, ${bucketOf("t_ns")} AS last_bucket
     FROM (
@@ -605,9 +533,8 @@ async function chartIn(
     )
     WHERE t_ns >= ${fromNs} AND NOT unknown AND (is_delta OR t_ns > s_ns)`;
   /**
-   * Each step's increase over the buckets its interval covers, in
-   * proportion to the overlap (at most the chart's buckets: the interval
-   * is cut at the range's start); a delta point's all in its bucket.
+   * Spread increases by overlap, clipped to chart buckets. Delta increases stay in their point's
+   * bucket.
    */
   const spread = `
     arrayJoin(range(first_bucket, last_bucket + 1)) AS bucket,
@@ -626,10 +553,7 @@ async function chartIn(
     fold =
       "sum(total_value) AS total_value, sum(points) AS points, min(low) AS low, max(high) AS high";
   } else if (options.kind === "updown") {
-    // Each cumulative series' last value in the bucket, and each delta
-    // series' points added up (its net change: a delta series never says
-    // its level), then added up; with freshMs, only the cumulative series
-    // whose last point is that close to the bucket's end.
+    // Sum last cumulative values and net delta changes. freshMs excludes stale cumulative series.
     const fresh =
       freshMs === undefined
         ? ""
@@ -660,13 +584,8 @@ async function chartIn(
       GROUP BY label, bucket`;
     fold = "sum(increase) AS increase";
   } else {
-    // Two parts, added up per value and bucket. The observations per second:
-    // the count, per point, spread as a counter's increase. The percentiles:
-    // each series' bucket counts per bucket, from its last point in the
-    // bucket (a cumulative series) or all its points (delta), so the window
-    // that takes differences sorts one row per series and bucket, not one
-    // per point with its array: its memory no longer grows with the points.
-    // A reset inside a bucket counts only the counts since it.
+    // Rates spread counts across intervals. Percentiles aggregate arrays per series/bucket before
+    // window differences to bound memory. A reset within a bucket keeps only counts since reset.
     const previous = "arrayResize(prev_counts, length(last_counts))";
     const pointBucket = `if(t_ns < ${fromNs}, -1, ${bucketOf("t_ns")})`;
     const counts = rowsWith(
@@ -722,9 +641,7 @@ async function chartIn(
       "sumForEach(step_counts) AS step_counts, sum(increase) AS increase, min(low) AS low, max(high) AS high";
   }
 
-  // Values ranked by their whole volume; past SPLIT_LINES, all from the
-  // SPLIT_LINES-th on fold into "other". Ties break by the value, so each
-  // has its own rank.
+  // Rank by volume, breaking ties by value. Fold SPLIT_LINES-th and later values into "other".
   const slots = params.add(SPLIT_LINES, "UInt32");
   const folded = await queryRows<FoldedRow>(
     reader,
@@ -762,7 +679,7 @@ async function chartIn(
 }
 
 interface FoldedRow {
-  /** A single-query chart's series in the range, before the cap (UInt64, as text). */
+  /** Uncapped series count (UInt64 as text). */
   found_series?: string;
   other: boolean | number;
   value: string | null;
@@ -777,7 +694,7 @@ interface FoldedRow {
   step_counts?: (string | number)[];
 }
 
-/** The rows of a chart's query as lines, most volume first, "other" last. */
+/** Most volume first; "other" last. */
 function seriesOf(
   rows: FoldedRow[],
   kind: MetricKind,
@@ -832,25 +749,14 @@ function seriesOf(
   );
 }
 
-/** Time buckets a sparkline has at most: a day is hours, 7 days 6 hours. */
+/** At this cap, a day uses hours and 7 days uses 6-hour buckets. */
 export const SPARKLINE_BUCKETS = 30;
-/**
- * The longest period a sparkline is drawn for, in days: its two reads take
- * the metric's rows of the whole period, and a list asks for one per row.
- */
+/** Limits full-period reads because lists request one sparkline per metric. */
 export const SPARKLINE_MAX_DAYS = 7;
-/**
- * Series a sparkline reads at most, those with the most points: a line of
- * a list is a glance, and a metric's own chart reads up to MAX_SERIES.
- */
+/** Sparklines read fewer series than full charts (MAX_SERIES). */
 export const SPARKLINE_SERIES = 100;
 
-/**
- * What a sparkline draws of each kind: the line a metric's chart opens on
- * (the dashboard's default measure). A gauge's average, an up-down
- * counter's total, a counter's rate per second, a histogram's 95th
- * percentile.
- */
+/** Matches each chart's default measure: gauge average, updown total, counter rate, histogram p95. */
 export const SPARKLINE_MEASURES: Record<MetricKind, string> = {
   gauge: "avg",
   updown: "sum",
@@ -861,30 +767,21 @@ export const SPARKLINE_MEASURES: Record<MetricKind, string> = {
 export interface MetricSparkline {
   name: string;
   kind: MetricKind;
-  /** SPARKLINE_MEASURES' measure of the kind. */
   measure: string;
   start: Date;
   stepSeconds: number;
   buckets: number;
-  /** One per bucket; null where nothing arrived (or, for a histogram, no bucket counts). */
+  /** Null without data or histogram bucket counts. */
   values: (number | null)[];
-  /** A histogram's series have bucket counts to work its percentiles out from. */
   percentiles: boolean;
-  /** Series read: at most SPARKLINE_SERIES. */
   seriesCount: number;
-  /** More series than SPARKLINE_SERIES: the line leaves out those with the fewest points. */
+  /** Omits series with the fewest points past SPARKLINE_SERIES. */
   seriesCapped: boolean;
 }
 
 /**
- * One metric of the Metrics page's list, as its chart reads it (chartIn,
- * without a split), in at most SPARKLINE_BUCKETS buckets and of at most
- * SPARKLINE_SERIES series: the measure of SPARKLINE_MEASURES. Two queries,
- * as a chart's: the first ranks the series (without FINAL), the second
- * reads theirs, FINAL, from the lookback before the range. A histogram's
- * reads only its bucket counts, not its observations per second, which a
- * sparkline does not draw. Each reads only its metric's rows (the sort
- * key's project and name).
+ * Ranks series without FINAL, then reads their points with FINAL and lookback. Histogram
+ * sparklines read bucket counts only, skipping observation rates.
  */
 export async function metricSparkline(
   reader: Reader,
@@ -921,40 +818,25 @@ export async function metricSparkline(
   };
 }
 
-/**
- * How far before a window a metric's window reads at least (metricWindow):
- * the window's own length, or this when longer, so the point before the
- * window's first is there for a series exported every minute or every
- * few, as SDKs and the Collector do by default, and for one exported less
- * often than its window is long.
- */
+/** Minimum lookback for finding a previous point; longer windows use their own length. */
 export const WINDOW_LOOKBACK_MS = 5 * 60_000;
 /**
- * An up-down counter's series counts in a window's total only when its
- * last point is within this of the window's end: two export intervals of
- * a minute. A series that stopped earlier, as a pod replaced in a rolling
- * deploy, is no longer there.
+ * Two one-minute export intervals. Excludes stopped series, such as replaced pods, from up-down
+ * totals.
  */
 export const FRESH_SERIES_MS = 2 * 60_000;
 
-/** A metric's value over one window, as its chart reads it, per measure; null without data. */
+/** Null measures have no data. */
 export interface MetricWindow {
-  /** Per kind, as ChartSeries' values: gauge avg, min, max; updown sum; counter rate; histogram p50, p95, p99, rate. */
+  /** Uses the same measures as ChartSeries.values. */
   values: Record<string, number | null>;
   unit: string;
-  /** Series read: at most MAX_SERIES. */
   seriesCount: number;
 }
 
 /**
- * One metric over [from, to), as a chart of one bucket covering it reads
- * it (chartIn): a gauge's average, minimum, and maximum over the points;
- * an up-down counter's total of the last value of each series still
- * reporting at the window's end (its last point within FRESH_SERIES_MS of
- * it); a counter's rate per second; a histogram's percentiles from the
- * window's bucket counts. Points are read until `readUntil` (past `to`), so
- * a counter's step that ends after the window counts the part inside it,
- * and from the window's length (at least WINDOW_LOOKBACK_MS) before `from`.
+ * Uses one chart bucket for [from, to). Keeps up-down series fresh within FRESH_SERIES_MS. Reads
+ * through readUntil for overlapping counter steps, with lookback of at least WINDOW_LOOKBACK_MS.
  */
 export async function metricWindow(
   reader: Reader,
@@ -987,7 +869,6 @@ export async function metricWindow(
   };
 }
 
-/** Whether any point of the metric, of this kind and with these filters, arrived in [from, to). */
 export async function metricSeen(
   reader: Reader,
   scope: { projectId: string; environment: string },
