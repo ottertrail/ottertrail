@@ -136,6 +136,10 @@ describe("POST /api/server-events", () => {
     );
     expect(withPublic.statusCode).toBe(401);
     expect(withPublic.json().error).toBe("unknown_key");
+    // A well-formed key no project has is refused before the body is read too.
+    const unknown = await send("{", { authorization: `Bearer sk_${"0".repeat(32)}` });
+    expect(unknown.statusCode).toBe(401);
+    expect(unknown.json().error).toBe("unknown_key");
   });
 
   test.each([

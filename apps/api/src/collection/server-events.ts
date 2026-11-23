@@ -1,6 +1,6 @@
 import { Buffer } from "node:buffer";
 
-import type { FastifyInstance, FastifyReply } from "fastify";
+import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 
 import type { IngestActivity } from "../activity/activity.ts";
 import type { ClickHouseClient } from "../clickhouse/clickhouse.ts";
@@ -10,7 +10,7 @@ import { type NewEvent, storeEvents } from "./event-store.ts";
 import { USER_ID_PATTERN } from "./identity.ts";
 import type { LastEventRecorder } from "./last-event.ts";
 import { isStorableText, MAX_EVENT_AGE_MS } from "./normalize.ts";
-import type { ProjectKeyCache } from "./project-keys.ts";
+import type { CollectingProject, ProjectKeyCache } from "./project-keys.ts";
 import type { ClientRateLimiter, EventBudget, RateLimit } from "./rate-limiter.ts";
 
 /**
@@ -58,7 +58,8 @@ function storageUnavailable(reply: FastifyReply) {
 }
 
 /**
- * Authenticated by the project secret key (Authorization: Bearer sk_…).
+ * Authenticated by the project secret key (Authorization: Bearer sk_…),
+ * looked up (cached) before the body is read.
  * No Origin, hostname, bot, or user-signature checks are needed. Events belong
  * to users and have no visitor ID, so web analytics excludes them.
  * Schema validation precedes database work; the shared event budget applies.
@@ -95,6 +96,9 @@ export function serverEventsRoute(
     now,
     activity,
   } = options;
+
+  /** The project each request's key names, found before its body is read. */
+  const projectOf = new WeakMap<FastifyRequest, CollectingProject>();
 
   app.post<{ Body: ServerBatch }>(
     "/server-events",
@@ -147,20 +151,26 @@ export function serverEventsRoute(
             .header("retry-after", String(result.retryAfterSeconds))
             .send(problem("rate_limited", "Too many requests from this address."));
         }
+        // The key too, from the cache: an unknown key is refused before its body is read.
+        const secretKey = BEARER.exec(request.headers.authorization ?? "")?.[1] ?? "";
+        let project;
+        try {
+          project = await projects.findBySecret(secretKey);
+        } catch (error) {
+          request.log.error({ err: error }, "could not look up the secret key");
+          return storageUnavailable(reply);
+        }
+        if (project === null) {
+          return reply.code(401).send(problem("unknown_key", "No project has this secret key."));
+        }
+        projectOf.set(request, project);
         return undefined;
       },
     },
     async (request, reply) => {
-      const secretKey = BEARER.exec(request.headers.authorization ?? "")?.[1] ?? "";
-      let project;
-      try {
-        project = await projects.findBySecret(secretKey);
-      } catch (error) {
-        request.log.error({ err: error }, "could not look up the secret key");
-        return storageUnavailable(reply);
-      }
-      if (project === null) {
-        return reply.code(401).send(problem("unknown_key", "No project has this secret key."));
+      const project = projectOf.get(request);
+      if (project === undefined) {
+        throw new Error("the server events onRequest hook must find the project first");
       }
       const projectId = project.id;
       const invalid = (message: string) => {
