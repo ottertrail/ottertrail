@@ -35,15 +35,9 @@ const DayCalendar = React.lazy(async () => {
 });
 
 /**
- * A day field: typed day first (`DD/MM/YYYY`, the slashes added as one
- * types, as in the custom range dialog), or picked on shadcn's calendar
- * from the button at its end. Never the browser's own date field, whose
- * pop-up calendar ignores the dashboard's look (docs/design-system.md,
- * "Fields").
- *
- * `value` and `onChange` speak "YYYY-MM-DD"; a day typed halfway, or one
- * that is not a real day, is "". The field keeps what was typed until the
- * value changes from outside.
+ * Use the styled calendar instead of the native picker (docs/design-system.md, "Fields").
+ * Display DD/MM/YYYY; exchange YYYY-MM-DD, or "" for incomplete or invalid dates.
+ * Keep typed text until an external value change.
  */
 export function DateField({
   id,

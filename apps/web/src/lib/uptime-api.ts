@@ -11,11 +11,7 @@ import {
   telemetryRetry,
 } from "./telemetry-shapes";
 
-/**
- * A project's uptime checks (docs/uptime-alerts.md; apps/api/src/uptime):
- * HTTP(S) requests the instance's worker makes on a schedule, each up,
- * down, or pending, with its uptime and incidents.
- */
+/** Worker-run uptime checks (docs/uptime-alerts.md; apps/api/src/uptime). */
 
 export const CHECK_CAUSES = [
   "timeout",

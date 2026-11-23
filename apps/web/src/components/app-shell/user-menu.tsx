@@ -73,11 +73,7 @@ function ThemeItems() {
   );
 }
 
-/**
- * The sidebar's foot: who is signed in, as shadcn's NavUser block. It opens
- * a menu with the account's settings, the theme, and Sign out. Collapsed to icons, only
- * the avatar shows, and its tooltip names the user.
- */
+/** Collapsed mode shows only the avatar; its tooltip names the user. */
 export function UserMenu() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();

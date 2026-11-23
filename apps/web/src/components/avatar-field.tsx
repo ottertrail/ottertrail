@@ -7,11 +7,8 @@ import { Field, FieldDescription, FieldError, FieldLabel } from "@/components/ui
 import { AVATAR_TYPES, avatarDataUrl } from "@/lib/avatars";
 
 /**
- * An avatar in a settings form (the instance's icon, a user's avatar, a
- * project's icon), under the save rule: choosing an image or Remove is an
- * edit like any other, and Save sends it. `value` is the saved image's
- * address, a chosen image as a data: URL (shown as the preview), or null.
- * Without object storage the buttons are disabled, and one line says why.
+ * Choosing or removing an image waits for Save. value is a saved URL, a data: preview,
+ * or null. Disable uploads when object storage is unavailable.
  */
 export function AvatarField({
   label,

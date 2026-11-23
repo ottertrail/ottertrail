@@ -257,11 +257,7 @@ export const SPARKLINES_AT_ONCE = 2;
 let sparklinesRunning = 0;
 const sparklineTurns: (() => void)[] = [];
 
-/**
- * Runs `work` once fewer than SPARKLINES_AT_ONCE sparklines load, so a
- * page of rows asks the API two at a time. One that is no longer wanted
- * (its row's query cancelled) leaves the queue without asking.
- */
+/** Limit sparkline requests to two at a time. Canceled queries leave the queue without a request. */
 async function inSparklineTurn<T>(work: () => Promise<T>, signal: AbortSignal): Promise<T> {
   if (sparklinesRunning >= SPARKLINES_AT_ONCE) {
     await new Promise<void>((resolve, reject) => {

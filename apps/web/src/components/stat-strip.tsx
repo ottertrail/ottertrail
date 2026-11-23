@@ -15,10 +15,8 @@ export interface Stat {
   /** The figure the change compares with, as shown, for the sentence a screen reader hears. */
   before?: string;
   /**
-   * What the change rests on: the figure's own count in this period and the
-   * one before (for a share, the counts it is taken of). With a `minCount`,
-   * the change shows only when the larger reaches it, and "New" when the
-   * period before had none (lib/change.ts).
+   * Counts for this period and the previous one; use denominator counts for shares.
+   * Show change when the larger reaches minCount, or "New" with no prior count (lib/change.ts).
    */
   counts?: ChangeCounts;
   /**
@@ -58,12 +56,6 @@ function StatChange({ change, before }: { change: Change | "new"; before: string
   );
 }
 
-/**
- * A report's figures in one row, separated by hairlines rather than set in
- * tiles: each a label, a figure in tabular numerals, and optionally its
- * change from the period before. Wraps to two or four columns on narrower
- * screens.
- */
 export function StatStrip({
   stats,
   minCount = 0,

@@ -110,7 +110,6 @@ export interface SpanDetail {
   scope: { name: string; version: string };
 }
 
-/** The list's filters besides the range and environment. */
 export interface TraceFilters {
   service?: string | undefined;
   name?: string | undefined;
@@ -215,7 +214,6 @@ const isSpanAnswer = (value: unknown): value is { timeZone: string; span: SpanDe
 
 const projectPath = (projectId: string) => `/api/projects/${encodeURIComponent(projectId)}`;
 
-/** The list's query parameters: the range, environment, and filters. */
 function listParams(range: PageRange, environment: string, filters: TraceFilters) {
   return {
     ...rangeParams(range),

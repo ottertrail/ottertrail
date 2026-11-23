@@ -11,11 +11,7 @@ const BUTTON_TEXT: Record<CopyState, string> = {
   failed: "Copy failed",
 };
 
-/**
- * Text to copy, such as an install snippet or a key: shown as code, never
- * as a field, so it does not look editable. It wraps instead of scrolling,
- * and the copy button sits inside the box.
- */
+/** Show copyable text as wrapping code so it does not look editable. */
 export function CopyableCode({ text, copyLabel }: { text: string; copyLabel: string }) {
   const [state, setState] = React.useState<CopyState>("idle");
 

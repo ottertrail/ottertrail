@@ -2,13 +2,8 @@ import type { DirtyForm } from "@/hooks/use-dirty-form";
 
 import { apiRequest, expectShape } from "./api";
 
-/**
- * Avatars (docs/dashboard.md, "Avatars"): the instance's icon, a user's
- * avatar, and a project's icon. The browser turns the chosen image into a
- * 256×256 PNG before it is sent; the API takes only that.
- */
+/** Avatars (docs/dashboard.md, "Avatars") must reach the API as 256×256 PNGs. */
 
-/** The side of the PNG the browser sends. */
 export const AVATAR_SIZE = 256;
 
 /** The images the file picker offers and the browser converts. Never SVG. */
@@ -17,10 +12,8 @@ export const AVATAR_TYPES = ["image/png", "image/jpeg", "image/webp", "image/gif
 const isAcceptedType = (type: string) => AVATAR_TYPES.some((accepted) => accepted === type);
 
 /**
- * The image as a 256×256 PNG, cropped to its centre square, as a data:
- * URL: the dashboard's Content-Security-Policy shows data: images, not
- * blob: ones, so the preview uses the same. Rejects with a sentence when
- * the browser cannot read the file.
+ * Crop to a 256×256 PNG. Use a data: URL because the dashboard CSP blocks blob: previews.
+ * Reject with a message if the browser cannot read the file.
  */
 export async function avatarDataUrl(file: Blob): Promise<string> {
   const unreadable = new Error(
@@ -59,11 +52,9 @@ export async function avatarDataUrl(file: Blob): Promise<string> {
   }
 }
 
-/** Whether an avatar field's value is a chosen image not yet saved. */
 export const isChosenImage = (value: string | null): value is string =>
   value?.startsWith("data:image/png;base64,") === true;
 
-/** The PNG a chosen image's data: URL holds. */
 export function pngOf(dataUrl: string): Blob {
   const text = atob(dataUrl.slice(dataUrl.indexOf(",") + 1));
   const bytes = Uint8Array.from(text, (char) => char.charCodeAt(0));
@@ -84,10 +75,8 @@ const isAvatarAnswer = (
   (!("iconUrl" in value) || isUrlOrNull(value.iconUrl));
 
 /**
- * Saves an avatar field's value and answers the address now saved: a
- * chosen image is uploaded, null removes the avatar, and a saved address
- * is no change and sends nothing. `path` is the route:
- * /api/settings/avatar, /api/account/avatar, or /api/projects/:id/avatar.
+ * Upload a chosen image, remove on null, or leave a saved URL unchanged.
+ * Routes: /api/settings/avatar, /api/account/avatar, /api/projects/:id/avatar.
  */
 export async function saveAvatar(path: string, value: string | null): Promise<string | null> {
   if (value === null) {
@@ -103,12 +92,8 @@ export async function saveAvatar(path: string, value: string | null): Promise<st
 }
 
 /**
- * A form's first step on Save: sends its `avatar` when it changed, and
- * marks it saved at once with the address the server answered, in the
- * saved values and in the field (unless it was edited meanwhile), so a
- * later failure of the rest keeps only the other edits, and saving again
- * sends no image. Answers the values with that address, for the form's
- * final `saved`.
+ * Save the avatar first and record its URL so a later form failure does not reupload it.
+ * Preserve field edits made during the upload. Return values for the final saved state.
  */
 export async function saveAvatarFirst<T extends { avatar: string | null }>(
   form: DirtyForm<T>,

@@ -1,7 +1,4 @@
-/**
- * Reloads the page, fetching the dashboard's current version. Its own
- * module so a browser test can replace it: `location.reload` cannot be.
- */
+/** Separate module so browser tests can replace it; location.reload cannot be replaced. */
 export function reloadPage() {
   window.location.reload();
 }

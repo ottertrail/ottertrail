@@ -6,10 +6,7 @@ export function modifierKey(): string {
   return /mac|iphone|ipad/i.test(platform) ? "⌘" : "Ctrl";
 }
 
-/**
- * Whether a key press belongs to a text field, a menu or a dialog, where a
- * screen's single-key shortcuts (j, k, Esc) must not act.
- */
+/** Skip page shortcuts (j, k, Esc) while a field, menu, or dialog owns the key press. */
 export function typingOrOverlay(event: KeyboardEvent): boolean {
   if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) {
     return true;

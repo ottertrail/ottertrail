@@ -3,18 +3,12 @@ import { createAuthClient } from "better-auth/react";
 
 import { ApiError, UNREACHABLE } from "./api";
 
-/**
- * Talks to the API's sign-in endpoints on this origin (/api/auth/*). The
- * session lives in an httpOnly cookie that page scripts cannot read; the
- * client asks the API who is signed in.
- */
+/** The session uses an httpOnly cookie. Ask /api/auth/* who is signed in. */
 export const authClient = createAuthClient();
 
 /**
- * Whether someone is signed in. Only the API's answer that there is no
- * session (none, or a 401) means no: any other failure, such as Better
- * Auth's rate limit (429) or the API being down, throws, so a page says the
- * check failed instead of signing the person out.
+ * Only a missing session or 401 means signed out. Throw on other failures
+ * (including 429) so pages report a failed check.
  */
 export async function checkSession(): Promise<boolean> {
   let answer: Awaited<ReturnType<typeof authClient.getSession>>;
@@ -40,10 +34,9 @@ export async function checkSession(): Promise<boolean> {
 }
 
 /**
- * The session check, kept 30 seconds while signed in, so moving between
- * pages does not ask each time; a "signed out" answer is asked again at
- * once, so signing in is seen. Signing out, and any 401 (router.tsx),
- * clear the query cache, this answer included.
+ * Cache signed-in sessions for 30 seconds to avoid checks between pages.
+ * Recheck signed-out sessions immediately to detect sign-in. Sign-out and 401s
+ * (router.tsx) clear the query cache.
  */
 export const sessionQuery = () =>
   queryOptions({
@@ -52,7 +45,6 @@ export const sessionQuery = () =>
     staleTime: (query) => (query.state.data === true ? 30_000 : 0),
   });
 
-/** Turns a failed sign-in into a message for the person signing in. */
 export function signInErrorMessage(error: { status: number; message?: string | undefined }) {
   if (error.status === 401) {
     return "Wrong email or password.";

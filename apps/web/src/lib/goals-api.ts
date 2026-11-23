@@ -3,11 +3,7 @@ import { queryOptions } from "@tanstack/react-query";
 import { apiRequest, expectShape } from "./api";
 import { nameProblem } from "./text";
 
-/**
- * A project's saved goals (docs/product-analytics.md): named conversions,
- * each a pageview of one path or a product event, as a funnel step is. The
- * analytics answer counts them in the page's visits.
- */
+/** Saved goals count conversions within the report visits (docs/product-analytics.md). */
 
 /** What reaching a goal means; the same shape as a funnel step. */
 export type GoalStep =

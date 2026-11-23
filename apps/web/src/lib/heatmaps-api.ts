@@ -180,7 +180,6 @@ const isHeatmap = (value: unknown): value is Heatmap =>
   isListOf(value.hotspots, isHotspot) &&
   isListOf(value.deadHotspots, isDeadHotspot);
 
-/** The range, environment, and device as the API's query parameters. */
 const params = (range: PageRange, environment: string, device: HeatmapDevice | undefined) => ({
   ...rangeParams(range),
   ...(environment === DEFAULT_ENVIRONMENT ? {} : { environment }),
@@ -238,10 +237,8 @@ export const heatmapQuery = (
   });
 
 /**
- * POST /api/projects/:id/heatmaps/overlay-link: a one-time link token that
- * opens the page with its heatmap over it, working once within 5 minutes
- * (docs/web-analytics.md, "The overlay on your site"). Made only when the
- * reader asks to open it.
+ * POST /api/projects/:id/heatmaps/overlay-link issues a token usable once within 5 minutes.
+ * Request it only when opening the overlay (docs/web-analytics.md, "The overlay on your site").
  */
 export async function mintOverlayLink(projectId: string, path: string): Promise<{ token: string }> {
   return expectShape(
@@ -302,11 +299,7 @@ export const heatmapSnapshotsQuery = (projectId: string, path: string) =>
       ),
   });
 
-/**
- * The page that shows a saved view with the heatmap over it, for the
- * report's range and environment: the replay player's, served by the API
- * under its own Content Security Policy.
- */
+/** The API serves the saved-view player under its own Content Security Policy. */
 export function snapshotPlayerSrc(
   projectId: string,
   device: HeatmapDevice,

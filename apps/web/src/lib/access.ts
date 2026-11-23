@@ -4,10 +4,8 @@ import { apiRequest, expectShape } from "./api";
 import { isRecord, isText } from "./telemetry-shapes";
 
 /**
- * Who is signed in and what they may reach (docs/access.md), from GET
- * /api/me. The dashboard hides what the user cannot use; the API refuses
- * it regardless. The areas and permissions match the API's
- * (apps/api/src/access/areas.ts).
+ * Access from GET /api/me (docs/access.md). The API checks access independently.
+ * Keep areas and permissions aligned with apps/api/src/access/areas.ts.
  */
 
 export const AREAS = [
@@ -38,7 +36,6 @@ export const AREA_LEVELS: Record<Area, readonly AreaLevel[]> = {
   uptime_alerts: ["none", "view", "manage"],
 };
 
-/** Each area's name, and the pages it covers, as the Members page shows them. */
 export const AREA_LABELS: Record<Area, { name: string; pages: string }> = {
   web_analytics: { name: "Web analytics", pages: "Analytics, Speed, and Heatmaps" },
   product_analytics: { name: "Product analytics", pages: "Events, funnels, goals, retention" },
@@ -89,7 +86,6 @@ export const PRESETS = {
 export type Preset = keyof typeof PRESETS | "custom";
 export const PRESET_NAMES = ["viewer", "engineering", "marketing"] as const;
 
-/** The preset these areas match, or "custom". */
 export function presetOf(areas: Areas): Preset {
   const found = PRESET_NAMES.find((preset) =>
     AREAS.every((area) => PRESETS[preset][area] === areas[area]),

@@ -2,14 +2,9 @@ import { lazyRouteComponent } from "@tanstack/react-router";
 import type * as React from "react";
 
 /**
- * A page's code that could not be downloaded. The usual cause is a deploy:
- * a tab opened before it asks for files the new version no longer has.
- * Browsers remember a failed module, so only reloading the page helps.
- *
- * Its own message, not the browser's ("Failed to fetch dynamically imported
- * module…"): TanStack Router reloads the page by itself, once, on the
- * browser's message; this way the page says what happened and the reader
- * chooses to reload (docs/dashboard.md, "Code splitting").
+ * Deploys can remove chunks requested by older tabs. Browsers cache failed imports,
+ * so recovery requires reload. A custom message prevents TanStack Router's automatic reload,
+ * letting the user choose when to reload (docs/dashboard.md, "Code splitting").
  */
 export class PageLoadError extends Error {
   constructor(cause: unknown) {
@@ -19,10 +14,8 @@ export class PageLoadError extends Error {
 }
 
 /**
- * The messages browsers give a dynamic import whose file could not be
- * fetched (Chromium, Firefox, Safari, all TypeErrors; the same list as
- * TanStack Router's own check), and Vite's when a chunk's stylesheet
- * could not be.
+ * Chromium, Firefox, and Safari import failures, matching TanStack Router's checks,
+ * plus Vite stylesheet preload failures.
  */
 const FAILED_FETCH = [
   /^Failed to fetch dynamically imported module/,
@@ -32,11 +25,8 @@ const FAILED_FETCH = [
 ];
 
 /**
- * The browser's error for a file that could not be downloaded, when that is
- * why an import failed; undefined when the code threw while it ran. Only
- * the browser's messages tell them apart, since a module's own bug can be a
- * TypeError too. A loader may wrap the browser's error (Vitest's module
- * mocker does), so its causes are looked at as well.
+ * Match browser messages because application bugs can also be TypeErrors.
+ * Check causes for wrapped import failures, including Vitest's module mocker.
  */
 export function failedDownload(error: unknown): Error | undefined {
   for (let current = error, depth = 0; current instanceof Error && depth < 5; depth++) {
@@ -49,11 +39,7 @@ export function failedDownload(error: unknown): Error | undefined {
   return undefined;
 }
 
-/**
- * Loads a module; a file that could not be downloaded becomes a
- * PageLoadError (holding the browser's error), and anything else is thrown
- * as it is.
- */
+/** Wrap download failures in PageLoadError; propagate other errors unchanged. */
 export async function loadChunk<M>(load: () => Promise<M>): Promise<M> {
   try {
     return await load();
@@ -64,11 +50,8 @@ export async function loadChunk<M>(load: () => Promise<M>): Promise<M> {
 }
 
 /**
- * A page component loaded in its own chunk on first use, through TanStack
- * Router's `lazyRouteComponent`. Used as a route's component, or inside one
- * that `withPage` gives its `preload`, the router loads the chunk with the
- * route: on a link's hover or focus (`defaultPreload: "intent"`), or before
- * the page renders.
+ * Let the router preload chunks on link hover or focus (defaultPreload: "intent").
+ * Wrappers must expose preload through withPage.
  */
 export function lazyPage<M extends Record<string, unknown>, K extends keyof M & string>(
   load: () => Promise<M>,
@@ -77,10 +60,7 @@ export function lazyPage<M extends Record<string, unknown>, K extends keyof M & 
   return lazyRouteComponent(() => loadChunk(load), name);
 }
 
-/**
- * A route component that reads the route's params and search into a lazy
- * page's props: preloading the route preloads the page's chunk too.
- */
+/** Forward preload so route preloading also loads the page chunk. */
 export function withPage<C extends React.ComponentType>(
   page: { preload?: () => Promise<void> | undefined },
   component: C,

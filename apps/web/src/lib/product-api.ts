@@ -95,7 +95,6 @@ export const MAX_VISITOR_WINDOW: FunnelWindow = 86_400;
 export const isFunnelWindow = (value: unknown): value is FunnelWindow =>
   FUNNEL_WINDOWS.some((item) => item.value === value);
 
-/** Whether a window can be used with a count. */
 export const windowAllowed = (count: FunnelCount, window: FunnelWindow) =>
   count === "users" || window <= MAX_VISITOR_WINDOW;
 
@@ -209,7 +208,6 @@ const isRetention = (value: unknown): value is Retention =>
 
 const projectPath = (projectId: string) => `/api/projects/${encodeURIComponent(projectId)}`;
 
-/** The range and environment as the API's query; the default environment is left out. */
 const rangeQuery = (range: PageRange, environment: string): Record<string, string> => ({
   ...rangeParams(range),
   ...(environment === DEFAULT_ENVIRONMENT ? {} : { environment }),
@@ -239,7 +237,6 @@ export const productEventsQuery = (projectId: string, range: PageRange, environm
     placeholderData: keepPreviousData,
   });
 
-/** One product event with its properties, where every filter holds. */
 export const productEventQuery = (
   projectId: string,
   name: string,

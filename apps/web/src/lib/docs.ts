@@ -28,10 +28,8 @@ interface ScreenDocs extends DocsPage {
 type RoutePath = keyof RegisteredRouter["routesByPath"];
 
 /**
- * The page header's Docs link on each screen, by the route's path. A screen left
- * out has no page that explains it, and shows no link: no entry is better
- * than a page that does not fit. `tests/docs-links.test.ts` lists the map,
- * and every path in it was checked on the docs site.
+ * Docs links by route. Omit screens without a relevant docs page.
+ * The map is covered by tests/docs-links.test.ts.
  */
 export const SCREEN_DOCS: Partial<Record<RoutePath, ScreenDocs>> = {
   // The workspace.

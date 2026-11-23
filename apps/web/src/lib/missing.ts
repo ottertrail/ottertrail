@@ -1,7 +1,5 @@
 /**
- * The placeholder for a missing value, in formatters and tables: the one
- * place the dashboard writes an en dash (docs/design-system.md, "Dates").
- * Where a screen reader should hear what is missing, use `<Missing>`
- * (components/missing.tsx) instead.
+ * Shared missing-value dash (docs/design-system.md, "Dates"). For screen reader text,
+ * use <Missing> from components/missing.tsx.
  */
 export const MISSING = "–";

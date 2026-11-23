@@ -3,10 +3,8 @@ import { queryOptions } from "@tanstack/react-query";
 import { apiRequest, expectShape } from "./api";
 
 /**
- * What a project's ingestion accepted, filtered, and refused, per source
- * (docs/dashboard.md, "Activity"): request counts the API adds up every 15
- * seconds, kept 7 days. For the owner and admins, as the other project
- * settings.
+ * Ingestion counts update every 15 seconds and are kept 7 days, for the owner and admins
+ * (docs/dashboard.md, "Activity").
  */
 
 export const INGEST_SOURCES = [

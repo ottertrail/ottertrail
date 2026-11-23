@@ -3,12 +3,7 @@ import * as React from "react";
 
 import { Button } from "@/components/ui/button";
 
-/**
- * One chart of a report, full width and without a card: a hairline above,
- * the title with "Show the numbers" beside it, an optional line on what it
- * draws, the chart, and its numbers as a table on demand (the table view
- * every chart has). `table` is only rendered while it is shown.
- */
+/** Render the numbers table only when expanded. */
 export function ReportChart({
   title,
   headingLevel = 2,
@@ -19,7 +14,6 @@ export function ReportChart({
   className,
 }: {
   title: React.ReactNode;
-  /** The title's heading level in the page's outline. */
   headingLevel?: 2 | 3;
   /** What the chart draws, in a line under the title. */
   description?: React.ReactNode;
@@ -27,7 +21,6 @@ export function ReportChart({
   actions?: React.ReactNode;
   /** The chart's numbers; without it there is no "Show the numbers". */
   table?: React.ReactNode;
-  /** The chart, or why there is none. */
   children: React.ReactNode;
   className?: string;
 }) {

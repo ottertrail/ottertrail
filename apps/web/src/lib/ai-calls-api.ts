@@ -6,11 +6,8 @@ import { apiRequest, expectShape } from "./api";
 import { isListOf, isNumber, isRecord, isText, telemetryRetry } from "./telemetry-shapes";
 
 /**
- * The AI calls list and its conversations (docs/ai-usage.md, "The calls
- * list"; apps/api/src/ai/call-routes.ts): the calls one page at a time,
- * one call with its price's source, the period's conversations, and one
- * conversation's calls. No prompt or completion is ever stored, so none
- * is here: only names, token counts, and times.
+ * AI calls and conversations (docs/ai-usage.md, "The calls list";
+ * apps/api/src/ai/call-routes.ts). Prompts and completions are never stored.
  */
 
 /** The list's filters: the AI page's, and a user, a conversation, and the failed calls only. */

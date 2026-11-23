@@ -3,10 +3,8 @@ import * as React from "react";
 const PRODUCT = "Ottertrail";
 
 /**
- * The browser tab's title, most specific first, so a narrow tab still shows
- * the page: "Errors · Demo shop – Ottertrail". Parts not known yet, or the
- * same as the product's name, are left out. The instance's name is not in
- * it: the sidebar shows it.
+ * Put the page first so narrow tabs show it. Omit unknown or duplicate product names.
+ * The sidebar already shows the instance name.
  */
 export function documentTitle(parts: {
   page?: string | undefined;
@@ -25,12 +23,7 @@ export function useDocumentTitle(title: string) {
   }, [title]);
 }
 
-/*
- * A 404 or an error shown in place of a page names the tab instead of the
- * page ("Page not found – Ottertrail"). The state registers its title
- * here, and the shell's and the sign-in layout's tab titles read it, so the
- * two never overwrite each other.
- */
+/* Page states register a shared tab title so the shell and sign-in layout cannot overwrite it. */
 let statusTitle: string | undefined;
 const statusListeners = new Set<() => void>();
 const subscribeStatus = (listener: () => void) => {

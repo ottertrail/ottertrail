@@ -1,12 +1,8 @@
 import { ApiError } from "./api";
 
-/** Shape checks and settings the telemetry clients share (traces-api.ts, logs-api.ts, …). */
-
 /**
- * Retries of a telemetry page's request: none after an answer from the
- * API. A 503 says ClickHouse or the instance's queries are busy, and an
- * automatic retry would only add to them; the page offers Retry instead.
- * A request that never reached the API is retried once.
+ * Retry network failures once. API errors, including busy-query 503s, require manual Retry
+ * to avoid adding load.
  */
 export const telemetryRetry = (failures: number, error: Error) =>
   !(error instanceof ApiError && error.status !== 0) && failures < 1;

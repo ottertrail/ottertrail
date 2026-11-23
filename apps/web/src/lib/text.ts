@@ -1,7 +1,6 @@
 /**
- * Characters as the API and PostgreSQL count them: code points, so a
- * surrogate pair (most emoji) is one. Not graphemes: an emoji built of
- * several code points counts as several there too.
+ * Count Unicode code points to match the API and PostgreSQL.
+ * Surrogate pairs count once; emoji with multiple code points count each point.
  */
 export const characters = (text: string) =>
   text.replace(/[\uD800-\uDBFF][\uDC00-\uDFFF]/g, "_").length;
@@ -11,9 +10,8 @@ export const characters = (text: string) =>
 const CONTROL = /[\u0000-\u001F\u007F]/u;
 
 /**
- * Why the name of a saved thing (a goal, a funnel) would be refused, as the
- * API checks it: 1 to `max` characters after trimming, no control
- * characters. null when it would not be.
+ * Match API rules: 1 to max characters after trimming, with no control characters.
+ * Return null for valid names.
  */
 export function nameProblem(name: string, what: string, max: number): string | null {
   const trimmed = name.trim();

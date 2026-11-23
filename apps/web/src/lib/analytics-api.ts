@@ -57,7 +57,6 @@ export function rangeFrom(search: { period?: unknown; from?: unknown; to?: unkno
   return { period: isPeriod(search.period) ? search.period : DEFAULT_PERIOD };
 }
 
-/** The range as the API's query parameters. */
 export const rangeParams = (range: PageRange): Record<string, string> =>
   "period" in range ? { period: range.period } : { from: range.from, to: range.to };
 
@@ -228,11 +227,7 @@ export const isAnalytics = (value: unknown): value is Analytics =>
     isListOf(isRecord(value.breakdowns) ? value.breakdowns[name] : undefined, isBreakdownRow),
   );
 
-/**
- * What the page can be filtered by, in the order filters are shown and
- * sent. "page" keeps visits that viewed the page; the others keep visits
- * whose property has the value, exactly as its list shows it.
- */
+/** "page" matches visits that viewed that page. Other filters match exact property values. */
 export const FILTER_NAMES = [
   "page",
   "entryPage",
@@ -289,10 +284,8 @@ function filterValue(value: unknown): string | undefined {
 }
 
 /**
- * Filters from the address bar's query. Every name is in the result,
- * undefined when absent or unusable (an object, an overlong value): the
- * router merges this over the raw query, so a name left out would keep its
- * raw, unchecked value. The type makes the compiler check that none is.
+ * Include every filter name, with undefined for invalid or absent values.
+ * The router merges this over the raw query; omitted names would keep unchecked values.
  */
 export function filtersFrom(
   search: Record<string, unknown>,
@@ -313,7 +306,6 @@ export function filtersFrom(
   };
 }
 
-/** The active filters as [name, value] pairs, in FILTER_NAMES order. */
 export function activeFilters(filters: Filters): [FilterName, string][] {
   return FILTER_NAMES.flatMap((name) => {
     const value = filters[name];
@@ -324,7 +316,6 @@ export function activeFilters(filters: Filters): [FilterName, string][] {
 /** How often a page that shows today refreshes on its own. */
 const REFRESH_MS = 60_000;
 
-/** The API's environment parameter: left out for the default. */
 const environmentParams = (environment: string): Record<string, string> =>
   environment === DEFAULT_ENVIRONMENT ? {} : { environment };
 

@@ -3,10 +3,8 @@ import { cn } from "cn";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 
 /**
- * An avatar square: the image when there is one, else `text` (an initial
- * or initials) on `hairline-strong`, which also shows while the image
- * loads or when it fails. Hidden from screen readers; the name beside it,
- * or a label, says whose it is.
+ * Show initials while the image loads or fails. Hide from screen readers;
+ * a nearby name or label must identify whose avatar it is.
  */
 export function AvatarSquare({
   src,

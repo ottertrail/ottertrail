@@ -1,11 +1,7 @@
 /**
- * Messages between the dashboard and the replay player, which runs in a
- * frame on the dashboard's own origin under its own Content Security
- * Policy (docs/session-replay.md, "The timeline"). The dashboard asks the
- * player to move to a moment; the player says where it is. The player has
- * the same names (packages/replay-player/src/format.ts). Each side takes a
- * message only from the other window, from its own origin, in exactly this
- * shape; anything else is ignored.
+ * Dashboard/player messages (docs/session-replay.md, "The timeline"). Keep names aligned
+ * with packages/replay-player/src/format.ts. The iframe has its own Content Security Policy.
+ * Accept only messages of this shape from the other window on this origin.
  */
 export const SEEK_MESSAGE = "ottertrail:replay-seek";
 export const TIME_MESSAGE = "ottertrail:replay-time";

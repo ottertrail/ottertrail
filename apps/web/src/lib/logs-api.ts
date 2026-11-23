@@ -129,7 +129,6 @@ const isLogList = (value: unknown): value is LogList =>
   isTextOrNull(value.next) &&
   typeof value.received === "boolean";
 
-/** The search's filters as query parameters, besides the range. */
 function filterParams(environment: string, filters: LogFilters): Record<string, string> {
   return {
     ...(environment === DEFAULT_ENVIRONMENT ? {} : { environment }),
@@ -298,7 +297,6 @@ export const logsQuery = (
 const isLogAnswer = (value: unknown): value is { timeZone: string; log: LogRecord } =>
   isRecord(value) && isText(value.timeZone) && isLogRecord(value.log);
 
-/** One whole record: its body, attributes, and resource attributes, read when it is opened. */
 export const logQuery = (projectId: string, log: LogSummary) =>
   queryOptions({
     queryKey: ["log", projectId, log.id, log.timeNs],

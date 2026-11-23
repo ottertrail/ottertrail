@@ -4,7 +4,6 @@ import { apiRequest, expectShape } from "./api";
 
 /** The instance's settings, as GET /api/settings returns them to the owner. */
 export interface Settings {
-  /** The instance's display name, shown at the top of the sidebar. */
   name: string;
   /** IANA timezone: reports count days in it. */
   timeZone: string;

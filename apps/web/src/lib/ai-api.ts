@@ -4,11 +4,7 @@ import { DEFAULT_ENVIRONMENT, type PageRange, rangeParams } from "./analytics-ap
 import { apiRequest, expectShape } from "./api";
 import { isListOf, isNumber, isRecord, isText, telemetryRetry } from "./telemetry-shapes";
 
-/**
- * The AI page's report (docs/ai-usage.md, "The report"; apps/api/src/ai):
- * the LLM calls in a project's traces, with tokens, estimated cost,
- * latency, and failures by model, feature, and user.
- */
+/** AI report (docs/ai-usage.md, "The report"; apps/api/src/ai). */
 
 /** The report's filters, each exactly as stored. `feature: ""` is the calls with no feature. */
 export interface AiFilters {
@@ -43,7 +39,6 @@ export interface AiTotals {
   noPriceModels: string[];
 }
 
-/** A breakdown row's figures. */
 export interface AiFigures {
   calls: number;
   inputTokens: number;

@@ -2,9 +2,8 @@ import { AvatarSquare } from "@/components/avatar-square";
 import { initialsOf } from "@/lib/initials";
 
 /**
- * A dashboard user's avatar: their uploaded image, else their initials on
- * `hairline-strong`. Hidden from screen readers; the name beside it, or a
- * label, says who. `size="sm"` is the 24px one of lists (an error's assignee).
+ * Hide from screen readers; a nearby name or label must identify the user.
+ * size="sm" is 24px.
  */
 export function UserAvatar({
   name,

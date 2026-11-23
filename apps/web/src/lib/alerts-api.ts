@@ -4,11 +4,7 @@ import { apiRequest, expectShape } from "./api";
 import { isMetricKind, type MetricKind } from "./metrics-api";
 import { isListOf, isNumber, isRecord, isText, isTextOrNull } from "./telemetry-shapes";
 
-/**
- * A project's alert rules (docs/uptime-alerts.md, "Alerts";
- * apps/api/src/alerts): what each watches, the channels it sends to,
- * whether it fires now, and the alerts it sent.
- */
+/** Project alert rules (docs/uptime-alerts.md, "Alerts"; apps/api/src/alerts). */
 
 /** The kinds of rule, in the order the form offers them. */
 export const RULE_KINDS = [
@@ -43,7 +39,6 @@ export const KIND_LABEL: Record<RuleKind, string> = {
   ai_latency: "AI latency",
 };
 
-/** The kinds that watch traces and metrics. */
 export const TELEMETRY_KINDS: readonly RuleKind[] = [
   "route_latency",
   "route_failures",
@@ -90,7 +85,7 @@ export type Percentile = (typeof PERCENTILES)[number];
 export const DIRECTIONS = ["above", "below"] as const;
 export type Direction = (typeof DIRECTIONS)[number];
 
-/** The windows an AI cost rule adds up: the last hour, the last 24 hours, or the month so far. */
+/** "month" means the month so far. */
 export const COST_WINDOWS = ["1h", "1d", "month"] as const;
 export type CostWindow = (typeof COST_WINDOWS)[number];
 export const DEFAULT_COST_WINDOW: CostWindow = "1d";
@@ -126,7 +121,6 @@ export interface RuleSettings {
   percentile?: Percentile;
   thresholdMs?: number;
   thresholdPercent?: number;
-  /** Metric rules. */
   metric?: string;
   metricKind?: MetricKind;
   aggregate?: Aggregate;
@@ -201,7 +195,6 @@ export interface FiringAlert {
   message: string;
 }
 
-/** What the form sends. */
 export interface RuleFields {
   name: string;
   kind: RuleKind;
@@ -308,11 +301,9 @@ const rulesPath = (projectId: string) => `${projectPath(projectId)}/alert-rules`
 const rulePath = (projectId: string, ruleId: string) =>
   `${rulesPath(projectId)}/${encodeURIComponent(ruleId)}`;
 
-/** The project's rules; read again every 30 seconds, as whether each fires changes. */
 /**
- * A notification channel by name, as a rule's form offers it: GET
- * /api/projects/:id/alert-channels. Never its addresses, URL, or secret,
- * which only the Settings page shows (docs/access.md).
+ * Channel names from GET /api/projects/:id/alert-channels. Addresses, URLs, and secrets
+ * are restricted to Settings (docs/access.md).
  */
 export interface ChannelName {
   id: string;

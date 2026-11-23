@@ -3,7 +3,6 @@ export class ApiError extends Error {
   override name = "ApiError";
   /** HTTP status; 0 when the API could not be reached or answered something unexpected. */
   readonly status: number;
-  /** The API's error code, such as "invalid_hostname". */
   readonly code: string | undefined;
   constructor(status: number, message: string, code?: string) {
     super(message);
@@ -37,10 +36,8 @@ export function expectShape<T>(value: unknown, isShape: (value: unknown) => valu
 }
 
 /**
- * Calls the API on this origin. The session cookie goes along automatically,
- * and the browser adds the Origin header the API checks on changes.
- * Throws ApiError for anything but a 2xx response. The body comes back
- * unchecked; callers narrow it with expectShape.
+ * Sends the session cookie and Origin header on this origin. Throws ApiError outside 2xx.
+ * Response bodies are unchecked; callers narrow them with expectShape.
  */
 export async function apiRequest(
   path: string,

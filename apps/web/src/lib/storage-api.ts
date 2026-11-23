@@ -2,11 +2,7 @@ import { queryOptions } from "@tanstack/react-query";
 
 import { apiRequest, expectShape } from "./api";
 
-/**
- * The instance's storage (GET /api/settings/storage; docs/deployment.md,
- * "Storage"): what fills the server's disk, the warnings, and the channels
- * that get them. The owner and admins only.
- */
+/** Owner/admin storage settings (GET /api/settings/storage; docs/deployment.md, "Storage"). */
 
 /** A store's figures, or why they could not be measured. */
 export type Measured<T> = ({ ok: true } & T) | { ok: false; error: string };
@@ -42,7 +38,6 @@ export interface HeldWarning {
   id: string;
   level: WarningLevel;
   title: string;
-  /** When it started. */
   since: string;
 }
 

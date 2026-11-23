@@ -2,7 +2,6 @@ import { queryOptions } from "@tanstack/react-query";
 
 import { apiRequest, expectShape } from "./api";
 
-/** The signed-in user's own account, as the account routes answer it. */
 export interface AccountUser {
   id: string;
   name: string;
@@ -54,7 +53,6 @@ export interface AccountSession {
   createdAt: Date;
   /** When the session's row was last renewed: at most once a day. */
   updatedAt: Date;
-  /** This browser's. */
   current: boolean;
 }
 
@@ -104,12 +102,10 @@ export const accountSessionsQuery = () =>
     },
   });
 
-/** Signs out one of the user's other sessions. */
 export async function revokeSession(id: string): Promise<void> {
   await apiRequest(`/api/account/sessions/${encodeURIComponent(id)}`, { method: "DELETE" });
 }
 
-/** Signs out every session of the user but this one. */
 export async function revokeOtherSessions(): Promise<void> {
   await apiRequest("/api/account/sessions", { method: "DELETE" });
 }
@@ -139,11 +135,7 @@ const SYSTEMS: readonly [RegExp, string][] = [
   [/\bLinux\b/, "Linux"],
 ];
 
-/**
- * The browser (with its major version) and the system from a User-Agent:
- * a few patterns for the common browsers, not a full parser. Browsers
- * freeze or trim their User-Agent, so the system's version is left out.
- */
+/** Common User-Agent patterns only. Browsers trim or freeze system versions, so omit them. */
 export function parseUserAgent(userAgent: string | null): Device {
   if (userAgent === null) return { browser: null, os: null };
   let browser: string | null = null;

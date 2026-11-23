@@ -1,12 +1,8 @@
 import * as React from "react";
 
 /**
- * A table that scrolls sideways inside its widget, as on a phone, with a
- * fade at the edge where more columns wait, so a cut-off column reads as
- * "scroll for more". The fade goes when the table fits or is scrolled to
- * that end. The table's first column stays pinned (`PINNED`, pinned-column.ts);
- * when its last column is pinned too (`PINNED_END`, the row's actions), the
- * fade sits just inside that column, above the cells that scroll under it.
+ * Fade the edge to signal more columns. With PINNED_END, keep the fade inside the action column
+ * so it covers only scrolling cells (pinned-column.ts).
  */
 export function ScrollHint({
   children,

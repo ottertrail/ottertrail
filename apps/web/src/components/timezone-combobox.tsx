@@ -9,11 +9,7 @@ import {
   ComboboxList,
 } from "@/components/ui/combobox";
 
-/**
- * The timezone names to choose from. The browser's list leaves out "UTC",
- * which most installs start with, so it is added. The API checks the name
- * and stores its official form.
- */
+/** Add UTC because the browser list omits it. The API validates and canonicalizes names. */
 const TIME_ZONES = [...new Set(["UTC", ...Intl.supportedValuesOf("timeZone")])];
 
 /** Lowercase, with underscores as spaces, so "new york" finds America/New_York. */
@@ -41,11 +37,6 @@ function utcOffset(zone: string, at: Date) {
   }
 }
 
-/**
- * A field for an IANA timezone name: type part of the name to filter the
- * list, then pick one with the pointer or the arrow keys and Enter. Each
- * option shows its current offset from UTC.
- */
 export function TimezoneCombobox({
   id,
   name,

@@ -14,13 +14,7 @@ const DOT_TONE = {
 
 const LABEL = { checking: "Checking API", ok: "API online", unreachable: "API unreachable" };
 
-/**
- * The status as a dot: in the sidebar's head while the API is online, and
- * on the mark's corner when the sidebar is collapsed to icons. The same
- * words for screen readers, and in a tooltip on hover and focus, with the
- * reason when the API cannot be reached. Retry waits for the expanded
- * sidebar.
- */
+/** Keep the same accessible name in both sidebar layouts. Retry requires the expanded sidebar. */
 function StatusDot({ health, side }: { health: ApiHealthState; side: "right" | "bottom" }) {
   const label = LABEL[health.state];
   return (
@@ -43,12 +37,8 @@ function StatusDot({ health, side }: { health: ApiHealthState; side: "right" | "
 }
 
 /**
- * Live result of GET /api/health. Shows the real state, including failures.
- * The <output> element is a polite live region, so changes are announced.
- * `compact` draws it as a dot (the collapsed sidebar); `quiet` draws a dot
- * while the API is online or being checked, and the full badge, with its
- * reason and Retry, only when it cannot be reached (the sidebar's head).
- * `badgeClassName` applies while the badge shows.
+ * The output announces health changes as a polite live region. In quiet mode,
+ * show failure details and Retry only when unreachable; compact mode always uses a dot.
  */
 export function ApiStatus({
   compact = false,

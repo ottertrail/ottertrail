@@ -3,13 +3,10 @@ import { queryOptions } from "@tanstack/react-query";
 import { apiRequest, expectShape } from "./api";
 
 /**
- * A project's source maps (docs/errors.md, "Source maps"): a site's build
- * uploads one per release and minified file, with the project's secret key,
- * and the error page maps stacks with them. The dashboard lists and deletes
- * them; it never uploads.
+ * Builds upload maps per release and minified file with the project secret key.
+ * The dashboard lists and deletes them (docs/errors.md, "Source maps").
  */
 
-/** One release's maps, together. */
 export interface SourceMapRelease {
   release: string;
   files: number;
@@ -38,7 +35,6 @@ export interface SourceMapOverview {
 /** Newest releases first, or oldest: the oldest are the ones to delete for room. */
 export type ReleaseOrder = "newest" | "oldest";
 
-/** One minified file's map. */
 export interface SourceMapFile {
   release: string;
   /** The minified file's path as the browser loads it, such as /assets/index-4f3a.js. */

@@ -4,9 +4,8 @@ import { apiRequest, expectShape } from "./api";
 import { isListOf, isNumber, isRecord, isText, isTextOrNull } from "./telemetry-shapes";
 
 /**
- * The instance's notification channels (docs/uptime-alerts.md, "Where
- * alerts go"; apps/api/src/notifications): email lists and webhooks that
- * alert rules send to, with their deliveries of the last 30 days.
+ * Notification channels and their last 30 days of deliveries
+ * (docs/uptime-alerts.md, "Where alerts go"; apps/api/src/notifications).
  */
 
 export const MAX_CHANNEL_NAME = 100;
@@ -180,11 +179,7 @@ export async function rotateSecret(id: string): Promise<{ channel: Channel; secr
 const isTestEmail = (value: unknown): value is { email: string; message: string } =>
   isRecord(value) && isText(value.email) && isText(value.message);
 
-/**
- * Sends a test email to the signed-in user's own address, through the
- * instance's SMTP server, while the request waits: the answer says whether
- * the mail server accepted it, or throws its error.
- */
+/** Wait for the instance SMTP server to accept mail to the signed-in user, or throw its error. */
 export async function sendTestEmail(): Promise<{ email: string; message: string }> {
   return expectShape(await apiRequest("/api/channels/email-test", { method: "POST" }), isTestEmail);
 }

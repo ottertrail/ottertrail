@@ -4,10 +4,8 @@ import { enGB } from "react-day-picker/locale";
 import { Calendar } from "@/components/ui/calendar";
 
 /**
- * One day on shadcn's calendar, for `DateField`'s popover: weeks start on
- * Monday (enGB, as the custom range dialog's), today underlined, and days
- * after `max` disabled. A module of its own so the calendar's code loads
- * only when a date field first opens it.
+ * Separate module so the calendar loads only when a date field first opens it.
+ * Weeks start Monday; disable days after max.
  */
 export function DayCalendar({
   selected,

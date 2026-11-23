@@ -42,7 +42,6 @@ export interface ServiceList {
   received: boolean;
 }
 
-/** An object with a value of `isItem` for each status class. */
 const isPerClass = (value: unknown, isItem: (item: unknown) => boolean) =>
   isRecord(value) && STATUS_CLASSES.every((name) => isItem(value[name]));
 

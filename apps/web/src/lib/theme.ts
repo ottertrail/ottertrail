@@ -1,11 +1,8 @@
 import * as React from "react";
 
 /**
- * The dashboard's theme (docs/design-system.md, "Color"): System, Light or
- * Dark, kept per device in localStorage. System follows the device's
- * `prefers-color-scheme`, and its changes. public/theme.js applies the same
- * choice before the first paint, with the same key and the same colors;
- * this module keeps it applied while the app runs.
+ * Per-device theme (docs/design-system.md, "Color"). Keep the storage key and colors aligned
+ * with public/theme.js, which applies the theme before first paint.
  */
 export type ThemeChoice = "system" | "light" | "dark";
 export type Theme = "light" | "dark";
@@ -40,7 +37,6 @@ function systemTheme(): Theme {
 export const resolveTheme = (choice: ThemeChoice): Theme =>
   choice === "system" ? systemTheme() : choice;
 
-/** Sets the `dark` class, `color-scheme`, and the two meta tags on the page. */
 export function applyTheme(theme: Theme, doc: Document = document) {
   const root = doc.documentElement;
   root.classList.toggle("dark", theme === "dark");
@@ -87,11 +83,7 @@ export function setThemeChoice(choice: ThemeChoice) {
 
 let watching = false;
 
-/**
- * Keeps the theme in step while the app runs: the device's scheme changing
- * under System, and a choice made in another tab. Applies the stored choice
- * once, too (public/theme.js did before the first paint; this is the same).
- */
+/** Watch system scheme changes and choices made in other tabs; apply the stored choice on startup. */
 export function watchTheme() {
   if (watching) return;
   watching = true;
@@ -110,7 +102,6 @@ function subscribe(listener: () => void) {
   return () => listeners.delete(listener);
 }
 
-/** The choice (System, Light or Dark) and the theme it gives now, kept current. */
 export function useTheme(): ThemeState {
   return React.useSyncExternalStore(subscribe, current);
 }

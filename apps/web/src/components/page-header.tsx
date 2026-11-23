@@ -20,22 +20,14 @@ interface PageHeaderSlots {
 
 const SlotsContext = React.createContext<PageHeaderSlots | null>(null);
 
-/**
- * The page's primary actions (New project, Invite, Add rule), drawn at the
- * end of the page header. They stay in the page's React tree, so a dialog
- * they open keeps the page's state and context.
- */
+/** Portal actions into the header while keeping page state and context for their dialogs. */
 export function PageActions({ children }: { children: React.ReactNode }) {
   const slots = React.use(SlotsContext);
   if (slots?.actions == null) return null;
   return createPortal(children, slots.actions);
 }
 
-/**
- * Names the page in its header in place of the route's title: a detail
- * page's item, such as an error's type or a user's name. While it loads,
- * the route's title ("Error") shows.
- */
+/** Use the route title until the detail title loads. */
 export function PageTitle({ title }: { title: string | undefined }) {
   const setTitle = React.use(SlotsContext)?.setTitle;
   React.useLayoutEffect(() => {
@@ -63,11 +55,7 @@ function MenuButton() {
   );
 }
 
-/**
- * The screen's page on the docs site, in a new tab: "Docs" and an arrow in
- * small muted text, on the title's baseline. `noreferrer` keeps the
- * instance's address from the docs site. The name starts with the topic.
- */
+/** Use noreferrer to keep the instance address from the docs site. */
 function DocsLink({ docs }: { docs: DocsLinkTarget }) {
   return (
     <a
@@ -86,12 +74,8 @@ function DocsLink({ docs }: { docs: DocsLinkTarget }) {
 }
 
 /**
- * The top of every signed-in page, in place of a header bar
- * (docs/design-system.md, "Page header"): the page's `h1`, its docs page
- * right after it (lib/docs.ts), and its actions at the end, which the page
- * draws with `PageActions`. Under 60rem the menu button comes first. A
- * route without a title (a missing page) keeps the `h1` for screen readers
- * only, as its state shows a heading of its own.
+ * Page header (docs/design-system.md, "Page header"; lib/docs.ts). Below 60rem,
+ * put the menu first. Untitled routes keep a screen-reader h1 because their state has a heading.
  */
 function PageHeader({
   title,
@@ -138,12 +122,7 @@ function PageHeader({
   );
 }
 
-/**
- * The content panel's scrolling column: the page header, then the page,
- * which fills what is left (a workbench's full height, a state centred in
- * it) and scrolls with the header when longer. The page fills in the
- * header through `PageTitle` and `PageActions`.
- */
+/** Keep the header in the page scroll. Let workbenches and page states fill the remaining height. */
 export function PageWithHeader({ children }: { children: React.ReactNode }) {
   const [actions, setActions] = React.useState<HTMLElement | null>(null);
   const [title, setTitle] = React.useState<string | undefined>(undefined);

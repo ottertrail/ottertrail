@@ -3,9 +3,8 @@ import { queryOptions } from "@tanstack/react-query";
 import { apiRequest, expectShape } from "./api";
 
 /**
- * A project as every user with access to it sees it: GET /api/projects
- * and GET /api/projects/:id. Its keys and settings come only to those who
- * manage projects (docs/access.md): see Project.
+ * GET /api/projects and GET /api/projects/:id omit keys and settings unless the user
+ * manages projects (docs/access.md). See Project.
  */
 export interface ProjectSummary {
   id: string;
@@ -92,7 +91,6 @@ export function isFullProject(value: unknown): value is Project {
   );
 }
 
-/** A project in full, or without its keys and settings; never a mix. */
 const isProject = (value: unknown): value is ProjectSummary | Project =>
   isFullProject(value) || (isProjectSummary(value) && Object.keys(value).length === 5);
 
@@ -199,7 +197,6 @@ export interface SpamFilters {
   country?: string;
 }
 
-/** Visits, and their events by kind. */
 export interface SpamCounts {
   visits: number;
   events: number;
@@ -226,7 +223,6 @@ const isSpamCounts = (value: unknown): value is SpamCounts =>
 const isPreview = (value: unknown): value is SpamCounts & { limit: number } =>
   isSpamCounts(value) && "limit" in value && typeof value.limit === "number";
 
-/** What deleting with these filters would take. */
 export async function previewSpamVisits(projectId: string, filters: SpamFilters) {
   const body = await apiRequest(
     `/api/projects/${encodeURIComponent(projectId)}/spam-visits/preview`,

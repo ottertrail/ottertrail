@@ -354,14 +354,12 @@ const isResolution = (
   isRecord(value) && isText(value.fingerprint) && isTextOrNull(value.resolvedAt);
 
 /**
- * The API answers 404 both for a project it does not know (or the user
- * cannot reach) and for an error with no occurrence in the range; only the
- * message tells them apart.
+ * Project access failures and errors with no occurrence both return 404.
+ * Use the no_occurrences error code to distinguish them.
  */
 export const isUnknownProject = (error: unknown) =>
   error instanceof ApiError && error.status === 404 && error.code !== "no_occurrences";
 
-/** The API's environment parameter: left out for the default. */
 const environmentParams = (environment: string): Record<string, string> =>
   environment === DEFAULT_ENVIRONMENT ? {} : { environment };
 

@@ -12,9 +12,8 @@ import {
 import { nameProblem } from "./text";
 
 /**
- * A project's saved funnels (docs/product-analytics.md): a name for a
- * funnel's steps, who it counts, and its window. The period and the
- * environment are not part of it: they are chosen when it is shown.
+ * Saved funnel definitions (docs/product-analytics.md) exclude the period and environment;
+ * those are selected when viewing the funnel.
  */
 
 export interface SavedFunnel {
@@ -68,11 +67,7 @@ const hasFunnel = (value: unknown): value is { funnel: SavedFunnel } =>
 /** The key every saved-funnel change invalidates. */
 export const savedFunnelsKey = (projectId: string) => ["saved-funnels", projectId] as const;
 
-/**
- * Puts a funnel the API just saved into the list already loaded, by name
- * as the API sorts it, so the page shows it saved at once; the list is
- * fetched again all the same.
- */
+/** Update the cached list in API name order for immediate feedback, then refetch it. */
 export function rememberSavedFunnel(
   queryClient: QueryClient,
   projectId: string,
@@ -117,9 +112,8 @@ export async function createFunnel(
 }
 
 /**
- * PUT /api/projects/:id/funnels/:funnelId: replaces the name and the
- * definition of the funnel as read. Refused (funnel_changed) when it was
- * changed since, such as in another tab, so that change is not undone.
+ * PUT /api/projects/:id/funnels/:funnelId rejects concurrent changes (funnel_changed)
+ * to avoid overwriting edits from another tab.
  */
 export async function updateFunnel(
   projectId: string,

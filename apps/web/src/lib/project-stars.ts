@@ -30,11 +30,7 @@ async function setStar(projectId: string, starred: boolean) {
   });
 }
 
-/**
- * Stars or unstars a project. The list changes at once, so the sidebar and
- * the Projects page follow the click; a failure puts that one project back
- * as it was and leaves the error on the mutation.
- */
+/** Update stars immediately. On failure, roll back only this project and keep the mutation error. */
 export function useProjectStar() {
   const queryClient = useQueryClient();
   return useMutation({

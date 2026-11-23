@@ -24,11 +24,7 @@ import { PageLoadError } from "@/lib/lazy-page";
 import { hasNavigated } from "@/lib/navigations";
 import { reloadPage } from "@/lib/reload";
 
-/**
- * A page inside the shell whose code is still downloading, once the router
- * has waited `pendingMs` for it: a filter bar, a strip of figures, and a
- * chart, the shape most pages take (docs/design-system.md, "Data states").
- */
+/** Match the common page shape while route code loads (docs/design-system.md, "Data states"). */
 export function PagePending() {
   return (
     <output
@@ -60,7 +56,6 @@ export function PagePending() {
   );
 }
 
-/** A page before signing in whose code is still downloading: its panel's shape (AuthLayout). */
 export function AuthPending() {
   return (
     <main
@@ -107,11 +102,8 @@ function usePlacement(): Placement {
 const useTabTitle = useShowStatusTitle;
 
 /**
- * A state that replaces a page (docs/design-system.md, "Data states"): a
- * quiet mark (a large muted status number, or an icon in a soft circle),
- * the heading, what goes under it, and the actions. After a navigation
- * focus moves to the heading, and an error (`alert`) is announced; on the
- * page's first load it is the page, read from the top.
+ * Focus the heading and announce errors after navigation. On first load, read from the top
+ * (docs/design-system.md, "Data states").
  */
 function PageState({
   placement,
@@ -170,12 +162,10 @@ function PageState({
   );
 }
 
-/** The large muted status number of a state with no icon. */
 function StatusNumber({ children }: { children: string }) {
   return <p className="text-display-lg text-ink-subtle/40 tabular-nums select-none">{children}</p>;
 }
 
-/** An icon in a soft circle: the mark of an error. */
 function StateIcon({ icon: Icon }: { icon: React.ComponentType<{ className?: string }> }) {
   return (
     <div className="flex size-12 items-center justify-center rounded-full bg-muted text-ink-subtle">
@@ -184,12 +174,7 @@ function StateIcon({ icon: Icon }: { icon: React.ComponentType<{ className?: str
   );
 }
 
-/**
- * Nothing at this address: "404", the title, the address asked for, and
- * the way on. In the shell for a signed-in person, in the panel alone
- * before it (the router's notFoundComponent on the root route, the
- * catch-all route inside the app route, and the default one).
- */
+/** Render in the signed-in shell or AuthLayout, depending on the route. */
 export function NotFound({
   title = "Page not found",
   line,
@@ -228,12 +213,10 @@ export function NotFound({
   );
 }
 
-/** The router's notFoundComponent: the same state, wherever it shows. */
 export function RouteNotFound() {
   return <NotFound />;
 }
 
-/** What went wrong, by what the reader can do about it. */
 type ErrorKind = "unreachable" | "updated" | "other";
 
 function errorKind(error: unknown): ErrorKind {
@@ -266,7 +249,6 @@ const ERROR_COPY: Record<
 
 const messageOf = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
-/** The technical detail, for a report: the status and the message, and what caused it. */
 function errorDetails(error: unknown): string {
   if (!(error instanceof Error)) return String(error);
   const head =
@@ -280,11 +262,8 @@ function errorDetails(error: unknown): string {
 }
 
 /**
- * A failure, titled by its kind: the API out of reach (no answer, or a
- * proxy's 502, 503 or 504) offers Try again, which runs the routes' checks
- * again in place, and Reload; a newer version deployed (a page's code that
- * could not download) and anything else offer Reload, since browsers
- * remember a failed module. The technical detail waits under "Details".
+ * Retry API failures (network, 502, 503, 504) in place. Reload failed modules
+ * because browsers cache import failures.
  */
 export function ErrorState({ error, placement }: { error: unknown; placement: Placement }) {
   const router = useRouter();
@@ -339,12 +318,7 @@ export function ErrorState({ error, placement }: { error: unknown; placement: Pl
   );
 }
 
-/**
- * What a route shows when it fails (the router's defaultErrorComponent): in
- * the shell's content panel below the app route, so the other pages stay a
- * click away, and alone before it (the session check, the pages before
- * signing in).
- */
+/** Keep the shell available after app-route failures. Earlier failures use AuthLayout. */
 export function RouteError({ error }: ErrorComponentProps) {
   return <ErrorState error={error} placement={usePlacement()} />;
 }

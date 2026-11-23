@@ -6,17 +6,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import type { DirtyForm } from "@/hooks/use-dirty-form";
 
-/**
- * One settings form with its own Save bar, sticky at the foot of the
- * screen while the form is in view.
- *
- * - Save is disabled until something in the form changes, and again when
- *   the change is undone; "Unsaved changes" and Discard show meanwhile.
- * - While `saving`, Save says so and the bar waits; a failed save shows
- *   `error` above the bar and keeps the edits.
- * - A section without fields (a key, a danger zone) leaves out `form` and
- *   has no Save bar.
- */
+/** Keep edits after failed saves. Omit form for sections without editable fields or a Save bar. */
 export function SettingsSection<T>({
   title,
   description,
@@ -39,17 +29,10 @@ export function SettingsSection<T>({
   /** Why the last save failed, from the server's answer. */
   error?: string | undefined;
   saveLabel?: string;
-  /**
-   * Makes the heading focusable from script, for focus to land on when the
-   * control that had it goes away (a deleted row's buttons).
-   */
+  /** Accept focus when the previously focused control is removed, such as after deleting a row. */
   headingRef?: React.Ref<HTMLHeadingElement>;
-  /** The title's level in the page's outline: 3 under a heading of the page's own (a member's name). */
   headingLevel?: 2 | 3;
-  /**
-   * Content as wide as a table needs (a list, deliveries), rather than a
-   * form's measure; `"full"` for a table of many columns, as wide as the page.
-   */
+  /** Use true for table width or "full" for the full page width. */
   wide?: boolean | "full";
   children: React.ReactNode;
   className?: string;
@@ -102,7 +85,7 @@ export function SettingsSection<T>({
       onReset={(event) => {
         event.preventDefault();
         form.discard();
-        // Discard leaves the bar; focus stays in it rather than dropping to the page.
+        // Keep focus in the Save bar after Discard removes its button.
         focusSave();
       }}
     >
@@ -153,7 +136,7 @@ export function SettingsSection<T>({
           disabled={!form.dirty || saving}
           focusableWhenDisabled
           aria-busy={saving || undefined}
-          // Base UI marks a focusable disabled button with aria-disabled, not `disabled`.
+          // Base UI uses aria-disabled for focusable disabled buttons.
           className="aria-disabled:cursor-not-allowed aria-disabled:opacity-50"
         >
           {saving ? "Saving…" : saveLabel}

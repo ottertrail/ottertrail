@@ -1,8 +1,6 @@
 /**
- * Routers that have moved since the page loaded: a link, Back, or a retry
- * (`router.invalidate()`). A state that replaces the page, such as a 404 or
- * an error, moves focus to its heading and announces itself only then; on
- * the page's first load it is the page, and a screen reader starts there.
+ * Track navigation, Back, and retries so page states focus and announce their headings.
+ * On first load, screen readers already start at the top.
  */
 const moved = new WeakSet<object>();
 

@@ -21,12 +21,8 @@ export interface SettingsTab {
 }
 
 /**
- * A settings page's sections as tabs (project Settings, instance Settings,
- * Members), the chosen one in the address so it can be linked and
- * reloaded. Every tab stays mounted, so edits in one survive a visit to
- * another, and leaving the page with unsaved edits in any of them asks
- * first (`UnsavedChangesGuard`). Under 40rem the tab row scrolls sideways
- * rather than wrapping.
+ * Keep tabs mounted so edits survive tab changes. UnsavedChangesGuard covers every tab.
+ * Store selection in the URL for links and reloads; scroll the tab row below 40rem.
  */
 export function SettingsTabs({
   tabs,
@@ -54,11 +50,8 @@ export function SettingsTabs({
       >
         <div className="overflow-x-auto border-b px-gutter">
           {/*
-           * The list starts a tab's padding (px-3) to the left, and without
-           * the list's own 3px, so the first tab's label lines up with the
-           * content below it. Its height and the underline are set on the
-           * selectors ui/tabs.tsx uses (a plain h-10 loses to its h-8), and the
-           * underline sits inside the tab: below it, the row would scroll.
+           * Offset by px-3 and remove the list padding to align labels with content.
+           * Match ui/tabs.tsx selectors to override h-8. Keep the underline inside to avoid scrolling.
            */}
           <TabsList variant="line" aria-label={label} className={LINE_TABS_LIST}>
             {tabs.map((tab) => (

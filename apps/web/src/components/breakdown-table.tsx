@@ -44,16 +44,8 @@ export interface BreakdownViews {
 }
 
 /**
- * A compact ranked table on `ui/table`: the name, an inline bar in
- * proportion to the largest row, and the figures in tabular numerals. A
- * toggle group in its header switches between lists of one kind (top pages, entry pages);
- * a "show all" control goes in `showAll`.
- *
- * On phones (under 40rem) the table scrolls sideways inside itself
- * (`layout="scroll"`, the name column pinned) or each row stacks into a
- * block, the name over its bar and the figures labelled
- * (`layout="stack"`). The pinned column is painted `--block-surface`,
- * the page's background unless a card sets it.
+ * Below 40rem, scroll with a pinned name column or stack labeled figures.
+ * Pinned columns use --block-surface, set by the page or containing card.
  */
 export function BreakdownTable({
   title,
@@ -70,7 +62,6 @@ export function BreakdownTable({
   className,
 }: {
   title: string;
-  /** The title's heading level in the page's outline. */
   headingLevel?: 2 | 3 | 4;
   /** A line under the title, such as how many events a property is on. */
   description?: React.ReactNode;

@@ -32,7 +32,6 @@ export interface ActivityError {
   fingerprint: string;
 }
 
-/** One event of a user's activity. */
 export interface Activity {
   eventId: string;
   /** "pageview", "error", or a custom event's name. */
@@ -123,7 +122,6 @@ const isUserActivity = (value: unknown): value is UserActivity =>
   Array.isArray(value.replays) &&
   value.replays.every(isReplaySummary);
 
-/** The API's environment parameter: left out for the default. */
 const environmentParams = (environment: string): Record<string, string> =>
   environment === DEFAULT_ENVIRONMENT ? {} : { environment };
 

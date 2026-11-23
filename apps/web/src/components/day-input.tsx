@@ -4,10 +4,8 @@ import { Input } from "@/components/ui/input";
 import { DAY_PLACEHOLDER, maskDay } from "@/features/analytics/day-text";
 
 /**
- * One typed day: digits only, the slashes come by themselves (maskDay). The
- * field's text and cursor are set within the same event that changed them,
- * so no keystroke is lost however fast they come. The custom range dialog
- * and `DateField` both use it.
+ * Update text and cursor in the same event to avoid lost keystrokes.
+ * Shared by DateField and the custom range dialog.
  */
 export function DayInput({
   text,

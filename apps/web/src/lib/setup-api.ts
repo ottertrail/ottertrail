@@ -31,9 +31,7 @@ export interface OwnerDetails {
   name: string;
   email: string;
   password: string;
-  /** The same again: the API checks it too. */
   confirmPassword: string;
-  /** The instance's display name, shown at the top of the sidebar. */
   instanceName: string;
   /** An IANA timezone: reports count days in it. */
   timeZone: string;

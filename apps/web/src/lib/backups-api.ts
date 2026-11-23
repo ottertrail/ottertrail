@@ -3,11 +3,9 @@ import { queryOptions } from "@tanstack/react-query";
 import { apiRequest, expectShape } from "./api";
 
 /**
- * Scheduled backups (GET /api/settings/backups and its routes;
- * docs/deployment.md, "Backups"), for the owner only. Where backups go is
- * the worker's BACKUP_S3_*: the answer holds what the worker reported,
- * never the secret. The backup key comes only from its own route, fetched
- * when the owner asks to see it, and never cached.
+ * Owner-only backups (GET /api/settings/backups; docs/deployment.md, "Backups").
+ * Destination details come from the worker, excluding BACKUP_S3_* secrets.
+ * Fetch the backup key only on request through its own route; never cache it.
  */
 
 export interface BackupRun {
@@ -39,7 +37,6 @@ export interface DestinationConfig {
   endpoint: string;
   region: string;
   bucket: string;
-  /** The folder backups go under. */
   prefix: string;
   accessKeyId: string;
 }
@@ -63,7 +60,6 @@ export interface Backups {
   destination: {
     reportedAt: string | null;
     config: DestinationConfig | null;
-    /** What is wrong with the variables, in words. */
     problem: string | null;
     /** Over two hours old: the worker reports hourly, so it may be stopped. */
     stale: boolean;
@@ -80,7 +76,7 @@ export interface Backups {
     state: "none" | "ready" | "unreadable";
     recipient: string | null;
     createdAt: string | null;
-    /** When the owner said they saved the key; null while the reminder stays. */
+    /** Null until the owner confirms saving the key; controls the reminder. */
     savedAt: string | null;
   };
   status: {
@@ -92,11 +88,9 @@ export interface Backups {
     nextDueAt: string | null;
     /** The daily time since which no backup worked, three hours on. */
     overdueSince: string | null;
-    /** When a failed backup is tried once more. */
     retryAt: string | null;
     backupRequested: boolean;
     testRestoreRequested: boolean;
-    /** When the worker last listed the folder. */
     listedAt: string | null;
   };
 }
@@ -191,7 +185,6 @@ export const backupsQuery = () =>
       expectShape(await apiRequest("/api/settings/backups", { signal }), isBackups),
   });
 
-/** What the form saves. */
 export interface BackupChanges {
   enabled?: boolean;
   timeOfDay?: string;

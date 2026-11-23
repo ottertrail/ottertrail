@@ -13,11 +13,8 @@ import {
 import { type Registry, RegistryContext } from "@/hooks/unsaved-changes";
 
 /**
- * Asks before leaving a page with unsaved changes in any form inside it
- * (`useDirtyForm`): a dialog for a link or the Back button, and the
- * browser's own question for closing or reloading the tab. Moving between
- * tabs on the same page changes only the address's search, keeps every
- * form's edits, and is not asked about.
+ * Guard navigation, Back, tab close, and reload when any form is dirty.
+ * Allow search-only tab changes because forms stay mounted.
  */
 export function UnsavedChangesGuard({ children }: { children: React.ReactNode }) {
   // Read when leaving, in the same tick as a save or a discard that just ran.

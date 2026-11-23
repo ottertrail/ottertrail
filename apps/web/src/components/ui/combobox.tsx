@@ -4,19 +4,10 @@ import { Combobox as ComboboxPrimitive } from "@base-ui/react/combobox";
 import { cn } from "cn";
 import { CheckIcon, ChevronDownIcon } from "lucide-react";
 
-/**
- * A text field that filters a list of options, on Base UI's Combobox,
- * styled like `Input` and `SelectContent`. Base UI gives the field the
- * `combobox` role and the list `listbox` and `option`, with arrow keys,
- * Enter, and Escape.
- */
+/** Use Base UI for combobox roles and keyboard navigation. */
 const Combobox = ComboboxPrimitive.Root;
 
-/**
- * The field and its open button. `className` sizes the whole control
- * (`w-72`); the other props go to the `<input>`, so its `id` ties it to a
- * `<label htmlFor>`.
- */
+/** className sizes the whole control. Other props reach the input, including id for its label. */
 function ComboboxInput({
   className,
   triggerLabel = "Show options",
@@ -46,10 +37,7 @@ function ComboboxInput({
   );
 }
 
-/**
- * The floating list, as wide as the field, at most 18rem high (less when
- * the window has less room); the list inside it scrolls.
- */
+/** At most 18rem high, limited by available viewport space. */
 function ComboboxContent({
   className,
   children,
@@ -97,7 +85,6 @@ function ComboboxList({ className, ...props }: ComboboxPrimitive.List.Props) {
   );
 }
 
-/** One option; the check marks the chosen one. */
 function ComboboxItem({ className, children, ...props }: ComboboxPrimitive.Item.Props) {
   return (
     <ComboboxPrimitive.Item
@@ -120,11 +107,7 @@ function ComboboxItem({ className, children, ...props }: ComboboxPrimitive.Item.
   );
 }
 
-/**
- * Shown in place of the list when nothing matches. Base UI keeps the
- * element mounted, as a polite live region, and renders its children only
- * while the list is empty.
- */
+/** Base UI keeps this polite live region mounted and renders children only while empty. */
 function ComboboxEmpty({ className, ...props }: ComboboxPrimitive.Empty.Props) {
   return (
     <ComboboxPrimitive.Empty

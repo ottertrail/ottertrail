@@ -555,11 +555,8 @@ function ProjectMenu({ projectId }: { projectId: string }) {
 }
 
 /**
- * The API's health in the head (docs/design-system.md, "The shell"): a
- * green dot while it is online, a grey one while it is checked, and the
- * full badge with Retry, on a line of its own under the name, when it
- * cannot be reached, so "Ottertrail" is never cut off. Collapsed to icons,
- * a dot on the mark's corner, with the same accessible name.
+ * Wrap failures below the name so it stays visible (docs/design-system.md, "The shell").
+ * Collapsed mode keeps the same accessible name on the status dot.
  */
 function SidebarApiStatus() {
   const { isMobile, state } = useSidebar();
@@ -620,11 +617,6 @@ export function AppSidebar() {
   return (
     <Sidebar variant="inset" collapsible="icon">
       <SidebarHeader>
-        {/*
-         * The mark and name, the API's health, and the toggle; an unreachable
-         * API's badge wraps under them. Collapsed to icons, the toggle goes
-         * under the mark, and the health is a dot on its corner.
-         */}
         <div
           data-slot="sidebar-head"
           className="relative flex flex-wrap items-center gap-x-0.5 gap-y-1 group-data-[collapsible=icon]:flex-col group-data-[collapsible=icon]:flex-nowrap group-data-[collapsible=icon]:gap-2"

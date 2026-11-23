@@ -4,9 +4,8 @@ import { apiRequest, expectShape } from "./api";
 import { isListOf, isNumber, isRecord, isText, isTextOrNull } from "./telemetry-shapes";
 
 /**
- * The instance's AI model prices (docs/ai-usage.md, "Prices";
- * apps/api/src/ai/model-routes.ts): Settings → AI models, for the owner
- * and admins. US dollars per million tokens.
+ * AI model prices in US dollars per million tokens, for the owner and admins
+ * (docs/ai-usage.md, "Prices"; apps/api/src/ai/model-routes.ts).
  */
 
 /** A model's prices per million tokens; a null cache price is charged as input. */

@@ -28,28 +28,12 @@ function narrowNow(): boolean {
 }
 
 /**
- * A list and the selected item's detail beside it, resizable (Errors,
- * Replays, Traces, Logs, Users, Uptime, Alerts).
- *
- * - The selection is a search parameter (`param`); with none, the detail
- *   pane shows `summary`. Nothing is selected on arrival.
- * - A click selects with a new history entry. `j` and `k` select the next
- *   and previous item and `Esc` clears the selection, replacing the entry,
- *   with focus on the chosen row; `action` acts on the selected item. Keys
- *   typed in a field, a menu or a dialog are left alone.
- * - Under 64rem there is no room for two panes: the list fills the screen,
- *   `narrowFooter` follows it, and choosing an item calls `onOpenPage`, which
- *   goes to its own page. A selection that appears while the screen is
- *   narrow (an address opened there) does the same, once, after removing
- *   the selection from the list's entry.
- * - The list, the pane, and what they open stay mounted across 64rem: CSS
- *   switches the layout. A window that narrows with an item selected keeps
- *   the selection in the address and its pane, hidden; widening shows the
- *   pane again as it was. The summary, which holds no dialog, shows once:
- *   in the pane from 64rem, as `narrowFooter` under it.
- *
- * Rows mark themselves with `data-workbench-id={id}`, so the selection
- * scrolls into view as the keys move it.
+ * Store selection in param; show summary when absent. Clicks add history entries;
+ * j/k and Esc replace them. Ignore shortcuts in fields, menus, and dialogs.
+ * Below 64rem, open selections with onOpenPage. Clear URL selections before opening them once.
+ * Keep list and pane mounted across resizes so selection and dialogs survive.
+ * Show summary in the pane from 64rem, or as narrowFooter below it.
+ * Mark rows with data-workbench-id={id} for keyboard scrolling.
  */
 export function Workbench({
   label,
@@ -104,8 +88,7 @@ export function Workbench({
   const narrow = useMediaQuery(NARROW_WORKBENCH);
   const listRef = React.useRef<HTMLElement>(null);
   const detailRef = React.useRef<HTMLElement>(null);
-  // The latest callback, so a page may pass it inline without re-running the effects, and
-  // the latest selection, for the effect that runs as the width changes.
+  // Refs keep inline callbacks and selection current without rerunning effects.
   const openPageRef = React.useRef(onOpenPage);
   const selectedRef = React.useRef(selected);
   React.useLayoutEffect(() => {
@@ -113,16 +96,13 @@ export function Workbench({
     selectedRef.current = selected;
   });
 
-  // The pane renders from the first moment the screen is wide, and stays mounted after:
-  // CSS hides it under 64rem, so crossing 64rem unmounts nothing open in it. A phone that
-  // never widens renders no hidden pane.
+  // Mount the pane once the screen reaches 64rem. Keep it mounted when hidden
+  // so resizing preserves dialogs. Phones that never widen need no hidden pane.
   const [wideReached, setWideReached] = React.useState(!narrow);
   if (!narrow && !wideReached) setWideReached(true);
 
-  // A click selects with a new history entry, so Back returns to the list as it was. Under
-  // 64rem, at the moment of the click, it opens the item's own page instead, after taking a
-  // hidden selection out of the list's entry: Back then lands on the list, not on a
-  // selection that would open its own page as it appeared.
+  // Add history on selection so Back restores the list. Below 64rem, clear hidden
+  // selection before opening the item page so Back cannot reopen it.
   const select = React.useCallback(
     (id: string) => {
       if (!narrowNow()) {
@@ -135,11 +115,8 @@ export function Workbench({
     [selected, onOpenPage, setSelected],
   );
 
-  // A selection that appears while the screen is narrow (an address opened there, a link)
-  // shows the item's own page, once: the list's entry loses the selection first, so Back
-  // returns to the list rather than opening the page again. A selection made on a wider
-  // screen stays in the address, its pane hidden, when the window narrows; so does the one
-  // that replaces it (a deleted check's neighbour).
+  // Open new narrow-screen URL selections once, clearing them first so Back returns to the list.
+  // Preserve selections made while wide, including replacements after deletion, when narrowing.
   const lastSelected = React.useRef<string | undefined>(undefined);
   React.useEffect(() => {
     const before = lastSelected.current;
@@ -149,7 +126,6 @@ export function Workbench({
     openPageRef.current(selected);
   }, [selected, setSelected]);
 
-  // Keys move the selection, focus follows it, and the list's rows scroll to it.
   const rowOf = React.useCallback((id: string | undefined) => {
     const list = listRef.current;
     if (list === null) return null;
@@ -181,8 +157,7 @@ export function Workbench({
       focusRow(selected ?? before);
       return;
     }
-    // The selection cleared (Back, a link) while focus was in the detail, which is gone:
-    // focus returns to the list, at the row that was chosen.
+    // Restore focus to the chosen row when clearing selection removes the focused detail.
     const active = document.activeElement;
     if (
       selected === undefined &&
@@ -191,8 +166,7 @@ export function Workbench({
     ) {
       focusRow(before);
     } else if (selected !== undefined) {
-      // Chosen from inside the detail pane (a name in the summary), whose content is
-      // gone: focus moves to the chosen row rather than dropping to the page.
+      // Move focus to the row when selection removes the focused pane content.
       if (
         before !== selected &&
         (active === null ||
@@ -208,11 +182,9 @@ export function Workbench({
     }
   }, [selected, focusRow]);
 
-  // The window narrowed while focus was in the pane, which CSS now hides: focus moves to
-  // the list, at the selected row, rather than dropping to the page. Focus in a dialog
-  // opened from the pane stays there. Whether focus was in the pane is tracked as it moves:
-  // hiding the pane drops focus to the page before the narrowing renders. Focus that
-  // leaves the pane while it shows (a click on blank space) no longer counts.
+  // Return pane focus to the selected row on narrowing; leave open dialogs focused.
+  // Track focus before CSS hides the pane and drops focus to the page.
+  // Focus that leaves a visible pane no longer counts.
   const focusInDetail = React.useRef(false);
   React.useEffect(() => {
     const onFocusIn = (event: FocusEvent) => {
@@ -241,9 +213,8 @@ export function Workbench({
       const active = document.activeElement;
       return active === null || active === document.body || pane.contains(active);
     };
-    // A list of choices, a menu or a popover opened from the pane would float at the
-    // screen's corner, its anchor hidden: Escape closes it, as the reader would. A dialog
-    // opened from the pane is centred, and stays open.
+    // Close anchored popups when their hidden anchor would move them to the screen corner.
+    // Keep centered dialogs open.
     const anchor = pane.querySelector(
       '[aria-expanded="true"][aria-haspopup]:not([aria-haspopup="dialog"])',
     );
@@ -257,7 +228,7 @@ export function Workbench({
     (document.activeElement ?? document.body).dispatchEvent(
       new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }),
     );
-    // Focus leaves the popup as it closes, for its hidden anchor: then it goes to the row.
+    // Restore row focus after the popup closes and focuses its hidden anchor.
     let timer = 0;
     let tries = 60;
     const settle = () => {
@@ -272,8 +243,6 @@ export function Workbench({
     return () => window.clearTimeout(timer);
   }, [narrow, focusRow]);
 
-  // What the pane's content reads: whether it shows, and where a dialog opened from it
-  // returns focus while it is hidden.
   const finalFocus = React.useCallback(
     () => (narrowNow() ? (rowOf(selectedRef.current)?.target ?? true) : true),
     [rowOf],
@@ -283,13 +252,10 @@ export function Workbench({
     [narrow, finalFocus],
   );
 
-  // Where the selection last was in the list: when an action takes it out of the list
-  // (resolving an error under Unresolved), j and k carry on from there, not the top.
-  // New filters make a new list, which j starts at its top.
+  // Remember the position of removed items so j/k continue there. Reset on filter changes.
   const lastIndex = React.useRef(-1);
   const shownFilters = React.useRef(filterKey);
-  // The list and selection when the filters changed: the old list stays on screen until
-  // the new one comes, and the selection's place in it no longer counts.
+  // Ignore the old selection position while new filters load over a stale list.
   const beforeFilters = React.useRef<string | null>(null);
   React.useEffect(() => {
     const shown = `${selected ?? ""}\n${ids.join("\n")}`;
@@ -307,11 +273,10 @@ export function Workbench({
 
   React.useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      // Under 64rem, at the moment of the key, the list stands alone: the keys are not its.
+      // Disable list shortcuts below 64rem, when items open on their own pages.
       if (narrowNow() || typingOrOverlay(event)) return;
       const index = selected === undefined ? -1 : ids.indexOf(selected);
-      // A selection the list no longer holds sat at `lastIndex`: the item now there is
-      // the next one, and the one before it the previous.
+      // After removal, lastIndex points to the next item; its predecessor is the previous item.
       const gone = selected !== undefined && index === -1 && lastIndex.current !== -1;
       const pressed = event.key;
       if (pressed === "j" || pressed === "k") {
@@ -329,7 +294,7 @@ export function Workbench({
         const id = ids[next];
         if (id !== undefined && id !== selected) {
           moved.current = true;
-          // Moving through the list replaces the entry: Back leaves the list, not each step.
+          // Replace history so Back skips keyboard selection steps.
           setSelected(id, { replace: true });
         }
       } else if (pressed === "Escape" && selected !== undefined) {
@@ -357,15 +322,13 @@ export function Workbench({
     </section>
   );
 
-  // One tree at every width, so crossing 64rem (a tablet turned) keeps what is open in the
-  // pane, its dialogs and their text, and the panels' sizes. From 64rem the panels sit side
-  // by side; under it CSS hides the handle and the pane, the list takes the whole row, and
-  // the footer follows it.
+  // Keep one tree across 64rem so resizing preserves pane state, dialogs, and panel sizes.
+  // CSS hides the pane and handle below 64rem.
   return (
     <div data-slot="workbench" className={cn("flex min-h-0 flex-col", className)}>
       <ResizablePanelGroup
         orientation="horizontal"
-        // Under 64rem the hidden handle would still take pointer presses at the corner.
+        // Disable pointer events on the hidden handle below 64rem.
         disabled={narrow}
         className="min-h-0 min-[64rem]:flex-1 max-[64rem]:[&>[data-workbench-pane=detail]]:hidden! max-[64rem]:[&>[data-workbench-pane=list]]:grow!"
       >
@@ -455,7 +418,6 @@ function fitsOnOneLine(bar: HTMLElement, hints: HTMLElement, hintsWidth: number)
       needed += item.getBoundingClientRect().width;
       continue;
     }
-    // The group that holds the hints: its other items, the hints, and the gaps between them.
     const parts = [...item.children].filter(
       (part): part is HTMLElement =>
         part instanceof HTMLElement && part !== hints && part.offsetParent !== null,
@@ -463,24 +425,19 @@ function fitsOnOneLine(bar: HTMLElement, hints: HTMLElement, hintsWidth: number)
     needed += parts.reduce((sum, part) => sum + part.getBoundingClientRect().width, 0);
     needed += hintsWidth + parts.length * columnGap(item);
   }
-  // A pixel of slack for sub-pixel widths.
+  // Allow 1px for subpixel widths.
   return needed <= room + 1;
 }
 
 /**
- * The hints give way first: they show only while the filter bar fits on one
- * line with them, so they never push it onto a second (docs/design-system.md,
- * "Workbench"). Checked on each render of the page (a filter or period that
- * changes the bar's items renders it again) and when the bar resizes. When
- * they don't fit they stay laid out, invisible and out of the flow, so their
- * width can be measured for the next check.
+ * Hide hints before they force the filter bar to wrap (docs/design-system.md, "Workbench").
+ * Keep hidden hints laid out outside the flow to measure them. Recheck on render and resize.
  */
 function useFitsOnBar(ref: React.RefObject<HTMLUListElement | null>): boolean {
   const [fits, setFits] = React.useState(true);
   const check = React.useCallback(() => {
     const hints = ref.current;
     const bar = hints?.closest<HTMLElement>("[data-slot=filter-bar]");
-    // Under 64rem the hints are not shown at all: nothing to decide.
     if (hints == null || bar == null || getComputedStyle(hints).display === "none") return;
     setFits(fitsOnOneLine(bar, hints, hints.getBoundingClientRect().width));
   }, [ref]);
@@ -506,7 +463,7 @@ export function WorkbenchKeyHints({ action }: { action?: Pick<WorkbenchAction, "
       data-fits={fits}
       className={cn(
         "hidden items-center gap-3 text-xs whitespace-nowrap text-ink-subtle min-[64rem]:flex",
-        // Inside the bar's corner, so nothing past its edge scrolls sideways.
+        // Keep within the bar to prevent horizontal overflow.
         !fits && "pointer-events-none invisible absolute top-0 right-0",
       )}
     >

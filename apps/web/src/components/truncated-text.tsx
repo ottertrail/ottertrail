@@ -5,25 +5,10 @@ import * as React from "react";
 import { Tooltip, TooltipContent } from "@/components/ui/tooltip";
 
 /**
- * Text an ellipsis may cut off: one line (`truncate`), or a few with a
- * `line-clamp-*` class. Only while it is cut off, its whole text shows in
- * a tooltip on hover and on keyboard focus (docs/design-system.md,
- * "Truncated text"). Tooltips do not open on a tap, so on a phone the
- * whole text must be on the item's own page too.
- *
- * Where it is:
- * - **The control itself** (`render` a link or a button): the control is
- *   the trigger, with no tab stop of its own added.
- * - **Inside a link or a button** (a row's link holding a name and a
- *   detail), or around one (a trace ID's link): the tooltip opens when
- *   that control is hovered or focused, anchored to the text, again with
- *   no tab stop added.
- * - **Anywhere else:** cut off, the text takes a tab stop, so the
- *   keyboard reaches its tooltip.
- *
- * Cheap in long tables: one ResizeObserver for every instance, and the
- * text is measured when it mounts, when it is entered or focused, when its
- * size changes, and when its text changes, never on each render.
+ * Show full text on hover or focus only when truncated (docs/design-system.md, "Truncated text").
+ * Reuse a containing or rendered control as the trigger; otherwise add a tab stop.
+ * Tooltips do not open on tap, so the item page must also show the full text.
+ * Share one ResizeObserver. Measure on mount, entry, focus, size changes, or text changes.
  */
 export function TruncatedText(props: TruncatedTextProps) {
   // Inside an OverflowTooltip, the control's own tooltip shows the text.
@@ -31,7 +16,6 @@ export function TruncatedText(props: TruncatedTextProps) {
     const { text, children, className, render } = props;
     const element = render ?? <span />;
     const own = { "data-truncated-text": "", className: cn("block min-w-0 truncate", className) };
-    // An element's own children (a heading's text) stay, as with the tooltip.
     return element.props.children === undefined
       ? React.cloneElement(element, own, children ?? text)
       : React.cloneElement(element, own);
@@ -40,24 +24,18 @@ export function TruncatedText(props: TruncatedTextProps) {
 }
 
 interface TruncatedTextProps {
-  /** The whole text: shown, and in the tooltip. */
   text: string;
-  /** The tooltip's text one item per line instead (hostnames, services). */
   lines?: readonly string[];
   /** What shows instead of `text`, such as a type in bold before its message. */
   children?: React.ReactNode;
   /** A `line-clamp-*` class clamps to that many lines instead of one. */
   className?: string;
   /**
-   * The element to render (a link, a button, a heading); a span when left
-   * out. Children it has of its own show instead of `children` and `text`
-   * (a heading holds its text, for the lint rule on empty headings).
+   * Defaults to span. The rendered element's own children override children and text,
+   * so headings can supply text for the empty-heading lint rule.
    */
   render?: React.ReactElement<Record<string, unknown>>;
-  /**
-   * The shown text leaves part of `text` out on purpose (an element's last
-   * steps): the tooltip shows even when nothing is cut off.
-   */
+  /** Show the tooltip even without overflow when the displayed text is deliberately shortened. */
   shortened?: boolean | undefined;
   side?: "top" | "bottom";
 }
@@ -77,7 +55,6 @@ function TooltipText({
   const [open, setOpen] = React.useState(false);
   /** The link or button the text is in (or holds), whose hover and focus open the tooltip. */
   const [host, setHost] = React.useState<HTMLElement | null>(null);
-  /** Whether the element is a link or a button itself. */
   const [control, setControl] = React.useState(false);
 
   const measure = React.useCallback(() => {
@@ -92,8 +69,7 @@ function TooltipText({
     return now;
   }, [clamp, shortened]);
 
-  // Once: where the text is, whether it is cut off before the first paint (its tab
-  // stop then shows at once), and one observer entry for its size.
+  // Measure before paint so truncated text immediately has its tab stop.
   React.useLayoutEffect(() => {
     const element = ref.current;
     if (element === null) return undefined;
@@ -113,7 +89,6 @@ function TooltipText({
     measure();
   }, [text, measure]);
 
-  // Inside a link or a button: its hover and keyboard focus open the tooltip.
   const timer = React.useRef<ReturnType<typeof setTimeout>>(undefined);
   const popup = React.useRef<HTMLDivElement>(null);
   /**
@@ -183,8 +158,7 @@ function TooltipText({
       open={open}
       onOpenChange={(next, details) => {
         if (details.reason === "escape-key") {
-          // Escape closes the tooltip and still reaches the page (a workbench's Escape
-          // clears its selection): a tooltip is a hint, never a layer of its own.
+          // Let Escape reach the page too, so workbenches can clear selection.
           details.cancel();
           details.allowPropagation();
         }
@@ -197,7 +171,7 @@ function TooltipText({
         render={element}
         delay={OPEN_DELAY}
         disabled={nested}
-        // Not a data-slot: that would take the global focus ring off a link or button.
+        // Avoid data-slot, which would remove the global focus ring from links and buttons.
         data-truncated-text=""
         className={cn(clamp ? "min-w-0" : "block min-w-0 truncate", className)}
       >
@@ -214,10 +188,8 @@ function TooltipText({
           onPointerLeave={nested ? () => closeUnlessOn(() => host) : undefined}
         >
           {/*
-           * A very long text scrolls in here, not on the tooltip itself: there
-           * the arrow, which hangs below the box, would overflow it, so it
-           * would scroll by a few pixels, and macOS would flash a scrollbar as
-           * it opens and closes.
+           * Scroll inside this wrapper. Scrolling the tooltip itself lets its arrow overflow,
+           * causing macOS to flash a scrollbar.
            */}
           <div
             data-slot="tooltip-scroll"
@@ -239,7 +211,6 @@ function TooltipText({
   );
 }
 
-/** A link or a button: the element whose hover and focus open the tooltip. */
 const CONTROL = "a[href], button, summary, [role=button], [role=link]";
 /** Before the tooltip opens on hover, so moving across a long list shows none. */
 const OPEN_DELAY = 300;
@@ -264,7 +235,6 @@ function observeSize(element: Element, callback: () => void) {
 /** Set inside an OverflowTooltip: the TruncatedTexts in its control show no tooltip of their own. */
 const InsideOverflowTooltip = React.createContext(false);
 
-/** Whether the element, or a TruncatedText inside it, is cut off now. */
 function anyCutOff(element: Element | null): boolean {
   if (element === null) return false;
   const parts = [element, ...element.querySelectorAll("[data-truncated-text]")];
@@ -272,11 +242,8 @@ function anyCutOff(element: Element | null): boolean {
 }
 
 /**
- * One tooltip for a control holding several TruncatedTexts (the sidebar's
- * user button: a name over an email): it opens on the control's hover and
- * focus while any of them is cut off, or always while `always` (the
- * collapsed sidebar, which shows no text), with `content` in it. The texts
- * inside show no tooltip of their own.
+ * Share one tooltip across the control's TruncatedTexts. Open when any text is cut off,
+ * or unconditionally when `always` is set. Suppress the inner tooltips.
  */
 export function OverflowTooltip({
   render,
@@ -285,7 +252,7 @@ export function OverflowTooltip({
   always = false,
   side = "top",
 }: {
-  /** The control, with no children of its own. */
+  /** Supply a control with no children of its own. */
   render: React.ReactElement;
   children: React.ReactNode;
   content: React.ReactNode;

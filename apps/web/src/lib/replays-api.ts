@@ -4,11 +4,7 @@ import { DEFAULT_ENVIRONMENT, type PageRange, rangeParams } from "./analytics-ap
 import { apiRequest, expectShape } from "./api";
 import { type Project, updateProject } from "./projects-api";
 
-/**
- * A project's session replays (docs/session-replay.md): off, or recorded
- * around errors. The dashboard turns them on and off, shows their use, and
- * deletes them; the player is a page of the API's own, shown in a frame.
- */
+/** Error-triggered session replays (docs/session-replay.md). The API serves the player in a frame. */
 
 export type ReplayMode = Project["replayMode"];
 
@@ -17,7 +13,7 @@ export interface ReplayOverview {
   /** false: the install has no object store, so replays are off. */
   configured: boolean;
   mode: ReplayMode;
-  /** The project's replays: how many, and their compressed size. */
+  /** Bytes are compressed storage size. */
   replays: { count: number; bytes: number };
   /**
    * What all projects' replays take together, and the instance's limit:
@@ -186,12 +182,10 @@ export interface ReplayTimeline {
   recordingStartMs: number;
 }
 
-/** The list's filters besides the days and environment. */
 export interface ReplayFilters {
   /** A path visited contains this. */
   path?: string | undefined;
   userId?: string | undefined;
-  /** The error group. */
   fingerprint?: string | undefined;
   /** In milliseconds. */
   minDuration?: number | undefined;
@@ -330,7 +324,6 @@ export const replayListQuery = (
     placeholderData: keepPreviousData,
   });
 
-/** One replay: what it shows, and its timeline. */
 export const replayTimelineQuery = (projectId: string, replayId: string) =>
   queryOptions({
     queryKey: ["replay-timeline", projectId, replayId],
