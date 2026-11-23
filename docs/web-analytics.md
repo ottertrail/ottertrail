@@ -184,15 +184,15 @@ Content-Type: application/json
 
 ### The responses
 
-| Status | Body `error`                                                | Meaning                                                                                                                                                   | Should the sender retry? |
-| ------ | ----------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------ |
-| 202    | none: `{ "received" }`                                      | Accepted: the batch's events were written to ClickHouse, or filtered ([Spam](#spam)). `received` is the batch's number of events, whatever became of them | No                       |
-| 400    | `invalid_request`                                           | The batch breaks a rule below                                                                                                                             | No: it will fail again   |
-| 403    | `unknown_key`, `origin_not_allowed`, `hostname_not_allowed` | Wrong key, or a site the project does not allow                                                                                                           | No                       |
-| 413    | `payload_too_large`                                         | Body over 64 KB                                                                                                                                           | No: send smaller batches |
-| 415    | `unsupported_media_type`                                    | Not `text/plain` or `application/json`                                                                                                                    | No                       |
-| 429    | `rate_limited`                                              | Too many requests or events, or too many of the project's requests in progress                                                                            | Yes, after `Retry-After` |
-| 503    | `storage_unavailable`, `busy`                               | The key could not be looked up, or ClickHouse could not write, or the API has too many requests in progress; nothing was stored                           | Yes, after `Retry-After` |
+| Status | Body `error`                                                | Meaning                                                                                                                                                                                                                                                        | Should the sender retry? |
+| ------ | ----------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------ |
+| 202    | none: `{ "received" }`                                      | Accepted: the batch's events were written to ClickHouse, or filtered ([Spam](#spam)). `received` is the batch's number of events, whatever became of them                                                                                                      | No                       |
+| 400    | `invalid_request`                                           | The batch breaks a rule below                                                                                                                                                                                                                                  | No: it will fail again   |
+| 403    | `unknown_key`, `origin_not_allowed`, `hostname_not_allowed` | Wrong key, or a site the project does not allow                                                                                                                                                                                                                | No                       |
+| 413    | `payload_too_large`                                         | Body over 64 KB                                                                                                                                                                                                                                                | No: send smaller batches |
+| 415    | `unsupported_media_type`                                    | Not `text/plain` or `application/json`                                                                                                                                                                                                                         | No                       |
+| 429    | `rate_limited`                                              | Too many requests or events, or too many of the project's requests in progress                                                                                                                                                                                 | Yes, after `Retry-After` |
+| 503    | `storage_unavailable`, `busy`                               | The key could not be looked up, or ClickHouse could not write, or the API has too many requests in progress. Usually nothing was stored, but after ClickHouse's 10 seconds it may still write the batch; a retry is the same rows, which ClickHouse keeps once | Yes, after `Retry-After` |
 
 Ottertrail answers 202 only after ClickHouse has written the events ([clickhouse.md](clickhouse.md#how-events-get-there)). A batch is saved completely or not at all: if one event breaks a rule, nothing from the batch is stored.
 
@@ -265,7 +265,7 @@ The sender's clock can be wrong by minutes or days. The batch carries two times 
 occurred_at = (time the server received the batch) - (sentAt - occurredAt)
 ```
 
-A phone whose clock is two hours slow still gets the right times. An `occurredAt` after `sentAt` is impossible and is treated as `sentAt`. Events that happened more than 24 hours before sending are not stored and are counted in `tooOld` (`correctClock` in `apps/api/src/collection/normalize.ts`).
+A phone whose clock is two hours slow still gets the right times. An `occurredAt` after `sentAt` is impossible and is treated as `sentAt`. Events that happened more than 24 hours before sending are not stored and are counted as too old in the Activity tab (`correctClock` in `apps/api/src/collection/normalize.ts`); the answer does not say so.
 
 The time the request spent on the way is not seen, so an event is placed that much later than it happened, usually a fraction of a second. The tracker reads `sentAt` again for each attempt, so a retry's time comes out later by however much longer it spent on the way. The table matches events by day, not exact time, so the retry is still the same row ([Event IDs make retries harmless](#event-ids-make-retries-harmless)).
 
@@ -355,6 +355,7 @@ A delete takes at most 10,000 visits; past that it refuses, deleting nothing (40
 - Compressed request bodies.
 - Limits per client address set per project, for sites whose visitors share an address.
 - Counting caught spam per project over time, so a site can see how much there was.
+- Timing still tells filters apart: a filtered batch is answered at once, a stored one only after ClickHouse's write, so a sender that measures the delay can tell which it was.
 
 ## 3. The tracker
 
@@ -411,11 +412,11 @@ Each event keeps the time it happened (`occurredAt`), and each request carries t
 
 ### Retries
 
-| Outcome                         | Tracker does                                       |
-| ------------------------------- | -------------------------------------------------- |
-| 202                             | Removes the events from the queue                  |
-| 400, 403, 413, 415              | Drops the batch: sending it again would fail again |
-| 429, 5xx, or no response at all | Keeps the batch and retries                        |
+| Outcome                              | Tracker does                                       |
+| ------------------------------------ | -------------------------------------------------- |
+| 202                                  | Removes the events from the queue                  |
+| 400, 403, 413, 415                   | Drops the batch: sending it again would fail again |
+| 408, 429, 5xx, or no response at all | Keeps the batch and retries                        |
 
 Retries wait for `Retry-After` when the server sends it, otherwise about 1, 2, 4, 8 … seconds (capped at 60), with ±20% random jitter so many visitors' browsers do not retry in step after an outage. New events do not cut a wait short, not even ones tracked while the failed request was still waiting for its answer. After 8 failed attempts the batch is dropped.
 
@@ -573,7 +574,7 @@ To send test events with `curl`, pass a browser User-Agent (`-A "Mozilla/5.0 …
 
 ### Data centers
 
-Many bots say they are an ordinary Chrome or Safari. What gives most of them away is where they run: people browse from homes, offices, and phones, while scrapers, headless browsers, and test runs run on servers rented from a cloud or hosting provider. A browser event from such an address is accepted and ignored like any bot (`202`, counted in `bots`), before the project's event budget. The address is checked while the request is in hand, as for its location, and never stored.
+Many bots say they are an ordinary Chrome or Safari. What gives most of them away is where they run: people browse from homes, offices, and phones, while scrapers, headless browsers, and test runs run on servers rented from a cloud or hosting provider. A browser event from such an address is accepted and ignored like any bot (`202`, the same answer as a stored batch, counted as a bot in the Activity tab), before the project's event budget. The address is checked while the request is in hand, as for its location, and never stored.
 
 The ranges come from two kinds of source, downloaded by the worker each week, or by `vp run geo:update` (`src/enrichment/data-center-sources.ts`), into one file the API reads (`DATA_CENTERS_PATH`; see "Keeping the files current" above):
 
