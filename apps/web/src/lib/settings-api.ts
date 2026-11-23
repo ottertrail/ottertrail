@@ -61,7 +61,7 @@ export interface LocationDataUpdate {
 export interface LocationDataStatus {
   /** The server's time when it answered: the page counts minutes from it, not the browser's clock. */
   now: string;
-  geoSource: "database" | "cloudflare" | "none";
+  geoSource: "database" | "none";
   locations: {
     loaded: { type: string; builtAt: string; fileModifiedAt: string | null } | null;
     /** Why the API could not use the last changed file; it kept the one before. */
@@ -91,9 +91,7 @@ const isUpdate = (value: unknown): value is LocationDataUpdate | null =>
 const isLocationDataStatus = (value: unknown): value is LocationDataStatus =>
   isRecord(value) &&
   typeof value.now === "string" &&
-  (value.geoSource === "database" ||
-    value.geoSource === "cloudflare" ||
-    value.geoSource === "none") &&
+  (value.geoSource === "database" || value.geoSource === "none") &&
   isRecord(value.locations) &&
   (value.locations.loaded === null ||
     (isRecord(value.locations.loaded) &&

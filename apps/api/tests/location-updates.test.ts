@@ -391,7 +391,7 @@ describe("updateLocationData", () => {
 
   test("without a location source of its own, only the data-center ranges are downloaded", async () => {
     const fetchFn = fakeFetch(allSources("2026-11"));
-    expect(await update(fetchFn, MID_NOVEMBER, { geoSource: "cloudflare" })).toMatchObject({
+    expect(await update(fetchFn, MID_NOVEMBER, { geoSource: "none" })).toMatchObject({
       ran: true,
       locations: "not_needed",
       dataCenters: "updated",
@@ -413,54 +413,54 @@ describe("updateLocationData", () => {
   });
 
   test("a missing file that fails is tried again after 15 minutes, then 30", async () => {
-    const cloudflare = { geoSource: "cloudflare" as const };
-    expect(await update(fakeFetch({}), MID_NOVEMBER, cloudflare)).toMatchObject({
+    const noLocations = { geoSource: "none" as const };
+    expect(await update(fakeFetch({}), MID_NOVEMBER, noLocations)).toMatchObject({
       dataCenters: "failed",
       nextCheckInMs: 15 * MINUTE,
     });
     const early = fakeFetch({});
     expect(
-      await update(early, new Date(MID_NOVEMBER.getTime() + 10 * MINUTE), cloudflare),
+      await update(early, new Date(MID_NOVEMBER.getTime() + 10 * MINUTE), noLocations),
     ).toMatchObject({ dataCenters: "waiting", nextCheckInMs: 5 * MINUTE });
     expect(early.urls).toEqual([]);
     expect(
-      await update(fakeFetch({}), new Date(MID_NOVEMBER.getTime() + 15 * MINUTE), cloudflare),
+      await update(fakeFetch({}), new Date(MID_NOVEMBER.getTime() + 15 * MINUTE), noLocations),
     ).toMatchObject({ dataCenters: "failed", nextCheckInMs: 30 * MINUTE });
     expect((await readUpdateStatus(testDb.db)).data_centers?.failures).toBe(2);
   });
 
   test("a file in place that keeps failing is tried every 6 hours, then once a day after 3", async () => {
-    const cloudflare = { geoSource: "cloudflare" as const };
-    await update(fakeFetch(allSources("2026-11")), MID_NOVEMBER, cloudflare);
+    const noLocations = { geoSource: "none" as const };
+    await update(fakeFetch(allSources("2026-11")), MID_NOVEMBER, noLocations);
     const start = MID_NOVEMBER.getTime() + 8 * DAY;
     const at = (hours: number) => new Date(start + hours * HOUR);
-    expect(await update(fakeFetch({}), at(0), cloudflare)).toMatchObject({
+    expect(await update(fakeFetch({}), at(0), noLocations)).toMatchObject({
       dataCenters: "failed",
       nextCheckInMs: 6 * HOUR,
     });
-    expect(await update(fakeFetch({}), at(5), cloudflare)).toMatchObject({
+    expect(await update(fakeFetch({}), at(5), noLocations)).toMatchObject({
       dataCenters: "waiting",
     });
-    expect(await update(fakeFetch({}), at(6), cloudflare)).toMatchObject({
+    expect(await update(fakeFetch({}), at(6), noLocations)).toMatchObject({
       dataCenters: "failed",
     });
     // The third: rounds still run every 6 hours, but this file waits a day.
-    expect(await update(fakeFetch({}), at(12), cloudflare)).toMatchObject({
+    expect(await update(fakeFetch({}), at(12), noLocations)).toMatchObject({
       dataCenters: "failed",
       nextCheckInMs: 6 * HOUR,
     });
     for (const hours of [18, 24, 30]) {
       const quiet = fakeFetch({});
-      expect(await update(quiet, at(hours), cloudflare)).toMatchObject({
+      expect(await update(quiet, at(hours), noLocations)).toMatchObject({
         dataCenters: "waiting",
       });
       expect(quiet.urls).toEqual([]);
     }
     // The manual command does not wait.
-    expect(await update(fakeFetch({}), at(30), { ...cloudflare, force: true })).toMatchObject({
+    expect(await update(fakeFetch({}), at(30), { ...noLocations, force: true })).toMatchObject({
       dataCenters: "failed",
     });
-    expect(await update(fakeFetch(allSources("2026-11")), at(30 + 24), cloudflare)).toMatchObject({
+    expect(await update(fakeFetch(allSources("2026-11")), at(30 + 24), noLocations)).toMatchObject({
       dataCenters: "updated",
       nextCheckInMs: UPDATE_CHECK_INTERVAL_MS,
     });
@@ -552,7 +552,7 @@ describe("updateLocationData", () => {
 
   test("a provider's list over the limit, or an ASN line too long, counts as that source failing", async () => {
     const run = await update(fakeFetch(allSources("2026-11")), MID_NOVEMBER, {
-      geoSource: "cloudflare",
+      geoSource: "none",
       limits: { textBytes: 100 },
     });
     expect(run).toMatchObject({ dataCenters: "updated" });
@@ -564,7 +564,7 @@ describe("updateLocationData", () => {
     // Both months' ASN files, so both fail the same way.
     const bothMonths = { ...allSources("2026-10"), ...allSources("2026-11") };
     const lines = await update(fakeFetch(bothMonths), MID_NOVEMBER, {
-      geoSource: "cloudflare",
+      geoSource: "none",
       limits: { lineLength: 10 },
       force: true,
     });
@@ -779,7 +779,7 @@ describe("updateLocationData", () => {
     const longAgo = new Date(Date.now() - LEASE_MS - 60_000);
     for (const path of stale) await utimes(path, longAgo, longAgo);
 
-    await update(fakeFetch({}), MID_NOVEMBER, { geoSource: "cloudflare" });
+    await update(fakeFetch({}), MID_NOVEMBER, { geoSource: "none" });
     expect([...stale, live].map((path) => existsSync(path))).toEqual([
       true,
       true,

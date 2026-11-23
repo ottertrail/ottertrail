@@ -515,11 +515,10 @@ A geolocation database maps IP address ranges to places. Ottertrail uses DB-IP's
 
 `GEO_SOURCE` picks where locations come from (see [development](development.md#configuration)):
 
-| Value                | Locations from                                                                                                                                                                                                                                                                                                                                                  |
-| -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `database` (default) | The file at `GEO_DATABASE_PATH`. If it is missing, the API starts anyway, stores events without a location, and logs a warning.                                                                                                                                                                                                                                 |
-| `cloudflare`         | Headers Cloudflare adds: `CF-IPCountry`, plus `CF-Region` and `CF-IPCity` with its "Add visitor location headers" managed transform. Cloudflare keeps them current. Use only when every request passes through Cloudflare, since anyone else can send these headers: lock the server to Cloudflare ([deployment](deployment.md#lock-the-server-to-your-proxy)). |
-| `none`               | No location lookup.                                                                                                                                                                                                                                                                                                                                             |
+| Value                | Locations from                                                                                                                  |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `database` (default) | The file at `GEO_DATABASE_PATH`. If it is missing, the API starts anyway, stores events without a location, and logs a warning. |
+| `none`               | No location lookup.                                                                                                             |
 
 ### Why the file is held in memory
 

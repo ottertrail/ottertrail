@@ -79,26 +79,4 @@ export class GeoDatabase {
   }
 }
 
-function header(headers: Record<string, unknown>, name: string): string | undefined {
-  const value = headers[name];
-  if (typeof value !== "string") return undefined;
-  try {
-    return decodeURIComponent(value);
-  } catch {
-    return value;
-  }
-}
-
-/**
- * Trust only when every request passes through Cloudflare; clients can forge
- * these headers otherwise. CF-IPCountry is always supplied. Region and city
- * require the "Add visitor location headers" managed transform.
- */
-export function cloudflareLocation(headers: Record<string, unknown>): Location {
-  const country = header(headers, "cf-ipcountry")?.toUpperCase();
-  // "XX" means unknown and "T1" means Tor: neither is a country.
-  const known = country === "XX" || country === "T1" ? undefined : country;
-  return location(known, header(headers, "cf-region"), header(headers, "cf-ipcity"));
-}
-
 export const noLocation: Locate = () => ({});

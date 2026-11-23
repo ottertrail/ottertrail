@@ -197,9 +197,7 @@ function LocationsStatus({
           <StatusBadge tone="neutral">Not needed</StatusBadge>
         </div>
         <p className="text-sm text-muted-foreground">
-          {status.geoSource === "cloudflare"
-            ? "Locations come from Cloudflare's headers (GEO_SOURCE=cloudflare). No database is downloaded."
-            : "Location lookup is off (GEO_SOURCE=none). No database is downloaded."}
+          Location lookup is off (GEO_SOURCE=none). No database is downloaded.
         </p>
       </section>
     );

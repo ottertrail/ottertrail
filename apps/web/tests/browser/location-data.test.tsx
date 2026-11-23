@@ -239,15 +239,15 @@ describe("the location data on the instance's Settings page", () => {
     await expect.element(dialog).not.toBeInTheDocument();
   });
 
-  test("with locations from Cloudflare, no database is needed", async () => {
+  test("with location lookup off, no database is needed", async () => {
     installFakeApi({
-      locationData: { ...LOCATION_DATA, geoSource: "cloudflare", locations: NOTHING },
+      locationData: { ...LOCATION_DATA, geoSource: "none", locations: NOTHING },
     });
     renderApp(LOCATION_TAB);
 
     await expect.element(locations().getByText("Not needed")).toBeVisible();
     await expect
-      .element(locations().getByText(/^Locations come from Cloudflare's headers/))
+      .element(locations().getByText(/^Location lookup is off \(GEO_SOURCE=none\)/))
       .toBeVisible();
   });
 

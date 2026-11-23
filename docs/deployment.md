@@ -90,6 +90,8 @@ Compose pulls the new image, runs `migrate`, and replaces the API and the worker
 
 An install that set `OTTERTRAIL_PROXY=cloudflare` (release 0.3.0) must replace it with `OTTERTRAIL_TRUSTED_PROXIES` and `OTTERTRAIL_CLIENT_IP_HEADER=CF-Connecting-IP` ([If you use Cloudflare](#if-you-use-cloudflare)). Releases after 0.3.0 ignore `OTTERTRAIL_PROXY`, so without the new settings every visitor gets Cloudflare's address.
 
+An install that set `GEO_SOURCE=cloudflare` must remove it: that option was removed after release 0.3.0, and the API and the worker stop at start while it is set. Locations then come from the location database.
+
 `OTTERTRAIL_VERSION` in `.env` chooses the release instead: each release's `compose.yaml` runs its own release by default, and `OTTERTRAIL_VERSION=0.2.0` runs 0.2.0 with the `compose.yaml` already there. That works while the Compose file itself has not changed between the two; the release notes say when it has.
 
 To go back to an earlier release, use its `compose.yaml` (or its version in `OTTERTRAIL_VERSION`) and run the same commands, as long as no migration ran in between. The deployment only runs migrations forward, and an older release may not work with a newer schema: after a migration, restore the backup taken before the update.
@@ -139,8 +141,6 @@ Nothing checks these. As nginx's documentation warns for its own setting, a wron
 - With `X-Forwarded-For`, the proxy must append a plain address: IPv4, or IPv6 without a port or brackets. In a list, Caddy skips an entry it cannot read and takes the next one to its left, which the visitor may have written. Tested through a trusted connection: `X-Forwarded-For: 6.6.6.6, 2001:db8::1:46532` gave `6.6.6.6`, and so did `6.6.6.6, unknown` and `6.6.6.6, [2001:db8::1]`. If the proxy appends ports, `unknown`, or bracketed IPv6, use a single-value header that the provider overwrites instead.
 - A header the provider keeps when the client sent it: any visitor can then set its own address. Make the provider overwrite it, or use a header the provider appends to.
 
-**Cloudflare's location headers.** With `GEO_SOURCE=cloudflare`, locations come from Cloudflare's `CF-IPCountry`, `CF-Region`, and `CF-IPCity` headers ([web analytics](web-analytics.md#location)). Caddy passes these on from anyone, so a request sent straight to the server can choose its own stored location. Use that option only with the server locked to Cloudflare ([Lock the server to your proxy](#lock-the-server-to-your-proxy)).
-
 ### Examples by provider
 
 | Provider       | `OTTERTRAIL_TRUSTED_PROXIES`                                                                | `OTTERTRAIL_CLIENT_IP_HEADER` | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
@@ -183,7 +183,7 @@ Caddy trusts `CF-Connecting-IP` because the request came from Cloudflare's netwo
 
 ## Lock the server to your proxy
 
-Without a lock, anyone who finds the server's address can connect to it directly, and skip the proxy and its protections. `GEO_SOURCE=cloudflare` needs the lock: without it, a direct request can choose its own location ([Cloudflare's location headers](#behind-a-proxy-or-cdn)). Visitor addresses stay correct either way: Caddy trusts the header only from the configured ranges, so a direct request keeps its own address.
+Without a lock, anyone who finds the server's address can connect to it directly, and skip the proxy and its protections. Visitor addresses stay correct either way: Caddy trusts the header only from the configured ranges, so a direct request keeps its own address.
 
 To lock it, allow ports 80 and 443 (TCP, and UDP 443 for HTTP/3) only from the proxy's ranges, with the firewall your host provides, such as a cloud provider's firewall or security group, or the server's own firewall. Lock it after the first certificate is in place. Use the same ranges as `OTTERTRAIL_TRUSTED_PROXIES`. Cloudflare's are at <https://www.cloudflare.com/ips-v4> and <https://www.cloudflare.com/ips-v6>. Update the firewall when the ranges change.
 
@@ -450,7 +450,7 @@ For an instance without internet access, or whose owner does not want the downlo
 docker compose exec api node dist/update-geo.mjs
 ```
 
-It downloads both files at once, and the API loads them within 10 minutes. It does not wait for a retry delay, but if the worker is updating at that moment, it says so, with when that update's lease ends at the latest, and exits with 1. Ctrl-C stops it cleanly: the old files stay, and the next update can start at once. With `GEO_SOURCE=cloudflare` or `none` in the services' environment, no location database is downloaded; the data-center ranges still are.
+It downloads both files at once, and the API loads them within 10 minutes. It does not wait for a retry delay, but if the worker is updating at that moment, it says so, with when that update's lease ends at the latest, and exits with 1. Ctrl-C stops it cleanly: the old files stay, and the next update can start at once. With `GEO_SOURCE=none` in the services' environment, no location database is downloaded; the data-center ranges still are.
 
 ### One customer per instance
 

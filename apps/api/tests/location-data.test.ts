@@ -62,7 +62,7 @@ describe("the API reloads changed files without a restart", () => {
     return () => rm(dir, { recursive: true, force: true });
   });
 
-  function open(geoSource: "database" | "cloudflare" = "database") {
+  function open(geoSource: "database" | "none" = "database") {
     return LiveLocationData.open({ geoSource, databasePath, dataCentersPath });
   }
 
@@ -188,8 +188,8 @@ describe("the API reloads changed files without a restart", () => {
     }
   });
 
-  test("with locations from Cloudflare, a location file is never loaded", async () => {
-    const { data } = await open("cloudflare");
+  test("with location lookup off, a location file is never loaded", async () => {
+    const { data } = await open("none");
     await replace(databasePath, fakeMmdb());
     await data.reload(log);
     expect(data.locate(request)).toEqual({});

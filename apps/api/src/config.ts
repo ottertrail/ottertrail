@@ -29,12 +29,11 @@ export const LOCAL_CLICKHOUSE = {
   database: "ottertrail",
 } as const;
 
-const GEO_SOURCES = ["database", "cloudflare", "none"] as const;
+const GEO_SOURCES = ["database", "none"] as const;
 
 /**
  * Where visitor locations come from:
  * - database: a local geolocation file (see GEO_DATABASE_PATH).
- * - cloudflare: headers Cloudflare adds. Only when every request passes through Cloudflare.
  * - none: no location lookup.
  */
 export type GeoSource = (typeof GEO_SOURCES)[number];
@@ -606,6 +605,10 @@ function parseTrustProxy(raw: string | undefined): false | number | string[] {
 }
 
 function parseGeoSource(raw: string): GeoSource {
+  // Removed after release 0.3.0: Cloudflare's location headers.
+  if (raw.trim() === "cloudflare") {
+    throw new ConfigError("GEO_SOURCE=cloudflare was removed; use database (the default) or none");
+  }
   const source = GEO_SOURCES.find((candidate) => candidate === raw.trim());
   if (source === undefined) {
     throw new ConfigError(`GEO_SOURCE must be one of ${GEO_SOURCES.join(", ")}, received "${raw}"`);

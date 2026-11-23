@@ -78,7 +78,7 @@ describe("loadConfig", () => {
         CLICKHOUSE_PASSWORD: "p".repeat(40),
         CLICKHOUSE_DATABASE: "analytics",
         TRUST_PROXY: "1",
-        GEO_SOURCE: "cloudflare",
+        GEO_SOURCE: "none",
         GEO_DATABASE_PATH: "/var/lib/ottertrail/geo.mmdb",
         DATA_CENTERS_PATH: "/var/lib/ottertrail/data-centers.json",
         INSTANCE_EVENTS_PER_SECOND: "2000",
@@ -113,7 +113,7 @@ describe("loadConfig", () => {
         database: "analytics",
       },
       trustProxy: 1,
-      geoSource: "cloudflare",
+      geoSource: "none",
       geoDatabasePath: "/var/lib/ottertrail/geo.mmdb",
       dataCentersPath: "/var/lib/ottertrail/data-centers.json",
       instanceEventsPerSecond: 2000,
@@ -306,6 +306,12 @@ describe("loadConfig", () => {
 
   test("rejects an unknown GEO_SOURCE", () => {
     expect(() => loadConfig({ GEO_SOURCE: "maxmind" })).toThrow(ConfigError);
+  });
+
+  test("refuses GEO_SOURCE=cloudflare, which was removed, and says what to use", () => {
+    expect(() => loadConfig({ GEO_SOURCE: "cloudflare" })).toThrow(
+      new ConfigError("GEO_SOURCE=cloudflare was removed; use database (the default) or none"),
+    );
   });
 
   test("never repeats DATABASE_URL in errors, because it may contain a password", () => {

@@ -3,12 +3,7 @@ import { existsSync } from "node:fs";
 import { describe, expect, test } from "vite-plus/test";
 
 import { DEFAULT_GEO_DATABASE_PATH } from "../src/config.ts";
-import {
-  type CityRecord,
-  cloudflareLocation,
-  GeoDatabase,
-  locationFromRecord,
-} from "../src/enrichment/geo.ts";
+import { type CityRecord, GeoDatabase, locationFromRecord } from "../src/enrichment/geo.ts";
 import { setUpLocation, STALE_AFTER_DAYS } from "../src/enrichment/setup.ts";
 import { isBot, parseUserAgent } from "../src/enrichment/user-agent.ts";
 
@@ -139,26 +134,6 @@ describe("locationFromRecord", () => {
   });
 });
 
-describe("cloudflareLocation", () => {
-  test("reads Cloudflare's visitor location headers, decoding city names", () => {
-    expect(
-      cloudflareLocation({
-        "cf-ipcountry": "DE",
-        "cf-region": "Bavaria",
-        "cf-ipcity": "M%C3%BCnchen",
-      }),
-    ).toEqual({ country: "DE", region: "Bavaria", city: "München" });
-  });
-
-  test.each(["XX", "T1"])("treats country %j (unknown, Tor) as no country", (code) => {
-    expect(cloudflareLocation({ "cf-ipcountry": code })).toEqual({});
-  });
-
-  test("returns nothing without the headers", () => {
-    expect(cloudflareLocation({})).toEqual({});
-  });
-});
-
 describe("setUpLocation", () => {
   test("reports a missing database instead of failing to start", async () => {
     const setup = await setUpLocation("database", "/nowhere/geo.mmdb");
@@ -167,14 +142,7 @@ describe("setUpLocation", () => {
     expect(setup.locate({ ip: "8.8.8.8", headers: {} })).toEqual({});
   });
 
-  test("reads Cloudflare's headers when configured", async () => {
-    const setup = await setUpLocation("cloudflare", "unused");
-    expect(setup.locate({ ip: "8.8.8.8", headers: { "cf-ipcountry": "NL" } })).toEqual({
-      country: "NL",
-    });
-  });
-
-  test("does no lookup when turned off", async () => {
+  test("does no lookup when turned off, whatever headers a request carries", async () => {
     const setup = await setUpLocation("none", "unused");
     expect(setup.locate({ ip: "8.8.8.8", headers: { "cf-ipcountry": "NL" } })).toEqual({});
   });

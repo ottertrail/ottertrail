@@ -1,6 +1,6 @@
 import type { GeoSource } from "../config.ts";
 import { DataCenters, type IsDataCenter, noDataCenters } from "./data-centers.ts";
-import { cloudflareLocation, GeoDatabase, type Locate, noLocation } from "./geo.ts";
+import { GeoDatabase, type Locate, noLocation } from "./geo.ts";
 
 const UPDATE_HINT =
   'The worker downloads it while "Update location data automatically" is on in Settings; or run "vp run geo:update" (in the Docker image: "node dist/update-geo.mjs"). The API loads a new file within 10 minutes.';
@@ -24,13 +24,6 @@ export async function setUpLocation(
 ): Promise<LocationSetup> {
   if (source === "none") {
     return { locate: noLocation, ok: true, message: "Location lookup is off (GEO_SOURCE=none)" };
-  }
-  if (source === "cloudflare") {
-    return {
-      locate: (request) => cloudflareLocation(request.headers),
-      ok: true,
-      message: "Locations come from Cloudflare's headers (GEO_SOURCE=cloudflare)",
-    };
   }
   let geo: GeoDatabase;
   try {
