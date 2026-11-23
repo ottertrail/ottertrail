@@ -34,6 +34,7 @@ import {
   isAllowedHostname,
   isStorableText,
   originHostname,
+  type PageUrl,
   parsePageUrl,
 } from "./normalize.ts";
 import { type CollectingProject, ProjectKeyCache, PUBLIC_KEY_PATTERN } from "./project-keys.ts";
@@ -504,11 +505,8 @@ export const collectionRoutes: FastifyPluginCallback<CollectionOptions> = (app, 
           return reply.code(202).send(received);
         }
 
-        // Use the IP for location, then discard it. Never store or log it.
-        const client = parseUserAgent(userAgent ?? "", { touch: request.body.touch === true });
-        const location = locate(request);
-
-        const accepted: NewEvent[] = [];
+        // The checks that can refuse the batch, before it spends any budget.
+        const valid: { event: IncomingEvent; occurredAt: Date; page: PageUrl }[] = [];
         const tooOldBySource = new Map<IngestSource, number>();
         for (const [index, event] of events.entries()) {
           const page = parsePageUrl(event.url);
@@ -594,6 +592,22 @@ export const collectionRoutes: FastifyPluginCallback<CollectionOptions> = (app, 
             tooOldBySource.set(source, (tooOldBySource.get(source) ?? 0) + 1);
             continue;
           }
+          valid.push({ event, occurredAt, page });
+        }
+
+        // After the rules above: a batch refused for one of them spends no budget.
+        const spent = budget.take(project.id, events.length);
+        if (!spent.allowed) {
+          count(spent.limit === "instance" ? "refused_volume" : "refused_rate_limited");
+          return tooManyRequests(reply, spent.retryAfterSeconds);
+        }
+
+        // The costlier work, only for a batch within its budget: signatures,
+        // error fingerprints, the location. The IP is used for the location,
+        // then discarded: never stored or logged.
+        const client = parseUserAgent(userAgent ?? "", { touch: request.body.touch === true });
+        const location = locate(request);
+        const accepted: NewEvent[] = valid.map(({ event, occurredAt, page }) => {
           // When signatures are required, invalid ones leave events anonymous.
           let { userId } = event;
           if (
@@ -603,7 +617,7 @@ export const collectionRoutes: FastifyPluginCallback<CollectionOptions> = (app, 
           ) {
             userId = undefined;
           }
-          accepted.push({
+          return {
             eventId: event.id,
             name: event.name,
             occurredAt,
@@ -632,15 +646,8 @@ export const collectionRoutes: FastifyPluginCallback<CollectionOptions> = (app, 
                       : { replayId: event.error.replayId.toLowerCase() }),
                   },
                 }),
-          });
-        }
-
-        // After the rules above: a batch refused for one of them spends no budget.
-        const spent = budget.take(project.id, events.length);
-        if (!spent.allowed) {
-          count(spent.limit === "instance" ? "refused_volume" : "refused_rate_limited");
-          return tooManyRequests(reply, spent.retryAfterSeconds);
-        }
+          };
+        });
 
         let capped = 0;
         const cappedBySource = new Map<IngestSource, number>();

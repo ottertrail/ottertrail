@@ -175,7 +175,9 @@ export function serverEventsRoute(
       preHandler: async (request, reply) => {
         const project = projectOf.get(request);
         if (project === undefined || !inFlight.take(request, reply)) return tooBusy(reply);
-        if (!inFlight.takeForProject(request, project.id)) {
+        // Its own count per project, apart from browsers': anyone with the
+        // public key could otherwise fill it and hold the servers' events back.
+        if (!inFlight.takeForProject(request, `server:${project.id}`)) {
           activity.add(project.id, "server_events", "refused_rate_limited");
           return projectTooBusy(reply);
         }
@@ -186,9 +188,22 @@ export function serverEventsRoute(
     },
     async (request, reply) =>
       inFlight.run(request, async () => {
-        const project = projectOf.get(request);
-        if (project === undefined) {
+        const found = projectOf.get(request);
+        if (found === undefined) {
           throw new Error("the server events onRequest hook must find the project first");
+        }
+        // Again, from the cache: the key may have been replaced while the body arrived.
+        let project;
+        try {
+          project = await projects.findBySecret(
+            BEARER.exec(request.headers.authorization ?? "")?.[1] ?? "",
+          );
+        } catch (error) {
+          request.log.error({ err: error }, "could not look up the secret key");
+          return storageUnavailable(reply);
+        }
+        if (project?.id !== found.id) {
+          return reply.code(401).send(problem("unknown_key", "No project has this secret key."));
         }
         const projectId = project.id;
         const invalid = (message: string) => {

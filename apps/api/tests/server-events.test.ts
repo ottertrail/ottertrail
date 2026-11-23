@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { PassThrough } from "node:stream";
 
 import { afterAll, beforeAll, describe, expect, test } from "vite-plus/test";
 
@@ -8,7 +9,7 @@ import { ProjectKeyCache } from "../src/collection/project-keys.ts";
 import { loadConfig } from "../src/config.ts";
 import { createDatabase } from "../src/db/database.ts";
 import { replaceSecretKey } from "../src/projects/projects.ts";
-import { signedInDashboard } from "./helpers/dashboard.ts";
+import { PUBLIC_URL, signedInDashboard } from "./helpers/dashboard.ts";
 import { countEvents, storedEvents } from "./helpers/events.ts";
 import { insertProject } from "./helpers/projects.ts";
 
@@ -229,6 +230,33 @@ describe("POST /api/server-events", () => {
     expect(await lookup).toMatchObject({ id: project.id });
     await replaceSecretKey(dashboard.db, project.id);
     expect(await cache.findBySecret(oldKey)).toBeNull();
+  });
+
+  test("a key replaced while the body arrives stores nothing", async () => {
+    const project = await insertProject(dashboard.db, { name: "Rotated mid-request" });
+    const key = await secretKeyOf(project.id);
+    const body = new PassThrough();
+    const pending = dashboard.app.inject({
+      method: "POST",
+      url: "/api/server-events",
+      headers: { "content-type": "application/json", authorization: `Bearer ${key}` },
+      payload: body,
+    });
+    const json = JSON.stringify({ v: 1, events: [serverEvent()] });
+    body.write(json.slice(0, 10));
+    // The key is looked up before the body: give it the time to be.
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    const replaced = await dashboard.app.inject({
+      method: "POST",
+      url: `/api/projects/${project.id}/secret-key`,
+      headers: { cookie: dashboard.cookie, origin: PUBLIC_URL },
+    });
+    expect(replaced.statusCode).toBe(200);
+    body.end(json.slice(10));
+    const response = await pending;
+    expect(response.statusCode).toBe(401);
+    expect(response.json()).toMatchObject({ error: "unknown_key" });
+    expect(await countEvents(dashboard.reader.client, project.id)).toBe(0);
   });
 
   test("counts an event over a day old instead of storing it", async () => {

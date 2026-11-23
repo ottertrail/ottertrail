@@ -504,6 +504,83 @@ describe("POST /api/events", () => {
       }
     });
 
+    test("browsers that fill a project's slots do not hold its server events back", async () => {
+      let open!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        open = resolve;
+      });
+      let inserts = 0;
+      const held = {
+        insert: async () => {
+          inserts += 1;
+          await gate;
+        },
+      } as unknown as ClickHouseClient;
+      const instance = appWith({
+        collection: { now: () => NOW, clickhouse: held, maxInFlightPerProject: 1 },
+      });
+      try {
+        const project = await createProject();
+        const { secret_key: secretKey } = await db()
+          .selectFrom("projects")
+          .select("secret_key")
+          .where("id", "=", project.id)
+          .executeTakeFirstOrThrow();
+        const waiting = [send(batch(project.public_key), { instance })];
+        await expect.poll(() => inserts).toBe(1);
+        expect((await send(batch(project.public_key), { instance })).statusCode).toBe(429);
+        const fromServer = (userId: string) =>
+          instance.inject({
+            method: "POST",
+            url: "/api/server-events",
+            headers: { "content-type": "application/json", authorization: `Bearer ${secretKey}` },
+            payload: JSON.stringify({
+              v: 1,
+              events: [{ id: randomUUID(), name: "paid", occurredAt: NOW - 1000, userId }],
+            }),
+          });
+        waiting.push(fromServer("42"));
+        await expect.poll(() => inserts).toBe(2);
+        // The servers' own slot is full now, and only theirs.
+        expect((await fromServer("43")).statusCode).toBe(429);
+        open();
+        for (const response of await Promise.all(waiting)) expect(response.statusCode).toBe(202);
+      } finally {
+        open();
+      }
+    });
+
+    test("ClickHouse gets 10 seconds to write a batch", async () => {
+      const settings: unknown[] = [];
+      const recording = {
+        insert: async (options: { clickhouse_settings?: unknown }) => {
+          settings.push(options.clickhouse_settings);
+        },
+      } as unknown as ClickHouseClient;
+      const instance = appWith({ collection: { now: () => NOW, clickhouse: recording } });
+      const project = await createProject();
+      const { secret_key: secretKey } = await db()
+        .selectFrom("projects")
+        .select("secret_key")
+        .where("id", "=", project.id)
+        .executeTakeFirstOrThrow();
+      expect((await send(batch(project.public_key), { instance })).statusCode).toBe(202);
+      const fromServer = await instance.inject({
+        method: "POST",
+        url: "/api/server-events",
+        headers: { "content-type": "application/json", authorization: `Bearer ${secretKey}` },
+        payload: JSON.stringify({
+          v: 1,
+          events: [{ id: randomUUID(), name: "paid", occurredAt: NOW - 1000, userId: "42" }],
+        }),
+      });
+      expect(fromServer.statusCode).toBe(202);
+      expect(settings).toEqual([
+        expect.objectContaining({ wait_for_async_insert: 1, wait_for_async_insert_timeout: 10 }),
+        expect.objectContaining({ wait_for_async_insert: 1, wait_for_async_insert_timeout: 10 }),
+      ]);
+    });
+
     test("a body that breaks the schema takes no slot", async () => {
       const instance = appWith({ collection: { now: () => NOW, maxInFlight: 1 } });
       const project = await createProject();
@@ -592,6 +669,28 @@ describe("POST /api/events", () => {
       }
       const full = await send(batch(project.public_key, pageviews(50)), { instance: limited });
       expect(full.statusCode).toBe(202);
+    });
+
+    test("a batch over its budget is refused before the location lookup and signatures", async () => {
+      let lookups = 0;
+      const limited = appWith({
+        collection: {
+          now: () => NOW,
+          projectLimit: { capacity: 50, refillPerSecond: 0.001 },
+          locate: () => {
+            lookups += 1;
+            return {};
+          },
+        },
+      });
+      const project = await createProject();
+      expect(
+        (await send(batch(project.public_key, pageviews(50)), { instance: limited })).statusCode,
+      ).toBe(202);
+      expect(lookups).toBe(1);
+      const over = await send(batch(project.public_key, pageviews(1)), { instance: limited });
+      expect(over.statusCode).toBe(429);
+      expect(lookups).toBe(1);
     });
 
     test("refuses to start with a project limit smaller than one batch", () => {
