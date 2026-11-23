@@ -978,6 +978,9 @@ function stubOpen(popup: ReturnType<typeof fakePopup> | null = fakePopup()) {
 const overlayLinkRequests = (api: FakeApi) =>
   api.requests.filter((item) => item.endsWith("/heatmaps/overlay-link"));
 
+/** Whether an element's content is wider than its box: cut off. */
+const cut = (element: Element) => element.scrollWidth > element.clientWidth;
+
 describe("open on your site", () => {
   afterEach(() => {
     vi.restoreAllMocks();
@@ -1078,7 +1081,6 @@ describe("open on your site", () => {
     const site = page.getByRole("combobox", { name: "Site" });
     await expect.element(site).toMatchTextContent(/demo-shop\.example/);
     const width = () => site.element().getBoundingClientRect().width;
-    const cut = (element: Element) => element.scrollWidth > element.clientWidth;
     const shown = () => site.element().querySelector("[data-truncated-text]");
     const before = width();
     await site.click();

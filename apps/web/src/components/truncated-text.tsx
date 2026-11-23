@@ -115,6 +115,20 @@ function TooltipText({
 
   // Inside a link or a button: its hover and keyboard focus open the tooltip.
   const timer = React.useRef<ReturnType<typeof setTimeout>>(undefined);
+  const popup = React.useRef<HTMLDivElement>(null);
+  /**
+   * Closes after CLOSE_DELAY unless the pointer is then on `over`: the
+   * tooltip, after leaving the control, or the control, after leaving the
+   * tooltip. Checked when the delay ends, not by cancelling on enter: the
+   * tooltip's enter can come before the control's leave, as when the
+   * tooltip slides in under a still pointer.
+   */
+  const closeUnlessOn = React.useCallback((over: () => Element | null) => {
+    clearTimeout(timer.current);
+    timer.current = setTimeout(() => {
+      if (over()?.matches(":hover") !== true) setOpen(false);
+    }, CLOSE_DELAY);
+  }, []);
   React.useEffect(() => {
     if (host === null) return undefined;
     const later = (action: () => void, ms: number) => {
@@ -127,7 +141,7 @@ function TooltipText({
         if (measure()) setOpen(true);
       }, OPEN_DELAY);
     };
-    const leave = () => later(() => setOpen(false), CLOSE_DELAY);
+    const leave = () => closeUnlessOn(() => popup.current);
     const focus = () => {
       if (host.matches(":focus-visible") && measure()) setOpen(true);
     };
@@ -151,7 +165,7 @@ function TooltipText({
       host.removeEventListener("blur", blur);
       host.removeEventListener("keydown", key);
     };
-  }, [host, measure]);
+  }, [host, measure, closeUnlessOn]);
 
   const nested = host !== null;
   // Cut off, plain text takes a tab stop, so the tooltip also shows on keyboard focus.
@@ -191,12 +205,13 @@ function TooltipText({
       </TooltipPrimitive.Trigger>
       {cut && (
         <TooltipContent
+          ref={popup}
           side={side}
           anchor={ref}
           className="max-w-sm [overflow-wrap:anywhere] whitespace-pre-line"
           // Inside a control, the pointer may move onto the tooltip without closing it.
           onPointerEnter={nested ? () => clearTimeout(timer.current) : undefined}
-          onPointerLeave={nested ? () => setOpen(false) : undefined}
+          onPointerLeave={nested ? () => closeUnlessOn(() => host) : undefined}
         >
           {/*
            * A very long text scrolls in here, not on the tooltip itself: there

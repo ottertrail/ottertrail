@@ -33,6 +33,21 @@ const tooltipText = () => tooltip()?.textContent ?? null;
 /** Waits long enough for a tooltip to open, before asserting it did not. */
 const settle = () => new Promise((resolve) => setTimeout(resolve, 500));
 
+/** The times, over the next `ms`, of frames in which the tooltip was closed or closing. */
+function closingsOver(ms: number): Promise<number[]> {
+  const closings: number[] = [];
+  const end = performance.now() + ms;
+  return new Promise((resolve) => {
+    const frame = (now: number) => {
+      const shown = tooltip();
+      if (shown === null || shown.hasAttribute("data-closed")) closings.push(Math.round(now));
+      if (now < end) requestAnimationFrame(frame);
+      else resolve(closings);
+    };
+    requestAnimationFrame(frame);
+  });
+}
+
 /** A box whose width a test can change. */
 function Box({ width, children }: { width: number; children: React.ReactNode }) {
   return (
@@ -221,6 +236,53 @@ describe("TruncatedText", () => {
     await userEvent.keyboard("{Tab}");
     // The next tab stop is past the link: the text added none.
     expect(document.activeElement).not.toBe(text.element());
+  });
+
+  test("inside a link, a tooltip that opens under a still pointer stays open", async () => {
+    // At the top of the page the tooltip opens below the text, over the
+    // link's second line, where the pointer is. The tooltip's enter came
+    // before the link's leave, so it closed 100ms later and opened again
+    // 300ms after that, over and over.
+    mount(
+      <Box width={140}>
+        <button type="button">Before</button>
+        <a href="#row" className="block">
+          <TruncatedText text={LONG} />
+          <span>Detail</span>
+        </a>
+      </Box>,
+    );
+    await page.getByText("Detail").hover();
+    await expect.poll(tooltipText).toBe(LONG);
+    await expect.poll(() => tooltip()?.matches(":hover")).toBe(true);
+    expect(await closingsOver(900)).toEqual([]);
+    await page.getByRole("button", { name: "Before" }).hover();
+    await expect.poll(tooltip).toBeNull();
+  });
+
+  test("inside a link, the pointer moving onto the tooltip and back keeps it open", async () => {
+    mount(
+      <div style={{ paddingTop: 120 }}>
+        <Box width={140}>
+          <a href="#row" className="block">
+            <TruncatedText text={LONG} />
+            <span>Detail</span>
+          </a>
+          <button type="button">After</button>
+        </Box>
+      </div>,
+    );
+    await page.getByText("Detail").hover();
+    await expect.poll(tooltipText).toBe(LONG);
+    const popup = tooltip();
+    if (popup === null) throw new Error("no tooltip");
+    const closings = closingsOver(700);
+    await page.elementLocator(popup).hover();
+    await page.getByText("Detail").hover();
+    expect(await closings).toEqual([]);
+    // Leaving for somewhere else still closes it.
+    await page.getByRole("button", { name: "After" }).hover();
+    await expect.poll(tooltip).toBeNull();
   });
 
   test("OverflowTooltip: one tooltip for a control's cut-off lines, or always", async () => {
