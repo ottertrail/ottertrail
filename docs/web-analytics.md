@@ -206,8 +206,8 @@ The endpoint is public, so anyone can send it anything. Checks run cheapest firs
 4. Project key, from an in-memory cache (`collection/project-keys.ts`): up to 1,000 projects' keys, each for a minute, the least recently used dropped first. Keys no project has are cached apart, up to 256 of them for 10 seconds, so repeating a made-up key costs one query every 10 seconds, not one per request, and a stream of made-up keys cannot push real projects out of the cache. Requests that miss the cache for the same key at once share one query. A stream of different made-up keys still costs a query each; steps 1 and 3 bound it.
 5. The `Origin` header against the project's allowed hostnames, and the release's text.
 6. Accepted and not stored, answered 202 with the count: the project's [blocked addresses](#blocked-addresses) (`blocked`), then bots and [data centers](#data-centers) (`bots`), then [referrer spam](#referrer-spam) (`spam`). These cost nothing more than the cache, and come before the budget, so they cannot use it up.
-7. Event budget per project and instance.
-8. Each event's rules and page hostname, URL cleanup, and clock correction.
+7. Each event's rules and page hostname, URL cleanup, and clock correction. A batch refused here spends no budget.
+8. Event budget per project and instance.
 9. Visitor IDs, then the [daily cap per visitor](#a-daily-cap-per-visitor) (`capped`). It needs the visitor ID, so it comes after the budget; capped events get their budget back.
 10. One insert into ClickHouse for the whole batch.
 

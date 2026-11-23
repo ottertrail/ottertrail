@@ -495,6 +495,25 @@ describe("POST /api/events", () => {
       expect(await storedEvents(project.id)).toHaveLength(50);
     });
 
+    test("a batch refused for its events' rules spends no budget", async () => {
+      const limited = appWith({
+        collection: { now: () => NOW, projectLimit: { capacity: 50, refillPerSecond: 1 } },
+      });
+      const project = await createProject();
+      const refused = [
+        [...pageviews(49), pageview({ url: "javascript:alert(1)" })],
+        [...pageviews(49), pageview({ url: "https://elsewhere.example/" })],
+        [...pageviews(49), { ...pageview(), name: "engagement", properties: { engagedMs: -1 } }],
+      ];
+      for (const events of refused) {
+        const response = await send(batch(project.public_key, events), { instance: limited });
+        expect(response.statusCode).toBeGreaterThanOrEqual(400);
+        expect(response.statusCode).toBeLessThan(429);
+      }
+      const full = await send(batch(project.public_key, pageviews(50)), { instance: limited });
+      expect(full.statusCode).toBe(202);
+    });
+
     test("refuses to start with a project limit smaller than one batch", () => {
       const tooSmall = appWith({
         collection: { projectLimit: { capacity: 10, refillPerSecond: 1 } },

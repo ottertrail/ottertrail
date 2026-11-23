@@ -288,8 +288,8 @@ function storageUnavailable(reply: FastifyReply) {
  * 6. Accepted and not stored (202): the project's blocked addresses, bots
  *    and data centers, referrer spam. Before the budget, so they cannot
  *    use it up.
- * 7. Event budget per project.
- * 8. Each event's rules, page hostname, URL cleanup, and clock correction.
+ * 7. Each event's rules, page hostname, URL cleanup, and clock correction.
+ * 8. Event budget per project, once the batch is known to be valid.
  * 9. Visitor IDs, and the daily cap per visitor.
  * 10. One insert into ClickHouse. 202 is sent only after ClickHouse has
  *     written it; 503 while it cannot, which the tracker retries.
@@ -493,12 +493,6 @@ export const collectionRoutes: FastifyPluginCallback<CollectionOptions> = (app, 
         return reply.code(202).send({ ...noneStored, spam: events.length });
       }
 
-      const spent = budget.take(project.id, events.length);
-      if (!spent.allowed) {
-        count(spent.limit === "instance" ? "refused_volume" : "refused_rate_limited");
-        return tooManyRequests(reply, spent.retryAfterSeconds);
-      }
-
       // Use the IP for location, then discard it. Never store or log it.
       const client = parseUserAgent(userAgent ?? "", { touch: request.body.touch === true });
       const location = locate(request);
@@ -632,6 +626,13 @@ export const collectionRoutes: FastifyPluginCallback<CollectionOptions> = (app, 
                 },
               }),
         });
+      }
+
+      // After the rules above: a batch refused for one of them spends no budget.
+      const spent = budget.take(project.id, events.length);
+      if (!spent.allowed) {
+        count(spent.limit === "instance" ? "refused_volume" : "refused_rate_limited");
+        return tooManyRequests(reply, spent.retryAfterSeconds);
       }
 
       let capped = 0;
