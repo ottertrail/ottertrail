@@ -1,0 +1,56 @@
+# Checks every push to main and every pull request with the same command a
+# commit needs first (docs/development.md, "Commands"): vp run ready, the
+# format, lint, and type checks, every package's tests, and the builds.
+#
+# The API's tests run against PostgreSQL, ClickHouse, and Garage from the
+# development compose.yaml, as on a developer's machine; each test file
+# makes its own schema and database there. The dashboard's browser tests
+# run in headless Chromium.
+#
+# The actions are pinned to exact commits; the comment names the release.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+# A newer push to a pull request replaces its running check; pushes to
+# main each finish.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  ready:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
+
+      - name: Install dependencies
+        run: |
+          npm install --global pnpm@12.21.0
+          pnpm install --frozen-lockfile
+
+      - name: Start PostgreSQL, ClickHouse, and Garage
+        run: docker compose up --detach --wait
+
+      - name: Install Chromium for the browser tests
+        run: pnpm --filter @ottertrail/web exec playwright install --with-deps --only-shell chromium
+
+      - name: Check, test, and build
+        run: pnpm exec vp run ready
+
+      - name: Show the databases' logs
+        if: failure()
+        run: docker compose logs --no-color --tail 200

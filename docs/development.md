@@ -109,6 +109,8 @@ Inside one package: `vp -C apps/api run dev`, `vp -C apps/web test`, and so on.
 
 `vp dev` (built in) and `vp run dev` (the root script) differ: `vp dev` starts only the dashboard.
 
+On GitHub, `.github/workflows/ci.yml` runs `vp run ready` on every push to `main` and every pull request, with the databases from `compose.yaml` and headless Chromium. Releases (`release.yml`) build and publish the image when a version tag is pushed ([deployment](deployment.md#images-and-releases)).
+
 ## Commits
 
 Commit messages follow [Conventional Commits 1.0.0](https://www.conventionalcommits.org/en/v1.0.0/):
