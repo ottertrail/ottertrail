@@ -71,6 +71,10 @@ const EXPECTED: Record<string, [topic: string, path: string]> = {
     "/product-analytics/custom-events/#one-event-and-its-properties",
   ],
   "/projects/$projectId/settings": ["Install settings", "/get-started/add-the-tracker/"],
+  "/projects/$projectId/settings?tab=activity": [
+    "Activity settings",
+    "/introduction/project-settings/#activity",
+  ],
   "/projects/$projectId/settings?tab=general": [
     "General settings",
     "/introduction/project-settings/#general",

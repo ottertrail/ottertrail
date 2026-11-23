@@ -146,6 +146,7 @@ export const SCREEN_DOCS: Partial<Record<RoutePath, ScreenDocs>> = {
     topic: "Install settings",
     path: "/get-started/add-the-tracker/",
     tabs: {
+      activity: { topic: "Activity settings", path: "/introduction/project-settings/#activity" },
       general: { topic: "General settings", path: "/introduction/project-settings/#general" },
       server: { topic: "Your server settings", path: "/introduction/project-settings/" },
       spam: {

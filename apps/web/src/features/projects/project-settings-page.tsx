@@ -35,6 +35,7 @@ import { goalsQuery } from "@/lib/goals-api";
 import { initialOf } from "@/lib/initials";
 import { isFullProject, type Project, projectQuery, updateProject } from "@/lib/projects-api";
 
+import { ACTIVITY_TAB, ActivityTab } from "./activity-tab";
 import { DangerZone } from "./danger-zone";
 import { hostnamesFromText, installSnippet, setupPrompt, timeAgo } from "./format";
 import { HeatmapsSettings } from "./heatmaps-card";
@@ -422,6 +423,11 @@ function SettingsTabsFor({ project }: { project: Project }) {
           ),
         },
         {
+          value: ACTIVITY_TAB,
+          label: "Activity",
+          content: <ActivityTab projectId={project.id} />,
+        },
+        {
           value: "general",
           label: "General",
           dirty: generalDirty,
@@ -458,7 +464,7 @@ function SettingsTabsFor({ project }: { project: Project }) {
 
 /**
  * A project's settings: /projects/<id>/settings, as tabs (the chosen one in
- * `?tab=`). Source maps and Danger zone hold no fields; Install has the
+ * `?tab=`). Activity, Source maps, and Danger zone hold no fields; Install has the
  * Heatmaps form under its snippet, and General, Your server, Spam and bots,
  * and Session replay are forms, each with a Save bar.
  */
@@ -473,7 +479,7 @@ export function ProjectSettingsPage({ projectId }: { projectId: string }) {
     return (
       <div className="flex flex-col" aria-busy="true">
         <div className="flex h-10 items-center gap-6 border-b px-gutter">
-          {Array.from({ length: 7 }, (_, index) => (
+          {Array.from({ length: 8 }, (_, index) => (
             // oxlint-disable-next-line react/no-array-index-key
             <Skeleton key={index} className="h-4 w-20" />
           ))}

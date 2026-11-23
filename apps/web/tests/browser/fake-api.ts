@@ -30,6 +30,14 @@ import type { GoalResult } from "../../src/lib/goals-api.ts";
 import type { Heatmap, HeatmapPages, HeatmapSnapshots } from "../../src/lib/heatmaps-api.ts";
 import type { HostCharts, HostList } from "../../src/lib/hosts-api.ts";
 import type {
+  IngestActivity,
+  IngestOutcome,
+  IngestSource,
+  OutcomeCounts,
+  SourceActivity,
+} from "../../src/lib/ingest-activity-api.ts";
+import { INGEST_SOURCES } from "../../src/lib/ingest-activity-api.ts";
+import type {
   LiveLogs,
   LogList,
   LogRecord,
@@ -225,6 +233,12 @@ export interface FakeApi {
    * release's files, and delete a release's. By default, fakeSourceMaps.
    */
   sourceMaps: FakeSourceMaps;
+  /**
+   * Answers GET /api/projects/:id/ingest-activity (the owner's and admins');
+   * by default, fakeIngestActivity. Each answer is counted in `ingestActivityRequests`.
+   */
+  ingestActivity: (projectId: string) => IngestActivity | Response;
+  ingestActivityRequests: number;
   /** The project's session replays; GET and DELETE /api/projects/:id/replays read and empty them. */
   replays: FakeReplays;
   /** Answers GET /api/projects/:id/replays/list; by default, fakeReplayList. */
@@ -1936,6 +1950,56 @@ export function fakeSourceMaps(): FakeSourceMaps {
       },
     ],
   };
+}
+
+/** One outcome's requests (and items, ten a request by default) in the hour, 24 hours, and 7 days. */
+export function outcomeCounts(
+  hour: number,
+  day: number,
+  week: number,
+  { items = 10, lastAt = new Date(Date.now() - 2 * 60_000).toISOString() } = {},
+): OutcomeCounts {
+  return {
+    hour: { count: hour, items: hour * items },
+    day: { count: day, items: day * items },
+    week: { count: week, items: week * items },
+    lastAt,
+  };
+}
+
+/** Every source, with nothing in 7 days but those `sources` gives. */
+export function ingestActivityOf(
+  sources: Partial<Record<IngestSource, Partial<Record<IngestOutcome, OutcomeCounts>>>>,
+): IngestActivity {
+  return {
+    now: new Date().toISOString(),
+    sources: INGEST_SOURCES.map((source): SourceActivity => {
+      const outcomes = sources[source] ?? {};
+      return { source, lastAcceptedAt: outcomes.accepted?.lastAt ?? null, outcomes };
+    }),
+  };
+}
+
+/**
+ * A project whose browser events arrive, some from a site not in Allowed
+ * sites and some from bots; whose traces failed while ClickHouse was down;
+ * and that sent nothing else in 7 days.
+ */
+export function fakeIngestActivity(): IngestActivity {
+  return ingestActivityOf({
+    browser_events: {
+      accepted: outcomeCounts(120, 2_480, 15_310, { items: 4 }),
+      refused_origin: outcomeCounts(3, 41, 97),
+      filtered_bot: outcomeCounts(0, 12, 80, { items: 2 }),
+    },
+    errors: { accepted: outcomeCounts(2, 18, 140, { items: 1 }) },
+    traces: {
+      accepted: outcomeCounts(60, 1_420, 9_870, {
+        lastAt: new Date(Date.now() - 3 * 3_600_000).toISOString(),
+      }),
+      refused_unavailable: outcomeCounts(0, 6, 6),
+    },
+  });
 }
 
 /**
@@ -3970,6 +4034,14 @@ async function answer(api: FakeApi, url: URL, init: RequestInit | undefined): Pr
   if (goalPath?.[1] !== undefined && init?.method === "DELETE") {
     return removeGoal(api, decodeURIComponent(goalPath[1]));
   }
+  if (/^\/api\/projects\/[^/]+\/ingest-activity$/.test(path)) {
+    if (api.access.role === "member") {
+      return json({ error: "forbidden", message: "You do not have access to this." }, 403);
+    }
+    api.ingestActivityRequests += 1;
+    const result = api.ingestActivity(PROJECT.id);
+    return result instanceof Response ? result : json(result);
+  }
   if (/^\/api\/projects\/[^/]+\/source-maps\/files$/.test(path)) {
     const release = url.searchParams.get("release") ?? "";
     return json({
@@ -4337,6 +4409,8 @@ export function installFakeApi(overrides: Partial<FakeApi> = {}): FakeApi {
     assignees: FAKE_ASSIGNEES,
     notifications: fakeNotifications(),
     sourceMaps: fakeSourceMaps(),
+    ingestActivity: fakeIngestActivity,
+    ingestActivityRequests: 0,
     replays: fakeReplays(),
     replayList: fakeReplayList,
     replayTimeline: fakeReplayTimeline,

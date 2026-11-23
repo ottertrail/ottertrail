@@ -37,6 +37,7 @@ describe("the settings tabs", () => {
         .map((tab) => tab.textContent),
     ).toEqual([
       "Install",
+      "Activity",
       "General",
       "Your server",
       "Spam and bots",
