@@ -79,6 +79,16 @@ const app = buildApp({
   trackerScriptPath: config.trackerScriptPath,
   dashboardPath: resolve(config.dashboardPath),
   replayPlayerPath: resolve(config.replayPlayerPath),
+  // After the server stops accepting requests and the last ingestion counts
+  // are written: never an onClose hook of its own, which would run first.
+  closeAfter: async () => {
+    locationData.stop();
+    await workerLog.stop();
+    await db.destroy();
+    await clickhouse.close();
+    objectStore?.close();
+    mailer?.close();
+  },
   // A number means "trust this many proxy hops in front of the API".
   trustProxy:
     typeof config.trustProxy === "number"
@@ -112,16 +122,6 @@ const workerLog = new WorkerLogListener({
   log: app.log,
 });
 workerLog.start();
-
-// Close database connections after the server stops accepting requests.
-app.addHook("onClose", async () => {
-  locationData.stop();
-  await workerLog.stop();
-  await db.destroy();
-  await clickhouse.close();
-  objectStore?.close();
-  mailer?.close();
-});
 
 async function shutdown(signal: NodeJS.Signals) {
   app.log.info({ signal }, "shutting down");

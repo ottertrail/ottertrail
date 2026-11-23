@@ -227,6 +227,14 @@ export interface AppOptions extends Omit<FastifyServerOptions, "logger"> {
    * own when omitted. Tests pass theirs to flush it when they choose.
    */
   ingestActivity?: IngestActivity;
+  /**
+   * What closes once the app's own close work is done: the database, the
+   * stores, and the rest the caller opened. Fastify runs `onClose` hooks
+   * last-added first, so a hook the caller adds after buildApp would run
+   * before the app's last ingestion counts are written, and close the
+   * database under them.
+   */
+  closeAfter?: () => Promise<void>;
   /** The built tracker, served at /t.js. Not served when omitted. */
   trackerScriptPath?: string;
   /** The built dashboard's directory, served at /. Not served when omitted. */
@@ -293,6 +301,7 @@ export function buildApp({
   aiModels = {},
   serverLog = {},
   ingestActivity,
+  closeAfter,
   trackerScriptPath,
   dashboardPath,
   replayPlayerPath,
@@ -315,7 +324,9 @@ export function buildApp({
   });
   app.register(healthRoutes, { prefix: "/api" });
   // Counts of what each project's ingestion accepted and refused, written
-  // every 15 seconds and once more on close, after the routes' last requests.
+  // every 15 seconds and once more on close, after the routes' last
+  // requests and before `closeAfter` closes the database. Added first, so
+  // it runs last of the app's onClose hooks.
   const activity =
     ingestActivity ??
     new IngestActivity(db, {
@@ -330,6 +341,7 @@ export function buildApp({
     await activity.flush().catch((error: unknown) => {
       app.log.warn({ err: error }, "ingestion activity: could not write the last counts");
     });
+    await closeAfter?.();
   });
   // One key cache for collection and the project routes, which make it
   // forget a replaced or deleted project's key at once.
