@@ -189,15 +189,16 @@ function LocationsStatus({
   now: number;
 }) {
   const { loaded, loadError, lastUpdate } = status.locations;
-  if (status.geoSource !== "database") {
+  if (!status.locationDatabaseUsed) {
     return (
       <section className="flex flex-col gap-2 border-t pt-4" aria-label="Location database">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h3 className="text-sm font-medium text-ink">Location database</h3>
-          <StatusBadge tone="neutral">Not needed</StatusBadge>
+          <StatusBadge tone="neutral">Not used</StatusBadge>
         </div>
         <p className="text-sm text-muted-foreground">
-          Location lookup is off (GEO_SOURCE=none). No database is downloaded.
+          No project looks up locations in the database, so it is not loaded or downloaded. Each
+          project picks its location source in its settings, under Location data.
         </p>
       </section>
     );

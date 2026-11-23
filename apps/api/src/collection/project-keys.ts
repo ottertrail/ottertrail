@@ -4,6 +4,7 @@ import type { Kysely } from "kysely";
 
 import type { Database } from "../db/schema.ts";
 import { blockListOf } from "../projects/blocked-addresses.ts";
+import { type ProjectLocation, projectLocationOf } from "./location-headers.ts";
 
 export const PUBLIC_KEY_PATTERN = "^pk_[0-9a-f]{32}$";
 export const SECRET_KEY_PATTERN = "^sk_[0-9a-f]{32}$";
@@ -25,6 +26,8 @@ export interface CollectingProject {
   blocked: BlockList | null;
   /** The project's blocked referrer domains (projects/blocked-referrers.ts), as a set; null for none. */
   blockedReferrers: ReadonlySet<string> | null;
+  /** Where visitor locations come from (location-headers.ts). */
+  location: ProjectLocation;
 }
 
 interface CacheEntry<T> {
@@ -182,6 +185,10 @@ export class ProjectKeyCache {
         "projects.heatmaps",
         "projects.blocked_addresses",
         "projects.blocked_referrers",
+        "projects.location_source",
+        "projects.location_country_header",
+        "projects.location_region_header",
+        "projects.location_city_header",
       ])
       .where(`projects.${column}`, "=", key)
       .executeTakeFirst();
@@ -198,6 +205,7 @@ export class ProjectKeyCache {
           blocked: blockListOf(row.blocked_addresses),
           blockedReferrers:
             row.blocked_referrers.length === 0 ? null : new Set(row.blocked_referrers),
+          location: projectLocationOf(row),
         };
   }
 

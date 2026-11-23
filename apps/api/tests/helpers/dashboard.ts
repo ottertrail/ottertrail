@@ -51,6 +51,7 @@ export async function signedInDashboard({
   logStream,
   serverLog,
   ingestActivity,
+  trustProxy,
 }: {
   timeZone?: string;
   now?: () => Date;
@@ -92,6 +93,8 @@ export async function signedInDashboard({
   serverLog?: AppOptions["serverLog"];
   /** Allows manual counter flushes (tests/ingest-activity.test.ts). */
   ingestActivity?: (db: Kysely<Database>) => IngestActivity;
+  /** As TRUST_PROXY sets it (server.ts); none by default. */
+  trustProxy?: AppOptions["trustProxy"];
 } = {}) {
   const testDb = await createTestDatabase();
   const testClickHouse = await createTestClickHouse().catch(async (error: unknown) => {
@@ -142,6 +145,7 @@ export async function signedInDashboard({
     ...(logStream === undefined ? {} : { log: { level: "info", stream: logStream } }),
     ...(serverLog === undefined ? {} : { serverLog }),
     ...(ingestActivity === undefined ? {} : { ingestActivity: ingestActivity(testDb.db) }),
+    ...(trustProxy === undefined ? {} : { trustProxy }),
   });
   const link = await createSetupToken(testDb.db);
   await app.inject({

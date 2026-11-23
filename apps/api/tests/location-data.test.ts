@@ -10,6 +10,7 @@ import type { DataCenterFile } from "../src/enrichment/data-centers.ts";
 import { GeoDatabase } from "../src/enrichment/geo.ts";
 import { LiveLocationData } from "../src/enrichment/reload.ts";
 import { stampOf, updateLocationData } from "../src/enrichment/updates.ts";
+import { anyProjectUsesLocationDatabase } from "../src/projects/projects.ts";
 import { PUBLIC_URL, signedInDashboard, signedInUser } from "./helpers/dashboard.ts";
 import { allSources, fakeFetch } from "./helpers/location-sources.ts";
 import { fakeMmdb } from "./helpers/mmdb.ts";
@@ -45,6 +46,8 @@ describe("the API reloads changed files without a restart", () => {
   const warnings: string[] = [];
   const log = { info: () => {}, warn: (msg: string) => warnings.push(msg) };
   let tick = Date.parse("2026-11-15T00:00:00.000Z");
+  /** Whether any project uses the location database, as the API checks it. */
+  let used = true;
 
   /** Replaces a file in one step, as an update does, with a modification time of its own. */
   async function replace(path: string, content: string | Buffer) {
@@ -59,11 +62,16 @@ describe("the API reloads changed files without a restart", () => {
     databasePath = join(dir, "dbip-city-lite.mmdb");
     dataCentersPath = join(dir, "data-centers.json");
     warnings.length = 0;
+    used = true;
     return () => rm(dir, { recursive: true, force: true });
   });
 
-  function open(geoSource: "database" | "none" = "database") {
-    return LiveLocationData.open({ geoSource, databasePath, dataCentersPath });
+  function open() {
+    return LiveLocationData.open({
+      needed: async () => used,
+      databasePath,
+      dataCentersPath,
+    });
   }
 
   test("a new location database replaces the one in use", async () => {
@@ -121,7 +129,6 @@ describe("the API reloads changed files without a restart", () => {
     expect(data.locate(ip)).toEqual({});
     expect(data.isDataCenter("203.0.113.5")).toBe(false);
     expect(data.loaded).toEqual({
-      geoSource: "database",
       locations: null,
       locationsError: null,
       dataCenters: null,
@@ -188,21 +195,128 @@ describe("the API reloads changed files without a restart", () => {
     }
   });
 
-  test("with location lookup off, a location file is never loaded", async () => {
-    const { data } = await open("none");
+  test("with no project using the location database, the file is never loaded", async () => {
+    used = false;
+    const { data, messages } = await open();
+    expect(messages[0]).toEqual({
+      ok: true,
+      message: expect.stringMatching(/^No project looks up locations/),
+    });
     await replace(databasePath, fakeMmdb());
     await data.reload(log);
     expect(data.locate(ip)).toEqual({});
     expect(data.loaded.locations).toBeNull();
+  });
+
+  test("once no project uses it, the loaded database is dropped from memory; the data-center ranges stay", async () => {
+    const gc = collectGarbage();
+    const opened: WeakRef<GeoDatabase>[] = [];
+    const original = Object.getOwnPropertyDescriptor(GeoDatabase, "open")!;
+    const realOpen = GeoDatabase.open.bind(GeoDatabase);
+    GeoDatabase.open = async (path) => {
+      const geo = await realOpen(path);
+      opened.push(new WeakRef(geo));
+      return geo;
+    };
+    try {
+      await replace(databasePath, fakeMmdb({ city: "First" }));
+      await replace(dataCentersPath, JSON.stringify(rangesFile("203.0.113.0/24")));
+      const startup = await open();
+      const { data } = startup;
+      expect(data.locate(ip).city).toBe("First");
+
+      used = false;
+      await data.checkNeeded(log);
+      expect(data.locate(ip)).toEqual({});
+      expect(data.loaded.locations).toBeNull();
+      expect(data.isDataCenter("203.0.113.5")).toBe(true);
+      expect(data.loaded.dataCenters).not.toBeNull();
+      await gc();
+      expect(opened.map((ref) => ref.deref() !== undefined)).toEqual([false]);
+      // Nothing changed: still nothing loaded.
+      await data.reload(log);
+      expect(opened).toHaveLength(1);
+    } finally {
+      Object.defineProperty(GeoDatabase, "open", original);
+    }
+  });
+
+  test("once a project uses it again, the file that is there loads, without a restart", async () => {
+    used = false;
+    await replace(databasePath, fakeMmdb({ city: "First" }));
+    const { data } = await open();
+    expect(data.locate(ip)).toEqual({});
+
+    used = true;
+    await data.checkNeeded(log);
+    expect(data.locate(ip).city).toBe("First");
+    expect(data.loaded.locations).toMatchObject({ type: "DBIP-City-Lite" });
+
+    // Off and on again reads the same file afresh.
+    used = false;
+    await data.checkNeeded(log);
+    used = true;
+    await data.reload(log);
+    expect(data.locate(ip).city).toBe("First");
+    expect(warnings).toEqual([]);
+  });
+
+  test("needed with no file: loaded once it appears", async () => {
+    used = false;
+    const { data } = await open();
+    used = true;
+    await data.checkNeeded(log);
+    expect(data.loaded.locations).toBeNull();
+    await replace(databasePath, fakeMmdb({ city: "Later" }));
+    await data.reload(log);
+    expect(data.locate(ip).city).toBe("Later");
+  });
+
+  test("the timer checks every minute whether the file is needed", async () => {
+    await replace(databasePath, fakeMmdb({ city: "First" }));
+    const { data } = await open();
+    used = false;
+    // A long file interval: only the check runs.
+    data.start(log, 60 * 60 * 1000, 20);
+    try {
+      await expect.poll(() => data.loaded.locations, { timeout: 2000 }).toBeNull();
+      expect(data.locate(ip)).toEqual({});
+    } finally {
+      data.stop();
+    }
+  });
+
+  test("a check that fails keeps things as they are", async () => {
+    await replace(databasePath, fakeMmdb({ city: "First" }));
+    const { data } = await open();
+    const { data: broken, messages } = await LiveLocationData.open({
+      needed: () => Promise.reject(new Error("no database")),
+      databasePath,
+      dataCentersPath,
+    });
+    // At startup: loaded, with a warning.
+    expect(messages[0]).toMatchObject({ ok: false, message: expect.stringMatching(/no database/) });
+    expect(broken.locate(ip).city).toBe("First");
+    await broken.checkNeeded(log);
+    expect(broken.locate(ip).city).toBe("First");
+    expect(warnings.at(-1)).toMatch(/stays as it is: no database/);
+    expect(data.locate(ip).city).toBe("First");
   });
 });
 
 describe("the location data on the Settings page", () => {
   let dir = "";
   let dashboard: Awaited<ReturnType<typeof signedInDashboard>>;
+  let started = false;
+  let projectId = "";
   let live: LiveLocationData;
 
-  function call(cookie: string | undefined, method: "GET" | "PATCH", url: string, body?: object) {
+  function call(
+    cookie: string | undefined,
+    method: "GET" | "PATCH" | "POST",
+    url: string,
+    body?: object,
+  ) {
     return dashboard.app.inject({
       method,
       url,
@@ -219,12 +333,17 @@ describe("the location data on the Settings page", () => {
     dir = await mkdtemp(join(tmpdir(), "ottertrail-location-status-"));
     live = (
       await LiveLocationData.open({
-        geoSource: "database",
+        // The dashboard's database exists only after this: until then, as if needed.
+        needed: async () => (started ? anyProjectUsesLocationDatabase(dashboard.db) : true),
         databasePath: join(dir, "dbip-city-lite.mmdb"),
         dataCentersPath: join(dir, "data-centers.json"),
       })
     ).data;
     dashboard = await signedInDashboard({ locationData: live });
+    // A project that looks up locations in the database, as a new one does.
+    const created = await call(dashboard.cookie, "POST", "/api/projects", { name: "Site" });
+    projectId = created.json().project.id;
+    started = true;
   });
   afterAll(async () => {
     await dashboard?.close();
@@ -236,7 +355,7 @@ describe("the location data on the Settings page", () => {
     expect(response.statusCode).toBe(200);
     expect(response.json()).toEqual({
       now: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/),
-      geoSource: "database",
+      locationDatabaseUsed: true,
       locations: { loaded: null, loadError: null, lastUpdate: null },
       dataCenters: { loaded: null, loadError: null, lastUpdate: null },
     });
@@ -246,7 +365,6 @@ describe("the location data on the Settings page", () => {
     const now = new Date("2026-11-15T12:00:00.000Z");
     await updateLocationData({
       db: dashboard.db,
-      geoSource: "database",
       databasePath: join(dir, "dbip-city-lite.mmdb"),
       dataCentersPath: join(dir, "data-centers.json"),
       fetch: fakeFetch(allSources("2026-11")),
@@ -261,7 +379,7 @@ describe("the location data on the Settings page", () => {
     const dataCentersFile = new Date((await stampOf(join(dir, "data-centers.json")))!.modifiedMs);
     expect(response.json()).toEqual({
       now: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/),
-      geoSource: "database",
+      locationDatabaseUsed: true,
       locations: {
         loaded: {
           type: "DBIP-City-Lite",
@@ -357,5 +475,21 @@ describe("the location data on the Settings page", () => {
       updateLocationData: true,
       avatarUrl: null,
     });
+  });
+
+  test("when no project uses the location database, the API drops it at once, and loads it again", async () => {
+    expect(live.loaded.locations).not.toBeNull();
+    const off = await call(dashboard.cookie, "PATCH", `/api/projects/${projectId}`, {
+      locationSource: "off",
+    });
+    expect(off.statusCode).toBe(200);
+    await expect.poll(() => live.loaded.locations).toBeNull();
+    const status = (await call(dashboard.cookie, "GET", "/api/settings/location-data")).json();
+    expect(status).toMatchObject({ locationDatabaseUsed: false, locations: { loaded: null } });
+
+    // A new project uses the database by default.
+    const other = await call(dashboard.cookie, "POST", "/api/projects", { name: "Other" });
+    expect(other.statusCode).toBe(201);
+    await expect.poll(() => live.loaded.locations).toMatchObject({ type: "DBIP-City-Lite" });
   });
 });

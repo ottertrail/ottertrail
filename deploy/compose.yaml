@@ -232,7 +232,7 @@ services:
       OTTERTRAIL_TRUSTED_PROXIES: ${OTTERTRAIL_TRUSTED_PROXIES:-}
       OTTERTRAIL_CLIENT_IP_HEADER: ${OTTERTRAIL_CLIENT_IP_HEADER:-X-Forwarded-For}
     labels:
-      ottertrail.config.caddyfile: "8497481f82a2"
+      ottertrail.config.caddyfile: "c4a2dc942a67"
     ports:
       - "80:80"
       - "443:443"
@@ -275,6 +275,10 @@ configs:
   # first address outside the ranges, so an address a visitor puts at the
   # start of X-Forwarded-For is skipped. With no ranges, the default, no
   # request is trusted. As nginx's realip module and Caddy itself.
+  # X-Ottertrail-Trusted-Proxy tells the API whether the connection came from
+  # one of those ranges ("true" or "false"), replacing any a client sent:
+  # projects that read their visitors' location from a proxy's headers
+  # read them only when it says "true" (collection/location-headers.ts).
   caddyfile:
     content: |
       {
@@ -290,6 +294,7 @@ configs:
       	encode @compressible zstd gzip
       	reverse_proxy api:3000 {
       		header_up X-Forwarded-For {client_ip}
+      		header_up X-Ottertrail-Trusted-Proxy {http.vars.trusted_proxy}
       	}
       }
 

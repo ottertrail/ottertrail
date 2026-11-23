@@ -136,14 +136,14 @@ describe("locationFromRecord", () => {
 
 describe("setUpLocation", () => {
   test("reports a missing database instead of failing to start", async () => {
-    const setup = await setUpLocation("database", "/nowhere/geo.mmdb");
+    const setup = await setUpLocation(true, "/nowhere/geo.mmdb");
     expect(setup.ok).toBe(false);
     expect(setup.message).toMatch(/vp run geo:update/);
     expect(setup.locate("8.8.8.8")).toEqual({});
   });
 
   test("does no lookup when turned off", async () => {
-    const setup = await setUpLocation("none", "unused");
+    const setup = await setUpLocation(false, "unused");
     expect(setup.locate("8.8.8.8")).toEqual({});
   });
 });
@@ -165,7 +165,7 @@ describe.skipIf(!existsSync(databasePath))("GeoDatabase with the downloaded file
   test(`warns when the file is older than ${STALE_AFTER_DAYS} days`, async () => {
     const geo = await GeoDatabase.open(databasePath);
     const later = new Date(geo.builtAt.getTime() + (STALE_AFTER_DAYS + 1) * 86_400_000);
-    const setup = await setUpLocation("database", databasePath, later);
+    const setup = await setUpLocation(true, databasePath, later);
     expect(setup.ok).toBe(false);
     expect(setup.message).toMatch(/less accurate/);
   });

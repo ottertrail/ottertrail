@@ -239,17 +239,42 @@ describe("the location data on the instance's Settings page", () => {
     await expect.element(dialog).not.toBeInTheDocument();
   });
 
-  test("with location lookup off, no database is needed", async () => {
+  test("when no project uses the location database, it says so instead of an error", async () => {
     installFakeApi({
-      locationData: { ...LOCATION_DATA, geoSource: "none", locations: NOTHING },
+      locationData: { ...LOCATION_DATA, locationDatabaseUsed: false, locations: NOTHING },
     });
     renderApp(LOCATION_TAB);
 
-    await expect.element(locations().getByText("Not needed")).toBeVisible();
+    await expect.element(locations().getByText("Not used")).toBeVisible();
     await expect
-      .element(locations().getByText(/^Location lookup is off \(GEO_SOURCE=none\)/))
+      .element(locations().getByText(/^No project looks up locations in the database/))
       .toBeVisible();
+    await expect.element(locations().getByText(/Missing|Update failed/)).not.toBeInTheDocument();
   });
+
+  test.each([1280, 1440, 1447])(
+    "at %i pixels wide, the Save button is whole, inside the window",
+    async (width) => {
+      await page.viewport(width, 900);
+      installFakeApi();
+      renderApp(LOCATION_TAB);
+      await toggle().click();
+      const saveButton = section().getByRole("button", { name: "Save location data settings" });
+      await expect.element(saveButton).toBeVisible();
+      const button = saveButton.element();
+      const rect = button.getBoundingClientRect();
+      expect(rect.right).toBeLessThanOrEqual(document.documentElement.clientWidth);
+      expect(button.scrollWidth).toBeLessThanOrEqual(button.clientWidth);
+      // Nothing covers or cuts its right edge: no ancestor clips it.
+      for (let parent = button.parentElement; parent !== null; parent = parent.parentElement) {
+        const style = getComputedStyle(parent);
+        if (style.overflowX === "visible") continue;
+        expect(rect.right).toBeLessThanOrEqual(parent.getBoundingClientRect().right + 0.5);
+      }
+      const hit = document.elementFromPoint(rect.right - 2, rect.top + rect.height / 2);
+      expect(button.contains(hit)).toBe(true);
+    },
+  );
 
   test("an admin does not see it", async () => {
     installFakeApi({ access: ADMIN_ACCESS });

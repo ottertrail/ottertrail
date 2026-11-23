@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { chmod, copyFile, mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -160,9 +160,9 @@ describe("Caddy trusts a proxy's header only from OTTERTRAIL_TRUSTED_PROXIES", (
     ]);
   });
 
-  test("the API gets the address Caddy settled on, one hop", () => {
+  test("the API gets the address Caddy settled on, one hop, and whether a trusted proxy sent it", () => {
     expect(caddyfile).toContain(
-      "\treverse_proxy api:3000 {\n\t\theader_up X-Forwarded-For {client_ip}\n\t}\n",
+      "\treverse_proxy api:3000 {\n\t\theader_up X-Forwarded-For {client_ip}\n\t\theader_up X-Ottertrail-Trusted-Proxy {http.vars.trusted_proxy}\n\t}\n",
     );
     expect(compose).toContain('    TRUST_PROXY: "1"\n');
   });
@@ -177,6 +177,95 @@ describe("Caddy trusts a proxy's header only from OTTERTRAIL_TRUSTED_PROXIES", (
     expect(example).toMatch(/^# OTTERTRAIL_CLIENT_IP_HEADER=X-Forwarded-For$/m);
     expect(example).not.toMatch(/OTTERTRAIL_PROXY\b/);
   });
+});
+
+/** Podman or Docker with Caddy's image, as deploy/compose.yaml names it; null without. */
+function caddyRuntime(): { cli: string; image: string } | null {
+  const image = /^ {4}image: (\S*caddy\S*)$/m.exec(compose)?.[1];
+  if (image === undefined) return null;
+  for (const cli of ["podman", "docker"]) {
+    try {
+      execFileSync(cli, ["image", "inspect", image], { stdio: "ignore" });
+      return { cli, image };
+    } catch {
+      // Not this one.
+    }
+  }
+  return null;
+}
+
+const caddy = caddyRuntime();
+
+/** What the stand-in behind Caddy received as the trust header, given the ranges and the headers a client sent. */
+async function trustHeaderSeen(trustedProxies: string, sent: string[]): Promise<string> {
+  const caddyfile = `${inlineConfig("caddyfile")
+    .replaceAll("$$", "$")
+    .replace("{\n\tservers {", "{\n\tauto_https off\n\tadmin off\n\tservers {")
+    .replace("{$OTTERTRAIL_DOMAIN} {", "http://:8080 {")
+    .replace("reverse_proxy api:3000", "reverse_proxy 127.0.0.1:8081")}
+:8081 {
+\trespond "{header.X-Ottertrail-Trusted-Proxy}"
+}
+`;
+  const headers = sent.map((value) => `--header 'X-Ottertrail-Trusted-Proxy: ${value}'`).join(" ");
+  const script = [
+    "cat > /tmp/Caddyfile",
+    "caddy start --config /tmp/Caddyfile --adapter caddyfile >/dev/null 2>&1 || exit 1",
+    "for i in 1 2 3 4 5 6 7 8 9 10; do wget -qO- http://127.0.0.1:8081/ >/dev/null 2>&1 && break; sleep 0.3; done",
+    `wget -qO- ${headers} http://127.0.0.1:8080/`,
+  ].join("\n");
+  const child = execFile(
+    caddy!.cli,
+    [
+      "run",
+      "--rm",
+      "-i",
+      "-e",
+      `OTTERTRAIL_TRUSTED_PROXIES=${trustedProxies}`,
+      "-e",
+      "OTTERTRAIL_CLIENT_IP_HEADER=X-Forwarded-For",
+      caddy!.image,
+      "sh",
+      "-c",
+      script,
+    ],
+    { encoding: "utf8", timeout: 60_000 },
+  );
+  child.stdin?.end(caddyfile);
+  let out = "";
+  child.stdout?.on("data", (chunk: string) => (out += chunk));
+  await new Promise<void>((resolve, reject) =>
+    child.on("exit", (code) =>
+      code === 0 ? resolve() : reject(new Error(`caddy exited with ${code}`)),
+    ),
+  );
+  return out.trim();
+}
+
+/**
+ * The shipped Caddyfile in the real image: the API's site is served over
+ * plain HTTP on :8080 and passes to a stand-in on :8081 that answers with
+ * the trust header it received. Requests come from inside the container
+ * (127.0.0.1), so a range holding 127.0.0.1 makes them come from a trusted proxy.
+ */
+describe.skipIf(caddy === null)("in Caddy's image, the trust header is Caddy's alone", () => {
+  test(
+    'from a connection outside the ranges, a client\'s "true" becomes false',
+    { timeout: 120_000 },
+    async () => {
+      expect(await trustHeaderSeen("", ["true"])).toBe("false");
+      expect(await trustHeaderSeen("192.0.2.0/24", ["true", "true"])).toBe("false");
+    },
+  );
+
+  test(
+    "from a trusted proxy, it is true, whatever the proxy sent",
+    { timeout: 120_000 },
+    async () => {
+      expect(await trustHeaderSeen("127.0.0.1/32", ["false"])).toBe("true");
+      expect(await trustHeaderSeen("127.0.0.1/32", [])).toBe("true");
+    },
+  );
 });
 
 describe("the release's files", () => {

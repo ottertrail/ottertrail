@@ -29,15 +29,6 @@ export const LOCAL_CLICKHOUSE = {
   database: "ottertrail",
 } as const;
 
-const GEO_SOURCES = ["database", "none"] as const;
-
-/**
- * Where visitor locations come from:
- * - database: a local geolocation file (see GEO_DATABASE_PATH).
- * - none: no location lookup.
- */
-export type GeoSource = (typeof GEO_SOURCES)[number];
-
 /** Relative to the API's working directory. `vp run geo:update` downloads it. */
 export const DEFAULT_GEO_DATABASE_PATH = "data/geo/dbip-city-lite.mmdb";
 
@@ -74,7 +65,7 @@ export interface Config {
    * false (none), a number of proxy hops, or a list of proxy IPs or CIDRs.
    */
   trustProxy: false | number | string[];
-  geoSource: GeoSource;
+  /** The location file, used for projects whose location source is "database". */
   geoDatabasePath: string;
   /** Address ranges of data centers, whose "browsers" are ignored (enrichment/data-centers.ts). */
   dataCentersPath: string;
@@ -604,17 +595,9 @@ function parseTrustProxy(raw: string | undefined): false | number | string[] {
   return entries;
 }
 
-function parseGeoSource(raw: string): GeoSource {
-  // Removed after release 0.3.0: Cloudflare's location headers.
-  if (raw.trim() === "cloudflare") {
-    throw new ConfigError("GEO_SOURCE=cloudflare was removed; use database (the default) or none");
-  }
-  const source = GEO_SOURCES.find((candidate) => candidate === raw.trim());
-  if (source === undefined) {
-    throw new ConfigError(`GEO_SOURCE must be one of ${GEO_SOURCES.join(", ")}, received "${raw}"`);
-  }
-  return source;
-}
+/** Removed after release 0.3.0; each project's location source replaced it (migration 0027). */
+export const GEO_SOURCE_REMOVED =
+  "GEO_SOURCE was removed; choose each project's location source in its settings (Location data).";
 
 function parsePublicUrl(env: NodeJS.ProcessEnv): string {
   const raw = env.PUBLIC_URL?.trim();
@@ -658,6 +641,8 @@ function parseAuthSecret(env: NodeJS.ProcessEnv): string {
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
+  // Any value, even empty: an install that set it expects it to do something.
+  if (env.GEO_SOURCE !== undefined) throw new ConfigError(GEO_SOURCE_REMOVED);
   return {
     host: env.HOST ?? "127.0.0.1",
     port: parsePort(env.PORT ?? "3000"),
@@ -665,7 +650,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     databaseUrl: parseDatabaseUrl(env),
     clickhouse: parseClickHouse(env),
     trustProxy: parseTrustProxy(env.TRUST_PROXY),
-    geoSource: parseGeoSource(env.GEO_SOURCE ?? "database"),
     geoDatabasePath: env.GEO_DATABASE_PATH?.trim() || DEFAULT_GEO_DATABASE_PATH,
     dataCentersPath: env.DATA_CENTERS_PATH?.trim() || DEFAULT_DATA_CENTERS_PATH,
     instanceEventsPerSecond: parseInstanceEventsPerSecond(env.INSTANCE_EVENTS_PER_SECOND),

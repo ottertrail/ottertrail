@@ -9,7 +9,7 @@ const SETTINGS = `/projects/${PROJECT.id}/settings`;
 const tab = (name: string) => `${SETTINGS}?tab=${name}`;
 
 /** The shown tab's Save bar status: "No unsaved changes", "Unsaved changes", "Saving…". */
-const saveStatus = () => page.getByRole("tabpanel").getByRole("status");
+const saveStatus = () => page.getByRole("tabpanel").getByRole("status").first();
 
 /** Stands in for the clipboard, which a headless browser may refuse. */
 function fakeClipboard() {

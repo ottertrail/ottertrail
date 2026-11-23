@@ -335,7 +335,6 @@ const stopRetention = every(RETENTION_INTERVAL_MS, async () => {
  */
 const locationData = new LocationDataJob({
   db,
-  geoSource: config.geoSource,
   databasePath: config.geoDatabasePath,
   dataCentersPath: config.dataCentersPath,
   log,

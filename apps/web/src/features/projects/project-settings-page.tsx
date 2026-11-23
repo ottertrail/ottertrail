@@ -39,6 +39,7 @@ import { ACTIVITY_TAB, ActivityTab } from "./activity-tab";
 import { DangerZone } from "./danger-zone";
 import { hostnamesFromText, installSnippet, setupPrompt, timeAgo } from "./format";
 import { HeatmapsSettings } from "./heatmaps-card";
+import { LocationSettings } from "./location-card";
 import { NoSuchProject } from "./no-such-project";
 import { ReplaysSettings } from "./replays-card";
 import { ServerSettings } from "./server-card";
@@ -379,6 +380,7 @@ function GeneralSettings({
 
 function SettingsTabsFor({ project }: { project: Project }) {
   const [generalDirty, setGeneralDirty] = React.useState(false);
+  const [locationDirty, setLocationDirty] = React.useState(false);
   const [serverDirty, setServerDirty] = React.useState(false);
   const [replayDirty, setReplayDirty] = React.useState(false);
   const [spamDirty, setSpamDirty] = React.useState(false);
@@ -406,8 +408,13 @@ function SettingsTabsFor({ project }: { project: Project }) {
         {
           value: "general",
           label: "General",
-          dirty: generalDirty,
-          content: <GeneralSettings project={project} onDirty={setGeneralDirty} />,
+          dirty: generalDirty || locationDirty,
+          content: (
+            <>
+              <GeneralSettings project={project} onDirty={setGeneralDirty} />
+              <LocationSettings project={project} onDirty={setLocationDirty} />
+            </>
+          ),
         },
         {
           value: "server",

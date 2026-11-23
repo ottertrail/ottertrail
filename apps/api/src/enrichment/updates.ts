@@ -8,8 +8,8 @@ import { createGunzip } from "node:zlib";
 
 import { type Kysely, sql } from "kysely";
 
-import type { GeoSource } from "../config.ts";
 import type { Database } from "../db/schema.ts";
+import { anyProjectUsesLocationDatabase } from "../projects/projects.ts";
 import { readInstanceSettings } from "../settings/settings.ts";
 import { downloadDataCenters, yearMonth } from "./data-center-sources.ts";
 import { type DataCenterFile, DataCenters, isDataCenterFile } from "./data-centers.ts";
@@ -19,10 +19,10 @@ import { GeoDatabase } from "./geo.ts";
  * Keeps the two files the API reads about IP addresses current
  * (docs/web-analytics.md, "Keeping the files current"):
  *
- * - the location database, DB-IP's City Lite, published monthly, when
- *   GEO_SOURCE is "database";
- * - the data-center ranges (data-center-sources.ts), whatever the source:
- *   collection checks them for every project that ignores data centers.
+ * - the location database, DB-IP's City Lite, published monthly, while some
+ *   project's location source is "database";
+ * - the data-center ranges (data-center-sources.ts), either way: collection
+ *   checks them for every project that ignores data centers.
  *
  * The worker calls updateLocationData() when UpdateSchedule says so; it
  * downloads only what is due, and only while the instance's "Update
@@ -656,7 +656,7 @@ export async function withUpdateLease<T>(
 }
 
 export type UpdateOutcome =
-  /** GEO_SOURCE is not "database": no location file is needed. */
+  /** No project's location source is "database": no location file is needed. */
   | "not_needed"
   | "not_due"
   | "updated"
@@ -681,7 +681,6 @@ export type UpdateRun =
 export interface UpdateOptions {
   /** Null when PostgreSQL cannot be reached: the manual command then updates without lease or status. */
   db: Kysely<Database> | null;
-  geoSource: GeoSource;
   databasePath: string;
   dataCentersPath: string;
   fetch?: Fetch;
@@ -712,21 +711,24 @@ export interface UpdateOptions {
  */
 export async function updateLocationData(options: UpdateOptions): Promise<UpdateRun> {
   const { db, force = false, holder = newHolder() } = options;
-  const round = () =>
+  const round = (locationsNeeded: boolean) =>
     updateFiles(
       { ...options, holder },
       {
+        locationsNeeded,
         signal: AbortSignal.any([
           ...(options.stop === undefined ? [] : [options.stop]),
           AbortSignal.timeout(options.roundTimeoutMs ?? LEASE_MS - LEASE_MARGIN_MS),
         ]),
       },
     );
-  if (db === null) return { ran: true, ...(await round()) };
+  // Without PostgreSQL the projects are unknown: the location file is downloaded, as by default.
+  if (db === null) return { ran: true, ...(await round(true)) };
   if (!force && !(await readInstanceSettings(db)).updateLocationData) {
     return { ran: false, reason: "off" };
   }
-  const leased = await withUpdateLease(db, round, options.log, holder);
+  const needed = await anyProjectUsesLocationDatabase(db);
+  const leased = await withUpdateLease(db, () => round(needed), options.log, holder);
   return leased.ran
     ? { ran: true, ...leased.value }
     : { ran: false, reason: "locked", until: leased.until };
@@ -735,7 +737,6 @@ export async function updateLocationData(options: UpdateOptions): Promise<Update
 async function updateFiles(
   {
     db,
-    geoSource,
     databasePath,
     dataCentersPath,
     fetch: fetchFn = fetch,
@@ -747,7 +748,7 @@ async function updateFiles(
     limits = DOWNLOAD_LIMITS,
     holder = newHolder(),
   }: UpdateOptions,
-  { signal }: { signal: AbortSignal },
+  { locationsNeeded, signal }: { locationsNeeded: boolean; signal: AbortSignal },
 ): Promise<{
   locations: UpdateOutcome;
   dataCenters: UpdateOutcome;
@@ -778,7 +779,7 @@ async function updateFiles(
   };
 
   let locations: UpdateOutcome = "not_needed";
-  if (geoSource === "database") {
+  if (locationsNeeded) {
     const file = await stampOf(databasePath);
     const status = recorded?.locations ?? null;
     let due = locationsDue(file, status, now(), await readMonthMarker(databasePath));
@@ -886,20 +887,25 @@ async function updateFiles(
 }
 
 /**
- * When the worker runs a round: each minute it reads the setting, and runs
+ * When the worker runs a round: each minute it reads the settings, and runs
  * one when the last round said so (UpdateRun.nextCheckInMs), at start, or
- * as soon as the setting is turned on.
+ * as soon as automatic updates are turned on or a project starts using the
+ * location database.
  */
 export class UpdateSchedule {
   #nextAt = 0;
   #wasOn = false;
+  #wasNeeded = true;
 
-  due(now: number, on: boolean): boolean {
+  /** `locationsNeeded`: whether any project uses the location database. */
+  due(now: number, on: boolean, locationsNeeded = true): boolean {
+    const nowNeeded = locationsNeeded && !this.#wasNeeded;
+    this.#wasNeeded = locationsNeeded;
     if (!on) {
       this.#wasOn = false;
       return false;
     }
-    if (!this.#wasOn) {
+    if (!this.#wasOn || nowNeeded) {
       this.#wasOn = true;
       this.#nextAt = 0;
     }
@@ -954,9 +960,10 @@ export class LocationDataJob {
     const { db, log } = this.#options;
     try {
       const on = (await readInstanceSettings(db)).updateLocationData;
+      const needed = await anyProjectUsesLocationDatabase(db);
       if (this.#failing) log("info", "checking for location data updates works again");
       this.#failing = false;
-      if (!this.#schedule.due(Date.now(), on)) return;
+      if (!this.#schedule.due(Date.now(), on, needed)) return;
       const run = await updateLocationData({
         ...this.#options,
         stop: this.#abort.signal,

@@ -140,8 +140,11 @@ export interface AppOptions extends Omit<FastifyServerOptions, "logger"> {
   };
   /** Source maps and replays are disabled when no object store is supplied. */
   objectStore?: ObjectStore | null;
-  /** Omitting this reports neither location file loaded (enrichment/reload.ts). */
-  locationData?: { readonly loaded: LoadedLocationData };
+  /**
+   * Omitting this reports neither location file loaded (enrichment/reload.ts).
+   * checkNeeded() loads or drops the location file when projects' location sources change.
+   */
+  locationData?: { readonly loaded: LoadedLocationData; checkNeeded?(): Promise<void> };
   /** Source maps (docs/errors.md, "Source maps"): the instance's storage limit, and upload limits. */
   sourceMaps?: {
     limitBytes: number;
@@ -365,6 +368,8 @@ export function buildApp({
       prefix: "/api",
       db,
       projectKeys,
+      // Location headers count only behind a proxy (collection/location-headers.ts).
+      behindProxy: fastifyOptions.trustProxy !== undefined && fastifyOptions.trustProxy !== false,
       ...collection,
       activity,
       clickhouse: collectionClickHouse,
@@ -522,6 +527,8 @@ export function buildApp({
       auth: dashboard.auth,
       trustedOrigins: dashboard.trustedOrigins,
       projectKeys,
+      // The reply does not wait: loading the file takes seconds, and checkNeeded never throws.
+      onLocationSourcesChange: () => void locationData?.checkNeeded?.(),
     });
     app.register(ingestActivityRoutes, {
       prefix: "/api",

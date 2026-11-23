@@ -28,6 +28,7 @@ import { isSignedUserId, USER_ID_PATTERN, USER_SIGNATURE_PATTERN } from "./ident
 import { InFlight } from "./in-flight.ts";
 import { parseTextPlainAsJson } from "./json-body.ts";
 import { LastEventRecorder } from "./last-event.ts";
+import { locationFromHeaders } from "./location-headers.ts";
 import {
   cleanReferrer,
   correctClock,
@@ -85,10 +86,18 @@ export interface CollectionOptions {
   ipEventLimit?: RateLimit;
   projectLimit?: RateLimit;
   instanceLimit?: RateLimit;
-  /** Finds the visitor's location from the request. Default: no location. */
+  /**
+   * Finds the visitor's location from the request. Default: no location.
+   * Called only for projects whose location source is "database".
+   */
   locate?: Locate;
   /** Whether an address is a data center's. Default: none is. */
   isDataCenter?: IsDataCenter;
+  /**
+   * Whether the API runs behind a proxy (TRUST_PROXY): without one, no
+   * project's location headers are read, whatever the request says.
+   */
+  behindProxy?: boolean;
   /** How often expired visitor salts are deleted. Default: hourly. */
   saltCleanupIntervalMs?: number;
   now?: () => number;
@@ -305,6 +314,7 @@ export const collectionRoutes: FastifyPluginCallback<CollectionOptions> = (app, 
     clickhouse,
     locate = noLocation,
     isDataCenter = noDataCenters,
+    behindProxy = false,
     now = Date.now,
     activity,
   } = options;
@@ -604,9 +614,17 @@ export const collectionRoutes: FastifyPluginCallback<CollectionOptions> = (app, 
 
         // The costlier work, only for a batch within its budget: signatures,
         // error fingerprints, the location. The IP is used for the location,
-        // then discarded: never stored or logged.
+        // then discarded: never stored or logged. Each project picks where
+        // locations come from (location-headers.ts), cached with its key.
         const client = parseUserAgent(userAgent ?? "", { touch: request.body.touch === true });
-        const location = locate(request.ip);
+        const location =
+          project.location.source === "database"
+            ? locate(request.ip)
+            : project.location.source === "headers"
+              ? behindProxy
+                ? locationFromHeaders(request.headers, project.location.headers)
+                : {}
+              : {};
         const accepted: NewEvent[] = valid.map(({ event, occurredAt, page }) => {
           // When signatures are required, invalid ones leave events anonymous.
           let { userId } = event;

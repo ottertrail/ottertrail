@@ -1,4 +1,3 @@
-import type { GeoSource } from "../config.ts";
 import { DataCenters, type IsDataCenter, noDataCenters } from "./data-centers.ts";
 import { GeoDatabase, type Locate, noLocation } from "./geo.ts";
 
@@ -16,15 +15,17 @@ export interface LocationSetup {
   database?: { type: string; builtAt: Date };
 }
 
-/** Picks the location source the instance is configured for. Never throws. */
+/** The startup message when no project uses the location database. */
+export const NOT_NEEDED_MESSAGE =
+  "No project looks up locations in the location database, so it is not loaded";
+
+/** Loads the location database when some project uses it (`needed`). Never throws. */
 export async function setUpLocation(
-  source: GeoSource,
+  needed: boolean,
   databasePath: string,
   now: Date = new Date(),
 ): Promise<LocationSetup> {
-  if (source === "none") {
-    return { locate: noLocation, ok: true, message: "Location lookup is off (GEO_SOURCE=none)" };
-  }
+  if (!needed) return { locate: noLocation, ok: true, message: NOT_NEEDED_MESSAGE };
   let geo: GeoDatabase;
   try {
     geo = await GeoDatabase.open(databasePath);

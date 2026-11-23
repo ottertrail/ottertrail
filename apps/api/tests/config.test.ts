@@ -44,7 +44,6 @@ describe("loadConfig", () => {
       databaseUrl: LOCAL_DATABASE_URL,
       clickhouse: LOCAL_CLICKHOUSE,
       trustProxy: false,
-      geoSource: "database",
       geoDatabasePath: DEFAULT_GEO_DATABASE_PATH,
       dataCentersPath: DEFAULT_DATA_CENTERS_PATH,
       instanceEventsPerSecond: DEFAULT_INSTANCE_EVENTS_PER_SECOND,
@@ -78,7 +77,6 @@ describe("loadConfig", () => {
         CLICKHOUSE_PASSWORD: "p".repeat(40),
         CLICKHOUSE_DATABASE: "analytics",
         TRUST_PROXY: "1",
-        GEO_SOURCE: "none",
         GEO_DATABASE_PATH: "/var/lib/ottertrail/geo.mmdb",
         DATA_CENTERS_PATH: "/var/lib/ottertrail/data-centers.json",
         INSTANCE_EVENTS_PER_SECOND: "2000",
@@ -113,7 +111,6 @@ describe("loadConfig", () => {
         database: "analytics",
       },
       trustProxy: 1,
-      geoSource: "none",
       geoDatabasePath: "/var/lib/ottertrail/geo.mmdb",
       dataCentersPath: "/var/lib/ottertrail/data-centers.json",
       instanceEventsPerSecond: 2000,
@@ -304,15 +301,17 @@ describe("loadConfig", () => {
     },
   );
 
-  test("rejects an unknown GEO_SOURCE", () => {
-    expect(() => loadConfig({ GEO_SOURCE: "maxmind" })).toThrow(ConfigError);
-  });
-
-  test("refuses GEO_SOURCE=cloudflare, which was removed, and says what to use", () => {
-    expect(() => loadConfig({ GEO_SOURCE: "cloudflare" })).toThrow(
-      new ConfigError("GEO_SOURCE=cloudflare was removed; use database (the default) or none"),
-    );
-  });
+  // The API, the worker, and update-geo.mjs each call loadConfig first, so all three stop.
+  test.each(["database", "none", "cloudflare", ""])(
+    "stops at GEO_SOURCE=%j, which was removed, and says where the setting went",
+    (value) => {
+      expect(() => loadConfig({ GEO_SOURCE: value })).toThrow(
+        new ConfigError(
+          "GEO_SOURCE was removed; choose each project's location source in its settings (Location data).",
+        ),
+      );
+    },
+  );
 
   test("never repeats DATABASE_URL in errors, because it may contain a password", () => {
     const url = "mysql://app:s3cret-value@db/ottertrail";

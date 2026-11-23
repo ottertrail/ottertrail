@@ -94,7 +94,7 @@ To go back to an earlier release, use its `compose.yaml` (or its version in `OTT
 
 An install that set `OTTERTRAIL_PROXY=cloudflare` (release 0.3.0) must replace it with `OTTERTRAIL_TRUSTED_PROXIES` and `OTTERTRAIL_CLIENT_IP_HEADER=CF-Connecting-IP` ([If you use Cloudflare](#if-you-use-cloudflare)). Releases after 0.3.0 ignore `OTTERTRAIL_PROXY`, so without the new settings every visitor gets Cloudflare's address. They also no longer ship Cloudflare's ranges: keep them current yourself in `.env`, and in any firewall lock.
 
-An install that set `GEO_SOURCE=cloudflare` must remove it. The Compose file never passed `GEO_SOURCE`, so it can only have been set outside it, in an override file or when running the image directly. The option was removed after release 0.3.0, and the API, the worker, and `update-geo.mjs` stop at start while it is set. Locations then come from the location database, once the worker's first download is done or after `docker compose exec api node dist/update-geo.mjs`.
+`GEO_SOURCE` was removed after release 0.3.0; use each project's settings, under **Location data**. An install that set it, in an override file or when running the image directly (the Compose file never passed it), must remove it: while it is set, to any value, the API, the worker, and `update-geo.mjs` stop at start. Every project starts with the location database, as `GEO_SOURCE=database` did; one that had `none` chooses Off.
 
 ## Behind a proxy or CDN
 
@@ -124,7 +124,7 @@ servers {
 }
 ```
 
-A request whose connection comes from one of the ranges takes its client address from the header. Any other request keeps its connection's address, and its header is ignored. So a client outside the trusted ranges can't set its own address, even by going around the proxy. Clients inside them can, which is why the list must hold only the proxy's addresses. Caddy then sends the API that address as `X-Forwarded-For` (`header_up X-Forwarded-For {client_ip}`), replacing whatever the client sent, and the API trusts one hop (`TRUST_PROXY=1`).
+A request whose connection comes from one of the ranges takes its client address from the header. Any other request keeps its connection's address, and its header is ignored. So a client outside the trusted ranges can't set its own address, even by going around the proxy. Clients inside them can, which is why the list must hold only the proxy's addresses. Caddy then sends the API that address as `X-Forwarded-For` (`header_up X-Forwarded-For {client_ip}`), replacing whatever the client sent, and the API trusts one hop (`TRUST_PROXY=1`). It also sends `X-Ottertrail-Trusted-Proxy` (`header_up X-Ottertrail-Trusted-Proxy {http.vars.trusted_proxy}`): `true` for a connection from the ranges, `false` for any other, again replacing whatever the client sent. Projects that take their visitors' location from the proxy's headers read them only when it says `true` ([web analytics](web-analytics.md#locations-from-a-proxys-headers)).
 
 `trusted_proxies_strict` reads the header from right to left and takes the first address outside the ranges. A proxy that appends to `X-Forwarded-For` adds the address it saw at the end, so an address a visitor sends at the start is skipped. A header with one address works the same way: when that address is inside the ranges, or Caddy cannot read it, Caddy uses the connection's address.
 
@@ -457,7 +457,7 @@ For an instance without internet access, or whose owner does not want the downlo
 docker compose exec api node dist/update-geo.mjs
 ```
 
-It downloads both files at once, and the API loads them within 10 minutes. It does not wait for a retry delay, but if the worker is updating at that moment, it says so, with when that update's lease ends at the latest, and exits with 1. Ctrl-C stops it cleanly: the old files stay, and the next update can start at once. With `GEO_SOURCE=none` in the services' environment, no location database is downloaded; the data-center ranges still are.
+It downloads both files at once, and the API loads them within 10 minutes. It does not wait for a retry delay, but if the worker is updating at that moment, it says so, with when that update's lease ends at the latest, and exits with 1. Ctrl-C stops it cleanly: the old files stay, and the next update can start at once. When no project uses the location database ([web analytics](web-analytics.md#location)), it skips that file and says so; the data-center ranges are still downloaded.
 
 ### One customer per instance
 

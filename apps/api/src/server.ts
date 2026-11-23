@@ -7,6 +7,7 @@ import { DEVELOPMENT_AUTH_SECRET, loadConfig } from "./config.ts";
 import { createDatabase } from "./db/database.ts";
 import { LiveLocationData } from "./enrichment/reload.ts";
 import { smtpMailer } from "./notifications/email.ts";
+import { anyProjectUsesLocationDatabase } from "./projects/projects.ts";
 import { ServerLogBuffer } from "./server-log/buffer.ts";
 import { WorkerLogListener } from "./server-log/listener.ts";
 import { s3ObjectStore } from "./storage/object-store.ts";
@@ -37,9 +38,10 @@ const auth = createAuth({
   trustedOrigins: config.trustedOrigins,
   secret: config.authSecret,
 });
-// Reloaded when the worker or the manual command replaces a file (enrichment/reload.ts).
+// Reloaded when the worker or the manual command replaces a file; the location
+// file is loaded only while some project uses it (enrichment/reload.ts).
 const { data: locationData, messages: locationMessages } = await LiveLocationData.open({
-  geoSource: config.geoSource,
+  needed: () => anyProjectUsesLocationDatabase(db),
   databasePath: config.geoDatabasePath,
   dataCentersPath: config.dataCentersPath,
 });

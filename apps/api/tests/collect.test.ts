@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { type AddressInfo, connect } from "node:net";
 
 import type { FastifyInstance } from "fastify";
 import { afterAll, beforeAll, describe, expect, onTestFinished, test } from "vite-plus/test";
@@ -114,6 +115,28 @@ function send(
     payload: typeof body === "string" ? body : JSON.stringify(body),
     remoteAddress,
   });
+}
+
+/** A project with its own location source (collection/location-headers.ts). */
+async function sourceProject(values: object) {
+  return insertProject(db(), { name: "Located", allowed_hostnames: [SITE], ...values });
+}
+
+/** An app whose database lookup counts its calls. */
+function countingApp() {
+  const calls: string[] = [];
+  const instance = appWith({
+    // Behind a proxy, as with Caddy (TRUST_PROXY=1).
+    trustProxy: true,
+    collection: {
+      now: () => NOW,
+      locate: (ip) => {
+        calls.push(ip);
+        return fakeLocate(ip);
+      },
+    },
+  });
+  return { instance, calls };
 }
 
 async function visitorIds(projectId: string) {
@@ -749,6 +772,148 @@ describe("POST /api/events", () => {
       await send(batch(project.public_key), { remoteAddress: "192.168.0.101" });
       const [event] = await storedEvents(project.id);
       expect(event).toMatchObject({ browser: "Chrome", country: null, region: null, city: null });
+    });
+
+    describe("each project's location source", () => {
+      const HEADERS = {
+        location_source: "headers" as const,
+        location_country_header: "x-visitor-country",
+        location_region_header: "x-visitor-region",
+        location_city_header: "x-visitor-city",
+      };
+      const FROM_PROXY = { "x-ottertrail-trusted-proxy": "true" };
+
+      test("headers, with the API not behind a proxy (TRUST_PROXY unset): nothing is read, even with the trust header", async () => {
+        const project = await sourceProject(HEADERS);
+        await send(batch(project.public_key), {
+          headers: { ...FROM_PROXY, "x-visitor-country": "FR", "x-visitor-city": "Paris" },
+        });
+        const [event] = await storedEvents(project.id);
+        expect(event).toMatchObject({ country: null, region: null, city: null });
+      });
+
+      test("database, the default: the lookup, as before", async () => {
+        const { instance, calls } = countingApp();
+        const project = await createProject();
+        expect((await send(batch(project.public_key), { instance })).statusCode).toBe(202);
+        expect(calls).toEqual(["203.0.113.10"]);
+        const [event] = await storedEvents(project.id);
+        expect(event).toMatchObject({ country: "DE", region: "Bavaria", city: "Munich" });
+      });
+
+      test("off: no location, and no lookup", async () => {
+        const { instance, calls } = countingApp();
+        const project = await sourceProject({ location_source: "off" });
+        await send(batch(project.public_key), {
+          instance,
+          headers: { ...FROM_PROXY, "x-visitor-country": "FR" },
+        });
+        expect(calls).toEqual([]);
+        const [event] = await storedEvents(project.id);
+        expect(event).toMatchObject({ country: null, region: null, city: null });
+      });
+
+      test("headers through a trusted proxy: the values the headers give, and no lookup", async () => {
+        const { instance, calls } = countingApp();
+        const project = await sourceProject(HEADERS);
+        await send(batch(project.public_key), {
+          instance,
+          headers: {
+            ...FROM_PROXY,
+            "x-visitor-country": "fr",
+            "x-visitor-region": "  Île-de-France ",
+            "x-visitor-city": "Paris",
+          },
+        });
+        expect(calls).toEqual([]);
+        const [event] = await storedEvents(project.id);
+        expect(event).toMatchObject({ country: "FR", region: "Île-de-France", city: "Paris" });
+      });
+
+      test.each([
+        ["absent", {}],
+        ["false", { "x-ottertrail-trusted-proxy": "false" }],
+        ["anything but true", { "x-ottertrail-trusted-proxy": "1" }],
+      ])("headers with the trust header %s: ignored, with no fallback", async (_, trust) => {
+        const { instance, calls } = countingApp();
+        const project = await sourceProject(HEADERS);
+        await send(batch(project.public_key), {
+          instance,
+          headers: { ...trust, "x-visitor-country": "FR", "x-visitor-city": "Paris" },
+        });
+        expect(calls).toEqual([]);
+        const [event] = await storedEvents(project.id);
+        expect(event).toMatchObject({ country: null, region: null, city: null });
+      });
+
+      test.each(["XX", "T1", "FRA", "F", "1A", "", "ZZ"])(
+        "headers: the country %j is dropped, the city kept",
+        async (country) => {
+          const { instance } = countingApp();
+          const project = await sourceProject(HEADERS);
+          await send(batch(project.public_key), {
+            instance,
+            headers: { ...FROM_PROXY, "x-visitor-country": country, "x-visitor-city": "Paris" },
+          });
+          const [event] = await storedEvents(project.id);
+          expect(event).toMatchObject({ country: null, region: null, city: "Paris" });
+        },
+      );
+
+      test("headers: percent-encoded UTF-8 is decoded; control characters and missing headers leave the field empty", async () => {
+        const { instance } = countingApp();
+        const project = await sourceProject(HEADERS);
+        await send(batch(project.public_key), {
+          instance,
+          headers: {
+            ...FROM_PROXY,
+            "x-visitor-country": "CH",
+            "x-visitor-city": "Z%C3%BCrich",
+            "x-visitor-region": "Zur%00ich",
+          },
+        });
+        const [event] = await storedEvents(project.id);
+        expect(event).toMatchObject({ country: "CH", region: null, city: "Zürich" });
+      });
+
+      test("headers: raw UTF-8 and Latin-1 bytes on the wire, as Node reads them", async () => {
+        const { instance } = countingApp();
+        await instance.listen({ host: "127.0.0.1", port: 0 });
+        const { port } = instance.server.address() as AddressInfo;
+        const project = await sourceProject(HEADERS);
+        const body = JSON.stringify(batch(project.public_key));
+        const raw = Buffer.concat([
+          Buffer.from(
+            [
+              "POST /api/events HTTP/1.1",
+              `host: 127.0.0.1:${port}`,
+              "content-type: text/plain",
+              `user-agent: ${CHROME_MAC}`,
+              "x-ottertrail-trusted-proxy: true",
+              "x-visitor-country: DE",
+              "x-visitor-city: ",
+            ].join("\r\n"),
+          ),
+          Buffer.from("Köln", "utf8"),
+          Buffer.from("\r\nx-visitor-region: "),
+          // Latin-1, which is not valid UTF-8: read as Latin-1.
+          Buffer.from("D\xfcsseldorf", "latin1"),
+          Buffer.from(
+            `\r\ncontent-length: ${Buffer.byteLength(body)}\r\nconnection: close\r\n\r\n${body}`,
+          ),
+        ]);
+        const answer = await new Promise<string>((resolve, reject) => {
+          // Written, not ended: the server would close a half-closed socket before its async answer.
+          const socket = connect(port, "127.0.0.1", () => socket.write(raw));
+          let text = "";
+          socket.on("data", (chunk) => (text += chunk.toString("latin1")));
+          socket.on("close", () => resolve(text));
+          socket.on("error", reject);
+        });
+        expect(answer).toMatch(/^HTTP\/1\.1 202/);
+        const [event] = await storedEvents(project.id);
+        expect(event).toMatchObject({ country: "DE", region: "Düsseldorf", city: "Köln" });
+      });
     });
 
     test("recognizes phones and tablets", async () => {

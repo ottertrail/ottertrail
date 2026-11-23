@@ -1,7 +1,7 @@
 import { type Kysely, sql } from "kysely";
 
 import { avatarUrlOf } from "../avatars/avatars.ts";
-import type { Database } from "../db/schema.ts";
+import type { Database, LocationSource } from "../db/schema.ts";
 
 /** Matches the projects table's check (migration 0001_create_schema). */
 export const MAX_ALLOWED_HOSTNAMES = 50;
@@ -36,6 +36,13 @@ export interface Project {
   blockedAddresses: string[];
   /** Domains whose referrals are ignored, with their subdomains (blocked-referrers.ts). Only those who manage projects see them. */
   blockedReferrers: string[];
+  /** Where visitor locations come from (collection/location-headers.ts). */
+  locationSource: LocationSource;
+  /**
+   * Header names for the "headers" source, lower case; null for none. Kept
+   * when another source is chosen, so choosing "headers" again finds them.
+   */
+  locationHeaders: { country: string | null; region: string | null; city: string | null };
   /**
    * What the dashboard shows for the project: its uploaded icon, else its
    * site's favicon (avatars/favicons.ts), else null for its initial.
@@ -107,6 +114,10 @@ function baseQuery(db: Kysely<Database>) {
       "projects.main_goal_id",
       "projects.blocked_addresses",
       "projects.blocked_referrers",
+      "projects.location_source",
+      "projects.location_country_header",
+      "projects.location_region_header",
+      "projects.location_city_header",
       "projects.avatar_key",
       "projects.favicon_key",
     ]);
@@ -131,9 +142,29 @@ function toProject(row: ProjectRow): Project {
     mainGoalId: row.main_goal_id,
     blockedAddresses: row.blocked_addresses,
     blockedReferrers: row.blocked_referrers,
+    locationSource: row.location_source,
+    locationHeaders: {
+      country: row.location_country_header,
+      region: row.location_region_header,
+      city: row.location_city_header,
+    },
     avatarUrl: avatarUrlOf(row.avatar_key ?? row.favicon_key),
     iconUrl: avatarUrlOf(row.avatar_key),
   };
+}
+
+/**
+ * Whether any project looks locations up in the DB-IP file: only then does
+ * the worker download it and the API load it (enrichment/updates.ts, reload.ts).
+ */
+export async function anyProjectUsesLocationDatabase(db: Kysely<Database>): Promise<boolean> {
+  const row = await db
+    .selectFrom("projects")
+    .select("id")
+    .where("location_source", "=", "database")
+    .limit(1)
+    .executeTakeFirst();
+  return row !== undefined;
 }
 
 /** The instance's projects, oldest first. */
@@ -189,6 +220,9 @@ export async function updateProject(
     blockedAddresses?: string[];
     /** Already checked and normalised (parseBlockedReferrers). */
     blockedReferrers?: string[];
+    locationSource?: LocationSource;
+    /** Already checked and normalised (parseLocationHeaderName). */
+    locationHeaders?: { country: string | null; region: string | null; city: string | null };
   },
 ): Promise<Project | null | "no_such_goal"> {
   const values = {
@@ -212,6 +246,14 @@ export async function updateProject(
     ...(changes.blockedReferrers === undefined
       ? {}
       : { blocked_referrers: changes.blockedReferrers }),
+    ...(changes.locationSource === undefined ? {} : { location_source: changes.locationSource }),
+    ...(changes.locationHeaders === undefined
+      ? {}
+      : {
+          location_country_header: changes.locationHeaders.country,
+          location_region_header: changes.locationHeaders.region,
+          location_city_header: changes.locationHeaders.city,
+        }),
   };
   if (Object.keys(values).length > 0) {
     try {

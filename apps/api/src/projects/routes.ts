@@ -13,7 +13,8 @@ import {
 import type { Auth } from "../auth/auth.ts";
 import { requireTrustedOrigin } from "../auth/origin.ts";
 import { requireSession } from "../auth/routes.ts";
-import type { Database } from "../db/schema.ts";
+import { parseLocationHeaderName } from "../collection/location-headers.ts";
+import type { Database, LocationSource } from "../db/schema.ts";
 import { MAX_BLOCKED_ADDRESSES, ownAddress, parseBlockedAddresses } from "./blocked-addresses.ts";
 import { MAX_BLOCKED_REFERRERS, parseBlockedReferrers } from "./blocked-referrers.ts";
 import {
@@ -60,6 +61,31 @@ const blockedReferrersSchema = {
   maxItems: MAX_BLOCKED_REFERRERS * 2,
   items: { type: "string", maxLength: 300 },
 } as const;
+const headerNameSchema = { type: ["string", "null"], maxLength: 200 } as const;
+const locationHeadersSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["country", "region", "city"],
+  properties: { country: headerNameSchema, region: headerNameSchema, city: headerNameSchema },
+} as const;
+
+type LocationHeaderNames = { country: string | null; region: string | null; city: string | null };
+
+/** Each name checked and in lower case; empty means none. */
+function parseLocationHeaders(
+  raw: LocationHeaderNames,
+): { ok: true; headers: LocationHeaderNames } | { ok: false; message: string } {
+  const headers: LocationHeaderNames = { country: null, region: null, city: null };
+  for (const field of ["country", "region", "city"] as const) {
+    const value = raw[field];
+    if (value === null || value.trim() === "") continue;
+    const parsed = parseLocationHeaderName(value);
+    if (!parsed.ok) return parsed;
+    headers[field] = parsed.name;
+  }
+  return { ok: true, headers };
+}
+
 const idParamsSchema = {
   type: "object",
   required: ["id"],
@@ -96,7 +122,12 @@ export const projectRoutes: FastifyPluginCallback<{
   trustedOrigins: readonly string[];
   /** The collection endpoint's key cache, which must forget replaced and deleted keys. */
   projectKeys?: { forget(publicKey: string): void; forgetProject(projectId: string): void };
-}> = (app, { db, auth, trustedOrigins, projectKeys }, done) => {
+  /**
+   * Called when projects' location sources may have changed, so the API loads
+   * or drops the location file at once (enrichment/reload.ts). Never throws.
+   */
+  onLocationSourcesChange?: () => void;
+}> = (app, { db, auth, trustedOrigins, projectKeys, onLocationSourcesChange }, done) => {
   const signedIn = requireSession(auth);
   const fromDashboard = requireTrustedOrigin(trustedOrigins);
   const anyUser = requirePermission(db, "signed_in");
@@ -146,6 +177,8 @@ export const projectRoutes: FastifyPluginCallback<{
         name: request.body.name.trim(),
         allowedHostnames: hostnames.hostnames,
       });
+      // A new project looks up locations in the database by default.
+      onLocationSourcesChange?.();
       return reply.code(201).send({ project });
     },
   );
@@ -163,6 +196,8 @@ export const projectRoutes: FastifyPluginCallback<{
       mainGoalId?: string | null;
       blockedAddresses?: string[];
       blockedReferrers?: string[];
+      locationSource?: LocationSource;
+      locationHeaders?: LocationHeaderNames;
     };
   }>(
     "/projects/:id",
@@ -194,6 +229,9 @@ export const projectRoutes: FastifyPluginCallback<{
             blockedAddresses: blockedAddressesSchema,
             // Referrer domains ignored, with their subdomains (blocked-referrers.ts).
             blockedReferrers: blockedReferrersSchema,
+            // Where visitor locations come from (collection/location-headers.ts).
+            locationSource: { type: "string", enum: ["database", "headers", "off"] },
+            locationHeaders: locationHeadersSchema,
           },
         },
       },
@@ -210,6 +248,8 @@ export const projectRoutes: FastifyPluginCallback<{
         mainGoalId,
         blockedAddresses,
         blockedReferrers,
+        locationSource,
+        locationHeaders,
       } = request.body;
       let hostnames: string[] | undefined;
       if (allowedHostnames !== undefined) {
@@ -238,6 +278,33 @@ export const projectRoutes: FastifyPluginCallback<{
         }
         referrers = parsed.domains;
       }
+      let headers: LocationHeaderNames | undefined;
+      if (locationHeaders !== undefined) {
+        const parsed = parseLocationHeaders(locationHeaders);
+        if (!parsed.ok) {
+          return reply.code(400).send(problem("invalid_header_name", parsed.message));
+        }
+        headers = parsed.headers;
+      }
+      if (locationSource === "headers" || (locationSource === undefined && headers !== undefined)) {
+        // Check what the project will have after this change.
+        const current = await findProject(db, request.params.id);
+        if (current === null) {
+          return reply.code(404).send(problem("not_found", "No project has this ID."));
+        }
+        const source = locationSource ?? current.locationSource;
+        const country = (headers ?? current.locationHeaders).country;
+        if (source === "headers" && country === null) {
+          return reply
+            .code(400)
+            .send(
+              problem(
+                "country_header_required",
+                "Enter the header that holds the visitor's country, such as x-visitor-country.",
+              ),
+            );
+        }
+      }
       const project = await updateProject(db, request.params.id, {
         ...(name === undefined ? {} : { name: name.trim() }),
         ...(hostnames === undefined ? {} : { allowedHostnames: hostnames }),
@@ -249,6 +316,8 @@ export const projectRoutes: FastifyPluginCallback<{
         ...(mainGoalId === undefined ? {} : { mainGoalId }),
         ...(blocked === undefined ? {} : { blockedAddresses: blocked }),
         ...(referrers === undefined ? {} : { blockedReferrers: referrers }),
+        ...(locationSource === undefined ? {} : { locationSource }),
+        ...(headers === undefined ? {} : { locationHeaders: headers }),
       });
       if (project === "no_such_goal") {
         return reply
@@ -263,10 +332,13 @@ export const projectRoutes: FastifyPluginCallback<{
         replayMode !== undefined ||
         heatmaps !== undefined ||
         blocked !== undefined ||
-        referrers !== undefined
+        referrers !== undefined ||
+        locationSource !== undefined ||
+        headers !== undefined
       ) {
         projectKeys?.forgetProject(request.params.id);
       }
+      if (locationSource !== undefined && project !== null) onLocationSourcesChange?.();
       return project === null
         ? reply.code(404).send(problem("not_found", "No project has this ID."))
         : { project };
@@ -302,6 +374,7 @@ export const projectRoutes: FastifyPluginCallback<{
       if (deleted !== null) {
         projectKeys?.forget(deleted.publicKey);
         projectKeys?.forgetProject(project.id);
+        onLocationSourcesChange?.();
       }
       return reply.code(204).send();
     },

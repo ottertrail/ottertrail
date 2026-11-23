@@ -7,7 +7,7 @@ import { gzipSync } from "node:zlib";
 import { sql } from "kysely";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "vite-plus/test";
 
-import { type GeoSource, loadConfig } from "../src/config.ts";
+import { loadConfig } from "../src/config.ts";
 import { createDatabase } from "../src/db/database.ts";
 import { migrations } from "../src/db/migrations/index.ts";
 import { gunzippedLines } from "../src/enrichment/data-center-sources.ts";
@@ -134,16 +134,27 @@ describe("updateLocationData", () => {
     await testDb.db.deleteFrom("location_data_updates").execute();
     await testDb.db.deleteFrom("location_data_lease").execute();
     await updateInstanceSettings(testDb.db, { updateLocationData: true });
+    await useLocationDatabase(true);
   });
+
+  /** Whether the one project looks locations up in the database. */
+  async function useLocationDatabase(used: boolean) {
+    await testDb.db.deleteFrom("projects").execute();
+    await testDb.db
+      .insertInto("projects")
+      .values({ name: "Site", allowed_hostnames: [], location_source: used ? "database" : "off" })
+      .execute();
+  }
   afterEach(async () => {
     await rm(dir, { recursive: true, force: true });
   });
 
-  function update(
+  async function update(
     fetchFn: Fetch,
     now: Date,
     options: {
-      geoSource?: GeoSource;
+      /** Whether a project uses the location database; set first. */
+      locationsNeeded?: boolean;
       force?: boolean;
       db?: TestDatabase["db"] | null;
       stop?: AbortSignal;
@@ -155,9 +166,10 @@ describe("updateLocationData", () => {
       onLog?: (msg: string) => void;
     } = {},
   ) {
+    const db = options.db === undefined ? testDb.db : options.db;
+    if (options.locationsNeeded !== undefined) await useLocationDatabase(options.locationsNeeded);
     return updateLocationData({
-      db: options.db === undefined ? testDb.db : options.db,
-      geoSource: options.geoSource ?? "database",
+      db,
       databasePath,
       dataCentersPath,
       fetch: fetchFn,
@@ -389,9 +401,9 @@ describe("updateLocationData", () => {
     expect(existsSync(databasePath)).toBe(true);
   });
 
-  test("without a location source of its own, only the data-center ranges are downloaded", async () => {
+  test("with no project using the location database, only the data-center ranges are downloaded", async () => {
     const fetchFn = fakeFetch(allSources("2026-11"));
-    expect(await update(fetchFn, MID_NOVEMBER, { geoSource: "none" })).toMatchObject({
+    expect(await update(fetchFn, MID_NOVEMBER, { locationsNeeded: false })).toMatchObject({
       ran: true,
       locations: "not_needed",
       dataCenters: "updated",
@@ -413,7 +425,7 @@ describe("updateLocationData", () => {
   });
 
   test("a missing file that fails is tried again after 15 minutes, then 30", async () => {
-    const noLocations = { geoSource: "none" as const };
+    const noLocations = { locationsNeeded: false };
     expect(await update(fakeFetch({}), MID_NOVEMBER, noLocations)).toMatchObject({
       dataCenters: "failed",
       nextCheckInMs: 15 * MINUTE,
@@ -430,7 +442,7 @@ describe("updateLocationData", () => {
   });
 
   test("a file in place that keeps failing is tried every 6 hours, then once a day after 3", async () => {
-    const noLocations = { geoSource: "none" as const };
+    const noLocations = { locationsNeeded: false };
     await update(fakeFetch(allSources("2026-11")), MID_NOVEMBER, noLocations);
     const start = MID_NOVEMBER.getTime() + 8 * DAY;
     const at = (hours: number) => new Date(start + hours * HOUR);
@@ -552,7 +564,7 @@ describe("updateLocationData", () => {
 
   test("a provider's list over the limit, or an ASN line too long, counts as that source failing", async () => {
     const run = await update(fakeFetch(allSources("2026-11")), MID_NOVEMBER, {
-      geoSource: "none",
+      locationsNeeded: false,
       limits: { textBytes: 100 },
     });
     expect(run).toMatchObject({ dataCenters: "updated" });
@@ -564,7 +576,7 @@ describe("updateLocationData", () => {
     // Both months' ASN files, so both fail the same way.
     const bothMonths = { ...allSources("2026-10"), ...allSources("2026-11") };
     const lines = await update(fakeFetch(bothMonths), MID_NOVEMBER, {
-      geoSource: "none",
+      locationsNeeded: false,
       limits: { lineLength: 10 },
       force: true,
     });
@@ -779,7 +791,7 @@ describe("updateLocationData", () => {
     const longAgo = new Date(Date.now() - LEASE_MS - 60_000);
     for (const path of stale) await utimes(path, longAgo, longAgo);
 
-    await update(fakeFetch({}), MID_NOVEMBER, { geoSource: "none" });
+    await update(fakeFetch({}), MID_NOVEMBER, { locationsNeeded: false });
     expect([...stale, live].map((path) => existsSync(path))).toEqual([
       true,
       true,
@@ -790,6 +802,7 @@ describe("updateLocationData", () => {
 
     // This updater's own download writes its own partial file; the other's is untouched.
     await update(fakeFetch(allSources("2026-11")), MID_NOVEMBER, {
+      locationsNeeded: true,
       removePartials: true,
       holder: "this-worker",
     });

@@ -2,7 +2,6 @@ import type { EventEmitter } from "node:events";
 
 import type { Kysely } from "kysely";
 
-import type { GeoSource } from "../config.ts";
 import type { Database } from "../db/schema.ts";
 import { type Fetch, updateLocationData } from "./updates.ts";
 
@@ -37,12 +36,12 @@ export function stopOnSignals(
 }
 
 /**
- * vp run geo:update (scripts/update-geo.ts) ignores due dates and the setting.
+ * vp run geo:update (scripts/update-geo.ts) ignores due dates and the
+ * automatic-update setting. When no project uses the location database, it skips that file.
  * Returns 1 for failure, cancellation, or a held lease; otherwise 0.
  */
 export async function manualUpdate(options: {
   db: Kysely<Database> | null;
-  geoSource: GeoSource;
   databasePath: string;
   dataCentersPath: string;
   stop: AbortSignal;
@@ -52,7 +51,6 @@ export async function manualUpdate(options: {
   const out = options.out ?? { log: console.log, error: console.error };
   const run = await updateLocationData({
     db: options.db,
-    geoSource: options.geoSource,
     databasePath: options.databasePath,
     dataCentersPath: options.dataCentersPath,
     force: true,
@@ -79,7 +77,9 @@ export async function manualUpdate(options: {
     return 1;
   }
   if (run.locations === "not_needed") {
-    out.log(`No location database needed: GEO_SOURCE is "${options.geoSource}".`);
+    out.log(
+      "Skipped the location database: no project looks up locations in it (project settings, Location data).",
+    );
   } else if (run.locations === "updated") {
     out.log(
       'CC BY 4.0 requires credit wherever locations appear: "IP geolocation by DB-IP" (https://db-ip.com).',

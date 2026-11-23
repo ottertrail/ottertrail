@@ -18,7 +18,7 @@ Each dashboard user has one role (`dashboard_users.role`):
 - **Admin.** Everything except the instance's settings and anything that touches the owner:
   - every project and area;
   - creating, changing, and deleting projects;
-  - project keys and settings (allowed sites, retention, replay mode, blocked addresses and referrers, and the rest), and deleting spam visits;
+  - project keys and settings (allowed sites, retention, replay mode, blocked addresses and referrers, the location source, and the rest), and deleting spam visits;
   - notification channels;
   - the Members page: inviting members, changing a member's access, removing a member, and making a member's reset link.
 

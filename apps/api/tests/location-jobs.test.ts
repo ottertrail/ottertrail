@@ -28,7 +28,17 @@ beforeEach(async () => {
   await testDb.db.deleteFrom("location_data_updates").execute();
   await testDb.db.deleteFrom("location_data_lease").execute();
   await updateInstanceSettings(testDb.db, { updateLocationData: true });
+  await useLocationDatabase(true);
 });
+
+/** Whether the one project looks locations up in the database: only then is the file downloaded. */
+async function useLocationDatabase(used: boolean) {
+  await testDb.db.deleteFrom("projects").execute();
+  await testDb.db
+    .insertInto("projects")
+    .values({ name: "Site", allowed_hostnames: [], location_source: used ? "database" : "off" })
+    .execute();
+}
 afterEach(async () => {
   await rm(dir, { recursive: true, force: true });
 });
@@ -43,7 +53,6 @@ const leases = () => testDb.db.selectFrom("location_data_lease").selectAll().exe
 function job(fetchFn: Fetch, db: TestDatabase["db"] = testDb.db) {
   return new LocationDataJob({
     db,
-    geoSource: "database",
     ...paths(),
     fetch: fetchFn,
     log: (level, msg) => logged.push({ level, msg }),
@@ -68,6 +77,26 @@ describe("the worker's location data job", () => {
     const before = fetchFn.urls.length;
     await worker.tick();
     expect(fetchFn.urls).toHaveLength(before);
+    await worker.stop();
+  });
+
+  test("with no project using the location database, only the data-center ranges are downloaded", async () => {
+    await useLocationDatabase(false);
+    const fetchFn = fakeFetch(allSources(new Date().toISOString().slice(0, 7)));
+    const worker = job(fetchFn);
+    await worker.tick();
+    expect(fetchFn.urls.some((url) => url.includes("city-lite"))).toBe(false);
+    expect(fetchFn.urls.length).toBeGreaterThan(0);
+    const status = await readUpdateStatus(testDb.db);
+    expect(status.locations).toBeNull();
+    expect(status.data_centers).toMatchObject({ failures: 0 });
+    expect(await readdir(dir)).toEqual(["data-centers.json"]);
+
+    // A project uses it: the next tick downloads the location file, without waiting hours.
+    await useLocationDatabase(true);
+    await worker.tick();
+    expect(fetchFn.urls.some((url) => url.includes("city-lite"))).toBe(true);
+    expect((await readUpdateStatus(testDb.db)).locations).toMatchObject({ failures: 0 });
     await worker.stop();
   });
 
@@ -129,7 +158,6 @@ describe("the manual command", () => {
     const errors: string[] = [];
     const code = await manualUpdate({
       db: testDb.db,
-      geoSource: "database",
       ...paths(),
       stop: controller.signal,
       fetch: fetchFn,
@@ -141,6 +169,25 @@ describe("the manual command", () => {
     expect((await readdir(dir)).filter((name) => name.endsWith(".download"))).toEqual([]);
   });
 
+  test("with no project using the location database, it skips that file and says why", async () => {
+    await useLocationDatabase(false);
+    const fetchFn = fakeFetch(allSources(new Date().toISOString().slice(0, 7)));
+    const lines: string[] = [];
+    const code = await manualUpdate({
+      db: testDb.db,
+      ...paths(),
+      stop: new AbortController().signal,
+      fetch: fetchFn,
+      out: { log: (line) => lines.push(line), error: (line) => lines.push(line) },
+    });
+    expect(code).toBe(0);
+    expect(lines).toContain(
+      "Skipped the location database: no project looks up locations in it (project settings, Location data).",
+    );
+    expect(fetchFn.urls.some((url) => url.includes("city-lite"))).toBe(false);
+    expect(await readdir(dir)).toEqual(["data-centers.json"]);
+  });
+
   test("a running update: says when its lease ends at the latest", async () => {
     const until = new Date(Date.now() + 20 * 60_000);
     await testDb.db
@@ -150,7 +197,6 @@ describe("the manual command", () => {
     const errors: string[] = [];
     const code = await manualUpdate({
       db: testDb.db,
-      geoSource: "database",
       ...paths(),
       stop: new AbortController().signal,
       fetch: fakeFetch({}),

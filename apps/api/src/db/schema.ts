@@ -12,6 +12,9 @@ type Nullable<T> = ColumnType<T | null, T | null | undefined, T | null>;
 
 export type JsonObject = { [key: string]: unknown };
 
+/** Where a project's visitor locations come from (docs/web-analytics.md, "Locations"). */
+export type LocationSource = "database" | "headers" | "off";
+
 /** Read through settings/settings.ts to use its cache (migration 0001_create_schema). */
 export interface InstanceSettingsTable {
   id: ColumnType<boolean, never, never>;
@@ -57,6 +60,12 @@ export interface ProjectsTable {
   blocked_addresses: ColumnType<string[], string[] | undefined, string[]>;
   /** Domains whose referrals are ignored, with their subdomains, normalised (projects/blocked-referrers.ts), at most 100. */
   blocked_referrers: ColumnType<string[], string[] | undefined, string[]>;
+  /** Where visitor locations come from (migration 0027, collection/location-headers.ts). */
+  location_source: ColumnType<LocationSource, LocationSource | undefined, LocationSource>;
+  /** Header names for location_source "headers", lower case; null for none. */
+  location_country_header: ColumnType<string | null, string | null | undefined, string | null>;
+  location_region_header: ColumnType<string | null, string | null | undefined, string | null>;
+  location_city_header: ColumnType<string | null, string | null | undefined, string | null>;
   /** The uploaded icon in the object store (avatars/avatars.ts), or null (migration 0017). */
   avatar_key: ColumnType<string | null, null | undefined, string | null>;
   /** The site's favicon the worker fetched (avatars/favicons.ts), or null. */

@@ -30,7 +30,6 @@ const controller = new AbortController();
 const signals = stopOnSignals(controller);
 const exitCode = await manualUpdate({
   db: reachable ? db : null,
-  geoSource: config.geoSource,
   databasePath: resolve(config.geoDatabasePath),
   dataCentersPath: resolve(config.dataCentersPath),
   stop: controller.signal,

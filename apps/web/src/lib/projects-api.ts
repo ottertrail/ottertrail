@@ -38,9 +38,33 @@ export interface Project extends ProjectSummary {
   blockedAddresses: string[];
   /** Referrer domains whose visits are ignored, with their subdomains. */
   blockedReferrers: string[];
+  /** Where visitor locations come from: the location database, a proxy's headers, or nowhere. */
+  locationSource: LocationSource;
+  /** Header names for "headers", lower case; kept when another source is chosen. */
+  locationHeaders: LocationHeaders;
   /** The uploaded icon alone; null without one. */
   iconUrl: string | null;
 }
+
+export type LocationSource = "database" | "headers" | "off";
+
+export interface LocationHeaders {
+  country: string | null;
+  region: string | null;
+  city: string | null;
+}
+
+const isNameOrNull = (value: unknown) => value === null || typeof value === "string";
+
+const isLocationHeaders = (value: unknown): value is LocationHeaders =>
+  typeof value === "object" &&
+  value !== null &&
+  "country" in value &&
+  isNameOrNull(value.country) &&
+  "region" in value &&
+  isNameOrNull(value.region) &&
+  "city" in value &&
+  isNameOrNull(value.city);
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null;
@@ -86,6 +110,12 @@ export function isFullProject(value: unknown): value is Project {
     isStringList(value.blockedAddresses) &&
     "blockedReferrers" in value &&
     isStringList(value.blockedReferrers) &&
+    "locationSource" in value &&
+    (value.locationSource === "database" ||
+      value.locationSource === "headers" ||
+      value.locationSource === "off") &&
+    "locationHeaders" in value &&
+    isLocationHeaders(value.locationHeaders) &&
     "iconUrl" in value &&
     (value.iconUrl === null || typeof value.iconUrl === "string")
   );
@@ -139,6 +169,8 @@ export async function updateProject(
     mainGoalId?: string | null;
     blockedAddresses?: string[];
     blockedReferrers?: string[];
+    locationSource?: LocationSource;
+    locationHeaders?: LocationHeaders;
   },
 ) {
   const body = await apiRequest(`/api/projects/${encodeURIComponent(id)}`, {

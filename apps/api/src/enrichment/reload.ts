@@ -1,6 +1,5 @@
-import type { GeoSource } from "../config.ts";
 import type { IsDataCenter } from "./data-centers.ts";
-import { GeoDatabase, type Locate } from "./geo.ts";
+import { GeoDatabase, type Locate, noLocation } from "./geo.ts";
 import { setUpDataCenters, setUpLocation } from "./setup.ts";
 import {
   checkDataCenterFile,
@@ -13,14 +12,23 @@ import {
 /** How often the API looks whether either file changed on disk. */
 export const RELOAD_INTERVAL_MS = 10 * 60 * 1000;
 
+/**
+ * How often the API checks whether any project uses the location database,
+ * so the file is loaded or dropped within this after a change. The project
+ * routes also ask for a check at once (checkNeeded).
+ */
+export const NEEDED_CHECK_MS = 60 * 1000;
+
+/** Whether any project's location source is "database" (projects/projects.ts). */
+export type LocationFileNeeded = () => Promise<boolean>;
+
 export interface ReloadLog {
   info(msg: string): void;
   warn(msg: string): void;
 }
 
 export interface LoadedLocationData {
-  geoSource: GeoSource;
-  /** The location database in use; null when none is loaded (or none is needed). */
+  /** The location database in use; null when none is loaded (or lookup is off). */
   locations: { type: string; builtAt: Date; fileModifiedAt: Date | null } | null;
   /** Why the last changed location file could not be used; null once one loads. */
   locationsError: string | null;
@@ -44,9 +52,14 @@ const message = (error: unknown) => (error instanceof Error ? error.message : St
  * Reloads files when size or modification time changes. Swap only after a full
  * load and validation so lookups never see partial data. Failed loads keep the old
  * copy and retry only after another file change; replaced copies can be freed.
+ *
+ * The location file is loaded only while some project's location source is
+ * "database". When none is, the loaded copy (about 130 MB) is dropped, and
+ * the garbage collector frees it; when one is again, the file is loaded if it
+ * exists. The data-center ranges, for bot filtering, load either way.
  */
 export class LiveLocationData {
-  readonly #geoSource: GeoSource;
+  readonly #needed: LocationFileNeeded;
   readonly #databasePath: string;
   readonly #dataCentersPath: string;
   #locate: Locate;
@@ -55,16 +68,21 @@ export class LiveLocationData {
   #dataCenterStamp: FileStamp | null = null;
   #loaded: LoadedLocationData;
   #timer: ReturnType<typeof setInterval> | undefined;
+  #neededTimer: ReturnType<typeof setInterval> | undefined;
   #reloading: Promise<void> | undefined;
+  /** Whether some project used the file at the last check. */
+  #on = true;
+  /** Runs reloads and checks one at a time. */
+  #queue: Promise<void> = Promise.resolve();
+  #log: ReloadLog = { info: () => {}, warn: () => {} };
 
-  private constructor(geoSource: GeoSource, databasePath: string, dataCentersPath: string) {
-    this.#geoSource = geoSource;
+  private constructor(needed: LocationFileNeeded, databasePath: string, dataCentersPath: string) {
+    this.#needed = needed;
     this.#databasePath = databasePath;
     this.#dataCentersPath = dataCentersPath;
-    this.#locate = () => ({});
+    this.#locate = noLocation;
     this.#isDataCenter = () => false;
     this.#loaded = {
-      geoSource,
       locations: null,
       locationsError: null,
       dataCenters: null,
@@ -85,20 +103,31 @@ export class LiveLocationData {
    * there so replaced startup data can be freed.
    */
   static async open(options: {
-    geoSource: GeoSource;
+    needed: LocationFileNeeded;
     databasePath: string;
     dataCentersPath: string;
     now?: Date;
   }): Promise<{ data: LiveLocationData; messages: StartupMessage[] }> {
     const data = new LiveLocationData(
-      options.geoSource,
+      options.needed,
       options.databasePath,
       options.dataCentersPath,
     );
+    const messages: StartupMessage[] = [];
+    try {
+      data.#on = await options.needed();
+    } catch (error) {
+      // As if it were; the next check corrects it.
+      messages.push({
+        ok: false,
+        message: `Could not check whether any project uses the location database, so it loads: ${message(error)}`,
+      });
+    }
     // Stamp first so a file replaced during loading is retried at the next poll.
-    data.#locationStamp = await stampOf(options.databasePath);
+    // While no project uses it, no stamp: when one does, the file loads.
+    data.#locationStamp = data.#on ? await stampOf(options.databasePath) : null;
     data.#dataCenterStamp = await stampOf(options.dataCentersPath);
-    const location = await setUpLocation(options.geoSource, options.databasePath, options.now);
+    const location = await setUpLocation(data.#on, options.databasePath, options.now);
     const dataCenters = await setUpDataCenters(options.dataCentersPath, options.now);
     data.#locate = location.locate;
     data.#isDataCenter = dataCenters.isDataCenter;
@@ -113,22 +142,65 @@ export class LiveLocationData {
           ? null
           : { ...dataCenters.ranges, fileModifiedAt: modified(data.#dataCenterStamp) },
     };
-    return {
-      data,
-      messages: [location, dataCenters].map(({ ok, message: text }) => ({ ok, message: text })),
-    };
+    for (const { ok, message: text } of [location, dataCenters])
+      messages.push({ ok, message: text });
+    return { data, messages };
   }
 
-  /** Looks for changed files, and loads them. Never throws; a run in progress is shared. */
+  /** Runs one task after the ones before it. */
+  #serial(task: () => Promise<void>): Promise<void> {
+    const run = this.#queue.then(task);
+    this.#queue = run.catch(() => undefined);
+    return run;
+  }
+
+  /**
+   * Checks whether any project uses the location file; drops it when none
+   * does any more, and loads it when one does again. Never throws.
+   */
+  checkNeeded(log: ReloadLog = this.#log): Promise<void> {
+    return this.#serial(() => this.#checkNeeded(log));
+  }
+
+  async #checkNeeded(log: ReloadLog): Promise<void> {
+    let on: boolean;
+    try {
+      on = await this.#needed();
+    } catch (error) {
+      log.warn(
+        `Could not check whether any project uses the location database; it stays as it is: ${message(error)}`,
+      );
+      return;
+    }
+    if (on === this.#on) return;
+    this.#on = on;
+    // Either way, the next load reads the file afresh.
+    this.#locationStamp = null;
+    if (on) {
+      log.info("A project uses the location database again: loading it");
+      await this.#reloadLocations(log);
+      return;
+    }
+    // Nothing else holds the database, so the garbage collector frees it.
+    this.#locate = noLocation;
+    this.#loaded = { ...this.#loaded, locations: null, locationsError: null };
+    log.info("No project uses the location database: it was dropped from memory");
+  }
+
+  /**
+   * Checks whether the location file is needed, then looks for changed
+   * files and loads them. Never throws; a run in progress is shared.
+   */
   reload(log: ReloadLog): Promise<void> {
-    this.#reloading ??= this.#reload(log).finally(() => {
+    this.#reloading ??= this.#serial(() => this.#reload(log)).finally(() => {
       this.#reloading = undefined;
     });
     return this.#reloading;
   }
 
   async #reload(log: ReloadLog): Promise<void> {
-    if (this.#geoSource === "database") await this.#reloadLocations(log);
+    await this.#checkNeeded(log);
+    if (this.#on) await this.#reloadLocations(log);
     await this.#reloadDataCenters(log);
   }
 
@@ -184,15 +256,28 @@ export class LiveLocationData {
     }
   }
 
-  /** Looks every `intervalMs` until stop(); the timer does not keep the process alive. */
-  start(log: ReloadLog, intervalMs: number = RELOAD_INTERVAL_MS): void {
+  /**
+   * Looks for changed files every `intervalMs`, and checks whether the
+   * location file is needed every `neededIntervalMs`, until stop(). The
+   * timers do not keep the process alive.
+   */
+  start(
+    log: ReloadLog,
+    intervalMs: number = RELOAD_INTERVAL_MS,
+    neededIntervalMs: number = NEEDED_CHECK_MS,
+  ): void {
     this.stop();
+    this.#log = log;
     this.#timer = setInterval(() => void this.reload(log), intervalMs);
     this.#timer.unref();
+    this.#neededTimer = setInterval(() => void this.checkNeeded(log), neededIntervalMs);
+    this.#neededTimer.unref();
   }
 
   stop(): void {
     clearInterval(this.#timer);
+    clearInterval(this.#neededTimer);
     this.#timer = undefined;
+    this.#neededTimer = undefined;
   }
 }

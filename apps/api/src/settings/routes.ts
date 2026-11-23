@@ -9,6 +9,7 @@ import { avatarUrlOf } from "../avatars/avatars.ts";
 import type { Database } from "../db/schema.ts";
 import type { LoadedLocationData } from "../enrichment/reload.ts";
 import { readUpdateStatus, type UpdateStatus } from "../enrichment/updates.ts";
+import { anyProjectUsesLocationDatabase } from "../projects/projects.ts";
 import { canonicalTimeZone } from "../visitors/visitor-ids.ts";
 import {
   INVALID_TIME_ZONE,
@@ -62,11 +63,15 @@ export const settingsRoutes: FastifyPluginCallback<{
     const loaded = locationData?.loaded;
     const locations = loaded?.locations ?? null;
     const dataCenters = loaded?.dataCenters ?? null;
-    const status = await readUpdateStatus(db);
+    const [status, databaseUsed] = await Promise.all([
+      readUpdateStatus(db),
+      anyProjectUsesLocationDatabase(db),
+    ]);
     return {
       // Use server time for relative dates to avoid browser clock skew.
       now: new Date().toISOString(),
-      geoSource: loaded?.geoSource ?? "database",
+      // Whether any project looks up locations in the database; if none, the file is not loaded.
+      locationDatabaseUsed: databaseUsed,
       locations: {
         loaded:
           locations === null

@@ -20,7 +20,8 @@ afterEach(async () => {
 });
 
 const panel = () => page.getByRole("tabpanel");
-const status = () => panel().getByRole("status");
+/** The first Save bar's status: on General, the General form's (Location data follows it). */
+const status = () => panel().getByRole("status").first();
 const save = () => panel().getByRole("button", { name: "Save changes" });
 
 describe("the settings tabs", () => {

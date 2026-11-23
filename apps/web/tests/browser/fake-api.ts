@@ -2329,7 +2329,7 @@ export const SETTINGS: Settings = {
 /** Both files loaded, and both updated by the worker without a problem. */
 export const LOCATION_DATA: LocationDataStatus = {
   now: "2026-11-17T05:00:00.000Z",
-  geoSource: "database",
+  locationDatabaseUsed: true,
   locations: {
     loaded: {
       type: "DBIP-City-Lite",
@@ -2519,6 +2519,8 @@ export const PROJECT: Project = {
   mainGoalId: null,
   blockedAddresses: [],
   blockedReferrers: [],
+  locationSource: "database",
+  locationHeaders: { country: null, region: null, city: null },
   avatarUrl: null,
   iconUrl: null,
 };
