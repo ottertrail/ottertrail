@@ -1073,7 +1073,7 @@ It draws again, at most once a frame, when anything scrolls or the window or pag
 
 **Limits of the overlay:**
 
-- Only the project's allowed hostnames, which have no port: for `localhost` and `127.0.0.1`, the dashboard asks for the port and uses plain http; every other site opens with https.
+- Only the project's allowed hostnames, which have no port: for `localhost`, names under `.localhost`, and `127.0.0.1`, the dashboard asks for the port and uses plain http; every other site opens with https.
 - The window opens as wide as the device the report is filtered on (390, 820, or 1280 pixels; 1280 for all devices). Browsers may ignore the size. Devtools' device mode gives exact widths.
 - An element the page does not have (a redesign, an A/B test, a block only some visitors see) is listed as not on this page: phase 1 keeps no page positions, so there are no fallback dots for it. Two elements with the same `data-ottertrail-name` and path: the first is drawn.
 - Scroll reach is for the document; a page that scrolls inside a box shows the document's.

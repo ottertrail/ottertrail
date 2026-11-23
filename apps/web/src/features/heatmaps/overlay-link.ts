@@ -18,15 +18,19 @@ export const OVERLAY_WIDTHS = [
   height: number;
 }[];
 
-/** Sites served on the owner's own computer: plain http, and any port. */
+/**
+ * Sites served on the owner's own computer: plain http, and any port. The same
+ * names the overlay's routes accept over http (localhost, names under
+ * .localhost, 127.0.0.1), which browsers treat as secure contexts.
+ */
 export const isLocalHostname = (hostname: string) =>
-  hostname === "localhost" || hostname === "127.0.0.1";
+  hostname === "localhost" || hostname === "127.0.0.1" || hostname.endsWith(".localhost");
 
 /** A port as typed: "" for none, or 1 to 65535. */
 export const isPort = (text: string) =>
   text === "" || (/^\d{1,5}$/.test(text) && Number(text) >= 1 && Number(text) <= 65_535);
 
-/** The site's origin: https, except http on localhost and 127.0.0.1, where a port may be given. */
+/** The site's origin: https, except http on local names (above), where a port may be given. */
 export function siteOrigin(hostname: string, port = ""): string {
   if (!isLocalHostname(hostname)) return `https://${hostname}`;
   return `http://${hostname}${port === "" ? "" : `:${port}`}`;
