@@ -8,8 +8,11 @@
  *
  *   node scripts/update-cloudflare-ranges.ts
  *
- * Every line must be one CIDR range of its family, without repeats, and a
- * result with fewer than 5 IPv4 or 3 IPv6 ranges is refused as implausible.
+ * Every line must be one globally routable CIDR range of its family
+ * (parseRange in apps/api/src/enrichment/data-centers.ts: no private,
+ * loopback, link-local, or ULA addresses), at most a /12 of IPv4 or a /28 of
+ * IPv6, written from its first address, without repeats. Fewer than 12 IPv4
+ * or 5 IPv6 ranges, as from a download cut off at a line break, is refused.
  *
  * Exit codes, for the weekly workflow (.github/workflows/cloudflare-ranges.yml):
  *   0  the ranges changed and compose.yaml was rewritten;
@@ -22,6 +25,8 @@ import { isIPv4, isIPv6 } from "node:net";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
+import { addressValue, parseRange } from "../apps/api/src/enrichment/data-centers.ts";
+
 export const SOURCES = {
   v4: "https://www.cloudflare.com/ips-v4",
   v6: "https://www.cloudflare.com/ips-v6",
@@ -29,10 +34,11 @@ export const SOURCES = {
 
 export const CONFIG_NAME = "caddy-proxy-cloudflare";
 
-// Fewer would mean a truncated or wrong download; more would be a different list.
-const LIMITS = { v4: { min: 5, max: 100 }, v6: { min: 3, max: 100 } } as const;
-// Shorter prefixes would trust a large part of the internet.
-const SHORTEST_PREFIX = { v4: 8, v6: 16 } as const;
+// Close to the 15 and 7 of November 2026: fewer would mean a truncated or
+// wrong download, more a different list. Keep in step with cloudflare-firewall.sh.
+const LIMITS = { v4: { min: 12, max: 100 }, v6: { min: 5, max: 100 } } as const;
+// Cloudflare's widest are a /13 and a /29; one bit to spare.
+const SHORTEST_PREFIX = { v4: 12, v6: 28 } as const;
 const TIMEOUT_MS = 30_000;
 
 export type Family = "v4" | "v6";
@@ -48,6 +54,11 @@ export function checkRange(text: string, family: Family): string | null {
   const longest = family === "v4" ? 32 : 128;
   if (prefix < SHORTEST_PREFIX[family] || prefix > longest) {
     return `prefix out of range (${SHORTEST_PREFIX[family]} to ${longest}): ${text}`;
+  }
+  const range = parseRange(text);
+  if (range === null) return `not a globally routable range: ${text}`;
+  if (range.start !== addressValue(address)?.value) {
+    return `not written from its first address: ${text}`;
   }
   return null;
 }

@@ -102,6 +102,8 @@ export function renderNotes(version: string, commits: Commit[], since: string | 
     "docker compose up -d",
     "```",
     "",
+    `Behind Cloudflare's proxy, also download \`${RELEASES}/download/v${version}/cloudflare-firewall.sh\` (optional), and run \`sudo ./cloudflare-firewall.sh\` after each install or update to limit ports 80 and 443 to Cloudflare's addresses ([docs/deployment.md](https://github.com/ottertrail/ottertrail/blob/main/docs/deployment.md#behind-cloudflares-proxy)).`,
+    "",
   );
   return lines.join("\n");
 }

@@ -228,11 +228,11 @@ services:
     environment:
       OTTERTRAIL_DOMAIN: ${OTTERTRAIL_DOMAIN:?set OTTERTRAIL_DOMAIN in .env}
       # Chooses the caddy-proxy-* config the Caddyfile imports.
-      PROXY: ${PROXY:-none}
+      OTTERTRAIL_PROXY: ${OTTERTRAIL_PROXY:-none}
     labels:
-      ottertrail.config.caddyfile: "0fcc9f2b88eb"
-      ottertrail.config.caddy-proxy-none: "c081706b2693"
-      ottertrail.config.caddy-proxy-cloudflare: "00fc5305226e"
+      ottertrail.config.caddyfile: "52a6d1a02632"
+      ottertrail.config.caddy-proxy-none: "b9bf92018a53"
+      ottertrail.config.caddy-proxy-cloudflare: "65ba630ebc21"
     ports:
       - "80:80"
       - "443:443"
@@ -272,12 +272,12 @@ configs:
   # ({client_ip}), which the API reads (TRUST_PROXY=1). It compresses every
   # answer but the Settings page's Server log, a stream of events, whose
   # lines would wait in the compressor; Caddy passes each event on at once.
-  # PROXY in .env picks one of the caddy-proxy-* configs below; any other
+  # OTTERTRAIL_PROXY in .env picks one of the caddy-proxy-* configs below; any other
   # value stops Caddy with "File to import not found".
   caddyfile:
     content: |
       {
-      	import /etc/caddy/proxy/{$$PROXY}.caddy
+      	import /etc/caddy/proxy/{$$OTTERTRAIL_PROXY}.caddy
       }
 
       {$$OTTERTRAIL_DOMAIN} {
@@ -290,13 +290,13 @@ configs:
 
   caddy-proxy-none:
     content: |
-      # PROXY=none: no proxy in front of Caddy. The client's address is the one
+      # OTTERTRAIL_PROXY=none: no proxy in front of Caddy. The client's address is the one
       # Caddy sees.
 
   # docs/deployment.md, "Behind Cloudflare's proxy".
   caddy-proxy-cloudflare:
     content: |
-      # PROXY=cloudflare: a request from one of Cloudflare's ranges carries the
+      # OTTERTRAIL_PROXY=cloudflare: a request from one of Cloudflare's ranges carries the
       # visitor's address in CF-Connecting-IP. Any other request keeps its own
       # address, so nobody can fake the header by going around Cloudflare.
       # The ranges are https://www.cloudflare.com/ips-v4 and ips-v6, written by
