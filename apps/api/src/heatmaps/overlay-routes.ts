@@ -222,14 +222,19 @@ export const heatmapOverlayRoutes: FastifyPluginCallback<{
     };
 
   // text/plain, so the exchange is a "simple" request without a preflight.
+  // Fastify's own parser refuses a __proto__ or constructor key.
+  const parseJson = app.getDefaultJsonParser("error", "error");
   for (const type of ["text/plain", "application/json"]) {
     app.addContentTypeParser(
       type,
       { parseAs: "string", bodyLimit: MAX_BODY_BYTES },
       (request, body, parsed) => {
-        try {
-          parsed(null, JSON.parse(String(body)));
-        } catch {
+        // The default parser is synchronous: it calls back before it returns.
+        void parseJson(request, String(body), (error, value) => {
+          if (error === null) {
+            parsed(null, value);
+            return;
+          }
           // Junk: the malformed bucket's, as a token of the wrong form is.
           const limited = !malformedLimiter.take(clientKey(request.ip)).allowed;
           parsed(
@@ -240,7 +245,7 @@ export const heatmapOverlayRoutes: FastifyPluginCallback<{
               },
             ),
           );
-        }
+        });
       },
     );
   }

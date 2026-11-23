@@ -781,8 +781,9 @@ describe("limits", () => {
         exchange(undefined, { app, body: "not json" }),
         exchange(undefined, { app, body: JSON.stringify({ token: "A".repeat(43), more: 1 }) }),
         exchange(undefined, { app, body: JSON.stringify({ token: "A".repeat(2000) }) }),
+        exchange(undefined, { app, body: `{"token":"${"A".repeat(43)}","__proto__":{"x":1}}` }),
       ]);
-      expect(exchanges.map((answer) => answer.statusCode)).toEqual([400, 400, 400, 400, 413]);
+      expect(exchanges.map((answer) => answer.statusCode)).toEqual([400, 400, 400, 400, 413, 400]);
       expect((await exchange("A".repeat(43), { app, origin: null })).statusCode).toBe(403);
       const projectId = randomUUID();
       const reads = await Promise.all([
