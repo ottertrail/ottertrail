@@ -1,18 +1,8 @@
-# Ottertrail on one server: PostgreSQL, ClickHouse, the API (which also
-# serves the dashboard and the tracker), the worker, and Caddy, which gets
-# HTTPS certificates and is the only service reachable from outside. With
-# the "object-store" profile, which example.env turns on, Garage too: it
-# holds session replays and source maps.
-#
-# This file works on its own: put it in an empty folder with a .env made
-# from example.env, and run `docker compose up -d`. It runs the published
-# image of one release (OTTERTRAIL_VERSION), and holds the settings of
-# Caddy, ClickHouse, and Garage at the end (configs). It needs Docker
-# Compose 2.23.1 or later; podman-compose cannot run it. Steps:
+# Run beside .env from example.env. Requires Docker Compose 2.23.1 or later;
+# podman-compose cannot run it. See:
 # https://github.com/ottertrail/ottertrail/blob/main/docs/deployment.md
 #
-# Not "ottertrail": that is the development stack (compose.yaml at the
-# repository root), and the same name would share its database volume.
+# Use a different name from the root development stack to avoid sharing volumes.
 name: ottertrail-instance
 
 x-logging: &logging
@@ -27,7 +17,6 @@ x-app: &app
   image: ghcr.io/ottertrail/ottertrail:${OTTERTRAIL_VERSION:-0.2.0}
   restart: unless-stopped
   logging: *logging
-  # Anchored too: the worker adds its own variables to these.
   environment: &app-environment
     NODE_ENV: production
     DATABASE_URL: postgres://ottertrail:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/ottertrail
@@ -41,14 +30,9 @@ x-app: &app
     TRUST_PROXY: "1"
     LOG_LEVEL: ${LOG_LEVEL:-info}
     INSTANCE_EVENTS_PER_SECOND: ${INSTANCE_EVENTS_PER_SECOND:-600}
-    # Session replays and source maps: off unless OBJECT_STORE_URL is set,
-    # to the stack's own Garage (http://garage:3900, the object-store
-    # profile) or another S3-compatible store such as Cloudflare R2
-    # (docs/deployment.md). With a URL, both keys are required: migrate,
-    # the API, and the worker refuse to start without them, and say so in
-    # their logs. Compose cannot check them itself: a required value only
-    # in some installs needs a nested check, which Docker Compose before
-    # 5.0.2 evaluates in every install.
+    # Replays and source maps require OBJECT_STORE_URL and both keys (docs/deployment.md).
+    # Startup validates them because Docker Compose before 5.0.2 evaluates nested
+    # required-value checks even when the object store is disabled.
     OBJECT_STORE_URL: ${OBJECT_STORE_URL:-}
     OBJECT_STORE_REGION: ${OBJECT_STORE_REGION:-garage}
     OBJECT_STORE_BUCKET: ${OBJECT_STORE_BUCKET:-ottertrail}
@@ -56,13 +40,10 @@ x-app: &app
     OBJECT_STORE_SECRET_ACCESS_KEY: ${OBJECT_STORE_SECRET_ACCESS_KEY:-}
     SOURCE_MAP_STORAGE_BYTES: ${SOURCE_MAP_STORAGE_BYTES:-}
     REPLAY_STORAGE_BYTES: ${REPLAY_STORAGE_BYTES:-}
-    # The stack's Garage's admin token (docs/deployment.md, "Storage"):
-    # with it, the Settings page shows the bucket's real size and Garage's
-    # disk, and the worker keeps a quota on the bucket. Optional: without
-    # it, the page says how to turn it on. Never logged or shown.
+    # Optional token for storage figures and bucket quotas (docs/deployment.md, "Storage").
+    # Never logged or shown.
     GARAGE_ADMIN_TOKEN: ${GARAGE_ADMIN_TOKEN:-}
-    # Traces, logs, and metrics over OTLP (docs/telemetry.md): days kept,
-    # 30 by default. The migrate service applies it to ClickHouse's tables.
+    # migrate applies retention to ClickHouse tables (docs/telemetry.md).
     TELEMETRY_RETENTION_DAYS: ${TELEMETRY_RETENTION_DAYS:-}
     # Uptime checks may not reach private addresses unless this is true
     # (docs/deployment.md, "Uptime checks"). Off by default.
@@ -137,11 +118,8 @@ services:
       timeout: 5s
       retries: 30
 
-  # Prepares the clickhouse-backups volume, then exits: owned by ClickHouse's
-  # user and group (101 in its image), writable by the group, which the worker
-  # joins (group_add below), so the worker can read ClickHouse's backup files
-  # and delete each once uploaded. The setgid bit keeps new files in the group.
-  # ClickHouse starts after it. ClickHouse's own image, as root, once per start.
+  # The worker joins ClickHouse's group (101) to read and delete uploaded backups.
+  # setgid keeps new files in that group. Prepare ownership before ClickHouse starts.
   backup-folder:
     image: docker.io/clickhouse/clickhouse-server:26.8.38.9
     restart: "no"
@@ -185,7 +163,6 @@ services:
       timeout: 3s
       retries: 20
 
-  # Brings both schemas up to date, then exits. The API and worker start after it.
   migrate:
     <<: *app
     restart: "no"
@@ -198,9 +175,8 @@ services:
 
   api:
     <<: *app
-    # The location database and data-center ranges: the worker keeps them
-    # current, and the API loads a new file within 10 minutes. Read-write
-    # here too, for `docker compose exec api node dist/update-geo.mjs`.
+    # The API reloads location data within 10 minutes. Allow writes here for
+    # `docker compose exec api node dist/update-geo.mjs`.
     volumes:
       - geo-data:/app/data/geo
     depends_on:
@@ -223,19 +199,14 @@ services:
   worker:
     <<: *app
     command: ["node", "--enable-source-maps", "dist/worker.mjs"]
-    # Downloads the location data into the volume the API reads. Reads
-    # ClickHouse's backup files from theirs for scheduled backups, as a member
-    # of ClickHouse's group (101), which owns that folder.
+    # Group 101 lets the worker read ClickHouse backup files.
     volumes:
       - geo-data:/app/data/geo
       - clickhouse-backups:/app/data/backups
     group_add: ["101"]
-    # Where scheduled backups go: a bucket of their own, with a key only
-    # the worker holds, so a key the internet-facing API holds can't
-    # delete them (docs/deployment.md, "Scheduled backups"). Not in the
-    # environment above: the API never gets them. Unset, backups can't be
-    # turned on; partly set or invalid, the worker logs why and the
-    # Backups tab shows it.
+    # Only the worker gets backup credentials, so API access cannot delete backups.
+    # Unset credentials disable backups; invalid settings appear in logs and the
+    # Backups tab (docs/deployment.md, "Scheduled backups").
     environment:
       <<: *app-environment
       BACKUP_S3_ENDPOINT: ${BACKUP_S3_ENDPOINT:-}
@@ -244,8 +215,7 @@ services:
       BACKUP_S3_PREFIX: ${BACKUP_S3_PREFIX:-}
       BACKUP_S3_ACCESS_KEY_ID: ${BACKUP_S3_ACCESS_KEY_ID:-}
       BACKUP_S3_SECRET_ACCESS_KEY: ${BACKUP_S3_SECRET_ACCESS_KEY:-}
-    # On shutdown the worker lets running uptime checks finish and records
-    # them: up to 30 seconds each, past Compose's default 10.
+    # Uptime checks can take 30 seconds to finish and record, beyond Compose's default 10.
     stop_grace_period: 45s
     depends_on:
       migrate:
@@ -282,19 +252,11 @@ volumes:
   caddy-config:
   garage-data:
 
-# The settings files the services read, held here so this file needs no
-# others. Compose replaces ${...} in them with values from .env, so a
-# literal dollar sign is written $$.
-#
-# Compose does not recreate a container when only its config's content
-# changes. So each service carries a label with the first 12 hex digits of
-# each config's SHA-256 (of the text as written here): a release that
-# changes a config changes its label, and `up -d` recreates the service.
-# apps/api/tests/deploy-files.test.ts fails when a label is out of date,
-# and names the right value. The development stack
-# (compose.yaml at the repository root) reads the same ClickHouse and
-# Garage settings from deploy/clickhouse/ and deploy/garage/; a test
-# (apps/api/tests/deploy-files.test.ts) fails when the two differ.
+# Inline configs keep this file standalone. Escape literal dollars as $$.
+# Compose does not recreate containers when only config content changes. Labels
+# use the first 12 hex digits of each config's SHA-256, as written here, to trigger recreation.
+# apps/api/tests/deploy-files.test.ts checks labels and matches these configs
+# to deploy/clickhouse/ and deploy/garage/ used by the root development stack.
 configs:
   # Caddy gets and renews the HTTPS certificate for the instance's domain,
   # redirects HTTP to HTTPS, and passes every request to the API. It

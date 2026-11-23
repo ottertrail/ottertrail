@@ -263,8 +263,7 @@ else
 fi
 cd "$(dirname "$0")"
 
-# Set before anything is downloaded, so a failure from here on cleans up
-# and says what happened.
+# Track the step before downloads so failures report it and clean up.
 step=
 restored=
 unpacked=
@@ -286,8 +285,7 @@ cleanup() {
   fi
 }
 trap cleanup EXIT
-# Some shells (dash, Debian's sh) skip the EXIT trap when a signal such as
-# Ctrl-C ends the script: exit instead, which runs it.
+# dash skips EXIT traps on signals. Exit explicitly to run cleanup.
 trap 'exit 1' INT TERM HUP
 
 if [ -n "$from_s3" ]; then
@@ -301,8 +299,7 @@ if [ -n "$from_s3" ]; then
   step="listing the backups in $BACKUP_S3_BUCKET/$BACKUP_S3_PREFIX"
   echo "Backups in $BACKUP_S3_BUCKET/$BACKUP_S3_PREFIX, newest first:"
   s3 api node dist/restore-backup.mjs list
-  # The chosen backup's manifest, checked against the key: a backup anyone
-  # who can write to the bucket made, without the key, stops here.
+  # Reject manifests made by bucket writers who lack the backup key.
   step="checking the backup's manifest against the key"
   described=$(s3 -v "$key_file:/backup-key.txt:ro,z" \
     api node dist/restore-backup.mjs describe "$wanted" /backup-key.txt)
@@ -354,9 +351,8 @@ if [ -z "$without_objects" ] && [ ! -f "$objects" ]; then
 fi
 unpacked=$(dirname "$backup")/$name-objects.restore
 
-# A one-off container of the app's image, without starting anything else,
-# as this user, so it can read the files this user unpacked. Its bind
-# mount carries :z, which SELinux hosts need and others ignore.
+# Run as this user to read the unpacked files.
+# The :z bind mount option is needed on SELinux hosts.
 app() {
   $compose run --rm --no-deps -T -u "$(id -u):$(id -g)" "$@"
 }
@@ -413,8 +409,7 @@ $compose exec -T clickhouse clickhouse-client --user ottertrail --receive_timeou
   --query "RESTORE DATABASE ottertrail FROM File('$name.zip')" > /dev/null
 $compose exec -T -u clickhouse clickhouse rm "/var/lib/clickhouse/backups/$name.zip"
 
-# The object store, before the API and the worker start: the worker
-# deletes expired replays, and must not run before their files are back.
+# Restore objects before starting the worker, which deletes expired replays.
 if [ -z "$without_objects" ]; then
   step="restoring the object store"
   app -v "$(cd "$unpacked" && pwd):/backup:z" api node dist/restore-objects.mjs /backup

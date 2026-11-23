@@ -1,8 +1,6 @@
 /**
- * Fake visits for the report benchmark (bench-reports.ts), made in a
- * PostgreSQL table of the benchmark's own schema (createFakeEventsTable),
- * where SQL generates them quickly, then copied to ClickHouse. Never run
- * against a real project.
+ * Generate fake events in a benchmark-only PostgreSQL schema, then copy to ClickHouse. Never use a
+ * real project.
  */
 import { type Kysely, type RawBuilder, sql } from "kysely";
 
@@ -14,11 +12,7 @@ import type { Database } from "../src/db/schema.ts";
 /** Events per ClickHouse insert: ClickHouse prefers few large inserts. */
 const COPY_BATCH_SIZE = 10_000;
 
-/**
- * An events table for fake events, in the schema `db` points at, with a
- * column for each of ClickHouse's (EventRow). Unlogged: it lives only as
- * long as the benchmark.
- */
+/** Unlogged because this table lives only for the benchmark. */
 export async function createFakeEventsTable(db: Kysely<Database>): Promise<void> {
   await sql`
     create unlogged table events (
@@ -60,10 +54,7 @@ export async function createFakeEventsTable(db: Kysely<Database>): Promise<void>
   `.execute(db);
 }
 
-/**
- * Copies the fake events from the schema's events table to ClickHouse's,
- * in batches along the primary key, and returns how many.
- */
+/** Copy in primary-key batches and return the row count. */
 export async function copyFakeEvents(
   db: Kysely<Database>,
   clickhouse: ClickHouseClient,

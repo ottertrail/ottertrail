@@ -34,10 +34,8 @@ import { REFERRER_SPAM_LIST } from "../src/enrichment/referrer-spam/list.ts";
 const REPOSITORY = "matomo-org/referrer-spam-list";
 
 /**
- * Entries of Matomo's list Ottertrail leaves out on purpose, each with its
- * reason: the way past a guard (referrer-spam-check.ts) when an upstream
- * entry would drop real visits. Dropped before the checks, and printed.
- * Remove an entry once Matomo's list no longer holds it.
+ * Exclude upstream entries that would drop real visits, before running guards
+ * (referrer-spam-check.ts). Print each exclusion and remove it when Matomo removes the entry.
  */
 const IGNORED_UPSTREAM: ReadonlyMap<string, string> = new Map<string, string>([
   // ["example.com", "Real referrer: listed upstream by mistake (link to the upstream issue)."],
@@ -46,9 +44,8 @@ const TIMEOUT_MS = 60_000;
 const OUTPUT = resolve(import.meta.dirname, "../src/enrichment/referrer-spam/list.ts");
 
 /**
- * A GitHub token, when one is set (GH_TOKEN or GITHUB_TOKEN, as the
- * workflow sets): the API allows far more requests with one than the 60 an
- * hour it allows an address without. Sent to GitHub's API only.
+ * Send GH_TOKEN or GITHUB_TOKEN only to GitHub's API to raise its unauthenticated limit of 60
+ * requests per hour per address.
  */
 const GITHUB_TOKEN = process.env.GH_TOKEN ?? process.env.GITHUB_TOKEN ?? "";
 
@@ -69,7 +66,6 @@ async function fetchOk(
   return response;
 }
 
-/** A field of a JSON value, or undefined. */
 function field(value: unknown, name: string): unknown {
   return typeof value === "object" && value !== null
     ? Object.entries(value).find(([key]) => key === name)?.[1]

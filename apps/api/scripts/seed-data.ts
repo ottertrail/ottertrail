@@ -4,22 +4,8 @@ import { gzipSync } from "node:zlib";
 import { type Kysely, sql } from "kysely";
 
 /**
- * Development demo data (`vp run seed`, scripts/seed.ts): a project named
- * "Demo shop" whose every dashboard page has something to show. It is
- * replaced on each run: the project from a previous run is deleted through
- * the project deletion every project goes through, then made again.
- *
- * Rows are built by the API's own code, with past times: events as the
- * collection endpoint builds them (seed-site.ts), traces, logs, and
- * metrics through the OTLP normalizers (seed-telemetry.ts), checks and
- * alerts through the worker's steps (seed-monitoring.ts), session replays
- * through the replay pipeline's functions, source maps through the
- * upload's. HTTP ingestion is not used: it refuses events more than a day
- * old, as it should.
- *
- * Touches nothing but its own project, apart from one notification
- * channel of the instance's, which it adds once and reuses: an email
- * channel to an address that cannot receive mail.
+ * Recreate the Demo shop using ingestion and worker helpers. HTTP ingestion rejects events over a
+ * day old. Also reuse one instance notification channel that cannot receive mail.
  */
 import { aiCallsOf } from "../src/ai/calls.ts";
 import type { ClickHouseClient } from "../src/clickhouse/clickhouse.ts";
@@ -64,11 +50,9 @@ export const DEMO_PROJECT_NAME = "Demo shop";
 export const DEMO_CHANNEL_NAME = "Demo shop alerts (sends nothing)";
 /** The `.example` domain is reserved: no mail is ever delivered to it. */
 const DEMO_CHANNEL_ADDRESS = "alerts@demo-shop.example";
-/** The randomness's seed: the same data on every run. */
 const SEED = 20_261_119;
-/** The heatmaps' own seed, so adding them left the rest of the data as it was. */
+/** Separate randomness keeps other demo data stable when heatmaps change. */
 const HEATMAP_SEED = 20_261_120;
-/** Rows per ClickHouse insert. */
 const BATCH = 10_000;
 /** Checkout errors that recorded a session replay: the latest. */
 const REPLAYS = 6;
@@ -105,11 +89,8 @@ export interface SeedResult {
 }
 
 /**
- * Deletes every project named "Demo shop", as the dashboard deletes a
- * project, and returns how many. Its ClickHouse rows and files are the
- * worker's to delete; they are deleted here too when no other project's
- * deletion is waiting, so a rerun does not leave them for a worker that
- * may not be running.
+ * Clean up deleted project data when no other deletion is pending, since the worker may be
+ * stopped.
  */
 export async function removeDemo(
   db: Kysely<Database>,
@@ -154,7 +135,6 @@ const arrived = (errors: NewEvent[]): Arrived[] =>
 
 const BASE64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
-/** A number in a source map's base64 VLQ. */
 function vlq(value: number): string {
   let rest = value < 0 ? (-value << 1) | 1 : value << 1;
   let text = "";
@@ -246,17 +226,16 @@ export function checkoutSourceMap(file: string): string {
   });
 }
 
-/** The replay recording every replay here reuses: a real capture through the tracker's privacy filter. */
+/**
+ * The replay recording every replay here reuses: a real capture through the tracker's privacy
+ * filter.
+ */
 function readRecording(): { v: 1; events: { type: number; timestamp: number; data?: unknown }[] } {
   return JSON.parse(
     readFileSync(new URL("../tests/fixtures/replay-recording.json", import.meta.url), "utf8"),
   );
 }
 
-/**
- * Replaces the "Demo shop" project with a new one full of demo data, and
- * returns what it made.
- */
 export async function seedDemo(options: SeedOptions): Promise<SeedResult> {
   const { db, clickhouse, store } = options;
   const now = options.now ?? new Date();
@@ -317,7 +296,6 @@ export async function seedDemo(options: SeedOptions): Promise<SeedResult> {
     window: 3600,
   });
 
-  // The browsers' events.
   const { timeZone } = await readInstanceSettings(db);
   const site = buildSite(rng, projectId, timeZone, now);
   const withReplays = store === null ? [] : site.replayErrors.slice(-REPLAYS);
@@ -336,7 +314,6 @@ export async function seedDemo(options: SeedOptions): Promise<SeedResult> {
   }
   log(`Stored ${heatmaps.length.toLocaleString("en")} heatmap clicks and scroll depths.`);
 
-  // The servers' traces, logs, and metrics, through the OTLP normalizers.
   const userIds = [...new Set(site.events.flatMap(({ event }) => event.userId ?? []))];
   const telemetry = buildTelemetry(rng, now, userIds);
   const context = {
@@ -382,7 +359,6 @@ export async function seedDemo(options: SeedOptions): Promise<SeedResult> {
     `Stored ${spans.toLocaleString("en")} spans (${aiCalls.toLocaleString("en")} AI calls), ${logs.toLocaleString("en")} log records, ${metricPoints.toLocaleString("en")} metric points, and ${serverErrors.length} server exceptions.`,
   );
 
-  // When the latest event happened, as collection records it.
   const latest = site.events.at(-1);
   if (latest !== undefined) await new LastEventRecorder(db).record(projectId, [latest.event]);
 
@@ -469,11 +445,8 @@ export async function seedDemo(options: SeedOptions): Promise<SeedResult> {
       if (outcome !== "stored") log(`A replay was not stored: ${outcome}.`);
     }
     replays = (await joinReplays(db, store, { now, onlyProjectId: projectId })).joined;
-    // Now by PostgreSQL's clock, not the seed's start or this machine's: the
-    // replays' rows were made since, due at once (next_link_at defaults to
-    // the database's now()). A database in a VM whose clock runs a few
-    // milliseconds ahead would leave the latest replays not yet due, and so
-    // never linked to their errors.
+    // Use PostgreSQL's clock to match next_link_at defaults. VM clock skew
+    // could otherwise leave new replays not yet due for linking.
     const { rows } = await sql<{ now: Date }>`select now() as now`.execute(db);
     await linkReplays(db, reader, {
       now: rows[0]?.now ?? new Date(),
@@ -481,7 +454,6 @@ export async function seedDemo(options: SeedOptions): Promise<SeedResult> {
     });
   }
 
-  // Checks and alerts, played through the worker's steps.
   const channelId = await demoChannel(db, now);
   const monitoring = await seedMonitoring({
     db,
@@ -495,7 +467,6 @@ export async function seedDemo(options: SeedOptions): Promise<SeedResult> {
     spikeAt: new Date(today - (RELEASE_DAYS_AGO - 1) * DAY_MS + 14 * 3_600_000),
   });
 
-  // The overview's business figures start with signups.
   if ("goal" in mainGoal) await updateProject(db, projectId, { mainGoalId: mainGoal.goal.id });
 
   return {
@@ -516,11 +487,7 @@ export async function seedDemo(options: SeedOptions): Promise<SeedResult> {
   };
 }
 
-/**
- * The instance's channel the demo's rules send to: an email list whose one
- * address cannot receive mail, so nothing reaches anyone, with or without
- * SMTP. Added on the first run, reused after.
- */
+/** Reuse an email channel whose address cannot receive mail, even with SMTP configured. */
 async function demoChannel(db: Kysely<Database>, now: Date): Promise<string> {
   const existing = (await listChannels(db)).find((channel) => channel.name === DEMO_CHANNEL_NAME);
   if (existing !== undefined) return existing.id;

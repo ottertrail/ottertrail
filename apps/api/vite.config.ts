@@ -5,7 +5,6 @@ import { REFERRER_SPAM_COMMIT } from "./src/enrichment/referrer-spam/list.ts";
 
 export default defineConfig({
   pack: {
-    // The commands an instance runs, bundled so a server needs only Node.js.
     entry: {
       server: "src/server.ts",
       worker: "src/worker.ts",
@@ -18,13 +17,10 @@ export default defineConfig({
       "restore-backup": "scripts/restore-backup.ts",
     },
     platform: "node",
-    // Dependencies go into the bundle, so a server needs only Node.js and
-    // dist/. Installing them instead would bring optional peers of
-    // better-auth (React, Vitest, Playwright) along: about 180 MB.
+    // Bundling avoids installing about 180 MB of better-auth optional peers.
     deps: { alwaysBundle: [/./], onlyBundle: false },
     plugins: [
       thirdPartyLicenses({
-        // OTLP's message definitions, kept in src/telemetry/proto/.
         vendored: [
           {
             name: "opentelemetry-proto",
@@ -32,7 +28,6 @@ export default defineConfig({
             license: "Apache-2.0",
             licenseFile: `${import.meta.dirname}/src/telemetry/proto/LICENSE`,
           },
-          // Matomo's referrer spam list, as data (src/enrichment/referrer-spam/list.ts).
           {
             name: "matomo-referrer-spam-list",
             version: REFERRER_SPAM_COMMIT,
@@ -43,29 +38,20 @@ export default defineConfig({
       }),
     ],
     format: "esm",
-    // For readable stack traces (node --enable-source-maps), which need only
-    // the mappings: the maps leave the sources out, so the image carries no
-    // copy of the TypeScript source or of the bundled packages' code.
+    // Stack traces need mappings, but the image does not need embedded source code.
     sourcemap: true,
     outputOptions: { sourcemapExcludeSources: true },
     dts: false,
   },
   test: {
     environment: "node",
-    // Every test talks to real PostgreSQL and ClickHouse, and some build and
-    // migrate a database of their own: run together, under load, a few take
-    // longer than the default five seconds. Fifteen still catches a hang.
+    // Database setup under concurrent load can exceed the default five seconds.
     testTimeout: 15_000,
     hookTimeout: 30_000,
-    // The databases, not this machine's cores, set the pace: by default
-    // Vitest runs a file per core but one (13 on a 14-core Mac) against a
-    // development PostgreSQL and ClickHouse in a 7-CPU, 4 GB VM. Measured
-    // there with the dashboard's tests alongside, as `vp run ready` runs
-    // them: 5 files at once took about as long as 13 (170 s against 178 s),
-    // and the slowest test setups (a schema, a ClickHouse database, and a
-    // sign-in) went from 8 s to 4.5 s, well inside the limits above.
+    // With a 7-CPU, 4 GB database VM, 5 workers matched 13 in total time
+    // (170 s vs. 178 s) and cut the slowest setup from 8 s to 4.5 s.
     maxWorkers: 5,
-    // Drops the test schemas and databases runs that were cut off left behind.
+    // Clean up schemas and databases left by interrupted runs.
     globalSetup: ["tests/helpers/global-setup.ts"],
   },
 });

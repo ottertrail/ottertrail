@@ -1,10 +1,4 @@
-/**
- * A build plugin that fails the dashboard's build when the JavaScript a
- * first visit downloads grows past its budget: the entry chunk and every
- * chunk it imports statically (what index.html loads before any page).
- * Each page's own chunk loads after, and is not counted
- * (docs/dashboard.md, "Code splitting").
- */
+/** Budgets cover entry chunks and static imports. See docs/dashboard.md, "Code splitting". */
 import { gzipSync } from "node:zlib";
 
 /** Limits in kB (1,000 bytes), as Vite's build output prints sizes. */
@@ -13,12 +7,11 @@ export interface ChunkBudget {
   gzip: number;
 }
 
-/** The parts of an output chunk this plugin reads. */
 export interface BuiltChunk {
   type: "chunk";
   fileName: string;
   isEntry: boolean;
-  /** The chunks it imports statically. */
+  /** Static imports only. */
   imports: readonly string[];
   code: string;
 }
@@ -46,7 +39,7 @@ export function initialChunks(bundle: Readonly<Record<string, BundleItem>>): Bui
   return [...chunks.values()];
 }
 
-/** Their total size in kB: as written, and each gzipped on its own, as a server sends them. */
+/** Sizes in kB, with each chunk gzipped separately as a server sends it. */
 export function measure(chunks: readonly BuiltChunk[]): ChunkBudget {
   let raw = 0;
   let gzip = 0;
@@ -59,7 +52,6 @@ export function measure(chunks: readonly BuiltChunk[]): ChunkBudget {
 
 const kb = (value: number) => `${value.toFixed(1)} kB`;
 
-/** Why the measured size breaks the budget, or null when it fits. */
 export function overBudget(size: ChunkBudget, budget: ChunkBudget): string | null {
   const over = (["raw", "gzip"] as const).filter((kind) => size[kind] > budget[kind]);
   if (over.length === 0) {

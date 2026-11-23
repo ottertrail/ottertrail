@@ -1,21 +1,15 @@
-/**
- * Deterministic randomness for the development seed (seed-data.ts): the
- * same seed gives the same data on every run, so two runs of `vp run seed`
- * on one day make the same pages.
- */
+/** The same seed reproduces the same demo data. */
 
 export interface Random {
   /** A number from 0 (included) to 1 (excluded). */
   next(): number;
   /** A whole number from `min` to `max`, both included. */
   int(min: number, max: number): number;
-  /** True with probability `p`. */
   chance(p: number): boolean;
   /** One of the items, each equally likely. */
   pick<T>(items: readonly T[]): T;
   /** One of the items, by weight. */
   weighted<T>(items: readonly (readonly [T, number])[]): T;
-  /** A normally distributed number. */
   normal(mean: number, deviation: number): number;
   /** A log-normally distributed number with this median: durations and Web Vitals. */
   logNormal(median: number, spread: number): number;
@@ -25,7 +19,7 @@ export interface Random {
   hex(bytes: number): string;
 }
 
-/** mulberry32: a small, fast generator with a 32-bit state, good enough for fake data. */
+/** mulberry32 uses a 32-bit state for repeatable fake data. */
 export function seededRandom(seed: number): Random {
   let state = seed >>> 0;
   const next = () => {

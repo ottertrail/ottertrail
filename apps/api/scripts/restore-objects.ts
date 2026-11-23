@@ -1,15 +1,7 @@
 /**
- * Puts the objects of a folder made by backup-objects back into the object
- * store, under the same keys and content types (src/storage/object-backup.ts):
- *
- *   node dist/restore-objects.mjs [--check] <folder>      (built; deploy/restore.sh runs it)
- *   vpx scripts/restore-objects.ts [--check] <folder>
- *
- * It refuses a folder without a manifest, checks every file against it, and
- * waits up to a minute for the bucket, before it uploads any. With --check,
- * it only checks: deploy/restore.sh runs that before it touches the
- * databases. Objects already in the store under the same keys are
- * replaced; others stay. Exits 1 on any failure.
+ * Check the manifest and every file before uploading; wait up to a minute for the bucket
+ * (src/storage/object-backup.ts). --check lets deploy/restore.sh validate before changing
+ * databases. Matching keys are replaced; other objects stay. Exits 1 on failure.
  */
 import { loadConfig } from "../src/config.ts";
 import { checkObjectBackup, restoreObjects } from "../src/storage/object-backup.ts";

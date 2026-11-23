@@ -1,16 +1,6 @@
 /**
- * Writes a release's notes in Markdown, from the Conventional Commits since
- * the previous version tag (docs/development.md, "Commits"). The release workflow
- * runs it for each tag; it runs with plain Node.js, without dependencies.
- *
- *   node scripts/release-notes.ts <version> [<ref>]
- *
- * <ref> is the release's commit, `v<version>` by default. The notes cover
- * the commits after the latest version tag before it, or the whole history
- * for a first release. A final release (no hyphen, such as 0.2.0) counts
- * from the previous final release, so its notes include what its release
- * candidates (v0.2.0-rc.1) already listed; a pre-release counts from any
- * tag.
+ * Release notes follow docs/development.md, "Commits". Final releases include changes from release
+ * candidates; prereleases start at the previous version tag.
  */
 import { execFileSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
@@ -19,7 +9,6 @@ export const IMAGE = "ghcr.io/ottertrail/ottertrail";
 const RELEASES = "https://github.com/ottertrail/ottertrail/releases";
 
 export interface Commit {
-  /** The short hash. */
   hash: string;
   subject: string;
   body: string;
@@ -56,12 +45,7 @@ export function entryFor(commit: Commit): Entry | null {
   return { section, text, hash: commit.hash };
 }
 
-/**
- * Puts each @name in backticks, so a subject such as "bump @types/node"
- * does not mention a GitHub user or team in the release. An address such
- * as a@b.example is left alone: GitHub mentions only after a space or
- * punctuation.
- */
+/** Quote @names to prevent GitHub mentions; leave email addresses unchanged. */
 export function noMentions(text: string): string {
   return text.replace(/(^|[^\w`])(@\w[\w-]*(?:\/[\w.-]*\w)?)/g, "$1`$2`");
 }
@@ -126,15 +110,11 @@ function git(args: string[], cwd?: string): string {
   return execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
 }
 
-/** Whether a version is a final release: not a pre-release such as 0.2.0-rc.1. */
 export function isFinal(version: string): boolean {
   return !version.includes("-");
 }
 
-/**
- * The latest version tag before ref, or null when there is none. For a
- * final release, pre-release tags (with a hyphen) do not count.
- */
+/** For final releases, skip prerelease tags. Return null when no earlier tag exists. */
 export function previousTag(ref: string, final: boolean, cwd?: string): string | null {
   const exclude = final ? ["--exclude", "v*-*"] : [];
   try {

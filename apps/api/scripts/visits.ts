@@ -29,7 +29,6 @@ if (!Number.isFinite(hours) || hours <= 0) {
 
 const config = loadConfig();
 const db = createDatabase({ connectionString: config.databaseUrl, maxConnections: 1 });
-// PostgreSQL holds the projects; ClickHouse holds the events.
 const reader: Reader = { client: createClickHouse(config.clickhouse) };
 const seconds = (ms: number) => `${Math.round(ms / 1000)} s`;
 

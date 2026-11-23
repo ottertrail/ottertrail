@@ -1,23 +1,6 @@
-# Releases Ottertrail. For a version tag (v0.1.0):
-#
-# 1. image: builds the image and pushes it to the GitHub Container Registry
-#    (ghcr.io/<owner>/<repo>), for amd64 and arm64 servers, tagged with the
-#    version (0.1.0) and the commit (sha-1a2b3c4), never "latest", so each
-#    server pins an exact release.
-# 2. release: once the image is pushed, creates the GitHub Release
-#    "Ottertrail 0.1.0" with the files an install downloads (compose.yaml,
-#    example.env, backup.sh, restore.sh) and notes written from the
-#    Conventional Commits since the previous tag (scripts/release-notes.ts).
-#
-# A version's image is pushed once. When it is already in the registry, as
-# on a re-run after the release job failed, the image job says so and
-# skips the build, and the release job runs again.
-#
-# Run by hand from the Actions tab, it builds and pushes the image, tagged
-# with the commit only, and releases nothing. docs/deployment.md,
-# "Releasing", has the steps.
-#
-# The actions are pinned to exact commits; the comment names the release.
+# Version tags publish immutable amd64 and arm64 images and release files.
+# Reruns reuse an existing image and retry the release job. Manual runs publish
+# only a commit-tagged image. See docs/deployment.md, "Releasing".
 name: Release
 
 on:
@@ -48,10 +31,7 @@ jobs:
         with:
           node-version-file: .node-version
 
-      # A version tag must match the version the API reports (webhooks name
-      # it) and the image deploy/compose.yaml runs, so the image's tag, what
-      # runs inside it, and the release's compose.yaml agree. Checked before
-      # the build, so a wrong tag pushes no image.
+      # Check versions before building so a wrong tag cannot publish an image.
       - name: Check the tag against the versions in the repository
         if: startsWith(github.ref, 'refs/tags/v')
         env:
@@ -67,9 +47,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Never overwrite a released image: servers pull it by its version.
-      # "not found" builds it; any other failure (such as the registry not
-      # answering) stops the job rather than risk an overwrite.
+      # Never overwrite a released image. Build only on "not found"; fail on other registry errors.
       - name: Check whether this version's image is already pushed
         id: released
         if: startsWith(github.ref, 'refs/tags/v')
@@ -119,7 +97,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      # The whole history and its tags: the notes start at the previous tag.
+      # Release notes need history back to the previous tag.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
@@ -129,8 +107,7 @@ jobs:
         with:
           node-version-file: .node-version
 
-      # The release's compose.yaml runs the image of its own version by
-      # default: it must be this tag's.
+      # The release's default image version must match its tag.
       - name: Check the tag against the versions in the repository
         env:
           TAG: ${{ github.ref_name }}
@@ -141,8 +118,7 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: node scripts/release-notes.ts "${TAG#v}" "$TAG" > "$RUNNER_TEMP/notes.md"
 
-      # With the gh CLI the runner already has. A run started again replaces
-      # the files and notes of the release it made the first time.
+      # Reruns replace the release's files and notes.
       - name: Create the release
         env:
           GH_TOKEN: ${{ github.token }}

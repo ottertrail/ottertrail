@@ -1,7 +1,4 @@
-/**
- * `vp run dev` for the API package: the API and the worker, each restarting
- * when its code changes. Ctrl-C stops both.
- */
+/** `vp run dev` restarts the API and worker on changes. Ctrl-C stops both. */
 import { type ChildProcess, spawn } from "node:child_process";
 
 const children: ChildProcess[] = ["src/server.ts", "src/worker.ts"].map((entry) =>

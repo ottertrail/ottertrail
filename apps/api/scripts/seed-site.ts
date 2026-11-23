@@ -1,11 +1,6 @@
 /**
- * The demo shop's browser side, for the development seed (seed-data.ts):
- * visits with their pageviews, time on page, Web Vitals, product events,
- * signed-in users, and browser errors, built as the collection endpoint
- * builds them (collection/routes.ts): the page URL and referrer cleaned by
- * the same functions, the browser read from a real User-Agent, the visitor
- * ID made by the same hash, and each error grouped by the same fingerprint.
- * Only the times are in the past, and the arrival time with them.
+ * Build past browser events with the collection helpers for URLs, User-Agents, visitor IDs, and
+ * fingerprints (collection/routes.ts; seed-data.ts).
  */
 import { createHmac } from "node:crypto";
 
@@ -297,7 +292,6 @@ const SOURCES: Source[] = [
   },
 ];
 
-/** A page's path: a kind of page from NEXT made concrete. */
 function concretePath(rng: Random, kind: string): string {
   if (kind === "/products") return `/products/${rng.pick(PRODUCTS)[0]}`;
   if (kind === "/blog") return rng.pick(BLOG_POSTS);
@@ -397,7 +391,9 @@ interface Context {
   releaseAt: Date;
   /** When the search API's bug was fixed: its error stops. */
   searchFixedAt: Date;
-  /** When the order date error was fixed (and resolved), until the current release brought it back. */
+  /**
+   * When the order date error was fixed (and resolved), until the current release brought it back.
+   */
   ordersFixedAt: Date;
 }
 
@@ -435,7 +431,6 @@ const releaseOf = (context: Context, at: Date, environment: string) =>
       ? RELEASES.previous
       : RELEASES.current;
 
-/** Adds one browser event, built as the collection endpoint builds it. */
 function add(
   context: Context,
   person: Person,
@@ -556,7 +551,6 @@ function page(
 const dwell = (rng: Random, median = 35_000) =>
   Math.min(10 * MINUTE_MS, Math.max(2000, Math.round(rng.logNormal(median, 0.8))));
 
-/** An error on a page, a moment after it loaded. */
 function pageError(
   context: Context,
   person: Person,
@@ -614,7 +608,6 @@ function visit(
       dwellMs: stay,
     });
 
-    // Errors on this page.
     const engine = engineOf(person.client);
     const release = releaseOf(context, loadedAt, environment);
     if (rng.chance(0.004) && engine === "v8") {
@@ -894,7 +887,6 @@ export function buildSite(rng: Random, projectId: string, timeZone: string, now:
     users.push(user);
   }
 
-  // Anonymous visits, day by day; some sign up and join the users.
   for (let daysAgo = TRAFFIC_DAYS - 1; daysAgo >= 0; daysAgo -= 1) {
     const dayStart = today - daysAgo * DAY_MS;
     const weekday = WEEKDAYS[new Date(dayStart).getUTCDay()] ?? 1;
@@ -918,7 +910,6 @@ export function buildSite(rng: Random, projectId: string, timeZone: string, now:
     }
   }
 
-  // Each user's later sessions, signed in.
   const lastDay = today;
   for (const user of users) {
     const firstDay = Date.UTC(

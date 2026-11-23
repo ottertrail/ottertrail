@@ -47,8 +47,7 @@ export default defineConfig({
         },
       },
       {
-        // Generated shadcn/ui source. Keep it close to upstream so `shadcn add`
-        // updates stay reviewable; these rules flag upstream patterns.
+        // Allow upstream shadcn/ui patterns to keep updates reviewable.
         files: ["apps/web/src/components/ui/*.tsx"],
         plugins: ["react", "jsx-a11y"],
         rules: {
@@ -60,7 +59,6 @@ export default defineConfig({
         },
       },
       {
-        // The tracker runs in visitors' browsers, on other people's sites.
         files: ["packages/tracker/**/*.ts"],
         env: { browser: true },
       },
@@ -69,13 +67,12 @@ export default defineConfig({
         plugins: ["node"],
         env: { node: true },
         rules: {
-          // Written for Express, which drops a rejected promise from an async
-          // handler. Fastify awaits async handlers and sends their errors.
+          // Fastify awaits async handlers and sends their errors.
           "oxc/no-async-endpoint-handlers": "off",
         },
       },
       {
-        // Local tools that drive other software and read its JSON replies.
+        // These tools cast JSON replies from external software.
         files: ["tools/**/*.ts"],
         plugins: ["node"],
         env: { node: true },
@@ -94,9 +91,7 @@ export default defineConfig({
     ],
   },
   run: {
-    // Never replay package.json scripts from cache: `migrate` changes the
-    // database, and tests depend on it, so a cached result could report work
-    // that never ran.
+    // Migrations change the database, and tests need its current state.
     cache: { scripts: false, tasks: true },
   },
   // Runs from .vite-hooks/pre-commit on the files being committed.

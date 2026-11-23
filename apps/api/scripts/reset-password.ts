@@ -41,8 +41,7 @@ try {
       ttlMs: COMMAND_RESET_TTL_MS,
       now: new Date(),
     });
-    // The token goes in the fragment (after #), which browsers never send to
-    // a server, so it cannot end up in request logs or proxies.
+    // Fragments stay in the browser, keeping the token out of request logs and proxies.
     console.log(
       [
         `Set the password for ${email} within ${COMMAND_RESET_TTL_MS / 60_000} minutes:`,

@@ -1,7 +1,4 @@
-/**
- * Whether the development seed (seed.ts) may run: only against what looks
- * like the local development stack, since it deletes and makes a project.
- */
+/** The seed deletes and recreates a project, so check for development settings. */
 import {
   type Config,
   DEVELOPMENT_PUBLIC_URL,
@@ -11,10 +8,8 @@ import {
 } from "../src/config.ts";
 
 /**
- * Why the seed must not run, or null when it may. NODE_ENV=production
- * always refuses. Any setting that points away from the local development
- * stack (compose.yaml and the API's development defaults) refuses unless
- * `yes` is given, naming each.
+ * Always refuse production. Other nonlocal settings require `yes` (compose.yaml and API
+ * development defaults).
  */
 export function refusalOf(
   env: Record<string, string | undefined>,

@@ -1,10 +1,4 @@
-/**
- * A build plugin (Vite and `vp pack`) that writes THIRD_PARTY_LICENSES.txt
- * next to the build: every npm package whose files went into the bundle,
- * with the licence text it ships. Bundling copies their code without their
- * LICENSE files, and most licences (MIT, BSD, Apache) require that text to
- * travel with every copy.
- */
+/** Bundled packages need their license text alongside the output in THIRD_PARTY_LICENSES.txt. */
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
@@ -33,11 +27,8 @@ const LICENSE_HEADING = /^(#{1,6})\s+(the\s+)?licen[cs]e\b/i;
 const ABSOLUTE_PATH = /^(\/|[A-Za-z]:\/)/;
 
 /**
- * The directory of the npm package a bundled file comes from, or null for
- * the app's own files and virtual modules. Bundler module IDs use forward
- * slashes on every system. With pnpm a file sits at
- * …/node_modules/.pnpm/name@1.0.0/node_modules/name/lib/file.js: the last
- * node_modules segment names its package.
+ * Bundler IDs use forward slashes. In pnpm paths, the last node_modules segment identifies the
+ * package.
  */
 export function packageDirectory(moduleId: string): string | null {
   const path = moduleId.split("?", 1)[0] ?? "";
@@ -91,7 +82,6 @@ export function readmeLicenseSection(readme: string): string | null {
   return section.split("\n").length > 1 ? section : null;
 }
 
-/** Reads a package's name, version, declared licence, and licence text. */
 export function readPackage(directory: string): BundledPackage {
   const parsed: unknown = JSON.parse(readFileSync(join(directory, "package.json"), "utf8"));
   const manifest = typeof parsed === "object" && parsed !== null ? parsed : {};
@@ -118,11 +108,7 @@ function readmeLicense(directory: string): string | null {
   return section === null ? null : `(No licence file; from the package's README.)\n\n${section}`;
 }
 
-/**
- * Packages a stylesheet pulls in with bare @import specifiers, such as
- * `@import "tailwindcss"`. CSS tools inline these themselves, so they never
- * appear among the bundler's modules.
- */
+/** CSS tools inline bare @import packages, so they do not appear in the bundler module list. */
 export function cssImportedPackages(css: string): string[] {
   const names = new Set<string>();
   for (const match of css.matchAll(/@import\s+(?:url\()?["']([^"']+)["']/g)) {
@@ -191,7 +177,6 @@ export function licensesText(packages: readonly BundledPackage[]): string {
   ].join("\n");
 }
 
-/** The parts of the bundler's plugin context this plugin uses. */
 interface BundleContext {
   getModuleIds(): IterableIterator<string>;
   emitFile(file: { type: "asset"; fileName: string; source: string }): string;
@@ -203,10 +188,7 @@ export function thirdPartyLicenses({
 }: {
   /** Absolute paths of stylesheets whose @import packages the build copies. */
   stylesheets?: readonly string[];
-  /**
-   * Code kept in the repository rather than installed from npm, which the
-   * build bundles too: its name, version, licence, and licence file.
-   */
+  /** Vendored code bundled alongside npm packages. */
   vendored?: readonly { name: string; version: string; license: string; licenseFile: string }[];
 } = {}) {
   return {
@@ -228,8 +210,7 @@ export function thirdPartyLicenses({
           text: readFileSync(licenseFile, "utf8"),
         })),
       ];
-      // Both builds bundle npm packages; none found means module IDs this
-      // plugin does not understand, and a release without their licences.
+      // No packages means unrecognized module IDs and missing license text.
       if (packages.length === 0) {
         throw new Error("found no bundled npm packages to list in " + LICENSES_FILE_NAME);
       }

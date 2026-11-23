@@ -40,7 +40,6 @@ if (!Number.isInteger(dayCount) || dayCount < 1 || dayCount > 366) {
 
 const config = loadConfig();
 const db = createDatabase({ connectionString: config.databaseUrl, maxConnections: 2 });
-// PostgreSQL holds the projects and counts the days; ClickHouse holds the events.
 const reader: Reader = { client: createClickHouse(config.clickhouse) };
 
 const percent = (value: number | null) => (value === null ? "-" : `${Math.round(value * 100)}%`);

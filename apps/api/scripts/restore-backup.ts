@@ -1,32 +1,8 @@
 /**
- * Lists and downloads the worker's scheduled backups from S3-compatible
- * storage, for deploy/restore.sh (docs/deployment.md, "Restoring from S3"):
- *
- *   node dist/restore-backup.mjs list
- *   node dist/restore-backup.mjs describe <name|latest> <key file>
- *   node dist/restore-backup.mjs download <name> <key file> <folder>
- *   vpx scripts/restore-backup.ts …
- *
- * `describe` checks the backup's manifest against the key (its MAC, which
- * only the key's holder can make: anyone who can write to the bucket could
- * otherwise upload a backup that decrypts) and prints its name, start, and
- * the Ottertrail version that made it, tab-separated, for restore.sh to
- * ask about. `download` checks the MAC again, before it reads any part,
- * then reads the backup's manifest, streams each part through
- * decryption with the key file (age's identity format, as the Backups tab
- * downloads it), checks every size and SHA-256 before and after
- * decryption, and writes the plain files into the folder as backup.sh
- * names them: ottertrail-<name>.dump, .zip, and -objects.tar, through a
- * folder of its own inside that is deleted on any failure, so a failed
- * download leaves no decrypted data. It prints the
- * backup's path without its ending, which restore.sh restores.
- *
- * Where the backups are comes from the environment, never the command
- * line: BACKUP_S3_ENDPOINT, BACKUP_S3_REGION, BACKUP_S3_BUCKET,
- * BACKUP_S3_PREFIX (the folder, ottertrail-backups when unset),
- * BACKUP_S3_ACCESS_KEY_ID, and BACKUP_S3_SECRET_ACCESS_KEY: the worker's
- * own variables, read and checked as the worker reads them (config.ts,
- * parseBackupS3). Exits 1 on any failure, saying why.
+ * For deploy/restore.sh (docs/deployment.md, "Restoring from S3"). Verify the manifest MAC before
+ * reading parts: bucket writers could otherwise forge decryptable backups. Check sizes and SHA-256
+ * before and after decryption; remove temporary plaintext on failure. Read BACKUP_S3_* settings
+ * through config.ts, parseBackupS3, keeping secrets off command lines. Exits 1 on failure.
  */
 import { readFile } from "node:fs/promises";
 

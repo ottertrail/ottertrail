@@ -20,8 +20,7 @@ try {
     console.error(`Owner already exists. Sign in at ${config.publicUrl}/sign-in`);
     process.exitCode = 1;
   } else {
-    // The token goes in the fragment (after #), which browsers never send to
-    // a server, so it cannot end up in request logs or proxies.
+    // Fragments stay in the browser, keeping the token out of request logs and proxies.
     console.log(
       [
         `Create the owner account within ${SETUP_LINK_TTL_MS / 60_000} minutes:`,

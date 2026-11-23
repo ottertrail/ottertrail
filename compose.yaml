@@ -1,5 +1,4 @@
-# Local development services only. This is not a deployment template:
-# production instances will get their own Compose stack.
+# Local development only. Deployments use deploy/compose.yaml.
 name: ottertrail
 
 services:
@@ -8,8 +7,7 @@ services:
     environment:
       POSTGRES_USER: ottertrail
       POSTGRES_DB: ottertrail
-      # Local development only: no password. The port below listens on
-      # 127.0.0.1, so nothing outside this computer can connect.
+      # Passwordless access is limited to this computer by the loopback binding.
       POSTGRES_HOST_AUTH_METHOD: trust
     ports:
       # 5433 on this computer, so it does not clash with other local Postgres servers.
@@ -23,7 +21,7 @@ services:
       timeout: 3s
       retries: 15
 
-  # Analytics events, and later logs, traces, and metrics (docs/storage-benchmark.md).
+  # Storage sizing: docs/storage-benchmark.md.
   clickhouse:
     image: docker.io/clickhouse/clickhouse-server:26.8.38.9
     environment:
@@ -39,10 +37,10 @@ services:
         hard: 262144
     volumes:
       - clickhouse-data:/var/lib/clickhouse
-      # The same small-server settings as deployments use …
+      # Share deployment settings.
       - ./deploy/clickhouse/config.d/ottertrail.xml:/etc/clickhouse-server/config.d/ottertrail.xml:ro
       - ./deploy/clickhouse/users.d/ottertrail.xml:/etc/clickhouse-server/users.d/ottertrail.xml:ro
-      # … except a larger share of the memory, for Podman's small machine.
+      # Allow a larger memory share in Podman's small VM.
       - ./deploy/clickhouse/development.xml:/etc/clickhouse-server/config.d/zz-development.xml:ro
     healthcheck:
       test:
@@ -54,8 +52,7 @@ services:
       timeout: 3s
       retries: 30
 
-  # Source maps, and later session replays: an S3-compatible object store
-  # (docs/errors.md#source-maps). About 7 MB of memory when idle.
+  # Object storage: docs/errors.md#source-maps. About 7 MB of memory when idle.
   garage:
     image: docker.io/dxflrs/garage:v2.5.0
     command: ["/garage", "server", "--single-node", "--default-bucket"]
@@ -66,9 +63,7 @@ services:
       GARAGE_DEFAULT_ACCESS_KEY: GK0000000000000000000000de
       GARAGE_DEFAULT_SECRET_KEY: "0000000000000000000000000000000000000000000000000000000000000de0"
       GARAGE_DEFAULT_BUCKET: ottertrail
-      # The admin API's token, which the API's development default matches
-      # (DEVELOPMENT_GARAGE_ADMIN_TOKEN in src/config.ts): the Settings
-      # page's Storage figures and the bucket's quota.
+      # Must match DEVELOPMENT_GARAGE_ADMIN_TOKEN in src/config.ts for storage figures and quotas.
       GARAGE_ADMIN_TOKEN: ottertrail-local-development-garage-admin-token
     ports:
       - "127.0.0.1:3900:3900"

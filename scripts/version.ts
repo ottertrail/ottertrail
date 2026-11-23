@@ -1,14 +1,6 @@
 /**
- * Sets the release version everywhere it is written, together: the root
- * package.json, apps/api/package.json (the API reports it, and webhooks
- * name it), and the image tag deploy/compose.yaml runs by default. Runs
- * with plain Node.js, without dependencies.
- *
- *   vp run version <x.y.z>                     sets it
- *   node scripts/version.ts --check <x.y.z>    fails unless all three are it
- *
- * The release workflow runs the check against each tag. Releasing is in
- * docs/deployment.md, "Releasing".
+ * Sets or checks package versions and the deploy/compose.yaml image tag. See docs/deployment.md,
+ * "Releasing".
  */
 import { readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -23,11 +15,7 @@ export function isSemver(version: string): boolean {
   return SEMVER.test(version);
 }
 
-/**
- * Why version cannot be a release, or null when it can. It must be a
- * semantic version, without build metadata (1.0.0+b1): the image is tagged
- * with the version, and a Docker tag cannot hold a "+".
- */
+/** Docker tags cannot contain "+", so release versions must omit build metadata. */
 export function versionProblem(version: string): string | null {
   if (!isSemver(version)) return `Not a semantic version (x.y.z, without a "v"): ${version}`;
   if (version.includes("+")) {
@@ -61,7 +49,6 @@ function find(text: string, place: Place): RegExpExecArray {
   return match;
 }
 
-/** The version each place holds now. */
 export function readVersions(root: string): Record<string, string> {
   const versions: Record<string, string> = {};
   for (const place of PLACES) {
@@ -70,11 +57,7 @@ export function readVersions(root: string): Record<string, string> {
   return versions;
 }
 
-/**
- * Writes version into every place, or into none: it reads all of them and
- * writes each new text to a temporary file first, then renames them into
- * place.
- */
+/** Read all files and prepare temporary files before replacing any originals. */
 export function setVersion(root: string, version: string): void {
   const problem = versionProblem(version);
   if (problem !== null) throw new Error(problem);
@@ -99,7 +82,7 @@ export function setVersion(root: string, version: string): void {
   updated.forEach(({ path }, index) => renameSync(temporary[index] ?? "", path));
 }
 
-/** The places that do not hold version, as messages; empty when all do. */
+/** Returns mismatch messages, or an empty array when every version matches. */
 export function checkVersion(root: string, version: string): string[] {
   const problem = versionProblem(version);
   if (problem !== null) return [problem];

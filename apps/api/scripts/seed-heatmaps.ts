@@ -1,17 +1,7 @@
 /**
- * The demo shop's heatmaps (seed-data.ts; docs/web-analytics.md,
- * "Heatmaps"): for a share of the site's own pageviews of its main pages,
- * the clicks and the scroll depth h.js would have sent, as rows of
- * ClickHouse's `heatmaps` table. Deterministic, from its own seed, so the
- * rest of the demo data stays as it was.
- *
- * Each page has a made-up layout: the elements people click, with the
- * site's own names where a real site would add data-ottertrail-name, and
- * how far down people read. On the checkout page, "Continue to payment"
- * is the button whose script fails (the seeded checkout error): many of its
- * clicks come in bursts, the rage clicks, and nothing responds to them,
- * the dead clicks. A picture on the home page that looks like a link but
- * is not gets dead clicks too.
+ * Sample demo pageviews with separate randomness (seed-data.ts; docs/web-analytics.md,
+ * "Heatmaps"). Broken checkout buttons produce rage and dead clicks; a nonlinked home image
+ * produces dead clicks.
  */
 import { HEATMAP_RETENTION_DAYS } from "../src/clickhouse/migrations.ts";
 import type { NewEvent } from "../src/collection/event-store.ts";
@@ -114,7 +104,6 @@ const LAYOUTS: Record<string, Layout> = {
 
 const layoutOf = (path: string) => LAYOUTS[path.startsWith("/products/") ? "/products" : path];
 
-/** The viewport of each kind of device the seed's browsers are. */
 const VIEWPORTS = {
   desktop: { width: 1440, height: 860, scale: 1 },
   tablet: { width: 820, height: 1100, scale: 1.4 },
@@ -124,7 +113,7 @@ const VIEWPORTS = {
 const clamp = (value: number) => Math.min(1, Math.max(0, value));
 const round3 = (value: number) => Math.round(clamp(value) * 1000) / 1000;
 
-/** Whole clicks from an average rate: 0.3 is a click three times in ten. */
+/** Convert fractional rates to whole clicks: 0.3 gives a click three times in ten. */
 function clicksOf(rng: Random, rate: number): number {
   let clicks = Math.floor(rate);
   if (rng.chance(rate - clicks)) clicks += 1;

@@ -1,14 +1,6 @@
 /**
- * Copies every object of the object store (source maps and session
- * replays) into a folder, with a manifest of their keys, sizes, content
- * types, and checksums (src/storage/object-backup.ts):
- *
- *   node dist/backup-objects.mjs <folder>      (built; deploy/backup.sh runs it)
- *   vpx scripts/backup-objects.ts <folder>
- *
- * The folder must be empty or not exist yet. It reads the store from the
- * same settings as the API (OBJECT_STORE_*). Without a store, it writes a
- * manifest that says so, which restores nothing. Exits 1 on any failure.
+ * Back up to an empty or new folder with a manifest (src/storage/object-backup.ts).
+ * Without a configured object store, record that none exists. Exits 1 on failure.
  */
 import { loadConfig } from "../src/config.ts";
 import { backupObjects } from "../src/storage/object-backup.ts";

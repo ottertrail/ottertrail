@@ -104,8 +104,7 @@ try {
   const eventCount = Number(rows[0]?.count);
   console.log(`${eventCount.toLocaleString("en")} events in ${(seedMs / 1000).toFixed(1)} s`);
 
-  // Then merged as ClickHouse does in the background over time, so reports
-  // read a table as it usually is.
+  // Merge before measuring to approximate background merges.
   const copyMs = await timed(() => copyFakeEvents(bench, clickhouse));
   console.log(
     `Copied to ClickHouse in ${(copyMs / 1000).toFixed(1)} s (${Math.round(eventCount / (copyMs / 1000)).toLocaleString("en")} events a second)`,
@@ -143,8 +142,7 @@ try {
   console.log("Median time per report (after a warm-up run):");
   console.table(results);
 
-  // A whole analytics page: every report working out visits on its own,
-  // compared with the endpoint, which works them out once (analytics.ts).
+  // Compare repeated visit queries with the shared query in analytics.ts.
   const pageDimensions = [
     "source",
     "utmCampaign",
@@ -191,7 +189,6 @@ try {
       ...page["visits worked out once"],
       [label]: `${Math.round(once)} ms`,
     };
-    // Filtered pages: a visit property, and a page (visits that viewed it).
     for (const [name, filter] of [
       ["filtered by a country", { name: "country", value: "DE" }],
       ["filtered by a page", { name: "page", value: "/pricing" }],

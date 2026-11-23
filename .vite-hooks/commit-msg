@@ -1,10 +1,9 @@
 #!/bin/sh
-# Checks the commit header against Conventional Commits 1.0.0.
-# Format and allowed types: see "Commits" in docs/development.md.
+# Conventional Commits 1.0.0. See docs/development.md, "Commits", for allowed types.
 
 header=$(sed -e '/^#/d' -e '/^[[:space:]]*$/d' "$1" | head -n 1)
 
-# Messages that git writes itself.
+# Allow Git-generated messages.
 case "$header" in
   "Merge "* | "Revert \""* | "fixup! "* | "squash! "* | "amend! "*) exit 0 ;;
 esac

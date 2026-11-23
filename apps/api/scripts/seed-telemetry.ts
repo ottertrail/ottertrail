@@ -1,25 +1,15 @@
 import { type Random, seededRandom } from "./seed-random.ts";
 /**
- * The demo shop's servers, for the development seed (seed-data.ts): what
- * three services (web, billing, worker) and an OpenTelemetry Collector on
- * three hosts would export over OTLP, as OTLP/JSON requests. seed-data.ts
- * hands each to the API's own normalizers (telemetry/normalize.ts), as the
- * OTLP routes do, so spans, logs, metrics, and the exceptions that become
- * error events are the rows real exporters make.
+ * Generate OTLP/JSON for demo services and hosts. seed-data.ts uses telemetry/normalize.ts so rows
+ * match real exporters.
  */
 import { DAY_MS, RELEASE_DAYS_AGO, RELEASES } from "./seed-site.ts";
 
-/** Days of traces and logs, and of metrics. */
 export const TRACE_DAYS = 14;
 export const METRIC_DAYS = 7;
 const APP_METRIC_STEP_MS = 10 * 60_000;
 const HOST_METRIC_STEP_MS = 15 * 60_000;
-/**
- * The hosts' points from the last 15-minute tick to now, at most this far
- * apart: the Hosts list takes CPU from the last two points within 15
- * minutes of a host's last one (docs/telemetry.md, "Hosts"), which needs
- * 7.5 minutes or less between points.
- */
+/** The Hosts list needs CPU points at most 7.5 minutes apart (docs/telemetry.md, "Hosts"). */
 export const HOST_RECENT_STEP_MS = 5 * 60_000;
 
 const SERVER = 2;
@@ -144,7 +134,6 @@ interface SpanInput {
   events?: object[];
 }
 
-/** One trace's spans, added to a day's batch. */
 class Trace {
   readonly id: string;
   readonly #rng: Random;
@@ -174,7 +163,6 @@ class Trace {
   }
 }
 
-/** A log record, joined to its trace and span when it has them. */
 function logRecord(
   at: number,
   severity: "DEBUG" | "INFO" | "WARN" | "ERROR",
@@ -241,24 +229,12 @@ const HOURLY = [
 const HOURLY_TOTAL = HOURLY.reduce((sum, weight) => sum + weight, 0);
 
 /**
- * The demo's incident: two days before today, 13:00 to 15:30 UTC, the
- * database is overloaded. The full-text search runs two and a half times
- * slower and a third of the searches time out, the payment provider fails
- * 40% of charges instead of 4%, and requests wait for a database
- * connection (a call of its own), most with a warning that the pool is
- * exhausted, and a quarter give up waiting and fail. So every chart shows
- * it: the Services and Databases charts a spike in the failed share, the
- * 95th percentile, and the time spent; the Traces chart more traces with
- * errors and a higher 95th percentile; the Logs chart a rise in warnings
- * and errors.
+ * Two days ago, 13:00 to 15:30 UTC: searches take 2.5 times longer and a third time out. Charges
+ * fail 40% of the time instead of 4%; a quarter of requests give up waiting for a connection.
  */
 export const INCIDENT_DAYS_AGO = 2;
 const INCIDENT_HOURS = [13, 15.5] as const;
-/**
- * Which of the incident's requests give up waiting, and their waits' span
- * IDs, are drawn from a generator of their own, so the rest of the data is
- * what it was without them.
- */
+/** Separate randomness keeps other demo data stable when connection waits change. */
 const GIVE_UP_SEED = 20_261_121;
 
 /** A database call, for the database client's duration histogram. */
@@ -329,7 +305,6 @@ export function buildTelemetry(rng: Random, now: Date, userIds: readonly string[
       for (const minute of [7, 37]) syncInventory(dayStart + hour * 3_600_000 + minute * 60_000);
       cleanupCarts(dayStart + hour * 3_600_000 + 52 * 60_000);
     }
-    // Invoices billing serves to the accounts pages.
     for (let index = 0; index < 30; index += 1) {
       invoice(
         dayStart +
@@ -672,7 +647,6 @@ export function buildTelemetry(rng: Random, now: Date, userIds: readonly string[
             }),
           );
           cursor += insert + 0.5;
-          // Shipping rates from a partner's API.
           const ratesAt = cursor;
           const rates = rng.logNormal(180, 0.4);
           later(() =>
@@ -689,7 +663,6 @@ export function buildTelemetry(rng: Random, now: Date, userIds: readonly string[
             ),
           );
           cursor += rates + 1;
-          // The charge, through the billing service.
           const chargeAt = cursor;
           const fails = rng.chance(busy ? 0.4 : 0.04);
           const providerMs = fails ? 10_000 : rng.logNormal(420, 0.35);
@@ -831,13 +804,10 @@ export function buildTelemetry(rng: Random, now: Date, userIds: readonly string[
       }
       for (const work of children) work();
       if (busy) {
-        // The time spent waiting for a database connection, added to the request after its
-        // work (so the spans already placed keep their times): a warning on most requests.
+        // Append connection waits so existing spans keep their timestamps.
         const waitMs = rng.logNormal(400, 0.5);
-        // The wait is a call to the database, as node-postgres's pool instrumentation reports
-        // it, so every incident hour's time spent stands out, not only those with many
-        // searches (without it, one bar in five held less than twice an average hour's).
-        // Its ID comes from giveUp, so the other draws stay as they were.
+        // Model pool waits as database calls so incident hours stand out.
+        // Draw IDs from giveUp to keep other randomness stable.
         trace.span(resource, SCOPES.pg, {
           id: giveUp.hex(8),
           name: "pg-pool.connect",
@@ -867,9 +837,7 @@ export function buildTelemetry(rng: Random, now: Date, userIds: readonly string[
             ),
           );
         }
-        // A quarter give up waiting (503), so the Traces chart's incident bars stand out from
-        // the other hours' one or two failed traces whatever the other draws: without them, a
-        // 2-hour bar held 3 failed traces or fewer on about one seed run in four.
+        // Fail a quarter with 503 so incident bars consistently show more failed traces.
         if (failure === undefined && giveUp.chance(0.25)) {
           status = 503;
           failure = "timed out waiting for a database connection";
@@ -1086,10 +1054,7 @@ export function buildTelemetry(rng: Random, now: Date, userIds: readonly string[
   return { traces, logs, metrics };
 }
 
-/**
- * The AI calls are drawn from a generator of their own, so the rest of the
- * data is what it was without them.
- */
+/** Separate randomness keeps other demo data stable when AI calls change. */
 const AI_SEED = 20_261_122;
 
 /** A model the demo shop calls, and roughly what one call of each feature uses. */
@@ -1315,7 +1280,6 @@ function aiTraces(
   return requests;
 }
 
-/** Points every `step` over the last METRIC_DAYS, up to now. */
 function times(nowMs: number, step: number): number[] {
   const first = Math.ceil((nowMs - METRIC_DAYS * DAY_MS) / step) * step;
   const result: number[] = [];
@@ -1383,14 +1347,7 @@ function durationPoints(
   return points;
 }
 
-/**
- * The services' own metrics, from the requests, calls, and jobs above:
- * the web service's request durations (a histogram per route) and the
- * shop database's calls' durations (a histogram per operation),
- * orders placed (a counter), its database pool (an up-down counter), and
- * the worker's jobs (a counter) and queue (a gauge). Cumulative, as SDKs
- * export by default.
- */
+/** Cumulative service metrics match the SDK default. */
 function appMetrics(
   rng: Random,
   nowMs: number,
@@ -1407,7 +1364,6 @@ function appMetrics(
   const webResource = web(nowMs, "app-1");
   const workerResource = worker(nowMs);
 
-  // Request durations, per route, from the requests themselves.
   const routes = ["/", "/products/:slug", "/api/cart", "/api/search"];
   const histogramPoints = durationPoints(
     routes.map((route) => ({
@@ -1425,7 +1381,6 @@ function appMetrics(
     histogram: { aggregationTemporality: CUMULATIVE, dataPoints: histogramPoints },
   });
 
-  // The shop database's calls' durations, per operation, from the calls themselves.
   const shopCalls = calls.filter((call) => call.database === "shop");
   const operations = [...new Set(shopCalls.map((call) => call.operation))].toSorted();
   batch.add(webResource, SCOPES.webMetrics, {
@@ -1450,7 +1405,6 @@ function appMetrics(
     },
   });
 
-  // Orders placed, counted as they happen.
   let placed = 0;
   let nextOrder = 0;
   const sorted = orders.filter((at) => at >= start).toSorted((a, b) => a - b);
@@ -1498,7 +1452,6 @@ function appMetrics(
     },
   });
 
-  // The worker's jobs, by name, and its queue.
   const jobNames = ["send-receipt", "sync-inventory", "cleanup-abandoned-carts"];
   const byJob = new Map(
     jobNames.map((name) => [
@@ -1554,11 +1507,8 @@ const SCRAPER = (name: string) => ({
 const GIB = 1024 ** 3;
 
 /**
- * When the hosts send points: every 15 minutes over METRIC_DAYS, then every
- * HOST_RECENT_STEP_MS up to the point just now, as a host scraped more
- * often. 15 minutes up to the point just now would leave up to 15 minutes
- * and 40 seconds between the last two, too far apart for the Hosts list's
- * CPU, which then showed nothing.
+ * Add recent points at HOST_RECENT_STEP_MS intervals. A 15-minute interval can exceed the Hosts
+ * list CPU window by 40 seconds.
  */
 export function hostTicks(nowMs: number): number[] {
   const ticks = times(nowMs, HOST_METRIC_STEP_MS);
@@ -1572,12 +1522,8 @@ export function hostTicks(nowMs: number): number[] {
 }
 
 /**
- * The hosts' metrics, as an OpenTelemetry Collector's host metrics
- * receiver sends them, under its scrapers' scope names (docs/telemetry.md,
- * "Hosts"): CPU time, memory, filesystems, network, disk, and load. Each
- * host has its own load: app-1 is quiet, app-2 busier, and db-1, the
- * database server, runs its CPU hard with its memory and data disk near
- * full, so the Hosts page shows values from low to high.
+ * Use Collector host scraper scopes (docs/telemetry.md, "Hosts"). Vary host load so the demo
+ * includes quiet and overloaded hosts.
  */
 function hostMetrics(rng: Random, nowMs: number, hosts: readonly string[]): object[] {
   const ticks = hostTicks(nowMs);
@@ -1612,7 +1558,6 @@ function hostMetrics(rng: Random, nowMs: number, hosts: readonly string[]): obje
       const hour = new Date(tick).getUTCHours();
       const traffic = (HOURLY[hour] ?? 3) / 6.6;
       const share = Math.min(0.95, busy * (0.5 + traffic) + rng.normal(0, 0.02));
-      // The time since the previous point, as the counters grow by it.
       const seconds = (tick - (ticks[index - 1] ?? start)) / 1000;
       for (const name of ["cpu0", "cpu1"]) {
         const states: Record<string, number> = {

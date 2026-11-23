@@ -1,13 +1,5 @@
-# Checks every push to main and every pull request with the same command a
-# commit needs first (docs/development.md, "Commands"): vp run ready, the
-# format, lint, and type checks, every package's tests, and the builds.
-#
-# The API's tests run against PostgreSQL, ClickHouse, and Garage from the
-# development compose.yaml, as on a developer's machine; each test file
-# makes its own schema and database there. The dashboard's browser tests
-# run in headless Chromium.
-#
-# The actions are pinned to exact commits; the comment names the release.
+# Run the required checks from docs/development.md, "Commands".
+# API tests use development compose.yaml databases; browser tests use headless Chromium.
 name: CI
 
 on:
@@ -18,8 +10,7 @@ on:
 permissions:
   contents: read
 
-# A newer push to a pull request replaces its running check; pushes to
-# main each finish.
+# Cancel superseded PR checks. Let every main push finish.
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}

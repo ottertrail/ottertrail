@@ -24,16 +24,13 @@ name=ottertrail-$(date -u +%Y-%m-%dT%H%M%SZ)
 objects=backups/$name-objects
 mkdir -p backups
 
-# A one-off container of the app's image, without starting anything else.
-# It runs as this user, so the files it writes into backups/ are this
-# user's, and as private as the others. Its bind mounts carry :z, which
-# SELinux hosts need and others ignore.
+# Run as this user to keep backup ownership and permissions.
+# The :z bind mount option is needed on SELinux hosts.
 app() {
   $compose run --rm --no-deps -T -u "$(id -u):$(id -g)" "$@"
 }
 
-# A failed run leaves no file that looks like a backup: each is written
-# under a .partial name and renamed once all three are complete.
+# Use .partial names until all three files are complete to avoid incomplete backups.
 step=
 cleanup() {
   status=$?
@@ -47,17 +44,12 @@ cleanup() {
   fi
 }
 trap cleanup EXIT
-# Some shells (dash, Debian's sh) skip the EXIT trap when a signal such as
-# Ctrl-C ends the script: exit instead, which runs it.
+# dash skips EXIT traps on signals. Exit explicitly to run cleanup.
 trap 'exit 1' INT TERM HUP
 
-# Free space first. ClickHouse writes its backup into its own volume and
-# the script copies it out, and the objects are written twice (files, then
-# the tar): the backup needs about twice ClickHouse's data and twice the
-# objects, the estimate the Settings page's "next backup would fail"
-# warning uses (docs/deployment.md, "Storage"). The objects' size is what
-# Ottertrail recorded in PostgreSQL. Below it, the script warns and goes on:
-# the disk may have room after all, and a failed run keeps no file.
+# Copies need about twice ClickHouse's data plus twice the recorded object size
+# (docs/deployment.md, "Storage"). Warn and continue below that estimate;
+# a failed run keeps no backup files.
 gib() { awk -v b="$1" 'BEGIN { printf "%.1f GiB", b / 1073741824 }'; }
 disk_free=$($compose exec -T clickhouse clickhouse-client --user ottertrail \
   --query "SELECT free_space FROM system.disks WHERE name = 'default'" 2> /dev/null) || disk_free=
@@ -82,10 +74,8 @@ else
   fi
 fi
 
-# PostgreSQL first, so every project in its dump has its events in
-# ClickHouse's backup, taken after. Events of a project created in between
-# belong to no restored project; the worker's orphan sweep deletes them
-# (docs/clickhouse.md).
+# Back up PostgreSQL first so every restored project has events in ClickHouse.
+# The worker removes events from projects created between backups (docs/clickhouse.md).
 step="dumping PostgreSQL"
 $compose exec -T postgres pg_dump -U ottertrail -Fc ottertrail > "backups/$name.dump.partial"
 
@@ -99,12 +89,8 @@ $compose exec -T clickhouse clickhouse-client --user ottertrail --receive_timeou
 step="copying ClickHouse's backup"
 $compose exec -T clickhouse cat "/var/lib/clickhouse/backups/$name.zip" > "backups/$name.zip.partial"
 
-# The object store last, with the same settings the API reads; without a
-# store, the command writes a manifest that says so. Each object is
-# streamed into its own file, then packed into one tar here. The instance
-# keeps running: an object written after PostgreSQL's dump is in the
-# backup but nothing refers to it, and one deleted in between (an expired
-# replay) is left out, as if it had expired (docs/deployment.md).
+# The instance keeps running: objects added after the dump have no references;
+# objects deleted during backup are skipped (docs/deployment.md).
 step="backing up the object store"
 mkdir "$objects.partial"
 app -v "$PWD/$objects.partial:/backup:z" api node dist/backup-objects.mjs /backup

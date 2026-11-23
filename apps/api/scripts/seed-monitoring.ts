@@ -1,12 +1,6 @@
 /**
- * The demo shop's uptime checks and alert rules, for the development seed
- * (seed-data.ts). Thirty days of check runs are played in time order
- * through the worker's own steps: each run's outcome is recorded on its
- * check (recordOutcome, which opens and closes incidents) and written to
- * ClickHouse as the scheduler writes it (resultRow), and the alert rules
- * are evaluated by the worker's evaluators at the moments it would have,
- * so incidents, alert history, and the alerts firing now are the rows the
- * worker makes.
+ * Replay check runs and evaluate alerts through worker helpers so demo incidents match worker
+ * behavior (seed-data.ts).
  */
 import type { Kysely } from "kysely";
 
@@ -33,7 +27,6 @@ import { DAY_MS } from "./seed-site.ts";
 
 const MINUTE_MS = 60_000;
 const UPTIME_DAYS = 30;
-/** Rows per ClickHouse insert. */
 const BATCH = 10_000;
 
 export interface MonitoringOptions {
@@ -63,7 +56,6 @@ interface CheckPlan {
   name: string;
   url: string;
   intervalSeconds: number;
-  /** The run's outcome at a moment. */
   outcome: (at: number) => CheckOutcome;
 }
 
@@ -80,7 +72,7 @@ const up = (statusCode: number, responseMs: number, tlsExpiresAt: Date | null): 
   tlsExpiresAt,
 });
 
-/** Adds a rule as the Alerts page does: its values checked first. */
+/** Validate rules as the Alerts page does. */
 async function addRule(
   options: MonitoringOptions,
   input: { name: string; kind: RuleKind; settings: SettingsInput },
@@ -192,7 +184,6 @@ export async function seedMonitoring(options: MonitoringOptions): Promise<Monito
     checks.push({ id: created.check.id, plan });
   }
 
-  // Every run of every check, in time order.
   const runs = checks
     .flatMap((check) => {
       const step = check.plan.intervalSeconds * 1000;
@@ -211,9 +202,7 @@ export async function seedMonitoring(options: MonitoringOptions): Promise<Monito
     const outcome = run.check.plan.outcome(run.at);
     const at = new Date(run.at);
     const checkRef = { id: run.check.id, projectId };
-    // The check's state changes only on a failure, the first success after
-    // one, and its first run: only those are recorded as they happen; the
-    // last run of each check is recorded below, for its latest answer.
+    // Record state transitions here and each check's latest result below.
     const first = !lastOf.has(run.check.id);
     if (first || !outcome.up || failing.has(run.check.id)) {
       const change = await recordOutcome(db, run.check.id, outcome, at);
@@ -365,7 +354,6 @@ export async function seedMonitoring(options: MonitoringOptions): Promise<Monito
     .toSorted((a, b) => a - b);
   for (const at of moments) await evaluateErrorRules(context, reader, new Date(at), { projectId });
 
-  // And now, as the worker's next minute would.
   await evaluateCheckDown(context, { projectId }, now);
   await evaluateCertificates(context, { projectId }, now);
   await evaluateErrorRules(context, reader, now, { projectId });

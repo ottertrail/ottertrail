@@ -1,22 +1,9 @@
 /**
- * Downloads what the API knows about IP addresses now, whatever is due and
- * whatever the instance's "Update location data automatically" setting
- * says. The worker does the same on its own while the setting is on
- * (src/enrichment/updates.ts, which this calls):
- *
- * 1. The latest DB-IP City Lite database (free, CC BY 4.0, updated
- *    monthly) to GEO_DATABASE_PATH, when GEO_SOURCE is "database". It is
- *    checked: it must open and answer a known lookup.
- * 2. The address ranges of cloud and hosting providers, to
- *    DATA_CENTERS_PATH (src/enrichment/data-center-sources.ts). A source
- *    that fails keeps its previous ranges.
- *
- * Each file replaces the old one in one step; if anything fails, the old
- * file stays. The API loads the new files within 10 minutes, without a
- * restart. With PostgreSQL reachable, the update takes the same lease as
- * the worker's and records its status for the Settings page.
- *
- *   vp run geo:update
+ * Force location updates regardless of the automatic-update setting (src/enrichment/updates.ts).
+ * Write DB-IP data to GEO_DATABASE_PATH and provider ranges to DATA_CENTERS_PATH
+ * (src/enrichment/data-center-sources.ts).
+ * Validate files before replacing them; failed sources keep old data. The API reloads within 10
+ * minutes. Use the worker lease and record status when PostgreSQL is reachable.
  */
 import { resolve } from "node:path";
 

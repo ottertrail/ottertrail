@@ -1,8 +1,4 @@
-# One image for an Ottertrail instance. It runs the API (which also serves
-# the dashboard and the tracker at /t.js), the worker, the migrations, and the
-# setup command; deploy/compose.yaml starts each. See docs/deployment.md.
-#
-#   docker build -t ottertrail .
+# deploy/compose.yaml starts each process from this image. See docs/deployment.md.
 
 ARG NODE_IMAGE=docker.io/library/node:26.11.1-trixie-slim
 
@@ -30,16 +26,11 @@ ENV NODE_ENV=production \
     REPLAY_PLAYER_PATH=/app/replay-player/player.js \
     GEO_DATABASE_PATH=/app/data/geo/dbip-city-lite.mmdb
 WORKDIR /app
-# pg_dump for the worker's scheduled backups (docs/deployment.md, "Backups"):
-# PostgreSQL 18's client, to match the stack's PostgreSQL 18. Debian trixie
-# ships 17, which refuses to dump a newer server, so it comes from the
-# PostgreSQL project's own Debian repository, which postgresql-common's script
-# adds with its signing key; the repository's source list is removed after,
-# so an image built on this one runs `apt-get update` against Debian alone.
-# Pinned exactly. That repository keeps only the latest minor of each package,
-# so when this version is gone the build fails at this step: bump it to the
-# one `apt-cache policy postgresql-client-18` lists (docs/deployment.md,
-# "Images and releases"). About 70 MB.
+# Backups need a PostgreSQL 18 client; Debian trixie ships 17, which cannot
+# dump newer servers. Use the PostgreSQL repository, then remove its source list.
+# It keeps only the latest minor: if this pin disappears, use the version from
+# `apt-cache policy postgresql-client-18`. Adds about 70 MB.
+# See docs/deployment.md, "Backups" and "Images and releases".
 ARG POSTGRESQL_CLIENT_VERSION=18.7-1.pgdg13+5
 RUN apt-get update \
  && apt-get install -y --no-install-recommends ca-certificates postgresql-common \
@@ -49,21 +40,14 @@ RUN apt-get update \
  && rm -f /etc/apt/sources.list.d/pgdg.list /etc/apt/sources.list.d/pgdg.sources \
  && rm -rf /var/lib/apt/lists/* \
  && pg_dump --version
-# The API bundles its dependencies, so dist/ needs only Node.js. Each build
-# output carries THIRD_PARTY_LICENSES.txt for the code it bundles.
+# Bundled dependencies need only Node.js. Build outputs include THIRD_PARTY_LICENSES.txt.
 COPY --from=build /src/apps/api/dist ./dist
 COPY --from=build /src/apps/web/dist ./dashboard
-# The tracker, and beside it what it loads: v.js to measure Web Vitals,
-# r.js to record session replays around errors, h.js for heatmaps,
-# o.js for the heatmap overlay on a page opened from the dashboard, and
-# s.js, which o.js loads to save a view of the page. Every
-# script packages/tracker/vite.config.ts builds (deploy-files.test.ts).
+# Include every script built by packages/tracker/vite.config.ts (deploy-files.test.ts).
 COPY --from=build /src/packages/tracker/dist/tracker.js /src/packages/tracker/dist/v.js /src/packages/tracker/dist/r.js /src/packages/tracker/dist/h.js /src/packages/tracker/dist/o.js /src/packages/tracker/dist/s.js ./tracker/
-# The session replay player, which the dashboard's player page loads.
 COPY --from=build /src/packages/replay-player/dist/player.js /src/packages/replay-player/dist/THIRD_PARTY_LICENSES.txt ./replay-player/
 COPY LICENSE THIRD_PARTY_NOTICES.md ./
-# The location database and data-center ranges live in a volume mounted
-# here, which the worker keeps current (and `node dist/update-geo.mjs` updates by hand).
+# The worker updates location data in this mounted volume.
 RUN mkdir -p data/geo && chown node:node data/geo
 USER node
 EXPOSE 3000

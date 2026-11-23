@@ -1,28 +1,8 @@
-# Refreshes the referrer spam list shipped in the repository
-# (apps/api/src/enrichment/referrer-spam/list.ts) from Matomo's community
-# list, weekly, through a pull request for a person to review.
-#
-# 1. Runs apps/api/scripts/update-referrer-spam.ts with plain Node.js (it
-#    needs no installed packages). Its exit code says what happened: 0 the
-#    list changed, 2 nothing changed, anything else failed (its checks:
-#    hostnames only, at least 1,000, the guard lists). It gets the
-#    workflow's token for GitHub's API.
-# 2. When the list changed, installs the packages and runs the checks that
-#    need no database (vp check, the referrer spam tests): the pull request
-#    starts no other workflow, so these are the checks it gets.
-# 3. Then commits it on the bot branch
-#    bot/referrer-spam-list (force-updated: the bot owns it, nobody else
-#    pushes there), and opens a pull request to main, or updates the one
-#    already open.
-#
-# Nothing changed ends the job cleanly; a failed check fails it, and no
-# pull request is opened. Ottertrail's own additions (additions.ts) are
-# never touched. A pull request opened with GITHUB_TOKEN starts no other
-# workflow. It needs Settings, Actions, General, "Allow GitHub Actions to
-# create and approve pull requests" (docs/development.md, "Maintenance").
-#
-# The actions are pinned to exact commits, as in release.yml; the comment
-# names the release.
+# Refresh apps/api/src/enrichment/referrer-spam/list.ts from Matomo.
+# PRs opened with GITHUB_TOKEN start no other workflows, so run checks here.
+# The bot owns bot/referrer-spam-list and force-updates it.
+# Enable "Allow GitHub Actions to create and approve pull requests"
+# (Settings, Actions, General). See docs/development.md, "Maintenance".
 name: Referrer spam list
 
 on:
@@ -39,7 +19,6 @@ concurrency:
 
 jobs:
   update:
-    # Forks do not run it.
     if: github.repository == 'ottertrail/ottertrail'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -73,11 +52,7 @@ jobs:
                exit 1 ;;
           esac
 
-      # The pull request starts no other workflow (GITHUB_TOKEN), so the
-      # checks that need no database run here, before anything is pushed:
-      # the format, lint, and type checks of the whole workspace (vp check),
-      # and the referrer spam tests (spam-rules.test.ts, which reads the new
-      # list). The packages install as the Dockerfile installs them.
+      # GITHUB_TOKEN PRs start no other workflows. Check before pushing.
       - name: Install dependencies
         if: steps.update.outputs.changed == 'true'
         run: |
