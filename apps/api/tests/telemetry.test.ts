@@ -11,7 +11,6 @@ import type { ProjectKeyCache } from "../src/collection/project-keys.ts";
 import { loadConfig } from "../src/config.ts";
 import { fingerprint } from "../src/errors/fingerprint.ts";
 import { SecretKeyLookups } from "../src/telemetry/key-lookups.ts";
-import { MAX_DAYS_PER_REQUEST } from "../src/telemetry/normalize.ts";
 import {
   LOGS_MESSAGES,
   METRICS_MESSAGES,
@@ -705,12 +704,12 @@ describe("bodies", () => {
 });
 
 describe("days", () => {
-  test(`a request's records past its first ${MAX_DAYS_PER_REQUEST} days are refused in partial_success, and not charged`, async () => {
+  test("every day within the retention is stored, and refused records are not charged", async () => {
     const app = buildApp({
       db: dashboard.db,
       telemetry: {
         clickhouse: dashboard.reader.client,
-        projectLimit: { capacity: 32, refillPerSecond: 0.001 },
+        projectLimit: { capacity: 64, refillPerSecond: 0.001 },
       },
     });
     try {
@@ -723,10 +722,10 @@ describe("days", () => {
           endTimeUnixNano: String(start + 1_000_000n),
         });
       };
-      // One span on each of the first 8 days, then 20 on a ninth.
+      // A span on each of the 30 days kept, and 20 older ones.
       const spans = [
-        ...Array.from({ length: MAX_DAYS_PER_REQUEST }, (_, day) => onDay(day)),
-        ...Array.from({ length: 20 }, () => onDay(MAX_DAYS_PER_REQUEST)),
+        ...Array.from({ length: 30 }, (_, day) => onDay(day)),
+        ...Array.from({ length: 20 }, () => onDay(31)),
       ];
       const response = await post("/v1/traces", protobufTraces(spans), {
         key: project.secretKey,
@@ -736,14 +735,12 @@ describe("days", () => {
       expect(decodeResponse(TRACE_MESSAGES.response, response.rawPayload)).toEqual({
         partialSuccess: {
           rejectedSpans: 20,
-          errorMessage: `20 of 28 spans refused: records past the first ${MAX_DAYS_PER_REQUEST} days (UTC) of the request: send other days apart.`,
+          errorMessage: "20 of 50 spans refused: times older than the 30 days telemetry is kept.",
         },
       });
-      expect(await storedRows(dashboard.reader.client, "spans", project.id)).toHaveLength(
-        MAX_DAYS_PER_REQUEST,
-      );
-      // Charged for the 8 stored, so 22 more fit in the budget of 32.
-      const more = Array.from({ length: 22 }, () => onDay(0));
+      expect(await storedRows(dashboard.reader.client, "spans", project.id)).toHaveLength(30);
+      // Charged for the 30 stored, so 34 more fit in the budget of 64.
+      const more = Array.from({ length: 34 }, () => onDay(0));
       expect(
         (await post("/v1/traces", protobufTraces(more), { key: project.secretKey, app }))
           .statusCode,

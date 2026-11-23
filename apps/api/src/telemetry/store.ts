@@ -25,11 +25,11 @@ export interface TelemetryRows {
  * log record's arrival is ClickHouse's clock as it writes it (0005), which
  * the live view compares with ClickHouse's own (telemetry/logs.ts).
  *
- * Each day is a partition. An OTLP request holds at most
- * MAX_DAYS_PER_REQUEST days (normalize.ts), but ClickHouse's guard (an
- * error past 100 partitions a block) stays off: asynchronous inserts can
- * join other requests' rows, other projects' included, into one block,
- * which would then fail together.
+ * Each day is a partition, and a request's records fall on at most the
+ * retention's days plus two (normalize.ts refuses other times). ClickHouse's
+ * guard (an error past 100 partitions a block) stays off: a retention of up
+ * to a year passes it, and asynchronous inserts can join other requests'
+ * rows, other projects' included, into one block, which would fail together.
  */
 export async function insertTelemetry(
   clickhouse: ClickHouseClient,

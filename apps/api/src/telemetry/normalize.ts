@@ -191,28 +191,6 @@ export interface Outcome {
   sharedBytes: number;
 }
 
-/**
- * Days (UTC) one request's records may fall on: each is a partition of
- * every table it writes to, so a request spread over many days would make
- * that many parts at once. Records past them are refused, and counted.
- */
-export const MAX_DAYS_PER_REQUEST = 8;
-const PAST_THE_DAYS = `records past the first ${MAX_DAYS_PER_REQUEST} days (UTC) of the request: send other days apart`;
-
-/** The days a request's records fall on, the first MAX_DAYS_PER_REQUEST in its order. */
-class Days {
-  readonly #seen = new Set<bigint>();
-
-  /** Whether a record at `ns` falls on one of them, taking its day if there is room. */
-  admit(ns: bigint): boolean {
-    const day = ns / NANOS_PER_DAY;
-    if (this.#seen.has(day)) return true;
-    if (this.#seen.size >= MAX_DAYS_PER_REQUEST) return false;
-    this.#seen.add(day);
-    return true;
-  }
-}
-
 /** Counts refused records and their reasons, each reason once. */
 class Refusals {
   count = 0;
@@ -525,7 +503,6 @@ export function normalizeTraces(
   const rows: SpanRow[] = [];
   const errors: NewEvent[] = [];
   const refusals = new Refusals();
-  const days = new Days();
   let records = 0;
   let sharedBytes = 0;
   for (const resourceSpans of messages(request, "resourceSpans")) {
@@ -566,10 +543,6 @@ export function normalizeTraces(
         const links = messages(span, "links");
         const status = message(span, "status");
         const statusCode = status === undefined ? 0 : enumValue(status, "code", 2);
-        if (!days.admit(start)) {
-          refusals.add(PAST_THE_DAYS);
-          continue;
-        }
         sharedBytes += resource.bytes;
         rows.push({
           ...shared,
@@ -663,7 +636,6 @@ export function normalizeLogs(
   const rows: LogRow[] = [];
   const errors: NewEvent[] = [];
   const refusals = new Refusals();
-  const days = new Days();
   let records = 0;
   let sharedBytes = 0;
   for (const resourceLogs of messages(request, "resourceLogs")) {
@@ -705,10 +677,6 @@ export function normalizeLogs(
           attributes,
           dropped_attributes_count: droppedCount(record, aiBody ? dropped + 1 : dropped),
         };
-        if (!days.admit(at)) {
-          refusals.add(PAST_THE_DAYS);
-          continue;
-        }
         sharedBytes += resource.bytes;
         const rowId = contentId(resource, row);
         rows.push({ ...row, resource_attributes: resource.attributes, id: rowId });
@@ -781,7 +749,6 @@ export function normalizeMetrics(
   const points: PointRow[] = [];
   const histograms: HistogramRow[] = [];
   const refusals = new Refusals();
-  const days = new Days();
   let records = 0;
   let sharedBytes = 0;
   for (const resourceMetrics of messages(request, "resourceMetrics")) {
@@ -836,10 +803,6 @@ export function normalizeMetrics(
               attributes,
               dropped_attributes_count: droppedCount(point, dropped),
             };
-            if (!days.admit(times.time)) {
-              refusals.add(PAST_THE_DAYS);
-              continue;
-            }
             sharedBytes += resource.bytes;
             points.push({
               ...row,
@@ -910,10 +873,6 @@ export function normalizeMetrics(
               attributes,
               dropped_attributes_count: droppedCount(point, dropped),
             };
-            if (!days.admit(times.time)) {
-              refusals.add(PAST_THE_DAYS);
-              continue;
-            }
             sharedBytes += resource.bytes;
             histograms.push({
               ...row,
