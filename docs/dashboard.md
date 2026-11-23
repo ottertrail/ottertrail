@@ -193,7 +193,7 @@ A page that cannot show takes a state of its own in its place (`components/route
 ></script>
 ```
 
-- `src`: the instance serves the built tracker at `/t.js`, and the Web Vitals script it loads at `/v.js`. A short, neutral name, because ad-block lists often match file names such as `tracker.js` or `analytics.js`. Browsers may cache it for an hour, then check it again with its ETag, so a new tracker reaches sites within an hour. The API reads the file on each request, so a new build needs no restart; until the tracker is built (`vp run -r build`), `/t.js` and `/v.js` answer 503, and a missing one is logged once.
+- `src`: the instance serves the built tracker at `/t.js`, and the Web Vitals script it loads at `/v.js`. A short, neutral name, because ad-block lists often match file names such as `tracker.js` or `analytics.js`. Browsers may cache it for an hour, then check it again with its ETag, so a new tracker reaches sites within an hour. The API keeps each file in memory with its ETag and reads it again only when its modification time or size changes, which it checks on each request, so a new build needs no restart; until the tracker is built (`vp run -r build`), `/t.js` and `/v.js` answer 503, and a missing one is logged once.
 - `data-key`: the project's public key. It only lets pages on the allowed sites send events; it cannot read anything.
 - `data-host`: where events go (`/api/events` on the same instance).
 - `data-environment` and `data-release` (optional): where the site runs, such as `staging`, and which version of it ([web analytics](web-analytics.md#environments-and-releases)). The Install tab explains both under the snippet; without them, events count as `production`.

@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 import type { FastifyPluginCallback, FastifyReply, FastifyRequest } from "fastify";
@@ -49,12 +49,36 @@ export const SNAPSHOT_SCRIPT_URL_PATH = "/s.js";
  */
 const reportedMissing = new Set<string>();
 
-/** One built script, read on each request, so a new build needs no restart. */
+interface LoadedScript {
+  mtimeMs: number;
+  size: number;
+  script: Buffer;
+  etag: string;
+}
+
+/** Each script as last read, by path: read and hashed again only when its file changes. */
+const loaded = new Map<string, LoadedScript>();
+
+async function loadScript(path: string): Promise<LoadedScript> {
+  const { mtimeMs, size } = await stat(path);
+  const cached = loaded.get(path);
+  if (cached?.mtimeMs === mtimeMs && cached.size === size) return cached;
+  const script = await readFile(path);
+  const etag = `"${createHash("sha256").update(script).digest("base64url").slice(0, 27)}"`;
+  // The stat before the read: a build written in between is read again next time.
+  const fresh = { mtimeMs, size, script, etag };
+  loaded.set(path, fresh);
+  return fresh;
+}
+
+/** One built script, checked on each request, so a new build needs no restart. */
 async function sendScript(request: FastifyRequest, reply: FastifyReply, path: string) {
   let script: Buffer;
+  let etag: string;
   try {
-    script = await readFile(path);
+    ({ script, etag } = await loadScript(path));
   } catch {
+    loaded.delete(path);
     if (!reportedMissing.has(path)) {
       reportedMissing.add(path);
       request.log.error(
@@ -68,7 +92,6 @@ async function sendScript(request: FastifyRequest, reply: FastifyReply, path: st
       .type("text/plain; charset=utf-8")
       .send("The tracker script has not been built on this instance.");
   }
-  const etag = `"${createHash("sha256").update(script).digest("base64url").slice(0, 27)}"`;
   reply
     .header("cache-control", "public, max-age=3600")
     .header("etag", etag)
@@ -87,8 +110,9 @@ async function sendScript(request: FastifyRequest, reply: FastifyReply, path: st
  * short and neutral: ad-block lists often match file names such as
  * "tracker.js" or "analytics.js".
  *
- * Each file is read on each request (about 9 KB), so a new build is served
- * without restarting the API. Browsers may cache them for an hour and then
+ * Each file is kept in memory with its ETag, and its modification time and
+ * size checked on each request, so a new build is served without
+ * restarting the API. Browsers may cache them for an hour and then
  * revalidate them with their ETags.
  */
 export const trackerScriptRoutes: FastifyPluginCallback<{ scriptPath: string }> = (

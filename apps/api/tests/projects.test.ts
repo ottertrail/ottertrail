@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -523,6 +523,26 @@ describe("tracker script", () => {
     const etag = String(response.headers.etag);
     const again = await app.inject({ url: "/t.js", headers: { "if-none-match": etag } });
     expect(again.statusCode).toBe(304);
+  });
+
+  test("keeps each script in memory until its file changes", async () => {
+    const path = join(directory, "tracker.js");
+    // A whole second, which utimes sets exactly.
+    const mtime = new Date("2026-11-01T00:00:00Z");
+    await utimes(path, mtime, mtime);
+    const first = await app.inject({ url: "/t.js" });
+    // The same size and time: taken for the file already read.
+    await writeFile(path, "console.log('TRACKER');\n");
+    await utimes(path, mtime, mtime);
+    const same = await app.inject({ url: "/t.js" });
+    expect(same.body).toBe(first.body);
+    expect(same.headers.etag).toBe(first.headers.etag);
+    // A new build: read again.
+    await writeFile(path, "console.log('tracker, rebuilt');\n");
+    const rebuilt = await app.inject({ url: "/t.js" });
+    expect(rebuilt.body).toBe("console.log('tracker, rebuilt');\n");
+    expect(rebuilt.headers.etag).not.toBe(first.headers.etag);
+    await writeFile(path, "console.log('tracker');\n");
   });
 
   test("serves the Web Vitals script it loads, v.js, from beside it", async () => {
