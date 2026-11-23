@@ -25,9 +25,9 @@ export interface TelemetryRows {
  * log record's arrival is ClickHouse's clock as it writes it (0005), which
  * the live view compares with ClickHouse's own (telemetry/logs.ts).
  *
- * A request may hold records of many days, each its own partition: more
- * than ClickHouse's default 100 a block is a warning here, not an error,
- * as a retention of up to a year allows.
+ * Each day is a partition. An OTLP request holds at most
+ * MAX_DAYS_PER_REQUEST days (routes.ts), so ClickHouse's own guard, an
+ * error past 100 partitions a block, stays on.
  */
 export async function insertTelemetry(
   clickhouse: ClickHouseClient,
@@ -46,10 +46,6 @@ export async function insertTelemetry(
       ["ai_calls", arrived(rows.ai_calls)],
     ];
   await Promise.all(
-    tables.map(async ([table, values]) =>
-      insertRows(clickhouse, table, values ?? [], {
-        throw_on_max_partitions_per_insert_block: 0,
-      }),
-    ),
+    tables.map(async ([table, values]) => insertRows(clickhouse, table, values ?? [])),
   );
 }

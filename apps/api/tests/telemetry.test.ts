@@ -16,7 +16,7 @@ import {
   STATUS_MESSAGE,
   TRACE_MESSAGES,
 } from "../src/telemetry/proto/definitions.ts";
-import { telemetryRoutes } from "../src/telemetry/routes.ts";
+import { MAX_DAYS_PER_REQUEST, telemetryRoutes } from "../src/telemetry/routes.ts";
 import { MAX_MESSAGES } from "../src/telemetry/wire.ts";
 import { signedInDashboard } from "./helpers/dashboard.ts";
 import { countEvents, storedEvents } from "./helpers/events.ts";
@@ -694,6 +694,38 @@ describe("bodies", () => {
     expect(fromJson.statusCode).toBe(413);
     expect(fromJson.json()).toEqual({ code: 3, message });
     expect(await storedRows(dashboard.reader.client, "spans", project.id)).toEqual([]);
+  });
+});
+
+describe("days", () => {
+  test(`a request's records fall on at most ${MAX_DAYS_PER_REQUEST} days, or none is stored`, async () => {
+    const project = await newProject("Many days");
+    const DAY_MS = 86_400_000;
+    const onDays = (count: number) =>
+      protobufTraces(
+        Array.from({ length: count }, (_, day) => {
+          const start = nowNs(-day * DAY_MS - 60_000);
+          return protobufSpan(randomHex(16), randomHex(8), {
+            startTimeUnixNano: String(start),
+            endTimeUnixNano: String(start + 1_000_000n),
+          });
+        }),
+      );
+    const tooMany = await post("/v1/traces", onDays(MAX_DAYS_PER_REQUEST + 1), {
+      key: project.secretKey,
+    });
+    expect(tooMany.statusCode).toBe(413);
+    expect(statusOf(tooMany.rawPayload).message).toBe(
+      `A request may hold records of at most ${MAX_DAYS_PER_REQUEST} days (UTC). This request holds ${MAX_DAYS_PER_REQUEST + 1}. Send fewer days at a time.`,
+    );
+    expect(await storedRows(dashboard.reader.client, "spans", project.id)).toEqual([]);
+    const fits = await post("/v1/traces", onDays(MAX_DAYS_PER_REQUEST), {
+      key: project.secretKey,
+    });
+    expect(fits.statusCode).toBe(200);
+    expect(await storedRows(dashboard.reader.client, "spans", project.id)).toHaveLength(
+      MAX_DAYS_PER_REQUEST,
+    );
   });
 });
 
