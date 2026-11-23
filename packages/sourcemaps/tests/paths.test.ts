@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { describe, expect, test } from "vite-plus/test";
 
 import { urlPathFor } from "../src/find.ts";
-import { normalizeUrlPrefix } from "../src/options.ts";
+import { normalizeUrlPrefix, parseCommand } from "../src/options.ts";
 
 describe("normalizeUrlPrefix", () => {
   test.each([
@@ -57,5 +57,22 @@ describe("urlPathFor", () => {
   test("matches new URL(frameUrl).pathname for the file served there", () => {
     const frame = "https://example.com/static/my%20assets/caf%C3%A9.js?v=2";
     expect(urlPathFor("/static/", join("my assets", "café.js"))).toBe(new URL(frame).pathname);
+  });
+});
+
+describe("the default concurrency", () => {
+  test("is the server's limit for one project: 2 uploads at once", () => {
+    const parsed = parseCommand(
+      [
+        "upload",
+        import.meta.dirname,
+        "--release",
+        "1.0",
+        "--host",
+        "https://analytics.example.com",
+      ],
+      { OTTERTRAIL_SECRET_KEY: `sk_${"0".repeat(32)}` },
+    );
+    expect(parsed).toMatchObject({ kind: "upload", options: { concurrency: 2 } });
   });
 });

@@ -20,14 +20,14 @@ replaced  /assets/vendor-9c1e.js  assets/vendor-9c1e.js.map
 Release 1.4.2: 1 stored, 1 replaced, 0 failed.
 ```
 
-| Option                  | Meaning                                                                                                                              |
-| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| `--release <release>`   | Required. The release, the same as the tracker's `data-release` (below).                                                             |
-| `--host <url>`          | Required. The Ottertrail address, such as `https://analytics.example.com`, with no path.                                             |
-| `--url-prefix <path>`   | Where the build directory is served on the site. Default `/`.                                                                        |
-| `--concurrency <n>`     | Uploads at the same time, 1 to 8. Default 4. The server takes a few at once and asks the rest to wait; those waits are not failures. |
-| `--dry-run`             | List what would be uploaded, with each file's URL path, and send nothing.                                                            |
-| `--delete-after-upload` | Delete each `.map` file once its upload succeeded.                                                                                   |
+| Option                  | Meaning                                                                                                                                                                                                                                                     |
+| ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--release <release>`   | Required. The release, the same as the tracker's `data-release` (below).                                                                                                                                                                                    |
+| `--host <url>`          | Required. The Ottertrail address, such as `https://analytics.example.com`, with no path.                                                                                                                                                                    |
+| `--url-prefix <path>`   | Where the build directory is served on the site. Default `/`.                                                                                                                                                                                               |
+| `--concurrency <n>`     | Uploads at the same time, 1 to 8. Default 2, the server's limit for one project: it stores 2 of a project's maps at once and asks the rest to wait (429), and the command sends them again. Those waits are not failures, but each one sends its map again. |
+| `--dry-run`             | List what would be uploaded, with each file's URL path, and send nothing.                                                                                                                                                                                   |
+| `--delete-after-upload` | Delete each `.map` file once its upload succeeded.                                                                                                                                                                                                          |
 
 The secret key is read from the `OTTERTRAIL_SECRET_KEY` environment variable only. There is no flag for it, because command lines end up in shell history and CI logs, and the command never prints it. A dry run works without a key.
 

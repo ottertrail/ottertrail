@@ -28,7 +28,9 @@ Options:
   --url-prefix <path>     Where <directory> is served on the site (default: /).
                           Example: --url-prefix /static/ when dist/app.js is
                           loaded from /static/app.js.
-  --concurrency <n>       Uploads at the same time, 1 to ${MAX_CONCURRENCY} (default: 4).
+  --concurrency <n>       Uploads at the same time, 1 to ${MAX_CONCURRENCY} (default: 2). The
+                          server stores 2 of a project's maps at once; it asks
+                          more to wait and send again.
   --dry-run               List what would be uploaded, and send nothing.
   --delete-after-upload   Delete each .map file once its upload succeeded.
   -h, --help              Show this help.`;
@@ -178,7 +180,8 @@ export function parseCommand(
     );
   }
 
-  let concurrency = 4;
+  // The server's own limit for one project (apps/api/src/source-maps/routes.ts).
+  let concurrency = 2;
   if (values.concurrency !== undefined) {
     concurrency = /^\d+$/u.test(values.concurrency) ? Number(values.concurrency) : Number.NaN;
     if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > MAX_CONCURRENCY) {
