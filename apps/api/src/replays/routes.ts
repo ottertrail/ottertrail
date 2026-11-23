@@ -32,14 +32,11 @@ import {
 const UUID_PATTERN =
   "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$";
 
-/** Chunks per client address: one replay is a few dozen at most. */
+/** One replay usually needs at most a few dozen chunks. */
 export const DEFAULT_REPLAY_IP_LIMIT: RateLimit = { capacity: 100, refillPerSecond: 2 };
 /**
- * Replay bytes, in KiB, per project and per instance, apart from events'
- * budgets, so recordings never crowd events out: bursts of a few replays,
- * and a steady flow of about one 2 MB replay every 8 seconds for a project
- * and 3 for the instance. Provisional, until measured on real
- * sites (docs/session-replay.md, "Decisions still open").
+ * Separate KiB budgets protect event ingestion. Allows about one 2 MB replay per 8 seconds per
+ * project, three for the instance. Provisional (docs/session-replay.md, "Decisions still open").
  */
 export const DEFAULT_REPLAY_PROJECT_LIMIT: RateLimit = { capacity: 8192, refillPerSecond: 256 };
 export const DEFAULT_REPLAY_INSTANCE_LIMIT: RateLimit = {
@@ -47,11 +44,9 @@ export const DEFAULT_REPLAY_INSTANCE_LIMIT: RateLimit = {
   refillPerSecond: 768,
 };
 /**
- * Chunks this process works on at once, and one project's of them, each
- * counted from when its body has arrived (at most 64 KB) until it is
- * stored: it holds that body and, while checked, up to 1 MiB unpacked. A
- * page leaving sends all its pieces at once, by beacon, which never
- * retries, so one project's cap is well above a replay's 100 pieces.
+ * Count slots after body arrival through storage: each holds at most 64 KB compressed and 1 MiB
+ * unpacked. Allow over 100 chunks per project because leaving-page beacons send all chunks without
+ * retries.
  */
 export const DEFAULT_REPLAY_MAX_IN_FLIGHT = 256;
 export const DEFAULT_REPLAY_MAX_IN_FLIGHT_PER_PROJECT = 128;
@@ -59,9 +54,8 @@ const KEY = new RegExp(PUBLIC_KEY_PATTERN);
 
 const problem = (error: string, message: string) => ({ error, message });
 /**
- * The answer to every chunk accepted: stored, a retry of one stored, or
- * filtered (blocked address, bot, data center), so a sender never learns
- * which.
+ * Same acknowledgment for stored, duplicate, and filtered chunks so senders cannot distinguish
+ * them.
  */
 const RECEIVED = { received: 1 } as const;
 
@@ -88,26 +82,18 @@ interface ChunkQuery {
 }
 
 /**
- * POST /api/replays?key=pk_…&replay=<uuid>&seq=<n>&last=0|1&cut=0|1
- *
- * A chunk of a session replay (docs/session-replay.md), as the tracker's
- * recorder sends it: one gzip member of a piece of the recording's JSON,
- * as text/plain, so a page sends it without a preflight, and with a beacon
- * when it is closing. Checked as events are, cheapest first: the address's
- * rate, the body's size, the public key, the page's origin against the
- * project's allowed hostnames, the project's replay setting, its blocked
- * addresses, bots, and its
- * own budgets in bytes. 202 once PostgreSQL has it; the worker joins a
- * replay's chunks (replays.ts).
+ * text/plain gzip allows preflight-free uploads and leaving-page beacons (docs/session-replay.md).
+ * Validate rates, key, Origin, project settings, filters, and byte budgets before storage. Return
+ * 202 after PostgreSQL stores the chunk; replays.ts joins it.
  */
 export const replayCollectionRoutes: FastifyPluginCallback<{
   db: Kysely<Database>;
   projects: ProjectKeyCache;
-  /** Counts for the Activity tab (activity/activity.ts). */
+  /** Activity tab counts (activity/activity.ts). */
   activity: IngestActivity;
-  /** Compressed replay bytes the instance may keep (Config.replayStorageBytes). */
+  /** Compressed instance quota (Config.replayStorageBytes). */
   limitBytes: number;
-  /** Whether the install has an object store to keep replays in: without one, they are off. */
+  /** Replays are disabled without an object store. */
   storeConfigured: boolean;
   ipLimit?: RateLimit;
   projectLimit?: RateLimit;
@@ -127,7 +113,7 @@ export const replayCollectionRoutes: FastifyPluginCallback<{
     activity,
   } = options;
   const ipLimiter = new TokenBucketLimiter(options.ipLimit ?? DEFAULT_REPLAY_IP_LIMIT, { now });
-  // In KiB: a chunk costs its size.
+  // Charge compressed KiB.
   const budget = new EventBudget(
     new TokenBucketLimiter(options.projectLimit ?? DEFAULT_REPLAY_PROJECT_LIMIT, { now }),
     new TokenBucketLimiter(options.instanceLimit ?? DEFAULT_REPLAY_INSTANCE_LIMIT, { now }),
@@ -136,10 +122,10 @@ export const replayCollectionRoutes: FastifyPluginCallback<{
     options.maxInFlight ?? DEFAULT_REPLAY_MAX_IN_FLIGHT,
     options.maxInFlightPerProject ?? DEFAULT_REPLAY_MAX_IN_FLIGHT_PER_PROJECT,
   );
-  /** The project each chunk's key names, found before its body is read. */
+  /** Resolve before reading the body. */
   const projectOf = new WeakMap<FastifyRequest, CollectingProject>();
 
-  // The chunk as bytes: gzip, kept as sent.
+  // Keep gzip bytes as sent.
   app.addContentTypeParser(
     ["text/plain", "application/octet-stream"],
     { parseAs: "buffer", bodyLimit: MAX_CHUNK_BYTES },
@@ -148,8 +134,7 @@ export const replayCollectionRoutes: FastifyPluginCallback<{
     },
   );
 
-  // As for events: the page may read every answer, so the recorder knows
-  // whether trying again can help (collection/routes.ts).
+  // Expose all answers so the recorder can decide whether to retry (collection/routes.ts).
   app.addHook("onSend", async (request, reply) => {
     const origin = request.headers.origin;
     if (origin !== undefined) {
@@ -162,7 +147,7 @@ export const replayCollectionRoutes: FastifyPluginCallback<{
 
   app.setErrorHandler((error: FastifyError, request, reply) => {
     if (error.validation !== undefined || error.statusCode === 400) {
-      // Never the validator's own text: the caller is not signed in.
+      // Do not expose validator details to unauthenticated callers.
       return reply
         .code(400)
         .send(
@@ -204,14 +189,13 @@ export const replayCollectionRoutes: FastifyPluginCallback<{
           },
         },
       },
-      // Before the body is read: the cheapest way to turn a flood away, the
-      // key's form, and the key itself.
+      // Reject rate and key failures before reading bodies.
       onRequest: async (request, reply) => {
         const result = ipLimiter.take(clientKey(request.ip));
         if (!result.allowed) return tooManyRequests(reply, result.retryAfterSeconds);
         const query: unknown = request.query;
         const key = typeof query === "object" && query !== null ? Reflect.get(query, "key") : "";
-        // One key of the public key's form: `?key=a&key=b` is an array.
+        // Repeated key parameters produce an array; require one key.
         if (typeof key !== "string" || !KEY.test(key)) {
           return reply
             .code(400)
@@ -230,8 +214,7 @@ export const replayCollectionRoutes: FastifyPluginCallback<{
         projectOf.set(request, project);
         return undefined;
       },
-      // Once the body has arrived: a slot of this process's and of the
-      // project's, so slow bodies hold none.
+      // Acquire slots after body arrival so slow uploads hold none.
       preHandler: async (request, reply) => {
         const project = projectOf.get(request);
         if (project === undefined) return undefined;
@@ -250,7 +233,7 @@ export const replayCollectionRoutes: FastifyPluginCallback<{
       onResponse: inFlight.finished,
       onRequestAbort: inFlight.finished,
     },
-    // The slot is held until the chunk is stored.
+    // Hold the slot through storage.
     async (request, reply) =>
       inFlight.run(request, async () => {
         const { replay, seq, last, cut } = request.query;
@@ -258,7 +241,6 @@ export const replayCollectionRoutes: FastifyPluginCallback<{
         if (project === undefined) {
           throw new Error("the replay onRequest hook must find its project first");
         }
-        // Known from here: what becomes of the chunk is counted, one item a chunk.
         const projectId = project.id;
         const count = (outcome: IngestOutcome, items = 0) => {
           activity.add(projectId, "replays", outcome, items);
@@ -273,7 +255,7 @@ export const replayCollectionRoutes: FastifyPluginCallback<{
               .send(problem("origin_not_allowed", "This site may not send to this project."));
           }
         }
-        // "replay_off" stops the page's recorder for the rest of its load.
+        // replay_off stops recording for this page load.
         if (project.replayMode !== "errors") {
           count("refused_disabled");
           return reply
@@ -308,9 +290,7 @@ export const replayCollectionRoutes: FastifyPluginCallback<{
                 .send(problem("payload_too_large", "A chunk unpacks to at most 1 MiB."))
             : reply.code(400).send(problem("invalid_request", "The chunk is not gzip."));
         }
-        // Accepted and ignored, as their events are (collection/routes.ts):
-        // the project's blocked addresses, bots, and data centers. Before the
-        // budget, so they cannot use it up.
+        // Filter before spending budgets, matching collection/routes.ts.
         if (isBlockedAddress(project.blocked, request.ip)) {
           count("filtered_spam", 1);
           return reply.code(202).send(RECEIVED);
@@ -360,7 +340,7 @@ export const replayCollectionRoutes: FastifyPluginCallback<{
                 ),
               );
           case "too_large":
-            // One replay's own limit: also a storage limit, which the sheet explains.
+            // The storage-limit UI also explains individual replay limits.
             count("refused_volume");
             return reply
               .code(413)
@@ -376,7 +356,7 @@ export const replayCollectionRoutes: FastifyPluginCallback<{
                 ),
               );
           default:
-            // A duplicate is a retry of a chunk already stored: accepted, no new item.
+            // Duplicates are accepted without counting a new chunk.
             count("accepted", result === "stored" ? 1 : 0);
             return reply.code(202).send(RECEIVED);
         }

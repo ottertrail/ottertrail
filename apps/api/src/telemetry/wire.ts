@@ -6,31 +6,25 @@ import { STATUS_MESSAGE, type SignalMessages } from "./proto/definitions.ts";
 import { MalformedError } from "./read.ts";
 
 /**
- * The messages one request may decode into (records, attributes, their
- * values, and what holds them). Decoding allocates for each, and an empty
- * one costs two bytes, so 16 MiB of them would take gigabytes; this many
- * take about as long and as much memory as decoding a large real batch
- * (20,000 spans of 20 attributes, about 820,000 messages). A Collector's
- * default batch, 8,192 spans, is about a third of it.
+ * Decoding allocates per message; empty messages need only two wire bytes, so 16 MiB could
+ * allocate gigabytes. This cap covers about 20,000 spans with 20 attributes (820,000 messages). A
+ * Collector's default 8,192-span batch is about a third.
  */
 export const MAX_MESSAGES = 1_000_000;
 
 /**
- * Elements of a list of doubles, floats, or 32-bit numbers (a histogram's
- * bounds) count as a message per this many: decoded, one takes about 32
- * bytes, a message about 100. A 64-bit integer (bucket counts) decodes to
- * a BigInt of about a message's size, and counts one, as does a string. In
- * JSON, where a list's type is not known, every element counts a quarter:
- * JSON.parse makes plain numbers and strings, never BigInts.
+ * Counts four doubles, floats, or 32-bit integers as one message: decoded elements use about 32
+ * bytes versus about 100 per message. Each 64-bit integer or string counts as one message. JSON
+ * elements count a quarter because JSON.parse creates no BigInts.
  */
 export const ELEMENTS_PER_MESSAGE = 4;
 
-/** A request holds more than MAX_MESSAGES messages: the answer is 413. */
+/** Maps to HTTP 413. */
 export class TooManyMessagesError extends Error {
   override name = "TooManyMessagesError";
 }
 
-/** How deep messages nest: protobufjs refuses past 100, as protoc does. */
+/** Matches protobufjs and protoc nesting limits. */
 const MAX_DEPTH = 100;
 
 function malformed(): MalformedError {
@@ -38,15 +32,12 @@ function malformed(): MalformedError {
 }
 
 /**
- * A field that counts: one holding a message, or a repeated scalar, each
- * element of which decoding allocates for. A packed list's elements are
- * `size` bytes each, or varints when it is 0; a repeated string's or
- * bytes' (null) one per occurrence. Each element weighs `quarters`
- * quarters of a message.
+ * Repeated scalars weigh `quarters` per element. Packed elements use `size` bytes or varints (0);
+ * strings and bytes (null) count per occurrence.
  */
 type CountedField = { message: protobuf.Type } | { size: 0 | 4 | 8 | null; quarters: 1 | 4 };
 
-/** Decoded to Long, then BigInt: as large as a message. */
+/** Long then BigInt decoding costs about as much as a message. */
 const WIDE_INTEGERS = new Set(["fixed64", "sfixed64", "uint64", "int64", "sint64"]);
 
 const FIXED_SIZES: Record<string, 4 | 8> = {
@@ -58,7 +49,6 @@ const FIXED_SIZES: Record<string, 4 | 8> = {
   sfixed32: 4,
 };
 
-/** For each message type, its fields that count: field number → how. */
 const countedFields = new WeakMap<protobuf.Type, Map<number, CountedField>>();
 
 function countedFieldsOf(type: protobuf.Type): Map<number, CountedField> {
@@ -83,12 +73,8 @@ function countedFieldsOf(type: protobuf.Type): Map<number, CountedField> {
 }
 
 /**
- * The messages a protobuf body decodes into, counted from the wire format
- * without decoding it or allocating: the body's own message, each
- * length-delimited field the definitions give a message type, at any depth,
- * and each element of a repeated scalar field, packed or not.
- * Throws TooManyMessagesError past `max`, MalformedError for a body that
- * is not protobuf.
+ * Counts the root, nested messages, and repeated scalars before decoding. Throws
+ * TooManyMessagesError past `max` and MalformedError for invalid protobuf.
  */
 export function countProtobufMessages(
   type: protobuf.Type,
@@ -108,7 +94,7 @@ export function countProtobufMessages(
     }
     throw malformed();
   };
-  /** List elements, in quarters of a message. */
+  /** Quarter-message units. */
   let quarters = 0;
   const total = () => count + Math.ceil(quarters / ELEMENTS_PER_MESSAGE);
   const add = (messages: number) => {
@@ -119,7 +105,6 @@ export function countProtobufMessages(
     quarters += found * weight;
     if (total() > max) throw new TooManyMessagesError(`more than ${max} messages`);
   };
-  // Each open message: its type, and where it ends.
   const open: { type: protobuf.Type; end: number }[] = [{ type, end: body.length }];
   for (;;) {
     const current = open.at(-1);
@@ -157,7 +142,6 @@ export function countProtobufMessages(
     else if (wireType === 5) position += 4;
     // Groups (3, 4) are not in OTLP; 6 and 7 are not wire types.
     else throw malformed();
-    // A repeated scalar's element, sent unpacked.
     if (counted !== undefined && !("message" in counted)) addElements(1, counted.quarters);
     if (position > current.end) throw malformed();
   }
@@ -173,18 +157,14 @@ const COMMA = 0x2c;
 const WHITESPACE = new Set([0x20, 0x09, 0x0a, 0x0d]);
 
 /**
- * The objects, arrays, and other array elements a JSON body parses into,
- * counted from its bytes without parsing: each { and [ outside a string,
- * and each value in an array that is neither, at ELEMENTS_PER_MESSAGE to
- * one. UTF-8 never puts these bytes
- * inside another character. Throws TooManyMessagesError past `max`.
+ * Counts containers plus scalar array elements at ELEMENTS_PER_MESSAGE to one before parsing.
+ * UTF-8 cannot embed these structural bytes in other characters. Throws TooManyMessagesError past
+ * `max`.
  */
 export function countJsonContainers(body: Uint8Array, max = MAX_MESSAGES): number {
   let count = 0;
   let inString = false;
-  // Whether each open container is an array.
   const arrays: boolean[] = [];
-  // Whether the next value starts an element of an array.
   let element = false;
   let elements = 0;
   const total = () => count + Math.ceil(elements / ELEMENTS_PER_MESSAGE);
@@ -211,7 +191,6 @@ export function countJsonContainers(body: Uint8Array, max = MAX_MESSAGES): numbe
     } else if (byte === COMMA) {
       element = arrays.at(-1) === true;
     } else if (starts) {
-      // A string, number, true, false, or null in an array.
       elements += 1;
       check();
       if (byte === QUOTE) inString = true;
@@ -223,9 +202,8 @@ export function countJsonContainers(body: Uint8Array, max = MAX_MESSAGES): numbe
 }
 
 /**
- * How many times a protobuf message's own field `number` occurs, read from
- * its bytes without decoding them: an exponential histogram's data points
- * (proto/definitions.ts). Throws MalformedError for bytes that are not one.
+ * Counts occurrences of an outer field without decoding exponential histogram data points
+ * (proto/definitions.ts). Throws MalformedError for invalid bytes.
  */
 export function countFields(bytes: Uint8Array, number: number): number {
   let count = 0;
@@ -257,7 +235,6 @@ export function countFields(bytes: Uint8Array, number: number): number {
   return count;
 }
 
-/** What a body decodes into, counted before decoding it: see the two functions above. */
 export function countMessages(
   messages: SignalMessages,
   body: Uint8Array,
@@ -269,7 +246,7 @@ export function countMessages(
     : countJsonContainers(body, max);
 }
 
-/** OTLP/HTTP's two encodings: an answer comes in the request's. */
+/** Responses use the request encoding. */
 export type Encoding = "protobuf" | "json";
 
 export const CONTENT_TYPES: Record<Encoding, string> = {
@@ -277,7 +254,7 @@ export const CONTENT_TYPES: Record<Encoding, string> = {
   json: "application/json",
 };
 
-/** The encoding a Content-Type names, or null for one OTLP does not use. */
+/** Returns null for unsupported content types. */
 export function encodingOf(contentType: string | undefined): Encoding | null {
   const type = (contentType ?? "").split(";", 1)[0]?.trim().toLowerCase();
   if (type === CONTENT_TYPES.protobuf) return "protobuf";
@@ -286,9 +263,8 @@ export function encodingOf(contentType: string | undefined): Encoding | null {
 }
 
 /**
- * An Export…ServiceRequest, decoded into the shape read.ts reads: from
- * protobuf with 64-bit numbers as bigint and bytes as Buffers, from JSON as
- * it is. Throws MalformedError when the body is not the encoding it says.
+ * Protobuf yields bigint and Buffers; JSON is unchanged (read.ts). Throws MalformedError for
+ * invalid bodies.
  */
 export function decodeRequest(messages: SignalMessages, body: Buffer, encoding: Encoding): object {
   if (encoding === "protobuf") {
@@ -310,7 +286,7 @@ export function decodeRequest(messages: SignalMessages, body: Buffer, encoding: 
   return parsed;
 }
 
-/** A message in the given encoding: protobuf bytes, or OTLP's JSON (64-bit numbers as text). */
+/** JSON encodes 64-bit integers as text. */
 export function encodeMessage(
   type: SignalMessages["response"],
   value: object,
@@ -324,10 +300,7 @@ export function encodeMessage(
   return JSON.stringify(type.toObject(message, { longs: String, json: true }));
 }
 
-/**
- * google.rpc.Status codes (google/rpc/code.proto) for the HTTP statuses
- * these routes answer with.
- */
+/** google.rpc.Status codes from google/rpc/code.proto. */
 const RPC_CODES: Record<number, number> = {
   400: 3, // INVALID_ARGUMENT
   401: 16, // UNAUTHENTICATED
@@ -338,7 +311,6 @@ const RPC_CODES: Record<number, number> = {
   503: 14, // UNAVAILABLE
 };
 
-/** An error answer's body: a Status, as protobuf or as {"code","message"}. */
 export function statusBody(httpStatus: number, text: string, encoding: Encoding): Buffer | string {
   return encodeMessage(
     STATUS_MESSAGE,

@@ -11,25 +11,13 @@ import type { ObjectStore } from "../storage/object-store.ts";
 import { deviceOf, type HeatmapDevice } from "./store.ts";
 
 /**
- * Saved heatmap views (docs/web-analytics.md, "Saved views"): a snapshot of
- * a page as the owner's own browser showed it, taken by the overlay (o.js
- * and s.js, packages/tracker/src/snapshot-take.ts) when they press "Save
- * this view", and uploaded with the overlay's session. The Heatmaps screen
- * draws the heatmap over it in the replay player's sandboxed frame.
- *
- * One per project, page path, and device class (the viewport's width, as
- * heatmaps class it). Each is an object in the store, gzip-compressed JSON
- * as sent, under a new random name:
- *
- *   heatmap-snapshots/<project_id>/<uuid>.json.gz
- *
- * PostgreSQL holds the current key (heatmap_snapshots). Saving again
- * replaces the row and deletes the old object; a project's deletion
- * deletes its prefix (clickhouse/delete-events.ts). Visitors' pages are
- * never stored: only a signed-in user's overlay session can save one.
- *
- * The API checks the snapshot's shape, not its contents: like a replay, it
- * is untrusted HTML, which only the player's sandboxed frame shows.
+ * Only authenticated overlay sessions save views; visitor pages are never stored
+ * (docs/web-analytics.md, "Saved views"; packages/tracker/src/snapshot-take.ts). Keep one per
+ * project, path, and device. Objects use random names under
+ * heatmap-snapshots/<project_id>/<uuid>.json.gz; heatmap_snapshots holds the current key.
+ * Replacing deletes the old object; project deletion removes its prefix
+ * (clickhouse/delete-events.ts). Validate shape only: HTML remains untrusted and must use the
+ * player's sandbox.
  */
 
 export const SNAPSHOT_PREFIX = "heatmap-snapshots/";
@@ -37,37 +25,28 @@ export const projectSnapshotPrefix = (projectId: string) => `${SNAPSHOT_PREFIX}$
 const newSnapshotKey = (projectId: string) =>
   `${projectSnapshotPrefix(projectId)}${randomUUID()}.json.gz`;
 
-/** The largest snapshot, compressed, in bytes (packages/tracker/src/snapshot-names.ts). */
+/** Compressed-byte cap matches packages/tracker/src/snapshot-names.ts. */
 export const MAX_SNAPSHOT_BYTES = 5_000_000;
-/** The largest snapshot unpacked, in bytes of JSON text. */
+/** Unpacked JSON byte cap. */
 export const MAX_SNAPSHOT_TEXT_BYTES = 32 * 1024 * 1024;
 /**
- * The most objects and arrays a snapshot's JSON may hold, and the most
- * values in all (every object, array, and comma-separated entry). The text
- * cap alone does not bound memory: 32 MiB of `{},` parses into millions of
- * objects. rrweb writes about three containers per element (the node, its
- * attributes, its children) and one per text node, so a very large page of
- * 80,000 elements and as many text nodes comes to about 320,000; these
- * leave room above that, and the pre-scan (structureOf) refuses a body past
- * them before JSON.parse runs.
+ * Pre-scan before JSON.parse: 32 MiB of {}, can allocate millions of objects. rrweb uses about
+ * three containers per element and one per text node; 80,000 of each needs about 320,000
+ * containers. These caps leave room above that while bounding memory.
  */
 export const MAX_SNAPSHOT_CONTAINERS = 500_000;
 export const MAX_SNAPSHOT_VALUES = 4_000_000;
-/**
- * The deepest nesting of objects and arrays: rrweb rebuilds a page by
- * recursion, about two levels per element (the node and its children), so
- * this allows pages over 200 elements deep, far past real ones.
- */
+/** rrweb rebuilds recursively at about two levels per element; allows pages over 200 elements deep. */
 export const MAX_SNAPSHOT_DEPTH = 500;
-/** Events in a snapshot at most: its meta, its full snapshot, and the stylesheets it brought. */
+/** Allows metadata, one full snapshot, and stylesheet events. */
 const MAX_EVENTS = 1000;
 
-// rrweb's numbers (@rrweb/types).
+// rrweb event numbers (@rrweb/types).
 const FULL_SNAPSHOT = 2;
 const INCREMENTAL = 3;
 const META = 4;
 const DOCUMENT_NODE = 0;
-/** Stylesheet rules, declarations, and adopted sheets: what a full snapshot brings with it. */
+/** rrweb sources for stylesheet rules, declarations, and adopted sheets. */
 const STYLE_SOURCES = new Set([8, 13, 15]);
 
 const unzip = promisify(gunzip);
@@ -89,11 +68,8 @@ export const SNAPSHOT_TOO_DEEP = problem(
 );
 
 /**
- * Counts the JSON's containers (objects and arrays) and values, and its
- * depth, outside strings, in one pass over its bytes; stops once one is
- * past its limit (`deep` when the depth). Only bytes of `{`, `[`, `}`, `]`,
- * `,`, `"`, and `\\` matter, which never occur inside a multi-byte UTF-8
- * character.
+ * Scans structural bytes outside strings, stopping at container/value caps or depth (`deep`).
+ * UTF-8 never embeds these bytes in multibyte characters.
  */
 export function structureOf(
   text: Uint8Array,
@@ -130,14 +106,13 @@ export function structureOf(
   return { containers, values, over: false, deep: false };
 }
 
-/** Checks run one at a time: each holds a parsed snapshot in memory. */
+/** Serialize checks because each holds a parsed snapshot in memory. */
 let checking: Promise<unknown> = Promise.resolve();
 const NOT_A_SNAPSHOT = problem("invalid_snapshot", "The body is not a heatmap snapshot.");
 
 /**
- * Refuses a `path` in the query that PostgreSQL cannot store (a NUL or an
- * unpaired surrogate, isStorableText), with 400 before any database work:
- * saved views keep the path in a row. A preValidation hook.
+ * preValidation rejects NUL and unpaired surrogates with 400 before database access; paths must
+ * fit PostgreSQL (isStorableText).
  */
 export async function storablePath(request: FastifyRequest, reply: FastifyReply) {
   const query: unknown = request.query;
@@ -149,7 +124,6 @@ export async function storablePath(request: FastifyRequest, reply: FastifyReply)
     .send(problem("invalid_query", "path contains a NUL character or an unpaired surrogate."));
 }
 
-/** What the API knows of a snapshot once checked. */
 export interface SnapshotInfo {
   device: HeatmapDevice;
   width: number;
@@ -162,10 +136,8 @@ export type ReadSnapshot =
   | { ok: false; status: 400 | 413; body: { error: string; message: string } };
 
 /**
- * Checks that gzip-compressed bytes are a snapshot as s.js writes it:
- * `{"v":1,"events":[…],"pageHeight":n}` and nothing else, its events
- * rrweb's, with one Meta event (the viewport's width and height), one full
- * snapshot of a document, and otherwise only style events.
+ * Requires v1 JSON with pageHeight and rrweb events: one Meta, one full document snapshot, and
+ * optional style events. Rejects other fields.
  */
 export function readSnapshot(body: Uint8Array): Promise<ReadSnapshot> {
   const turn = checking.then(() => checkSnapshot(body));
@@ -180,8 +152,7 @@ async function checkSnapshot(body: Uint8Array): Promise<ReadSnapshot> {
   let value: unknown;
   try {
     const text = await unzip(body, { maxOutputLength: MAX_SNAPSHOT_TEXT_BYTES });
-    // Counted before parsing: memory follows the objects, not the text, and
-    // the player's rebuild recurses as deep as the JSON nests.
+    // Bound object allocations and player recursion before parsing.
     const structure = structureOf(text);
     if (structure.deep) return { ok: false, status: 400, body: SNAPSHOT_TOO_DEEP };
     if (structure.over) return { ok: false, status: 413, body: SNAPSHOT_TOO_LARGE };
@@ -233,18 +204,16 @@ async function checkSnapshot(body: Uint8Array): Promise<ReadSnapshot> {
   };
 }
 
-/** One saved view, as the dashboard lists it. */
 export interface SnapshotRow {
   device: HeatmapDevice;
   width: number;
   height: number;
   pageHeight: number;
   savedAt: string;
-  /** Who saved it; null once that user was removed. */
+  /** Null after user deletion. */
   savedBy: string | null;
 }
 
-/** The page's saved views, one per device class at most. */
 export async function listSnapshots(
   db: Kysely<Database>,
   projectId: string,
@@ -268,7 +237,6 @@ export async function listSnapshots(
   }));
 }
 
-/** The object key of one saved view, or null. */
 export async function snapshotKey(
   db: Kysely<Database>,
   projectId: string,
@@ -289,16 +257,13 @@ export interface SnapshotLog {
   warn(fields: object, message: string): void;
 }
 
-/** One lock per project, path, and device: two saves of one view take turns. */
+/** Serialize saves per project, path, and device. */
 const lockView = (projectId: string, path: string, device: HeatmapDevice) =>
   sql`select pg_advisory_xact_lock(hashtextextended(${`heatmap-snapshot:${projectId}:${device}:${path}`}, 0))`;
 
 /**
- * Stores the snapshot and makes it the page's view for its device,
- * replacing the one before, whose object is then deleted. Returns null
- * when the project is gone meanwhile (its object is deleted again). A
- * failure of the store or the database throws, and leaves the earlier
- * view as it was.
+ * Replaces the saved view and deletes its old object. Failures preserve the prior view; concurrent
+ * project deletion returns null and removes the new object.
  */
 export async function saveSnapshot(
   db: Kysely<Database>,
@@ -326,7 +291,7 @@ export async function saveSnapshot(
   try {
     saved = await db.transaction().execute(async (trx) => {
       await lockView(projectId, path, info.device).execute(trx);
-      // Held until the end, so the project cannot be deleted meanwhile.
+      // Hold the project row through the transaction to prevent concurrent deletion.
       const project = await trx
         .selectFrom("projects")
         .select("id")
@@ -372,9 +337,8 @@ export async function saveSnapshot(
 }
 
 /**
- * Deletes one saved view: its object, then its row, in one transaction
- * that holds the row, so a failure of the store leaves both. False when
- * there was none.
+ * Delete the object before its locked row so store failures preserve both. Returns false if
+ * absent.
  */
 export async function deleteSnapshot(
   db: Kysely<Database>,
@@ -398,7 +362,7 @@ export async function deleteSnapshot(
   });
 }
 
-/** Deletes objects nothing points to any more; a failure is logged, not answered. */
+/** Cleanup failures are logged without failing the request. */
 async function deleteQuietly(store: ObjectStore, keys: readonly string[], log: SnapshotLog) {
   if (keys.length === 0) return;
   try {

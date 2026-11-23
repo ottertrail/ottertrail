@@ -1,10 +1,8 @@
 import { type Kysely, sql } from "kysely";
 
 /**
- * The overlay tokens' scope is renamed from 'heatmap:read' to
- * 'heatmap:overlay' (access/overlay-tokens.ts): a session reads the
- * heatmap and, for the owner and admins, saves a view of its page, so
- * "read" no longer describes it. Rows already made are renamed with it.
+ * Overlay sessions read heatmaps and let owners/admins save views, so use heatmap:overlay scope
+ * (access/overlay-tokens.ts).
  */
 export async function up(db: Kysely<unknown>): Promise<void> {
   await sql`

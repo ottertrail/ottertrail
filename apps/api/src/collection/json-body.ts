@@ -1,10 +1,8 @@
 import type { FastifyInstance } from "fastify";
 
 /**
- * Parses text/plain bodies as JSON, with Fastify's secure parser, as it
- * parses application/json: a `__proto__` or `constructor` key is refused
- * (400). Pages send text/plain because it needs no CORS preflight.
- * Scoped to the plugin that calls it.
+ * text/plain avoids CORS preflights. Use Fastify's secure JSON parser to reject __proto__ and
+ * constructor keys with 400. Scoped to the calling plugin.
  */
 export function parseTextPlainAsJson(app: FastifyInstance, bodyLimit: number): void {
   const parseJson = app.getDefaultJsonParser("error", "error");
@@ -12,7 +10,7 @@ export function parseTextPlainAsJson(app: FastifyInstance, bodyLimit: number): v
     "text/plain",
     { parseAs: "string", bodyLimit },
     (request, body, parsed) => {
-      // The default parser is synchronous: it calls back before it returns.
+      // The default parser invokes its callback synchronously.
       void parseJson(request, String(body), (error, value) => {
         if (error === null) {
           parsed(null, value);

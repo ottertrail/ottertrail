@@ -7,53 +7,43 @@ import type { ObjectStore } from "../storage/object-store.ts";
 import { deriveReplay } from "./derive.ts";
 
 /**
- * Session replays around errors (docs/session-replay.md): what a browser
- * recorded in the minute before an error, masked there, sent as chunks
- * (packages/tracker/src/replay.ts). Chunks land in PostgreSQL, which
- * confirms them; the worker joins each replay's into one object.
+ * PostgreSQL acknowledges masked replay chunks; the worker joins them into one object
+ * (packages/tracker/src/replay.ts; docs/session-replay.md).
  */
 
-/** Largest chunk a browser sends: one gzip member, under a beacon's limit. */
+/** One gzip member, within the beacon size limit. */
 export const MAX_CHUNK_BYTES = 64 * 1024;
-/** Most a chunk unpacks to: a small body cannot unpack into a large one. */
+/** Bounds decompression of small uploads. */
 export const MAX_CHUNK_UNPACKED_BYTES = 1024 ** 2;
-/**
- * Most chunks of one replay, numbered 0 to 99: twice what MAX_REPLAY_BYTES
- * needs, since the tracker fills each chunk at least about half.
- */
+/** Chunks 0 to 99: twice MAX_REPLAY_BYTES needs because the tracker fills chunks at least halfway. */
 export const MAX_CHUNKS = 100;
-/** Most bytes of one replay's chunks: the browser stops at 2,000,000. */
+/** The browser stops at 2,000,000 bytes. */
 export const MAX_REPLAY_BYTES = 2_100_000;
 /**
- * Most a replay's chunks unpack to together: its JSON, which the worker
- * parses, sorts, and compresses at once, and the viewer's tab parses too.
- * A minute of a busy page comes to a few MiB; masked text compresses
- * far better than the rest, so the compressed cap alone allows 100 MiB.
+ * Bounds JSON parsed by both worker and viewer. Masked text compresses well enough that the
+ * compressed cap alone permits 100 MiB.
  */
 export const MAX_REPLAY_UNPACKED_BYTES = 16 * 1024 ** 2;
-/** Most events of one recording: a minute of a busy page has a few thousand. */
+/** A typical minute has a few thousand events. */
 export const MAX_REPLAY_EVENTS = 100_000;
-/** A replay whose last chunk never came is given up after this long without one. */
+/** Idle incomplete replays are abandoned. */
 export const REPLAY_IDLE_MS = 5 * 60_000;
-/** Chunks are kept this long after their replay is joined, past the tracker's retries. */
+/** Keep chunks beyond tracker retry time after joining. */
 export const CHUNK_KEEP_MS = 60 * 60_000;
 /**
- * The times a recording's events may have, in epoch milliseconds: from
- * 1970, as on a device whose clock was reset, to 2100. A visitor's clock may
- * be wrong by years, which the join corrects (derive.ts), but past these a
- * time is not a clock's, and the correction would not fit in PostgreSQL.
+ * Accepts device clocks from 1970 through 2100. derive.ts corrects skew; wider corrections may
+ * exceed PostgreSQL timestamps.
  */
 export const EARLIEST_EVENT_TIME_MS = 0;
 export const LATEST_EVENT_TIME_MS = Date.UTC(2100, 0, 1);
-/** How long replays are kept: the shortest retention a project can choose for events. */
+/** Matches the shortest project event retention. */
 export const REPLAY_RETENTION_DAYS = 30;
 
-/** Every replay of a project starts with this. */
 export const replayPrefix = (projectId: string) => `replays/${projectId}/`;
 export const replayKeyOf = (projectId: string, replayId: string) =>
   `${replayPrefix(projectId)}${replayId}.json.gz`;
 
-/** The compressed bytes of the instance's replays, all projects', and of chunks not yet joined. */
+/** Includes compressed objects and unjoined chunks across all projects. */
 export async function storedReplayBytes(db: Kysely<Database>): Promise<number> {
   const [replays, chunks] = await Promise.all([
     db
@@ -74,19 +64,15 @@ export interface Chunk {
   last: boolean;
   cut: boolean;
   data: Buffer;
-  /** What `data` unpacks to, in bytes; unpacked here when left out. */
+  /** Defaults to decompressing data here. */
   unpackedBytes?: number;
-  /** When it arrived; now when left out. The development seed (scripts/seed-data.ts) sets past times. */
+  /** Defaults to now; scripts/seed-data.ts supplies historical arrival times. */
   receivedAt?: Date;
 }
 
 /**
- * Keeps one chunk, once: "stored", or why not. A new replay (its first
- * chunk) is refused when the instance's replays already take
- * `limitBytes`; a replay past MAX_REPLAY_BYTES is refused ("too_large"), or
- * past MAX_REPLAY_UNPACKED_BYTES once unpacked ("unpacked_too_large"); a
- * chunk of a replay already joined, or already kept, is a duplicate, as a
- * retry is.
+ * Deduplicates retained/joined chunks. New replays respect limitBytes; existing ones respect
+ * MAX_REPLAY_BYTES and MAX_REPLAY_UNPACKED_BYTES.
  */
 export async function storeChunk(
   db: Kysely<Database>,
@@ -97,8 +83,7 @@ export async function storeChunk(
   const unpackedBytes =
     chunk.unpackedBytes ??
     gunzipSync(chunk.data, { maxOutputLength: MAX_CHUNK_UNPACKED_BYTES }).byteLength;
-  // One chunk of a replay at a time: chunks arriving together would each
-  // read the same sums, and all pass the caps.
+  // Serialize chunks per replay so concurrent uploads cannot all pass the same size sums.
   return db.transaction().execute(async (trx) => {
     await sql`select pg_advisory_xact_lock(hashtextextended(${`replay-chunk:${project.id}:${chunk.replayId}`}, 0))`.execute(
       trx,
@@ -151,11 +136,8 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
 /**
- * The recording's JSON joined from its chunks, checked: `{"v":1,"events":
- * [...]}` with events, at most MAX_REPLAY_EVENTS, each an object with a
- * numeric type and timestamp.
- * Null when it is not. What was recorded is not read further: the player
- * treats it as untrusted.
+ * Requires v1 JSON and at most MAX_REPLAY_EVENTS objects with numeric type/timestamp. Returns null
+ * for invalid recordings; contents remain untrusted.
  */
 export function joinChunks(chunks: readonly Buffer[]): string | null {
   const unpacked = unpack(chunks);
@@ -165,11 +147,8 @@ export function joinChunks(chunks: readonly Buffer[]): string | null {
 }
 
 /**
- * The chunks' text, unpacked one at a time (each is gzip), up to
- * MAX_REPLAY_UNPACKED_BYTES: the chunks that fit, in order, and whether
- * that was all of them. The upload caps the sum, but a replay kept before
- * that cap, or past it some other way, keeps its start rather than being
- * lost. Null when a chunk is not gzip.
+ * Unpacks chunks in order up to MAX_REPLAY_UNPACKED_BYTES, preserving the start of oversized
+ * recordings. Returns null for invalid gzip.
  */
 function unpack(chunks: readonly Buffer[]): { text: string; whole: boolean } | null {
   const parts: Buffer[] = [];
@@ -189,12 +168,8 @@ function unpack(chunks: readonly Buffer[]): { text: string; whole: boolean } | n
 }
 
 /**
- * The start of a recording whose end never came, as a whole one: cut after
- * its last complete event, then closed. A visitor who leaves the page just
- * after an error sends only what a beacon takes, so the replay's first
- * chunks come and its last does not. The recording is
- * `{"v":1,"events":[…]}`: an event ends where an object closes inside the
- * array, at depth 2, outside strings. Null when no event is complete.
+ * Leaving-page beacons may omit final chunks. Close v1 JSON after its last complete event (depth 2
+ * outside strings); null if no event is complete.
  */
 export function closeRecording(start: string): string | null {
   let depth = 0;
@@ -225,7 +200,6 @@ interface RecordedEvent {
   data?: unknown;
 }
 
-/** The recording's text and events when it is one, as joinChunks describes; null when not. */
 function checkRecording(text: string): { text: string; events: RecordedEvent[] } | null {
   let parsed: unknown;
   try {
@@ -248,27 +222,15 @@ function checkRecording(text: string): { text: string; events: RecordedEvent[] }
 }
 
 /**
- * Joins each replay whose chunks are all in (the last one came, with every
- * one before it) into one object, and records it. One still missing some
- * after REPLAY_IDLE_MS keeps what came in order from its first chunk, up to
- * its last complete event, marked cut (closeRecording); one with nothing to
- * keep is given up, its chunks deleted. The worker runs it every few
- * seconds; running it twice at once is harmless.
+ * Joins complete replays or, after REPLAY_IDLE_MS, preserves contiguous chunks through their last
+ * complete event (closeRecording). Drops empty recordings. Overlapping worker runs are safe.
  *
- * Each replay is joined holding its project's row (FOR SHARE), which
- * deleteProjectReplays() takes exclusively: a deletion waits for a join in
- * progress, then deletes what it wrote, and a join after a deletion finds
- * no chunks. Without it, a join that had read the chunks could write the
- * object and its row back after the user deleted them.
+ * Hold the project row FOR SHARE so deleteProjectReplays waits, then removes the result; joins
+ * after deletion find no chunks. This prevents recreating deleted replays.
  *
- * A replay whose object the store refuses (Garage's bucket quota, a store
- * that is down) keeps its chunks and is tried again on the next run; the
- * others of the batch go on. `failed` counts them, with the first error.
- * Any other error is one replay's alone too: one that will pass (PostgreSQL
- * unreachable, a conflict between transactions) counts as failed, and its
- * chunks wait; one of the replay's own data (PostgreSQL refusing a value, a
- * recording the join cannot read) would fail on every run, so the replay is
- * dropped, its chunks and any object deleted. `onError` hears of each.
+ * Store and transient database failures keep chunks for retry; permanent data/code errors drop the
+ * replay and any object. Each failure affects only that replay. `failed` counts retryable
+ * failures; `onError` receives each error.
  */
 export async function joinReplays(
   db: Kysely<Database>,
@@ -281,9 +243,9 @@ export async function joinReplays(
   }: {
     now?: Date;
     limit?: number;
-    /** One project's replays only (the development seed); every project's when left out. */
+    /** Defaults to all projects; seed can restrict one. */
     onlyProjectId?: string;
-    /** Told of each replay an unexpected error failed (kept) or dropped. */
+    /** Reports unexpected failures, including whether the replay was dropped. */
     onError?: (
       error: unknown,
       replay: { projectId: string; replayId: string; dropped: boolean },
@@ -307,10 +269,8 @@ export async function joinReplays(
       ),
     )
     .groupBy(["c.project_id", "c.replay_id"])
-    // Only replays that can be joined now: complete (the last chunk came,
-    // with none missing) or quiet. One still waiting for a chunk would take
-    // a place of the run's limit and be skipped, and a sender could keep
-    // enough of them waiting to block every other replay.
+    // Only complete or idle replays consume the run limit, so pending uploads cannot starve other
+    // joins.
     .having((eb) =>
       eb.or([
         eb.and([
@@ -320,7 +280,7 @@ export async function joinReplays(
         eb(eb.fn.max("c.received_at"), "<", idleSince),
       ]),
     )
-    // Oldest first, so a flood of new replays cannot keep older ones waiting.
+    // Oldest first prevents new uploads from starving older replays.
     .orderBy((eb) => eb.fn.min("c.received_at"))
     .orderBy("c.project_id")
     .orderBy("c.replay_id")
@@ -349,13 +309,11 @@ export async function joinReplays(
           .where("project_id", "=", projectId)
           .where("replay_id", "=", replayId)
           .orderBy("seq")
-          // Shared: a drop of this replay waits for this join (dropReplay).
+          // dropReplay must wait for this join.
           .forShare()
           .execute();
-        // Deleted since it was found: nothing to join.
         if (chunks.length === 0) return "skipped";
         const lastAt = chunks.findIndex((chunk) => chunk.last);
-        // Complete: chunks 0 to the last, none missing.
         const complete =
           lastAt !== -1 && chunks.slice(0, lastAt + 1).every((chunk, index) => chunk.seq === index);
         const latest = chunks.reduce(
@@ -363,22 +321,20 @@ export async function joinReplays(
           0,
         );
         if (!complete && latest >= idleSince.getTime()) {
-          // A chunk may still come, as a retry: wait.
+          // Wait while a missing chunk may still be retried.
           return "skipped";
         }
-        // What came in order from the first chunk.
         let inOrder = 0;
         while (chunks[inOrder]?.seq === inOrder) inOrder += 1;
         const kept = complete ? chunks.slice(0, lastAt + 1) : chunks.slice(0, inOrder);
         const unpacked = kept.length === 0 ? null : unpack(kept.map((chunk) => chunk.data));
-        // Whole and complete as sent; otherwise cut after its last whole event.
+        // Cut incomplete or size-limited recordings at the last complete event.
         const whole = complete && unpacked?.whole === true;
         const closed =
           unpacked === null ? null : whole ? unpacked.text : closeRecording(unpacked.text);
         const recording = closed === null ? null : checkRecording(closed);
         if (recording === null) {
-          // Not a recording, or nothing of one: once its last chunk came, or
-          // it went quiet, nothing more will make it one.
+          // Completed or idle invalid recordings cannot recover; discard them.
           await trx
             .deleteFrom("replay_chunks")
             .where("project_id", "=", projectId)
@@ -387,7 +343,6 @@ export async function joinReplays(
           return "dropped";
         }
         const compressed = gzipSync(recording.text);
-        // What the list and the timeline show, worked out once, here.
         const firstReceivedAt = kept.reduce(
           (time, chunk) => (chunk.received_at < time ? chunk.received_at : time),
           kept[0]?.received_at ?? now,
@@ -396,7 +351,7 @@ export async function joinReplays(
         try {
           await store.put(objectKey, compressed, "application/gzip");
         } catch (error) {
-          // Nothing written: the chunks stay for the next run.
+          // Keep chunks for retry when no object was written.
           if (failed === 0) firstError = error;
           return "failed";
         }
@@ -429,7 +384,7 @@ export async function joinReplays(
         try {
           if (!(await dropReplay(db, store, projectId, replayId))) return "skipped" as const;
         } catch (deleteError) {
-          // Dropped on a later run.
+          // Cleanup retries on a later run.
           onError(deleteError, { projectId, replayId, dropped: false });
           if (failed === 0) firstError = deleteError;
           return "failed" as const;
@@ -445,10 +400,8 @@ export async function joinReplays(
 }
 
 /**
- * Deletes a replay's chunks and object, unless another join has recorded it
- * meanwhile (overlapping runs). Its chunks are locked first: a join that
- * holds them (FOR SHARE) commits before this reads the replays, and a join
- * after this finds no chunks. False when there was nothing to drop.
+ * Lock chunks before checking for an overlapping join's result. Later joins find no chunks.
+ * Returns false if nothing can be dropped.
  */
 async function dropReplay(
   db: Kysely<Database>,
@@ -482,17 +435,12 @@ async function dropReplay(
   });
 }
 
-/** PostgreSQL's classes of errors that are the data's: a value out of range, a broken constraint. */
+/** SQLSTATE data errors and constraint violations. */
 const DATA_ERROR_CLASSES = new Set(["22", "23"]);
 
 /**
- * Whether an error may pass by the next run. Not: errors of the join's own
- * code (a RangeError, TypeError, or SyntaxError, or Node's coded errors
- * such as ERR_OUT_OF_RANGE) and PostgreSQL refusing the replay's data
- * (SQLSTATE classes 22 and 23), which come back every time. Transient: a
- * system error (ECONNRESET, EPIPE, ETIMEDOUT), PostgreSQL's other classes
- * (a lost connection, a conflict between transactions, a shutdown), and an
- * error without a code (pg's "Connection terminated").
+ * Retry connection/system errors, other PostgreSQL classes, and uncoded errors. Code errors and
+ * SQLSTATE 22/23 recur, so drop those replays.
  */
 function isTransient(error: unknown): boolean {
   if (error instanceof RangeError || error instanceof TypeError || error instanceof SyntaxError) {
@@ -506,7 +454,7 @@ function isTransient(error: unknown): boolean {
   return false;
 }
 
-/** Deletes the chunks of replays joined more than CHUNK_KEEP_MS ago: past any retry. */
+/** Keep joined chunks through CHUNK_KEEP_MS to cover retries. */
 export async function deleteJoinedChunks(
   db: Kysely<Database>,
   { now = new Date() }: { now?: Date } = {},
@@ -527,10 +475,7 @@ export async function deleteJoinedChunks(
   return Number(result.numDeletedRows);
 }
 
-/**
- * Deletes replays older than REPLAY_RETENTION_DAYS: the objects, then the
- * rows, a thousand at a time, so a failure leaves rows to try again with.
- */
+/** Delete objects before rows, 1,000 at a time, so failures leave rows for retry. */
 export async function deleteExpiredReplays(
   db: Kysely<Database>,
   store: ObjectStore,
@@ -548,21 +493,19 @@ export async function deleteExpiredReplays(
     if (rows.length === 0) return deleted;
     const keys = rows.map((row) => row.object_key);
     await store.delete(keys);
-    // Each object's key is its replay's own: project and replay ID.
     await db.deleteFrom("replays").where("object_key", "in", keys).execute();
     deleted += rows.length;
   }
 }
 
-/** How long after an error its replay may still be on its way: recorded 10 s more, then sent. */
+/** Records 10 seconds after an error, then uploads; allow time for arrival. */
 export const REPLAY_PENDING_MS = 15 * 60_000;
 
 export type ReplayStatus = "ready" | "pending" | "missing";
 
 /**
- * Each replay ID's state, for the occurrences that name one: ready (joined),
- * pending (its error is recent, so it may still be coming), or missing
- * (never came, or expired).
+ * Recent errors may still be uploading (pending); joined replays are ready, absent/expired ones
+ * missing.
  */
 export async function replayStatuses(
   db: Kysely<Database>,
@@ -595,7 +538,6 @@ export async function replayStatuses(
   return statuses;
 }
 
-/** A project's replays, how many and how large, for its settings. */
 export async function projectReplays(
   db: Kysely<Database>,
   projectId: string,
@@ -609,11 +551,8 @@ export async function projectReplays(
 }
 
 /**
- * Deletes every replay of a project, as its settings offer when replays
- * are turned off: the objects, then the rows and any chunks still waiting.
- * Holds the project's row exclusively (FOR NO KEY UPDATE, which chunks
- * arriving still may reference), so a join in progress finishes first and
- * none starts until this is done (joinReplays()).
+ * Hold the project FOR NO KEY UPDATE so joins finish before deletion and cannot recreate data.
+ * Delete objects, rows, and pending chunks (joinReplays).
  */
 export async function deleteProjectReplays(
   db: Kysely<Database>,
@@ -635,10 +574,8 @@ export async function deleteProjectReplays(
 }
 
 /**
- * Deletes some of a project's replays by ID, with their chunks still
- * waiting: those of deleted spam visits (spam/delete-visits.ts). Holds the
- * project's row as deleteProjectReplays() does, so a join in progress
- * finishes first and cannot write one back. Returns how many were stored.
+ * Delete spam-visit replays (spam/delete-visits.ts). Lock the project as deleteProjectReplays does
+ * to prevent joins recreating them; returns stored count.
  */
 export async function deleteReplays(
   db: Kysely<Database>,

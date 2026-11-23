@@ -29,10 +29,10 @@ import { deleteProjectReplays, projectReplays, storedReplayBytes } from "./repla
 const UUID_PATTERN =
   "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$";
 
-/** Where the dashboard loads the replay player's script from (packages/replay-player). */
+/** Built by packages/replay-player. */
 export const PLAYER_SCRIPT_URL_PATH = "/replay-player.js";
 
-/** The access requireProjectAccess set: these routes always run it. */
+/** All routes run requireProjectAccess before this. */
 function accessOf(request: { projectAccess: ProjectAccess | null }): ProjectAccess {
   if (request.projectAccess === null) {
     throw new Error("requireProjectAccess must run before this route");
@@ -42,9 +42,8 @@ function accessOf(request: { projectAccess: ProjectAccess | null }): ProjectAcce
 
 const problem = (error: string, message: string) => ({ error, message });
 
-/** Text a filter may hold: no control characters. */
 const FILTER_TEXT_PATTERN = "^[^\\u0000-\\u001F\\u007F]{1,200}$";
-/** The longest minimum duration the list takes, in ms: far past any replay. */
+/** Milliseconds; well above replay lengths. */
 const MAX_MIN_DURATION_MS = 3_600_000;
 
 interface ListQuery extends RangeQuery {
@@ -57,24 +56,13 @@ interface ListQuery extends RangeQuery {
 }
 
 /**
- * The player page's Content Security Policy. A recording is whatever a
- * browser sent with a public key, which anyone can copy from a site, so it
- * is untrusted HTML, and so is a saved heatmap view:
+ * Recordings and saved heatmap views contain untrusted HTML. Allow only the player script and API
+ * connections from self. Permit inline styles and allowed project hosts for styles, images, and
+ * fonts; data/blob images support rrweb's cursor. Block forms, base URLs, and framing outside the
+ * dashboard.
  *
- * - script-src 'self': the player's own script; none from the recording.
- * - connect-src 'self': the player reads the recording, or the view and
- *   its heatmap, from the API.
- * - style-src 'unsafe-inline' and the project's allowed hostnames: the
- *   player's own CSS and the recording's stylesheets are written into the
- *   page as text.
- * - img-src data:, blob:, and the hostnames: rrweb's cursor is a data: image.
- * - font-src data: and the hostnames.
- * - Nothing else: no forms, no <base>, and only the dashboard may frame it.
- *
- * Never 'self' for styles, images, or fonts: a forged recording's
- * `<img src="/api/…">` would otherwise send the viewer's cookie with a GET
- * to the dashboard's own API. Hostnames are checked when saved
- * (projects/projects.ts): letters, digits, dots, and hyphens.
+ * Never allow self for styles, images, or fonts: forged /api/ URLs would send the viewer's
+ * cookies. projects/projects.ts validates hostnames as letters, digits, dots, and hyphens.
  */
 export function playerPolicy(allowedHostnames: readonly string[]): string {
   const sites = allowedHostnames.flatMap((host) => [`https://${host}:*`, `http://${host}:*`]);
@@ -92,10 +80,10 @@ export function playerPolicy(allowedHostnames: readonly string[]): string {
   ].join("; ");
 }
 
-/** The player's own theme, the dashboard's (packages/replay-player/src/styles.ts); dark when not given. */
+/** Defaults to dark, matching packages/replay-player/src/styles.ts. */
 type PlayerTheme = "light" | "dark";
 
-/** The player page: its script, its theme, and where to find the replay. Every value is checked first. */
+/** All interpolated values must be validated first. */
 function playerPage(replayUrl: string, errorAt: number | null, theme: PlayerTheme): string {
   const errorAttribute = errorAt === null ? "" : ` data-error-at="${String(errorAt)}"`;
   return `<!doctype html>
@@ -114,30 +102,21 @@ function playerPage(replayUrl: string, errorAt: number | null, theme: PlayerThem
 }
 
 /**
- * GET    /api/projects/:id/replays                         the project's replays, and the instance's use
- * GET    /api/projects/:id/replays/list?period=…[&environment=…&path=…&userId=…&fingerprint=…&minDuration=…&before=…&limit=…]
- *                                                          the project's replays, newest first, a page at a time
- * GET    /api/projects/:id/replays/:replayId               one replay: its recording, as JSON
- * GET    /api/projects/:id/replays/:replayId/timeline      one replay: what it shows, and its timeline
- * GET    /api/projects/:id/replays/:replayId/player        the page that plays it, in a frame of the dashboard
- * DELETE /api/projects/:id/replays                         deletes every replay of the project
- *
- * Session replays in the dashboard (docs/session-replay.md). Like every
- * project route, each runs requireProjectAccess first; deleting also needs
- * the dashboard's origin.
+ * Dashboard replay routes (docs/session-replay.md). All require project access; deletion also
+ * checks dashboard Origin.
  */
 export const replayRoutes: FastifyPluginCallback<{
   db: Kysely<Database>;
   store: ObjectStore | null;
   auth: Auth;
   trustedOrigins: readonly string[];
-  /** Compressed replay bytes the instance may keep. */
+  /** Compressed bytes across the instance. */
   limitBytes: number;
   now?: () => Date;
 }> = (app, { db, store, auth, trustedOrigins, limitBytes, now = () => new Date() }, done) => {
   const signedIn = requireSession(auth);
   const canView = requireProjectAccess(db, { area: "replays", level: "view" });
-  // Deleting every replay is a project setting (its Settings page), as the replay mode is.
+  // Deleting all replays requires project-settings access.
   const canManageProject = requireProjectAccess(db, { permission: "projects" });
   const fromDashboard = requireTrustedOrigin(trustedOrigins);
   const params = {
@@ -173,7 +152,7 @@ export const replayRoutes: FastifyPluginCallback<{
         configured: store !== null,
         mode: project.replay_mode,
         replays,
-        // All projects together: for those who manage projects only (docs/access.md).
+        // Instance totals require project-management permission (docs/access.md).
         ...(can(accessOf(request).user, "projects")
           ? { instance: { storedBytes: stored, limitBytes } }
           : {}),
@@ -230,7 +209,7 @@ export const replayRoutes: FastifyPluginCallback<{
           },
           { before, ...(query.limit === undefined ? {} : { limit: query.limit }) },
         ),
-        // The filters' choices, on the first page only: later pages skip them.
+        // Load filter choices only on the first page.
         before === undefined ? replayChoices(db, projectId, { from, to }, environment) : null,
       ]);
       const environments = choices?.environments ?? [];
@@ -284,7 +263,7 @@ export const replayRoutes: FastifyPluginCallback<{
           .send(problem("storage_unavailable", "The replay could not be read. Try again."));
       }
       if (data === null) return reply.code(404).send(NOT_FOUND);
-      // Stored gzip-compressed; the browser unpacks it.
+      // Browser decompresses the stored gzip.
       return reply
         .header("content-encoding", "gzip")
         .header("cache-control", "private, max-age=300")
@@ -358,11 +337,7 @@ export const replayRoutes: FastifyPluginCallback<{
   done();
 };
 
-/**
- * GET /replay-player.js: the replay player's script (packages/replay-player),
- * which the player page loads from the dashboard's own origin, read on each
- * request so a new build needs no restart.
- */
+/** Read packages/replay-player's script per request so rebuilds need no API restart. */
 export const replayPlayerScriptRoute: FastifyPluginCallback<{ scriptPath: string }> = (
   app,
   { scriptPath },

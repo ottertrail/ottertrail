@@ -4,59 +4,40 @@ import { dirname, join } from "node:path";
 
 import type { FastifyPluginCallback, FastifyReply, FastifyRequest } from "fastify";
 
-/** Where sites load the tracker from: <script src="https://analytics.example.com/t.js">. */
 export const TRACKER_SCRIPT_URL_PATH = "/t.js";
 
-/**
- * The Web Vitals script the tracker loads from beside itself, built next to
- * it (packages/tracker/src/vitals.ts): v.js in the tracker's folder.
- */
+/** Built from packages/tracker/src/vitals.ts beside the tracker. */
 export const VITALS_SCRIPT_URL_PATH = "/v.js";
 
-/**
- * The session replay recorder the tracker loads from beside itself when a
- * page asks for it (packages/tracker/src/replay.ts; docs/session-replay.md):
- * r.js in the tracker's folder.
- */
+/** Loaded on demand (packages/tracker/src/replay.ts; docs/session-replay.md). */
 export const REPLAY_SCRIPT_URL_PATH = "/r.js";
 
-/**
- * Heatmap capture, which the tracker loads from beside itself when a page
- * asks for it (packages/tracker/src/heatmaps.ts; docs/web-analytics.md,
- * "Heatmaps"): h.js in the tracker's folder.
- */
+/** Loaded on demand (packages/tracker/src/heatmaps.ts; docs/web-analytics.md, "Heatmaps"). */
 export const HEATMAP_SCRIPT_URL_PATH = "/h.js";
 
 /**
- * The heatmap overlay, which the tracker loads from beside itself when the
- * page's address carries an overlay link (packages/tracker/src/overlay.ts;
- * docs/web-analytics.md, "The overlay on your site"): o.js in the
- * tracker's folder.
+ * Loaded for overlay links (packages/tracker/src/overlay.ts; docs/web-analytics.md, "The overlay
+ * on your site").
  */
 export const OVERLAY_SCRIPT_URL_PATH = "/o.js";
 
 /**
- * Saved heatmap views, which the overlay loads from beside itself when the
- * owner presses "Save this view" (packages/tracker/src/snapshot.ts;
- * docs/web-analytics.md, "Saved views"): s.js in the tracker's folder.
+ * Loaded for Save this view (packages/tracker/src/snapshot.ts; docs/web-analytics.md, "Saved
+ * views").
  */
 export const SNAPSHOT_SCRIPT_URL_PATH = "/s.js";
 
-/**
- * Scripts found missing, logged once each: every page of every site asks
- * for them, and a missing v.js breaks nothing visible that would get it
- * noticed and fixed.
- */
+/** Log missing scripts once: repeated requests are noisy and missing v.js has no visible failure. */
 const reportedMissing = new Set<string>();
 
 interface LoadedScript {
-  /** The file's identity: a rebuild changes its inode or change time, even at the same size. */
+  /** Inode or change time detects same-size rebuilds. */
   version: string;
   script: Buffer;
   etag: string;
 }
 
-/** Each script as last read, by path: read and hashed again only when its file changes. */
+/** Reread and rehash only when the file changes. */
 const loaded = new Map<string, LoadedScript>();
 
 async function loadScript(path: string): Promise<LoadedScript> {
@@ -66,13 +47,13 @@ async function loadScript(path: string): Promise<LoadedScript> {
   if (cached?.version === version) return cached;
   const script = await readFile(path);
   const etag = `"${createHash("sha256").update(script).digest("base64url").slice(0, 27)}"`;
-  // The stat before the read: a build written in between is read again next time.
+  // Use pre-read stat so a concurrent rebuild triggers another read next request.
   const fresh = { version, script, etag };
   loaded.set(path, fresh);
   return fresh;
 }
 
-/** One built script, checked on each request, so a new build needs no restart. */
+/** Checks each request so rebuilds need no restart. */
 async function sendScript(request: FastifyRequest, reply: FastifyReply, path: string) {
   let script: Buffer;
   let etag: string;
@@ -97,7 +78,7 @@ async function sendScript(request: FastifyRequest, reply: FastifyReply, path: st
     .header("cache-control", "public, max-age=3600")
     .header("etag", etag)
     .header("x-content-type-options", "nosniff")
-    // Lets sites that isolate themselves (Cross-Origin-Embedder-Policy) load it.
+    // Allows loading from pages using Cross-Origin-Embedder-Policy.
     .header("cross-origin-resource-policy", "cross-origin");
   if (request.headers["if-none-match"] === etag) {
     return reply.code(304).send();
@@ -106,15 +87,9 @@ async function sendScript(request: FastifyRequest, reply: FastifyReply, path: st
 }
 
 /**
- * Serves the built browser tracker, and the Web Vitals, session replay,
- * heatmap, and heatmap overlay scripts it loads, so each site loads them from the instance it reports to. The paths are
- * short and neutral: ad-block lists often match file names such as
- * "tracker.js" or "analytics.js".
- *
- * Each file is kept in memory with its ETag, and its inode, change and
- * modification times, and size checked on each request, so a new build is served without
- * restarting the API. Browsers may cache them for an hour and then
- * revalidate them with their ETags.
+ * Short neutral paths avoid common ad-block matches such as tracker.js or analytics.js. Check file
+ * identity per request to serve rebuilds without restarting. Cache in memory with ETags; browsers
+ * revalidate after one hour.
  */
 export const trackerScriptRoutes: FastifyPluginCallback<{ scriptPath: string }> = (
   app,

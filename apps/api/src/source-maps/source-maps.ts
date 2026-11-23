@@ -7,46 +7,34 @@ import { isStorableText } from "../collection/normalize.ts";
 import type { Database } from "../db/schema.ts";
 import type { ObjectStore } from "../storage/object-store.ts";
 
-/**
- * Source maps (docs/errors.md, "Source maps"): what a site's build made to
- * turn its minified code back into its own, uploaded once per release and
- * minified file, and read when the dashboard shows an error's stack.
- */
+/** Maps are scoped to project, release, and minified file (docs/errors.md, "Source maps"). */
 
-/** Largest map, as JSON: a big app's largest chunk stays well under it. */
+/** JSON-byte cap; large app chunks stay well below it. */
 export const MAX_SOURCE_MAP_BYTES = 25 * 1024 ** 2;
 
 /**
- * Most lines and segments a map's mappings may hold. Reading a map builds
- * an array for each line and each segment, tens of bytes apiece, so these,
- * not the map's size, decide the memory it takes: a short map of empty
- * lines would otherwise take gigabytes. A large app's largest chunk stays
- * well under both.
+ * Decoded arrays cost tens of bytes per line and segment. Cap both to prevent compact mappings
+ * allocating gigabytes.
  */
 export const MAX_MAP_LINES = 100_000;
 export const MAX_MAP_SEGMENTS = 1_000_000;
 
 /**
- * Most entries of a map's "sources" and "names", and the longest of each.
- * Each is a string once read, and a frame shows its source and name: a
- * large app's largest chunk has a few thousand sources and far fewer than
- * this many names, each under a few hundred characters.
+ * Bounds sources/names array allocations and displayed frame text. Typical large chunks have a few
+ * thousand sources and short names.
  */
 export const MAX_MAP_SOURCES = 20_000;
 export const MAX_MAP_NAMES = 300_000;
 export const MAX_MAP_ENTRY = 1024;
-/** Most characters of all "sourcesContent" together: the rest of the map needs room too. */
+/** Character cap for sourcesContent, leaving room for other fields. */
 export const MAX_MAP_CONTENT = 20 * 1024 ** 2;
 
-/** Longest path of a minified file: an asset's address is far shorter. */
+/** Bounds minified asset paths. */
 export const MAX_SOURCE_PATH = 1024;
 
 /**
- * Whether `path` is a minified file's path as a browser reports it in a
- * stack, so frames can be matched to it (resolve.ts reads a frame's path
- * the same way): starting with "/", without an origin, query, or fragment,
- * percent-encoded, and without "." or ".." segments. Only ASCII, so it
- * stays within what the database indexes.
+ * Matches browser URL paths (resolve.ts): / prefix, percent-encoded, no origin/query/fragment or
+ * dot segments. ASCII keeps index sizes bounded.
  */
 export function isSourcePath(path: string): boolean {
   if (path.length === 0 || path.length > MAX_SOURCE_PATH || !path.startsWith("/")) return false;
@@ -55,22 +43,20 @@ export function isSourcePath(path: string): boolean {
   return url !== null && url.pathname === path && url.search === "" && url.hash === "";
 }
 
-/** Where a release's map for one file is in the object store: by project, so its files go together. */
+/** Project prefix keeps objects together for deletion. */
 export function objectKeyOf(projectId: string, release: string, path: string): string {
   const name = createHash("sha256").update(`${release}\n${path}`).digest("hex");
   return `${projectPrefix(projectId)}${name}.map.gz`;
 }
 
-/** Every source map of a project starts with this. */
 export const projectPrefix = (projectId: string) => `source-maps/${projectId}/`;
 
-/** A map's "mappings": base64 VLQ segments, "," between segments and ";" between lines. */
+/** Source-map base64 VLQ: commas separate segments, semicolons separate lines. */
 const VLQ_MAPPINGS = /^[A-Za-z0-9+/,;]*$/;
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
-/** How many times `character` is in `text`. */
 function occurrences(text: string, character: string): number {
   let count = 0;
   for (let at = text.indexOf(character); at !== -1; at = text.indexOf(character, at + 1)) {
@@ -84,7 +70,6 @@ export interface MapShape {
   segments: number;
 }
 
-/** Whether `value` is a list of at most `max` entries, each a short string or (if `nulls`) null. */
 function isEntryList(value: unknown, max: number, nulls: boolean): value is unknown[] {
   return (
     Array.isArray(value) &&
@@ -95,7 +80,6 @@ function isEntryList(value: unknown, max: number, nulls: boolean): value is unkn
   );
 }
 
-/** Whether "sourcesContent" is absent, or one string or null per source at most, within MAX_MAP_CONTENT. */
 function isSourcesContent(value: unknown, sources: number): boolean {
   if (value === undefined) return true;
   if (!Array.isArray(value) || value.length > sources) return false;
@@ -110,12 +94,8 @@ function isSourcesContent(value: unknown, sources: number): boolean {
 }
 
 /**
- * The shape of the source map in `text`, without reading its mappings:
- * null when it is not one Ottertrail reads (not JSON, not version 3, not
- * mappings of base64 VLQ, more lines, segments, sources, or names than the
- * limits, or sources' contents that are not text) or is an index map of
- * "sections", which is not supported: its offsets alone could make reading
- * it take any amount of memory.
+ * Checks v3 shape and limits before decoding mappings. Rejects index-map sections because offsets
+ * can cause unbounded allocations. Returns null if unsupported or invalid.
  */
 export function checkSourceMap(text: string): MapShape | null {
   let parsed: unknown;
@@ -132,7 +112,6 @@ export function checkSourceMap(text: string): MapShape | null {
   }
   if (!isSourcesContent(sourcesContent, sources.length)) return null;
   const lines = occurrences(mappings, ";") + 1;
-  // A segment ends at each "," and at the end of each line that has one.
   const segments = occurrences(mappings, ",") + lines;
   return lines <= MAX_MAP_LINES && segments <= MAX_MAP_SEGMENTS ? { lines, segments } : null;
 }
@@ -140,15 +119,15 @@ export function checkSourceMap(text: string): MapShape | null {
 export interface StoredSourceMap {
   release: string;
   path: string;
-  /** Its stored, compressed size. */
+  /** Compressed bytes. */
   bytes: number;
   uploadedAt: Date;
 }
 
-/** The compressed bytes of every source map of the instance, all projects'. */
+/** Compressed bytes across all projects. */
 export async function storedBytes(
   db: Kysely<Database>,
-  /** A map not to count: the one an upload replaces. */
+  /** Exclude the map being replaced. */
   except?: { projectId: string; release: string; path: string },
 ): Promise<number> {
   let query = db
@@ -169,18 +148,13 @@ export async function storedBytes(
   return Number(row.bytes);
 }
 
-/** PostgreSQL's foreign_key_violation: here, a project deleted since its key was read. */
+/** A foreign-key violation means the project was deleted after key lookup. */
 const isForeignKeyViolation = (error: unknown) =>
   typeof error === "object" && error !== null && "code" in error && error.code === "23503";
 
 /**
- * Stores a map checked by checkSourceMap, replacing one of the same release
- * and file: its row first, in a transaction, then the compressed map in the
- * object store, then the commit. A failed write leaves neither, and a
- * deletion of the release (deleteRelease) waits for the commit, so the two
- * cannot leave a row without its map or a map without its row. Refused when
- * the instance's maps would pass `limitBytes` (a soft limit: uploads at
- * the same moment can each pass the check), or when the project is gone.
+ * Write the row, then object, then commit so deleteRelease waits and failed writes roll back.
+ * limitBytes is soft: concurrent uploads can each pass. Refuses deleted projects.
  */
 export async function storeSourceMap(
   deps: { db: Kysely<Database>; store: ObjectStore; limitBytes: number },
@@ -252,10 +226,7 @@ export interface ReleaseMaps {
   lastUploadedAt: Date;
 }
 
-/**
- * The releases a project has maps for, by their latest upload, newest or
- * oldest first, at most `limit`; and how many there are in all.
- */
+/** Sorts by latest upload, newest or oldest first, with a capped list and total count. */
 export async function listReleases(
   db: Kysely<Database>,
   projectId: string,
@@ -293,7 +264,6 @@ export async function listReleases(
   };
 }
 
-/** One release's maps, by path: at most `limit`. */
 export async function listFiles(
   db: Kysely<Database>,
   projectId: string,
@@ -317,10 +287,8 @@ export async function listFiles(
 }
 
 /**
- * Deletes a release's maps, in a transaction that holds their rows: the
- * objects, then the rows. An upload of one of them waits for the commit,
- * then stores it anew; a failure leaves the rows, to try again with, never
- * objects nothing points to. How many there were; 0 when none.
+ * Locks rows and deletes objects first; failures leave rows for retry. Uploads wait for commit
+ * before replacing. Returns deleted count, or 0 if absent.
  */
 export async function deleteRelease(
   deps: { db: Kysely<Database>; store: ObjectStore },

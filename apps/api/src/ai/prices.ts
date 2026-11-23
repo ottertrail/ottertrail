@@ -4,76 +4,54 @@ import type { QueryParams } from "../clickhouse/query.ts";
 import { PRICE_TABLE } from "./price-table.ts";
 
 /**
- * What models cost (docs/ai-usage.md, "Cost"): a small table kept by hand,
- * from each provider's own price page, checked again for each release.
- * Every entry names its source and the day its prices were read there.
- * Prices are the standard, pay-as-you-go ones, in US dollars per million
- * tokens: no batch, flex, priority, or regional prices, no negotiated
- * discounts. So every cost the API answers is an estimate.
+ * Bundled prices are estimates in US dollars per million tokens, checked against provider pages
+ * each release (docs/ai-usage.md, "Cost"). Excludes batch, flex, priority, regional, and
+ * negotiated rates. Admins can override prices (custom-prices.ts).
  *
- * The owner and admins set the instance's own prices over it (Settings →
- * AI models; custom-prices.ts): a price from a moment on or for all calls,
- * or another model's price for one the table lacks (`price as`).
+ * Compute costs on read so corrections apply to past calls. priceSlotAt tries, in order: exact
+ * custom model price; custom price on a matching bundled entry's IDs; bundled price; one level of
+ * `price as`; no price. Custom prices use the latest start at or before the call. Bundled entries
+ * match exact IDs before longest prefixes, regardless of provider. Unpriced calls still count
+ * tokens and appear as "no price".
  *
- * Cost is worked out when calls are read, never stored (pricedColumns):
- * a corrected price applies to past calls too. A call's price is, in
- * order (priceSlotAt):
- *
- * 1. the instance's price for its model ID (exactly, in lower case) with
- *    the latest start at or before the call's time;
- * 2. else, when the model matches a bundled entry (exactly, then by the
- *    longest prefix: dated snapshots and region prefixes), the instance's
- *    price on any of that entry's IDs, the latest start at or before the
- *    call's time: a price on gpt-4o covers gpt-4o-2024-08-06 too;
- * 3. else that entry's bundled price, whatever provider sent the call;
- * 4. else, when the model is priced as another, that model's price at the
- *    call's time, by 1 to 3 (one level: its own `price as` is not followed);
- * 5. else none: its tokens count, its cost does not, and reports count
- *    its calls as "no price".
- *
- * Model IDs are lower-cased with toLowerCase here and lowerUTF8 in
- * ClickHouse: the same for ASCII and most letters, not for the few whose
- * case mapping depends on the language or changes the length (İ, ẞ).
+ * toLowerCase and ClickHouse lowerUTF8 differ for language-dependent or length-changing case
+ * mappings, such as İ and ẞ.
  */
 
 export type PriceProvider = "openai" | "anthropic" | "google" | "mistral" | "aws.bedrock";
 
 export interface ModelPrice {
   provider: PriceProvider;
-  /** The provider's name for the model. */
   label: string;
-  /** Model IDs and documented aliases, exactly, in lower case. */
+  /** Exact lowercase aliases. */
   ids: readonly string[];
-  /** ID prefixes, in lower case: dated snapshots priced the same, or a cloud's region prefixes. */
+  /** Lowercase prefixes for dated snapshots or cloud regions. */
   prefixes?: readonly string[];
-  /** US dollars per million input tokens: those neither read from nor written to a cache. */
+  /** US dollars per million input tokens, excluding cache reads and writes. */
   input: number;
   output: number;
-  /** Per million cached input tokens read; null: the provider has no separate price (charged as input). */
+  /** Per million cache reads; null charges the input rate. */
   cacheRead: number | null;
   /**
-   * Per million input tokens written to a cache; null: no separate price
-   * (charged as input). For Anthropic, the 5-minute cache's: spans do not
-   * say which was used.
+   * Per million cache writes; null charges the input rate. Uses Anthropic's 5-minute rate because
+   * spans omit cache duration.
    */
   cacheWrite: number | null;
-  /** Anthropic's 1-hour cache write, for reference: costs use cacheWrite. */
+  /** Reference only; costs use cacheWrite's 5-minute rate. */
   cacheWrite1h?: number;
-  /** What the table leaves out, such as a higher price past a prompt length. */
+  /** Omitted pricing conditions, such as prompt-length tiers. */
   notes?: string;
-  /** The page the prices were read from. */
   source: string;
-  /** The day they were read there, "YYYY-MM-DD". */
+  /** Source check date, YYYY-MM-DD. */
   checked: string;
 }
 
-/** The bundled table (price-table.ts). */
 export const PRICES: readonly ModelPrice[] = PRICE_TABLE;
 
-/** What a model costs, in US dollars per million tokens; a null cache price is charged as input. */
+/** US dollars per million tokens; null cache rates use the input rate. */
 export type Rates = Pick<ModelPrice, "input" | "output" | "cacheRead" | "cacheWrite">;
 
-/** The index of the entry a model ID matches in `prices`, or -1: exactly first, then the longest prefix. */
+/** Exact IDs before longest prefixes; -1 without a match. */
 function matchIndex(prices: readonly ModelPrice[], model: string): number {
   const id = model.toLowerCase();
   const exact = prices.findIndex((entry) => entry.ids.includes(id));
@@ -91,37 +69,30 @@ function matchIndex(prices: readonly ModelPrice[], model: string): number {
   return found;
 }
 
-/** The bundled entry a model ID matches, or null: exactly first, then the longest prefix. */
+/** Exact IDs before longest prefixes; null without a match. */
 export function priceOf(model: string, prices: readonly ModelPrice[] = PRICES): ModelPrice | null {
   return prices[matchIndex(prices, model)] ?? null;
 }
 
-/** Tokens of each kind a call or a sum of calls has. */
 export interface TokenCounts {
   input: number;
   output: number;
   cacheRead: number;
   cacheWrite: number;
   /**
-   * Whether `input` holds the cached tokens too (the ai_calls column,
-   * ai/calls.ts, inputIncludesCache); when left out, it does unless it is
-   * smaller than them.
+   * Defaults to inclusive counts unless input is smaller than cached tokens (ai/calls.ts,
+   * inputIncludesCache).
    */
   inputIncludesCache?: boolean;
-  /** Reasoning tokens, and whether `output` holds them (when left out, it does). */
+  /** Output includes reasoning by default. */
   reasoning?: number;
   outputIncludesReasoning?: boolean;
 }
 
 /**
- * The estimated cost of one call's tokens at a price, in US dollars:
- * cache reads and writes at their own prices, the rest of the input at the
- * input price, and the output at the output price, with the reasoning
- * tokens when the output does not hold them (outputIncludesReasoning).
- * The rest is the input less both when the input holds them (the GenAI
- * conventions, OpenAI's API), else all of the input (Anthropic's API):
- * each call says which (inputIncludesCache). An input smaller than its
- * cached tokens never holds them. pricedColumns works out the same in SQL.
+ * Charges cache reads/writes separately and subtracts them from inclusive input. Input smaller
+ * than cached tokens is treated as exclusive. Adds reasoning to output when needed. Returns US
+ * dollars; pricedColumns uses the same rules in SQL.
  */
 export function costOf(price: Rates, tokens: TokenCounts): number {
   const cached = tokens.cacheRead + tokens.cacheWrite;
@@ -137,35 +108,28 @@ export function costOf(price: Rates, tokens: TokenCounts): number {
   );
 }
 
-/** One of the instance's own prices (the ai_model_prices table, custom-prices.ts). */
+/** Instance price from ai_model_prices (custom-prices.ts). */
 export interface CustomPrice {
-  /** In lower case. */
+  /** Lowercase. */
   provider: string;
-  /** In lower case: matched exactly. */
+  /** Exact lowercase match. */
   model: string;
-  /** From when it prices the model's calls; null: all of them. */
+  /** Null applies to all calls. */
   effectiveFrom: Date | null;
-  /** null for a `price as` row. */
   rates: Rates | null;
-  /** The model whose price this one takes, for all calls; null for a row with prices. */
+  /** Model to price as; null when rates are supplied. */
   priceAs: { provider: string; model: string } | null;
 }
 
 /**
- * The prices a query uses: the bundled table and the instance's own,
- * with the parameters ClickHouse reads them from, built once.
- *
- * Every price is a numbered slot: the bundled entries from 1, then each
- * custom row with prices; 0 is "no price", what ClickHouse answers for
- * index 0. A model with custom rows has a timeline: the moments its price
- * may change (its rows' starts, and those of the model it is priced as),
- * each with the slot that applies from it (priceSlotAt), so a call's
- * price is one count over a short array.
+ * Slots start at 1 for bundled prices, then custom rate rows; 0 means no price. Custom models
+ * carry timelines of price-change times and slots, including changes to the model they are priced
+ * as. Queries resolve prices with a count over that timeline.
  */
 export interface PriceBook {
   readonly bundled: readonly ModelPrice[];
   readonly custom: readonly CustomPrice[];
-  /** Changes whenever any price does: what an AI cost rule's kept hours were added up with. */
+  /** Invalidates an AI cost rule's saved hours when prices change. */
   readonly fingerprint: string;
   readonly arrays: PriceArrays;
   readonly lookup: Lookup;
@@ -180,34 +144,29 @@ interface PriceArrays {
   output: number[];
   cacheRead: number[];
   cacheWrite: number[];
-  /** The models with custom rows, and each one's timeline: moments (ms) ascending, and slots. */
+  /** Custom model timelines use ascending milliseconds and matching slots. */
   customModels: string[];
   customFroms: number[][];
   customSlots: number[][];
-  /** The bundled entries (numbered from 1) with custom rows on their IDs, and each one's timeline. */
+  /** Bundled entries numbered from 1, with timelines for custom prices on their IDs. */
   entryNumbers: number[];
   entryFroms: number[][];
   entrySlots: number[][];
 }
 
-/** The custom rows by what they price, for priceSlotAt. */
 interface Lookup {
-  /** Rows with prices, by model, each with its slot. */
   byModel: ReadonlyMap<string, readonly { row: CustomPrice; slot: number }[]>;
-  /** Rows with prices on a bundled entry's IDs, by its index in the table. */
   byEntry: ReadonlyMap<number, readonly { row: CustomPrice; slot: number }[]>;
   priceAs: ReadonlyMap<string, CustomPrice>;
 }
 
-/** Before any call: the start of a timeline, for rows of all calls. */
+/** Starts all-call timelines before any call timestamp. */
 const ALWAYS = -1e15;
 
 const fromMs = (row: CustomPrice) => row.effectiveFrom?.getTime() ?? ALWAYS;
 
-/** Where a call's price comes from. */
 export type PriceSource = "custom" | "built_in" | "price_as";
 
-/** The slot of the latest of `rows` that starts at or before `atMs`, or null. */
 function latest(rows: readonly { row: CustomPrice; slot: number }[] | undefined, atMs: number) {
   let found: { slot: number; from: number; row: CustomPrice } | null = null;
   for (const { row, slot } of rows ?? []) {
@@ -217,17 +176,13 @@ function latest(rows: readonly { row: CustomPrice; slot: number }[] | undefined,
   return found;
 }
 
-/**
- * The slot that prices a call of `model` at `atMs` (0: none), where it
- * comes from, and the custom row it is, if one: the order in the header.
- */
+/** Resolves precedence documented above. Slot 0 means no price. */
 function priceSlotAt(
   bundled: readonly ModelPrice[],
   lookup: Lookup,
   model: string,
   atMs: number,
 ): { slot: number; source: PriceSource | null; row: CustomPrice | null } {
-  /** The price of `id` by its own rows, its entry's rows, then its entry. */
   const direct = (id: string) => {
     const own = latest(lookup.byModel.get(id), atMs);
     if (own !== null) return { slot: own.slot, row: own.row, custom: true };
@@ -250,7 +205,6 @@ function priceSlotAt(
 
 const hashOf = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 
-/** The prices of the bundled table and the instance's custom rows, ready for queries. */
 export function priceBookOf(
   custom: readonly CustomPrice[],
   bundled: readonly ModelPrice[] = PRICES,
@@ -295,7 +249,7 @@ export function priceBookOf(
   const byModel = new Map<string, { row: CustomPrice; slot: number }[]>();
   const byEntry = new Map<number, { row: CustomPrice; slot: number }[]>();
   const priceAs = new Map<string, CustomPrice>();
-  /** Each bundled ID's entry index: an exact ID belongs to one entry. */
+  /** Each exact alias belongs to one bundled entry. */
   const entryOfId = new Map<string, number>();
   for (const [index, entry] of bundled.entries()) {
     for (const id of entry.ids) if (!entryOfId.has(id)) entryOfId.set(id, index);
@@ -321,7 +275,6 @@ export function priceBookOf(
     }
   }
   const lookup: Lookup = { byModel, byEntry, priceAs };
-  /** The moments a price by `direct` (own rows, the entry's rows) of `id` may change. */
   const momentsOf = (id: string, into: Set<number>) => {
     for (const { row } of byModel.get(id) ?? []) into.add(fromMs(row));
     const index = matchIndex(bundled, id);
@@ -338,7 +291,6 @@ export function priceBookOf(
     }
     return { froms, slots };
   };
-  // A model with rows of its own (prices, or price as): its own timeline.
   for (const model of [...new Set(custom.map((row) => row.model))].toSorted()) {
     const moments = new Set([ALWAYS]);
     momentsOf(model, moments);
@@ -349,14 +301,14 @@ export function priceBookOf(
     arrays.customFroms.push(froms);
     arrays.customSlots.push(slots);
   }
-  // Every other call of an entry with rows: the entry's timeline, by its first ID's.
   for (const [index, rows] of [...byEntry.entries()].toSorted((a, b) => a[0] - b[0])) {
     const moments = new Set([ALWAYS]);
     for (const { row } of rows) moments.add(fromMs(row));
     const entry = bundled[index];
     const id = entry?.ids[0];
     if (id === undefined) continue;
-    // Its first ID's own rows are not the entry's: price as if from a dated ID without any.
+    // Ignore first-ID-specific prices here; this timeline also prices dated IDs without their own
+    // rows.
     const entryLookup: Lookup = { ...lookup, byModel: new Map(), priceAs: new Map() };
     const froms: number[] = [];
     const slots: number[] = [];
@@ -373,7 +325,7 @@ export function priceBookOf(
   return {
     bundled,
     custom,
-    // What prices calls, not who changed it or when.
+    // Hash pricing behavior; exclude audit metadata.
     fingerprint: hashOf([
       bundled === PRICES ? BUNDLED_HASH : hashOf(bundled),
       custom.map((row) => [
@@ -390,14 +342,9 @@ export function priceBookOf(
 
 const BUNDLED_HASH = hashOf(PRICES);
 
-/** The bundled table alone: an instance without prices of its own. */
 export const BUNDLED_BOOK: PriceBook = priceBookOf([]);
 
-/**
- * The price of a call of `model` at `at`, where it comes from, and the
- * custom row it is, if one; null without a price. What the SQL of
- * pricedColumns works out, in JavaScript.
- */
+/** Matches pricedColumns in JavaScript; null without a price. */
 export function priceAt(
   book: PriceBook,
   model: string,
@@ -409,25 +356,13 @@ export function priceAt(
   return rates === undefined ? null : { rates, source, row };
 }
 
-/** The slot of a timeline (its moments and slots, as SQL) that applies at the call's time. */
 const timelineAt = (froms: string, slots: string) =>
   `${slots}[arrayCount(moment -> moment <= toUnixTimestamp64Milli(timestamp), ${froms})]`;
 
 /**
- * SQL columns over an ai_calls row, for a SELECT list: `price_entry`, the
- * slot that prices it (0: none), `cost`, its estimated cost in US dollars
- * (0 without a price), `priced`, whether it has one, and
- * `all_input_tokens`, its input with the cached tokens, however the call
- * counted them (the cache-read share's whole), and `all_output_tokens`,
- * its output with the reasoning tokens, however it counted them. The prices go in
- * as query parameters, never as SQL text. A sum of these is the cost of
- * the calls summed.
- *
- * Per call: the bundled match is `indexOf` and `arrayFirstIndex` over the
- * IDs and prefixes; a model with custom rows is found with one `indexOf`
- * over those models, else its bundled entry with one `indexOf` over the
- * entries with custom rows, and its slot is the count of that timeline's
- * moments at or before the call (each timeline starts before any call).
+ * Adds price slot, estimated USD cost (0 unpriced), priced status, and inclusive input/output
+ * counts. Prices are parameters, never SQL text. Each call resolves its bundled match and custom
+ * timeline, then counts timeline starts at or before its time.
  */
 export function pricedColumns(params: QueryParams, book: PriceBook = BUNDLED_BOOK): string {
   const { arrays } = book;
@@ -439,8 +374,7 @@ export function pricedColumns(params: QueryParams, book: PriceBook = BUNDLED_BOO
       ${params.add(arrays.prefixEntries, "Array(UInt32)")}[arrayFirstIndex(prefix -> startsWith(${model}, prefix), ${prefixes})])`;
   let entry = bundled;
   if (arrays.entryNumbers.length > 0) {
-    // A call of an entry with custom rows on its IDs: the entry's timeline (ClickHouse
-    // computes the repeated bundled match once).
+    // ClickHouse computes the repeated bundled match once.
     const entries = params.add(arrays.entryNumbers, "Array(UInt32)");
     const found = `indexOf(${entries}, ${bundled})`;
     entry = `if(${found} > 0,
@@ -457,10 +391,10 @@ export function pricedColumns(params: QueryParams, book: PriceBook = BUNDLED_BOO
     const slots = `${params.add(arrays.customSlots, "Array(Array(UInt32))")}[${custom}]`;
     entry = `if(${custom} > 0, ${timelineAt(froms, slots)}, ${entry})`;
   }
-  // ClickHouse answers 0 for index 0: no entry, no price.
+  // ClickHouse index 0 returns 0, representing no price.
   const at = (values: number[]) => `${params.add(values, "Array(Float64)")}[price_entry]`;
-  // The input less what was read from and written to a cache when it holds
-  // them, else all of it (costOf); never below 0, as the columns are unsigned.
+  // Subtract cached tokens only from inclusive input; keep the unsigned result nonnegative
+  // (costOf).
   const base = `if(input_includes_cache AND input_tokens >= cache_read_tokens + cache_write_tokens,
     input_tokens - cache_read_tokens - cache_write_tokens, input_tokens)`;
   return `${entry} AS price_entry,

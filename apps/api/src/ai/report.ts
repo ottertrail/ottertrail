@@ -9,64 +9,50 @@ import {
 import { BUNDLED_BOOK, type PriceBook, pricedColumns } from "./prices.ts";
 
 /**
- * The AI page's figures (docs/ai-usage.md, "The report"): totals, a chart,
- * breakdowns by model, feature, and user, failures, and the latest calls,
- * from the ai_calls table. Every query filters by project first, then
- * time, passes every value as a parameter, has a LIMIT, and runs with the
- * dashboard's limits (DASHBOARD_SETTINGS). Percentiles are t-digest
- * estimates (quantileTDigest), whose memory stays small however many calls
- * a period of up to 366 days holds, not exact ones. The totals, chart, and
- * breakdowns read without FINAL, as the Services page does: a retried
- * call counts twice until its parts are merged. The latest calls read
- * with it. Cost is worked out here, from the tokens (ai/prices.ts).
+ * Project-first parameterized reads use dashboard limits (DASHBOARD_SETTINGS; docs/ai-usage.md,
+ * "The report"). t-digest percentiles bound memory across up to 366 days. Aggregates omit FINAL,
+ * so retries count until merged; latest calls use FINAL. Costs are computed on read
+ * (ai/prices.ts).
  */
 
-/** Models a breakdown lists; the rest are one "Other" row. */
+/** Remaining models fold into "Other". */
 export const MAX_LISTED_MODELS = 2000;
-/** Features a breakdown lists; the rest are one "Other" row. */
+/** Remaining features fold into "Other". */
 export const MAX_LISTED_FEATURES = 500;
-/** Users the breakdown by user lists: those with the highest cost. */
+/** Keeps users with the highest cost. */
 export const MAX_LISTED_USERS = 50;
-/** Kinds of failure listed. */
 export const MAX_FAILURE_TYPES = 100;
-/** Calls the latest-calls list holds. */
 export const RECENT_CALLS = 50;
-/** Lines a chart splits into: the highest cost; the rest are one "Other" line. */
+/** Keeps highest-cost lines; folds the rest into "Other". */
 export const CHART_SERIES = 10;
-/** Models without a price the totals name. */
 export const MAX_NO_PRICE_MODELS = 20;
-/** The finish reasons that mean the answer was cut off at its token limit. */
+/** These finish reasons indicate token-limit truncation. */
 export const CUT_OFF_REASONS = ["length", "max_tokens"] as const;
 
-/** One project's calls in one environment, from `from` to before `to`. */
 export interface AiScope {
   projectId: string;
   environment: string;
   from: Date;
   to: Date;
-  /**
-   * Instead of `from` to `to`, only these parts of it (an AI cost rule's
-   * open hours, alerts/ai-cost-hours.ts); none: no calls.
-   */
+  /** Restricts to an AI cost rule's open hours (alerts/ai-cost-hours.ts). Empty means no calls. */
   ranges?: readonly { from: Date; to: Date }[] | undefined;
-  /** The prices cost is worked out at (custom-prices.ts, readPriceBook); the bundled table alone when left out. */
+  /** Defaults to bundled prices (custom-prices.ts, readPriceBook). */
   prices?: PriceBook | undefined;
 }
 
-/** The report's filters, each exactly as stored; a feature of "" is the unlabeled calls. */
+/** Filters match stored values exactly; "" feature means unlabeled. */
 export interface AiFilters {
   service?: string | undefined;
   provider?: string | undefined;
   model?: string | undefined;
   feature?: string | undefined;
-  /** One end user's calls (user_id); the routes take it only from a reader with the users area. */
+  /** Routes require users-area access for this filter. */
   user?: string | undefined;
 }
 
 export const SPLITS = ["model", "feature"] as const;
 export type AiSplit = (typeof SPLITS)[number];
 
-/** The scope's and filters' conditions, the project first. */
 function conditions(params: QueryParams, scope: AiScope, filters: AiFilters): string {
   const ranges = scope.ranges ?? [{ from: scope.from, to: scope.to }];
   const times = ranges.map(
@@ -85,10 +71,7 @@ function conditions(params: QueryParams, scope: AiScope, filters: AiFilters): st
   return parts.join(" AND ");
 }
 
-/**
- * The scope's calls, each with its cost and whether it is priced: what
- * every figure of cost reads, the list of calls too (call-list.ts).
- */
+/** Shared cost calculation for aggregates and call lists (call-list.ts). */
 export function pricedCalls(
   params: QueryParams,
   scope: AiScope,
@@ -101,7 +84,7 @@ export function pricedCalls(
 }
 
 const count = (value: unknown) => Number(value ?? 0);
-/** A duration in nanoseconds as milliseconds; null for none (no calls, or none reported). */
+/** Nanoseconds to milliseconds; null without reported values. */
 const ms = (value: unknown) => {
   if (value === null || value === undefined) return null;
   const number = Number(value);
@@ -109,35 +92,31 @@ const ms = (value: unknown) => {
 };
 const share = (part: number, whole: number) => (whole === 0 ? null : part / whole);
 
-/** Calls, tokens, and cost of a set of calls. */
 export interface AiTotals {
   calls: number;
-  /** The input, cached tokens included, however each call counted them (all_input_tokens). */
+  /** Includes cached tokens (all_input_tokens). */
   inputTokens: number;
   outputTokens: number;
   cacheReadTokens: number;
   cacheWriteTokens: number;
   reasoningTokens: number;
-  /** Estimated, in US dollars: the calls of models without a price add nothing. */
+  /** Estimated USD; unpriced models add nothing. */
   costUsd: number;
-  /** Cache reads out of the input tokens, 0 to 1 (at most 1); null without input. */
+  /** 0 to 1; null without input. */
   cacheReadShare: number | null;
-  /** The 95th-percentile duration; null without calls. */
+  /** Null without calls. */
   p95Ms: number | null;
   failed: number;
-  /** Failed calls out of all, 0 to 1; null without calls. */
+  /** 0 to 1; null without calls. */
   failedShare: number | null;
-  /** Calls of models the price table does not have: their cost is not in costUsd. */
+  /** Calls excluded from costUsd because no price is available. */
   noPriceCalls: number;
-  /** Up to MAX_NO_PRICE_MODELS of those models. */
   noPriceModels: string[];
 }
 
 /**
- * The input summed is all of it, cached tokens included, and the output
- * all of it, reasoning included, whichever way each call counted them
- * (all_input_tokens and all_output_tokens, prices.ts): a call that counts
- * them apart and one that counts them in add up alike, as their cost does.
+ * Sum inclusive input and output counts so cache/reasoning conventions do not change totals
+ * (all_input_tokens, all_output_tokens; prices.ts).
  */
 const SUMS = `count() AS calls,
   sum(all_input_tokens) AS all_input, sum(all_output_tokens) AS output_tokens,
@@ -147,7 +126,7 @@ const SUMS = `count() AS calls,
 
 interface SumsRow {
   calls: string;
-  /** The input, cached tokens included, whichever way each call counted them. */
+  /** Includes cached tokens. */
   all_input: string;
   output_tokens: string;
   cache_read_tokens: string;
@@ -171,7 +150,6 @@ function sumsOf(row: SumsRow | undefined) {
     cacheWriteTokens: count(row?.cache_write_tokens),
     reasoningTokens: count(row?.reasoning_tokens),
     costUsd: calls === 0 ? 0 : (row?.cost ?? 0),
-    // Out of all the input; at most 1 all the same.
     cacheReadShare: inputTokens === 0 ? null : Math.min(1, cacheReadTokens / inputTokens),
     failed,
     failedShare: share(failed, calls),
@@ -179,7 +157,6 @@ function sumsOf(row: SumsRow | undefined) {
   };
 }
 
-/** The totals of the scope's calls with the filters. */
 export async function aiTotals(
   reader: Reader,
   scope: AiScope,
@@ -203,7 +180,6 @@ export async function aiTotals(
   };
 }
 
-/** A breakdown row's figures. */
 export interface AiFigures {
   calls: number;
   inputTokens: number;
@@ -218,28 +194,28 @@ export interface AiFigures {
   noPriceCalls: number;
   p50Ms: number | null;
   p95Ms: number | null;
-  /** The median time to the first chunk, of the calls that report one; null with none. */
+  /** Median among calls reporting first-chunk time; null if none. */
   firstChunkP50Ms: number | null;
-  /** Calls whose answer was cut off at its token limit (finish reason length or max_tokens). */
+  /** Finish reason length or max_tokens. */
   cutOff: number;
   cutOffShare: number | null;
 }
 
 export interface ModelRow extends AiFigures {
-  /** As sent; "" when the span named none. "" too for the Other row. */
+  /** "" if absent or for the Other row. */
   model: string;
-  /** The provider of most of its calls; "" for the Other row. */
+  /** Most common provider; "" for Other. */
   provider: string;
-  /** The models past the MAX_LISTED_MODELS with the most calls, together. */
+  /** Models outside the top MAX_LISTED_MODELS by call count. */
   other: boolean;
-  /** Whether the price table has the model; false for the Other row. */
+  /** False for Other. */
   priced: boolean;
 }
 
 export interface FeatureRow extends AiFigures {
-  /** "" for calls with no feature ("Unlabeled"), and for the Other row. */
+  /** "" for unlabeled calls and Other. */
   feature: string;
-  /** The features past the MAX_LISTED_FEATURES with the most calls, together. */
+  /** Features outside the top MAX_LISTED_FEATURES by call count. */
   other: boolean;
 }
 
@@ -277,10 +253,7 @@ function figuresOf(row: BreakdownRow): AiFigures {
 
 const listedOf = (value: number | boolean) => value === true || value === 1;
 
-/**
- * The calls by `column` (model or feature): the `limit` values with the
- * most calls, each a row, and the rest as one Other row; by cost, then calls.
- */
+/** Keeps the most frequent values, folds the rest into Other, then sorts by cost and call count. */
 async function breakdown(
   reader: Reader,
   scope: AiScope,
@@ -305,7 +278,7 @@ async function breakdown(
   );
 }
 
-/** The calls by model, the MAX_LISTED_MODELS with the most calls, the rest as Other. */
+/** Models outside the top MAX_LISTED_MODELS by calls fold into Other. */
 export async function aiModels(
   reader: Reader,
   scope: AiScope,
@@ -325,7 +298,7 @@ export async function aiModels(
   });
 }
 
-/** The calls by feature, the MAX_LISTED_FEATURES with the most calls, the rest as Other. */
+/** Features outside the top MAX_LISTED_FEATURES by calls fold into Other. */
 export async function aiFeatures(
   reader: Reader,
   scope: AiScope,
@@ -348,7 +321,7 @@ export interface UserRow {
   noPriceCalls: number;
 }
 
-/** The MAX_LISTED_USERS users whose calls cost the most; calls without a user are left out. */
+/** Excludes calls without a user; ranks users by cost. */
 export async function aiUsers(
   reader: Reader,
   scope: AiScope,
@@ -380,14 +353,12 @@ export async function aiUsers(
 }
 
 export interface FailureRow {
-  /** The calls' `error.type`; "" for failed calls that sent none (only the span's status). */
+  /** "" for failures without error.type. */
   errorType: string;
   calls: number;
-  /** The latest of them. */
   lastAt: Date;
 }
 
-/** Failed calls by `error.type`, the most first. */
 export async function aiFailures(
   reader: Reader,
   scope: AiScope,
@@ -416,7 +387,7 @@ export async function aiFailures(
 export interface RecentCall {
   traceId: string;
   spanId: string;
-  /** The span's start in nanoseconds since 1970, as text: what opens it (GET …/traces/:traceId/spans/:spanId?start=). */
+  /** Nanoseconds since 1970 for span lookup (GET …/traces/:traceId/spans/:spanId?start=). */
   startNs: string;
   at: Date;
   service: string;
@@ -425,14 +396,14 @@ export interface RecentCall {
   model: string;
   operation: string;
   feature: string;
-  /** null for a reader without the users area, or a call with no user. */
+  /** Null without users-area access or a call user. */
   userId: string | null;
   inputTokens: number;
   outputTokens: number;
   cacheReadTokens: number;
   cacheWriteTokens: number;
   reasoningTokens: number;
-  /** Estimated; null when its model has no price. */
+  /** Estimated; null without a price. */
   costUsd: number | null;
   durationMs: number;
   firstChunkMs: number | null;
@@ -441,13 +412,12 @@ export interface RecentCall {
   finishReasons: string[];
 }
 
-/** How far back the latest calls are looked for first: FINAL reads every row of its range. */
+/** Read the last day first because FINAL merges every row in its range. */
 const RECENT_FIRST_MS = 86_400_000;
 
 /**
- * The latest RECENT_CALLS calls, newest first, each once (FINAL). FINAL
- * merges every row of the range it reads, so the last day of the range is
- * read first, and the whole range only when that day holds fewer.
+ * Reads the last day with FINAL first, expanding to the full range only if fewer than RECENT_CALLS
+ * were found.
  */
 export async function recentAiCalls(
   reader: Reader,
@@ -511,7 +481,6 @@ interface RecentRow {
   finish_reasons: string[];
 }
 
-/** The scope's latest RECENT_CALLS rows, newest first, each once (FINAL). */
 async function recentRows(
   reader: Reader,
   scope: AiScope,
@@ -532,20 +501,18 @@ async function recentRows(
   );
 }
 
-/** What the filters offer: the range's environments, and the shown environment's values. */
 export interface AiLabels {
   environments: string[];
   services: string[];
   providers: string[];
-  /** At most MAX_LISTED_MODELS. */
   models: string[];
-  /** At most MAX_LISTED_FEATURES; "" is the unlabeled calls. */
+  /** Capped at MAX_LISTED_FEATURES; "" means unlabeled. */
   features: string[];
 }
 
 const sorted = (values: string[] | undefined) => (values ?? []).toSorted();
 
-/** The values the range holds, whatever the other filters: what the filter bar offers. */
+/** Ignores other filters so the filter bar offers all values in range. */
 export async function aiLabels(reader: Reader, scope: AiScope): Promise<AiLabels> {
   const params = new QueryParams();
   const environment = params.add(scope.environment, "String");
@@ -581,7 +548,7 @@ export async function aiLabels(reader: Reader, scope: AiScope): Promise<AiLabels
   };
 }
 
-/** Whether the project has any AI call at all: false shows how to send them. */
+/** False shows setup instructions. */
 export async function hasAiCalls(reader: Reader, projectId: string): Promise<boolean> {
   const params = new QueryParams();
   const rows = await queryRows<{ found: number }>(
@@ -593,26 +560,24 @@ export async function hasAiCalls(reader: Reader, projectId: string): Promise<boo
   return rows.length > 0;
 }
 
-/** One line of the chart: per bucket. */
 export interface AiSeries {
   costUsd: number[];
-  /** Input and output tokens. */
+  /** Input plus output tokens. */
   tokens: number[];
   calls: number[];
-  /** null in a bucket without calls. */
+  /** Null without calls. */
   p95Ms: (number | null)[];
 }
 
 export interface AiChart {
   start: Date;
-  /** Each bucket's start, on the clock of the instance's timezone (listChartBuckets). */
+  /** Bucket starts in the instance timezone (listChartBuckets). */
   bucketStarts: Date[];
   stepSeconds: number;
   buckets: number;
   split: AiSplit;
-  /** The CHART_SERIES models or features that cost the most, then Other; by cost. */
+  /** Top CHART_SERIES by cost, then Other. */
   series: (AiSeries & { key: string; other: boolean })[];
-  /** Every call. */
   total: AiSeries;
 }
 
@@ -624,12 +589,7 @@ interface BucketRow {
   p95: number | null;
 }
 
-/**
- * The calls over the range in time buckets (listChartBuckets, as the
- * Traces and Logs charts have them), split by model or feature: the
- * CHART_SERIES that cost the most in the range (then the most calls), each
- * a line, the rest one Other line; and every call together.
- */
+/** Uses listChartBuckets. Keeps CHART_SERIES by cost then call count, folding the rest into Other. */
 export async function aiChart(
   reader: Reader,
   range: TelemetryRange,
@@ -719,7 +679,7 @@ export async function aiChart(
   return chart;
 }
 
-/** What an alert rule reads of its window (alerts/ai-rules.ts). */
+/** Alert-window figures (alerts/ai-rules.ts). */
 export interface AiWindow {
   calls: number;
   failed: number;
@@ -727,7 +687,6 @@ export interface AiWindow {
   noPriceCalls: number;
 }
 
-/** The calls of one window with a rule's filters: how many, how many failed, their cost. */
 export async function aiWindow(
   reader: Reader,
   scope: AiScope,
@@ -749,14 +708,12 @@ export async function aiWindow(
   };
 }
 
-/** How many calls one window has with a rule's filters, and their 95th-percentile duration (an AI latency rule). */
 export async function aiLatencyWindow(
   reader: Reader,
   scope: AiScope,
   filters: AiFilters,
 ): Promise<{ calls: number; p95Ms: number | null }> {
   const params = new QueryParams();
-  // No prices: only the count and the percentile.
   const [row] = await queryRows<{ calls: string; p95: number | null }>(
     reader,
     `SELECT count() AS calls, quantileTDigest(0.95)(duration_ns) AS p95
@@ -770,7 +727,7 @@ export async function aiLatencyWindow(
   return { calls, p95Ms: calls === 0 ? null : ms(row?.p95) };
 }
 
-/** One UTC hour's calls of an AI cost rule's window: what alerts/ai-cost-hours.ts keeps. */
+/** UTC hours retained by alerts/ai-cost-hours.ts. */
 export interface AiHour {
   hour: Date;
   costUsd: number;
@@ -778,7 +735,7 @@ export interface AiHour {
   noPriceCalls: number;
 }
 
-/** The scope's calls by UTC hour, the hours with calls only. */
+/** Omits hours without calls. */
 export async function aiHours(
   reader: Reader,
   scope: AiScope,
@@ -803,7 +760,7 @@ export async function aiHours(
   }));
 }
 
-/** Whether any call with the filters arrived in the scope: a rule saved for none may never fire. */
+/** A rule matching no calls may never fire. */
 export async function aiSeen(reader: Reader, scope: AiScope, filters: AiFilters): Promise<boolean> {
   const params = new QueryParams();
   const rows = await queryRows<{ found: number }>(

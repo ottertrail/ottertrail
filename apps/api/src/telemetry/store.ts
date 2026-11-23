@@ -5,31 +5,25 @@ import type { TELEMETRY_TABLES } from "../clickhouse/migrations.ts";
 import { clickHouseTime } from "../clickhouse/query.ts";
 import type { HistogramRow, LogRow, PointRow, SpanRow } from "./normalize.ts";
 
-/** One request's rows, by table. */
 export interface TelemetryRows {
   spans?: SpanRow[];
   logs?: LogRow[];
   metric_points?: PointRow[];
   metric_histograms?: HistogramRow[];
-  /** The AI calls among the spans (ai/calls.ts): rows of their own table, kept as long as events. */
+  /** AI calls extracted from spans (ai/calls.ts), with the same retention as events. */
   ai_calls?: AiCallRow[];
 }
 
 /**
- * Writes one request's rows: one insert per table, each asynchronous and
- * waited for (clickhouse/insert.ts), so the answer confirms the data. A
- * traces request's AI calls go with its spans: the answer confirms both.
+ * Waits for every table insert, including AI calls, before acknowledging the request
+ * (clickhouse/insert.ts).
  *
- * Every row but a log record's carries `receivedAt`, when the API received
- * the request, as events do (received_at, ClickHouse migration 0011). A
- * log record's arrival is ClickHouse's clock as it writes it (0005), which
- * the live view compares with ClickHouse's own (telemetry/logs.ts).
+ * Rows use the API's receivedAt (ClickHouse migration 0011), except logs, whose arrival uses
+ * ClickHouse's clock (0005) for the live view (telemetry/logs.ts).
  *
- * Each day is a partition, and a request's records fall on at most the
- * retention's days plus two (normalize.ts refuses other times). ClickHouse's
- * guard (an error past 100 partitions a block) stays off: a retention of up
- * to a year passes it, and asynchronous inserts can join other requests'
- * rows, other projects' included, into one block, which would fail together.
+ * Records span at most retention days plus two (normalize.ts). Disable ClickHouse's 100-partition
+ * guard: up to a year of retention can exceed it, and async inserts combine requests across
+ * projects into one block that would fail together.
  */
 export async function insertTelemetry(
   clickhouse: ClickHouseClient,

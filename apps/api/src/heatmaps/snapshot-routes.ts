@@ -33,7 +33,6 @@ const VIEW_PARAMS = {
     device: { type: "string", enum: DEVICES },
   },
 } as const;
-/** A page path as collection stores it. */
 const PATH = { type: "string", minLength: 1, maxLength: 2048, pattern: "^/" } as const;
 const PATH_QUERY = {
   type: "object",
@@ -45,7 +44,7 @@ const PATH_QUERY = {
 const problem = (error: string, message: string) => ({ error, message });
 const NOT_FOUND = problem("snapshot_not_found", "This page has no saved view for this device.");
 
-/** The access requireProjectAccess set: these routes always run it. */
+/** All routes run requireProjectAccess before this. */
 function accessOf(request: { projectAccess: ProjectAccess | null }): ProjectAccess {
   if (request.projectAccess === null) {
     throw new Error("requireProjectAccess must run before this route");
@@ -53,14 +52,12 @@ function accessOf(request: { projectAccess: ProjectAccess | null }): ProjectAcce
   return request.projectAccess;
 }
 
-/** The store could not be reached: try again. */
 const unavailable = (reply: FastifyReply, what: string) =>
   reply
     .code(503)
     .header("retry-after", "30")
     .send(problem("storage_unavailable", `The saved view could not be ${what}. Try again.`));
 
-/** Text for an HTML attribute: its five special characters escaped. */
 const attribute = (text: string) =>
   text
     .replaceAll("&", "&amp;")
@@ -69,7 +66,7 @@ const attribute = (text: string) =>
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;");
 
-/** The page that shows a saved view with the heatmap over it: the replay player's script, in its snapshot mode. */
+/** Uses replay-player snapshot mode. */
 function snapshotPage(snapshotUrl: string, heatmapUrl: string, theme: "light" | "dark"): string {
   return `<!doctype html>
 <html lang="en" data-theme="${theme}">
@@ -89,21 +86,8 @@ function snapshotPage(snapshotUrl: string, heatmapUrl: string, theme: "light" | 
 type ViewQuery = RangeQuery & { path: string };
 
 /**
- * Saved heatmap views in the dashboard (heatmaps/snapshots.ts;
- * docs/dashboard.md, "Heatmaps"), in the Web analytics area at view, as
- * the overlay that saves them is:
- *
- *   GET    /api/projects/:id/heatmaps/snapshots?path=/pricing           the page's saved views
- *   GET    /api/projects/:id/heatmaps/snapshots/:device?path=…          one, as JSON (gzip)
- *   GET    /api/projects/:id/heatmaps/snapshots/:device/player?path=…&period=…&environment=…&theme=…
- *                                                                       the page that shows it, in a frame of the dashboard
- *   GET    /api/projects/:id/heatmaps/snapshots/:device/heatmap?path=…&period=…&environment=…
- *                                                                       the heatmap it draws: the overlay's answer, for the dashboard's range
- *   DELETE /api/projects/:id/heatmaps/snapshots/:device?path=…          deletes it (the owner and admins, from the dashboard's origin)
- *
- * The player page is the replay player's (packages/replay-player), with
- * its Content Security Policy: a snapshot is untrusted HTML as a replay
- * is, shown only in rrweb's sandboxed frame.
+ * Untrusted snapshots use the replay player's CSP and rrweb sandbox (heatmaps/snapshots.ts;
+ * docs/dashboard.md, "Heatmaps"). Reads require Web analytics view access.
  */
 export const heatmapSnapshotRoutes: FastifyPluginCallback<{
   db: Kysely<Database>;
@@ -120,11 +104,11 @@ export const heatmapSnapshotRoutes: FastifyPluginCallback<{
 ) => {
   const signedIn = requireSession(auth);
   const canView = requireProjectAccess(db, { area: "web_analytics", level: "view" });
-  // Saving, replacing, and deleting a saved view is the owner's and admins'.
+  // Saving and deleting views requires owner/admin access.
   const canManage = requireProjectAccess(db, { permission: "projects" });
   const fromDashboard = requireTrustedOrigin(trustedOrigins);
   app.setErrorHandler(clickHouseErrorHandler);
-  // Every route here takes a path that a row keeps or is looked up by.
+  // Reject paths PostgreSQL cannot store before database work.
   app.addHook("preValidation", storablePath);
 
   app.get<{ Params: { id: string }; Querystring: { path: string } }>(
@@ -155,7 +139,7 @@ export const heatmapSnapshotRoutes: FastifyPluginCallback<{
         return unavailable(reply, "read");
       }
       if (data === null) return reply.code(404).send(NOT_FOUND);
-      // Stored gzip-compressed, as sent; the browser unpacks it.
+      // Browser decompresses the stored gzip.
       return reply
         .header("content-encoding", "gzip")
         .header("cache-control", "private, no-cache")

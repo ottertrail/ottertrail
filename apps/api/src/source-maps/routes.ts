@@ -50,7 +50,6 @@ function storageUnavailable(reply: FastifyReply) {
     .send(problem("storage_unavailable", "The source map could not be stored. Try again."));
 }
 
-/** "1 GiB", "512 MiB": a limit as people read it. */
 function sizeText(bytes: number): string {
   return bytes >= 1024 ** 3 && bytes % 1024 ** 3 === 0
     ? `${bytes / 1024 ** 3} GiB`
@@ -58,43 +57,36 @@ function sizeText(bytes: number): string {
 }
 
 /**
- * PUT /api/source-maps?release=1.4.2&path=/assets/index-4f3a.js
- *     Authorization: Bearer sk_…   (the body: the map, as JSON; gzip with Content-Encoding)
- *
- * A site's build uploads its source maps (docs/errors.md, "Source maps"),
- * one request per minified file, with the project's secret key: a map
- * holds the site's own source code, so a public key never reaches one.
- * 201 for a new map, 200 for one that replaced the release's earlier map
- * of the same file.
+ * Source maps contain application source, so uploads require secret project keys (docs/errors.md,
+ * "Source maps"). Returns 201 for new files and 200 for replacements.
  */
 export const sourceMapUploadRoutes: FastifyPluginCallback<{
   db: Kysely<Database>;
   store: ObjectStore | null;
   projects: ProjectKeyCache;
-  /** Counts for the Activity tab (activity/activity.ts). */
+  /** Activity tab counts (activity/activity.ts). */
   activity: IngestActivity;
-  /** Compressed bytes the instance may store (Config.sourceMapStorageBytes). */
+  /** Compressed instance quota (Config.sourceMapStorageBytes). */
   limitBytes: number;
-  /** Uploads per client address: a build sends one per file, in a burst. */
+  /** Allows builds to burst one upload per file. */
   ipLimit?: RateLimit;
-  /** Uploads this process works on at once: each holds its map in memory. */
+  /** Bounds maps held in memory per process. */
   maxInFlight?: number;
-  /** Of those, one project's at most, so one key's slow uploads cannot hold them all. */
+  /** Prevents one project's slow uploads from occupying every slot. */
   maxInFlightPerProject?: number;
 }> = (app, options, done) => {
   const { db, store, projects, activity, limitBytes, ipLimit } = options;
   const ipLimiter = new TokenBucketLimiter(ipLimit ?? { capacity: 200, refillPerSecond: 5 });
-  /** The project each upload's key names, found before its body is read. */
+  /** Resolve before reading bodies. */
   const projectOf = new WeakMap<FastifyRequest, CollectingProject>();
   const inFlight = new InFlight(options.maxInFlight ?? 4, options.maxInFlightPerProject ?? 2);
-  /** Counts an upload whose project is known (activity/activity.ts); others are not. */
+  /** Counts only uploads whose project is known (activity/activity.ts). */
   const count = (request: FastifyRequest, outcome: IngestOutcome, items = 0) => {
     const project = projectOf.get(request);
     if (project !== undefined) activity.add(project.id, "source_maps", outcome, items);
   };
 
-  // The map as bytes: it is compressed and stored as sent, and a gzip body
-  // is unpacked here, with a cap, before anything reads it.
+  // Preserve uploaded bytes for storage; cap gzip decompression before reading content.
   app.addContentTypeParser(
     ["application/json", "application/octet-stream"],
     { parseAs: "buffer", bodyLimit: MAX_SOURCE_MAP_BYTES },
@@ -118,9 +110,8 @@ export const sourceMapUploadRoutes: FastifyPluginCallback<{
           },
         },
       },
-      // Before the body is read, so a request a project would not accept
-      // costs no more than its headers: the key's form, the address's rate,
-      // the install's store, how busy this process is, and the key itself.
+      // Reject key, rate, store, and concurrency failures before reading bodies to limit cost to
+      // headers.
       onRequest: async (request, reply) => {
         const secretKey = BEARER.exec(request.headers.authorization ?? "")?.[1];
         if (secretKey === undefined) {
@@ -171,13 +162,13 @@ export const sourceMapUploadRoutes: FastifyPluginCallback<{
       },
       onResponse: inFlight.finished,
       onRequestAbort: inFlight.finished,
-      // The key was read before the body: a query or body Fastify refuses is the project's.
+      // Keys resolve before body/query parsing, so Fastify refusals count against the project.
       onError: async (request, _reply, error) => {
         const status = error.validation === undefined ? (error.statusCode ?? 500) : 400;
         if (status >= 400 && status < 500) count(request, "refused_invalid");
       },
     },
-    // The slot is held until the map is stored.
+    // Hold the slot through storage.
     async (request, reply) =>
       inFlight.run(request, async () => {
         const project = projectOf.get(request);
@@ -274,7 +265,7 @@ export const sourceMapUploadRoutes: FastifyPluginCallback<{
           count(request, "refused_unavailable");
           return storageUnavailable(reply);
         }
-        // A project deleted meanwhile has nothing left to count in.
+        // Deleted projects have no counters to update.
         if ("refused" in result && result.refused !== "no_project")
           count(request, "refused_volume");
         if ("refused" in result) {
@@ -297,7 +288,7 @@ export const sourceMapUploadRoutes: FastifyPluginCallback<{
   done();
 };
 
-/** The access requireProjectAccess set: these routes always run it. */
+/** All routes run requireProjectAccess before this. */
 function accessOf(request: { projectAccess: ProjectAccess | null }): ProjectAccess {
   if (request.projectAccess === null) {
     throw new Error("requireProjectAccess must run before this route");
@@ -305,15 +296,7 @@ function accessOf(request: { projectAccess: ProjectAccess | null }): ProjectAcce
   return request.projectAccess;
 }
 
-/**
- * GET    /api/projects/:id/source-maps[?order=oldest]     the releases with maps (100, newest or oldest
- *                                                         first, and how many in all), and the instance's use
- * GET    /api/projects/:id/source-maps/files?release=…    one release's files
- * DELETE /api/projects/:id/source-maps?release=…          deletes one release's maps
- *
- * The dashboard's view of a project's maps. Like every project route, each
- * runs requireProjectAccess first; deleting also needs the dashboard's origin.
- */
+/** Dashboard maps require project access; deletions also check dashboard Origin. */
 export const sourceMapRoutes: FastifyPluginCallback<{
   db: Kysely<Database>;
   store: ObjectStore | null;
@@ -353,7 +336,7 @@ export const sourceMapRoutes: FastifyPluginCallback<{
     async (request) => {
       const { projectId, user } = accessOf(request);
       const order = request.query.order ?? "newest";
-      // All projects together: for those who manage projects only (docs/access.md).
+      // Instance totals require project-management permission (docs/access.md).
       const showInstance = can(user, "projects");
       const [listed, stored] = await Promise.all([
         listReleases(db, projectId, { order }),

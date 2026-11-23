@@ -1,10 +1,8 @@
 import { type Kysely, sql } from "kysely";
 
 /**
- * What each replay chunk unpacks to (replays/replays.ts, storeChunk), so an
- * upload can refuse a replay whose chunks would unpack past
- * MAX_REPLAY_UNPACKED_BYTES without unpacking the chunks already kept.
- * Chunks kept before it count as 0: the worker's join still caps them.
+ * Tracks unpacked chunk bytes to enforce MAX_REPLAY_UNPACKED_BYTES without rereading stored chunks
+ * (replays/replays.ts, storeChunk). Older chunks count as 0; the worker still caps joins.
  */
 export async function up(db: Kysely<unknown>): Promise<void> {
   await sql`

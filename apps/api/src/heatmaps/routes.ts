@@ -33,36 +33,33 @@ import {
 } from "./store.ts";
 import { HEATMAP_TAGS } from "./tags.ts";
 
-/** Records per batch: a page sends its clicks and its scroll depth together. */
+/** Batches combine clicks and scroll depth. */
 export const MAX_RECORDS_PER_BATCH = 50;
 export const MAX_BODY_BYTES = 64 * 1024;
-/** The structural path of a click's element: at most 24 steps and 512 characters. */
+/** Caps element paths at 24 steps and 512 characters. */
 export const MAX_ELEMENT_STEPS = 24;
 export const MAX_ELEMENT_LENGTH = 512;
-/** A site's own name for an element (data-ottertrail-name). */
+/** data-ottertrail-name label limit. */
 export const MAX_LABEL_LENGTH = 64;
-/** The largest viewport side and page height taken, in CSS pixels. */
+/** CSS pixels for viewport sides and page height. */
 export const MAX_VIEWPORT_PX = 16_384;
 export const MAX_PAGE_HEIGHT_PX = 1_000_000;
-/** A pageview's clicks past the 100 h.js sends, counted on its scroll record. */
+/** Scroll records count clicks beyond h.js's 100-click cap. */
 export const MAX_DROPPED = 65_535;
 
-/** Requests per client IP address, before the body is read: as for events. */
 export const DEFAULT_HEATMAP_IP_LIMIT: RateLimit = { capacity: 120, refillPerSecond: 2 };
 /**
- * Records per client address (clientKey): a pageview sends at most 100
- * clicks and one scroll depth, so bursts of 400, then 40 a second.
+ * Per address (clientKey): burst 400, then 40 records/second. A pageview sends at most 100 clicks
+ * and one scroll.
  */
 export const DEFAULT_HEATMAP_IP_RECORD_LIMIT: RateLimit = { capacity: 400, refillPerSecond: 40 };
 /**
- * Records per project and per instance, apart from events' budgets, so
- * heatmaps never crowd events out: bursts of 2,000, then 100 a second for
- * a project; three projects' worth for the instance. Provisional, until
- * measured on real sites.
+ * Separate budgets protect event ingestion. Project: burst 2,000, then 100/second. Instance: three
+ * projects' worth. Provisional pending real-site measurements.
  */
 export const DEFAULT_HEATMAP_PROJECT_LIMIT: RateLimit = { capacity: 2_000, refillPerSecond: 100 };
 export const DEFAULT_HEATMAP_INSTANCE_LIMIT: RateLimit = { capacity: 6_000, refillPerSecond: 300 };
-/** Heatmap requests one process works on at once, and one project's (collection/busy.ts). */
+/** Shares concurrency handling with collection/busy.ts. */
 export const DEFAULT_HEATMAP_MAX_IN_FLIGHT = 64;
 export const DEFAULT_HEATMAP_MAX_IN_FLIGHT_PER_PROJECT = 16;
 
@@ -70,28 +67,24 @@ const UUID_PATTERN =
   "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$";
 const MAX_TIMESTAMP = 8_640_000_000_000_000;
 
-/**
- * One step: a standard tag name (tags.ts), or "x" for any other, and its
- * place among siblings of that tag after the first.
- */
+/** Unknown tags become x; repeated sibling tags carry their position. */
 const STEP = `(${["x", ...HEATMAP_TAGS].join("|")})(:[1-9][0-9]{0,3})?`;
-/** Steps from the labelled ancestor or body, joined by ">"; "*>" first when cut at 24. */
+/** Paths start at the labeled ancestor or body; *> marks truncation at 24 steps. */
 export const ELEMENT_PATTERN = `^(\\*>)?${STEP}(>${STEP}){0,${MAX_ELEMENT_STEPS - 1}}$`;
-/** Letters, digits, spaces, and . _ : / -, starting with a letter or digit. */
 export const LABEL_PATTERN = `^[A-Za-z0-9][A-Za-z0-9 ._:/-]{0,${MAX_LABEL_LENGTH - 1}}$`;
 
 interface IncomingPage {
   url: string;
-  /** The page's referrer, for the referrer spam check only: never stored. */
+  /** Used only for spam checks; never stored. */
   referrer?: string;
 }
 
 interface IncomingRecord {
   id: string;
   type: "click" | "scroll";
-  /** A click's time; a scroll row's, when its pageview started. Sender's clock, to the minute. */
+  /** Sender-clock minutes: click time or scroll pageview start. */
   at: number;
-  /** Its page: an index into the batch's pages. */
+  /** Index into batch.pages. */
   page: number;
   label?: string;
   element?: string;
@@ -114,7 +107,6 @@ interface HeatmapBatch {
   sentAt: number;
   environment?: string;
   release?: string;
-  /** The pages of the batch's records, each once. */
   pages: IncomingPage[];
   records: IncomingRecord[];
 }
@@ -122,7 +114,7 @@ interface HeatmapBatch {
 const fraction = { type: "number", minimum: 0, maximum: 1 } as const;
 const pixels = (maximum: number) => ({ type: "integer", minimum: 1, maximum }) as const;
 
-// Unknown fields are removed, as for events: a newer h.js still reaches an older API.
+// Drop unknown fields so newer h.js versions work with older APIs.
 const batchSchema = {
   type: "object",
   required: ["v", "key", "sentAt", "pages", "records"],
@@ -179,7 +171,7 @@ const batchSchema = {
   },
 } as const;
 
-/** The same 202 answer for every outcome, as for events (collection/routes.ts). */
+/** All outcomes share 202, as with events (collection/routes.ts). */
 const receivedResponseSchema = {
   type: "object",
   required: ["received"],
@@ -203,7 +195,6 @@ function storageUnavailable(reply: FastifyReply) {
     .send(problem("storage_unavailable", "The heatmap data was not stored. Retry later."));
 }
 
-/** What is wrong with one record beyond its schema, or null. */
 function recordProblem(record: IncomingRecord): string | null {
   if (record.type === "click") {
     if (record.element === undefined || record.x === undefined || record.y === undefined) {
@@ -234,32 +225,19 @@ function recordProblem(record: IncomingRecord): string | null {
 }
 
 /**
- * POST /api/heatmaps: a page's clicks and scroll depth (docs/web-analytics.md,
- * "Heatmaps"), as the tracker's h.js sends them, as text/plain JSON.
+ * Collects text/plain clicks and scroll depth from h.js (docs/web-analytics.md, "Heatmaps").
+ * Validate cheapest checks first (collection/routes.ts): IP rate, body/schema, address record
+ * rate, cached key, allowed Origin, project setting, filters, then budgets and per-record rules.
+ * Filtering blocked addresses, bots, data centers, and referrer spam returns counted 202 before
+ * spending budgets. heatmaps_off returns 403 and stops h.js for the page load.
  *
- * Checked as events are, cheapest first (collection/routes.ts):
- *
- * 1. Requests per client IP, before the body is read.
- * 2. Body size, content type, and the JSON schema, which caps every field.
- * 3. Records per client address.
- * 4. The public key (cached).
- * 5. The Origin header against the project's allowed hostnames.
- * 6. The project's heatmaps setting: off answers 403 `heatmaps_off`, and
- *    h.js stops for the rest of the page load.
- * 7. Accepted and not stored (202, counted): the project's blocked
- *    addresses, bots and data centers, referrer spam. Before the budget.
- * 8. Heatmaps' own budget per project and instance, apart from events'.
- * 9. Each record's rules, page hostname, and clock correction.
- * 10. One insert into ClickHouse; 202 only once it has written the rows,
- *     503 while it cannot (the budget given back).
- *
- * Nothing about the visitor is stored: no visitor ID, no address, no user
- * agent, no referrer.
+ * Return 202 only after ClickHouse writes; refund budgets on retryable 503. Store no visitor IDs,
+ * addresses, user agents, or referrers.
  */
 export const heatmapCollectionRoutes: FastifyPluginCallback<{
   clickhouse: ClickHouseClient;
   projects: ProjectKeyCache;
-  /** Counts for the Activity tab (activity/activity.ts). */
+  /** Activity tab counts (activity/activity.ts). */
   activity: IngestActivity;
   ipLimit?: RateLimit;
   ipRecordLimit?: RateLimit;
@@ -278,7 +256,7 @@ export const heatmapCollectionRoutes: FastifyPluginCallback<{
     new TokenBucketLimiter(options.projectLimit ?? DEFAULT_HEATMAP_PROJECT_LIMIT, { now }),
     new TokenBucketLimiter(options.instanceLimit ?? DEFAULT_HEATMAP_INSTANCE_LIMIT, { now }),
   );
-  // Taken once the body has arrived, as for events.
+  // Acquire slots only after the body arrives.
   const inFlight = new InFlight(
     options.maxInFlight ?? DEFAULT_HEATMAP_MAX_IN_FLIGHT,
     options.maxInFlightPerProject ?? DEFAULT_HEATMAP_MAX_IN_FLIGHT_PER_PROJECT,
@@ -290,8 +268,7 @@ export const heatmapCollectionRoutes: FastifyPluginCallback<{
 
   parseTextPlainAsJson(app, MAX_BODY_BYTES);
 
-  // As for events: the page may read every answer, so h.js knows whether
-  // sending again can help (collection/routes.ts).
+  // Expose all answers so h.js can decide whether to retry (collection/routes.ts).
   app.addHook("onSend", async (request, reply) => {
     const origin = request.headers.origin;
     if (origin !== undefined) {
@@ -357,7 +334,6 @@ export const heatmapCollectionRoutes: FastifyPluginCallback<{
         if (project === null) {
           return reply.code(403).send(problem("unknown_key", "No project has this key."));
         }
-        // Known from here: what becomes of the batch is counted.
         const projectId = project.id;
         const count = (outcome: IngestOutcome, items = 0) => {
           activity.add(projectId, "heatmaps", outcome, items);
@@ -421,7 +397,6 @@ export const heatmapCollectionRoutes: FastifyPluginCallback<{
         }
 
         const environment = environmentOf(request.body.environment);
-        // Each page once: its path, on an allowed hostname.
         const paths: string[] = [];
         for (const [index, incoming] of pages.entries()) {
           const page = parsePageUrl(incoming.url);
@@ -495,13 +470,12 @@ export const heatmapCollectionRoutes: FastifyPluginCallback<{
             });
           }
         } catch (error) {
-          // Not the sender's doing: the budget back, so its retry is not refused for it.
+          // Refund server failures so retries retain their budget.
           budget.refund(project.id, accepted.length);
           request.log.error({ err: error }, "could not store heatmap data");
           count("refused_unavailable");
           return storageUnavailable(reply);
         }
-        // Per record: those stored, and those too old to store.
         if (accepted.length > 0) count("accepted", accepted.length);
         if (tooOld > 0) count("filtered_too_old", tooOld);
         return reply.code(202).send(received);

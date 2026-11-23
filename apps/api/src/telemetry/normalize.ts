@@ -37,54 +37,37 @@ import {
 import { countFields } from "./wire.ts";
 
 /**
- * OTLP requests, decoded (wire.ts), as rows of ClickHouse's telemetry
- * tables (clickhouse/migrations.ts; docs/telemetry.md), and the exceptions they
- * record as error events (exceptions.ts). Pure functions: the same
- * request, with the same project, always gives the same rows, so a retried
- * request stores rows ReplacingMergeTree keeps once. (A log record with no
- * time at all takes its arrival's, so a retry of it is stored again.)
+ * Stable rows let ReplacingMergeTree deduplicate retries (clickhouse/migrations.ts;
+ * docs/telemetry.md). Logs without timestamps use arrival time and are stored again on retry.
+ * Exceptions also become error events (exceptions.ts).
  */
 
-/** At most this many attributes a record keeps; the rest are dropped, and counted. */
+/** Excess attributes are dropped and counted. */
 export const MAX_ATTRIBUTES = 128;
-/** Attribute keys are cut to this many characters. */
 export const MAX_KEY_CHARS = 256;
-/** Attribute values are cut to this many bytes. */
 export const MAX_VALUE_BYTES = 4 * 1024;
-/**
- * A resource's attributes, keys and values together, are cut to this many
- * bytes (in key order): every record of the resource carries a copy.
- */
+/** Caps combined key/value bytes in key order because each record copies its resource. */
 export const MAX_RESOURCE_ATTRIBUTE_BYTES = 8 * 1024;
-/** A span's name is cut to this many bytes. */
 export const MAX_NAME_BYTES = 1024;
-/** A log record's body is cut to this many bytes. */
 export const MAX_BODY_BYTES = 64 * 1024;
-/** At most this many events, and as many links, a span keeps; the rest are dropped, and counted. */
+/** Caps events and links separately. Excess items are dropped and counted. */
 export const MAX_SPAN_EVENTS = 128;
 export const MAX_SPAN_LINKS = 128;
-/** Names such as a service's, a scope's, a severity, or a unit are cut to this many characters. */
+/** Character limit for service, scope, severity, and unit labels. */
 const MAX_LABEL_CHARS = 256;
-/** How deep a nested attribute value is written out; deeper parts are left out. */
+/** Deeper nested values are omitted. */
 const MAX_VALUE_DEPTH = 16;
 
 const NANOS_PER_SECOND = 1_000_000_000n;
 const NANOS_PER_DAY = 86_400n * NANOS_PER_SECOND;
-/** How far ahead of the server's clock a record may be. */
 const MAX_AHEAD_NS = 3600n * NANOS_PER_SECOND;
-/** How long after its span's end an exception event's own time is still taken. */
+/** Slack after a span ends for using an exception event's timestamp. */
 const EXCEPTION_SLACK_NS = 60n * NANOS_PER_SECOND;
 const MAX_UINT32 = 0xffff_ffff;
 const MAX_UINT64 = 0xffff_ffff_ffff_ffffn;
-/**
- * Counts a histogram may hold: below 2^63, so a chart's arithmetic on
- * them (as Int64, to take differences) never wraps to a negative count.
- */
+/** Keeps histogram differences within signed Int64 to prevent negative overflow. */
 const MAX_HISTOGRAM_COUNT = 0x7fff_ffff_ffff_ffffn;
-/**
- * Bounds a histogram point may have: a chart's memory grows with its
- * buckets. OpenTelemetry's default has 15; Prometheus's classic 11.
- */
+/** Bounds chart memory. OpenTelemetry defaults to 15 bounds; Prometheus classic uses 11. */
 export const MAX_HISTOGRAM_BOUNDS = 64;
 
 const ENVIRONMENT = new RegExp(ENVIRONMENT_PATTERN);
@@ -94,11 +77,10 @@ export interface NormalizeContext {
   projectId: string;
   /** When the request arrived, in nanoseconds since 1970. */
   receivedAtNs: bigint;
-  /** Days telemetry is kept: older records are refused. */
+  /** Older records are refused. */
   retentionDays: number;
 }
 
-/** What every row of one resource and scope shares, but the resource's attributes. */
 interface Labels {
   project_id: string;
   service: string;
@@ -178,21 +160,16 @@ export interface HistogramRow extends Origin {
   dropped_attributes_count: number;
 }
 
-/** Records a request held, and those refused, with why. */
 export interface Outcome {
-  /** Spans, log records, or data points in the request, refused or not. */
+  /** Includes refused records. */
   records: number;
   refused: number;
-  /** Why records were refused, for partial_success; "" when none were. */
+  /** Refusal reasons for partial_success; "" if none. */
   message: string;
-  /**
-   * Bytes of resource attributes the rows repeat: each row's copy of its
-   * resource's, which the request sent once.
-   */
+  /** Counts each row's copy of resource attributes sent once in the request. */
   sharedBytes: number;
 }
 
-/** Counts refused records and their reasons, each reason once. */
 class Refusals {
   count = 0;
   readonly #reasons = new Set<string>();
@@ -216,7 +193,7 @@ class Refusals {
   }
 }
 
-/** "2026-11-18 12:00:00.123456789": a DateTime64(9, 'UTC') as ClickHouse reads it. */
+/** Formats DateTime64(9, 'UTC'), e.g. "2026-11-18 12:00:00.123456789". */
 export function nanosText(ns: bigint): string {
   const seconds = ns / NANOS_PER_SECOND;
   const fraction = ns % NANOS_PER_SECOND;
@@ -224,24 +201,19 @@ export function nanosText(ns: bigint): string {
   return `${whole}.${fraction.toString().padStart(9, "0")}`;
 }
 
-/** Text cut to `max` bytes of UTF-8, never inside a character; unpaired surrogates replaced. */
+/** Cuts at UTF-8 boundaries and replaces unpaired surrogates. */
 export function cutBytes(value: string, max: number): string {
   const wellFormed = value.toWellFormed();
-  // Fast path: a UTF-16 unit is at most 3 bytes of UTF-8.
+  // A UTF-16 unit needs at most 3 UTF-8 bytes.
   if (wellFormed.length * 3 <= max || Buffer.byteLength(wellFormed) <= max) return wellFormed;
   const cut = Buffer.from(wellFormed).subarray(0, max).toString("utf8");
-  // A character split at the end decodes as U+FFFD: leave it out.
+  // Remove U+FFFD from a split trailing character.
   return wellFormed.startsWith(cut) ? cut : cut.slice(0, -1);
 }
 
-/** Whether a UTF-16 unit is a control character: C0, DEL, or C1. */
 const isControl = (code: number) => code < 0x20 || (code >= 0x7f && code <= 0x9f);
 
-/**
- * A label (a service's or scope's name, a severity's or event's name, a
- * unit) without control characters, cut to MAX_LABEL_CHARS: the dashboard
- * lists labels as filters, and its filters refuse control characters.
- */
+/** Strips control characters to match dashboard filters; caps at MAX_LABEL_CHARS. */
 export function label(value: string): string {
   let clean = "";
   for (const char of value) {
@@ -250,14 +222,14 @@ export function label(value: string): string {
   return cutChars(clean, MAX_LABEL_CHARS);
 }
 
-/** Text cut to `max` UTF-16 units; a surrogate pair split at the end is replaced. */
+/** Cuts to `max` UTF-16 units and replaces a split surrogate pair. */
 export function cutChars(value: string, max: number): string {
   return (value.length <= max ? value : value.slice(0, max)).toWellFormed();
 }
 
 type Json = string | number | boolean | null | Json[] | { [key: string]: Json };
 
-/** An AnyValue as JSON: integers beyond what a double holds exactly as text. */
+/** Serializes integers beyond double precision as text. */
 function jsonOf(value: object | undefined, depth: number): Json {
   if (value === undefined) return null;
   if (depth > MAX_VALUE_DEPTH) return null;
@@ -290,10 +262,7 @@ function jsonOf(value: object | undefined, depth: number): Json {
   return null;
 }
 
-/**
- * An AnyValue as text: a string as it is, a number or boolean as written,
- * bytes in hex, a list or a map as JSON, nothing as "".
- */
+/** Strings pass through; bytes use hex; lists and maps use JSON; absent values use "". */
 export function valueText(value: object | undefined): string {
   if (value === undefined) return "";
   if (has(value, "stringValue")) return text(value, "stringValue");
@@ -305,17 +274,15 @@ export function valueText(value: object | undefined): string {
   return typeof json === "string" ? json : JSON.stringify(json);
 }
 
-/** Map entries sorted by key, as an object: the same attributes always read the same. */
+/** Key order makes serialized attributes stable. */
 function sortedObject(map: Map<string, string>): Record<string, string> {
   return Object.fromEntries([...map].toSorted(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
 }
 
 /**
- * KeyValues as a map of text: at most MAX_ATTRIBUTES, keys cut to
- * MAX_KEY_CHARS, values to MAX_VALUE_BYTES. A repeated key keeps its last
- * value. With `withoutAiContent`, AI prompts and completions are left out
- * (ai-content.ts), a resource's, span's, span event's, span link's, or log record's.
- * `dropped` counts those left out.
+ * Caps attributes at MAX_ATTRIBUTES, keys at MAX_KEY_CHARS, and values at MAX_VALUE_BYTES.
+ * Duplicate keys keep the last value. `withoutAiContent` drops prompts and completions from
+ * resources, spans, events, links, and logs (ai-content.ts). `dropped` counts omissions.
  */
 export function flattenAttributes(
   items: object[],
@@ -341,21 +308,17 @@ export function flattenAttributes(
   return { attributes: sortedObject(attributes), dropped };
 }
 
-/** A count to store as UInt32: the sender's dropped count plus ours. */
 function droppedCount(from: object, ours: number): number {
   return Math.min(MAX_UINT32, Math.max(0, int32(from, "droppedAttributesCount")) + ours);
 }
 
-/** An environment as the tracker's are stored: lower case, "production" when absent or invalid. */
+/** Matches tracker environments: lowercase, defaulting to "production" when absent or invalid. */
 export function environmentOfResource(attributes: Record<string, string>): string {
   const sent = attributes["deployment.environment.name"] ?? attributes["deployment.environment"];
   return sent !== undefined && ENVIRONMENT.test(sent) ? sent.toLowerCase() : DEFAULT_ENVIRONMENT;
 }
 
-/**
- * Attributes, in key order, while their keys and values together fit in
- * `max` bytes of UTF-8; the rest are left out.
- */
+/** Keeps attributes in key order within `max` combined UTF-8 bytes. */
 export function keepWithin(
   attributes: Record<string, string>,
   max: number,
@@ -371,18 +334,14 @@ export function keepWithin(
   return { attributes: kept, bytes };
 }
 
-/** A resource: what its records share, read once for all of them. */
 interface Resource {
   labels: Omit<Labels, "scope_name" | "scope_version">;
-  /** Its attributes, at most MAX_RESOURCE_ATTRIBUTE_BYTES. */
   attributes: Record<string, string>;
-  /** Their size: what each record's row repeats. */
   bytes: number;
-  /** A hash of them, which records' content IDs take instead of the attributes themselves. */
+  /** Reused in record content IDs to avoid hashing attributes per row. */
   hash: string;
 }
 
-/** The resource's service, release, and environment (from all its attributes), and the attributes kept. */
 function resourceOf(container: object, projectId: string): Resource {
   const resource = message(container, "resource");
   const { attributes: all } = flattenAttributes(
@@ -414,7 +373,6 @@ function withScope(resource: Resource, container: object): Labels {
   };
 }
 
-/** Why a record's time cannot be stored, or null when it can. */
 function timeProblem(ns: bigint, context: NormalizeContext): string | null {
   if (ns > context.receivedAtNs + MAX_AHEAD_NS) {
     return "times more than an hour ahead of the server's clock";
@@ -426,10 +384,8 @@ function timeProblem(ns: bigint, context: NormalizeContext): string | null {
 }
 
 /**
- * A stable ID from a row's content, without its resource's attributes, and
- * its resource's hash: the first 16 bytes of their SHA-256, in hex. Hashing
- * the attributes once per resource, not once per row, keeps a request's
- * cost to its own size.
+ * Uses the first 16 SHA-256 bytes of row content and resource hash. Hashing attributes once per
+ * resource bounds work to request size.
  */
 function contentId(resource: Resource, row: object): string {
   return createHash("sha256")
@@ -439,7 +395,7 @@ function contentId(resource: Resource, row: object): string {
     .slice(0, 32);
 }
 
-/** A field's value in an enum's range, or 0 (unspecified) when outside it. */
+/** Out-of-range enums become 0 (unspecified). */
 function enumValue(from: object, key: string, max: number): number {
   const value = int32(from, key);
   return value >= 0 && value <= max ? value : 0;
@@ -448,21 +404,13 @@ function enumValue(from: object, key: string, max: number): number {
 const ZERO_TRACE = "0".repeat(32);
 const ZERO_SPAN = "0".repeat(16);
 
-/**
- * An ID a record may leave out (a log's trace and span, a span's parent, a
- * link's): all zeros means none, as OTLP says, and is stored as "", so a
- * span with an all-zero parent is a root and a log has no trace.
- */
+/** OTLP all-zero optional IDs become "": parents become roots and logs have no trace. */
 function optionalId(from: object, key: string, length: number): string {
   const value = id(from, key, length);
   return value === ZERO_TRACE || value === ZERO_SPAN ? "" : value;
 }
 
-/**
- * An exception's attributes, as sent: read from the record's own
- * KeyValues, not its row's, so a stack is cut to what an error holds
- * (exceptions.ts), not to an attribute's MAX_VALUE_BYTES.
- */
+/** Reads original KeyValues so stacks use error limits (exceptions.ts) rather than MAX_VALUE_BYTES. */
 function exceptionAttributesOf(items: object[]): ExceptionAttributes {
   const found: ExceptionAttributes = {};
   for (const item of items) {
@@ -474,7 +422,7 @@ function exceptionAttributesOf(items: object[]): ExceptionAttributes {
   return found;
 }
 
-/** A KeyValue's value as text, the last if repeated; "" when absent. */
+/** Duplicate keys keep the last value; absent keys return "". */
 function attributeText(items: object[], key: string): string {
   let found = "";
   for (const item of items) {
@@ -483,7 +431,6 @@ function attributeText(items: object[], key: string): string {
   return found;
 }
 
-/** The resource's labels an error event takes. */
 function errorLabels(resource: Resource) {
   return {
     projectId: resource.labels.project_id,
@@ -493,10 +440,7 @@ function errorLabels(resource: Resource) {
   };
 }
 
-/**
- * ExportTraceServiceRequest → spans rows, and an error event for each of a
- * kept span's first MAX_EXCEPTIONS_PER_SPAN events named "exception".
- */
+/** Converts kept spans' first MAX_EXCEPTIONS_PER_SPAN exception events to errors too. */
 export function normalizeTraces(
   request: object,
   context: NormalizeContext,
@@ -532,8 +476,7 @@ export function normalizeTraces(
           refusals.add("spans that end before they start");
           continue;
         }
-        // The end bounds the duration and the exceptions' times: never
-        // more than an hour ahead, as the start.
+        // Cap end times at one hour ahead too: they bound duration and exception timestamps.
         const endProblem = timeProblem(end, context);
         if (endProblem !== null) {
           refusals.add(endProblem);
@@ -586,7 +529,7 @@ export function normalizeTraces(
           ),
         });
         let exceptions = 0;
-        // Only the events the span's row keeps, so an error's span holds it.
+        // Only retained span events can become errors, so the span still holds each error.
         for (const [position, event] of events.slice(0, MAX_SPAN_EVENTS).entries()) {
           if (exceptions === MAX_EXCEPTIONS_PER_SPAN) break;
           if (text(event, "name") !== "exception") continue;
@@ -599,15 +542,14 @@ export function normalizeTraces(
               ...errorLabels(resource),
               attributes,
               exception,
-              // Its own time when within the span (a minute's slack after
-              // its end), else the span's start: decided from the span
-              // alone, so every attempt gives the same time.
+              // Use event time within the span plus a minute of slack; otherwise use span start.
+              // This stays stable on retry.
               occurredAtNs: time >= start && time <= end + EXCEPTION_SLACK_NS ? time : start,
-              // An exception on a span that did not fail was dealt with.
+              // Exceptions on spans without error status are treated as handled.
               handled: statusCode !== 2,
               traceId,
               spanId,
-              // Its place among the span's events too: two alike stay two.
+              // Include event position so identical exceptions remain distinct.
               identity: [
                 "span",
                 traceId,
@@ -626,10 +568,7 @@ export function normalizeTraces(
   return { rows, errors, ...refusals.outcome(records, "spans", sharedBytes) };
 }
 
-/**
- * ExportLogsServiceRequest → logs rows, and an error event for each kept
- * record with exception.type or exception.message.
- */
+/** Logs with exception.type or exception.message also become errors. */
 export function normalizeLogs(
   request: object,
   context: NormalizeContext,
@@ -647,7 +586,6 @@ export function normalizeLogs(
         records += 1;
         const time = uint64(record, "timeUnixNano");
         const observed = uint64(record, "observedTimeUnixNano");
-        // When it happened; failing that, when a collector saw it; failing that, now.
         const at = time !== 0n ? time : observed !== 0n ? observed : context.receivedAtNs;
         const problem = timeProblem(at, context);
         if (problem !== null) {
@@ -657,8 +595,8 @@ export function normalizeLogs(
         const items = messages(record, "attributes");
         const { attributes, dropped } = flattenAttributes(items, true);
         const eventName = text(record, "eventName");
-        // A GenAI message event's body is its message: dropped, and counted
-        // with the attributes. Older SDKs name the event in an attribute.
+        // GenAI event bodies contain messages to drop and count. Older SDKs put the event name in
+        // an attribute.
         const body = valueText(message(record, "body"));
         const aiBody =
           body !== "" &&
@@ -689,12 +627,12 @@ export function normalizeLogs(
               attributes,
               exception,
               occurredAtNs: at,
-              // Below ERROR (17) it was dealt with; ERROR and above, or no severity, it was not.
+              // Severity 1 through 16 is handled; ERROR (17) and above, or absent severity, is
+              // unhandled.
               handled: row.severity_number >= 1 && row.severity_number <= 16,
               traceId: row.trace_id,
               spanId: row.span_id,
-              // The record as sent, not the row: a record with no time takes
-              // its arrival's, which a retry's differs from.
+              // Use sent content for identity; a timestamp derived from arrival changes on retry.
               identity: [
                 "log",
                 resource.hash,
@@ -721,10 +659,9 @@ export function normalizeLogs(
   return { rows, errors, ...refusals.outcome(records, "log records", sharedBytes) };
 }
 
-/** OTLP's DataPointFlags: the point marks a missing value, not a value. */
+/** OTLP DataPointFlags: marks a missing value. */
 const NO_RECORDED_VALUE = 1;
 
-/** A data point's times, or why it is refused. */
 function pointTimes(
   point: object,
   context: NormalizeContext,
@@ -737,12 +674,11 @@ function pointTimes(
   return { time, start: start <= time ? start : 0n };
 }
 
-/** A histogram's sum, minimum, or maximum: null when absent or not a finite number. */
+/** Absent and non-finite values become null. */
 function finiteOrNull(value: number | undefined): number | null {
   return value !== undefined && Number.isFinite(value) ? value : null;
 }
 
-/** ExportMetricsServiceRequest → metric_points and metric_histograms rows. */
 export function normalizeMetrics(
   request: object,
   context: NormalizeContext,
@@ -824,7 +760,7 @@ export function normalizeMetrics(
               refusals.add("data points without a value");
               continue;
             }
-            // Lengths first: converting millions of elements would exhaust the heap.
+            // Check lengths before conversion to prevent huge arrays from exhausting the heap.
             const sentBounds = list(point, "explicitBounds");
             const sentCounts = list(point, "bucketCounts");
             if (sentBounds.length > MAX_HISTOGRAM_BOUNDS) {
@@ -882,7 +818,7 @@ export function normalizeMetrics(
             });
           }
         } else if (unsupported !== undefined) {
-          // From protobuf, an exponential histogram is its bytes (proto/definitions.ts).
+          // Protobuf exponential histograms remain bytes (proto/definitions.ts).
           const count =
             unsupported instanceof Uint8Array
               ? countFields(unsupported, 1)

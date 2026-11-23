@@ -32,47 +32,42 @@ import {
   MAX_CONVERSATION_ID_CHARS,
 } from "./calls.ts";
 
-/** Calls in one request (docs/ai-usage.md, "Sending calls over HTTP"). */
+/** Batch limit (docs/ai-usage.md, "Sending calls over HTTP"). */
 export const MAX_AI_CALLS_PER_BATCH = 1000;
-/** A request's body: 1,000 calls of usual size fit with room to spare. */
+/** Leaves room for 1,000 typical calls. */
 export const MAX_AI_CALLS_BODY_BYTES = 1024 * 1024;
-/** A call's duration, and its time to the first chunk, at most a day. */
+/** Duration and first-chunk delay cap: one day. */
 const MAX_CALL_MS = 86_400_000;
-/** Tighter than a span's (calls.ts): real calls stay far below them. */
+/** Tighter than span counts (calls.ts); real calls stay well below this. */
 export const MAX_HTTP_TOKENS = 10_000_000;
 export const MAX_HTTP_ERROR_TYPE_CHARS = 100;
-/** One a choice: OpenAI's `n` and Gemini's `candidateCount` ask for several. */
+/** One per choice when OpenAI n or Gemini candidateCount requests several. */
 export const MAX_HTTP_FINISH_REASONS = 16;
 export const MAX_HTTP_FINISH_REASON_CHARS = 32;
 
 const UUID_PATTERN =
   "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$";
 const BEARER = /^Bearer (sk_[0-9a-f]{32})$/;
-/**
- * No control characters (C0, DEL, and C1), as user IDs. A required name
- * has at least one; an optional one may be "", which is as left out.
- */
+/** Excludes C0, DEL, and C1 controls. Optional names may be empty. */
 const textOf = (max: number, min = 1) => ({
   type: "string",
   pattern: `^[^\\u0000-\\u001F\\u007F-\\u009F]{${min},${max}}$`,
 });
 const optionalTextOf = (max: number) => textOf(max, 0);
-/** A name such as a model's: no whitespace, control, format, or unassigned characters. */
 const identifierOf = (max: number, min = 1) => ({
   type: "string",
   pattern: `^[^\\s\\p{C}]{${min},${max}}$`,
 });
 /**
- * Free text an app names things with: none of textOf's characters, nor
- * format characters (such as bidi overrides and zero-width ones) or line
- * and paragraph separators, which can hide or reorder what a page shows.
+ * Excludes format and line/paragraph separators too: bidi overrides and zero-width characters can
+ * hide or reorder displayed text.
  */
 const NO_FORMAT = "\\p{Cf}\\u2028\\u2029";
 const labelOf = (max: number) => ({
   type: "string",
   pattern: `^[^\\p{Cc}${NO_FORMAT}]{0,${max}}$`,
 });
-/** An error's name, such as `RateLimitError` or `Too Many Requests`: identifier characters, words apart by one space. */
+/** Allows multiword error names with one space between words. */
 const ERROR_TYPE = {
   type: "string",
   maxLength: MAX_HTTP_ERROR_TYPE_CHARS,
@@ -83,16 +78,16 @@ const MILLISECONDS = { type: "number", minimum: 0, maximum: MAX_CALL_MS };
 
 interface HttpAiCall {
   id: string;
-  /** When the call started, in milliseconds since 1970: the server's clock is trusted. */
+  /** Milliseconds since 1970; trusts the server clock. */
   occurredAt: number;
   provider: string;
   model: string;
   operation?: string;
   inputTokens?: number;
-  /** Whether inputTokens holds the cached tokens; by the provider when left out (calls.ts). */
+  /** Defaults by provider (calls.ts). */
   inputIncludesCache?: boolean;
   outputTokens?: number;
-  /** Whether outputTokens holds the reasoning tokens; by the provider when left out (calls.ts). */
+  /** Defaults by provider (calls.ts). */
   outputIncludesReasoning?: boolean;
   cacheReadTokens?: number;
   cacheWriteTokens?: number;
@@ -104,7 +99,6 @@ interface HttpAiCall {
   finishReasons?: string[];
   userId?: string;
   feature?: string;
-  /** The app's ID for the conversation the call is a turn of. */
   conversationId?: string;
   service?: string;
   traceId?: string;
@@ -133,8 +127,7 @@ const batchSchema = {
       items: {
         type: "object",
         required: ["id", "occurredAt", "provider", "model", "durationMs"],
-        // Any other field, a prompt or a completion included, is dropped
-        // by the schema (Fastify's removeAdditional), as server events'.
+        // removeAdditional drops unknown fields, including prompts and completions.
         additionalProperties: false,
         properties: {
           id: { type: "string", pattern: UUID_PATTERN },
@@ -165,7 +158,7 @@ const batchSchema = {
             allOf: [{ pattern: `^[^${NO_FORMAT}]*$` }],
           },
           feature: labelOf(MAX_AI_LABEL_CHARS),
-          // Its length is checked once trimmed (below), as a span's is.
+          // Check the trimmed length below, matching spans.
           conversationId: labelOf(MAX_CONVERSATION_ID_CHARS * 4),
           service: optionalTextOf(MAX_AI_LABEL_CHARS),
           traceId: { type: "string", pattern: "^[0-9a-fA-F]{32}$" },
@@ -202,9 +195,8 @@ interface TypedSchema {
 }
 
 /**
- * The first value not of its schema's type as sent, or null. Fastify's
- * Ajv coerces types (app.ts), so `"ok": null` would pass as false and a
- * token count of "5" as 5; this route takes JSON types as they are.
+ * Checks original JSON types before Ajv coercion (app.ts), which would accept null as false or "5"
+ * as 5.
  */
 function typeProblem(value: unknown, schema: TypedSchema, path: string): string | null {
   if (value === undefined) return null;
@@ -228,10 +220,8 @@ function typeProblem(value: unknown, schema: TypedSchema, path: string): string 
 }
 
 /**
- * An error type with its spaces at the ends removed and runs of them made
- * one, in linear time: a backtracking regex over a long run of spaces
- * would block the event loop. One longer than the schema allows is left
- * as it is, for the schema to refuse.
+ * Normalize spaces in linear time to avoid regex backtracking blocking the event loop. Leave
+ * overlong values for schema rejection.
  */
 export function tidyErrorType(value: string): string {
   if (value.length > MAX_HTTP_ERROR_TYPE_CHARS) return value;
@@ -253,7 +243,7 @@ function storageUnavailable(reply: FastifyReply) {
     .send(problem("storage_unavailable", "The calls were not stored. Retry later."));
 }
 
-/** Milliseconds as nanoseconds, as text: what the table's UInt64 columns take. */
+/** Nanosecond text for UInt64 columns. */
 function nanosOf(ms: number): string {
   return BigInt(Math.round(ms * 1e6)).toString();
 }
@@ -261,37 +251,31 @@ function nanosOf(ms: number): string {
 export interface AiCallIngestOptions {
   clickhouse: ClickHouseClient;
   projects: ProjectKeyCache;
-  /** Counts for the Activity tab (activity/activity.ts). */
+  /** Activity tab counts (activity/activity.ts). */
   activity: IngestActivity;
-  /** The telemetry budget, shared with OTLP (telemetry/routes.ts): each call is a unit. */
+  /** Shares the OTLP budget; each call costs one unit (telemetry/routes.ts). */
   budget: EventBudget;
-  /** Requests per client address, an IPv6 address by its /64 (DEFAULT_SERVER_IP_LIMIT). */
+  /** IPv6 addresses group by /64 (DEFAULT_SERVER_IP_LIMIT). */
   ipLimit?: RateLimit;
-  /** Requests this process works on at once, and one project's of them, as OTLP's (telemetry/routes.ts). */
+  /** Uses OTLP concurrency limits (telemetry/routes.ts). */
   maxInFlight?: number;
   maxInFlightPerProject?: number;
-  /** Bounds key lookups, as OTLP's (telemetry/key-lookups.ts); this route's own by default. */
+  /** Defaults to a route-local limiter (telemetry/key-lookups.ts). */
   keyLookups?: SecretKeyLookups;
   now?: () => number;
 }
 
 /**
- * POST /api/ai-calls (docs/ai-usage.md, "Sending calls over HTTP"): AI
- * calls an app's server sends itself, for apps without OpenTelemetry,
- * into the same ai_calls table as calls found in spans (calls.ts), so the
- * AI page and the alert rules read them unchanged.
+ * Direct model-call ingestion for servers without OpenTelemetry (docs/ai-usage.md, "Sending calls
+ * over HTTP"). Shares ai_calls reporting with spans (calls.ts).
  *
- * As OTLP's (telemetry/routes.ts), before the body is read: the secret
- * key's form, the address's rate, the key's project (cached, unknown keys
- * too), and the requests in progress. Then, as server events
- * (collection/server-events.ts): a schema check, the server's clock trusted (5 minutes
- * ahead at most; over a day old counted, not stored), and 202 only once
- * ClickHouse has written the calls, 503 while it cannot. Each call is a
- * unit of the project's telemetry budget, as a span that is an AI call
- * costs one more. Its row ID is the call's `id`, and its time the one
- * sent, so a retry is the same row, which ReplacingMergeTree keeps once.
- * Token counts only: cost is worked out when calls are read (prices.ts),
- * and the schema has no field for prompts or completions.
+ * Check secret keys, rates, and concurrency before reading bodies (telemetry/routes.ts). Trust
+ * server timestamps up to 5 minutes ahead; count calls over a day old without storing them
+ * (collection/server-events.ts). Acknowledge with 202 after ClickHouse writes, or 503 for retries.
+ * Stable call IDs and timestamps deduplicate in ReplacingMergeTree.
+ *
+ * Each call costs one telemetry budget unit. Store token counts only; compute cost on read
+ * (prices.ts). The schema excludes prompts and completions.
  */
 export const aiCallIngestRoutes: FastifyPluginCallback<AiCallIngestOptions> = (
   app,
@@ -309,11 +293,10 @@ export const aiCallIngestRoutes: FastifyPluginCallback<AiCallIngestOptions> = (
     maxInFlightPerProject = DEFAULT_MAX_IN_FLIGHT_PER_PROJECT,
   } = options;
   const ipLimiter = new TokenBucketLimiter(options.ipLimit ?? DEFAULT_SERVER_IP_LIMIT, { now });
-  /** The project each request's key names, found before its body is read. */
+  /** Resolved before reading the body. */
   const projectOf = new WeakMap<FastifyRequest, CollectingProject>();
-  /** Requests in progress, counted as OTLP's are (in-flight.ts). */
   const inFlight = new InFlight(maxInFlight, maxInFlightPerProject);
-  /** Counts a request whose project is known (activity/activity.ts); others are not. */
+  /** Counts only requests whose project is known (activity/activity.ts). */
   const count = (
     request: FastifyRequest,
     outcome: IngestOutcome,
@@ -324,7 +307,7 @@ export const aiCallIngestRoutes: FastifyPluginCallback<AiCallIngestOptions> = (
   };
 
   app.setErrorHandler((error: FastifyError, request, reply) => {
-    // The key was read before the body: a body refused here is the project's.
+    // Keys are resolved before body parsing, so body refusals still count against the project.
     const status = error.validation === undefined ? (error.statusCode ?? 500) : 400;
     if (status >= 400 && status < 500) count(request, "refused_invalid");
     if (error.validation !== undefined || error.statusCode === 400) {
@@ -351,10 +334,7 @@ export const aiCallIngestRoutes: FastifyPluginCallback<AiCallIngestOptions> = (
     {
       bodyLimit: MAX_AI_CALLS_BODY_BYTES,
       schema: { body: batchSchema },
-      // Before the body is read, as OTLP's (telemetry/routes.ts): the key's
-      // form, the address's rate, the key itself (cached, unknown keys
-      // too), and the requests in progress, so a request that cannot be
-      // stored is never read or parsed.
+      // Reject invalid keys, rates, and concurrency before reading or parsing bodies.
       onRequest: async (request, reply) => {
         const secretKey = BEARER.exec(request.headers.authorization ?? "")?.[1];
         if (secretKey === undefined) {
@@ -371,7 +351,7 @@ export const aiCallIngestRoutes: FastifyPluginCallback<AiCallIngestOptions> = (
             .header("retry-after", String(result.retryAfterSeconds))
             .send(problem("rate_limited", "Too many requests from this address."));
         }
-        // As OTLP's: the key before a slot, so made-up keys hold none.
+        // Resolve keys before taking slots so made-up keys cannot occupy ingestion capacity.
         let project;
         try {
           project = await keyLookups.findFor(projects, secretKey, request, reply);
@@ -395,7 +375,7 @@ export const aiCallIngestRoutes: FastifyPluginCallback<AiCallIngestOptions> = (
             .send(problem("busy", "Too many requests are in progress. Try again shortly."));
         }
         if (!inFlight.takeForProject(request, project.id)) {
-          // A request that disconnected meanwhile has no slot, and was not refused.
+          // Disconnected requests take no slot and do not count as refusals.
           if (!reply.raw.destroyed) count(request, "refused_rate_limited", 0, project);
           return reply
             .code(429)
@@ -410,15 +390,14 @@ export const aiCallIngestRoutes: FastifyPluginCallback<AiCallIngestOptions> = (
         projectOf.set(request, project);
         return undefined;
       },
-      // Before the schema, which would coerce what was sent.
+      // Check before schema coercion.
       preValidation: async (request, reply) => {
         const found = typeProblem(request.body, batchSchema, "");
         if (found !== null) {
           count(request, "refused_invalid");
           return reply.code(400).send(problem("invalid_request", found));
         }
-        // An error type's spaces at the ends, or several in a row, are a
-        // sender's slip: tidied, not refused. Other whitespace still is.
+        // Normalize leading, trailing, and repeated spaces; reject other whitespace.
         const { calls } = request.body as Partial<HttpAiBatch>;
         for (const call of Array.isArray(calls) ? calls : []) {
           if (typeof call?.errorType === "string") call.errorType = tidyErrorType(call.errorType);
@@ -428,7 +407,7 @@ export const aiCallIngestRoutes: FastifyPluginCallback<AiCallIngestOptions> = (
       onResponse: inFlight.finished,
       onRequestAbort: inFlight.finished,
     },
-    // The slot is held until the work settles, the insert included.
+    // Hold the slot through insertion.
     async (request, reply) =>
       inFlight.run(request, async () => {
         const project = projectOf.get(request);
@@ -495,8 +474,7 @@ export const aiCallIngestRoutes: FastifyPluginCallback<AiCallIngestOptions> = (
           }
           rows.push({
             timestamp: nanosText(BigInt(call.occurredAt) * 1_000_000n),
-            // A UUID, never a span's 48 hex characters: no call sent here
-            // can replace one found in a span.
+            // UUIDs cannot replace span-derived calls, whose IDs are 48 hex characters.
             id: call.id.toLowerCase(),
             trace_id: call.traceId?.toLowerCase() ?? "",
             span_id: call.spanId?.toLowerCase() ?? "",
@@ -567,13 +545,12 @@ export const aiCallIngestRoutes: FastifyPluginCallback<AiCallIngestOptions> = (
             })),
           );
         } catch (error) {
-          // Not the sender's doing: the budget back, so its retries are not refused for it.
+          // Refund server failures so retries retain their budget.
           budget.refund(project.id, rows.length);
           request.log.error({ err: error }, "could not store AI calls");
           count(request, "refused_unavailable");
           return storageUnavailable(reply);
         }
-        // Per call: those stored, and those too old to store.
         if (rows.length > 0) count(request, "accepted", rows.length);
         if (tooOld > 0) count(request, "filtered_too_old", tooOld);
         return reply.code(202).send({ stored: rows.length, tooOld });

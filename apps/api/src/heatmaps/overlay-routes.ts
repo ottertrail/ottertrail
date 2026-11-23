@@ -36,26 +36,20 @@ import {
 } from "./snapshots.ts";
 import { DEVICES, type HeatmapDevice } from "./store.ts";
 
-/**
- * Exchanges per client address (an IPv6 address by its /64): a burst of
- * 10, then one every 30 seconds. A person opens the overlay a few times;
- * a guesser of 32-byte tokens gets nowhere either way.
- */
+/** Per address (IPv6 /64): burst 10, then one exchange every 30 seconds. */
 export const DEFAULT_OVERLAY_EXCHANGE_LIMIT: RateLimit = { capacity: 10, refillPerSecond: 1 / 30 };
-/** Reads and preflights per client address: a burst of 60, then one a second. */
+/** Reads and preflights per address: burst 60, then one per second. */
 export const DEFAULT_OVERLAY_READ_LIMIT: RateLimit = { capacity: 60, refillPerSecond: 1 };
-/** Saved views per client address: a burst of 10, then one every 10 seconds. */
+/** Saves per address: burst 10, then one every 10 seconds. */
 export const DEFAULT_OVERLAY_SAVE_LIMIT: RateLimit = { capacity: 10, refillPerSecond: 1 / 10 };
 /**
- * Requests whose token, Origin, or size has the wrong form, per client
- * address, in a bucket of their own, so those do not spend the owner's
- * exchanges, reads, or saves. Requests of the right form with a made-up
- * token still spend them: a script on the owner's page can send those.
+ * Malformed requests use a separate bucket to preserve legitimate capacity. Well-formed fake
+ * tokens still spend normal limits because scripts on the owner's page can send them.
  */
 export const DEFAULT_OVERLAY_MALFORMED_LIMIT: RateLimit = { capacity: 30, refillPerSecond: 1 };
-/** The periods the overlay offers, in days back from today. */
+/** Days back from today. */
 export const OVERLAY_PERIODS = ["7d", "30d", "90d"] as const;
-/** The exchange's body is a token in JSON: far below a kilobyte. */
+/** Token-only JSON fits well below a kilobyte. */
 const MAX_BODY_BYTES = 1024;
 
 const UUID_PATTERN =
@@ -88,9 +82,8 @@ export const SNAPSHOTS_NEED_STORE = problem(
 );
 
 /**
- * Refuses fields the route does not take (400), where the schemas would
- * only drop them (Fastify's removeAdditional): the overlay's routes take
- * nothing else, such as a key or a token in the address.
+ * Reject unknown fields with 400 before Fastify's removeAdditional drops them, including keys or
+ * tokens in query strings.
  */
 function only(part: "body" | "query", names: readonly string[]) {
   return async (request: FastifyRequest, reply: FastifyReply) => {
@@ -106,18 +99,15 @@ function only(part: "body" | "query", names: readonly string[]) {
 }
 
 /**
- * Plain http only for a site on this computer, on any port: localhost,
- * names under .localhost, and 127.0.0.1, which browsers treat as secure
- * contexts. Elsewhere, https.
+ * Allow HTTP only for secure local contexts: localhost, .localhost, and 127.0.0.1 on any port.
+ * Require HTTPS elsewhere.
  */
 const isLocalHostname = (hostname: string) =>
   hostname === "localhost" || hostname === "127.0.0.1" || hostname.endsWith(".localhost");
 
 /**
- * The request's Origin and its hostname, or null without one the overlay
- * opens on: https, or http on this computer (isLocalHostname). The
- * overlay's own rule: collection (collection/normalize.ts) takes either
- * scheme.
+ * Overlay origins require HTTPS or local HTTP (isLocalHostname). Collection allows either scheme
+ * (collection/normalize.ts).
  */
 function originOf(request: FastifyRequest): { origin: string; hostname: string } | null {
   const origin = request.headers.origin;
@@ -128,7 +118,6 @@ function originOf(request: FastifyRequest): { origin: string; hostname: string }
   return secure || isLocalHostname(hostname) ? { origin, hostname } : null;
 }
 
-/** Charges the client address in `bucket`; a 429 when it is empty. */
 function charge(bucket: TokenBucketLimiter, request: FastifyRequest, reply: FastifyReply) {
   const result = bucket.take(clientKey(request.ip));
   if (result.allowed) return undefined;
@@ -143,12 +132,11 @@ function charge(bucket: TokenBucketLimiter, request: FastifyRequest, reply: Fast
     );
 }
 
-/** Refuses a client address past its limit (429), before anything else is done. */
 function limitedBy(bucket: TokenBucketLimiter) {
   return async (request: FastifyRequest, reply: FastifyReply) => charge(bucket, request, reply);
 }
 
-/** The access requireOverlayAccess set: the read always runs it. */
+/** requireOverlayAccess runs before this. */
 function accessOf(request: { projectAccess: ProjectAccess | null }): ProjectAccess {
   if (request.projectAccess === null) {
     throw new Error("requireOverlayAccess must run before this route");
@@ -157,40 +145,27 @@ function accessOf(request: { projectAccess: ProjectAccess | null }): ProjectAcce
 }
 
 /**
- * The routes the heatmap overlay (o.js) calls from the customer's own site
- * (docs/web-analytics.md, "The overlay on your site"):
+ * Overlay routes run on customer sites (docs/web-analytics.md, "The overlay on your site").
+ * Exchange link tokens once in request bodies; send session tokens as Authorization: Bearer.
+ * requireOverlayAccess checks database roles and grants on every read (access/access.ts). Cookies
+ * and public keys grant no access.
  *
- *   POST    /api/heatmap-overlay/session                    { token }: link → session
- *   GET     /api/heatmap-overlay/:projectId/heatmap?path=/pricing&device=desktop&period=30d&environment=…
- *   OPTIONS /api/heatmap-overlay/:projectId/heatmap          the browser's preflight
- *   POST    /api/heatmap-overlay/:projectId/snapshot?path=/pricing   a saved view (gzip), heatmaps/snapshots.ts
- *   OPTIONS /api/heatmap-overlay/:projectId/snapshot         the browser's preflight
- *
- * No cookie and no public key plays a part. The exchange takes a link
- * token in its body and uses it once; the read takes the session token as
- * `Authorization: Bearer`, never in the address, and runs
- * requireOverlayAccess, which checks the user's role and grants on each
- * read (access/access.ts).
- *
- * CORS: once the project is known (from the link, or the read's address)
- * and the Origin is one of its allowed hostnames, the same rule collection
- * uses, the answer is readable by that page, a refusal too (a link used
- * up, no access, a session ended); before that (a limit, a malformed or
- * unknown token), by none. Never with credentials. Every answer is `Cache-Control: no-store`. Requests are
- * limited per client address before anything else, and a malformed body,
- * query, Origin, or Authorization is refused before any database work.
+ * Enable credential-free CORS only after identifying the project and matching an allowed Origin,
+ * including refusals. Unknown/malformed tokens get no CORS. Every response uses Cache-Control:
+ * no-store. Limit addresses first; reject malformed bodies, queries, Origins, and Authorization
+ * before database work.
  */
 export const heatmapOverlayRoutes: FastifyPluginCallback<{
   db: Kysely<Database>;
   clickhouse: ClickHouseClient;
   limiter: DashboardQueryLimiter;
-  /** Where saved views go; none: saving is refused (409). */
+  /** Without an object store, saves return 409. */
   store?: ObjectStore | null;
   exchangeLimit?: RateLimit;
   readLimit?: RateLimit;
   saveLimit?: RateLimit;
   malformedLimit?: RateLimit;
-  /** The clock that decides "today" for the period; tests fix it. */
+  /** Controls "today"; injectable for tests. */
   now?: () => Date;
 }> = (app, options, done) => {
   const { db, clickhouse, limiter, store = null, now = () => new Date() } = options;
@@ -202,16 +177,15 @@ export const heatmapOverlayRoutes: FastifyPluginCallback<{
   const malformedLimiter = new TokenBucketLimiter(
     options.malformedLimit ?? DEFAULT_OVERLAY_MALFORMED_LIMIT,
   );
-  /** Requests from an origin on the project's allowed hostnames: their answers carry CORS. */
+  /** Only allowed project origins receive CORS headers. */
   const allowed = new WeakMap<FastifyRequest, string>();
   const canView = requireOverlayAccess(db, { area: "web_analytics", level: "view" });
-  // Saving, replacing, and deleting saved views is the owner's and admins'.
+  // Saving and deleting views requires owner/admin access.
   const canSave = requireOverlayAccess(db, { permission: "projects" });
 
   /**
-   * Charges a request with a Bearer of the overlay token's form to
-   * `bucket`, and refuses one without (401), charged to the malformed
-   * bucket. No database work.
+   * Valid Bearer form spends the normal bucket; malformed form spends the malformed bucket and
+   * returns 401. No database access.
    */
   const bearerFirst =
     (bucket: TokenBucketLimiter) => async (request: FastifyRequest, reply: FastifyReply) => {
@@ -221,21 +195,19 @@ export const heatmapOverlayRoutes: FastifyPluginCallback<{
       return charge(malformedLimiter, request, reply) ?? reply.code(401).send(NO_TOKEN);
     };
 
-  // text/plain, so the exchange is a "simple" request without a preflight.
-  // Fastify's own parser refuses a __proto__ or constructor key.
+  // text/plain avoids preflight. Fastify rejects __proto__ and constructor keys.
   const parseJson = app.getDefaultJsonParser("error", "error");
   for (const type of ["text/plain", "application/json"]) {
     app.addContentTypeParser(
       type,
       { parseAs: "string", bodyLimit: MAX_BODY_BYTES },
       (request, body, parsed) => {
-        // The default parser is synchronous: it calls back before it returns.
+        // The default parser invokes its callback synchronously.
         void parseJson(request, String(body), (error, value) => {
           if (error === null) {
             parsed(null, value);
             return;
           }
-          // Junk: the malformed bucket's, as a token of the wrong form is.
           const limited = !malformedLimiter.take(clientKey(request.ip)).allowed;
           parsed(
             Object.assign(
@@ -249,7 +221,6 @@ export const heatmapOverlayRoutes: FastifyPluginCallback<{
       },
     );
   }
-  // A saved view: the snapshot as gzip-compressed JSON, checked by the route.
   app.addContentTypeParser(
     "application/gzip",
     { parseAs: "buffer", bodyLimit: MAX_SNAPSHOT_BYTES },
@@ -268,10 +239,8 @@ export const heatmapOverlayRoutes: FastifyPluginCallback<{
   app.setErrorHandler(clickHouseErrorHandler);
 
   /**
-   * The read's checks before the token is looked up: an Origin header and a
-   * Bearer token of the right shape (no database work), then the Origin
-   * against the project's allowed hostnames. Only then does the answer
-   * carry CORS.
+   * Validate Origin and Bearer form before lookup. Set CORS only after matching the project's
+   * allowed hostnames.
    */
   const fromProjectSite =
     ({ needsToken }: { needsToken: boolean }) =>
@@ -297,8 +266,7 @@ export const heatmapOverlayRoutes: FastifyPluginCallback<{
     "/heatmap-overlay/session",
     {
       bodyLimit: MAX_BODY_BYTES,
-      // After the small body is read: a token of the token's form spends the
-      // exchange's bucket, anything else the malformed one.
+      // Charge valid token forms to the exchange bucket; all others to the malformed bucket.
       preValidation: [
         async (request, reply) => {
           const body: unknown = request.body;
@@ -323,9 +291,8 @@ export const heatmapOverlayRoutes: FastifyPluginCallback<{
       if (origin === null) return reply.code(403).send(ORIGIN_REFUSED);
       const clock = new Date();
       const link = await findOverlayLink(db, request.body.token, clock);
-      // Never made, purged a day after it expired, or its dashboard session
-      // ended: no project, so no CORS; o.js shows nothing, and the tracker
-      // counts the visit.
+      // Unknown, purged, or ended links have no project for CORS. The overlay stays hidden and
+      // tracking continues.
       if (link === null) return reply.code(410).send(LINK_UNKNOWN);
       if (!isAllowedHostname(origin.hostname, link.allowedHostnames)) {
         return reply.code(403).send(ORIGIN_REFUSED);
@@ -344,9 +311,8 @@ export const heatmapOverlayRoutes: FastifyPluginCallback<{
         token: session.token,
         projectId: link.projectId,
         expiresAt: session.expiresAt.toISOString(),
-        // Whether "Save this view" can work: saved views need the object store.
         snapshots: store !== null,
-        // Whether this user may save one: the owner and admins only. The save checks again.
+        // Advertises owner/admin access; the save route rechecks.
         canSave: can(checked.access.user, "projects"),
       };
     },
@@ -454,8 +420,8 @@ export const heatmapOverlayRoutes: FastifyPluginCallback<{
     savePath,
     {
       bodyLimit: MAX_SNAPSHOT_BYTES,
-      // Before the body is read, and without database work: the Origin's
-      // form, the Bearer's, and the size the request declares.
+      // Check Origin, Bearer form, and declared size before reading bodies or accessing the
+      // database.
       onRequest: async (request, reply) => {
         const length = Number(request.headers["content-length"] ?? Number.NaN);
         let refused: { status: number; body: { error: string; message: string } } | null = null;
@@ -493,7 +459,7 @@ export const heatmapOverlayRoutes: FastifyPluginCallback<{
           .code(415)
           .send(problem("unsupported_media_type", "Send the snapshot as application/gzip."));
       }
-      // The session's own page, from its link: never another page of the site.
+      // Sessions can save only the page named in their link.
       const token = bearerToken(request.headers.authorization) ?? "";
       const { path } = request.query;
       if ((await overlaySessionPath(db, token, access.projectId, new Date())) !== path) {

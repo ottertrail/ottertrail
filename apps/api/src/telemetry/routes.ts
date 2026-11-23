@@ -49,27 +49,21 @@ import {
 
 const gunzipAsync = promisify(gunzip);
 
-/** A request's body, unpacked, at most this many bytes (docs/telemetry.md, "Limits"). */
+/** Uncompressed body limit (docs/telemetry.md, "Limits"). */
 export const MAX_TELEMETRY_BODY_BYTES = 16 * 1024 * 1024;
 
 /**
- * What a request spends of its project's and the instance's budgets: one
- * per record, or, when it holds more than records usually do, one per
- * MESSAGES_PER_UNIT messages it decodes into, or per BYTES_PER_UNIT bytes
- * its rows hold (its body, and the resource attributes each row repeats).
- * So a request's cost follows the work it makes: a few records with many
- * attributes, or with a large resource each copies, cost as much as the
- * records that would be as much work.
+ * Budgets charge per record, MESSAGES_PER_UNIT decoded messages, or BYTES_PER_UNIT row bytes,
+ * including repeated resources. This bounds work from large attributes and resources.
  */
 export const MESSAGES_PER_UNIT = 64;
 export const BYTES_PER_UNIT = 2048;
 
-/** Requests one process works on at once, by default: each holds its body, decoded, in memory. */
+/** Bounds memory held by decoded requests per process. */
 export const DEFAULT_MAX_IN_FLIGHT = 8;
-/** Of those, one project's at most, by default, so one project's exporters cannot take them all. */
+/** Prevents one project from occupying every request slot. */
 export const DEFAULT_MAX_IN_FLIGHT_PER_PROJECT = 4;
 
-/** What a request costs before it is decoded: what its size and messages alone make. */
 function costBeforeDecoding(messages: number, bodyBytes: number): number {
   return Math.max(
     1,
@@ -82,12 +76,10 @@ const BEARER = /^Bearer (sk_[0-9a-f]{32})$/;
 
 interface Signal {
   path: string;
-  /** Where its requests count on the Activity tab. */
   source: IngestSource;
-  /** The records a request stored: spans, log records, or data points. */
   stored: (rows: TelemetryRows) => number;
   messages: SignalMessages;
-  /** The response's partial_success field counting refused records. */
+  /** OTLP partial_success field for refused records. */
   rejectedField: string;
   normalize: (
     request: object,
@@ -138,31 +130,27 @@ const SIGNALS: Signal[] = [
 export interface TelemetryOptions {
   clickhouse: ClickHouseClient;
   projects: ProjectKeyCache;
-  /** Counts for the Activity tab (activity/activity.ts). */
+  /** Activity tab counts (activity/activity.ts). */
   activity: IngestActivity;
-  /** Days telemetry is kept (Config.telemetryRetentionDays): older records are refused. */
+  /** Rejects older records (Config.telemetryRetentionDays). */
   retentionDays: number;
-  /** Requests per client address. */
   ipLimit?: RateLimit;
-  /** Spans, log records, and data points per project, and per instance (see BYTES_PER_UNIT). */
+  /** Project and instance record budgets, also charged by bytes (BYTES_PER_UNIT). */
   projectLimit?: RateLimit;
   instanceLimit?: RateLimit;
   /**
-   * The budget those limits make, when it is shared with POST
-   * /api/ai-calls (ai/ingest-routes.ts); made here from them when omitted.
+   * Shared with POST /api/ai-calls (ai/ingest-routes.ts). Defaults to a budget built from the
+   * limits.
    */
   budget?: EventBudget;
-  /** Requests this process works on at once (DEFAULT_MAX_IN_FLIGHT). */
   maxInFlight?: number;
-  /** Of those, one project's (DEFAULT_MAX_IN_FLIGHT_PER_PROJECT). */
   maxInFlightPerProject?: number;
-  /** Bounds key lookups (key-lookups.ts); this route's own by default. */
+  /** Defaults to this route's own lookup limiter (key-lookups.ts). */
   keyLookups?: SecretKeyLookups;
-  /** The clock, in milliseconds since 1970; tests fix it. */
+  /** Milliseconds since 1970; injectable for tests. */
   now?: () => number;
 }
 
-/** The telemetry budget: per project, inside the instance's. */
 export function telemetryBudget(
   limits: Pick<TelemetryOptions, "projectLimit" | "instanceLimit">,
 ): EventBudget {
@@ -172,12 +160,11 @@ export function telemetryBudget(
   );
 }
 
-/** The encoding to answer in: the request's, or JSON when it named none OTLP uses. */
+/** Falls back to JSON when the request encoding is unsupported. */
 function answerEncoding(request: FastifyRequest): Encoding {
   return encodingOf(request.headers["content-type"]) ?? "json";
 }
 
-/** An error answer, as OTLP has them: a Status in the request's encoding. */
 function fail(
   request: FastifyRequest,
   reply: FastifyReply,
@@ -194,24 +181,16 @@ function fail(
 }
 
 /**
- * OTLP/HTTP (docs/telemetry.md): POST /v1/traces, /v1/logs, and
- * /v1/metrics, at the instance's root, where an exporter pointed at it
- * sends them. Authenticated by the project's secret key, never a public
- * one: these come from servers.
+ * OTLP/HTTP requires project secret keys because these endpoints collect server telemetry
+ * (docs/telemetry.md).
  *
- * Before the body is read: the key's form, the address's rate, the
- * encoding, the key itself, and how many requests this process and the
- * key's project have in progress. Then the body is unpacked (at most
- * 16 MiB), and its messages counted without decoding (at most
- * MAX_MESSAGES), which pays the budgets for decoding it. Then it is decoded
- * and turned into rows; records the tables cannot take are refused and
- * counted in partial_success; the rest of its cost is paid, with a unit
- * more for each exception that becomes an error event (exceptions.ts) and
- * each span that is an AI call (ai/calls.ts), the AI calls' units up to
- * the whole budget. The budgets are apart from events'. The answer is sent once ClickHouse has written the rows, the
- * error events, and the AI calls (asynchronous inserts, waiting for
- * them), and is 503 while it cannot, which exporters retry: a retry writes
- * the same rows and events again, which ClickHouse keeps once.
+ * Validate authentication, rate, encoding, and concurrency before reading the body. Cap unpacked
+ * bodies at 16 MiB and count MAX_MESSAGES before decoding to bound allocations. Charge decoding
+ * first, then stored rows, exception events (exceptions.ts), and AI calls (ai/calls.ts); AI
+ * charges cannot exceed the whole budget. Event budgets are separate.
+ *
+ * Acknowledge only after ClickHouse writes all rows. Write failures return 503 for exporters to
+ * retry; ClickHouse deduplicates stable row identities.
  */
 export const telemetryRoutes: FastifyPluginCallback<TelemetryOptions> = (app, options, done) => {
   const {
@@ -226,13 +205,11 @@ export const telemetryRoutes: FastifyPluginCallback<TelemetryOptions> = (app, op
   } = options;
   const ipLimiter = new TokenBucketLimiter(options.ipLimit ?? DEFAULT_SERVER_IP_LIMIT);
   const budget = options.budget ?? telemetryBudget(options);
-  /** The project each request's key names, found before its body is read. */
+  /** Resolved before reading the body. */
   const projectOf = new WeakMap<FastifyRequest, CollectingProject>();
-  /** Requests in progress (in-flight.ts). */
   const inFlight = new InFlight(maxInFlight, maxInFlightPerProject);
-  /** Each signal's source, by its path. */
   const sourceOf = new Map(SIGNALS.map((signal) => [signal.path, signal.source]));
-  /** Counts a request whose project is known (activity/activity.ts); others are not. */
+  /** Counts only requests whose project is known (activity/activity.ts). */
   const count = (
     request: FastifyRequest,
     outcome: IngestOutcome,
@@ -245,9 +222,7 @@ export const telemetryRoutes: FastifyPluginCallback<TelemetryOptions> = (app, op
     }
   };
 
-  // Both encodings as bytes: protobuf needs them, and JSON is parsed only
-  // once unpacked. The limit applies to the body as sent; a gzip body is
-  // limited again once unpacked.
+  // Keep bytes until decompression, then parse JSON. Limit both compressed and unpacked sizes.
   app.addContentTypeParser(
     [CONTENT_TYPES.protobuf, CONTENT_TYPES.json],
     { parseAs: "buffer", bodyLimit: MAX_TELEMETRY_BODY_BYTES },
@@ -256,13 +231,13 @@ export const telemetryRoutes: FastifyPluginCallback<TelemetryOptions> = (app, op
     },
   );
 
-  // Fastify's own refusals (a body too large, one it cannot read) as OTLP's.
+  // Return OTLP errors for Fastify body-read failures too.
   app.setErrorHandler((error, request, reply) => {
     const statusCode =
       typeof error === "object" && error !== null && "statusCode" in error
         ? Number(error.statusCode)
         : 500;
-    // The key was read before the body: a body refused here is the project's.
+    // The key was resolved before body parsing, so refusals still count against the project.
     if (statusCode >= 400 && statusCode < 500) count(request, "refused_invalid");
     if (statusCode === 413) {
       return fail(request, reply, 413, "The body is larger than 16 MiB.");
@@ -304,8 +279,7 @@ export const telemetryRoutes: FastifyPluginCallback<TelemetryOptions> = (app, op
     if (contentEncoding !== "gzip" && contentEncoding !== "identity") {
       return fail(request, reply, 415, "Send the body as it is, or with Content-Encoding: gzip.");
     }
-    // The key is looked up before a slot is taken, so lookups of made-up
-    // keys cannot hold the slots real requests need.
+    // Resolve keys before taking slots so made-up keys cannot occupy ingestion capacity.
     let project;
     try {
       project = await keyLookups.findFor(projects, secretKey, request, reply);
@@ -323,7 +297,7 @@ export const telemetryRoutes: FastifyPluginCallback<TelemetryOptions> = (app, op
       return fail(request, reply, 503, "Too many requests are in progress. Try again shortly.", 1);
     }
     if (!inFlight.takeForProject(request, project.id)) {
-      // A request that disconnected meanwhile has no slot, and was not refused.
+      // Disconnected requests take no slot and do not count as refusals.
       if (!reply.raw.destroyed) count(request, "refused_rate_limited", 0, project);
       return fail(
         request,
@@ -346,7 +320,7 @@ export const telemetryRoutes: FastifyPluginCallback<TelemetryOptions> = (app, op
         onResponse: inFlight.finished,
         onRequestAbort: inFlight.finished,
       },
-      // The slot is held until the work settles, the insert included.
+      // Hold the slot through insertion.
       async (request, reply) =>
         inFlight.run(request, async () => {
           const project = projectOf.get(request);
@@ -355,7 +329,6 @@ export const telemetryRoutes: FastifyPluginCallback<TelemetryOptions> = (app, op
           }
           const encoding = answerEncoding(request);
           const sent = request.body ?? Buffer.alloc(0);
-          // What becomes of the request is counted from here (activity/activity.ts).
           const invalid = (httpStatus: 400 | 413, text: string) => {
             count(request, "refused_invalid");
             return fail(request, reply, httpStatus, text);
@@ -374,8 +347,7 @@ export const telemetryRoutes: FastifyPluginCallback<TelemetryOptions> = (app, op
             body = sent;
           }
 
-          // Counted, and paid for, before decoding: decoding allocates for
-          // every message, and costs the same whether records come of it or not.
+          // Charge before decoding: every message allocates, even if it produces no records.
           let messageCount: number;
           try {
             messageCount = countMessages(signal.messages, body, encoding);
@@ -409,8 +381,7 @@ export const telemetryRoutes: FastifyPluginCallback<TelemetryOptions> = (app, op
           const paid = budget.take(project.id, prepaid);
           if (!paid.allowed) return tooMuch(paid.limit, paid.retryAfterSeconds);
 
-          // Neither a malformed request nor one refused below gets its
-          // decoding back: it was done.
+          // Malformed and refused requests still pay for decoding already done.
           let outcome: Outcome & { rows: TelemetryRows; errors: NewEvent[] };
           const receivedAt = now();
           try {
@@ -421,7 +392,7 @@ export const telemetryRoutes: FastifyPluginCallback<TelemetryOptions> = (app, op
             });
           } catch (error) {
             if (error instanceof MalformedError) return invalid(400, error.message);
-            // Its text is the runtime's, not written for senders: logged, not sent.
+            // Log runtime error details without exposing them to senders.
             if (error instanceof RangeError) {
               request.log.warn({ err: error }, "telemetry request held a value out of range");
               return invalid(
@@ -438,9 +409,8 @@ export const telemetryRoutes: FastifyPluginCallback<TelemetryOptions> = (app, op
               `A request holds at most ${budget.capacity} records. This request contains ${outcome.records}. Send smaller batches.`,
             );
           }
-          // Each error event is one more row, in the events table: so a
-          // span's exceptions cannot multiply rows for free.
-          // Refused records are not charged past the decoding already paid.
+          // Charge each exception row so spans cannot multiply writes for free. Refused records
+          // pay only for decoding.
           const base =
             Math.max(
               prepaid,
@@ -448,10 +418,8 @@ export const telemetryRoutes: FastifyPluginCallback<TelemetryOptions> = (app, op
               Math.ceil((body.length + outcome.sharedBytes) / BYTES_PER_UNIT),
             ) + outcome.errors.length;
           if (base > budget.capacity) return tooLarge(base);
-          // Each AI call is one more too, in ai_calls, but never makes a
-          // request too large: a batch the budget could take without them is
-          // charged at most the whole budget, and waits for it (429, which
-          // exporters retry), rather than being refused for good (413).
+          // Cap AI charges at the budget so an otherwise valid batch gets retryable 429 instead of
+          // permanent 413.
           const cost = Math.min(budget.capacity, base + (outcome.rows.ai_calls?.length ?? 0));
           if (cost > prepaid) {
             const rest = budget.take(project.id, cost - prepaid);
@@ -465,15 +433,13 @@ export const telemetryRoutes: FastifyPluginCallback<TelemetryOptions> = (app, op
               }),
             ]);
           } catch (error) {
-            // Not the sender's doing: all of it back.
+            // Refund server-side failures.
             budget.refund(project.id, cost);
             request.log.error({ err: error }, "could not store telemetry");
             count(request, "refused_unavailable");
             return fail(request, reply, 503, "Telemetry was not stored. Retry later.", 5);
           }
-          // The records stored, and those refused in partial_success, per
-          // item; the error events and AI calls the spans and logs held
-          // count in those sources too.
+          // Also count derived error events and AI calls in their sources.
           const stored = signal.stored(outcome.rows);
           if (stored > 0) count(request, "accepted", stored);
           if (outcome.refused > 0) count(request, "refused_invalid", outcome.refused);
