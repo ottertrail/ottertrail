@@ -40,7 +40,8 @@ const root = rootOf(METRICS_PROTO);
  * The same, but an exponential histogram is left as its bytes: Ottertrail
  * refuses those points (normalize.ts), and decoded, their bucket counts
  * would each be a BigInt, so 4 MB of them would take 400 MB. As bytes, it
- * is a view of the body, and counts as one message (wire.ts).
+ * is a view of the body and counts nothing itself; the Metric holding it
+ * counts as a message (wire.ts), so memory stays bounded.
  */
 const decodingRoot = rootOf(
   METRICS_PROTO.replace(

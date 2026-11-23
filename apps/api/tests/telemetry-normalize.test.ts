@@ -926,7 +926,7 @@ describe("counting messages before decoding", () => {
     expect([histograms.length, refused]).toEqual([8192, 0]);
   });
 
-  test("an exponential histogram is decoded as its bytes: counted as one, its points counted from them", () => {
+  test("an exponential histogram is decoded as its bytes: not counted, its points counted from them", () => {
     const zeros = Array.from({ length: 3_990_000 }, () => 0);
     const time = String(NOW - SECOND);
     const request = metrics([
