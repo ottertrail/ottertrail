@@ -81,13 +81,19 @@ async function unread(cookie: string) {
   return response.json().unread;
 }
 
-/** A channel notification of `type`, as alert rules and storage send them. */
-function notice(
+/**
+ * A channel notification of `type`, as alert rules and storage send them.
+ * Each waits for the next millisecond: notices of the same millisecond have
+ * no set order, and the tests read them newest first.
+ */
+async function notice(
   type: Parameters<typeof notify>[1]["type"],
   project: { id: string; name: string } | null,
   subject: Record<string, string | number>,
   inbox?: Parameters<typeof notify>[1]["inbox"],
 ) {
+  const start = Date.now();
+  while (Date.now() === start) await new Promise((done) => setTimeout(done, 1));
   return notify(dashboard.db, {
     channelIds: [],
     type,
