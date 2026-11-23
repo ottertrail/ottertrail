@@ -1,7 +1,7 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { gunzipSync, gzipSync } from "node:zlib";
 
-import { InsertQueryNode, type KyselyPlugin } from "kysely";
+import { InsertQueryNode, type KyselyPlugin, sql } from "kysely";
 import { afterAll, beforeAll, describe, expect, test } from "vite-plus/test";
 
 import { purgeDeletedProjects } from "../src/clickhouse/delete-events.ts";
@@ -46,6 +46,10 @@ const RECORDING = JSON.stringify({
     { type: 3, timestamp: 1_500, data: { source: 2, type: 2, id: 1 } },
   ],
 });
+
+/** A recording's event of about a megabyte. */
+const bigEvent = (index: number) =>
+  JSON.stringify({ type: 3, timestamp: 1000 + index, data: { text: " ".repeat(999_900) } });
 
 /** A recording of `count` events, as one chunk. */
 const recordingOf = (count: number) => [
@@ -316,7 +320,7 @@ describe("collecting a replay's chunks", () => {
     expect(await chunkCount(project.id, replay)).toBe("16");
   });
 
-  test("limits an IPv6 network as one address, and chunks in progress", async () => {
+  test("limits an IPv6 network as one address", async () => {
     const limited = await signedInDashboard({
       objectStore: store,
       replays: { limitBytes: 1024 ** 3, ipLimit: { capacity: 1, refillPerSecond: 0.001 } },
@@ -334,25 +338,43 @@ describe("collecting a replay's chunks", () => {
     } finally {
       await limited.close();
     }
+  });
 
-    // At most 8 of one project's chunks at once, and 16 of all.
-    const one = await newProject("Many chunks");
-    const many = await Promise.all(
-      Array.from({ length: 9 }, () =>
-        send(one.public_key, randomUUID(), 0, gzipSync("x"), { remoteAddress: "198.51.100.8" }),
-      ),
-    );
-    expect(many.filter((response) => response.statusCode === 429)).toHaveLength(1);
-    const others = await Promise.all(["A", "B", "C"].map((name) => newProject(`Busy ${name}`)));
-    const all = await Promise.all(
-      Array.from({ length: 17 }, (_, index) =>
-        send(others[index % 3]?.public_key ?? "", randomUUID(), 0, gzipSync("x"), {
-          remoteAddress: "198.51.100.17",
+  test("stores a page's whole burst of chunks as it leaves, and refuses a malformed key first", async () => {
+    // A page leaving sends every piece at once, by beacon, which never retries.
+    const project = await newProject("Burst");
+    const replay = randomUUID();
+    const text = `{"v":1,"events":[${Array.from({ length: 100 }, (_, index) =>
+      JSON.stringify({ type: 3, timestamp: 1000 + index, data: { source: 1 } }),
+    ).join(",")}]}`;
+    const pieces = chunksOf(text, 100);
+    const answers = await Promise.all(
+      pieces.map((piece, seq) =>
+        send(project.public_key, replay, seq, piece, {
+          last: seq === 99,
+          remoteAddress: "198.51.100.100",
         }),
       ),
     );
-    const busy = all.filter((response) => response.statusCode === 503);
-    expect(busy.map((response) => response.json().error)).toEqual(["busy"]);
+    expect(answers.map((answer) => answer.statusCode)).toEqual(Array(100).fill(202));
+    expect(await chunkCount(project.id, replay)).toBe("100");
+
+    // At most 128 of one project's at once: one of 129 is asked to wait.
+    const many = await Promise.all(
+      Array.from({ length: 129 }, (_, index) =>
+        send(project.public_key, randomUUID(), 0, gzipSync("x"), {
+          remoteAddress: `198.51.100.${200 + (index % 2)}`,
+        }),
+      ),
+    );
+    expect(many.filter((response) => response.statusCode === 429)).toHaveLength(1);
+
+    for (const key of ["pk_short", `${project.public_key}&key=${project.public_key}`]) {
+      const refused = await send(key, randomUUID(), 0, gzipSync("x"), {
+        remoteAddress: "198.51.100.99",
+      });
+      expect([refused.statusCode, refused.json().error]).toEqual([400, "invalid_request"]);
+    }
   });
 
   test("spends the project's own budget, in bytes, apart from events'", async () => {
@@ -603,12 +625,16 @@ describe("joining a replay's chunks", () => {
     await send(project.public_key, notJson, 0, gzipSync('{"v":1,"events":"no"}'), { last: true });
 
     // Soon after: the missing chunk may still come, so nothing is joined or dropped.
-    await joinReplays(dashboard.db, store);
+    // This project's only: other tests leave replays waiting.
+    await joinReplays(dashboard.db, store, { onlyProjectId: project.id });
     expect(await chunkCount(project.id, gap)).toBe("2");
     expect(await store.get(replayKeyOf(project.id, gap))).toBeNull();
 
     // Quiet for longer than a replay waits: what came in order is kept, cut.
-    await joinReplays(dashboard.db, store, { now: new Date(Date.now() + 10 * 60_000) });
+    await joinReplays(dashboard.db, store, {
+      now: new Date(Date.now() + 10 * 60_000),
+      onlyProjectId: project.id,
+    });
     for (const replay of [gap, quiet]) {
       const row = await dashboard.db
         .selectFrom("replays")
@@ -648,6 +674,101 @@ describe("joining a replay's chunks", () => {
       .where("project_id", "=", project.id)
       .execute();
     expect(joined.map((row) => row.replay_id)).toEqual([older]);
+  });
+
+  test("replays still waiting for a chunk do not take the run's places", async () => {
+    const project = await newProject("Stuck");
+    // 101 replays whose last chunk came without the one before it, older
+    // than the joinable one, and not quiet yet.
+    const twoMinutesAgo = new Date(Date.now() - 2 * 60_000);
+    await Promise.all(
+      Array.from({ length: 101 }, () =>
+        storeChunk(
+          dashboard.db,
+          project,
+          { replayId: randomUUID(), seq: 1, last: true, cut: false, data: gzipSync("]}") },
+          1024 ** 3,
+        ).then(() => undefined),
+      ),
+    );
+    await sql`update replay_chunks set received_at = ${twoMinutesAgo} where project_id = ${project.id}`.execute(
+      dashboard.db,
+    );
+    const ready = randomUUID();
+    await storeChunk(
+      dashboard.db,
+      project,
+      { replayId: ready, seq: 0, last: true, cut: false, data: gzipSync(RECORDING) },
+      1024 ** 3,
+    );
+    await joinReplays(dashboard.db, store, { limit: 100, onlyProjectId: project.id });
+    const joined = await dashboard.db
+      .selectFrom("replays")
+      .select("replay_id")
+      .where("project_id", "=", project.id)
+      .execute();
+    expect(joined.map((row) => row.replay_id)).toEqual([ready]);
+    // Gone, so later runs of this file's other tests are not theirs to wait on.
+    await dashboard.db.deleteFrom("replay_chunks").where("project_id", "=", project.id).execute();
+  });
+
+  test("chunks of one replay arriving together cannot pass its unpacked cap", async () => {
+    const project = await newProject("Together");
+    const replay = randomUUID();
+    const chunk = gzipSync(Buffer.alloc(1_000_000, 32));
+    const outcomes = await Promise.all(
+      Array.from({ length: 20 }, (_, seq) =>
+        storeChunk(
+          dashboard.db,
+          project,
+          { replayId: replay, seq, last: false, cut: false, data: chunk },
+          1024 ** 3,
+        ),
+      ),
+    );
+    expect(outcomes.filter((outcome) => outcome === "stored")).toHaveLength(16);
+    expect(outcomes.filter((outcome) => outcome === "unpacked_too_large")).toHaveLength(4);
+  });
+
+  test("a replay that unpacks past the cap keeps the start that fits, cut", async () => {
+    const project = await newProject("Past the cap");
+    const replay = randomUUID();
+    const texts = [
+      `{"v":1,"events":[${JSON.stringify({ type: 4, timestamp: 1000, data: {} })}`,
+      ...Array.from({ length: 18 }, (_, index) => `,${bigEvent(index + 1)}`),
+      "]}",
+    ];
+    // As if kept past the upload's cap: their sizes say nothing.
+    for (const [seq, text] of texts.entries()) {
+      await storeChunk(
+        dashboard.db,
+        project,
+        {
+          replayId: replay,
+          seq,
+          last: seq === texts.length - 1,
+          cut: false,
+          data: gzipSync(text),
+          unpackedBytes: 0,
+        },
+        1024 ** 3,
+      );
+    }
+    await joinReplays(dashboard.db, store, { onlyProjectId: project.id });
+    const row = await dashboard.db
+      .selectFrom("replays")
+      .select("cut")
+      .where("project_id", "=", project.id)
+      .where("replay_id", "=", replay)
+      .executeTakeFirstOrThrow();
+    expect(row.cut).toBe(true);
+    const object = await store.get(replayKeyOf(project.id, replay));
+    const kept = JSON.parse(gunzipSync(object ?? Buffer.alloc(0)).toString()) as {
+      events: unknown[];
+    };
+    // 16 MiB holds the Meta event and 16 of the 18 others.
+    expect(kept.events.length).toBeGreaterThan(10);
+    expect(kept.events.length).toBeLessThan(19);
   });
 
   test("gives up a recording of too many events", () => {

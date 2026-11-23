@@ -94,50 +94,57 @@ export async function storeChunk(
   chunk: Chunk,
   limitBytes: number,
 ): Promise<"stored" | "duplicate" | "storage_full" | "too_large" | "unpacked_too_large"> {
-  const joined = await db
-    .selectFrom("replays")
-    .select("replay_id")
-    .where("project_id", "=", project.id)
-    .where("replay_id", "=", chunk.replayId)
-    .executeTakeFirst();
-  if (joined !== undefined) return "duplicate";
-
-  const sofar = await db
-    .selectFrom("replay_chunks")
-    .select([
-      sql<string>`coalesce(sum(octet_length(data)), 0)`.as("bytes"),
-      sql<string>`count(*)`.as("chunks"),
-      sql<string>`coalesce(sum(unpacked_bytes), 0)`.as("unpacked"),
-    ])
-    .where("project_id", "=", project.id)
-    .where("replay_id", "=", chunk.replayId)
-    .executeTakeFirstOrThrow();
-  if (Number(sofar.chunks) === 0 && (await storedReplayBytes(db)) >= limitBytes) {
-    return "storage_full";
-  }
-  if (Number(sofar.bytes) + chunk.data.byteLength > MAX_REPLAY_BYTES) return "too_large";
   const unpackedBytes =
     chunk.unpackedBytes ??
     gunzipSync(chunk.data, { maxOutputLength: MAX_CHUNK_UNPACKED_BYTES }).byteLength;
-  if (Number(sofar.unpacked) + unpackedBytes > MAX_REPLAY_UNPACKED_BYTES) {
-    return "unpacked_too_large";
-  }
+  // One chunk of a replay at a time: chunks arriving together would each
+  // read the same sums, and all pass the caps.
+  return db.transaction().execute(async (trx) => {
+    await sql`select pg_advisory_xact_lock(hashtextextended(${`replay-chunk:${project.id}:${chunk.replayId}`}, 0))`.execute(
+      trx,
+    );
+    const joined = await trx
+      .selectFrom("replays")
+      .select("replay_id")
+      .where("project_id", "=", project.id)
+      .where("replay_id", "=", chunk.replayId)
+      .executeTakeFirst();
+    if (joined !== undefined) return "duplicate";
 
-  const result = await db
-    .insertInto("replay_chunks")
-    .values({
-      project_id: project.id,
-      replay_id: chunk.replayId,
-      seq: chunk.seq,
-      last: chunk.last,
-      cut: chunk.cut,
-      data: chunk.data,
-      unpacked_bytes: unpackedBytes,
-      ...(chunk.receivedAt === undefined ? {} : { received_at: chunk.receivedAt }),
-    })
-    .onConflict((oc) => oc.columns(["project_id", "replay_id", "seq"]).doNothing())
-    .executeTakeFirst();
-  return (result.numInsertedOrUpdatedRows ?? 0n) > 0n ? "stored" : "duplicate";
+    const sofar = await trx
+      .selectFrom("replay_chunks")
+      .select([
+        sql<string>`coalesce(sum(octet_length(data)), 0)`.as("bytes"),
+        sql<string>`count(*)`.as("chunks"),
+        sql<string>`coalesce(sum(unpacked_bytes), 0)`.as("unpacked"),
+      ])
+      .where("project_id", "=", project.id)
+      .where("replay_id", "=", chunk.replayId)
+      .executeTakeFirstOrThrow();
+    if (Number(sofar.chunks) === 0 && (await storedReplayBytes(trx)) >= limitBytes) {
+      return "storage_full";
+    }
+    if (Number(sofar.bytes) + chunk.data.byteLength > MAX_REPLAY_BYTES) return "too_large";
+    if (Number(sofar.unpacked) + unpackedBytes > MAX_REPLAY_UNPACKED_BYTES) {
+      return "unpacked_too_large";
+    }
+
+    const result = await trx
+      .insertInto("replay_chunks")
+      .values({
+        project_id: project.id,
+        replay_id: chunk.replayId,
+        seq: chunk.seq,
+        last: chunk.last,
+        cut: chunk.cut,
+        data: chunk.data,
+        unpacked_bytes: unpackedBytes,
+        ...(chunk.receivedAt === undefined ? {} : { received_at: chunk.receivedAt }),
+      })
+      .onConflict((oc) => oc.columns(["project_id", "replay_id", "seq"]).doNothing())
+      .executeTakeFirst();
+    return (result.numInsertedOrUpdatedRows ?? 0n) > 0n ? "stored" : "duplicate";
+  });
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -151,19 +158,34 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
  * treats it as untrusted.
  */
 export function joinChunks(chunks: readonly Buffer[]): string | null {
-  const text = unpack(chunks);
-  return text === null ? null : (checkRecording(text)?.text ?? null);
+  const unpacked = unpack(chunks);
+  return unpacked === null || !unpacked.whole
+    ? null
+    : (checkRecording(unpacked.text)?.text ?? null);
 }
 
-/** The chunks' text, unpacked: each is one gzip member. Null when they are not gzip. */
-function unpack(chunks: readonly Buffer[]): string | null {
-  try {
-    return gunzipSync(Buffer.concat(chunks), {
-      maxOutputLength: MAX_REPLAY_UNPACKED_BYTES,
-    }).toString("utf8");
-  } catch {
-    return null;
+/**
+ * The chunks' text, unpacked one at a time (each is gzip), up to
+ * MAX_REPLAY_UNPACKED_BYTES: the chunks that fit, in order, and whether
+ * that was all of them. The upload caps the sum, but a replay kept before
+ * that cap, or past it some other way, keeps its start rather than being
+ * lost. Null when a chunk is not gzip.
+ */
+function unpack(chunks: readonly Buffer[]): { text: string; whole: boolean } | null {
+  const parts: Buffer[] = [];
+  let total = 0;
+  for (const chunk of chunks) {
+    let part: Buffer;
+    try {
+      part = gunzipSync(chunk, { maxOutputLength: MAX_REPLAY_UNPACKED_BYTES - total });
+    } catch (error) {
+      if (error instanceof RangeError) break;
+      return null;
+    }
+    parts.push(part);
+    total += part.byteLength;
   }
+  return { text: Buffer.concat(parts).toString("utf8"), whole: parts.length === chunks.length };
 }
 
 /**
@@ -285,9 +307,16 @@ export async function joinReplays(
       ),
     )
     .groupBy(["c.project_id", "c.replay_id"])
+    // Only replays that can be joined now: complete (the last chunk came,
+    // with none missing) or quiet. One still waiting for a chunk would take
+    // a place of the run's limit and be skipped, and a sender could keep
+    // enough of them waiting to block every other replay.
     .having((eb) =>
       eb.or([
-        eb(sql<boolean>`bool_or(c.last)`, "=", true),
+        eb.and([
+          eb(sql<boolean>`bool_or(c.last)`, "=", true),
+          eb(sql<number>`count(*)`, "=", sql<number>`max(c.seq) + 1`),
+        ]),
         eb(eb.fn.max("c.received_at"), "<", idleSince),
       ]),
     )
@@ -342,7 +371,10 @@ export async function joinReplays(
         while (chunks[inOrder]?.seq === inOrder) inOrder += 1;
         const kept = complete ? chunks.slice(0, lastAt + 1) : chunks.slice(0, inOrder);
         const unpacked = kept.length === 0 ? null : unpack(kept.map((chunk) => chunk.data));
-        const closed = complete || unpacked === null ? unpacked : closeRecording(unpacked);
+        // Whole and complete as sent; otherwise cut after its last whole event.
+        const whole = complete && unpacked?.whole === true;
+        const closed =
+          unpacked === null ? null : whole ? unpacked.text : closeRecording(unpacked.text);
         const recording = closed === null ? null : checkRecording(closed);
         if (recording === null) {
           // Not a recording, or nothing of one: once its last chunk came, or
@@ -375,7 +407,7 @@ export async function joinReplays(
             replay_id: replayId,
             object_key: objectKey,
             bytes: compressed.byteLength,
-            cut: !complete || kept.some((chunk) => chunk.cut),
+            cut: !whole || kept.some((chunk) => chunk.cut),
             started_at: details.startedAt,
             ended_at: details.endedAt,
             clock_offset_ms: details.clockOffsetMs,

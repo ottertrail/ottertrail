@@ -47,11 +47,14 @@ export const DEFAULT_REPLAY_INSTANCE_LIMIT: RateLimit = {
   refillPerSecond: 768,
 };
 /**
- * Chunks this process works on at once, and one project's of them: each
- * holds its body and, while it is checked, up to 1 MiB unpacked.
+ * Chunks this process works on at once, and one project's of them, each
+ * counted from when its body has arrived (at most 64 KB) until it is
+ * stored: it holds that body and, while checked, up to 1 MiB unpacked. A
+ * page leaving sends all its pieces at once, by beacon, which never
+ * retries, so one project's cap is well above a replay's 100 pieces.
  */
-export const DEFAULT_REPLAY_MAX_IN_FLIGHT = 16;
-export const DEFAULT_REPLAY_MAX_IN_FLIGHT_PER_PROJECT = 8;
+export const DEFAULT_REPLAY_MAX_IN_FLIGHT = 256;
+export const DEFAULT_REPLAY_MAX_IN_FLIGHT_PER_PROJECT = 128;
 const KEY = new RegExp(PUBLIC_KEY_PATTERN);
 
 const problem = (error: string, message: string) => ({ error, message });
@@ -201,20 +204,18 @@ export const replayCollectionRoutes: FastifyPluginCallback<{
           },
         },
       },
-      // Before the body is read: the cheapest way to turn a flood away,
-      // then a slot of this process's and of the key's project.
+      // Before the body is read: the cheapest way to turn a flood away, the
+      // key's form, and the key itself.
       onRequest: async (request, reply) => {
         const result = ipLimiter.take(clientKey(request.ip));
         if (!result.allowed) return tooManyRequests(reply, result.retryAfterSeconds);
         const query: unknown = request.query;
         const key = typeof query === "object" && query !== null ? Reflect.get(query, "key") : "";
-        // A malformed key is the query schema's to refuse, after this.
-        if (typeof key !== "string" || !KEY.test(key)) return undefined;
-        if (!inFlight.take(request, reply)) {
+        // One key of the public key's form: `?key=a&key=b` is an array.
+        if (typeof key !== "string" || !KEY.test(key)) {
           return reply
-            .code(503)
-            .header("retry-after", "1")
-            .send(problem("busy", "Too many replay chunks are in progress. Try again shortly."));
+            .code(400)
+            .send(problem("invalid_request", "Send the project's public key once, as key=pk_…."));
         }
         let project;
         try {
@@ -226,11 +227,24 @@ export const replayCollectionRoutes: FastifyPluginCallback<{
         if (project === null) {
           return reply.code(403).send(problem("unknown_key", "No project has this key."));
         }
+        projectOf.set(request, project);
+        return undefined;
+      },
+      // Once the body has arrived: a slot of this process's and of the
+      // project's, so slow bodies hold none.
+      preHandler: async (request, reply) => {
+        const project = projectOf.get(request);
+        if (project === undefined) return undefined;
+        if (!inFlight.take(request, reply)) {
+          return reply
+            .code(503)
+            .header("retry-after", "1")
+            .send(problem("busy", "Too many replay chunks are in progress. Try again shortly."));
+        }
         if (!inFlight.takeForProject(request, project.id)) {
           activity.add(project.id, "replays", "refused_rate_limited", 0);
           return tooManyRequests(reply, 1);
         }
-        projectOf.set(request, project);
         return undefined;
       },
       onResponse: inFlight.finished,
