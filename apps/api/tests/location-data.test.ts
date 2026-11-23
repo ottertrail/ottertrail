@@ -14,7 +14,7 @@ import { PUBLIC_URL, signedInDashboard, signedInUser } from "./helpers/dashboard
 import { allSources, fakeFetch } from "./helpers/location-sources.ts";
 import { fakeMmdb } from "./helpers/mmdb.ts";
 
-const request = { ip: "8.8.8.8", headers: {} };
+const ip = "8.8.8.8";
 
 /** Node's gc(), without starting the test process with --expose-gc; runs it until things settle. */
 function collectGarbage(): () => Promise<void> {
@@ -69,16 +69,16 @@ describe("the API reloads changed files without a restart", () => {
   test("a new location database replaces the one in use", async () => {
     await replace(databasePath, fakeMmdb({ city: "First" }));
     const { data } = await open();
-    expect(data.locate(request)).toEqual({ country: "US", city: "First" });
+    expect(data.locate(ip)).toEqual({ country: "US", city: "First" });
 
     await data.reload(log);
-    expect(data.locate(request).city).toBe("First");
+    expect(data.locate(ip).city).toBe("First");
 
     await replace(databasePath, fakeMmdb({ city: "Second", builtAt: new Date("2026-12-01") }));
     // Not before the next look.
-    expect(data.locate(request).city).toBe("First");
+    expect(data.locate(ip).city).toBe("First");
     await data.reload(log);
-    expect(data.locate(request).city).toBe("Second");
+    expect(data.locate(ip).city).toBe("Second");
     expect(data.loaded.locations).toEqual({
       type: "DBIP-City-Lite",
       builtAt: new Date("2026-12-01"),
@@ -94,11 +94,11 @@ describe("the API reloads changed files without a restart", () => {
 
     await replace(databasePath, "not a database");
     await data.reload(log);
-    expect(data.locate(request).city).toBe("First");
+    expect(data.locate(ip).city).toBe("First");
     // Opens, but is not a City database that places 8.8.8.8 in the US.
     await replace(databasePath, fakeMmdb({ country: "DE" }));
     await data.reload(log);
-    expect(data.locate(request).city).toBe("First");
+    expect(data.locate(ip).city).toBe("First");
 
     await replace(dataCentersPath, "{ cut off");
     await data.reload(log);
@@ -118,7 +118,7 @@ describe("the API reloads changed files without a restart", () => {
   test("files missing at startup are loaded once they appear", async () => {
     const { data, messages } = await open();
     expect(messages.map((message) => message.ok)).toEqual([false, false]);
-    expect(data.locate(request)).toEqual({});
+    expect(data.locate(ip)).toEqual({});
     expect(data.isDataCenter("203.0.113.5")).toBe(false);
     expect(data.loaded).toEqual({
       geoSource: "database",
@@ -131,7 +131,7 @@ describe("the API reloads changed files without a restart", () => {
     await replace(databasePath, fakeMmdb());
     await replace(dataCentersPath, JSON.stringify(rangesFile("203.0.113.0/24")));
     await data.reload(log);
-    expect(data.locate(request).country).toBe("US");
+    expect(data.locate(ip).country).toBe("US");
     expect(data.isDataCenter("203.0.113.5")).toBe(true);
     expect(data.loaded.dataCenters).toEqual({
       providers: 1,
@@ -150,11 +150,11 @@ describe("the API reloads changed files without a restart", () => {
     const { data } = await open();
     await replace(databasePath, fakeMmdb({ city: "Sixth", ipVersion: 6 }));
     await data.reload(log);
-    expect(data.locate({ ip: "2001:db8::1", headers: {} })).toEqual({
+    expect(data.locate("2001:db8::1")).toEqual({
       country: "US",
       city: "Sixth",
     });
-    expect(data.locate(request).city).toBe("Sixth");
+    expect(data.locate(ip).city).toBe("Sixth");
   });
 
   test("a replaced database is released: only the copy in use stays in memory", async () => {
@@ -181,7 +181,7 @@ describe("the API reloads changed files without a restart", () => {
       await gc();
       // The startup copy and the second are gone; the third is in use.
       expect(opened.map((ref) => ref.deref() !== undefined)).toEqual([false, false, true]);
-      expect(data.locate(request).city).toBe("Third");
+      expect(data.locate(ip).city).toBe("Third");
       expect(startup.messages).toHaveLength(2);
     } finally {
       Object.defineProperty(GeoDatabase, "open", original);
@@ -192,7 +192,7 @@ describe("the API reloads changed files without a restart", () => {
     const { data } = await open("none");
     await replace(databasePath, fakeMmdb());
     await data.reload(log);
-    expect(data.locate(request)).toEqual({});
+    expect(data.locate(ip)).toEqual({});
     expect(data.loaded.locations).toBeNull();
   });
 });

@@ -23,7 +23,7 @@ const CHROME_MAC =
 const locations: Record<string, Location> = {
   "203.0.113.10": { country: "DE", region: "Bavaria", city: "Munich" },
 };
-const fakeLocate: Locate = (request) => locations[request.ip] ?? {};
+const fakeLocate: Locate = (ip) => locations[ip] ?? {};
 
 let testDb: TestDatabase | undefined;
 let testClickHouse: TestClickHouse | undefined;

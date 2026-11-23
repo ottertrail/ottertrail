@@ -139,12 +139,12 @@ describe("setUpLocation", () => {
     const setup = await setUpLocation("database", "/nowhere/geo.mmdb");
     expect(setup.ok).toBe(false);
     expect(setup.message).toMatch(/vp run geo:update/);
-    expect(setup.locate({ ip: "8.8.8.8", headers: {} })).toEqual({});
+    expect(setup.locate("8.8.8.8")).toEqual({});
   });
 
-  test("does no lookup when turned off, whatever headers a request carries", async () => {
+  test("does no lookup when turned off", async () => {
     const setup = await setUpLocation("none", "unused");
-    expect(setup.locate({ ip: "8.8.8.8", headers: { "cf-ipcountry": "NL" } })).toEqual({});
+    expect(setup.locate("8.8.8.8")).toEqual({});
   });
 });
 

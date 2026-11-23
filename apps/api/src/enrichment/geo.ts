@@ -12,8 +12,8 @@ export interface Location {
   city?: string;
 }
 
-/** Finds the location for one request. The IP address is used here and never stored. */
-export type Locate = (request: { ip: string; headers: Record<string, unknown> }) => Location;
+/** Finds the location of one client address. The address is used here and never stored. */
+export type Locate = (ip: string) => Location;
 
 /**
  * DB-IP City Lite follows the MaxMind GeoIP2/GeoLite2 layout, but regions have

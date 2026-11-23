@@ -39,7 +39,7 @@ export async function setUpLocation(
   const ageDays = (now.getTime() - geo.builtAt.getTime()) / 86_400_000;
   const stale = ageDays > STALE_AFTER_DAYS;
   return {
-    locate: (request) => geo.lookup(request.ip),
+    locate: (ip) => geo.lookup(ip),
     database: { type: geo.type, builtAt: geo.builtAt },
     ok: !stale,
     message: stale

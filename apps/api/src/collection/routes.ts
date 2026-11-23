@@ -606,7 +606,7 @@ export const collectionRoutes: FastifyPluginCallback<CollectionOptions> = (app, 
         // error fingerprints, the location. The IP is used for the location,
         // then discarded: never stored or logged.
         const client = parseUserAgent(userAgent ?? "", { touch: request.body.touch === true });
-        const location = locate(request);
+        const location = locate(request.ip);
         const accepted: NewEvent[] = valid.map(({ event, occurredAt, page }) => {
           // When signatures are required, invalid ones leave events anonymous.
           let { userId } = event;

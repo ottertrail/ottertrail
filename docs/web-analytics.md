@@ -286,7 +286,7 @@ The request limit lets one client send 50 events in each of its requests, 100 a 
 
 That is also its cost: everyone behind one address shares one bucket. An office, a school, or a mobile carrier's shared address (carrier-grade NAT, where thousands of phones leave through a few addresses) can reach it on a busy site, and then their events wait and are retried (429, `Retry-After`): the tracker keeps up to 200 events and tries again, so a short peak loses nothing, but a long one can. A site whose visitors mostly arrive through one address would need a higher limit; it is a constant for now, not a setting.
 
-Behind a proxy (Cloudflare, Caddy), every request seems to come from the proxy's address. Set `TRUST_PROXY` (see [development](development.md#configuration)) so the API reads the client's address from `X-Forwarded-For`. Leave it unset without a proxy: otherwise any client could claim any address. Set the number of hops to exactly the number of proxies that append to `X-Forwarded-For`: a number too high is as unsafe as no proxy, because entries the client wrote then count. The Docker deployment sets `1`, for Caddy.
+Behind a proxy (Cloudflare, Caddy), every request seems to come from the proxy's address. Set `TRUST_PROXY` (see [development](development.md#configuration)) so the API reads the client's address from `X-Forwarded-For`. Leave it unset without a proxy: otherwise any client could claim any address. Set the number of hops to exactly the number of proxies in front of the API that set or append `X-Forwarded-For`: a number too high is as unsafe as setting it with no proxy in front, because entries the client wrote then count. The Docker deployment sets `1`, for Caddy, which replaces the header.
 
 ### Spam
 

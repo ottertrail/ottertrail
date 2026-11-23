@@ -72,7 +72,7 @@ export class LiveLocationData {
     };
   }
 
-  readonly locate: Locate = (request) => this.#locate(request);
+  readonly locate: Locate = (ip) => this.#locate(ip);
 
   readonly isDataCenter: IsDataCenter = (ip) => this.#isDataCenter(ip);
 
@@ -140,7 +140,7 @@ export class LiveLocationData {
       // For a moment both copies are in memory, about 130 MB each.
       const geo = await GeoDatabase.open(this.#databasePath);
       const info = checkLocationDatabase(geo);
-      this.#locate = (request) => geo.lookup(request.ip);
+      this.#locate = (ip) => geo.lookup(ip);
       this.#loaded = {
         ...this.#loaded,
         locations: { ...info, fileModifiedAt: modified(stamp) },

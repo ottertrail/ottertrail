@@ -88,13 +88,13 @@ docker compose up -d
 
 Compose pulls the new image, runs `migrate`, and replaces the API and the worker. The API is unavailable for a few seconds while its container is replaced; the tracker retries events it could not send. Read the release's notes first: a release whose `compose.yaml` adds a required setting names it there, and Compose stops until `.env` has it.
 
-An install that set `OTTERTRAIL_PROXY=cloudflare` (release 0.3.0) must replace it with `OTTERTRAIL_TRUSTED_PROXIES` and `OTTERTRAIL_CLIENT_IP_HEADER=CF-Connecting-IP` ([If you use Cloudflare](#if-you-use-cloudflare)). Releases after 0.3.0 ignore `OTTERTRAIL_PROXY`, so without the new settings every visitor gets Cloudflare's address.
-
-An install that set `GEO_SOURCE=cloudflare` must remove it: that option was removed after release 0.3.0, and the API and the worker stop at start while it is set. Locations then come from the location database.
-
 `OTTERTRAIL_VERSION` in `.env` chooses the release instead: each release's `compose.yaml` runs its own release by default, and `OTTERTRAIL_VERSION=0.2.0` runs 0.2.0 with the `compose.yaml` already there. That works while the Compose file itself has not changed between the two; the release notes say when it has.
 
 To go back to an earlier release, use its `compose.yaml` (or its version in `OTTERTRAIL_VERSION`) and run the same commands, as long as no migration ran in between. The deployment only runs migrations forward, and an older release may not work with a newer schema: after a migration, restore the backup taken before the update.
+
+An install that set `OTTERTRAIL_PROXY=cloudflare` (release 0.3.0) must replace it with `OTTERTRAIL_TRUSTED_PROXIES` and `OTTERTRAIL_CLIENT_IP_HEADER=CF-Connecting-IP` ([If you use Cloudflare](#if-you-use-cloudflare)). Releases after 0.3.0 ignore `OTTERTRAIL_PROXY`, so without the new settings every visitor gets Cloudflare's address. They also no longer ship Cloudflare's ranges: keep them current yourself in `.env`, and in any firewall lock.
+
+An install that set `GEO_SOURCE=cloudflare` must remove it. The Compose file never passed `GEO_SOURCE`, so it can only have been set outside it, in an override file or when running the image directly. The option was removed after release 0.3.0, and the API, the worker, and `update-geo.mjs` stop at start while it is set. Locations then come from the location database, once the worker's first download is done or after `docker compose exec api node dist/update-geo.mjs`.
 
 ## Behind a proxy or CDN
 
@@ -137,7 +137,12 @@ Tested with the release's Caddy image (23 November 2026), using the image's own 
 Nothing checks these. As nginx's documentation warns for its own setting, a wrong list lets visitors choose their address:
 
 - Never trust everything: `0.0.0.0/0`, `::/0`, or very wide ranges. Any client inside them could set its own address.
-- Never trust whole private blocks: `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `fc00::/7`, or Caddy's `private_ranges`. They include the Docker or Podman network's gateway (`docker network inspect ottertrail-instance_default` shows the network). IPv6 connections, and anything on the server itself, reach Caddy from that gateway (see "An `A` record only", below). With it trusted, they could set any address as their own. So trusting your VPC's whole private range also trusts them. List only the proxy's own addresses: for a load balancer, its specific subnet or addresses.
+- Never trust whole private blocks: `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `fc00::/7`, Caddy's `private_ranges`, or your VPC's whole range. There are two reasons:
+  - Every other host in that range could then set its own address.
+  - A range that overlaps the Docker or Podman network (by default in 172.16.0.0/12 or 192.168.0.0/16 for Docker, 10.89.0.0/24 for Podman; `docker network inspect ottertrail-instance_default` shows it) holds the network's gateway. IPv6 connections, and anything on the server itself, reach Caddy from that gateway (see "An `A` record only", below), so they could set any address too.
+
+  List only the load balancer's own addresses or subnet.
+
 - With `X-Forwarded-For`, the proxy must append a plain address: IPv4, or IPv6 without a port or brackets. In a list, Caddy skips an entry it cannot read and takes the next one to its left, which the visitor may have written. Tested through a trusted connection: `X-Forwarded-For: 6.6.6.6, 2001:db8::1:46532` gave `6.6.6.6`, and so did `6.6.6.6, unknown` and `6.6.6.6, [2001:db8::1]`. If the proxy appends ports, `unknown`, or bracketed IPv6, use a single-value header that the provider overwrites instead.
 - A header the provider keeps when the client sent it: any visitor can then set its own address. Make the provider overwrite it, or use a header the provider appends to.
 
@@ -307,20 +312,22 @@ Restoring PostgreSQL alone, or moving it to a new major version (dump, new volum
 
 `.env` holds only what differs between instances. Compose sets the rest (see the [API's configuration](development.md#configuration)).
 
-| Variable              | Meaning                                                                                                                                                                                                                                   |
-| --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `OTTERTRAIL_DOMAIN`   | The instance's domain, without `https://`. The public URL is `https://` and this domain                                                                                                                                                   |
-| `POSTGRES_PASSWORD`   | The database password. Only the containers use it; PostgreSQL has no port open. PostgreSQL keeps the password it was first created with: to change it, run `ALTER USER ottertrail PASSWORD '…'` in the database first, then change `.env` |
-| `CLICKHOUSE_PASSWORD` | ClickHouse's password. Only the containers use it; ClickHouse has no port open. Like PostgreSQL's, it is set when ClickHouse first creates its data                                                                                       |
-| `AUTH_SECRET`         | Signs sign-in cookies. Changing it signs everyone out                                                                                                                                                                                     |
-| `LOG_LEVEL`           | Optional, default `info`                                                                                                                                                                                                                  |
-| `OTTERTRAIL_VERSION`  | Optional: the release to run, such as `0.2.0`. Each release's `compose.yaml` runs its own release when this is unset ([Updating](#updating))                                                                                              |
-| `COMPOSE_PROFILES`    | `object-store` in `example.env`: Docker Compose then starts Garage ([session replays and source maps](#session-replays-and-source-maps))                                                                                                  |
-| `OBJECT_STORE_…`      | The object store for session replays and source maps, and its keys ([session replays and source maps](#session-replays-and-source-maps))                                                                                                  |
-| `GARAGE_ADMIN_TOKEN`  | Optional: the stack's Garage's admin token. With it, the Settings page shows the bucket's real size and Garage's disk, and the worker keeps a quota on the bucket ([Storage](#storage)). Never logged or shown                            |
-| `BACKUP_S3_…`         | Optional: where scheduled backups go, a bucket of their own; only the worker gets them ([scheduled backups](#scheduled-backups)). Never logged or shown                                                                                   |
-| `SMTP_URL`            | Optional: the SMTP server alert email and account email go through, with its user name and password ([email](#email)). Never logged                                                                                                       |
-| `EMAIL_FROM`          | The sender of alert email and account email, required with `SMTP_URL`                                                                                                                                                                     |
+| Variable                      | Meaning                                                                                                                                                                                                                                   |
+| ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `OTTERTRAIL_DOMAIN`           | The instance's domain, without `https://`. The public URL is `https://` and this domain                                                                                                                                                   |
+| `POSTGRES_PASSWORD`           | The database password. Only the containers use it; PostgreSQL has no port open. PostgreSQL keeps the password it was first created with: to change it, run `ALTER USER ottertrail PASSWORD '…'` in the database first, then change `.env` |
+| `CLICKHOUSE_PASSWORD`         | ClickHouse's password. Only the containers use it; ClickHouse has no port open. Like PostgreSQL's, it is set when ClickHouse first creates its data                                                                                       |
+| `AUTH_SECRET`                 | Signs sign-in cookies. Changing it signs everyone out                                                                                                                                                                                     |
+| `LOG_LEVEL`                   | Optional, default `info`                                                                                                                                                                                                                  |
+| `OTTERTRAIL_VERSION`          | Optional: the release to run, such as `0.2.0`. Each release's `compose.yaml` runs its own release when this is unset ([Updating](#updating))                                                                                              |
+| `COMPOSE_PROFILES`            | `object-store` in `example.env`: Docker Compose then starts Garage ([session replays and source maps](#session-replays-and-source-maps))                                                                                                  |
+| `OBJECT_STORE_…`              | The object store for session replays and source maps, and its keys ([session replays and source maps](#session-replays-and-source-maps))                                                                                                  |
+| `GARAGE_ADMIN_TOKEN`          | Optional: the stack's Garage's admin token. With it, the Settings page shows the bucket's real size and Garage's disk, and the worker keeps a quota on the bucket ([Storage](#storage)). Never logged or shown                            |
+| `BACKUP_S3_…`                 | Optional: where scheduled backups go, a bucket of their own; only the worker gets them ([scheduled backups](#scheduled-backups)). Never logged or shown                                                                                   |
+| `SMTP_URL`                    | Optional: the SMTP server alert email and account email go through, with its user name and password ([email](#email)). Never logged                                                                                                       |
+| `OTTERTRAIL_TRUSTED_PROXIES`  | Optional, default empty (no proxy): the addresses or CIDR ranges of a proxy or CDN in front of the server, separated by spaces ([Behind a proxy or CDN](#behind-a-proxy-or-cdn))                                                          |
+| `OTTERTRAIL_CLIENT_IP_HEADER` | Optional, default `X-Forwarded-For`: the header with the visitor's address, read only from `OTTERTRAIL_TRUSTED_PROXIES` ([Behind a proxy or CDN](#behind-a-proxy-or-cdn))                                                                 |
+| `EMAIL_FROM`                  | The sender of alert email and account email, required with `SMTP_URL`                                                                                                                                                                     |
 
 Compose stops with "set … in .env" when `OTTERTRAIL_DOMAIN`, `POSTGRES_PASSWORD`, `CLICKHOUSE_PASSWORD`, or `AUTH_SECRET` is missing.
 
