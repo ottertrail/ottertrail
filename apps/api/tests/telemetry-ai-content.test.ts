@@ -19,7 +19,12 @@ import {
 import { afterAll, beforeAll, describe, expect, test } from "vite-plus/test";
 
 import { isAiContent, isAiContentEvent } from "../src/telemetry/ai-content.ts";
-import { MAX_ATTRIBUTES, normalizeLogs, normalizeTraces } from "../src/telemetry/normalize.ts";
+import {
+  MAX_ATTRIBUTES,
+  normalizeLogs,
+  normalizeMetrics,
+  normalizeTraces,
+} from "../src/telemetry/normalize.ts";
 import { signedInDashboard } from "./helpers/dashboard.ts";
 import { insertProject } from "./helpers/projects.ts";
 import { keyValues, nowNs, secretKeyOf, storedRows } from "./helpers/telemetry.ts";
@@ -273,6 +278,69 @@ describe("normalizing", () => {
     expect(Object.keys(rows[0]?.attributes ?? {})).toHaveLength(MAX_ATTRIBUTES);
     expect(rows[0]?.attributes["k127"]).toBe("v");
     expect(rows[0]?.dropped_attributes_count).toBe(5);
+  });
+
+  test("a resource's content is dropped too, from every signal's rows", () => {
+    const resource = {
+      attributes: keyValues({
+        "service.name": "chat",
+        "gen_ai.prompt": "secret",
+        "ai.prompt": "x",
+      }),
+    };
+    const spans = normalizeTraces(
+      {
+        resourceSpans: [
+          {
+            resource,
+            scopeSpans: [
+              {
+                spans: [
+                  {
+                    traceId: "5b8efff798038103d269b633813fc60c",
+                    spanId: "eee19b7ec3c1b174",
+                    startTimeUnixNano: String(NOW - 1_000_000_000n),
+                    endTimeUnixNano: String(NOW),
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+      normalizeContext,
+    ).rows;
+    const logs = normalizeLogs(
+      { resourceLogs: [{ resource, scopeLogs: [{ logRecords: [record({})] }] }] },
+      normalizeContext,
+    ).rows;
+    const { points } = normalizeMetrics(
+      {
+        resourceMetrics: [
+          {
+            resource,
+            scopeMetrics: [
+              {
+                metrics: [
+                  {
+                    name: "g",
+                    gauge: {
+                      dataPoints: [{ timeUnixNano: String(NOW - 1_000_000_000n), asDouble: 1 }],
+                    },
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+      normalizeContext,
+    );
+    for (const row of [...spans, ...logs, ...points]) {
+      expect(row.resource_attributes).toEqual({ "service.name": "chat" });
+      expect(row.service).toBe("chat");
+    }
+    expect(spans.length + logs.length + points.length).toBe(3);
   });
 
   test("a GenAI message event's body is dropped, and counted; an empty one is not counted", () => {

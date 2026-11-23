@@ -422,6 +422,7 @@ A conversation is the calls that share a `conversation_id` ([Detection](#detecti
 - **OpenInference spans** that name only `llm.*` attributes (no `gen_ai.*`) are not detected: set `OPENINFERENCE_ENABLE_GENAI_SEMCONV=true`.
 - **Calls older than the telemetry retention** cannot be sent: the traces route refuses spans older than `TELEMETRY_RETENTION_DAYS`, and `POST /api/ai-calls` calls more than a day old, so a project's history starts when it starts sending.
 - **A call sent over HTTP without a trace** has no "Open its trace" link on the AI page.
+- **Exception messages and other log bodies are kept.** Only the content attributes, and the bodies of GenAI message events, are dropped ([telemetry](telemetry.md#ai-prompts-and-completions-are-not-stored)). An exception message that quotes a prompt (`exception.message`, in the error list), a span's status message, or the body of a log record with any other event name is stored as sent. Keep prompts out of the messages your app's errors and logs carry.
 - **The calls list's totals and its rows can differ** until a retried call's copies merge: the totals read without `FINAL`, as the AI page's, the rows with it.
 - **A conversation is its calls in the period:** one that started before the period shows only its later turns, and its figures cover those. Choose a longer period to see it whole.
 - **At most 1,000 conversations** a period, those with the latest calls, and 500 calls of one conversation; past them the pages say so.

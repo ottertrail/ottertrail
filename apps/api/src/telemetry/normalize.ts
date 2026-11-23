@@ -313,7 +313,7 @@ function sortedObject(map: Map<string, string>): Record<string, string> {
  * KeyValues as a map of text: at most MAX_ATTRIBUTES, keys cut to
  * MAX_KEY_CHARS, values to MAX_VALUE_BYTES. A repeated key keeps its last
  * value. With `withoutAiContent`, AI prompts and completions are left out
- * (ai-content.ts), a span's, span event's, span link's, or log record's.
+ * (ai-content.ts), a resource's, span's, span event's, span link's, or log record's.
  * `dropped` counts those left out.
  */
 export function flattenAttributes(
@@ -386,6 +386,7 @@ function resourceOf(container: object, projectId: string): Resource {
   const resource = message(container, "resource");
   const { attributes: all } = flattenAttributes(
     resource === undefined ? [] : messages(resource, "attributes"),
+    true,
   );
   const service = label(all["service.name"] ?? "");
   const version = all["service.version"] ?? "";
