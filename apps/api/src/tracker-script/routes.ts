@@ -50,8 +50,8 @@ export const SNAPSHOT_SCRIPT_URL_PATH = "/s.js";
 const reportedMissing = new Set<string>();
 
 interface LoadedScript {
-  mtimeMs: number;
-  size: number;
+  /** The file's identity: a rebuild changes its inode or change time, even at the same size. */
+  version: string;
   script: Buffer;
   etag: string;
 }
@@ -60,13 +60,14 @@ interface LoadedScript {
 const loaded = new Map<string, LoadedScript>();
 
 async function loadScript(path: string): Promise<LoadedScript> {
-  const { mtimeMs, size } = await stat(path);
+  const { ino, ctimeMs, mtimeMs, size } = await stat(path);
+  const version = `${ino}:${ctimeMs}:${mtimeMs}:${size}`;
   const cached = loaded.get(path);
-  if (cached?.mtimeMs === mtimeMs && cached.size === size) return cached;
+  if (cached?.version === version) return cached;
   const script = await readFile(path);
   const etag = `"${createHash("sha256").update(script).digest("base64url").slice(0, 27)}"`;
   // The stat before the read: a build written in between is read again next time.
-  const fresh = { mtimeMs, size, script, etag };
+  const fresh = { version, script, etag };
   loaded.set(path, fresh);
   return fresh;
 }
@@ -110,8 +111,8 @@ async function sendScript(request: FastifyRequest, reply: FastifyReply, path: st
  * short and neutral: ad-block lists often match file names such as
  * "tracker.js" or "analytics.js".
  *
- * Each file is kept in memory with its ETag, and its modification time and
- * size checked on each request, so a new build is served without
+ * Each file is kept in memory with its ETag, and its inode, change and
+ * modification times, and size checked on each request, so a new build is served without
  * restarting the API. Browsers may cache them for an hour and then
  * revalidate them with their ETags.
  */

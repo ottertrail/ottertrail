@@ -525,22 +525,15 @@ describe("tracker script", () => {
     expect(again.statusCode).toBe(304);
   });
 
-  test("keeps each script in memory until its file changes", async () => {
+  test("serves a rebuilt script at once, even at the same size and modification time", async () => {
     const path = join(directory, "tracker.js");
-    // A whole second, which utimes sets exactly.
     const mtime = new Date("2026-11-01T00:00:00Z");
     await utimes(path, mtime, mtime);
     const first = await app.inject({ url: "/t.js" });
-    // The same size and time: taken for the file already read.
     await writeFile(path, "console.log('TRACKER');\n");
     await utimes(path, mtime, mtime);
-    const same = await app.inject({ url: "/t.js" });
-    expect(same.body).toBe(first.body);
-    expect(same.headers.etag).toBe(first.headers.etag);
-    // A new build: read again.
-    await writeFile(path, "console.log('tracker, rebuilt');\n");
     const rebuilt = await app.inject({ url: "/t.js" });
-    expect(rebuilt.body).toBe("console.log('tracker, rebuilt');\n");
+    expect(rebuilt.body).toBe("console.log('TRACKER');\n");
     expect(rebuilt.headers.etag).not.toBe(first.headers.etag);
     await writeFile(path, "console.log('tracker');\n");
   });
