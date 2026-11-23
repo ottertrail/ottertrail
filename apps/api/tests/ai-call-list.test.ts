@@ -10,13 +10,8 @@ import { insertProject } from "./helpers/projects.ts";
 import { encodeProtobuf, keyValues, secretKeyOf } from "./helpers/telemetry.ts";
 
 /**
- * The AI calls list and its conversations (docs/ai-usage.md, "The calls
- * list"; ai/call-list.ts, ai/call-routes.ts), against real PostgreSQL and
- * ClickHouse: the list's filters and keyset paging, a retried batch listed
- * once (FINAL), one call with its price's source and whether its trace is
- * kept, the totals and cost matching the AI page's, conversations grouped
- * from spans and from calls sent over HTTP, bounded, and access with and
- * without the users area.
+ * Guard retry deduplication, paging, conversation grouping, and users-area access
+ * against real databases (docs/ai-usage.md, "The calls list"; ai/call-list.ts, ai/call-routes.ts).
  */
 
 let dashboard: Awaited<ReturnType<typeof signedInDashboard>>;

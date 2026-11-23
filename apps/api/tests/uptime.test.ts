@@ -8,12 +8,7 @@ import { PUBLIC_URL, signedInDashboard } from "./helpers/dashboard.ts";
 import { insertProject } from "./helpers/projects.ts";
 import { testLookup } from "./helpers/uptime-servers.ts";
 
-/**
- * The uptime routes (docs/uptime-alerts.md): checks added, changed,
- * paused, and deleted, with the address rules on save; uptime worked out
- * from incidents; and a check's response times and failures from
- * ClickHouse.
- */
+/** Guard uptime address rules and incident-based reports (docs/uptime-alerts.md). */
 
 /** Yesterday, in UTC (the instance's timezone): results stay within ClickHouse's 90 days. */
 const YESTERDAY = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);

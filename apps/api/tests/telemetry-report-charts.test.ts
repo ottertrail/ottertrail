@@ -12,13 +12,7 @@ import { signedInDashboard } from "./helpers/dashboard.ts";
 import { insertProject } from "./helpers/projects.ts";
 import { keyValues, secretKeyOf } from "./helpers/telemetry.ts";
 
-/**
- * The charts above the Services and Databases lists
- * (GET /api/projects/:id/services/trend, /databases/trend) and the
- * sparklines of the Metrics list (GET /api/projects/:id/metrics/sparkline),
- * on telemetry sent over OTLP. Every number is worked out by hand in the
- * comments.
- */
+/** Check service, database, and metric charts against telemetry sent over OTLP. */
 
 let dashboard: Awaited<ReturnType<typeof signedInDashboard>>;
 
@@ -187,7 +181,7 @@ const histogramPoint = (time: string, counts: number[], count?: number) => ({
 
 /** One of each kind, yesterday, in hourly buckets (a day is 24 of a sparkline's at most 30). */
 const SHOP_METRICS = [
-  // A gauge: 2 and 4 in 10:00–11:00 (average 3), 9 in 12:00–13:00.
+  // A gauge: 2 and 4 in 10:00 to 11:00 (average 3), 9 in 12:00 to 13:00.
   {
     name: "queue.depth",
     gauge: {
@@ -198,9 +192,9 @@ const SHOP_METRICS = [
       ],
     },
   },
-  // A counter from 10:00: 1,800 by 10:30 (all in 10:00–11:00), 5,400 by 11:30
-  // (3,600 over an hour, half in each). 10:00–11:00: 3,600 in 3,600 s, 1 a
-  // second; 11:00–12:00: 1,800, 0.5 a second.
+  // A counter from 10:00: 1,800 by 10:30 (all in 10:00 to 11:00), 5,400 by 11:30
+  // (3,600 over an hour, half in each). 10:00 to 11:00: 3,600 in 3,600 s, 1 a
+  // second; 11:00 to 12:00: 1,800, 0.5 a second.
   {
     name: "jobs.done",
     sum: {
@@ -209,7 +203,7 @@ const SHOP_METRICS = [
       dataPoints: [point("10:30:00", "10:00:00", 1800), point("11:30:00", "10:00:00", 5400)],
     },
   },
-  // An up-down counter of two series: each one's last value in 10:00–11:00, 5 + 2.
+  // An up-down counter of two series: each one's last value in 10:00 to 11:00, 5 + 2.
   {
     name: "pool.used",
     sum: {
@@ -222,8 +216,8 @@ const SHOP_METRICS = [
       ],
     },
   },
-  // A histogram, bounds 0.1 and 1, from 10:00. 10:00–11:00: 10 in the first
-  // bucket, rank 9.5 of 10: 0 + 0.1 × 9.5 / 10 = 0.095. 11:00–12:00: 10 more
+  // A histogram, bounds 0.1 and 1, from 10:00. 10:00 to 11:00: 10 in the first
+  // bucket, rank 9.5 of 10: 0 + 0.1 × 9.5 / 10 = 0.095. 11:00 to 12:00: 10 more
   // in the second, rank 9.5: 0.1 + 0.9 × 9.5 / 10 = 0.955.
   {
     name: "request.duration",
@@ -296,7 +290,7 @@ describe("GET /api/projects/:id/services/trend", () => {
       stepSeconds: 300,
       buckets: 288,
     });
-    // 10:00–10:05 is bucket 120: 10, 20 (failed), 30 ms. 10:05–10:10, bucket 121: 40, 50 ms.
+    // 10:00 to 10:05 is bucket 120: 10, 20 (failed), 30 ms. 10:05 to 10:10, bucket 121: 40, 50 ms.
     expect(present(trend.counts.requests).filter(([, value]) => value !== 0)).toEqual([
       [120, 3],
       [121, 2],

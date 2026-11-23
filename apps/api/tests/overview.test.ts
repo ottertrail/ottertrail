@@ -17,14 +17,10 @@ import { deleteExpiredEvents } from "../src/retention/retention.ts";
 import { PUBLIC_URL, signedInDashboard, signedInUser } from "./helpers/dashboard.ts";
 
 /**
- * The project overview (docs/dashboard.md, "Overview"): each widget's
- * numbers on a small set of events, spans, AI calls, checks, and alerts,
- * worked out by hand in the comments; who reaches which widget; and each user's own
- * layout.
+ * Guard widget access and per-user layouts (docs/dashboard.md, "Overview").
  *
- * The instance is in UTC, and the clock stands at noon today: "7d" is the
- * last six days and today, compared with the seven days before, up to
- * noon of the seventh (a running period is compared up to the same moment).
+ * At noon UTC, "7d" covers six full days and today. Compare with the prior
+ * seven days through noon on the seventh day to match the partial period.
  */
 
 const DAY_MS = 86_400_000;

@@ -18,9 +18,8 @@ import { PUBLIC_URL, signedInDashboard, signedInUser } from "./helpers/dashboard
 import { insertProject } from "./helpers/projects.ts";
 
 /*
- * Saved heatmap views (docs/web-analytics.md, "Saved views"): the overlay
- * uploads a snapshot of the owner's page with its session; the dashboard
- * lists, shows, and deletes them.
+ * Guard snapshot uploads through an overlay session and dashboard access.
+ * See docs/web-analytics.md, "Saved views".
  */
 
 type Dashboard = Awaited<ReturnType<typeof signedInDashboard>>;

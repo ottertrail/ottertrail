@@ -31,10 +31,7 @@ import { signedInDashboard } from "./helpers/dashboard.ts";
 import { insertProject } from "./helpers/projects.ts";
 import { secretKeyOf, storedRows } from "./helpers/telemetry.ts";
 
-/**
- * OpenTelemetry's own JavaScript exporters, over HTTP, to the API listening
- * on a local port: what a site's server sends, in both encodings.
- */
+/** Use OpenTelemetry's JavaScript exporters to check both encodings over real HTTP. */
 
 let dashboard: Awaited<ReturnType<typeof signedInDashboard>>;
 let baseUrl = "";

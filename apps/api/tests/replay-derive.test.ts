@@ -13,24 +13,15 @@ import {
 } from "../src/replays/derive.ts";
 
 /**
- * A real recording: a page recorded in Chromium by the recorder as r.js
- * runs it (rrweb 2.2.2 and the privacy filter), joined and unpacked as the
- * worker does. On /cart the visitor clicks the label inside a "Pay now"
- * button, types an email (sent masked), and scrolls; the page moves to
- * /checkout (a snapshot follows); the visitor ticks a checkbox, clicks a
- * <div role="button"> and a link, and an error is reported.
+ * Chromium recording from rrweb 2.2.2 through createFilter (replay-filter.ts).
+ * On /cart: click the "Pay now" label, type a masked email, and scroll.
+ * On /checkout: take a snapshot, tick a checkbox, click a <div role="button">
+ * and a link, and report an error.
  *
- * Captured on 18 November 2026 by a one-off browser test in
- * packages/tracker (not kept, as it writes a file): it put that page in
- * the test's document, started the recorder with startReplay() and a fake
- * fetch that kept the chunks, acted as above with userEvent and
- * history.pushState plus record.takeFullSnapshot(true), called error(),
- * unpacked the chunks with the package's `gunzip` command, and wrote the
- * text with commands.writeFile. Every event went through the tracker's
- * createFilter (replay-filter.ts), as on a real site. The page's origin is
- * the test server's, http://localhost:23315, whose port changes on each
- * run: a new capture has another, so the tests below find the origin in
- * the fixture rather than naming the port only.
+ * To recapture in packages/tracker: use startReplay(), retain fetch chunks,
+ * perform these actions with userEvent and history.pushState, call
+ * record.takeFullSnapshot(true) and error(), then unpack with `gunzip`.
+ * Read the origin from the fixture because the test server's port varies.
  */
 const RECORDING: { v: 1; events: { type: number; timestamp: number; data: unknown }[] } =
   JSON.parse(readFileSync(new URL("fixtures/replay-recording.json", import.meta.url), "utf8"));

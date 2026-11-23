@@ -23,12 +23,8 @@ import { insertProject } from "./helpers/projects.ts";
 import { secretKeyOf } from "./helpers/telemetry.ts";
 
 /**
- * POST /api/ai-calls (docs/ai-usage.md, "Sending calls over HTTP";
- * ai/ingest-routes.ts): AI calls an app's server sends without
- * OpenTelemetry, into ai_calls. The secret key, the schema and its limits,
- * the server's clock, a retried batch one row, each call a unit of the
- * telemetry budget OTLP shares, 503 while ClickHouse cannot write, and the
- * calls on the AI page and in an alert rule.
+ * Guard secret-key ingestion, retry deduplication, and the shared OTLP budget.
+ * See docs/ai-usage.md, "Sending calls over HTTP", and ai/ingest-routes.ts.
  */
 
 let dashboard: Awaited<ReturnType<typeof signedInDashboard>>;

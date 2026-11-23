@@ -10,8 +10,7 @@ function chunk(type: string, data: Buffer): Buffer {
 }
 
 /**
- * A real PNG of `width`×`height` grey pixels, with its IHDR saying so.
- * `claimed` writes other dimensions into the IHDR than the pixels have.
+ * Override `claimed` to make the IHDR dimensions differ from the pixels.
  */
 export function png(
   width: number,
@@ -34,7 +33,7 @@ export function png(
   ]);
 }
 
-/** An ICO file's first bytes: one image. Enough for the magic-byte check. */
+/** Only enough ICO data for the magic-byte check. */
 export const ICO = Buffer.concat([Buffer.from([0, 0, 1, 0, 1, 0]), Buffer.alloc(32, 1)]);
 
 export const SVG = Buffer.from(
@@ -51,7 +50,7 @@ export function jpeg(width: number, height: number, frame = 0xc0): Buffer {
   return Buffer.concat([Buffer.from([0xff, 0xd8]), app0, sof, Buffer.from([0xff, 0xd9])]);
 }
 
-/** A GIF's header and logical screen, `width`×`height`. */
+/** Header and logical screen only, without pixel data. */
 export function gif(width: number, height: number): Buffer {
   const header = Buffer.alloc(13);
   header.write("GIF89a", 0, "ascii");
@@ -60,7 +59,6 @@ export function gif(width: number, height: number): Buffer {
   return header;
 }
 
-/** A WebP of one chunk, `VP8 `, `VP8L`, or `VP8X`, declaring `width`×`height`. */
 export function webp(kind: "VP8 " | "VP8L" | "VP8X", width: number, height: number): Buffer {
   const payload = Buffer.alloc(16);
   if (kind === "VP8 ") {
@@ -83,7 +81,7 @@ export function webp(kind: "VP8 " | "VP8L" | "VP8X", width: number, height: numb
   return Buffer.concat([head, payload]);
 }
 
-/** An ICO with one entry of `width`×`height` (256 written as 0), its image an embedded `image`. */
+/** ICO dimensions of 256 are encoded as 0. */
 export function ico(width: number, height: number, image: Buffer = Buffer.alloc(40, 1)): Buffer {
   const header = Buffer.from([0, 0, 1, 0, 1, 0]);
   const entry = Buffer.alloc(16);

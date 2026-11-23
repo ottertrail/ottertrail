@@ -19,15 +19,8 @@ import {
 } from "./helpers/test-database.ts";
 
 /**
- * The Backups tab's routes (backups/routes.ts; docs/access.md): the owner
- * only, Origin on changes, bodies checked first; no destination fields,
- * since where backups go is the worker's BACKUP_S3_*, and the tab shows
- * what the worker reported; turning on refused without a reported
- * destination; the backup key made once, sealed, shown and downloaded only
- * on request (both logged, without the key); Test connection asked of the
- * worker; the listing the worker stored; and the per-user limits. The
- * worker's side (its report, Test connection, the listing, and the
- * backups themselves) is in backup-run.test.ts.
+ * Guard owner-only backup access and key secrecy (backups/routes.ts; docs/access.md).
+ * The worker owns the destination; backup-run.test.ts covers its behavior.
  */
 
 type Dashboard = Awaited<ReturnType<typeof signedInDashboard>>;

@@ -21,13 +21,8 @@ import { insertProject } from "./helpers/projects.ts";
 import { keyValues, secretKeyOf } from "./helpers/telemetry.ts";
 
 /**
- * Telemetry alert rules (docs/uptime-alerts.md, "Alerts on telemetry"),
- * against real PostgreSQL and ClickHouse, with spans and metrics sent
- * through the OTLP routes: route latency, route failures, and metrics
- * above or below a value, each fired, held back below its request
- * minimum, resolved only after a whole window back, and quiet without
- * data; the worker's bounded, spread evaluation; and the rule routes'
- * checks.
+ * Guard telemetry alert thresholds, request minimums, recovery windows, and missing data.
+ * Use OTLP and real databases (docs/uptime-alerts.md, "Alerts on telemetry").
  */
 
 let dashboard: Awaited<ReturnType<typeof signedInDashboard>>;

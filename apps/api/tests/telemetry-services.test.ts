@@ -6,11 +6,7 @@ import { signedInDashboard } from "./helpers/dashboard.ts";
 import { insertProject } from "./helpers/projects.ts";
 import { keyValues, secretKeyOf } from "./helpers/telemetry.ts";
 
-/**
- * The Services page's p99 and status classes, and a service's and route's
- * charts (GET /api/projects/:id/services/chart), on spans sent over OTLP.
- * Every number is worked out by hand in the comments.
- */
+/** Check service percentiles and status classes against spans sent over OTLP. */
 
 let dashboard: Awaited<ReturnType<typeof signedInDashboard>>;
 
@@ -247,8 +243,8 @@ describe("GET /api/projects/:id/services/chart", () => {
       stepSeconds: 300,
       buckets: 288,
     });
-    // 10:00–10:05 is bucket 120: spans 1, 2, 3, 7 (10, 20, 30, 5 ms).
-    // 10:05–10:10 is bucket 121: spans 4, 5, 6, 8 (40, 50, 1000, 15 ms).
+    // 10:00 to 10:05 is bucket 120: spans 1, 2, 3, 7 (10, 20, 30, 5 ms).
+    // 10:05 to 10:10 is bucket 121: spans 4, 5, 6, 8 (40, 50, 1000, 15 ms).
     expect(busy(chart, chart.counts.requests)).toEqual([
       [120, 4],
       [121, 4],

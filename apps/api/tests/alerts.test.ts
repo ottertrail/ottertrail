@@ -29,10 +29,8 @@ import { createTestDatabase, type TestDatabase } from "./helpers/test-database.t
 import { startUptimeServers, testLookup, type UptimeServers } from "./helpers/uptime-servers.ts";
 
 /**
- * Alert rules evaluated against real PostgreSQL and ClickHouse
- * (docs/uptime-alerts.md, "Alerts"): every kind fires once, and not again
- * after a restart; resolves where its kind resolves; and sends through
- * notify, so each notification is a delivery with its type and payload.
+ * Guard alert firing, recovery, and deduplication across restarts using real databases.
+ * See docs/uptime-alerts.md, "Alerts".
  */
 
 const PUBLIC = "https://ottertrail.example.com";

@@ -8,10 +8,8 @@ import { insertProject } from "./helpers/projects.ts";
 import { keyValues, secretKeyOf } from "./helpers/telemetry.ts";
 
 /**
- * The Hosts pages (docs/telemetry.md, "Hosts"): host metrics as an
- * OpenTelemetry Collector's host metrics receiver sends them, from two
- * hosts, read back as the list and one host's charts. Every point is sent
- * twice, as a retry would, so a copy counted twice shows.
+ * Send every host metric twice to expose duplicate counting in reports.
+ * See docs/telemetry.md, "Hosts".
  */
 
 const MS = 1_000_000n;
@@ -469,7 +467,7 @@ describe("a host's charts", () => {
     expect(charts.filesystem?.metrics).toEqual(["system.filesystem.usage"]);
     expect(linesAt(charts.filesystem, times)).toEqual({ "/": [60, 60, 60], "/data": [90, 90, 90] });
     // Network: 100 B/s in, 200 out, in the buckets its points cover whole
-    // (10:15–10:20 holds four minutes of increase over five minutes: 80 and 160).
+    // (10:15 to 10:20 holds four minutes of increase over five minutes: 80 and 160).
     expect(charts.network?.unit).toBe("By/s");
     expect(linesAt(charts.network, ["10:05", "10:10", "10:15"])).toEqual({
       transmit: [200, 200, 160],

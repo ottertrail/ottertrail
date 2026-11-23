@@ -1,8 +1,6 @@
 /**
- * One request for every route on one project, valid enough to pass each
- * route's schema, so that the access check is what answers. Keyed by the
- * route as Fastify registers it: tests/access-routes.test.ts fails when a
- * project route is missing here.
+ * Requests must pass schema validation to reach the access check.
+ * tests/access-routes.test.ts requires every project route to be listed.
  */
 export interface ProjectRequest {
   method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
@@ -185,5 +183,4 @@ export const PROJECT_REQUESTS: readonly ProjectRequest[] = [
   request("GET", "/alert-channels", "/alert-channels"),
 ];
 
-/** The key a route goes by in the tables: "GET /api/projects/:id/goals". */
 export const routeKey = (method: string, route: string) => `${method} ${route}`;

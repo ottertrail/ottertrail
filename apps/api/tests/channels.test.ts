@@ -9,10 +9,8 @@ import { PUBLIC_URL, signedInDashboard, signedInUser } from "./helpers/dashboard
 import { startWebhookReceiver, type WebhookReceiver } from "./helpers/webhook-receiver.ts";
 
 /**
- * The notification channel routes (docs/uptime-alerts.md, "Where alerts
- * go"): channels added, changed, and deleted, with the webhook address
- * rules on save and on send; secrets; test sends and their limit; and a
- * channel's deliveries, page by page.
+ * Guard webhook address rules, secrets, and test-send limits.
+ * See docs/uptime-alerts.md, "Where alerts go".
  */
 
 /** What each host resolves to; a test changes it, as DNS can change. */

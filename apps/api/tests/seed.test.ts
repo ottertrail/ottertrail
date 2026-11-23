@@ -15,10 +15,8 @@ import { s3ObjectStore } from "../src/storage/object-store.ts";
 import { PUBLIC_URL, signedInDashboard } from "./helpers/dashboard.ts";
 
 /**
- * The development seed (scripts/seed-data.ts, `vp run seed`), run against a
- * test schema and ClickHouse database and the development Garage: every
- * page's main answer has something to show, a second run replaces the
- * project, and the command refuses what does not look like development.
+ * Guard seed replacement and refusal outside development (scripts/seed-data.ts, `vp run seed`).
+ * Use isolated databases and development Garage.
  */
 
 const GIB = 1024 ** 3;
@@ -32,9 +30,7 @@ let result: SeedResult;
 let seconds = 0;
 
 /**
- * One clock for every run here. The seed places its data relative to now, so
- * two runs a minute apart (more on a busy machine) would differ at the edges
- * of each window, by more than the comparison below allows.
+ * Fix the clock so repeated seeds match at each window's edges.
  */
 const SEED_NOW = new Date();
 
@@ -92,7 +88,6 @@ describe("the demo data", () => {
   });
 });
 
-/** An answer, as each test reads the fields it checks. */
 type Json = any;
 
 /** An overview widget's answer, for the last 7 days. */

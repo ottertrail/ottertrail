@@ -1,8 +1,6 @@
 /**
- * A tiny MMDB file (MaxMind DB format 2.0) for tests, so they never need
- * DB-IP's real 130 MB download: a tree of one node whose records both
- * point at the same record, so every address has one location. An IPv6
- * tree (`ipVersion: 6`, as DB-IP's) answers IPv4 addresses too.
+ * Avoid DB-IP's 130 MB download with a one-node MaxMind DB format 2.0 file.
+ * Every address maps to one location. An IPv6 tree also answers IPv4 queries.
  */
 
 /** A control byte and, for types above 7, the extended type byte. */
@@ -42,9 +40,7 @@ function encode(value: unknown): number[] {
 }
 
 /**
- * The bytes of an MMDB file in which every IPv4 address is in `country`
- * (and `city`), of `type` ("DBIP-City-Lite" passes the update's check),
- * built at `builtAt`.
+ * "DBIP-City-Lite" passes the updater's type check.
  */
 export function fakeMmdb({
   type = "DBIP-City-Lite",

@@ -143,7 +143,6 @@ describe("GET /api/projects/:id/analytics", () => {
       });
     }
 
-    // And the numbers themselves.
     expect(body.summary).toMatchObject({ visitors: 5, pageviews: 7, visits: 6 });
     expect(body.days.map((day: { visits: number }) => day.visits)).toEqual([3, 3]);
   });
@@ -187,7 +186,6 @@ describe("GET /api/projects/:id/analytics", () => {
   });
 });
 
-/** All custom events in a response. */
 const totalEvents = (body: { customEvents: { events: number }[] }) =>
   body.customEvents.reduce((sum, row) => sum + row.events, 0);
 

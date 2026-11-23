@@ -6,12 +6,12 @@ import type { ClickHouseClient } from "../../src/clickhouse/clickhouse.ts";
 import type { Database } from "../../src/db/schema.ts";
 import type { SignalMessages } from "../../src/telemetry/proto/definitions.ts";
 
-/** Now, in nanoseconds since 1970, as OTLP counts time. */
+/** OTLP time in nanoseconds since 1970; offset is in milliseconds. */
 export function nowNs(offsetMs = 0): bigint {
   return BigInt(Date.now() + offsetMs) * 1_000_000n;
 }
 
-/** An OTLP attribute list from plain values: strings, whole numbers (int), other numbers (double), booleans. */
+/** Encode whole numbers as OTLP int values, other numbers as doubles. */
 export function keyValues(values: Record<string, string | number | boolean>) {
   return Object.entries(values).map(([key, value]) => ({
     key,
@@ -32,7 +32,6 @@ export function encodeProtobuf(messages: SignalMessages, request: object): Buffe
   return Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
 }
 
-/** An answer's protobuf body, decoded. */
 export function decodeResponse(
   type: SignalMessages["response"],
   body: Buffer,
@@ -49,7 +48,7 @@ export async function secretKeyOf(db: Kysely<Database>, projectId: string): Prom
   return row.secret_key;
 }
 
-/** A project's rows of a telemetry table, one per ID (FINAL), oldest first. */
+/** Read with FINAL to exclude retry copies, oldest first. */
 export async function storedRows<Row = Record<string, unknown>>(
   client: ClickHouseClient,
   table: "spans" | "logs" | "metric_points" | "metric_histograms",

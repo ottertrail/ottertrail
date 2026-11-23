@@ -2,10 +2,8 @@ import { Buffer } from "node:buffer";
 import dgram from "node:dgram";
 
 /**
- * A name server on 127.0.0.1 for the uptime tests, over UDP on a port of
- * its own: it answers A queries for the names in `answers` with their
- * IPv4 address, AAAA queries with no record, and never answers a name in
- * `silent`, as a name server that is down. Anything else is NXDOMAIN.
+ * Local UDP DNS server. `answers` supplies A records; AAAA answers are empty.
+ * Names in `silent` time out. Unknown names return NXDOMAIN.
  */
 export interface TestDnsServer {
   /** "127.0.0.1:<port>", for a resolver's setServers(). */
@@ -15,7 +13,6 @@ export interface TestDnsServer {
   close(): Promise<void>;
 }
 
-/** The question's name and where the question ends, from a DNS message. */
 function questionOf(message: Buffer): { name: string; end: number; type: number } {
   const labels: string[] = [];
   let at = 12;

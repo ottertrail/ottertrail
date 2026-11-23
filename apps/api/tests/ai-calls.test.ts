@@ -24,12 +24,8 @@ import { encodeProtobuf, keyValues, nowNs, secretKeyOf, storedRows } from "./hel
 import { createTestClickHouse } from "./helpers/test-clickhouse.ts";
 
 /**
- * AI calls (docs/ai-usage.md, "Detection"; ai/calls.ts): which spans of a
- * traces request are calls to a model, read through the old and new
- * attribute names, sent through OpenTelemetry's own exporters in both
- * encodings and stored in ai_calls beside the spans; a retried batch
- * stays one row; and each call costs a unit of the budget, given back
- * with a 503 when ClickHouse cannot take it.
+ * Guard old and new AI attributes through both OpenTelemetry exporter encodings.
+ * Retries stay one row; a 503 refunds the budget (docs/ai-usage.md, "Detection"; ai/calls.ts).
  */
 
 let dashboard: Awaited<ReturnType<typeof signedInDashboard>>;

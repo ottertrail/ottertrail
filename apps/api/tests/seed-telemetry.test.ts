@@ -4,12 +4,9 @@ import { hostTicks } from "../scripts/seed-telemetry.ts";
 import { LATEST_WINDOW_MS } from "../src/telemetry/hosts.ts";
 
 /**
- * The seed's host metrics (scripts/seed-telemetry.ts) at every second of a
- * 15-minute step. The Hosts list takes CPU from a counter's last two points
- * within LATEST_WINDOW_MS of the host's last point (src/telemetry/hosts.ts),
- * which docs/telemetry.md promises for points up to half of it apart.
- * Before, a seed run 15:20 to 16:00 past a quarter hour left up to 15:40
- * between its last two, and the list showed no CPU.
+ * Guard CPU visibility at every second of a 15-minute seed step (scripts/seed-telemetry.ts).
+ * The last two counter points must fit LATEST_WINDOW_MS (src/telemetry/hosts.ts).
+ * docs/telemetry.md promises support for points up to half that window apart.
  */
 describe("the seed's host points", () => {
   test("two in the Hosts list's window, at any time of the step", () => {

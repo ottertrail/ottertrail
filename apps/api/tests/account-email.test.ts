@@ -204,7 +204,6 @@ describe("with SMTP set up", () => {
       expect(text).toContain("A newer request replaces this link.");
       const link = linkIn(message.raw, "/reset-password");
       expect(link.startsWith(`${PUBLIC_URL}/reset-password#token=`)).toBe(true);
-      // An HTML version too.
       expect(message.raw).toMatch(/Content-Type: text\/html/u);
 
       const row = await dashboard.db
@@ -473,7 +472,6 @@ describe("with SMTP set up", () => {
       expect(header(sink.messages[0]?.raw ?? "", "subject")).toBe(
         `${OWNER.instanceName}: Test email`,
       );
-      // Not queued.
       expect(await queued(dashboard)).toEqual([]);
     });
 
@@ -738,7 +736,6 @@ describe("an account email's message", () => {
   });
 });
 
-/* The security review's findings (20 November 2026): each test fails without its fix. */
 describe("the review's fixes", () => {
   let dashboard: Dashboard;
   let counter = 0;

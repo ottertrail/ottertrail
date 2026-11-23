@@ -56,13 +56,8 @@ import { insertProject } from "./helpers/projects.ts";
 import { testName } from "./helpers/test-names.ts";
 
 /**
- * Scheduled backups end to end (backups/run.ts, job.ts): a whole backup of
- * a test's own PostgreSQL schema, ClickHouse database, and objects, to the
- * development Garage, which stands in for an off-site S3 destination;
- * decrypting it with the key and checking its checksums; restoring it into
- * fresh databases, as restore.sh does; Test restore catching a damaged
- * part; retention; the free-space check; and the worker's schedule,
- * retry, and alert.
+ * Back up isolated databases and objects to development Garage, then restore them.
+ * This tests backups/run.ts and job.ts against an S3 destination and restore.sh.
  */
 
 type Dashboard = Awaited<ReturnType<typeof signedInDashboard>>;

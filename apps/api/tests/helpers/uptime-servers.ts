@@ -5,9 +5,7 @@ import type { Lookup } from "../../src/outbound/addresses.ts";
 import { makeCertificate, type TestCertificate } from "./certificate.ts";
 
 /**
- * Local HTTP and HTTPS servers for the uptime checks' tests, on 127.0.0.1
- * and ports of their own (port 0). Each path answers in its own way; see
- * `answer`. `status` sets what /flaky answers next.
+ * Local HTTP and HTTPS servers. See `answer` for each path's behavior.
  */
 export interface UptimeServers {
   http: string;
@@ -15,9 +13,8 @@ export interface UptimeServers {
   certificate: TestCertificate;
   /** What /flaky answers. */
   flaky: { status: number };
-  /** Paths requested, in order. */
   requests: string[];
-  /** Runs while a request to /hook is answered, before its answer. */
+  /** Runs before /hook sends its response. */
   onHook: { run: () => Promise<void> };
   close(): Promise<void>;
 }
@@ -139,7 +136,7 @@ export async function startUptimeServers(): Promise<UptimeServers> {
   };
 }
 
-/** A resolver that sends status.test (and localhost) to 127.0.0.1, and counts its calls. */
+/** Resolve status.test and localhost to 127.0.0.1 by default. Record each lookup. */
 export function testLookup(table: Record<string, string[]> = {}): Lookup & { calls: string[] } {
   const calls: string[] = [];
   const answers: Record<string, string[]> = {
@@ -158,7 +155,6 @@ export function testLookup(table: Record<string, string[]> = {}): Lookup & { cal
   return Object.assign(lookup, { calls });
 }
 
-/** A port nothing listens on: a server's, closed again. */
 export async function closedPort(): Promise<number> {
   const server = http.createServer();
   const port = await listen(server);

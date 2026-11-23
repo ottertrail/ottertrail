@@ -25,12 +25,8 @@ import { PUBLIC_URL, signedInDashboard, signedInUser } from "./helpers/dashboard
 import { insertProject, setInstanceTimeZone } from "./helpers/projects.ts";
 
 /**
- * The instance's AI model prices (docs/ai-usage.md, "Prices";
- * ai/custom-prices.ts, ai/model-routes.ts): cost at read time with
- * custom rows from a day, for all calls, priced as another model, and
- * after a reset, in ClickHouse as in JavaScript; AI cost rules' kept
- * hours added up again after a change; the list; who may change them;
- * and the routes' checks.
+ * Compare ClickHouse and JavaScript pricing, including changes to retained alert hours.
+ * See docs/ai-usage.md, "Prices", ai/custom-prices.ts, and ai/model-routes.ts.
  */
 
 let dashboard: Awaited<ReturnType<typeof signedInDashboard>>;

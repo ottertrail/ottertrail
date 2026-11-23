@@ -9,11 +9,7 @@ import { PUBLIC_URL, signedInDashboard } from "./helpers/dashboard.ts";
 import { insertProject } from "./helpers/projects.ts";
 import { testLookup } from "./helpers/uptime-servers.ts";
 
-/**
- * The alert rule routes (docs/uptime-alerts.md, "Alerts"): rules added,
- * read, changed, turned off, and deleted; what they may name; the one
- * access check; and what deleting a check or a channel does to them.
- */
+/** Guard alert references and access checks (docs/uptime-alerts.md, "Alerts"). */
 
 let dashboard: Awaited<ReturnType<typeof signedInDashboard>>;
 let projectId = "";

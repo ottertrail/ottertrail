@@ -207,7 +207,7 @@ beforeAll(async () => {
   dashboard = await signedInDashboard();
   shop = await newProject("Shop");
   const metrics = [
-    // Two hosts' memory: 10, 20, 30 and 40 in 10:00–10:05; 5 in 10:05–10:10.
+    // Two hosts' memory: 10, 20, 30 and 40 in 10:00 to 10:05; 5 in 10:05 to 10:10.
     {
       name: "process.memory",
       unit: "MiBy",
@@ -239,7 +239,7 @@ beforeAll(async () => {
         { time: "10:02:00", value: 1120, attributes: { route: "/b" } },
       ]),
     },
-    // Jobs, delta: 30 and 60 in 10:00–10:05, 15 in 10:05–10:10.
+    // Jobs, delta: 30 and 60 in 10:00 to 10:05, 15 in 10:05 to 10:10.
     {
       name: "jobs.done",
       ...sum(DELTA, true, [
@@ -371,7 +371,7 @@ describe("GET /api/projects/:id/metrics/chart", () => {
   test("a gauge: the average, minimum, and maximum per bucket", async () => {
     const [line] = (await chart(shop.id, "process.memory", "gauge")).series;
     const times = ["09:55", "10:00", "10:05"];
-    // 10:00–10:05: 10, 20, 30, 40. 10:05–10:10: 5. Nothing before.
+    // 10:00 to 10:05: 10, 20, 30, 40. 10:05 to 10:10: 5. Nothing before.
     expect(valuesAt(line, "avg", times)).toEqual([null, 25, 5]);
     expect(valuesAt(line, "min", times)).toEqual([null, 10, 5]);
     expect(valuesAt(line, "max", times)).toEqual([null, 40, 5]);
@@ -381,10 +381,10 @@ describe("GET /api/projects/:id/metrics/chart", () => {
   test("a cumulative counter: the change between points per second, with resets", async () => {
     const requests = await chart(shop.id, "http.requests", "counter");
     const [line] = requests.series;
-    // Each increase counts in the buckets its interval covers. 09:55–10:00:
-    // /a's first 100, since its start at 09:59. 10:00–10:05: /a 60 + 60 + 30
+    // Each increase counts in the buckets its interval covers. 09:55 to 10:00:
+    // /a's first 100, since its start at 09:59. 10:00 to 10:05: /a 60 + 60 + 30
     // (reset) + 60, and 150 since it started again at 10:04:30; /b 120. So
-    // 480 over 300 s. 10:05–10:10: /a 30.
+    // 480 over 300 s. 10:05 to 10:10: /a 30.
     expect(valuesAt(line, "rate", ["09:50", "09:55", "10:00", "10:05", "10:10"])).toEqual([
       null,
       0.3333,
@@ -420,7 +420,7 @@ describe("GET /api/projects/:id/metrics/chart", () => {
       {
         service: "web",
         metrics: [
-          // Changes: +5 and -2 in 10:00–10:05, +4 in 10:05–10:10.
+          // Changes: +5 and -2 in 10:00 to 10:05, +4 in 10:05 to 10:10.
           {
             name: "queue.depth",
             ...sum(DELTA, false, [
@@ -526,12 +526,12 @@ describe("GET /api/projects/:id/metrics/chart", () => {
     const durations = await chart(shop.id, "http.duration", "histogram");
     expect(durations.bounds).toEqual([10, 50, 100]);
     const [line] = durations.series;
-    // 09:55–10:00: the first point, counted from its start at 09:00: [5, 10,
+    // 09:55 to 10:00: the first point, counted from its start at 09:00: [5, 10,
     // 4, 1], 20 observations. p50 is the 10th: in (10, 50],
     // after 5, the 5th of 10: 10 + 40 × 5 / 10 = 30. p95, the 19th: the 4th
     // of 4 in (50, 100]: 100. p99, 19.8th: in the last bucket, (100, max
     // 150]: 100 + 50 × 0.8 = 140.
-    // 10:00–10:05: the change, [0, 20, 10, 0], 30 observations since 09:58.
+    // 10:00 to 10:05: the change, [0, 20, 10, 0], 30 observations since 09:58.
     // p50, the 15th: 10 + 40 × 15 / 20 = 40. p95, the 28.5th: 50 + 50 × 8.5
     // / 10 = 92.5. p99, the 29.7th: 50 + 50 × 9.7 / 10 = 98.5.
     const times = ["09:55", "10:00"];
@@ -539,8 +539,8 @@ describe("GET /api/projects/:id/metrics/chart", () => {
     expect(valuesAt(line, "p95", times)).toEqual([100, 92.5]);
     expect(valuesAt(line, "p99", times)).toEqual([140, 98.5]);
     // The counts stay in the point's bucket; the observations spread over
-    // their interval: 20 over 09:00–09:58, 3 minutes of it in 09:55–10:00;
-    // 30 over 09:58–10:02, half in each bucket.
+    // their interval: 20 over 09:00 to 09:58, 3 minutes of it in 09:55 to 10:00;
+    // 30 over 09:58 to 10:02, half in each bucket.
     expect(valuesAt(line, "rate", times)).toEqual([
       rounded(((20 * 3) / 58 + 15) / 300),
       rounded(15 / 300),

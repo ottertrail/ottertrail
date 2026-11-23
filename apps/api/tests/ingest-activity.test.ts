@@ -132,8 +132,7 @@ const textOrder = (a: string | undefined, b: string | undefined) =>
 type Counts = Record<string, { count: number; items: number }>;
 
 /**
- * Flushes the counters, then reads the project's rows as "source outcome":
- * requests and items, every hour together (a test may cross one).
+ * Sum across hours because a test may cross an hour boundary.
  */
 async function countsOf(projectId: string): Promise<Counts> {
   await activity.flush();

@@ -11,10 +11,7 @@ import { OTTERTRAIL_VERSION } from "../src/version.ts";
 import { testLookup } from "./helpers/uptime-servers.ts";
 import { startWebhookReceiver, type WebhookReceiver } from "./helpers/webhook-receiver.ts";
 
-/**
- * Verifies a webhook as docs/webhooks.md shows a receiver doing it: the
- * same code, so the documented example is known to work.
- */
+/** Use the receiver code from docs/webhooks.md to check the documented example. */
 const TOLERANCE_SECONDS = 300;
 
 function verifyOttertrailWebhook(

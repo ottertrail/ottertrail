@@ -21,13 +21,8 @@ import { insertProject, setInstanceTimeZone } from "./helpers/projects.ts";
 import { encodeProtobuf, keyValues, secretKeyOf } from "./helpers/telemetry.ts";
 
 /**
- * AI alert rules (docs/ai-usage.md, "Alerts"; alerts/ai-rules.ts): the
- * estimated cost of a window above a value, for one feature or model or
- * all, the failed share of a window's calls above a share, and their
- * 95th-percentile duration above a number of milliseconds, both with a
- * minimum of calls; each fired, resolved after its time back, and quiet
- * without data, from calls sent over OTLP; the worker's pass; and the
- * rule routes' checks.
+ * Guard AI alert thresholds, minimum call counts, and recovery windows through OTLP.
+ * See docs/ai-usage.md, "Alerts", and alerts/ai-rules.ts.
  */
 
 let dashboard: Awaited<ReturnType<typeof signedInDashboard>>;

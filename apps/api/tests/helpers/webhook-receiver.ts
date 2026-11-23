@@ -2,10 +2,8 @@ import { Buffer } from "node:buffer";
 import http, { type IncomingHttpHeaders } from "node:http";
 
 /**
- * A local HTTP server that receives webhooks, on 127.0.0.1 and a port of
- * its own. /hook answers with `answer.status` (and `answer.location`, for
- * a redirect); /slow never answers; every other path answers 200, so a
- * redirect that was followed shows in `requests`.
+ * /hook uses `answer`; /slow times out. Other paths return 200 so followed
+ * redirects appear in `requests`.
  */
 export interface WebhookReceiver {
   /** http://127.0.0.1:<port> */

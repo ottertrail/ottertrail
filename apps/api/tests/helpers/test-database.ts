@@ -9,34 +9,20 @@ import type { Database } from "../../src/db/schema.ts";
 import { testName } from "./test-names.ts";
 
 /**
- * Test files run in parallel, each in its own schema. Kysely's migrator
- * checks for its bookkeeping tables by listing every column of every table
- * in every schema, which under a full run is both slow (a dozen test
- * schemas of 50 tables each) and fragile: the listing fails ("schema … does
- * not exist") if another file drops its schema in the middle of it.
+ * Kysely's all-schema listing can fail if another test drops a schema.
+ * schemaScoped avoids the listing and needs no lock.
  *
- * So a test schema's own migrations list only that schema (schemaScoped),
- * and need no lock. Only a migration that lists every schema, as `vp run
- * migrate` does (createTestDatabase's `asDeployed`), holds this PostgreSQL
- * advisory lock exclusively; dropping a schema, or tables in one, holds it
- * shared, so drops run side by side and wait only for such a listing.
- * (Before, every migration held it shared and every drop exclusively: under
- * load drops queued behind migrations and migrations behind drops, and a
- * test that made a dashboard of its own waited seconds for the lock twice.)
+ * asDeployed migrations take this advisory lock exclusively. Schema and
+ * table drops share it, so they can run together but wait for listings.
  */
 const SCHEMA_LOCK = 4_281_708_001;
 
-/**
- * The time limit for a test that makes a schema of its own and moves it
- * back or forward (migrateTestDatabase): each move runs a dozen migrations
- * or more, which a busy machine can take tens of seconds over.
- */
+/** Migration tests can take tens of seconds on a busy machine. */
 export const MIGRATION_TEST_MS = 90_000;
 
 /**
- * `db`, for Kysely's migrator, with an introspector that lists the tables
- * of the connection's own schema (its search path, the test schema) only.
- * The migrator reads nothing but their names and schemas.
+ * Limit introspection to the connection's schema to avoid other tests' drops.
+ * The migrator only needs table names and schemas.
  */
 function schemaScoped(db: Kysely<Database>): Kysely<Database> {
   const introspection: DatabaseIntrospector = {
@@ -69,26 +55,22 @@ function schemaScoped(db: Kysely<Database>): Kysely<Database> {
 
 export interface TestDatabase {
   db: Kysely<Database>;
-  /** The schema the test's tables are in. */
   schema: string;
   destroy(): Promise<void>;
 }
 
 /**
- * Creates an empty schema with every migration applied, so each test file
- * starts from a clean database and never sees development data. Drop it
- * with destroy() when the tests finish.
+ * Isolates each test file from development data. Call destroy() after use.
  *
  * Needs the local database: `podman compose up -d` (or `docker compose up -d`).
  *
- * `asDeployed` migrates as `vp run migrate` does, without naming the
- * schema, so a test can check that path.
+ * `asDeployed` tests the `vp run migrate` path without naming the schema.
  */
 export async function createTestDatabase({
   asDeployed = false,
 }: { asDeployed?: boolean } = {}): Promise<TestDatabase> {
   const connectionString = loadConfig().databaseUrl;
-  // Named with when it was made, so a later run can drop it if this one is cut off.
+  // The timestamp lets later runs clean up after an interrupted run.
   const schema = testName();
 
   await withAdmin(connectionString, async (admin) => {
@@ -114,8 +96,7 @@ export async function createTestDatabase({
 }
 
 /**
- * Drops a test schema, holding SCHEMA_LOCK shared: never while a migration
- * lists every schema (createTestDatabase's `asDeployed`).
+ * Share SCHEMA_LOCK to wait for all-schema migration listings.
  */
 export async function dropTestSchema(schema: string): Promise<void> {
   await withSchemaLock(loadConfig().databaseUrl, "shared", (connection) =>
@@ -124,10 +105,8 @@ export async function dropTestSchema(schema: string): Promise<void> {
 }
 
 /**
- * Moves a test database to a migration, back or forward ("latest" for the
- * newest), for tests of migrations themselves, and returns what ran. Going
- * back drops tables, as destroy() drops a schema, so it holds SCHEMA_LOCK
- * shared too.
+ * Use "latest" for the newest migration. Rollbacks drop tables, so share
+ * SCHEMA_LOCK to wait for all-schema listings.
  */
 export async function migrateTestDatabase(
   testDb: TestDatabase,
@@ -167,7 +146,6 @@ async function withAdmin(
   }
 }
 
-/** Runs work while holding SCHEMA_LOCK, on a connection of its own. */
 async function withSchemaLock(
   connectionString: string,
   mode: "shared" | "exclusive",

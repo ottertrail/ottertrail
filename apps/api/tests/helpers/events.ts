@@ -3,7 +3,6 @@ import { fromClickHouseTime } from "../../src/clickhouse/query.ts";
 import type { EventRow } from "../../src/collection/event-store.ts";
 import { isRecord } from "../../src/enrichment/data-centers.ts";
 
-/** A row of ClickHouse's events table, as JSON. */
 type StoredRow = Omit<
   EventRow,
   | "occurred_at"
@@ -28,10 +27,7 @@ type StoredRow = Omit<
 };
 
 /**
- * A project's events in ClickHouse, one per event (FINAL), oldest first,
- * in the shape storeEvents() was given them: times as dates, properties as
- * an object, and null where ClickHouse keeps "" for "none" (a path, an
- * error's details).
+ * Read with FINAL, oldest first, and restore the EventRow shape passed to storeEvents().
  */
 export async function storedEvents(
   client: ClickHouseClient,
@@ -62,7 +58,7 @@ export async function storedEvents(
   });
 }
 
-/** How many events ClickHouse holds for a project, each once (FINAL). */
+/** Count with FINAL to exclude retry copies. */
 export async function countEvents(client: ClickHouseClient, projectId: string): Promise<number> {
   const result = await client.query({
     query: "SELECT count() AS n FROM events FINAL WHERE project_id = {project:UUID}",

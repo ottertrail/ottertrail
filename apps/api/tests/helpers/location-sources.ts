@@ -53,14 +53,12 @@ export function asnFile(): Buffer {
 export const locationFile = (options: Parameters<typeof fakeMmdb>[0] = {}) =>
   gzipSync(fakeMmdb(options));
 
-/** A redirect the fake answers with. */
 export interface Redirect {
   redirect: string;
 }
 
 /**
- * A body in 16 KB chunks, as a download arrives: an aborted signal fails
- * it between chunks, as fetch()'s body does.
+ * Check for aborts between 16 KB chunks, as fetch() does while reading a body.
  */
 function streamOf(
   body: string | Buffer,
@@ -85,11 +83,8 @@ function streamOf(
 }
 
 /**
- * A fetch() that never leaves the process: it answers the URLs in `files`
- * (a body, or a redirect), and 404 to anything else, and records every URL
- * asked for. As fetch(), it follows redirects itself unless asked for
- * `redirect: "manual"`, and an aborted signal rejects it, or fails its
- * body while it is read.
+ * In-process fetch with 404s for unknown URLs. Matches fetch() redirect and
+ * abort behavior, including aborts while reading the body. Records requested URLs.
  */
 export function fakeFetch(
   files: Record<string, string | Buffer | Redirect>,
@@ -120,10 +115,7 @@ export function allSources(month: string, location: Buffer = locationFile()) {
 export const hangingFetch: Fetch = (_url, init) =>
   new Promise((_resolve, reject) => {
     const signal = init?.signal;
-    // As fetch does, a signal already aborted rejects at once. Otherwise a
-    // stop that lands just before the call (the round holds its lease but
-    // has not reached the download yet, as on a busy machine) never fires
-    // again, and the round waits for ever.
+    // An already-aborted signal will not fire again. Reject now to avoid hanging.
     if (signal?.aborted === true) {
       reject(signal.reason);
       return;

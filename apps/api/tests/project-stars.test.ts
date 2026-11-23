@@ -7,9 +7,7 @@ import { setUserAccess } from "../src/access/grants.ts";
 import { PUBLIC_URL, signedInDashboard, signedInUser } from "./helpers/dashboard.ts";
 
 /*
- * Starred projects (docs/dashboard.md, "Starred projects"): each user's
- * own, only on projects they may reach, hidden and deleted once they no
- * longer may.
+ * Stars must disappear when project access is lost (docs/dashboard.md, "Starred projects").
  */
 
 const NOT_FOUND = { error: "not_found", message: "No project has this ID." };

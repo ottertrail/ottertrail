@@ -14,10 +14,7 @@ import { signedInDashboard } from "./helpers/dashboard.ts";
 import { insertProject } from "./helpers/projects.ts";
 
 /**
- * The Replays page's data (docs/session-replay.md, "Finding replays"):
- * what the worker derives when it joins a replay and links it to its
- * error, the list with its filters and pages, the timeline, the user's
- * page, and the one access check on each.
+ * Guard replay-derived data and access checks (docs/session-replay.md, "Finding replays").
  */
 
 // The development Garage from compose.yaml.

@@ -5,17 +5,13 @@ import { SMTPServer, type SMTPServerOptions } from "smtp-server";
 import { makeCertificate, type TestCertificate } from "./certificate.ts";
 
 /**
- * A local SMTP server for the email tests, on 127.0.0.1 and a port of its
- * own: it keeps every message it accepts. With `login`, it offers
- * STARTTLS with a certificate made at run time and requires a user name
- * and password after it, as a real provider does; without, it offers
- * neither, and takes mail from anyone, as a local relay may. `reject` makes it refuse the next messages with a code.
+ * Local SMTP sink. `login` requires STARTTLS and authentication; omitting it
+ * allows unauthenticated mail without STARTTLS. `reject` refuses upcoming messages.
  */
 export interface SmtpSink {
   port: number;
   certificate: TestCertificate;
   messages: { from: string; to: string[]; raw: string }[];
-  /** The user names that signed in, and those refused. */
   logins: { user: string; ok: boolean }[];
   /** How many messages to refuse next, and with what code (451: try again later). */
   reject: { count: number; code: number };
@@ -82,7 +78,7 @@ export async function startSmtpSink({
   };
 }
 
-/** A message's text with quoted-printable soft breaks and escapes undone, as a mail client shows it. */
+/** Decode quoted-printable soft breaks and escapes. */
 export function decodedBody(raw: string): string {
   const [, body] = splitOnce(raw);
   return body

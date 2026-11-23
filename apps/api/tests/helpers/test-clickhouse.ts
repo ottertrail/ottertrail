@@ -9,21 +9,18 @@ import { testName } from "./test-names.ts";
 
 export interface TestClickHouse {
   client: ClickHouseClient;
-  /** The test file's own database. */
   database: string;
   destroy(): Promise<void>;
 }
 
 /**
- * A ClickHouse database of its own for one test file, with every migration
- * applied, as createTestDatabase makes a PostgreSQL schema. Drop it with
- * destroy() when the tests finish.
+ * Isolate one test file in a migrated database. Call destroy() after use.
  *
  * Needs the local ClickHouse: `podman compose up -d` (or `docker compose up -d`).
  */
 export async function createTestClickHouse(): Promise<TestClickHouse> {
   const config = loadConfig().clickhouse;
-  // Named with when it was made, so a later run can drop it if this one is cut off.
+  // The timestamp lets later runs clean up after an interrupted run.
   const database = testName();
   const admin = createClickHouse(config, { database: "default" });
   try {

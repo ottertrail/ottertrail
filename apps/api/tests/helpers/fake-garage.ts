@@ -1,9 +1,8 @@
 import { createServer, type Server, type ServerResponse } from "node:http";
 
 /**
- * Stands in for Garage's admin API v2 (storage/garage-admin.ts): the three
- * calls Ottertrail makes, with a bearer token, answering as Garage v2.5.0
- * does (checked against a real container). Records each request.
+ * Match Garage v2.5.0 admin responses for storage/garage-admin.ts.
+ * Require a bearer token and record each request.
  */
 export interface FakeGarage {
   url: string;

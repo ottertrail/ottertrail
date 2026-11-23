@@ -56,7 +56,6 @@ const roomyDisk = (): Disk => ({
   broken: false,
 });
 
-/** A webhook channel of the instance. */
 async function channel(name: string) {
   return dashboard.db
     .insertInto("notification_channels")

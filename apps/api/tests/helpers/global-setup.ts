@@ -1,10 +1,8 @@
 import { dropStaleTestDatabases } from "./stale-test-databases.ts";
 
 /**
- * Runs once before the API's test files (vite.config.ts, test.globalSetup):
- * drops the test schemas and databases runs that were cut off left behind.
- * Without the databases running, it says so and lets the tests fail with
- * their own messages.
+ * Clean up interrupted runs before API tests (vite.config.ts, test.globalSetup).
+ * If databases are unavailable, let each test report its own failure.
  */
 export default async function setup(): Promise<void> {
   try {

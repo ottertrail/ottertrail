@@ -30,10 +30,8 @@ import { insertProject } from "./helpers/projects.ts";
 import { keyValues, nowNs, secretKeyOf, storedRows } from "./helpers/telemetry.ts";
 
 /**
- * AI prompts and completions are dropped at ingestion (ai-content.ts;
- * docs/telemetry.md): what each instrumentation family sends, through
- * OpenTelemetry's own exporters in both encodings, stored without its
- * content, with its metadata, and with the content counted as dropped.
+ * Guard prompt and completion removal while preserving metadata in both exporter encodings.
+ * See ai-content.ts and docs/telemetry.md.
  */
 
 type Value = string | number | string[];

@@ -21,10 +21,8 @@ import { PUBLIC_URL, signedInDashboard, signedInUser } from "./helpers/dashboard
 import { insertProject } from "./helpers/projects.ts";
 
 /*
- * The heatmap overlay's tokens and routes (docs/web-analytics.md, "The
- * overlay on your site"; docs/access.md, "Heatmap overlay tokens"): the
- * dashboard mints a one-time link, o.js exchanges it on the customer's
- * site for a session, and reads aggregates with it.
+ * Guard the one-time link exchange and overlay session access.
+ * See docs/web-analytics.md, "The overlay on your site", and docs/access.md, "Heatmap overlay tokens".
  */
 
 const SITE = "https://example.com";

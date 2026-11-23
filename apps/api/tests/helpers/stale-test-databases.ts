@@ -6,28 +6,19 @@ import { createDatabase } from "../../src/db/database.ts";
 import { dropTestSchema } from "./test-database.ts";
 import { madeAt } from "./test-names.ts";
 
-/**
- * Test schemas and databases older than this are left over from a run that
- * was cut off: no test file takes nearly as long.
- */
+/** No test file runs this long, so older databases can be cleaned up. */
 export const STALE_AFTER_MS = 2 * 60 * 60 * 1000;
 
-/** Whether a name is a test's (testName()) made more than STALE_AFTER_MS before `now`. */
 export function isStale(name: string, now: number): boolean {
   const made = madeAt(name);
   return made !== null && now - made.getTime() > STALE_AFTER_MS;
 }
 
 /**
- * Drops the PostgreSQL schemas and ClickHouse databases that test runs cut
- * off before their files' destroy() left behind, and returns their names.
- * Each slows every later run a little: Kysely's migrator lists every table
- * in every schema, and a migration test began to time out at about 100.
+ * Clean up interrupted runs. Leftover schemas slow Kysely's all-schema listing.
  *
- * Only names with their making time (testName()) that are older than
- * STALE_AFTER_MS: names in any other form, such as older code's
- * "test_<32 hex digits>", are left alone, so a run of older code at the
- * same time cannot lose its databases.
+ * Leave names without a known timestamp alone, including "test_<32 hex digits>",
+ * to protect concurrent runs using that format.
  */
 export async function dropStaleTestDatabases(
   now: number = Date.now(),

@@ -6,14 +6,11 @@ import type { FastifyInstance } from "fastify";
 import { expect } from "vite-plus/test";
 
 /**
- * Listens on a free local port and returns a client that sends a request's
- * whole body, waits until `held()` says the server is working on it (an
- * insert held by a fake ClickHouse), then disconnects without reading the
- * answer, and resolves once the server has seen the connection close.
+ * Disconnect after `held()` confirms the server is processing the body.
+ * Wait for the server to see the close before resolving.
  */
 export async function hangingUpClient(app: FastifyInstance) {
-  // Registered before listening, after Node's own, so its close listener
-  // runs once Node has closed the response.
+  // Register after Node's listener so it closes the response before our close listener runs.
   const serverSockets: Socket[] = [];
   app.server.on("connection", (socket: Socket) => {
     serverSockets.push(socket);

@@ -30,7 +30,6 @@ function db() {
   return testDb.db;
 }
 
-/** Where reports read events: ClickHouse. */
 function reader(): Reader {
   if (testClickHouse === undefined) throw new Error("The test ClickHouse was not created");
   return { client: testClickHouse.client };

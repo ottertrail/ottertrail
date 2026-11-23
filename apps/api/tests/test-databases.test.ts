@@ -11,9 +11,8 @@ import { dropTestSchema } from "./helpers/test-database.ts";
 import { madeAt, testName } from "./helpers/test-names.ts";
 
 /**
- * The test runs' own schemas and databases (helpers/test-names.ts): named
- * with when they were made, and dropped by a later run once a cut-off run
- * left them behind for more than two hours (helpers/global-setup.ts).
+ * Guard cleanup of interrupted runs after two hours.
+ * See helpers/test-names.ts and helpers/global-setup.ts.
  */
 
 const config = loadConfig();

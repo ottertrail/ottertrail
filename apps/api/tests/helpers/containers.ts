@@ -9,13 +9,9 @@ import {
 } from "../../src/backups/run.ts";
 
 /**
- * The development stack's containers (compose.yaml at the repository
- * root), for the backup tests: pg_dump runs inside the PostgreSQL
- * container, as this machine may have no PostgreSQL 18 client, and
- * ClickHouse's backup file is read from inside its container, whose
- * volume the test process cannot see. A deployed worker does both on its
- * own (backups/sources.ts): the image has pg_dump, and Compose shares
- * ClickHouse's backups folder with it.
+ * Use compose.yaml's containers: the host may lack a PostgreSQL 18 client
+ * and cannot read ClickHouse's backup volume. The deployed worker has both
+ * pg_dump and the shared backup folder (backups/sources.ts).
  */
 export interface DevContainers {
   cli: string;
@@ -46,7 +42,6 @@ export function devContainers(): DevContainers | null {
   return found;
 }
 
-/** The containers, or an error that says how to start them. */
 export function requireDevContainers(): DevContainers {
   const containers = devContainers();
   if (containers === null) {
@@ -57,7 +52,6 @@ export function requireDevContainers(): DevContainers {
   return containers;
 }
 
-/** pg_dump of one schema, inside the PostgreSQL container. */
 export function containerPgDump(containers: DevContainers, schema: string): PostgresDump {
   const child = spawn(
     containers.cli,
@@ -126,7 +120,6 @@ export function containerClickHouseFiles(containers: DevContainers): ClickHouseB
   };
 }
 
-/** Whether a file is in ClickHouse's backups folder, inside its container. */
 export function clickHouseFileExists(containers: DevContainers, name: string): boolean {
   try {
     execFileSync(containers.cli, [

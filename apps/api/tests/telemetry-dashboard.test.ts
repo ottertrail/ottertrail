@@ -139,7 +139,6 @@ function get(projectId: string, path: string, cookie = dashboard.cookie) {
   });
 }
 
-/** The status of each path, to compare with what each should get. */
 async function statuses(projectId: string, paths: string[], cookie = dashboard.cookie) {
   const answers: Record<string, number> = {};
   for (const path of paths) answers[path] = (await get(projectId, path, cookie)).statusCode;
@@ -155,7 +154,6 @@ async function getJson(projectId: string, path: string) {
   return response.json();
 }
 
-// The shop's project: three traces and their logs.
 let shop = { id: "", secretKey: "" };
 const ORDER = { trace: hex(16), root: hex(8), query: hex(8), charge: hex(8), card: hex(8) };
 const ORPHAN = hex(8);
@@ -213,7 +211,6 @@ beforeAll(async () => {
           start: ORDER_START + 15n * MS,
           durationMs: 5,
         },
-        // GET /health, 2 ms, 20 minutes ago.
         {
           traceId: HEALTH.trace,
           spanId: HEALTH.root,
@@ -312,19 +309,16 @@ afterAll(async () => {
   await dashboard?.close();
 });
 
-/** The root spans' names the shop's traces list has with this query. */
 const names = async (query: string) =>
   (await getJson(shop.id, `/traces?period=7d&${query}`)).traces.map(
     (trace: { name: string }) => trace.name,
   );
 
-/** The bodies of the shop's log records this query finds. */
 const bodies = async (query: string) =>
   (await getJson(shop.id, `/logs?period=7d&${query}`)).logs.map(
     (log: { body: string }) => log.body,
   );
 
-/** The query plan of a read of the shop's rows, with its indexes. */
 const explain = async (table: string, condition: string, params: Record<string, string>) => {
   const result = await dashboard.reader.client.query({
     query: `EXPLAIN indexes = 1
@@ -819,7 +813,6 @@ describe("pages read without FINAL", () => {
     expect(second.next).toBeNull();
     const listed = [...first.traces, ...second.traces].map((trace: { name: string }) => trace.name);
     expect(listed.toSorted(byText)).toEqual(spans.map((span) => span.name).toSorted(byText));
-    // Newest first: the groups in order.
     expect(listed.slice(0, 40).toSorted(byText)).toEqual(
       spans
         .slice(0, 40)
@@ -939,11 +932,9 @@ const dayAgo = (days: number) =>
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-/** The traces chart's totals of the shop with this query. */
 const traceTotals = async (query: string) =>
   (await getJson(shop.id, `/traces/chart?period=7d&${query}`)).total;
 
-/** A poll's bodies, cursor, what it skipped, and its gap. */
 const poll = async (projectId: string, query = "") => {
   const answer = await getJson(projectId, `/logs/live?${query}`);
   return {
@@ -1047,8 +1038,7 @@ describe("GET /api/projects/:id/logs/volume", () => {
   test("reads without FINAL: a retried record counts twice until its day is merged", async () => {
     const retried = await newProject("Retried logs");
     const logs = [{ time: minutesAgo(5), severityNumber: 9, body: "sent twice" }];
-    // Merges stopped, so the copies stay as they would in a busy day before
-    // ClickHouse merges it (forced within about an hour, migration 0002).
+    // Stop merges to keep retry copies visible (forced within about an hour, migration 0002).
     const { client } = dashboard.reader;
     await client.command({ query: "SYSTEM STOP MERGES logs" });
     try {
@@ -1233,8 +1223,7 @@ const wallClock = (ms: number, timeZone: string) =>
   }).format(ms);
 
 /**
- * The buckets of chosen days in a timezone, as the charts make them, at
- * `now` (by default two days after the last), with where the range starts and ends.
+ * Default to two days after `to` so the range is complete.
  */
 async function rangeBuckets(timeZone: string, from: string, to: string, now?: string) {
   const at = new Date(now ?? Date.parse(`${to}T00:00:00Z`) + 2 * 86_400_000);
@@ -1258,7 +1247,6 @@ async function bucketsOf(timeZone: string, from: string, to: string) {
   return (await rangeBuckets(timeZone, from, to)).buckets;
 }
 
-/** The bucket ClickHouse puts a row at `iso` in, by its SQL. */
 async function bucketInClickHouse(buckets: Awaited<ReturnType<typeof bucketsOf>>, iso: string) {
   const params = new QueryParams();
   const [row] = await queryRows<{ bucket: string | number }>(
@@ -1271,11 +1259,8 @@ async function bucketInClickHouse(buckets: Awaited<ReturnType<typeof bucketsOf>>
 }
 
 /**
- * Every minute of a range placed by ClickHouse, as the charts' queries
- * place rows: the minutes each bucket got, beside the minutes its span
- * holds (to the next bucket's start, or the range's end). Equal, with the
- * total every minute of the range, when no row falls outside a bucket and
- * none counts twice.
+ * Compare minutes assigned by ClickHouse with each bucket's duration.
+ * Matching counts and totals detect gaps and double counting.
  */
 async function everyMinute(timeZone: string, from: string, to: string, now?: string) {
   const { buckets, fromMs, endMs } = await rangeBuckets(timeZone, from, to, now);
@@ -1506,7 +1491,6 @@ describe("GET /api/projects/:id/logs/live", () => {
     expect(new Set(next.bodies).size).toBe(LIVE_PAGE_SIZE);
     expect(next.skipped).toBe(50);
     expect(next.gap).toBeNull();
-    // From there, nothing new: nothing skipped.
     expect(await poll(live.id, `after=${next.cursor}`)).toMatchObject({ skipped: 0, gap: null });
   });
 
@@ -1559,7 +1543,6 @@ describe("GET /api/projects/:id/logs/live", () => {
     expect(answer.logs.map((log: { body: string }) => log.body)).toEqual(["after the gap"]);
     expect(answer.skipped).toBe(0);
     expect(answer.gap.from).toBe(new Date(Number(old / MS)).toISOString());
-    // The window's start: about 5 minutes before now.
     const to = Date.parse(answer.gap.to);
     expect(Math.abs(to - (Date.now() - LIVE_WINDOW_MS))).toBeLessThan(30_000);
     // Without a cursor, a fresh start is no gap.
@@ -1584,8 +1567,7 @@ describe("GET /api/projects/:id/logs/live", () => {
         logs: [{ time: minutesAgo(1), severityNumber: 17, body: "staging error" }],
       },
     ];
-    // Sent twice, as an exporter retries after a lost answer; merges stopped,
-    // so both copies stay as they would before ClickHouse merges the day.
+    // Stop merges to keep both copies of the exporter retry visible.
     const { client } = dashboard.reader;
     await client.command({ query: "SYSTEM STOP MERGES logs" });
     try {

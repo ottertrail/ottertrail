@@ -15,7 +15,7 @@ import { createTestClickHouse } from "./test-clickhouse.ts";
 import { createTestDatabase } from "./test-database.ts";
 
 export const PUBLIC_URL = "http://localhost:5173";
-/** The auth secret of every test dashboard; it also seals queued account email links. */
+/** Also seals queued account email links. */
 export const TEST_AUTH_SECRET = "a-secret-only-these-tests-use-0123456789";
 export const OWNER = {
   name: "Ada Owner",
@@ -25,10 +25,8 @@ export const OWNER = {
 };
 
 /**
- * An app with the dashboard API on a fresh test database and ClickHouse,
- * its owner created and signed in, the instance's timezone `timeZone`.
- * Send `cookie` (and `origin` for changes) with requests; add events with
- * `store`, which reports then read.
+ * Uses isolated databases and a signed-in owner. Send `cookie` with requests
+ * and `origin` with changes. Use `store` to add events for reports.
  */
 export async function signedInDashboard({
   timeZone = "UTC",
@@ -92,7 +90,7 @@ export async function signedInDashboard({
   logStream?: { write(line: string): void };
   /** The Server log's buffer and its stream's limits (tests/server-log.test.ts). */
   serverLog?: AppOptions["serverLog"];
-  /** Makes the ingestion counters on the test's database, to flush when the test chooses (tests/ingest-activity.test.ts). */
+  /** Allows manual counter flushes (tests/ingest-activity.test.ts). */
   ingestActivity?: (db: Kysely<Database>) => IngestActivity;
 } = {}) {
   const testDb = await createTestDatabase();
@@ -135,7 +133,6 @@ export async function signedInDashboard({
     ...(replayPlayerPath === undefined ? {} : { replayPlayerPath }),
     ...(telemetry === undefined ? {} : { telemetry }),
     ...(uptime === undefined ? {} : { uptime }),
-    // The auth secret seals queued account email links, as on a server.
     notifications: { linkSecret: TEST_AUTH_SECRET, ...notifications },
     ...(locationData === undefined ? {} : { locationData }),
     ...(storage === undefined ? {} : { storage }),
@@ -162,11 +159,9 @@ export async function signedInDashboard({
   const reader: Reader = { client: testClickHouse.client };
   return {
     db: testDb.db,
-    /** The test's PostgreSQL schema, for a test that opens a pool of its own on it. */
+    /** Use this schema when opening another pool. */
     schema: testDb.schema,
-    /** Where reports read events. */
     reader,
-    /** The name of the test's own ClickHouse database. */
     clickhouseDatabase: testClickHouse.database,
     app,
     auth,
@@ -199,12 +194,11 @@ const NO_AREAS: Areas = {
 
 /** What a member is granted (docs/access.md): areas left out are none. */
 export interface MemberGrants {
-  /** "all", or the projects' IDs. */
   projects: "all" | readonly string[];
   areas?: Partial<Areas>;
 }
 
-/** Stores a member's grants, replacing any they had, as the Members page will (access/grants.ts). */
+/** Replace existing grants through access/grants.ts, as the Members page does. */
 export async function grantMember(
   db: Kysely<Database>,
   userId: string,
@@ -218,8 +212,7 @@ export async function grantMember(
 }
 
 /**
- * Another dashboard user, created in the database and signed in: a member
- * (with `grants`, or nothing granted) unless `role` says "admin".
+ * Members have no access unless `grants` is supplied.
  */
 export async function signedInUser(
   { db, app, auth }: Pick<Dashboard, "db" | "app" | "auth">,

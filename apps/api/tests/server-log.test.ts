@@ -15,9 +15,8 @@ import { NOTIFY_MAX_BYTES, WorkerLogRelay } from "../src/server-log/relay.ts";
 import { signedInDashboard, signedInUser } from "./helpers/dashboard.ts";
 
 /*
- * The Settings page's Server log (docs/dashboard.md, "Server log"): the
- * buffer's bounds, the masking every log line gets, the stream route and
- * who may open it, and the worker's lines over NOTIFY.
+ * Guard log masking, buffer bounds, stream access, and worker NOTIFY delivery.
+ * See docs/dashboard.md, "Server log".
  */
 
 const line = (msg: string, fields: LogRecord = {}): LogRecord => ({

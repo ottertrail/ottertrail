@@ -2,10 +2,8 @@ import { Buffer } from "node:buffer";
 import { generateKeyPairSync, randomBytes, sign } from "node:crypto";
 
 /**
- * A self-signed TLS certificate made at run time for the tests' HTTPS
- * servers, so none is kept in the repository: an ECDSA P-256 key, and an
- * X.509 v3 certificate for the given names and IPv4 addresses, encoded by
- * hand in DER (node:crypto signs, but makes no certificates).
+ * Generate self-signed ECDSA P-256 certificates at runtime to avoid storing them.
+ * Encode X.509 v3 in DER by hand because node:crypto signs but cannot create certificates.
  */
 export interface TestCertificate {
   /** PEM, for the server's `cert` and a client's `ca`. */
@@ -67,9 +65,7 @@ export function makeCertificate({
   const subject = sequence(
     set(sequence(oid("2.5.4.3"), tlv(0x0c, Buffer.from("Ottertrail test", "utf8")))),
   );
-  // DER wants the shortest form of a positive integer: no top bit (that
-  // would be negative), and no zero first byte (OpenSSL refuses one as
-  // "illegal padding"), so the first byte is 0x40 to 0x7f.
+  // Keep the serial positive without leading zeros, which OpenSSL rejects as padding.
   const serial = randomBytes(8);
   serial[0] = ((serial[0] ?? 0) & 0x3f) | 0x40;
   const altNames = sequence(
@@ -79,7 +75,7 @@ export function makeCertificate({
   const extensions = tlv(
     0xa3,
     sequence(
-      // basicConstraints, critical: a CA, so a client can trust it as its own root.
+      // Mark basicConstraints critical and CA=true so clients can trust this root.
       sequence(oid("2.5.29.19"), tlv(0x01, [0xff]), tlv(0x04, sequence(tlv(0x01, [0xff])))),
       sequence(oid("2.5.29.17"), tlv(0x04, altNames)),
     ),

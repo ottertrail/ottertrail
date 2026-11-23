@@ -11,10 +11,7 @@ import {
 
 const GiB = 1024 ** 3;
 
-/**
- * A reading of an instance on a 100 GiB disk with plenty free: no
- * warning. Each test changes one figure.
- */
+/** Start with a healthy 100 GiB disk; each test changes one figure. */
 function reading(change: {
   free?: number;
   total?: number;

@@ -11,12 +11,7 @@ import { insertProject } from "./helpers/projects.ts";
 import { keyValues, secretKeyOf } from "./helpers/telemetry.ts";
 import { testName } from "./helpers/test-names.ts";
 
-/**
- * The Databases page (GET /api/projects/:id/databases) and a query
- * shape's page (GET /api/projects/:id/databases/shapes/:shapeId), on spans
- * sent over OTLP and inserted straight into ClickHouse. Every number is
- * worked out by hand in the comments.
- */
+/** Check database reports against OTLP spans and rows too large for OTLP. */
 
 let dashboard: Awaited<ReturnType<typeof signedInDashboard>>;
 
@@ -680,7 +675,7 @@ describe("GET /api/projects/:id/databases/shapes/:shapeId", () => {
       serviceCount,
     });
     expect(shape).toMatchObject({ stepSeconds: 300, buckets: 288 });
-    // 10:00–10:05 is bucket 120 (a1 10 ms, a2 30 ms); 10:05–10:10 bucket 121 (a3 50 ms).
+    // 10:00 to 10:05 is bucket 120 (a1 10 ms, a2 30 ms); 10:05 to 10:10 bucket 121 (a3 50 ms).
     expect(sum(shape.counts.calls)).toBe(3);
     expect(shape.counts.calls[120]).toBe(2);
     expect(shape.counts.calls[121]).toBe(1);

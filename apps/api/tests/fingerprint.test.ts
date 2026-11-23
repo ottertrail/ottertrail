@@ -10,9 +10,8 @@ import {
 } from "../src/errors/fingerprint.ts";
 
 /**
- * The fastest of a few timed runs of work, in milliseconds. A busy machine
- * (the full test suite runs files in parallel) can slow any one run, but not
- * every run; slow parsing is slow on every run.
+ * Use the fastest run to reduce noise from parallel tests on a busy machine.
+ * Slow parsing affects every run.
  */
 function fastestMs(work: () => void, runs = 5): number {
   let fastest = Number.POSITIVE_INFINITY;

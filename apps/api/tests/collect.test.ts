@@ -14,10 +14,9 @@ import { insertProject, setInstanceTimeZone } from "./helpers/projects.ts";
 import { createTestClickHouse, type TestClickHouse } from "./helpers/test-clickhouse.ts";
 import { createTestDatabase, type TestDatabase } from "./helpers/test-database.ts";
 
-/** The server's clock in these tests. */
 const NOW = Date.parse("2026-11-16T10:00:00.000Z");
 const SITE = "example.com";
-/** A real browser. Requests without a browser User-Agent are treated as bots. */
+/** A browser User-Agent is needed to avoid bot filtering. */
 const CHROME_MAC =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36";
 /** Stands in for a geolocation database: known test addresses only. */
@@ -98,7 +97,6 @@ function pageview(overrides: Record<string, unknown> = {}) {
   };
 }
 
-/** `count` pageviews, each with its own ID. */
 const pageviews = (count: number) => Array.from({ length: count }, () => pageview());
 
 function batch(key: string, events: unknown[] = [pageview()], overrides: object = {}) {
@@ -611,8 +609,7 @@ describe("POST /api/events", () => {
         headers: { origin: `https://${SITE}` },
       });
       expect(fromBrowser.statusCode).toBe(429);
-      // The tracker can read Retry-After only if the browser lets it see the response
-      // and that header: it is not one browsers show cross-site pages by default.
+      // Cross-origin scripts need explicit access to the response and Retry-After header.
       expect(fromBrowser.headers["access-control-allow-origin"]).toBe(`https://${SITE}`);
       expect(fromBrowser.headers["access-control-expose-headers"]).toBe("Retry-After");
 
@@ -1186,7 +1183,6 @@ describe("POST /api/events", () => {
       expect(after?.visitor_id).not.toBe(before?.visitor_id); // A new day, a new ID …
       expect(Object.keys(after ?? {})).not.toContain("previous_visitor_id"); // … and no link.
 
-      // Reports work out visits in ClickHouse.
       const visits = await findVisits(
         { client: clickhouse() },
         {
@@ -1284,8 +1280,7 @@ describe("POST /api/events", () => {
         });
         const project = await createProject();
 
-        // Twice: the first attempt's budget was given back, so the retry
-        // is refused for the store, not for the budget.
+        // Retry to check that a failed write refunds the budget.
         for (let attempt = 0; attempt < 2; attempt += 1) {
           // A full batch: the whole budget.
           const response = await send(batch(project.public_key, pageviews(50)), {
@@ -1303,9 +1298,8 @@ describe("POST /api/events", () => {
       }
     });
 
-    // deploy/clickhouse/config.d/ottertrail.xml refuses inserts under 5% free
-    // disk. Here the table asks for more free space than any disk has, so
-    // ClickHouse refuses as it would on a full one (NOT_ENOUGH_SPACE).
+    // Request impossible free space to trigger NOT_ENOUGH_SPACE, as the 5% disk
+    // limit in deploy/clickhouse/config.d/ottertrail.xml would on a full disk.
     test("answers 503 and stores nothing while ClickHouse refuses inserts for lack of disk", async () => {
       const setting = (ratio: number) =>
         clickhouse().command({

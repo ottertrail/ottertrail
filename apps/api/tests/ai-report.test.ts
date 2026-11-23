@@ -22,14 +22,8 @@ import { insertProject } from "./helpers/projects.ts";
 import { encodeProtobuf, keyValues, secretKeyOf } from "./helpers/telemetry.ts";
 
 /**
- * The AI page's API (docs/ai-usage.md, "The report"; ai/report.ts,
- * ai/routes.ts) and the price table (ai/prices.ts), against real
- * PostgreSQL and ClickHouse: calls sent over OTLP, the totals, chart,
- * breakdowns, failures, and latest calls, with their filters and the
- * previous period; cost from the tokens, cache reads and writes priced
- * apart, models without a price counted apart; access, the breakdown by
- * user only with the users area; and AI calls kept and deleted with the
- * project's events.
+ * Check reports against OTLP calls, including cache pricing and users-area access.
+ * See docs/ai-usage.md, "The report", ai/report.ts, ai/routes.ts, and ai/prices.ts.
  */
 
 let dashboard: Awaited<ReturnType<typeof signedInDashboard>>;

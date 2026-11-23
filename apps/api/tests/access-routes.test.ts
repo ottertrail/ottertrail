@@ -4,10 +4,8 @@ import { PROJECT_REQUESTS, routeKey } from "./helpers/project-routes.ts";
 import { describeDeclaration, registeredRoutes } from "./helpers/routes.ts";
 
 /**
- * The routes anyone may call: health, collection with a project's key,
- * the scripts and the dashboard's files, sign-in, setup, and the heatmap
- * overlay's exchange and preflight. Every other
- * route must declare what it needs (docs/access.md).
+ * Only listed routes may omit an access declaration (docs/access.md).
+ * Public collection still requires a project key.
  */
 const PUBLIC_ROUTES = new Set([
   "GET /api/health",
