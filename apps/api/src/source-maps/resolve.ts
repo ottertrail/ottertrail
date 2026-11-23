@@ -14,6 +14,10 @@ const CONTEXT_LINES = 3;
 const MAX_CONTEXT_LINE = 300;
 /** Most files of one stack looked up: a stack's own code is in a few. */
 const MAX_FILES = 10;
+/** Longest source and name shown: a map's entries are capped, but each frame repeats them. */
+const MAX_NAME = 300;
+/** Most lines of one source whose context is shown: past it, a frame shows none. */
+const MAX_SOURCE_LINES = 200_000;
 
 export interface SourceContext {
   /** The first line's number: the frame's line is among them. */
@@ -66,10 +70,10 @@ export interface ResolvedStack {
 
 interface CachedMap {
   map: TraceMap;
-  /** About what it takes in memory, decoded: see sizeOf. */
+  /** About what it takes in memory, decoded (sizeOf), and its sources' line starts. */
   bytes: number;
-  /** Each source's lines, split once. */
-  lines: Map<string, string[]>;
+  /** Where each line of a source starts, found once; null for a source without content or too many lines. */
+  lines: Map<string, Uint32Array | null>;
 }
 
 /**
@@ -108,6 +112,14 @@ export class SourceMapCache {
     return entry;
   }
 
+  /** Counts `bytes` more for an entry, held or not: the line starts it found. */
+  grow(entry: CachedMap, bytes: number): void {
+    entry.bytes += bytes;
+    if (![...this.#entries.values()].includes(entry)) return;
+    this.#bytes += bytes;
+    this.#evict();
+  }
+
   set(key: string, entry: CachedMap): void {
     if (entry.bytes > this.maxBytes) return;
     const replaced = this.#entries.get(key);
@@ -117,6 +129,10 @@ export class SourceMapCache {
     }
     this.#entries.set(key, entry);
     this.#bytes += entry.bytes;
+    this.#evict();
+  }
+
+  #evict(): void {
     for (const [oldest, old] of this.#entries) {
       if (this.#bytes <= this.maxBytes) break;
       this.#entries.delete(oldest);
@@ -137,35 +153,76 @@ function cleanSource(source: string): string {
   return source.replace(/^webpack:\/\/[^/]*\//, "").replace(/^(?:\.\/)+/, "");
 }
 
-function contextOf(entry: CachedMap, source: string, line: number): SourceContext | null {
-  let lines = entry.lines.get(source);
-  if (lines === undefined) {
-    const content = sourceContentFor(entry.map, source);
-    if (content === null) return null;
-    lines = content.split(/\r\n|\n|\r/);
-    entry.lines.set(source, lines);
+/**
+ * Where each line of `content` starts, after "\r\n", "\n", or "\r"; null
+ * past MAX_SOURCE_LINES. Offsets, not split strings: a source of millions
+ * of short lines would otherwise take millions of strings.
+ */
+export function lineStarts(content: string, maxLines = MAX_SOURCE_LINES): Uint32Array | null {
+  const starts = [0];
+  for (let at = 0; at < content.length; at += 1) {
+    const code = content.charCodeAt(at);
+    if (code !== 10 && code !== 13) continue;
+    if (code === 13 && content.charCodeAt(at + 1) === 10) at += 1;
+    if (starts.length >= maxLines) return null;
+    starts.push(at + 1);
   }
-  if (line > lines.length) return null;
-  const firstLine = Math.max(1, line - CONTEXT_LINES);
-  const lastLine = Math.min(lines.length, line + CONTEXT_LINES);
-  return {
-    firstLine,
-    lines: lines.slice(firstLine - 1, lastLine).map((text) => text.slice(0, MAX_CONTEXT_LINE)),
-  };
+  return Uint32Array.from(starts);
 }
 
-function originalOf(entry: CachedMap, frame: StackFrame): OriginalPosition | null {
+/** The lines around `line` of `content`, each cut to MAX_CONTEXT_LINE, without their line breaks. */
+function linesAround(content: string, starts: Uint32Array, line: number): SourceContext | null {
+  if (line < 1 || line > starts.length) return null;
+  const firstLine = Math.max(1, line - CONTEXT_LINES);
+  const lastLine = Math.min(starts.length, line + CONTEXT_LINES);
+  const lines: string[] = [];
+  for (let index = firstLine - 1; index < lastLine; index += 1) {
+    const start = starts[index] ?? 0;
+    const end = Math.min(starts[index + 1] ?? content.length, start + MAX_CONTEXT_LINE + 2);
+    lines.push(
+      content
+        .slice(start, end)
+        .replace(/\r?\n$|\r$/, "")
+        .slice(0, MAX_CONTEXT_LINE),
+    );
+  }
+  return { firstLine, lines };
+}
+
+function contextOf(
+  cache: SourceMapCache,
+  entry: CachedMap,
+  source: string,
+  line: number,
+): SourceContext | null {
+  // Checked when stored; a map read back is treated as untrusted all the same.
+  const content: unknown = sourceContentFor(entry.map, source);
+  if (typeof content !== "string") return null;
+  let starts = entry.lines.get(source);
+  if (starts === undefined) {
+    starts = lineStarts(content);
+    entry.lines.set(source, starts);
+    cache.grow(entry, (starts?.byteLength ?? 0) + 64);
+  }
+  return starts === null ? null : linesAround(content, starts, line);
+}
+
+function originalOf(
+  cache: SourceMapCache,
+  entry: CachedMap,
+  frame: StackFrame,
+): OriginalPosition | null {
   if (frame.line === null || frame.line < 1) return null;
   // Browsers count columns from 1, source maps from 0.
   const column = Math.max(0, (frame.column ?? 1) - 1);
   const position = originalPositionFor(entry.map, { line: frame.line, column });
   if (position.source === null) return null;
   return {
-    source: cleanSource(position.source),
+    source: cleanSource(position.source).slice(0, MAX_NAME),
     line: position.line,
     column: position.column + 1,
-    name: position.name,
-    context: contextOf(entry, position.source, position.line),
+    name: typeof position.name === "string" ? position.name.slice(0, MAX_NAME) : null,
+    context: contextOf(cache, entry, position.source, position.line),
   };
 }
 
@@ -261,7 +318,10 @@ export async function resolveStack(
     resolved = frames.map((frame) => {
       const path = pathOf(frame.file);
       const entry = path === null ? undefined : maps.get(path);
-      return { ...frame, original: entry === undefined ? null : originalOf(entry, frame) };
+      return {
+        ...frame,
+        original: entry === undefined ? null : originalOf(cache, entry, frame),
+      };
     });
   } catch (error) {
     // A map whose mappings do not decode, though they looked right.

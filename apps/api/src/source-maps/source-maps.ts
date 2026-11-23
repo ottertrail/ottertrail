@@ -26,6 +26,18 @@ export const MAX_SOURCE_MAP_BYTES = 25 * 1024 ** 2;
 export const MAX_MAP_LINES = 100_000;
 export const MAX_MAP_SEGMENTS = 1_000_000;
 
+/**
+ * Most entries of a map's "sources" and "names", and the longest of each.
+ * Each is a string once read, and a frame shows its source and name: a
+ * large app's largest chunk has a few thousand sources and far fewer than
+ * this many names, each under a few hundred characters.
+ */
+export const MAX_MAP_SOURCES = 20_000;
+export const MAX_MAP_NAMES = 300_000;
+export const MAX_MAP_ENTRY = 1024;
+/** Most characters of all "sourcesContent" together: the rest of the map needs room too. */
+export const MAX_MAP_CONTENT = 20 * 1024 ** 2;
+
 /** Longest path of a minified file: an asset's address is far shorter. */
 export const MAX_SOURCE_PATH = 1024;
 
@@ -72,12 +84,38 @@ export interface MapShape {
   segments: number;
 }
 
+/** Whether `value` is a list of at most `max` entries, each a short string or (if `nulls`) null. */
+function isEntryList(value: unknown, max: number, nulls: boolean): value is unknown[] {
+  return (
+    Array.isArray(value) &&
+    value.length <= max &&
+    value.every((entry) =>
+      typeof entry === "string" ? entry.length <= MAX_MAP_ENTRY : nulls && entry === null,
+    )
+  );
+}
+
+/** Whether "sourcesContent" is absent, or one string or null per source at most, within MAX_MAP_CONTENT. */
+function isSourcesContent(value: unknown, sources: number): boolean {
+  if (value === undefined) return true;
+  if (!Array.isArray(value) || value.length > sources) return false;
+  let characters = 0;
+  for (const content of value) {
+    if (content === null) continue;
+    if (typeof content !== "string") return false;
+    characters += content.length;
+    if (characters > MAX_MAP_CONTENT) return false;
+  }
+  return true;
+}
+
 /**
  * The shape of the source map in `text`, without reading its mappings:
  * null when it is not one Ottertrail reads (not JSON, not version 3, not
- * mappings of base64 VLQ, more lines or segments than the limits) or is an
- * index map of "sections", which is not supported: its offsets alone could
- * make reading it take any amount of memory.
+ * mappings of base64 VLQ, more lines, segments, sources, or names than the
+ * limits, or sources' contents that are not text) or is an index map of
+ * "sections", which is not supported: its offsets alone could make reading
+ * it take any amount of memory.
  */
 export function checkSourceMap(text: string): MapShape | null {
   let parsed: unknown;
@@ -87,11 +125,12 @@ export function checkSourceMap(text: string): MapShape | null {
     return null;
   }
   if (!isRecord(parsed) || parsed.version !== 3 || "sections" in parsed) return null;
-  const { mappings, sources } = parsed;
+  const { mappings, sources, names = [], sourcesContent } = parsed;
   if (typeof mappings !== "string" || !VLQ_MAPPINGS.test(mappings)) return null;
-  if (!Array.isArray(sources) || !sources.every((s) => typeof s === "string" || s === null)) {
+  if (!isEntryList(sources, MAX_MAP_SOURCES, true) || !isEntryList(names, MAX_MAP_NAMES, false)) {
     return null;
   }
+  if (!isSourcesContent(sourcesContent, sources.length)) return null;
   const lines = occurrences(mappings, ";") + 1;
   // A segment ends at each "," and at the end of each line that has one.
   const segments = occurrences(mappings, ",") + lines;

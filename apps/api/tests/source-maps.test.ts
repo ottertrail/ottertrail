@@ -8,8 +8,17 @@ import { purgeDeletedProjects } from "../src/clickhouse/delete-events.ts";
 import type { NewEvent } from "../src/collection/event-store.ts";
 import { LOCAL_OBJECT_STORE } from "../src/config.ts";
 import { fingerprint } from "../src/errors/fingerprint.ts";
-import { SourceMapCache } from "../src/source-maps/resolve.ts";
-import { MAX_MAP_LINES, MAX_MAP_SEGMENTS, objectKeyOf } from "../src/source-maps/source-maps.ts";
+import { lineStarts, SourceMapCache } from "../src/source-maps/resolve.ts";
+import {
+  checkSourceMap,
+  MAX_MAP_CONTENT,
+  MAX_MAP_ENTRY,
+  MAX_MAP_LINES,
+  MAX_MAP_NAMES,
+  MAX_MAP_SEGMENTS,
+  MAX_MAP_SOURCES,
+  objectKeyOf,
+} from "../src/source-maps/source-maps.ts";
 import { s3ObjectStore } from "../src/storage/object-store.ts";
 import { PUBLIC_URL, signedInDashboard } from "./helpers/dashboard.ts";
 import { insertProject } from "./helpers/projects.ts";
@@ -313,6 +322,38 @@ describe("uploading a source map", () => {
     }
   });
 
+  test("limits an IPv6 network as one address, and one project's uploads at once", async () => {
+    const limited = await signedInDashboard({
+      now: () => NOW,
+      objectStore: store,
+      sourceMaps: { limitBytes: 1024 ** 3, ipLimit: { capacity: 1, refillPerSecond: 0.001 } },
+    });
+    try {
+      const put = (remoteAddress: string, path = "/a.js") =>
+        limited.app.inject({
+          method: "PUT",
+          url: `/api/source-maps?release=${RELEASE}&path=${path}`,
+          headers: { authorization: `Bearer sk_${"0".repeat(32)}` },
+          remoteAddress,
+          payload: MAP,
+        });
+      expect((await put("2001:db8:1:2::1")).statusCode).toBe(401);
+      expect((await put("2001:db8:1:2::ffff")).statusCode).toBe(429);
+      expect((await put("2001:db8:1:3::1")).statusCode).toBe(401);
+    } finally {
+      await limited.close();
+    }
+
+    const project = await newProject("Many at once");
+    const responses = await Promise.all(
+      ["/a.js", "/b.js", "/c.js"].map((path) => upload(project.secretKey, MAP, { path })),
+    );
+    const statuses = responses.map((response) => response.statusCode).toSorted((a, b) => a - b);
+    // Two of the process's four slots at most for one project.
+    expect(statuses).toEqual([201, 201, 429]);
+    expect(responses.find((response) => response.statusCode === 429)?.json().error).toBe("busy");
+  });
+
   test("stops at the instance's limit, but a replacement only counts once", async () => {
     const project = await newProject("Full");
     // Random hex: gzip halves it at best, so about 600 KB stored, and a
@@ -400,6 +441,31 @@ describe("an error's stack with source maps", () => {
     ]);
     // The stack as the browser wrote it stays.
     expect(body.stack).toBe(STACK);
+  });
+
+  test("cuts a long source and name, and shows no context for a source of too many lines", async () => {
+    const project = await newProject("Long names");
+    const source = `src/${"s".repeat(1000)}.ts`;
+    const name = "n".repeat(1000);
+    const long = JSON.stringify({
+      version: 3,
+      sources: [source, "src/lines.ts"],
+      // A few hundred kilobytes of line breaks: millions of strings once split.
+      sourcesContent: ["const a = 1;\n", "\n".repeat(300_000)],
+      names: [name],
+      // Column 0: the first source's line 1, named; column 37: the second source's line 1.
+      mappings: "AAAAA,qCCAA",
+    });
+    expect((await upload(project.secretKey, long)).statusCode).toBe(201);
+    const stack = `TypeError: x
+    at a (https://shop.example${FILE}:1:1)
+    at b (https://shop.example${FILE}:1:38)`;
+    const body = await detailOf(project.id, anError(stack, RELEASE));
+    const [first, second] = body.frames;
+    expect(first.original.source).toBe(source.slice(0, 300));
+    expect(first.original.name).toBe(name.slice(0, 300));
+    expect(first.original.context).toEqual({ firstLine: 1, lines: ["const a = 1;", ""] });
+    expect(second.original).toMatchObject({ source: "src/lines.ts", line: 1, context: null });
   });
 
   test("says why when no map applies: no release, or none for its files", async () => {
@@ -515,7 +581,7 @@ describe("deleting source maps", () => {
 const entry = (bytes: number) => ({
   map: new TraceMap({ version: 3, sources: [], names: [], mappings: "" }),
   bytes,
-  lines: new Map<string, string[]>(),
+  lines: new Map<string, Uint32Array | null>(),
 });
 
 describe("the cache of maps read", () => {
@@ -528,6 +594,20 @@ describe("the cache of maps read", () => {
     cache.set("b", entry(50));
     expect(cache.get("a")).toBeDefined();
     expect(cache.get("b")).toBeDefined();
+  });
+
+  test("counts the line starts it finds for a map, and lets older maps go for them", () => {
+    const cache = new SourceMapCache(100);
+    const a = entry(40);
+    const b = entry(40);
+    cache.set("a", a);
+    cache.set("b", b);
+    cache.grow(b, 30);
+    expect(cache.bytes).toBe(70);
+    expect(cache.get("a")).toBeUndefined();
+    // An entry the cache no longer holds counts for nothing.
+    cache.grow(a, 1000);
+    expect(cache.bytes).toBe(70);
   });
 
   test("lets the least recently used maps go past its size, and keeps none too large", () => {
@@ -544,5 +624,38 @@ describe("the cache of maps read", () => {
     cache.set("huge", entry(101));
     expect(cache.get("huge")).toBeUndefined();
     expect(cache.bytes).toBe(80);
+  });
+});
+
+const mapWith = (fields: Record<string, unknown>) =>
+  JSON.stringify({ version: 3, sources: ["a.ts"], mappings: "AAAA", ...fields });
+
+describe("what a map may hold", () => {
+  const map = mapWith;
+
+  test("refuses too many or too long sources and names, and contents that are not text", () => {
+    const long = "a".repeat(MAX_MAP_ENTRY + 1);
+    expect(checkSourceMap(map({}))).not.toBeNull();
+    expect(checkSourceMap(map({ sources: [long] }))).toBeNull();
+    expect(checkSourceMap(map({ names: [long] }))).toBeNull();
+    expect(checkSourceMap(map({ names: [null] }))).toBeNull();
+    expect(checkSourceMap(map({ sources: Array(MAX_MAP_SOURCES + 1).fill("a") }))).toBeNull();
+    expect(checkSourceMap(map({ names: Array(MAX_MAP_NAMES + 1).fill("a") }))).toBeNull();
+    expect(checkSourceMap(map({ sourcesContent: ["x", "y"] }))).toBeNull();
+    expect(checkSourceMap(map({ sourcesContent: [123] }))).toBeNull();
+    expect(checkSourceMap(map({ sourcesContent: "x" }))).toBeNull();
+    expect(checkSourceMap(map({ sourcesContent: [null] }))).not.toBeNull();
+    expect(
+      checkSourceMap(
+        map({ sources: ["a.ts", "b.ts"], sourcesContent: ["x".repeat(MAX_MAP_CONTENT), "y"] }),
+      ),
+    ).toBeNull();
+  });
+
+  test("finds where lines start, after any line break, up to a limit", () => {
+    expect([...(lineStarts("a\r\nb\nc\rd") ?? [])]).toEqual([0, 3, 5, 7]);
+    expect([...(lineStarts("") ?? [])]).toEqual([0]);
+    expect(lineStarts("\n".repeat(9), 10)).not.toBeNull();
+    expect(lineStarts("\n".repeat(10), 10)).toBeNull();
   });
 });

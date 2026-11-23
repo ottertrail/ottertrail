@@ -9,9 +9,10 @@ import type { Auth } from "../auth/auth.ts";
 import { requireTrustedOrigin } from "../auth/origin.ts";
 import { requireSession } from "../auth/routes.ts";
 import { RELEASE_PATTERN } from "../collection/environment.ts";
+import { InFlight } from "../collection/in-flight.ts";
 import { isStorableText } from "../collection/normalize.ts";
 import type { CollectingProject, ProjectKeyCache } from "../collection/project-keys.ts";
-import { type RateLimit, TokenBucketLimiter } from "../collection/rate-limiter.ts";
+import { clientKey, type RateLimit, TokenBucketLimiter } from "../collection/rate-limiter.ts";
 import type { Database } from "../db/schema.ts";
 import type { ObjectStore } from "../storage/object-store.ts";
 import {
@@ -20,8 +21,11 @@ import {
   isSourcePath,
   listFiles,
   listReleases,
+  MAX_MAP_ENTRY,
   MAX_MAP_LINES,
+  MAX_MAP_NAMES,
   MAX_MAP_SEGMENTS,
+  MAX_MAP_SOURCES,
   MAX_SOURCE_MAP_BYTES,
   MAX_SOURCE_PATH,
   storedBytes,
@@ -75,15 +79,14 @@ export const sourceMapUploadRoutes: FastifyPluginCallback<{
   ipLimit?: RateLimit;
   /** Uploads this process works on at once: each holds its map in memory. */
   maxInFlight?: number;
-}> = (app, { db, store, projects, activity, limitBytes, ipLimit, maxInFlight = 4 }, done) => {
+  /** Of those, one project's at most, so one key's slow uploads cannot hold them all. */
+  maxInFlightPerProject?: number;
+}> = (app, options, done) => {
+  const { db, store, projects, activity, limitBytes, ipLimit } = options;
   const ipLimiter = new TokenBucketLimiter(ipLimit ?? { capacity: 200, refillPerSecond: 5 });
   /** The project each upload's key names, found before its body is read. */
   const projectOf = new WeakMap<FastifyRequest, CollectingProject>();
-  /** Uploads in progress, each counted once until its answer is sent or it is abandoned. */
-  const inFlight = new Set<FastifyRequest>();
-  const finished = async (request: FastifyRequest) => {
-    inFlight.delete(request);
-  };
+  const inFlight = new InFlight(options.maxInFlight ?? 4, options.maxInFlightPerProject ?? 2);
   /** Counts an upload whose project is known (activity/activity.ts); others are not. */
   const count = (request: FastifyRequest, outcome: IngestOutcome, items = 0) => {
     const project = projectOf.get(request);
@@ -127,7 +130,7 @@ export const sourceMapUploadRoutes: FastifyPluginCallback<{
               problem("unauthorized", "Send the project's secret key: Authorization: Bearer sk_…"),
             );
         }
-        const result = ipLimiter.take(request.ip);
+        const result = ipLimiter.take(clientKey(request.ip));
         if (!result.allowed) {
           return reply
             .code(429)
@@ -135,15 +138,12 @@ export const sourceMapUploadRoutes: FastifyPluginCallback<{
             .send(problem("rate_limited", "Too many requests from this address."));
         }
         if (store === null) return reply.code(503).send(NOT_CONFIGURED);
-        if (inFlight.size >= maxInFlight) {
+        if (!inFlight.take(request, reply)) {
           return reply
             .code(503)
             .header("retry-after", "2")
             .send(problem("busy", "Too many source maps are being stored. Try again."));
         }
-        // Taken before anything waits, so uploads arriving together cannot
-        // all pass the check; given back when the answer is sent.
-        inFlight.add(request);
         let project;
         try {
           project = await projects.findBySecret(secretKey);
@@ -154,129 +154,144 @@ export const sourceMapUploadRoutes: FastifyPluginCallback<{
         if (project === null) {
           return reply.code(401).send(problem("unknown_key", "No project has this secret key."));
         }
+        if (!inFlight.takeForProject(request, project.id)) {
+          activity.add(project.id, "source_maps", "refused_rate_limited", 0);
+          return reply
+            .code(429)
+            .header("retry-after", "2")
+            .send(
+              problem(
+                "busy",
+                "Too many of this project's source maps are being stored. Send fewer at once.",
+              ),
+            );
+        }
         projectOf.set(request, project);
         return undefined;
       },
-      onResponse: finished,
-      onRequestAbort: finished,
+      onResponse: inFlight.finished,
+      onRequestAbort: inFlight.finished,
       // The key was read before the body: a query or body Fastify refuses is the project's.
       onError: async (request, _reply, error) => {
         const status = error.validation === undefined ? (error.statusCode ?? 500) : 400;
         if (status >= 400 && status < 500) count(request, "refused_invalid");
       },
     },
-    async (request, reply) => {
-      const project = projectOf.get(request);
-      if (store === null || project === undefined) {
-        throw new Error("the upload's onRequest hook must find its project first");
-      }
+    // The slot is held until the map is stored.
+    async (request, reply) =>
+      inFlight.run(request, async () => {
+        const project = projectOf.get(request);
+        if (store === null || project === undefined) {
+          throw new Error("the upload's onRequest hook must find its project first");
+        }
 
-      const { release, path } = request.query;
-      if (!isSourcePath(path)) {
-        count(request, "refused_invalid");
-        return reply
-          .code(400)
-          .send(
-            problem(
-              "invalid_path",
-              `path is the minified file's path as a browser reports it, such as /assets/index-4f3a.js: no origin, query, or fragment, percent-encoded, at most ${MAX_SOURCE_PATH} characters.`,
-            ),
-          );
-      }
-      if (!isStorableText(release)) {
-        count(request, "refused_invalid");
-        return reply
-          .code(400)
-          .send(problem("invalid_release", "release contains an unpaired surrogate."));
-      }
-      if (!Buffer.isBuffer(request.body) || request.body.byteLength === 0) {
-        count(request, "refused_invalid");
-        return reply
-          .code(400)
-          .send(
-            problem(
-              "invalid_source_map",
-              "Send the source map as the body, with Content-Type: application/json.",
-            ),
-          );
-      }
-
-      const encoding = (request.headers["content-encoding"] ?? "identity").toLowerCase();
-      let body: Buffer;
-      if (encoding === "gzip") {
-        try {
-          body = gunzipSync(request.body, { maxOutputLength: MAX_SOURCE_MAP_BYTES });
-        } catch (error) {
+        const { release, path } = request.query;
+        if (!isSourcePath(path)) {
           count(request, "refused_invalid");
-          return error instanceof RangeError
-            ? reply
-                .code(413)
+          return reply
+            .code(400)
+            .send(
+              problem(
+                "invalid_path",
+                `path is the minified file's path as a browser reports it, such as /assets/index-4f3a.js: no origin, query, or fragment, percent-encoded, at most ${MAX_SOURCE_PATH} characters.`,
+              ),
+            );
+        }
+        if (!isStorableText(release)) {
+          count(request, "refused_invalid");
+          return reply
+            .code(400)
+            .send(problem("invalid_release", "release contains an unpaired surrogate."));
+        }
+        if (!Buffer.isBuffer(request.body) || request.body.byteLength === 0) {
+          count(request, "refused_invalid");
+          return reply
+            .code(400)
+            .send(
+              problem(
+                "invalid_source_map",
+                "Send the source map as the body, with Content-Type: application/json.",
+              ),
+            );
+        }
+
+        const encoding = (request.headers["content-encoding"] ?? "identity").toLowerCase();
+        let body: Buffer;
+        if (encoding === "gzip") {
+          try {
+            body = gunzipSync(request.body, { maxOutputLength: MAX_SOURCE_MAP_BYTES });
+          } catch (error) {
+            count(request, "refused_invalid");
+            return error instanceof RangeError
+              ? reply
+                  .code(413)
+                  .send(
+                    problem(
+                      "too_large",
+                      `A source map has at most ${sizeText(MAX_SOURCE_MAP_BYTES)}.`,
+                    ),
+                  )
+              : reply.code(400).send(problem("invalid_gzip", "The body is not valid gzip."));
+          }
+        } else if (encoding === "identity") {
+          body = request.body;
+        } else {
+          count(request, "refused_invalid");
+          return reply
+            .code(415)
+            .send(
+              problem(
+                "unsupported_encoding",
+                "Send the map as it is, or with Content-Encoding: gzip.",
+              ),
+            );
+        }
+
+        const text = body.toString("utf8");
+        if (checkSourceMap(text) === null) {
+          count(request, "refused_invalid");
+          return reply
+            .code(400)
+            .send(
+              problem(
+                "invalid_source_map",
+                `The body is not a source map Ottertrail reads: JSON with "version": 3, "sources", and "mappings" of base64 VLQ, at most ${MAX_MAP_LINES.toLocaleString("en")} lines, ${MAX_MAP_SEGMENTS.toLocaleString("en")} segments, ${MAX_MAP_SOURCES.toLocaleString("en")} sources, and ${MAX_MAP_NAMES.toLocaleString("en")} names of up to ${MAX_MAP_ENTRY.toLocaleString("en")} characters each, and "sourcesContent" of text, one per source at most. Index maps ("sections") are not supported.`,
+              ),
+            );
+        }
+
+        let result;
+        try {
+          result = await storeSourceMap(
+            { db, store, limitBytes },
+            { id: project.id },
+            release,
+            path,
+            text,
+          );
+        } catch (error) {
+          request.log.error({ err: error }, "could not store a source map");
+          count(request, "refused_unavailable");
+          return storageUnavailable(reply);
+        }
+        // A project deleted meanwhile has nothing left to count in.
+        if ("refused" in result && result.refused !== "no_project")
+          count(request, "refused_volume");
+        if ("refused" in result) {
+          return result.refused === "no_project"
+            ? reply.code(401).send(problem("unknown_key", "No project has this secret key."))
+            : reply
+                .code(409)
                 .send(
                   problem(
-                    "too_large",
-                    `A source map has at most ${sizeText(MAX_SOURCE_MAP_BYTES)}.`,
+                    "storage_limit",
+                    `The instance's source maps would pass its ${sizeText(limitBytes)} limit. Delete older releases' maps first.`,
                   ),
-                )
-            : reply.code(400).send(problem("invalid_gzip", "The body is not valid gzip."));
+                );
         }
-      } else if (encoding === "identity") {
-        body = request.body;
-      } else {
-        count(request, "refused_invalid");
-        return reply
-          .code(415)
-          .send(
-            problem(
-              "unsupported_encoding",
-              "Send the map as it is, or with Content-Encoding: gzip.",
-            ),
-          );
-      }
-
-      const text = body.toString("utf8");
-      if (checkSourceMap(text) === null) {
-        count(request, "refused_invalid");
-        return reply
-          .code(400)
-          .send(
-            problem(
-              "invalid_source_map",
-              `The body is not a source map Ottertrail reads: JSON with "version": 3, "sources", and "mappings" of base64 VLQ, at most ${MAX_MAP_LINES.toLocaleString("en")} lines and ${MAX_MAP_SEGMENTS.toLocaleString("en")} segments. Index maps ("sections") are not supported.`,
-            ),
-          );
-      }
-
-      let result;
-      try {
-        result = await storeSourceMap(
-          { db, store, limitBytes },
-          { id: project.id },
-          release,
-          path,
-          text,
-        );
-      } catch (error) {
-        request.log.error({ err: error }, "could not store a source map");
-        count(request, "refused_unavailable");
-        return storageUnavailable(reply);
-      }
-      // A project deleted meanwhile has nothing left to count in.
-      if ("refused" in result && result.refused !== "no_project") count(request, "refused_volume");
-      if ("refused" in result) {
-        return result.refused === "no_project"
-          ? reply.code(401).send(problem("unknown_key", "No project has this secret key."))
-          : reply
-              .code(409)
-              .send(
-                problem(
-                  "storage_limit",
-                  `The instance's source maps would pass its ${sizeText(limitBytes)} limit. Delete older releases' maps first.`,
-                ),
-              );
-      }
-      count(request, "accepted", 1);
-      return reply.code(result.replaced ? 200 : 201).send({ sourceMap: result.stored });
-    },
+        count(request, "accepted", 1);
+        return reply.code(result.replaced ? 200 : 201).send({ sourceMap: result.stored });
+      }),
   );
 
   done();
