@@ -3,12 +3,8 @@ import type { ClickHouseSettings } from "@clickhouse/client";
 import type { ClickHouseClient } from "./clickhouse.ts";
 
 /**
- * Inserts rows into one table, the values as JSONEachRow, never in SQL
- * text. An asynchronous insert, waiting for the write: ClickHouse gathers
- * many small requests into one part, and this returns only once that part
- * is written, so a caller that answers after it confirms stored data.
- * Events and telemetry arrive in small requests, which as plain inserts
- * would each make a part of their own.
+ * Async inserts combine small requests into fewer parts. Wait for the write
+ * before returning so callers acknowledge only stored data.
  */
 export async function insertRows(
   clickhouse: ClickHouseClient,

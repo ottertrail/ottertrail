@@ -89,22 +89,20 @@ export interface AppOptions extends Omit<FastifyServerOptions, "logger"> {
   timeouts?: { requestMs?: number; headersMs?: number; checkIntervalMs?: number };
   db: Kysely<Database>;
   /**
-   * Rate limits, location lookup, and clock for the collection endpoints,
-   * and the ClickHouse they store events in: the dashboard's unless
-   * `clickhouse` names another. Not served without a ClickHouse client.
+   * Uses the dashboard's ClickHouse client unless overridden.
+   * Collection routes require a ClickHouse client.
    */
   collection?: Omit<CollectionOptions, "db" | "clickhouse" | "activity"> & {
     clickhouse?: ClickHouseClient;
   };
   /**
-   * Logging; off when omitted. Tests pass a stream to read the log; it
-   * goes to stdout otherwise. Every line is masked first (server-log/redact.ts).
+   * Logging is off when omitted. Redact every line (server-log/redact.ts)
+   * before sending it to the supplied stream or stdout.
    */
   log?: { level: string; stream?: { write(line: string): void } };
   /**
-   * The Server log (server-log/): the buffer the API's lines go into, with
-   * the worker's from server-log/listener.ts, and the stream route's
-   * limits, which tests lower. Omitted, the route streams an empty buffer.
+   * Omitting the buffer gives an empty stream. Worker lines arrive through
+   * server-log/listener.ts; tests can lower stream limits.
    */
   serverLog?: {
     buffer?: ServerLogBuffer;
@@ -113,9 +111,8 @@ export interface AppOptions extends Omit<FastifyServerOptions, "logger"> {
     recheckMs?: number;
   };
   /**
-   * Dashboard sign-in (src/auth/auth.ts) and the instance's public URL.
-   * Without it the API serves only health, and event collection when
-   * `collection.clickhouse` is given, which is all some tests need.
+   * Without a dashboard, serve health and collection only. Collection still
+   * requires collection.clickhouse (src/auth/auth.ts).
    */
   dashboard?: {
     auth: Auth;
@@ -136,21 +133,14 @@ export interface AppOptions extends Omit<FastifyServerOptions, "logger"> {
     /** Emailed invitations and New links per owner or admin. */
     invitationEmailLimit?: RateLimit;
     /**
-     * Current-password tries per user, shared by every route that checks
-     * one: email and password changes, and handing over ownership.
+     * Share one per-user password limiter across email, password,
+     * and ownership changes.
      */
     passwordTryLimit?: RateLimit;
   };
-  /**
-   * The S3-compatible object store that holds source maps and session
-   * replays; null, or omitted, when the install has none, and both are off.
-   */
+  /** Source maps and replays are disabled when no object store is supplied. */
   objectStore?: ObjectStore | null;
-  /**
-   * The location database and data-center ranges the API has loaded, for
-   * the Settings page's status (enrichment/reload.ts). Omitted, the page
-   * reports neither file loaded.
-   */
+  /** Omitting this reports neither location file loaded (enrichment/reload.ts). */
   locationData?: { readonly loaded: LoadedLocationData };
   /** Source maps (docs/errors.md, "Source maps"): the instance's storage limit, and upload limits. */
   sourceMaps?: {
@@ -159,10 +149,7 @@ export interface AppOptions extends Omit<FastifyServerOptions, "logger"> {
     /** Uploads one process stores at once (source-maps/routes.ts). */
     maxInFlight?: number;
   };
-  /**
-   * Session replays (docs/session-replay.md): the instance's limit on what
-   * replays keep, and the collection limits, which tests lower.
-   */
+  /** Replay storage and collection limits (docs/session-replay.md). */
   replays?: {
     limitBytes: number;
     ipLimit?: RateLimit;
@@ -170,9 +157,8 @@ export interface AppOptions extends Omit<FastifyServerOptions, "logger"> {
     instanceLimit?: RateLimit;
   };
   /**
-   * Heatmaps' collection limits (heatmaps/routes.ts), which tests lower.
-   * Collected with the events' ClickHouse client. And the overlay's limits
-   * per client address (heatmaps/overlay-routes.ts).
+   * Heatmaps use the event collection's ClickHouse client (heatmaps/routes.ts).
+   * Overlay limits apply per client address (heatmaps/overlay-routes.ts).
    */
   heatmaps?: {
     ipLimit?: RateLimit;
@@ -188,9 +174,8 @@ export interface AppOptions extends Omit<FastifyServerOptions, "logger"> {
     maxInFlightPerProject?: number;
   };
   /**
-   * OTLP traces, logs, and metrics (docs/telemetry.md), stored in
-   * ClickHouse: the dashboard's client unless `clickhouse` names another.
-   * Not served without a ClickHouse client.
+   * Uses the dashboard's ClickHouse client unless overridden. OTLP routes
+   * require a client (docs/telemetry.md).
    */
   telemetry?: Partial<Omit<TelemetryOptions, "projects" | "now" | "budget" | "activity">>;
   /** POST /api/ai-calls (ai/ingest-routes.ts): its limit per client address and its requests in progress, which tests lower. */
@@ -242,17 +227,14 @@ export interface AppOptions extends Omit<FastifyServerOptions, "logger"> {
   /** Changes to the AI model prices per user (ai/model-routes.ts), which tests lower. */
   aiModels?: { changeLimit?: RateLimit };
   /**
-   * The ingestion counters (activity/activity.ts) the collection routes add
-   * to, flushed every 15 seconds and when the app closes; one of the app's
-   * own when omitted. Tests pass theirs to flush it when they choose.
+   * Flush every 15 seconds and on close (activity/activity.ts).
+   * Tests can supply counters to control flushing.
    */
   ingestActivity?: IngestActivity;
   /**
-   * What closes once the app's own close work is done: the database, the
-   * stores, and the rest the caller opened. Fastify runs `onClose` hooks
-   * last-added first, so a hook the caller adds after buildApp would run
-   * before the app's last ingestion counts are written, and close the
-   * database under them.
+   * Fastify runs onClose hooks in reverse registration order. Close external
+   * resources here, after the final ingestion counts are written, to avoid
+   * closing the database before the flush.
    */
   closeAfter?: () => Promise<void>;
   /** The built tracker, served at /t.js. Not served when omitted. */

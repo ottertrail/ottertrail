@@ -1,8 +1,4 @@
-/**
- * Command-line entry point: brings PostgreSQL's and then ClickHouse's
- * schema up to date. Run it as a deployment step before starting the API,
- * not from the API itself, so several API processes never race to migrate.
- */
+/** Run before starting the API to avoid concurrent schema migrations. */
 import { createClickHouse } from "./clickhouse/clickhouse.ts";
 import { applyTelemetryRetention, migrateClickHouse } from "./clickhouse/migrate.ts";
 import { loadConfig } from "./config.ts";
@@ -11,7 +7,7 @@ import { migrateToLatest } from "./db/migrate.ts";
 
 const config = loadConfig();
 const db = createDatabase({ connectionString: config.databaseUrl, maxConnections: 1 });
-// Bound to "default", which always exists: migrating creates Ottertrail's database.
+// Use "default" because Ottertrail's database may not exist yet.
 const clickhouse = createClickHouse(config.clickhouse, { database: "default" });
 
 function report(store: string, results: { status: string; migrationName: string }[]) {

@@ -1,25 +1,16 @@
 /**
- * What the API's and the worker's log lines never hold: secrets, and the
- * personal data reports keep apart from logs. Applied in the logger itself
- * (destination.ts, the worker's `log`), so stdout, `docker compose logs`,
- * and the Settings page's Server log all get the same masked line.
- *
- * Request lines record only the method and URL (requestLogFields in
- * app.ts): never headers, so Authorization and Cookie never reach a log.
- * These patterns catch what a URL or an error's text can still carry.
+ * Redact in the logger so stdout, container logs, and the Server log agree.
+ * requestLogFields in app.ts excludes headers; these patterns catch secrets
+ * and personal data still present in URLs and error text.
  */
 
 import { isLogRecord, type LogRecord } from "./buffer.ts";
 
-/** What a masked value becomes. */
 export const MASK = "…";
 
 /**
- * Query parameters whose value is a secret wherever they appear: a
- * one-time token (Better Auth's email verification and reset links), a
- * project key (`/api/replays?key=`, a public key, masked anyway), an OAuth
- * code or state, a signature, a password, a session. Tested on the name
- * after percent-decoding, as a server reads it, so `%74oken=` is masked too.
+ * Mask secret parameters, including public project keys. Match decoded names
+ * so percent-encoded names such as `%74oken` are covered.
  */
 const SECRET_NAME =
   /token|secret|passw(?:or)?d|pwd|signature|sig|key|code|state|auth|session|credential/i;
@@ -41,7 +32,6 @@ function decodeName(name: string): string {
   );
 }
 
-/** How a text's query parameters are read. */
 interface ParameterRules {
   /** Characters a name starts after: `&` also ends a name not yet closed by `=`. */
   separator: RegExp;

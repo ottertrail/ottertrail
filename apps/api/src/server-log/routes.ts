@@ -10,9 +10,8 @@ import { requireSession, toHeaders } from "../auth/routes.ts";
 import type { Database } from "../db/schema.ts";
 import type { ServerLogBuffer, ServerLogEntry } from "./buffer.ts";
 
-/** Streams open at once, every viewer together; past it a new one is told and closed. */
 export const SERVER_LOG_MAX_STREAMS = 5;
-/** A comment line this often keeps proxies and the browser from taking a quiet stream for a dead one. */
+/** Heartbeat comments prevent idle stream timeouts. */
 export const SERVER_LOG_HEARTBEAT_MS = 15_000;
 /** How often an open stream checks its session and the owner's permission again. */
 export const SERVER_LOG_RECHECK_MS = 30_000;
@@ -39,10 +38,8 @@ export interface ServerLogRouteOptions {
   recheckMs?: number;
 }
 
-/** What a stream that never subscribed stops. */
 const nothing = () => undefined;
 
-/** One event of the stream, as the EventSource format writes it. */
 function event(name: string | null, data: string, id?: string): string {
   return `${id === undefined ? "" : `id: ${id}\n`}${name === null ? "" : `event: ${name}\n`}data: ${data}\n\n`;
 }
@@ -89,7 +86,6 @@ export const serverLogRoutes: FastifyPluginCallback<ServerLogRouteOptions> = (
   const signedIn = requireSession(auth);
   const owner = requirePermission(db, "settings");
   const fromDashboard = requireSameOriginRead(trustedOrigins);
-  /** Every open stream, and what cuts it off. */
   const streams = new Map<ServerResponse, () => void>();
 
   app.addHook("preClose", (finish) => {

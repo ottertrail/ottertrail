@@ -29,41 +29,24 @@ import {
 } from "./state.ts";
 
 /**
- * The worker's backups (docs/deployment.md, "Backups"), every BACKUP_TICK_MS:
- *
- * 1. Reports its destination (BACKUP_S3_*, without the secret) or what is
- *    wrong with it to PostgreSQL, for the Backups tab, when that changed
- *    or an hour after it last did; and runs a Test connection the owner
- *    asked for, storing each step's result. On its first tick, and after
- *    each run and Test connection, it stores the folder's listing.
- * 2. Marks a run whose worker stopped (no heartbeat for 10 minutes) as failed.
- * 3. Takes one piece of work, in this order: a Test restore the owner asked
- *    for, a "Back up now", the daily time when it is due, or the one retry
- *    of a failed backup an hour after it failed. Only one runs at a time,
- *    in any number of workers (state.ts).
- * 4. Runs it (run.ts), touching its heartbeat each minute, and records how
- *    it ended. A failed backup is tried once more RETRY_AFTER_MS later,
- *    not again and again; after a backup that worked, retention deletes
- *    the folder's backups past the days to keep.
- *
- * Failures show on the Backups tab, and as storage warnings, which notify
- * the channels chosen for them (storage/warning-job.ts).
+ * Run backups and restore tests one at a time across workers (state.ts;
+ * docs/deployment.md, "Backups"). Priority: requested restore test, manual backup,
+ * daily backup, then one retry after RETRY_AFTER_MS. Keep the destination secret
+ * out of PostgreSQL reports. Failures feed storage warnings (storage/warning-job.ts).
  */
 
-/** How often the worker looks for due work: a "Back up now" waits at most this long. */
+/** Manual backups can wait this long before starting. */
 export const BACKUP_TICK_MS = 30_000;
 /** A failed backup is tried once more after this. */
 export const RETRY_AFTER_MS = 60 * 60 * 1000;
-/** An unchanged destination is reported again this long after the last report: a heartbeat. */
+/** Refresh unchanged destination reports as a heartbeat. */
 export const REPORT_EVERY_MS = 60 * 60 * 1000;
 /**
- * A report another worker wrote that differs from this worker's is written
- * over at most this often: two workers with different BACKUP_S3_* don't
- * rewrite the row on every tick.
+ * Throttle conflicting reports so workers with different BACKUP_S3_*
+ * settings do not overwrite each other on every tick.
  */
 export const CONTESTED_REPORT_MS = 10 * 60 * 1000;
 
-/** Without BACKUP_S3_*: what a run and Test connection say. */
 export const NO_DESTINATION =
   "No backup destination. Set the BACKUP_S3_* variables in the server's .env, then restart the worker.";
 
@@ -100,11 +83,9 @@ export class BackupJob {
   readonly #heartbeatMs: number;
   #abort = new AbortController();
   #failing = false;
-  /** Whether this worker stored the listing yet: once on start, then after changes. */
   #listed = false;
-  /** When this worker last wrote its report; null before it has. */
   #reportedAt: Date | null = null;
-  /** Whether it logged its configuration problem: once, at its first report. */
+  /** Log configuration errors once, at the first report. */
   #problemLogged = false;
 
   constructor(options: BackupJobOptions) {
@@ -143,7 +124,7 @@ export class BackupJob {
     const now = this.#now();
     const stale = await failStaleRuns(db, now);
     if (stale > 0) this.#options.log("warn", "worker stopped; backup run marked failed");
-    // A backup a worker's stop cut off is tried once more, now: the day is not skipped.
+    // Retry interrupted backups immediately so a restart does not skip the day.
     if (await retryStoppedBackup(db, now)) {
       this.#options.log("info", "retrying backup interrupted by worker shutdown");
     }
@@ -169,7 +150,6 @@ export class BackupJob {
       }
       if (work === null) return null;
       const id = await startRun(trx, work.kind, work.trigger, now);
-      // Another run is under way: the request waits for the next tick.
       if (id === null) return null;
       const slot = dueSlot(now, settings, timeZone);
       await trx
@@ -193,7 +173,6 @@ export class BackupJob {
     return claimed.work;
   }
 
-  /** The destination's non-secret parts, or the problem in words. */
   #reportNow(): { destination: DestinationReport | null; problem: string | null } {
     const { destination } = this.#options;
     if (destination === null) return { destination: null, problem: null };
@@ -202,11 +181,9 @@ export class BackupJob {
   }
 
   /**
-   * Writes what this worker has to PostgreSQL: when nothing is there yet;
-   * when the same report is REPORT_EVERY_MS old (a heartbeat); and when
-   * another worker's report differs, at most every CONTESTED_REPORT_MS. Of
-   * several workers, the last write wins. Its configuration problem is
-   * logged once: the variables don't change while it runs.
+   * Refresh reports every REPORT_EVERY_MS; throttle conflicts with
+   * CONTESTED_REPORT_MS. Last write wins. Log configuration errors once
+   * because the environment does not change during the process.
    */
   async #report(): Promise<void> {
     const { db } = this.#options;
@@ -242,7 +219,6 @@ export class BackupJob {
       .execute();
   }
 
-  /** A client for the destination, or why there is none. */
   #client(): { destination: Destination; client: S3Client } | { problem: string } {
     const { destination } = this.#options;
     if (destination === null) return { problem: NO_DESTINATION };
@@ -397,7 +373,6 @@ export class BackupJob {
     }
   }
 
-  /** The saved settings, with the destination and its client, or why there is none. */
   async #destination() {
     const settings = await readBackupSettings(this.#options.db);
     const target = this.#client();
@@ -511,7 +486,7 @@ export class BackupJob {
   }
 }
 
-/** Whether two reports name the same destination: PostgreSQL's JSON may order keys its own way. */
+/** Compare fields because PostgreSQL JSON can reorder keys. */
 function sameDestination(a: DestinationReport | null, b: DestinationReport | null): boolean {
   if (a === null || b === null) return a === b;
   return (

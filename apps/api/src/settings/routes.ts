@@ -19,12 +19,11 @@ import {
   updateInstanceSettings,
 } from "./settings.ts";
 
-/** The settings as the dashboard gets them: the icon as its address. */
+/** Expose the icon as a URL. */
 function view({ avatarKey, ...settings }: InstanceSettings) {
   return { settings: { ...settings, avatarUrl: avatarUrlOf(avatarKey) } };
 }
 
-/** A file's last recorded update, as the dashboard gets it. */
 function updateView(status: UpdateStatus | null) {
   if (status === null) return null;
   return {
@@ -41,12 +40,8 @@ function updateView(status: UpdateStatus | null) {
 const iso = (date: Date | null) => date?.toISOString() ?? null;
 
 /**
- * The instance's settings (settings.ts), for the owner only (docs/access.md):
- * GET reads them; PATCH changes the name, the timezone, or whether the
- * worker updates the location data on its own; GET /settings/location-data
- * says what the API has loaded and what the last updates did. A changed timezone moves where days
- * start in every report, past ones included, and starts new visitor IDs
- * for the rest of the day, so the dashboard says so before saving.
+ * Owner-only settings (docs/access.md). Changing the timezone shifts report
+ * day boundaries, including past reports, and restarts visitor IDs for today.
  */
 export const settingsRoutes: FastifyPluginCallback<{
   db: Kysely<Database>;
@@ -69,7 +64,7 @@ export const settingsRoutes: FastifyPluginCallback<{
     const dataCenters = loaded?.dataCenters ?? null;
     const status = await readUpdateStatus(db);
     return {
-      // The server's clock: the page measures "15 minutes ago" from it, not the browser's.
+      // Use server time for relative dates to avoid browser clock skew.
       now: new Date().toISOString(),
       geoSource: loaded?.geoSource ?? "database",
       locations: {
@@ -116,7 +111,7 @@ export const settingsRoutes: FastifyPluginCallback<{
               pattern: "\\S",
             },
             timeZone: { type: "string", minLength: 1, maxLength: 100 },
-            // Not `type: "boolean"`: Fastify would turn null, 0, "" and "false" into false.
+            // Fastify's boolean coercion would accept null, 0, "", and "false" as false.
             updateLocationData: { enum: [true, false] },
           },
         },
@@ -131,8 +126,7 @@ export const settingsRoutes: FastifyPluginCallback<{
         }
       }
       const name = request.body.name?.trim();
-      // Visitor IDs read the timezone through the same cache, so a new one
-      // starts at once in this process, and within seconds in the others.
+      // Invalidate the timezone cache for visitor IDs immediately here; other processes refresh within seconds.
       await updateInstanceSettings(db, {
         ...(name === undefined ? {} : { name }),
         ...(timeZone === undefined ? {} : { timeZone }),

@@ -8,17 +8,11 @@ import { Sealer } from "../auth/sealer.ts";
 const KEY_BINDING = "backups: backup key";
 
 /**
- * The backup key, an age X25519 identity ("AGE-SECRET-KEY-1…"), sealed
- * with a key derived from AUTH_SECRET (auth/sealer.ts), as queued account
- * email links are. The owner can view and download it (backups/routes.ts),
- * and the worker opens it to sign each manifest and to check a backup
- * (Test restore). Backups are encrypted to its public half, the recipient
- * ("age1…"), which is not secret.
- *
- * Whoever has a database dump and AUTH_SECRET can open it; with a dump
- * alone, no one. A changed AUTH_SECRET makes it unreadable: the Backups
- * tab then offers a new key. The destination's keys are not here: they
- * are the worker's BACKUP_S3_* (config.ts).
+ * Seal the age X25519 identity with AUTH_SECRET (auth/sealer.ts). The worker
+ * uses it to authenticate manifests and test restores; encryption uses the
+ * public recipient. A database dump alone cannot open the key, but a dump
+ * and AUTH_SECRET can. Changing AUTH_SECRET makes it unreadable.
+ * Destination credentials stay in BACKUP_S3_* (config.ts; backups/routes.ts).
  */
 export class BackupSecrets {
   readonly #sealer: Sealer;
@@ -37,10 +31,7 @@ export class BackupSecrets {
   }
 }
 
-/**
- * JSON with every object's keys sorted: the bytes a manifest's MAC is
- * worked out over, the same however the JSON was written.
- */
+/** Sort object keys so equivalent manifest JSON produces the same MAC. */
 export function canonicalJson(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
   if (typeof value === "object" && value !== null) {
@@ -53,11 +44,9 @@ export function canonicalJson(value: unknown): string {
 }
 
 /**
- * A backup manifest's MAC: HMAC-SHA256 of its canonical JSON (without
- * `mac`), under a key derived from the backup key by HKDF. age needs only
- * the public recipient to encrypt, which the manifest names, so anyone who
- * can write to the bucket could make a backup that decrypts; only the
- * holder of the key can make one whose MAC checks out.
+ * Authenticate canonical manifest JSON without `mac` using HMAC-SHA256
+ * and an HKDF-derived key. The public age recipient lets anyone encrypt;
+ * the MAC proves the backup key holder made the manifest.
  */
 export function manifestMac(identity: string, manifest: Record<string, unknown>): string {
   const { mac: _mac, ...rest } = manifest;
@@ -67,7 +56,6 @@ export function manifestMac(identity: string, manifest: Record<string, unknown>)
   return `hmac-sha256:${createHmac("sha256", key).update(canonicalJson(rest)).digest("hex")}`;
 }
 
-/** Whether a manifest carries the MAC the backup key gives it. */
 export function manifestMacValid(identity: string, manifest: Record<string, unknown>): boolean {
   const given = manifest.mac;
   if (typeof given !== "string") return false;
@@ -76,7 +64,6 @@ export function manifestMacValid(identity: string, manifest: Record<string, unkn
   return actual.length === expected.length && timingSafeEqual(actual, expected);
 }
 
-/** A new backup key: an age X25519 identity and its recipient. */
 export async function makeBackupKey(): Promise<{ identity: string; recipient: string }> {
   const identity = await generateX25519Identity();
   return { identity, recipient: await identityToRecipient(identity) };
@@ -110,7 +97,6 @@ export function keyFileText({
   ].join("\n");
 }
 
-/** The file's name when downloaded. */
 export function keyFileName(instanceName: string): string {
   const slug = instanceName
     .toLowerCase()

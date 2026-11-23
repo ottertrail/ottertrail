@@ -4,12 +4,8 @@ import type { Database } from "../db/schema.ts";
 import { MAX_CHANNELS } from "../notifications/channels.ts";
 import { isWarningId, type WarningId, type WarningLevel } from "./warnings.ts";
 
-/**
- * What PostgreSQL keeps about storage warnings (migration 0010): the
- * channels that get them, and the warnings that are on.
- */
+/** Storage warning state is defined in migration 0010. */
 
-/** The most channels the setting takes: every channel the instance may have. */
 export const MAX_WARNING_CHANNELS = MAX_CHANNELS;
 
 /** The channels that get storage warnings, oldest first. */
@@ -24,18 +20,14 @@ export async function readWarningChannels(db: Kysely<Database>): Promise<string[
   return rows.map((row) => row.channel_id);
 }
 
-/**
- * Replaces the channels that get storage warnings. Refused, with the IDs,
- * when one is not a channel of the instance (deleted meanwhile, or never
- * one): nothing changes then.
- */
+/** Unknown channel IDs leave the selection unchanged. */
 export async function setWarningChannels(
   db: Kysely<Database>,
   channelIds: readonly string[],
 ): Promise<{ unknown: string[] } | null> {
   const ids = [...new Set(channelIds.map((id) => id.toLowerCase()))];
   return db.transaction().execute(async (trx) => {
-    // Locked, so a channel cannot be deleted between the check and the insert.
+    // Prevent channel deletion between validation and insertion.
     const found =
       ids.length === 0
         ? []
@@ -64,7 +56,7 @@ export interface ActiveWarning {
   startedAt: Date;
 }
 
-/** The warnings that are on; in a transaction, locked until it ends. */
+/** With lock enabled, hold row locks until the transaction ends. */
 export async function readActiveWarnings(
   db: Kysely<Database> | Transaction<Database>,
   { lock = false }: { lock?: boolean } = {},

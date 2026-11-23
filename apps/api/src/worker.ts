@@ -1,64 +1,8 @@
 /**
- * The worker: background work, in its own process beside the API.
- *
- * - Deleting a deleted project's events from ClickHouse, and its source
- *   maps and replays from the object store, every minute
- *   (clickhouse/delete-events.ts).
- * - Joining each session replay's chunks into one object every few
- *   seconds, with what the Replays page lists and its timeline, then
- *   finding each new replay's error in ClickHouse (replays/link.ts), and
- *   deleting replays past their 30 days with retention (replays/replays.ts).
- * - Running due uptime checks every few seconds, at most 20 requests at
- *   once, and recording their state, incidents, and results
- *   (uptime/scheduler.ts).
- * - Evaluating alert rules (alerts/evaluator.ts): a check's rules as soon
- *   as it changes state or shows a new certificate, and every minute the
- *   check-down and error rules of every project, recording each alert
- *   with its notification; and, on a loop of their own every few seconds,
- *   the telemetry rules due (each once a minute, taken by one worker).
- * - Sending due notifications every few seconds, at most 10 at once, by
- *   email and webhook, retrying failures for about an hour, and deleting
- *   deliveries past their 30 days every hour (notifications/sender.ts).
- * - Sending account email every few seconds, with SMTP only: reset links,
- *   "password changed" notices, invitations, and email-change notices,
- *   retried as alert deliveries are, each row deleted once sent or given
- *   up (notifications/account-emails.ts).
- * - At start, every 6 hours, sooner after a failure while a file is
- *   missing, and within a minute of the setting being turned on:
- *   downloading a new location database (monthly) and new data-center
- *   ranges (weekly) when they are due and the instance's "Update location
- *   data automatically" setting is on, one updater at a time
- *   (enrichment/updates.ts). The API loads them within minutes
- *   (enrichment/reload.ts).
- * - At start and every 5 minutes: measuring what fills the disk, setting
- *   the stack's Garage bucket quota to the budgets plus 10% when it
- *   differs, and notifying the channels the "Storage warnings" setting
- *   names when a storage warning starts or ends (storage/warning-job.ts).
- * - Every 30 seconds: the scheduled backup when its daily time is due, an
- *   owner's "Back up now", "Test restore", or "Test connection", and the
- *   one retry of a failed backup (backups/job.ts): each backup encrypted
- *   and uploaded to the S3 bucket BACKUP_S3_* names, one at a time in any
- *   number of workers. Only the worker reads BACKUP_S3_*: it reports the
- *   destination, without the secret, and the folder's listing to
- *   PostgreSQL for the Backups tab.
- * - Every minute: fetching the favicon of projects whose first allowed
- *   site changed, or was last fetched a week ago, as their default icon,
- *   with the object store only (avatars/favicons.ts).
- * - At start and every few hours: finding projects ClickHouse still holds
- *   events of but PostgreSQL no longer knows, deleting events older than
- *   each project's retention (retention/retention.ts),
- *   and taking deleted rows off ClickHouse's disk.
- *
- * - At start and daily: deleting the Activity tab's ingestion counts
- *   older than 7 days (activity/activity.ts).
- *
- * - Each log line also goes to the API, for the Settings page's Server log:
- *   a NOTIFY on a connection of its own, at most 20 lines a second, never
- *   stored (server-log/relay.ts).
- *
- * All are safe to repeat and to run in two workers at once (uptime checks
- * and deliveries are taken with FOR UPDATE SKIP LOCKED), so plain timers
- * are enough; a job queue comes with work that needs one.
+ * Jobs are safe to repeat across workers; uptime checks and deliveries use
+ * FOR UPDATE SKIP LOCKED. Timers are sufficient without a separate job queue.
+ * Only the worker reads BACKUP_S3_*; the API receives a report without secrets
+ * (backups/job.ts). Worker logs reach the API through server-log/relay.ts.
  */
 import { pruneIngestActivity } from "./activity/activity.ts";
 import { ALERT_TICK_MS, AlertEvaluator } from "./alerts/evaluator.ts";
@@ -98,23 +42,19 @@ import { STORAGE_CHECK_INTERVAL_MS, StorageWarningJob } from "./storage/warning-
 import { CHECK_TICK_MS, CheckScheduler } from "./uptime/scheduler.ts";
 import { OTTERTRAIL_VERSION } from "./version.ts";
 
-/**
- * How often retention runs, with the search for forgotten projects and the
- * removal of deleted rows from disk. Expired events wait at most this long.
- */
+/** Expired events can wait this long for retention and disk cleanup. */
 export const RETENTION_INTERVAL_MS = 6 * 60 * 60 * 1000;
 
-/** How often a deleted project's events are deleted from ClickHouse: at most this late. */
+/** Deleted project data can wait this long for ClickHouse cleanup. */
 export const PURGE_INTERVAL_MS = 60 * 1000;
 
-/** How often the Activity tab's counts past their 7 days are deleted. */
 export const ACTIVITY_PRUNE_INTERVAL_MS = 24 * 60 * 60 * 1000;
 
-/** How often finished replays are joined: how long one waits to be seen. */
+/** Finished replays can wait this long before appearing. */
 export const REPLAY_INTERVAL_MS = 10_000;
 
 const config = loadConfig();
-// Before anything logs: the Server log's copy of each line, to the API.
+// Start relaying before the first log line.
 const relay = new WorkerLogRelay({ connectionString: config.databaseUrl });
 const db = createDatabase({
   connectionString: config.databaseUrl,
@@ -127,11 +67,7 @@ const db = createDatabase({
 const clickhouse = createClickHouse(config.clickhouse);
 const objectStore = config.objectStore === null ? null : s3ObjectStore(config.objectStore);
 
-/**
- * One JSON line per message, like the API's log, with secrets masked
- * (server-log/redact.ts); and the same line to the Server log, which never
- * fails or slows this.
- */
+/** Redact before writing to stdout and the Server log (server-log/redact.ts). */
 function log(level: "info" | "warn" | "error", msg: string, fields: Record<string, unknown> = {}) {
   const { value } = redactRecord({ level, time: Date.now(), name: "worker", msg, ...fields });
   console.log(JSON.stringify(value));
@@ -141,9 +77,8 @@ function log(level: "info" | "warn" | "error", msg: string, fields: Record<strin
 let stopping = false;
 
 /**
- * Runs `job` now and then every `intervalMs` after each run ends, until
- * shutdown. Returns what stops it: the waiting timer is cleared, and a run
- * in progress finishes first.
+ * Wait intervalMs after each run finishes. Shutdown clears the timer
+ * and waits for any active run.
  */
 function every(intervalMs: number, job: () => Promise<unknown>): () => Promise<void> {
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -171,7 +106,7 @@ const stopPurging = every(PURGE_INTERVAL_MS, async () => {
   }
 });
 
-/** Whether the last join failed: an outage is logged once. */
+/** Log an outage once until recovery. */
 let replaysFailing = false;
 
 const stopReplays = every(REPLAY_INTERVAL_MS, async () => {
@@ -212,7 +147,7 @@ const stopReplays = every(REPLAY_INTERVAL_MS, async () => {
   }
 });
 
-/** Whether the last search for replays' errors failed: a ClickHouse outage is logged once. */
+/** Log a ClickHouse outage once until recovery. */
 let linkingFailing = false;
 
 const stopLinking = every(REPLAY_INTERVAL_MS, async () => {
@@ -260,10 +195,9 @@ const checks = new CheckScheduler({
 });
 
 const stopAlerts = every(ALERT_TICK_MS, () => alerts.tick());
-// Telemetry rules due, every few seconds, on a loop of their own.
 const stopTelemetryAlerts = every(TELEMETRY_TICK_MS, () => alerts.telemetryTick());
 
-/** Whether the last look for due checks failed: an outage is logged once. */
+/** Log an outage once until recovery. */
 let checksFailing = false;
 
 const stopChecks = every(CHECK_TICK_MS, async () => {
@@ -281,7 +215,7 @@ const stopChecks = every(CHECK_TICK_MS, async () => {
 const mailer = config.email === null ? null : smtpMailer(config.email);
 const deliveries = new DeliverySender({ db, mailer, policy, log });
 
-/** Account email, apart from alert deliveries; links start with PUBLIC_URL. */
+/** Account links use PUBLIC_URL. */
 // Queued links are sealed with a key from AUTH_SECRET, which the API uses too.
 const accountEmails = new AccountEmailSender({
   db,
@@ -306,7 +240,7 @@ if (mailer === null) {
   );
 }
 
-/** Whether the last look for due account emails failed: an outage is logged once. */
+/** Log an outage once until recovery. */
 let accountEmailsFailing = false;
 
 const stopAccountEmails = every(DELIVERY_TICK_MS, async () => {
@@ -322,7 +256,7 @@ const stopAccountEmails = every(DELIVERY_TICK_MS, async () => {
   }
 });
 
-/** Whether the last look for due deliveries failed: an outage is logged once. */
+/** Log an outage once until recovery. */
 let deliveriesFailing = false;
 
 const stopDeliveries = every(DELIVERY_TICK_MS, async () => {
@@ -396,9 +330,8 @@ const stopRetention = every(RETENTION_INTERVAL_MS, async () => {
 });
 
 /**
- * The location database and the data-center ranges: each downloaded when
- * due, checked, and swapped in; a failure keeps the old file, is recorded
- * for the Settings page, and waits for the next round, hours later.
+ * Failed location updates keep the old files and retry next round
+ * (enrichment/updates.ts).
  */
 const locationData = new LocationDataJob({
   db,
@@ -409,7 +342,6 @@ const locationData = new LocationDataJob({
 });
 const stopLocationData = every(SETTING_POLL_MS, () => locationData.tick());
 
-/** What fills the disk, the Garage quota, and storage warnings to the channels. */
 const storage = new StorageWarningJob({
   db,
   // Garage's admin token goes only to its client: never logged.
@@ -420,10 +352,8 @@ const storage = new StorageWarningJob({
 const stopStorage = every(STORAGE_CHECK_INTERVAL_MS, () => storage.tick());
 
 /**
- * Scheduled backups, to the bucket BACKUP_S3_* names: read here only, never
- * by the API. A problem with them is logged and shown on the Backups tab,
- * and stops only the backups. The backup key is sealed with a key from
- * AUTH_SECRET, as the API seals it.
+ * Read BACKUP_S3_* only here. Configuration errors stop backups alone.
+ * Seal the backup key with AUTH_SECRET, as the API does (backups/job.ts).
  */
 const backupDestination = loadBackupS3(process.env, config.objectStore);
 const backups = new BackupJob({
@@ -436,7 +366,6 @@ const backups = new BackupJob({
 });
 const stopBackups = every(BACKUP_TICK_MS, () => backups.tick());
 
-/** Projects' default icons: their site's favicon, through the outbound address rules. */
 // Never private addresses, whatever the uptime checks may reach.
 const favicons = new FaviconJob({
   db,
@@ -446,7 +375,7 @@ const favicons = new FaviconJob({
   log,
 });
 
-/** Whether the last look for due favicons failed: an outage is logged once. */
+/** Log an outage once until recovery. */
 let faviconsFailing = false;
 
 const stopFavicons = every(FAVICON_TICK_MS, async () => {

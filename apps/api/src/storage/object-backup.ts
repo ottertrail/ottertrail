@@ -38,11 +38,11 @@ import { s3Client } from "./object-store.ts";
 export const MANIFEST_FILE = "manifest.json";
 const OBJECTS_FOLDER = "objects";
 export const OBJECTS_FORMAT = "ottertrail-objects";
-/** Objects copied at the same time: enough to hide a store's latency. */
+/** Concurrent copies hide object-store latency. */
 const CONCURRENCY = 8;
-/** Tries of each upload: the SDK never retries a request whose body is a stream. */
+/** The SDK cannot retry a stream body; reopen the file for each attempt. */
 const UPLOAD_ATTEMPTS = 4;
-/** How long a restore waits for the bucket to answer: a store just started creates it. */
+/** Wait for newly started stores to create the bucket. */
 const BUCKET_WAIT_MS = 60_000;
 
 export const objectManifestSchema = z.object({
@@ -54,7 +54,7 @@ export const objectManifestSchema = z.object({
   objects: z.array(
     z.object({
       key: z.string().min(1),
-      // Only names this module writes: nothing outside the folder.
+      // Restrict files to this folder.
       file: z.string().regex(/^objects\/[0-9]+$/),
       size: z.number().int().nonnegative(),
       contentType: z.string(),
@@ -70,10 +70,9 @@ export type CheckedEntry = ManifestEntry & { md5: string };
 
 export interface ObjectBackupOptions {
   /**
-   * Only keys that start with this; tests use it to keep to their own
-   * objects. By default, the store's own prefixes (OBJECT_PREFIXES):
-   * `replays/`, `source-maps/`, `avatars/`, and `heatmap-snapshots/`, never other keys a shared bucket holds,
-   * such as scheduled backups.
+   * Restrict keys to OBJECT_PREFIXES by default: `replays/`, `source-maps/`,
+   * `avatars/`, and `heatmap-snapshots/`. Shared buckets may also hold backups.
+   * Tests can select an isolated prefix.
    */
   prefix?: string;
   /** Keys asked for per listing page; S3's most, 1,000, unless a test needs pages. */
@@ -206,7 +205,6 @@ async function downloadObject(
           yield chunk;
         }
       },
-      // wx: never over a file that is already there.
       createWriteStream(path.join(dir, file), { flags: "wx", mode: 0o600 }),
     );
   } catch (error) {
@@ -253,11 +251,9 @@ export async function readObjectManifest(dir: string): Promise<ObjectManifest> {
 }
 
 /**
- * Everything a restore can check before it changes anything: the
- * manifest, every file against it (a regular file, its size, its SHA-256),
- * that the instance has an object store when the backup holds objects, and
- * that the bucket answers. deploy/restore.sh runs it before it touches the
- * databases; restoreObjects runs it again.
+ * Validate the manifest, regular files, sizes, SHA-256 hashes, and bucket
+ * before changing data. deploy/restore.sh checks before touching databases;
+ * restoreObjects checks again.
  */
 export async function checkObjectBackup(
   config: ObjectStoreConfig | null,
@@ -279,9 +275,8 @@ export async function checkObjectBackup(
 }
 
 /**
- * Puts every object of `dir`'s manifest back under its key and content
- * type, after checkObjectBackup, so a damaged backup changes nothing. An
- * object already in the store under the same key is replaced.
+ * Validate first so a damaged backup changes nothing. Existing objects
+ * with the same keys are overwritten.
  */
 export async function restoreObjects(
   config: ObjectStoreConfig | null,
@@ -310,7 +305,7 @@ async function checkFile(dir: string, entry: ManifestEntry): Promise<CheckedEntr
   } catch (error) {
     throw new Error(`${entry.file} (${entry.key}) is missing`, { cause: error });
   }
-  // lstat: a link is refused, never followed out of the folder.
+  // Reject symlinks to prevent reads outside the folder.
   if (!info.isFile()) throw new Error(`${entry.file} (${entry.key}) is not a regular file`);
   if (info.size !== entry.size) {
     throw new Error(`${entry.file} (${entry.key}) has ${info.size} bytes, not ${entry.size}`);
@@ -327,7 +322,6 @@ async function checkFile(dir: string, entry: ManifestEntry): Promise<CheckedEntr
   return { ...entry, md5: md5.digest("base64") };
 }
 
-/** Waits until the bucket answers, up to `waitMs`. */
 async function waitForBucket(config: ObjectStoreConfig, waitMs: number): Promise<void> {
   const client = s3Client(config);
   const deadline = Date.now() + waitMs;
@@ -410,26 +404,23 @@ async function putFile(
   }
 }
 
-/** Whether trying again may help: no answer, a server error, or too many requests. */
 function retryable(error: unknown): boolean {
   if (!(error instanceof S3ServiceException)) return true;
   const status = error.$metadata.httpStatusCode;
   return status === undefined || status >= 500 || status === 429;
 }
 
-/** Runs `run` on every item, at most `limit` at a time; the results in order. */
+/** Preserve result order while limiting concurrency. */
 async function mapLimit<T, R>(
   items: readonly T[],
   limit: number,
   run: (item: T, index: number) => Promise<R>,
 ): Promise<R[]> {
   const results = Array.from<R>({ length: items.length });
-  // One iterator for all the workers: each item goes to one of them.
   const queue = items.entries();
   let failed = false;
   async function worker(): Promise<void> {
     for (const [index, item] of queue) {
-      // After a failure, start nothing more.
       if (failed) return;
       try {
         results[index] = await run(item, index);

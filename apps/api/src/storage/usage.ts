@@ -143,9 +143,8 @@ const QUERY_SECONDS = 5;
 const TELEMETRY_TABLES = new Set(["spans", "logs", "metric_points", "metric_histograms"]);
 
 /**
- * Records a failed measurement: the page gets a short fixed reason; the
- * driver's own message, which may name internal addresses, goes only to
- * the server's log.
+ * Expose a fixed reason to the page; keep driver details in logs
+ * because they may contain internal addresses.
  */
 type Fail = (reason: string, error: unknown) => { ok: false; error: string };
 
@@ -254,7 +253,6 @@ async function measureDisk(sources: StorageSources, fail: Fail): Promise<Storage
     const [disk] = await queryRows<{
       total_space: string;
       free_space: string;
-      // UInt8 columns: JSON numbers.
       is_read_only: number | string;
       is_broken: number | string;
     }>(
@@ -356,10 +354,7 @@ export async function measureStorage(
   };
 }
 
-/**
- * What to measure, from the configuration: the server's and the worker's
- * own clients. The admin token goes only into the Garage client.
- */
+/** Pass the admin token only to the Garage client. */
 export function storageSourcesOf(
   config: Pick<
     Config,
@@ -395,9 +390,8 @@ export function storageSourcesOf(
 }
 
 /**
- * The quota to keep on the stack's Garage bucket now (plannedQuota): with
- * the bucket's size and the budgets' room when both were measured, else
- * the budgets plus 10%, which the worker then does not set.
+ * Use bucket measurements for plannedQuota. Without them, return budgets
+ * plus 10%; the worker must not apply that fallback.
  */
 export function quotaPlanOf(
   budgets: StorageSources["budgets"],

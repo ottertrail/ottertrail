@@ -20,11 +20,9 @@ import { evaluateWarnings, WARNING_TITLES, type WarningId, type WarningLevel } f
 const UUID_PATTERN =
   "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$";
 
-/** Garage's figures without the admin token: what to do to see them. */
 export const NO_TOKEN_MESSAGE =
   "Garage's own figures (the bucket's real size and the disk it writes to) need its admin token. Set GARAGE_ADMIN_TOKEN in .env (generate it with `openssl rand -hex 32`), then run `docker compose up -d`.";
 
-/** The channels setting: which get storage warnings, and the instance's channels to choose from. */
 async function channelsView(db: Kysely<Database>) {
   const [chosen, channels] = await Promise.all([
     readWarningChannels(db),
@@ -54,7 +52,6 @@ function garageView(reading: StorageReading, quota: { bytes: number; aboveBudget
             quotaBytes: garage.bucket.maxSize,
           },
     dataPartition: garage.dataPartition,
-    /** The quota the worker keeps on the bucket. */
     plannedQuotaBytes: quota.bytes,
     /** It sits above the budgets plus 10%: the bucket holds more than they leave room for. */
     quotaAboveBudgets: quota.aboveBudgets,
@@ -95,7 +92,7 @@ export const storageRoutes: FastifyPluginCallback<{
       [...active].map(([id, warning]) => [id, warning.level]),
     );
     const { warnings, undetermined } = evaluateWarnings(reading, levels);
-    // On when last measured, and not measured now: still on, as the worker keeps them.
+    // Preserve active warnings without measurements, as the worker does.
     const held = undetermined.flatMap((id) => {
       const on = active.get(id);
       return on === undefined
@@ -112,7 +109,6 @@ export const storageRoutes: FastifyPluginCallback<{
       garage: garageView(reading, quotaPlanOf(sources.budgets, reading)),
       warnings,
       held,
-      /** The warnings that could not be worked out now: their figures were not measured. */
       undetermined,
       warningChannels: channels,
       /** Scheduled backups on or off; off says since when and by whom (backups/routes.ts). */

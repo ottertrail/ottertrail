@@ -4,10 +4,8 @@ import type { FastifyError, FastifyReply, FastifyRequest } from "fastify";
 import { DashboardBusyError } from "../telemetry/dashboard-limit.ts";
 
 /**
- * The error handler of routes that read ClickHouse (reports, users). A
- * database's error text stays in the log: it can name servers, settings,
- * and versions. A bad request (validation) keeps Fastify's own answer,
- * which names the problem.
+ * Keep database error details in logs because they can expose server details.
+ * Validation errors keep Fastify's response.
  */
 export function clickHouseErrorHandler(
   error: FastifyError,
@@ -18,7 +16,6 @@ export function clickHouseErrorHandler(
     throw error;
   }
   if (error instanceof DashboardBusyError) {
-    // The dashboard's pages already run as many queries as they may (telemetry/dashboard-limit.ts).
     request.log.warn("a dashboard query waited too long for a place");
     return reply.code(503).header("retry-after", "10").send({
       error: "reports_busy",
@@ -26,12 +23,11 @@ export function clickHouseErrorHandler(
     });
   }
   if (request.raw.destroyed || (error instanceof Error && error.name === "AbortError")) {
-    // The browser gave up on the request, and its query was ended: no one reads the answer.
+    // The client disconnected, so no one can read the response.
     request.log.info("a report's request was closed before it was answered");
     return reply.code(499).send({ error: "closed", message: "The request was closed." });
   }
   if (error instanceof ClickHouseError && error.type === "MEMORY_LIMIT_EXCEEDED") {
-    // The server's memory, or a query's own limit (telemetry's dashboard sets max_memory_usage).
     request.log.warn({ err: error }, "a report ran out of memory");
     return reply.code(503).header("retry-after", "60").send({
       error: "reports_busy",
@@ -40,7 +36,6 @@ export function clickHouseErrorHandler(
     });
   }
   if (error instanceof ClickHouseError && error.type === "TIMEOUT_EXCEEDED") {
-    // A query past its max_execution_time (telemetry's dashboard queries set one).
     request.log.warn({ err: error }, "a report took too long");
     return reply.code(503).header("retry-after", "60").send({
       error: "reports_busy",

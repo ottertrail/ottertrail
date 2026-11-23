@@ -57,11 +57,7 @@ export const DEFAULT_REPLAY_PLAYER_PATH = "../../packages/replay-player/dist/pla
 /** Where the dashboard runs during local development (`vp run dev`). */
 export const DEVELOPMENT_PUBLIC_URL = "http://localhost:5173";
 
-/**
- * Signs dashboard session cookies during local development only. Production
- * refuses to start without AUTH_SECRET, so this value can never protect a
- * real instance.
- */
+/** For local development only. Production requires AUTH_SECRET. */
 export const DEVELOPMENT_AUTH_SECRET = "ottertrail-local-development-only-not-a-secret";
 
 /** Shortest AUTH_SECRET accepted: 32 characters, such as `openssl rand -base64 32` prints. */
@@ -84,10 +80,8 @@ export interface Config {
   /** Address ranges of data centers, whose "browsers" are ignored (enrichment/data-centers.ts). */
   dataCentersPath: string;
   /**
-   * Events the instance may store per second, all its projects together,
-   * with bursts of ten seconds' worth (collection/rate-limiter.ts,
-   * EventBudget), inside which each project has its own budget. It bounds
-   * what the instance takes in, however many projects it has.
+   * Instance-wide events per second, with ten-second bursts and separate
+   * project budgets (collection/rate-limiter.ts, EventBudget).
    */
   instanceEventsPerSecond: number;
   /** The instance's address, such as "https://analytics.example.com": an origin, no path. */
@@ -218,7 +212,6 @@ function parsePort(raw: string): number {
   return port;
 }
 
-/** The default: three projects at their full 200 events a second. */
 export const DEFAULT_INSTANCE_EVENTS_PER_SECOND = 600;
 
 function parseInstanceEventsPerSecond(raw: string | undefined): number {
@@ -339,11 +332,9 @@ function parseObjectStore(env: NodeJS.ProcessEnv): ObjectStoreConfig | null {
 }
 
 /**
- * The stack's own Garage, when the object store is it: the Compose
- * service `garage` (deploy/compose.yaml), or in development the local one
- * (compose.yaml). Its admin API is on the same host, port 3903. Another
- * store (R2, S3) has no Garage to ask: null, and GARAGE_ADMIN_TOKEN is
- * not used.
+ * Detect the Compose garage service (deploy/compose.yaml), or the local
+ * development Garage (compose.yaml). Use its host on admin port 3903.
+ * Other stores return null and do not use GARAGE_ADMIN_TOKEN.
  */
 function parseGarage(env: NodeJS.ProcessEnv, store: ObjectStoreConfig | null): GarageConfig | null {
   if (store === null) return null;
@@ -473,10 +464,8 @@ export function parseBackupS3(
 }
 
 /**
- * The worker's backup destination: as parseBackupS3, with a configuration
- * problem as its message instead of an error, since the worker does other
- * jobs and must not stop over this one. It reports the problem to the
- * Backups tab (backups/job.ts).
+ * Report backup configuration errors without stopping the worker
+ * so other jobs continue (backups/job.ts).
  */
 export function loadBackupS3(
   env: NodeJS.ProcessEnv,
@@ -490,7 +479,6 @@ export function loadBackupS3(
   }
 }
 
-/** The default: 1 GiB of compressed source maps. */
 export const DEFAULT_SOURCE_MAP_STORAGE_BYTES = 1024 ** 3;
 
 /** The default: 2 GiB of compressed replays, until measured on real sites. */
@@ -506,7 +494,6 @@ function parseBytes(name: string, raw: string | undefined, fallback: number): nu
   return bytes;
 }
 
-/** The default: 30 days of traces, logs, and metrics, as long as session replays. */
 export const DEFAULT_TELEMETRY_RETENTION_DAYS = 30;
 
 function parseTelemetryRetentionDays(raw: string | undefined): number {
@@ -557,9 +544,8 @@ export function parseSender(raw: string): string | null {
 function parseEmail(env: NodeJS.ProcessEnv): EmailConfig | null {
   const raw = env.SMTP_URL?.trim() ?? "";
   if (raw === "") return null;
-  // Error messages never repeat the URL: it holds the password.
-  // Nodemailer would read options from a query string over the ones the
-  // code sets (requireTLS, logging, certificate checks): none is taken.
+  // Keep the URL out of errors because it contains a password. Reject query
+  // options that could override requireTLS, logging, or certificate checks.
   if (raw.includes("?") || raw.includes("#")) {
     throw new ConfigError(
       "No query string or fragment in SMTP_URL. Percent-encode ? and # in credentials.",
@@ -668,11 +654,6 @@ function parseAuthSecret(env: NodeJS.ProcessEnv): string {
   return raw;
 }
 
-/**
- * Reads instance configuration from environment variables.
- * Every instance is configured independently; there are no shared defaults
- * beyond local development values.
- */
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   return {
     host: env.HOST ?? "127.0.0.1",

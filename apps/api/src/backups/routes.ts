@@ -152,7 +152,6 @@ export const backupRoutes: FastifyPluginCallback<{
   testRestoreLimit?: RateLimit;
   /** The app's one limiter for current-password checks. */
   passwordTries?: TokenBucketLimiter;
-  /** For notices' links. */
   publicUrl: string;
   /** With SMTP set up, the owner gets an account email for each guarded action. */
   emailConfigured?: boolean;
@@ -237,7 +236,6 @@ export const backupRoutes: FastifyPluginCallback<{
         message: `${user.name} ${BACKUP_ACTIONS[action]}.`,
         url: `${publicUrl}/settings?tab=backups`,
         time: at,
-        // The Backups tab is the owner's.
         inbox: { title: `${user.name} ${BACKUP_ACTIONS[action]}`, permission: "settings" },
       });
       if (emailConfigured && sealer !== null) {
@@ -299,12 +297,12 @@ export const backupRoutes: FastifyPluginCallback<{
         disabledAt: settings.enabled ? null : iso(settings.disabledAt),
         disabledBy: settings.enabled ? null : settings.disabledBy,
       },
-      // What the worker last reported of its BACKUP_S3_*, never the secret.
+      // Use the worker's report; never include its secret.
       destination: {
         reportedAt: iso(settings.destinationReportedAt),
         config: settings.destination,
         problem: settings.destinationProblem,
-        // The worker may be stopped: what it last said may no longer hold.
+        // A stopped worker's report may be stale.
         stale:
           settings.destinationReportedAt !== null &&
           at.getTime() - settings.destinationReportedAt.getTime() > REPORT_STALE_MS,
@@ -351,7 +349,7 @@ export const backupRoutes: FastifyPluginCallback<{
           additionalProperties: false,
           minProperties: 1,
           properties: {
-            // Not `type: "boolean"`: Fastify would turn null, 0, "" and "false" into false.
+            // Fastify's boolean coercion would accept null, 0, "", and "false" as false.
             enabled: { enum: [true, false] },
             timeOfDay: { type: "string", pattern: TIME_PATTERN },
             keepDays: { type: "integer", minimum: 1, maximum: MAX_KEEP_DAYS },
@@ -376,7 +374,7 @@ export const backupRoutes: FastifyPluginCallback<{
       if (actions.length > 0 && !(await passwordConfirmed(request, reply, body.currentPassword))) {
         return reply;
       }
-      // Made before the transaction: age's key generation is asynchronous.
+      // Generate before the transaction because age key generation is asynchronous.
       const key = enabled && saved.keySealed === null ? await makeBackupKey() : null;
       const at = now();
       const scheduleChanged =
@@ -394,7 +392,7 @@ export const backupRoutes: FastifyPluginCallback<{
             // Off is a state the tab and the Storage page show: since when, and by whom.
             ...(turnedOff ? { disabled_at: at, disabled_by: user.name } : {}),
             ...(enabled ? { disabled_at: null, disabled_by: null } : {}),
-            // Another request may have made one meanwhile: never replace a key.
+            // Preserve a key created by a concurrent request.
             ...(key !== null && current.keySealed === null
               ? {
                   key_sealed: secrets.sealKey(key.identity),
@@ -608,7 +606,7 @@ export const backupRoutes: FastifyPluginCallback<{
         });
       }
       const key = await makeBackupKey();
-      // Only over the key read above: of two at once, one replaces it, and the other is refused.
+      // Match the key read above so concurrent replacements cannot overwrite each other.
       const replaced = await db
         .updateTable("backup_settings")
         .set({

@@ -10,12 +10,8 @@ import {
 import type { ObjectStoreConfig } from "../config.ts";
 
 /**
- * Files too large for the databases, such as source maps: in an
- * S3-compatible object store (Garage locally and when self-hosting,
- * Cloudflare R2 or Amazon S3 when hosted). Only the basic calls, which
- * every one of them answers alike. Keys are made by Ottertrail, never
- * taken from a request, and start with the project's ID, so a project's
- * files can be deleted together.
+ * Generate keys internally and group them by project so project deletion
+ * can remove its files together.
  */
 export interface ObjectStore {
   put(key: string, body: Uint8Array, contentType: string): Promise<void>;
@@ -31,25 +27,19 @@ export interface ObjectStore {
 /** DeleteObjects takes at most this many keys. */
 const DELETE_BATCH = 1000;
 
-/**
- * The S3 client for the object store, with the settings every use of it
- * shares: the store's own, and the backup commands' (object-backup.ts).
- */
+/** Share client settings with backup commands (object-backup.ts). */
 export function s3Client(config: ObjectStoreConfig): S3Client {
   return new S3Client({
     endpoint: config.url,
     region: config.region,
     credentials: { accessKeyId: config.accessKeyId, secretAccessKey: config.secretAccessKey },
-    // The bucket in the path, not in a host name: no DNS name per bucket.
+    // Path-style buckets avoid needing DNS names per bucket.
     forcePathStyle: true,
-    // Checksums only where S3 requires them: not every compatible store
-    // checks the newer ones the SDK would add to every request.
+    // Some S3-compatible stores do not support the SDK's newer optional checksums.
     requestChecksumCalculation: "WHEN_REQUIRED",
     responseChecksumValidation: "WHEN_REQUIRED",
-    // A store that stops answering fails a request in seconds, not when the
-    // system gives up on the connection: an error page then shows its stack
-    // unmapped instead of waiting. Without throwOnRequestTimeout, a request
-    // past its time is only logged.
+    // Bound stalled requests so error pages can show unmapped stacks promptly.
+    // throwOnRequestTimeout is required; otherwise the SDK only logs timeouts.
     requestHandler: {
       connectionTimeout: 3000,
       requestTimeout: 30_000,

@@ -3,32 +3,22 @@ import type { ClickHouseSettings } from "@clickhouse/client";
 import type { ClickHouseClient } from "./clickhouse.ts";
 
 /**
- * Where report queries run. With a session, they can read the temporary
- * tables an earlier query of the same session made (reports/analytics.ts).
- * Queries in one session run one after another: ClickHouse refuses two at once.
+ * Sessions share temporary tables (reports/analytics.ts).
+ * ClickHouse allows only one query at a time per session.
  */
 export interface Reader {
   client: ClickHouseClient;
   sessionId?: string | undefined;
   /**
-   * Closes the query's connection when it fires, such as when the browser
-   * gives up on the request. ClickHouse then stops the query only if it
-   * runs read-only (DASHBOARD_SETTINGS' readonly); otherwise it runs on to
-   * its own limits.
+   * Aborting closes the connection. ClickHouse stops the query only in
+   * read-only mode (DASHBOARD_SETTINGS); otherwise its own limits apply.
    */
   signal?: AbortSignal | undefined;
   /** Runs each query, such as within a limit of queries at once (telemetry/dashboard-limit.ts). */
   gate?: (<T>(work: () => Promise<T>) => Promise<T>) | undefined;
-  /**
-   * When the reader's work must be over (milliseconds since 1970), such as
-   * an alert rule's budget: each query's max_execution_time is cut to the
-   * time left, and a query that would start past it is refused.
-   */
+  /** Deadline in milliseconds since 1970. Caps max_execution_time and refuses late starts. */
   deadline?: number | undefined;
-  /**
-   * Settings for every query the reader runs, such as the dashboard's
-   * limits (DASHBOARD_SETTINGS); a query's own settings win over them.
-   */
+  /** Per-query settings override these defaults (DASHBOARD_SETTINGS). */
   settings?: ClickHouseSettings | undefined;
 }
 
@@ -37,7 +27,6 @@ export class DeadlineError extends Error {
   override name = "DeadlineError";
 }
 
-/** The settings with max_execution_time cut to what is left before the reader's deadline. */
 function withinDeadline(
   reader: Reader,
   settings: ClickHouseSettings | undefined,
@@ -59,11 +48,7 @@ export function fromClickHouseTime(text: string): Date {
   return new Date(`${text.replace(" ", "T")}Z`);
 }
 
-/**
- * The values of one query, each behind a typed placeholder. Every value from
- * outside, such as a filter or a search, goes in through here, never into the
- * SQL text.
- */
+/** Keep external values in typed placeholders, outside SQL text. */
 export class QueryParams {
   readonly values: Record<string, unknown> = {};
   #count = 0;
@@ -82,7 +67,6 @@ export class QueryParams {
   }
 }
 
-/** Runs a query and returns its rows. */
 export async function queryRows<Row>(
   reader: Reader,
   query: string,
@@ -103,13 +87,12 @@ export async function queryRows<Row>(
       ...(reader.sessionId === undefined ? {} : { session_id: reader.sessionId }),
       ...(reader.signal === undefined ? {} : { abort_signal: reader.signal }),
     });
-    // Read whole within the gate: the query runs until its rows are read.
+    // Keep the gate until all rows are read; the query is still running.
     return result.json<Row>();
   };
   return reader.gate === undefined ? run() : reader.gate(run);
 }
 
-/** Runs a statement that returns nothing, such as CREATE TEMPORARY TABLE. */
 export async function runCommand(
   reader: Reader,
   query: string,

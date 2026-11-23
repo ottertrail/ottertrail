@@ -4,33 +4,28 @@ import { type RateLimit, TokenBucketLimiter } from "../collection/rate-limiter.t
 import { fitLine, type LogRecord } from "./buffer.ts";
 
 /**
- * The PostgreSQL channel the worker's log lines cross to the API on
- * (NOTIFY, then LISTEN in listener.ts): transport only, nothing written to
- * a table. A notification reaches whoever listens at that moment and is
- * gone; with no API listening, PostgreSQL drops it.
+ * NOTIFY transports worker logs to listener.ts without storing them.
+ * Only current listeners receive each line.
  */
 export const SERVER_LOG_CHANNEL = "ottertrail_server_log";
 
 /**
- * The most bytes of one line's payload. PostgreSQL refuses a NOTIFY
- * payload of 8000 bytes or more (its default build); a longer line is cut
- * and says so (fitLine).
+ * PostgreSQL rejects NOTIFY payloads of 8000 bytes or more (default build).
+ * fitLine truncates longer lines.
  */
 export const NOTIFY_MAX_BYTES = 7900;
 
-/** The worker's lines per second to the Server log, and the burst. Its stdout gets every line. */
+/** Rate limiting affects the Server log only; stdout gets every line. */
 export const RELAY_LIMIT: RateLimit = { capacity: 100, refillPerSecond: 20 };
 
 /** Lines waiting while the connection opens; past it, lines are dropped and counted. */
 export const RELAY_MAX_QUEUE = 200;
 
-/** How long the relay waits after a failed connection or notification before trying again. */
 const RETRY_MS = { first: 1000, max: 30_000 };
 
 /**
- * The connection's limits, the listener's too: TCP keepalive finds a
- * half-open connection, and a connect or a query gives up after 10 seconds
- * rather than hang.
+ * Shared with the listener. Timeouts bound connection and query waits;
+ * TCP keepalive detects half-open connections.
  */
 export const CONNECTION_LIMITS = {
   keepAlive: true,
@@ -54,14 +49,9 @@ export interface RelayOptions {
 }
 
 /**
- * The worker's side of the Server log: each log line, already on stdout,
- * also goes to the API as a NOTIFY on its own connection, apart from the
- * worker's pool, so a busy pool never holds a line up and a line never
- * holds a job up. `send` never throws and never waits; a failure only
- * drops lines. At most RELAY_LIMIT lines a second go out, so a worker
- * logging in a loop can't flood PostgreSQL; lines dropped, for the limit
- * or while PostgreSQL can't be reached, are counted and sent as one line
- * when lines go out again.
+ * Use a separate connection so log delivery cannot block jobs or the pool.
+ * `send` never waits or throws. RELAY_LIMIT bounds PostgreSQL traffic;
+ * dropped lines are counted and reported when delivery resumes.
  */
 export class WorkerLogRelay {
   readonly #connectionString: string;
@@ -130,7 +120,6 @@ export class WorkerLogRelay {
     await client?.end().catch(() => undefined);
   }
 
-  /** Starts sending, unless a run is under way; a line queued as one ends starts the next. */
   #schedule(): void {
     if (this.#pumping !== null) return;
     this.#pumping = this.#pump().finally(() => {
@@ -152,12 +141,11 @@ export class WorkerLogRelay {
     return { payload, counts: count };
   }
 
-  /** Counts a queued payload as dropped: a line as one, the count's own line as what it counted. */
+  /** If a dropped-count message is lost, add its count back. */
   #drop(item: Queued): void {
     this.#dropped += item.counts ?? 1;
   }
 
-  /** Waits before the next connection, doubling up to 30 seconds. */
   #backOff(): void {
     this.#retryAt = this.#now() + this.#retryMs;
     this.#retryMs = Math.min(this.#retryMs * 2, RETRY_MS.max);
@@ -171,7 +159,7 @@ export class WorkerLogRelay {
       application_name: "ottertrail-server-log-relay",
       ...CONNECTION_LIMITS,
     });
-    // Unheard, a lost connection's "error" would end the worker.
+    // An unhandled connection error would end the worker.
     client.on("error", () => {
       if (this.#client === client) this.#client = null;
     });
@@ -197,7 +185,7 @@ export class WorkerLogRelay {
     while (this.#queue.length > 0) {
       const client = await this.#connect();
       if (client === null) {
-        // Unreachable: what waits is dropped and counted, and goes out as one line later.
+        // Count queued lines as dropped; report them when delivery resumes.
         for (const item of this.#queue.splice(0)) this.#drop(item);
         return;
       }
@@ -207,8 +195,7 @@ export class WorkerLogRelay {
         await client.query("select pg_notify($1, $2)", [this.#channel, item.payload]);
         this.#retryMs = RETRY_MS.first;
       } catch {
-        // A notification that keeps failing waits as a failed connection does,
-        // rather than open a connection for each line queued.
+        // Back off after notification failures to avoid reconnecting for every queued line.
         this.#drop(item);
         if (this.#client === client) this.#client = null;
         await client.end().catch(() => undefined);

@@ -6,9 +6,8 @@ import { overdueSlot } from "./schedule.ts";
 import { readBackupSettings } from "./settings.ts";
 
 /**
- * What PostgreSQL keeps about backup runs (backup_runs, migration 0014):
- * each backup and test restore, one running at a time, with a heartbeat,
- * so a worker that died mid-run does not hold the next one back.
+ * Heartbeats prevent a dead worker from blocking later runs
+ * (backup_runs, migration 0014).
  */
 
 export type RunKind = "backup" | "test_restore";
@@ -29,9 +28,7 @@ export interface Run {
 
 /** A running row whose heartbeat is older than this belongs to a worker that stopped. */
 export const STALE_AFTER_MS = 10 * 60 * 1000;
-/** How often a running backup touches its heartbeat. */
 export const HEARTBEAT_MS = 60 * 1000;
-/** Runs kept of each kind: the newest. */
 const RUNS_KEPT = 100;
 
 export const WORKER_STOPPED =
@@ -113,7 +110,7 @@ export async function latestRuns(db: Executor): Promise<{
   };
 }
 
-/** Marks runs whose worker stopped as failed; how many. */
+/** Returns the number of stale runs marked failed. */
 export async function failStaleRuns(db: Executor, now: Date): Promise<number> {
   const result = await db
     .updateTable("backup_runs")
@@ -125,8 +122,8 @@ export async function failStaleRuns(db: Executor, now: Date): Promise<number> {
 }
 
 /**
- * Starts a run, unless one is running: null then. In a transaction, the
- * unique index (backup_runs_one_running) decides between two workers.
+ * Returns null if another run is active. backup_runs_one_running
+ * serializes workers inside the transaction.
  */
 export async function startRun(
   trx: Transaction<Database>,
@@ -148,10 +145,7 @@ export async function startRun(
   return row?.id ?? null;
 }
 
-/**
- * Touches a running run's heartbeat. 0 when it is no longer running: another
- * worker marked it stale (failStaleRuns), and the run must stop.
- */
+/** A zero result means another worker marked the run stale; stop it. */
 export async function touchRun(db: Executor, id: string, now: Date): Promise<number> {
   const result = await db
     .updateTable("backup_runs")
@@ -171,10 +165,8 @@ export const RUN_TAKEN_OVER =
   "This run's heartbeat was late, so another worker marked it stopped, and it ended. The next one runs at its time.";
 
 /**
- * When the latest backup was cut off by a worker stopping (its own
- * shutdown, or a stale heartbeat), and was not itself a retry, schedules
- * its one retry now, so a restart during the daily backup does not skip
- * the day. True when it did.
+ * Retry an interrupted non-retry backup immediately so a restart does not
+ * skip the day. Returns true if a retry was scheduled.
  */
 export async function retryStoppedBackup(db: Kysely<Database>, now: Date): Promise<boolean> {
   const last = await db
@@ -249,7 +241,6 @@ export interface BackupHealth {
   noDestination: { problem: string | null } | null;
 }
 
-/** Reads backups' health now: off, failed, overdue, or fine. */
 export async function readBackupHealth(db: Kysely<Database>, now: Date): Promise<BackupHealth> {
   const [settings, runs, { timeZone }] = await Promise.all([
     readBackupSettings(db),

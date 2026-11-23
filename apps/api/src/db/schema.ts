@@ -2,13 +2,7 @@ import type { ColumnType } from "kysely";
 
 import type { IngestOutcome, IngestSource } from "../activity/activity.ts";
 
-/**
- * TypeScript view of the database tables, used by Kysely to check queries.
- * Keep it in step with the migrations in ./migrations.
- *
- * ColumnType<Select, Insert, Update> describes what a column returns when
- * read, and what it accepts on insert and update.
- */
+/** Keep these Kysely types in sync with ./migrations. */
 
 /** Set by the database on insert; never written by the application. */
 type DatabaseDefault<T> = ColumnType<T, never, never>;
@@ -18,18 +12,12 @@ type Nullable<T> = ColumnType<T | null, T | null | undefined, T | null>;
 
 export type JsonObject = { [key: string]: unknown };
 
-/**
- * The instance's settings: one row (migration 0001_create_schema). Read them
- * through settings/settings.ts, which caches them.
- */
+/** Read through settings/settings.ts to use its cache (migration 0001_create_schema). */
 export interface InstanceSettingsTable {
   id: ColumnType<boolean, never, never>;
   /** What the dashboard shows above the projects. */
   name: string;
-  /**
-   * IANA timezone, such as "Asia/Singapore". Reports count days in it, and
-   * visitor salts change at its midnight.
-   */
+  /** IANA timezone. Reports use its day boundaries; visitor salts rotate at its midnight. */
   time_zone: string;
   /** Whether the worker downloads new location data (migration 0009). */
   update_location_data: ColumnType<boolean, never, boolean>;
@@ -61,17 +49,11 @@ export interface ProjectsTable {
   replay_mode: ColumnType<"off" | "errors", "off" | "errors" | undefined, "off" | "errors">;
   /** Heatmaps: whether collection takes clicks and scroll depth (docs/web-analytics.md, "Heatmaps"). */
   heatmaps: ColumnType<boolean, boolean | undefined, boolean>;
-  /**
-   * When the project's latest event happened; null before the first. The
-   * API records it as it stores events (collection/last-event.ts).
-   */
+  /** Updated during ingestion (collection/last-event.ts); null before the first event. */
   last_event_at: ColumnType<Date | null, never, Date | null>;
   /** The goal the overview's business figures start with; null for none. One of the project's goals. */
   main_goal_id: ColumnType<string | null, string | null | undefined, string | null>;
-  /**
-   * Addresses and CIDR ranges whose browser events are ignored, normalised
-   * (projects/blocked-addresses.ts), at most 100. Typed in by an owner or admin.
-   */
+  /** At most 100 normalized IP addresses or CIDRs (projects/blocked-addresses.ts). */
   blocked_addresses: ColumnType<string[], string[] | undefined, string[]>;
   /** Domains whose referrals are ignored, with their subdomains, normalised (projects/blocked-referrers.ts), at most 100. */
   blocked_referrers: ColumnType<string[], string[] | undefined, string[]>;
@@ -134,7 +116,6 @@ export interface UptimeChecksTable {
   last_status_code: Nullable<number>;
   last_response_ms: Nullable<number>;
   last_cause: Nullable<CheckCause>;
-  /** When the HTTPS certificate seen last expires. */
   tls_expires_at: Nullable<Date>;
   /** When the URL last changed: a run started before it is not recorded. */
   url_changed_at: Nullable<Date>;
@@ -277,7 +258,6 @@ export interface AlertStatesTable {
   /** A spike rule's: since when its count has been below the threshold. */
   clear_since: Nullable<Date>;
   last_notified_at: Nullable<Date>;
-  /** The open alert in alert_history. */
   history_id: Nullable<string>;
 }
 
@@ -287,8 +267,8 @@ export interface AlertHistoryTable {
   rule_id: ColumnType<string, string, never>;
   project_id: ColumnType<string, string, never>;
   /**
-   * The rule's kind when it fired (0021): who may read the alert goes by
-   * it, since a rule can change kind and keep its history.
+   * Snapshot the kind for access checks because a rule can change kind
+   * while retaining its history (0021).
    */
   kind: ColumnType<string, string, never>;
   subject: string;
@@ -327,7 +307,6 @@ export interface GoalsTable {
   project_id: string;
   name: string;
   kind: "page" | "event";
-  /** For a page goal: the path viewed. */
   path: Nullable<string>;
   /** For an event goal: the product event's name, and its property filter if any. */
   event_name: Nullable<string>;
@@ -336,7 +315,6 @@ export interface GoalsTable {
   created_at: ColumnType<Date, Date | undefined, never>;
 }
 
-/** A project's named funnel. */
 export interface SavedFunnelsTable {
   id: ColumnType<string, string | undefined, never>;
   project_id: string;
@@ -355,7 +333,6 @@ export interface ReplayChunksTable {
   replay_id: string;
   /** From 0: the pieces join in this order. */
   seq: number;
-  /** The replay's last piece. */
   last: boolean;
   /** The browser stopped at the size limit: the replay is shorter than it was. */
   cut: boolean;
@@ -388,7 +365,6 @@ export interface ReplaysTable {
   timeline: ColumnType<unknown, string | undefined, never>;
   /** The worker's search for the replay's error is over: found, or given up. */
   linked: ColumnType<boolean, boolean | undefined, boolean>;
-  /** When the worker looks for the error again. */
   next_link_at: ColumnType<Date, Date | undefined, Date>;
   /** From the replay's first error event, once found; null until then, or when never found. */
   error_at: ColumnType<Date | null, never, Date | null>;
@@ -435,20 +411,14 @@ export interface VisitorSaltsTable {
   created_at: DatabaseDefault<Date>;
 }
 
-/**
- * Dashboard sign-in. Better Auth reads and writes these tables itself
- * (src/auth/auth.ts); the application only reads them and sets `role`.
- */
+/** Better Auth manages these tables (src/auth/auth.ts); the app reads them and sets role. */
 export interface DashboardUsersTable {
   id: ColumnType<string, string | undefined, never>;
   name: string;
   email: string;
   email_verified: ColumnType<boolean, boolean | undefined, boolean>;
   image: Nullable<string>;
-  /**
-   * "owner" for the one account that owns the instance (the setup flow
-   * creates it); "admin" or "member" otherwise (docs/access.md).
-   */
+  /** Setup creates the single owner; other users are admins or members (docs/access.md). */
   role: ColumnType<Role, Role | undefined, Role>;
   /** When the user last signed in; null before the first time. */
   last_sign_in_at: Nullable<Date>;
@@ -625,9 +595,7 @@ export interface IngestActivityTable {
 export interface OverviewLayoutsTable {
   user_id: string;
   project_id: string;
-  /** Widget IDs in order. */
   widgets: string[];
-  /** Widget IDs the user hid. */
   hidden: ColumnType<string[], string[] | undefined, string[]>;
   updated_at: ColumnType<Date, Date | undefined, Date>;
 }
@@ -700,13 +668,11 @@ export interface BackupSettingsTable {
   /** Its public half ("age1…"), which each backup is encrypted to. */
   key_recipient: string | null;
   key_created_at: Date | null;
-  /** When the owner confirmed they saved the key. */
   key_saved_at: Date | null;
   /** Daily times before this are not due: turning backups on at 15:00 waits for the next 03:00. */
   schedule_from: Date | null;
   /** The local day ("YYYY-MM-DD") of the last daily time taken. */
   last_slot: string | null;
-  /** When a failed backup is tried once more. */
   retry_at: Date | null;
   /** Since when backups are off, and the name of who turned them off; null while on, or never on. */
   disabled_at: Date | null;

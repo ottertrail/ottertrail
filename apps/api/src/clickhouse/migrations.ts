@@ -1,8 +1,6 @@
 /**
- * ClickHouse's tables, as PostgreSQL's are in db/migrations/. Each
- * migration is a list of statements for one database, named by the
- * caller. A migration that has run is recorded in its schema_migrations
- * table and never runs again, so never change one: add the next.
+ * Applied migrations are recorded in schema_migrations. Add a new migration
+ * instead of changing one that has run (PostgreSQL: db/migrations/).
  */
 import { DATABASE_CALL_COLUMNS, databaseCallColumns } from "../telemetry/db-shape.ts";
 import { ENGAGEMENT, VITALS } from "../visits/visits.ts";
@@ -18,7 +16,7 @@ export const TELEMETRY_TABLES = ["spans", "logs", "metric_points", "metric_histo
 /** The AI calls among the spans (0008; docs/ai-usage.md), kept as long as events. */
 export const AI_CALLS_TABLE = "ai_calls";
 
-/** The columns ai_calls has since 0011, which 0012 copies. */
+/** Migration 0012 copies these columns from 0011. */
 const AI_CALL_COLUMNS = [
   "project_id",
   "timestamp",
@@ -58,8 +56,8 @@ export const USER_FIRST_SEEN = "user_first_seen";
  * deleted (clickhouse/delete-events.ts) all use it.
  */
 export function firstSeenSelect(database: string | null, where = "1"): string {
-  // The ID is renamed inside: an alias named user_id would stand for the
-  // column in the WHERE too, and let events without a user through.
+  // Rename user_id inside the subquery to prevent alias substitution in WHERE
+  // from admitting events without a user.
   return `SELECT project_id, environment, id AS user_id, minState(occurred_at) AS first_seen
           FROM (
             SELECT project_id, environment, assumeNotNull(user_id) AS id, occurred_at

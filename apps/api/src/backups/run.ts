@@ -121,7 +121,6 @@ export class BackupError extends Error {
   override name = "BackupError";
 }
 
-/** pg_dump running, with its output. */
 export interface PostgresDump {
   stdout: AsyncIterable<Uint8Array>;
   /** Resolves when it exits cleanly; rejects with its error otherwise. */
@@ -143,7 +142,6 @@ export interface ClickHouseBackupFiles {
 /** The ClickHouse backup files the worker makes, and only those. */
 export const WORKER_ZIP = /^ottertrail-worker-[0-9A-Za-z-]+\.zip$/;
 
-/** What a backup reads from. */
 export interface BackupSources {
   /** Starts `pg_dump -Fc` of the instance's database. */
   dumpPostgres(): PostgresDump;
@@ -215,13 +213,11 @@ async function encryptAndUpload(
   return { plain: plain.digest(), encrypted: sealed.digest() };
 }
 
-/** Lines of pg_dump's error output kept for the message. */
 const STDERR_BYTES = 2000;
 
 /**
- * pg_dump of `databaseUrl`, custom format. The password goes in
- * PGPASSWORD, never on the command line; `schema` keeps it to one
- * schema (tests).
+ * Pass the password through PGPASSWORD to keep it off the command line.
+ * Tests can restrict the dump to one schema.
  */
 export function spawnPgDump(
   databaseUrl: string,
@@ -250,7 +246,6 @@ export function spawnPgDump(
   return pgDumpOf(child, "pg_dump");
 }
 
-/** A running pg_dump (or a stand-in that runs it elsewhere), as a PostgresDump. */
 export function pgDumpOf(
   child: import("node:child_process").ChildProcessByStdio<null, Readable, Readable>,
   command: string,
@@ -320,9 +315,7 @@ export function localClickHouseFiles(dir: string | null): ClickHouseBackupFiles 
   };
 }
 
-/** How often the worker asks ClickHouse whether its backup is done. */
 const CLICKHOUSE_POLL_MS = 2000;
-/** The longest ClickHouse's backup may take. */
 const CLICKHOUSE_BACKUP_MS = 12 * 60 * 60 * 1000;
 
 /** How long a failed or stopped run waits for ClickHouse's backup to end before deleting its file. */
@@ -343,9 +336,8 @@ async function backupState(
 }
 
 /**
- * Stops ClickHouse's backup (KILL QUERY on its query, which cancels it)
- * and waits, up to CLICKHOUSE_STOP_MS, until it is no longer being
- * written, so its file can be deleted rather than finished afterwards.
+ * Cancel and wait up to CLICKHOUSE_STOP_MS before deleting the file
+ * so ClickHouse cannot finish writing it afterward.
  */
 async function stopClickHouseBackup(client: ClickHouseClient, id: string): Promise<void> {
   const deadline = Date.now() + CLICKHOUSE_STOP_MS;
@@ -374,7 +366,7 @@ async function backupClickHouse(
   signal: AbortSignal,
 ): Promise<void> {
   if (!WORKER_ZIP.test(file)) throw new Error(`not a backup file name: ${file}`);
-  // ASYNC: the request returns at once, and a long backup needs no long-lived HTTP request.
+  // Avoid keeping an HTTP request open for the whole backup.
   const started = await client.query({
     query: `BACKUP DATABASE ${identifier(database)} TO File('${file}') ASYNC`,
     format: "JSONEachRow",
@@ -388,14 +380,11 @@ async function backupClickHouse(
   });
 }
 
-/** What a ClickHouse backup's row says: its status and error. */
 export type ClickHouseBackupState = { status: string; error: string } | null;
 
 /**
- * Waits for ClickHouse's backup to be created. On any failure or abort,
- * first `stop`s it (cancels it, and waits for its end), so its file is not
- * finished, or written to, after the run deletes it. No row in
- * system.backups is a failure at once (ClickHouse restarted), not a wait.
+ * On failure or abort, stop the backup before deleting its file.
+ * A missing system.backups row means ClickHouse restarted; fail immediately.
  */
 export async function waitForClickHouseBackup({
   readState,
@@ -454,7 +443,7 @@ async function* objectEntries(
   const listed: ObjectManifest["objects"] = [];
   let next = 0;
   try {
-    // Only the store's own prefixes: never other keys a shared bucket holds, backups among them.
+    // Limit reads to app prefixes so shared buckets can also hold backups.
     for (const prefix of prefixes) {
       let token: string | undefined;
       do {
@@ -582,7 +571,7 @@ export async function runBackup({
     throw new BackupError(OVERLAP_PROBLEM);
   }
   onStep("cleaning up after earlier runs");
-  // One run at a time (state.ts): what an earlier run left is nobody's now.
+  // Only one run is allowed (state.ts), so leftover files cannot belong to another run.
   await sources.clickhouseFiles.removeLeftovers().catch(() => []);
   await abortStaleUploads(client, destination, now(), staleUploadMs).catch(() => 0);
   onStep("checking free disk space");
@@ -613,7 +602,7 @@ export async function runBackup({
       dump.kill();
       throw failedStep("Uploading PostgreSQL's dump", error);
     }
-    // A pg_dump that fails ends its output early: the upload succeeds, and its exit says why.
+    // A failed pg_dump can still upload successfully; check its exit status.
     try {
       await dump.done;
     } catch (error) {
@@ -700,7 +689,7 @@ export async function runBackup({
     return { name, bytes, manifest };
   } catch (error) {
     if (uploaded) {
-      // A folder without its manifest is no backup: leave nothing that looks like part of one.
+      // Remove partial uploads so an incomplete backup cannot look usable.
       await deleteBackup(client, destination.bucket, destination.prefix, name).catch(
         () => undefined,
       );
@@ -713,9 +702,8 @@ export async function runBackup({
 export const STALE_UPLOAD_MS = 24 * 60 * 60 * 1000;
 
 /**
- * Aborts multipart uploads under the destination's folder started more
- * than `olderThanMs` ago: a worker killed mid-upload leaves its parts,
- * which the store keeps (and charges for) until aborted. How many.
+ * Abort uploads older than olderThanMs under the destination prefix.
+ * Stores keep and charge for parts left by a killed worker.
  */
 export async function abortStaleUploads(
   client: S3Client,
@@ -759,10 +747,8 @@ export async function abortStaleUploads(
 }
 
 /**
- * Deletes backups older than `keepDays`, only in the destination's folder,
- * and never the newest whole one, however old: a run of failures never
- * leaves no backup at all. A folder without a manifest (a run cut off
- * before it could clean up) goes once it is a day old.
+ * Keep the newest complete backup even past keepDays so failures cannot
+ * leave no backup. Delete incomplete folders after one day.
  */
 export async function applyRetention(
   client: S3Client,
@@ -786,7 +772,6 @@ export async function applyRetention(
   return deleted;
 }
 
-/** What Test restore checked. */
 export interface RestoreCheck {
   name: string;
   /** Encrypted bytes downloaded and checked. */

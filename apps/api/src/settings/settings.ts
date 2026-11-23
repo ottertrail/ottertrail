@@ -4,22 +4,15 @@ import type { Database } from "../db/schema.ts";
 
 export const MAX_INSTANCE_NAME_LENGTH = 100;
 
-/**
- * How long a process keeps the settings it read: another process (the
- * worker, a second API process) sees a change within this time.
- */
+/** Other processes see settings changes within this interval. */
 export const SETTINGS_CACHE_MS = 5_000;
 
-/** The instance's settings (the instance_settings table). */
 export interface InstanceSettings {
   /** What the dashboard shows above the projects. */
   name: string;
   /** IANA timezone: reports count days in it, and visitor salts change at its midnight. */
   timeZone: string;
-  /**
-   * Whether the worker keeps the location database and the data-center
-   * ranges current on its own (enrichment/updates.ts). On by default.
-   */
+  /** Automatic updates default to on (enrichment/updates.ts). */
   updateLocationData: boolean;
   /** The instance's icon in the object store, or null (avatars/avatars.ts). */
   avatarKey: string | null;
@@ -34,10 +27,8 @@ interface CacheEntry {
 const caches = new WeakMap<Kysely<Database>, CacheEntry>();
 
 /**
- * The instance's settings, from a cache that lasts SETTINGS_CACHE_MS:
- * every report, event, and project route needs the timezone, and it seldom
- * changes. A change made through updateInstanceSettings() shows at once in
- * this process.
+ * Cache the frequently read timezone for SETTINGS_CACHE_MS.
+ * updateInstanceSettings() invalidates this process's cache immediately.
  */
 export function readInstanceSettings(
   db: Kysely<Database>,
@@ -56,7 +47,7 @@ export function readInstanceSettings(
       avatarKey: row.avatar_key,
     }));
   caches.set(db, { settings, expiresAt: now + SETTINGS_CACHE_MS });
-  // A failed read is not kept: the next caller tries again.
+  // Discard failed reads so the next caller can retry.
   settings.catch(() => {
     if (caches.get(db)?.settings === settings) caches.delete(db);
   });
@@ -64,10 +55,8 @@ export function readInstanceSettings(
 }
 
 /**
- * Changes the instance's name, timezone, or automatic location data
- * updates, and drops this process's cached
- * copy. Checking who may do it is the caller's job. In a transaction, call
- * forgetInstanceSettings() on the outer handle once it commits.
+ * The caller must check access. After a transaction commits,
+ * call forgetInstanceSettings() on the outer database handle.
  */
 export async function updateInstanceSettings(
   db: Kysely<Database>,
@@ -84,24 +73,20 @@ export async function updateInstanceSettings(
       updated_at: new Date(),
     })
     .executeTakeFirst();
-  // The schema's migration inserts the one row and nothing deletes it; if
-  // it is gone all the same, fail rather than report a change not made
-  // (setup's transaction then rolls back).
+  // A missing settings row must fail so setup's transaction rolls back.
   if (result.numUpdatedRows !== 1n) {
     throw new Error("The instance's settings row is missing");
   }
   forgetInstanceSettings(db);
 }
 
-/** Drops this process's cached settings, so the next read goes to the database. */
 export function forgetInstanceSettings(db: Kysely<Database>): void {
   caches.delete(db);
 }
 
 /**
- * Whether PostgreSQL knows a timezone name. Node.js and PostgreSQL carry
- * separate timezone databases, and reports and retention hand the name to
- * PostgreSQL, so a name only Node.js knows would make them fail.
+ * Node.js and PostgreSQL have separate timezone databases. Reports and
+ * retention need a name PostgreSQL recognizes.
  */
 export async function postgresKnowsTimeZone(db: Kysely<Database>, name: string): Promise<boolean> {
   const { rows } = await sql<{ known: boolean }>`
@@ -110,7 +95,6 @@ export async function postgresKnowsTimeZone(db: Kysely<Database>, name: string):
   return rows[0]?.known === true;
 }
 
-/** The answer to a timezone that is not one both Node.js and PostgreSQL know. */
 export const INVALID_TIME_ZONE = {
   error: "invalid_time_zone",
   message:

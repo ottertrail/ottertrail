@@ -5,26 +5,17 @@ import type { Database } from "./schema.ts";
 
 export interface DatabaseOptions {
   connectionString: string;
-  /** Upper bound on open connections from this process. */
   maxConnections?: number;
-  /**
-   * Schema to use instead of "public". Tests use a fresh schema each so they
-   * never touch development data or each other.
-   */
+  /** Defaults to "public". Tests use separate schemas to isolate their data. */
   schema?: string;
-  /**
-   * Hears an idle connection ending (PostgreSQL restarted, or the backend
-   * terminated); the API and the worker pass their own log. By default, a
-   * JSON line on stderr, for scripts.
-   */
+  /** Handles idle connection errors. Defaults to a JSON line on stderr. */
   onIdleError?: (error: Error) => void;
 }
 
 const SCHEMA_NAME = /^[a-z_][a-z0-9_]{0,62}$/;
 
-// PostgreSQL "date" columns (no time of day) stay "YYYY-MM-DD" strings. By
-// default pg turns them into JavaScript Dates at local midnight, which shifts
-// the day whenever the server's timezone differs from the data's.
+// Keep DATE values as YYYY-MM-DD strings. pg's local-midnight Dates
+// can shift the day across timezones.
 types.setTypeParser(types.builtins.DATE, (value) => value);
 
 function logIdleError(error: Error): void {
@@ -48,10 +39,8 @@ export function createDatabase(options: DatabaseOptions): Kysely<Database> {
     max: maxConnections,
     ...(schema === undefined ? {} : { options: `-c search_path=${schema}` }),
   });
-  // An idle connection whose backend ends (PostgreSQL restarted, or the
-  // backend terminated) makes the pool emit "error"; unheard, that would
-  // end the process. The pool has already dropped the connection, and the
-  // next query opens a new one.
+  // An unhandled pool error would end the process. The pool drops the idle
+  // connection and reconnects on the next query.
   pool.on("error", onIdleError);
   return new Kysely<Database>({ dialect: new PostgresDialect({ pool }) });
 }

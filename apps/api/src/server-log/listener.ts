@@ -6,7 +6,7 @@ import { CONNECTION_LIMITS, SERVER_LOG_CHANNEL } from "./relay.ts";
 
 const RETRY_MS = { first: 1000, max: 30_000 };
 
-/** How often the listening connection runs a no-op query, so a dead one is found and replaced. */
+/** Ping to detect and replace dead connections. */
 export const LISTENER_PING_MS = 30_000;
 
 export interface ListenerOptions {
@@ -22,11 +22,9 @@ export interface ListenerOptions {
 }
 
 /**
- * The API's side of the Server log's worker lines (relay.ts): one
- * PostgreSQL connection of its own, apart from the pool, LISTENing on the
- * channel, adding each notification to the buffer as a worker line. A lost
- * connection is opened again, after 1 second and then up to 30; the
- * worker's lines sent meanwhile are lost, and the API's log says so.
+ * Use a separate PostgreSQL LISTEN connection for worker logs (relay.ts).
+ * Reconnect after 1 second, backing off to 30 seconds. Lines sent while
+ * disconnected are lost.
  */
 export class WorkerLogListener {
   readonly #options: ListenerOptions;
@@ -41,13 +39,11 @@ export class WorkerLogListener {
     this.#options = options;
   }
 
-  /** Connects and listens, now and after every loss, until stop(). */
   start(): void {
     this.#stopped = false;
     void this.#connect();
   }
 
-  /** Whether a connection is listening now. */
   get listening(): boolean {
     return this.#client !== null;
   }
@@ -67,7 +63,7 @@ export class WorkerLogListener {
       time: Date.now(),
       msg: "a worker log line could not be read",
     };
-    // The worker masks its lines; masked again here, so another sender on the channel can't slip a secret in.
+    // Redact again because other senders can publish to this channel.
     this.#options.buffer.add("worker", redactRecord(record).value);
   }
 
@@ -106,7 +102,7 @@ export class WorkerLogListener {
     client.on("notification", (message) => {
       if (message.channel === channel) this.#heard(message.payload);
     });
-    // Each connection is lost once, whether it errs, ends, or both.
+    // Handle error and end as one disconnect.
     let lost = false;
     const onLost = (error: unknown) => {
       if (lost) return;
@@ -117,7 +113,6 @@ export class WorkerLogListener {
     client.on("end", () => onLost(new Error("the connection ended")));
     try {
       await client.connect();
-      // A channel name is an identifier: quoted, as escapeIdentifier does.
       await client.query(`LISTEN ${client.escapeIdentifier(channel)}`);
     } catch (error) {
       onLost(error);
@@ -130,8 +125,7 @@ export class WorkerLogListener {
     }
     this.#client = client;
     this.#retryMs = RETRY_MS.first;
-    // TCP keepalive takes minutes to give up on a half-open connection; a
-    // query that fails or times out (query_timeout) finds it sooner.
+    // A timed query detects half-open connections sooner than TCP keepalive.
     clearInterval(this.#ping);
     this.#ping = setInterval(() => {
       client.query("select 1").catch((error: unknown) => onLost(error));

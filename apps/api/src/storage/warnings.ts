@@ -1,14 +1,9 @@
 import type { Budget, StorageReading } from "./usage.ts";
 
 /**
- * Storage warnings (docs/deployment.md, "Storage"), worked out on the
- * server from a reading (usage.ts). Each says what happens and what to do.
- *
- * A warning starts at its threshold and ends only once the figure is back
- * past a margin (`HOLD`), so a figure that hovers at the line does not
- * start and end it on every check. Whether it was already on comes from
- * the stored state (warning-state.ts). A warning whose figures could not
- * be measured is neither started nor ended: `undetermined` lists it.
+ * Storage thresholds use a recovery margin (HOLD) to prevent flapping
+ * (docs/deployment.md, "Storage"; warning-state.ts). Missing measurements
+ * leave warning state unchanged and appear in `undetermined`.
  */
 
 export const WARNING_IDS = [
@@ -32,9 +27,7 @@ export const isWarningId = (value: unknown): value is WarningId =>
 export interface StorageWarning {
   id: WarningId;
   level: WarningLevel;
-  /** A short line, such as "The disk is 85% full". */
   title: string;
-  /** What happens, and what to do, in a few sentences. */
   text: string;
   /** The figures behind it, as a notification's subject carries them. */
   figures: Record<string, number | string>;
@@ -65,19 +58,14 @@ export const THRESHOLDS = {
 } as const;
 
 /**
- * How far past its threshold a figure must come back before a warning that
- * is on ends: 10% more free space than the threshold needs, or 2 points
- * under a percentage.
+ * Recovery requires 10% more free space than the threshold,
+ * or 2 percentage points below a usage threshold.
  */
 export const HOLD = { spaceFactor: 1.1, percentPoints: 2 } as const;
 
 const SIZE_UNITS = ["KB", "MB", "GB"] as const;
 
-/**
- * "1.5 GB", "300 MB", "12 KB": sizes in messages, written as the Storage
- * tab writes the figures beside them (formatBytes in the dashboard): powers
- * of 1,024, one decimal under 10.
- */
+/** Match dashboard formatBytes: powers of 1,024, one decimal below 10. */
 export function sizeText(bytes: number): string {
   if (bytes < 1024) return `${bytes} ${bytes === 1 ? "byte" : "bytes"}`;
   let value = bytes;
@@ -113,10 +101,7 @@ export interface Evaluation {
   undetermined: WarningId[];
 }
 
-/**
- * The warnings a reading shows. `active` holds the warnings already on,
- * with their level: they end only past the margin.
- */
+/** Active warnings must pass the recovery margin before ending. */
 export function evaluateWarnings(
   reading: StorageReading,
   active: ReadonlyMap<WarningId, WarningLevel> = new Map(),
@@ -129,7 +114,6 @@ export function evaluateWarnings(
     free < need * (held(id) ? HOLD.spaceFactor : 1);
   const { disk, clickhouse } = reading;
 
-  // 1. Merge headroom.
   if (!disk.ok || !clickhouse.ok) {
     undetermined.push("merge_headroom");
   } else if (clickhouse.largestPartition !== null && clickhouse.largestPartition.bytes > 0) {
@@ -161,7 +145,6 @@ export function evaluateWarnings(
     }
   }
 
-  // 2. The next backup.
   const objects = objectBytes(reading);
   if (!disk.ok || !clickhouse.ok || objects === null) {
     undetermined.push("backup_space");
@@ -186,7 +169,6 @@ export function evaluateWarnings(
     }
   }
 
-  // 3. The disk, in percent.
   if (!disk.ok) {
     undetermined.push("disk_used");
   } else if (disk.readOnly || disk.broken) {
@@ -227,7 +209,6 @@ export function evaluateWarnings(
     }
   }
 
-  // 4. The budgets.
   const budget = (id: "replay_budget" | "source_map_budget", of: Budget, what: string) => {
     if (of.limitBytes <= 0) return;
     const used = percentOf(of.usedBytes, of.limitBytes);
@@ -401,7 +382,6 @@ export function recovery(
     case "budgets_exceed_disk":
       break;
   }
-  // The budgets larger than the free disk.
   const budgets = reading.budgets?.ok === true ? reading.budgets : null;
   const room =
     budgets === null

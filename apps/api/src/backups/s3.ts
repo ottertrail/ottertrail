@@ -20,11 +20,8 @@ import { codeOf } from "../outbound/request.ts";
 import type { Destination } from "./settings.ts";
 
 /**
- * Backups' S3 calls (docs/deployment.md, "Backups"): uploads streamed in
- * parts, the listing of the backups in their folder, deleting one backup's
- * folder, and Test connection. Every call stays under the destination's
- * folder: a backup is `<folder>/<UTC time>/<file>`, and nothing else is
- * listed or deleted.
+ * Keep all S3 operations under the destination prefix (docs/deployment.md,
+ * "Backups"). Each backup uses `<folder>/<UTC time>/<file>`.
  */
 
 /** A backup's folder name: its UTC start time, "2026-11-20T030000Z". */
@@ -32,7 +29,6 @@ export const BACKUP_NAME = /^\d{4}-\d{2}-\d{2}T\d{6}Z$/;
 
 export const MANIFEST_KEY = "manifest.json";
 
-/** The folder name of a backup that starts at `at`. */
 export function backupName(at: Date): string {
   return at
     .toISOString()
@@ -40,7 +36,7 @@ export function backupName(at: Date): string {
     .replaceAll(":", "");
 }
 
-/** The moment a folder name stands for; null when it is not one. */
+/** Returns null for invalid backup folder names. */
 export function backupTime(name: string): Date | null {
   if (!BACKUP_NAME.test(name)) return null;
   // "2026-11-20T030000Z" is "2026-11-20T03:00:00Z".
@@ -57,9 +53,8 @@ export const PART_BYTES = 16 * 1024 * 1024;
 export const MAX_PARTS = 10_000;
 
 /**
- * The S3 client for a destination. The destination is the operator's own
- * BACKUP_S3_* (config.ts), as OBJECT_STORE_URL is: no outbound address
- * rules apply.
+ * BACKUP_S3_* is operator configuration, like OBJECT_STORE_URL;
+ * outbound address rules do not apply (config.ts).
  */
 export function backupClient(destination: Destination): S3Client {
   return new S3Client({
@@ -69,17 +64,17 @@ export function backupClient(destination: Destination): S3Client {
       accessKeyId: destination.accessKeyId,
       secretAccessKey: destination.secretAccessKey,
     },
-    // The bucket in the path, as the object store's client does (storage/object-store.ts).
+    // Use path-style buckets, as in storage/object-store.ts.
     forcePathStyle: true,
     requestChecksumCalculation: "WHEN_REQUIRED",
     responseChecksumValidation: "WHEN_REQUIRED",
     requestHandler: {
       connectionTimeout: 5000,
-      // Between bytes, not for the whole request: a large part may take minutes.
+      // Timeout between bytes; a large part can take minutes.
       requestTimeout: 120_000,
       throwOnRequestTimeout: true,
     },
-    // Parts are buffers, so the SDK can send one again.
+    // Buffers let the SDK retry each part.
     maxAttempts: 4,
   });
 }
@@ -213,12 +208,9 @@ export async function getStream(
   return { body: response.Body, size: response.ContentLength ?? null };
 }
 
-/** One backup in the destination's folder. */
 export interface ListedBackup {
-  /** Its folder name, the UTC start time. */
   name: string;
   at: Date;
-  /** Its files' bytes together. */
   bytes: number;
   files: string[];
   /** It has its manifest, which is written last: a whole backup. */
@@ -306,7 +298,6 @@ export async function deleteBackup(
   }
 }
 
-/** What each step of Test connection does, in the words of its refusal. */
 const VERBS = { put: "write", list: "list", get: "read", delete: "delete" } as const;
 
 export type ConnectionStep = keyof typeof VERBS;
@@ -314,7 +305,6 @@ export type ConnectionStep = keyof typeof VERBS;
 export interface StepResult {
   step: ConnectionStep;
   status: "ok" | "failed" | "skipped";
-  /** Why it failed, in plain words. */
   error?: string;
 }
 
@@ -350,7 +340,7 @@ export async function testConnection(
       { abortSignal: signal },
     );
     const seen = (page.Contents ?? []).some((item) => item.Key === key);
-    // A long folder may list the test file on a later page: a listing that answered is enough.
+    // The test file may be on a later page; a successful listing is enough.
     if (!seen && page.IsTruncated !== true) {
       results.push({
         step: "list",
@@ -391,9 +381,8 @@ export async function testConnection(
 const DNS_CODES = new Set(["ENOTFOUND", "EAI_AGAIN", "ENODATA", "ESERVFAIL", "ECONNREFUSED_DNS"]);
 
 /**
- * An S3 call's failure in plain words: what the store said, and what to
- * check. `verb` names what was refused ("write", "list"). Never holds a
- * key: S3's errors name none.
+ * S3 errors contain no secret keys. `verb` identifies the failed action
+ * ("write", "list").
  */
 export function s3ErrorText(error: unknown, verb = "use"): string {
   if (error instanceof S3ServiceException) {

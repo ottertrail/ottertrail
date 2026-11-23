@@ -5,14 +5,9 @@ import type { BackupS3Config } from "../config.ts";
 import type { Database } from "../db/schema.ts";
 
 /**
- * Scheduled backups' settings (backup_settings, migrations 0014 and 0020;
- * docs/deployment.md, "Scheduled backups"). The owner's part is on the
- * Backups tab: on or off, the time of day, the days to keep, and the
- * backup key. Where backups go is the worker's: BACKUP_S3_* in its
- * environment (config.ts, parseBackupS3), which the API never reads. The
- * worker reports what it has here, without the secret: the destination or
- * what is wrong with it, Test connection's result, and the folder's
- * listing (backups/job.ts).
+ * The API stores owner settings; only the worker reads BACKUP_S3_* credentials.
+ * Worker reports omit secrets (backups/job.ts; migrations 0014 and 0020;
+ * docs/deployment.md, "Scheduled backups").
  */
 
 export const DEFAULT_PREFIX = "ottertrail-backups";
@@ -24,13 +19,12 @@ export const TIME_PATTERN = "^([01][0-9]|2[0-3]):[0-5][0-9]$";
 /** S3's bucket names: 3 to 63 lowercase letters, digits, dots, and hyphens. */
 export const BUCKET_PATTERN = "^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$";
 /**
- * A folder: one or more names of letters, digits, dots, hyphens, and
- * underscores, joined by slashes, without a slash at either end. Never
- * empty, so backups never list or delete at a bucket's top.
+ * Require a nonempty slash-separated path of letters, digits, dots, hyphens,
+ * and underscores, with no leading or trailing slash. This keeps listing
+ * and deletion away from the bucket root.
  */
 export const PREFIX_PATTERN = "^[A-Za-z0-9_-][A-Za-z0-9._-]*(/[A-Za-z0-9_-][A-Za-z0-9._-]*)*$";
 export const MAX_PREFIX = 200;
-/** A region such as "us-east-1", "auto" (R2), or "garage". */
 export const REGION_PATTERN = "^[A-Za-z0-9_-]{1,64}$";
 /** An access key ID: visible characters, no spaces. */
 export const ACCESS_KEY_PATTERN = "^[\\x21-\\x7E]{1,128}$";
@@ -144,7 +138,7 @@ export async function readBackupSettings(
     disabledBy: row.disabled_by,
     backupRequestedAt: row.backup_requested_at,
     testRestoreRequestedAt: row.test_restore_requested_at,
-    // The three JSON columns are written by the worker alone (backups/job.ts).
+    // Only the worker writes these JSON columns (backups/job.ts).
     destination: parsed(destinationReportSchema, row.destination),
     destinationProblem: row.destination_problem,
     destinationReportedAt: row.destination_reported_at,
@@ -156,14 +150,13 @@ export async function readBackupSettings(
   };
 }
 
-/** Where backups go, with the keys to sign for it: the worker's BACKUP_S3_*. */
+/** Credentials come only from the worker's BACKUP_S3_*. */
 export type Destination = BackupS3Config;
 
 /**
- * Where the object store keeps its objects (replays/replays.ts,
- * source-maps/source-maps.ts, avatars/avatars.ts,
- * heatmaps/snapshots.ts): object backups list only these, and a backup
- * folder in the store's own bucket may not overlap them.
+ * Object backups list only these prefixes. Backup destinations in the same
+ * bucket must not overlap them (replays/replays.ts, source-maps/source-maps.ts,
+ * avatars/avatars.ts, heatmaps/snapshots.ts).
  */
 export const OBJECT_PREFIXES = [
   "replays/",
@@ -172,7 +165,6 @@ export const OBJECT_PREFIXES = [
   "heatmap-snapshots/",
 ] as const;
 
-/** Whether a backup folder overlaps the store's objects: "replays", "replays/x", "source-maps", "avatars", or "heatmap-snapshots". */
 export function overlapsObjects(prefix: string): boolean {
   const folder = `${prefix}/`;
   return OBJECT_PREFIXES.some(

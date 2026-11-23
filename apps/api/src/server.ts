@@ -13,7 +13,7 @@ import { s3ObjectStore } from "./storage/object-store.ts";
 import { storageSourcesOf } from "./storage/usage.ts";
 
 const config = loadConfig();
-// The Settings page's Server log: this process's lines and the worker's, in memory only.
+// Keep API and worker Server log lines in memory only.
 const serverLogBuffer = new ServerLogBuffer();
 const db = createDatabase({
   connectionString: config.databaseUrl,
@@ -24,7 +24,7 @@ const db = createDatabase({
       "an idle PostgreSQL connection ended; the next query opens a new one",
     ),
 });
-// Events and telemetry are stored here, and reports read them (docs/clickhouse.md).
+// Events and reports share ClickHouse (docs/clickhouse.md).
 const clickhouse = createClickHouse(config.clickhouse);
 // Source maps; none when the install has no object store (docs/errors.md).
 const objectStore = config.objectStore === null ? null : s3ObjectStore(config.objectStore);
@@ -70,17 +70,17 @@ const app = buildApp({
     allowPrivateAddresses: config.uptimeAllowPrivateAddresses,
     denyAddresses: config.uptimeDenyAddresses,
   },
-  // SMTP_URL holds a password: it goes only to the mailer, never logged.
+  // Pass SMTP_URL only to the mailer; it contains a password.
   notifications: { emailConfigured: config.email !== null, mailer, linkSecret: config.authSecret },
-  // Garage's admin token goes only to its client: never logged or returned.
+  // Keep the Garage admin token out of logs and responses.
   storage: storageSourcesOf(config, db, clickhouse),
   // The backup key is sealed with AUTH_SECRET; where backups go is the worker's alone.
   backups: { authSecret: config.authSecret },
   trackerScriptPath: config.trackerScriptPath,
   dashboardPath: resolve(config.dashboardPath),
   replayPlayerPath: resolve(config.replayPlayerPath),
-  // After the server stops accepting requests and the last ingestion counts
-  // are written: never an onClose hook of its own, which would run first.
+  // Close after the final ingestion counts are written. A separate onClose
+  // hook would run too early.
   closeAfter: async () => {
     locationData.stop();
     await workerLog.stop();
@@ -89,7 +89,6 @@ const app = buildApp({
     objectStore?.close();
     mailer?.close();
   },
-  // A number means "trust this many proxy hops in front of the API".
   trustProxy:
     typeof config.trustProxy === "number"
       ? (
@@ -115,7 +114,7 @@ locationData.start({
   info: (msg) => app.log.info(msg),
   warn: (msg) => app.log.warn(msg),
 });
-// The worker's lines, over PostgreSQL's NOTIFY (server-log/relay.ts), on a connection of their own.
+// Use a separate PostgreSQL LISTEN connection for worker logs (server-log/relay.ts).
 const workerLog = new WorkerLogListener({
   connectionString: config.databaseUrl,
   buffer: serverLogBuffer,

@@ -10,26 +10,10 @@ import { readActiveWarnings, readWarningChannels } from "./warning-state.ts";
 import { evaluateWarnings, recovery, type WarningId, type WarningLevel } from "./warnings.ts";
 
 /**
- * The worker's storage check (docs/deployment.md, "Storage warnings"),
- * every STORAGE_CHECK_INTERVAL_MS:
- *
- * 1. Measures every store (usage.ts).
- * 2. On the stack's Garage with its admin token, sets the bucket's quota
- *    to the budgets plus 10%, never below what the bucket holds plus the
- *    budgets' room (plannedQuota), when it differs: at the worker's start,
- *    and so after a change of budget, which needs a restart.
- * 3. Works out the warnings (warnings.ts) against the ones already on,
- *    in PostgreSQL, and records the change: a warning that starts, or
- *    rises to critical, sends `storage.low`; one that ends sends
- *    `storage.recovered`, to the channels the setting names. A warning
- *    whose figures could not be measured stays as it was.
- *
- * 4. Rebuilds the first-seen times a rebuild skipped for lack of disk, or
- *    left part way, once ClickHouse has room again
- *    (clickhouse/delete-events.ts, retryFirstSeenRebuilds).
- *
- * Two workers at once take turns on an advisory lock, so a change is
- * notified once.
+ * Measure stores and update quotas and warnings (docs/deployment.md,
+ * "Storage warnings"). An advisory lock prevents duplicate notifications
+ * across workers. Missing measurements preserve warning state. Retry deferred
+ * first-seen rebuilds when disk space returns (clickhouse/delete-events.ts).
  */
 
 /** How often the worker checks: disks fill over hours, and a check is a few small queries. */
@@ -69,7 +53,7 @@ export class StorageWarningJob {
   readonly #log: StorageLog;
   readonly #now: () => Date;
   readonly #room: RoomCheck;
-  /** Whether the last quota call failed: logged once until it works again. */
+  /** Log quota failures once until recovery. */
   #quotaFailing = false;
   #checkFailing = false;
 
@@ -90,7 +74,7 @@ export class StorageWarningJob {
     this.#room = options.room ?? {};
   }
 
-  /** One check; never throws: a failure is logged, and the next check tries again. */
+  /** Failures are logged and retried on the next tick; never throws. */
   async tick(): Promise<StorageCheckResult | null> {
     try {
       const reading = await measureStorage(this.#sources, {
@@ -144,7 +128,7 @@ export class StorageWarningJob {
       return null;
     }
     const plan = quotaPlanOf(this.#sources.budgets, reading);
-    // Without the budgets' figures, the floor under the quota is unknown: wait.
+    // Wait for measurements so the quota floor is known.
     if (!plan.measured) return null;
     const quota = plan.bytes;
     if (garage.bucket.maxSize === quota) return null;
@@ -172,7 +156,6 @@ export class StorageWarningJob {
   async #record(
     reading: StorageReading,
   ): Promise<{ started: WarningId[]; raised: WarningId[]; ended: WarningId[] }> {
-    // Backup warnings link to the Backups tab, the others to Storage.
     const urlOf = (id: WarningId) =>
       `${this.#publicUrl}/settings?tab=${onBackupsTab(id) ? "backups" : "storage"}`;
     const now = reading.measuredAt;
@@ -202,7 +185,7 @@ export class StorageWarningJob {
             .set({ level: warning.level, updated_at: now })
             .where("warning", "=", warning.id)
             .execute();
-          // A rise to critical is news; a fall back to a warning is not.
+          // Notify on escalation to critical; a downgrade needs no notification.
           if (!(was.level === "warning" && warning.level === "critical")) continue;
           raised.push(warning.id);
         }
@@ -236,7 +219,6 @@ export class StorageWarningJob {
           message: cut(message),
           url: urlOf(id),
           time: now,
-          // The message's first clause: "Backups work again".
           inbox: {
             title: message.split(/[:.](?:\s|$)/u)[0] ?? message,
             permission: permissionOf(id),

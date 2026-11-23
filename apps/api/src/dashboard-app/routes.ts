@@ -5,11 +5,8 @@ import fastifyStatic from "@fastify/static";
 import type { FastifyPluginAsync, FastifyReply } from "fastify";
 
 /**
- * What the dashboard's pages may load: only files from this instance. The
- * built dashboard has no inline scripts and loads its styles from its own
- * files. Vite inlines files under 4 KB as data: URLs, which includes one of
- * the font subsets. `frame-ancestors 'none'` stops other sites from framing
- * a signed-in dashboard to trick clicks out of it.
+ * Vite inlines files under 4 KB, including a font subset, as data: URLs.
+ * Blocking frames prevents clickjacking of the signed-in dashboard.
  */
 export const DASHBOARD_CONTENT_SECURITY_POLICY = [
   "default-src 'self'",
@@ -24,11 +21,7 @@ export const DASHBOARD_CONTENT_SECURITY_POLICY = [
   "frame-ancestors 'none'",
 ].join("; ");
 
-/**
- * Whether to send Strict-Transport-Security for this public URL: HTTPS, and
- * not this computer. A browser that kept HSTS for localhost would refuse
- * plain-HTTP development servers there (any port) for a year.
- */
+/** HSTS on localhost would block plain HTTP development servers on every port for a year. */
 export function sendsHsts(publicUrl: string): boolean {
   const url = URL.parse(publicUrl);
   if (url === null || url.protocol !== "https:") {
@@ -43,25 +36,17 @@ export function sendsHsts(publicUrl: string): boolean {
   );
 }
 
-/** Vite's build output, whose names change with their content: safe to cache for good. */
+/** Content hashes make these assets safe to cache for a year. */
 const HASHED_ASSETS_DIRECTORY = "assets";
 
 /**
- * Serves the built dashboard (apps/web/dist) from the instance's own origin,
- * so one process answers the dashboard, its API, and the tracker.
- *
- * - Files that exist at startup get a route each; a new build needs a restart.
- * - Any other GET without a file extension, outside /api/, answers with
- *   index.html: the dashboard's router reads the path in the browser.
- * - index.html is revalidated on every load, so a new release shows at once;
- *   hashed files under /assets/ are cached for a year.
- *
- * Without a build (index.html missing), pages answer 503, as /t.js does.
+ * Files are registered at startup, so a new build needs a restart.
+ * Revalidate index.html on each load; cache hashed /assets/ files for a year.
+ * Missing index.html returns 503. Other page paths use the browser router.
  */
 export const dashboardAppRoutes: FastifyPluginAsync<{
-  /** The built dashboard's directory. */
   root: string;
-  /** Send Strict-Transport-Security (see sendsHsts). */
+  /** See sendsHsts for localhost exclusions. */
   hsts: boolean;
 }> = async (app, { root, hsts }) => {
   app.addHook("onSend", async (_request, reply) => {
@@ -69,7 +54,7 @@ export const dashboardAppRoutes: FastifyPluginAsync<{
       .header("content-security-policy", DASHBOARD_CONTENT_SECURITY_POLICY)
       .header("x-frame-options", "DENY")
       .header("x-content-type-options", "nosniff")
-      // Dashboard URLs hold project IDs and filters: other sites need not see them.
+      // Keep project IDs and filters out of cross-origin referrers.
       .header("referrer-policy", "same-origin");
     if (hsts) {
       reply.header("strict-transport-security", "max-age=31536000");
@@ -94,7 +79,7 @@ export const dashboardAppRoutes: FastifyPluginAsync<{
   const hashedPrefix = join(root, HASHED_ASSETS_DIRECTORY) + sep;
   await app.register(fastifyStatic, {
     root,
-    // A route per file found at startup, instead of reading any path asked for.
+    // Register known files to avoid serving arbitrary paths.
     wildcard: false,
     cacheControl: false,
     setHeaders(reply: FastifyReply, path: string) {
@@ -121,11 +106,8 @@ function cacheControlFor(path: string, hashedPrefix: string): string {
 }
 
 /**
- * A path the dashboard's router may own: not the API, and not a missing
- * file such as /assets/old-build.js, which must stay a 404 instead of
- * turning into a page. Every path under /projects/ is a page, extension or
- * not: a user's page ends in the site's own ID, which may hold a dot
- * (/projects/…/users/john.doe).
+ * Missing files must stay 404. /projects/ paths can contain dots in user IDs
+ * (/projects/…/users/john.doe), so they always count as pages.
  */
 function isPagePath(url: string): boolean {
   const path = url.split("?", 1)[0] ?? "";

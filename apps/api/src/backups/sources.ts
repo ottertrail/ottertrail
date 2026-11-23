@@ -29,10 +29,8 @@ export async function clickHouseDataBytes(clickhouse: ClickHouseClient): Promise
 }
 
 /**
- * What the worker's backups read, from its configuration: pg_dump of
- * DATABASE_URL (the image has PostgreSQL 18's client), ClickHouse's
- * database and the folder its backups land in (CLICKHOUSE_BACKUP_PATH),
- * and the object store.
+ * Use PostgreSQL 18's pg_dump from the image. CLICKHOUSE_BACKUP_PATH
+ * must be shared with ClickHouse.
  */
 export function backupSourcesOf(
   config: Pick<Config, "databaseUrl" | "clickhouse" | "clickhouseBackupPath" | "objectStore">,
