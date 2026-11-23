@@ -49,6 +49,9 @@
  *   each project's retention (retention/retention.ts),
  *   and taking deleted rows off ClickHouse's disk.
  *
+ * - At start and daily: deleting the Activity tab's ingestion counts
+ *   older than 7 days (activity/activity.ts).
+ *
  * - Each log line also goes to the API, for the Settings page's Server log:
  *   a NOTIFY on a connection of its own, at most 20 lines a second, never
  *   stored (server-log/relay.ts).
@@ -57,6 +60,7 @@
  * and deliveries are taken with FOR UPDATE SKIP LOCKED), so plain timers
  * are enough; a job queue comes with work that needs one.
  */
+import { pruneIngestActivity } from "./activity/activity.ts";
 import { ALERT_TICK_MS, AlertEvaluator } from "./alerts/evaluator.ts";
 import { TELEMETRY_TICK_MS } from "./alerts/telemetry-rules.ts";
 import { FAVICON_TICK_MS, FaviconJob, faviconPolicy } from "./avatars/favicons.ts";
@@ -102,6 +106,9 @@ export const RETENTION_INTERVAL_MS = 6 * 60 * 60 * 1000;
 
 /** How often a deleted project's events are deleted from ClickHouse: at most this late. */
 export const PURGE_INTERVAL_MS = 60 * 1000;
+
+/** How often the Activity tab's counts past their 7 days are deleted. */
+export const ACTIVITY_PRUNE_INTERVAL_MS = 24 * 60 * 60 * 1000;
 
 /** How often finished replays are joined: how long one waits to be seen. */
 export const REPLAY_INTERVAL_MS = 10_000;
@@ -338,6 +345,15 @@ const stopPruning = every(PRUNE_INTERVAL_MS, async () => {
   }
 });
 
+const stopActivityPruning = every(ACTIVITY_PRUNE_INTERVAL_MS, async () => {
+  try {
+    const pruned = await pruneIngestActivity(db);
+    if (pruned > 0) log("info", "old ingestion activity counts deleted", { pruned });
+  } catch (error) {
+    log("error", "deleting old ingestion activity counts failed", { err: String(error) });
+  }
+});
+
 const stopRetention = every(RETENTION_INTERVAL_MS, async () => {
   if (objectStore !== null) {
     try {
@@ -480,6 +496,7 @@ async function shutdown(signal: NodeJS.Signals) {
     stopDeliveries(),
     stopAccountEmails(),
     stopPruning(),
+    stopActivityPruning(),
     stopRetention(),
     stopLocationData(),
     stopStorage(),
