@@ -1,7 +1,5 @@
 /**
- * What the heatmap overlay (o.js) and its snapshot script (snapshot.ts,
- * built to s.js) share, without the snapshot's code: importing that here
- * would put rrweb in o.js.
+ * Shared by o.js and snapshot.ts (s.js) without bundling rrweb in o.js.
  */
 
 /** The property o.js sets on s.js's script element: a SnapshotConfig. */
@@ -17,8 +15,6 @@ export const MAX_SNAPSHOT_BYTES = 5_000_000;
  * as rrweb writes a page (apps/api/src/heatmaps/snapshots.ts, MAX_SNAPSHOT_CONTAINERS).
  */
 export const MAX_SNAPSHOT_CONTAINERS = 500_000;
-
-/** What taking a snapshot came to. */
 export type SnapshotResult =
   | {
       ok: true;
@@ -31,8 +27,6 @@ export type SnapshotResult =
 
 /** Takes a snapshot of the page as it is now, leaving out `hide` (the overlay's own element). */
 export type TakeSnapshot = (hide: Element) => Promise<SnapshotResult>;
-
-/** What o.js hands s.js. */
 export interface SnapshotConfig {
   /** s.js calls it once, as it runs, with the function that takes snapshots. */
   ready: (take: TakeSnapshot) => void;

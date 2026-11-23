@@ -19,7 +19,6 @@ declare global {
 }
 
 const START = Date.UTC(2026, 10, 16, 8, 0, 0);
-/** 1:30 into a 2:00 recording. */
 const ERROR_AT = START + 90_000;
 
 /** What a recording would run, if the player let it: it marks this test's window. */
@@ -111,7 +110,6 @@ const json = (body: unknown, status = 200) =>
 
 let player: Player | undefined;
 
-/** Starts the player in this page, its fetch answering with `respond`. */
 async function start(
   respond: () => Response,
   errorAt: number | null = ERROR_AT,
@@ -169,13 +167,11 @@ describe("the replay player", () => {
     expect(marker?.hidden).toBe(false);
     expect(marker?.style.left).toBe("75%");
     expect(marker?.textContent).toBe("The error");
-    // The button names the marker: its red bar and the error's time.
     const jump = page.getByRole("button", { name: "Jump to the error, at 1:30" });
     await expect.element(jump).toBeVisible();
     expect(jump.element().querySelector(".ot-swatch")).not.toBeNull();
     expect(jump.element().textContent).toBe("Jump to the error· 1:30");
 
-    // The page as recorded, in rrweb's frame.
     await expect
       .poll(() => replayFrame().contentDocument?.querySelector("h1")?.textContent)
       .toBe("Hello replay");
@@ -200,7 +196,6 @@ describe("the replay player", () => {
     await userEvent.keyboard(" ");
     await expect.element(page.getByRole("button", { name: "Play the replay" })).toBeVisible();
 
-    // The timeline's arrows move 5 seconds.
     await page.getByRole("button", { name: /^Jump to the error/ }).click();
     slider().element().focus();
     await userEvent.keyboard("{ArrowRight}");
@@ -313,7 +308,6 @@ describe("messages with the dashboard", () => {
       offsetMs: 75_000,
       totalMs: 120_000,
     });
-    // Past the end: at the end.
     deliver({ type: SEEK_MESSAGE, offsetMs: 500_000 }, location.origin, dashboard);
     await expect.element(slider()).toHaveAttribute("aria-valuetext", "2:00 of 2:00");
   });
@@ -329,7 +323,7 @@ describe("messages with the dashboard", () => {
     deliver({ type: SEEK_MESSAGE, offsetMs: "75000" }, location.origin, dashboard);
     deliver({ type: SEEK_MESSAGE, offsetMs: 75_000, extra: 1 }, location.origin, dashboard);
     deliver("seek 75000", location.origin, dashboard);
-    // A real message after them shows they were read, and ignored.
+    // A valid message confirms the listener processed the earlier messages.
     deliver({ type: SEEK_MESSAGE, offsetMs: 10_000 }, location.origin, dashboard);
     await expect.element(slider()).toHaveAttribute("aria-valuetext", "0:10 of 2:00");
   });
@@ -340,7 +334,6 @@ describe("messages with the dashboard", () => {
     await page.getByRole("button", { name: "Play the replay" }).click();
     await expect.element(page.getByRole("button", { name: "Pause the replay" })).toBeVisible();
 
-    // Other shapes and windows are ignored.
     deliver({ type: PAUSE_MESSAGE, extra: 1 }, location.origin, dashboard);
     deliver({ type: PAUSE_MESSAGE }, location.origin, window);
     await new Promise((resolve) => setTimeout(resolve, 100));
@@ -348,7 +341,6 @@ describe("messages with the dashboard", () => {
 
     deliver({ type: PAUSE_MESSAGE }, location.origin, dashboard);
     await expect.element(page.getByRole("button", { name: "Play the replay" })).toBeVisible();
-    // Paused already, it stays paused.
     deliver({ type: PAUSE_MESSAGE }, location.origin, dashboard);
     await expect.element(page.getByRole("button", { name: "Play the replay" })).toBeVisible();
   });

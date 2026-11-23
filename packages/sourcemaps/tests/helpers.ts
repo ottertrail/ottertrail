@@ -5,7 +5,7 @@ import { dirname, join } from "node:path";
 
 import { run } from "../src/main.ts";
 
-/** A key of the right form, made up: built from parts, so no scanner takes it for a real one. */
+/** Assemble a fake key from parts to avoid secret-scanner alerts. */
 export const SECRET_KEY = `sk_${"0123456789abcdef".repeat(2)}`;
 
 export interface ReceivedRequest {
@@ -17,7 +17,6 @@ export interface ReceivedRequest {
 
 export type Handler = (request: ReceivedRequest, response: ServerResponse) => void;
 
-/** A local HTTP server that records every request and answers with `handler`. */
 export async function startServer(handler: Handler) {
   const requests: ReceivedRequest[] = [];
   const server = createServer((incoming, response) => {
@@ -63,7 +62,6 @@ export async function buildDirectory(files: Record<string, string>) {
   return { directory, remove: () => rm(directory, { recursive: true, force: true }) };
 }
 
-/** Runs the command and captures what it prints. */
 export async function runCommand(
   argv: string[],
   {

@@ -19,17 +19,10 @@ import {
 import { PLAYER_CSS } from "./styles.ts";
 
 /**
- * The session replay player (docs/session-replay.md, "Playback"). It runs in
- * a page of its own that the API serves with a strict Content Security
- * Policy, shown in a frame of the dashboard; that page's body names the
- * recording (data-replay-url) and the error's time (data-error-at, ms since
- * the epoch).
- *
- * A recording is whatever a browser sent with a public key, so it is
- * untrusted HTML: only rrweb's Replayer puts it on screen, in an iframe it
- * sandboxes without allow-scripts. Nothing from it is written into this
- * page's own document, and UNSAFE_replayCanvas, which allows scripts, is
- * never set.
+ * Replay HTML is untrusted public-key input. Render it only through rrweb
+ * in its iframe, sandboxed without allow-scripts, under the API page's strict
+ * Content Security Policy. Never enable UNSAFE_replayCanvas or write recorded
+ * HTML into the player document. See docs/session-replay.md, "Playback".
  */
 import rrwebStyle from "@rrweb/replay/dist/style.css?inline";
 
@@ -39,15 +32,11 @@ export const NOT_LOADED = "Could not load the replay. Close it and try again.";
 export const NOT_READABLE = "This player doesn't support the recording format.";
 
 const SPEEDS = [1, 2, 4] as const;
-
-/** The timeline's arrow keys move this far. */
 const ARROW_STEP_MS = 5_000;
 /** While playing, the dashboard hears where the player is this often at most. */
 const TIME_MESSAGE_MS = 250;
 
 type Fetch = (input: string, init?: RequestInit) => Promise<Response>;
-
-/** An element with its class and, optionally, its text. */
 function element<K extends keyof HTMLElementTagNameMap>(
   tag: K,
   className: string,
@@ -64,8 +53,6 @@ function addStyles(doc: Document) {
   style.textContent = `${rrwebStyle}\n${PLAYER_CSS}`;
   doc.head.append(style);
 }
-
-/** The recorded page's new viewport, as the Replayer reports it. */
 const isViewport = (value: unknown): value is { width: number; height: number } =>
   typeof value === "object" &&
   value !== null &&

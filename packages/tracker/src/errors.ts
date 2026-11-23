@@ -14,7 +14,6 @@ export const MAX_MESSAGE_LENGTH = 2000;
 export const MAX_STACK_LENGTH = 16_000;
 
 export interface ErrorDetails {
-  /** The Error's name, such as "TypeError". */
   type: string;
   message: string;
   stack?: string;

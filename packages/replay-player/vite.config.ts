@@ -16,8 +16,7 @@ const inlineCss = {
 };
 
 export default defineConfig({
-  // `vp pack` builds dist/player.js, one minified script that the API serves
-  // at /replay-player.js to the replay player page, with rrweb in it.
+  // The API serves dist/player.js at /replay-player.js.
   pack: {
     entry: { player: "src/main.ts" },
     format: "iife",
@@ -26,7 +25,7 @@ export default defineConfig({
     minify: true,
     sourcemap: true,
     dts: false,
-    // A page's script has no node_modules: put the library in it.
+    // Bundle dependencies for direct browser use.
     deps: { alwaysBundle: [/./] },
     plugins: [inlineCss, thirdPartyLicenses()],
     // The libraries' licenses ask for their notices to go with them: rrweb,
@@ -48,8 +47,7 @@ export default defineConfig({
         test: { name: "unit", include: ["tests/*.test.ts"], environment: "node" },
       },
       {
-        // The player in headless Chromium, with a fake fetch.
-        // Needs the browser once per machine: pnpm exec playwright install --only-shell chromium
+        // Install Chromium once: pnpm exec playwright install --only-shell chromium
         extends: true,
         test: {
           name: "browser",

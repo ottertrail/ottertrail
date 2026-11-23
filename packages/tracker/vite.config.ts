@@ -10,7 +10,6 @@ const RRWEB_BANNER =
 
 /** The scripts a site loads, each its own build: a script tag takes one file. */
 const scripts = {
-  // The script tag's file.
   tracker: { entry: "src/script.ts" },
   // Web Vitals, loaded by the tracker from beside itself.
   v: {
@@ -29,9 +28,7 @@ const scripts = {
 };
 
 export default defineConfig({
-  // `vp pack` builds six minified scripts: dist/tracker.js for a <script>
-  // tag, and dist/v.js, dist/r.js, dist/h.js, and dist/o.js, which it loads
-  // from beside itself, and dist/s.js, which o.js loads from beside itself.
+  // Keep each script in one file for loading by script tag.
   pack: Object.entries(scripts).map(([name, script]) => ({
     entry: { [name]: script.entry },
     format: "iife" as const,
@@ -40,9 +37,9 @@ export default defineConfig({
     minify: true,
     sourcemap: true,
     dts: false,
-    // A later build must not empty dist/ of the first.
+    // Preserve earlier scripts when building the rest.
     clean: name === "tracker",
-    // A browser script has no node_modules: put the library in it.
+    // Bundle dependencies for direct browser use.
     deps: { alwaysBundle: [/./] },
     // The library's license asks for its notice to go with it.
     ...("banner" in script ? { banner: script.banner } : {}),
@@ -65,8 +62,7 @@ export default defineConfig({
         test: { name: "unit", include: ["tests/*.test.ts"], environment: "node" },
       },
       {
-        // The replay recorder in headless Chromium, with the real rrweb.
-        // Needs the browser once per machine: pnpm exec playwright install --only-shell chromium
+        // Install Chromium once: pnpm exec playwright install --only-shell chromium
         extends: true,
         test: {
           name: "browser",
@@ -78,8 +74,7 @@ export default defineConfig({
             viewport: { width: 1280, height: 900 },
             instances: [{ browser: "chromium" }],
             commands: {
-              // Joined gzip pieces decompressed as the API does, with Node's zlib:
-              // the browser's DecompressionStream takes one gzip member only.
+              // Use Node zlib for joined gzip members; DecompressionStream reads only one.
               gunzip: (_context, base64: string) =>
                 gunzipSync(Buffer.from(base64, "base64")).toString("utf8"),
             },

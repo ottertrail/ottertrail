@@ -1,19 +1,10 @@
-/** The parts of `window` that navigation tracking uses; tests pass a fake. */
 export interface NavigationWindow {
   location: { pathname: string };
   history: Pick<History, "pushState" | "replaceState">;
   addEventListener(type: "popstate", listener: () => void): void;
 }
 
-/**
- * Calls `onNewPath` whenever the page's path changes without a page load.
- *
- * Single-page apps (React Router, Next.js, Vue Router) change the URL with
- * history.pushState and replaceState, and the back button fires popstate;
- * the browser never loads a new page. These are wrapped so each path
- * change becomes a pageview. A change to only the query string or the
- * fragment is not a new page.
- */
+/** Track SPA path changes as pageviews. Query and fragment changes do not count. */
 export function watchNavigation(win: NavigationWindow, onNewPath: () => void): void {
   let lastPath = win.location.pathname;
 

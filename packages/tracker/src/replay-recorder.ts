@@ -1,15 +1,10 @@
 /**
- * The replay recorder (docs/session-replay.md, "Recording"): records the page
- * into memory all the time, keeps only the current and the previous stretch
- * between full snapshots (30 to 60 seconds), and sends nothing until an
- * error. The first error starts a replay: recording goes on for
- * AFTER_ERROR_MS, then stops, and the recording is compressed and sent in
- * pieces (replay-pack.ts). One replay per recording: a page load has one
- * recording, unless the page stops it and starts a new one (again()).
- *
- * Every event passes the privacy filter (replay-filter.ts) before it is
- * kept. If the filter fails, the recording stops and is dropped: a
- * recording that cannot be masked is not sent at all.
+ * Keep the current and previous full-snapshot stretches (30 to 60 seconds)
+ * in memory. The first error starts a replay, ending after AFTER_ERROR_MS.
+ * Only one replay is sent per recording; again() can start another recording.
+ * Every event passes replay-filter.ts before storage. Filter failure drops
+ * the recording so unmasked content cannot be sent.
+ * See docs/session-replay.md, "Recording", and replay-pack.ts.
  */
 import { createFilter, ERROR_TAG, type FilterOptions } from "./replay-filter.ts";
 import type { Recorder } from "./replay-names.ts";
@@ -275,7 +270,7 @@ export function createRecorder(options: RecorderOptions): ReplayRecorder {
       try {
         options.again?.();
       } catch {
-        // No new recording, as before.
+        // Keep restart failures inside the tracker.
       }
     },
     exit() {

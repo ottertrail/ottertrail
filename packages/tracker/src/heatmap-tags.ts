@@ -1,10 +1,7 @@
 /**
- * The tag names a heatmap path may name (heatmap-capture.ts): standard HTML
- * elements, and SVG's, in lower case. Any other element, a custom element
- * or a made-up tag such as <wilhelmina>, is written "x": a tag name is
- * chosen by the site and could carry a word of the page. The API accepts
- * this list and "x" only (apps/api/src/heatmaps/tags.ts, which a test keeps
- * the same).
+ * Allow standard HTML and SVG tags, in lower case. Other tags become "x"
+ * because site-defined names could contain private text. Keep this list in
+ * sync with apps/api/src/heatmaps/tags.ts (checked by a test).
  */
 export const HEATMAP_TAGS = [
   // HTML: the elements of the body a click can land on, or hold one.

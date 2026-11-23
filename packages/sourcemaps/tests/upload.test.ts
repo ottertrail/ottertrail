@@ -111,7 +111,7 @@ describe("upload", () => {
   });
 
   test("waits as often as the server asks, without counting it as a failed attempt", async () => {
-    // A server busy with other uploads, six times over: more than the attempts allowed.
+    // Six server waits exceed the failed-attempt limit.
     let calls = 0;
     const { directory, server } = await setup(
       { "app.js": "", "app.js.map": sourceMap("app") },
@@ -288,7 +288,7 @@ const withHost = (release: string, host: string) => [
   host,
 ];
 
-/** Runs the command on a build directory that holds one map; "<dir>" in argv is its path. */
+/** Replace "<dir>" in argv with a temporary build directory containing one map. */
 async function runOnBuild(argv: string[], env: Record<string, string | undefined>) {
   const build = await buildDirectory({ "a.js": "", "a.js.map": sourceMap("a") });
   cleanups.push(build.remove);
@@ -357,7 +357,6 @@ describe("input validation", () => {
     const result = await runOnBuild(argv, env);
     expect(result.code).toBe(2);
     expect(result.stderr).toContain(message);
-    // Not the key, nor any part of it.
     expect(result.stdout + result.stderr).not.toContain("0123456789abcdef");
   });
 

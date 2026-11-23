@@ -1,11 +1,7 @@
 /**
- * Saved heatmap views, built to dist/s.js and served beside the tracker at
- * /s.js. The heatmap overlay (o.js) loads it only when the owner presses
- * "Save this view", so neither visitors nor an overlay that saves nothing
- * download rrweb (snapshot-take.ts; docs/web-analytics.md, "Saved views").
- *
- * It takes the snapshot and hands it back to o.js, which uploads it with
- * its own session: this script never sees a token.
+ * Load rrweb only when the owner saves a view (snapshot-take.ts).
+ * o.js uploads the result with its session; this script never sees a token.
+ * See docs/web-analytics.md, "Saved views".
  */
 import { type SnapshotConfig, SNAPSHOT_PROPERTY } from "./snapshot-names.ts";
 import { takeSnapshot } from "./snapshot-take.ts";

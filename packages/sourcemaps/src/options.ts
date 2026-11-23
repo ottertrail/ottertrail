@@ -2,7 +2,7 @@ import { statSync } from "node:fs";
 import { resolve } from "node:path";
 import { parseArgs } from "node:util";
 
-/** The environment variable the secret key is read from. Never a flag: flags end up in shell history and CI logs. */
+/** Read the secret from the environment to keep it out of shell history and CI logs. */
 export const SECRET_KEY_VARIABLE = "OTTERTRAIL_SECRET_KEY";
 
 const SECRET_KEY = /^sk_[0-9a-f]{32}$/;
@@ -13,7 +13,7 @@ const RELEASE = /^[^\s\u0000-\u001F\u007F-\u009F]{1,200}$/u;
 const RELEASE_REFUSED = /[\s\u0000-\u001F\u007F-\u009F]/u;
 // eslint-disable-next-line no-control-regex -- control characters are what it refuses
 const PREFIX_REFUSED = /[?#\s\u0000-\u001F\u007F]/u;
-/** The server takes a few maps at once, and asks the rest to wait. */
+/** Limit parallel uploads to reduce server waits. */
 const MAX_CONCURRENCY = 8;
 
 export const USAGE = `Usage: ottertrail-sourcemaps upload <directory> --release <release> --host <url> [options]
@@ -110,7 +110,7 @@ function parseHost(raw: string): { origin: string; insecure: boolean } | string 
   return { origin: url.origin, insecure: url.protocol === "http:" && !local };
 }
 
-/** Parses and checks the command line and the environment, before any file is read or request sent. */
+/** Validate arguments and environment before reading files or sending requests. */
 export function parseCommand(
   argv: readonly string[],
   env: Readonly<Record<string, string | undefined>>,
@@ -186,7 +186,7 @@ export function parseCommand(
     }
   }
 
-  // A key copied into a CI secret often brings a line break along.
+  // CI secrets may include a trailing line break.
   const rawKey = env[SECRET_KEY_VARIABLE]?.trim() ?? "";
   let secretKey: string | null = null;
   if (rawKey === "") {

@@ -9,7 +9,6 @@ export interface RunEnvironment {
   env: Readonly<Record<string, string | undefined>>;
   stdout: (line: string) => void;
   stderr: (line: string) => void;
-  /** Replaceable in tests. */
   fetch?: typeof globalThis.fetch;
   sleep?: (milliseconds: number) => Promise<void>;
 }
@@ -26,10 +25,8 @@ function sizeText(bytes: number): string {
 }
 
 const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? "" : "s"}`;
-
-/** Runs the command; returns the exit code. */
 export async function run(argv: readonly string[], io: RunEnvironment): Promise<number> {
-  // Whatever happens, the secret key is never printed, not even in part.
+  // Redact secrets from all output, including errors.
   const rawKey = io.env[SECRET_KEY_VARIABLE]?.trim() ?? "";
   const redact = (line: string) => {
     let text = line.replace(/\bsk_[0-9a-z]{8,}/giu, "sk_[redacted]");

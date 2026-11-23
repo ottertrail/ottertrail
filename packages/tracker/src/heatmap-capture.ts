@@ -364,8 +364,6 @@ export function startCapture(config: HeatmapConfig, options: CaptureOptions) {
     if (navigated || doc.readyState === "complete") measureLater(true);
     else win.addEventListener("load", () => measureLater(true), { once: true });
   };
-
-  /** The request's body for these records. */
   const bodyOf = (records: Queued[]): string => {
     const pages: HeatmapBatch["pages"] = [];
     const index = new Map<string, number>();
@@ -463,8 +461,6 @@ export function startCapture(config: HeatmapConfig, options: CaptureOptions) {
     if (current.length > 0) batches.push({ records: current, bytes });
     return batches;
   };
-
-  /** The oldest records that fit one request. */
   const nextBatch = (from: Queued[]): Queued[] => plan(from)[0]?.records ?? [];
 
   const remove = (records: Queued[]) => {

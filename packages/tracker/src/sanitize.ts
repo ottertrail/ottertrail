@@ -1,7 +1,5 @@
 /**
- * Makes custom event names and properties fit the API's rules before they
- * are queued. The API rejects a whole batch if one event breaks a rule, so
- * one bad `track()` call must not cost the page views sent with it.
+ * One invalid event makes the API reject the whole batch. Validate before queuing.
  */
 
 export type PropertyValue = string | number | boolean | null;
@@ -20,10 +18,8 @@ export function byteLength(text: string): number {
 }
 
 /**
- * Matches text PostgreSQL cannot store, which the API rejects: a NUL
- * character, or half of a UTF-16 surrogate pair without the other half. A
- * regular expression rather than String.prototype.isWellFormed, which older
- * browsers lack; no lookbehind, which older Safari cannot parse.
+ * PostgreSQL rejects NUL and unpaired surrogates. Older browsers lack
+ * isWellFormed, and older Safari cannot parse lookbehind.
  */
 export const UNSTORABLE =
   /\0|[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?:^|[^\uD800-\uDBFF])[\uDC00-\uDFFF]/;
@@ -71,7 +67,6 @@ export function cleanText(text: unknown, max: number, lines = false): string {
       (code > 31 && (code < 127 || code > 159) && (code < 0xd800 || code > 0xdfff))
     ) {
       clean += character;
-      // Enough: the rest would be cut anyway.
       if (clean.length > max) break;
     }
   }

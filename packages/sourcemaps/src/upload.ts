@@ -9,21 +9,13 @@ const gzip = promisify(gzipCallback);
 /** The server refuses maps larger than this once unpacked. */
 export const MAX_SOURCE_MAP_BYTES = 25 * 1024 * 1024;
 export const MAX_ATTEMPTS = 4;
-/**
- * Waits the server asks for (429, or 503 with Retry-After: rate limits,
- * and a server storing as many maps as it takes at once), counted apart
- * from failures: a build of hundreds of maps meets them as a matter of
- * course, and each says how long to wait.
- */
+/** Count 429/503 Retry-After waits separately; large builds routinely hit server limits. */
 export const MAX_WAITS = 30;
 const MAX_WAIT_MS = 120_000;
 const REQUEST_TIMEOUT_MS = 120_000;
 /** Answers worth another try: rate limits, and a server or proxy briefly unable to answer. */
 const RETRY_STATUSES = new Set([429, 502, 503, 504]);
-/**
- * Errors that every other file would meet too: a wrong key, an install
- * without an object store, a full storage allowance. No more uploads start.
- */
+/** Stop new uploads when every file would fail for the same reason. */
 const FATAL_ERRORS = new Set(["unauthorized", "unknown_key", "not_configured", "storage_limit"]);
 
 export type UploadOutcome =
@@ -63,7 +55,7 @@ async function readProblem(response: Response): Promise<{ error: string; message
       };
     }
   } catch {
-    // Not JSON: a proxy's error page, say.
+    // A proxy may return a non-JSON error page.
   }
   return { error: `HTTP ${response.status}`, message: response.statusText };
 }
@@ -78,7 +70,7 @@ function networkMessage(error: unknown): string {
   return String(error);
 }
 
-/** Uploads one map, gzip-compressed, trying again a few times when the server asks to wait or cannot be reached. */
+/** Gzip and upload a map, retrying network failures and server waits. */
 export async function uploadSourceMap(
   file: SourceMapFile,
   context: UploadContext,

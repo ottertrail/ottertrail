@@ -1,14 +1,7 @@
 /**
- * The heatmap overlay, built to dist/o.js and served beside the tracker at
- * /o.js. The tracker loads it only on a page opened from the dashboard's
- * "Open on your site", whose address carried a one-time link token
- * (script.ts), so visitors never download it.
- *
- * It draws the project's heatmap for this page over the page itself, for
- * the signed-in owner who opened it (overlay-view.ts; docs/web-analytics.md,
- * "The overlay on your site"). It stores nothing on the device. "Save this
- * view" loads s.js from beside it (snapshot.ts) to save a snapshot of the
- * page for the Heatmaps screen.
+ * Load o.js only for a dashboard overlay link, so visitors do not download it.
+ * The overlay uses no device storage. Saving a view loads snapshot.ts (s.js).
+ * See overlay-view.ts and docs/web-analytics.md, "The overlay on your site".
  */
 import { type OverlayConfig, OVERLAY_PROPERTY } from "./overlay-names.ts";
 import { startOverlay } from "./overlay-view.ts";

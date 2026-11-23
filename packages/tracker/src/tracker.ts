@@ -81,7 +81,6 @@ export interface TrackerOptions {
   touch?: boolean;
   /** Where the site runs, such as "staging"; the API counts events as "production" without it. */
   environment?: string;
-  /** The site's version, such as "1.4.2". */
   release?: string;
   /**
    * Start paused: events are queued as usual, but nothing leaves until

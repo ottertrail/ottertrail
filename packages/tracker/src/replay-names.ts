@@ -1,17 +1,12 @@
 /**
- * What the tracker (script.ts) and the replay recorder (replay.ts, built to
- * r.js) share, without the recorder: importing it here would put rrweb in
- * the tracker.
+ * Shared with script.ts without importing replay.ts, which would bundle rrweb in the tracker.
  */
 
 /** The property the tracker sets on the recorder's script element: a ReplayConfig. */
 export const REPLAY_PROPERTY = "ottertrailReplay";
-
-/** What the tracker hands the recorder. */
 export interface ReplayConfig {
   /** The data host's /api/replays URL. */
   endpoint: string;
-  /** The project's public key. */
   key: string;
   /** data-replay-text="show": page text is recorded as it is. */
   text: boolean;

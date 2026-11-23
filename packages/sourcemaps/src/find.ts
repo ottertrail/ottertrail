@@ -21,20 +21,12 @@ export interface FoundMaps {
   warnings: string[];
 }
 
-/**
- * A file name as it appears in a URL path. The URL parser encodes spaces
- * and non-ASCII characters itself, as a browser does; these four it would
- * read as URL syntax instead.
- */
+/** Escape URL syntax; the URL parser handles spaces and non-ASCII characters. */
 function encodeSegment(segment: string): string {
   return segment.replace(/[%?#\\]/gu, (character) => encodeURIComponent(character));
 }
 
-/**
- * The URL path a browser reports for a file at `relativeFile` (a path inside
- * the build directory, with the platform's separators) when the directory
- * is served at `urlPrefix` ("/" or "/static/"): `new URL(frameUrl).pathname`.
- */
+/** Match browser stack-frame paths using the platform separators in `relativeFile`. */
 export function urlPathFor(urlPrefix: string, relativeFile: string): string {
   const segments = relativeFile.split(sep).map((segment) => encodeSegment(segment));
   return new URL(urlPrefix + segments.join("/"), "http://placeholder").pathname;
@@ -44,8 +36,7 @@ async function* walk(directory: string): AsyncGenerator<string> {
   const entries = await readdir(directory, { withFileTypes: true });
   entries.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
   for (const entry of entries) {
-    // Symbolic links are never followed: they could lead out of the build
-    // directory, and --delete-after-upload must only touch files in it.
+    // Skip symlinks so --delete-after-upload stays inside the build directory.
     if (entry.isSymbolicLink()) continue;
     const path = join(directory, entry.name);
     if (entry.isDirectory()) yield* walk(path);

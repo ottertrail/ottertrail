@@ -1,81 +1,9 @@
 /**
- * The script tag entry point, built to dist/tracker.js:
- *
- *   <script defer src="…/tracker.js"
- *     data-key="pk_…" data-host="https://analytics.example.com"></script>
- *
- * Optional: data-environment="staging" on a site other than the live one,
- * whose events then never mix with production's, data-release="1.4.2", the
- * site's version, and data-user-id="42", the site's ID for the signed-in
- * user, with data-user-signature="…" when the project requires the site's
- * server to sign user IDs. A single-page app that signs someone in or out
- * without a page load calls window.ottertrail.identify("42", signature)
- * and window.ottertrail.reset().
- * The user's ID is kept in memory only: the tracker stores nothing on the
- * device, so the site gives it on every page load.
- *
- * It records a pageview on load and on every path change, reports how long
- * each page was visible (an "engagement" event), and exposes
- * window.ottertrail.track(name, properties) for custom events.
- *
- * It also sends uncaught errors and unhandled promise rejections as "error"
- * events; data-errors="off" turns that off. Either way the site can report
- * an error it caught with window.ottertrail.captureError(error, properties).
- * Noise is skipped: "Script error." from a cross-origin script that hides
- * its details, and errors from browser extensions. Each distinct error is
- * sent once per page load, and 25 at most.
- *
- * It loads v.js from beside itself to measure Web Vitals, sent as one
- * "vitals" event per page load when the page is first hidden or left;
- * data-vitals="off" skips it, and so does an integrity attribute.
- *
- * Session replay around errors: data-replay="errors" loads r.js from beside
- * it (not with an integrity attribute), which records the page into memory
- * and sends a replay of the 30 to 60 seconds before the page load's first
- * error and the 10 after; that error event, and others of the same page
- * load while it still records, carry its replayId. The project's settings
- * must allow replays too. Recordings are masked in the browser: page text
- * becomes "*" unless data-replay-text="show"; images, picture, video,
- * audio, and SVG are blocked unless data-replay-media="show"; canvas,
- * frames, object, and embed always are; typed values never leave the page.
- * In the site's HTML, data-ottertrail-mask masks an element's text,
- * data-ottertrail-block leaves an element out (only a box of its size),
- * and data-ottertrail-unmask shows an element's text in a private
- * recording.
- *
- * Consent: with data-replay-consent="wait" beside data-replay="errors", r.js
- * is not loaded until the page calls window.ottertrail.replay(true), as
- * when a visitor agrees. replay(false) stops recording and drops what was
- * recorded, or cancels a start still waiting, as when a visitor declines or
- * withdraws consent; replay(true) after it starts a new, empty recording.
- * The last call wins. Nothing about consent is stored: the site calls
- * replay(true) on each page load once its consent tool knows the answer.
- * A page that may call before this script runs defines, first, the
- * stand-in in docs/session-replay.md: replay() queues its answers in q, and
- * track(), identify(), reset(), and captureError() do nothing until then.
- * This script makes the last call queued in q once it runs, and points the
- * stand-in's methods at its own, so a reference kept to it still works.
- *
- * Heatmaps: data-heatmaps="on" loads h.js from beside it (not with an
- * integrity attribute), which records the pageview's clicks, by element,
- * and how far down the page the visitor scrolled; never any text, value,
- * ID, class, or address of the page (docs/web-analytics.md, "Heatmaps").
- * The project's settings must allow heatmaps too. Each pageview is sampled
- * on its own: data-heatmaps-sample="0.25" records a quarter of them (1,
- * all, by default); nothing about it is stored.
- *
- * Heatmap overlay: a page opened from the dashboard's "Open on your site"
- * has #ottertrail-heatmap=<token> in its address. The tracker removes it
- * from the address and loads o.js from beside it (not with an integrity
- * attribute), which asks the server about the link. For a real link it
- * draws the project's heatmap over the page for the signed-in owner only,
- * and nothing is sent for that page load; for anything else (a made-up
- * token, a link used up, o.js not loading within 5 seconds) the page load
- * is recorded as usual, a few seconds late.
- *
- * Loaded twice on one page (in a tag manager and in the page's template),
- * the second copy warns and does nothing: two copies would count every
- * pageview twice, and replay(false) would reach only one recorder.
+ * Script tag entry point, built to dist/tracker.js. See docs/session-replay.md
+ * for replay consent and docs/web-analytics.md for heatmaps and the overlay.
+ * User IDs and consent stay in memory, so the site supplies them on each load.
+ * Optional scripts cannot be pinned by this tag's integrity attribute, so it
+ * disables them. Duplicate copies must not double-count visits or split consent.
  */
 import {
   createEngagementTimer,
@@ -221,7 +149,6 @@ const REAL = Symbol.for("ottertrail.tracker");
     let sending = !overlay;
     /** Whether v.js, r.js, and h.js may load: from the start, or after the answer or the wait. */
     let loading = !overlay;
-    /** The scripts that wait: v.js, r.js, h.js. */
     const held: (() => void)[] = [];
     const whenSending = (run: () => void) => {
       if (shown) return;
@@ -310,7 +237,6 @@ const REAL = Symbol.for("ottertrail.tracker");
     // engagement report is theirs, not that of whoever signed in since.
     let user: SignedUser | undefined;
     let viewedBy: SignedUser | undefined;
-    /** Sets the signed-in user from a page's values, warning about any it cannot use. */
     const setUser = (id: unknown, signature: unknown, from: string) => {
       const userId = id === undefined ? undefined : cleanUserId(id);
       if (id !== undefined && userId === undefined) {

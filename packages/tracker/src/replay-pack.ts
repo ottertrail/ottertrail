@@ -1,28 +1,19 @@
 /**
- * Cuts a recording into the pieces the API takes (docs/session-replay.md,
- * "Sending"): the recording is the JSON text {"v":1,"events":[…]}, and each
- * piece is one gzip member of a part of that text, at most MAX_CHUNK_BYTES.
- * Joined in order and decompressed, the pieces give the text back exactly.
- *
- * Each piece also unpacks to at most MAX_PIECE_TEXT_BYTES, and a recording
- * has at most MAX_PIECES, as the API takes. A recording that would go past
- * MAX_REPLAY_BYTES in all, or past MAX_PIECES, is cut at an event's end:
- * its last piece closes the JSON, and is marked cut.
+ * Send {"v":1,"events":[…]} as ordered gzip members, each bounded by
+ * MAX_CHUNK_BYTES and MAX_PIECE_TEXT_BYTES. Concatenating and decompressing
+ * them restores the JSON. At MAX_REPLAY_BYTES or MAX_PIECES, truncate at an
+ * event boundary and close the JSON in the final piece, marked cut.
+ * See docs/session-replay.md, "Sending".
  */
 
 /** Largest piece, in bytes: under the 64 KB browsers allow a beacon or keepalive request. */
 export const MAX_CHUNK_BYTES = 60_000;
 /**
- * Largest piece once unpacked, in bytes of UTF-8: the API refuses a chunk
- * that unpacks to more than 1 MiB. Text that compresses well, such as a
- * masked page's runs of the same character, reaches it long before
- * MAX_CHUNK_BYTES.
+ * Limit unpacked UTF-8 to 1,000,000 bytes per piece. Repetitive masked text
+ * can reach this before MAX_CHUNK_BYTES.
  */
 export const MAX_PIECE_TEXT_BYTES = 1_000_000;
-/**
- * Most pieces a recording has: the API numbers them 0 to 99. Pieces are at
- * least about half full, so MAX_REPLAY_BYTES comes first; this guards the rest.
- */
+/** The API numbers pieces 0 to 99. Guard this limit even below MAX_REPLAY_BYTES. */
 export const MAX_PIECES = 100;
 /** Largest recording, in compressed bytes over all its pieces. */
 export const MAX_REPLAY_BYTES = 2_000_000;
@@ -31,11 +22,8 @@ const CLOSING_ROOM = 64;
 
 const HEADER = '{"v":1,"events":[';
 const FOOTER = "]}";
-
-/** One compressed piece, in the order it is sent. */
 export interface Piece {
   bytes: Uint8Array<ArrayBuffer>;
-  /** The recording's last piece. */
   last: boolean;
   /** The recording was cut at MAX_REPLAY_BYTES. Only on the last piece. */
   cut: boolean;
@@ -118,7 +106,6 @@ export function createPacker(): Packer {
   async function add(events: string[], final: boolean): Promise<Piece[]> {
     const ready: Piece[] = [];
     let i = 0;
-    // Until every event is packed, and with `final`, until the JSON is closed.
     for (;;) {
       if (closed || (i >= events.length && !final)) break;
       // As many whole events as the target allows, at least one.

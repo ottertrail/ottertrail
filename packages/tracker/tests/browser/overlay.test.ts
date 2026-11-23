@@ -129,7 +129,7 @@ function heatmap(overrides: Record<string, unknown> = {}) {
 function open(api = fakeApi(), environment?: string, inTime = true) {
   const states: OverlayState[] = [];
   const settled = vi.fn<(shown: boolean) => boolean>(() => inTime);
-  // Called through: the spy only keeps what the overlay asked for and got.
+  // Call through so the spy preserves overlay behavior.
   const spy = vi.spyOn(Element.prototype, "attachShadow");
   const overlay = startOverlay(
     { host: HOST, token: LINK, settled, ...(environment === undefined ? {} : { environment }) },
@@ -147,7 +147,6 @@ function open(api = fakeApi(), environment?: string, inTime = true) {
     overlay,
     api,
     states,
-    /** What the overlay told the tracker. */
     told: settled,
     mode: () => mode,
     root: shadow,
@@ -413,7 +412,6 @@ describe("the overlay", () => {
     expect(view.told).toHaveBeenCalledTimes(1);
     expect(document.querySelector("ottertrail-heatmap")).toBeNull();
     expect(view.states).toEqual([]);
-    // No read was made.
     expect(view.api.calls).toHaveLength(1);
   });
 
@@ -537,7 +535,6 @@ describe("the overlay", () => {
     await view.settled("ready");
     (element("#first") as HTMLElement).focus();
     await userEvent.tab();
-    // The first control of the panel, inside the shadow root.
     expect(view.root().activeElement?.getAttribute("aria-label")).toBe("Close the heatmap");
     await userEvent.keyboard("{Enter}");
     expect(document.querySelector("ottertrail-heatmap")).toBeNull();
@@ -691,7 +688,6 @@ describe("hostile keys", () => {
     expect(found.slice(0, 200).every((item) => item === null)).toBe(true);
     // Past the budget, a key is not found, even a real one.
     expect(found[200]).toBeNull();
-    // Within it, found.
     expect(resolveKeys(document, [{ label: null, element: real.element }])).toEqual([
       element("#real"),
     ]);

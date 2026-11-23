@@ -1,7 +1,5 @@
 /**
- * What the tracker (script.ts) and the heatmap overlay (overlay.ts, built
- * to o.js) share, without the overlay's code: importing it here would put
- * it in the tracker.
+ * Shared with script.ts without bundling overlay.ts (o.js) in the tracker.
  */
 
 /** The element o.js draws in, over the page: h.js ignores its changes. */
@@ -9,8 +7,6 @@ export const OVERLAY_TAG = "ottertrail-heatmap";
 
 /** The property the tracker sets on o.js's script element: an OverlayConfig. */
 export const OVERLAY_PROPERTY = "ottertrailOverlay";
-
-/** What the tracker hands o.js. */
 export interface OverlayConfig {
   /** The instance's origin (the tag's data-host). */
   host: string;

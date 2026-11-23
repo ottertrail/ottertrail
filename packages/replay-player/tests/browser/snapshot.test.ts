@@ -176,10 +176,8 @@ describe("a saved view", () => {
     (page?.querySelector("button") as HTMLButtonElement | null)?.click();
     await new Promise((done) => setTimeout(done, 50));
     expect(window.ottertrailPwned).toBeUndefined();
-    // No mouse cursor: a snapshot has no mouse.
     const cursor = root.querySelector<HTMLElement>(".replayer-mouse");
     expect(cursor === null || getComputedStyle(cursor).display === "none").toBe(true);
-    // The canvas over the frame, as large as the saved viewport.
     const canvas = root.querySelector<HTMLCanvasElement>("canvas.ot-heat");
     expect(canvas?.style.width).toBe("800px");
     expect(canvas?.style.height).toBe("600px");
@@ -218,7 +216,7 @@ describe("a saved view with events apart, as rrweb stamps a real page", () => {
   test("is built once, its stylesheets applied, links and forms blocked, and redrawn on scroll", async () => {
     const { root, messages } = mount({ snapshot: json(snapshot({ apart: true })) });
     await view?.ready;
-    // Past the Replayer's own first build (a timer of 1 ms): nothing may undo what follows.
+    // Wait past Replayer's 1 ms build timer so it cannot undo the next steps.
     await new Promise((done) => setTimeout(done, 100));
     const frame = root.querySelector("iframe");
     const page = frame?.contentDocument;
@@ -236,7 +234,6 @@ describe("a saved view with events apart, as rrweb stamps a real page", () => {
     page.querySelector("form")?.dispatchEvent(submit);
     expect(submit.defaultPrevented).toBe(true);
 
-    // The elements resolve: only the footer's link is missing.
     await vi.waitFor(() => expect(messages.at(-1)).toMatchObject({ total: 1, found: 2 }));
 
     // Scrolling the view draws the canvas again, at the new position.

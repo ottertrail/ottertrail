@@ -1,13 +1,7 @@
 /**
- * Heatmap capture, built to dist/h.js and served beside the tracker at
- * /h.js. The tracker loads it only when its tag says data-heatmaps="on",
- * with the first pageview in the sample (script.ts), so pages without
- * heatmaps never download it.
- *
- * It records each click of a sampled pageview on the element it hit, and
- * the pageview's scroll depth, sent when the page is hidden or left
- * (heatmap-capture.ts, docs/web-analytics.md, "Heatmaps"). It stores
- * nothing on the device.
+ * Load h.js only for data-heatmaps="on" and a sampled pageview.
+ * Capture uses no device storage. See heatmap-capture.ts and
+ * docs/web-analytics.md, "Heatmaps".
  */
 import { startCapture } from "./heatmap-capture.ts";
 import { HEATMAP_PROPERTY, type HeatmapConfig } from "./heatmap-names.ts";

@@ -18,18 +18,11 @@ import {
 import { PLAYER_CSS } from "./styles.ts";
 
 /**
- * A saved heatmap view (docs/web-analytics.md, "Saved views"): the
- * snapshot of a page its owner saved from the overlay, rebuilt by rrweb in
- * the player's sandboxed frame (allow-same-origin only, no scripts, under
- * the player page's Content Security Policy), with the heatmap drawn over
- * it as the overlay draws it on the live page: each element found by its
- * key inside the frame (resolveKeys, the overlay's own), its clicks' cells,
- * and the scroll bands at the right edge (drawHeatmap, shared with o.js).
- *
- * The page's body names the snapshot (data-snapshot-url) and the heatmap
- * (data-heatmap-url), both on this origin. The view scrolls; links and
- * forms in it do nothing. The elements not found in the snapshot go to
- * the dashboard that frames the page, as a message (snapshotMissingMessage).
+ * Rebuild saved views in rrweb's sandboxed frame with allow-same-origin
+ * only, under the player page's Content Security Policy. Disable links and
+ * forms. Share resolveKeys and drawHeatmap with the live overlay, and report
+ * missing elements to the dashboard. Snapshot and heatmap URLs are same-origin.
+ * See docs/web-analytics.md, "Saved views".
  */
 import rrwebStyle from "@rrweb/replay/dist/style.css?inline";
 
@@ -44,8 +37,6 @@ const MAX_MISSING = 200;
 
 /** Looks for the elements again this long after the view is built: fonts and images move them. */
 const SETTLE_MS = [250, 1000, 3000];
-
-/** A click or a submit in the view: it does nothing. */
 const still = (event: Event) => event.preventDefault();
 
 type Fetch = (input: string, init?: RequestInit) => Promise<Response>;
@@ -62,8 +53,6 @@ export interface SnapshotView {
   ready: Promise<void>;
   destroy: () => void;
 }
-
-/** The dashboard's message: the elements missing (label, path, clicks), how many in all, and how many found. */
 export const snapshotMissingMessage = (missing: readonly OverlayElement[], found: number) => ({
   type: SNAPSHOT_MISSING_MESSAGE,
   missing: missing.slice(0, MAX_MISSING).map((item) => ({

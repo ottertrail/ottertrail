@@ -15,7 +15,7 @@ const meta = (href = "https://example.com/p?secret=1") => ({
   data: { href, width: 800, height: 600 },
   timestamp: Date.now(),
 });
-/** A full snapshot whose one paragraph is named, to tell stretches apart. */
+/** Name a paragraph to distinguish recording stretches. */
 const snapshot = (name: string) => ({
   type: 2,
   data: {

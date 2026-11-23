@@ -1206,7 +1206,6 @@ describe("session replay after consent", () => {
     await runScript();
     page.hide();
     await page.settle();
-    // None of them was queued: only the pageview went.
     expect(page.events.map((event) => event.name)).toEqual(["pageview"]);
   });
 
@@ -1314,7 +1313,6 @@ describe("session replay after consent", () => {
   });
 });
 
-/** The configuration h.js reads, from the script the tracker added for it. */
 const heatmapConfig = (page: ReturnType<typeof fakePage>) => {
   const script = page.added.find((element) => String(element.src).endsWith("/h.js"));
   return script?.[HEATMAP_PROPERTY] as HeatmapConfig | undefined;
@@ -1410,7 +1408,6 @@ describe("heatmaps", () => {
     page.window.location.href = "https://example.com/about?tab=2";
     page.window.history.pushState();
     expect(navigated).toHaveBeenCalledTimes(1);
-    // Loaded once.
     expect(page.added).toHaveLength(1);
   });
 
@@ -1419,7 +1416,6 @@ describe("heatmaps", () => {
       attributes: { heatmaps: "on", vitals: "off" },
     });
     await runScript();
-    // h.js is not even loaded for it.
     expect(page.added).toEqual([]);
     page.window.location.href = "https://example.com/next";
     page.window.history.pushState();
@@ -1438,7 +1434,6 @@ describe("heatmaps", () => {
   });
 });
 
-/** What the tracker handed o.js, from the script it added for it. */
 const configOf = (page: ReturnType<typeof fakePage>) =>
   page.added.find((element) => String(element.src).endsWith("/o.js"))?.[
     OVERLAY_PROPERTY
@@ -1546,7 +1541,7 @@ describe("the heatmap overlay", () => {
     const batch = page.batches[0] as SentBatch & { sentAt: number };
     // Written as it left, not as it was held.
     expect(batch.sentAt).toBe(start + 5001);
-    // The API's correction: received − (sentAt − occurredAt). Each event keeps its age,
+    // API correction: received - (sentAt - occurredAt). Each event keeps its age,
     // so the pageview stays 2 seconds before the custom event.
     expect(batch.events.map((event) => [event.name, batch.sentAt - event.occurredAt])).toEqual([
       ["pageview", 5001],
@@ -1594,7 +1589,6 @@ describe("the heatmap overlay", () => {
     await leave(page);
     expect(page.events.map((event) => event.name)).toEqual(["pageview"]);
     page.show();
-    // Then the answer: a real link, late.
     expect(configOf(page).settled(true)).toBe(false);
     page.window.ottertrail?.track("signup");
     page.fire("error", new FakeErrorEvent({ message: "boom", error: new Error("boom") }));
@@ -1626,7 +1620,6 @@ describe("the heatmap overlay", () => {
     heatmapConfig(page)?.register(capture);
     const sent = page.events.length;
 
-    // Then the answer: a real link, late.
     expect(configOf(page).settled(true)).toBe(false);
     expect(started.stop).toHaveBeenCalledTimes(1);
     expect(capture.stop).toHaveBeenCalledTimes(1);
@@ -1711,7 +1704,6 @@ describe("the heatmap overlay", () => {
     await vi.advanceTimersByTimeAsync(1);
     await silent.settle();
     expect(silent.events.map((event) => event.name)).toEqual(["pageview"]);
-    // A late answer: not in time, and nothing starts twice.
     expect(configOf(silent).settled(true)).toBe(false);
     await leave(silent);
     expect(silent.events.filter((event) => event.name === "pageview")).toHaveLength(1);

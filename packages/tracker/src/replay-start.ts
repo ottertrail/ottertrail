@@ -1,9 +1,7 @@
 /**
- * Starts the replay recorder on the page with rrweb, configured as the
- * first line of the privacy rules (docs/session-replay.md): text masked
- * through maskTextFn unless shown, every input masked, media and frames
- * blocked, no canvas, fonts, or images inlined. The filter
- * (replay-filter.ts) checks every event again.
+ * Mask inputs and, unless shown, text and media before capture. Block frames;
+ * never inline canvas, fonts, or images. replay-filter.ts checks each event
+ * again. See docs/session-replay.md.
  */
 import { record } from "@rrweb/record";
 

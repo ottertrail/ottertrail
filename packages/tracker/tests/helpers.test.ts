@@ -203,7 +203,7 @@ describe("randomId", () => {
       expect(randomId()).toBe(expected);
     } finally {
       random.mockRestore();
-      // As above: remove the own property, or put the original back.
+      // Restore the original property.
       Reflect.deleteProperty(crypto, "randomUUID");
       if (own !== undefined) Object.defineProperty(crypto, "randomUUID", own);
     }
@@ -211,7 +211,6 @@ describe("randomId", () => {
   });
 });
 
-/** A window with just enough location and history for watchNavigation. */
 function fakeWindow(pathname = "/") {
   const listeners: (() => void)[] = [];
   const location = { pathname };
@@ -240,7 +239,6 @@ describe("watchNavigation", () => {
     win.history.replaceState({}, "", "/docs");
 
     expect(onNewPath).toHaveBeenCalledTimes(2);
-    // The app's own navigation still happens.
     expect(original.pushState).toHaveBeenCalledWith({}, "", "/pricing");
     expect(original.replaceState).toHaveBeenCalledWith({}, "", "/docs");
   });

@@ -1,6 +1,5 @@
 /**
- * What the tracker (script.ts) and the Web Vitals script (vitals.ts) share,
- * without the library: importing vitals.ts here would put it in the tracker.
+ * Shared with script.ts without importing vitals.ts, which would bundle web-vitals in the tracker.
  */
 
 /** The event a page load's Web Vitals are sent as. Reserved: pages cannot send it themselves. */

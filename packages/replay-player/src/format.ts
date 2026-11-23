@@ -1,10 +1,3 @@
-/**
- * Pure helpers of the replay player: time text, where the error sits on the
- * timeline, how the recorded viewport fits the frame, and the recording's
- * shape. No DOM, so they are tested in Node.js (tests/format.test.ts).
- */
-
-/** The player starts this long before the error, at most. */
 export const LEAD_BEFORE_ERROR_MS = 60_000;
 
 /** "0:05", "1:05", "12:00", "1:02:03": whole seconds, rounded down. */
@@ -17,16 +10,11 @@ export function formatClock(ms: number): string {
     ? `${hours}:${String(minutes).padStart(2, "0")}:${seconds}`
     : `${minutes}:${seconds}`;
 }
-
-/** The timeline's spoken value: "0:12 of 1:05". */
 export const timelineText = (currentMs: number, totalMs: number) =>
   `${formatClock(currentMs)} of ${formatClock(totalMs)}`;
 
 /**
- * How far past the recording's end an error time may fall and still mark
- * its end. A recording ends with its last change: a page where nothing
- * changes after the error ends there, and the error's time, from the
- * server's corrected clock, can land a moment later.
+ * Allow clock correction to place the error just after the last recorded change.
  */
 export const ERROR_AFTER_END_MS = 15_000;
 
@@ -101,12 +89,7 @@ const isEvent = (value: unknown): value is RecordedEvent =>
 const isSize = (value: unknown): value is number =>
   typeof value === "number" && Number.isFinite(value) && value > 0;
 
-/**
- * The recording the API sent, `{"v":1,"events":[…]}`, checked: version 1,
- * rrweb events, at least two, a Meta event with the viewport's size, and a
- * full snapshot to build the page from. null when it is anything else.
- * Events come back sorted by time.
- */
+/** Require version 1, viewport metadata, and a full snapshot. Sort events by time. */
 export function readRecording(value: unknown): Recording | null {
   if (!isRecord(value) || value.v !== 1 || !Array.isArray(value.events)) return null;
   const raw: unknown[] = value.events;
@@ -121,12 +104,8 @@ export function readRecording(value: unknown): Recording | null {
 }
 
 /**
- * Messages between the dashboard and the player page, which the dashboard
- * shows in a frame (docs/session-replay.md, "The timeline"): the dashboard
- * asks the player to move to a moment, and the player says where it is.
- * The dashboard has the same names (apps/web/src/lib/replay-messages.ts).
- * Each side takes a message only from the other window, from its own
- * origin, in exactly this shape; anything else is ignored.
+ * Match apps/web/src/lib/replay-messages.ts. Accept only exact message shapes
+ * from the peer window on the same origin. See docs/session-replay.md, "The timeline".
  */
 export const SEEK_MESSAGE = "ottertrail:replay-seek";
 export const TIME_MESSAGE = "ottertrail:replay-time";
@@ -140,8 +119,6 @@ const isOffset = (value: unknown): value is number =>
   Number.isFinite(value) &&
   value >= 0 &&
   value <= MAX_MESSAGE_OFFSET_MS;
-
-/** Exactly these keys, and no others: what a structured clone of the message gives. */
 const hasExactly = (value: Record<string, unknown>, keys: readonly string[]) => {
   const own = Object.keys(value);
   return own.length === keys.length && keys.every((key) => own.includes(key));
@@ -159,7 +136,7 @@ export function isPauseMessage(data: unknown): boolean {
   return isRecord(data) && hasExactly(data, ["type"]) && data.type === PAUSE_MESSAGE;
 }
 
-/** The player's own theme. Not the recorded page's: that keeps its own colors. */
+/** Applies to player controls; the recorded page keeps its colors. */
 export type PlayerTheme = "light" | "dark";
 
 export const isPlayerTheme = (value: unknown): value is PlayerTheme =>
@@ -183,7 +160,5 @@ export interface MessagePeer {
   window: { postMessage: (message: unknown, targetOrigin: string) => void };
   origin: string;
 }
-
-/** Whether a message event comes from the peer: its window, and its origin. */
 export const fromPeer = (event: { origin: string; source: unknown }, peer: MessagePeer) =>
   event.origin === peer.origin && event.source === peer.window;

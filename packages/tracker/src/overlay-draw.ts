@@ -1,10 +1,8 @@
 /**
- * The heatmap overlay's data and drawing, shared by o.js (overlay-view.ts),
- * which draws over the owner's live page, and the replay player's snapshot
- * view (packages/replay-player/src/snapshot.ts), which draws over a saved
- * snapshot of it (docs/web-analytics.md, "The overlay on your site" and
- * "Saved views"). Everything from the API is checked and capped here, and
- * drawn as shapes or canvas text, never parsed as HTML.
+ * Shared by the live overlay (overlay-view.ts, o.js) and saved views
+ * (packages/replay-player/src/snapshot.ts). Validate and cap API data before
+ * drawing it as shapes or canvas text; never parse it as HTML.
+ * See docs/web-analytics.md, "The overlay on your site" and "Saved views".
  */
 
 /** The grid the API counts clicks in, per element. */

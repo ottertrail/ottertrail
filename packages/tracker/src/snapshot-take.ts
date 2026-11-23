@@ -1,18 +1,10 @@
 /**
- * A saved heatmap view (docs/web-analytics.md, "Saved views"): an rrweb
- * full snapshot of the owner's page as their browser shows it now, taken
- * only when they press "Save this view" in the overlay. The overlay's own
- * element is left out.
- *
- * It is the owner's own page and choice, so text stays; typed values are
- * masked (rrweb's maskAllInputs, every input type), and the snapshot then
- * passes the replay filter (replay-filter.ts) with text and media shown:
- * no scripts or event handlers, addresses cut to origin and path, and the
- * site's data-ottertrail-mask and -block markers applied as in replays.
- * data-ottertrail-name stays, since heatmap keys start from it.
- *
- * The result is `{"v":1,"events":[meta, fullSnapshot, …style events],
- * "pageHeight":n}`, gzip-compressed, at most MAX_SNAPSHOT_BYTES.
+ * Save an rrweb snapshot only at the owner's request, excluding the overlay.
+ * Keep text and media, mask every input, and apply replay-filter.ts to remove
+ * scripts, handlers, and URL queries and fragments. Replay mask/block markers
+ * still apply; data-ottertrail-name stays for heatmap keys.
+ * The gzip JSON contains v, events (meta, full snapshot, styles), and pageHeight,
+ * bounded by MAX_SNAPSHOT_BYTES. See docs/web-analytics.md, "Saved views".
  */
 import { record as rrwebRecord } from "@rrweb/record";
 

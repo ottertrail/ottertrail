@@ -1,14 +1,11 @@
-/** Two hex digits for each byte value. */
 const BYTE_HEX = Array.from({ length: 256 }, (_, value) => value.toString(16).padStart(2, "0"));
 
 /** Positions after which the UUID's text form has a hyphen (8-4-4-4-12). */
 const HYPHEN_AFTER = new Set([3, 5, 7, 9]);
 
 /**
- * A random version 4 UUID for each event. crypto.randomUUID only exists on
- * HTTPS pages and localhost; elsewhere the 16 bytes come from
- * crypto.getRandomValues, which every browser has, with the version and
- * variant bits RFC 9562 (section 5.4) requires.
+ * crypto.randomUUID requires HTTPS or localhost. Fall back to getRandomValues
+ * with the version 4 and variant bits from RFC 9562, section 5.4.
  */
 export function randomId(): string {
   if (typeof crypto.randomUUID === "function") return crypto.randomUUID();

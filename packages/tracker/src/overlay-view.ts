@@ -1,21 +1,9 @@
 /**
- * The heatmap overlay, as o.js runs it (overlay.ts; docs/web-analytics.md,
- * "The overlay on your site"): the project's heatmap for this page, drawn
- * over the live page for the owner who opened it from the dashboard.
- *
- * - It exchanges the link token the tracker took from the address for a
- *   session token, kept in this closure only: never stored, never in an
- *   address.
- * - It reads the page's aggregates (clicks per element in an 8 by 8 grid,
- *   scroll reach per 5%) for a device class and period.
- * - It draws them on a canvas in a fixed layer that lets every click
- *   through, inside a closed shadow root, so the page's styles and scripts
- *   cannot reach it and it changes nothing of the page's. A small panel
- *   holds the period, the device, the totals, and the elements not found
- *   on this page.
- *
- * Everything from the API is drawn as shapes or set as text
- * (textContent, fillText), never parsed as HTML.
+ * Exchange the overlay link for a session kept only in this closure.
+ * Draw aggregates in a closed shadow root to isolate them from page styles
+ * and scripts. The canvas passes clicks through. API data is rendered with
+ * textContent or fillText, never parsed as HTML.
+ * See docs/web-analytics.md, "The overlay on your site".
  */
 import { type Device, deviceOf, NAME_ATTRIBUTE, resolveKeys } from "./heatmap-path.ts";
 import {

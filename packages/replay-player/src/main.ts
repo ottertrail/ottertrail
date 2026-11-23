@@ -1,9 +1,6 @@
 /**
- * dist/player.js: the script of the player pages the API serves. The
- * replay player's (/api/projects/:id/replays/:replayId/player) body names
- * the recording and the error's time; a saved heatmap view's
- * (/api/projects/:id/heatmaps/snapshots/:device/player) names the
- * snapshot and its heatmap (snapshot.ts).
+ * dist/player.js serves both API player pages. Their body data attributes
+ * name the replay and error time, or the snapshot and heatmap (snapshot.ts).
  */
 import { startPlayer } from "./player.ts";
 import { startSnapshot } from "./snapshot.ts";

@@ -50,7 +50,6 @@ describe("the error on the timeline", () => {
   test("is left out without a time, or outside the recording", () => {
     expect(errorOffset(start, 90_000, null)).toBeNull();
     expect(errorOffset(start, 90_000, start - 1)).toBeNull();
-    // Just past the end, as when nothing changed after the error: at the end.
     expect(errorOffset(start, 90_000, start + 92_000)).toBe(90_000);
     expect(errorOffset(start, 90_000, start + 90_000 + 15_001)).toBeNull();
   });
@@ -142,7 +141,6 @@ describe("messages from the dashboard", () => {
       { type: SEEK_MESSAGE, offsetMs: 86_400_001 },
       { type: TIME_MESSAGE, offsetMs: 1 },
       { type: "seek", offsetMs: 1 },
-      // Anything more than the two keys.
       { type: SEEK_MESSAGE, offsetMs: 1, html: "<img onerror=alert(1)>" },
     ]) {
       expect(readSeekMessage(data)).toBeNull();

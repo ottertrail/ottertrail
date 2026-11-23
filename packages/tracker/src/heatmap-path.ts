@@ -1,15 +1,8 @@
 /**
- * Element keys, shared by capture (heatmap-capture.ts, h.js) and the
- * overlay (overlay-view.ts, o.js): describe() writes an element's key as
- * a click is recorded, and resolve() finds the element a key names on the
- * page the overlay draws over. resolve() only accepts an element whose
- * key, written by describe(), is the one asked for, so the two cannot
- * drift apart.
- *
- * A key is the element's structural path (standard tag names and their
- * places among siblings) from the nearest element the site named with
- * data-ottertrail-name, or from body, with that name. Nothing else about
- * the element is read: no text, values, IDs, classes, or other attributes.
+ * Shared element keys for capture and overlay. resolve() accepts a match
+ * only if describe() produces the requested key, keeping both in sync.
+ * Keys use standard tags and sibling positions from data-ottertrail-name
+ * or body. No text, values, IDs, classes, or other attributes are read.
  */
 import { HEATMAP_TAGS } from "./heatmap-tags.ts";
 

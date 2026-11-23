@@ -1,7 +1,5 @@
 /**
- * What the tracker (script.ts) and heatmap capture (heatmaps.ts, built to
- * h.js) share, without the capture code: importing it here would put it in
- * the tracker.
+ * Shared with script.ts without bundling heatmaps.ts (h.js) in the tracker.
  */
 
 /** The property the tracker sets on h.js's script element: a HeatmapConfig. */
@@ -16,12 +14,9 @@ export interface HeatmapPage {
   /** When the pageview started (Date.now()): its scroll depth's time. */
   at: number;
 }
-
-/** What the tracker hands h.js. */
 export interface HeatmapConfig {
   /** The data host's /api/heatmaps URL. */
   endpoint: string;
-  /** The project's public key. */
   key: string;
   environment?: string | undefined;
   release?: string | undefined;
