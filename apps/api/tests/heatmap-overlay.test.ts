@@ -357,21 +357,39 @@ describe("exchanging a link", () => {
     expect((await exchange(link, { origin: "https://www.example.com:8080" })).statusCode).toBe(200);
   });
 
-  test("only over https, but over http on localhost and 127.0.0.1, on any port", async () => {
-    const project = await newProject(["example.com", "localhost", "127.0.0.1"]);
-    const link = await linkFor(project.id);
-    const plain = await exchange(link, { origin: "http://example.com" });
+  test("only over https, but over http on localhost, .localhost, and 127.0.0.1, on any port", async () => {
+    // Links minted on an app of its own: the shared app's links per user are this file's.
+    const app = appWith({
+      overlayMintLimit: UNLIMITED,
+      overlayExchangeLimit: UNLIMITED,
+      overlayReadLimit: UNLIMITED,
+    });
+    const project = await newProject(["example.com", "localhost", "127.0.0.1", "shop.localhost"]);
+    const newLink = async () =>
+      (
+        await app.inject({
+          method: "POST",
+          url: `/api/projects/${project.id}/heatmaps/overlay-link`,
+          headers: { cookie: dashboard.cookie, origin: PUBLIC_URL },
+        })
+      ).json().token as string;
+    const link = await newLink();
+    const plain = await exchange(link, { origin: "http://example.com", app });
     expect([plain.statusCode, plain.json().error]).toEqual([403, "origin_not_allowed"]);
     expect(plain.headers["access-control-allow-origin"]).toBeUndefined();
     // Not used up by the refusal.
-    expect((await exchange(link, { origin: "http://localhost:5173" })).statusCode).toBe(200);
-    const local = await exchange(await linkFor(project.id), { origin: "http://127.0.0.1:8080" });
+    expect((await exchange(link, { origin: "http://localhost:5173", app })).statusCode).toBe(200);
+    const named = await exchange(await newLink(), { origin: "http://shop.localhost:3000", app });
+    expect(named.statusCode).toBe(200);
+    const local = await exchange(await newLink(), { origin: "http://127.0.0.1:8080", app });
     expect(local.statusCode).toBe(200);
     const token = `Bearer ${local.json().token}`;
-    expect((await read(project.id, token, { origin: "http://127.0.0.1:8080" })).statusCode).toBe(
-      200,
+    expect(
+      (await read(project.id, token, { origin: "http://127.0.0.1:8080", app })).statusCode,
+    ).toBe(200);
+    expect((await read(project.id, token, { origin: "http://example.com", app })).statusCode).toBe(
+      403,
     );
-    expect((await read(project.id, token, { origin: "http://example.com" })).statusCode).toBe(403);
   });
 
   test("a user who lost access meanwhile gets no session", async () => {
@@ -709,7 +727,7 @@ describe("limits", () => {
     expect((await read(project.id, unknown, { app })).statusCode).toBe(429);
   });
 
-  test("junk from a script on the page cannot use up the owner's exchanges and reads", async () => {
+  test("requests with a token of the wrong form spend a bucket of their own, not the owner's", async () => {
     const app = appWith({
       overlayExchangeLimit: { capacity: 1, refillPerSecond: 0.001 },
       overlayReadLimit: { capacity: 1, refillPerSecond: 0.001 },

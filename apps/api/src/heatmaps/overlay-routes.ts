@@ -48,8 +48,9 @@ export const DEFAULT_OVERLAY_READ_LIMIT: RateLimit = { capacity: 60, refillPerSe
 export const DEFAULT_OVERLAY_SAVE_LIMIT: RateLimit = { capacity: 10, refillPerSecond: 1 / 10 };
 /**
  * Requests whose token, Origin, or size has the wrong form, per client
- * address, in a bucket of their own: a script on the owner's page cannot
- * use up the owner's exchanges, reads, or saves with junk.
+ * address, in a bucket of their own, so those do not spend the owner's
+ * exchanges, reads, or saves. Requests of the right form with a made-up
+ * token still spend them: a script on the owner's page can send those.
  */
 export const DEFAULT_OVERLAY_MALFORMED_LIMIT: RateLimit = { capacity: 30, refillPerSecond: 1 };
 /** The periods the overlay offers, in days back from today. */
@@ -104,13 +105,19 @@ function only(part: "body" | "query", names: readonly string[]) {
   };
 }
 
-/** Plain http only for a site on this computer, on any port: elsewhere, https. */
-const LOCAL_HOSTNAMES = new Set(["localhost", "127.0.0.1"]);
+/**
+ * Plain http only for a site on this computer, on any port: localhost,
+ * names under .localhost, and 127.0.0.1, which browsers treat as secure
+ * contexts. Elsewhere, https.
+ */
+const isLocalHostname = (hostname: string) =>
+  hostname === "localhost" || hostname === "127.0.0.1" || hostname.endsWith(".localhost");
 
 /**
  * The request's Origin and its hostname, or null without one the overlay
- * opens on: https, or http on localhost or 127.0.0.1. The overlay's own
- * rule: collection (collection/normalize.ts) takes either scheme.
+ * opens on: https, or http on this computer (isLocalHostname). The
+ * overlay's own rule: collection (collection/normalize.ts) takes either
+ * scheme.
  */
 function originOf(request: FastifyRequest): { origin: string; hostname: string } | null {
   const origin = request.headers.origin;
@@ -118,7 +125,7 @@ function originOf(request: FastifyRequest): { origin: string; hostname: string }
   const hostname = originHostname(origin);
   if (hostname === null) return null;
   const secure = origin.toLowerCase().startsWith("https:");
-  return secure || LOCAL_HOSTNAMES.has(hostname) ? { origin, hostname } : null;
+  return secure || isLocalHostname(hostname) ? { origin, hostname } : null;
 }
 
 /** Charges the client address in `bucket`; a 429 when it is empty. */
