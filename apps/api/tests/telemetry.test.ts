@@ -68,16 +68,19 @@ function post(
     type = PROTOBUF,
     headers = {},
     app = dashboard.app,
+    remoteAddress,
   }: {
     key: string | undefined;
     type?: string;
     headers?: Record<string, string>;
     app?: typeof dashboard.app;
+    remoteAddress?: string;
   },
 ) {
   return app.inject({
     method: "POST",
     url: path,
+    ...(remoteAddress === undefined ? {} : { remoteAddress }),
     headers: {
       "content-type": type,
       ...(key === undefined ? {} : { authorization: `Bearer ${key}` }),
@@ -926,7 +929,11 @@ describe("requests in progress", () => {
     });
     try {
       const body = protobufTraces([protobufSpan(randomHex(16), randomHex(8))]);
-      const madeUp = post("/v1/traces", body, { key: `sk_${"b".repeat(32)}`, app });
+      const madeUp = post("/v1/traces", body, {
+        key: `sk_${"b".repeat(32)}`,
+        app,
+        remoteAddress: "198.51.100.1",
+      });
       await expect.poll(() => lookups).toBe(1);
       expect((await post("/v1/traces", body, { key: real, app })).statusCode).toBe(200);
       open();
@@ -963,55 +970,66 @@ describe("requests in progress", () => {
     }
   });
 
-  test("lookups of keys not yet seen to be real share a few places; real ones skip them", async () => {
+  test("lookups of keys not yet seen to be real wait their turn, one per address; real ones skip", async () => {
     let open!: () => void;
     const gate = new Promise<void>((resolve) => {
       open = resolve;
     });
     let lookups = 0;
     const real = `sk_${"a".repeat(32)}`;
-    // Any other key's lookup waits for the gate, as a cache miss waits for the database.
+    const fresh = `sk_${"c".repeat(32)}`;
+    // Made-up keys' lookups wait for the gate, as a cache miss waits for the database.
     const projects = {
       findBySecret: async (key: string) => {
         lookups += 1;
         if (key === real) return { id: "0b0e5f1e-8a4e-4e43-9b0a-1f0c5d3e7a11" };
+        if (key === fresh) return { id: "7c1d2e3f-4a5b-4c6d-8e7f-901a2b3c4d5e" };
         await gate;
         return null;
       },
     } as unknown as ProjectKeyCache;
+    // One running, two waiting.
+    const keyLookups = new SecretKeyLookups(1, 2);
     const app = Fastify();
     await app.register(telemetryRoutes, {
       clickhouse: { insert: async () => {} } as unknown as ClickHouseClient,
       projects,
       activity: { add: () => {} } as unknown as IngestActivity,
       retentionDays: 30,
-      keyLookups: new SecretKeyLookups(2),
+      keyLookups,
     });
     try {
       const body = protobufTraces([protobufSpan(randomHex(16), randomHex(8))]);
-      expect((await post("/v1/traces", body, { key: real, app })).statusCode).toBe(200);
-      const waiting = [1, 2].map((n) => post("/v1/traces", body, { key: unknownKey(n), app }));
-      await expect.poll(() => lookups).toBe(3);
-      const full = await post("/v1/traces", body, { key: unknownKey(3), app });
-      expect(full.statusCode).toBe(503);
-      expect(full.headers["retry-after"]).toBe("1");
-      expect(statusOf(full.rawPayload).message).toBe(
+      const from = (key: string, remoteAddress: string) =>
+        post("/v1/traces", body, { key, app, remoteAddress });
+      expect((await from(real, "192.0.2.1")).statusCode).toBe(200);
+      const running = from(unknownKey(1), "2001:db8:1:2::1");
+      await expect.poll(() => lookups).toBe(2);
+      // One lookup an address: another from its IPv6 /64 is refused.
+      const again = await from(unknownKey(2), "2001:db8:1:2::2");
+      expect(again.statusCode).toBe(503);
+      expect(statusOf(again.rawPayload).message).toBe(
         "Too many keys are being looked up. Try again shortly.",
       );
-      // A key already found to be real is not held up.
-      expect((await post("/v1/traces", body, { key: real, app })).statusCode).toBe(200);
+      const waiting = from(unknownKey(3), "198.51.100.1");
+      // A new project's key waits its turn behind the flood, instead of being refused.
+      const freshKey = from(fresh, "203.0.113.7");
+      await expect.poll(() => keyLookups.waiting).toBe(2);
+      // The queue is full.
+      expect((await from(unknownKey(5), "198.51.100.9")).statusCode).toBe(503);
+      // A key already found to be real does not wait.
+      expect((await from(real, "192.0.2.1")).statusCode).toBe(200);
       open();
-      for (const response of await Promise.all(waiting)) expect(response.statusCode).toBe(401);
+      expect((await running).statusCode).toBe(401);
+      expect((await waiting).statusCode).toBe(401);
+      expect((await freshKey).statusCode).toBe(200);
       // The places are given back.
-      const after = post("/v1/traces", body, { key: unknownKey(4), app });
-      await expect.poll(() => lookups).toBe(5);
-      expect((await after).statusCode).toBe(401);
+      expect((await from(unknownKey(6), "198.51.100.1")).statusCode).toBe(401);
     } finally {
       open();
       await app.close();
     }
   });
-
   test("an address's rate counts an IPv6 address by its /64", async () => {
     const app = buildApp({
       db: dashboard.db,

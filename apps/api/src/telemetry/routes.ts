@@ -19,7 +19,7 @@ import {
   TokenBucketLimiter,
 } from "../collection/rate-limiter.ts";
 import { DEFAULT_SERVER_IP_LIMIT } from "../collection/server-events.ts";
-import { BUSY, type SecretKeyLookups, secretKeyLookups } from "./key-lookups.ts";
+import { BUSY, SecretKeyLookups } from "./key-lookups.ts";
 import {
   type NormalizeContext,
   normalizeLogs,
@@ -156,7 +156,7 @@ export interface TelemetryOptions {
   maxInFlight?: number;
   /** Of those, one project's (DEFAULT_MAX_IN_FLIGHT_PER_PROJECT). */
   maxInFlightPerProject?: number;
-  /** Bounds key lookups (key-lookups.ts); the process's by default. */
+  /** Bounds key lookups (key-lookups.ts); this route's own by default. */
   keyLookups?: SecretKeyLookups;
   /** The clock, in milliseconds since 1970; tests fix it. */
   now?: () => number;
@@ -220,7 +220,7 @@ export const telemetryRoutes: FastifyPluginCallback<TelemetryOptions> = (app, op
     activity,
     retentionDays,
     now = Date.now,
-    keyLookups = secretKeyLookups,
+    keyLookups = new SecretKeyLookups(),
     maxInFlight = DEFAULT_MAX_IN_FLIGHT,
     maxInFlightPerProject = DEFAULT_MAX_IN_FLIGHT_PER_PROJECT,
   } = options;
@@ -308,7 +308,7 @@ export const telemetryRoutes: FastifyPluginCallback<TelemetryOptions> = (app, op
     // keys cannot hold the slots real requests need.
     let project;
     try {
-      project = await keyLookups.find(projects, secretKey);
+      project = await keyLookups.find(projects, secretKey, clientKey(request.ip));
     } catch (error) {
       request.log.error({ err: error }, "could not look up the secret key");
       return fail(request, reply, 503, "Telemetry was not stored. Retry later.", 5);

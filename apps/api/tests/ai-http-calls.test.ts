@@ -44,6 +44,11 @@ afterAll(async () => {
   await dashboard?.close();
 });
 
+/** The header that sends a secret key. */
+function bearer(key: string) {
+  return { authorization: `Bearer ${key}` };
+}
+
 /** A well-formed secret key no project has. */
 function unknownKey(n: number): string {
   return `sk_${n.toString(16).padStart(32, "0")}`;
@@ -657,7 +662,12 @@ describe("limits", () => {
     });
     try {
       const body = { v: 1, calls: [aiCall()] };
-      const madeUp = send(body, { authorization: `Bearer sk_${"b".repeat(32)}` }, app);
+      const madeUp = send(
+        body,
+        { authorization: `Bearer sk_${"b".repeat(32)}` },
+        app,
+        "198.51.100.1",
+      );
       await expect.poll(() => lookups).toBe(1);
       expect((await send(body, { authorization: `Bearer ${real}` }, app)).statusCode).toBe(202);
       open();
@@ -675,11 +685,13 @@ describe("limits", () => {
     });
     let lookups = 0;
     const real = `sk_${"a".repeat(32)}`;
-    // Any other key's lookup waits for the gate, as a cache miss waits for the database.
+    const fresh = `sk_${"c".repeat(32)}`;
+    // Made-up keys' lookups wait for the gate, as a cache miss waits for the database.
     const projects = {
       findBySecret: async (key: string) => {
         lookups += 1;
         if (key === real) return { id: "0b0e5f1e-8a4e-4e43-9b0a-1f0c5d3e7a11" };
+        if (key === fresh) return { id: "7c1d2e3f-4a5b-4c6d-8e7f-901a2b3c4d5e" };
         await gate;
         return null;
       },
@@ -691,23 +703,22 @@ describe("limits", () => {
       projects,
       activity: { add: () => {} } as unknown as IngestActivity,
       budget: telemetryBudget({}),
-      keyLookups: new SecretKeyLookups(1),
+      keyLookups: new SecretKeyLookups(1, 0),
     });
     try {
       const body = { v: 1, calls: [aiCall()] };
-      const waiting = send(body, { authorization: `Bearer ${unknownKey(1)}` }, app);
+      const waiting = send(body, bearer(unknownKey(1)), app, "198.51.100.1");
       await expect.poll(() => lookups).toBe(1);
-      const full = await send(body, { authorization: `Bearer ${unknownKey(2)}` }, app);
+      const full = await send(body, bearer(unknownKey(2)), app, "198.51.100.2");
       expect([full.statusCode, full.json().error]).toEqual([503, "busy"]);
       open();
       expect((await waiting).statusCode).toBe(401);
-      expect((await send(body, { authorization: `Bearer ${real}` }, app)).statusCode).toBe(202);
+      expect((await send(body, bearer(fresh), app, "198.51.100.2")).statusCode).toBe(202);
     } finally {
       open();
       await app.close();
     }
   });
-
   test("a client that hangs up while its calls are being written holds its slots until the insert settles", async () => {
     // A ClickHouse that holds each insert while `hold` is on, until the test lets it finish.
     let hold = true;

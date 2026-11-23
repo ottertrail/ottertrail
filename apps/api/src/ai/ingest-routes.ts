@@ -17,7 +17,7 @@ import {
   TokenBucketLimiter,
 } from "../collection/rate-limiter.ts";
 import { DEFAULT_SERVER_IP_LIMIT, MAX_FUTURE_MS } from "../collection/server-events.ts";
-import { BUSY, type SecretKeyLookups, secretKeyLookups } from "../telemetry/key-lookups.ts";
+import { BUSY, SecretKeyLookups } from "../telemetry/key-lookups.ts";
 import { nanosText } from "../telemetry/normalize.ts";
 import { DEFAULT_MAX_IN_FLIGHT, DEFAULT_MAX_IN_FLIGHT_PER_PROJECT } from "../telemetry/routes.ts";
 import {
@@ -251,7 +251,7 @@ export interface AiCallIngestOptions {
   /** Requests this process works on at once, and one project's of them, as OTLP's (telemetry/routes.ts). */
   maxInFlight?: number;
   maxInFlightPerProject?: number;
-  /** Bounds key lookups, as OTLP's (telemetry/key-lookups.ts); the process's by default. */
+  /** Bounds key lookups, as OTLP's (telemetry/key-lookups.ts); this route's own by default. */
   keyLookups?: SecretKeyLookups;
   now?: () => number;
 }
@@ -285,7 +285,7 @@ export const aiCallIngestRoutes: FastifyPluginCallback<AiCallIngestOptions> = (
     activity,
     budget,
     now = Date.now,
-    keyLookups = secretKeyLookups,
+    keyLookups = new SecretKeyLookups(),
     maxInFlight = DEFAULT_MAX_IN_FLIGHT,
     maxInFlightPerProject = DEFAULT_MAX_IN_FLIGHT_PER_PROJECT,
   } = options;
@@ -355,7 +355,7 @@ export const aiCallIngestRoutes: FastifyPluginCallback<AiCallIngestOptions> = (
         // As OTLP's: the key before a slot, so made-up keys hold none.
         let project;
         try {
-          project = await keyLookups.find(projects, secretKey);
+          project = await keyLookups.find(projects, secretKey, clientKey(request.ip));
         } catch (error) {
           request.log.error({ err: error }, "could not look up the secret key");
           return storageUnavailable(reply);
