@@ -189,11 +189,19 @@ export async function storeEvents(
   clickhouse: ClickHouseClient,
   projectId: string,
   events: readonly NewEvent[],
-  { receivedAt = new Date() }: { receivedAt?: Date } = {},
+  {
+    receivedAt = new Date(),
+    waitSeconds,
+  }: {
+    receivedAt?: Date;
+    /** How long ClickHouse may take to write it before it answers an error; its default otherwise. */
+    waitSeconds?: number;
+  } = {},
 ): Promise<void> {
   await insertRows(
     clickhouse,
     "events",
     events.map((event) => toClickHouse(toRow(projectId, event, receivedAt))),
+    waitSeconds === undefined ? {} : { wait_for_async_insert_timeout: waitSeconds },
   );
 }

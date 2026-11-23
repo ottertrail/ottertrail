@@ -4,7 +4,7 @@ import type { FastifyInstance } from "fastify";
 import { afterAll, beforeAll, describe, expect, onTestFinished, test } from "vite-plus/test";
 
 import { type AppOptions, buildApp } from "../src/app.ts";
-import { createClickHouse } from "../src/clickhouse/clickhouse.ts";
+import { type ClickHouseClient, createClickHouse } from "../src/clickhouse/clickhouse.ts";
 import { loadConfig } from "../src/config.ts";
 import { createDatabase } from "../src/db/database.ts";
 import type { Locate, Location } from "../src/enrichment/geo.ts";
@@ -437,6 +437,80 @@ describe("POST /api/events", () => {
       const response = await send(batch(key), { headers: { "content-type": "text/html" } });
       expect(response.statusCode).toBe(415);
       expect(response.json()).toMatchObject({ error: "unsupported_media_type" });
+    });
+  });
+
+  describe("requests in progress", () => {
+    test("503 past the process's limit, 429 past one project's, shared with server events, each given back", async () => {
+      let open!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        open = resolve;
+      });
+      let inserts = 0;
+      // A ClickHouse that holds every insert until the gate opens.
+      const held = {
+        insert: async () => {
+          inserts += 1;
+          await gate;
+        },
+      } as unknown as ClickHouseClient;
+      const instance = appWith({
+        collection: { now: () => NOW, clickhouse: held, maxInFlight: 3, maxInFlightPerProject: 2 },
+      });
+      try {
+        const ours = await createProject();
+        const theirs = await createProject();
+        const sendTo = (key: string) => send(batch(key), { instance });
+
+        const waiting = [sendTo(ours.public_key), sendTo(ours.public_key)];
+        await expect.poll(() => inserts).toBe(2);
+        const projectFull = await sendTo(ours.public_key);
+        expect(projectFull.statusCode).toBe(429);
+        expect(projectFull.headers["retry-after"]).toBe("1");
+
+        waiting.push(sendTo(theirs.public_key));
+        await expect.poll(() => inserts).toBe(3);
+        const processFull = await sendTo(theirs.public_key);
+        expect(processFull.statusCode).toBe(503);
+        expect(processFull.headers["retry-after"]).toBe("1");
+        expect(processFull.json()).toMatchObject({ error: "busy" });
+        const { secret_key: secretKey } = await db()
+          .selectFrom("projects")
+          .select("secret_key")
+          .where("id", "=", theirs.id)
+          .executeTakeFirstOrThrow();
+        const fromServer = await instance.inject({
+          method: "POST",
+          url: "/api/server-events",
+          headers: {
+            "content-type": "application/json",
+            authorization: `Bearer ${secretKey}`,
+          },
+          payload: JSON.stringify({
+            v: 1,
+            events: [{ id: randomUUID(), name: "paid", occurredAt: NOW - 1000, userId: "42" }],
+          }),
+        });
+        expect(fromServer.statusCode).toBe(503);
+
+        open();
+        for (const response of await Promise.all(waiting)) expect(response.statusCode).toBe(202);
+        // Every slot was given back.
+        expect((await sendTo(ours.public_key)).statusCode).toBe(202);
+        expect((await sendTo(ours.public_key)).statusCode).toBe(202);
+        expect((await sendTo(theirs.public_key)).statusCode).toBe(202);
+      } finally {
+        open();
+      }
+    });
+
+    test("a body that breaks the schema takes no slot", async () => {
+      const instance = appWith({ collection: { now: () => NOW, maxInFlight: 1 } });
+      const project = await createProject();
+      for (let i = 0; i < 3; i += 1) {
+        expect((await send("{not json", { instance })).statusCode).toBe(400);
+      }
+      expect((await send(batch(project.public_key), { instance })).statusCode).toBe(202);
     });
   });
 

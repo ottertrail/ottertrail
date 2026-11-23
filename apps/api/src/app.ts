@@ -166,6 +166,9 @@ export interface AppOptions extends Omit<FastifyServerOptions, "logger"> {
     overlayReadLimit?: RateLimit;
     overlayMintLimit?: RateLimit;
     overlaySaveLimit?: RateLimit;
+    /** Collection requests in progress, per process and per project (heatmaps/routes.ts). */
+    maxInFlight?: number;
+    maxInFlightPerProject?: number;
   };
   /**
    * OTLP traces, logs, and metrics (docs/telemetry.md), stored in

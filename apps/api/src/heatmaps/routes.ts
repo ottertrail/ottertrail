@@ -2,7 +2,9 @@ import type { FastifyError, FastifyPluginCallback, FastifyReply } from "fastify"
 
 import type { IngestActivity, IngestOutcome } from "../activity/activity.ts";
 import type { ClickHouseClient } from "../clickhouse/clickhouse.ts";
+import { INSERT_WAIT_SECONDS, projectTooBusy, tooBusy } from "../collection/busy.ts";
 import { ENVIRONMENT_PATTERN, environmentOf, RELEASE_PATTERN } from "../collection/environment.ts";
+import { InFlight } from "../collection/in-flight.ts";
 import { parseTextPlainAsJson } from "../collection/json-body.ts";
 import {
   correctClock,
@@ -60,6 +62,9 @@ export const DEFAULT_HEATMAP_IP_RECORD_LIMIT: RateLimit = { capacity: 400, refil
  */
 export const DEFAULT_HEATMAP_PROJECT_LIMIT: RateLimit = { capacity: 2_000, refillPerSecond: 100 };
 export const DEFAULT_HEATMAP_INSTANCE_LIMIT: RateLimit = { capacity: 6_000, refillPerSecond: 300 };
+/** Heatmap requests one process works on at once, and one project's (collection/busy.ts). */
+export const DEFAULT_HEATMAP_MAX_IN_FLIGHT = 64;
+export const DEFAULT_HEATMAP_MAX_IN_FLIGHT_PER_PROJECT = 16;
 
 const UUID_PATTERN =
   "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$";
@@ -261,6 +266,8 @@ export const heatmapCollectionRoutes: FastifyPluginCallback<{
   projectLimit?: RateLimit;
   instanceLimit?: RateLimit;
   isDataCenter?: IsDataCenter;
+  maxInFlight?: number;
+  maxInFlightPerProject?: number;
   now?: () => number;
 }> = (app, options, done) => {
   const { clickhouse, projects, activity, isDataCenter = noDataCenters, now = Date.now } = options;
@@ -270,6 +277,11 @@ export const heatmapCollectionRoutes: FastifyPluginCallback<{
   const budget = new EventBudget(
     new TokenBucketLimiter(options.projectLimit ?? DEFAULT_HEATMAP_PROJECT_LIMIT, { now }),
     new TokenBucketLimiter(options.instanceLimit ?? DEFAULT_HEATMAP_INSTANCE_LIMIT, { now }),
+  );
+  // Taken once the body has arrived, as for events.
+  const inFlight = new InFlight(
+    options.maxInFlight ?? DEFAULT_HEATMAP_MAX_IN_FLIGHT,
+    options.maxInFlightPerProject ?? DEFAULT_HEATMAP_MAX_IN_FLIGHT_PER_PROJECT,
   );
   if (budget.capacity < MAX_RECORDS_PER_BATCH) {
     done(new Error(`The heatmap budgets must allow a full batch of ${MAX_RECORDS_PER_BATCH}`));
@@ -319,169 +331,181 @@ export const heatmapCollectionRoutes: FastifyPluginCallback<{
         const result = ipLimiter.take(request.ip);
         return result.allowed ? undefined : tooManyRequests(reply, result.retryAfterSeconds);
       },
+      preHandler: async (request, reply) =>
+        inFlight.take(request, reply) ? undefined : tooBusy(reply),
+      onResponse: inFlight.finished,
+      onRequestAbort: inFlight.finished,
     },
-    async (request, reply) => {
-      const receivedAt = now();
-      const { key, sentAt, pages, records } = request.body;
+    async (request, reply) =>
+      inFlight.run(request, async () => {
+        const receivedAt = now();
+        const { key, sentAt, pages, records } = request.body;
 
-      const perClient = ipRecordLimiter.take(
-        request.ip,
-        Math.min(records.length, ipRecordLimit.capacity),
-      );
-      if (!perClient.allowed) return tooManyRequests(reply, perClient.retryAfterSeconds);
+        const perClient = ipRecordLimiter.take(
+          request.ip,
+          Math.min(records.length, ipRecordLimit.capacity),
+        );
+        if (!perClient.allowed) return tooManyRequests(reply, perClient.retryAfterSeconds);
 
-      let project;
-      try {
-        project = await projects.find(key);
-      } catch (error) {
-        request.log.error({ err: error }, "could not look up the project key");
-        return storageUnavailable(reply);
-      }
-      if (project === null) {
-        return reply.code(403).send(problem("unknown_key", "No project has this key."));
-      }
-      // Known from here: what becomes of the batch is counted.
-      const projectId = project.id;
-      const count = (outcome: IngestOutcome, items = 0) => {
-        activity.add(projectId, "heatmaps", outcome, items);
-      };
-      const origin = request.headers.origin;
-      if (origin !== undefined) {
-        const hostname = originHostname(origin);
-        if (hostname === null || !isAllowedHostname(hostname, project.allowedHostnames)) {
-          count("refused_origin");
+        let project;
+        try {
+          project = await projects.find(key);
+        } catch (error) {
+          request.log.error({ err: error }, "could not look up the project key");
+          return storageUnavailable(reply);
+        }
+        if (project === null) {
+          return reply.code(403).send(problem("unknown_key", "No project has this key."));
+        }
+        // Known from here: what becomes of the batch is counted.
+        const projectId = project.id;
+        const count = (outcome: IngestOutcome, items = 0) => {
+          activity.add(projectId, "heatmaps", outcome, items);
+        };
+        if (!inFlight.takeForProject(request, projectId)) {
+          count("refused_rate_limited");
+          return projectTooBusy(reply);
+        }
+        const origin = request.headers.origin;
+        if (origin !== undefined) {
+          const hostname = originHostname(origin);
+          if (hostname === null || !isAllowedHostname(hostname, project.allowedHostnames)) {
+            count("refused_origin");
+            return reply
+              .code(403)
+              .send(problem("origin_not_allowed", "This site may not send to this project."));
+          }
+        }
+        if (!project.heatmaps) {
+          count("refused_disabled");
           return reply
             .code(403)
-            .send(problem("origin_not_allowed", "This site may not send to this project."));
+            .send(problem("heatmaps_off", "The project does not take heatmap data."));
         }
-      }
-      if (!project.heatmaps) {
-        count("refused_disabled");
-        return reply
-          .code(403)
-          .send(problem("heatmaps_off", "The project does not take heatmap data."));
-      }
-      const { release } = request.body;
-      if (release !== undefined && !isStorableText(release)) {
-        count("refused_invalid");
-        return reply
-          .code(400)
-          .send(problem("invalid_request", "release contains an unpaired surrogate."));
-      }
-
-      const received = { received: records.length };
-      if (isBlockedAddress(project.blocked, request.ip)) {
-        count("filtered_spam", records.length);
-        return reply.code(202).send(received);
-      }
-      const userAgent = request.headers["user-agent"];
-      if (isBot(userAgent) || (project.ignoreDataCenters && isDataCenter(request.ip))) {
-        count("filtered_bot", records.length);
-        return reply.code(202).send(received);
-      }
-      if (
-        pages.some((page) =>
-          isReferrerSpam(
-            page.referrer,
-            project.blockedReferrers,
-            undefined,
-            project.allowedHostnames,
-          ),
-        )
-      ) {
-        count("filtered_spam", records.length);
-        return reply.code(202).send(received);
-      }
-
-      const spent = budget.take(project.id, records.length);
-      if (!spent.allowed) {
-        count(spent.limit === "instance" ? "refused_volume" : "refused_rate_limited");
-        return tooManyRequests(reply, spent.retryAfterSeconds);
-      }
-
-      const environment = environmentOf(request.body.environment);
-      // Each page once: its path, on an allowed hostname.
-      const paths: string[] = [];
-      for (const [index, incoming] of pages.entries()) {
-        const page = parsePageUrl(incoming.url);
-        if (page === null || !isAllowedHostname(page.hostname, project.allowedHostnames)) {
-          budget.refund(project.id, records.length);
-          count(page === null ? "refused_invalid" : "refused_origin");
-          return page === null
-            ? reply
-                .code(400)
-                .send(problem("invalid_request", `pages[${index}].url is not a valid http(s) URL.`))
-            : reply
-                .code(403)
-                .send(
-                  problem(
-                    "hostname_not_allowed",
-                    `pages[${index}].url is not on an allowed hostname.`,
-                  ),
-                );
-        }
-        paths.push(page.path);
-      }
-      const accepted: NewHeatmapRecord[] = [];
-      let tooOld = 0;
-      for (const [index, record] of records.entries()) {
-        const refuse = (status: 400 | 403, code: string, message: string) => {
-          budget.refund(project.id, records.length);
+        const { release } = request.body;
+        if (release !== undefined && !isStorableText(release)) {
           count("refused_invalid");
-          return reply.code(status).send(problem(code, `records[${index}] ${message}`));
-        };
-        const wrong = recordProblem(record);
-        if (wrong !== null) return refuse(400, "invalid_request", wrong);
-        const path = paths[record.page];
-        if (path === undefined) {
-          return refuse(400, "invalid_request", "page is not one of the batch's pages.");
+          return reply
+            .code(400)
+            .send(problem("invalid_request", "release contains an unpaired surrogate."));
         }
-        const occurredAt = correctClock(record.at, sentAt, receivedAt);
-        if (occurredAt === null) {
-          tooOld += 1;
-          continue;
+
+        const received = { received: records.length };
+        if (isBlockedAddress(project.blocked, request.ip)) {
+          count("filtered_spam", records.length);
+          return reply.code(202).send(received);
         }
-        accepted.push({
-          recordId: record.id,
-          kind: record.type,
-          occurredAt,
-          environment,
-          release,
-          path,
-          device: record.device,
-          label: record.label ?? "",
-          element: record.element ?? "",
-          x: record.x ?? 0,
-          y: record.y ?? 0,
-          viewportWidth: record.vw,
-          viewportHeight: record.vh,
-          pageHeight: record.ph,
-          rage: record.rage === true,
-          dead: record.dead === true,
-          depth: record.depth ?? 0,
-          fold: record.fold ?? 0,
-          dropped: record.dropped ?? 0,
-        });
-      }
-      if (tooOld > 0) budget.refund(project.id, tooOld);
-      try {
-        if (accepted.length > 0) {
-          await storeHeatmapRecords(clickhouse, project.id, accepted, {
-            receivedAt: new Date(receivedAt),
+        const userAgent = request.headers["user-agent"];
+        if (isBot(userAgent) || (project.ignoreDataCenters && isDataCenter(request.ip))) {
+          count("filtered_bot", records.length);
+          return reply.code(202).send(received);
+        }
+        if (
+          pages.some((page) =>
+            isReferrerSpam(
+              page.referrer,
+              project.blockedReferrers,
+              undefined,
+              project.allowedHostnames,
+            ),
+          )
+        ) {
+          count("filtered_spam", records.length);
+          return reply.code(202).send(received);
+        }
+
+        const spent = budget.take(project.id, records.length);
+        if (!spent.allowed) {
+          count(spent.limit === "instance" ? "refused_volume" : "refused_rate_limited");
+          return tooManyRequests(reply, spent.retryAfterSeconds);
+        }
+
+        const environment = environmentOf(request.body.environment);
+        // Each page once: its path, on an allowed hostname.
+        const paths: string[] = [];
+        for (const [index, incoming] of pages.entries()) {
+          const page = parsePageUrl(incoming.url);
+          if (page === null || !isAllowedHostname(page.hostname, project.allowedHostnames)) {
+            budget.refund(project.id, records.length);
+            count(page === null ? "refused_invalid" : "refused_origin");
+            return page === null
+              ? reply
+                  .code(400)
+                  .send(
+                    problem("invalid_request", `pages[${index}].url is not a valid http(s) URL.`),
+                  )
+              : reply
+                  .code(403)
+                  .send(
+                    problem(
+                      "hostname_not_allowed",
+                      `pages[${index}].url is not on an allowed hostname.`,
+                    ),
+                  );
+          }
+          paths.push(page.path);
+        }
+        const accepted: NewHeatmapRecord[] = [];
+        let tooOld = 0;
+        for (const [index, record] of records.entries()) {
+          const refuse = (status: 400 | 403, code: string, message: string) => {
+            budget.refund(project.id, records.length);
+            count("refused_invalid");
+            return reply.code(status).send(problem(code, `records[${index}] ${message}`));
+          };
+          const wrong = recordProblem(record);
+          if (wrong !== null) return refuse(400, "invalid_request", wrong);
+          const path = paths[record.page];
+          if (path === undefined) {
+            return refuse(400, "invalid_request", "page is not one of the batch's pages.");
+          }
+          const occurredAt = correctClock(record.at, sentAt, receivedAt);
+          if (occurredAt === null) {
+            tooOld += 1;
+            continue;
+          }
+          accepted.push({
+            recordId: record.id,
+            kind: record.type,
+            occurredAt,
+            environment,
+            release,
+            path,
+            device: record.device,
+            label: record.label ?? "",
+            element: record.element ?? "",
+            x: record.x ?? 0,
+            y: record.y ?? 0,
+            viewportWidth: record.vw,
+            viewportHeight: record.vh,
+            pageHeight: record.ph,
+            rage: record.rage === true,
+            dead: record.dead === true,
+            depth: record.depth ?? 0,
+            fold: record.fold ?? 0,
+            dropped: record.dropped ?? 0,
           });
         }
-      } catch (error) {
-        // Not the sender's doing: the budget back, so its retry is not refused for it.
-        budget.refund(project.id, accepted.length);
-        request.log.error({ err: error }, "could not store heatmap data");
-        count("refused_unavailable");
-        return storageUnavailable(reply);
-      }
-      // Per record: those stored, and those too old to store.
-      if (accepted.length > 0) count("accepted", accepted.length);
-      if (tooOld > 0) count("filtered_too_old", tooOld);
-      return reply.code(202).send(received);
-    },
+        if (tooOld > 0) budget.refund(project.id, tooOld);
+        try {
+          if (accepted.length > 0) {
+            await storeHeatmapRecords(clickhouse, project.id, accepted, {
+              receivedAt: new Date(receivedAt),
+              waitSeconds: INSERT_WAIT_SECONDS,
+            });
+          }
+        } catch (error) {
+          // Not the sender's doing: the budget back, so its retry is not refused for it.
+          budget.refund(project.id, accepted.length);
+          request.log.error({ err: error }, "could not store heatmap data");
+          count("refused_unavailable");
+          return storageUnavailable(reply);
+        }
+        // Per record: those stored, and those too old to store.
+        if (accepted.length > 0) count("accepted", accepted.length);
+        if (tooOld > 0) count("filtered_too_old", tooOld);
+        return reply.code(202).send(received);
+      }),
   );
 
   done();

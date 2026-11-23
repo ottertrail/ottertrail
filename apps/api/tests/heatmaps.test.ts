@@ -5,7 +5,7 @@ import { afterAll, beforeAll, describe, expect, test } from "vite-plus/test";
 
 import { HEATMAP_TAGS as TRACKER_TAGS } from "../../../packages/tracker/src/heatmap-tags.ts";
 import { type AppOptions, buildApp } from "../src/app.ts";
-import { createClickHouse } from "../src/clickhouse/clickhouse.ts";
+import { type ClickHouseClient, createClickHouse } from "../src/clickhouse/clickhouse.ts";
 import { purgeDeletedProjects } from "../src/clickhouse/delete-events.ts";
 import { QueryParams, queryRows } from "../src/clickhouse/query.ts";
 import { loadConfig } from "../src/config.ts";
@@ -537,6 +537,41 @@ describe("POST /api/heatmaps", () => {
       remoteAddress: "2001:db8:1:2::3",
     });
     expect(third.statusCode).toBe(429);
+  });
+
+  test("503 past the process's requests in progress, 429 past one project's", async () => {
+    let open!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      open = resolve;
+    });
+    let inserts = 0;
+    const held = {
+      insert: async () => {
+        inserts += 1;
+        await gate;
+      },
+    } as unknown as ClickHouseClient;
+    const app = appWith({
+      collection: { clickhouse: held, now: () => NOON },
+      heatmaps: { maxInFlight: 2, maxInFlightPerProject: 1 },
+    });
+    try {
+      const ours = await newProject();
+      const theirs = await newProject();
+      const waiting = [send(ours.public_key, [click()], { app })];
+      await expect.poll(() => inserts).toBe(1);
+      expect((await send(ours.public_key, [click()], { app })).statusCode).toBe(429);
+      waiting.push(send(theirs.public_key, [click()], { app }));
+      await expect.poll(() => inserts).toBe(2);
+      const full = await send(theirs.public_key, [click()], { app });
+      expect(full.statusCode).toBe(503);
+      expect(full.headers["retry-after"]).toBe("1");
+      open();
+      for (const response of await Promise.all(waiting)) expect(response.statusCode).toBe(202);
+      expect((await send(ours.public_key, [click()], { app })).statusCode).toBe(202);
+    } finally {
+      open();
+    }
   });
 
   test("answers 503 while ClickHouse cannot write, and gives the budget back", async () => {

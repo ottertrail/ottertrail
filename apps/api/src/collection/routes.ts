@@ -15,9 +15,17 @@ import { isBlockedAddress } from "../projects/blocked-addresses.ts";
 import { readInstanceSettings } from "../settings/settings.ts";
 import { VisitorIds } from "../visitors/visitor-ids.ts";
 import { ENGAGEMENT, ERROR, VITALS } from "../visits/visits.ts";
+import {
+  DEFAULT_MAX_EVENTS_IN_FLIGHT,
+  DEFAULT_MAX_EVENTS_IN_FLIGHT_PER_PROJECT,
+  INSERT_WAIT_SECONDS,
+  projectTooBusy,
+  tooBusy,
+} from "./busy.ts";
 import { ENVIRONMENT_PATTERN, environmentOf, RELEASE_PATTERN } from "./environment.ts";
 import { type NewEvent, storeEvents } from "./event-store.ts";
 import { isSignedUserId, USER_ID_PATTERN, USER_SIGNATURE_PATTERN } from "./identity.ts";
+import { InFlight } from "./in-flight.ts";
 import { parseTextPlainAsJson } from "./json-body.ts";
 import { LastEventRecorder } from "./last-event.ts";
 import {
@@ -89,6 +97,9 @@ export interface CollectionOptions {
   serverIpLimit?: RateLimit;
   /** Events one visitor ID may store per day (visitor-cap.ts); replaceable in tests. */
   visitorCap?: number;
+  /** Event requests in progress per process, and per project (DEFAULT_MAX_EVENTS_IN_FLIGHT). */
+  maxInFlight?: number;
+  maxInFlightPerProject?: number;
 }
 
 type PropertyValue = string | number | boolean | null;
@@ -328,6 +339,11 @@ export const collectionRoutes: FastifyPluginCallback<CollectionOptions> = (app, 
     new TokenBucketLimiter(instanceLimit, { now }),
   );
   const projects = options.projectKeys ?? new ProjectKeyCache(db, { now });
+  // Taken once the body has arrived, so a slow sender holds no slot while it sends.
+  const inFlight = new InFlight(
+    options.maxInFlight ?? DEFAULT_MAX_EVENTS_IN_FLIGHT,
+    options.maxInFlightPerProject ?? DEFAULT_MAX_EVENTS_IN_FLIGHT_PER_PROJECT,
+  );
   const lastEvents = new LastEventRecorder(db, { now });
 
   parseTextPlainAsJson(app, MAX_BODY_BYTES);
@@ -379,294 +395,308 @@ export const collectionRoutes: FastifyPluginCallback<CollectionOptions> = (app, 
         const result = ipLimiter.take(request.ip);
         return result.allowed ? undefined : tooManyRequests(reply, result.retryAfterSeconds);
       },
+      preHandler: async (request, reply) =>
+        inFlight.take(request, reply) ? undefined : tooBusy(reply),
+      onResponse: inFlight.finished,
+      onRequestAbort: inFlight.finished,
     },
-    async (request, reply) => {
-      const receivedAt = now();
-      const { key, sentAt, events } = request.body;
+    async (request, reply) =>
+      inFlight.run(request, async () => {
+        const receivedAt = now();
+        const { key, sentAt, events } = request.body;
 
-      // Count events before the key lookup. Requests can each hold 50 events; clients
-      // behind one address (an office or carrier NAT) share the limit.
-      const perClient = ipEventLimiter.take(
-        request.ip,
-        Math.min(events.length, ipEventLimit.capacity),
-      );
-      if (!perClient.allowed) {
-        return tooManyRequests(reply, perClient.retryAfterSeconds);
-      }
-
-      let project: CollectingProject | null;
-      try {
-        project = await projects.find(key);
-      } catch (error) {
-        request.log.error({ err: error }, "could not look up the project key");
-        return storageUnavailable(reply);
-      }
-      if (project === null) {
-        return reply.code(403).send(problem("unknown_key", "No project has this key."));
-      }
-      const projectId = project.id;
-
-      // Count outcomes per source once the project is known (activity/activity.ts).
-      const inBatch = countBySource(events);
-      const count = (outcome: IngestOutcome, items?: ReadonlyMap<IngestSource, number>) => {
-        for (const source of (items ?? inBatch).keys()) {
-          activity.add(projectId, source, outcome, items?.get(source) ?? 0);
-        }
-      };
-      const invalid = (message: string) => {
-        count("refused_invalid");
-        return reply.code(400).send(problem("invalid_request", message));
-      };
-
-      // Browser Origin filters other websites. Servers can omit or forge it.
-      const origin = request.headers.origin;
-      if (origin !== undefined) {
-        const hostname = originHostname(origin);
-        if (hostname === null || !isAllowedHostname(hostname, project.allowedHostnames)) {
-          count("refused_origin");
-          return reply
-            .code(403)
-            .send(problem("origin_not_allowed", "This site may not send events to this project."));
-        }
-      }
-
-      // Checked before the budget below: a bad request costs nothing.
-      const environment = environmentOf(request.body.environment);
-      const { release } = request.body;
-      if (release !== undefined && !isStorableText(release)) {
-        return invalid("release contains an unpaired surrogate, which cannot be stored.");
-      }
-
-      // Acknowledge blocked addresses without storing their events or address.
-      const received = { received: events.length };
-      if (isBlockedAddress(project.blocked, request.ip)) {
-        count("filtered_spam", inBatch);
-        return reply.code(202).send(received);
-      }
-
-      // Acknowledge bots to avoid retries; check before the budget so they consume none.
-      // Data-center addresses are checked here and never stored.
-      const userAgent = request.headers["user-agent"];
-      const bot = isBot(userAgent);
-      const dataCenter = !bot && project.ignoreDataCenters && isDataCenter(request.ip);
-      if (dataCenter && !dataCenterProjects.has(project.id) && dataCenterProjects.size < 10_000) {
-        dataCenterProjects.add(project.id);
-        request.log.info(
-          { projectId: project.id },
-          "ignoring this project's events from data-center addresses (logged once)",
+        // Count events before the key lookup. Requests can each hold 50 events; clients
+        // behind one address (an office or carrier NAT) share the limit.
+        const perClient = ipEventLimiter.take(
+          request.ip,
+          Math.min(events.length, ipEventLimit.capacity),
         );
-      }
-      if (bot || dataCenter) {
-        count("filtered_bot", inBatch);
-        return reply.code(202).send(received);
-      }
-
-      // One spam referrer drops the whole visit batch, including engagement and vitals.
-      // The project's own hostnames are exempt so a listed domain cannot drop later pages.
-      if (
-        events.some((event) =>
-          isReferrerSpam(
-            event.referrer,
-            project.blockedReferrers,
-            undefined,
-            project.allowedHostnames,
-          ),
-        )
-      ) {
-        count("filtered_spam", inBatch);
-        return reply.code(202).send(received);
-      }
-
-      // Use the IP for location, then discard it. Never store or log it.
-      const client = parseUserAgent(userAgent ?? "", { touch: request.body.touch === true });
-      const location = locate(request);
-
-      const accepted: NewEvent[] = [];
-      const tooOldBySource = new Map<IngestSource, number>();
-      for (const [index, event] of events.entries()) {
-        const page = parsePageUrl(event.url);
-        if (page === null) {
-          return invalid(`events[${index}].url is not a valid http(s) URL.`);
+        if (!perClient.allowed) {
+          return tooManyRequests(reply, perClient.retryAfterSeconds);
         }
-        if (!isAllowedHostname(page.hostname, project.allowedHostnames)) {
-          count("refused_origin");
-          return reply
-            .code(403)
-            .send(
-              problem(
-                "hostname_not_allowed",
-                `events[${index}].url is not on an allowed hostname.`,
-              ),
-            );
+
+        let project: CollectingProject | null;
+        try {
+          project = await projects.find(key);
+        } catch (error) {
+          request.log.error({ err: error }, "could not look up the project key");
+          return storageUnavailable(reply);
         }
-        if (event.userId !== undefined && !isStorableText(event.userId)) {
-          return invalid(
-            `events[${index}].userId contains an unpaired surrogate, which cannot be stored.`,
+        if (project === null) {
+          return reply.code(403).send(problem("unknown_key", "No project has this key."));
+        }
+        const projectId = project.id;
+
+        // Count outcomes per source once the project is known (activity/activity.ts).
+        const inBatch = countBySource(events);
+        const count = (outcome: IngestOutcome, items?: ReadonlyMap<IngestSource, number>) => {
+          for (const source of (items ?? inBatch).keys()) {
+            activity.add(projectId, source, outcome, items?.get(source) ?? 0);
+          }
+        };
+        const invalid = (message: string) => {
+          count("refused_invalid");
+          return reply.code(400).send(problem("invalid_request", message));
+        };
+        if (!inFlight.takeForProject(request, projectId)) {
+          count("refused_rate_limited");
+          return projectTooBusy(reply);
+        }
+
+        // Browser Origin filters other websites. Servers can omit or forge it.
+        const origin = request.headers.origin;
+        if (origin !== undefined) {
+          const hostname = originHostname(origin);
+          if (hostname === null || !isAllowedHostname(hostname, project.allowedHostnames)) {
+            count("refused_origin");
+            return reply
+              .code(403)
+              .send(
+                problem("origin_not_allowed", "This site may not send events to this project."),
+              );
+          }
+        }
+
+        // Checked before the budget below: a bad request costs nothing.
+        const environment = environmentOf(request.body.environment);
+        const { release } = request.body;
+        if (release !== undefined && !isStorableText(release)) {
+          return invalid("release contains an unpaired surrogate, which cannot be stored.");
+        }
+
+        // Acknowledge blocked addresses without storing their events or address.
+        const received = { received: events.length };
+        if (isBlockedAddress(project.blocked, request.ip)) {
+          count("filtered_spam", inBatch);
+          return reply.code(202).send(received);
+        }
+
+        // Acknowledge bots to avoid retries; check before the budget so they consume none.
+        // Data-center addresses are checked here and never stored.
+        const userAgent = request.headers["user-agent"];
+        const bot = isBot(userAgent);
+        const dataCenter = !bot && project.ignoreDataCenters && isDataCenter(request.ip);
+        if (dataCenter && !dataCenterProjects.has(project.id) && dataCenterProjects.size < 10_000) {
+          dataCenterProjects.add(project.id);
+          request.log.info(
+            { projectId: project.id },
+            "ignoring this project's events from data-center addresses (logged once)",
           );
         }
-        if (!isStorableText(event.name)) {
-          return invalid(
-            `events[${index}].name contains an unpaired surrogate, which cannot be stored.`,
-          );
+        if (bot || dataCenter) {
+          count("filtered_bot", inBatch);
+          return reply.code(202).send(received);
         }
+
+        // One spam referrer drops the whole visit batch, including engagement and vitals.
+        // The project's own hostnames are exempt so a listed domain cannot drop later pages.
         if (
-          event.properties !== undefined &&
-          Object.entries(event.properties).some(
-            ([name, value]) =>
-              !isStorableText(name) || (typeof value === "string" && !isStorableText(value)),
+          events.some((event) =>
+            isReferrerSpam(
+              event.referrer,
+              project.blockedReferrers,
+              undefined,
+              project.allowedHostnames,
+            ),
           )
         ) {
-          return invalid(
-            `events[${index}].properties contains a NUL character or an unpaired surrogate, which cannot be stored.`,
-          );
-        }
-        if (
-          event.properties !== undefined &&
-          Buffer.byteLength(JSON.stringify(event.properties)) > MAX_PROPERTIES_BYTES
-        ) {
-          return invalid(
-            `events[${index}].properties is larger than ${MAX_PROPERTIES_BYTES} bytes.`,
-          );
+          count("filtered_spam", inBatch);
+          return reply.code(202).send(received);
         }
 
-        // "engagement" is reserved: time a page was visible, reported by the tracker.
-        if (event.name === ENGAGEMENT) {
-          const engagedMs = event.properties?.engagedMs;
-          if (
-            typeof engagedMs !== "number" ||
-            !Number.isInteger(engagedMs) ||
-            engagedMs < 0 ||
-            engagedMs > MAX_ENGAGED_MS
-          ) {
+        // Use the IP for location, then discard it. Never store or log it.
+        const client = parseUserAgent(userAgent ?? "", { touch: request.body.touch === true });
+        const location = locate(request);
+
+        const accepted: NewEvent[] = [];
+        const tooOldBySource = new Map<IngestSource, number>();
+        for (const [index, event] of events.entries()) {
+          const page = parsePageUrl(event.url);
+          if (page === null) {
+            return invalid(`events[${index}].url is not a valid http(s) URL.`);
+          }
+          if (!isAllowedHostname(page.hostname, project.allowedHostnames)) {
+            count("refused_origin");
+            return reply
+              .code(403)
+              .send(
+                problem(
+                  "hostname_not_allowed",
+                  `events[${index}].url is not on an allowed hostname.`,
+                ),
+              );
+          }
+          if (event.userId !== undefined && !isStorableText(event.userId)) {
             return invalid(
-              `events[${index}] is an engagement event: properties.engagedMs must be a whole number of milliseconds, at most 24 hours.`,
+              `events[${index}].userId contains an unpaired surrogate, which cannot be stored.`,
             );
           }
-        }
-        if (event.name === VITALS && event.properties !== undefined) {
-          keepValidVitals(event.properties);
-        }
+          if (!isStorableText(event.name)) {
+            return invalid(
+              `events[${index}].name contains an unpaired surrogate, which cannot be stored.`,
+            );
+          }
+          if (
+            event.properties !== undefined &&
+            Object.entries(event.properties).some(
+              ([name, value]) =>
+                !isStorableText(name) || (typeof value === "string" && !isStorableText(value)),
+            )
+          ) {
+            return invalid(
+              `events[${index}].properties contains a NUL character or an unpaired surrogate, which cannot be stored.`,
+            );
+          }
+          if (
+            event.properties !== undefined &&
+            Buffer.byteLength(JSON.stringify(event.properties)) > MAX_PROPERTIES_BYTES
+          ) {
+            return invalid(
+              `events[${index}].properties is larger than ${MAX_PROPERTIES_BYTES} bytes.`,
+            );
+          }
 
-        // Cached trackers may send "error" as a custom event without details. Keep those
-        // events so they do not invalidate the whole batch.
-        if (event.error !== undefined && event.name !== ERROR) {
-          return invalid(`events[${index}].error is only for events named "error".`);
-        }
-        if (
-          event.error !== undefined &&
-          ![event.error.type, event.error.message, event.error.stack ?? ""].every(isStorableText)
-        ) {
-          return invalid(
-            `events[${index}].error contains an unpaired surrogate, which cannot be stored.`,
-          );
-        }
+          // "engagement" is reserved: time a page was visible, reported by the tracker.
+          if (event.name === ENGAGEMENT) {
+            const engagedMs = event.properties?.engagedMs;
+            if (
+              typeof engagedMs !== "number" ||
+              !Number.isInteger(engagedMs) ||
+              engagedMs < 0 ||
+              engagedMs > MAX_ENGAGED_MS
+            ) {
+              return invalid(
+                `events[${index}] is an engagement event: properties.engagedMs must be a whole number of milliseconds, at most 24 hours.`,
+              );
+            }
+          }
+          if (event.name === VITALS && event.properties !== undefined) {
+            keepValidVitals(event.properties);
+          }
 
-        const occurredAt = correctClock(event.occurredAt, sentAt, receivedAt);
-        if (occurredAt === null) {
-          const source = sourceOf(event);
-          tooOldBySource.set(source, (tooOldBySource.get(source) ?? 0) + 1);
-          continue;
-        }
-        // When signatures are required, invalid ones leave events anonymous.
-        let { userId } = event;
-        if (
-          userId !== undefined &&
-          project.requireSignedUserIds &&
-          !isSignedUserId(project.secretKey, userId, event.userSignature)
-        ) {
-          userId = undefined;
-        }
-        accepted.push({
-          eventId: event.id,
-          name: event.name,
-          occurredAt,
-          path: page.path,
-          referrer: cleanReferrer(event.referrer),
-          utm: page.utm,
-          ...(event.properties === undefined ? {} : { properties: event.properties }),
-          client,
-          location,
-          environment,
-          ...(release === undefined ? {} : { release }),
-          ...(userId === undefined ? {} : { userId }),
-          ...(event.error === undefined
-            ? {}
-            : {
-                error: {
-                  type: event.error.type,
-                  message: event.error.message,
-                  ...(event.error.stack === undefined || event.error.stack === ""
-                    ? {}
-                    : { stack: event.error.stack }),
-                  handled: event.error.handled === true,
-                  fingerprint: fingerprint(event.error),
-                  ...(event.error.replayId === undefined
-                    ? {}
-                    : { replayId: event.error.replayId.toLowerCase() }),
-                },
-              }),
-        });
-      }
+          // Cached trackers may send "error" as a custom event without details. Keep those
+          // events so they do not invalidate the whole batch.
+          if (event.error !== undefined && event.name !== ERROR) {
+            return invalid(`events[${index}].error is only for events named "error".`);
+          }
+          if (
+            event.error !== undefined &&
+            ![event.error.type, event.error.message, event.error.stack ?? ""].every(isStorableText)
+          ) {
+            return invalid(
+              `events[${index}].error contains an unpaired surrogate, which cannot be stored.`,
+            );
+          }
 
-      // After the rules above: a batch refused for one of them spends no budget.
-      const spent = budget.take(project.id, events.length);
-      if (!spent.allowed) {
-        count(spent.limit === "instance" ? "refused_volume" : "refused_rate_limited");
-        return tooManyRequests(reply, spent.retryAfterSeconds);
-      }
-
-      let capped = 0;
-      const cappedBySource = new Map<IngestSource, number>();
-      const counted: { day: string; visitorId: string }[] = [];
-      let toStore = accepted;
-      try {
-        // Each event gets the visitor ID of the day it happened, so a late
-        // event from just before midnight joins the rest of that day's visit.
-        const { timeZone } = await readInstanceSettings(db);
-        for (const event of accepted) {
-          event.visitorId = await visitors.idFor({
-            projectId: project.id,
-            timeZone,
-            ip: request.ip,
-            userAgent: userAgent ?? "",
-            occurredAt: event.occurredAt,
+          const occurredAt = correctClock(event.occurredAt, sentAt, receivedAt);
+          if (occurredAt === null) {
+            const source = sourceOf(event);
+            tooOldBySource.set(source, (tooOldBySource.get(source) ?? 0) + 1);
+            continue;
+          }
+          // When signatures are required, invalid ones leave events anonymous.
+          let { userId } = event;
+          if (
+            userId !== undefined &&
+            project.requireSignedUserIds &&
+            !isSignedUserId(project.secretKey, userId, event.userSignature)
+          ) {
+            userId = undefined;
+          }
+          accepted.push({
+            eventId: event.id,
+            name: event.name,
+            occurredAt,
+            path: page.path,
+            referrer: cleanReferrer(event.referrer),
+            utm: page.utm,
+            ...(event.properties === undefined ? {} : { properties: event.properties }),
+            client,
+            location,
+            environment,
+            ...(release === undefined ? {} : { release }),
+            ...(userId === undefined ? {} : { userId }),
+            ...(event.error === undefined
+              ? {}
+              : {
+                  error: {
+                    type: event.error.type,
+                    message: event.error.message,
+                    ...(event.error.stack === undefined || event.error.stack === ""
+                      ? {}
+                      : { stack: event.error.stack }),
+                    handled: event.error.handled === true,
+                    fingerprint: fingerprint(event.error),
+                    ...(event.error.replayId === undefined
+                      ? {}
+                      : { replayId: event.error.replayId.toLowerCase() }),
+                  },
+                }),
           });
         }
-        toStore = accepted.filter((event) => {
-          const day = visitors.dayOf(timeZone, event.occurredAt);
-          const visitorId = event.visitorId ?? "";
-          if (visitorCap.take(project.id, day, visitorId)) {
-            counted.push({ day, visitorId });
-            return true;
-          }
-          capped += 1;
-          const source = sourceOf(event);
-          cappedBySource.set(source, (cappedBySource.get(source) ?? 0) + 1);
-          return false;
-        });
-        // Capped events spend no budget: they are not stored.
-        if (capped > 0) budget.refund(project.id, capped);
-        if (toStore.length > 0) {
-          await storeEvents(clickhouse, project.id, toStore, { receivedAt: new Date(receivedAt) });
+
+        // After the rules above: a batch refused for one of them spends no budget.
+        const spent = budget.take(project.id, events.length);
+        if (!spent.allowed) {
+          count(spent.limit === "instance" ? "refused_volume" : "refused_rate_limited");
+          return tooManyRequests(reply, spent.retryAfterSeconds);
         }
-      } catch (error) {
-        // Refund budget and visitor counts so storage failures do not penalize retries.
-        budget.refund(project.id, events.length - capped);
-        for (const { day, visitorId } of counted) visitorCap.untake(project.id, day, visitorId);
-        request.log.error({ err: error }, "could not store events");
-        count("refused_unavailable");
-        return storageUnavailable(reply);
-      }
-      // Mixed batches count in each outcome: stored, too old, or capped (spam).
-      count("accepted", countBySource(toStore));
-      count("filtered_too_old", tooOldBySource);
-      count("filtered_spam", cappedBySource);
-      // PostgreSQL bookkeeping must not delay or fail an already stored batch.
-      lastEvents.record(project.id, toStore).catch((error: unknown) => {
-        request.log.warn({ err: error }, "could not record the project's latest event");
-      });
-      return reply.code(202).send(received);
-    },
+
+        let capped = 0;
+        const cappedBySource = new Map<IngestSource, number>();
+        const counted: { day: string; visitorId: string }[] = [];
+        let toStore = accepted;
+        try {
+          // Each event gets the visitor ID of the day it happened, so a late
+          // event from just before midnight joins the rest of that day's visit.
+          const { timeZone } = await readInstanceSettings(db);
+          for (const event of accepted) {
+            event.visitorId = await visitors.idFor({
+              projectId: project.id,
+              timeZone,
+              ip: request.ip,
+              userAgent: userAgent ?? "",
+              occurredAt: event.occurredAt,
+            });
+          }
+          toStore = accepted.filter((event) => {
+            const day = visitors.dayOf(timeZone, event.occurredAt);
+            const visitorId = event.visitorId ?? "";
+            if (visitorCap.take(project.id, day, visitorId)) {
+              counted.push({ day, visitorId });
+              return true;
+            }
+            capped += 1;
+            const source = sourceOf(event);
+            cappedBySource.set(source, (cappedBySource.get(source) ?? 0) + 1);
+            return false;
+          });
+          // Capped events spend no budget: they are not stored.
+          if (capped > 0) budget.refund(project.id, capped);
+          if (toStore.length > 0) {
+            await storeEvents(clickhouse, project.id, toStore, {
+              receivedAt: new Date(receivedAt),
+              waitSeconds: INSERT_WAIT_SECONDS,
+            });
+          }
+        } catch (error) {
+          // Refund budget and visitor counts so storage failures do not penalize retries.
+          budget.refund(project.id, events.length - capped);
+          for (const { day, visitorId } of counted) visitorCap.untake(project.id, day, visitorId);
+          request.log.error({ err: error }, "could not store events");
+          count("refused_unavailable");
+          return storageUnavailable(reply);
+        }
+        // Mixed batches count in each outcome: stored, too old, or capped (spam).
+        count("accepted", countBySource(toStore));
+        count("filtered_too_old", tooOldBySource);
+        count("filtered_spam", cappedBySource);
+        // PostgreSQL bookkeeping must not delay or fail an already stored batch.
+        lastEvents.record(project.id, toStore).catch((error: unknown) => {
+          request.log.warn({ err: error }, "could not record the project's latest event");
+        });
+        return reply.code(202).send(received);
+      }),
   );
 
   serverEventsRoute(app, {
@@ -676,6 +706,7 @@ export const collectionRoutes: FastifyPluginCallback<CollectionOptions> = (app, 
     budget,
     activity,
     ipLimiter: new ClientRateLimiter(options.serverIpLimit ?? DEFAULT_SERVER_IP_LIMIT, { now }),
+    inFlight,
     maxEvents: MAX_EVENTS_PER_BATCH,
     maxBodyBytes: MAX_BODY_BYTES,
     maxPropertiesBytes: MAX_PROPERTIES_BYTES,

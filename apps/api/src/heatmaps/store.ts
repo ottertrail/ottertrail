@@ -110,11 +110,19 @@ export async function storeHeatmapRecords(
   clickhouse: ClickHouseClient,
   projectId: string,
   records: readonly NewHeatmapRecord[],
-  { receivedAt = new Date() }: { receivedAt?: Date } = {},
+  {
+    receivedAt = new Date(),
+    waitSeconds,
+  }: {
+    receivedAt?: Date;
+    /** How long ClickHouse may take to write them before it answers an error (storeEvents). */
+    waitSeconds?: number;
+  } = {},
 ): Promise<void> {
   await insertRows(
     clickhouse,
     "heatmaps",
     records.map((record) => toHeatmapRow(projectId, record, receivedAt)),
+    waitSeconds === undefined ? {} : { wait_for_async_insert_timeout: waitSeconds },
   );
 }
