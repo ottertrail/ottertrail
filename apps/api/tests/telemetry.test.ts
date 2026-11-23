@@ -492,6 +492,49 @@ function allKinds() {
 }
 
 describe("POST /v1/metrics", () => {
+  test("a batch with exponential histograms stores its other metrics; their points are refused", async () => {
+    const project = await newProject("Exponential histograms");
+    const at = String(nowNs(-5000));
+    // Over a million 64-bit bucket counts: counted in full, the request was refused whole.
+    const bucketCounts = Array.from({ length: 1_100_000 }, () => 0);
+    const request = {
+      resourceMetrics: [
+        {
+          resource: RESOURCE,
+          scopeMetrics: [
+            {
+              metrics: [
+                { name: "queue.depth", gauge: { dataPoints: [{ timeUnixNano: at, asInt: 7 }] } },
+                {
+                  name: "http.duration",
+                  exponentialHistogram: {
+                    dataPoints: [
+                      { timeUnixNano: at, scale: 3, positive: { bucketCounts } },
+                      { timeUnixNano: at, scale: 3 },
+                    ],
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+    const response = await post("/v1/metrics", encodeProtobuf(METRICS_MESSAGES, request), {
+      key: project.secretKey,
+    });
+    expect(response.statusCode).toBe(200);
+    expect(decodeResponse(METRICS_MESSAGES.response, response.rawPayload)).toEqual({
+      partialSuccess: {
+        rejectedDataPoints: 2,
+        errorMessage:
+          "2 of 3 data points refused: exponential histograms and summaries are not supported yet.",
+      },
+    });
+    const points = await storedRows(dashboard.reader.client, "metric_points", project.id);
+    expect(points.map((point) => point.name)).toEqual(["queue.depth"]);
+  });
+
   test("stores protobuf gauges, sums, and histograms", async () => {
     const project = await newProject("Metrics protobuf");
     const response = await post("/v1/metrics", encodeProtobuf(METRICS_MESSAGES, allKinds()), {

@@ -34,6 +34,7 @@ import {
   text,
   uint64,
 } from "./read.ts";
+import { countFields } from "./wire.ts";
 
 /**
  * OTLP requests, decoded (wire.ts), as rows of ClickHouse's telemetry
@@ -881,7 +882,11 @@ export function normalizeMetrics(
             });
           }
         } else if (unsupported !== undefined) {
-          const count = messages(unsupported, "dataPoints").length;
+          // From protobuf, an exponential histogram is its bytes (proto/definitions.ts).
+          const count =
+            unsupported instanceof Uint8Array
+              ? countFields(unsupported, 1)
+              : messages(unsupported, "dataPoints").length;
           records += count;
           refusals.add("exponential histograms and summaries are not supported yet", count);
         }

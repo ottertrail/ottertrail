@@ -926,6 +926,32 @@ describe("counting messages before decoding", () => {
     expect([histograms.length, refused]).toEqual([8192, 0]);
   });
 
+  test("an exponential histogram is decoded as its bytes: counted as one, its points counted from them", () => {
+    const zeros = Array.from({ length: 3_990_000 }, () => 0);
+    const time = String(NOW - SECOND);
+    const request = metrics([
+      {
+        name: "e",
+        exponentialHistogram: {
+          dataPoints: [
+            { timeUnixNano: time, positive: { bucketCounts: zeros } },
+            { timeUnixNano: time },
+            { timeUnixNano: time },
+          ],
+        },
+      },
+    ]);
+    const body = encodeProtobuf(METRICS_MESSAGES, request);
+    expect(countMessages(METRICS_MESSAGES, body, "protobuf")).toBeLessThan(10);
+    const decoded = decodeRequest(METRICS_MESSAGES, body, "protobuf");
+    const result = normalizeMetrics(decoded, context);
+    expect([result.records, result.refused]).toEqual([3, 3]);
+    // The full definitions still count every bucket.
+    expect(() => countProtobufMessages(METRICS_MESSAGES.request, body)).toThrow(
+      TooManyMessagesError,
+    );
+  });
+
   test("a 4 MB body of one-byte 64-bit counts is refused, and 16 MiB of JSON numbers", () => {
     const buckets = METRICS_MESSAGES.request.lookupType(
       "opentelemetry.proto.metrics.v1.ExponentialHistogramDataPoint.Buckets",

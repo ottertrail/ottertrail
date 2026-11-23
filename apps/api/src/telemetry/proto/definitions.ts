@@ -15,24 +15,44 @@ import { TRACE_PROTO } from "./trace.ts";
  * (opentelemetry-proto v1.11.1). Fields are named in lowerCamelCase, as
  * OTLP's JSON names them, so both encodings decode to the same shape.
  */
-const root = new protobuf.Root();
-for (const source of [
-  COMMON_PROTO,
-  RESOURCE_PROTO,
-  TRACE_PROTO,
-  LOGS_PROTO,
-  METRICS_PROTO,
-  TRACE_SERVICE_PROTO,
-  LOGS_SERVICE_PROTO,
-  METRICS_SERVICE_PROTO,
-  STATUS_PROTO,
-]) {
-  protobuf.parse(source, root);
+function rootOf(metrics: string): protobuf.Root {
+  const parsed = new protobuf.Root();
+  for (const source of [
+    COMMON_PROTO,
+    RESOURCE_PROTO,
+    TRACE_PROTO,
+    LOGS_PROTO,
+    metrics,
+    TRACE_SERVICE_PROTO,
+    LOGS_SERVICE_PROTO,
+    METRICS_SERVICE_PROTO,
+    STATUS_PROTO,
+  ]) {
+    protobuf.parse(source, parsed);
+  }
+  parsed.resolveAll();
+  return parsed;
 }
-root.resolveAll();
+
+const root = rootOf(METRICS_PROTO);
+
+/**
+ * The same, but an exponential histogram is left as its bytes: Ottertrail
+ * refuses those points (normalize.ts), and decoded, their bucket counts
+ * would each be a BigInt, so 4 MB of them would take 400 MB. As bytes, it
+ * is a view of the body, and counts as one message (wire.ts).
+ */
+const decodingRoot = rootOf(
+  METRICS_PROTO.replace(
+    "ExponentialHistogram exponential_histogram = 10;",
+    "bytes exponential_histogram = 10;",
+  ),
+);
 
 export interface SignalMessages {
   request: protobuf.Type;
+  /** What a request is counted and decoded as: `request`, or for metrics, decodingRoot's. */
+  decoding: protobuf.Type;
   response: protobuf.Type;
 }
 
@@ -40,16 +60,19 @@ const COLLECTOR = "opentelemetry.proto.collector";
 
 export const TRACE_MESSAGES: SignalMessages = {
   request: root.lookupType(`${COLLECTOR}.trace.v1.ExportTraceServiceRequest`),
+  decoding: root.lookupType(`${COLLECTOR}.trace.v1.ExportTraceServiceRequest`),
   response: root.lookupType(`${COLLECTOR}.trace.v1.ExportTraceServiceResponse`),
 };
 
 export const LOGS_MESSAGES: SignalMessages = {
   request: root.lookupType(`${COLLECTOR}.logs.v1.ExportLogsServiceRequest`),
+  decoding: root.lookupType(`${COLLECTOR}.logs.v1.ExportLogsServiceRequest`),
   response: root.lookupType(`${COLLECTOR}.logs.v1.ExportLogsServiceResponse`),
 };
 
 export const METRICS_MESSAGES: SignalMessages = {
   request: root.lookupType(`${COLLECTOR}.metrics.v1.ExportMetricsServiceRequest`),
+  decoding: decodingRoot.lookupType(`${COLLECTOR}.metrics.v1.ExportMetricsServiceRequest`),
   response: root.lookupType(`${COLLECTOR}.metrics.v1.ExportMetricsServiceResponse`),
 };
 

@@ -222,6 +222,41 @@ export function countJsonContainers(body: Uint8Array, max = MAX_MESSAGES): numbe
   return total();
 }
 
+/**
+ * How many times a protobuf message's own field `number` occurs, read from
+ * its bytes without decoding them: an exponential histogram's data points
+ * (proto/definitions.ts). Throws MalformedError for bytes that are not one.
+ */
+export function countFields(bytes: Uint8Array, number: number): number {
+  let count = 0;
+  let position = 0;
+  const varint = (): number => {
+    let value = 0;
+    for (let shift = 0; shift < 64; shift += 7) {
+      const byte = bytes[position];
+      if (byte === undefined) throw malformed();
+      position += 1;
+      value += (byte & 0x7f) * 2 ** shift;
+      if (byte < 0x80) return value;
+    }
+    throw malformed();
+  };
+  while (position < bytes.length) {
+    const tag = varint();
+    if (Math.floor(tag / 8) === number) count += 1;
+    const wireType = tag % 8;
+    if (wireType === 0) varint();
+    else if (wireType === 1) position += 8;
+    else if (wireType === 5) position += 4;
+    else if (wireType === 2) {
+      const length = varint();
+      position += length;
+    } else throw malformed();
+    if (position > bytes.length) throw malformed();
+  }
+  return count;
+}
+
 /** What a body decodes into, counted before decoding it: see the two functions above. */
 export function countMessages(
   messages: SignalMessages,
@@ -230,7 +265,7 @@ export function countMessages(
   max = MAX_MESSAGES,
 ): number {
   return encoding === "protobuf"
-    ? countProtobufMessages(messages.request, body, max)
+    ? countProtobufMessages(messages.decoding, body, max)
     : countJsonContainers(body, max);
 }
 
@@ -258,7 +293,7 @@ export function encodingOf(contentType: string | undefined): Encoding | null {
 export function decodeRequest(messages: SignalMessages, body: Buffer, encoding: Encoding): object {
   if (encoding === "protobuf") {
     try {
-      return messages.request.toObject(messages.request.decode(body), { longs: BigInt });
+      return messages.decoding.toObject(messages.decoding.decode(body), { longs: BigInt });
     } catch (error) {
       throw new MalformedError("The body is not an OTLP protobuf message.", { cause: error });
     }
