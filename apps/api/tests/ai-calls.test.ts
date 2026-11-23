@@ -451,6 +451,9 @@ describe("detection", () => {
                   }),
                   spanOf({ "ai.telemetry.functionId": "  \u0001 " }),
                   spanOf({}),
+                  // An empty candidate does not block the next.
+                  spanOf({ "gen_ai.agent.name": "  ", "ai.telemetry.functionId": "sdk" }),
+                  spanOf({ "ottertrail.feature": "\u0001", "gen_ai.agent.name": "agent" }),
                 ],
               },
             ],
@@ -465,6 +468,8 @@ describe("detection", () => {
       `support-${"x".repeat(92)}`,
       "",
       "",
+      "sdk",
+      "agent",
     ]);
   });
 
@@ -505,6 +510,22 @@ describe("detection", () => {
                   spanOf({ ...botocore, "rpc.method": "InvokeModel" }),
                   spanOf({ "gen_ai.system": "aws.bedrock" }),
                   spanOf({ "gen_ai.provider.name": "openai", "rpc.method": "Converse" }),
+                  // Matched in any case, trimmed, and with a service prefix.
+                  spanOf({ "gen_ai.provider.name": "AWS.Bedrock", "rpc.method": " converse " }),
+                  spanOf({ ...botocore, "rpc.method": "BedrockRuntime/ConverseStream" }),
+                  spanOf({ ...botocore, "rpc.method": "BedrockRuntime/InvokeModel" }),
+                  // More cached than input: apart, whatever the method.
+                  spanOf({
+                    ...botocore,
+                    "rpc.method": "Converse",
+                    "gen_ai.usage.input_tokens": 100,
+                    "gen_ai.usage.cache_read.input_tokens": 900,
+                  }),
+                  spanOf({
+                    "gen_ai.system": "aws.bedrock",
+                    "gen_ai.usage.input_tokens": 100,
+                    "gen_ai.usage.cache_read.input_tokens": 900,
+                  }),
                 ],
               },
             ],
@@ -521,6 +542,11 @@ describe("detection", () => {
       true,
       true,
       true,
+      false,
+      false,
+      true,
+      false,
+      false,
     ]);
     expect(calls[1]?.cache_write_tokens).toBe(200);
   });
@@ -528,8 +554,9 @@ describe("detection", () => {
   test.each([
     ["anthropic", "claude-sonnet-4-6", false],
     ["aws.bedrock", "us.anthropic.claude-sonnet-4-6", false],
-    // Converse counts the cache apart for every model; a Responses API call sends true.
-    ["aws.bedrock", "openai.gpt-5.5", false],
+    // OpenAI's models report cache counts in OpenAI's form; a Converse call sends false.
+    ["aws.bedrock", "openai.gpt-5.5", true],
+    ["aws.bedrock", "global.openai.gpt-5.6-sol", true],
     ["aws.bedrock", "amazon.nova-pro-v1:0", false],
     ["gcp.vertex_ai", "claude-sonnet-4-6", false],
     ["gcp.vertex_ai", "gemini-2.5-pro", true],

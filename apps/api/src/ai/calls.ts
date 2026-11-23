@@ -78,11 +78,17 @@ export const AI_ATTRIBUTES = {
 } as const;
 
 /**
- * Bedrock API methods whose `inputTokens` leave out cache reads and writes. OpenTelemetry's
- * botocore instrumentation copies them into `gen_ai.usage.input_tokens` and names the method in
- * `rpc.method` (docs/ai-usage.md, "Cost").
+ * Bedrock API methods whose `inputTokens` leave out cache reads and writes, in lower case.
+ * OpenTelemetry's botocore instrumentation copies them into `gen_ai.usage.input_tokens` and names
+ * the method in `rpc.method` (docs/ai-usage.md, "Cost").
  */
-const BEDROCK_CACHE_APART_METHODS: ReadonlySet<string> = new Set(["Converse", "ConverseStream"]);
+const BEDROCK_CACHE_APART_METHODS: ReadonlySet<string> = new Set(["converse", "conversestream"]);
+
+/** Trimmed and lower-cased, without a service prefix (`BedrockRuntime/Converse`). */
+function methodName(method: string): string {
+  const name = method.trim().toLowerCase();
+  return name.slice(name.lastIndexOf("/") + 1);
+}
 
 /**
  * A span's input holds the cached tokens, as the GenAI conventions say, except a Bedrock
@@ -95,7 +101,7 @@ export function spanInputIncludesCache(attributes: Record<string, string>): bool
   return !(
     provider === "aws.bedrock" &&
     method !== undefined &&
-    BEDROCK_CACHE_APART_METHODS.has(method)
+    BEDROCK_CACHE_APART_METHODS.has(methodName(method))
   );
 }
 
@@ -150,16 +156,17 @@ export function inputIncludesCache(
 
 /**
  * Anthropic and Claude on Vertex AI report cached tokens separately. So do Bedrock's Converse API
- * (for every model) and InvokeModel for Claude (Anthropic's body). InvokeModel for OpenAI's models
- * and Bedrock's Responses API return OpenAI's form, which includes them, but an HTTP call does not
- * say which Bedrock API it used: `aws.bedrock` takes Converse's rule, and a Responses call sends
- * `inputIncludesCache: true`. A call through OpenAI's SDK on Bedrock's OpenAI-compatible endpoint
- * is sent as `openai`. OpenAI, Gemini, and other providers default to inclusive counts.
+ * and InvokeModel for Claude (Anthropic's body), so `aws.bedrock` counts them apart, except
+ * OpenAI's models (`openai.`): their cache counts come in OpenAI's form from the Responses and
+ * Chat Completions APIs, which include them, and Bedrock's model pages list Converse caching for
+ * GPT-5.6 and later only (implicit). A Converse call to those sends `inputIncludesCache: false`.
+ * OpenAI, Gemini, and other providers default to inclusive counts.
  */
 export function inputIncludesCacheByDefault(provider: string, model: string): boolean {
   const name = provider.toLowerCase();
   const id = model.toLowerCase();
-  if (name === "anthropic" || name === "aws.bedrock") return false;
+  if (name === "anthropic") return false;
+  if (name === "aws.bedrock") return id.includes("openai.");
   if (name === "gcp.vertex_ai") return !id.includes("claude");
   return true;
 }
@@ -170,6 +177,15 @@ function first(attributes: Record<string, string>, names: readonly string[]): st
     if (value !== undefined) return value;
   }
   return undefined;
+}
+
+/** The first of `names` whose cleaned value is not empty; "" if none. */
+function firstLabel(attributes: Record<string, string>, names: readonly string[]): string {
+  for (const name of names) {
+    const value = cleanLabel(attributes[name]);
+    if (value !== "") return value;
+  }
+  return "";
 }
 
 /** Strips controls, trims, and caps labels at `max` characters. */
@@ -275,9 +291,7 @@ export function aiCallOf(span: SpanRow): AiCallRow | null {
   const errorType = cleanLabel(first(attributes, AI_ATTRIBUTES.errorType), MAX_AI_ERROR_TYPE_CHARS);
   const provider = cleanLabel(first(attributes, AI_ATTRIBUTES.provider));
   const model = cleanLabel(first(attributes, AI_ATTRIBUTES.model));
-  const feature =
-    cleanLabel(first(attributes, AI_ATTRIBUTES.feature)) ||
-    cleanLabel(first(attributes, AI_ATTRIBUTES.agent));
+  const feature = firstLabel(attributes, [...AI_ATTRIBUTES.feature, ...AI_ATTRIBUTES.agent]);
   return {
     project_id: span.project_id,
     timestamp: span.timestamp,
