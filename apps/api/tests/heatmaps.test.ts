@@ -357,6 +357,26 @@ describe("POST /api/heatmaps", () => {
     expect(JSON.stringify(rows)).not.toContain("Sign up");
   });
 
+  test("keeps when the batch arrived to the minute only", async () => {
+    const project = await newProject();
+    const app = atNoon(12_345);
+    expect(
+      (await send(project.public_key, clicks(2), { app, sentAt: NOON + 12_345 })).statusCode,
+    ).toBe(202);
+    const params = new QueryParams();
+    const rows = await queryRows<{ received_at: string }>(
+      dashboard.reader,
+      `SELECT toString(received_at) AS received_at FROM heatmaps
+       WHERE project_id = ${params.add(project.id, "UUID")}`,
+      params,
+    );
+    expect(rows.map((row) => row.received_at)).toEqual(
+      Array.from({ length: 2 }, () =>
+        new Date(NOON).toISOString().replace("T", " ").replace("Z", ""),
+      ),
+    );
+  });
+
   test("records more than a day old are counted, not stored", async () => {
     const project = await newProject();
     const response = await send(project.public_key, [

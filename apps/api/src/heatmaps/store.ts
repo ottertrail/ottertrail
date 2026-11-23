@@ -77,7 +77,9 @@ export function toHeatmapRow(
     record_id: record.recordId.toLowerCase(),
     kind: record.kind,
     occurred_at: clickHouseTime(toMinute(record.occurredAt)),
-    received_at: clickHouseTime(receivedAt),
+    // To the minute too: rows of one request share it, and to the millisecond
+    // it would give away the order of a visitor's clicks.
+    received_at: clickHouseTime(new Date(Math.floor(receivedAt.getTime() / 60_000) * 60_000)),
     environment: record.environment,
     release: record.release ?? "",
     path: record.path,
