@@ -29,12 +29,13 @@ WORKDIR /app
 # Backups need a PostgreSQL 18 client; Debian trixie ships 17, which cannot
 # dump newer servers. Use the PostgreSQL repository, then remove its source list.
 # It keeps only the latest minor: if this pin disappears, use the version from
-# `apt-cache policy postgresql-client-18`. Adds about 70 MB.
+# `apt-cache policy postgresql-client-18`. Adds about 70 MB. The script reads
+# HOST as the repository's host, and HOST is the API's listen address here.
 # See docs/deployment.md, "Backups" and "Images and releases".
 ARG POSTGRESQL_CLIENT_VERSION=18.7-1.pgdg13+5
 RUN apt-get update \
  && apt-get install -y --no-install-recommends ca-certificates postgresql-common \
- && /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y \
+ && HOST=apt.postgresql.org /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y \
  && apt-get install -y --no-install-recommends "postgresql-client-18=${POSTGRESQL_CLIENT_VERSION}" \
  && apt-get purge -y --auto-remove postgresql-common \
  && rm -f /etc/apt/sources.list.d/pgdg.list /etc/apt/sources.list.d/pgdg.sources \
