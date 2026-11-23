@@ -106,6 +106,45 @@ describe("ProjectKeyCache", () => {
     expect(counted.queries).toBe(2);
   });
 
+  test("a failed lookup fails every request that shared it, caches nothing, and is tried again", async () => {
+    const project = await newProject();
+    let failing = true;
+    let queries = 0;
+    const flaky = new Proxy(db(), {
+      get(target, property) {
+        if (property === "selectFrom") {
+          queries += 1;
+          if (failing) {
+            let fail!: (error: Error) => void;
+            const result = new Promise((_resolve, reject) => {
+              fail = reject;
+            });
+            // Fails once both requests wait on it.
+            setTimeout(() => fail(new Error("the database is down")), 20);
+            const chain = {
+              select: () => chain,
+              where: () => chain,
+              executeTakeFirst: () => result,
+            };
+            return () => chain;
+          }
+        }
+        const value: unknown = Reflect.get(target, property, target);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+    const cache = new ProjectKeyCache(flaky);
+    const results = await Promise.allSettled([
+      cache.find(project.public_key),
+      cache.find(project.public_key),
+    ]);
+    expect(results.map((result) => result.status)).toEqual(["rejected", "rejected"]);
+    expect(queries).toBe(1);
+    failing = false;
+    expect((await cache.find(project.public_key))?.id).toBe(project.id);
+    expect(queries).toBe(2);
+  });
+
   test("a request after forgetProject does not share a lookup that was under way", async () => {
     const project = await newProject();
     const { db: database, counted } = counting();

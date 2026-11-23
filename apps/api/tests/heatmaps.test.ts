@@ -574,6 +574,19 @@ describe("POST /api/heatmaps", () => {
     }
   });
 
+  test("ClickHouse gets 10 seconds to write a batch", async () => {
+    const settings: unknown[] = [];
+    const recording = {
+      insert: async (options: { clickhouse_settings?: unknown }) => {
+        settings.push(options.clickhouse_settings);
+      },
+    } as unknown as ClickHouseClient;
+    const project = await newProject();
+    const app = appWith({ collection: { clickhouse: recording, now: () => NOON } });
+    expect((await send(project.public_key, [click()], { app })).statusCode).toBe(202);
+    expect(settings).toEqual([expect.objectContaining({ wait_for_async_insert_timeout: 10 })]);
+  });
+
   test("answers 503 while ClickHouse cannot write, and gives the budget back", async () => {
     const down = createClickHouse({ ...loadConfig().clickhouse, url: "http://127.0.0.1:1" });
     const project = await newProject();
