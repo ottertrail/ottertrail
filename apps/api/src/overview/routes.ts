@@ -71,17 +71,13 @@ const QUERY = {
   },
 };
 
-/** Rows a widget's list shows. */
 const TOP_ROWS = 5;
-/** Models the AI cost widget lists, those that cost the most. */
 const TOP_AI_MODELS = 3;
 
 const DAY_MS = 86_400_000;
 
-/** A share of visitors; 0 without visitors. */
 const rate = (reached: number, of: number) => (of === 0 ? 0 : reached / of);
 
-/** The access requireProjectAccess set: these routes always run it. */
 function accessOf(request: { projectAccess: ProjectAccess | null }): ProjectAccess {
   if (request.projectAccess === null) {
     throw new Error("requireProjectAccess must run before this route");
@@ -89,7 +85,6 @@ function accessOf(request: { projectAccess: ProjectAccess | null }): ProjectAcce
   return request.projectAccess;
 }
 
-/** The days a widget counts, in the instance's timezone, and those it compares with. */
 interface OverviewRange {
   projectId: string;
   environment: string;
@@ -103,7 +98,6 @@ interface OverviewRange {
   now: Date;
 }
 
-/** What every widget's answer starts with: the days counted and compared. */
 const header = (range: OverviewRange) => ({
   timeZone: range.timeZone,
   environment: range.environment,
@@ -112,7 +106,7 @@ const header = (range: OverviewRange) => ({
   previous: { firstDay: range.previous.firstDay, lastDay: range.previous.lastDay },
 });
 
-/** The period before, as the analytics page compares: up to the same moment while it runs. */
+/** Compare running periods up to the same time of day as analytics. */
 const previousOf = (range: ReportRange, previous: PreviousDays): ReportRange => ({
   ...range,
   from: previous.from,
@@ -120,7 +114,6 @@ const previousOf = (range: ReportRange, previous: PreviousDays): ReportRange => 
   until: previous.until ?? undefined,
 });
 
-/** The users queries' scope: the period, and the one before up to the same moment. */
 const usersScope = (range: OverviewRange): UsersScope => ({
   projectId: range.projectId,
   environment: range.environment,
@@ -132,18 +125,9 @@ const usersScope = (range: OverviewRange): UsersScope => ({
 });
 
 /**
- * GET    /api/projects/:id/overview/layout
- * PUT    /api/projects/:id/overview/layout   { "order": [widget IDs], "hidden": [widget IDs] }
- * DELETE /api/projects/:id/overview/layout   back to the default
- * GET    /api/projects/:id/overview/<widget>[?period=today|7d|30d&environment=…]
- *
- * The project overview (docs/dashboard.md, "Overview"). The layout is the
- * signed-in user's own, for this project; it needs only the project. Each
- * widget's numbers have a route of their own, which needs the widget's
- * area (layout.ts, WIDGETS), so each loads and fails alone, and a user
- * without the area gets 403. Every ClickHouse query runs with the
- * dashboard's limits (DASHBOARD_SETTINGS) and within its shared limit of
- * queries at once (DashboardQueryLimiter).
+ * Layout belongs to the user and project (docs/dashboard.md, "Overview").
+ * Each widget route checks its own area and fails independently.
+ * Apply DASHBOARD_SETTINGS and the shared DashboardQueryLimiter to queries.
  */
 export const overviewRoutes: FastifyPluginCallback<{
   db: Kysely<Database>;
@@ -169,7 +153,7 @@ export const overviewRoutes: FastifyPluginCallback<{
   const reachProject = requireProjectAccess(db, "project");
   app.setErrorHandler(clickHouseErrorHandler);
 
-  /** The request's reader: the dashboard's limits, ended with the request. */
+  /** Apply dashboard limits and cancel queries when the request ends. */
   const readerOf = (reply: FastifyReply): Reader => ({
     ...dashboardReader(clickhouse, limiter, reply),
     settings: DASHBOARD_SETTINGS,
@@ -198,7 +182,6 @@ export const overviewRoutes: FastifyPluginCallback<{
     } satisfies OverviewRange;
   }
 
-  /** The range as the web analytics reports take it, with the project's own sites. */
   async function reportRange(range: OverviewRange): Promise<ReportRange> {
     const project = await db
       .selectFrom("projects")
@@ -215,7 +198,6 @@ export const overviewRoutes: FastifyPluginCallback<{
     };
   }
 
-  /** One widget's route: its area at view, its period, and its numbers. */
   function widget(
     id: WidgetId,
     area: Parameters<typeof canUse>[1],
@@ -276,14 +258,11 @@ export const overviewRoutes: FastifyPluginCallback<{
     async (request) => resetLayout(db, userAccessOf(request), accessOf(request).projectId),
   );
 
-  // 1. What needs attention now: alerts firing (of the kinds the user may
-  // see), checks down, and certificates about to expire that no alert covers.
   widget("attention", "uptime_alerts", async (range, { request }) => {
     const { user } = accessOf(request);
     const [alerts, checks, rules] = await Promise.all([
       firingAlerts(db, range.projectId, visibleKinds(user)),
       listChecks(db, range.projectId),
-      // The rules that watch something now: on, and of kinds the user may see.
       db
         .selectFrom("alert_rules")
         .select((eb) => eb.fn.countAll<string>().as("count"))
@@ -328,7 +307,6 @@ export const overviewRoutes: FastifyPluginCallback<{
           name: check.name,
           url: check.url,
           expiresAt: check.tlsExpiresAt,
-          // Already past: the certificate has expired, not about to.
           expired: check.tlsExpiresAt !== null && check.tlsExpiresAt <= range.now,
         })),
       checks: {
@@ -340,12 +318,10 @@ export const overviewRoutes: FastifyPluginCallback<{
     };
   });
 
-  // 2. New and returning errors, and the unresolved groups that reached the most people.
   widget("errors", "errors", async (range, { reader }) => {
     const scope = { projectId: range.projectId, environment: range.environment };
-    // Occurrences and new groups are counted in full; the list, and the
-    // regressed and unresolved counts from it, cover the MAX_GROUPS most
-    // recently seen groups (`truncated` says when there were more).
+    // Occurrence and new-group counts are complete. Regressed and unresolved
+    // counts use the MAX_GROUPS most recent groups; truncated flags omissions.
     const [{ groups, truncated }, inPeriod, previousOccurrences, counted, received] =
       await Promise.all([
         listErrors(reader, db, { ...scope, ...range }, "all"),
@@ -385,7 +361,6 @@ export const overviewRoutes: FastifyPluginCallback<{
     };
   });
 
-  // 3. Each check's state, uptime over the period and the one before, and incidents.
   widget("uptime", "uptime_alerts", async (range) => {
     const checks = await listChecks(db, range.projectId);
     const [shares, incidents] = await Promise.all([
@@ -419,7 +394,6 @@ export const overviewRoutes: FastifyPluginCallback<{
     };
   });
 
-  // 4. Each service's requests, failed share, and p95, busiest first.
   widget("services", "monitoring", async (range, { reader }) => {
     const { services, more } = await serviceTotals(reader, {
       projectId: range.projectId,
@@ -436,8 +410,6 @@ export const overviewRoutes: FastifyPluginCallback<{
     };
   });
 
-  // The estimated cost of AI calls against the period before, and the models
-  // that cost the most, as the AI page counts them (ai/report.ts).
   widget("ai-cost", "ai", async (range, { reader }) => {
     const scope = {
       projectId: range.projectId,
@@ -459,7 +431,6 @@ export const overviewRoutes: FastifyPluginCallback<{
       noPriceCalls: totals.noPriceCalls,
       previousCostUsd: previous.costUsd,
       previousCalls: previous.calls,
-      // By cost (aiModels), without the Other row and the models without a price.
       models: models
         .filter((row) => !row.other && row.costUsd > 0)
         .slice(0, TOP_AI_MODELS)
@@ -467,7 +438,6 @@ export const overviewRoutes: FastifyPluginCallback<{
     };
   });
 
-  // 5. The p75 of the Core Web Vitals on each kind of device, with Google's thresholds.
   widget("speed", "web_analytics", async (range, { reader }) => {
     const devices = await speedByDevice(reader, range);
     return {
@@ -477,7 +447,6 @@ export const overviewRoutes: FastifyPluginCallback<{
     };
   });
 
-  /** The project's main goal, or null when it has none. */
   async function mainGoalOf(projectId: string) {
     const [project, goals] = await Promise.all([
       db
@@ -490,7 +459,6 @@ export const overviewRoutes: FastifyPluginCallback<{
     return { mainGoalId: project?.main_goal_id ?? null, goals };
   }
 
-  /** Goals with their visitors, times, and conversion, now and in the period before. */
   async function countGoals(
     reader: Reader,
     range: OverviewRange,
@@ -523,7 +491,7 @@ export const overviewRoutes: FastifyPluginCallback<{
     };
   }
 
-  // The headline business figure: the main goal, or without one, new signed-in users.
+  // Use new signed-in users when no main goal is configured.
   widget("main-goal", "product_analytics", async (range, { reader }) => {
     const { mainGoalId, goals } = await mainGoalOf(range.projectId);
     const goal = goals.find((item) => item.id === mainGoalId);
@@ -545,7 +513,6 @@ export const overviewRoutes: FastifyPluginCallback<{
     };
   });
 
-  // 6. Visitors, visits, and pageviews against the period before, and visitors per day.
   widget("traffic", "web_analytics", async (range, { reader }) => {
     const current = await reportRange(range);
     const [counted, before, days, project] = await Promise.all([
@@ -571,7 +538,6 @@ export const overviewRoutes: FastifyPluginCallback<{
     };
   });
 
-  // 7. Each goal's visitors, times, and conversion against the period before.
   widget("goals", "product_analytics", async (range, { reader }) => {
     const { mainGoalId, goals } = await mainGoalOf(range.projectId);
     if (goals.length === 0) {
@@ -580,8 +546,7 @@ export const overviewRoutes: FastifyPluginCallback<{
     return { mainGoalId, ...(await countGoals(reader, range, goals)) };
   });
 
-  // 8. Signed-in users: active and new, and weekly retention. The newest
-  // users by ID only for those who may see users (docs/access.md).
+  // User IDs require users access (docs/access.md).
   widget("users", "product_analytics", async (range, { reader, request }) => {
     const withNewest = canUse(accessOf(request).user, "users", "view");
     const users = await signedInUsers(reader, {
@@ -592,7 +557,6 @@ export const overviewRoutes: FastifyPluginCallback<{
     return { ...users, newest: withNewest ? (users.newest ?? []) : null };
   });
 
-  // 9. The top sources and pages by visitors.
   widget("sources", "web_analytics", async (range, { reader }) => {
     const current = await reportRange(range);
     const [sources, pages] = await Promise.all([

@@ -1,12 +1,9 @@
 /**
- * The tag names a heatmap path may hold: standard HTML and SVG elements, in
- * lower case, as the tracker's h.js writes them (packages/tracker/src/
- * heatmap-tags.ts; tests/heatmaps.test.ts keeps the two lists the same).
- * Any other tag arrives as "x": a site's own tag names could carry a word
- * of the page, so the API refuses every other name.
+ * Allow only standard HTML and SVG tags, lowercase as in
+ * packages/tracker/src/heatmap-tags.ts (tests/heatmaps.test.ts checks parity).
+ * Custom tags use "x" because site-defined names could contain page text.
  */
 export const HEATMAP_TAGS = [
-  // HTML: the elements of the body a click can land on, or hold one.
   "a",
   "abbr",
   "address",
@@ -112,7 +109,7 @@ export const HEATMAP_TAGS = [
   "var",
   "video",
   "wbr",
-  // SVG, lower-cased as the path writes every tag.
+  // SVG tags are lowercase in heatmap paths.
   "svg",
   "g",
   "path",

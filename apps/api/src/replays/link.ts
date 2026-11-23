@@ -5,30 +5,19 @@ import type { Database } from "../db/schema.ts";
 import { ERROR } from "../visits/visits.ts";
 
 /**
- * Links each joined replay to the error events that carry its ID
- * (ClickHouse `events.replay_id`), and keeps in PostgreSQL what the Replays
- * page lists and filters by: the first error's time, group, type, and
- * message, the known user, the environment, and the browser, OS, and
- * device (docs/session-replay.md, "Finding replays"). The list then reads
- * PostgreSQL alone, a page at a time.
- *
- * The page sends its error before its replay, so the error is usually
- * there at the first try. A replay whose error is not found is tried again
- * later each time (nextLinkAt), and given up LINK_WAIT_MS after it was
- * joined. Each run takes at most LINK_PER_PROJECT replays of one project,
- * the most due first, so a project whose errors never come cannot keep
- * another's replays waiting.
+ * Cache error metadata in PostgreSQL so replay lists avoid ClickHouse
+ * (docs/session-replay.md, "Finding replays"). Match events.replay_id.
+ * Retry missing errors with increasing delays until LINK_WAIT_MS after join.
+ * Take at most LINK_PER_PROJECT due replays per project to avoid starvation.
  */
 
 /** How long after its join a replay's error is still looked for. */
 export const LINK_WAIT_MS = 60 * 60_000;
-/** The most replays of one project a run looks at. */
 export const LINK_PER_PROJECT = 20;
 /** Waits between tries: half the replay's age, from 10 seconds to 10 minutes. */
 const MIN_RETRY_MS = 10_000;
 const MAX_RETRY_MS = 10 * 60_000;
 
-/** When a replay joined at `createdAt`, its error not found `now`, is looked for again. */
 export function nextLinkAt(createdAt: Date, now: Date): Date {
   const age = Math.max(0, now.getTime() - createdAt.getTime());
   const wait = Math.min(MAX_RETRY_MS, Math.max(MIN_RETRY_MS, age / 2));
@@ -36,7 +25,7 @@ export function nextLinkAt(createdAt: Date, now: Date): Date {
 }
 /** How far around a replay its error is looked for, on the server's clock. */
 const LINK_MARGIN_MS = 60 * 60_000;
-/** Lengths kept, as the replays table's checks allow. */
+/** Match the replays table length constraints. */
 const MAX_TYPE_LENGTH = 200;
 const MAX_MESSAGE_LENGTH = 1000;
 
@@ -58,14 +47,10 @@ const truncate = (text: string, max: number) => Array.from(text).slice(0, max).j
 
 const orNull = (text: string) => (text === "" ? null : text);
 
-/** The first value among the replay's errors that is not null; "" when none is. */
 const firstOf = (column: string) =>
   `argMinIf(ifNull(${column}, ''), (occurred_at, event_id), ${column} IS NOT NULL)`;
 
-/**
- * Looks for the errors of up to `limit` replays not yet linked, oldest
- * first; returns how many were linked and how many given up.
- */
+/** Returns linked and abandoned counts. */
 export async function linkReplays(
   db: Kysely<Database>,
   reader: Reader,
@@ -80,7 +65,6 @@ export async function linkReplays(
     onlyProjectId?: string;
   } = {},
 ): Promise<{ linked: number; givenUp: number }> {
-  // The due replays, at most LINK_PER_PROJECT of each project, the most due first.
   const waiting = await db
     .selectFrom((eb) => {
       let replays = eb.selectFrom("replays");
@@ -118,7 +102,7 @@ export async function linkReplays(
     const params = new QueryParams();
     const rows = await queryRows<LinkRow>(
       reader,
-      // Not "AS replay_id": ClickHouse would read the alias in WHERE.
+      // Avoid alias replay_id: ClickHouse would substitute it in WHERE.
       `SELECT toString(replay_id) AS replay,
               min(occurred_at) AS error_at,
               argMin(error_fingerprint, (occurred_at, event_id)) AS fingerprint,
@@ -172,7 +156,7 @@ export async function linkReplays(
           .execute();
         givenUp += 1;
       } else {
-        // Not there yet: later, so the next runs look at others first.
+        // Delay missing errors so other replays get a turn.
         await db
           .updateTable("replays")
           .set({ next_link_at: nextLinkAt(replay.created_at, now) })

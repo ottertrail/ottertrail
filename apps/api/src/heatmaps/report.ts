@@ -3,26 +3,15 @@ import { DEFAULT_ENVIRONMENT } from "../collection/environment.ts";
 import { DEVICES, type HeatmapDevice, UNITS } from "./store.ts";
 
 /**
- * The Heatmaps screen's figures (docs/web-analytics.md, "Heatmaps"), from
- * ClickHouse's `heatmaps` table. Every query filters by project first,
- * then the range, passes every value as a parameter, has a LIMIT or
- * returns one row. One page's report reads with FINAL: a retried batch is
- * a second copy until its parts merge, and FINAL counts it once, as reports
- * of events do; one page's rows are few, so it costs little. The page
- * picker reads every page of the project over up to 90 days, so it reads
- * without FINAL and counts distinct record IDs instead: a scroll row is
- * sent again as the visitor scrolls further, and a retry is a copy, and
- * each counts once. The table merges each day's parts once they are an
- * hour old (migration 0006), so copies do not pile up.
+ * Heatmaps use FINAL for one-page reports to deduplicate retries
+ * (docs/web-analytics.md, "Heatmaps"). The picker scans up to 90 days
+ * without FINAL and counts distinct record IDs, including updated scroll
+ * rows. Migration 0006 merges daily parts once they are an hour old.
  */
 
-/** Pages the picker lists, most pageviews first. */
 export const HEATMAP_PAGES = 100;
-/** Elements a report lists, most clicks first. */
 export const HEATMAP_ELEMENTS = 100;
-/** Rage-click hotspots a report lists, and dead-click hotspots. */
 export const HEATMAP_HOTSPOTS = 20;
-/** Scroll reach is counted at every tenth of the page: 10%, 20% … 100%. */
 export const REACH_STEPS = [10, 20, 30, 40, 50, 60, 70, 80, 90, 100] as const;
 
 export interface HeatmapRange {
@@ -30,7 +19,6 @@ export interface HeatmapRange {
   environment: string;
   from: Date;
   to: Date;
-  /** Only this device class, when given. */
   device?: HeatmapDevice | undefined;
 }
 
@@ -44,14 +32,13 @@ export interface HeatmapPage {
 export interface HeatmapElement {
   /** The site's data-ottertrail-name, or null. */
   label: string | null;
-  /** The structural path. */
   element: string;
   clicks: number;
   /** Of the page's clicks, 0 to 1. */
   share: number;
   rageClicks: number;
   deadClicks: number;
-  /** Where in the element the clicks fell, on average, 0 to 1. */
+  /** Average click position within the element, from 0 to 1. */
   x: number;
   y: number;
 }
@@ -64,7 +51,7 @@ export interface HeatmapReport {
     rageClicks: number;
     /** Clicks after which nothing on the page responded within a second. */
     deadClicks: number;
-    /** The median pageview's deepest share of the page, 0 to 1; null without pageviews. */
+    /** Median deepest scroll depth, from 0 to 1; null without pageviews. */
     medianDepth: number | null;
     /** The share of pageviews that reached the bottom; null without pageviews. */
     reachedBottom: number | null;
@@ -72,17 +59,13 @@ export interface HeatmapReport {
     droppedClicks: number;
   };
   scroll: {
-    /** For each tenth of the page, the pageviews that reached it, and their share. */
     reach: { depth: number; pageviews: number; share: number }[];
-    /**
-     * The share of the page visible without scrolling, on average, as each
-     * pageview first showed; null without pageviews.
-     */
+    /** Average share visible at page load, before scrolling; null without pageviews. */
     averageFold: number | null;
   };
   elements: HeatmapElement[];
   hotspots: { label: string | null; element: string; rageClicks: number; x: number; y: number }[];
-  /** The elements with dead clicks, most first, and where in them those clicks fell. */
+  /** Dead-click elements, most clicks first, with average click positions. */
   deadHotspots: {
     label: string | null;
     element: string;
@@ -101,7 +84,7 @@ const fraction = (raw: unknown): number | null => {
 const round = (value: number) => Math.round(value * 10_000) / 10_000;
 const labelOf = (raw: unknown) => (typeof raw === "string" && raw !== "" ? raw : null);
 
-/** The rows of the range, project first; `device` narrows to one class unless `allDevices`. */
+/** Filter by project and range; apply device unless allDevices is set. */
 function scope(params: QueryParams, range: HeatmapRange, { allDevices = false } = {}): string {
   return `project_id = ${params.add(range.projectId, "UUID")}
     AND occurred_at >= ${params.time(range.from)}
@@ -111,8 +94,8 @@ function scope(params: QueryParams, range: HeatmapRange, { allDevices = false } 
 }
 
 /**
- * The environments with heatmap data in the range, most rows first, then
- * the one shown and production even without: the page can switch back.
+ * Include the selected environment and production even without data,
+ * so the page can switch back.
  */
 export async function heatmapEnvironments(reader: Reader, range: HeatmapRange): Promise<string[]> {
   const params = new QueryParams();
@@ -135,10 +118,8 @@ export async function heatmapEnvironments(reader: Reader, range: HeatmapRange): 
 }
 
 /**
- * The pages with heatmap data, for the picker: most records first (sampled
- * pageviews and clicks together, so a page whose scroll depths have not
- * arrived yet is listed too), `search` a part of the path. Without FINAL
- * (above).
+ * Count clicks and sampled pageviews so pages appear before scroll rows
+ * arrive. Match search within the path. Read without FINAL (above).
  */
 export async function heatmapPages(
   reader: Reader,
@@ -165,7 +146,6 @@ export async function heatmapPages(
   }));
 }
 
-/** One page's report: five queries, run side by side. */
 export async function heatmapReport(
   reader: Reader,
   range: HeatmapRange,
@@ -183,7 +163,6 @@ export async function heatmapReport(
     (step) => `countIf(kind = 'scroll' AND depth >= ${(step * UNITS) / 100}) AS reach_${step}`,
   ).join(",\n");
 
-  /** The elements with clicks flagged `flag` (rage, dead), most first. */
   const spots = (flag: "rage" | "dead", params: QueryParams) =>
     queryRows<Record<string, unknown>>(
       reader,
@@ -286,7 +265,7 @@ export async function heatmapReport(
   };
 }
 
-/** A report with nothing in it: for a range wholly before the 90 days kept. */
+/** Used when the range is wholly before the 90 days kept. */
 export function emptyReport(): HeatmapReport {
   return {
     devices: [],
@@ -309,21 +288,18 @@ export function emptyReport(): HeatmapReport {
   };
 }
 
-/** Elements the overlay draws, most clicks first. */
+/** Overlay elements, most clicks first. */
 export const OVERLAY_ELEMENTS = 200;
-/** The grid each element's clicks are counted in: 8 by 8 cells. */
+/** Each element uses an 8 by 8 click grid. */
 export const OVERLAY_GRID = 8;
-/** Cells the overlay gets in all, the busiest first: at most 64 per element. */
+/** Total overlay cells, busiest first; at most 64 per element. */
 export const OVERLAY_CELLS = 3000;
-/** The overlay's scroll reach is counted at every twentieth of the page: 5%, 10% … 100%. */
 export const OVERLAY_REACH_STEPS = Array.from({ length: 20 }, (_, index) => (index + 1) * 5);
 
 /**
- * What the overlay on the live site draws (heatmaps/overlay-routes.ts):
- * aggregates of one page, device, and range, and nothing about any one
- * pageview. Clicks per element (its label and structural path), with
- * where in the element they fell counted in a coarse 8 by 8 grid of
- * cells; the share of pageviews that reached each 5% of the page.
+ * Live-site overlay aggregates (heatmaps/overlay-routes.ts). No individual
+ * pageview data: clicks use an 8 by 8 grid per element, and scroll reach
+ * uses 5% intervals.
  */
 export interface HeatmapOverlay {
   totals: { pageviews: number; clicks: number; rageClicks: number; deadClicks: number };
@@ -341,7 +317,7 @@ export interface HeatmapOverlay {
   }[];
 }
 
-/** One page's overlay: four queries, run side by side, each project first and with FINAL. */
+/** Reads with FINAL to deduplicate retries. */
 export async function heatmapOverlay(
   reader: Reader,
   range: HeatmapRange & { device: HeatmapDevice },
@@ -445,7 +421,7 @@ export async function heatmapOverlay(
   };
 }
 
-/** An overlay with nothing in it: for a range wholly before the 90 days kept. */
+/** Used when the range is wholly before the 90 days kept. */
 export function emptyOverlay(): HeatmapOverlay {
   return {
     totals: { pageviews: 0, clicks: 0, rageClicks: 0, deadClicks: 0 },

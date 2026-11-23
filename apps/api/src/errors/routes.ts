@@ -59,7 +59,6 @@ const GROUP_PARAMS = {
   },
 };
 
-/** The access requireProjectAccess set: these routes always run it. */
 function accessOf(request: { projectAccess: ProjectAccess | null }): ProjectAccess {
   if (request.projectAccess === null) {
     throw new Error("requireProjectAccess must run before this route");
@@ -68,19 +67,9 @@ function accessOf(request: { projectAccess: ProjectAccess | null }): ProjectAcce
 }
 
 /**
- * GET   /api/projects/:id/errors[?period=7d|from=…&to=…&environment=…&status=unresolved]
- * GET   /api/projects/:id/errors/:fingerprint[?period=…&environment=…]
- *       (the latest stack's frames mapped to the original source by the
- *       project's source maps for its release: ../source-maps/resolve.ts;
- *       a server's stack is not mapped)
- * PATCH /api/projects/:id/errors/:fingerprint  { "status": "resolved" | "unresolved" }
- * PUT   /api/projects/:id/errors/:fingerprint/assignee  { "assignee": "<user ID>" | null }
- * GET   /api/projects/:id/error-assignees   who can be assigned: users who see its errors
- *
- * The project's error groups (`assignee=me|none` filters them by who is
- * on them), one group's detail, its status (errors.ts), and its assignee
- * (assignments.ts). Like every project route, each runs
- * requireProjectAccess first; changes also need the dashboard's origin.
+ * Project error routes require error access; changes also require the
+ * dashboard origin. Map browser stacks using the latest occurrence release
+ * (../source-maps/resolve.ts); leave server stacks unchanged.
  */
 export const errorRoutes: FastifyPluginCallback<{
   db: Kysely<Database>;
@@ -117,7 +106,6 @@ export const errorRoutes: FastifyPluginCallback<{
   const reader: Reader = { client: clickhouse };
   app.setErrorHandler(clickHouseErrorHandler);
 
-  /** The request's days, in the instance's timezone; or the reason it is refused. */
   async function rangeOf(request: {
     query: RangeQuery;
     projectAccess: ProjectAccess | null;
@@ -203,14 +191,14 @@ export const errorRoutes: FastifyPluginCallback<{
       const { range } = asked;
       const detail = await errorDetail(reader, db, range, request.params.fingerprint);
       if (detail === null) {
-        // Not "not_found", which the access check answers for an unknown project.
+        // Reserve not_found for the access check on unknown projects.
         return reply.code(404).send({
           error: "no_occurrences",
           message: "This error has no occurrence in the range and environment.",
         });
       }
-      // The stack is the latest occurrence's, so its release is the one to map with.
-      // Source maps are for browser code: a server's stack is shown as it was sent.
+      // Use the latest occurrence release for its stack. Source maps apply
+      // only to browser code.
       const resolved =
         detail.stack === null || detail.source === "server"
           ? null
@@ -224,8 +212,7 @@ export const errorRoutes: FastifyPluginCallback<{
               detail.occurrences[0]?.release ?? null,
               detail.stack,
             );
-      // Each occurrence's replay, if its page sent one: ready, still coming, or
-      // missing. Only for those who may watch replays (docs/access.md).
+      // Expose replay status only with replay view access (docs/access.md).
       const showReplays = canUse(accessOf(request).user, "replays", "view");
       const replays = showReplays
         ? await replayStatuses(db, range.projectId, detail.occurrences, now())

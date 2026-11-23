@@ -12,11 +12,9 @@ import { createGoal, deleteGoal, listGoals, MAX_GOALS } from "./goals.ts";
 const UUID_PATTERN =
   "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$";
 
-/** A goal's name: 1 to 100 characters after trimming, no control characters. */
 // eslint-disable-next-line no-control-regex -- control characters are what it refuses
 const GOAL_NAME = /^[^\u0000-\u001F\u007F]{1,100}$/u;
 
-/** The access requireProjectAccess set: these routes always run it. */
 function accessOf(request: { projectAccess: ProjectAccess | null }): ProjectAccess {
   if (request.projectAccess === null) {
     throw new Error("requireProjectAccess must run before this route");
@@ -26,14 +24,7 @@ function accessOf(request: { projectAccess: ProjectAccess | null }): ProjectAcce
 
 const problem = (error: string, message: string) => ({ error, message });
 
-/**
- * GET    /api/projects/:id/goals
- * POST   /api/projects/:id/goals          { "name": "Signed up", "step": { "type": "event", "name": "signup" } }
- * DELETE /api/projects/:id/goals/:goalId
- *
- * A project's saved goals (goals.ts). Like every project route, each runs
- * requireProjectAccess first; the changes also need the dashboard's origin.
- */
+/** Goal changes require the dashboard origin (goals.ts). */
 export const goalRoutes: FastifyPluginCallback<{
   db: Kysely<Database>;
   auth: Auth;

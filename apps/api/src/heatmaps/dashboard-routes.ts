@@ -35,12 +35,11 @@ const PARAMS_SCHEMA = {
   required: ["id"],
   properties: { id: { type: "string", pattern: UUID_PATTERN } },
 } as const;
-/** A page path as collection stores it: a "/" and at most 2,048 characters. */
+/** Matches collection paths: a leading "/", up to 2,048 characters. */
 const PATH_SCHEMA = { type: "string", minLength: 1, maxLength: 2048, pattern: "^/" } as const;
 
 export type Query = RangeQuery & { device?: HeatmapDevice };
 
-/** The access requireProjectAccess set: these routes always run it. */
 function accessOf(request: { projectAccess: ProjectAccess | null }): ProjectAccess {
   if (request.projectAccess === null) {
     throw new Error("requireProjectAccess must run before this route");
@@ -48,11 +47,10 @@ function accessOf(request: { projectAccess: ProjectAccess | null }): ProjectAcce
   return request.projectAccess;
 }
 
-/** A "YYYY-MM-DD" moved by whole days. */
 const addDays = (day: string, days: number) =>
   new Date(Date.parse(`${day}T00:00:00Z`) + days * 86_400_000).toISOString().slice(0, 10);
 
-/** An overlay link's page: null without a body, undefined for anything but `{ path }`. */
+/** Returns null for no body, undefined for an invalid `{ path }`. */
 function linkPathOf(body: unknown): string | null | undefined {
   if (body === undefined || body === null) return null;
   if (typeof body !== "object" || Array.isArray(body)) return undefined;
@@ -71,7 +69,7 @@ function linkPathOf(body: unknown): string | null | undefined {
 /** Overlay links each user may make: 20 at once, then 20 a minute. */
 export const DEFAULT_OVERLAY_MINT_LIMIT: RateLimit = { capacity: 20, refillPerSecond: 20 / 60 };
 
-/** A range asked for, cut to the days kept, with what the answers say of it. */
+/** The requested range clipped to retention, with response metadata. */
 export type AskedRange =
   | { problem: { error: string; message: string } }
   | {
@@ -87,18 +85,12 @@ export type AskedRange =
         retentionDays: number;
         clipped: boolean;
         device: HeatmapDevice | null;
-        /**
-         * The project's allowed hostnames, where its site runs: the
-         * dashboard opens the overlay on one of them.
-         */
+        /** Allowed site hostnames where the dashboard can open the overlay. */
         siteHostnames: string[];
       };
     };
 
-/**
- * The range asked for, cut to the 90 days kept, and the project's setting:
- * for the dashboard's reports and the overlay's (overlay-routes.ts).
- */
+/** Clips reports to the 90 days kept and reads the heatmap setting (overlay-routes.ts). */
 export async function heatmapRangeOf(
   db: Kysely<Database>,
   { projectId, timeZone }: ProjectAccess,
@@ -110,8 +102,7 @@ export async function heatmapRangeOf(
   if ("problem" in days) return days;
   const firstKept = addDays(today, -(HEATMAP_RETENTION_DAYS - 1));
   const clipped = days.from < firstKept;
-  // A range wholly before the kept days has nothing to read: it stays as
-  // asked, and the routes answer empty.
+  // Keep an expired range unchanged; routes return empty reports.
   const before = days.to < firstKept;
   const firstDay = clipped && !before ? firstKept : days.from;
   const lastDay = days.to;
@@ -142,22 +133,11 @@ export async function heatmapRangeOf(
 }
 
 /**
- * The heatmap reports (docs/web-analytics.md, "Heatmaps"), in the Web
- * analytics area at view:
- *
- *   GET /api/projects/:id/heatmaps/pages?period=7d|from=…&to=…&environment=…&device=…&search=…
- *   GET /api/projects/:id/heatmaps?path=/pricing&period=…&environment=…&device=…
- *   POST /api/projects/:id/heatmaps/overlay-link   { path }
- *
- * The range is cut to the 90 days heatmap rows are kept (`clipped`). Both
- * say whether the project takes heatmaps, so the screen can say how to
- * start. Queries run with the dashboard's limits, within its shared limit
- * of queries at once, and end with the request (telemetry/dashboard-limit.ts).
- *
- * The overlay link is a one-time token that opens the project's heatmap
- * over its live site (access/overlay-tokens.ts; docs/web-analytics.md,
- * "The overlay on your site"): made only when asked, from the dashboard's
- * own origin, 20 a minute per user at most, and answered once.
+ * Heatmap reports use the dashboard query limits (telemetry/dashboard-limit.ts).
+ * Ranges are clipped to the 90 days kept (docs/web-analytics.md, "Heatmaps").
+ * Overlay links are one-time tokens minted from the dashboard origin, up to
+ * 20 per minute per user (access/overlay-tokens.ts; docs/web-analytics.md,
+ * "The overlay on your site").
  */
 export const heatmapRoutes: FastifyPluginCallback<{
   db: Kysely<Database>;
@@ -165,7 +145,6 @@ export const heatmapRoutes: FastifyPluginCallback<{
   auth: Auth;
   limiter: DashboardQueryLimiter;
   trustedOrigins: readonly string[];
-  /** Overlay links per user. */
   mintLimit?: RateLimit;
   now?: () => Date;
 }> = (
@@ -266,7 +245,7 @@ export const heatmapRoutes: FastifyPluginCallback<{
     "/projects/:id/heatmaps/overlay-link",
     { preHandler: [fromDashboard, signedIn, canView], schema: { params: PARAMS_SCHEMA } },
     async (request, reply) => {
-      // The page it opens, if given: its session may save a view of that page only.
+      // The session may save a view only for the page named in its link.
       const path = linkPathOf(request.body);
       if (path === undefined) {
         return reply.code(400).send({
@@ -285,7 +264,7 @@ export const heatmapRoutes: FastifyPluginCallback<{
             message: `Too many links. Try again in ${limited.retryAfterSeconds} seconds.`,
           });
       }
-      // The real clock, as the exchange uses: never the reports' fixed one.
+      // Use the real clock to match token exchange expiry checks.
       const link = await mintOverlayLink(
         db,
         { userId: user.userId, sessionId: signedInUser(request).sessionId },

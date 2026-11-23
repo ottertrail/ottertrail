@@ -28,11 +28,9 @@ import {
 const UUID_PATTERN =
   "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$";
 
-/** A saved funnel's name: 1 to 100 characters after trimming, no control characters. */
 // eslint-disable-next-line no-control-regex -- control characters are what it refuses
 const FUNNEL_NAME = /^[^\u0000-\u001F\u007F]{1,100}$/u;
 
-/** The access requireProjectAccess set: these routes always run it. */
 function accessOf(request: { projectAccess: ProjectAccess | null }): ProjectAccess {
   if (request.projectAccess === null) {
     throw new Error("requireProjectAccess must run before this route");
@@ -64,10 +62,7 @@ const FUNNEL_BODY = {
   },
 };
 
-/**
- * The funnel a request asks to save, checked as the funnel report checks
- * its own: or the answer that refuses it, already sent.
- */
+/** Return null after sending a validation refusal. */
 function definitionOf(body: FunnelBody, reply: FastifyReply): FunnelDefinition | null {
   const name = body.name.trim();
   if (!FUNNEL_NAME.test(name)) {
@@ -95,14 +90,8 @@ function definitionOf(body: FunnelBody, reply: FastifyReply): FunnelDefinition |
 }
 
 /**
- * GET    /api/projects/:id/funnels
- * POST   /api/projects/:id/funnels              { "name": "Pricing to signup", "steps": […], "count": "visitors", "window": 3600 }
- * PUT    /api/projects/:id/funnels/:funnelId    (the same, and the "updatedAt" it was read with: replaces the name and the funnel)
- * DELETE /api/projects/:id/funnels/:funnelId
- *
- * A project's saved funnels (saved-funnels.ts). Like every project route,
- * each runs requireProjectAccess first; the changes also need the
- * dashboard's origin.
+ * Saved-funnel changes require the dashboard origin. Updates require
+ * the previously read updatedAt to prevent lost edits (saved-funnels.ts).
  */
 export const savedFunnelRoutes: FastifyPluginCallback<{
   db: Kysely<Database>;

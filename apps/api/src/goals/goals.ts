@@ -4,9 +4,8 @@ import type { Database, GoalsTable } from "../db/schema.ts";
 import type { Step } from "../product/steps.ts";
 
 /**
- * A project's saved goals (docs/product-analytics.md, "Goals"): named
- * conversions, each a page or a product event, as a funnel step is. The
- * analytics page counts them (reports/analytics.ts).
+ * Goals use funnel steps and are counted by reports/analytics.ts
+ * (docs/product-analytics.md, "Goals").
  */
 export interface Goal {
   id: string;
@@ -15,7 +14,6 @@ export interface Goal {
   createdAt: Date;
 }
 
-/** Goals a project may have: enough for a team's key actions, few enough to read at a glance. */
 export const MAX_GOALS = 20;
 
 function goalOf(row: Selectable<GoalsTable>): Goal {
@@ -32,7 +30,6 @@ function goalOf(row: Selectable<GoalsTable>): Goal {
   return { id: row.id, name: row.name, step, createdAt: row.created_at };
 }
 
-/** A project's goals, oldest first: the order they were added in. */
 export async function listGoals(db: Kysely<Database>, projectId: string): Promise<Goal[]> {
   const rows = await db
     .selectFrom("goals")
@@ -48,7 +45,7 @@ export async function listGoals(db: Kysely<Database>, projectId: string): Promis
 const isUniqueViolation = (error: unknown) =>
   typeof error === "object" && error !== null && "code" in error && error.code === "23505";
 
-/** Adds a goal; or says why not: the project has MAX_GOALS, or one with this name. */
+/** Refuse duplicate names and projects at MAX_GOALS. */
 export async function createGoal(
   db: Kysely<Database>,
   projectId: string,
@@ -57,8 +54,7 @@ export async function createGoal(
 ): Promise<{ goal: Goal } | { refused: "too_many" | "name_taken" }> {
   try {
     return await db.transaction().execute(async (trx) => {
-      // Adds to one project wait for each other here, so two at once
-      // cannot both find room for the last goal.
+      // Serialize project inserts so concurrent requests cannot exceed the limit.
       await trx
         .selectFrom("projects")
         .select("id")
@@ -92,7 +88,7 @@ export async function createGoal(
   }
 }
 
-/** Deletes one of the project's goals; false when it has none with this ID. */
+/** Return false if the project has no matching goal. */
 export async function deleteGoal(
   db: Kysely<Database>,
   projectId: string,

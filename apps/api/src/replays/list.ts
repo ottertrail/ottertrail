@@ -4,20 +4,14 @@ import type { Database, ReplaysTable } from "../db/schema.ts";
 import { isTimelineItem, type Timeline } from "./derive.ts";
 
 /**
- * The Replays page: a project's replays, newest first, a page at a time,
- * filtered, and one replay's timeline (docs/session-replay.md, "Finding
- * replays"). Everything is read from PostgreSQL's replays table, which the
- * worker filled when it joined each replay (derive.ts) and found its error
- * (link.ts): every query starts with the project, and every value from the
- * request is a parameter.
+ * Read replay lists and timelines from PostgreSQL, populated by derive.ts
+ * and link.ts (docs/session-replay.md, "Finding replays"). Scope every query
+ * to the project and parameterize request values.
  */
 
-/** Replays per page, and the most a page may ask for. */
 export const REPLAYS_PAGE_SIZE = 50;
 export const MAX_REPLAYS_PAGE_SIZE = 100;
-/** The most environments and error groups the filters offer. */
 const MAX_CHOICES = 50;
-/** Replays on a user's page. */
 export const USER_REPLAYS = 10;
 /**
  * How far past the recording's end an error's time may fall and still mark
@@ -37,7 +31,7 @@ export interface ReplayCursor {
 export const replayCursorText = (cursor: ReplayCursor) =>
   `${String(cursor.startedAt.getTime())}_${cursor.replayId}`;
 
-/** A cursor the pattern matched; null when its time is not a real one. */
+/** Return null when the cursor matches the pattern but has an invalid time. */
 export function replayCursorOf(text: string): ReplayCursor | null {
   const [ms = "", replayId = ""] = text.split("_");
   const startedAt = new Date(Number(ms));
@@ -53,7 +47,6 @@ export interface ReplayFilters {
   /** One of its paths contains this, case ignored. */
   path?: string | undefined;
   userId?: string | undefined;
-  /** Its first error's group. */
   fingerprint?: string | undefined;
   minDurationMs?: number | undefined;
 }
@@ -131,7 +124,6 @@ export function toSummary(row: SummaryRow): ReplaySummary {
   };
 }
 
-/** The filters as conditions on the project's replays. */
 function filtered(eb: ExpressionBuilder<Database, "replays">, filters: ReplayFilters) {
   const conditions = [];
   if (filters.from !== undefined) conditions.push(eb("started_at", ">=", filters.from));
@@ -155,7 +147,7 @@ function filtered(eb: ExpressionBuilder<Database, "replays">, filters: ReplayFil
     );
   }
   if (filters.path !== undefined && filters.path !== "") {
-    // strpos, not LIKE: the text is matched as it is, with no wildcards.
+    // strpos treats search text literally, without wildcards.
     conditions.push(
       eb.exists(
         sql`(select 1 from unnest(pages) as page(path) where strpos(lower(page.path), lower(${filters.path})) > 0)`,
@@ -165,10 +157,7 @@ function filtered(eb: ExpressionBuilder<Database, "replays">, filters: ReplayFil
   return eb.and(conditions);
 }
 
-/**
- * One page of the project's replays, newest first, after `before`; `next`
- * is the cursor to the page after it, null on the last.
- */
+/** Newest first; next is null on the last page. */
 export async function listReplays(
   db: Kysely<Database>,
   projectId: string,
@@ -199,10 +188,8 @@ export async function listReplays(
 }
 
 /**
- * What the filters offer for the period: the environments of its replays'
- * errors, and the error groups of its replays in `environment` (as the list
- * takes it: replays whose error was not found are in every one), most
- * replays first.
+ * Filter choices include unlinked replays in every environment, matching
+ * the list. Order environments and error groups by replay count.
  */
 export async function replayChoices(
   db: Kysely<Database>,
@@ -264,7 +251,6 @@ export async function replayChoices(
   };
 }
 
-/** A user's latest replays in an environment, for the user's page. */
 export async function userReplays(
   db: Kysely<Database>,
   projectId: string,
@@ -285,9 +271,8 @@ export interface ReplayTimeline {
   replay: ReplaySummary;
   timeline: Timeline;
   /**
-   * Where the error is, in ms from the recording's start: the recorder's own
-   * marker, else the first error event's time; null when neither is known
-   * or it falls outside the recording.
+   * Milliseconds from recording start: prefer the recorder marker, then
+   * the first error time. Null if unknown or outside the recording.
    */
   errorOffsetMs: number | null;
   /** The recording's start on its own clock (ms since 1970), as the player counts. */
@@ -297,7 +282,6 @@ export interface ReplayTimeline {
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
-/** The stored timeline, as the worker wrote it; empty when it is anything else. */
 function timelineOf(value: unknown): Timeline {
   if (!isRecord(value) || !Array.isArray(value.items)) return { items: [], truncated: false };
   const { truncated } = value;
@@ -307,7 +291,7 @@ function timelineOf(value: unknown): Timeline {
   };
 }
 
-/** One replay's summary and timeline; null when the project has no such replay. */
+/** Return null if the project has no matching replay. */
 export async function replayTimeline(
   db: Kysely<Database>,
   projectId: string,

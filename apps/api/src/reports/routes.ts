@@ -12,14 +12,13 @@ import { dayIn } from "../visitors/visitor-ids.ts";
 import { LIST_REPORTS, type ListReport, projectAnalytics, projectList } from "./analytics.ts";
 import { FILTER_NAMES, type FilterName, MAX_LIMIT, type ReportFilter } from "./reports.ts";
 
-/** The longest range one request may cover, to bound the work it causes. */
+/** Bound query work per request. */
 export const MAX_RANGE_DAYS = 366;
 
-/** Ranges that end today in the instance's timezone, which the browser does not know. */
+/** Periods end today in the instance timezone, which the browser does not know. */
 export const PERIODS = ["today", "7d", "30d", "90d", "12m"] as const;
 export type Period = (typeof PERIODS)[number];
 
-/** "YYYY-MM-DD" moved by whole days and months on the calendar. */
 function shiftDay(
   day: string,
   { days = 0, months = 0 }: { days?: number; months?: number },
@@ -28,7 +27,6 @@ function shiftDay(
   return new Date(Date.UTC(year, month - 1 + months, date + days)).toISOString().slice(0, 10);
 }
 
-/** Days before today that each fixed-length period starts. */
 const DAYS_BACK: Record<Exclude<Period, "12m">, number> = {
   today: 0,
   "7d": 6,
@@ -60,31 +58,27 @@ function problem(code: string, message: string) {
   return { error: code, message };
 }
 
-/** As text a query parameter may hold: no NUL, which PostgreSQL text cannot hold. */
+/** PostgreSQL text cannot store NUL. */
 const NO_NUL = "^[^\\u0000]*$";
 
-/** As long as the longest stored path; values are compared, never parsed. */
+/** Match the longest stored path; compare values without parsing. */
 const MAX_FILTER_LENGTH = 2048;
 
 /** One query parameter per filter. An empty value matches visits where it is unknown. */
 const FILTER_PROPERTIES = Object.fromEntries(
   FILTER_NAMES.map((name) => [
     name,
-    // No NUL: PostgreSQL text cannot hold it, so it could never match.
+    // PostgreSQL cannot store NUL, so it can never match.
     { type: "string", maxLength: MAX_FILTER_LENGTH, pattern: NO_NUL },
   ]),
 );
 
-/** Rows one page of a "show all" list holds. */
 export const LIST_PAGE_SIZE = 50;
-/** Search text a list accepts: far longer than any name worth typing. */
 const MAX_SEARCH_LENGTH = 200;
 
 /**
- * Refuses query parameters the route does not know. Fastify's validator
- * drops them silently, so a mistyped filter ("contry") would return
- * unfiltered numbers. Runs before validation, while the query still holds
- * every parameter sent.
+ * Reject unknown parameters before Fastify drops them; otherwise a
+ * mistyped filter would silently return unfiltered counts.
  */
 function refuseUnknownParameters(names: readonly string[]) {
   const known = new Set(names);
@@ -97,7 +91,6 @@ function refuseUnknownParameters(names: readonly string[]) {
         .code(400)
         .send(problem("invalid_query", `Unknown query parameter: ${unknown.join(", ")}.`));
     }
-    // Nothing sent: Fastify goes on to validation.
     return undefined;
   };
 }
@@ -123,7 +116,6 @@ const PARAMS_SCHEMA = {
   properties: { id: { type: "string", pattern: UUID_PATTERN } },
 };
 
-/** The days a request asks for, or the reason it cannot be answered. */
 export function requestDays(
   query: RangeQuery,
   todayDay: string,
@@ -158,7 +150,6 @@ function requestFilters(query: Partial<Record<FilterName, string>>): ReportFilte
   });
 }
 
-/** The access requireProjectAccess set: the report routes always run it. */
 function accessOf(request: { projectAccess: ProjectAccess | null }): ProjectAccess {
   if (request.projectAccess === null) {
     throw new Error("requireProjectAccess must run before this route");
@@ -167,19 +158,11 @@ function accessOf(request: { projectAccess: ProjectAccess | null }): ProjectAcce
 }
 
 /**
- * GET /api/projects/:id/analytics?from=YYYY-MM-DD&to=YYYY-MM-DD[&limit=10]
- * GET /api/projects/:id/analytics?period=7d[&environment=staging][&limit=10][&country=DE&page=/pricing …]
- *
- * Every report of the analytics page for whole days in the instance's
- * timezone, from and to included (see analytics.ts), in one
- * environment ("production" unless named). A period (today, 7d, 30d, 90d,
- * 12m) ends today in that timezone. Filters (FILTER_NAMES) narrow every
- * report to the visits that match all of them.
- * Like every project route, both run requireProjectAccess first.
+ * Use inclusive days in the instance timezone (analytics.ts). Default to
+ * production. All filters apply to every report.
  */
 export const reportRoutes: FastifyPluginCallback<{
   db: Kysely<Database>;
-  /** Where the events are; PostgreSQL holds the projects and counts the days. */
   clickhouse: ClickHouseClient;
   auth: Auth;
   now?: () => Date;
@@ -241,11 +224,8 @@ export const reportRoutes: FastifyPluginCallback<{
   );
 
   /**
-   * GET /api/projects/:id/analytics/list?report=country&period=7d[&search=…&offset=0&limit=50][&filters …]
-   *
-   * One list of the analytics page, a page at a time, for "show all": the
-   * same days and filters as the page, rows whose name contains `search`
-   * (case-insensitive; for countries, the English name), and `hasMore`.
+   * Match search case-insensitively; country lists search English names.
+   * Use the same days and filters as the analytics page.
    */
   app.get<{
     Params: { id: string };

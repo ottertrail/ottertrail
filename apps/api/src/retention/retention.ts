@@ -14,13 +14,10 @@ export interface RetentionResult {
 }
 
 /**
- * Deletes each project's events older than its retention (projects with
- * none keep everything) from ClickHouse. The cut-off is a midnight in the
- * instance's timezone, retention_days days before
- * today there, so a report never shows a day with only some of its events.
- * The rows leave reports at once and the disk with removeDeletedRows(),
- * which the worker runs after this. Running this twice, or in two
- * processes at once, is harmless.
+ * Delete whole local days to avoid partial report days. Projects without
+ * retention keep everything. Reports exclude deleted rows immediately;
+ * the worker calls removeDeletedRows() to reclaim disk. Repeated or
+ * concurrent runs are safe.
  */
 export async function deleteExpiredEvents(
   db: Kysely<Database>,
@@ -38,7 +35,6 @@ export async function deleteExpiredEvents(
     order by projects.id
   `.execute(db);
 
-  // Every project in one statement, which takes seconds however many there are.
   const deleted = await deleteEventsBefore(
     db,
     clickhouse,

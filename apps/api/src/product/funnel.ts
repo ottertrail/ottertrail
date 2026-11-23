@@ -3,12 +3,10 @@ import type { ProductRange } from "./events.ts";
 import { type Step, stepOf, stepSql, stepsOverlap } from "./steps.ts";
 
 /**
- * One ordered funnel (docs/product-analytics.md, "Funnel"): of the people
- * who did step 1 in the range, how many then did each next step, in order,
- * within the conversion window from their step 1.
+ * A funnel follows people from step 1 through ordered steps within its
+ * conversion window (docs/product-analytics.md, "Funnel").
  */
 
-/** A funnel's step: a page or a product event (steps.ts). */
 export type FunnelStep = Step;
 
 /** Who a funnel follows: a daily visitor ID, or a signed-in user's ID. */
@@ -23,11 +21,6 @@ export const MAX_VISITOR_WINDOW = 86_400;
 export const MIN_STEPS = 2;
 export const MAX_STEPS = 5;
 
-/**
- * A funnel's steps from parsed JSON: an array of MIN_STEPS to MAX_STEPS
- * steps (steps.ts), each rebuilt with only the fields it has, in one
- * order. Null when not.
- */
 export function funnelStepsOf(value: unknown): FunnelStep[] | null {
   if (!Array.isArray(value) || value.length < MIN_STEPS || value.length > MAX_STEPS) {
     return null;
@@ -45,7 +38,6 @@ export function overlappingStep(steps: readonly FunnelStep[]): number | null {
   return null;
 }
 
-/** An answer's refusal: a code for programs, and a sentence for people. */
 export interface Refusal {
   error: string;
   message: string;
@@ -57,9 +49,8 @@ export const INVALID_STEPS: Refusal = {
 };
 
 /**
- * Why these steps, counted this way, make no funnel the report can count:
- * two steps in a row that one event could both be, or a window over a day
- * for visitors. Null when they make one.
+ * Reject adjacent steps that can match one event and visitor windows
+ * longer than a day, because visitor IDs change daily.
  */
 export function funnelRefusal(
   steps: readonly FunnelStep[],
@@ -85,14 +76,12 @@ export function funnelRefusal(
 
 export interface FunnelStepResult {
   step: FunnelStep;
-  /** People who reached this step, in order, within the window. */
   reached: number;
 }
 
 /**
- * The funnel: people reaching each step. Events are read from the range's
- * start to its end plus the window, so a funnel started near the end can
- * finish; only a step 1 inside the range starts one.
+ * Read through the range end plus the window so late starts can finish.
+ * Only step 1 inside the range starts a funnel.
  */
 export async function funnel(
   reader: Reader,
@@ -104,7 +93,6 @@ export async function funnel(
   const params = new QueryParams();
   const until = new Date(range.to.getTime() + windowSeconds * 1000);
   const conditions = steps.map((step) => stepSql(params, step));
-  // Step 1 counts only inside the range.
   const [first = "false", ...rest] = conditions;
   const startsInRange = `(${first} AND occurred_at < ${params.time(range.to)})`;
   // The column names are constants, never input.
@@ -132,7 +120,6 @@ export async function funnel(
     params,
   );
   const atLevel = new Map(rows.map((row) => [Number(row.level), Number(row.people)]));
-  // Reaching step k means reaching at least level k.
   return steps.map((step, index) => ({
     step,
     reached: [...atLevel].reduce((sum, [level, people]) => (level > index ? sum + people : sum), 0),

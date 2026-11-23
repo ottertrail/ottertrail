@@ -13,35 +13,25 @@ import { DASHBOARD_SETTINGS } from "../telemetry/dashboard-query.ts";
 import { ERROR } from "../visits/visits.ts";
 
 /**
- * Error assignment (docs/errors.md, "Assignment"): an error group is on
- * one dashboard user's plate, or nobody's. Only someone who can see the
- * project's errors can be assigned (checked with the access module's one
- * check), and an assignment goes when its user does, or loses the
- * project's errors (access/grants.ts). Resolving keeps the assignee.
- *
- * The assignee hears of it in the inbox (none when they assigned
- * themselves) and, with SMTP, by an account email; and in the inbox when
- * the group regresses (tellAssigneesOfRegressions).
+ * Assignments require access to project errors; removal or lost access
+ * clears them (access/grants.ts). Resolution keeps the assignee.
+ * Notify other assignees through the inbox and SMTP, when configured;
+ * notify regressions through the inbox (docs/errors.md, "Assignment").
  */
 
 export interface Assignee {
   id: string;
   name: string;
-  /** Their avatar's address, or null (avatars/avatars.ts). */
   avatarUrl: string | null;
 }
 
-/** The longest error message a title quotes. */
 const MESSAGE_CHARS = 120;
-/** Error groups per page of arrivals a regression pass reads. */
 const ARRIVAL_PAGE = 1000;
-/** Fingerprints per ClickHouse query. */
 const CHUNK = 200;
 
 const cutMessage = (message: string) =>
   message.length <= MESSAGE_CHARS ? message : `${message.slice(0, MESSAGE_CHARS - 1)}…`;
 
-/** The group's assignees, by fingerprint. */
 export async function assigneesOf(
   db: Kysely<Database>,
   projectId: string,
@@ -67,10 +57,7 @@ export async function assigneesOf(
   return found;
 }
 
-/**
- * The title of a group's latest occurrence since `since` (its type and
- * message), or null when it has none then: no such group in the project.
- */
+/** Return null if the project has no occurrence since `since`. */
 async function latestError(
   reader: Reader,
   projectId: string,
@@ -103,10 +90,8 @@ export type AssignResult =
   | { ok: false; reason: "no_occurrences" };
 
 /**
- * Assigns a group to `assigneeId`, or to nobody (null), as `actor`. A new
- * assignee other than the actor gets an inbox item and, with `email`, an
- * account email. Assigning the same person again changes nothing, even
- * when two people do it at once.
+ * Notify a changed assignee unless they assigned themselves. Repeated
+ * assignments send nothing, including concurrent requests.
  */
 export async function assignError(
   db: Kysely<Database>,
@@ -137,18 +122,18 @@ export async function assignError(
       .execute();
     return { ok: true, assignee: null };
   }
-  // A first check before ClickHouse, so a refused choice reads nothing there;
-  // it is made again below, under the lock.
+  // Reject inaccessible assignees before querying ClickHouse; recheck
+  // under the lock below.
   if (
     !(await checkProjectAccess(db, assigneeId, projectId, { area: "errors", level: "view" })).ok
   ) {
     return { ok: false, reason: "not_assignable" };
   }
-  // Read before the transaction: a ClickHouse query holds no lock.
+  // Query ClickHouse before opening the transaction to avoid holding locks.
   const title = await latestError(reader, projectId, fingerprint, seenSince);
   if (title === null) return { ok: false, reason: "no_occurrences" };
   return db.transaction().execute(async (trx): Promise<AssignResult> => {
-    // Locked, so a removal or a change of access at the same moment waits.
+    // Block concurrent user removal or access changes.
     const user = await trx
       .selectFrom("dashboard_users")
       .select(["id", "name", "email", "avatar_key"])
@@ -156,16 +141,14 @@ export async function assignError(
       .forShare()
       .executeTakeFirst();
     if (user === undefined) return { ok: false, reason: "not_assignable" };
-    // Checked after the lock: a change of their access waits for this, or
-    // went first and is seen here (access/grants.ts clears what it takes).
+    // Recheck access under the lock; access/grants.ts clears revoked assignments.
     const checked = await checkProjectAccess(trx, user.id, projectId, {
       area: "errors",
       level: "view",
     });
     if (!checked.ok) return { ok: false, reason: "not_assignable" };
     const assignee = { id: user.id, name: user.name, avatarUrl: avatarUrlOf(user.avatar_key) };
-    // A row only when the assignee changed: the same person again, or a
-    // second request racing the first, returns none and tells nobody.
+    // Only a changed assignee gets a row and notification, including races.
     const changed = await trx
       .insertInto("error_assignments")
       .values({
@@ -222,20 +205,16 @@ export async function assignError(
   });
 }
 
-/** A group whose occurrences arrived in a regression pass's window. */
 interface Arrived {
   fingerprint: string;
-  /** Its latest occurrence among them. */
   last: string;
   type: string;
   message: string;
 }
 
 /**
- * A page of the project's error groups whose occurrences arrived in
- * (from, until], by fingerprint, after `after`; one more than `pageSize`
- * when more are left. Kept to the days such arrivals can be on, as the
- * error rules' read is (alerts/error-rules.ts).
+ * Page arrivals in (from, until] by fingerprint, with one extra row when
+ * more remain. Bound event days as in alerts/error-rules.ts.
  */
 async function arrivedErrors(
   reader: Reader,
@@ -268,7 +247,6 @@ async function arrivedErrors(
   );
 }
 
-/** Tells the assignees of the groups in one page of arrivals that regressed. */
 async function tellPage(
   db: Kysely<Database>,
   projectId: string,
@@ -302,9 +280,8 @@ async function tellPage(
     // Only an occurrence after both the resolution and the assignment.
     if (last <= group.resolved_at || last <= group.assigned_at) continue;
     const done = await db.transaction().execute(async (trx) => {
-      // Once per resolution, whichever worker gets there first. The
-      // resolution's time is copied inside PostgreSQL, whole: a JavaScript
-      // Date would cut its microseconds, and the row would never match.
+      // Notify once per resolution. Copy its timestamp within PostgreSQL;
+      // a JavaScript Date loses microseconds and would never match.
       const marked = await trx
         .updateTable("error_assignments as a")
         .from("error_resolutions as r")
@@ -341,15 +318,10 @@ async function tellPage(
 }
 
 /**
- * Tells each assignee, in the inbox, when their resolved group happens
- * again: once per resolution, and only for an occurrence after both the
- * resolution and the assignment, so assigning a group that already
- * regressed tells nothing. Run by the worker each minute, after the alert
- * rules (alerts/evaluator.ts), over the errors that arrived since its
- * last pass (`window`), as the error rules read them: each pass reads one
- * minute of arrivals, however long ago a group was resolved. It reads
- * only the projects with an assigned group that is resolved and not yet
- * told, a page of groups at a time. Returns how many were told.
+ * Notify once per resolution for occurrences after both resolution and
+ * assignment, excluding regressions before assignment. The worker runs this
+ * after alerts/evaluator.ts each minute, paging arrivals in window for
+ * projects with resolved assignments that have not been notified.
  */
 export async function tellAssigneesOfRegressions(
   db: Kysely<Database>,

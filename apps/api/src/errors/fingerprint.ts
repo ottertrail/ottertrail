@@ -1,37 +1,17 @@
 import { createHash } from "node:crypto";
 
 /**
- * Which errors are "the same error": occurrences with the same fingerprint
- * form one group in the Errors list (docs/errors.md, "Grouping").
- *
- * Version 1 groups by three things, each made stable across deploys:
- *
- * 1. The type, such as "TypeError".
- * 2. The message, with what changes between occurrences of one bug
- *    replaced: IDs, long numbers, URLs (normalizeMessage).
- * 3. The file of the stack's top frame, without its origin, query, or the
- *    content hash a bundler puts in its name (normalizeFile). A browser's
- *    or Node.js's stack is read by parseStack; a server's in another
- *    language, which parseStack finds no frame in, by parseServerStack
- *    (the frame where the exception was raised; for Java, its class).
- *
- * Function names and line numbers are left out on purpose: in minified
- * code both change with every build, so each release would start new
- * groups. Two bugs with the same message in the same bundle therefore
- * share a group, until source maps (planned) give real names.
- *
- * The version is part of the fingerprint ("1-…"): a new rule gets a new
- * number, so old and new groups never mix.
+ * Fingerprint grouping (docs/errors.md, "Grouping") uses error type,
+ * normalized message, and the top frame file or JVM class. Omit function
+ * names and line numbers because minification changes them across builds;
+ * bugs with the same message in one bundle can share a group.
+ * Version rule changes so fingerprints from different rules never mix.
  */
 export const FINGERPRINT_VERSION = 1;
 
 /** "1-" and 20 hex digits (80 bits of SHA-256): what the routes accept. */
 export const FINGERPRINT_PATTERN = "^[0-9]{1,3}-[0-9a-f]{20}$";
 
-/**
- * A frame's location, from V8 (Chrome, Edge, Node.js), Firefox, or Safari
- * stack text, or a server's (parseServerStack).
- */
 export interface StackFrame {
   function: string;
   /** The file; for a JVM frame, the class. */
@@ -40,14 +20,12 @@ export interface StackFrame {
   column: number | null;
 }
 
-/** Longest stack line and file name read: a frame is far shorter, and the cap bounds the work. */
+/** Cap stack lines and file names to bound parsing work. */
 const MAX_LINE = 1000;
 const MAX_FILE = 500;
 const MAX_LINES = 200;
 
-/** ":line:col" or ":line" at the end of a location. */
 const LINE_AND_COLUMN = /:(\d{1,9})(?::(\d{1,9}))?$/;
-/** A location that is a frame's: a URL, a path, or V8's "<anonymous>" and "native". */
 const LOCATION = /^(?:[a-z][\w+.-]{0,30}:\/\/|\/|<anonymous>$|native$)/i;
 
 function frameAt(name: string, location: string): StackFrame | null {
@@ -82,11 +60,9 @@ function geckoFrame(line: string): StackFrame | null {
 }
 
 /**
- * The frames of a stack, top first. A stack with V8 frames ("at …") is read
- * as V8's only, so its first line, "Type: message", is never taken for a
- * frame, even with an "@" in the message. Lines that are not frames are
- * skipped. Plain string work on capped lines: a hostile stack costs as
- * little as a real one.
+ * Parse top-first frames. If V8 frames exist, use only V8 syntax so
+ * "Type: message" containing "@" cannot become a frame. Cap line lengths
+ * to bound work on hostile stacks.
  */
 export function parseStack(stack: string): StackFrame[] {
   const lines = stack
@@ -102,7 +78,6 @@ export function parseStack(stack: string): StackFrame[] {
   return frames;
 }
 
-/** All of a stack's lines, trimmed, without empty ones: each cut to MAX_LINE. */
 function stackLines(stack: string): string[] {
   return stack
     .split(/\r\n|[\n\r\u2028\u2029]/)
@@ -110,7 +85,6 @@ function stackLines(stack: string): string[] {
     .filter((line) => line !== "");
 }
 
-/** "file:12" → the file and the line; null without a line number. */
 function fileAndLine(location: string): { file: string; line: number } | null {
   const position = /:(\d{1,9})$/.exec(location);
   if (position === null || position.index === 0) return null;
@@ -160,11 +134,7 @@ function goLocation(line: string): { file: string; line: number } | null {
   return location !== null && location.file.endsWith(".go") ? location : null;
 }
 
-/**
- * Frames Go puts above where the error was raised: the runtime's own (a
- * panic, debug.Stack()) and OpenTelemetry's, which records the stack when
- * the error is recorded on the span.
- */
+/** Skip Go runtime and OpenTelemetry frames above the error site. */
 function isGoPlumbing(frame: StackFrame): boolean {
   return (
     frame.function.startsWith("panic(") ||
@@ -179,8 +149,8 @@ const JVM_SOURCE =
   /^(?:[\w$.-]+\.(?:java|kt|kts|scala|groovy|clj)(?::\d{1,9})?|Unknown Source|Native Method)$/;
 
 /**
- * A frame without the jar Logback and Log4j add after it ("… ~[shop.jar:1.4.2]"):
- * string work, as a pattern for it backtracks on long runs of spaces.
+ * Strip Logback/Log4j jar suffixes with string operations; regex matching
+ * backtracks on long runs of spaces.
  */
 function withoutJar(rest: string): string {
   if (!rest.endsWith("]")) return rest;
@@ -199,14 +169,13 @@ function jvmFrame(line: string): StackFrame | null {
   if (open <= 0 || !rest.endsWith(")")) return null;
   const source = rest.slice(open + 1, -1);
   if (!JVM_SOURCE.test(source)) return null;
-  // Without the module or class loader ("java.base/", "app//").
   const qualified = rest.slice(rest.lastIndexOf("/", open) + 1, open);
   const dot = qualified.lastIndexOf(".");
   if (dot <= 0 || /\s/.test(qualified)) return null;
   const position = /:(\d{1,9})$/.exec(source);
   return {
     function: qualified.slice(dot + 1),
-    // The class, not the file: the file name alone is the same in every package.
+    // Use the qualified class because file names repeat across packages.
     file: qualified.slice(0, dot),
     line: position === null ? null : Number(position[1]),
     column: null,
@@ -235,7 +204,6 @@ function dotnetFrame(line: string): StackFrame | null {
   const dot = method.lastIndexOf(".");
   return {
     function: dot === -1 ? method : method.slice(dot + 1),
-    // The file when the build kept it; the type otherwise.
     file: file !== "" ? file : dot === -1 ? method : method.slice(0, dot),
     line: lineNumber,
     column: null,
@@ -243,13 +211,9 @@ function dotnetFrame(line: string): StackFrame | null {
 }
 
 /**
- * The frames of a server's stack that the browser formats do not cover:
- * Python, Ruby, Go, Java (and other JVM languages), and .NET, the frame
- * where the exception was raised first. Python's traceback lists that
- * frame last; the others list it first, and Go's stacks start with the
- * runtime's and OpenTelemetry's own frames, left out here. The first
- * format with a frame is the stack's. Plain string work on capped lines,
- * as parseStack's: Python's last MAX_LINES lines, the others' first.
+ * Return the error-site frame first: reverse Python tracebacks and skip
+ * Go runtime/OpenTelemetry frames. Use the first format with frames.
+ * Cap lines as in parseStack; read Python from the end.
  */
 export function parseServerStack(stack: string): StackFrame[] {
   const all = stackLines(stack);
@@ -286,10 +250,8 @@ export function parseServerStack(stack: string): StackFrame[] {
 }
 
 /**
- * A content hash in a file name: "-", "." or "_" and six or more letters,
- * digits, or "_" with at least one digit, before the extension, as in
- * "index-BfK3x9A2.js" (Vite), "main.3f2a1c9d.js" (webpack), or
- * "page-1a2b3c4d5e6f.js" (Next.js).
+ * Bundler hash suffixes: -, ., or _ followed by at least six letters,
+ * digits, or underscores, including a digit (Vite, webpack, Next.js).
  */
 const CONTENT_HASH = /[-._](?=[A-Za-z_]*\d)[A-Za-z0-9_]{6,}(?=\.(?:m|c)?js$)/;
 
@@ -310,13 +272,11 @@ export function normalizeFile(file: string): string {
 
 const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
 const URL_IN_TEXT = /\bhttps?:\/\/[^\s'"`)<>]+/gi;
-// Eight or more hex digits with at least one digit: an ID or hash.
 const HEX_ID = /\b(?=[0-9a-f]*\d)[0-9a-f]{8,}\b/gi;
-// Four or more digits: an ID, a count, a time. Shorter ones, such as an
-// HTTP status, often tell failures apart, so they stay.
+// Keep numbers shorter than four digits, such as HTTP status codes,
+// because they can distinguish failures.
 const LONG_NUMBER = /\d{4,}/g;
 
-/** A message without the parts that differ between occurrences of one bug. */
 export function normalizeMessage(message: string): string {
   return message
     .replace(UUID, "<id>")
@@ -329,11 +289,9 @@ export function normalizeMessage(message: string): string {
 }
 
 /**
- * The group an occurrence belongs to: "1-" and 20 hex digits. A server's
- * error (`server`) reads its stack in the server formats first: the
- * Firefox format takes any line with "@" and a path as a frame, which a
- * Python message can be ("…: postgresql://app@/shop"). Node.js stacks fit
- * none of the server formats, so they still read as V8's.
+ * Try server formats first for server errors: Firefox syntax can mistake
+ * Python messages containing URLs with "@" for frames. Node.js falls
+ * back to V8 syntax. Fingerprints use "1-" plus 20 hex digits.
  */
 export function fingerprint(
   error: { type: string; message: string; stack?: string },

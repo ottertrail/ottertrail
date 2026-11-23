@@ -43,7 +43,6 @@ const UUID_PATTERN =
 /** "p.plan=team": a property filter in the address. The key is the rest of the name. */
 const FILTER_PREFIX = "p.";
 
-/** The access requireProjectAccess set: these routes always run it. */
 function accessOf(request: { projectAccess: ProjectAccess | null }): ProjectAccess {
   if (request.projectAccess === null) {
     throw new Error("requireProjectAccess must run before this route");
@@ -52,11 +51,9 @@ function accessOf(request: { projectAccess: ProjectAccess | null }): ProjectAcce
 }
 
 /**
- * The property filters of a request: each "p.<key>" parameter of its
- * address, as sent. Null when one is not a filter collection could match
- * (a name of 1 to 100 characters, a value up to 500, no NUL): the schema
- * would drop such a parameter silently, and the page would show
- * unfiltered numbers under the filter.
+ * Read p.<key> filters before the schema drops unknown parameters. Enforce
+ * collection limits: names 1 to 100 characters, values up to 500, no NUL,
+ * so invalid filters cannot silently show unfiltered counts.
  */
 function filtersOf(url: string): PropertyFilter[] | null {
   const filters: PropertyFilter[] = [];
@@ -69,11 +66,7 @@ function filtersOf(url: string): PropertyFilter[] | null {
   return filters;
 }
 
-/**
- * A funnel's steps from the address: a JSON array of 2 to 5 of
- * {"type":"event","name":"signup","filter":{"key":"plan","value":"team"}}
- * (filter optional) and {"type":"page","path":"/pricing"}. Null when not.
- */
+/** Parse 2 to 5 page or event steps; return null on invalid input. */
 export function parseSteps(text: string): FunnelStep[] | null {
   try {
     return funnelStepsOf(JSON.parse(text));
@@ -82,7 +75,6 @@ export function parseSteps(text: string): FunnelStep[] | null {
   }
 }
 
-/** What every answer says about its range. */
 const answer = (range: ProductRange) => ({
   timeZone: range.timeZone,
   environment: range.environment,
@@ -90,14 +82,7 @@ const answer = (range: ProductRange) => ({
   lastDay: range.lastDay,
 });
 
-/**
- * GET /api/projects/:id/events[?period=7d|from=…&to=…&environment=…]
- * GET /api/projects/:id/events/:name[?…&p.plan=team&p.seats=5]
- *
- * The project's product events, and one event with its properties
- * (events.ts; docs/product-analytics.md). Like every project route, both
- * run requireProjectAccess first.
- */
+/** Product events and properties (events.ts; docs/product-analytics.md). */
 export const productRoutes: FastifyPluginCallback<{
   db: Kysely<Database>;
   clickhouse: ClickHouseClient;
@@ -172,9 +157,7 @@ export const productRoutes: FastifyPluginCallback<{
           type: "object",
           additionalProperties: false,
           properties: RANGE_PROPERTIES,
-          // A property filter: "p." and the property's name, up to 100
-          // characters as collection allows, equal to a value up to 500.
-          // Checked as sent by filtersOf: here only kept from being dropped.
+          // filtersOf validates raw property filters; keep the schema from dropping them.
           patternProperties: { "^p\\.": { type: "string" } },
         },
       },

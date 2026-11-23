@@ -11,10 +11,8 @@ import {
 } from "../product/funnel.ts";
 
 /**
- * A project's saved funnels (docs/product-analytics.md, "Saved funnels"):
- * a name for a funnel's steps, who it counts, and its window, so the
- * funnel page can open it again. The page's period and environment are
- * not part of it.
+ * Save steps, count type, and conversion window; omit page period and
+ * environment (docs/product-analytics.md, "Saved funnels").
  */
 export interface SavedFunnel {
   id: string;
@@ -26,7 +24,6 @@ export interface SavedFunnel {
   updatedAt: Date;
 }
 
-/** What a saved funnel holds besides its ID and times: checked before it gets here. */
 export interface FunnelDefinition {
   name: string;
   steps: readonly FunnelStep[];
@@ -34,16 +31,14 @@ export interface FunnelDefinition {
   window: FunnelWindow;
 }
 
-/** Saved funnels a project may have: a list to pick from, kept within one screen or two. */
 export const MAX_SAVED_FUNNELS = 50;
 
 function savedFunnelOf(row: Selectable<SavedFunnelsTable>): SavedFunnel {
   return {
     id: row.id,
     name: row.name,
-    // Both checked when saved. Should a later rule refuse what a row holds,
-    // it reads as no steps, or the default window, and the row keeps it:
-    // a change of rules comes with a migration for saved funnels.
+    // Invalid stored values fall back without changing the row. Validation
+    // rule changes need a saved-funnel migration.
     steps: funnelStepsOf(row.steps) ?? [],
     count: row.count_by,
     window: FUNNEL_WINDOWS.find((seconds) => seconds === row.window_seconds) ?? MAX_VISITOR_WINDOW,
@@ -54,14 +49,12 @@ function savedFunnelOf(row: Selectable<SavedFunnelsTable>): SavedFunnel {
 
 const columnsOf = (definition: FunnelDefinition) => ({
   name: definition.name,
-  // As JSON text: the driver would write a JavaScript array as a
-  // PostgreSQL array.
+  // Serialize JSON explicitly; the driver treats JavaScript arrays as PostgreSQL arrays.
   steps: JSON.stringify(definition.steps),
   count_by: definition.count,
   window_seconds: definition.window,
 });
 
-/** A project's saved funnels, by name: as a list to pick one from. */
 export async function listSavedFunnels(
   db: Kysely<Database>,
   projectId: string,
@@ -81,7 +74,7 @@ export async function listSavedFunnels(
 const isUniqueViolation = (error: unknown) =>
   typeof error === "object" && error !== null && "code" in error && error.code === "23505";
 
-/** Saves a funnel; or says why not: the project has MAX_SAVED_FUNNELS, or one with this name. */
+/** Refuse duplicate names and projects at MAX_SAVED_FUNNELS. */
 export async function createSavedFunnel(
   db: Kysely<Database>,
   projectId: string,
@@ -89,8 +82,7 @@ export async function createSavedFunnel(
 ): Promise<{ funnel: SavedFunnel } | { refused: "too_many" | "name_taken" }> {
   try {
     return await db.transaction().execute(async (trx) => {
-      // Saves to one project wait for each other here, so two at once
-      // cannot both find room for the last funnel.
+      // Serialize project saves so concurrent requests cannot exceed the limit.
       await trx
         .selectFrom("projects")
         .select("id")
@@ -117,10 +109,8 @@ export async function createSavedFunnel(
 }
 
 /**
- * Replaces one of the project's saved funnels, its name and what it
- * counts, if it is still the version read (`readUpdatedAt`): a change made
- * from an older copy would undo another one, made since, without a word.
- * Null when the project has no funnel with this ID.
+ * Require readUpdatedAt to prevent overwriting a newer edit. Return null
+ * if the project has no matching funnel.
  */
 export async function updateSavedFunnel(
   db: Kysely<Database>,
@@ -156,7 +146,7 @@ export async function updateSavedFunnel(
   return exists === undefined ? null : { refused: "changed" };
 }
 
-/** Deletes one of the project's saved funnels; false when it has none with this ID. */
+/** Return false if the project has no matching funnel. */
 export async function deleteSavedFunnel(
   db: Kysely<Database>,
   projectId: string,

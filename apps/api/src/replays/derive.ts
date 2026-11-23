@@ -1,18 +1,11 @@
 import { parsePageUrl } from "../collection/normalize.ts";
 
 /**
- * What the dashboard lists and shows about a replay, worked out once, when
- * the worker joins it (replays.ts), so neither the list nor the browser
- * reads a whole recording again (docs/session-replay.md, "Finding
- * replays"). Pure: tested on its own.
- *
- * It reads only what the recorder kept after masking it in the visitor's
- * browser (packages/tracker/src/replay-filter.ts), and from that only:
- * the page's address (already origin and path), the times, a clicked or
- * typed-in element's tag, its `role` and an input's `type` (structure
- * attributes the filter keeps as they are, and here only matched against
- * fixed lists), click positions, and scroll positions. Never text, typed
- * values, or any other attribute.
+ * Derive list and timeline data once at join time (replays.ts), avoiding
+ * full-recording reads (docs/session-replay.md, "Finding replays"). Read only
+ * masked data from packages/tracker/src/replay-filter.ts: origin and path,
+ * times, tags, allowed roles and input types, click and scroll positions.
+ * Never read text, typed values, or other attributes.
  */
 
 /** rrweb's event types, sources, and node type (rrweb 2.2.2's documented enums). */
@@ -26,27 +19,22 @@ const SCROLL = 3;
 const INPUT = 5;
 const CLICK = 2;
 const ELEMENT_NODE = 2;
-/** The custom event the recorder adds when the page's error happens. */
 const ERROR_TAG = "error";
 
 /** The most timeline items kept: the latest, nearest the error. */
 export const MAX_TIMELINE_ITEMS = 500;
-/** The most paths kept per replay. */
 export const MAX_PAGES = 30;
 /** Scrolls closer together than this are one item. */
 const SCROLL_GAP_MS = 1_000;
 /**
- * A visitor's clock this far off the server's is corrected. Far beyond the
- * tracker's retries (eight attempts, at most a minute apart): a first chunk
- * that came only on a retry, minutes late, does not move a right clock.
+ * Allow 10 minutes of clock drift so delayed retries do not trigger
+ * correction (eight attempts, at most a minute apart).
  */
 export const CLOCK_TOLERANCE_MS = 10 * 60_000;
-/** A recording longer than this has a forged or broken clock: its start is stored this far before its end. */
+/** Clamp longer recordings to this duration to limit forged or broken clocks. */
 const MAX_STORED_DURATION_MS = 24 * 3_600_000;
-/** How far up from a clicked element a button, link, or field is looked for. */
 const ANCESTOR_STEPS = 6;
 
-/** A field, button, or link's role: what the timeline says was clicked or typed in. */
 export type ElementRole =
   | "button"
   | "link"
@@ -100,9 +88,8 @@ export type TimelineItem =
   | { at: number; kind: "error" };
 
 /**
- * Why items were left out past MAX_TIMELINE_ITEMS: only the earliest
- * scrolls ("scrolls"), or every scroll and then the earliest other items
- * ("earliest"); false when none were.
+ * Truncation drops earliest scrolls first ("scrolls"), then other earliest
+ * items ("earliest"); false means nothing was dropped.
  */
 export type Truncation = false | "scrolls" | "earliest";
 
@@ -111,7 +98,6 @@ export interface Timeline {
   truncated: Truncation;
 }
 
-/** A stored timeline item, as deriveReplay writes them. */
 export function isTimelineItem(value: unknown): value is TimelineItem {
   if (!isRecord(value) || !isFiniteNumber(value.at)) return false;
   const role = value.role === null || (typeof value.role === "string" && isRole(value.role));
@@ -149,9 +135,7 @@ export interface ReplayDetails {
 interface NodeInfo {
   parent: number | undefined;
   tag: string;
-  /** The `role` attribute, when it is one of ROLES. */
   role: ElementRole | null;
-  /** An input's `type`, lower case, when short and plain. */
   type: string | null;
 }
 
@@ -162,7 +146,7 @@ const isId = (value: unknown): value is number =>
 const isFiniteNumber = (value: unknown): value is number =>
   typeof value === "number" && Number.isFinite(value);
 
-/** A tag name as the timeline may show it: plain, lower case; anything else is "element". */
+/** Invalid tag names become "element". */
 export function cleanTag(value: unknown): string {
   if (typeof value !== "string") return "element";
   const tag = value.toLowerCase();
@@ -177,7 +161,6 @@ function roleOf(value: unknown): ElementRole | null {
   return isRole(role) ? role : null;
 }
 
-/** An input's role from its type, as browsers give it. */
 function inputRole(type: string | null): ElementRole {
   switch (type) {
     case "checkbox":
@@ -199,7 +182,7 @@ function inputRole(type: string | null): ElementRole {
   }
 }
 
-/** The element's role: its own `role` when known, otherwise its tag's. */
+/** Prefer a recognized role attribute over the tag default. */
 export function elementRole(info: { tag: string; role: ElementRole | null; type: string | null }) {
   if (info.role !== null) return info.role;
   switch (info.tag) {
@@ -221,7 +204,7 @@ export function elementRole(info: { tag: string; role: ElementRole | null; type:
   }
 }
 
-/** Adds a serialized node and everything inside it to the map, without recursion. */
+/** Avoid recursion when walking untrusted serialized nodes. */
 function addNodes(nodes: Map<number, NodeInfo>, root: unknown, parent: number | undefined) {
   const stack: [unknown, number | undefined][] = [[root, parent]];
   for (let next = stack.pop(); next !== undefined; next = stack.pop()) {
@@ -244,9 +227,8 @@ function addNodes(nodes: Map<number, NodeInfo>, root: unknown, parent: number | 
 }
 
 /**
- * What was clicked or typed in: the nearest button, link, or field at or
- * above the target (a click lands on the icon inside a button), else the
- * target itself; "element" when the recording does not know it.
+ * Use the nearest button, link, or field ancestor so clicks on nested
+ * icons describe the control. Fall back to the target or "element".
  */
 function describe(nodes: Map<number, NodeInfo>, id: unknown) {
   const own = isId(id) ? nodes.get(id) : undefined;
@@ -260,16 +242,13 @@ function describe(nodes: Map<number, NodeInfo>, id: unknown) {
   return { tag: own?.tag ?? "element", role: null };
 }
 
-/** The path of a page address, as page URLs are cleaned: no origin, query string, or fragment. */
+/** Remove origin, query, and fragment to match cleaned page URLs. */
 export function pathOf(href: unknown): string | null {
   if (typeof href !== "string" || href === "") return null;
   return parsePageUrl(href)?.path ?? null;
 }
 
-/**
- * The items within the cap: as few scrolls as needed go first, the
- * earliest; then, with none left, the earliest of the rest.
- */
+/** Drop earliest scrolls first, then other earliest items to meet the cap. */
 function capped(items: TimelineItem[]): Timeline {
   const excess = items.length - MAX_TIMELINE_ITEMS;
   if (excess <= 0) return { items, truncated: false };
@@ -288,17 +267,14 @@ function capped(items: TimelineItem[]): Timeline {
 }
 
 /**
- * The details of a recording's events, which joinChunks checked are objects
- * with a numeric type and timestamp. `firstReceivedAt` is when its first
- * chunk arrived: the recorder sends it as the recording ends, so a
- * recording ending more than CLOCK_TOLERANCE_MS away from it was made on a
- * clock that is off, and its times are moved by the difference.
+ * joinChunks validates event objects, types, and timestamps. The recorder
+ * sends its first chunk when recording ends; correct clock drift when that
+ * end differs from firstReceivedAt by more than CLOCK_TOLERANCE_MS.
  */
 export function deriveReplay(
   events: readonly { type: number; timestamp: number; data?: unknown }[],
   firstReceivedAt: Date,
 ): ReplayDetails {
-  // As the player plays them: by time, the first event at 0.
   const sorted = events.toSorted((a, b) => a.timestamp - b.timestamp);
   const start = sorted[0]?.timestamp ?? firstReceivedAt.getTime();
   const end = sorted.at(-1)?.timestamp ?? start;
@@ -311,7 +287,6 @@ export function deriveReplay(
   let pageChanges = 0;
   /** The input being typed in: one item per run of inputs in one field. */
   let typingIn: number | null = null;
-  /** When the current run of scrolls last moved. */
   let lastScrollAt = Number.NEGATIVE_INFINITY;
 
   const push = (item: TimelineItem) => {

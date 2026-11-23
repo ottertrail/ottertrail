@@ -3,26 +3,17 @@ import { fromClickHouseTime, QueryParams, queryRows, type Reader } from "../clic
 import { ENGAGEMENT, VITALS } from "../visits/visits.ts";
 
 /**
- * The overview's signed-in users (docs/dashboard.md, "Overview"): how many
- * were active in a period and the period before, how many were new (first
- * seen in it), and the week-1 and week-4 retention of the latest weekly
- * cohorts, as the Retention page counts them (product/retention.ts): a
- * user is active in a week when they did anything there but report time on
- * a page or Web Vitals.
- *
- * When a user was first seen comes from user_first_seen (docs/clickhouse.md,
- * "First-seen times"), a row per user, so no query reads all the history.
- * Activity is read only from the earliest day a figure needs: the period
- * before, or the first cohort's Monday, whichever is earlier. Both read
- * without FINAL: a retried event stored twice changes neither a user's
- * first event nor the weeks they were active.
+ * Read first-seen times from user_first_seen to avoid scanning all history
+ * (docs/clickhouse.md, "First-seen times"; docs/dashboard.md, "Overview").
+ * Read activity from the earlier of the previous period or first cohort.
+ * Skip FINAL: retries change neither first-seen times nor active weeks.
+ * Activity excludes engagement and Web Vitals, matching product/retention.ts.
  */
 
 /** Weekly cohorts the overview shows, the current week's included. */
 export const OVERVIEW_COHORTS = 6;
-/** The weeks after a cohort's first that the overview shows. */
 export const RETENTION_WEEKS = [1, 4] as const;
-/** Newest signed-in users listed, for those who may see users. */
+/** List user IDs only with users access. */
 export const NEWEST_USERS = 5;
 
 /** A cohort's users active some weeks later; `current` while that week is still running. */
@@ -34,7 +25,6 @@ export interface Retained {
 export interface OverviewCohort {
   /** The Monday the cohort's week starts, "YYYY-MM-DD", in the instance's timezone. */
   week: string;
-  /** Users first seen that week. */
   users: number;
   /** Users of the cohort active 1 and 4 weeks later; null for a week that has not begun. */
   week1: Retained | null;
@@ -54,9 +44,8 @@ export interface SignedInUsers extends NewUsers {
   previousActive: number;
   /** Oldest first. */
   cohorts: OverviewCohort[];
-  /** The Monday of the current week. */
   currentWeek: string;
-  /** The newest users first seen in the period, newest first; only when asked for. */
+  /** Include newest users only when requested. */
   newest?: { userId: string; firstSeenAt: Date }[];
 }
 
@@ -72,7 +61,6 @@ export interface UsersScope {
 
 const DAY_MS = 86_400_000;
 
-/** "YYYY-MM-DD" of the Monday of a day's week. */
 export function mondayOf(day: string): string {
   const date = new Date(`${day}T00:00:00Z`);
   const back = (date.getUTCDay() + 6) % 7;
@@ -82,7 +70,6 @@ export function mondayOf(day: string): string {
 const weeksBefore = (monday: string, weeks: number) =>
   new Date(Date.parse(`${monday}T00:00:00Z`) - weeks * 7 * DAY_MS).toISOString().slice(0, 10);
 
-/** Each user's first-seen time in the scope's environment, first seen before the period's end. */
 function firstSeen(params: QueryParams, scope: UsersScope): string {
   return `SELECT user_id, minMerge(first_seen) AS first_time
           FROM ${USER_FIRST_SEEN}
@@ -92,10 +79,7 @@ function firstSeen(params: QueryParams, scope: UsersScope): string {
           HAVING first_time < ${params.time(scope.to)}`;
 }
 
-/**
- * New signed-in users in the period and the one before, from the first-seen
- * times alone: the overview's headline without a main goal.
- */
+/** Use first-seen times alone for the overview headline without a main goal. */
 export async function newUsers(reader: Reader, scope: UsersScope): Promise<NewUsers> {
   const params = new QueryParams();
   const [row] = await queryRows<{ users: string; new_users: string; previous_new: string }>(
@@ -133,9 +117,7 @@ export async function signedInUsers(
   const previousFrom = params.time(scope.previousFrom);
   const previousTo = params.time(scope.previousTo);
   const week = `toMonday(toDate(occurred_at, ${timeZone}))`;
-  // Activity from the period before, or the first cohort's Monday, whichever is earlier.
   const readFrom = `least(${previousFrom}, toDateTime64(${cohortStart}, 3, ${timeZone}))`;
-  // The offsets a cohort's user was active in, of 0 (their first week) and RETENTION_WEEKS.
   const offsets = `arrayFilter(o -> has([0, ${RETENTION_WEEKS.join(", ")}], o),
                      arrayMap(w -> intDiv(dateDiff('day', first_week, w), 7), weeks))`;
   const activityQuery = queryRows<{
@@ -192,7 +174,7 @@ export async function signedInUsers(
     newUsers(reader, scope),
     newestQuery,
   ]);
-  // sumMap answers a tuple of keys and values: two arrays.
+  // sumMap returns separate key and value arrays.
   const [keys = [], values = []] = Array.isArray(row?.retained) ? row.retained : [];
   const retainedOf = (key: string): number => {
     const index = Array.isArray(keys) ? keys.indexOf(key) : -1;

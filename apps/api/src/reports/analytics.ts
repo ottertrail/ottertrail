@@ -32,7 +32,6 @@ import {
   type VisitsSource,
 } from "./reports.ts";
 
-/** The breakdowns the analytics page shows. */
 export const ANALYTICS_BREAKDOWNS = [
   "source",
   "utmCampaign",
@@ -49,7 +48,7 @@ export const ANALYTICS_BREAKDOWNS = [
 
 export type AnalyticsBreakdown = (typeof ANALYTICS_BREAKDOWNS)[number];
 
-/** Every list of the analytics page, each of which can be read in full, a page at a time. */
+/** Lists support full pagination. */
 export const LIST_REPORTS = ["pages", "customEvents", ...ANALYTICS_BREAKDOWNS] as const;
 
 export type ListReport = (typeof LIST_REPORTS)[number];
@@ -62,11 +61,10 @@ export interface PreviousPeriod extends Pick<PreviousDays, "firstDay" | "lastDay
 export interface Analytics {
   /** The instance's timezone, which the days are counted in. */
   timeZone: string;
-  /** The environment every report counts, such as "production". */
   environment: string;
   /**
-   * The environments with events in the range, most events first, and the
-   * one shown even without: what the page can switch to.
+   * Include the selected environment even without events so the page
+   * can switch back.
    */
   environments: string[];
   /** First and last day of the range, "YYYY-MM-DD", both included. */
@@ -87,7 +85,6 @@ export interface GoalResult extends Goal, GoalCount {
   conversionRate: number;
 }
 
-/** The goals with their counts, and their share of the visitors. */
 async function goalResults(
   reader: Reader,
   range: ReportRange,
@@ -112,9 +109,8 @@ async function goalResults(
 }
 
 /**
- * The report range of whole days in the instance's timezone: PostgreSQL
- * counts the days, and holds the project's allowed hostnames, which tell a
- * referrer from in-app navigation.
+ * PostgreSQL defines local day boundaries and supplies hostnames for
+ * distinguishing referrals from in-app navigation.
  */
 async function dayRange(
   db: Kysely<Database>,
@@ -147,10 +143,8 @@ async function dayRange(
 }
 
 /**
- * The environments with browser events in the range (not errors), most events first,
- * then the range's own environment and production, even without events:
- * the page can always switch back to the one it shows by default. Events
- * from a site's server have no visitor and are not web analytics.
+ * Exclude server events without visitor IDs. Include the selected
+ * environment and production even without events so the page can switch back.
  */
 async function environmentsIn(reader: Reader, range: ReportRange): Promise<string[]> {
   const params = new QueryParams();
@@ -173,24 +167,14 @@ async function environmentsIn(reader: Reader, range: ReportRange): Promise<strin
   return names;
 }
 
-/** The temporary table the analytics page works out visits into, once per request. */
 const VISITS_TABLE = "analytics_visits";
 
 /**
- * Every report the analytics page shows, for one project and a range of
- * days in the instance's timezone.
- *
- * Working out visits sorts every event in the range, and most reports need
- * them (docs/web-analytics.md, section 7). Here they are worked out once,
- * into a temporary table of a ClickHouse session of this request's own, and
- * every report reads that table. The session's queries run one after
- * another, and the table goes when the request ends.
- *
- * With filters, the table holds only the matching visits, and every report
- * counts those visits and their events.
- *
- * ClickHouse has no snapshot that spans queries: events stored while the
- * page is worked out can reach some of its reports and not others.
+ * Compute visits once per request because sorting events is expensive
+ * (docs/web-analytics.md, section 7). Store filtered visits in a temporary
+ * ClickHouse session table; run queries serially and drop it on completion.
+ * ClickHouse has no snapshot across queries, so arriving events may appear
+ * in only some reports.
  */
 export async function projectAnalytics(
   db: Kysely<Database>,
@@ -225,7 +209,7 @@ export async function projectAnalytics(
   ]);
   const reader: Reader = { client: clickhouse, sessionId: randomUUID() };
   const params = new QueryParams();
-  // On disk (MergeTree), not in memory: a long range can hold millions of visits.
+  // Use disk-backed MergeTree storage for ranges with millions of visits.
   await runCommand(
     reader,
     `CREATE TEMPORARY TABLE ${VISITS_TABLE} ENGINE = MergeTree ORDER BY tuple()
@@ -251,7 +235,7 @@ export async function projectAnalytics(
       os: await by("os"),
       release: await by("release"),
     };
-    // The period before: its own visits, so only the summary is compared.
+    // Compare only the summary, using the previous period visits.
     const previousSummary = await summary(reader, {
       ...range,
       from: previous.from,
@@ -278,19 +262,14 @@ export async function projectAnalytics(
       goals: await goalResults(reader, range, saved, visits, currentSummary.visitors),
     };
   } finally {
-    // The session would drop it when it expires; this frees it now. A
-    // failure here must not hide the error that ended the reports.
+    // Free the table before session expiry without hiding the report error.
     await runCommand(reader, `DROP TEMPORARY TABLE IF EXISTS ${VISITS_TABLE}`).catch(
       () => undefined,
     );
   }
 }
 
-/**
- * One list of the analytics page, a page at a time, for "show all": the
- * rows after `offset`, optionally only those whose name contains `search`,
- * and whether more follow. One row more than asked for is read to tell.
- */
+/** Read one extra row to detect whether another page exists. */
 export async function projectList(
   db: Kysely<Database>,
   clickhouse: ClickHouseClient,

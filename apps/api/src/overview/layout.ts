@@ -5,10 +5,8 @@ import { type Area, reaches } from "../access/areas.ts";
 import type { Database } from "../db/schema.ts";
 
 /**
- * The overview's widgets (docs/dashboard.md, "Overview"), in their default
- * order, each with the area a user needs to see it. A widget's data has a
- * route of its own (routes.ts), which checks that area: a user without it
- * neither sees the widget nor can ask for its numbers.
+ * Each widget requires its area both in the layout and data route
+ * (routes.ts), preventing unauthorized reads (docs/dashboard.md, "Overview").
  */
 export const WIDGETS = [
   { id: "attention", area: "uptime_alerts" },
@@ -29,7 +27,6 @@ export const WIDGET_IDS: readonly WidgetId[] = WIDGETS.map((widget) => widget.id
 
 const isWidgetId = (id: string): id is WidgetId => (WIDGET_IDS as readonly string[]).includes(id);
 
-/** The widgets a user may see, by the areas they have. */
 export function visibleWidgets(access: UserAccess): WidgetId[] {
   return WIDGETS.filter((widget) => reaches(access.areas[widget.area], "view")).map(
     (widget) => widget.id,
@@ -37,17 +34,14 @@ export function visibleWidgets(access: UserAccess): WidgetId[] {
 }
 
 export interface Layout {
-  /** The widgets the user may see, in their order, each shown or hidden. */
   widgets: { id: WidgetId; hidden: boolean }[];
   /** Whether this is the default layout: the user saved none, or reset theirs. */
   isDefault: boolean;
 }
 
 /**
- * A stored order with every widget in it: known IDs once each, in the
- * stored order; a widget the order lacks (one added since, or one the user
- * could not see when they saved) goes right after the widget before it in
- * the default order, or first.
+ * Keep known IDs once each. Insert missing widgets after their default
+ * predecessor, or first, so saved layouts include newly available widgets.
  */
 export function completeOrder(stored: readonly string[]): WidgetId[] {
   const order = [...new Set(stored)].filter(isWidgetId);
@@ -73,7 +67,6 @@ function layoutOf(
   };
 }
 
-/** The user's layout of the project's overview: theirs, or the default. */
 export async function readLayout(
   db: Kysely<Database>,
   access: UserAccess,
@@ -89,10 +82,8 @@ export async function readLayout(
 }
 
 /**
- * Saves the user's layout of the project's overview. The order may name
- * only some widgets: the others keep their place (completeOrder). Widgets
- * the user cannot see now keep their place too, so a layout saved before
- * an area was granted or taken still holds.
+ * Preserve omitted and inaccessible widgets through completeOrder,
+ * so permission changes do not erase their saved positions.
  */
 export async function saveLayout(
   db: Kysely<Database>,
@@ -100,9 +91,8 @@ export async function saveLayout(
   projectId: string,
   layout: { order: readonly WidgetId[]; hidden: readonly WidgetId[] },
 ): Promise<Layout> {
-  // One transaction, with the user's row locked first: two saves of the
-  // same user's layout wait for each other, so each reads what the one
-  // before it wrote, and the last to arrive wins whole.
+  // Lock the user row to serialize saves. Each reads the previous save,
+  // and the last save wins.
   return db.transaction().execute(async (trx) => {
     await trx
       .selectFrom("dashboard_users")
@@ -144,7 +134,6 @@ export async function saveLayout(
   });
 }
 
-/** Back to the default layout: the user's own is deleted. */
 export async function resetLayout(
   db: Kysely<Database>,
   access: UserAccess,

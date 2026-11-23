@@ -2,10 +2,7 @@ import { QueryParams, queryRows, type Reader } from "../clickhouse/query.ts";
 import { DEFAULT_ENVIRONMENT } from "../collection/environment.ts";
 import { analyticsEvent, ENGAGEMENT, PAGEVIEW, VITALS } from "../visits/visits.ts";
 
-/**
- * Product events: the events a site sends itself, by name, with their
- * properties (docs/product-analytics.md, "Definitions").
- */
+/** Site-defined events and properties (docs/product-analytics.md, "Definitions"). */
 
 /** A range of whole days in the instance's timezone, in one environment. */
 export interface ProductRange {
@@ -19,27 +16,24 @@ export interface ProductRange {
   to: Date;
 }
 
-/** One property equal to one value, compared as text (propertyText). */
 export interface PropertyFilter {
   key: string;
   value: string;
 }
 
-/** Filters per request, and the keys and values a breakdown lists. */
 export const MAX_FILTERS = 5;
 export const PROPERTY_KEYS = 30;
 export const PROPERTY_VALUES = 10;
 export const EVENT_NAMES = 100;
 
 /**
- * SQL for a property's value as text: a string as it is, anything else
- * (a number, true, false, null) as JSON writes it. `key` is a placeholder
- * or SQL expression, never input text.
+ * Strings remain literal; other values use JSON text. key must be a SQL
+ * expression or placeholder, never input text.
  */
 export const propertyText = (key: string) =>
   `if(JSONType(properties, ${key}) = 'String', JSONExtractString(properties, ${key}), JSONExtractRaw(properties, ${key}))`;
 
-/** SQL true for a product event: not the tracker's own pageviews, time on page, errors, or Web Vitals. */
+/** Exclude tracker pageviews, engagement, errors, and Web Vitals. */
 export const PRODUCT_EVENT = `name NOT IN ('${PAGEVIEW}', '${ENGAGEMENT}') AND ${analyticsEvent()}`;
 
 function scope(params: QueryParams, range: ProductRange): string {
@@ -51,16 +45,15 @@ function scope(params: QueryParams, range: ProductRange): string {
 }
 
 /**
- * SQL true when the event has the property and it equals the value, as
- * text. Without the first half, an empty value would also match every
- * event without the property, whose text is "" too.
+ * Require the property to exist: missing properties also read as empty
+ * text and would otherwise match an empty filter.
  */
 export function propertyEquals(params: QueryParams, filter: PropertyFilter): string {
   const name = params.add(filter.key, "String");
   return `(JSONHas(properties, ${name}) AND ${propertyText(name)} = ${params.add(filter.value, "String")})`;
 }
 
-/** SQL for the filters, each property equal to its value; "" without filters. */
+/** Returns an empty SQL fragment without filters. */
 export function filtersSql(params: QueryParams, filters: readonly PropertyFilter[]): string {
   return filters.map((filter) => `AND ${propertyEquals(params, filter)}`).join(" ");
 }
@@ -73,7 +66,6 @@ export interface EventRow {
   events: number;
   /** Daily visitor IDs; a server's events have none. */
   visitors: number;
-  /** Signed-in users. */
   users: number;
 }
 
@@ -101,19 +93,16 @@ export async function listEvents(reader: Reader, range: ProductRange): Promise<E
   }));
 }
 
-/** What each report counts, for the environments it lists: SQL conditions, constants. */
+/** Fixed SQL scopes for environment choices. */
 export const COUNTED = {
-  /** The Events tab: product events. */
   events: PRODUCT_EVENT,
-  /** A funnel: pageviews and product events. */
   funnel: `name != '${ENGAGEMENT}' AND ${analyticsEvent()}`,
-  /** Retention: signed-in users' own events. */
   retention: `user_id IS NOT NULL AND name NOT IN ('${ENGAGEMENT}', '${VITALS}')`,
 } as const;
 
 /**
- * The environments with what a report counts in the range, most first,
- * then the one shown and production even without: the page can switch back.
+ * Include the selected environment and production even without data,
+ * so the page can switch back.
  */
 export async function productEnvironments(
   reader: Reader,
@@ -141,7 +130,6 @@ export async function productEnvironments(
 
 export interface PropertyBreakdown {
   key: string;
-  /** Events with this property. */
   events: number;
   /** Its most frequent values, as text (propertyText). */
   values: { value: string; events: number }[];
@@ -153,7 +141,6 @@ export interface EventDetail extends EventRow {
   properties: PropertyBreakdown[];
 }
 
-/** Every day from firstDay to lastDay, both included. */
 function eachDay(firstDay: string, lastDay: string): string[] {
   const days: string[] = [];
   const end = Date.parse(`${lastDay}T00:00:00Z`);
@@ -163,10 +150,7 @@ function eachDay(firstDay: string, lastDay: string): string[] {
   return days;
 }
 
-/**
- * One event in the range, with the filters: its counts, each day, and its
- * properties with their most frequent values. Zeros when none match.
- */
+/** Return zero counts when no events match. */
 export async function eventDetail(
   reader: Reader,
   range: ProductRange,
@@ -200,7 +184,7 @@ export async function eventDetail(
        GROUP BY day`,
       dayParams,
     ),
-    // Names and values in one pass: each value's events, and its name's.
+    // Count property names and values in one pass.
     queryRows<{ key: string; value: string; events: string; key_events: string }>(
       reader,
       `SELECT key, value, events, key_events
@@ -216,7 +200,6 @@ export async function eventDetail(
       valueParams,
     ),
   ]);
-  // The most frequent names, in order, each with its values.
   const keys: { key: string; events: number }[] = [];
   for (const row of values) {
     if (keys.length >= PROPERTY_KEYS) break;

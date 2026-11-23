@@ -13,66 +13,46 @@ import {
 } from "../visits/visits.ts";
 
 /**
- * Report queries for the dashboard, run in ClickHouse. Every number is
- * computed from the stored events when asked (see docs/web-analytics.md,
- * section 7, and docs/clickhouse.md).
- *
- * A range is [from, to) in absolute time; localDays() turns calendar days in
- * the instance's timezone into one. Days in charts are local days too.
+ * Report ranges are [from, to); localDays resolves instance-timezone
+ * boundaries and chart days (docs/web-analytics.md, section 7; docs/clickhouse.md).
  */
 export interface ReportRange {
   projectId: string;
-  /**
-   * The one environment reports count ("production", "staging" …): the
-   * events of others never mix in (collection/environment.ts).
-   */
   environment: string;
   from: Date;
   to: Date;
   /** IANA timezone that days are counted in, the instance's timezone. */
   timeZone: string;
-  /**
-   * The project's allowed hostnames. A referrer on one of them is in-app
-   * navigation, not a source, so it counts as direct.
-   */
+  /** Treat referrers on project hostnames as direct traffic. */
   ownHostnames: readonly string[];
   /**
-   * Only visits that match every filter count, and only their events. A
-   * visit lies within one local day (visitor IDs change at midnight), so
-   * every event of a range belongs to exactly one of the range's visits.
+   * Count only matching visits and their events. Daily visitor IDs keep
+   * each visit within one local day.
    */
   filters?: readonly ReportFilter[] | undefined;
   /**
-   * Ignore events from this moment on, as if they had not happened yet:
-   * for a comparison up to a time of day. Every report reads events up to
-   * rangeEnd(), and visits only see events before it (VisitRange.until).
+   * Exclusive cutoff for partial-period comparisons, applied by rangeEnd
+   * and VisitRange.until.
    */
   until?: Date | undefined;
 }
 
-/** Where a report stops reading events: `to`, or `until` when that is earlier. */
 const rangeEnd = ({ to, until }: ReportRange): Date =>
   until !== undefined && until < to ? until : to;
 
 const hasFilters = (range: ReportRange) => (range.filters?.length ?? 0) > 0;
 
-/** Rows a report returns unless told otherwise, and the most it ever returns. */
 export const DEFAULT_LIMIT = 10;
 export const MAX_LIMIT = 100;
 
-/** Rows a list can skip: far past any list worth paging through. */
 const MAX_OFFSET = 100_000;
 
-/** For "show all": a page further down a list, and only rows whose name contains `search`. */
 export interface ListOptions {
   offset?: number | undefined;
   search?: string | undefined;
 }
 
-/**
- * A condition that the text `expression` contains `search`, case ignored,
- * taken literally (no wildcards); always true without a search.
- */
+/** Match literal substrings, case-insensitive; missing search matches all. */
 function nameContains(expression: string, search: string | undefined, params: QueryParams): string {
   if (search === undefined || search === "") return "1";
   return `positionCaseInsensitiveUTF8(${expression}, ${params.add(search, "String")}) > 0`;
@@ -89,11 +69,7 @@ function clampLimit(limit: number): number {
   return Math.min(limit, MAX_LIMIT);
 }
 
-/**
- * Country codes whose English name contains the search, or that equal it:
- * a country list shows names, but stores codes. Every two-letter code the
- * runtime can name.
- */
+/** Search English country names while storing codes. */
 const countryNames = new Intl.DisplayNames(["en"], { type: "region" });
 const COUNTRY_CODES = Array.from({ length: 26 * 26 }, (_, index) =>
   String.fromCodePoint(65 + Math.floor(index / 26), 65 + (index % 26)),
@@ -110,9 +86,8 @@ function countryCodesMatching(search: string): string[] {
 const DIRECT = "Direct / none";
 
 /**
- * The start of `firstDay` and the end of `lastDay` (both "YYYY-MM-DD",
- * inclusive) in a timezone, worked out by PostgreSQL's timezone database,
- * so days that are 23 or 25 hours long (daylight saving) come out right.
+ * Resolve inclusive YYYY-MM-DD days through PostgreSQL to handle
+ * 23- and 25-hour daylight saving days.
  */
 export async function localDays(
   db: Kysely<Database>,
@@ -137,19 +112,16 @@ export interface PreviousDays {
   /** The end of lastDay, or the cut-off when the period is still running. */
   to: Date;
   /**
-   * For a period still running, the cut-off: now, moved back by the
-   * period's length. lastDay is then the cut-off's day. null for whole days.
+   * Partial-period cutoff: now shifted back by the period length; lastDay
+   * is its day. Null for whole-day comparisons.
    */
   until: Date | null;
 }
 
 /**
- * The days a period is compared with: as many days right before it, in
- * the same timezone. A period that is still running (it ends today, or
- * later) only has data up to now, so it is compared up to the same moment
- * of its earlier counterpart: now, moved back by the period's length. A
- * day in progress is never compared with a whole day. Calendar days are
- * counted by PostgreSQL, so daylight saving changes come out right.
+ * Compare the preceding equal-length period in the same timezone.
+ * For a running period, shift now back by its calendar length so partial
+ * days compare equally. Use PostgreSQL for daylight saving boundaries.
  */
 export async function previousDays(
   db: Kysely<Database>,
@@ -206,17 +178,14 @@ const ratio = (part: number, whole: number) => (whole === 0 ? null : part / whol
 const average = (value: unknown) => (value === null || value === undefined ? null : Number(value));
 const text = (value: unknown) => (typeof value === "string" ? value : null);
 
-/** "YYYY-MM-DD" a calendar day later. */
 function nextDay(day: string): string {
   const [year = 0, month = 1, date = 1] = day.split("-").map(Number);
   return new Date(Date.UTC(year, month - 1, date + 1)).toISOString().slice(0, 10);
 }
 
 /**
- * Optional for every report: the visits the report counts, worked out
- * ahead into a temporary table of the reader's session. When it is left
- * out, each report works the visits out itself; the analytics endpoint
- * works them out once and passes them to every report (analytics.ts).
+ * Optionally reuse visits in a temporary table in the reader session.
+ * Without it, each report computes visits; analytics.ts computes them once.
  */
 export type VisitsSource =
   | {
@@ -227,14 +196,12 @@ export type VisitsSource =
     }
   | undefined;
 
-/** Filters as one comparable string, in any order. */
 const filtersKey = (filters: readonly ReportFilter[] = []) =>
   filters
     .map(({ name, value }) => JSON.stringify([name, value]))
     .toSorted((a, b) => a.localeCompare(b))
     .join(",");
 
-/** SQL for the visits a report counts: `visitsSource`, or the range's visits narrowed by its filters. */
 function countedVisits(
   range: ReportRange,
   visitsSource: VisitsSource,
@@ -242,8 +209,7 @@ function countedVisits(
   options: VisitsQueryOptions = {},
 ): string {
   if (visitsSource !== undefined) {
-    // Reports also narrow events by range.filters; visits filtered any other
-    // way would mix filtered and unfiltered numbers on one page.
+    // Match event and visit filters to avoid mixing inconsistent counts.
     if (filtersKey(visitsSource.filters) !== filtersKey(range.filters)) {
       throw new Error("The visits source was filtered differently from the report range");
     }
@@ -254,12 +220,9 @@ function countedVisits(
 }
 
 /**
- * Events in the range that a person caused: pageviews and custom events,
- * not engagement reports, errors, or Web Vitals, as rows of visitor_id,
- * name, path, occurred_at, properties, and error_fingerprint; goalCounts
- * matches goals on the last two (product/steps.ts, stepSql). With filters,
- * only those within one of the counted `visits` (SQL with visitsSql's
- * columns), from its start to its end.
+ * Count pageviews and custom events within the selected visits. Exclude
+ * engagement, errors, and Web Vitals. Goal matching uses properties and
+ * error_fingerprint (product/steps.ts, stepSql).
  */
 function activity(range: ReportRange, visits: string, params: QueryParams): string {
   const filtered = hasFilters(range);
@@ -322,9 +285,8 @@ export async function summary(
 }
 
 /**
- * Distinct visitors in the range's activity (pageviews and custom events):
- * the summary's visitors, without working out visits when the range has
- * no filters. What the overview divides goals by.
+ * Avoid computing visits for unfiltered counts. Used as the overview
+ * goal-conversion denominator.
  */
 export async function visitorCount(reader: Reader, range: ReportRange): Promise<number> {
   const params = new QueryParams();
@@ -429,8 +391,8 @@ export async function topPages(
          AND e.occurred_at < ${params.time(rangeEnd(range))}
          AND e.name = '${ENGAGEMENT}'
          ${
-           // A report at the same moment as a visit's first pageview sorts
-           // before it, so it can only be stale (visits.ts): the start is excluded.
+           // Exclude the start: engagement at the first pageview timestamp sorts
+           // before it and belongs to an earlier visit (visits.ts).
            filtered
              ? "AND e.occurred_at > counted.started_at AND e.occurred_at <= counted.ended_at"
              : ""
@@ -449,7 +411,6 @@ export async function topPages(
   }));
 }
 
-/** What a visit breakdown can group by. */
 export const VISIT_DIMENSION_NAMES = [
   "source",
   "entryPage",
@@ -468,16 +429,13 @@ export const VISIT_DIMENSION_NAMES = [
 
 export type VisitDimension = (typeof VISIT_DIMENSION_NAMES)[number];
 
-/** For names arriving from outside, such as an HTTP request. */
 export function isVisitDimension(name: string): name is VisitDimension {
   return (VISIT_DIMENSION_NAMES as readonly string[]).includes(name);
 }
 
 /**
- * Each dimension maps to a fixed SQL expression over a visit row, so no
- * caller input becomes SQL. Breakdowns group by these expressions and
- * filters compare with them, so a filter matches exactly the visits its
- * breakdown row counted.
+ * Use fixed SQL expressions so input cannot become SQL. Share them
+ * between breakdowns and filters to keep counts consistent.
  */
 const VISIT_DIMENSIONS: Record<Exclude<VisitDimension, "source">, string> = {
   entryPage: "entry_path",
@@ -495,18 +453,12 @@ const VISIT_DIMENSIONS: Record<Exclude<VisitDimension, "source">, string> = {
   release: "release",
 };
 
-/**
- * The host after "scheme://": a bracketed IPv6 address ("[2001:db8::1]")
- * whole, otherwise up to a port or path; lower case, without "www.".
- */
+/** Keep bracketed IPv6 hosts intact; otherwise stop at the port or path. */
 const REFERRER_HOST_PATTERN = String.raw`^[a-zA-Z][a-zA-Z0-9+.-]*://(\[[^\]]*\]|[^/:]+)`;
 
 /**
- * The SQL expression of a dimension. The source of a visit is its
- * utm_source if set, otherwise the website that linked to it (without
- * "www."), otherwise "Direct / none". A referrer on one of the project's
- * own allowed hostnames is in-app navigation, not a source, so it also
- * counts as direct.
+ * Prefer utm_source, then the referrer host without www., then direct.
+ * Treat project hostnames as direct.
  */
 function dimensionSql(dimension: VisitDimension, range: ReportRange, params: QueryParams): string {
   if (dimension !== "source") return VISIT_DIMENSIONS[dimension];
@@ -521,17 +473,13 @@ function dimensionSql(dimension: VisitDimension, range: ReportRange, params: Que
   return `coalesce(utm_source, if(${host} IS NOT NULL AND NOT has(${own}, ${host}), ${host}, NULL), ${params.add(DIRECT, "String")})`;
 }
 
-/** What a report can be narrowed by: a visit dimension, or "page" for visits that viewed a page. */
 export const FILTER_NAMES = ["page", ...VISIT_DIMENSION_NAMES] as const;
 
 export type FilterName = (typeof FILTER_NAMES)[number];
 
 export interface ReportFilter {
   name: FilterName;
-  /**
-   * The value as a breakdown row shows it ("google.com", "Munich, DE",
-   * "/pricing"). null matches visits where the dimension is unknown.
-   */
+  /** Use the displayed breakdown value; null matches unknown dimensions. */
   value: string | null;
 }
 
@@ -539,11 +487,7 @@ export function isFilterName(name: string): name is FilterName {
   return (FILTER_NAMES as readonly string[]).includes(name);
 }
 
-/**
- * The condition one filter puts on a visit row (visitsSql's columns).
- * `allVisits` is SQL for the range's unfiltered visits, which the page
- * filter looks the page up in.
- */
+/** allVisits supplies unfiltered visits for the page filter lookup. */
 function filterCondition(
   filter: ReportFilter,
   range: ReportRange,
@@ -551,7 +495,6 @@ function filterCondition(
   allVisits: string,
 ): string {
   if (filter.name === "page") {
-    // Visits with a pageview of the page, between their first and last event.
     if (filter.value === null) return "0";
     // The page's views are few, so they are the joined (in-memory) side.
     return `(visitor_id, started_at) IN (
@@ -570,7 +513,7 @@ function filterCondition(
       WHERE viewed.occurred_at >= v.started_at AND viewed.occurred_at <= v.ended_at
     )`;
   }
-  // TypeScript checks callers; this guards JavaScript callers and bad input.
+  // Validate JavaScript callers and untrusted input at runtime.
   if (!isVisitDimension(filter.name)) throw new Error("Unknown filter");
   const value = dimensionSql(filter.name, range, params);
   return filter.value === null
@@ -579,9 +522,8 @@ function filterCondition(
 }
 
 /**
- * Only the visits (SQL with visitsSql's columns, including the first-event
- * columns) that match every filter of the range; all of them without
- * filters. The page filter reads `allVisits` (by default `visits` again).
+ * Requires visitsSql columns, including first-event fields. Page filters
+ * use allVisits, defaulting to visits.
  */
 export function filterVisits(
   range: ReportRange,
@@ -613,7 +555,7 @@ export async function breakdown(
   visitsSource?: VisitsSource,
   { offset, search }: ListOptions = {},
 ): Promise<BreakdownRow[]> {
-  // TypeScript checks callers; this guards JavaScript callers and bad input.
+  // Validate JavaScript callers and untrusted input at runtime.
   if (!isVisitDimension(dimension)) throw new Error("Unknown breakdown dimension");
   const params = new QueryParams();
   const visits = countedVisits(range, visitsSource, params);
@@ -646,7 +588,6 @@ export async function breakdown(
 
 export interface CustomEventRow {
   name: string;
-  /** Times the event happened. */
   events: number;
   visitors: number;
 }
@@ -682,14 +623,12 @@ export async function customEvents(
 export interface GoalCount {
   /** Visitors with at least one: daily IDs, as the summary counts them. */
   visitors: number;
-  /** Every time it happened. */
   events: number;
 }
 
 /**
- * Each step's visitors and events in the range's activity: the same visits
- * and filters as the rest of the page, so a filtered page counts its
- * goals among its own visits. One query, whatever the number of goals.
+ * Use the same visits and filters as the page so goal conversions stay
+ * consistent. Count all goals in one query.
  */
 export async function goalCounts(
   reader: Reader,

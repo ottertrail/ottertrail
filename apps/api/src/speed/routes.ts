@@ -23,7 +23,6 @@ import {
 const UUID_PATTERN =
   "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$";
 
-/** The access requireProjectAccess set: this route always runs it. */
 function accessOf(request: { projectAccess: ProjectAccess | null }): ProjectAccess {
   if (request.projectAccess === null) {
     throw new Error("requireProjectAccess must run before this route");
@@ -31,12 +30,7 @@ function accessOf(request: { projectAccess: ProjectAccess | null }): ProjectAcce
   return request.projectAccess;
 }
 
-/**
- * GET /api/projects/:id/speed[?period=7d|from=…&to=…&environment=…&device=mobile]
- *
- * The project's Web Vitals in a range and environment (speed.ts). Like
- * every project route, it runs requireProjectAccess first.
- */
+/** Web Vitals report access uses the project Web analytics area (speed.ts). */
 export const speedRoutes: FastifyPluginCallback<{
   db: Kysely<Database>;
   clickhouse: ClickHouseClient;

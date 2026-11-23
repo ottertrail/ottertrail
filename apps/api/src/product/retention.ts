@@ -3,12 +3,10 @@ import { ENGAGEMENT, VITALS } from "../visits/visits.ts";
 import type { ProductRange } from "./events.ts";
 
 /**
- * One retention report (docs/product-analytics.md, "Retention"): signed-in
- * users by the week of their first event, and how many did something in
- * each week after. Visitors cannot be followed: their IDs change daily.
+ * Weekly retention uses signed-in users because visitor IDs change daily
+ * (docs/product-analytics.md, "Retention").
  */
 
-/** Cohorts a report shows, and weeks after each: about a quarter. */
 export const MAX_COHORTS = 13;
 export const MAX_WEEKS = 12;
 
@@ -18,8 +16,8 @@ export interface Cohort {
   /** Users first seen that week. */
   users: number;
   /**
-   * Users who did something in week 0, 1, 2 … after: week 0 is everyone.
-   * Only weeks that have begun; the last may not be over (`current`).
+   * Week 0 includes everyone. Omit weeks that have not begun; the last
+   * may still be current.
    */
   retained: number[];
 }
@@ -30,7 +28,6 @@ export interface Retention {
   currentWeek: string;
 }
 
-/** "YYYY-MM-DD" of the Monday of a day's week. */
 function mondayOf(day: string): string {
   const date = new Date(`${day}T00:00:00Z`);
   const back = (date.getUTCDay() + 6) % 7;
@@ -41,10 +38,9 @@ const weeksBetween = (from: string, to: string) =>
   Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / (7 * 86_400_000));
 
 /**
- * The cohorts whose week holds a day of the range, the latest MAX_COHORTS,
- * with up to MAX_WEEKS weeks after each, until the current week. A user's
- * first week is over all the time the project keeps, so this reads every
- * signed-in event of the environment.
+ * Read all retained signed-in events in the environment to find each
+ * user first week. Show the latest MAX_COHORTS intersecting the range,
+ * with up to MAX_WEEKS following weeks, ending at the current week.
  */
 export async function retention(
   reader: Reader,
@@ -57,8 +53,7 @@ export async function retention(
   const firstWeek = mondayOf(range.firstDay);
   const lastWeek = mondayOf(range.lastDay);
   const currentWeek = mondayOf(today);
-  // Events after the last cohort's last shown week change nothing: they can
-  // neither make a first week earlier nor fill a column the report shows.
+  // Later events cannot change first-seen weeks or any displayed column.
   const readUntil = new Date(Date.parse(`${lastWeek}T00:00:00Z`) + (MAX_WEEKS + 1) * 7 * 86_400_000)
     .toISOString()
     .slice(0, 10);

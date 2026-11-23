@@ -4,9 +4,8 @@ import { VITAL_NAMES, type VitalName, vitalValue } from "../collection/vitals.ts
 import { VITALS } from "../visits/visits.ts";
 
 /**
- * Web Vitals reports: how fast page loads felt, from the "vitals" event
- * each page load sends once (collection/vitals.ts; docs/web-analytics.md,
- * "Web Vitals").
+ * One vitals event per page load (collection/vitals.ts;
+ * docs/web-analytics.md, "Web Vitals").
  */
 
 /** A range of whole days in the instance's timezone, in one environment. */
@@ -19,7 +18,6 @@ export interface SpeedRange {
   lastDay: string;
   from: Date;
   to: Date;
-  /** Only page loads on this kind of device, when given. */
   deviceType?: DeviceType | undefined;
 }
 
@@ -27,9 +25,8 @@ export const DEVICE_TYPES = ["desktop", "mobile", "tablet"] as const;
 export type DeviceType = (typeof DEVICE_TYPES)[number];
 
 /**
- * Good up to the first value, poor above the second: Google's thresholds,
- * as the web-vitals library (6.2.3) exports them, in milliseconds and, for
- * CLS, its score.
+ * Google thresholds from web-vitals 6.2.3: good through the first value,
+ * poor above the second. Units are milliseconds, except the CLS score.
  */
 export const THRESHOLDS: Record<VitalName, readonly [number, number]> = {
   lcp: [2500, 4000],
@@ -39,7 +36,6 @@ export const THRESHOLDS: Record<VitalName, readonly [number, number]> = {
   ttfb: [800, 1800],
 };
 
-/** The value most page loads were faster than, and how many were good, needed improvement, or poor. */
 export interface MetricSummary {
   /** The 75th percentile, as Google's own field data reports; null without values. */
   p75: number | null;
@@ -69,25 +65,21 @@ export interface Speed {
   days: (SpeedRow & { day: string })[];
 }
 
-/** Pages a report lists. */
 export const SPEED_PAGES = 20;
 
 /**
- * A metric's value in a report, NULL when the page load has none, or an
- * impossible one: the API drops those on arrival, but an event named
- * "vitals" a site sent itself before Web Vitals existed was not checked.
+ * Reject impossible values on read as well as ingestion: legacy custom
+ * events named vitals may contain unchecked values.
  */
 const value = vitalValue;
 
 /**
- * The 75th percentile, interpolated between the two nearest values, as
- * NumPy's default and Excel's PERCENTILE.INC do: four loads of 1, 2, 3,
- * and 4 seconds give 3.25 seconds. Milliseconds whole, CLS to four decimals.
+ * Interpolate as NumPy default and Excel PERCENTILE.INC: 1, 2, 3, 4 seconds
+ * give 3.25 seconds. Round milliseconds to integers and CLS to four decimals.
  */
 const p75 = (name: VitalName) =>
   `round(quantileExactInclusive(0.75)(${value(name)}), ${name === "cls" ? 4 : 0})`;
 
-/** p75 of LCP, INP, and CLS: the three Core Web Vitals. */
 const CORE_P75 = (["lcp", "inp", "cls"] as const)
   .map((name) => `${p75(name)} AS ${name}`)
   .join(", ");
@@ -97,10 +89,9 @@ const textOrNull = (raw: unknown) => (typeof raw === "string" ? raw : null);
 const numberOrNull = (raw: unknown) =>
   raw === null || raw === undefined || Number.isNaN(Number(raw)) ? null : Number(raw);
 
-/** True for a "vitals" event with at least one value: a measured page load. */
+/** Count only page loads with at least one measured value. */
 const MEASURED = `(${VITAL_NAMES.map((name) => `${value(name)} IS NOT NULL`).join(" OR ")})`;
 
-/** The page loads of a range: their "vitals" events with a value. */
 function scope(params: QueryParams, range: SpeedRange): string {
   return `project_id = ${params.add(range.projectId, "UUID")}
     AND environment = ${params.add(range.environment, "String")}
@@ -121,8 +112,8 @@ function row(raw: Record<string, unknown>): SpeedRow {
 }
 
 /**
- * The environments with measured page loads in the range, most first, then
- * the one shown and production even without: the page can switch back.
+ * Include the selected environment and production even without data,
+ * so the page can switch back.
  */
 export async function speedEnvironments(reader: Reader, range: SpeedRange): Promise<string[]> {
   const params = new QueryParams();
@@ -145,7 +136,6 @@ export async function speedEnvironments(reader: Reader, range: SpeedRange): Prom
   return names;
 }
 
-/** Every day from firstDay to lastDay, both included. */
 function eachDay(firstDay: string, lastDay: string): string[] {
   const days: string[] = [];
   const end = Date.parse(`${lastDay}T00:00:00Z`);
@@ -155,10 +145,7 @@ function eachDay(firstDay: string, lastDay: string): string[] {
   return days;
 }
 
-/**
- * Page loads and the p75 of LCP, INP, and CLS on each kind of device, most
- * loads first: for the Speed page and the overview, which rates each device.
- */
+/** Used by the Speed page and overview; most measured loads first. */
 export async function speedByDevice(reader: Reader, range: SpeedRange): Promise<Speed["devices"]> {
   const params = new QueryParams();
   const rows = await queryRows<Record<string, unknown>>(
@@ -174,8 +161,8 @@ export async function speedByDevice(reader: Reader, range: SpeedRange): Promise<
 }
 
 /**
- * Whether the project has ever had a measured page load in the environment:
- * whether its pages send Web Vitals at all, within what the project keeps.
+ * Check retained history to distinguish no data in this range from
+ * no Web Vitals received in this environment.
  */
 export async function hasVitals(
   reader: Reader,
@@ -195,7 +182,6 @@ export async function hasVitals(
   return rows.length > 0;
 }
 
-/** The Speed report of a range: four queries, run side by side. */
 export async function speedReport(reader: Reader, range: SpeedRange): Promise<Speed> {
   const summaryParams = new QueryParams();
   const metricColumns = VITAL_NAMES.map((name) => {

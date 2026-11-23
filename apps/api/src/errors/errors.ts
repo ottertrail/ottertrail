@@ -8,9 +8,8 @@ import { ERROR } from "../visits/visits.ts";
 import { type Assignee, assigneesOf } from "./assignments.ts";
 
 /**
- * Error groups: occurrences of an error with one fingerprint
- * (fingerprint.ts), counted in ClickHouse, with their status from
- * PostgreSQL (error_resolutions). See docs/errors.md.
+ * Count fingerprint groups in ClickHouse; read resolutions from PostgreSQL
+ * (error_resolutions; docs/errors.md).
  */
 
 /** A range of whole days in the instance's timezone, in one environment. */
@@ -40,14 +39,10 @@ export interface ErrorGroup {
   /** The type and message of its latest occurrence in the range. */
   type: string;
   message: string;
-  /** In the range. */
   occurrences: number;
   /** Known users (user IDs) who had it, in the range. */
   users: number;
-  /**
-   * Visitors who had it, in the range: daily visitor IDs, as in web
-   * analytics. A server's exceptions have none.
-   */
+  /** Daily visitor IDs, as in web analytics; server exceptions have none. */
   visitors: number;
   /** Its first and latest occurrence in the environment, at any time the project keeps. */
   firstSeen: Date;
@@ -56,11 +51,9 @@ export interface ErrorGroup {
   resolvedAt: Date | null;
   /** The dashboard user who resolved it; null when unknown or not resolved. */
   resolvedBy: string | null;
-  /** Who is on it (assignments.ts); null for nobody. */
   assignee: Assignee | null;
 }
 
-/** The most groups a list reads; the page shows the most recent first. */
 export const MAX_GROUPS = 1000;
 /** Fingerprints per query, so a query's parameters stay small. */
 const CHUNK = 200;
@@ -85,7 +78,6 @@ interface RangeRow {
   visitors: string;
 }
 
-/** The groups seen in the range, with counts for it. */
 async function groupsInRange(
   reader: Reader,
   range: ErrorRange,
@@ -120,8 +112,8 @@ interface Seen {
 }
 
 /**
- * When each group was seen, at any time the project keeps: the bloom filter
- * on the fingerprint skips the parts without it.
+ * Read all retained occurrences; the fingerprint bloom filter skips
+ * parts without the group.
  */
 async function seen(
   reader: Reader,
@@ -162,7 +154,6 @@ async function seen(
   return found;
 }
 
-/** The project's resolutions of these groups, with who resolved each. */
 export async function resolutions(
   db: Kysely<Database>,
   projectId: string,
@@ -186,9 +177,8 @@ export async function resolutions(
 }
 
 /**
- * A group's status from its latest occurrence anywhere and its resolution:
- * regressed when it happened after it was resolved. Alert rules
- * (alerts/error-rules.ts) decide "regressed" with this same rule.
+ * Regressions use the latest occurrence across environments, matching
+ * alerts/error-rules.ts.
  */
 export function statusOf(
   lastSeen: Date,
@@ -212,10 +202,9 @@ async function toGroups(
   ]);
   return rows.map((row) => {
     const time = times.get(row.fingerprint);
-    // Seen in the range, so it has times; the fallback only satisfies the types.
+    // The group has occurrences; the fallback satisfies the type checker.
     const lastSeen = time?.lastSeen ?? range.to;
     const resolution = resolved.get(row.fingerprint);
-    // Seen again anywhere after it was resolved: regressed, in every environment.
     const status = statusOf(time?.lastAnywhere ?? lastSeen, resolution);
     return {
       fingerprint: row.fingerprint,
@@ -235,8 +224,8 @@ async function toGroups(
 }
 
 /**
- * The environments with errors in the range, most first, then the one shown
- * and production even without: the page can always switch back.
+ * Include the selected environment and production even without data,
+ * so the page can switch back.
  */
 export async function errorEnvironments(reader: Reader, range: ErrorRange): Promise<string[]> {
   const params = new QueryParams();
@@ -259,11 +248,8 @@ export async function errorEnvironments(reader: Reader, range: ErrorRange): Prom
 }
 
 /**
- * The groups seen in the range, latest first, with a status filter:
- * "unresolved" (the default) includes regressions, and an assignee
- * filter. The filters apply to
- * the MAX_GROUPS most recently seen groups; `truncated` says when there
- * were more, which a shorter range shows.
+ * Unresolved includes regressions. Apply status and assignee filters to
+ * the MAX_GROUPS most recent groups; truncated means more exist.
  */
 export async function listErrors(
   reader: Reader,
@@ -298,7 +284,7 @@ export interface ErrorDay {
 export interface Occurrence {
   eventId: string;
   occurredAt: Date;
-  /** Its own message: the group's messages differ in the parts the fingerprint ignores. */
+  /** Messages may differ in the parts the fingerprint ignores. */
   message: string;
   handled: boolean;
   path: string;
@@ -311,20 +297,15 @@ export interface Occurrence {
   release: string | null;
   /** The session replay its page sent with it, if any (docs/session-replay.md). */
   replayId: string | null;
-  /**
-   * A server's exception (received over OTLP, docs/telemetry.md): its
-   * service, and the trace and span it happened in. null for a browser's.
-   */
+  /** OTLP service, trace, and span (docs/telemetry.md); null for browser errors. */
   service: string | null;
   traceId: string | null;
   spanId: string | null;
 }
 
-/** Where an occurrence comes from: the tracker in a browser, or a server over OTLP. */
 export type ErrorSource = "browser" | "server";
 
 export interface BreakdownRow {
-  /** null: not known. */
   value: string | null;
   occurrences: number;
 }
@@ -340,19 +321,16 @@ export interface ErrorDetail {
     /** A server's exceptions' services; null for a browser's errors. */
     service: BreakdownRow[];
   };
-  /** The latest occurrences in the range, newest first. */
   occurrences: Occurrence[];
-  /** Where the latest occurrence comes from: its stack is a browser's or a server's. */
+  /** Determines whether to parse the latest stack as browser or server format. */
   source: ErrorSource;
   /** The latest occurrence's stack, as the browser or server wrote it; null without one. */
   stack: string | null;
 }
 
-/** Occurrences the detail lists, and rows per breakdown. */
 export const RECENT_OCCURRENCES = 20;
 export const BREAKDOWN_ROWS = 5;
 
-/** Every day from firstDay to lastDay, both included. */
 function eachDay(firstDay: string, lastDay: string): string[] {
   const days: string[] = [];
   const end = Date.parse(`${lastDay}T00:00:00Z`);
@@ -373,7 +351,7 @@ const BREAKDOWN_COLUMNS = {
 const breakdown = (rows: { value: string | null; occurrences: string }[] | undefined) =>
   (rows ?? []).map((item) => ({ value: item.value, occurrences: count(item.occurrences) }));
 
-/** One group in the range: null when it has no occurrence there. */
+/** Return null if the group has no occurrence in the range. */
 export async function errorDetail(
   reader: Reader,
   db: Kysely<Database>,
@@ -479,16 +457,12 @@ export async function errorDetail(
       traceId: occurrence.trace_id || null,
       spanId: occurrence.span_id || null,
     })),
-    // Only a server's exceptions have a service.
     source: (occurrenceRows[0]?.service ?? "") === "" ? "browser" : "server",
     stack: occurrenceRows[0]?.error_stack || null,
   };
 }
 
-/**
- * Marks a group resolved, by this dashboard user, from now; or unresolved
- * again. Returns the new resolution, or null once unresolved.
- */
+/** Return the resolution, or null after marking unresolved. */
 export async function setResolution(
   db: Kysely<Database>,
   options: { projectId: string; fingerprint: string; resolved: boolean; userId: string },
@@ -518,10 +492,7 @@ export async function setResolution(
   return { resolvedAt: row.resolved_at };
 }
 
-/**
- * Occurrences of every error group in [from, to) of one environment, each
- * once (FINAL): what the overview compares the period with.
- */
+/** Count each occurrence once with FINAL for overview comparisons. */
 export async function countOccurrences(
   reader: Reader,
   scope: { projectId: string; environment: string; from: Date; to: Date },
@@ -556,10 +527,8 @@ export async function hasErrors(
 }
 
 /**
- * Error groups seen in [from, to) of one environment, and those of them
- * first seen there (their first occurrence in the environment, of all the
- * project keeps, is in the range): real counts, not cut at MAX_GROUPS.
- * It reads the environment's errors up to `to`, one row per group.
+ * Count all groups and first-seen groups, without the MAX_GROUPS cap.
+ * First-seen times use retained history in this environment up to `to`.
  */
 export async function countGroups(
   reader: Reader,

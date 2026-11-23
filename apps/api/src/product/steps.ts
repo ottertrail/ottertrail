@@ -3,23 +3,20 @@ import { ENGAGEMENT, ERROR, PAGEVIEW, VITALS } from "../visits/visits.ts";
 import { PRODUCT_EVENT, type PropertyFilter, propertyEquals } from "./events.ts";
 
 /**
- * The tracker's own events: never product events, so an event step of one
- * of these names could never match. A page step stands for a pageview, and
- * errors have their own page.
+ * Tracker events cannot match product-event steps. Page steps represent
+ * pageviews; errors have a separate page.
  */
 export const TRACKER_EVENTS: readonly string[] = [PAGEVIEW, ENGAGEMENT, ERROR, VITALS];
 
 /**
- * Something a visitor or user does: a page viewed, or a product event with
- * an optional property filter. A funnel's step (funnel.ts), and a goal
- * (goals/goals.ts). See docs/product-analytics.md.
+ * Shared by funnels and goals (funnel.ts; goals/goals.ts;
+ * docs/product-analytics.md).
  */
 export type Step =
   | { type: "event"; name: string; filter?: PropertyFilter | undefined }
   | { type: "page"; path: string };
 
-// As collection allows them (collection/routes.ts). Control characters are
-// what they refuse.
+// Match collection limits (collection/routes.ts).
 /* eslint-disable no-control-regex */
 const NAME = /^[^\u0000-\u001F\u007F]{1,200}$/u;
 /** Property names: collection refuses only NUL in them. */
@@ -32,7 +29,6 @@ const PATH = /^\/[^\u0000-\u001F\u007F?#]{0,499}$/u;
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
-/** A step's property filter, or null when it is not one. */
 function filterOf(value: unknown): PropertyFilter | null {
   if (!isRecord(value)) return null;
   const { key, value: wanted } = value;
@@ -44,11 +40,6 @@ function filterOf(value: unknown): PropertyFilter | null {
     : null;
 }
 
-/**
- * A step from parsed JSON, or null when it is not one:
- * {"type":"event","name":"signup","filter":{"key":"plan","value":"team"}}
- * (filter optional) or {"type":"page","path":"/pricing"}.
- */
 export function stepOf(item: unknown): Step | null {
   if (!isRecord(item)) return null;
   if (item.type === "page") {
@@ -70,10 +61,8 @@ export function stepOf(item: unknown): Step | null {
 }
 
 /**
- * SQL true for an event that is this step: a pageview of exactly the path,
- * or a product event of the name, with its filter. Values only through
- * `params`; the columns it reads are name, path, properties, and
- * error_fingerprint.
+ * Pass values through params. Requires name, path, properties, and
+ * error_fingerprint columns.
  */
 export function stepSql(params: QueryParams, step: Step): string {
   if (step.type === "page") {
@@ -84,11 +73,9 @@ export function stepSql(params: QueryParams, step: Step): string {
 }
 
 /**
- * Whether one event could be both steps. ClickHouse's windowFunnel lets one
- * event count for two funnel steps in a row when it matches both, so
- * "/pricing, then /pricing" would always convert: such steps are refused.
- * Two event steps of one name are apart only when both filter one property
- * by different values.
+ * windowFunnel can count one event for adjacent matching steps, making
+ * repeated steps always convert. Reject overlaps; same-name event steps
+ * are separate only with different values for the same property.
  */
 export function stepsOverlap(first: Step, second: Step): boolean {
   if (first.type === "page" && second.type === "page") return first.path === second.path;
