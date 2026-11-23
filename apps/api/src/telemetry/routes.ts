@@ -63,22 +63,6 @@ export const MAX_TELEMETRY_BODY_BYTES = 16 * 1024 * 1024;
 export const MESSAGES_PER_UNIT = 64;
 export const BYTES_PER_UNIT = 2048;
 
-/**
- * Days (UTC) one request's records may fall on: each day is a partition
- * of every table it writes to, so a request spread over many days would
- * make that many parts at once.
- */
-export const MAX_DAYS_PER_REQUEST = 8;
-
-/** The days the rows of the day-partitioned tables fall on. */
-function daysOf(rows: TelemetryRows): number {
-  const days = new Set<string>();
-  for (const table of [rows.spans, rows.logs, rows.metric_points, rows.metric_histograms]) {
-    for (const row of table ?? []) days.add(row.timestamp.slice(0, 10));
-  }
-  return days.size;
-}
-
 /** Requests one process works on at once, by default: each holds its body, decoded, in memory. */
 export const DEFAULT_MAX_IN_FLIGHT = 8;
 /** Of those, one project's at most, by default, so one project's exporters cannot take them all. */
@@ -446,19 +430,13 @@ export const telemetryRoutes: FastifyPluginCallback<TelemetryOptions> = (app, op
               `A request holds at most ${budget.capacity} records. This request contains ${outcome.records}. Send smaller batches.`,
             );
           }
-          const days = daysOf(outcome.rows);
-          if (days > MAX_DAYS_PER_REQUEST) {
-            return invalid(
-              413,
-              `A request may hold records of at most ${MAX_DAYS_PER_REQUEST} days (UTC). This request holds ${days}. Send fewer days at a time.`,
-            );
-          }
           // Each error event is one more row, in the events table: so a
           // span's exceptions cannot multiply rows for free.
+          // Refused records are not charged past the decoding already paid.
           const base =
             Math.max(
               prepaid,
-              outcome.records,
+              signal.stored(outcome.rows),
               Math.ceil((body.length + outcome.sharedBytes) / BYTES_PER_UNIT),
             ) + outcome.errors.length;
           if (base > budget.capacity) return tooLarge(base);

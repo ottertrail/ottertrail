@@ -10,13 +10,14 @@ import { type ClickHouseClient, createClickHouse } from "../src/clickhouse/click
 import type { ProjectKeyCache } from "../src/collection/project-keys.ts";
 import { loadConfig } from "../src/config.ts";
 import { fingerprint } from "../src/errors/fingerprint.ts";
+import { MAX_DAYS_PER_REQUEST } from "../src/telemetry/normalize.ts";
 import {
   LOGS_MESSAGES,
   METRICS_MESSAGES,
   STATUS_MESSAGE,
   TRACE_MESSAGES,
 } from "../src/telemetry/proto/definitions.ts";
-import { MAX_DAYS_PER_REQUEST, telemetryRoutes } from "../src/telemetry/routes.ts";
+import { telemetryRoutes } from "../src/telemetry/routes.ts";
 import { MAX_MESSAGES } from "../src/telemetry/wire.ts";
 import { signedInDashboard } from "./helpers/dashboard.ts";
 import { countEvents, storedEvents } from "./helpers/events.ts";
@@ -698,34 +699,52 @@ describe("bodies", () => {
 });
 
 describe("days", () => {
-  test(`a request's records fall on at most ${MAX_DAYS_PER_REQUEST} days, or none is stored`, async () => {
-    const project = await newProject("Many days");
-    const DAY_MS = 86_400_000;
-    const onDays = (count: number) =>
-      protobufTraces(
-        Array.from({ length: count }, (_, day) => {
-          const start = nowNs(-day * DAY_MS - 60_000);
-          return protobufSpan(randomHex(16), randomHex(8), {
-            startTimeUnixNano: String(start),
-            endTimeUnixNano: String(start + 1_000_000n),
-          });
-        }),
+  test(`a request's records past its first ${MAX_DAYS_PER_REQUEST} days are refused in partial_success, and not charged`, async () => {
+    const app = buildApp({
+      db: dashboard.db,
+      telemetry: {
+        clickhouse: dashboard.reader.client,
+        projectLimit: { capacity: 32, refillPerSecond: 0.001 },
+      },
+    });
+    try {
+      const project = await newProject("Many days");
+      const DAY_MS = 86_400_000;
+      const onDay = (day: number) => {
+        const start = nowNs(-day * DAY_MS - 60_000);
+        return protobufSpan(randomHex(16), randomHex(8), {
+          startTimeUnixNano: String(start),
+          endTimeUnixNano: String(start + 1_000_000n),
+        });
+      };
+      // One span on each of the first 8 days, then 20 on a ninth.
+      const spans = [
+        ...Array.from({ length: MAX_DAYS_PER_REQUEST }, (_, day) => onDay(day)),
+        ...Array.from({ length: 20 }, () => onDay(MAX_DAYS_PER_REQUEST)),
+      ];
+      const response = await post("/v1/traces", protobufTraces(spans), {
+        key: project.secretKey,
+        app,
+      });
+      expect(response.statusCode).toBe(200);
+      expect(decodeResponse(TRACE_MESSAGES.response, response.rawPayload)).toEqual({
+        partialSuccess: {
+          rejectedSpans: 20,
+          errorMessage: `20 of 28 spans refused: records past the first ${MAX_DAYS_PER_REQUEST} days (UTC) of the request: send other days apart.`,
+        },
+      });
+      expect(await storedRows(dashboard.reader.client, "spans", project.id)).toHaveLength(
+        MAX_DAYS_PER_REQUEST,
       );
-    const tooMany = await post("/v1/traces", onDays(MAX_DAYS_PER_REQUEST + 1), {
-      key: project.secretKey,
-    });
-    expect(tooMany.statusCode).toBe(413);
-    expect(statusOf(tooMany.rawPayload).message).toBe(
-      `A request may hold records of at most ${MAX_DAYS_PER_REQUEST} days (UTC). This request holds ${MAX_DAYS_PER_REQUEST + 1}. Send fewer days at a time.`,
-    );
-    expect(await storedRows(dashboard.reader.client, "spans", project.id)).toEqual([]);
-    const fits = await post("/v1/traces", onDays(MAX_DAYS_PER_REQUEST), {
-      key: project.secretKey,
-    });
-    expect(fits.statusCode).toBe(200);
-    expect(await storedRows(dashboard.reader.client, "spans", project.id)).toHaveLength(
-      MAX_DAYS_PER_REQUEST,
-    );
+      // Charged for the 8 stored, so 22 more fit in the budget of 32.
+      const more = Array.from({ length: 22 }, () => onDay(0));
+      expect(
+        (await post("/v1/traces", protobufTraces(more), { key: project.secretKey, app }))
+          .statusCode,
+      ).toBe(200);
+    } finally {
+      await app.close();
+    }
   });
 });
 
