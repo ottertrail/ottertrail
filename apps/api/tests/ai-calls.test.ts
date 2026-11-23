@@ -374,7 +374,7 @@ describe("detection", () => {
     },
   );
 
-  test("a span's output holds its reasoning unless its provider counts it apart (Gemini)", () => {
+  test("a span's output holds its reasoning, whatever the provider, as instrumentations count it", () => {
     const now = nowNs();
     const spanOf = (provider: string, model: string) => ({
       traceId: hex(16),
@@ -409,9 +409,10 @@ describe("detection", () => {
       },
       { projectId: "0b0e5f1e-8a4e-4e43-9b0a-1f0c5d3e7a11", receivedAtNs: now, retentionDays: 30 },
     );
+    // OpenLLMetry's Gemini instrumentations and the Vercel AI SDK add the thoughts in.
     expect(aiCallsOf(rows).map((call) => call.output_includes_reasoning)).toEqual([
-      false,
-      false,
+      true,
+      true,
       true,
       true,
     ]);

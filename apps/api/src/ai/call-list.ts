@@ -462,7 +462,7 @@ interface ConversationRow {
 const CONVERSATION_COLUMNS = `
   toString(toUnixTimestamp64Nano(min(timestamp))) AS first_ns,
   toString(toUnixTimestamp64Nano(max(timestamp))) AS last_ns,
-  count() AS calls, sum(all_input_tokens) AS all_input, sum(output_tokens) AS output_tokens,
+  count() AS calls, sum(all_input_tokens) AS all_input, sum(all_output_tokens) AS output_tokens,
   sum(cost) AS cost, countIf(NOT priced) AS no_price, sum(duration_ns) AS duration_ns,
   countIf(failed) AS failed`;
 

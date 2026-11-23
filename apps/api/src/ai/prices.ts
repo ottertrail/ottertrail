@@ -418,7 +418,8 @@ const timelineAt = (froms: string, slots: string) =>
  * slot that prices it (0: none), `cost`, its estimated cost in US dollars
  * (0 without a price), `priced`, whether it has one, and
  * `all_input_tokens`, its input with the cached tokens, however the call
- * counted them (the cache-read share's whole). The prices go in
+ * counted them (the cache-read share's whole), and `all_output_tokens`,
+ * its output with the reasoning tokens, however it counted them. The prices go in
  * as query parameters, never as SQL text. A sum of these is the cost of
  * the calls summed.
  *
@@ -470,5 +471,6 @@ export function pricedColumns(params: QueryParams, book: PriceBook = BUNDLED_BOO
       / 1000000 AS cost,
     price_entry > 0 AS priced,
     if(input_includes_cache, input_tokens,
-      input_tokens + cache_read_tokens + cache_write_tokens) AS all_input_tokens`;
+      input_tokens + cache_read_tokens + cache_write_tokens) AS all_input_tokens,
+    output_tokens + if(output_includes_reasoning, 0, reasoning_tokens) AS all_output_tokens`;
 }

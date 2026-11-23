@@ -134,12 +134,13 @@ export interface AiTotals {
 }
 
 /**
- * The input summed is all of it, cached tokens included, whichever way each
- * call counted them (all_input_tokens, prices.ts): a call that counts them
- * apart and one that counts them in add up alike.
+ * The input summed is all of it, cached tokens included, and the output
+ * all of it, reasoning included, whichever way each call counted them
+ * (all_input_tokens and all_output_tokens, prices.ts): a call that counts
+ * them apart and one that counts them in add up alike, as their cost does.
  */
 const SUMS = `count() AS calls,
-  sum(all_input_tokens) AS all_input, sum(output_tokens) AS output_tokens,
+  sum(all_input_tokens) AS all_input, sum(all_output_tokens) AS output_tokens,
   sum(cache_read_tokens) AS cache_read_tokens, sum(cache_write_tokens) AS cache_write_tokens,
   sum(reasoning_tokens) AS reasoning_tokens, sum(cost) AS cost,
   countIf(failed) AS failed, countIf(NOT priced) AS no_price`;
@@ -671,7 +672,7 @@ export async function aiChart(
     target.costUsd[index] = calls === 0 ? 0 : row.cost;
     target.p95Ms[index] = calls === 0 ? null : ms(row.p95);
   };
-  const columns = `count() AS calls, sum(all_input_tokens + output_tokens) AS tokens, sum(cost) AS cost,
+  const columns = `count() AS calls, sum(all_input_tokens + all_output_tokens) AS tokens, sum(cost) AS cost,
     quantileTDigest(0.95)(duration_ns) AS p95`;
 
   const totalParams = new QueryParams();

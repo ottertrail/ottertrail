@@ -280,6 +280,11 @@ describe("POST /api/ai-calls", () => {
       [aiCall({ ...thinking, provider: "gcp.gemini", model: "gemini-2.5-flash" }), false],
       [aiCall({ ...thinking, provider: "gcp.vertex_ai", model: "gemini-2.5-pro" }), false],
       [aiCall({ ...thinking, provider: "gcp.vertex_ai", model: "claude-sonnet-4-6" }), true],
+      [aiCall({ ...thinking, provider: "google", model: "gemini-2.5-flash" }), false],
+      [aiCall({ ...thinking, provider: "gemini", model: "gemini-2.5-flash" }), false],
+      // The Vercel AI SDK's Google providers add the thoughts into outputTokens.
+      [aiCall({ ...thinking, provider: "google.generative-ai", model: "gemini-2.5-flash" }), true],
+      [aiCall({ ...thinking, provider: "google.vertex.chat", model: "gemini-2.5-pro" }), true],
       [aiCall({ ...thinking, provider: "openai", outputIncludesReasoning: false }), false],
       [
         aiCall({

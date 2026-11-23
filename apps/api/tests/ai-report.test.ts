@@ -462,9 +462,14 @@ describe("the price table", () => {
       format: "JSONEachRow",
     });
     const params = new QueryParams();
-    const rows = await queryRows<{ id: string; cost: number; priced: boolean | number }>(
+    const rows = await queryRows<{
+      id: string;
+      cost: number;
+      priced: boolean | number;
+      all_output_tokens: string;
+    }>(
       dashboard.reader,
-      `SELECT id, cost, priced FROM (SELECT *, ${pricedColumns(params, priceBookOf([], table))} FROM ai_calls
+      `SELECT id, cost, priced, all_output_tokens FROM (SELECT *, ${pricedColumns(params, priceBookOf([], table))} FROM ai_calls
        WHERE project_id = ${params.add(project, "UUID")}) ORDER BY id`,
       params,
     );
@@ -493,6 +498,10 @@ describe("the price table", () => {
       expect.closeTo((200 * 8) / 1e6, 12),
     ]);
     expect(costOf(a as ModelPrice, apart)).toBeCloseTo((1000 * 2 + 500 * 0.5) / 1e6, 12);
+    // The output added up holds the reasoning a call counted apart, as its cost does.
+    expect(
+      rows.filter((item) => ["g", "h"].includes(item.id)).map((item) => item.all_output_tokens),
+    ).toEqual(["5200", "200"]);
     expect(costOf(a as ModelPrice, exclusive)).toBeCloseTo(
       (100_000 * 2 + 400_000 * 0.5 + 100_000 * 2 + 1000 * 8) / 1e6,
       9,

@@ -255,21 +255,25 @@ export function isAiCall(attributes: Record<string, string>): boolean {
   );
 }
 
+/** Names for Gemini's own API, whose counts a call sent over HTTP may copy. */
+const GEMINI_API_PROVIDERS = new Set(["gcp.gemini", "gcp.gen_ai", "gemini", "google"]);
+const VERTEX_PROVIDERS = new Set(["gcp.vertex_ai", "vertex_ai"]);
+
 /**
- * Whether a provider's own API counts reasoning tokens in the output, for
- * a call that does not say: OpenAI's (`completion_tokens` holds
- * `completion_tokens_details.reasoning_tokens`) and Anthropic's
- * (`output_tokens` holds the thinking) do; Gemini's counts its thoughts
- * apart (`thoughtsTokenCount` beside `candidatesTokenCount`), on Vertex AI
- * too, and bills them as output. Every other provider: counted in, as the
- * GenAI conventions count reasoning in the output.
+ * Whether a call sent over HTTP that does not say counts reasoning tokens
+ * in its output, by the provider whose counts it copies: OpenAI's API
+ * (`completion_tokens` holds `completion_tokens_details.reasoning_tokens`)
+ * and Anthropic's (`output_tokens` holds the thinking) do; Gemini's counts
+ * its thoughts apart (`thoughtsTokenCount` beside `candidatesTokenCount`),
+ * on Vertex AI too, and bills them as output. The Vercel AI SDK's Google
+ * providers (`google.generative-ai`, `google.vertex…`) add the thoughts
+ * into `outputTokens`, as every other provider is taken to.
  */
 export function outputIncludesReasoningByDefault(provider: string, model: string): boolean {
   const name = provider.toLowerCase();
-  if (name === "gcp.gemini" || name === "gcp.gen_ai" || name === "gemini") return false;
-  if (name === "gcp.vertex_ai" || name === "vertex_ai") {
-    return !model.toLowerCase().includes("gemini");
-  }
+  const gemini = model.toLowerCase().includes("gemini");
+  if (GEMINI_API_PROVIDERS.has(name)) return name === "google" ? !gemini : false;
+  if (VERTEX_PROVIDERS.has(name)) return !gemini;
   return true;
 }
 
@@ -305,8 +309,10 @@ export function aiCallOf(span: SpanRow): AiCallRow | null {
     input_tokens: input,
     input_includes_cache: inputIncludesCache(true, input, cacheRead, cacheWrite),
     output_tokens: count(AI_ATTRIBUTES.outputTokens),
-    // Spans have no attribute that says: by the provider, as its instrumentation copies its counts.
-    output_includes_reasoning: outputIncludesReasoningByDefault(provider, model),
+    // As the GenAI conventions count it, and Gemini's instrumentations
+    // do (OpenLLMetry and the Vercel AI SDK add the thoughts in; the
+    // OpenTelemetry Vertex AI one reports no reasoning at all).
+    output_includes_reasoning: true,
     cache_read_tokens: cacheRead,
     cache_write_tokens: cacheWrite,
     reasoning_tokens: count(AI_ATTRIBUTES.reasoningTokens),
