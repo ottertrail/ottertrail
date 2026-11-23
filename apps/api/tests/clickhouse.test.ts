@@ -316,7 +316,12 @@ describe("ai_calls keyed by day (migration 0012)", () => {
         values: [call("a", { input_tokens: 10 }), call("b")],
         format: "JSONEachRow",
       });
-      await migrateClickHouse(admin, scratch);
+      // Up to 0012 only: rerun below, after a later migration it would drop that one's columns.
+      await migrateClickHouse(
+        admin,
+        scratch,
+        CLICKHOUSE_MIGRATIONS.filter((migration) => migration.name < "0013"),
+      );
       const copied = [
         {
           id: "a",
@@ -359,6 +364,17 @@ describe("ai_calls keyed by day (migration 0012)", () => {
         format: "JSONEachRow",
       });
       expect(await rows()).toHaveLength(2);
+
+      // The later migrations, then: 0014's column, true for the calls already stored.
+      await migrateClickHouse(admin, scratch);
+      const reasoning = await admin.query({
+        query: `SELECT id, output_includes_reasoning FROM ${scratch}.ai_calls FINAL ORDER BY id`,
+        format: "JSONEachRow",
+      });
+      expect(await reasoning.json()).toEqual([
+        { id: "a", output_includes_reasoning: true },
+        { id: "b", output_includes_reasoning: true },
+      ]);
     } finally {
       await admin.command({ query: `DROP DATABASE IF EXISTS ${scratch}` });
       await admin.close();
