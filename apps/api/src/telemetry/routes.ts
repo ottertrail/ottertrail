@@ -15,6 +15,7 @@ import {
   type RateLimit,
   TELEMETRY_INSTANCE_LIMIT,
   TELEMETRY_PROJECT_LIMIT,
+  clientKey,
   TokenBucketLimiter,
 } from "../collection/rate-limiter.ts";
 import { DEFAULT_SERVER_IP_LIMIT } from "../collection/server-events.ts";
@@ -196,8 +197,8 @@ function fail(
  * one: these come from servers.
  *
  * Before the body is read: the key's form, the address's rate, the
- * encoding, how many requests this process and the key's project
- * have in progress, and the key itself. Then the body is unpacked (at most
+ * encoding, the key itself, and how many requests this process and the
+ * key's project have in progress. Then the body is unpacked (at most
  * 16 MiB), and its messages counted without decoding (at most
  * MAX_MESSAGES), which pays the budgets for decoding it. Then it is decoded
  * and turned into rows; records the tables cannot take are refused and
@@ -277,7 +278,7 @@ export const telemetryRoutes: FastifyPluginCallback<TelemetryOptions> = (app, op
     if (secretKey === undefined) {
       return fail(request, reply, 401, "Send the project's secret key: Authorization: Bearer sk_…");
     }
-    const allowed = ipLimiter.take(request.ip);
+    const allowed = ipLimiter.take(clientKey(request.ip));
     if (!allowed.allowed) {
       return fail(
         request,
@@ -299,9 +300,8 @@ export const telemetryRoutes: FastifyPluginCallback<TelemetryOptions> = (app, op
     if (contentEncoding !== "gzip" && contentEncoding !== "identity") {
       return fail(request, reply, 415, "Send the body as it is, or with Content-Encoding: gzip.");
     }
-    if (!inFlight.take(request, reply)) {
-      return fail(request, reply, 503, "Too many requests are in progress. Try again shortly.", 1);
-    }
+    // The key is looked up before a slot is taken, so lookups of made-up
+    // keys cannot hold the slots real requests need.
     let project;
     try {
       project = await projects.findBySecret(secretKey);
@@ -311,6 +311,9 @@ export const telemetryRoutes: FastifyPluginCallback<TelemetryOptions> = (app, op
     }
     if (project === null) {
       return fail(request, reply, 401, "No project has this secret key.");
+    }
+    if (!inFlight.take(request, reply)) {
+      return fail(request, reply, 503, "Too many requests are in progress. Try again shortly.", 1);
     }
     if (!inFlight.takeForProject(request, project.id)) {
       count(request, "refused_rate_limited", 0, project);

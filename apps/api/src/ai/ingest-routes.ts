@@ -181,8 +181,8 @@ export interface AiCallIngestOptions {
  * AI page and the alert rules read them unchanged.
  *
  * As OTLP's (telemetry/routes.ts), before the body is read: the secret
- * key's form, the address's rate, the requests in progress, and the key's
- * project (cached, unknown keys too). Then, as server events
+ * key's form, the address's rate, the key's project (cached, unknown keys
+ * too), and the requests in progress. Then, as server events
  * (collection/server-events.ts): a schema check, the server's clock trusted (5 minutes
  * ahead at most; over a day old counted, not stored), and 202 only once
  * ClickHouse has written the calls, 503 while it cannot. Each call is a
@@ -250,8 +250,8 @@ export const aiCallIngestRoutes: FastifyPluginCallback<AiCallIngestOptions> = (
       bodyLimit: MAX_AI_CALLS_BODY_BYTES,
       schema: { body: batchSchema },
       // Before the body is read, as OTLP's (telemetry/routes.ts): the key's
-      // form, the address's rate, the requests in progress, and the key
-      // itself (cached, unknown keys too), so a request that cannot be
+      // form, the address's rate, the key itself (cached, unknown keys
+      // too), and the requests in progress, so a request that cannot be
       // stored is never read or parsed.
       onRequest: async (request, reply) => {
         const secretKey = BEARER.exec(request.headers.authorization ?? "")?.[1];
@@ -269,12 +269,7 @@ export const aiCallIngestRoutes: FastifyPluginCallback<AiCallIngestOptions> = (
             .header("retry-after", String(result.retryAfterSeconds))
             .send(problem("rate_limited", "Too many requests from this address."));
         }
-        if (!inFlight.take(request, reply)) {
-          return reply
-            .code(503)
-            .header("retry-after", "1")
-            .send(problem("busy", "Too many requests are in progress. Try again shortly."));
-        }
+        // As OTLP's: the key before a slot, so made-up keys hold none.
         let project;
         try {
           project = await projects.findBySecret(secretKey);
@@ -284,6 +279,12 @@ export const aiCallIngestRoutes: FastifyPluginCallback<AiCallIngestOptions> = (
         }
         if (project === null) {
           return reply.code(401).send(problem("unknown_key", "No project has this secret key."));
+        }
+        if (!inFlight.take(request, reply)) {
+          return reply
+            .code(503)
+            .header("retry-after", "1")
+            .send(problem("busy", "Too many requests are in progress. Try again shortly."));
         }
         if (!inFlight.takeForProject(request, project.id)) {
           count(request, "refused_rate_limited", 0, project);

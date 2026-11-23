@@ -1,13 +1,17 @@
 import { randomBytes, randomUUID } from "node:crypto";
 
+import Fastify from "fastify";
 import { afterAll, beforeAll, describe, expect, test } from "vite-plus/test";
 
-import { MAX_AI_CALLS_PER_BATCH } from "../src/ai/ingest-routes.ts";
+import type { IngestActivity } from "../src/activity/activity.ts";
+import { aiCallIngestRoutes, MAX_AI_CALLS_PER_BATCH } from "../src/ai/ingest-routes.ts";
 import { evaluateTelemetryRule, telemetryRules } from "../src/alerts/telemetry-rules.ts";
 import { buildApp } from "../src/app.ts";
 import { type ClickHouseClient, createClickHouse } from "../src/clickhouse/clickhouse.ts";
+import type { ProjectKeyCache } from "../src/collection/project-keys.ts";
 import { loadConfig } from "../src/config.ts";
 import { createDatabase } from "../src/db/database.ts";
+import { telemetryBudget } from "../src/telemetry/routes.ts";
 import { PUBLIC_URL, signedInDashboard } from "./helpers/dashboard.ts";
 import { hangingUpClient } from "./helpers/hang-up.ts";
 import { insertProject } from "./helpers/projects.ts";
@@ -563,6 +567,44 @@ describe("limits", () => {
       waiting[2]?.();
       expect((await after).statusCode).toBe(202);
     } finally {
+      await app.close();
+    }
+  });
+
+  test("a key is looked up before it takes a slot: made-up keys being looked up hold none", async () => {
+    let open!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      open = resolve;
+    });
+    let lookups = 0;
+    const real = `sk_${"a".repeat(32)}`;
+    // Any other key's lookup waits for the gate, as a cache miss waits for the database.
+    const projects = {
+      findBySecret: async (key: string) => {
+        lookups += 1;
+        if (key === real) return { id: "0b0e5f1e-8a4e-4e43-9b0a-1f0c5d3e7a11" };
+        await gate;
+        return null;
+      },
+    } as unknown as ProjectKeyCache;
+    const app = Fastify();
+    await app.register(aiCallIngestRoutes, {
+      prefix: "/api",
+      clickhouse: { insert: async () => {} } as unknown as ClickHouseClient,
+      projects,
+      activity: { add: () => {} } as unknown as IngestActivity,
+      budget: telemetryBudget({}),
+      maxInFlight: 1,
+    });
+    try {
+      const body = { v: 1, calls: [aiCall()] };
+      const madeUp = send(body, { authorization: `Bearer sk_${"b".repeat(32)}` }, app);
+      await expect.poll(() => lookups).toBe(1);
+      expect((await send(body, { authorization: `Bearer ${real}` }, app)).statusCode).toBe(202);
+      open();
+      expect((await madeUp).statusCode).toBe(401);
+    } finally {
+      open();
       await app.close();
     }
   });

@@ -1,10 +1,13 @@
 import { randomBytes } from "node:crypto";
 import { gzipSync } from "node:zlib";
 
+import Fastify from "fastify";
 import { afterAll, beforeAll, describe, expect, test } from "vite-plus/test";
 
+import type { IngestActivity } from "../src/activity/activity.ts";
 import { buildApp } from "../src/app.ts";
 import { type ClickHouseClient, createClickHouse } from "../src/clickhouse/clickhouse.ts";
+import type { ProjectKeyCache } from "../src/collection/project-keys.ts";
 import { loadConfig } from "../src/config.ts";
 import { fingerprint } from "../src/errors/fingerprint.ts";
 import {
@@ -13,6 +16,7 @@ import {
   STATUS_MESSAGE,
   TRACE_MESSAGES,
 } from "../src/telemetry/proto/definitions.ts";
+import { telemetryRoutes } from "../src/telemetry/routes.ts";
 import { MAX_MESSAGES } from "../src/telemetry/wire.ts";
 import { signedInDashboard } from "./helpers/dashboard.ts";
 import { countEvents, storedEvents } from "./helpers/events.ts";
@@ -842,6 +846,69 @@ describe("budgets by size", () => {
 });
 
 describe("requests in progress", () => {
+  test("a key is looked up before it takes a slot: made-up keys being looked up hold none", async () => {
+    let open!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      open = resolve;
+    });
+    let lookups = 0;
+    const real = `sk_${"a".repeat(32)}`;
+    // Any other key's lookup waits for the gate, as a cache miss waits for the database.
+    const projects = {
+      findBySecret: async (key: string) => {
+        lookups += 1;
+        if (key === real) return { id: "0b0e5f1e-8a4e-4e43-9b0a-1f0c5d3e7a11" };
+        await gate;
+        return null;
+      },
+    } as unknown as ProjectKeyCache;
+    const app = Fastify();
+    await app.register(telemetryRoutes, {
+      clickhouse: { insert: async () => {} } as unknown as ClickHouseClient,
+      projects,
+      activity: { add: () => {} } as unknown as IngestActivity,
+      retentionDays: 30,
+      maxInFlight: 1,
+    });
+    try {
+      const body = protobufTraces([protobufSpan(randomHex(16), randomHex(8))]);
+      const madeUp = post("/v1/traces", body, { key: `sk_${"b".repeat(32)}`, app });
+      await expect.poll(() => lookups).toBe(1);
+      expect((await post("/v1/traces", body, { key: real, app })).statusCode).toBe(200);
+      open();
+      expect((await madeUp).statusCode).toBe(401);
+    } finally {
+      open();
+      await app.close();
+    }
+  });
+
+  test("an address's rate counts an IPv6 address by its /64", async () => {
+    const app = buildApp({
+      db: dashboard.db,
+      telemetry: {
+        clickhouse: dashboard.reader.client,
+        ipLimit: { capacity: 2, refillPerSecond: 0.001 },
+      },
+    });
+    try {
+      const from = (remoteAddress: string) =>
+        app.inject({
+          method: "POST",
+          url: "/v1/traces",
+          remoteAddress,
+          headers: { "content-type": PROTOBUF, authorization: `Bearer sk_${"0".repeat(32)}` },
+          payload: protobufTraces([]),
+        });
+      expect((await from("2001:db8:1:2::1")).statusCode).toBe(401);
+      expect((await from("2001:db8:1:2::2")).statusCode).toBe(401);
+      expect((await from("2001:db8:1:2:ffff::9")).statusCode).toBe(429);
+      expect((await from("2001:db8:1:3::1")).statusCode).toBe(401);
+    } finally {
+      await app.close();
+    }
+  });
+
   test("503 past the process's limit, 429 past one project's, each given back with its answer", async () => {
     let open!: () => void;
     const gate = new Promise<void>((resolve) => {
