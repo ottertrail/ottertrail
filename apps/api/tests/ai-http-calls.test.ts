@@ -371,8 +371,6 @@ describe("POST /api/ai-calls", () => {
     [{ model: "gpt-4o\u200b" }, "a model with a zero-width space"],
     [{ model: "gpt\ue000" }, "a model with a private-use character"],
     [{ operation: "chat\u2028" }, "an operation with a line separator"],
-    [{ errorType: "Rate  limit" }, "an error type with two spaces in a row"],
-    [{ errorType: " Timeout" }, "an error type starting with a space"],
     [{ errorType: "Rate\tlimit" }, "an error type with a tab"],
     [{ errorType: "Rate\u2028limit" }, "an error type with a line separator"],
     [{ errorType: "E\u202e" }, "an error type with a bidi override"],
@@ -411,8 +409,9 @@ describe("POST /api/ai-calls", () => {
     });
     const choices = aiCall({ finishReasons: Array.from({ length: 16 }, () => "stop") });
     const failed = aiCall({ errorType: "Too Many Requests" });
+    const untidy = aiCall({ errorType: " Rate   limit  " });
     const response = await send(
-      { v: 1, calls: [gemini, choices, failed] },
+      { v: 1, calls: [gemini, choices, failed, untidy] },
       { authorization: `Bearer ${project.key}` },
     );
     expect(response.statusCode).toBe(202);
@@ -420,6 +419,7 @@ describe("POST /api/ai-calls", () => {
     expect(rows.get(gemini.id)).toMatchObject({ output_tokens: "12", reasoning_tokens: "900" });
     expect(rows.get(choices.id)?.finish_reasons).toHaveLength(16);
     expect(rows.get(failed.id)).toMatchObject({ failed: true, error_type: "Too Many Requests" });
+    expect(rows.get(untidy.id)?.error_type).toBe("Rate limit");
   });
 
   test("takes JSON types as sent: null is never false, nor text a number", async () => {

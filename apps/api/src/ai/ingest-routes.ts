@@ -393,9 +393,19 @@ export const aiCallIngestRoutes: FastifyPluginCallback<AiCallIngestOptions> = (
       // Before the schema, which would coerce what was sent.
       preValidation: async (request, reply) => {
         const found = typeProblem(request.body, batchSchema, "");
-        if (found === null) return undefined;
-        count(request, "refused_invalid");
-        return reply.code(400).send(problem("invalid_request", found));
+        if (found !== null) {
+          count(request, "refused_invalid");
+          return reply.code(400).send(problem("invalid_request", found));
+        }
+        // An error type's spaces at the ends, or several in a row, are a
+        // sender's slip: tidied, not refused. Other whitespace still is.
+        const { calls } = request.body as Partial<HttpAiBatch>;
+        for (const call of Array.isArray(calls) ? calls : []) {
+          if (typeof call?.errorType === "string") {
+            call.errorType = call.errorType.replaceAll(/ {2,}/g, " ").trim();
+          }
+        }
+        return undefined;
       },
       onResponse: inFlight.finished,
       onRequestAbort: inFlight.finished,
