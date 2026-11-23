@@ -1065,6 +1065,35 @@ describe("open on your site", () => {
       .toBe(`http://localhost:3000/pricing#ottertrail-heatmap=${OVERLAY_TOKEN}`);
   });
 
+  test("the site list keeps one width, its longest hostname's, and shows every hostname whole", async () => {
+    installFakeApi({
+      heatmap: (query) => ({
+        ...fakeHeatmap(query),
+        siteHostnames: ["demo-shop.example", "www.demo-shop.example", "staging.demo-shop.example"],
+      }),
+    });
+    stubOpen();
+    renderApp(`${HEATMAPS}?path=%2Fpricing`);
+    await expect.element(ready()).toBeVisible();
+    const site = page.getByRole("combobox", { name: "Site" });
+    await expect.element(site).toMatchTextContent(/demo-shop\.example/);
+    const width = () => site.element().getBoundingClientRect().width;
+    const cut = (element: Element) => element.scrollWidth > element.clientWidth;
+    const shown = () => site.element().querySelector("[data-truncated-text]");
+    const before = width();
+    await site.click();
+    await expect
+      .element(page.getByRole("option", { name: "staging.demo-shop.example" }))
+      .toBeVisible();
+    const list = document.querySelector("[data-slot=select-content]");
+    expect(list === null ? true : cut(list)).toBe(false);
+    await page.getByRole("option", { name: "staging.demo-shop.example" }).click();
+    await expect.element(site).toMatchTextContent(/staging\.demo-shop\.example/);
+    expect(width()).toBe(before);
+    const value = shown();
+    expect(value === null ? true : cut(value)).toBe(false);
+  });
+
   test("without a hostname, says what to add and where; only those who may change settings get the link", async () => {
     installFakeApi({ heatmap: noHostnames });
     renderApp(HEATMAPS);

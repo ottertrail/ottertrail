@@ -2,6 +2,7 @@ import { ExternalLinkIcon } from "lucide-react";
 import * as React from "react";
 
 import { ButtonLink } from "@/components/button-link";
+import { TruncatedText } from "@/components/truncated-text";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -120,8 +121,23 @@ export function OpenOnSite({
               if (typeof value === "string") setChosenHost(value);
             }}
           >
-            <SelectTrigger aria-label="Site" size="sm" className="max-w-56">
-              <SelectValue />
+            <SelectTrigger aria-label="Site" size="sm" className="max-w-72">
+              {/* As wide as the longest hostname, whichever is chosen: hidden
+                  copies of them all share the value's grid cell. */}
+              <span className="grid min-w-0 flex-1">
+                {hostnames.map((item) => (
+                  <span
+                    key={item}
+                    aria-hidden="true"
+                    className="invisible col-start-1 row-start-1 h-0 overflow-hidden whitespace-nowrap"
+                  >
+                    {item}
+                  </span>
+                ))}
+                <SelectValue className="col-start-1 row-start-1 min-w-0">
+                  {(value: string) => <TruncatedText text={value} />}
+                </SelectValue>
+              </span>
             </SelectTrigger>
             <SelectContent>
               {hostnames.map((item) => (
