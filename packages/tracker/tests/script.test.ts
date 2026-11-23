@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vite-plus/tes
 
 import { ENGAGEMENT, MAX_ENGAGED_MS } from "../src/engagement.ts";
 import { HEATMAP_PROPERTY, type HeatmapCapture, type HeatmapConfig } from "../src/heatmap-names.ts";
-import { type OverlayConfig, OVERLAY_PROPERTY } from "../src/overlay-names.ts";
+import { type OverlayConfig, type OverlayHandoff, OVERLAY_PROPERTY } from "../src/overlay-names.ts";
 import { type Recorder, REPLAY_PROPERTY, type ReplayConfig } from "../src/replay-names.ts";
 import type { QueuedEvent } from "../src/tracker.ts";
 import { RECORD_PROPERTY } from "../src/vital-names.ts";
@@ -1434,10 +1434,29 @@ describe("heatmaps", () => {
   });
 });
 
-const configOf = (page: ReturnType<typeof fakePage>) =>
-  page.added.find((element) => String(element.src).endsWith("/o.js"))?.[
-    OVERLAY_PROPERTY
-  ] as OverlayConfig;
+/** o.js's element, and the handoff the tracker put on it. */
+const handoffOf = (page: ReturnType<typeof fakePage>) => {
+  const script = page.added.find((element) => String(element.src).endsWith("/o.js"));
+  return { script, handoff: script?.[OVERLAY_PROPERTY] as OverlayHandoff };
+};
+
+const taken = new WeakMap<object, OverlayConfig>();
+/** The config, as o.js takes it while it runs: once, then kept for the test. */
+function configOf(page: ReturnType<typeof fakePage>): OverlayConfig {
+  const known = taken.get(page);
+  if (known !== undefined) return known;
+  const { script, handoff } = handoffOf(page);
+  const tag = page.document.currentScript;
+  Reflect.set(page.document, "currentScript", script);
+  try {
+    const config = handoff();
+    if (config === undefined) throw new Error("o.js got no config");
+    taken.set(page, config);
+    return config;
+  } finally {
+    Reflect.set(page.document, "currentScript", tag);
+  }
+}
 
 /** Hides the page, which sends what is waiting, and lets beacons arrive. */
 async function leave(page: ReturnType<typeof fakePage>) {
@@ -1470,12 +1489,21 @@ describe("the heatmap overlay", () => {
         nonce: "abc123",
       }),
     ]);
+    // Not on the element: a function that gives it to o.js only, as it runs, once.
+    const { script, handoff } = handoffOf(page);
+    expect(typeof handoff).toBe("function");
+    expect(JSON.stringify(script)).not.toContain(TOKEN);
+    expect(handoff()).toBeUndefined();
     expect(configOf(page)).toEqual({
       host: "https://analytics.example.com",
       token: TOKEN,
       environment: "staging",
       settled: expect.any(Function),
+      fetch: expect.any(Function),
     });
+    Reflect.set(page.document, "currentScript", script);
+    expect(handoff()).toBeUndefined();
+    Reflect.set(page.document, "currentScript", undefined);
     page.window.ottertrail?.track("signup");
     await vi.advanceTimersByTimeAsync(4000);
     await page.settle();

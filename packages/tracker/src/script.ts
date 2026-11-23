@@ -19,7 +19,7 @@ import {
   HEATMAP_PROPERTY,
 } from "./heatmap-names.ts";
 import { watchNavigation } from "./navigation.ts";
-import { type OverlayConfig, OVERLAY_PROPERTY } from "./overlay-names.ts";
+import { type OverlayConfig, type OverlayHandoff, OVERLAY_PROPERTY } from "./overlay-names.ts";
 import { randomId } from "./random-id.ts";
 import { type Recorder, REPLAY_PROPERTY, type ReplayConfig } from "./replay-names.ts";
 import { cleanSignature, cleanUserId } from "./sanitize.ts";
@@ -220,13 +220,22 @@ const REAL = Symbol.for("ottertrail.tracker");
         if (document.visibilityState === "hidden") unpause(false);
       });
       if (beside) {
-        const config: OverlayConfig = {
+        // Never on the element: a page script watching the DOM could read it there.
+        let config: OverlayConfig | undefined = {
           host,
           token: overlay[1] ?? "",
           environment,
           settled: settle,
+          ...(typeof fetch === "function" ? { fetch: fetch.bind(window) } : {}),
         };
-        load("o.js", OVERLAY_PROPERTY, config)?.addEventListener("error", () => settle(false));
+        const handoff: OverlayHandoff = () => {
+          if (added === undefined || document.currentScript !== added) return undefined;
+          const given = config;
+          config = undefined;
+          return given;
+        };
+        const added = load("o.js", OVERLAY_PROPERTY, handoff);
+        added?.addEventListener("error", () => settle(false));
       } else {
         settle(false);
       }

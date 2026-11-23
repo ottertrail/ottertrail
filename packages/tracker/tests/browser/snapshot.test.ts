@@ -48,13 +48,14 @@ interface Call {
 /** The API as o.js sees it, with the answer to a save. */
 function fakeApi({
   snapshots = true,
+  canSave = true,
   save = () => json(201, { path: location.pathname, device: "desktop" }),
-}: { snapshots?: boolean; save?: () => Promise<Response> } = {}) {
+}: { snapshots?: boolean; canSave?: boolean; save?: () => Promise<Response> } = {}) {
   const calls: Call[] = [];
   const fetch = vi.fn<(url: string, init: RequestInit) => Promise<Response>>(async (url, init) => {
     calls.push({ url, init });
     if (url.endsWith("/session")) {
-      return json(200, { token: SESSION, projectId: PROJECT, expiresAt: "", snapshots });
+      return json(200, { token: SESSION, projectId: PROJECT, expiresAt: "", snapshots, canSave });
     }
     return url.includes("/snapshot?") ? save() : json(200, HEATMAP);
   });
@@ -122,8 +123,15 @@ describe("the Save control", () => {
     expect(script.nonce).toBe("n0nce");
     const handoff = Reflect.get(script, SNAPSHOT_PROPERTY) as SnapshotConfig;
     expect(typeof handoff.ready).toBe("function");
+    // Another script of the page cannot hand over a function of its own.
+    handoff.ready(async () => ({ ok: false, reason: "failed" }));
     // s.js as it runs: it hands back the function that takes the snapshot.
-    handoff.ready((hide) => takeSnapshot({ hide }));
+    Object.defineProperty(document, "currentScript", { configurable: true, get: () => script });
+    try {
+      handoff.ready((hide) => takeSnapshot({ hide }));
+    } finally {
+      Reflect.deleteProperty(document, "currentScript");
+    }
     await vi.waitFor(() => expect(view.said()?.textContent).toBe(SAVE_MESSAGES.saved("desktop")));
     expect(view.api.calls.filter((call) => call.url.includes("/snapshot?"))).toHaveLength(1);
   });
@@ -158,7 +166,27 @@ describe("the Save control", () => {
     expect(view.said()?.textContent).toBe(SAVE_MESSAGES.no_storage);
   });
 
+  test("for a member, it says only the owner and admins save a view, and offers no button", async () => {
+    const view = open(fakeApi({ canSave: false }));
+    await settled(view, "ready");
+    expect(view.save()?.hidden).toBe(true);
+    expect(view.said()?.textContent).toBe(SAVE_MESSAGES.not_allowed);
+    expect(view.said()?.dataset.tone).toBe("");
+  });
+
+  test("refused as no longer the owner or an admin, the button goes", async () => {
+    const view = open(fakeApi({ save: () => json(403, { error: "forbidden" }) }), {
+      loadSnapshot: async () => (hide) => takeSnapshot({ hide }),
+    });
+    await settled(view, "ready");
+    view.save()?.click();
+    await vi.waitFor(() => expect(view.said()?.textContent).toBe(SAVE_MESSAGES.not_allowed));
+    expect(view.save()?.hidden).toBe(true);
+    expect(view.overlay.state()).toBe("ready");
+  });
+
   test.each([
+    [400, { error: "snapshot_too_deep" }, SAVE_MESSAGES.too_deep],
     [409, { error: "object_store_not_set_up" }, SAVE_MESSAGES.no_storage],
     [403, { error: "wrong_page" }, SAVE_MESSAGES.wrong_page],
     [413, { error: "snapshot_too_large" }, SAVE_MESSAGES.too_large],

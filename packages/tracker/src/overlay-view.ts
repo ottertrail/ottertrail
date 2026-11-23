@@ -63,7 +63,10 @@ export const SAVE_MESSAGES = {
   saved: (device: string) => `Saved. The Heatmaps screen now shows this page's ${device} view.`,
   too_large:
     "This page is too large to save: over 5 MB compressed or about 150,000 elements. The overlay still shows its heatmap here.",
+  too_deep:
+    "This page nests its elements too deeply to save. The overlay still shows its heatmap here.",
   no_storage: "Saving a view needs object storage on the Ottertrail server.",
+  not_allowed: "Only the owner and admins can save a view.",
   wrong_page:
     "This link was opened for another page. Open this page from the dashboard to save it.",
   unsupported: "This browser can't save a view. Use a current Chrome, Firefox, or Safari.",
@@ -168,8 +171,12 @@ export function startOverlay(config: OverlayConfig, options: OverlayOptions) {
       return true;
     }
   };
-  /** The session, and whether the server can keep saved views (it has an object store). */
-  let session: { token: string; projectId: string; snapshots: boolean } | null = null;
+  /**
+   * The session, whether the server can keep saved views (it has an object
+   * store), and whether this user may save one (the owner and admins).
+   */
+  let session: { token: string; projectId: string; snapshots: boolean; canSave: boolean } | null =
+    null;
   let device: Device = deviceOf(win.innerWidth);
   let period: Period = "30d";
   let data: OverlayData | null = null;
@@ -384,6 +391,7 @@ export function startOverlay(config: OverlayConfig, options: OverlayOptions) {
           token: body.token,
           projectId: body.projectId,
           snapshots: body.snapshots === true,
+          canSave: body.canSave === true,
         };
         return { ok: true };
       }
@@ -543,8 +551,9 @@ export function startOverlay(config: OverlayConfig, options: OverlayOptions) {
     const can = (state === "ready" || state === "empty") && session !== null && !away();
     saveRow.hidden = !can;
     if (!can || session === null) return;
-    save.hidden = !session.snapshots;
+    save.hidden = !session.snapshots || !session.canSave;
     if (!session.snapshots) tell(SAVE_MESSAGES.no_storage, true);
+    else if (!session.canSave) tell(SAVE_MESSAGES.not_allowed, false);
   }
 
   function tell(message: string, problem: boolean) {
@@ -557,7 +566,12 @@ export function startOverlay(config: OverlayConfig, options: OverlayOptions) {
   const loadScript = () =>
     new Promise<TakeSnapshot>((resolve, reject) => {
       const script = doc.createElement("script");
-      const handoff: SnapshotConfig = { ready: resolve };
+      // Only s.js, as it runs, hands back its function.
+      const handoff: SnapshotConfig = {
+        ready: (take) => {
+          if (doc.currentScript === script) resolve(take);
+        },
+      };
       Reflect.set(script, SNAPSHOT_PROPERTY, handoff);
       if (options.nonce) script.nonce = options.nonce;
       script.src = new URL("s.js", options.scriptUrl ?? new URL("/o.js", config.host)).href;
@@ -612,6 +626,11 @@ export function startOverlay(config: OverlayConfig, options: OverlayOptions) {
           setState("session_expired");
         } else if (answer.status === 403 && answer.error === "wrong_page") {
           message = SAVE_MESSAGES.wrong_page;
+        } else if (answer.status === 403 && answer.error === "forbidden") {
+          // No longer the owner or an admin: the Save button goes.
+          current.canSave = false;
+          message = SAVE_MESSAGES.not_allowed;
+          problem = false;
         } else if (answer.status === 403 || answer.status === 404) {
           session = null;
           setState("no_access");
@@ -619,6 +638,8 @@ export function startOverlay(config: OverlayConfig, options: OverlayOptions) {
           message = SAVE_MESSAGES.no_storage;
         } else if (answer.status === 413) {
           message = SAVE_MESSAGES.too_large;
+        } else if (answer.status === 400 && answer.error === "snapshot_too_deep") {
+          message = SAVE_MESSAGES.too_deep;
         }
       }
     } catch {
@@ -628,6 +649,7 @@ export function startOverlay(config: OverlayConfig, options: OverlayOptions) {
       save.disabled = false;
       save.textContent = "Save this view";
     }
+    showSave();
     if (!closed && !saveRow.hidden) tell(message, problem);
   };
 

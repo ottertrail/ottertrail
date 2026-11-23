@@ -6,6 +6,9 @@
 import { type OverlayConfig, OVERLAY_PROPERTY } from "./overlay-names.ts";
 import { startOverlay } from "./overlay-view.ts";
 
+// As early as o.js can: a page script that wraps fetch later never sees the session.
+const pageFetch = typeof fetch === "function" ? fetch.bind(window) : undefined;
+
 const isConfig = (value: unknown): value is OverlayConfig =>
   typeof value === "object" &&
   value !== null &&
@@ -16,14 +19,16 @@ const isConfig = (value: unknown): value is OverlayConfig =>
 
 try {
   const script = document.currentScript;
-  const config: unknown = script === null ? undefined : Reflect.get(script, OVERLAY_PROPERTY);
-  // Off the element at once: the token and the tracker's callback are o.js's alone.
+  const handoff: unknown = script === null ? undefined : Reflect.get(script, OVERLAY_PROPERTY);
   if (script !== null) Reflect.deleteProperty(script, OVERLAY_PROPERTY);
-  if (isConfig(config)) {
+  // Taken from the tracker now, while this is the current script: once only.
+  const config: unknown = typeof handoff === "function" ? handoff() : undefined;
+  const send = isConfig(config) ? (config.fetch ?? pageFetch) : undefined;
+  if (isConfig(config) && send !== undefined) {
     startOverlay(config, {
       window,
       document,
-      fetch: (url, init) => fetch(url, init),
+      fetch: (url, init) => send(url, init),
       ...(script?.nonce ? { nonce: script.nonce } : {}),
       ...(script instanceof HTMLScriptElement && script.src ? { scriptUrl: script.src } : {}),
     });

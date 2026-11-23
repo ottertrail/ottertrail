@@ -611,15 +611,38 @@ describe("opened from the dashboard, with the tracker", () => {
     expect(page.scripts.map((script) => script.src)).toEqual([`${HOST}/o.js`]);
     const overlayScript = page.scripts[0] as HTMLScriptElement;
     expect(overlayScript.nonce).toBe("n0nce");
-    expect(Reflect.get(overlayScript, OVERLAY_PROPERTY)).toMatchObject({ host: HOST, token: LINK });
+    // Never the config on the element: a page script watching the DOM sees a
+    // function that gives nothing, except to o.js as it runs.
+    const handoff: unknown = Reflect.get(overlayScript, OVERLAY_PROPERTY);
+    expect(typeof handoff).toBe("function");
+    expect(typeof handoff === "function" ? handoff() : "missing").toBeUndefined();
 
     await run(overlayScript, "overlay.ts");
-    // Off the element at once: no other script of the page reads the token there.
     expect(Reflect.get(overlayScript, OVERLAY_PROPERTY)).toBeUndefined();
     await vi.waitFor(() => expect(api.calls).toHaveLength(2));
     expect(document.querySelector("ottertrail-heatmap")).not.toBeNull();
     await page.leave();
     expect(page.sent).toEqual([]);
+  });
+
+  test("a page script that wraps fetch after the tracker started never sees the link or session", async () => {
+    const api = fakeApi();
+    const page = await openedFromDashboard(api);
+    const seen: string[] = [];
+    const tracked = globalThis.fetch;
+    globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input instanceof Request ? input.url : input.toString();
+      const body = typeof init?.body === "string" ? init.body : "";
+      seen.push(`${url} ${JSON.stringify(init?.headers ?? {})} ${body}`);
+      return tracked(input, init);
+    };
+    try {
+      await run(page.scripts[0] as HTMLScriptElement, "overlay.ts");
+      await vi.waitFor(() => expect(api.calls).toHaveLength(2));
+    } finally {
+      globalThis.fetch = tracked;
+    }
+    expect(seen.filter((call) => call.includes(LINK) || call.includes(SESSION))).toEqual([]);
   });
 
   test("a made-up token: no panel, and the visit is counted as any other", async () => {
