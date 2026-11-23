@@ -213,6 +213,14 @@ Collection ignores visits referred by known referrer spam domains ([web analytic
 - A pull request opened with the workflow's `GITHUB_TOKEN` starts no other workflow, so the checks above are all it gets. Run `vp run ready` on the branch before merging, for the tests that need the databases.
 - The workflow needs one repository setting: Settings, Actions, General, "Allow GitHub Actions to create and approve pull requests".
 
+### Cloudflare's address ranges
+
+Caddy trusts `CF-Connecting-IP` only from Cloudflare's ranges, and `deploy/cloudflare-firewall.sh` lets only them reach ports 80 and 443 ([deployment](deployment.md#behind-cloudflares-proxy)). The ranges ship in `deploy/compose.yaml`, in the `caddy-proxy-cloudflare` config, and reach instances with each release.
+
+- `node scripts/update-cloudflare-ranges.ts` downloads <https://www.cloudflare.com/ips-v4> and <https://www.cloudflare.com/ips-v6> and checks them: every line one CIDR range of its family, with a prefix of at least /8 (IPv4) or /16 (IPv6), no repeats, and from 5 IPv4 and 3 IPv6 ranges to 100 of each. It rewrites the config's `trusted_proxies` line and the caddy service's `ottertrail.config.caddy-proxy-cloudflare` label only when a range was added or removed, and prints them. It exits 0 when it rewrote the file, 2 when nothing changed, and 1 when the download or a check failed, leaving the file as it was. It needs no installed packages.
+- `.github/workflows/cloudflare-ranges.yml` runs it every Monday at 06:30 UTC, and by hand from the Actions tab, in `ottertrail/ottertrail` only. When the ranges changed, it installs the packages and runs `vp check`, the deploy file tests (`apps/api/tests/deploy-files.test.ts`, which check the label and that the firewall script reads the same ranges), and `cloudflare-firewall.sh --check`. It then commits `deploy/compose.yaml` on `bot/cloudflare-ranges`, which it force-updates, and opens or updates a pull request to `main` titled "chore: update Cloudflare's address ranges", listing the ranges added and removed.
+- As with the referrer spam list, run `vp run ready` on the branch before merging, and the workflow needs "Allow GitHub Actions to create and approve pull requests". Name new ranges in the next release's notes: instances behind Cloudflare need the new `compose.yaml`, `docker compose up -d`, and `cloudflare-firewall.sh` again.
+
 ## Adding UI components
 
 From `apps/web`:

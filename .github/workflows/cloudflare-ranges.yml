@@ -1,0 +1,92 @@
+# Refresh Cloudflare's ranges in deploy/compose.yaml (caddy-proxy-cloudflare).
+# PRs opened with GITHUB_TOKEN start no other workflows, so run checks here.
+# The bot owns bot/cloudflare-ranges and force-updates it.
+# Enable "Allow GitHub Actions to create and approve pull requests"
+# (Settings, Actions, General). See docs/development.md, "Maintenance".
+name: Cloudflare ranges
+
+on:
+  schedule:
+    # Mondays, 06:30 UTC.
+    - cron: "30 6 * * 1"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: cloudflare-ranges
+  cancel-in-progress: false
+
+jobs:
+  update:
+    if: github.repository == 'ottertrail/ottertrail'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      pull-requests: write
+    env:
+      BRANCH: bot/cloudflare-ranges
+      FILE: deploy/compose.yaml
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
+
+      - name: Download and check the ranges
+        id: update
+        run: |
+          set +e
+          node scripts/update-cloudflare-ranges.ts | tee "$RUNNER_TEMP/update.txt"
+          status=${PIPESTATUS[0]}
+          set -e
+          case "$status" in
+            0) echo "changed=true" >> "$GITHUB_OUTPUT" ;;
+            2) echo "changed=false" >> "$GITHUB_OUTPUT" ;;
+            *) echo "::error::Cloudflare's ranges were not updated (exit $status). See the log above."
+               exit 1 ;;
+          esac
+
+      # GITHUB_TOKEN PRs start no other workflows. Check before pushing.
+      - name: Install dependencies
+        if: steps.update.outputs.changed == 'true'
+        run: |
+          npm install --global pnpm@12.21.0
+          pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Check the new ranges
+        if: steps.update.outputs.changed == 'true'
+        run: |
+          pnpm exec vp check
+          pnpm --filter @ottertrail/api exec vp test run tests/deploy-files.test.ts
+          bash deploy/cloudflare-firewall.sh --check > /dev/null
+
+      - name: Open or update the pull request
+        if: steps.update.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch --create "$BRANCH"
+          git add -- "$FILE"
+          git commit --message "chore: update Cloudflare's address ranges"
+          git push --force origin "$BRANCH"
+
+          {
+            echo "Updates Cloudflare's address ranges in \`deploy/compose.yaml\` from https://www.cloudflare.com/ips-v4 and https://www.cloudflare.com/ips-v6 (\`node scripts/update-cloudflare-ranges.ts\`)."
+            echo
+            grep -E '^(Cloudflare|Added|Removed)' "$RUNNER_TEMP/update.txt" | cut -c1-3000 | sed 's/^/- /'
+            echo
+            echo "Caddy trusts CF-Connecting-IP only from these ranges, and \`cloudflare-firewall.sh\` lets only them reach ports 80 and 443. After the release, instances behind Cloudflare need the new \`compose.yaml\`, then \`docker compose up -d\` and \`sudo ./cloudflare-firewall.sh\` again."
+          } > "$RUNNER_TEMP/body.md"
+
+          open=$(gh pr list --head "$BRANCH" --base main --state open --json number --jq '.[0].number')
+          if [ -n "$open" ]; then
+            gh pr edit "$open" --title "chore: update Cloudflare's address ranges" --body-file "$RUNNER_TEMP/body.md"
+          else
+            gh pr create --base main --head "$BRANCH" \
+              --title "chore: update Cloudflare's address ranges" --body-file "$RUNNER_TEMP/body.md"
+          fi
