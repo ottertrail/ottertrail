@@ -25,9 +25,9 @@ If `docs/private/product-spec.md` exists, read it before work on product scope o
 
 ## Working in this repository
 
-- Use the Vite+ commands in README.md. Run `vp run ready` before committing, and do not claim a check passed without running it.
+- Use the Vite+ commands in `docs/development.md`. Run `vp run ready` before committing, and do not claim a check passed without running it.
 - Lint and format settings live only in the root `vite.config.ts`.
-- Commit messages follow Conventional Commits (see "Commits" in README.md). Do not bypass the hooks in `.vite-hooks/`.
+- Commit messages follow Conventional Commits (see "Commits" in `docs/development.md`). Do not bypass the hooks in `.vite-hooks/`.
 - Label planned features as planned in the UI and docs. Never show seeded or fake data as real.
 - Reuse maintained libraries. Add a dependency only for a current need, and pin versions.
 - Record design decisions and known limitations in `docs/`. The design system is documented in `docs/design-system.md`.

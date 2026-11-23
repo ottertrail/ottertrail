@@ -19,7 +19,7 @@
 # pull request is opened. Ottertrail's own additions (additions.ts) are
 # never touched. A pull request opened with GITHUB_TOKEN starts no other
 # workflow. It needs Settings, Actions, General, "Allow GitHub Actions to
-# create and approve pull requests" (README.md, "Maintenance").
+# create and approve pull requests" (docs/development.md, "Maintenance").
 #
 # The actions are pinned to exact commits, as in release.yml; the comment
 # names the release.

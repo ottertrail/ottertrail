@@ -208,7 +208,7 @@ Restoring PostgreSQL alone, or moving it to a new major version (dump, new volum
 
 ## Settings
 
-`.env` holds only what differs between instances. Compose sets the rest (see the [API's configuration](../README.md#configuration)).
+`.env` holds only what differs between instances. Compose sets the rest (see the [API's configuration](development.md#configuration)).
 
 | Variable              | Meaning                                                                                                                                                                                                                                   |
 | --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

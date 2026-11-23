@@ -1,6 +1,6 @@
 /**
  * Writes a release's notes in Markdown, from the Conventional Commits since
- * the previous version tag (README.md, "Commits"). The release workflow
+ * the previous version tag (docs/development.md, "Commits"). The release workflow
  * runs it for each tag; it runs with plain Node.js, without dependencies.
  *
  *   node scripts/release-notes.ts <version> [<ref>]

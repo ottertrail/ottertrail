@@ -1,6 +1,6 @@
 #!/bin/sh
 # Checks the commit header against Conventional Commits 1.0.0.
-# Format and allowed types: see "Commits" in README.md.
+# Format and allowed types: see "Commits" in docs/development.md.
 
 header=$(sed -e '/^#/d' -e '/^[[:space:]]*$/d' "$1" | head -n 1)
 
