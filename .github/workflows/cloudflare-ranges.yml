@@ -30,6 +30,8 @@ jobs:
       FILE: deploy/compose.yaml
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -73,7 +75,11 @@ jobs:
           git switch --create "$BRANCH"
           git add -- "$FILE"
           git commit --message "chore: update Cloudflare's address ranges"
-          git push --force origin "$BRANCH"
+          # The checkout keeps no token, so the push sends it, only here.
+          auth=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
+          echo "::add-mask::$auth"
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" \
+            push --force origin "$BRANCH"
 
           {
             echo "Updates Cloudflare's address ranges in \`deploy/compose.yaml\` from https://www.cloudflare.com/ips-v4 and https://www.cloudflare.com/ips-v6 (\`node scripts/update-cloudflare-ranges.ts\`)."
