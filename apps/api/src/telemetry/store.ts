@@ -26,8 +26,10 @@ export interface TelemetryRows {
  * the live view compares with ClickHouse's own (telemetry/logs.ts).
  *
  * Each day is a partition. An OTLP request holds at most
- * MAX_DAYS_PER_REQUEST days (routes.ts), so ClickHouse's own guard, an
- * error past 100 partitions a block, stays on.
+ * MAX_DAYS_PER_REQUEST days (normalize.ts), but ClickHouse's guard (an
+ * error past 100 partitions a block) stays off: asynchronous inserts can
+ * join other requests' rows, other projects' included, into one block,
+ * which would then fail together.
  */
 export async function insertTelemetry(
   clickhouse: ClickHouseClient,
@@ -46,6 +48,10 @@ export async function insertTelemetry(
       ["ai_calls", arrived(rows.ai_calls)],
     ];
   await Promise.all(
-    tables.map(async ([table, values]) => insertRows(clickhouse, table, values ?? [])),
+    tables.map(async ([table, values]) =>
+      insertRows(clickhouse, table, values ?? [], {
+        throw_on_max_partitions_per_insert_block: 0,
+      }),
+    ),
   );
 }
