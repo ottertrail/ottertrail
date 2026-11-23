@@ -52,6 +52,8 @@ export default defineConfig({
         test: {
           name: "browser",
           include: ["tests/browser/**/*.test.ts"],
+          // The player page's policy for styles, images, and fonts.
+          setupFiles: ["tests/browser/policy.ts"],
           browser: {
             enabled: true,
             headless: true,

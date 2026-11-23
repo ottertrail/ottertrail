@@ -838,13 +838,22 @@ describe("replays in the dashboard", () => {
     const response = await get(`${project.id}/replays/${replay}/player?errorAt=1700000000000`);
     expect(response.statusCode).toBe(200);
     const policy = response.headers["content-security-policy"];
-    expect(policy).toContain("default-src 'none'");
-    expect(policy).toContain("script-src 'self'");
-    expect(policy).toContain(
-      "img-src 'self' data: blob: https://shop.example:* http://shop.example:*",
+    // Never 'self' for styles, images, or fonts: a forged recording could send
+    // cookie-bearing GETs to the API. packages/replay-player's browser tests
+    // run under the same directives.
+    expect(policy).toBe(
+      [
+        "default-src 'none'",
+        "script-src 'self'",
+        "connect-src 'self'",
+        "style-src 'unsafe-inline' https://shop.example:* http://shop.example:*",
+        "img-src data: blob: https://shop.example:* http://shop.example:*",
+        "font-src data: https://shop.example:* http://shop.example:*",
+        "base-uri 'none'",
+        "form-action 'none'",
+        "frame-ancestors 'self'",
+      ].join("; "),
     );
-    expect(policy).toContain("frame-ancestors 'self'");
-    expect(policy).not.toMatch(/script-src[^;]*unsafe/);
     expect(response.body).toContain(
       `data-replay-url="/api/projects/${project.id}/replays/${replay}"`,
     );

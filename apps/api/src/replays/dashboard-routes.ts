@@ -59,12 +59,22 @@ interface ListQuery extends RangeQuery {
 /**
  * The player page's Content Security Policy. A recording is whatever a
  * browser sent with a public key, which anyone can copy from a site, so it
- * is untrusted HTML: its images, stylesheets, and fonts may come only from
- * the project's allowed hostnames, so a forged recording cannot make the
- * viewer's browser call other servers; scripts only from Ottertrail (the
- * player's own), none from the recording; and only the dashboard may frame
- * the page. Hostnames are checked when saved (projects/projects.ts):
- * letters, digits, dots, and hyphens.
+ * is untrusted HTML, and so is a saved heatmap view:
+ *
+ * - script-src 'self': the player's own script; none from the recording.
+ * - connect-src 'self': the player reads the recording, or the view and
+ *   its heatmap, from the API.
+ * - style-src 'unsafe-inline' and the project's allowed hostnames: the
+ *   player's own CSS and the recording's stylesheets are written into the
+ *   page as text.
+ * - img-src data:, blob:, and the hostnames: rrweb's cursor is a data: image.
+ * - font-src data: and the hostnames.
+ * - Nothing else: no forms, no <base>, and only the dashboard may frame it.
+ *
+ * Never 'self' for styles, images, or fonts: a forged recording's
+ * `<img src="/api/…">` would otherwise send the viewer's cookie with a GET
+ * to the dashboard's own API. Hostnames are checked when saved
+ * (projects/projects.ts): letters, digits, dots, and hyphens.
  */
 export function playerPolicy(allowedHostnames: readonly string[]): string {
   const sites = allowedHostnames.flatMap((host) => [`https://${host}:*`, `http://${host}:*`]);
@@ -73,10 +83,9 @@ export function playerPolicy(allowedHostnames: readonly string[]): string {
     "default-src 'none'",
     "script-src 'self'",
     "connect-src 'self'",
-    // The recording's own stylesheets are written into the page as text.
-    `style-src ${from("'self'", "'unsafe-inline'")}`,
-    `img-src ${from("'self'", "data:", "blob:")}`,
-    `font-src ${from("'self'", "data:")}`,
+    `style-src ${from("'unsafe-inline'")}`,
+    `img-src ${from("data:", "blob:")}`,
+    `font-src ${from("data:")}`,
     "base-uri 'none'",
     "form-action 'none'",
     "frame-ancestors 'self'",

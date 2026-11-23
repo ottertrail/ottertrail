@@ -248,6 +248,32 @@ describe("the replay player", () => {
     expect(document.body.textContent).not.toContain("Hello replay");
   });
 
+  test("needs no 'self' for styles, images, or fonts, and loads none from it", async () => {
+    await start(() => json(recording()));
+    const doc = replayFrame().contentDocument;
+    if (doc === null) throw new Error("No replay document");
+    // The frame inherits the page's policy: a recorded image, stylesheet,
+    // or font on the dashboard's own origin would send its cookie with a GET.
+    const refused: string[] = [];
+    doc.addEventListener("securitypolicyviolation", (event) => {
+      refused.push(event.effectiveDirective);
+    });
+    const image = doc.createElement("img");
+    image.src = "/api/projects/p/replays";
+    const sheet = doc.createElement("link");
+    sheet.rel = "stylesheet";
+    sheet.href = "/api/projects/p/replays.css";
+    const font = doc.createElement("style");
+    font.textContent = `@font-face { font-family: x; src: url("/api/font.woff2"); } body { font-family: x; }`;
+    doc.body.append(image, sheet, font, doc.createTextNode("text in the font"));
+    await expect
+      .poll(() => refused.toSorted())
+      .toEqual(expect.arrayContaining(["img-src", "style-src-elem"]));
+    // The player itself: its inline CSS and rrweb's data: cursor pass.
+    await page.getByRole("button", { name: /^Jump to the error/ }).click();
+    expect(window.ottertrailViolations).toEqual([]);
+  });
+
   test("hides the marker and the jump without an error time", async () => {
     await start(() => json(recording()), null);
     await expect.element(slider()).toHaveAttribute("aria-valuetext", "0:00 of 2:00");

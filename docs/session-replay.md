@@ -233,7 +233,16 @@ On an error group's page, each occurrence says whether its replay is ready, stil
 A recording is whatever a browser sent with a public key, which anyone can copy from a site, so the player treats it as untrusted HTML:
 
 - `@rrweb/replay` builds the page in an `iframe` sandboxed with exactly `allow-same-origin`, never `allow-scripts`: rrweb 2.2.2 sets that itself and refuses to build into a frame sandboxed otherwise (scripts become `noscript`, forms and popups are blocked). Never `UNSAFE_replayCanvas`, which allows scripts. A test plays a recording with a script and event handlers and checks none ran.
-- The player runs in a page of its own, `GET /api/projects/:id/replays/:replayId/player` (`apps/api/src/replays/dashboard-routes.ts`), served with a Content Security Policy that lets images, stylesheets, and fonts load only from the project's allowed hostnames, Ottertrail's own address, and `data:` addresses (and `blob:` for images) ([keys and allowed hostnames](web-analytics.md#keys-and-allowed-hostnames)), so a forged recording cannot make the viewer's browser call other servers; scripts only from Ottertrail, none inline; no forms or `<base>`; and only the dashboard may frame it. The recording itself comes from `GET /api/projects/:id/replays/:replayId`, after the access check every project route runs.
+- The player runs in a page of its own, `GET /api/projects/:id/replays/:replayId/player` (`apps/api/src/replays/dashboard-routes.ts`), served with a Content Security Policy (`playerPolicy`) whose directives allow these sources, and nothing else (`default-src 'none'`):
+  - `script-src 'self'`: the player's own script, none inline and none from the recording.
+  - `connect-src 'self'`: the player reads the recording from the API.
+  - `style-src 'unsafe-inline'` and the project's allowed hostnames, over `https:` or `http:` on any port ([keys and allowed hostnames](web-analytics.md#keys-and-allowed-hostnames)): the player's CSS and the recording's stylesheets are written into the page as text.
+  - `img-src data: blob:` and the allowed hostnames: rrweb's cursor is a `data:` image.
+  - `font-src data:` and the allowed hostnames.
+  - `base-uri 'none'`, `form-action 'none'`, and `frame-ancestors 'self'`: no `<base>`, no forms, and only the dashboard may frame it.
+
+  So a forged recording cannot make the viewer's browser call other servers. Styles, images, and fonts never load from Ottertrail's own address: a recorded `<img src="/api/…">` would send the viewer's cookie with a GET to the API. The player's browser tests run under these directives, so they show it needs nothing from there (`packages/replay-player/tests/browser/policy.ts`). The recording itself comes from `GET /api/projects/:id/replays/:replayId`, after the access check every project route runs.
+
 - Nothing from a recording is put into the dashboard's own page.
 
 The same script shows a saved heatmap view ([web analytics](web-analytics.md#saved-views)) in its snapshot mode (`packages/replay-player/src/snapshot.ts`): its page, `GET /api/projects/:id/heatmaps/snapshots/:device/player`, is served with the same policy and names the snapshot and its heatmap in place of a recording. rrweb rebuilds the snapshot in the same sandboxed frame, with no controls; the player finds the heatmap's elements in the frame and draws over it, and tells the dashboard which elements it did not find. A test (`tests/browser/snapshot.test.ts`) rebuilds a snapshot with a script and handlers, checks none ran and links do nothing, and that the elements are found and drawn.
