@@ -17,6 +17,7 @@ import {
   TokenBucketLimiter,
 } from "../collection/rate-limiter.ts";
 import { DEFAULT_SERVER_IP_LIMIT, MAX_FUTURE_MS } from "../collection/server-events.ts";
+import { BUSY, type SecretKeyLookups, secretKeyLookups } from "../telemetry/key-lookups.ts";
 import { nanosText } from "../telemetry/normalize.ts";
 import { DEFAULT_MAX_IN_FLIGHT, DEFAULT_MAX_IN_FLIGHT_PER_PROJECT } from "../telemetry/routes.ts";
 import {
@@ -250,6 +251,8 @@ export interface AiCallIngestOptions {
   /** Requests this process works on at once, and one project's of them, as OTLP's (telemetry/routes.ts). */
   maxInFlight?: number;
   maxInFlightPerProject?: number;
+  /** Bounds key lookups, as OTLP's (telemetry/key-lookups.ts); the process's by default. */
+  keyLookups?: SecretKeyLookups;
   now?: () => number;
 }
 
@@ -282,6 +285,7 @@ export const aiCallIngestRoutes: FastifyPluginCallback<AiCallIngestOptions> = (
     activity,
     budget,
     now = Date.now,
+    keyLookups = secretKeyLookups,
     maxInFlight = DEFAULT_MAX_IN_FLIGHT,
     maxInFlightPerProject = DEFAULT_MAX_IN_FLIGHT_PER_PROJECT,
   } = options;
@@ -351,10 +355,16 @@ export const aiCallIngestRoutes: FastifyPluginCallback<AiCallIngestOptions> = (
         // As OTLP's: the key before a slot, so made-up keys hold none.
         let project;
         try {
-          project = await projects.findBySecret(secretKey);
+          project = await keyLookups.find(projects, secretKey);
         } catch (error) {
           request.log.error({ err: error }, "could not look up the secret key");
           return storageUnavailable(reply);
+        }
+        if (project === BUSY) {
+          return reply
+            .code(503)
+            .header("retry-after", "1")
+            .send(problem("busy", "Too many keys are being looked up. Try again shortly."));
         }
         if (project === null) {
           return reply.code(401).send(problem("unknown_key", "No project has this secret key."));

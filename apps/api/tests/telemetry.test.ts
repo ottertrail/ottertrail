@@ -10,6 +10,7 @@ import { type ClickHouseClient, createClickHouse } from "../src/clickhouse/click
 import type { ProjectKeyCache } from "../src/collection/project-keys.ts";
 import { loadConfig } from "../src/config.ts";
 import { fingerprint } from "../src/errors/fingerprint.ts";
+import { SecretKeyLookups } from "../src/telemetry/key-lookups.ts";
 import { MAX_DAYS_PER_REQUEST } from "../src/telemetry/normalize.ts";
 import {
   LOGS_MESSAGES,
@@ -50,6 +51,11 @@ async function newProject(name: string) {
     publicKey: project.public_key,
     secretKey: await secretKeyOf(dashboard.db, project.id),
   };
+}
+
+/** A well-formed secret key no project has. */
+function unknownKey(n: number): string {
+  return `sk_${n.toString(16).padStart(32, "0")}`;
 }
 
 const PROTOBUF = "application/x-protobuf";
@@ -956,6 +962,55 @@ describe("requests in progress", () => {
         "The request holds a value out of range. Check the times and numbers the exporter sends.",
       );
     } finally {
+      await app.close();
+    }
+  });
+
+  test("lookups of keys not yet seen to be real share a few places; real ones skip them", async () => {
+    let open!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      open = resolve;
+    });
+    let lookups = 0;
+    const real = `sk_${"a".repeat(32)}`;
+    // Any other key's lookup waits for the gate, as a cache miss waits for the database.
+    const projects = {
+      findBySecret: async (key: string) => {
+        lookups += 1;
+        if (key === real) return { id: "0b0e5f1e-8a4e-4e43-9b0a-1f0c5d3e7a11" };
+        await gate;
+        return null;
+      },
+    } as unknown as ProjectKeyCache;
+    const app = Fastify();
+    await app.register(telemetryRoutes, {
+      clickhouse: { insert: async () => {} } as unknown as ClickHouseClient,
+      projects,
+      activity: { add: () => {} } as unknown as IngestActivity,
+      retentionDays: 30,
+      keyLookups: new SecretKeyLookups(2),
+    });
+    try {
+      const body = protobufTraces([protobufSpan(randomHex(16), randomHex(8))]);
+      expect((await post("/v1/traces", body, { key: real, app })).statusCode).toBe(200);
+      const waiting = [1, 2].map((n) => post("/v1/traces", body, { key: unknownKey(n), app }));
+      await expect.poll(() => lookups).toBe(3);
+      const full = await post("/v1/traces", body, { key: unknownKey(3), app });
+      expect(full.statusCode).toBe(503);
+      expect(full.headers["retry-after"]).toBe("1");
+      expect(statusOf(full.rawPayload).message).toBe(
+        "Too many keys are being looked up. Try again shortly.",
+      );
+      // A key already found to be real is not held up.
+      expect((await post("/v1/traces", body, { key: real, app })).statusCode).toBe(200);
+      open();
+      for (const response of await Promise.all(waiting)) expect(response.statusCode).toBe(401);
+      // The places are given back.
+      const after = post("/v1/traces", body, { key: unknownKey(4), app });
+      await expect.poll(() => lookups).toBe(5);
+      expect((await after).statusCode).toBe(401);
+    } finally {
+      open();
       await app.close();
     }
   });

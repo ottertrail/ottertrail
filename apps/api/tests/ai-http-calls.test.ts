@@ -11,6 +11,7 @@ import { type ClickHouseClient, createClickHouse } from "../src/clickhouse/click
 import type { ProjectKeyCache } from "../src/collection/project-keys.ts";
 import { loadConfig } from "../src/config.ts";
 import { createDatabase } from "../src/db/database.ts";
+import { SecretKeyLookups } from "../src/telemetry/key-lookups.ts";
 import { telemetryBudget } from "../src/telemetry/routes.ts";
 import { PUBLIC_URL, signedInDashboard } from "./helpers/dashboard.ts";
 import { hangingUpClient } from "./helpers/hang-up.ts";
@@ -42,6 +43,11 @@ beforeAll(async () => {
 afterAll(async () => {
   await dashboard?.close();
 });
+
+/** A well-formed secret key no project has. */
+function unknownKey(n: number): string {
+  return `sk_${n.toString(16).padStart(32, "0")}`;
+}
 
 function aiCall(overrides: Record<string, unknown> = {}) {
   return {
@@ -656,6 +662,46 @@ describe("limits", () => {
       expect((await send(body, { authorization: `Bearer ${real}` }, app)).statusCode).toBe(202);
       open();
       expect((await madeUp).statusCode).toBe(401);
+    } finally {
+      open();
+      await app.close();
+    }
+  });
+
+  test("503 busy while the places for lookups of unknown keys are taken", async () => {
+    let open!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      open = resolve;
+    });
+    let lookups = 0;
+    const real = `sk_${"a".repeat(32)}`;
+    // Any other key's lookup waits for the gate, as a cache miss waits for the database.
+    const projects = {
+      findBySecret: async (key: string) => {
+        lookups += 1;
+        if (key === real) return { id: "0b0e5f1e-8a4e-4e43-9b0a-1f0c5d3e7a11" };
+        await gate;
+        return null;
+      },
+    } as unknown as ProjectKeyCache;
+    const app = Fastify();
+    await app.register(aiCallIngestRoutes, {
+      prefix: "/api",
+      clickhouse: { insert: async () => {} } as unknown as ClickHouseClient,
+      projects,
+      activity: { add: () => {} } as unknown as IngestActivity,
+      budget: telemetryBudget({}),
+      keyLookups: new SecretKeyLookups(1),
+    });
+    try {
+      const body = { v: 1, calls: [aiCall()] };
+      const waiting = send(body, { authorization: `Bearer ${unknownKey(1)}` }, app);
+      await expect.poll(() => lookups).toBe(1);
+      const full = await send(body, { authorization: `Bearer ${unknownKey(2)}` }, app);
+      expect([full.statusCode, full.json().error]).toEqual([503, "busy"]);
+      open();
+      expect((await waiting).statusCode).toBe(401);
+      expect((await send(body, { authorization: `Bearer ${real}` }, app)).statusCode).toBe(202);
     } finally {
       open();
       await app.close();
