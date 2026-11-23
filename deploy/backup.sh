@@ -2,8 +2,9 @@
 # Backs up a running instance into ./backups/, as
 # ottertrail-<time>.zip (ClickHouse: events, traces, logs, metrics),
 # ottertrail-<time>.dump (PostgreSQL: accounts, projects, settings), and
-# ottertrail-<time>-objects.tar (the object store: source maps and session
-# replays; without a store, a manifest that says there is none). Keep it
+# ottertrail-<time>-objects.tar (the object store: source maps, session
+# replays, avatars, and saved heatmap views; without a store, a manifest
+# that says there is none). Keep it
 # next to compose.yaml and .env, as a release's files are; it runs Compose
 # in its own folder, wherever it is called from. Copy all three files off
 # the server: a backup on the same disk is lost with it. docs/deployment.md

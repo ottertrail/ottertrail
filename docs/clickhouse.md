@@ -76,6 +76,8 @@ A rebuild works the new rows out first, into a temporary table of a ClickHouse s
 
 ## Retention and deleting a project
 
+Every table's retention, beside PostgreSQL's and the object store's, is in [where data is stored](data.md).
+
 ClickHouse has no foreign keys, so nothing deletes its events with a project or a retention limit on its own. The worker does (`apps/api/src/clickhouse/delete-events.ts`):
 
 - **Retention.** At start and every 6 hours, the worker deletes each project's events past its limit, up to a midnight in the instance's timezone (`retention/retention.ts`, [web analytics, section 1](web-analytics.md#how-long-events-are-kept)).

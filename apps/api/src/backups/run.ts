@@ -59,8 +59,9 @@ import { type Destination, OBJECT_PREFIXES, OVERLAP_PROBLEM, overlapsObjects } f
  * 2. `clickhouse.zip.age`: ClickHouse's own `BACKUP DATABASE … TO
  *    File(…)`, written into its backups folder, which the worker shares
  *    (deploy/compose.yaml), read from there, and deleted after.
- * 3. `objects.tar.age`: the object store's objects (source maps and
- *    session replays) with their manifest, the tar backup.sh makes.
+ * 3. `objects.tar.age`: the object store's objects (source maps, session
+ *    replays, avatars, and saved heatmap views) with their manifest, the
+ *    tar backup.sh makes.
  * 4. `manifest.json`, last, not encrypted: the backup's version and time,
  *    the instance's version, and each part's size and SHA-256 before and
  *    after encryption. A folder without it is not a whole backup.
