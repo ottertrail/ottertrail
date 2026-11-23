@@ -4,7 +4,7 @@ import { afterAll, beforeAll, describe, expect, test } from "vite-plus/test";
 
 import { requestLogFields } from "../src/app.ts";
 import type { NewEvent } from "../src/collection/event-store.ts";
-import { signedInDashboard } from "./helpers/dashboard.ts";
+import { signedInDashboard, signedInUser } from "./helpers/dashboard.ts";
 import { insertProject } from "./helpers/projects.ts";
 
 let dashboard: Awaited<ReturnType<typeof signedInDashboard>>;
@@ -95,6 +95,7 @@ describe("GET /api/projects/:id/users", () => {
     expect(response.json()).toEqual({
       timeZone: "Asia/Singapore",
       environment: "production",
+      signedUserIdsRequired: false,
       environments: ["production", "staging"],
       users: [
         {
@@ -150,6 +151,7 @@ describe("GET /api/projects/:id/users/:userId", () => {
     expect(body).toMatchObject({
       timeZone: "Asia/Singapore",
       environment: "production",
+      signedUserIdsRequired: false,
       user: { userId: "ada", events: 3 },
       hasMore: false,
     });
@@ -229,6 +231,37 @@ describe("GET /api/projects/:id/users/:userId", () => {
     ]) {
       const response = await get(`/api/projects/${projectId}/users/ada?${query}`);
       expect({ query, status: response.statusCode }).toEqual({ query, status: 400 });
+    }
+  });
+});
+
+describe("signedUserIdsRequired", () => {
+  test("follows the project's setting, for a member with users view too", async () => {
+    const member = await signedInUser(dashboard, {
+      name: "Mia",
+      email: "mia@example.com",
+      grants: { projects: [projectId], areas: { users: "view" } },
+    });
+    await dashboard.db
+      .updateTable("projects")
+      .set({ require_signed_user_ids: true })
+      .where("id", "=", projectId)
+      .execute();
+    try {
+      for (const url of [
+        `/api/projects/${projectId}/users`,
+        `/api/projects/${projectId}/users/ada`,
+      ]) {
+        const response = await dashboard.app.inject({ url, headers: { cookie: member.cookie } });
+        expect({ url, status: response.statusCode }).toEqual({ url, status: 200 });
+        expect(response.json().signedUserIdsRequired).toBe(true);
+      }
+    } finally {
+      await dashboard.db
+        .updateTable("projects")
+        .set({ require_signed_user_ids: false })
+        .where("id", "=", projectId)
+        .execute();
     }
   });
 });

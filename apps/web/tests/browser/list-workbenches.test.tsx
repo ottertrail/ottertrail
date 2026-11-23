@@ -888,6 +888,7 @@ describe("the users summary's windows", () => {
     return {
       timeZone: "Asia/Singapore",
       environment: "production",
+      signedUserIdsRequired: false,
       environments: ["production"],
       users: all.slice(offset, offset + 50),
       hasMore: offset + 50 < all.length,

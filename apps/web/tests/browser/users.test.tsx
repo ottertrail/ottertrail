@@ -250,6 +250,90 @@ describe("a user's page", () => {
   });
 });
 
+const UNVERIFIED = "User IDs on this project aren't verified, so any page could send any ID.";
+/** The notice as the owner and admins see it, with its link. */
+const UNVERIFIED_LINKED = `${UNVERIFIED} Require signed IDs`;
+const notices = () => document.querySelectorAll('[role="note"]');
+
+/** The fake API, with the project requiring signed user IDs. */
+const signedOnly = () =>
+  installFakeApi({
+    users: (query) => ({ ...fakeUsers(query), signedUserIdsRequired: true }),
+    user: (userId, query) => {
+      const answer = fakeUser(userId, query);
+      return answer instanceof Response ? answer : { ...answer, signedUserIdsRequired: true };
+    },
+  });
+
+describe("the notice that user IDs are unverified", () => {
+  test("shows on the list and links the owner to the setting", async () => {
+    installFakeApi();
+    const router = renderApp(USERS);
+
+    await expect.element(page.getByRole("note")).toHaveTextContent(UNVERIFIED_LINKED);
+    await page.getByRole("note").getByRole("link", { name: "Require signed IDs" }).click();
+    await expect
+      .poll(() => router.state.location.pathname)
+      .toBe(`/projects/${PROJECT.id}/settings`);
+    expect(router.state.location.search).toEqual({ tab: "server" });
+  });
+
+  test("shows a member no link, since they cannot change settings", async () => {
+    installFakeApi({ access: memberAccess({ users: "view" }) });
+    renderApp(USERS);
+
+    await expect.element(page.getByRole("note")).toHaveTextContent(UNVERIFIED);
+    expect(page.getByRole("note").getByRole("link").query()).toBeNull();
+  });
+
+  test("shows on a user's page", async () => {
+    installFakeApi();
+    renderApp(`${USERS}/ada`);
+    await expect.element(page.getByRole("note")).toHaveTextContent(UNVERIFIED_LINKED);
+  });
+
+  test("shows once with a user chosen in the list", async () => {
+    await page.viewport(1440, 900);
+    installFakeApi({ user: (_userId, query) => fakeUser("ada", query) });
+    renderApp(`${USERS}?user=user-1`);
+    await expect
+      .element(page.getByRole("region", { name: "Users, selected" }).getByText("First seen"))
+      .toBeVisible();
+    expect(notices()).toHaveLength(1);
+  });
+
+  test("shows while no user is known yet", async () => {
+    installFakeApi({ users: (query) => ({ ...fakeUsers(query), users: [], hasMore: false }) });
+    renderApp(USERS);
+
+    await expect.element(page.getByText("No known users yet")).toBeVisible();
+    await expect.element(page.getByRole("note")).toHaveTextContent(UNVERIFIED_LINKED);
+  });
+
+  test("is not shown while the project requires signed IDs", async () => {
+    signedOnly();
+    renderApp(USERS);
+    await expect.poll(() => listedUsers().length).toBe(50);
+    expect(notices()).toHaveLength(0);
+  });
+
+  test("is not shown on a user's page while the project requires signed IDs", async () => {
+    signedOnly();
+    renderApp(`${USERS}/ada`);
+    await expect.element(page.getByRole("list", { name: /^Activity on/ }).first()).toBeVisible();
+    expect(notices()).toHaveLength(0);
+  });
+
+  test.each([USERS, `${USERS}/ada`])("fits at 390 wide on %s", async (path) => {
+    await page.viewport(390, 844);
+    installFakeApi();
+    renderApp(path);
+    await expect.element(page.getByRole("note")).toBeVisible();
+    await expect.element(page.getByRole("link", { name: "Require signed IDs" })).toBeVisible();
+    expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(390);
+  });
+});
+
 /** The user page's requests to the AI report. */
 const aiRequests = (api: FakeApi) =>
   api.requests.filter((request) => request.split("?")[0]?.endsWith(`/${PROJECT.id}/ai`));

@@ -361,6 +361,7 @@ export function fakeUsers(query: URLSearchParams): UserList {
   return {
     timeZone: "Asia/Singapore",
     environment: query.get("environment") ?? "production",
+    signedUserIdsRequired: false,
     environments: ["production"],
     users: all.slice(offset, offset + 50),
     hasMore: offset + 50 < all.length,
@@ -397,6 +398,7 @@ export function fakeUser(userId: string, query: URLSearchParams): UserActivity |
   return {
     timeZone: "Asia/Singapore",
     environment: query.get("environment") ?? "production",
+    signedUserIdsRequired: false,
     user: {
       userId,
       firstSeenAt: all.at(-1)?.occurredAt ?? "",

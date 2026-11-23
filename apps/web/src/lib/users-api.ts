@@ -18,6 +18,8 @@ export interface User {
 export interface UserList {
   timeZone: string;
   environment: string;
+  /** Whether the project accepts only user IDs signed by its server; if not, any page could send any ID. */
+  signedUserIdsRequired: boolean;
   environments: string[];
   users: User[];
   hasMore: boolean;
@@ -56,6 +58,8 @@ export interface Activity {
 export interface UserActivity {
   timeZone: string;
   environment: string;
+  /** Whether the project accepts only user IDs signed by its server; if not, any page could send any ID. */
+  signedUserIdsRequired: boolean;
   user: User;
   activity: Activity[];
   hasMore: boolean;
@@ -79,6 +83,7 @@ const isUserList = (value: unknown): value is UserList =>
   isRecord(value) &&
   isText(value.timeZone) &&
   isText(value.environment) &&
+  typeof value.signedUserIdsRequired === "boolean" &&
   Array.isArray(value.environments) &&
   value.environments.every(isText) &&
   Array.isArray(value.users) &&
@@ -110,6 +115,7 @@ const isUserActivity = (value: unknown): value is UserActivity =>
   isRecord(value) &&
   isText(value.timeZone) &&
   isText(value.environment) &&
+  typeof value.signedUserIdsRequired === "boolean" &&
   isUser(value.user) &&
   Array.isArray(value.activity) &&
   value.activity.every(isActivity) &&

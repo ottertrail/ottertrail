@@ -35,6 +35,7 @@ import { countryName } from "../analytics/format";
 import { ARRIVING_HINT } from "../errors/occurrence-replay";
 import { formatReplayDuration, pagesText } from "../replays/format";
 import { dayKey, formatLongDay, formatMoment, formatTime, rangeCovering } from "./format";
+import { UnverifiedIdsNotice } from "./unverified-ids-notice";
 import { UserAi } from "./user-ai";
 
 /** An error: its type and message, linked to its group on the Errors page. */
@@ -251,7 +252,8 @@ function Properties({ properties }: { properties: Record<string, unknown> }) {
  * and last seen, and what they did, newest first, by day in the timezone
  * set in Settings. Only events that carry the user's ID: anonymous browsing
  * before a sign-in is not theirs for sure. With the AI area, their AI usage
- * (user-ai.tsx). On the user's own page, and in
+ * (user-ai.tsx). On its own page, a notice while the project accepts
+ * unsigned user IDs. On the user's own page, and in
  * the Users workbench beside the list, where `actions` links to the page
  * and a missing user's link clears the selection instead.
  */
@@ -357,6 +359,10 @@ export function UserView({
           <p className="text-sm text-ink-subtle">
             Times in {timeZone}. Only events with this user ID count.
           </p>
+        )}
+        {/* In the workbench, the list above says it already. */}
+        {!inWorkbench && first !== undefined && !first.signedUserIdsRequired && (
+          <UnverifiedIdsNotice projectId={projectId} />
         )}
       </div>
 

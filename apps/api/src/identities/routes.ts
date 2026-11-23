@@ -32,9 +32,24 @@ function accessOf(request: { projectAccess: ProjectAccess | null }): ProjectAcce
 }
 
 /**
+ * Whether the project accepts only user IDs signed by its server
+ * (docs/web-analytics.md, "Signed user IDs"). The Users pages say when it
+ * does not: any page with the public key could send any ID.
+ */
+async function signedUserIdsRequired(db: Kysely<Database>, projectId: string): Promise<boolean> {
+  const row = await db
+    .selectFrom("projects")
+    .select("require_signed_user_ids")
+    .where("id", "=", projectId)
+    .executeTakeFirst();
+  return row?.require_signed_user_ids ?? false;
+}
+
+/**
  * Lists known users and their activity (users.ts). Error events include replay state;
  * the first page also includes recent replays (replays/list.ts).
- * Both routes require project access.
+ * Both routes require project access. Both answer whether the project requires
+ * signed user IDs, a setting otherwise shown only with the projects permission.
  */
 export const userRoutes: FastifyPluginCallback<{
   db: Kysely<Database>;
@@ -75,16 +90,20 @@ export const userRoutes: FastifyPluginCallback<{
       const { timeZone, projectId } = accessOf(request);
       const environment = environmentOf(request.query.environment);
       const { search, offset, limit } = request.query;
-      const page = await listUsers(reader, {
-        projectId,
-        environment,
-        search,
-        ...(offset === undefined ? {} : { offset }),
-        ...(limit === undefined ? {} : { limit }),
-      });
+      const [page, signed] = await Promise.all([
+        listUsers(reader, {
+          projectId,
+          environment,
+          search,
+          ...(offset === undefined ? {} : { offset }),
+          ...(limit === undefined ? {} : { limit }),
+        }),
+        signedUserIdsRequired(db, projectId),
+      ]);
       return {
         timeZone,
         environment,
+        signedUserIdsRequired: signed,
         // The page reads them from the first page only; later pages skip the scan.
         environments:
           offset === undefined || offset === 0
@@ -139,16 +158,19 @@ export const userRoutes: FastifyPluginCallback<{
           .code(400)
           .send({ error: "invalid_query", message: "before must be a real time." });
       }
-      const found = await userActivity(reader, {
-        projectId,
-        environment,
-        userId: request.params.userId,
-        before:
-          occurredAt === undefined || beforeId === undefined
-            ? undefined
-            : { occurredAt, eventId: beforeId },
-        ...(limit === undefined ? {} : { limit }),
-      });
+      const [found, signed] = await Promise.all([
+        userActivity(reader, {
+          projectId,
+          environment,
+          userId: request.params.userId,
+          before:
+            occurredAt === undefined || beforeId === undefined
+              ? undefined
+              : { occurredAt, eventId: beforeId },
+          ...(limit === undefined ? {} : { limit }),
+        }),
+        signedUserIdsRequired(db, projectId),
+      ]);
       if (found === null) {
         return reply.code(404).send({
           error: "not_found",
@@ -169,6 +191,7 @@ export const userRoutes: FastifyPluginCallback<{
       return {
         timeZone,
         environment,
+        signedUserIdsRequired: signed,
         ...found,
         activity: found.activity.map(({ replayId, ...activity }) => ({
           ...activity,

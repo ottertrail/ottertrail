@@ -65,6 +65,7 @@ import { type User, usersQuery } from "@/lib/users-api";
 import { formatWhole } from "../analytics/format";
 import { NoSuchProject } from "../projects/no-such-project";
 import { formatMoment, timeAgo } from "./format";
+import { UnverifiedIdsNotice } from "./unverified-ids-notice";
 import { UserView } from "./user-page";
 
 /** How a site names its signed-in user, shown while it names none. */
@@ -335,6 +336,9 @@ export function UsersPage({
   }
 
   const noneYet = first !== undefined && users.length === 0 && search === "";
+  const unverified = first !== undefined && !first.signedUserIdsRequired && (
+    <UnverifiedIdsNotice projectId={projectId} />
+  );
   const filterBar = (
     <FilterBar
       label="Environment and search"
@@ -393,7 +397,8 @@ export function UsersPage({
     return (
       <div className="flex flex-col">
         {filterBar}
-        <div className="px-gutter py-5">
+        <div className="flex flex-col gap-4 px-gutter py-5">
+          {unverified}
           {list.isPending ? (
             <div className="flex flex-col gap-2" aria-busy="true" aria-label="Loading">
               <Skeleton className="h-10 w-full" />
@@ -433,6 +438,7 @@ export function UsersPage({
   return (
     <div className="flex flex-col min-[64rem]:h-full min-[64rem]:min-h-0">
       {filterBar}
+      {unverified && <div className="px-gutter pt-4">{unverified}</div>}
       <Workbench
         label="Users"
         className="min-[64rem]:min-h-0 min-[64rem]:flex-1"
