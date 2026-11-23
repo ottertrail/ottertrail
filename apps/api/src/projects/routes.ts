@@ -257,6 +257,7 @@ export const projectRoutes: FastifyPluginCallback<{
       }
       // Invalidate cached rules so changes apply immediately.
       if (
+        hostnames !== undefined ||
         requireSignedUserIds !== undefined ||
         ignoreDataCenters !== undefined ||
         replayMode !== undefined ||

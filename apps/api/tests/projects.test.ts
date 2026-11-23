@@ -226,6 +226,47 @@ describe("project routes", () => {
     expect((await browserEvent()).json().unverifiedUsers).toBe(1);
   });
 
+  test("changing the allowed sites applies from the next event on", async () => {
+    const created = (
+      await request("POST", "/api/projects", { name: "Moved", allowedHostnames: ["shop.example"] })
+    ).json().project;
+    const browserEvent = () =>
+      app.inject({
+        method: "POST",
+        url: "/api/events",
+        headers: {
+          "content-type": "text/plain",
+          origin: "https://shop.example",
+          "user-agent":
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+        },
+        payload: JSON.stringify({
+          v: 1,
+          key: created.publicKey,
+          sentAt: Date.now(),
+          events: [
+            {
+              id: randomUUID(),
+              name: "pageview",
+              occurredAt: Date.now(),
+              url: "https://shop.example/",
+            },
+          ],
+        }),
+      });
+    // Sent once, so collection has the project cached.
+    expect((await browserEvent()).statusCode).toBe(202);
+
+    const changed = await request("PATCH", `/api/projects/${created.id}`, {
+      allowedHostnames: ["store.example"],
+    });
+    expect(changed.statusCode).toBe(200);
+
+    const refused = await browserEvent();
+    expect(refused.statusCode).toBe(403);
+    expect(refused.json()).toMatchObject({ error: "origin_not_allowed" });
+  });
+
   test("ignore browsers in data centers unless turned off", async () => {
     const created = (await request("POST", "/api/projects", { name: "Cloud" })).json().project;
     expect(created.ignoreDataCenters).toBe(true);
