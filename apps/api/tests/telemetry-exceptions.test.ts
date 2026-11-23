@@ -149,6 +149,29 @@ describe("exceptions on spans", () => {
     expect(exceptionAt(START + 3n * SECOND)).toEqual(msOf(START + 3n * SECOND));
   });
 
+  test("never more than about an hour ahead: a span ending later is refused, with its exceptions", () => {
+    const centuries = NOW + 200n * 365n * 86_400n * SECOND;
+    const far = traces([
+      span({
+        endTimeUnixNano: String(centuries),
+        events: [exceptionEvent({ "exception.type": "E" }, centuries - SECOND)],
+      }),
+    ]);
+    expect(far.rows).toEqual([]);
+    expect(far.errors).toEqual([]);
+    expect(far.message).toContain("more than an hour ahead");
+    // Ending within the hour, its exceptions take their own time: at most a minute past it.
+    const end = NOW + 3599n * SECOND;
+    const near = traces([
+      span({
+        endTimeUnixNano: String(end),
+        events: [exceptionEvent({ "exception.type": "E" }, end + 59n * SECOND)],
+      }),
+    ]);
+    expect(near.errors[0]?.occurredAt).toEqual(msOf(end + 59n * SECOND));
+    expect(near.rows[0]?.duration_ns).toBe(String(end - START));
+  });
+
   test(`at most the first ${MAX_EXCEPTIONS_PER_SPAN} of a span; other events and empty exceptions are not errors`, () => {
     const events = [
       { name: "retry", timeUnixNano: String(START) },

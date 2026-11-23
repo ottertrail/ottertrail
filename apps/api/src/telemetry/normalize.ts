@@ -530,6 +530,13 @@ export function normalizeTraces(
           refusals.add("spans that end before they start");
           continue;
         }
+        // The end bounds the duration and the exceptions' times: never
+        // more than an hour ahead, as the start.
+        const endProblem = timeProblem(end, context);
+        if (endProblem !== null) {
+          refusals.add(endProblem);
+          continue;
+        }
         const { attributes, dropped } = flattenAttributes(messages(span, "attributes"), true);
         const events = messages(span, "events");
         const links = messages(span, "links");
