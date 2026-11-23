@@ -237,8 +237,8 @@ services:
       ottertrail.config.caddyfile: "52a6d1a02632"
       ottertrail.config.caddy-proxy-none: "b9bf92018a53"
       ottertrail.config.caddy-proxy-cloudflare: "c590d98f6320"
-      ottertrail.config.caddy-proxy-custom: "020818a4e47f"
-      ottertrail.config.caddy-start: "ca7fc8abda97"
+      ottertrail.config.caddy-proxy-custom: "a9ea8c1510c2"
+      ottertrail.config.caddy-start: "1ea1481ba08d"
     ports:
       - "80:80"
       - "443:443"
@@ -324,7 +324,8 @@ configs:
       # request keeps its own address. Strict mode reads the header from right to
       # left and takes the first address outside the ranges, so an address a
       # visitor puts at the start of X-Forwarded-For is skipped. caddy-start
-      # refuses empty ranges and ranges that cover every address.
+      # refuses empty ranges, private_ranges, anything but addresses and
+      # ranges, and ranges wider than an IPv4 /8 or an IPv6 /16.
       servers {
       	trusted_proxies static {$$OTTERTRAIL_TRUSTED_PROXIES}
       	client_ip_headers {$$OTTERTRAIL_CLIENT_IP_HEADER}
@@ -361,11 +362,19 @@ configs:
       			fail "OTTERTRAIL_PROXY is custom, but OTTERTRAIL_TRUSTED_PROXIES is empty. Set it to your proxy's address ranges, separated by spaces."
       		for range; do
       			case "$$range" in
-      				*/0) fail "OTTERTRAIL_TRUSTED_PROXIES has $$range, which covers every address, so any client could set its own address. List only your proxy's ranges." ;;
+      				private_ranges) fail "OTTERTRAIL_TRUSTED_PROXIES has private_ranges, which covers the Docker network's gateway: IPv6 connections and connections from the server itself could then set any address. List only your proxy's ranges." ;;
+      				# Only address characters reach the Caddyfile, so no value can change its structure.
+      				*[!0-9A-Fa-f:./]*) fail "OTTERTRAIL_TRUSTED_PROXIES has \"$$range\", which is not an IP address or CIDR range." ;;
       			esac
+      			case "$$range" in */*) ;; *) continue ;; esac
+      			bits=$${range##*/}
+      			case "$$bits" in "" | *[!0-9]*) fail "OTTERTRAIL_TRUSTED_PROXIES has \"$$range\", which is not an IP address or CIDR range." ;; esac
+      			case "$$range" in *:*) shortest=16 ;; *) shortest=8 ;; esac
+      			[ "$$bits" -ge "$$shortest" ] ||
+      				fail "OTTERTRAIL_TRUSTED_PROXIES has $$range, which is too wide: anyone inside it could set their own address. Use IPv4 ranges of /8 or narrower and IPv6 ranges of /16 or narrower, only your proxy's."
       		done
       		case "$$header" in
-      			*[!A-Za-z0-9-]*) fail "OTTERTRAIL_CLIENT_IP_HEADER is \"$$header\". Give one header name, such as X-Forwarded-For." ;;
+      			-* | *- | *[!A-Za-z0-9-]*) fail "OTTERTRAIL_CLIENT_IP_HEADER is \"$$header\". Give one header name, such as X-Forwarded-For." ;;
       		esac
       		export OTTERTRAIL_TRUSTED_PROXIES="$$*"
       		;;

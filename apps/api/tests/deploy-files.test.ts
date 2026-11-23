@@ -289,7 +289,8 @@ describe("caddy-start: the proxy settings Caddy refuses to start with", () => {
   test("custom passes the ranges on, separated by spaces, commas, or line breaks", async () => {
     const result = await runCaddyStart({
       OTTERTRAIL_PROXY: "custom",
-      OTTERTRAIL_TRUSTED_PROXIES: " 203.0.113.0/24,2001:db8::/32 ,\n198.51.100.7  private_ranges ",
+      OTTERTRAIL_TRUSTED_PROXIES:
+        " 203.0.113.0/24,2001:db8::/32 ,\n198.51.100.7  10.0.0.0/8 2600::/16 ",
       OTTERTRAIL_CLIENT_IP_HEADER: "True-Client-IP",
     });
     expect(result).toEqual({
@@ -297,7 +298,7 @@ describe("caddy-start: the proxy settings Caddy refuses to start with", () => {
       stdout: [
         "caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile",
         "proxy=custom",
-        "ranges=203.0.113.0/24 2001:db8::/32 198.51.100.7 private_ranges",
+        "ranges=203.0.113.0/24 2001:db8::/32 198.51.100.7 10.0.0.0/8 2600::/16",
         "header=True-Client-IP",
         "",
       ].join("\n"),
@@ -319,28 +320,87 @@ describe("caddy-start: the proxy settings Caddy refuses to start with", () => {
     expect((await runCaddyStart({ OTTERTRAIL_PROXY: "custom" })).code).toBe(1);
   });
 
-  test.each(["0.0.0.0/0", "::/0", "203.0.113.9/0"])(
-    "custom refuses %s, which covers every address",
-    async (wide) => {
-      const result = await runCaddyStart({
+  // Narrower than an IPv4 /8 or an IPv6 /16, as SHORTEST_PREFIX in
+  // scripts/update-cloudflare-ranges.ts bounds Cloudflare's own.
+  test.each([
+    "0.0.0.0/0",
+    "::/0",
+    "203.0.113.9/0",
+    "0.0.0.0/1",
+    "128.0.0.0/1",
+    "::/1",
+    "8000::/1",
+    "10.0.0.0/7",
+    "2600::/15",
+  ])("custom refuses %s, which is too wide", async (wide) => {
+    const result = await runCaddyStart({
+      OTTERTRAIL_PROXY: "custom",
+      OTTERTRAIL_TRUSTED_PROXIES: `203.0.113.0/24 ${wide}`,
+    });
+    expect(result).toEqual({
+      code: 1,
+      stdout: "",
+      stderr:
+        `Caddy did not start: OTTERTRAIL_TRUSTED_PROXIES has ${wide}, which is too wide: anyone inside it could set their own address. Use IPv4 ranges of /8 or narrower and IPv6 ranges of /16 or narrower, only your proxy's.\n` +
+        footer(custom),
+    });
+  });
+
+  test("the shipped Cloudflare ranges are well inside the widest custom range", () => {
+    const shipped = shippedRanges(compose);
+    for (const range of shipped) {
+      const bits = Number(range.split("/")[1]);
+      expect(bits).toBeGreaterThanOrEqual(range.includes(":") ? 16 + 8 : 8 + 4);
+    }
+  });
+
+  test("custom refuses private_ranges, which covers the Docker network's gateway", async () => {
+    expect(
+      await runCaddyStart({
         OTTERTRAIL_PROXY: "custom",
-        OTTERTRAIL_TRUSTED_PROXIES: `203.0.113.0/24 ${wide}`,
-      });
-      expect(result).toEqual({
-        code: 1,
-        stdout: "",
-        stderr:
-          `Caddy did not start: OTTERTRAIL_TRUSTED_PROXIES has ${wide}, which covers every address, so any client could set its own address. List only your proxy's ranges.\n` +
-          footer(custom),
-      });
-    },
-  );
+        OTTERTRAIL_TRUSTED_PROXIES: "203.0.113.0/24 private_ranges",
+      }),
+    ).toEqual({
+      code: 1,
+      stdout: "",
+      stderr:
+        "Caddy did not start: OTTERTRAIL_TRUSTED_PROXIES has private_ranges, which covers the Docker network's gateway: IPv6 connections and connections from the server itself could then set any address. List only your proxy's ranges.\n" +
+        footer(custom),
+    });
+  });
+
+  // Only address characters reach the Caddyfile's {$OTTERTRAIL_TRUSTED_PROXIES}.
+  test.each([
+    "203.0.113.0/24}",
+    "{$HOME}",
+    "203.0.113.0/24\\",
+    "example.com",
+    "10.0.0.0/",
+    "10.0.0.0/x8",
+    "2001:db8::/1.6",
+  ])("custom refuses %j, which is not an address or a range", async (bad) => {
+    expect(
+      await runCaddyStart({
+        OTTERTRAIL_PROXY: "custom",
+        OTTERTRAIL_TRUSTED_PROXIES: `203.0.113.0/24 ${bad}`,
+      }),
+    ).toEqual({
+      code: 1,
+      stdout: "",
+      stderr:
+        `Caddy did not start: OTTERTRAIL_TRUSTED_PROXIES has "${bad}", which is not an IP address or CIDR range.\n` +
+        footer(custom),
+    });
+  });
 
   test.each([
     "X-Real-IP X-Forwarded-For",
     "X-Forwarded-For,X-Real-IP",
     "{$$HOME}",
     "X-Forwarded-For\n}",
+    "-",
+    "-X-Forwarded-For",
+    "X-Forwarded-For-",
   ])("custom refuses a header setting that is not one name: %j", async (header) => {
     const result = await runCaddyStart({
       OTTERTRAIL_PROXY: "custom",
