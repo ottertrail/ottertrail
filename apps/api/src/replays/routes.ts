@@ -55,6 +55,12 @@ export const DEFAULT_REPLAY_MAX_IN_FLIGHT_PER_PROJECT = 8;
 const KEY = new RegExp(PUBLIC_KEY_PATTERN);
 
 const problem = (error: string, message: string) => ({ error, message });
+/**
+ * The answer to every chunk accepted: stored, a retry of one stored, or
+ * filtered (blocked address, bot, data center), so a sender never learns
+ * which.
+ */
+const RECEIVED = { received: 1 } as const;
 
 function tooManyRequests(reply: FastifyReply, retryAfterSeconds: number) {
   return reply
@@ -293,14 +299,14 @@ export const replayCollectionRoutes: FastifyPluginCallback<{
         // budget, so they cannot use it up.
         if (isBlockedAddress(project.blocked, request.ip)) {
           count("filtered_spam", 1);
-          return reply.code(202).send({ stored: 0 });
+          return reply.code(202).send(RECEIVED);
         }
         if (
           isBot(request.headers["user-agent"]) ||
           (project.ignoreDataCenters && isDataCenter(request.ip))
         ) {
           count("filtered_bot", 1);
-          return reply.code(202).send({ stored: 0 });
+          return reply.code(202).send(RECEIVED);
         }
         const spent = budget.take(project.id, Math.ceil(request.body.byteLength / 1024));
         if (!spent.allowed) {
@@ -358,7 +364,7 @@ export const replayCollectionRoutes: FastifyPluginCallback<{
           default:
             // A duplicate is a retry of a chunk already stored: accepted, no new item.
             count("accepted", result === "stored" ? 1 : 0);
-            return reply.code(202).send({ stored: result === "stored" ? 1 : 0 });
+            return reply.code(202).send(RECEIVED);
         }
       }),
   );

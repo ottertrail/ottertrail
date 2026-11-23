@@ -155,7 +155,7 @@ describe("collecting a replay's chunks", () => {
     expect(await sendRecording(project.public_key, replay)).toEqual([202, 202, 202]);
     // A retry: kept once.
     const again = await send(project.public_key, replay, 0, chunksOf(RECORDING, 3)[0] ?? "");
-    expect([again.statusCode, again.json()]).toEqual([202, { stored: 0 }]);
+    expect([again.statusCode, again.json()]).toEqual([202, { received: 1 }]);
     expect(await chunkCount(project.id, replay)).toBe("3");
     // The page may read every answer.
     expect(again.headers["access-control-allow-origin"]).toBe(ORIGIN);
@@ -252,7 +252,8 @@ describe("collecting a replay's chunks", () => {
     const bot = await send(project.public_key, replay, 0, gzipSync("x"), {
       headers: { "user-agent": "Googlebot/2.1 (+http://www.google.com/bot.html)" },
     });
-    expect([bot.statusCode, bot.json()]).toEqual([202, { stored: 0 }]);
+    // The same answer as a chunk stored: a sender never learns a filter caught it.
+    expect([bot.statusCode, bot.json()]).toEqual([202, { received: 1 }]);
     expect(await chunkCount(project.id, replay)).toBe("0");
   });
 
@@ -576,7 +577,7 @@ describe("joining a replay's chunks", () => {
     // Kept an hour, for retries; a late one is a duplicate.
     expect(await deleteJoinedChunks(dashboard.db)).toBe(0);
     const late = await send(project.public_key, replay, 1, chunksOf(RECORDING, 3)[1] ?? "");
-    expect(late.json()).toEqual({ stored: 0 });
+    expect(late.json()).toEqual({ received: 1 });
     expect(
       await deleteJoinedChunks(dashboard.db, { now: new Date(Date.now() + 2 * 3_600_000) }),
     ).toBeGreaterThanOrEqual(3);

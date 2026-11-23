@@ -360,7 +360,7 @@ describe("blocked addresses", () => {
       });
     const blocked = await chunk("203.0.113.9");
     expect(blocked.statusCode).toBe(202);
-    expect(blocked.json()).toEqual({ stored: 0 });
+    expect(blocked.json()).toEqual({ received: 1 });
     const chunks = async () =>
       (
         await dashboard.db
@@ -370,7 +370,7 @@ describe("blocked addresses", () => {
           .execute()
       ).length;
     expect(await chunks()).toBe(0);
-    expect((await chunk("198.51.100.4")).json()).toEqual({ stored: 1 });
+    expect((await chunk("198.51.100.4")).json()).toEqual({ received: 1 });
     expect(await chunks()).toBe(1);
   });
 
