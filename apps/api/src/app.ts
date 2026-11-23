@@ -74,7 +74,7 @@ import { uptimeRoutes } from "./uptime/routes.ts";
  * its headers. Fastify turns off Node's own limits, so without them a
  * client could send a body a byte at a time and hold its connection for
  * ever. Enough for the largest upload, a 25 MiB source map, at about
- * 2 Mbit/s. A response may take as long as it needs: the Server log's
+ * 1.75 Mbit/s, or less gzipped. A response may take as long as it needs: the Server log's
  * stream stays open.
  */
 export const REQUEST_TIMEOUT_MS = 120_000;

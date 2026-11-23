@@ -157,6 +157,42 @@ describe("upload", () => {
     expect(result.stderr).toContain("429 rate_limited: Slow down. (after 4 attempts)");
   });
 
+  test("tries once more after a 408, then says why it failed", async () => {
+    const { directory, server } = await setup(
+      { "app.js": "", "app.js.map": sourceMap("app") },
+      (_request, response) => reply(response, 408, { error: "Request Timeout" }),
+    );
+    const waits: number[] = [];
+
+    const result = await runCommand(upload(directory, server.host), {
+      sleep: async (milliseconds) => {
+        waits.push(milliseconds);
+      },
+    });
+
+    expect(result.code).toBe(1);
+    expect(server.requests).toHaveLength(2);
+    expect(waits).toEqual([1000]);
+    expect(result.stderr).toContain("took longer than the server allows (120 seconds)");
+  });
+
+  test("a 408 once, then stored", async () => {
+    let calls = 0;
+    const { directory, server } = await setup(
+      { "app.js": "", "app.js.map": sourceMap("app") },
+      (_request, response) => {
+        calls++;
+        if (calls === 1) reply(response, 408, { error: "Request Timeout" });
+        else reply(response, 201);
+      },
+    );
+
+    const result = await runCommand(upload(directory, server.host), { sleep: async () => {} });
+
+    expect(result.code).toBe(0);
+    expect(result.stdout).toContain("1 stored");
+  });
+
   test("reports a 400 with the server's message and exits non-zero", async () => {
     const { directory, server } = await setup(
       { "good.js": "", "good.js.map": sourceMap("good"), "bad.js": "", "bad.js.map": "nope" },

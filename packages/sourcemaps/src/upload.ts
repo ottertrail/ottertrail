@@ -89,6 +89,8 @@ export async function uploadSourceMap(
   url.searchParams.set("path", file.urlPath);
 
   let waits = 0;
+  // 408: the upload took longer than the server allows (120 seconds). Tried once more.
+  let timedOut = false;
   for (let attempt = 1; ; attempt++) {
     let response: Response;
     try {
@@ -129,6 +131,19 @@ export async function uploadSourceMap(
       attempt -= 1;
       await context.sleep(retryAfter);
       continue;
+    }
+    if (response.status === 408 && !timedOut && attempt < MAX_ATTEMPTS) {
+      timedOut = true;
+      await context.sleep(backoff(attempt));
+      continue;
+    }
+    if (response.status === 408) {
+      return {
+        status: "failed",
+        message:
+          "408: the upload took longer than the server allows (120 seconds), twice. Upload from a faster connection, or split the build into smaller files.",
+        fatal: false,
+      };
     }
     if (RETRY_STATUSES.has(response.status) && !fatal && attempt < MAX_ATTEMPTS) {
       await context.sleep(retryAfter ?? backoff(attempt));

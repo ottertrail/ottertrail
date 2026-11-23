@@ -2,7 +2,7 @@
  * What happened to a batch:
  * - sent: stored (202).
  * - drop: rejected for good (400, 403, 413, 415); sending it again would fail again.
- * - retry: worth sending again later (429, 5xx, or no response at all).
+ * - retry: worth sending again later (408, 429, 5xx, or no response at all).
  */
 export type SendOutcome =
   | { type: "sent" }
@@ -32,7 +32,8 @@ export function outcomeForStatus(status: number, retryAfter: string | null): Sen
   if (status >= 200 && status < 300) {
     return { type: "sent" };
   }
-  if (status === 429 || status >= 500) {
+  // 408: the request took too long to arrive, on a slow connection.
+  if (status === 408 || status === 429 || status >= 500) {
     const retryAfterMs = parseRetryAfter(retryAfter);
     return retryAfterMs === undefined ? { type: "retry" } : { type: "retry", retryAfterMs };
   }

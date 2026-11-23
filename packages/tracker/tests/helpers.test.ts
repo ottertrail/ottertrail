@@ -151,6 +151,7 @@ describe("outcomeForStatus", () => {
     [400, { type: "drop" }],
     [403, { type: "drop" }],
     [413, { type: "drop" }],
+    [408, { type: "retry", retryAfterMs: 5000 }],
     [429, { type: "retry", retryAfterMs: 5000 }],
     [503, { type: "retry", retryAfterMs: 5000 }],
   ])("status %i means %j", (status, outcome) => {
