@@ -209,6 +209,8 @@ The endpoint is public, so anyone can send it anything. Checks run cheapest firs
 
 Replay uploads (`POST /api/replays`, [session replay](session-replay.md)) run steps 1, 2, 4, 5, then blocked addresses with bots and data centers (202, `{ "stored": 0 }`), then their own budgets in bytes. The event checks of steps 3 and 9 and referrer spam do not apply to them: a chunk carries no events or referrer. Heatmap batches (`POST /api/heatmaps`, [Heatmaps](#heatmaps)) run steps 1 to 6 in the same order, with records in place of events and the project's heatmaps setting after step 5, then their own budgets; they have no visitor ID, so no daily cap. Server-side events and OTLP telemetry run none of the spam checks.
 
+From step 5 on, the project is known, and what becomes of each request is counted in memory, without a query, for the project's Activity tab: accepted, filtered (a bot, spam, too old), or refused, and why ([dashboard](dashboard.md#activity)). A request turned away in steps 1 to 4 is not counted, since nothing yet names its project.
+
 ### Keys and allowed hostnames
 
 Each project has a `public_key` (`pk_` plus 32 hex characters). It sits in every page's HTML, so it is not a secret: it only identifies the project and only allows sending events.
