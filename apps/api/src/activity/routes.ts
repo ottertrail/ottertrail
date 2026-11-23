@@ -5,15 +5,15 @@ import { requireProjectAccess } from "../access/access.ts";
 import type { Auth } from "../auth/auth.ts";
 import { requireSession } from "../auth/routes.ts";
 import type { Database } from "../db/schema.ts";
-import { readIngestActivity } from "./activity.ts";
+import { activityWindows, readIngestActivity } from "./activity.ts";
 
 const UUID_PATTERN =
   "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$";
 
 /**
  * GET /api/projects/:id/ingest-activity: what the project's ingestion
- * routes accepted, filtered, and refused in the last hour, 24 hours, and
- * 7 days, per source (activity.ts), for the Activity tab of its settings.
+ * routes accepted, filtered, and refused this hour, in the 24 hours, and
+ * in the 7 days that end with it, per source (activity.ts), for the Activity tab of its settings.
  * As the project's other settings: the owner and admins.
  */
 export const ingestActivityRoutes: FastifyPluginCallback<{
@@ -38,8 +38,15 @@ export const ingestActivityRoutes: FastifyPluginCallback<{
     },
     async (request) => {
       const at = now();
+      const since = activityWindows(at);
       return {
         now: at.toISOString(),
+        // Where "this hour", "24 h", and "7 days" start: whole hours.
+        since: {
+          hour: since.hour.toISOString(),
+          day: since.day.toISOString(),
+          week: since.week.toISOString(),
+        },
         sources: await readIngestActivity(db, request.params.id, at),
       };
     },

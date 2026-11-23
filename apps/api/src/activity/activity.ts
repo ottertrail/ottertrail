@@ -171,7 +171,9 @@ export class IngestActivity {
       this.#dropped = 0;
     }
     if (this.#counters.size === 0) return;
-    const pending = [...this.#counters.values()];
+    // In key order, so processes flushing the same rows take their locks
+    // in the same order and cannot deadlock each other.
+    const pending = [...this.#counters.values()].toSorted(byKey);
     this.#counters = new Map();
     for (let start = 0; start < pending.length; start += ROWS_PER_STATEMENT) {
       const rows = pending.slice(start, start + ROWS_PER_STATEMENT);
@@ -184,13 +186,23 @@ export class IngestActivity {
     }
   }
 
-  /** Puts unwritten counters back, merged with any added since; they pass the cap if they must. */
+  /**
+   * Puts unwritten counters back, merged with any added since, within the
+   * cap: through a long outage, or a flush that can never succeed, the
+   * kept counters stay bounded. Hours past the 7 days are dropped too: the
+   * worker would delete them. Dropped requests are warned about once, at
+   * the next flush.
+   */
   #keep(counters: readonly Counter[]): void {
+    const oldest = activityWindows(new Date(this.#now())).week.getTime();
     for (const kept of counters) {
       const key = `${kept.projectId} ${kept.hour} ${kept.source} ${kept.outcome}`;
       const counter = this.#counters.get(key);
-      if (counter === undefined) {
-        this.#counters.set(key, kept);
+      if (kept.hour < oldest) {
+        this.#dropped += kept.count;
+      } else if (counter === undefined) {
+        if (this.#counters.size >= this.#maxKeys) this.#dropped += kept.count;
+        else this.#counters.set(key, kept);
       } else {
         counter.count += kept.count;
         counter.items += kept.items;
@@ -216,6 +228,19 @@ export class IngestActivity {
   }
 }
 
+/** Text in code-unit order, as PostgreSQL's "C" collation and a UUID's bytes sort. */
+const compareText = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
+
+/** Counters in their key's order: project, hour, source, outcome (as upsert's ORDER BY). */
+function byKey(a: Counter, b: Counter): number {
+  return (
+    compareText(a.projectId, b.projectId) ||
+    a.hour - b.hour ||
+    compareText(a.source, b.source) ||
+    compareText(a.outcome, b.outcome)
+  );
+}
+
 /**
  * Adds counters to their rows. Rows of a project deleted meanwhile are
  * left out (the join), so one deletion cannot fail every later flush.
@@ -232,6 +257,8 @@ async function upsert(db: Kysely<Database>, rows: readonly Counter[]): Promise<v
     select v.project_id, v.hour, v.source, v.outcome, v.count, v.items, v.last_at
     from (values ${values}) as v (project_id, hour, source, outcome, count, items, last_at)
     join projects p on p.id = v.project_id
+    -- Rows locked in key order, whatever the join's plan: no deadlock between processes.
+    order by v.project_id, v.hour, v.source collate "C", v.outcome collate "C"
     on conflict (project_id, hour, source, outcome) do update set
       count = a.count + excluded.count,
       items = a.items + excluded.items,
@@ -239,16 +266,26 @@ async function upsert(db: Kysely<Database>, rows: readonly Counter[]): Promise<v
   `.execute(db);
 }
 
-/** Deletes hours wholly older than 7 days; the worker runs it daily. */
-export async function pruneIngestActivity(db: Kysely<Database>, now?: Date): Promise<number> {
-  const at = sql`coalesce(${now ?? null}::timestamptz, now())`;
+/**
+ * Where each window starts: this hour, since its start (UTC hours, which
+ * the instance's timezone shows as its own), and the 24 and 168 whole
+ * hours that end with it. The counts are kept by the hour, so no window
+ * can start mid-hour.
+ */
+export function activityWindows(now: Date): { hour: Date; day: Date; week: Date } {
+  const hour = now.getTime() - (now.getTime() % HOUR_MS);
+  return {
+    hour: new Date(hour),
+    day: new Date(hour - 23 * HOUR_MS),
+    week: new Date(hour - (ACTIVITY_RETENTION_DAYS * 24 - 1) * HOUR_MS),
+  };
+}
+
+/** Deletes the hours before the 7 days' window; the worker runs it daily. */
+export async function pruneIngestActivity(db: Kysely<Database>, now = new Date()): Promise<number> {
   const result = await db
     .deleteFrom("ingest_activity")
-    .where(
-      "hour",
-      "<=",
-      sql<Date>`${at} - make_interval(days => ${ACTIVITY_RETENTION_DAYS}) - interval '1 hour'`,
-    )
+    .where("hour", "<", activityWindows(now).week)
     .executeTakeFirst();
   return Number(result.numDeletedRows);
 }
@@ -274,16 +311,15 @@ export interface SourceActivity {
 }
 
 /**
- * A project's counts for the last hour, 24 hours, and 7 days, every
- * source listed. The counts are by the hour: each window takes every
- * hour that overlaps it, so at 10:20 "the last hour" counts from 9:00.
+ * A project's counts for this hour, the 24 hours, and the 7 days that end
+ * with it (activityWindows), every source listed.
  */
 export async function readIngestActivity(
   db: Kysely<Database>,
   projectId: string,
   now: Date,
 ): Promise<SourceActivity[]> {
-  const since = (hours: number) => sql`${now}::timestamptz - make_interval(hours => ${hours + 1})`;
+  const since = activityWindows(now);
   const { rows } = await sql<{
     source: IngestSource;
     outcome: IngestOutcome;
@@ -296,15 +332,15 @@ export async function readIngestActivity(
     last_at: Date;
   }>`
     select source, outcome,
-      coalesce(sum(count) filter (where hour > ${since(1)}), 0) as hour_count,
-      coalesce(sum(items) filter (where hour > ${since(1)}), 0) as hour_items,
-      coalesce(sum(count) filter (where hour > ${since(24)}), 0) as day_count,
-      coalesce(sum(items) filter (where hour > ${since(24)}), 0) as day_items,
+      coalesce(sum(count) filter (where hour >= ${since.hour}), 0) as hour_count,
+      coalesce(sum(items) filter (where hour >= ${since.hour}), 0) as hour_items,
+      coalesce(sum(count) filter (where hour >= ${since.day}), 0) as day_count,
+      coalesce(sum(items) filter (where hour >= ${since.day}), 0) as day_items,
       sum(count) as week_count,
       sum(items) as week_items,
       max(last_at) as last_at
     from ingest_activity
-    where project_id = ${projectId} and hour > ${since(ACTIVITY_RETENTION_DAYS * 24)}
+    where project_id = ${projectId} and hour >= ${since.week}
     group by source, outcome
   `.execute(db);
   const bySource = new Map<IngestSource, SourceActivity>(
