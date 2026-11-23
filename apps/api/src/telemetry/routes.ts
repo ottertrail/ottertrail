@@ -4,6 +4,7 @@ import { gunzip } from "node:zlib";
 
 import type { FastifyPluginCallback, FastifyReply, FastifyRequest } from "fastify";
 
+import type { IngestActivity, IngestOutcome, IngestSource } from "../activity/activity.ts";
 import { aiCallsOf } from "../ai/calls.ts";
 import type { ClickHouseClient } from "../clickhouse/clickhouse.ts";
 import { type NewEvent, storeEvents } from "../collection/event-store.ts";
@@ -79,6 +80,10 @@ const BEARER = /^Bearer (sk_[0-9a-f]{32})$/;
 
 interface Signal {
   path: string;
+  /** Where its requests count on the Activity tab. */
+  source: IngestSource;
+  /** The records a request stored: spans, log records, or data points. */
+  stored: (rows: TelemetryRows) => number;
   messages: SignalMessages;
   /** The response's partial_success field counting refused records. */
   rejectedField: string;
@@ -91,6 +96,8 @@ interface Signal {
 const SIGNALS: Signal[] = [
   {
     path: "/v1/traces",
+    source: "traces",
+    stored: (rows) => rows.spans?.length ?? 0,
     messages: TRACE_MESSAGES,
     rejectedField: "rejectedSpans",
     normalize: (request, context) => {
@@ -100,6 +107,8 @@ const SIGNALS: Signal[] = [
   },
   {
     path: "/v1/logs",
+    source: "logs",
+    stored: (rows) => rows.logs?.length ?? 0,
     messages: LOGS_MESSAGES,
     rejectedField: "rejectedLogRecords",
     normalize: (request, context) => {
@@ -109,6 +118,8 @@ const SIGNALS: Signal[] = [
   },
   {
     path: "/v1/metrics",
+    source: "metrics",
+    stored: (rows) => (rows.metric_points?.length ?? 0) + (rows.metric_histograms?.length ?? 0),
     messages: METRICS_MESSAGES,
     rejectedField: "rejectedDataPoints",
     normalize: (request, context) => {
@@ -125,6 +136,8 @@ const SIGNALS: Signal[] = [
 export interface TelemetryOptions {
   clickhouse: ClickHouseClient;
   projects: ProjectKeyCache;
+  /** Counts for the Activity tab (activity/activity.ts). */
+  activity: IngestActivity;
   /** Days telemetry is kept (Config.telemetryRetentionDays): older records are refused. */
   retentionDays: number;
   /** Requests per client address. */
@@ -200,6 +213,7 @@ export const telemetryRoutes: FastifyPluginCallback<TelemetryOptions> = (app, op
   const {
     clickhouse,
     projects,
+    activity,
     retentionDays,
     now = Date.now,
     maxInFlight = DEFAULT_MAX_IN_FLIGHT,
@@ -211,6 +225,20 @@ export const telemetryRoutes: FastifyPluginCallback<TelemetryOptions> = (app, op
   const projectOf = new WeakMap<FastifyRequest, CollectingProject>();
   /** Requests in progress (in-flight.ts). */
   const inFlight = new InFlight(maxInFlight, maxInFlightPerProject);
+  /** Each signal's source, by its path. */
+  const sourceOf = new Map(SIGNALS.map((signal) => [signal.path, signal.source]));
+  /** Counts a request whose project is known (activity/activity.ts); others are not. */
+  const count = (
+    request: FastifyRequest,
+    outcome: IngestOutcome,
+    items = 0,
+    project = projectOf.get(request),
+  ) => {
+    const source = sourceOf.get(request.routeOptions.url ?? "");
+    if (project !== undefined && source !== undefined) {
+      activity.add(project.id, source, outcome, items);
+    }
+  };
 
   // Both encodings as bytes: protobuf needs them, and JSON is parsed only
   // once unpacked. The limit applies to the body as sent; a gzip body is
@@ -229,6 +257,8 @@ export const telemetryRoutes: FastifyPluginCallback<TelemetryOptions> = (app, op
       typeof error === "object" && error !== null && "statusCode" in error
         ? Number(error.statusCode)
         : 500;
+    // The key was read before the body: a body refused here is the project's.
+    if (statusCode >= 400 && statusCode < 500) count(request, "refused_invalid");
     if (statusCode === 413) {
       return fail(request, reply, 413, "The body is larger than 16 MiB.");
     }
@@ -283,6 +313,7 @@ export const telemetryRoutes: FastifyPluginCallback<TelemetryOptions> = (app, op
       return fail(request, reply, 401, "No project has this secret key.");
     }
     if (!inFlight.takeForProject(request, project.id)) {
+      count(request, "refused_rate_limited", 0, project);
       return fail(
         request,
         reply,
@@ -313,6 +344,11 @@ export const telemetryRoutes: FastifyPluginCallback<TelemetryOptions> = (app, op
           }
           const encoding = answerEncoding(request);
           const sent = request.body ?? Buffer.alloc(0);
+          // What becomes of the request is counted from here (activity/activity.ts).
+          const invalid = (httpStatus: 400 | 413, text: string) => {
+            count(request, "refused_invalid");
+            return fail(request, reply, httpStatus, text);
+          };
 
           let body: Buffer;
           if ((request.headers["content-encoding"] ?? "").toLowerCase() === "gzip") {
@@ -320,8 +356,8 @@ export const telemetryRoutes: FastifyPluginCallback<TelemetryOptions> = (app, op
               body = await gunzipAsync(sent, { maxOutputLength: MAX_TELEMETRY_BODY_BYTES });
             } catch (error) {
               return error instanceof RangeError
-                ? fail(request, reply, 413, "The body is larger than 16 MiB once unpacked.")
-                : fail(request, reply, 400, "The body is not valid gzip.");
+                ? invalid(413, "The body is larger than 16 MiB once unpacked.")
+                : invalid(400, "The body is not valid gzip.");
             }
           } else {
             body = sent;
@@ -334,35 +370,33 @@ export const telemetryRoutes: FastifyPluginCallback<TelemetryOptions> = (app, op
             messageCount = countMessages(signal.messages, body, encoding);
           } catch (error) {
             if (error instanceof TooManyMessagesError) {
-              return fail(
-                request,
-                reply,
+              return invalid(
                 413,
                 `A request decodes into at most ${MAX_MESSAGES} messages (records, attributes, values). Send smaller batches.`,
               );
             }
-            if (error instanceof MalformedError) return fail(request, reply, 400, error.message);
+            if (error instanceof MalformedError) return invalid(400, error.message);
             throw error;
           }
           const tooLarge = (cost: number) =>
-            fail(
-              request,
-              reply,
+            invalid(
               413,
               `A request may cost at most ${budget.capacity} (one per record, or more for numerous or large attributes). This request costs ${cost}. Send smaller batches.`,
             );
-          const tooMuch = (retryAfterSeconds: number) =>
-            fail(
+          const tooMuch = (limit: "project" | "instance", retryAfterSeconds: number) => {
+            count(request, limit === "instance" ? "refused_volume" : "refused_rate_limited");
+            return fail(
               request,
               reply,
               429,
               `Too many records for this project. Retry after ${retryAfterSeconds} seconds.`,
               retryAfterSeconds,
             );
+          };
           const prepaid = costBeforeDecoding(messageCount, body.length);
           if (prepaid > budget.capacity) return tooLarge(prepaid);
           const paid = budget.take(project.id, prepaid);
-          if (!paid.allowed) return tooMuch(paid.retryAfterSeconds);
+          if (!paid.allowed) return tooMuch(paid.limit, paid.retryAfterSeconds);
 
           // Neither a malformed request nor one refused below gets its
           // decoding back: it was done.
@@ -376,15 +410,13 @@ export const telemetryRoutes: FastifyPluginCallback<TelemetryOptions> = (app, op
             });
           } catch (error) {
             if (error instanceof MalformedError || error instanceof RangeError) {
-              return fail(request, reply, 400, error.message);
+              return invalid(400, error.message);
             }
             throw error;
           }
 
           if (outcome.records > budget.capacity) {
-            return fail(
-              request,
-              reply,
+            return invalid(
               413,
               `A request holds at most ${budget.capacity} records. This request contains ${outcome.records}. Send smaller batches.`,
             );
@@ -405,7 +437,7 @@ export const telemetryRoutes: FastifyPluginCallback<TelemetryOptions> = (app, op
           const cost = Math.min(budget.capacity, base + (outcome.rows.ai_calls?.length ?? 0));
           if (cost > prepaid) {
             const rest = budget.take(project.id, cost - prepaid);
-            if (!rest.allowed) return tooMuch(rest.retryAfterSeconds);
+            if (!rest.allowed) return tooMuch(rest.limit, rest.retryAfterSeconds);
           }
           try {
             await Promise.all([
@@ -418,8 +450,20 @@ export const telemetryRoutes: FastifyPluginCallback<TelemetryOptions> = (app, op
             // Not the sender's doing: all of it back.
             budget.refund(project.id, cost);
             request.log.error({ err: error }, "could not store telemetry");
+            count(request, "refused_unavailable");
             return fail(request, reply, 503, "Telemetry was not stored. Retry later.", 5);
           }
+          // The records stored, and those refused in partial_success, per
+          // item; the error events and AI calls the spans and logs held
+          // count in those sources too.
+          const stored = signal.stored(outcome.rows);
+          if (stored > 0) count(request, "accepted", stored);
+          if (outcome.refused > 0) count(request, "refused_invalid", outcome.refused);
+          if (outcome.errors.length > 0) {
+            activity.add(project.id, "errors", "accepted", outcome.errors.length);
+          }
+          const aiCalls = outcome.rows.ai_calls?.length ?? 0;
+          if (aiCalls > 0) activity.add(project.id, "ai_calls", "accepted", aiCalls);
 
           const response =
             outcome.refused === 0

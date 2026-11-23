@@ -3,6 +3,7 @@ import { Buffer } from "node:buffer";
 import type { FastifyError, FastifyPluginCallback, FastifyReply } from "fastify";
 import type { Kysely } from "kysely";
 
+import type { IngestActivity, IngestOutcome, IngestSource } from "../activity/activity.ts";
 import type { ClickHouseClient } from "../clickhouse/clickhouse.ts";
 import type { Database } from "../db/schema.ts";
 import { type IsDataCenter, noDataCenters } from "../enrichment/data-centers.ts";
@@ -63,6 +64,8 @@ export const DEFAULT_INSTANCE_LIMIT: RateLimit = { capacity: 6_000, refillPerSec
 
 export interface CollectionOptions {
   db: Kysely<Database>;
+  /** What each project's requests came to, counted for its Activity tab (activity/activity.ts). */
+  activity: IngestActivity;
   /** Where events are stored (docs/clickhouse.md). */
   clickhouse: ClickHouseClient;
   ipLimit?: RateLimit;
@@ -242,6 +245,30 @@ function problem(code: string, message: string) {
   return { error: code, message };
 }
 
+/**
+ * Which source an event counts in on the Activity tab: errors and Web
+ * Vitals ride in the same batches as pageviews and custom events, and are
+ * counted apart, by their name.
+ */
+function sourceOf(event: { name: string; error?: unknown }): IngestSource {
+  // An "error" without its details is a custom event, as the route stores it.
+  if (event.name === ERROR && event.error !== undefined) return "errors";
+  if (event.name === VITALS) return "web_vitals";
+  return "browser_events";
+}
+
+/** Events per source. */
+function countBySource(
+  events: readonly { name: string; error?: unknown }[],
+): Map<IngestSource, number> {
+  const counts = new Map<IngestSource, number>();
+  for (const event of events) {
+    const source = sourceOf(event);
+    counts.set(source, (counts.get(source) ?? 0) + 1);
+  }
+  return counts;
+}
+
 function tooManyRequests(reply: FastifyReply, retryAfterSeconds: number) {
   return reply
     .code(429)
@@ -284,6 +311,7 @@ export const collectionRoutes: FastifyPluginCallback<CollectionOptions> = (app, 
     locate = noLocation,
     isDataCenter = noDataCenters,
     now = Date.now,
+    activity,
   } = options;
   // Projects whose events were ignored as coming from a data center, logged
   // once each: a site that forwards its events through its own server in a
@@ -415,6 +443,21 @@ export const collectionRoutes: FastifyPluginCallback<CollectionOptions> = (app, 
       if (project === null) {
         return reply.code(403).send(problem("unknown_key", "No project has this key."));
       }
+      const projectId = project.id;
+
+      // From here on the project is known, and what becomes of the request
+      // is counted (activity/activity.ts): once in each source the batch
+      // carries, with the number of that source's events where it matters.
+      const inBatch = countBySource(events);
+      const count = (outcome: IngestOutcome, items?: ReadonlyMap<IngestSource, number>) => {
+        for (const source of (items ?? inBatch).keys()) {
+          activity.add(projectId, source, outcome, items?.get(source) ?? 0);
+        }
+      };
+      const invalid = (message: string) => {
+        count("refused_invalid");
+        return reply.code(400).send(problem("invalid_request", message));
+      };
 
       // Browsers always send Origin on cross-site POSTs, and pages cannot
       // change it. Servers and scripts may leave it out or set anything, so
@@ -423,6 +466,7 @@ export const collectionRoutes: FastifyPluginCallback<CollectionOptions> = (app, 
       if (origin !== undefined) {
         const hostname = originHostname(origin);
         if (hostname === null || !isAllowedHostname(hostname, project.allowedHostnames)) {
+          count("refused_origin");
           return reply
             .code(403)
             .send(problem("origin_not_allowed", "This site may not send events to this project."));
@@ -433,14 +477,7 @@ export const collectionRoutes: FastifyPluginCallback<CollectionOptions> = (app, 
       const environment = environmentOf(request.body.environment);
       const { release } = request.body;
       if (release !== undefined && !isStorableText(release)) {
-        return reply
-          .code(400)
-          .send(
-            problem(
-              "invalid_request",
-              "release contains an unpaired surrogate, which cannot be stored.",
-            ),
-          );
+        return invalid("release contains an unpaired surrogate, which cannot be stored.");
       }
 
       // Accepted and ignored, as bots below: the project's owner chose to
@@ -455,6 +492,7 @@ export const collectionRoutes: FastifyPluginCallback<CollectionOptions> = (app, 
         capped: 0,
       };
       if (isBlockedAddress(project.blocked, request.ip)) {
+        count("filtered_spam", inBatch);
         return reply.code(202).send({ ...noneStored, blocked: events.length });
       }
 
@@ -473,6 +511,7 @@ export const collectionRoutes: FastifyPluginCallback<CollectionOptions> = (app, 
         );
       }
       if (bot || dataCenter) {
+        count("filtered_bot", inBatch);
         return reply.code(202).send({ ...noneStored, bots: events.length });
       }
 
@@ -492,11 +531,13 @@ export const collectionRoutes: FastifyPluginCallback<CollectionOptions> = (app, 
           ),
         )
       ) {
+        count("filtered_spam", inBatch);
         return reply.code(202).send({ ...noneStored, spam: events.length });
       }
 
       const spent = budget.take(project.id, events.length);
       if (!spent.allowed) {
+        count(spent.limit === "instance" ? "refused_volume" : "refused_rate_limited");
         return tooManyRequests(reply, spent.retryAfterSeconds);
       }
 
@@ -508,15 +549,15 @@ export const collectionRoutes: FastifyPluginCallback<CollectionOptions> = (app, 
 
       const accepted: NewEvent[] = [];
       let tooOld = 0;
+      const tooOldBySource = new Map<IngestSource, number>();
       let unverifiedUsers = 0;
       for (const [index, event] of events.entries()) {
         const page = parsePageUrl(event.url);
         if (page === null) {
-          return reply
-            .code(400)
-            .send(problem("invalid_request", `events[${index}].url is not a valid http(s) URL.`));
+          return invalid(`events[${index}].url is not a valid http(s) URL.`);
         }
         if (!isAllowedHostname(page.hostname, project.allowedHostnames)) {
+          count("refused_origin");
           return reply
             .code(403)
             .send(
@@ -527,24 +568,14 @@ export const collectionRoutes: FastifyPluginCallback<CollectionOptions> = (app, 
             );
         }
         if (event.userId !== undefined && !isStorableText(event.userId)) {
-          return reply
-            .code(400)
-            .send(
-              problem(
-                "invalid_request",
-                `events[${index}].userId contains an unpaired surrogate, which cannot be stored.`,
-              ),
-            );
+          return invalid(
+            `events[${index}].userId contains an unpaired surrogate, which cannot be stored.`,
+          );
         }
         if (!isStorableText(event.name)) {
-          return reply
-            .code(400)
-            .send(
-              problem(
-                "invalid_request",
-                `events[${index}].name contains an unpaired surrogate, which cannot be stored.`,
-              ),
-            );
+          return invalid(
+            `events[${index}].name contains an unpaired surrogate, which cannot be stored.`,
+          );
         }
         if (
           event.properties !== undefined &&
@@ -553,27 +584,17 @@ export const collectionRoutes: FastifyPluginCallback<CollectionOptions> = (app, 
               !isStorableText(name) || (typeof value === "string" && !isStorableText(value)),
           )
         ) {
-          return reply
-            .code(400)
-            .send(
-              problem(
-                "invalid_request",
-                `events[${index}].properties contains a NUL character or an unpaired surrogate, which cannot be stored.`,
-              ),
-            );
+          return invalid(
+            `events[${index}].properties contains a NUL character or an unpaired surrogate, which cannot be stored.`,
+          );
         }
         if (
           event.properties !== undefined &&
           Buffer.byteLength(JSON.stringify(event.properties)) > MAX_PROPERTIES_BYTES
         ) {
-          return reply
-            .code(400)
-            .send(
-              problem(
-                "invalid_request",
-                `events[${index}].properties is larger than ${MAX_PROPERTIES_BYTES} bytes.`,
-              ),
-            );
+          return invalid(
+            `events[${index}].properties is larger than ${MAX_PROPERTIES_BYTES} bytes.`,
+          );
         }
 
         // "engagement" is reserved: time a page was visible, reported by the tracker.
@@ -585,14 +606,9 @@ export const collectionRoutes: FastifyPluginCallback<CollectionOptions> = (app, 
             engagedMs < 0 ||
             engagedMs > MAX_ENGAGED_MS
           ) {
-            return reply
-              .code(400)
-              .send(
-                problem(
-                  "invalid_request",
-                  `events[${index}] is an engagement event: properties.engagedMs must be a whole number of milliseconds, at most 24 hours.`,
-                ),
-              );
+            return invalid(
+              `events[${index}] is an engagement event: properties.engagedMs must be a whole number of milliseconds, at most 24 hours.`,
+            );
           }
         }
         // A page load's Web Vitals: only the values a page load can have.
@@ -605,32 +621,22 @@ export const collectionRoutes: FastifyPluginCallback<CollectionOptions> = (app, 
         // in a browser's cache may still send one, and refusing it would
         // lose its whole batch.
         if (event.error !== undefined && event.name !== ERROR) {
-          return reply
-            .code(400)
-            .send(
-              problem(
-                "invalid_request",
-                `events[${index}].error is only for events named "error".`,
-              ),
-            );
+          return invalid(`events[${index}].error is only for events named "error".`);
         }
         if (
           event.error !== undefined &&
           ![event.error.type, event.error.message, event.error.stack ?? ""].every(isStorableText)
         ) {
-          return reply
-            .code(400)
-            .send(
-              problem(
-                "invalid_request",
-                `events[${index}].error contains an unpaired surrogate, which cannot be stored.`,
-              ),
-            );
+          return invalid(
+            `events[${index}].error contains an unpaired surrogate, which cannot be stored.`,
+          );
         }
 
         const occurredAt = correctClock(event.occurredAt, sentAt, receivedAt);
         if (occurredAt === null) {
           tooOld += 1;
+          const source = sourceOf(event);
+          tooOldBySource.set(source, (tooOldBySource.get(source) ?? 0) + 1);
           continue;
         }
         // A project that requires signed user IDs keeps an unsigned or
@@ -679,6 +685,7 @@ export const collectionRoutes: FastifyPluginCallback<CollectionOptions> = (app, 
 
       // Events past their visitor's daily cap, and the days they were counted on.
       let capped = 0;
+      const cappedBySource = new Map<IngestSource, number>();
       const counted: { day: string; visitorId: string }[] = [];
       let toStore = accepted;
       try {
@@ -703,6 +710,8 @@ export const collectionRoutes: FastifyPluginCallback<CollectionOptions> = (app, 
             return true;
           }
           capped += 1;
+          const source = sourceOf(event);
+          cappedBySource.set(source, (cappedBySource.get(source) ?? 0) + 1);
           return false;
         });
         // Capped events spend no budget: they are not stored.
@@ -716,8 +725,15 @@ export const collectionRoutes: FastifyPluginCallback<CollectionOptions> = (app, 
         budget.refund(project.id, events.length - capped);
         for (const { day, visitorId } of counted) visitorCap.untake(project.id, day, visitorId);
         request.log.error({ err: error }, "could not store events");
+        count("refused_unavailable");
         return storageUnavailable(reply);
       }
+      // Each part of the batch in its outcome, per source: stored, too
+      // old, or past its visitor's daily cap (counted as spam). A request
+      // that stored some events and dropped others counts in both.
+      count("accepted", countBySource(toStore));
+      count("filtered_too_old", tooOldBySource);
+      count("filtered_spam", cappedBySource);
       // Not waited for: the events are stored, and a slow PostgreSQL must
       // not hold the answer up, nor fail it.
       lastEvents.record(project.id, toStore).catch((error: unknown) => {
@@ -738,6 +754,7 @@ export const collectionRoutes: FastifyPluginCallback<CollectionOptions> = (app, 
     projects,
     lastEvents,
     budget,
+    activity,
     ipLimiter: new TokenBucketLimiter(options.serverIpLimit ?? DEFAULT_SERVER_IP_LIMIT, { now }),
     maxEvents: MAX_EVENTS_PER_BATCH,
     maxBodyBytes: MAX_BODY_BYTES,

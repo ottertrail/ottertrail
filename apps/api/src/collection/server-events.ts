@@ -2,6 +2,7 @@ import { Buffer } from "node:buffer";
 
 import type { FastifyInstance, FastifyReply } from "fastify";
 
+import type { IngestActivity } from "../activity/activity.ts";
 import type { ClickHouseClient } from "../clickhouse/clickhouse.ts";
 import { ENGAGEMENT, PAGEVIEW, VITALS } from "../visits/visits.ts";
 import { ENVIRONMENT_PATTERN, environmentOf, RELEASE_PATTERN } from "./environment.ts";
@@ -76,6 +77,8 @@ export function serverEventsRoute(
   options: {
     clickhouse: ClickHouseClient;
     projects: ProjectKeyCache;
+    /** Counts for the Activity tab (activity/activity.ts). */
+    activity: IngestActivity;
     /** Shared with browser events (last-event.ts). */
     lastEvents: LastEventRecorder;
     /** Shared with browser events: one budget per project, inside the instance's. */
@@ -98,6 +101,7 @@ export function serverEventsRoute(
     maxBodyBytes,
     maxPropertiesBytes,
     now,
+    activity,
   } = options;
 
   app.post<{ Body: ServerBatch }>(
@@ -167,27 +171,26 @@ export function serverEventsRoute(
       if (project === null) {
         return reply.code(401).send(problem("unknown_key", "No project has this secret key."));
       }
+      // Known from here: what becomes of the request is counted.
+      const projectId = project.id;
+      const invalid = (message: string) => {
+        activity.add(projectId, "server_events", "refused_invalid");
+        return reply.code(400).send(problem("invalid_request", message));
+      };
 
       const receivedAt = now();
       const environment = environmentOf(request.body.environment);
       const { release } = request.body;
       if (release !== undefined && !isStorableText(release)) {
-        return reply
-          .code(400)
-          .send(problem("invalid_request", "release contains an unpaired surrogate."));
+        return invalid("release contains an unpaired surrogate.");
       }
       const accepted: NewEvent[] = [];
       let tooOld = 0;
       for (const [index, event] of request.body.events.entries()) {
         if (event.name === PAGEVIEW || event.name === ENGAGEMENT || event.name === VITALS) {
-          return reply
-            .code(400)
-            .send(
-              problem(
-                "invalid_request",
-                `events[${index}].name: "${event.name}" is sent by the browser tracker only.`,
-              ),
-            );
+          return invalid(
+            `events[${index}].name: "${event.name}" is sent by the browser tracker only.`,
+          );
         }
         const texts = [
           event.name,
@@ -198,37 +201,18 @@ export function serverEventsRoute(
           ),
         ];
         if (!texts.every(isStorableText)) {
-          return reply
-            .code(400)
-            .send(
-              problem(
-                "invalid_request",
-                `events[${index}] contains a NUL character or an unpaired surrogate, which cannot be stored.`,
-              ),
-            );
+          return invalid(
+            `events[${index}] contains a NUL character or an unpaired surrogate, which cannot be stored.`,
+          );
         }
         if (
           event.properties !== undefined &&
           Buffer.byteLength(JSON.stringify(event.properties)) > maxPropertiesBytes
         ) {
-          return reply
-            .code(400)
-            .send(
-              problem(
-                "invalid_request",
-                `events[${index}].properties is larger than ${maxPropertiesBytes} bytes.`,
-              ),
-            );
+          return invalid(`events[${index}].properties is larger than ${maxPropertiesBytes} bytes.`);
         }
         if (event.occurredAt > receivedAt + MAX_FUTURE_MS) {
-          return reply
-            .code(400)
-            .send(
-              problem(
-                "invalid_request",
-                `events[${index}].occurredAt is in the future: check the server's clock.`,
-              ),
-            );
+          return invalid(`events[${index}].occurredAt is in the future: check the server's clock.`);
         }
         if (receivedAt - event.occurredAt > MAX_EVENT_AGE_MS) {
           tooOld += 1;
@@ -248,6 +232,11 @@ export function serverEventsRoute(
 
       const spent = budget.take(project.id, accepted.length);
       if (!spent.allowed) {
+        activity.add(
+          projectId,
+          "server_events",
+          spent.limit === "instance" ? "refused_volume" : "refused_rate_limited",
+        );
         return reply
           .code(429)
           .header("retry-after", String(spent.retryAfterSeconds))
@@ -264,8 +253,14 @@ export function serverEventsRoute(
         // Not the sender's doing: the budget back, so its retries are not refused for it.
         budget.refund(project.id, accepted.length);
         request.log.error({ err: error }, "could not store server events");
+        activity.add(projectId, "server_events", "refused_unavailable");
         return storageUnavailable(reply);
       }
+      // Stored events, and the ones too old to store: per item.
+      if (accepted.length > 0) {
+        activity.add(projectId, "server_events", "accepted", accepted.length);
+      }
+      if (tooOld > 0) activity.add(projectId, "server_events", "filtered_too_old", tooOld);
       // Not waited for: the events are stored, and a slow PostgreSQL must
       // not hold the answer up, nor fail it.
       lastEvents.record(project.id, accepted).catch((error: unknown) => {

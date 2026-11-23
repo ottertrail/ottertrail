@@ -3,6 +3,7 @@ import { gunzipSync } from "node:zlib";
 import type { FastifyError, FastifyPluginCallback, FastifyReply } from "fastify";
 import type { Kysely } from "kysely";
 
+import type { IngestActivity, IngestOutcome } from "../activity/activity.ts";
 import { isAllowedHostname, originHostname } from "../collection/normalize.ts";
 import { ProjectKeyCache, PUBLIC_KEY_PATTERN } from "../collection/project-keys.ts";
 import { EventBudget, type RateLimit, TokenBucketLimiter } from "../collection/rate-limiter.ts";
@@ -70,6 +71,8 @@ interface ChunkQuery {
 export const replayCollectionRoutes: FastifyPluginCallback<{
   db: Kysely<Database>;
   projects: ProjectKeyCache;
+  /** Counts for the Activity tab (activity/activity.ts). */
+  activity: IngestActivity;
   /** Compressed replay bytes the instance may keep (Config.replayStorageBytes). */
   limitBytes: number;
   /** Whether the install has an object store to keep replays in: without one, they are off. */
@@ -87,6 +90,7 @@ export const replayCollectionRoutes: FastifyPluginCallback<{
     storeConfigured,
     isDataCenter = noDataCenters,
     now = Date.now,
+    activity,
   } = options;
   const ipLimiter = new TokenBucketLimiter(options.ipLimit ?? DEFAULT_REPLAY_IP_LIMIT, { now });
   // In KiB: a chunk costs its size.
@@ -170,10 +174,16 @@ export const replayCollectionRoutes: FastifyPluginCallback<{
       if (project === null) {
         return reply.code(403).send(problem("unknown_key", "No project has this key."));
       }
+      // Known from here: what becomes of the chunk is counted, one item a chunk.
+      const projectId = project.id;
+      const count = (outcome: IngestOutcome, items = 0) => {
+        activity.add(projectId, "replays", outcome, items);
+      };
       const origin = request.headers.origin;
       if (origin !== undefined) {
         const hostname = originHostname(origin);
         if (hostname === null || !isAllowedHostname(hostname, project.allowedHostnames)) {
+          count("refused_origin");
           return reply
             .code(403)
             .send(problem("origin_not_allowed", "This site may not send to this project."));
@@ -181,11 +191,13 @@ export const replayCollectionRoutes: FastifyPluginCallback<{
       }
       // "replay_off" stops the page's recorder for the rest of its load.
       if (project.replayMode !== "errors") {
+        count("refused_disabled");
         return reply
           .code(403)
           .send(problem("replay_off", "The project does not take session replays."));
       }
       if (!storeConfigured) {
+        count("refused_disabled");
         return reply
           .code(403)
           .send(
@@ -196,11 +208,13 @@ export const replayCollectionRoutes: FastifyPluginCallback<{
           );
       }
       if (!Buffer.isBuffer(request.body) || request.body.byteLength === 0) {
+        count("refused_invalid");
         return reply.code(400).send(problem("invalid_request", "Send the chunk as the body."));
       }
       try {
         gunzipSync(request.body, { maxOutputLength: MAX_CHUNK_UNPACKED_BYTES });
       } catch (error) {
+        count("refused_invalid");
         return error instanceof RangeError
           ? reply.code(413).send(problem("payload_too_large", "A chunk unpacks to at most 1 MiB."))
           : reply.code(400).send(problem("invalid_request", "The chunk is not gzip."));
@@ -208,15 +222,22 @@ export const replayCollectionRoutes: FastifyPluginCallback<{
       // Accepted and ignored, as their events are (collection/routes.ts):
       // the project's blocked addresses, bots, and data centers. Before the
       // budget, so they cannot use it up.
+      if (isBlockedAddress(project.blocked, request.ip)) {
+        count("filtered_spam", 1);
+        return reply.code(202).send({ stored: 0 });
+      }
       if (
-        isBlockedAddress(project.blocked, request.ip) ||
         isBot(request.headers["user-agent"]) ||
         (project.ignoreDataCenters && isDataCenter(request.ip))
       ) {
+        count("filtered_bot", 1);
         return reply.code(202).send({ stored: 0 });
       }
       const spent = budget.take(project.id, Math.ceil(request.body.byteLength / 1024));
-      if (!spent.allowed) return tooManyRequests(reply, spent.retryAfterSeconds);
+      if (!spent.allowed) {
+        count(spent.limit === "instance" ? "refused_volume" : "refused_rate_limited");
+        return tooManyRequests(reply, spent.retryAfterSeconds);
+      }
 
       let result;
       try {
@@ -234,10 +255,12 @@ export const replayCollectionRoutes: FastifyPluginCallback<{
         );
       } catch (error) {
         request.log.error({ err: error }, "could not store a replay chunk");
+        count("refused_unavailable");
         return storageUnavailable(reply);
       }
       switch (result) {
         case "storage_full":
+          count("refused_volume");
           return reply
             .code(403)
             .send(
@@ -247,10 +270,14 @@ export const replayCollectionRoutes: FastifyPluginCallback<{
               ),
             );
         case "too_large":
+          // One replay's own limit: also a storage limit, which the sheet explains.
+          count("refused_volume");
           return reply
             .code(413)
             .send(problem("replay_too_large", "A replay is at most 2 MB, compressed."));
         default:
+          // A duplicate is a retry of a chunk already stored: accepted, no new item.
+          count("accepted", result === "stored" ? 1 : 0);
           return reply.code(202).send({ stored: result === "stored" ? 1 : 0 });
       }
     },

@@ -1,5 +1,6 @@
 import type { FastifyError, FastifyPluginCallback, FastifyReply, FastifyRequest } from "fastify";
 
+import type { IngestActivity, IngestOutcome } from "../activity/activity.ts";
 import type { ClickHouseClient } from "../clickhouse/clickhouse.ts";
 import { insertRows } from "../clickhouse/insert.ts";
 import { AI_CALLS_TABLE } from "../clickhouse/migrations.ts";
@@ -161,6 +162,8 @@ function nanosOf(ms: number): string {
 export interface AiCallIngestOptions {
   clickhouse: ClickHouseClient;
   projects: ProjectKeyCache;
+  /** Counts for the Activity tab (activity/activity.ts). */
+  activity: IngestActivity;
   /** The telemetry budget, shared with OTLP (telemetry/routes.ts): each call is a unit. */
   budget: EventBudget;
   /** Requests per client address, an IPv6 address by its /64 (DEFAULT_SERVER_IP_LIMIT). */
@@ -197,6 +200,7 @@ export const aiCallIngestRoutes: FastifyPluginCallback<AiCallIngestOptions> = (
   const {
     clickhouse,
     projects,
+    activity,
     budget,
     now = Date.now,
     maxInFlight = DEFAULT_MAX_IN_FLIGHT,
@@ -207,8 +211,20 @@ export const aiCallIngestRoutes: FastifyPluginCallback<AiCallIngestOptions> = (
   const projectOf = new WeakMap<FastifyRequest, CollectingProject>();
   /** Requests in progress, counted as OTLP's are (in-flight.ts). */
   const inFlight = new InFlight(maxInFlight, maxInFlightPerProject);
+  /** Counts a request whose project is known (activity/activity.ts); others are not. */
+  const count = (
+    request: FastifyRequest,
+    outcome: IngestOutcome,
+    items = 0,
+    project = projectOf.get(request),
+  ) => {
+    if (project !== undefined) activity.add(project.id, "ai_calls", outcome, items);
+  };
 
   app.setErrorHandler((error: FastifyError, request, reply) => {
+    // The key was read before the body: a body refused here is the project's.
+    const status = error.validation === undefined ? (error.statusCode ?? 500) : 400;
+    if (status >= 400 && status < 500) count(request, "refused_invalid");
     if (error.validation !== undefined || error.statusCode === 400) {
       return reply.code(400).send(problem("invalid_request", error.message));
     }
@@ -270,6 +286,7 @@ export const aiCallIngestRoutes: FastifyPluginCallback<AiCallIngestOptions> = (
           return reply.code(401).send(problem("unknown_key", "No project has this secret key."));
         }
         if (!inFlight.takeForProject(request, project.id)) {
+          count(request, "refused_rate_limited", 0, project);
           return reply
             .code(429)
             .header("retry-after", "1")
@@ -293,8 +310,10 @@ export const aiCallIngestRoutes: FastifyPluginCallback<AiCallIngestOptions> = (
         if (project === undefined) {
           throw new Error("the AI calls onRequest hook must find its project first");
         }
-        const invalid = (message: string) =>
-          reply.code(400).send(problem("invalid_request", message));
+        const invalid = (message: string) => {
+          count(request, "refused_invalid");
+          return reply.code(400).send(problem("invalid_request", message));
+        };
         const receivedAt = now();
         const { release = "" } = request.body;
         if (!isStorableText(release)) return invalid("release contains an unpaired surrogate.");
@@ -384,6 +403,7 @@ export const aiCallIngestRoutes: FastifyPluginCallback<AiCallIngestOptions> = (
         }
 
         if (rows.length > budget.capacity) {
+          count(request, "refused_invalid");
           return reply
             .code(413)
             .send(
@@ -395,6 +415,7 @@ export const aiCallIngestRoutes: FastifyPluginCallback<AiCallIngestOptions> = (
         }
         const spent = budget.take(project.id, rows.length);
         if (!spent.allowed) {
+          count(request, spent.limit === "instance" ? "refused_volume" : "refused_rate_limited");
           return reply
             .code(429)
             .header("retry-after", String(spent.retryAfterSeconds))
@@ -419,8 +440,12 @@ export const aiCallIngestRoutes: FastifyPluginCallback<AiCallIngestOptions> = (
           // Not the sender's doing: the budget back, so its retries are not refused for it.
           budget.refund(project.id, rows.length);
           request.log.error({ err: error }, "could not store AI calls");
+          count(request, "refused_unavailable");
           return storageUnavailable(reply);
         }
+        // Per call: those stored, and those too old to store.
+        if (rows.length > 0) count(request, "accepted", rows.length);
+        if (tooOld > 0) count(request, "filtered_too_old", tooOld);
         return reply.code(202).send({ stored: rows.length, tooOld });
       }),
   );

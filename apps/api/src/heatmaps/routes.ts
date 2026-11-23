@@ -1,5 +1,6 @@
 import type { FastifyError, FastifyPluginCallback, FastifyReply } from "fastify";
 
+import type { IngestActivity, IngestOutcome } from "../activity/activity.ts";
 import type { ClickHouseClient } from "../clickhouse/clickhouse.ts";
 import { ENVIRONMENT_PATTERN, environmentOf, RELEASE_PATTERN } from "../collection/environment.ts";
 import {
@@ -258,6 +259,8 @@ function recordProblem(record: IncomingRecord): string | null {
 export const heatmapCollectionRoutes: FastifyPluginCallback<{
   clickhouse: ClickHouseClient;
   projects: ProjectKeyCache;
+  /** Counts for the Activity tab (activity/activity.ts). */
+  activity: IngestActivity;
   ipLimit?: RateLimit;
   ipRecordLimit?: RateLimit;
   projectLimit?: RateLimit;
@@ -265,7 +268,7 @@ export const heatmapCollectionRoutes: FastifyPluginCallback<{
   isDataCenter?: IsDataCenter;
   now?: () => number;
 }> = (app, options, done) => {
-  const { clickhouse, projects, isDataCenter = noDataCenters, now = Date.now } = options;
+  const { clickhouse, projects, activity, isDataCenter = noDataCenters, now = Date.now } = options;
   const ipLimiter = new TokenBucketLimiter(options.ipLimit ?? DEFAULT_HEATMAP_IP_LIMIT, { now });
   const ipRecordLimit = options.ipRecordLimit ?? DEFAULT_HEATMAP_IP_RECORD_LIMIT;
   const ipRecordLimiter = new TokenBucketLimiter(ipRecordLimit, { now });
@@ -353,22 +356,30 @@ export const heatmapCollectionRoutes: FastifyPluginCallback<{
       if (project === null) {
         return reply.code(403).send(problem("unknown_key", "No project has this key."));
       }
+      // Known from here: what becomes of the batch is counted.
+      const projectId = project.id;
+      const count = (outcome: IngestOutcome, items = 0) => {
+        activity.add(projectId, "heatmaps", outcome, items);
+      };
       const origin = request.headers.origin;
       if (origin !== undefined) {
         const hostname = originHostname(origin);
         if (hostname === null || !isAllowedHostname(hostname, project.allowedHostnames)) {
+          count("refused_origin");
           return reply
             .code(403)
             .send(problem("origin_not_allowed", "This site may not send to this project."));
         }
       }
       if (!project.heatmaps) {
+        count("refused_disabled");
         return reply
           .code(403)
           .send(problem("heatmaps_off", "The project does not take heatmap data."));
       }
       const { release } = request.body;
       if (release !== undefined && !isStorableText(release)) {
+        count("refused_invalid");
         return reply
           .code(400)
           .send(problem("invalid_request", "release contains an unpaired surrogate."));
@@ -376,10 +387,12 @@ export const heatmapCollectionRoutes: FastifyPluginCallback<{
 
       const none = { stored: 0, tooOld: 0, bots: 0, blocked: 0, spam: 0 };
       if (isBlockedAddress(project.blocked, request.ip)) {
+        count("filtered_spam", records.length);
         return reply.code(202).send({ ...none, blocked: records.length });
       }
       const userAgent = request.headers["user-agent"];
       if (isBot(userAgent) || (project.ignoreDataCenters && isDataCenter(request.ip))) {
+        count("filtered_bot", records.length);
         return reply.code(202).send({ ...none, bots: records.length });
       }
       if (
@@ -392,11 +405,15 @@ export const heatmapCollectionRoutes: FastifyPluginCallback<{
           ),
         )
       ) {
+        count("filtered_spam", records.length);
         return reply.code(202).send({ ...none, spam: records.length });
       }
 
       const spent = budget.take(project.id, records.length);
-      if (!spent.allowed) return tooManyRequests(reply, spent.retryAfterSeconds);
+      if (!spent.allowed) {
+        count(spent.limit === "instance" ? "refused_volume" : "refused_rate_limited");
+        return tooManyRequests(reply, spent.retryAfterSeconds);
+      }
 
       const environment = environmentOf(request.body.environment);
       // Each page once: its path, on an allowed hostname.
@@ -405,6 +422,7 @@ export const heatmapCollectionRoutes: FastifyPluginCallback<{
         const page = parsePageUrl(incoming.url);
         if (page === null || !isAllowedHostname(page.hostname, project.allowedHostnames)) {
           budget.refund(project.id, records.length);
+          count(page === null ? "refused_invalid" : "refused_origin");
           return page === null
             ? reply
                 .code(400)
@@ -425,6 +443,7 @@ export const heatmapCollectionRoutes: FastifyPluginCallback<{
       for (const [index, record] of records.entries()) {
         const refuse = (status: 400 | 403, code: string, message: string) => {
           budget.refund(project.id, records.length);
+          count("refused_invalid");
           return reply.code(status).send(problem(code, `records[${index}] ${message}`));
         };
         const wrong = recordProblem(record);
@@ -471,8 +490,12 @@ export const heatmapCollectionRoutes: FastifyPluginCallback<{
         // Not the sender's doing: the budget back, so its retry is not refused for it.
         budget.refund(project.id, accepted.length);
         request.log.error({ err: error }, "could not store heatmap data");
+        count("refused_unavailable");
         return storageUnavailable(reply);
       }
+      // Per record: those stored, and those too old to store.
+      if (accepted.length > 0) count("accepted", accepted.length);
+      if (tooOld > 0) count("filtered_too_old", tooOld);
       return reply.code(202).send({ ...none, stored: accepted.length, tooOld });
     },
   );

@@ -6,6 +6,8 @@ import type { Kysely } from "kysely";
 import { memberRoutes } from "./access/member-routes.ts";
 import { meRoutes } from "./access/routes.ts";
 import { accountRoutes } from "./account/routes.ts";
+import { IngestActivity } from "./activity/activity.ts";
+import { ingestActivityRoutes } from "./activity/routes.ts";
 import { aiCallListRoutes } from "./ai/call-routes.ts";
 import { type AiCallIngestOptions, aiCallIngestRoutes } from "./ai/ingest-routes.ts";
 import { aiModelRoutes } from "./ai/model-routes.ts";
@@ -74,7 +76,9 @@ export interface AppOptions extends Omit<FastifyServerOptions, "logger"> {
    * and the ClickHouse they store events in: the dashboard's unless
    * `clickhouse` names another. Not served without a ClickHouse client.
    */
-  collection?: Omit<CollectionOptions, "db" | "clickhouse"> & { clickhouse?: ClickHouseClient };
+  collection?: Omit<CollectionOptions, "db" | "clickhouse" | "activity"> & {
+    clickhouse?: ClickHouseClient;
+  };
   /**
    * Logging; off when omitted. Tests pass a stream to read the log; it
    * goes to stdout otherwise. Every line is masked first (server-log/redact.ts).
@@ -168,7 +172,7 @@ export interface AppOptions extends Omit<FastifyServerOptions, "logger"> {
    * ClickHouse: the dashboard's client unless `clickhouse` names another.
    * Not served without a ClickHouse client.
    */
-  telemetry?: Partial<Omit<TelemetryOptions, "projects" | "now" | "budget">>;
+  telemetry?: Partial<Omit<TelemetryOptions, "projects" | "now" | "budget" | "activity">>;
   /** POST /api/ai-calls (ai/ingest-routes.ts): its limit per client address and its requests in progress, which tests lower. */
   aiCalls?: Pick<AiCallIngestOptions, "ipLimit" | "maxInFlight" | "maxInFlightPerProject">;
   /**
@@ -217,6 +221,12 @@ export interface AppOptions extends Omit<FastifyServerOptions, "logger"> {
   avatars?: { uploadLimit?: RateLimit };
   /** Changes to the AI model prices per user (ai/model-routes.ts), which tests lower. */
   aiModels?: { changeLimit?: RateLimit };
+  /**
+   * The ingestion counters (activity/activity.ts) the collection routes add
+   * to, flushed every 15 seconds and when the app closes; one of the app's
+   * own when omitted. Tests pass theirs to flush it when they choose.
+   */
+  ingestActivity?: IngestActivity;
   /** The built tracker, served at /t.js. Not served when omitted. */
   trackerScriptPath?: string;
   /** The built dashboard's directory, served at /. Not served when omitted. */
@@ -282,6 +292,7 @@ export function buildApp({
   avatars = {},
   aiModels = {},
   serverLog = {},
+  ingestActivity,
   trackerScriptPath,
   dashboardPath,
   replayPlayerPath,
@@ -303,6 +314,23 @@ export function buildApp({
           },
   });
   app.register(healthRoutes, { prefix: "/api" });
+  // Counts of what each project's ingestion accepted and refused, written
+  // every 15 seconds and once more on close, after the routes' last requests.
+  const activity =
+    ingestActivity ??
+    new IngestActivity(db, {
+      ...(collection.now === undefined ? {} : { now: collection.now }),
+      warn: (message, fields) => {
+        app.log.warn(fields, message);
+      },
+    });
+  const stopActivity = activity.start();
+  app.addHook("onClose", async () => {
+    stopActivity();
+    await activity.flush().catch((error: unknown) => {
+      app.log.warn({ err: error }, "ingestion activity: could not write the last counts");
+    });
+  });
   // One key cache for collection and the project routes, which make it
   // forget a replaced or deleted project's key at once.
   const projectKeys = new ProjectKeyCache(
@@ -316,12 +344,14 @@ export function buildApp({
       db,
       projectKeys,
       ...collection,
+      activity,
       clickhouse: collectionClickHouse,
     });
     app.register(heatmapCollectionRoutes, {
       prefix: "/api",
       clickhouse: collectionClickHouse,
       projects: projectKeys,
+      activity,
       ...collectionLimitsOf(heatmaps),
       ...(collection.isDataCenter === undefined ? {} : { isDataCenter: collection.isDataCenter }),
       ...(collection.now === undefined ? {} : { now: collection.now }),
@@ -331,6 +361,7 @@ export function buildApp({
     prefix: "/api",
     db,
     projects: projectKeys,
+    activity,
     storeConfigured: objectStore !== null,
     ...replays,
     ...(collection.isDataCenter === undefined ? {} : { isDataCenter: collection.isDataCenter }),
@@ -341,6 +372,7 @@ export function buildApp({
     db,
     store: objectStore,
     projects: projectKeys,
+    activity,
     limitBytes: sourceMaps.limitBytes,
     ...(sourceMaps.ipLimit === undefined ? {} : { ipLimit: sourceMaps.ipLimit }),
     ...(sourceMaps.maxInFlight === undefined ? {} : { maxInFlight: sourceMaps.maxInFlight }),
@@ -355,6 +387,7 @@ export function buildApp({
       ...telemetry,
       clickhouse: telemetryClickHouse,
       projects: projectKeys,
+      activity,
       budget,
       retentionDays: telemetry.retentionDays ?? DEFAULT_TELEMETRY_RETENTION_DAYS,
       ...(collection.now === undefined ? {} : { now: collection.now }),
@@ -363,6 +396,7 @@ export function buildApp({
       prefix: "/api",
       clickhouse: telemetryClickHouse,
       projects: projectKeys,
+      activity,
       budget,
       ...aiCalls,
       ...(collection.now === undefined ? {} : { now: collection.now }),
@@ -462,6 +496,12 @@ export function buildApp({
       auth: dashboard.auth,
       trustedOrigins: dashboard.trustedOrigins,
       projectKeys,
+    });
+    app.register(ingestActivityRoutes, {
+      prefix: "/api",
+      db,
+      auth: dashboard.auth,
+      ...(dashboard.now === undefined ? {} : { now: dashboard.now }),
     });
     app.register(userRoutes, {
       prefix: "/api",

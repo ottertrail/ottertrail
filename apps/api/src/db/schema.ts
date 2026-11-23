@@ -1,5 +1,7 @@
 import type { ColumnType } from "kysely";
 
+import type { IngestOutcome, IngestSource } from "../activity/activity.ts";
+
 /**
  * TypeScript view of the database tables, used by Kysely to check queries.
  * Keep it in step with the migrations in ./migrations.
@@ -605,6 +607,18 @@ export interface HeatmapSnapshotsTable {
   saved_at: Date;
 }
 
+/** One project's ingestion counts for one hour, source, and outcome (activity/activity.ts). */
+export interface IngestActivityTable {
+  project_id: string;
+  hour: Date;
+  source: IngestSource;
+  outcome: IngestOutcome;
+  /** Requests; bigint, so the driver returns text. */
+  count: ColumnType<string, number, number>;
+  items: ColumnType<string, number, number>;
+  last_at: Date;
+}
+
 /** One dashboard user's layout of one project's overview (overview/layout.ts). */
 export interface OverviewLayoutsTable {
   user_id: string;
@@ -806,6 +820,7 @@ export interface Database {
   owner_setup_tokens: OwnerSetupTokensTable;
   heatmap_overlay_tokens: HeatmapOverlayTokensTable;
   heatmap_snapshots: HeatmapSnapshotsTable;
+  ingest_activity: IngestActivityTable;
   dashboard_member_access: DashboardMemberAccessTable;
   dashboard_member_projects: DashboardMemberProjectsTable;
   dashboard_invitations: DashboardInvitationsTable;

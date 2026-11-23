@@ -4,6 +4,7 @@ import type { FastifyPluginCallback, FastifyReply, FastifyRequest } from "fastif
 import type { Kysely } from "kysely";
 
 import { can, type ProjectAccess, requireProjectAccess } from "../access/access.ts";
+import type { IngestActivity, IngestOutcome } from "../activity/activity.ts";
 import type { Auth } from "../auth/auth.ts";
 import { requireTrustedOrigin } from "../auth/origin.ts";
 import { requireSession } from "../auth/routes.ts";
@@ -66,13 +67,15 @@ export const sourceMapUploadRoutes: FastifyPluginCallback<{
   db: Kysely<Database>;
   store: ObjectStore | null;
   projects: ProjectKeyCache;
+  /** Counts for the Activity tab (activity/activity.ts). */
+  activity: IngestActivity;
   /** Compressed bytes the instance may store (Config.sourceMapStorageBytes). */
   limitBytes: number;
   /** Uploads per client address: a build sends one per file, in a burst. */
   ipLimit?: RateLimit;
   /** Uploads this process works on at once: each holds its map in memory. */
   maxInFlight?: number;
-}> = (app, { db, store, projects, limitBytes, ipLimit, maxInFlight = 4 }, done) => {
+}> = (app, { db, store, projects, activity, limitBytes, ipLimit, maxInFlight = 4 }, done) => {
   const ipLimiter = new TokenBucketLimiter(ipLimit ?? { capacity: 200, refillPerSecond: 5 });
   /** The project each upload's key names, found before its body is read. */
   const projectOf = new WeakMap<FastifyRequest, CollectingProject>();
@@ -80,6 +83,11 @@ export const sourceMapUploadRoutes: FastifyPluginCallback<{
   const inFlight = new Set<FastifyRequest>();
   const finished = async (request: FastifyRequest) => {
     inFlight.delete(request);
+  };
+  /** Counts an upload whose project is known (activity/activity.ts); others are not. */
+  const count = (request: FastifyRequest, outcome: IngestOutcome, items = 0) => {
+    const project = projectOf.get(request);
+    if (project !== undefined) activity.add(project.id, "source_maps", outcome, items);
   };
 
   // The map as bytes: it is compressed and stored as sent, and a gzip body
@@ -151,6 +159,11 @@ export const sourceMapUploadRoutes: FastifyPluginCallback<{
       },
       onResponse: finished,
       onRequestAbort: finished,
+      // The key was read before the body: a query or body Fastify refuses is the project's.
+      onError: async (request, _reply, error) => {
+        const status = error.validation === undefined ? (error.statusCode ?? 500) : 400;
+        if (status >= 400 && status < 500) count(request, "refused_invalid");
+      },
     },
     async (request, reply) => {
       const project = projectOf.get(request);
@@ -160,6 +173,7 @@ export const sourceMapUploadRoutes: FastifyPluginCallback<{
 
       const { release, path } = request.query;
       if (!isSourcePath(path)) {
+        count(request, "refused_invalid");
         return reply
           .code(400)
           .send(
@@ -170,11 +184,13 @@ export const sourceMapUploadRoutes: FastifyPluginCallback<{
           );
       }
       if (!isStorableText(release)) {
+        count(request, "refused_invalid");
         return reply
           .code(400)
           .send(problem("invalid_release", "release contains an unpaired surrogate."));
       }
       if (!Buffer.isBuffer(request.body) || request.body.byteLength === 0) {
+        count(request, "refused_invalid");
         return reply
           .code(400)
           .send(
@@ -191,6 +207,7 @@ export const sourceMapUploadRoutes: FastifyPluginCallback<{
         try {
           body = gunzipSync(request.body, { maxOutputLength: MAX_SOURCE_MAP_BYTES });
         } catch (error) {
+          count(request, "refused_invalid");
           return error instanceof RangeError
             ? reply
                 .code(413)
@@ -205,6 +222,7 @@ export const sourceMapUploadRoutes: FastifyPluginCallback<{
       } else if (encoding === "identity") {
         body = request.body;
       } else {
+        count(request, "refused_invalid");
         return reply
           .code(415)
           .send(
@@ -217,6 +235,7 @@ export const sourceMapUploadRoutes: FastifyPluginCallback<{
 
       const text = body.toString("utf8");
       if (checkSourceMap(text) === null) {
+        count(request, "refused_invalid");
         return reply
           .code(400)
           .send(
@@ -238,8 +257,11 @@ export const sourceMapUploadRoutes: FastifyPluginCallback<{
         );
       } catch (error) {
         request.log.error({ err: error }, "could not store a source map");
+        count(request, "refused_unavailable");
         return storageUnavailable(reply);
       }
+      // A project deleted meanwhile has nothing left to count in.
+      if ("refused" in result && result.refused !== "no_project") count(request, "refused_volume");
       if ("refused" in result) {
         return result.refused === "no_project"
           ? reply.code(401).send(problem("unknown_key", "No project has this secret key."))
@@ -252,6 +274,7 @@ export const sourceMapUploadRoutes: FastifyPluginCallback<{
                 ),
               );
       }
+      count(request, "accepted", 1);
       return reply.code(result.replaced ? 200 : 201).send({ sourceMap: result.stored });
     },
   );

@@ -117,6 +117,11 @@ export class TokenBucketLimiter {
   }
 }
 
+/** A budget's answer: when it refuses, whose limit was reached, for the Activity tab. */
+export type BudgetResult =
+  | { allowed: true }
+  | { allowed: false; retryAfterSeconds: number; limit: "project" | "instance" };
+
 /** The instance budget's one key. */
 const INSTANCE = "instance";
 
@@ -140,18 +145,19 @@ export class EventBudget {
    * both: retrying when only the instance's has refilled would only be
    * refused again.
    */
-  take(projectId: string, events: number): TakeResult {
+  take(projectId: string, events: number): BudgetResult {
     const instance = this.#instance.take(INSTANCE, events);
     if (!instance.allowed) {
       const retryAfterSeconds = Math.max(
         instance.retryAfterSeconds,
         this.#projects.wait(projectId, events),
       );
-      return { allowed: false, retryAfterSeconds };
+      return { allowed: false, retryAfterSeconds, limit: "instance" };
     }
     const own = this.#projects.take(projectId, events);
-    if (!own.allowed) this.#instance.refund(INSTANCE, events);
-    return own;
+    if (own.allowed) return own;
+    this.#instance.refund(INSTANCE, events);
+    return { ...own, limit: "project" };
   }
 
   /** Puts back what take() spent, for records that were not stored after all. */
