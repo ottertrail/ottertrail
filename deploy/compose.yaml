@@ -227,8 +227,12 @@ services:
     logging: *logging
     environment:
       OTTERTRAIL_DOMAIN: ${OTTERTRAIL_DOMAIN:?set OTTERTRAIL_DOMAIN in .env}
+      # Chooses the caddy-proxy-* config the Caddyfile imports.
+      PROXY: ${PROXY:-none}
     labels:
-      ottertrail.config.caddyfile: "bbed7980361e"
+      ottertrail.config.caddyfile: "0fcc9f2b88eb"
+      ottertrail.config.caddy-proxy-none: "c081706b2693"
+      ottertrail.config.caddy-proxy-cloudflare: "00fc5305226e"
     ports:
       - "80:80"
       - "443:443"
@@ -240,6 +244,10 @@ services:
     configs:
       - source: caddyfile
         target: /etc/caddy/Caddyfile
+      - source: caddy-proxy-none
+        target: /etc/caddy/proxy/none.caddy
+      - source: caddy-proxy-cloudflare
+        target: /etc/caddy/proxy/cloudflare.caddy
     depends_on:
       - api
 
@@ -260,16 +268,42 @@ volumes:
 configs:
   # Caddy gets and renews the HTTPS certificate for the instance's domain,
   # redirects HTTP to HTTPS, and passes every request to the API. It
-  # replaces any X-Forwarded-For a client sends with the client's real
-  # address, which the API reads (TRUST_PROXY=1). It compresses every
+  # replaces any X-Forwarded-For a client sends with the client's address
+  # ({client_ip}), which the API reads (TRUST_PROXY=1). It compresses every
   # answer but the Settings page's Server log, a stream of events, whose
   # lines would wait in the compressor; Caddy passes each event on at once.
+  # PROXY in .env picks one of the caddy-proxy-* configs below; any other
+  # value stops Caddy with "File to import not found".
   caddyfile:
     content: |
+      {
+      	import /etc/caddy/proxy/{$$PROXY}.caddy
+      }
+
       {$$OTTERTRAIL_DOMAIN} {
       	@compressible not path /api/settings/server-log
       	encode @compressible zstd gzip
-      	reverse_proxy api:3000
+      	reverse_proxy api:3000 {
+      		header_up X-Forwarded-For {client_ip}
+      	}
+      }
+
+  caddy-proxy-none:
+    content: |
+      # PROXY=none: no proxy in front of Caddy. The client's address is the one
+      # Caddy sees.
+
+  # docs/deployment.md, "Behind Cloudflare's proxy".
+  caddy-proxy-cloudflare:
+    content: |
+      # PROXY=cloudflare: a request from one of Cloudflare's ranges carries the
+      # visitor's address in CF-Connecting-IP. Any other request keeps its own
+      # address, so nobody can fake the header by going around Cloudflare.
+      # The ranges are https://www.cloudflare.com/ips-v4 and ips-v6, written by
+      # scripts/update-cloudflare-ranges.ts. cloudflare-firewall.sh reads them here.
+      servers {
+      	trusted_proxies static 173.245.48.0/20 103.21.244.0/22 103.22.200.0/22 103.31.4.0/22 141.101.64.0/18 108.162.192.0/18 190.93.240.0/20 188.114.96.0/20 197.234.240.0/22 198.41.128.0/17 162.158.0.0/15 104.16.0.0/13 104.24.0.0/14 172.64.0.0/13 131.0.72.0/22 2400:cb00::/32 2606:4700::/32 2803:f800::/32 2405:b500::/32 2405:8100::/32 2a06:98c0::/29 2c0f:f248::/32
+      	client_ip_headers CF-Connecting-IP
       }
 
   # ClickHouse on a small server it shares (docs/storage-benchmark.md).

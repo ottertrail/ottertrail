@@ -8,6 +8,12 @@ import { promisify } from "node:util";
 
 import { describe, expect, test } from "vite-plus/test";
 
+import {
+  CONFIG_NAME,
+  parseRanges,
+  rewriteCompose,
+  shippedRanges,
+} from "../../../scripts/update-cloudflare-ranges.ts";
 import { DEVELOPMENT_GARAGE_ADMIN_TOKEN, GARAGE_ADMIN_PORT } from "../src/config.ts";
 
 const deploy = join(import.meta.dirname, "../../../deploy");
@@ -17,8 +23,8 @@ const compose = readFileSync(join(deploy, "compose.yaml"), "utf8");
  * A config's inline content in compose.yaml: the literal block under
  * `configs: <name>: content: |`, without its indentation.
  */
-function inlineConfig(name: string): string {
-  const lines = compose.split("\n");
+function inlineConfig(name: string, file = compose): string {
+  const lines = file.split("\n");
   const top = lines.indexOf("configs:");
   expect(top, "compose.yaml has a top-level configs: section").toBeGreaterThan(-1);
   const start = lines.indexOf(`  ${name}:`, top);
@@ -103,7 +109,7 @@ describe("deploy/compose.yaml works on its own, as a release download", () => {
 
   test("Caddy reads the domain from its environment, so a new domain recreates it", () => {
     // $$ is a literal dollar sign for Compose: Caddy reads {$OTTERTRAIL_DOMAIN}.
-    expect(inlineConfig("caddyfile").split("\n")[0]).toBe("{$$OTTERTRAIL_DOMAIN} {");
+    expect(inlineConfig("caddyfile").split("\n")).toContain("{$$OTTERTRAIL_DOMAIN} {");
     expect(compose).toContain(
       "    environment:\n      OTTERTRAIL_DOMAIN: ${OTTERTRAIL_DOMAIN:?set OTTERTRAIL_DOMAIN in .env}\n",
     );
@@ -114,10 +120,171 @@ describe("deploy/compose.yaml works on its own, as a release download", () => {
 // the content of one of its configs does. A label with each config's hash
 // makes a changed config recreate the service that reads it.
 describe("each service that reads a config carries the config's hash", () => {
-  test.each(["caddyfile", "clickhouse-config", "clickhouse-users", "garage"])("%s", (name) => {
+  test.each([
+    "caddyfile",
+    "caddy-proxy-none",
+    "caddy-proxy-cloudflare",
+    "clickhouse-config",
+    "clickhouse-users",
+    "garage",
+  ])("%s", (name) => {
     const hash = createHash("sha256").update(inlineConfig(name)).digest("hex").slice(0, 12);
     const labels = compose.match(new RegExp(`^ {6}ottertrail\\.config\\.${name}: .*$`, "gm")) ?? [];
     expect(labels).toEqual([`      ottertrail.config.${name}: "${hash}"`]);
+  });
+});
+
+/** A config's lines that are not comments. */
+function directives(config: string): string[] {
+  return config.split("\n").filter((line) => line.trim() !== "" && !line.trim().startsWith("#"));
+}
+
+describe("PROXY: Caddy reads the visitor's address from Cloudflare only for Cloudflare's ranges", () => {
+  const caddyfile = inlineConfig("caddyfile");
+  const cloudflare = inlineConfig("caddy-proxy-cloudflare");
+  const shipped = (/^\ttrusted_proxies static (.+)$/m.exec(cloudflare)?.[1] ?? "").split(" ");
+  const firewall = join(deploy, "cloudflare-firewall.sh");
+
+  test("Caddy gets PROXY, none by default, and imports the config of that name", () => {
+    const caddy = serviceBlock(compose, "caddy");
+    expect(caddy).toContain("      PROXY: ${PROXY:-none}\n");
+    expect(caddyfile.split("\n").slice(0, 3)).toEqual([
+      "{",
+      "\timport /etc/caddy/proxy/{$$PROXY}.caddy",
+      "}",
+    ]);
+    for (const mode of ["none", "cloudflare"]) {
+      expect(caddy).toContain(
+        `      - source: caddy-proxy-${mode}\n        target: /etc/caddy/proxy/${mode}.caddy\n`,
+      );
+    }
+  });
+
+  test("the API gets the address Caddy settled on, one hop, as before", () => {
+    expect(caddyfile).toContain(
+      "\treverse_proxy api:3000 {\n\t\theader_up X-Forwarded-For {client_ip}\n\t}\n",
+    );
+    expect(compose).toContain('    TRUST_PROXY: "1"\n');
+  });
+
+  test("none sets nothing; cloudflare trusts CF-Connecting-IP from the shipped ranges only", () => {
+    expect(directives(inlineConfig("caddy-proxy-none"))).toEqual([]);
+    expect(directives(cloudflare)).toEqual([
+      "servers {",
+      `\ttrusted_proxies static ${shipped.join(" ")}`,
+      "\tclient_ip_headers CF-Connecting-IP",
+      "}",
+    ]);
+  });
+
+  test("the shipped ranges are Cloudflare's, IPv4 then IPv6, each a valid range", () => {
+    const v4 = shipped.filter((range) => !range.includes(":"));
+    const v6 = shipped.filter((range) => range.includes(":"));
+    expect(shipped).toEqual([...v4, ...v6]);
+    expect(parseRanges(v4.join("\n"), "v4")).toEqual(v4);
+    expect(parseRanges(v6.join("\n"), "v6")).toEqual(v6);
+    expect(v4).toContain("173.245.48.0/20");
+    expect(v6).toContain("2606:4700::/32");
+    expect(shippedRanges(compose)).toEqual(shipped);
+  });
+
+  test("the firewall script reads the same ranges, and matches ports 80 and 443 only", async () => {
+    const { stdout } = await promisify(execFile)("bash", [firewall, "--check"]);
+    const allowed = [...stdout.matchAll(/^-A ottertrail-cloudflare -s (\S+) -j RETURN$/gm)].map(
+      ([, range]) => range,
+    );
+    expect(allowed).toEqual(shipped);
+    const jumps = stdout.split("\n").filter((line) => line.endsWith(" -j ottertrail-cloudflare"));
+    expect(jumps).toHaveLength(12);
+    for (const jump of jumps) {
+      expect(jump).toMatch(/^-A (DOCKER-USER|ufw6?-before-input) -p (tcp|udp) .*\b(80|443) -j /);
+      expect(jump).toMatch(/(--ctorigdstport|--dport) (80|443) /);
+    }
+    // Each family's block is one table, between the markers --remove looks for.
+    expect(stdout.match(/^# BEGIN ottertrail-cloudflare /gm)).toHaveLength(2);
+    expect(stdout.match(/^COMMIT\n# END ottertrail-cloudflare$/gm)).toHaveLength(2);
+  });
+
+  test("the firewall script refuses a range that is not one, and too few ranges", async () => {
+    const folder = await mkdtemp(join(tmpdir(), "ottertrail-firewall-"));
+    try {
+      await copyFile(firewall, join(folder, "cloudflare-firewall.sh"));
+      const check = async (ranges: string) => {
+        await writeFile(join(folder, "compose.yaml"), `      \ttrusted_proxies static ${ranges}\n`);
+        try {
+          await promisify(execFile)("bash", [join(folder, "cloudflare-firewall.sh"), "--check"]);
+          return "";
+        } catch (error) {
+          return String((error as { stderr?: unknown }).stderr);
+        }
+      };
+      expect(await check(`${shipped.join(" ")} 10.0.0.0/8;reboot`)).toBe(
+        "Not a CIDR range: 10.0.0.0/8;reboot. Nothing was changed.\n",
+      );
+      expect(await check(`${shipped.join(" ")} 0.0.0.0/0`)).toContain(
+        "Not a CIDR range: 0.0.0.0/0",
+      );
+      expect(await check("173.245.48.0/20 2400:cb00::/32")).toBe(
+        "Only 1 IPv4 and 1 IPv6 ranges: too few to be Cloudflare's. Nothing was changed.\n",
+      );
+    } finally {
+      await rm(folder, { recursive: true, force: true });
+    }
+  });
+
+  test("example.env documents PROXY, commented out", () => {
+    const example = readFileSync(join(deploy, "example.env"), "utf8");
+    expect(example).toMatch(/^# PROXY=cloudflare$/m);
+    expect(example).toMatch(/^# Optional: a proxy in front of this server\. none \(the default\)/m);
+  });
+});
+
+describe("scripts/update-cloudflare-ranges.ts", () => {
+  // As Cloudflare serves them: no newline after the last line.
+  const v4List =
+    "173.245.48.0/20\n103.21.244.0/22\n103.22.200.0/22\n103.31.4.0/22\n141.101.64.0/18";
+  const v6List = "2400:cb00::/32\n2606:4700::/32\n2A06:98C0::/29";
+
+  test("reads Cloudflare's lists, one range per line", () => {
+    expect(parseRanges(v4List, "v4")).toHaveLength(5);
+    expect(parseRanges(`${v4List.replaceAll("\n", "\r\n")}\r\n\n`, "v4")).toEqual(
+      parseRanges(v4List, "v4"),
+    );
+    expect(parseRanges(v6List, "v6")).toEqual([
+      "2400:cb00::/32",
+      "2606:4700::/32",
+      "2a06:98c0::/29",
+    ]);
+  });
+
+  test.each([
+    ["<!DOCTYPE html>", "v4", "not a CIDR range"],
+    [`${v4List}\n2400:cb00::/32`, "v4", "not an IPv4 address"],
+    [`${v6List}\n173.245.48.0/20`, "v6", "not an IPv6 address"],
+    [`${v4List}\n256.1.1.0/24`, "v4", "not an IPv4 address"],
+    [`${v4List}\n10.0.0.0`, "v4", "not a CIDR range"],
+    [`${v4List}\n0.0.0.0/0`, "v4", "prefix out of range"],
+    [`${v4List}\n10.0.0.0/33`, "v4", "prefix out of range"],
+    [`${v6List}\n::/0`, "v6", "prefix out of range"],
+    [`${v4List}\n173.245.48.0/20`, "v4", "repeated range"],
+    ["173.245.48.0/20\n103.21.244.0/22", "v4", "2 ranges, expected 5 to 100"],
+    ["2400:cb00::/32", "v6", "1 ranges, expected 3 to 100"],
+  ] as const)("refuses %j as IP%s", (text, family, reason) => {
+    expect(() => parseRanges(text, family)).toThrow(reason);
+  });
+
+  test("rewrites the ranges and the config's hash label, and nothing else", () => {
+    const ranges = ["198.51.100.0/24", ...shippedRanges(compose).slice(1)];
+    const updated = rewriteCompose(compose, ranges);
+    expect(shippedRanges(updated)).toEqual(ranges);
+    const hash = createHash("sha256")
+      .update(inlineConfig(CONFIG_NAME, updated))
+      .digest("hex")
+      .slice(0, 12);
+    expect(updated).toContain(`      ottertrail.config.${CONFIG_NAME}: "${hash}"\n`);
+    const changed = updated.split("\n").filter((line, i) => line !== compose.split("\n")[i]);
+    expect(changed).toHaveLength(2);
+    expect(rewriteCompose(compose, shippedRanges(compose))).toBe(compose);
   });
 });
 
