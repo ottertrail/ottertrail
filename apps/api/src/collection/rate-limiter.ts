@@ -107,6 +107,25 @@ export class TokenBucketLimiter {
   }
 }
 
+/**
+ * A limiter per client address: every key goes through clientKey, so an
+ * IPv6 sender cannot get a fresh bucket by moving within its /64. Use it
+ * for any limit on request.ip.
+ */
+export class ClientRateLimiter extends TokenBucketLimiter {
+  override take(ip: string, cost = 1): TakeResult {
+    return super.take(clientKey(ip), cost);
+  }
+
+  override wait(ip: string, cost: number): number {
+    return super.wait(clientKey(ip), cost);
+  }
+
+  override refund(ip: string, cost: number): void {
+    super.refund(clientKey(ip), cost);
+  }
+}
+
 /** A budget's answer: when it refuses, whose limit was reached, for the Activity tab. */
 export type BudgetResult =
   | { allowed: true }

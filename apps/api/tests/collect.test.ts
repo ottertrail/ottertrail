@@ -449,6 +449,21 @@ describe("POST /api/events", () => {
       expect(other.statusCode).toBe(202);
     });
 
+    test("counts the addresses of one IPv6 /64 as one client", async () => {
+      const limited = appWith({
+        collection: { now: () => NOW, ipLimit: { capacity: 2, refillPerSecond: 1 } },
+      });
+      const project = await createProject();
+      const body = batch(project.public_key);
+      for (const address of ["2001:db8:1:2::1", "2001:db8:1:2::2"]) {
+        expect((await send(body, { instance: limited, remoteAddress: address })).statusCode).toBe(
+          202,
+        );
+      }
+      const third = await send(body, { instance: limited, remoteAddress: "2001:db8:1:2::3" });
+      expect(third.statusCode).toBe(429);
+    });
+
     test("limits events per project", async () => {
       const limited = appWith({
         collection: { now: () => NOW, projectLimit: { capacity: 50, refillPerSecond: 10 } },

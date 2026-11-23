@@ -12,7 +12,7 @@ import {
 } from "../collection/normalize.ts";
 import { type ProjectKeyCache, PUBLIC_KEY_PATTERN } from "../collection/project-keys.ts";
 import {
-  clientKey,
+  ClientRateLimiter,
   EventBudget,
   type RateLimit,
   TokenBucketLimiter,
@@ -269,9 +269,9 @@ export const heatmapCollectionRoutes: FastifyPluginCallback<{
   now?: () => number;
 }> = (app, options, done) => {
   const { clickhouse, projects, activity, isDataCenter = noDataCenters, now = Date.now } = options;
-  const ipLimiter = new TokenBucketLimiter(options.ipLimit ?? DEFAULT_HEATMAP_IP_LIMIT, { now });
+  const ipLimiter = new ClientRateLimiter(options.ipLimit ?? DEFAULT_HEATMAP_IP_LIMIT, { now });
   const ipRecordLimit = options.ipRecordLimit ?? DEFAULT_HEATMAP_IP_RECORD_LIMIT;
-  const ipRecordLimiter = new TokenBucketLimiter(ipRecordLimit, { now });
+  const ipRecordLimiter = new ClientRateLimiter(ipRecordLimit, { now });
   const budget = new EventBudget(
     new TokenBucketLimiter(options.projectLimit ?? DEFAULT_HEATMAP_PROJECT_LIMIT, { now }),
     new TokenBucketLimiter(options.instanceLimit ?? DEFAULT_HEATMAP_INSTANCE_LIMIT, { now }),
@@ -341,7 +341,7 @@ export const heatmapCollectionRoutes: FastifyPluginCallback<{
       const { key, sentAt, pages, records } = request.body;
 
       const perClient = ipRecordLimiter.take(
-        clientKey(request.ip),
+        request.ip,
         Math.min(records.length, ipRecordLimit.capacity),
       );
       if (!perClient.allowed) return tooManyRequests(reply, perClient.retryAfterSeconds);

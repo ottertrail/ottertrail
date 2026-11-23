@@ -11,7 +11,7 @@ import { USER_ID_PATTERN } from "./identity.ts";
 import type { LastEventRecorder } from "./last-event.ts";
 import { isStorableText, MAX_EVENT_AGE_MS } from "./normalize.ts";
 import type { ProjectKeyCache } from "./project-keys.ts";
-import type { EventBudget, RateLimit, TokenBucketLimiter } from "./rate-limiter.ts";
+import type { ClientRateLimiter, EventBudget, RateLimit } from "./rate-limiter.ts";
 
 /**
  * Site servers send frequently from few addresses. This higher IP limit bounds
@@ -75,7 +75,7 @@ export function serverEventsRoute(
     lastEvents: LastEventRecorder;
     /** Shared with browser events: one budget per project, inside the instance's. */
     budget: EventBudget;
-    ipLimiter: TokenBucketLimiter;
+    ipLimiter: ClientRateLimiter;
     maxEvents: number;
     maxBodyBytes: number;
     maxPropertiesBytes: number;

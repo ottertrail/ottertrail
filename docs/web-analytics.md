@@ -273,14 +273,14 @@ Every limit uses a token bucket: each key has a bucket of tokens that refills at
 
 | Limit                      | Burst        | Sustained                                        | Checked                 |
 | -------------------------- | ------------ | ------------------------------------------------ | ----------------------- |
-| Per client IP              | 120 requests | 2 requests/second                                | Before the body is read |
+| Per client address         | 120 requests | 2 requests/second                                | Before the body is read |
 | Events per client address  | 200 events   | 20 events/second                                 | Before the key lookup   |
 | Per project                | 2,000 events | 200 events/second                                | After the key is known  |
 | Per instance, all projects | 6,000 events | 600 events/second (`INSTANCE_EVENTS_PER_SECOND`) | With the project's      |
 
 A batch spends from its project's bucket and the instance's, or from neither: the first keeps one project from crowding out the others, and the second keeps the instance's total bounded however many projects it has (`EventBudget` in `rate-limiter.ts`). Server-side events spend from the same buckets, so a flood of browser events with a project's public key, which anyone can copy, can hold its servers' events back too (429, to retry). An instance that needs more may raise its limit. A refusal's `Retry-After` waits for both buckets. The buckets live in the API process's memory: each process enforces its own limits, and a restart resets them. Ottertrail runs one API process per instance for now.
 
-The request limit lets one client send 50 events in each of its requests, 100 a second; the events limit counts the events themselves (`DEFAULT_IP_EVENT_LIMIT` in `collection/routes.ts`). Its key is `clientKey`: an IPv4 address as it is, and an IPv6 address by its /64, the block one household or office usually holds, so a client cannot dodge it by rotating through its addresses. A person sends a handful of events a minute; 20 a second sustained, after a burst of 200, leaves room for dozens of people behind one address.
+The request limit lets one client send 50 events in each of its requests, 100 a second; the events limit counts the events themselves (`DEFAULT_IP_EVENT_LIMIT` in `collection/routes.ts`). Both limits, and every other limit per address (server-side events, heatmaps), key on `clientKey` (`ClientRateLimiter` in `rate-limiter.ts`): an IPv4 address as it is, and an IPv6 address by its /64, the block one household or office usually holds, so a client cannot dodge them by rotating through its addresses. A person sends a handful of events a minute; 20 a second sustained, after a burst of 200, leaves room for dozens of people behind one address.
 
 That is also its cost: everyone behind one address shares one bucket. An office, a school, or a mobile carrier's shared address (carrier-grade NAT, where thousands of phones leave through a few addresses) can reach it on a busy site, and then their events wait and are retried (429, `Retry-After`): the tracker keeps up to 200 events and tries again, so a short peak loses nothing, but a long one can. A site whose visitors mostly arrive through one address would need a higher limit; it is a constant for now, not a setting.
 

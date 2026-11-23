@@ -492,6 +492,24 @@ describe("POST /api/heatmaps", () => {
     ).toBe(202);
   });
 
+  test("counts the addresses of one IPv6 /64 as one client", async () => {
+    const project = await newProject();
+    const app = appWith({
+      collection: { clickhouse: dashboard.reader.client, now: () => NOON },
+      heatmaps: { ipLimit: { capacity: 2, refillPerSecond: 1 } },
+    });
+    for (const remoteAddress of ["2001:db8:1:2::1", "2001:db8:1:2::2"]) {
+      expect((await send(project.public_key, [click()], { app, remoteAddress })).statusCode).toBe(
+        202,
+      );
+    }
+    const third = await send(project.public_key, [click()], {
+      app,
+      remoteAddress: "2001:db8:1:2::3",
+    });
+    expect(third.statusCode).toBe(429);
+  });
+
   test("answers 503 while ClickHouse cannot write, and gives the budget back", async () => {
     const down = createClickHouse({ ...loadConfig().clickhouse, url: "http://127.0.0.1:1" });
     const project = await newProject();

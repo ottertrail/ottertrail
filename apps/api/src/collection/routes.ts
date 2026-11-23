@@ -28,7 +28,12 @@ import {
   parsePageUrl,
 } from "./normalize.ts";
 import { type CollectingProject, ProjectKeyCache, PUBLIC_KEY_PATTERN } from "./project-keys.ts";
-import { clientKey, EventBudget, type RateLimit, TokenBucketLimiter } from "./rate-limiter.ts";
+import {
+  ClientRateLimiter,
+  EventBudget,
+  type RateLimit,
+  TokenBucketLimiter,
+} from "./rate-limiter.ts";
 import { DEFAULT_SERVER_IP_LIMIT, serverEventsRoute } from "./server-events.ts";
 import { VisitorCap } from "./visitor-cap.ts";
 import { keepValidVitals } from "./vitals.ts";
@@ -319,9 +324,9 @@ export const collectionRoutes: FastifyPluginCallback<CollectionOptions> = (app, 
   app.addHook("onClose", async () => {
     stopSaltCleanup();
   });
-  const ipLimiter = new TokenBucketLimiter(options.ipLimit ?? DEFAULT_IP_LIMIT, { now });
+  const ipLimiter = new ClientRateLimiter(options.ipLimit ?? DEFAULT_IP_LIMIT, { now });
   const ipEventLimit = options.ipEventLimit ?? DEFAULT_IP_EVENT_LIMIT;
-  const ipEventLimiter = new TokenBucketLimiter(ipEventLimit, { now });
+  const ipEventLimiter = new ClientRateLimiter(ipEventLimit, { now });
   const visitorCap = new VisitorCap(
     options.visitorCap === undefined ? {} : { cap: options.visitorCap },
   );
@@ -401,7 +406,7 @@ export const collectionRoutes: FastifyPluginCallback<CollectionOptions> = (app, 
       // Count events before the key lookup. Requests can each hold 50 events; clients
       // behind one address (an office or carrier NAT) share the limit.
       const perClient = ipEventLimiter.take(
-        clientKey(request.ip),
+        request.ip,
         Math.min(events.length, ipEventLimit.capacity),
       );
       if (!perClient.allowed) {
@@ -706,7 +711,7 @@ export const collectionRoutes: FastifyPluginCallback<CollectionOptions> = (app, 
     lastEvents,
     budget,
     activity,
-    ipLimiter: new TokenBucketLimiter(options.serverIpLimit ?? DEFAULT_SERVER_IP_LIMIT, { now }),
+    ipLimiter: new ClientRateLimiter(options.serverIpLimit ?? DEFAULT_SERVER_IP_LIMIT, { now }),
     maxEvents: MAX_EVENTS_PER_BATCH,
     maxBodyBytes: MAX_BODY_BYTES,
     maxPropertiesBytes: MAX_PROPERTIES_BYTES,

@@ -1,6 +1,11 @@
 import { describe, expect, test } from "vite-plus/test";
 
-import { clientKey, EventBudget, TokenBucketLimiter } from "../src/collection/rate-limiter.ts";
+import {
+  ClientRateLimiter,
+  clientKey,
+  EventBudget,
+  TokenBucketLimiter,
+} from "../src/collection/rate-limiter.ts";
 
 function fakeClock(start = 0) {
   let time = start;
@@ -164,5 +169,19 @@ describe("clientKey", () => {
     expect(clientKey("2001:0db8:0001:0002:abcd:ef01:2345:6789")).toBe("2001:db8:1:2::/64");
     expect(clientKey("2001:db8:1:3::1")).toBe("2001:db8:1:3::/64");
     expect(clientKey("::ffff:203.0.113.10")).toBe("203.0.113.10");
+  });
+});
+
+describe("ClientRateLimiter", () => {
+  test("gives the addresses of one IPv6 /64 one bucket", () => {
+    const limiter = new ClientRateLimiter({ capacity: 2, refillPerSecond: 1 }, fakeClock());
+    expect(limiter.take("2001:db8:1:2::1")).toEqual({ allowed: true });
+    expect(limiter.take("2001:db8:1:2::2")).toEqual({ allowed: true });
+    expect(limiter.take("2001:db8:1:2:ffff::9").allowed).toBe(false);
+    expect(limiter.wait("2001:db8:1:2::3", 1)).toBe(1);
+    limiter.refund("2001:db8:1:2::4", 1);
+    expect(limiter.take("2001:db8:1:2::5")).toEqual({ allowed: true });
+    // Another /64 has its own.
+    expect(limiter.take("2001:db8:1:3::1")).toEqual({ allowed: true });
   });
 });
