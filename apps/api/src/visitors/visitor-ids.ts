@@ -141,21 +141,28 @@ export class VisitorIds {
   }
 
   /**
-   * Delete immediately and on a timer, even without traffic. Returns a stop function;
-   * the timer does not keep the process alive. Each API process runs it; duplicate
-   * deletes are harmless.
+   * Delete immediately and on a timer, even without traffic. Returns a stop function,
+   * which settles once a run still in progress has finished, so nothing is deleted
+   * after it. The timer does not keep the process alive. Each API process runs it;
+   * duplicate deletes are harmless.
    */
   startCleanup(
     onError: (error: unknown) => void,
     intervalMs: number = SALT_CLEANUP_INTERVAL_MS,
-  ): () => void {
+  ): () => Promise<void> {
+    const running = new Set<Promise<void>>();
     const run = () => {
-      this.deleteExpiredSalts().catch(onError);
+      const deleting = this.deleteExpiredSalts().then(() => undefined, onError);
+      running.add(deleting);
+      void deleting.finally(() => running.delete(deleting));
     };
     run();
     const timer = setInterval(run, intervalMs);
     timer.unref();
-    return () => clearInterval(timer);
+    return async () => {
+      clearInterval(timer);
+      await Promise.all(running);
+    };
   }
 
   #day(timeZone: string): (moment: Date) => string {

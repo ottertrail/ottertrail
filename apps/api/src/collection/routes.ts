@@ -327,7 +327,7 @@ export const collectionRoutes: FastifyPluginCallback<CollectionOptions> = (app, 
     app.log.warn({ err: error }, "could not delete expired visitor salts");
   }, options.saltCleanupIntervalMs);
   app.addHook("onClose", async () => {
-    stopSaltCleanup();
+    await stopSaltCleanup();
   });
   const ipLimiter = new ClientRateLimiter(options.ipLimit ?? DEFAULT_IP_LIMIT, { now });
   const ipEventLimit = options.ipEventLimit ?? DEFAULT_IP_EVENT_LIMIT;

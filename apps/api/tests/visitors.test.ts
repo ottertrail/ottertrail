@@ -282,6 +282,7 @@ describe("VisitorIds", () => {
       .values({ time_zone: "UTC", day: "2026-11-01", salt: randomBytes(32) })
       .execute();
     const errors: unknown[] = [];
+    const runs = vi.spyOn(VisitorIds.prototype, "deleteExpiredSalts");
     const stop = visitorsAt("2026-11-16T12:00:00Z").startCleanup((error) => errors.push(error), 50);
     try {
       // The first run happens at once, without waiting for an interval.
@@ -294,17 +295,15 @@ describe("VisitorIds", () => {
         .execute();
       await vi.waitFor(async () => expect(await salts()).toEqual([]));
     } finally {
-      stop();
+      await stop();
     }
     expect(errors).toEqual([]);
 
-    // Once stopped, nothing is deleted any more.
-    await db()
-      .insertInto("visitor_salts")
-      .values({ time_zone: "UTC", day: "2026-11-03", salt: randomBytes(32) })
-      .execute();
+    // Once stopped, and its last run finished, no run starts again.
+    const runsWhenStopped = runs.mock.calls.length;
     await new Promise((resolve) => setTimeout(resolve, 150));
-    expect(await salts()).toEqual(["2026-11-03"]);
+    expect(runs.mock.calls.length).toBe(runsWhenStopped);
+    runs.mockRestore();
   });
 
   test("reports cleanup errors instead of crashing", async () => {
@@ -316,7 +315,7 @@ describe("VisitorIds", () => {
     try {
       await vi.waitFor(() => expect(errors).toHaveLength(1));
     } finally {
-      stop();
+      await stop();
       await unreachable.destroy();
     }
   });
