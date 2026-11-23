@@ -7,6 +7,8 @@ import { afterAll, beforeAll, describe, expect, test } from "vite-plus/test";
 import {
   ACTIVITY_MAX_KEYS,
   IngestActivity,
+  INGEST_OUTCOMES,
+  INGEST_SOURCES,
   type IngestOutcome,
   type IngestSource,
   pruneIngestActivity,
@@ -122,6 +124,10 @@ async function newProject(values: Record<string, unknown> = {}) {
     secretKey: await secretKeyOf(dashboard.db, project.id),
   };
 }
+
+/** Text in code-unit order, as the flush sorts its keys. */
+const textOrder = (a: string | undefined, b: string | undefined) =>
+  (a ?? "") < (b ?? "") ? -1 : (a ?? "") > (b ?? "") ? 1 : 0;
 
 type Counts = Record<string, { count: number; items: number }>;
 
@@ -728,18 +734,115 @@ describe("the counters and their flush", () => {
     expect(ACTIVITY_MAX_KEYS).toBe(20_000);
   });
 
-  test("writes the last counts when the app closes", async () => {
+  test("writes the last counts when the app closes, before closeAfter closes the database", async () => {
     const project = await newProject();
-    const counters = new IngestActivity(dashboard.db, { flushIntervalMs: 3_600_000 });
+    // The app's own pool, closed by closeAfter, as server.ts closes its database.
+    const appDb = createDatabase({
+      connectionString: loadConfig().databaseUrl,
+      maxConnections: 2,
+      schema: dashboard.schema,
+    });
+    const order: string[] = [];
     const app = buildApp({
-      db: dashboard.db,
+      db: appDb,
       collection: { clickhouse: dashboard.reader.client },
-      ingestActivity: counters,
+      closeAfter: async () => {
+        order.push("closeAfter");
+        await appDb.destroy();
+      },
+    });
+    // A hook added after buildApp runs before the app's own (last added, first run).
+    app.addHook("onClose", async () => {
+      order.push("caller's hook");
     });
     expect((await sendEvents(project.publicKey, [pageview()], { app })).statusCode).toBe(202);
     expect(await rowsOf(project.id)).toEqual([]);
     await app.close();
+    expect(order).toEqual(["caller's hook", "closeAfter"]);
     expect(await rowsOf(project.id)).toMatchObject([{ source: "browser_events", count: "1" }]);
+  });
+
+  test("keeps at most the cap through failed flushes, and drops hours past the 7 days", async () => {
+    const project = await newProject();
+    const db = switchable(dashboard.db);
+    try {
+      let now = Date.now();
+      const warnings: Record<string, unknown>[] = [];
+      const counters = new IngestActivity(db.db, {
+        now: () => now,
+        maxKeys: 2,
+        warn: (_message, fields) => warnings.push(fields),
+      });
+      db.state.failing = true;
+      counters.add(project.id, "logs", "accepted");
+      counters.add(project.id, "traces", "accepted");
+      await expect(counters.flush()).rejects.toBeInstanceOf(Error);
+      // The next hour: new keys while the kept ones wait.
+      now += HOUR_MS;
+      counters.add(project.id, "metrics", "accepted");
+      counters.add(project.id, "errors", "accepted");
+      await expect(counters.flush()).rejects.toBeInstanceOf(Error);
+      expect(counters.size).toBe(2);
+      // Eight days on, every kept hour is past the 7 days.
+      now += 8 * 24 * HOUR_MS;
+      await expect(counters.flush()).rejects.toBeInstanceOf(Error);
+      expect(counters.size).toBe(0);
+      db.state.failing = false;
+      await counters.flush();
+      expect(warnings.map((fields) => fields.dropped)).toEqual([2, 2]);
+      expect(await rowsOf(project.id)).toEqual([]);
+    } finally {
+      await db.close();
+    }
+  });
+
+  test("writes rows in key order, so processes lock them in one order", async () => {
+    const statements: string[] = [];
+    const project = await newProject();
+    const other = await newProject();
+    const recording = new Proxy(dashboard.db, {
+      get(target, property) {
+        if (property === "getExecutor") {
+          return () => {
+            const executor = target.getExecutor();
+            return new Proxy(executor, {
+              get(inner, name) {
+                const value: unknown = Reflect.get(inner, name, inner);
+                if (name !== "executeQuery" || typeof value !== "function") {
+                  return typeof value === "function" ? value.bind(inner) : value;
+                }
+                return (
+                  query: { sql: string; parameters: readonly unknown[] },
+                  ...rest: unknown[]
+                ) => {
+                  statements.push(JSON.stringify(query.parameters));
+                  return (value as (...args: unknown[]) => unknown).call(inner, query, ...rest);
+                };
+              },
+            });
+          };
+        }
+        const value: unknown = Reflect.get(target, property, target);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+    const counters = new IngestActivity(recording);
+    const [first, second] = [project.id, other.id].toSorted(textOrder);
+    counters.add(second ?? "", "traces", "accepted");
+    counters.add(first ?? "", "traces", "accepted");
+    counters.add(first ?? "", "logs", "refused_volume");
+    counters.add(first ?? "", "logs", "accepted");
+    await counters.flush();
+    const parameters = JSON.parse(statements[0] ?? "[]") as unknown[];
+    const keys = [0, 7, 14, 21].map((at) =>
+      [parameters[at], parameters[at + 2], parameters[at + 3]].join(" "),
+    );
+    expect(keys).toEqual([
+      `${first} logs accepted`,
+      `${first} logs refused_volume`,
+      `${first} traces accepted`,
+      `${second} traces accepted`,
+    ]);
   });
 
   test("skips a project deleted before the flush", async () => {
@@ -800,19 +903,27 @@ const get = (projectId: string, cookie = dashboard.cookie) =>
   });
 
 describe("GET /api/projects/:id/ingest-activity", () => {
-  test("sums every hour that overlaps the last hour, 24 hours, and 7 days", async () => {
+  test("sums this hour, and the 24 hours and 7 days that end with it, in whole hours", async () => {
     const project = await newProject();
     await insertCount(project.id, 0, 1);
     await insertCount(project.id, 1, 2);
-    await insertCount(project.id, 3, 4);
+    await insertCount(project.id, 23, 4);
     await insertCount(project.id, 24, 8);
-    await insertCount(project.id, 25, 16);
+    await insertCount(project.id, 167, 16);
     // Past the 7 days.
-    await insertCount(project.id, 170, 32);
+    await insertCount(project.id, 168, 32);
     await insertCount(project.id, 2, 5, "refused_origin");
     const response = await get(project.id);
     expect(response.statusCode).toBe(200);
-    const { sources } = response.json<{ sources: { source: string }[] }>();
+    const { since, sources } = response.json<{
+      since: Record<string, string>;
+      sources: { source: string }[];
+    }>();
+    expect(since).toEqual({
+      hour: hourAgo(0).toISOString(),
+      day: hourAgo(23).toISOString(),
+      week: hourAgo(167).toISOString(),
+    });
     expect(sources.map((source) => source.source)).toEqual([
       "browser_events",
       "server_events",
@@ -831,8 +942,8 @@ describe("GET /api/projects/:id/ingest-activity", () => {
       lastAcceptedAt: hourAgo(0).toISOString(),
       outcomes: {
         accepted: {
-          hour: { count: 3, items: 30 },
-          day: { count: 15, items: 150 },
+          hour: { count: 1, items: 10 },
+          day: { count: 7, items: 70 },
           week: { count: 31, items: 310 },
           lastAt: hourAgo(0).toISOString(),
         },
@@ -882,12 +993,12 @@ describe("GET /api/projects/:id/ingest-activity", () => {
 });
 
 describe("the worker's cleanup", () => {
-  test("deletes hours wholly older than 7 days, and only those", async () => {
+  test("deletes the hours before the 7 days' window, and only those", async () => {
     const project = await newProject();
     const now = new Date();
     const at = (hoursBefore: number) =>
       new Date(now.getTime() - (now.getTime() % HOUR_MS) - hoursBefore * HOUR_MS);
-    for (const hours of [169, 168, 2]) {
+    for (const hours of [168, 167, 2]) {
       await dashboard.db
         .insertInto("ingest_activity")
         .values({
@@ -908,7 +1019,7 @@ describe("the worker's cleanup", () => {
       .where("project_id", "=", project.id)
       .orderBy("hour")
       .execute();
-    expect(left.map((row) => row.hour.getTime())).toEqual([at(168).getTime(), at(2).getTime()]);
+    expect(left.map((row) => row.hour.getTime())).toEqual([at(167).getTime(), at(2).getTime()]);
   });
 });
 
@@ -933,6 +1044,20 @@ describe("migration 0024_ingest_activity", () => {
     ]) {
       await expect(row(project.id, bad).execute(dashboard.db)).rejects.toThrow(/check constraint/);
     }
+  });
+
+  test("its CHECK lists are the code's sources and outcomes", async () => {
+    const { rows } = await sql<{ definition: string }>`
+      select pg_get_constraintdef(oid) as definition from pg_constraint
+      where conrelid = 'ingest_activity'::regclass and contype = 'c'`.execute(dashboard.db);
+    const listed = (column: string) => {
+      const definition = rows.find((one) => one.definition.includes(`(${column} = ANY`));
+      return [...(definition?.definition.matchAll(/'([a-z_]+)'::text/g) ?? [])]
+        .map((match) => match[1])
+        .toSorted(textOrder);
+    };
+    expect(listed("source")).toEqual([...INGEST_SOURCES].toSorted(textOrder));
+    expect(listed("outcome")).toEqual([...INGEST_OUTCOMES].toSorted(textOrder));
   });
 
   test("deletes a project's rows with it", async () => {

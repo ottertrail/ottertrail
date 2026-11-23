@@ -162,6 +162,8 @@ export async function signedInDashboard({
   const reader: Reader = { client: testClickHouse.client };
   return {
     db: testDb.db,
+    /** The test's PostgreSQL schema, for a test that opens a pool of its own on it. */
+    schema: testDb.schema,
     /** Where reports read events. */
     reader,
     /** The name of the test's own ClickHouse database. */
