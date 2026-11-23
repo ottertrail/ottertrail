@@ -2,9 +2,8 @@
  * Refreshes Cloudflare's address ranges in deploy/compose.yaml (the
  * caddy-proxy-cloudflare config, and its hash label on the caddy service)
  * from https://www.cloudflare.com/ips-v4 and ips-v6. Caddy trusts
- * CF-Connecting-IP only from these ranges, and deploy/cloudflare-firewall.sh
- * reads them from the same file (docs/deployment.md, "Behind Cloudflare's
- * proxy"). Installs get them with each release's compose.yaml.
+ * CF-Connecting-IP only from these ranges (docs/deployment.md, "Behind
+ * Cloudflare's proxy"). Installs get them with each release's compose.yaml.
  *
  *   node scripts/update-cloudflare-ranges.ts
  *
@@ -35,7 +34,7 @@ export const SOURCES = {
 export const CONFIG_NAME = "caddy-proxy-cloudflare";
 
 // Close to the 15 and 7 of November 2026: fewer would mean a truncated or
-// wrong download, more a different list. Keep in step with cloudflare-firewall.sh.
+// wrong download, more a different list.
 const LIMITS = { v4: { min: 12, max: 100 }, v6: { min: 5, max: 100 } } as const;
 // Cloudflare's widest are a /13 and a /29; one bit to spare.
 const SHORTEST_PREFIX = { v4: 12, v6: 28 } as const;

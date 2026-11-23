@@ -227,12 +227,18 @@ services:
     logging: *logging
     environment:
       OTTERTRAIL_DOMAIN: ${OTTERTRAIL_DOMAIN:?set OTTERTRAIL_DOMAIN in .env}
-      # Chooses the caddy-proxy-* config the Caddyfile imports.
+      # Chooses the caddy-proxy-* config the Caddyfile imports. caddy-start
+      # checks it, and the two settings custom reads, before Caddy starts.
       OTTERTRAIL_PROXY: ${OTTERTRAIL_PROXY:-none}
+      OTTERTRAIL_TRUSTED_PROXIES: ${OTTERTRAIL_TRUSTED_PROXIES:-}
+      OTTERTRAIL_CLIENT_IP_HEADER: ${OTTERTRAIL_CLIENT_IP_HEADER:-X-Forwarded-For}
+    command: ["sh", "/etc/caddy/start.sh", "run"]
     labels:
       ottertrail.config.caddyfile: "52a6d1a02632"
       ottertrail.config.caddy-proxy-none: "b9bf92018a53"
-      ottertrail.config.caddy-proxy-cloudflare: "65ba630ebc21"
+      ottertrail.config.caddy-proxy-cloudflare: "c590d98f6320"
+      ottertrail.config.caddy-proxy-custom: "020818a4e47f"
+      ottertrail.config.caddy-start: "ca7fc8abda97"
     ports:
       - "80:80"
       - "443:443"
@@ -248,6 +254,10 @@ services:
         target: /etc/caddy/proxy/none.caddy
       - source: caddy-proxy-cloudflare
         target: /etc/caddy/proxy/cloudflare.caddy
+      - source: caddy-proxy-custom
+        target: /etc/caddy/proxy/custom.caddy
+      - source: caddy-start
+        target: /etc/caddy/start.sh
     depends_on:
       - api
 
@@ -272,8 +282,8 @@ configs:
   # ({client_ip}), which the API reads (TRUST_PROXY=1). It compresses every
   # answer but the Settings page's Server log, a stream of events, whose
   # lines would wait in the compressor; Caddy passes each event on at once.
-  # OTTERTRAIL_PROXY in .env picks one of the caddy-proxy-* configs below; any other
-  # value stops Caddy with "File to import not found".
+  # OTTERTRAIL_PROXY in .env picks one of the caddy-proxy-* configs below;
+  # caddy-start stops Caddy with a message for any other value.
   caddyfile:
     content: |
       {
@@ -300,11 +310,70 @@ configs:
       # visitor's address in CF-Connecting-IP. Any other request keeps its own
       # address, so nobody can fake the header by going around Cloudflare.
       # The ranges are https://www.cloudflare.com/ips-v4 and ips-v6, written by
-      # scripts/update-cloudflare-ranges.ts. cloudflare-firewall.sh reads them here.
+      # scripts/update-cloudflare-ranges.ts.
       servers {
       	trusted_proxies static 173.245.48.0/20 103.21.244.0/22 103.22.200.0/22 103.31.4.0/22 141.101.64.0/18 108.162.192.0/18 190.93.240.0/20 188.114.96.0/20 197.234.240.0/22 198.41.128.0/17 162.158.0.0/15 104.16.0.0/13 104.24.0.0/14 172.64.0.0/13 131.0.72.0/22 2400:cb00::/32 2606:4700::/32 2803:f800::/32 2405:b500::/32 2405:8100::/32 2a06:98c0::/29 2c0f:f248::/32
       	client_ip_headers CF-Connecting-IP
       }
+
+  # docs/deployment.md, "Behind another CDN or load balancer".
+  caddy-proxy-custom:
+    content: |
+      # OTTERTRAIL_PROXY=custom: a request from one of OTTERTRAIL_TRUSTED_PROXIES
+      # carries the visitor's address in OTTERTRAIL_CLIENT_IP_HEADER. Any other
+      # request keeps its own address. Strict mode reads the header from right to
+      # left and takes the first address outside the ranges, so an address a
+      # visitor puts at the start of X-Forwarded-For is skipped. caddy-start
+      # refuses empty ranges and ranges that cover every address.
+      servers {
+      	trusted_proxies static {$$OTTERTRAIL_TRUSTED_PROXIES}
+      	client_ip_headers {$$OTTERTRAIL_CLIENT_IP_HEADER}
+      	trusted_proxies_strict
+      }
+
+  # The caddy service's command: checks the proxy settings, then starts Caddy.
+  # Its argument is Caddy's subcommand: run, or validate to check the config.
+  caddy-start:
+    content: |
+      set -euf
+
+      fail() {
+      	echo "Caddy did not start: $$1" >&2
+      	echo "Fix it in .env, then run docker compose up -d. See \"$${2:-Behind another CDN or load balancer}\" in docs/deployment.md." >&2
+      	exit 1
+      }
+
+      command=$${1:-run}
+      proxy=$${OTTERTRAIL_PROXY:-none}
+      header=$${OTTERTRAIL_CLIENT_IP_HEADER:-X-Forwarded-For}
+      # The ranges as separate words: spaces, commas, and line breaks all separate them.
+      # shellcheck disable=SC2046
+      set -- $$(printf '%s' "$${OTTERTRAIL_TRUSTED_PROXIES:-}" | tr ',' ' ')
+
+      case "$$proxy" in
+      	none | cloudflare)
+      		if [ "$$#" -gt 0 ]; then
+      			echo "Note: OTTERTRAIL_TRUSTED_PROXIES is ignored. Caddy reads it only when OTTERTRAIL_PROXY is custom." >&2
+      		fi
+      		;;
+      	custom)
+      		[ "$$#" -gt 0 ] ||
+      			fail "OTTERTRAIL_PROXY is custom, but OTTERTRAIL_TRUSTED_PROXIES is empty. Set it to your proxy's address ranges, separated by spaces."
+      		for range; do
+      			case "$$range" in
+      				*/0) fail "OTTERTRAIL_TRUSTED_PROXIES has $$range, which covers every address, so any client could set its own address. List only your proxy's ranges." ;;
+      			esac
+      		done
+      		case "$$header" in
+      			*[!A-Za-z0-9-]*) fail "OTTERTRAIL_CLIENT_IP_HEADER is \"$$header\". Give one header name, such as X-Forwarded-For." ;;
+      		esac
+      		export OTTERTRAIL_TRUSTED_PROXIES="$$*"
+      		;;
+      	*) fail "OTTERTRAIL_PROXY is \"$$proxy\". Use none, cloudflare, or custom." "Behind Cloudflare's proxy" ;;
+      esac
+      export OTTERTRAIL_PROXY="$$proxy" OTTERTRAIL_CLIENT_IP_HEADER="$$header"
+
+      exec caddy "$$command" --config /etc/caddy/Caddyfile --adapter caddyfile
 
   # ClickHouse on a small server it shares (docs/storage-benchmark.md).
   clickhouse-config:

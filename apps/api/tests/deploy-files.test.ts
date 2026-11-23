@@ -124,6 +124,8 @@ describe("each service that reads a config carries the config's hash", () => {
     "caddyfile",
     "caddy-proxy-none",
     "caddy-proxy-cloudflare",
+    "caddy-proxy-custom",
+    "caddy-start",
     "clickhouse-config",
     "clickhouse-users",
     "garage",
@@ -139,25 +141,41 @@ function directives(config: string): string[] {
   return config.split("\n").filter((line) => line.trim() !== "" && !line.trim().startsWith("#"));
 }
 
-describe("OTTERTRAIL_PROXY: Caddy reads the visitor's address from Cloudflare only for Cloudflare's ranges", () => {
+describe("OTTERTRAIL_PROXY: Caddy reads the visitor's address from a header only for the proxy's ranges", () => {
   const caddyfile = inlineConfig("caddyfile");
   const cloudflare = inlineConfig("caddy-proxy-cloudflare");
   const shipped = (/^\ttrusted_proxies static (.+)$/m.exec(cloudflare)?.[1] ?? "").split(" ");
-  const firewall = join(deploy, "cloudflare-firewall.sh");
 
-  test("Caddy gets OTTERTRAIL_PROXY, none by default, and imports the config of that name", () => {
+  test("Caddy gets the proxy settings, and imports the config of OTTERTRAIL_PROXY's name", () => {
     const caddy = serviceBlock(compose, "caddy");
-    expect(caddy).toContain("      OTTERTRAIL_PROXY: ${OTTERTRAIL_PROXY:-none}\n");
+    expect(caddy).toContain(
+      [
+        "      OTTERTRAIL_PROXY: ${OTTERTRAIL_PROXY:-none}",
+        "      OTTERTRAIL_TRUSTED_PROXIES: ${OTTERTRAIL_TRUSTED_PROXIES:-}",
+        "      OTTERTRAIL_CLIENT_IP_HEADER: ${OTTERTRAIL_CLIENT_IP_HEADER:-X-Forwarded-For}",
+        "",
+      ].join("\n"),
+    );
     expect(caddyfile.split("\n").slice(0, 3)).toEqual([
       "{",
       "\timport /etc/caddy/proxy/{$$OTTERTRAIL_PROXY}.caddy",
       "}",
     ]);
-    for (const mode of ["none", "cloudflare"]) {
+    for (const mode of ["none", "cloudflare", "custom"]) {
       expect(caddy).toContain(
         `      - source: caddy-proxy-${mode}\n        target: /etc/caddy/proxy/${mode}.caddy\n`,
       );
     }
+  });
+
+  test("Caddy starts through caddy-start, which checks the settings first", () => {
+    const caddy = serviceBlock(compose, "caddy");
+    expect(caddy).toContain('    command: ["sh", "/etc/caddy/start.sh", "run"]\n');
+    expect(caddy).toContain("      - source: caddy-start\n        target: /etc/caddy/start.sh\n");
+    // The image's own command, with the subcommand as its argument.
+    expect(inlineConfig("caddy-start")).toContain(
+      'exec caddy "$$command" --config /etc/caddy/Caddyfile --adapter caddyfile\n',
+    );
   });
 
   test("the API gets the address Caddy settled on, one hop, as before", () => {
@@ -177,6 +195,16 @@ describe("OTTERTRAIL_PROXY: Caddy reads the visitor's address from Cloudflare on
     ]);
   });
 
+  test("custom trusts the header from .env's ranges only, read from right to left", () => {
+    expect(directives(inlineConfig("caddy-proxy-custom"))).toEqual([
+      "servers {",
+      "\ttrusted_proxies static {$$OTTERTRAIL_TRUSTED_PROXIES}",
+      "\tclient_ip_headers {$$OTTERTRAIL_CLIENT_IP_HEADER}",
+      "\ttrusted_proxies_strict",
+      "}",
+    ]);
+  });
+
   test("the shipped ranges are Cloudflare's, IPv4 then IPv6, each a valid range", () => {
     const v4 = shipped.filter((range) => !range.includes(":"));
     const v6 = shipped.filter((range) => range.includes(":"));
@@ -188,73 +216,168 @@ describe("OTTERTRAIL_PROXY: Caddy reads the visitor's address from Cloudflare on
     expect(shippedRanges(compose)).toEqual(shipped);
   });
 
-  test("the firewall script reads the same ranges, and matches ports 80 and 443 only", async () => {
-    const { stdout } = await promisify(execFile)("bash", [firewall, "--check"]);
-    const allowed = [...stdout.matchAll(/^-A ottertrail-cloudflare -s (\S+) -j RETURN$/gm)].map(
-      ([, range]) => range,
-    );
-    expect(allowed).toEqual(shipped);
-    const jumps = stdout.split("\n").filter((line) => line.endsWith(" -j ottertrail-cloudflare"));
-    expect(jumps).toHaveLength(12);
-    for (const jump of jumps) {
-      expect(jump).toMatch(/^-A (DOCKER-USER|ufw6?-before-input) -p (tcp|udp) .*\b(80|443) -j /);
-      expect(jump).toMatch(/(--ctorigdstport|--dport) (80|443) /);
-    }
-    // Each family's block is one table, between the markers --remove looks for.
-    expect(stdout.match(/^# BEGIN ottertrail-cloudflare /gm)).toHaveLength(2);
-    expect(stdout.match(/^COMMIT\n# END ottertrail-cloudflare$/gm)).toHaveLength(2);
-  });
-
-  test("the firewall script refuses ranges that are not routable or not Cloudflare's size", async () => {
-    const folder = await mkdtemp(join(tmpdir(), "ottertrail-firewall-"));
-    try {
-      await copyFile(firewall, join(folder, "cloudflare-firewall.sh"));
-      const check = async (ranges: string) => {
-        await writeFile(join(folder, "compose.yaml"), `      \ttrusted_proxies static ${ranges}\n`);
-        try {
-          await promisify(execFile)("bash", [join(folder, "cloudflare-firewall.sh"), "--check"]);
-          return "";
-        } catch (error) {
-          return String((error as { stderr?: unknown }).stderr);
-        }
-      };
-      expect(await check(shipped.join(" "))).toBe("");
-      for (const bad of [
-        "10.0.0.0/8;reboot",
-        "0.0.0.0/0",
-        "10.0.0.0/8",
-        "172.16.0.0/12",
-        "192.168.0.0/16",
-        "100.64.0.0/12",
-        "127.0.0.0/16",
-        "169.254.0.0/16",
-        "224.0.0.0/12",
-        "256.1.0.0/16",
-        "104.16.0.1/13",
-        "104.0.0.0/11",
-        "fd00::/29",
-        "fe80::/32",
-        "::1/128",
-        "2002::/32",
-        "2400::/27",
-      ]) {
-        expect(await check(`${shipped.join(" ")} ${bad}`)).toBe(
-          `Not a routable CIDR range of Cloudflare's size: ${bad}. Nothing was changed.\n`,
-        );
-      }
-      // As from a download cut off at a line break.
-      expect(await check(shipped.slice(0, 11).join(" ") + " 2400:cb00::/32")).toBe(
-        "Only 11 IPv4 and 1 IPv6 ranges: too few to be Cloudflare's. Nothing was changed.\n",
-      );
-    } finally {
-      await rm(folder, { recursive: true, force: true });
-    }
-  });
-
-  test("example.env documents OTTERTRAIL_PROXY, commented out", () => {
+  test("example.env documents the proxy settings, commented out", () => {
     const example = readFileSync(join(deploy, "example.env"), "utf8");
-    expect(example).toMatch(/^# OTTERTRAIL_PROXY=cloudflare$/m);
     expect(example).toMatch(/^# Optional: a proxy in front of this server\. none \(the default\)/m);
+    expect(example).toMatch(/^# OTTERTRAIL_PROXY=cloudflare$/m);
+    expect(example).toMatch(/^# OTTERTRAIL_PROXY=custom$/m);
+    expect(example).toMatch(/^# OTTERTRAIL_TRUSTED_PROXIES=\S/m);
+    expect(example).toMatch(/^# OTTERTRAIL_CLIENT_IP_HEADER=X-Forwarded-For$/m);
+  });
+});
+
+/**
+ * Runs caddy-start with `env`, as Compose writes it (`$$` read as `$`),
+ * and a stand-in for caddy that prints its arguments and the two
+ * settings it would read.
+ */
+async function runCaddyStart(env: Record<string, string>, command = "validate") {
+  const folder = await mkdtemp(join(tmpdir(), "ottertrail-caddy-start-"));
+  try {
+    const script = join(folder, "start.sh");
+    await writeFile(script, inlineConfig("caddy-start").replaceAll("$$", "$"));
+    const fake = join(folder, "caddy");
+    await writeFile(
+      fake,
+      '#!/bin/sh\necho "caddy $*"\necho "proxy=$OTTERTRAIL_PROXY"\necho "ranges=$OTTERTRAIL_TRUSTED_PROXIES"\necho "header=$OTTERTRAIL_CLIENT_IP_HEADER"\n',
+    );
+    await chmod(fake, 0o755);
+    try {
+      const { stdout, stderr } = await promisify(execFile)("sh", [script, command], {
+        env: { PATH: `${folder}:/usr/bin:/bin`, ...env },
+      });
+      return { code: 0, stdout, stderr };
+    } catch (error) {
+      const failed = error as { code?: number; stdout?: string; stderr?: string };
+      return { code: failed.code, stdout: failed.stdout ?? "", stderr: failed.stderr ?? "" };
+    }
+  } finally {
+    await rm(folder, { recursive: true, force: true });
+  }
+}
+
+const footer = (section: string) =>
+  `Fix it in .env, then run docker compose up -d. See "${section}" in docs/deployment.md.\n`;
+
+describe("caddy-start: the proxy settings Caddy refuses to start with", () => {
+  const custom = "Behind another CDN or load balancer";
+
+  test("none, the default, and cloudflare start Caddy with nothing to check", async () => {
+    expect(await runCaddyStart({}, "run")).toEqual({
+      code: 0,
+      stdout:
+        "caddy run --config /etc/caddy/Caddyfile --adapter caddyfile\nproxy=none\nranges=\nheader=X-Forwarded-For\n",
+      stderr: "",
+    });
+    const cloudflare = await runCaddyStart({ OTTERTRAIL_PROXY: "cloudflare" });
+    expect(cloudflare.code).toBe(0);
+    expect(cloudflare.stdout).toContain("caddy validate --config");
+    expect(cloudflare.stderr).toBe("");
+  });
+
+  test("ranges set beside none or cloudflare only bring a note", async () => {
+    const result = await runCaddyStart({
+      OTTERTRAIL_PROXY: "cloudflare",
+      OTTERTRAIL_TRUSTED_PROXIES: "203.0.113.0/24",
+    });
+    expect(result.code).toBe(0);
+    expect(result.stderr).toBe(
+      "Note: OTTERTRAIL_TRUSTED_PROXIES is ignored. Caddy reads it only when OTTERTRAIL_PROXY is custom.\n",
+    );
+  });
+
+  test("custom passes the ranges on, separated by spaces, commas, or line breaks", async () => {
+    const result = await runCaddyStart({
+      OTTERTRAIL_PROXY: "custom",
+      OTTERTRAIL_TRUSTED_PROXIES: " 203.0.113.0/24,2001:db8::/32 ,\n198.51.100.7  private_ranges ",
+      OTTERTRAIL_CLIENT_IP_HEADER: "True-Client-IP",
+    });
+    expect(result).toEqual({
+      code: 0,
+      stdout: [
+        "caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile",
+        "proxy=custom",
+        "ranges=203.0.113.0/24 2001:db8::/32 198.51.100.7 private_ranges",
+        "header=True-Client-IP",
+        "",
+      ].join("\n"),
+      stderr: "",
+    });
+  });
+
+  test.each(["", " ", " , ,\n"])("custom with empty ranges (%j) stops Caddy", async (ranges) => {
+    expect(
+      await runCaddyStart({ OTTERTRAIL_PROXY: "custom", OTTERTRAIL_TRUSTED_PROXIES: ranges }),
+    ).toEqual({
+      code: 1,
+      stdout: "",
+      stderr:
+        "Caddy did not start: OTTERTRAIL_PROXY is custom, but OTTERTRAIL_TRUSTED_PROXIES is empty. Set it to your proxy's address ranges, separated by spaces.\n" +
+        footer(custom),
+    });
+    // Unset, as without the Compose file's default.
+    expect((await runCaddyStart({ OTTERTRAIL_PROXY: "custom" })).code).toBe(1);
+  });
+
+  test.each(["0.0.0.0/0", "::/0", "203.0.113.9/0"])(
+    "custom refuses %s, which covers every address",
+    async (wide) => {
+      const result = await runCaddyStart({
+        OTTERTRAIL_PROXY: "custom",
+        OTTERTRAIL_TRUSTED_PROXIES: `203.0.113.0/24 ${wide}`,
+      });
+      expect(result).toEqual({
+        code: 1,
+        stdout: "",
+        stderr:
+          `Caddy did not start: OTTERTRAIL_TRUSTED_PROXIES has ${wide}, which covers every address, so any client could set its own address. List only your proxy's ranges.\n` +
+          footer(custom),
+      });
+    },
+  );
+
+  test.each([
+    "X-Real-IP X-Forwarded-For",
+    "X-Forwarded-For,X-Real-IP",
+    "{$$HOME}",
+    "X-Forwarded-For\n}",
+  ])("custom refuses a header setting that is not one name: %j", async (header) => {
+    const result = await runCaddyStart({
+      OTTERTRAIL_PROXY: "custom",
+      OTTERTRAIL_TRUSTED_PROXIES: "203.0.113.0/24",
+      OTTERTRAIL_CLIENT_IP_HEADER: header.replaceAll("$$", "$"),
+    });
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain("Give one header name, such as X-Forwarded-For.\n");
+  });
+
+  test("another mode stops Caddy and lists the modes", async () => {
+    expect(await runCaddyStart({ OTTERTRAIL_PROXY: "fastly" })).toEqual({
+      code: 1,
+      stdout: "",
+      stderr:
+        'Caddy did not start: OTTERTRAIL_PROXY is "fastly". Use none, cloudflare, or custom.\n' +
+        footer("Behind Cloudflare's proxy"),
+    });
+  });
+});
+
+describe("the release's files", () => {
+  test("are the deploy files installs download, each of which exists", () => {
+    const workflow = readFileSync(
+      join(import.meta.dirname, "../../../.github/workflows/release.yml"),
+      "utf8",
+    );
+    const files = /^ {10}files="([^"]+)"$/m.exec(workflow)?.[1]?.split(" ");
+    expect(files).toEqual([
+      "deploy/compose.yaml",
+      "deploy/example.env",
+      "deploy/backup.sh",
+      "deploy/restore.sh",
+    ]);
+    for (const file of files ?? []) {
+      expect(readFileSync(join(deploy, "..", file), "utf8").length).toBeGreaterThan(0);
+    }
   });
 });
 

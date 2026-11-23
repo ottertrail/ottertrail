@@ -126,7 +126,7 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: |
           version="${TAG#v}"
-          files="deploy/compose.yaml deploy/example.env deploy/backup.sh deploy/restore.sh deploy/cloudflare-firewall.sh"
+          files="deploy/compose.yaml deploy/example.env deploy/backup.sh deploy/restore.sh"
           prerelease=
           case "$version" in *-*) prerelease=--prerelease ;; esac
           if gh release view "$TAG" > /dev/null 2>&1; then

@@ -63,7 +63,6 @@ jobs:
         run: |
           pnpm exec vp check
           pnpm --filter @ottertrail/api exec vp test run tests/deploy-files.test.ts
-          bash deploy/cloudflare-firewall.sh --check > /dev/null
 
       - name: Open or update the pull request
         if: steps.update.outputs.changed == 'true'
@@ -86,7 +85,7 @@ jobs:
             echo
             grep -E '^(Cloudflare|Added|Removed)' "$RUNNER_TEMP/update.txt" | cut -c1-3000 | sed 's/^/- /'
             echo
-            echo "Caddy trusts CF-Connecting-IP only from these ranges, and \`cloudflare-firewall.sh\` lets only them reach ports 80 and 443. After the release, instances behind Cloudflare need the new \`compose.yaml\`, then \`docker compose up -d\` and \`sudo ./cloudflare-firewall.sh\` again."
+            echo "Caddy trusts CF-Connecting-IP only from these ranges. After the release, instances behind Cloudflare need the new \`compose.yaml\`, then \`docker compose up -d\`. Owners who lock ports 80 and 443 to Cloudflare's ranges in a firewall need to update that list too."
           } > "$RUNNER_TEMP/body.md"
 
           open=$(gh pr list --head "$BRANCH" --base main --state open --json number --jq '.[0].number')

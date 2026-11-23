@@ -104,6 +104,8 @@ describe("renderNotes", () => {
     expect(notes).toContain("gh release download v1.2.0");
     expect(notes).toContain("OTTERTRAIL_VERSION=1.2.0");
     expect(notes).toContain("docker compose pull\ndocker compose up -d");
+    // The release ships no firewall script: the host's own firewall does that job.
+    expect(notes).not.toContain("firewall");
   });
 
   test("leaves out empty sections", () => {

@@ -28,9 +28,9 @@ ClickHouse's defaults assume a machine of its own with 16 GB or more, and its ow
 - A Linux server with Docker Engine and Docker Compose 2.23.1 or later (`docker compose version`). The Compose file holds its settings files inline (`configs:` with `content:`), which Docker Compose reads from 2.23.1 on ([Compose's reference](https://docs.docker.com/reference/compose-file/configs/)).
 - Podman works with Docker Compose too: `podman compose` runs Docker Compose when it is installed (`PODMAN_COMPOSE_PROVIDER` chooses), or point Docker Compose at Podman's socket with `DOCKER_HOST`. Use Docker Compose 2.23.1 or later there too. podman-compose does not work: version 1.6 skips inline configs without a warning, so Caddy, ClickHouse, and Garage start without their settings, and Garage stops at once ([What has been tested](#what-has-been-tested)).
 - A domain or subdomain for the instance, such as `analytics.example.com`, with its DNS A record pointing at the server. Leave out an AAAA record: the stack's network has no IPv6, so IPv6 visitors would all reach Caddy from one address ([Known limitations](#known-limitations)).
-- Ports 80 and 443 open to the internet: Caddy needs them to get a certificate from Let's Encrypt, and sites send events to 443. Nothing else needs to be open besides SSH. Behind Cloudflare's proxy, they can be limited to Cloudflare's addresses once the first certificate is in place ([Behind Cloudflare's proxy](#behind-cloudflares-proxy)).
+- Ports 80 and 443 open to the internet: Caddy needs them to get a certificate from Let's Encrypt, and sites send events to 443. Nothing else needs to be open besides SSH. Behind a CDN or load balancer, they can be limited to its addresses once the first certificate is in place ([Lock the server to your proxy](#lock-the-server-to-your-proxy)).
 
-No checkout of this repository is needed. An install is a folder with four files from a release (five behind Cloudflare's proxy), and the `.env` made from one of them.
+No checkout of this repository is needed. An install is a folder with four files from a release, and the `.env` made from one of them.
 
 ## First start
 
@@ -98,7 +98,7 @@ An instance can run behind Cloudflare's proxy (the orange cloud on the DNS recor
 
 ### The setting
 
-`OTTERTRAIL_PROXY` in `.env`: `none` (the default, when unset) or `cloudflare`. Another value stops Caddy at start with "File to import not found". It is not called `PROXY`: Compose prefers a variable exported in the shell over `.env`, and many servers export `PROXY` for an HTTP proxy. The Caddyfile imports one of two small configs from the Compose file, `caddy-proxy-none` or `caddy-proxy-cloudflare`. With `cloudflare`, Caddy's global options get:
+`OTTERTRAIL_PROXY` in `.env`: `none` (the default, when unset), `cloudflare`, or `custom` for any other proxy ([Behind another CDN or load balancer](#behind-another-cdn-or-load-balancer)). Compose starts Caddy through a short script, the `caddy-start` config, which checks the setting first: another value stops Caddy, and its log (`docker compose logs caddy`) lists the three. It is not called `PROXY`: Compose prefers a variable exported in the shell over `.env`, and many servers export `PROXY` for an HTTP proxy. The Caddyfile imports one of three small configs from the Compose file, `caddy-proxy-none`, `caddy-proxy-cloudflare`, or `caddy-proxy-custom`. With `cloudflare`, Caddy's global options get:
 
 ```caddyfile
 servers {
@@ -121,7 +121,7 @@ The ranges ship inside `compose.yaml`, from <https://www.cloudflare.com/ips-v4> 
 2. Set `OTTERTRAIL_PROXY=cloudflare` in `.env` and run `docker compose up -d`: Caddy's environment changed, so Compose recreates it. While the record is DNS only, no request comes from Cloudflare's ranges, so nothing changes yet.
 3. In Cloudflare's dashboard, set the zone's settings in the table below.
 4. Switch the record to **Proxied**.
-5. Lock ports 80 and 443 to Cloudflare with the firewall script below.
+5. Lock ports 80 and 443 to Cloudflare's ranges ([Lock the server to your proxy](#lock-the-server-to-your-proxy)).
 
 | Setting                                       | Value                                                                                                                                                                                                                                                                                                                                                                                                                          | Why                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -135,46 +135,77 @@ The ranges ship inside `compose.yaml`, from <https://www.cloudflare.com/ips-v4> 
 | Managed transform "Remove visitor IP headers" | Off                                                                                                                                                                                                                                                                                                                                                                                                                            | It removes `CF-Connecting-IP`, and every visitor would then have Cloudflare's address.                                                                                                                                                                                                                                                                                                                                             |
 | Caching                                       | A cache rule that bypasses the cache for `/api/*`                                                                                                                                                                                                                                                                                                                                                                              | The API's answers are per user and per moment. The tracker scripts (`/t.js` and the files it loads) may be cached: they are sent with a 1-hour cache time. Files under `/assets/` are cached for a year under content-hashed names.                                                                                                                                                                                                |
 
-### Locking the server to Cloudflare
+## Behind another CDN or load balancer
 
-With the record proxied, anyone who learns the server's address can still connect to it directly. Their address counts as their own, so they cannot fake one, but they skip Cloudflare's protections. `cloudflare-firewall.sh`, a release file like `backup.sh`, lets only Cloudflare's ranges reach ports 80 and 443 (TCP, and UDP 443 for HTTP/3), for IPv4 and IPv6. It needs UFW, active, and Docker running with its default iptables firewall.
+Any other CDN, load balancer, or proxy in front of Caddy works with `OTTERTRAIL_PROXY=custom`. Tunnels, such as Cloudflare Tunnel, are not supported. Behind a proxy, every request reaches Caddy from the proxy's addresses. Unless Caddy is told which ones, all visitors would share one rate limit, the daily visitor ID would merge visitors with the same browser, and locations would be the proxy's.
 
-UFW's own rules cannot restrict Docker's published ports: Docker's iptables rules handle those packets before UFW's. Docker passes them through its `DOCKER-USER` chain, which is for rules like these. The script fills it with jumps to a chain of its own, `ottertrail-cloudflare`, which lets Cloudflare's ranges, and traffic from the containers and the server itself, through, and drops the rest. `DOCKER-USER` sees packets after Docker has rewritten their destination to the container (DNAT), so the jumps match the port the client connected to, with conntrack's `--ctorigdstport`, and only for connections Docker rewrote: the containers' own connections out, such as the worker's downloads, are never matched. The same chain also guards ports 80 and 443 on the server itself, from UFW's `ufw-before-input` (and `ufw6-before-input`), for connections Docker's proxy takes there, as IPv6 ones are. SSH and every other port are not matched.
+### The settings
 
-The rules go into `/etc/ufw/after.rules` and `/etc/ufw/after6.rules` between `# BEGIN ottertrail-cloudflare` and `# END ottertrail-cloudflare`, so UFW loads them again after a reboot. Running the script again replaces the block; each file's original is kept once, as `after.rules.before-ottertrail`. It reads the ranges from `compose.yaml` beside it, or, without one, from Cloudflare's lists, and refuses a failed download, any range that is not a globally routable CIDR range (no private, loopback, carrier-grade NAT, link-local, multicast, ULA, or 6to4 addresses) of at most a /12 of IPv4 or a /28 of IPv6, and fewer than 12 IPv4 or 5 IPv6 ranges, as from a list cut off at a line break.
-
-Before writing anything, it stops when:
-
-- UFW is not installed or not active: it would not load the rules.
-- `FORWARD` does not jump to `DOCKER-USER` (`iptables -C FORWARD -j DOCKER-USER`): Docker is not running, or uses its nftables firewall, or runs with `"iptables": false`. The rules would not apply.
-- `DOCKER-USER` holds rules it did not write: loading the block empties that chain.
-- `iptables-restore --test` refuses a block.
-
-Without UFW's IPv6 rules (`IPV6=no` in `/etc/default/ufw`, so no `ufw6-before-input` chain), UFW loads no `after6.rules` and filters no IPv6 at all. The script then writes the IPv4 block only, and warns that IPv6 is not limited: set `IPV6=yes`, or make sure the server has no public IPv6 address. Without Docker's IPv6 firewall, it says so: IPv6 connections then all reach Docker's proxy on the server, where the `ufw6-before-input` jumps apply. After `ufw reload`, it checks that the jumps are in force, and fails if they are not.
+Three settings in `.env`:
 
 ```sh
-curl -fLO https://github.com/ottertrail/ottertrail/releases/latest/download/cloudflare-firewall.sh
-chmod +x cloudflare-firewall.sh
-./cloudflare-firewall.sh --check     # prints both blocks; changes nothing, needs no sudo
-sudo ./cloudflare-firewall.sh        # writes them and reloads UFW
-sudo ./cloudflare-firewall.sh --remove
+OTTERTRAIL_PROXY=custom
+OTTERTRAIL_TRUSTED_PROXIES=203.0.113.0/24 2001:db8::/32
+OTTERTRAIL_CLIENT_IP_HEADER=X-Forwarded-For
 ```
 
-Run it again after each update, so the firewall takes the new `compose.yaml`'s ranges; with the same ranges, it writes the same rules. `--remove` takes the block out of both files, reloads UFW if it is active, deletes every jump to the chain and the chain itself, and fails if the chain is still there: ports 80 and 443 are then open as UFW allows. It works with UFW inactive too, since the running rules stay in force until a reboot.
+- `OTTERTRAIL_TRUSTED_PROXIES`: the addresses the proxy connects to the server from, as CIDR ranges or single addresses, separated by spaces. Commas work too. Take them from the provider's published list, or from your load balancer's subnets.
+- `OTTERTRAIL_CLIENT_IP_HEADER`: the one header that carries the visitor's address. `X-Forwarded-For` when unset.
 
-The script has been checked with `bash -n`, ShellCheck, and its `--check` output, and its decisions and file edits with stand-ins for `ufw` and `iptables` (installing, a missing `FORWARD` jump, UFW's IPv6 rules off, rules not in force after the reload, removing with UFW inactive, a chain that would not go); it has not run on a server yet. On the server, with a second SSH session open in case:
+Caddy's global options then get the `caddy-proxy-custom` config:
 
-- `sudo ./cloudflare-firewall.sh --check`: both blocks list Cloudflare's ranges, and every jump names port 80 or 443.
-- After running it: `sudo iptables -S DOCKER-USER` shows the three jumps, and `sudo iptables -S ottertrail-cloudflare` the ranges and a final `DROP`; the same with `ip6tables`. `sudo iptables -S ufw-before-input | grep ottertrail` shows the three jumps there, and `sudo ip6tables -S ufw6-before-input | grep ottertrail` too.
-- `sudo iptables -C FORWARD -j DOCKER-USER` still succeeds after `sudo ufw reload`.
-- SSH still connects, in a new session.
-- The instance answers through Cloudflare (`curl -I https://<domain>`), and an event from a test site reaches the analytics page with the visitor's location, not Cloudflare's.
-- Straight to the server, from a machine outside Cloudflare, it does not answer: `curl -m 10 --resolve <domain>:443:<server IPv4> https://<domain>/api/health` times out, and the same with the IPv6 address in brackets, and on port 80.
-- The worker still downloads: the Settings page's Location data shows no new error after its next update, or after `docker compose exec api node dist/update-geo.mjs`.
-- After `sudo reboot`, the chains hold the same rules, and `FORWARD` still jumps to `DOCKER-USER` (UFW starts before Docker, which keeps the chain UFW made).
-- `--remove`, then the direct request answers again.
+```caddyfile
+servers {
+	trusted_proxies static {$OTTERTRAIL_TRUSTED_PROXIES}
+	client_ip_headers {$OTTERTRAIL_CLIENT_IP_HEADER}
+	trusted_proxies_strict
+}
+```
 
-It does not tie the server to your Cloudflare account: any Cloudflare customer can point a proxied record at its address, and those requests come from Cloudflare's ranges. Cloudflare's Authenticated Origin Pulls would close that, and is not set up.
+As with Cloudflare, a request whose connection comes from one of the ranges takes its client address from the header. Any other request keeps its connection's address, and its header is ignored. Caddy sends the API that address as `X-Forwarded-For`, and the API trusts one hop.
+
+`trusted_proxies_strict` reads the header from right to left and takes the first address outside the ranges. A proxy that appends to `X-Forwarded-For` adds the address it saw at the end, so an address a visitor sends at the start is skipped. A header with one address works the same way. When that address is itself inside the ranges, or is not an address, Caddy uses the connection's address. Caddy reads an address with a port, such as `198.51.100.10:46532` or `[2001:db8::1]:46532`, and drops the port. It does not read an IPv6 address with a port and no brackets, such as `2001:db8::1:46532`, and uses the connection's address instead.
+
+Leave the Compose network's addresses out of the ranges, and so Caddy's `private_ranges` too. Docker takes the network from 172.16.0.0/12 or 192.168.0.0/16 by default (`docker network inspect ottertrail-instance_default` shows it). IPv6 connections, and anything on the server itself, reach Caddy from the network's gateway ("An `A` record only", above). With the gateway trusted, they could set any address as their own.
+
+Keeping the ranges current is your job. Cloudflare's ranges ship with each release. Nothing updates the custom ones. When the provider changes its addresses, update `OTTERTRAIL_TRUSTED_PROXIES` and run `docker compose up -d`. Until then, requests from its new addresses count as the proxy's own.
+
+### Checks at start
+
+`caddy-start` checks the settings before Caddy starts. Caddy does not start, and its log says which setting to fix, when:
+
+- `OTTERTRAIL_PROXY` is `custom` and `OTTERTRAIL_TRUSTED_PROXIES` is empty. Caddy itself would start without a word, trust no proxy, and give every visitor the proxy's address.
+- A range ends in `/0`, such as `0.0.0.0/0` or `::/0`. It covers every address, so any client could set its own address.
+- `OTTERTRAIL_CLIENT_IP_HEADER` is more than one header name.
+
+Caddy refuses a range it cannot read, such as `203.0.113.0/33`, with its own error. Caddy starts with any other wide range, so list only the proxy's ranges: anyone inside them can set their own address.
+
+Tested with the release's Caddy image (23 November 2026): `caddy validate`, run through `caddy-start`, accepts `none`, `cloudflare`, and `custom` with ranges and either `X-Forwarded-For` or `True-Client-IP`, and stops with the messages above for empty ranges, `0.0.0.0/0`, and `::/0`. With `custom` and `X-Forwarded-For`, a request from a trusted address with `X-Forwarded-For: 1.2.3.4, 203.0.113.9` got `203.0.113.9` as its address. With the connection outside the ranges, every header was ignored.
+
+### Headers by provider
+
+| Provider       | `OTTERTRAIL_CLIENT_IP_HEADER` | Notes                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| -------------- | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Fastly         | `Fastly-Client-IP`            | A client can set it unless the Fastly service overwrites it.                                                                                                                                                                                                                                                                                                                                                                   |
+| AWS CloudFront | `X-Forwarded-For`             | CloudFront appends the viewer's address to it. CloudFront's `CloudFront-Viewer-Address` needs an origin request policy, and its value is `ip:port`. Caddy reads that for IPv4. AWS's docs show no IPv6 value, and Caddy does not read an IPv6 address with a port and no brackets, so use `X-Forwarded-For` ([AWS's docs](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/adding-cloudfront-headers.html)). |
+| Akamai         | `True-Client-IP`              | Akamai can rename it. An Akamai setting decides whether a value the client sent is kept.                                                                                                                                                                                                                                                                                                                                       |
+
+When a provider keeps a header the client sent, any visitor can set its own address. Make the provider overwrite it, or use a header the provider appends to.
+
+### Setting it up
+
+1. Start the instance as in [First start](#first-start), with its DNS record pointing at the server, so Let's Encrypt reaches Caddy directly for the first certificate. Leave out an `AAAA` record.
+2. Set the three settings in `.env` and run `docker compose up -d`. Check `docker compose logs caddy` for a message from `caddy-start`.
+3. Point the DNS record at the proxy. Renewals need Let's Encrypt's HTTP check to reach Caddy: the proxy must pass requests for `/.well-known/acme-challenge/` on port 80 to the server.
+4. Lock ports 80 and 443 to the proxy's ranges ([Lock the server to your proxy](#lock-the-server-to-your-proxy)).
+
+## Lock the server to your proxy
+
+Without a lock, anyone who finds the server's address can connect to it directly, and skip the proxy and its protections. Visitor addresses stay correct either way: Caddy trusts the header only from the configured ranges, so a direct request keeps its own address.
+
+To lock it, allow ports 80 and 443 (TCP, and UDP 443 for HTTP/3) only from the proxy's ranges, with the firewall your host provides, such as a cloud provider's firewall or security group, or the server's own firewall. Lock it after the first certificate is in place. Behind Cloudflare, its ranges are at <https://www.cloudflare.com/ips-v4> and <https://www.cloudflare.com/ips-v6>, the same ones `compose.yaml` ships. With `custom`, use the ranges in `OTTERTRAIL_TRUSTED_PROXIES`. Update the firewall when the ranges change.
+
+Docker's published ports bypass UFW's rules ([Docker's docs](https://docs.docker.com/engine/network/packet-filtering-firewalls/)), so a rule in UFW does not lock them. A firewall outside the server, from your hosting provider, is the simplest place for the lock.
 
 ## Backups
 
@@ -451,7 +482,7 @@ Every install serves one customer, whether self-hosted or hosted: each hosted cu
 
 **Security headers on the dashboard.** Its files carry a Content Security Policy that allows only the instance's own scripts, styles, fonts, and requests, plus `data:` images and fonts (Vite inlines files under 4 KB). `frame-ancestors 'none'` and `X-Frame-Options: DENY` stop other sites from framing it; `Referrer-Policy: same-origin` keeps project IDs and filters in dashboard URLs from reaching other sites. With an HTTPS public URL, `Strict-Transport-Security` tells browsers to use HTTPS for a year; not for `localhost`, where a stored entry would break plain-HTTP development servers. The tracker and the API's JSON answers do not carry the dashboard's policy: sites on other origins load the tracker.
 
-**Client addresses.** Caddy replaces any `X-Forwarded-For` a client sends with the client's address, and the API trusts exactly one proxy hop (`TRUST_PROXY=1`). Rate limits and the visitor ID therefore see the real address, and a client cannot fake one. Tested: an event sent through Caddy with `X-Forwarded-For: 8.8.8.8` got no location, while the same header sent to the API from inside the stack was placed in the US. Behind Cloudflare's proxy, `OTTERTRAIL_PROXY=cloudflare` has Caddy take the client's address from `CF-Connecting-IP`, only for connections from Cloudflare's ranges, so the API still sees one hop ([Behind Cloudflare's proxy](#behind-cloudflares-proxy)). Caddy decides, not the API, because Caddy sees the connection's address and the API only Caddy's. Another CDN or proxy in front of Caddy is not set up: every request would seem to come from it.
+**Client addresses.** Caddy replaces any `X-Forwarded-For` a client sends with the client's address, and the API trusts exactly one proxy hop (`TRUST_PROXY=1`). Rate limits and the visitor ID therefore see the real address, and a client cannot fake one. Tested: an event sent through Caddy with `X-Forwarded-For: 8.8.8.8` got no location, while the same header sent to the API from inside the stack was placed in the US. Behind Cloudflare's proxy, `OTTERTRAIL_PROXY=cloudflare` has Caddy take the client's address from `CF-Connecting-IP`, only for connections from Cloudflare's ranges, so the API still sees one hop ([Behind Cloudflare's proxy](#behind-cloudflares-proxy)). Behind another CDN or load balancer, `OTTERTRAIL_PROXY=custom` does the same with the header and ranges set in `.env`, and Caddy does not start without ranges or with one that covers every address ([Behind another CDN or load balancer](#behind-another-cdn-or-load-balancer)). Caddy decides, not the API, because Caddy sees the connection's address and the API only Caddy's.
 
 **Request timeouts.** A client has 20 seconds to send a request's headers and 120 seconds to send the whole request, its body included (`REQUEST_TIMEOUT_MS` and `HEADERS_TIMEOUT_MS` in `apps/api/src/app.ts`); past them the API answers 408 and closes the connection. Fastify turns off Node's own limits, so without them a client could send a body a byte at a time and hold a connection for as long as it liked. 120 seconds lets the largest upload, a 25 MiB source map, through at about 1.75 Mbit/s if it does not compress, and about 0.5 Mbit/s gzipped, as the source maps command sends it ([errors](errors.md#5-source-maps)); a slower link needs a smaller upload. The tracker and the source maps command retry a 408. Node checks every 30 seconds, so a cut can come up to 30 seconds late. Answers have no limit: the Server log's stream stays open.
 
@@ -478,7 +509,7 @@ git tag v0.2.0
 git push origin main v0.2.0
 ```
 
-It refuses a version that is not [semantic](https://semver.org) (`x.y.z`, without a `v`). Run `vp run ready` before tagging. For the tag, the workflow first checks that all three hold the tag's version (`node scripts/version.ts --check`), then builds and pushes the image. Once the image is pushed, it creates the GitHub Release "Ottertrail 0.2.0" with `compose.yaml`, `example.env`, `backup.sh`, `restore.sh`, and `cloudflare-firewall.sh`, and notes written from the commits since the previous tag (`scripts/release-notes.ts`): breaking changes (a `!` or a `BREAKING CHANGE:` footer) first, then features, fixes, and the rest, then how to install or update. `node scripts/release-notes.ts 0.2.0 HEAD` shows them before tagging. A version with a hyphen, such as `0.2.0-rc.1`, becomes a pre-release, and its notes count from the tag before it; a final release's notes count from the previous final release, so they include what its release candidates listed. Build metadata (`1.0.0+b1`) is refused: a Docker tag cannot hold a `+`.
+It refuses a version that is not [semantic](https://semver.org) (`x.y.z`, without a `v`). Run `vp run ready` before tagging. For the tag, the workflow first checks that all three hold the tag's version (`node scripts/version.ts --check`), then builds and pushes the image. Once the image is pushed, it creates the GitHub Release "Ottertrail 0.2.0" with `compose.yaml`, `example.env`, `backup.sh`, and `restore.sh`, and notes written from the commits since the previous tag (`scripts/release-notes.ts`): breaking changes (a `!` or a `BREAKING CHANGE:` footer) first, then features, fixes, and the rest, then how to install or update. `node scripts/release-notes.ts 0.2.0 HEAD` shows them before tagging. A version with a hyphen, such as `0.2.0-rc.1`, becomes a pre-release, and its notes count from the tag before it; a final release's notes count from the previous final release, so they include what its release candidates listed. Build metadata (`1.0.0+b1`) is refused: a Docker tag cannot hold a `+`.
 
 A version's image is pushed once and never replaced: servers pull it by its version. When the workflow finds the image already in the registry, as when it runs again after the release step failed, it says so in its log and skips the build and the push; the release step then runs again, and replaces the files and notes of the release if it exists. To change a released image, release a new version. The workflow can also be run by hand from the Actions tab, which pushes an image tagged with the commit only, and releases nothing.
 
@@ -566,5 +597,5 @@ Releases as an install gets them (18 and 19 November 2026), on macOS with Podman
 - `docker compose pull` from the private registry, and the release downloads with `gh` or a token, are not tested yet.
 - One deployment per server. Two stacks on one host would both need ports 80 and 443; sharing a host needs one proxy in front of both, not set up.
 - IPv6 visitors share one address when the domain has an AAAA record. The stack's Compose network has no IPv6, so Docker's proxy takes IPv6 connections on the server and passes them on from the network's gateway address, which Caddy sees as the client's: they share one rate limit, the daily visitor ID merges visitors with the same browser, and they get no location. Leave out the AAAA record (behind Cloudflare too: [An `A` record only](#behind-cloudflares-proxy)). Turning on IPv6 for the Compose network would pass the real addresses, but it has not been tested.
-- Only Cloudflare's proxy is supported in front of Caddy, not Cloudflare Tunnel or another CDN or proxy (see "Client addresses"). Behind Cloudflare, `cloudflare-firewall.sh` has not run on a server yet, and admits every Cloudflare customer's proxy, not only your account's ([Behind Cloudflare's proxy](#locking-the-server-to-cloudflare)).
+- Tunnels, such as Cloudflare Tunnel, are not supported in front of Caddy. Cloudflare's proxy and the `custom` mode have been checked with Caddy's own commands and a test site, not yet behind a real CDN or load balancer. With `custom`, nothing keeps `OTTERTRAIL_TRUSTED_PROXIES` current: that is the owner's job. Ottertrail sets up no firewall: locking ports 80 and 443 to the proxy is up to the owner, and a lock to Cloudflare's ranges admits every Cloudflare customer's proxy, not only your account's ([Lock the server to your proxy](#lock-the-server-to-your-proxy)).
 - The API prints one line that is not JSON at startup: a warning from its JSON schema validator about union types.
