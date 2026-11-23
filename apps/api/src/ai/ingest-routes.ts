@@ -26,7 +26,6 @@ import {
   conversationIdOf,
   inputIncludesCache,
   inputIncludesCacheByDefault,
-  MAX_AI_ERROR_TYPE_CHARS,
   MAX_AI_LABEL_CHARS,
   MAX_CONVERSATION_ID_CHARS,
 } from "./calls.ts";
@@ -39,7 +38,9 @@ export const MAX_AI_CALLS_BODY_BYTES = 1024 * 1024;
 const MAX_CALL_MS = 86_400_000;
 /** Tighter than a span's (calls.ts): real calls stay far below them. */
 export const MAX_HTTP_TOKENS = 10_000_000;
-export const MAX_HTTP_FINISH_REASONS = 4;
+export const MAX_HTTP_ERROR_TYPE_CHARS = 100;
+/** One a choice: OpenAI's `n` and Gemini's `candidateCount` ask for several. */
+export const MAX_HTTP_FINISH_REASONS = 16;
 export const MAX_HTTP_FINISH_REASON_CHARS = 32;
 
 const UUID_PATTERN =
@@ -69,6 +70,12 @@ const labelOf = (max: number) => ({
   type: "string",
   pattern: `^[^\\p{Cc}${NO_FORMAT}]{0,${max}}$`,
 });
+/** An error's name, such as `RateLimitError` or `Too Many Requests`: identifier characters, words apart by one space. */
+const ERROR_TYPE = {
+  type: "string",
+  maxLength: MAX_HTTP_ERROR_TYPE_CHARS,
+  pattern: "^(?:[^\\s\\p{C}]+(?: [^\\s\\p{C}]+)*)?$",
+};
 const TOKENS = { type: "integer", minimum: 0, maximum: MAX_HTTP_TOKENS };
 const MILLISECONDS = { type: "number", minimum: 0, maximum: MAX_CALL_MS };
 
@@ -140,7 +147,7 @@ const batchSchema = {
           durationMs: MILLISECONDS,
           firstChunkMs: MILLISECONDS,
           ok: { type: "boolean" },
-          errorType: identifierOf(MAX_AI_ERROR_TYPE_CHARS, 0),
+          errorType: ERROR_TYPE,
           finishReasons: {
             type: "array",
             maxItems: MAX_HTTP_FINISH_REASONS,
@@ -197,7 +204,7 @@ interface TypedSchema {
 function typeProblem(value: unknown, schema: TypedSchema, path: string): string | null {
   if (value === undefined) return null;
   if (schema.type !== undefined && !isOfType(value, schema.type)) {
-    return `${path} must be ${TYPE_NAMES[schema.type] ?? schema.type}.`;
+    return `${path === "" ? "The body" : path} must be ${TYPE_NAMES[schema.type] ?? schema.type}.`;
   }
   if (Array.isArray(value) && schema.items !== undefined) {
     for (const [index, item] of value.entries()) {
@@ -423,7 +430,7 @@ export const aiCallIngestRoutes: FastifyPluginCallback<AiCallIngestOptions> = (
           if (provider === "" || model === "") {
             return invalid(`calls[${index}]: provider and model must not be blank.`);
           }
-          const errorType = cleanLabel(call.errorType, MAX_AI_ERROR_TYPE_CHARS);
+          const errorType = cleanLabel(call.errorType, MAX_HTTP_ERROR_TYPE_CHARS);
           if (call.ok === true && errorType !== "") {
             return invalid(`calls[${index}]: a call with an errorType failed; leave out ok.`);
           }
@@ -435,11 +442,6 @@ export const aiCallIngestRoutes: FastifyPluginCallback<AiCallIngestOptions> = (
           }
           if (call.firstChunkMs !== undefined && call.firstChunkMs > call.durationMs) {
             return invalid(`calls[${index}]: firstChunkMs is longer than durationMs.`);
-          }
-          if ((call.reasoningTokens ?? 0) > (call.outputTokens ?? 0)) {
-            return invalid(
-              `calls[${index}]: reasoningTokens is more than outputTokens, which counts them.`,
-            );
           }
           if (call.spanId !== undefined && call.traceId === undefined) {
             return invalid(`calls[${index}]: a spanId needs its traceId.`);

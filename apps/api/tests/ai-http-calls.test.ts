@@ -345,13 +345,11 @@ describe("POST /api/ai-calls", () => {
     [{ inputTokens: -1 }, "a negative token count"],
     [{ outputTokens: 1.5 }, "a fractional token count"],
     [{ inputTokens: 10_000_001 }, "a token count over 10^7"],
-    [{ reasoningTokens: 301, outputTokens: 300 }, "more reasoning tokens than output tokens"],
-    [{ reasoningTokens: 1, outputTokens: undefined }, "reasoning tokens without output tokens"],
     [{ durationMs: 1000, firstChunkMs: 1000.5 }, "a first chunk after the call ended"],
     [{ occurredAt: Date.now() + 10 * 60_000 }, "a time ten minutes ahead"],
     [{ occurredAt: new Date().toISOString() }, "a time as text"],
     [{ ok: true, errorType: "RateLimitError" }, "ok with an error type"],
-    [{ errorType: "E".repeat(201) }, "an error type over 200 characters"],
+    [{ errorType: "E".repeat(101) }, "an error type over 100 characters"],
     [{ userId: "" }, "an empty user ID"],
     [{ userId: "u".repeat(201) }, "a user ID over 200 characters"],
     [{ feature: "f".repeat(101) }, "a feature over 100 characters"],
@@ -360,17 +358,17 @@ describe("POST /api/ai-calls", () => {
     [{ conversationId: "conv\ud800" }, "a conversation ID with an unpaired surrogate"],
     [{ traceId: "xyz" }, "a trace ID that is not 32 hex characters"],
     [{ spanId: "00f067aa0ba902b7" }, "a span ID without its trace ID"],
-    [
-      { finishReasons: ["stop", "length", "tool_calls", "content_filter", "stop"] },
-      "5 finish reasons",
-    ],
+    [{ finishReasons: Array.from({ length: 17 }, () => "stop") }, "17 finish reasons"],
     [{ finishReasons: ["s".repeat(33)] }, "a finish reason over 32 characters"],
     [{ finishReasons: ["end turn"] }, "a finish reason with a space"],
     [{ provider: "open ai" }, "a provider with a space"],
     [{ model: "gpt-4o\u200b" }, "a model with a zero-width space"],
     [{ model: "gpt\ue000" }, "a model with a private-use character"],
     [{ operation: "chat\u2028" }, "an operation with a line separator"],
-    [{ errorType: "Rate limit exceeded" }, "an error type with spaces"],
+    [{ errorType: "Rate  limit" }, "an error type with two spaces in a row"],
+    [{ errorType: " Timeout" }, "an error type starting with a space"],
+    [{ errorType: "Rate\tlimit" }, "an error type with a tab"],
+    [{ errorType: "Rate\u2028limit" }, "an error type with a line separator"],
     [{ errorType: "E\u202e" }, "an error type with a bidi override"],
     [{ feature: "support\u202echat" }, "a feature with a bidi override"],
     [{ feature: "a\u2029b" }, "a feature with a paragraph separator"],
@@ -396,7 +394,30 @@ describe("POST /api/ai-calls", () => {
     },
   );
 
+  test("takes what real calls send: thought tokens over output, many choices, error names with spaces", async () => {
+    const project = await newProject("Real calls");
+    // Gemini counts thoughts apart from the answer (thoughtsTokenCount, candidatesTokenCount).
+    const gemini = aiCall({
+      provider: "gcp.gemini",
+      model: "gemini-2.5-flash",
+      outputTokens: 12,
+      reasoningTokens: 900,
+    });
+    const choices = aiCall({ finishReasons: Array.from({ length: 16 }, () => "stop") });
+    const failed = aiCall({ errorType: "Too Many Requests" });
+    const response = await send(
+      { v: 1, calls: [gemini, choices, failed] },
+      { authorization: `Bearer ${project.key}` },
+    );
+    expect(response.statusCode).toBe(202);
+    const rows = new Map((await storedCalls(project.id)).map((row) => [row.id, row]));
+    expect(rows.get(gemini.id)).toMatchObject({ output_tokens: "12", reasoning_tokens: "900" });
+    expect(rows.get(choices.id)?.finish_reasons).toHaveLength(16);
+    expect(rows.get(failed.id)).toMatchObject({ failed: true, error_type: "Too Many Requests" });
+  });
+
   test("takes JSON types as sent: null is never false, nor text a number", async () => {
+    expect((await send([aiCall()])).json().message).toBe("The body must be an object.");
     const response = await send({ v: 1, calls: [aiCall(), aiCall({ ok: null })] });
     expect(response.statusCode).toBe(400);
     expect(response.json().message).toBe("calls[1].ok must be true or false.");
