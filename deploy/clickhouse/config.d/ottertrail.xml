@@ -23,6 +23,27 @@
     <query_views_log remove="1"/>
     <part_log remove="1"/>
     <processors_profile_log remove="1"/>
+    <query_metric_log remove="1"/>
+    <error_log remove="1"/>
+    <background_schedule_pool_log remove="1"/>
+    <instrumentation_trace_log remove="1"/>
+    <opentelemetry_span_log remove="1"/>
+    <iceberg_metadata_log remove="1"/>
+    <delta_lake_metadata_log remove="1"/>
+
+    <!-- The logs kept get a time limit: ClickHouse keeps them forever by
+         default, on the disk the data shares. query_log has a row for every
+         query and insert; tests read it to measure queries, and an operator
+         can look up a slow one there. -->
+    <query_log>
+        <ttl>event_date + INTERVAL 7 DAY DELETE</ttl>
+    </query_log>
+    <backup_log>
+        <ttl>event_date + INTERVAL 30 DAY DELETE</ttl>
+    </backup_log>
+    <crash_log>
+        <ttl>event_date + INTERVAL 30 DAY DELETE</ttl>
+    </crash_log>
 
     <logger>
         <level>warning</level>
