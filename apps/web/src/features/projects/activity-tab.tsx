@@ -174,7 +174,7 @@ function reasonText(source: IngestSource, outcome: IngestOutcome, links: Links):
       return (
         <>
           Sent by a bot, or by a browser at a data center's address, and dropped. If real visitors
-          use cloud desktops, turn off data centers on the{" "}
+          use cloud desktops, turn off &quot;Ignore visits from data centers&quot; on the{" "}
           <TabLink links={links} tab="spam">
             Spam and bots
           </TabLink>{" "}

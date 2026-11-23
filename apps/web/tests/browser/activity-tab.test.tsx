@@ -112,7 +112,13 @@ describe("a source's sheet", () => {
         sheet().getByText("The page's site isn't in Allowed sites. Add it on the General tab."),
       )
       .toBeVisible();
-    await expect.element(sheet().getByText(/Sent by a bot/)).toBeVisible();
+    await expect
+      .element(
+        sheet().getByText(
+          'Sent by a bot, or by a browser at a data center\'s address, and dropped. If real visitors use cloud desktops, turn off "Ignore visits from data centers" on the Spam and bots tab.',
+        ),
+      )
+      .toBeVisible();
     // Only reasons with a count.
     await expect.element(sheet().getByText("Refused: invalid")).not.toBeInTheDocument();
 
