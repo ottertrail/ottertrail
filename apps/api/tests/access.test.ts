@@ -186,6 +186,7 @@ describe("members, admins, and the one access check", () => {
     expect(settings.map(({ method, route }) => routeKey(method, route)).toSorted()).toEqual([
       "DELETE /api/projects/:id",
       "DELETE /api/projects/:id/avatar",
+      "DELETE /api/projects/:id/heatmaps/snapshots/:device",
       "DELETE /api/projects/:id/replays",
       "GET /api/projects/:id/ingest-activity",
       "PATCH /api/projects/:id",
