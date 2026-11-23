@@ -1,17 +1,28 @@
+import { useId } from "react";
 import type * as React from "react";
 
-/** Placeholder mark. Final Ottertrail branding has not been decided. */
+/*
+ * The Ottertrail logo (docs/design-system.md, "Logo"): an otter's head held up,
+ * on a slim neck with a rounded base. The eye is cut out, so the surface behind
+ * shows through. The same shapes are in public/favicon.svg; change both together.
+ */
+const OTTER =
+  "M176 33C184 21 198 16 211 18C220 19 226 24 231 27C237 30 237 39 231 42C224 45 217 45 210 47C203 49 200 55 201 61C202 67 206 71 205 73C204 76 197 77 186 77C175 77 168 76 167 73C166 70 169 66 170 60L171 50C171 44 173 38 176 33Z";
+const EYE = "M206 31Q212.5 24 219 31";
+
 export function BrandMark(props: React.ComponentProps<"svg">) {
+  // useId's characters (":r1:", "«r1»") are not safe inside url(#…).
+  const eye = `otter-eye-${useId().replace(/[^\w-]/g, "")}`;
   return (
-    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" {...props}>
-      <rect width="24" height="24" rx="6" fill="var(--brand)" />
-      <path
-        d="M5 15.5c2.2-3.6 4.2-3.6 6 0s3.8 3.6 6 0c.7-1.1 1.3-1.9 2-2.3"
-        stroke="#fff"
-        strokeWidth="2"
-        strokeLinecap="round"
-      />
-      <circle cx="16.5" cy="8" r="1.5" fill="#fff" />
+    <svg viewBox="159.5 3 84 84" aria-hidden="true" {...props}>
+      <mask id={eye}>
+        <rect x="150" y="-5" width="100" height="100" fill="#fff" />
+        <path d={EYE} fill="none" stroke="#000" strokeWidth="3" strokeLinecap="round" />
+      </mask>
+      <g mask={`url(#${eye})`} fill="var(--brand)">
+        <circle cx="186" cy="21" r="8" />
+        <path d={OTTER} />
+      </g>
     </svg>
   );
 }

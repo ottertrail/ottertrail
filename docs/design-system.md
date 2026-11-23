@@ -1,6 +1,6 @@
 # Ottertrail design system
 
-Status: initial foundation. The name treatment and mascot are undecided; the mark in the app is a placeholder.
+Status: initial foundation. The logo is a swimming otter ([Logo](#logo)).
 
 An interface for a dense dashboard, in a dark theme and a light one: a near-black canvas (or a light grey one), a ladder of surfaces instead of shadows, hairline borders, and a single orchid accent used sparingly. This document records the tokens, the reasons behind them, and the remaining gaps.
 
@@ -20,6 +20,15 @@ This document is the reference. The components in `apps/web/src/components/` are
 | shadcn configuration                                                                                           | `apps/web/components.json`                              |
 
 Use tokens through Tailwind utilities (`bg-card`, `text-ink-subtle`, `ring-border`, `text-headline`), not raw hex values in components.
+
+## Logo
+
+The logo is an otter holding its head up, in `brand` orchid: a blunt snout, a small ear and a closed, smiling eye, on a slim neck that ends in a rounded base. It is one solid shape, and the eye is cut out, so the surface behind it shows through, in either theme. The same mark is used everywhere: the sidebar's head, the sign-in pages, and the browser and device icons. It has no lettering: wherever the name appears beside it, "Ottertrail" is text in Inter, the app's own font.
+
+- **In the app:** `BrandMark` (`components/brand-mark.tsx`), square, its color from `--brand`.
+- **Browser and device icons** (`apps/web/public/`): `favicon.svg` is the same drawing in `#a557aa`, since it is outside the page's styles, on a transparent background. PNG copies cover the places that do not take SVG: `apple-touch-icon.png` (180 px, on white with a small margin, since iOS fills a transparent icon with black) and `icon-192.png` and `icon-512.png` (transparent) in `manifest.webmanifest`, for Android and installed web apps. Redraw these from `favicon.svg` when the shape changes.
+- At 16 px the eye is too small to show, and the head reads as a silhouette.
+- The docs site keeps a copy of `brand-mark.tsx` and `favicon.svg`; change it with the app's.
 
 ## Color
 
@@ -330,7 +339,7 @@ Contrast (WCAG 1.4.11, non-text, at least 3:1; `tests/tokens.test.ts` and `tests
 
 ### Before signing in
 
-The sign-in, setup, invitation and reset pages share `AuthLayout` (`features/auth/auth-layout.tsx`): the canvas, the brand mark, and one panel, 26rem at most, on `background` with a hairline ring, holding the page's `h1`, one line on what it does, and its form. Under 40rem the panel drops its frame and the form takes the width. No illustration, no marketing copy.
+The sign-in, setup, invitation and reset pages share `AuthLayout` (`features/auth/auth-layout.tsx`): the canvas, the logo (`BrandMark`) with the name, and one panel, 26rem at most, on `background` with a hairline ring, holding the page's `h1`, one line on what it does, and its form. From 40rem the logo and name (32px mark, `text-lg`) are centred above the panel, and the column sits a little above the middle of the screen (more space below it than above), which reads as centred. A page with one task gets controls a step taller than the app's: inputs and the submit button are `h-9`. Under 40rem the panel drops its frame, the logo sits at the start, and the form takes the width. No illustration, no marketing copy.
 
 ### Responsive rules
 
