@@ -27,39 +27,101 @@ export interface CollectingProject {
   blockedReferrers: ReadonlySet<string> | null;
 }
 
-interface CacheEntry {
-  project: CollectingProject | null;
+interface CacheEntry<T> {
+  value: T;
   expiresAt: number;
 }
 
+/** Entries in insertion order, refreshed on a hit: the least recently used goes first. */
+class LruMap<T> {
+  readonly #entries = new Map<string, CacheEntry<T>>();
+  readonly #max: number;
+
+  constructor(max: number) {
+    this.#max = max;
+  }
+
+  get(key: string, now: number): T | undefined {
+    const entry = this.#entries.get(key);
+    if (entry === undefined) return undefined;
+    this.#entries.delete(key);
+    if (entry.expiresAt <= now) return undefined;
+    this.#entries.set(key, entry);
+    return entry.value;
+  }
+
+  set(key: string, value: T, expiresAt: number): void {
+    this.#entries.delete(key);
+    this.#entries.set(key, { value, expiresAt });
+    while (this.#entries.size > this.#max) {
+      const oldest = this.#entries.keys().next().value;
+      if (oldest === undefined) break;
+      this.#entries.delete(oldest);
+    }
+  }
+
+  delete(key: string): void {
+    this.#entries.delete(key);
+  }
+
+  deleteWhere(matches: (value: T) => boolean): void {
+    for (const [key, entry] of this.#entries) {
+      if (matches(entry.value)) this.#entries.delete(key);
+    }
+  }
+}
+
+/** One kind of key: its projects, the keys no project has, and the lookups under way. */
+interface KeyTable {
+  known: LruMap<CollectingProject>;
+  unknown: LruMap<true>;
+  pending: Map<string, Promise<CollectingProject | null>>;
+}
+
 /**
- * Caches known and unknown keys to limit database lookups. The per-IP limit bounds
- * lookups for distinct unknown keys. Hostname changes take effect within the cache
- * lifetime; forget() invalidates replaced or deleted keys immediately in this process.
- * In-flight lookups still answer their request but cannot cache a possibly stale row.
+ * Caches keys to limit database lookups. Known keys are kept apart from
+ * keys no project has, so a stream of made-up keys cannot push real
+ * projects out; both are least recently used first. Concurrent misses for
+ * one key share one query. Hostname changes take effect within the cache
+ * lifetime; forget() and forgetProject() invalidate keys at once in this
+ * process. A lookup under way when they are called still answers its
+ * request, but its row is not cached or shared with later requests.
  */
 export class ProjectKeyCache {
   readonly #db: Kysely<Database>;
   readonly #ttlMs: number;
-  readonly #maxEntries: number;
+  readonly #unknownTtlMs: number;
   readonly #now: () => number;
-  readonly #entries = new Map<string, CacheEntry>();
-  readonly #bySecret = new Map<string, CacheEntry>();
+  readonly #byPublic: KeyTable;
+  readonly #bySecret: KeyTable;
   /** Counts forget() calls: a lookup that spans one does not cache its result. */
   #forgotten = 0;
 
   constructor(
     db: Kysely<Database>,
-    options: { ttlMs?: number; maxEntries?: number; now?: () => number } = {},
+    options: {
+      ttlMs?: number;
+      maxEntries?: number;
+      unknownTtlMs?: number;
+      maxUnknown?: number;
+      now?: () => number;
+    } = {},
   ) {
     this.#db = db;
     this.#ttlMs = options.ttlMs ?? 60_000;
-    this.#maxEntries = options.maxEntries ?? 1_000;
+    this.#unknownTtlMs = options.unknownTtlMs ?? 10_000;
     this.#now = options.now ?? Date.now;
+    const table = (): KeyTable => ({
+      known: new LruMap(options.maxEntries ?? 1_000),
+      unknown: new LruMap(options.maxUnknown ?? 256),
+      pending: new Map(),
+    });
+    this.#byPublic = table();
+    this.#bySecret = table();
   }
 
   find(publicKey: string): Promise<CollectingProject | null> {
-    return this.#lookup(this.#entries, "public_key", publicKey);
+    return this.#lookup(this.#byPublic, "public_key", publicKey);
   }
 
   findBySecret(secretKey: string): Promise<CollectingProject | null> {
@@ -67,17 +129,36 @@ export class ProjectKeyCache {
   }
 
   async #lookup(
-    entries: Map<string, CacheEntry>,
+    table: KeyTable,
     column: "public_key" | "secret_key",
     key: string,
   ): Promise<CollectingProject | null> {
     const now = this.#now();
-    const cached = entries.get(key);
-    if (cached !== undefined && cached.expiresAt > now) {
-      return cached.project;
-    }
-    const forgotten = this.#forgotten;
+    const known = table.known.get(key, now);
+    if (known !== undefined) return known;
+    if (table.unknown.get(key, now) !== undefined) return null;
+    const pending = table.pending.get(key);
+    if (pending !== undefined) return pending;
 
+    const forgotten = this.#forgotten;
+    const query = this.#query(column, key);
+    table.pending.set(key, query);
+    try {
+      const project = await query;
+      if (forgotten === this.#forgotten) {
+        if (project === null) table.unknown.set(key, true, now + this.#unknownTtlMs);
+        else table.known.set(key, project, now + this.#ttlMs);
+      }
+      return project;
+    } finally {
+      if (table.pending.get(key) === query) table.pending.delete(key);
+    }
+  }
+
+  async #query(
+    column: "public_key" | "secret_key",
+    key: string,
+  ): Promise<CollectingProject | null> {
     const row = await this.#db
       .selectFrom("projects")
       .select([
@@ -93,46 +174,36 @@ export class ProjectKeyCache {
       ])
       .where(`projects.${column}`, "=", key)
       .executeTakeFirst();
-    const project =
-      row === undefined
-        ? null
-        : {
-            id: row.id,
-            allowedHostnames: row.allowed_hostnames,
-            secretKey: row.secret_key,
-            requireSignedUserIds: row.require_signed_user_ids,
-            ignoreDataCenters: row.ignore_data_centers,
-            replayMode: row.replay_mode,
-            heatmaps: row.heatmaps,
-            blocked: blockListOf(row.blocked_addresses),
-            blockedReferrers:
-              row.blocked_referrers.length === 0 ? null : new Set(row.blocked_referrers),
-          };
-
-    if (forgotten !== this.#forgotten) return project;
-    entries.delete(key);
-    entries.set(key, { project, expiresAt: now + this.#ttlMs });
-    while (entries.size > this.#maxEntries) {
-      const oldest = entries.keys().next().value;
-      if (oldest === undefined) break;
-      entries.delete(oldest);
-    }
-    return project;
+    return row === undefined
+      ? null
+      : {
+          id: row.id,
+          allowedHostnames: row.allowed_hostnames,
+          secretKey: row.secret_key,
+          requireSignedUserIds: row.require_signed_user_ids,
+          ignoreDataCenters: row.ignore_data_centers,
+          replayMode: row.replay_mode,
+          heatmaps: row.heatmaps,
+          blocked: blockListOf(row.blocked_addresses),
+          blockedReferrers:
+            row.blocked_referrers.length === 0 ? null : new Set(row.blocked_referrers),
+        };
   }
 
   /** Invalidate replaced or deleted keys before the next request. */
   forget(publicKey: string) {
     this.#forgotten += 1;
-    this.#entries.delete(publicKey);
+    this.#byPublic.known.delete(publicKey);
+    this.#byPublic.pending.delete(publicKey);
   }
 
   /** Invalidate both keys after project deletion, secret-key rotation, or collection changes. */
   forgetProject(projectId: string) {
     this.#forgotten += 1;
-    for (const entries of [this.#entries, this.#bySecret]) {
-      for (const [key, entry] of entries) {
-        if (entry.project?.id === projectId) entries.delete(key);
-      }
+    for (const table of [this.#byPublic, this.#bySecret]) {
+      table.known.deleteWhere((project) => project.id === projectId);
+      // A lookup under way may read the old row: later requests start their own.
+      table.pending.clear();
     }
   }
 }
