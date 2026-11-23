@@ -74,6 +74,7 @@ export const PROJECT_REQUESTS: readonly ProjectRequest[] = [
   request("POST", "/secret-key", "/secret-key"),
   request("PUT", "/avatar", "/avatar"),
   request("DELETE", "/avatar", "/avatar"),
+  request("GET", "/ingest-activity", "/ingest-activity"),
   request("POST", "/spam-visits/preview", "/spam-visits/preview", {
     from: "2026-11-15",
     to: "2026-11-15",

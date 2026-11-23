@@ -126,6 +126,7 @@ const EXPECTED: Record<string, string> = {
   "POST /api/projects/:id/secret-key": "project:permission:projects",
   "PUT /api/projects/:id/avatar": "project:permission:projects",
   "DELETE /api/projects/:id/avatar": "project:permission:projects",
+  "GET /api/projects/:id/ingest-activity": "project:permission:projects",
   "GET /api/projects/:id/replays": "replays:view",
   "DELETE /api/projects/:id/replays": "project:permission:projects",
   "POST /api/projects/:id/spam-visits/preview": "project:permission:projects",

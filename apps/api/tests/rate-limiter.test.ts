@@ -85,9 +85,17 @@ describe("EventBudget", () => {
     );
     expect(budget.take(SITE, 100)).toEqual({ allowed: true });
     // The site's own budget is spent, though the instance has 50 left.
-    expect(budget.take(SITE, 1)).toEqual({ allowed: false, retryAfterSeconds: 1 });
+    expect(budget.take(SITE, 1)).toEqual({
+      allowed: false,
+      retryAfterSeconds: 1,
+      limit: "project",
+    });
     // Another project: only the instance's 50 left.
-    expect(budget.take(DOCS, 60)).toEqual({ allowed: false, retryAfterSeconds: 1 });
+    expect(budget.take(DOCS, 60)).toEqual({
+      allowed: false,
+      retryAfterSeconds: 1,
+      limit: "instance",
+    });
     expect(budget.take(DOCS, 50)).toEqual({ allowed: true });
     // Adding a project does not add to the instance's budget.
     expect(budget.take(SHOP, 1).allowed).toBe(false);
@@ -102,7 +110,11 @@ describe("EventBudget", () => {
     expect(budget.take(SITE, 100)).toEqual({ allowed: true });
     expect(budget.take(DOCS, 50)).toEqual({ allowed: true });
     // The instance needs 1 second for 50 more; the project, 5.
-    expect(budget.take(SITE, 50)).toEqual({ allowed: false, retryAfterSeconds: 5 });
+    expect(budget.take(SITE, 50)).toEqual({
+      allowed: false,
+      retryAfterSeconds: 5,
+      limit: "instance",
+    });
   });
 
   test("a project's own limit refusing leaves the instance's budget untouched", () => {

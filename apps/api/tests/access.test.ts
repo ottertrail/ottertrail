@@ -187,6 +187,7 @@ describe("members, admins, and the one access check", () => {
       "DELETE /api/projects/:id",
       "DELETE /api/projects/:id/avatar",
       "DELETE /api/projects/:id/replays",
+      "GET /api/projects/:id/ingest-activity",
       "PATCH /api/projects/:id",
       "POST /api/projects/:id/public-key",
       "POST /api/projects/:id/secret-key",

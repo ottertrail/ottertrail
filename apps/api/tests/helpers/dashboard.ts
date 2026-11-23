@@ -2,6 +2,7 @@ import type { Kysely } from "kysely";
 
 import type { Areas } from "../../src/access/areas.ts";
 import { setUserAccess } from "../../src/access/grants.ts";
+import type { IngestActivity } from "../../src/activity/activity.ts";
 import { type AppOptions, buildApp } from "../../src/app.ts";
 import { createAuth } from "../../src/auth/auth.ts";
 import { createSetupToken } from "../../src/auth/setup.ts";
@@ -51,6 +52,7 @@ export async function signedInDashboard({
   aiModels,
   logStream,
   serverLog,
+  ingestActivity,
 }: {
   timeZone?: string;
   now?: () => Date;
@@ -90,6 +92,8 @@ export async function signedInDashboard({
   logStream?: { write(line: string): void };
   /** The Server log's buffer and its stream's limits (tests/server-log.test.ts). */
   serverLog?: AppOptions["serverLog"];
+  /** Makes the ingestion counters on the test's database, to flush when the test chooses (tests/ingest-activity.test.ts). */
+  ingestActivity?: (db: Kysely<Database>) => IngestActivity;
 } = {}) {
   const testDb = await createTestDatabase();
   const testClickHouse = await createTestClickHouse().catch(async (error: unknown) => {
@@ -140,6 +144,7 @@ export async function signedInDashboard({
     ...(aiModels === undefined ? {} : { aiModels }),
     ...(logStream === undefined ? {} : { log: { level: "info", stream: logStream } }),
     ...(serverLog === undefined ? {} : { serverLog }),
+    ...(ingestActivity === undefined ? {} : { ingestActivity: ingestActivity(testDb.db) }),
   });
   const link = await createSetupToken(testDb.db);
   await app.inject({
