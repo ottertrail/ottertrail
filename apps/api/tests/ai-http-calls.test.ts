@@ -183,14 +183,14 @@ describe("POST /api/ai-calls", () => {
     });
   });
 
-  test("an empty or blank operation, feature, conversation, service, error type, or finish reason is as left out", async () => {
+  test("an empty operation, error type, or finish reason, or a blank feature, conversation, or service, is as left out", async () => {
     const project = await newProject("Empty");
     const call = aiCall({
       operation: "",
       feature: "   ",
       conversationId: "  ",
       service: "",
-      errorType: " ",
+      errorType: "",
       finishReasons: ["", "stop"],
     });
     const response = await send(
@@ -344,7 +344,10 @@ describe("POST /api/ai-calls", () => {
     [{ durationMs: 86_400_001 }, "a duration over a day"],
     [{ inputTokens: -1 }, "a negative token count"],
     [{ outputTokens: 1.5 }, "a fractional token count"],
-    [{ inputTokens: 1_000_000_001 }, "a token count over 10^9"],
+    [{ inputTokens: 10_000_001 }, "a token count over 10^7"],
+    [{ reasoningTokens: 301, outputTokens: 300 }, "more reasoning tokens than output tokens"],
+    [{ reasoningTokens: 1, outputTokens: undefined }, "reasoning tokens without output tokens"],
+    [{ durationMs: 1000, firstChunkMs: 1000.5 }, "a first chunk after the call ended"],
     [{ occurredAt: Date.now() + 10 * 60_000 }, "a time ten minutes ahead"],
     [{ occurredAt: new Date().toISOString() }, "a time as text"],
     [{ ok: true, errorType: "RateLimitError" }, "ok with an error type"],
@@ -357,7 +360,28 @@ describe("POST /api/ai-calls", () => {
     [{ conversationId: "conv\ud800" }, "a conversation ID with an unpaired surrogate"],
     [{ traceId: "xyz" }, "a trace ID that is not 32 hex characters"],
     [{ spanId: "00f067aa0ba902b7" }, "a span ID without its trace ID"],
-    [{ finishReasons: Array.from({ length: 17 }, () => "stop") }, "17 finish reasons"],
+    [
+      { finishReasons: ["stop", "length", "tool_calls", "content_filter", "stop"] },
+      "5 finish reasons",
+    ],
+    [{ finishReasons: ["s".repeat(33)] }, "a finish reason over 32 characters"],
+    [{ finishReasons: ["end turn"] }, "a finish reason with a space"],
+    [{ provider: "open ai" }, "a provider with a space"],
+    [{ model: "gpt-4o\u200b" }, "a model with a zero-width space"],
+    [{ model: "gpt\ue000" }, "a model with a private-use character"],
+    [{ operation: "chat\u2028" }, "an operation with a line separator"],
+    [{ errorType: "Rate limit exceeded" }, "an error type with spaces"],
+    [{ errorType: "E\u202e" }, "an error type with a bidi override"],
+    [{ feature: "support\u202echat" }, "a feature with a bidi override"],
+    [{ feature: "a\u2029b" }, "a feature with a paragraph separator"],
+    [{ userId: "user\u200d42" }, "a user ID with a zero-width joiner"],
+    [{ userId: "user\u2028" }, "a user ID with a line separator"],
+    [{ conversationId: "conv\ufeff" }, "a conversation ID with a byte order mark"],
+    [{ ok: null }, "ok as null, which coercion would make false"],
+    [{ inputTokens: "5" }, "a token count as text"],
+    [{ inputTokens: null }, "a token count as null"],
+    [{ provider: 5 }, "a provider as a number"],
+    [{ finishReasons: "stop" }, "finish reasons not in a list"],
   ] as [Record<string, unknown>, string][])(
     "refuses %j (%s), the whole batch",
     async (overrides) => {
@@ -371,6 +395,14 @@ describe("POST /api/ai-calls", () => {
       expect(ids).not.toContain(bad.id);
     },
   );
+
+  test("takes JSON types as sent: null is never false, nor text a number", async () => {
+    const response = await send({ v: 1, calls: [aiCall(), aiCall({ ok: null })] });
+    expect(response.statusCode).toBe(400);
+    expect(response.json().message).toBe("calls[1].ok must be true or false.");
+    const tokens = await send({ v: 1, calls: [aiCall({ outputTokens: "300" })] });
+    expect(tokens.json().message).toBe("calls[0].outputTokens must be a whole number.");
+  });
 
   test.each([
     [{ v: 2, calls: [aiCall()] }, "another version"],

@@ -29,9 +29,6 @@ import {
   MAX_AI_ERROR_TYPE_CHARS,
   MAX_AI_LABEL_CHARS,
   MAX_CONVERSATION_ID_CHARS,
-  MAX_FINISH_REASON_CHARS,
-  MAX_FINISH_REASONS,
-  MAX_TOKENS,
 } from "./calls.ts";
 
 /** Calls in one request (docs/ai-usage.md, "Sending calls over HTTP"). */
@@ -40,6 +37,10 @@ export const MAX_AI_CALLS_PER_BATCH = 1000;
 export const MAX_AI_CALLS_BODY_BYTES = 1024 * 1024;
 /** A call's duration, and its time to the first chunk, at most a day. */
 const MAX_CALL_MS = 86_400_000;
+/** Tighter than a span's (calls.ts): real calls stay far below them. */
+export const MAX_HTTP_TOKENS = 10_000_000;
+export const MAX_HTTP_FINISH_REASONS = 4;
+export const MAX_HTTP_FINISH_REASON_CHARS = 32;
 
 const UUID_PATTERN =
   "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$";
@@ -53,7 +54,22 @@ const textOf = (max: number, min = 1) => ({
   pattern: `^[^\\u0000-\\u001F\\u007F-\\u009F]{${min},${max}}$`,
 });
 const optionalTextOf = (max: number) => textOf(max, 0);
-const TOKENS = { type: "integer", minimum: 0, maximum: MAX_TOKENS };
+/** A name such as a model's: no whitespace, control, format, or unassigned characters. */
+const identifierOf = (max: number, min = 1) => ({
+  type: "string",
+  pattern: `^[^\\s\\p{C}]{${min},${max}}$`,
+});
+/**
+ * Free text an app names things with: none of textOf's characters, nor
+ * format characters (such as bidi overrides and zero-width ones) or line
+ * and paragraph separators, which can hide or reorder what a page shows.
+ */
+const NO_FORMAT = "\\p{Cf}\\u2028\\u2029";
+const labelOf = (max: number) => ({
+  type: "string",
+  pattern: `^[^\\p{Cc}${NO_FORMAT}]{0,${max}}$`,
+});
+const TOKENS = { type: "integer", minimum: 0, maximum: MAX_HTTP_TOKENS };
 const MILLISECONDS = { type: "number", minimum: 0, maximum: MAX_CALL_MS };
 
 interface HttpAiCall {
@@ -112,9 +128,9 @@ const batchSchema = {
         properties: {
           id: { type: "string", pattern: UUID_PATTERN },
           occurredAt: { type: "integer", minimum: 0, maximum: 8_640_000_000_000_000 },
-          provider: textOf(MAX_AI_LABEL_CHARS),
-          model: textOf(MAX_AI_LABEL_CHARS),
-          operation: optionalTextOf(MAX_AI_LABEL_CHARS),
+          provider: identifierOf(MAX_AI_LABEL_CHARS),
+          model: identifierOf(MAX_AI_LABEL_CHARS),
+          operation: identifierOf(MAX_AI_LABEL_CHARS, 0),
           inputTokens: TOKENS,
           inputIncludesCache: { type: "boolean" },
           outputTokens: TOKENS,
@@ -124,16 +140,21 @@ const batchSchema = {
           durationMs: MILLISECONDS,
           firstChunkMs: MILLISECONDS,
           ok: { type: "boolean" },
-          errorType: optionalTextOf(MAX_AI_ERROR_TYPE_CHARS),
+          errorType: identifierOf(MAX_AI_ERROR_TYPE_CHARS, 0),
           finishReasons: {
             type: "array",
-            maxItems: MAX_FINISH_REASONS,
-            items: optionalTextOf(MAX_FINISH_REASON_CHARS),
+            maxItems: MAX_HTTP_FINISH_REASONS,
+            items: identifierOf(MAX_HTTP_FINISH_REASON_CHARS, 0),
           },
-          userId: { type: "string", maxLength: 200, pattern: USER_ID_PATTERN },
-          feature: optionalTextOf(MAX_AI_LABEL_CHARS),
+          userId: {
+            type: "string",
+            maxLength: 200,
+            pattern: USER_ID_PATTERN,
+            allOf: [{ pattern: `^[^${NO_FORMAT}]*$` }],
+          },
+          feature: labelOf(MAX_AI_LABEL_CHARS),
           // Its length is checked once trimmed (below), as a span's is.
-          conversationId: optionalTextOf(MAX_CONVERSATION_ID_CHARS * 4),
+          conversationId: labelOf(MAX_CONVERSATION_ID_CHARS * 4),
           service: optionalTextOf(MAX_AI_LABEL_CHARS),
           traceId: { type: "string", pattern: "^[0-9a-fA-F]{32}$" },
           spanId: { type: "string", pattern: "^[0-9a-fA-F]{16}$" },
@@ -142,6 +163,57 @@ const batchSchema = {
     },
   },
 };
+
+const TYPE_NAMES: Record<string, string> = {
+  string: "a string",
+  integer: "a whole number",
+  number: "a number",
+  boolean: "true or false",
+  array: "a list",
+  object: "an object",
+};
+
+function isOfType(value: unknown, type: string): boolean {
+  if (type === "string" || type === "number" || type === "boolean") return typeof value === type;
+  if (type === "integer") return Number.isInteger(value);
+  if (type === "array") return Array.isArray(value);
+  if (type === "object")
+    return typeof value === "object" && value !== null && !Array.isArray(value);
+  return true;
+}
+
+interface TypedSchema {
+  [keyword: string]: unknown;
+  type?: string;
+  properties?: Record<string, TypedSchema>;
+  items?: TypedSchema;
+}
+
+/**
+ * The first value not of its schema's type as sent, or null. Fastify's
+ * Ajv coerces types (app.ts), so `"ok": null` would pass as false and a
+ * token count of "5" as 5; this route takes JSON types as they are.
+ */
+function typeProblem(value: unknown, schema: TypedSchema, path: string): string | null {
+  if (value === undefined) return null;
+  if (schema.type !== undefined && !isOfType(value, schema.type)) {
+    return `${path} must be ${TYPE_NAMES[schema.type] ?? schema.type}.`;
+  }
+  if (Array.isArray(value) && schema.items !== undefined) {
+    for (const [index, item] of value.entries()) {
+      const found = typeProblem(item, schema.items, `${path}[${index}]`);
+      if (found !== null) return found;
+    }
+  } else if (typeof value === "object" && value !== null && schema.properties !== undefined) {
+    for (const [key, property] of Object.entries(schema.properties)) {
+      if (!Object.hasOwn(value, key)) continue;
+      const item: unknown = Reflect.get(value, key);
+      const found = typeProblem(item, property, path === "" ? key : `${path}.${key}`);
+      if (found !== null) return found;
+    }
+  }
+  return null;
+}
 
 function problem(code: string, message: string) {
   return { error: code, message };
@@ -301,6 +373,13 @@ export const aiCallIngestRoutes: FastifyPluginCallback<AiCallIngestOptions> = (
         projectOf.set(request, project);
         return undefined;
       },
+      // Before the schema, which would coerce what was sent.
+      preValidation: async (request, reply) => {
+        const found = typeProblem(request.body, batchSchema, "");
+        if (found === null) return undefined;
+        count(request, "refused_invalid");
+        return reply.code(400).send(problem("invalid_request", found));
+      },
       onResponse: inFlight.finished,
       onRequestAbort: inFlight.finished,
     },
@@ -354,6 +433,14 @@ export const aiCallIngestRoutes: FastifyPluginCallback<AiCallIngestOptions> = (
               `calls[${index}].conversationId is longer than ${MAX_CONVERSATION_ID_CHARS} characters.`,
             );
           }
+          if (call.firstChunkMs !== undefined && call.firstChunkMs > call.durationMs) {
+            return invalid(`calls[${index}]: firstChunkMs is longer than durationMs.`);
+          }
+          if ((call.reasoningTokens ?? 0) > (call.outputTokens ?? 0)) {
+            return invalid(
+              `calls[${index}]: reasoningTokens is more than outputTokens, which counts them.`,
+            );
+          }
           if (call.spanId !== undefined && call.traceId === undefined) {
             return invalid(`calls[${index}]: a spanId needs its traceId.`);
           }
@@ -398,7 +485,7 @@ export const aiCallIngestRoutes: FastifyPluginCallback<AiCallIngestOptions> = (
             failed: call.ok === false || errorType !== "",
             error_type: errorType,
             finish_reasons: (call.finishReasons ?? [])
-              .map((reason) => cleanLabel(reason, MAX_FINISH_REASON_CHARS).toLowerCase())
+              .map((reason) => cleanLabel(reason, MAX_HTTP_FINISH_REASON_CHARS).toLowerCase())
               .filter((reason) => reason !== ""),
           });
         }
