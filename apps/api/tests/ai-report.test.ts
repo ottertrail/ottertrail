@@ -369,6 +369,13 @@ describe("the price table", () => {
         inputIncludesCache: true,
       }),
     ).toBeCloseTo((10 * 3 + 20 * 0.3) / 1e6, 12);
+    // Reasoning counted apart from the output, as Gemini's API does: priced as output too.
+    const gemini = { input: 0, output: 200, cacheRead: 0, cacheWrite: 0, reasoning: 5000 };
+    expect(costOf(price, { ...gemini, outputIncludesReasoning: false })).toBeCloseTo(
+      (5200 * 15) / 1e6,
+      12,
+    );
+    expect(costOf(price, gemini)).toBeCloseTo((200 * 15) / 1e6, 12);
   });
 
   test("ClickHouse works out the same cost, matching exactly, then by the longest prefix", async () => {
@@ -419,10 +426,16 @@ describe("the price table", () => {
       output_tokens: tokens.output,
       cache_read_tokens: tokens.cacheRead,
       cache_write_tokens: tokens.cacheWrite,
+      reasoning_tokens: tokens.reasoning ?? 0,
       ...(tokens.inputIncludesCache === undefined
         ? {}
         : { input_includes_cache: tokens.inputIncludesCache }),
+      ...(tokens.outputIncludesReasoning === undefined
+        ? {}
+        : { output_includes_reasoning: tokens.outputIncludesReasoning }),
     });
+    // 200 output and 5,000 reasoning tokens, counted apart (Gemini's API), and in.
+    const thoughts = { input: 0, output: 200, cacheRead: 0, cacheWrite: 0, reasoning: 5000 };
     // More uncached input than cached, counted apart, as Anthropic's API does.
     const apart = {
       input: 1000,
@@ -443,6 +456,8 @@ describe("the price table", () => {
         // Cached tokens counted apart from the input.
         row("e", "model-a", exclusive),
         row("f", "model-a", apart),
+        row("g", "model-a", { ...thoughts, outputIncludesReasoning: false }),
+        row("h", "model-a", thoughts),
       ],
       format: "JSONEachRow",
     });
@@ -461,6 +476,8 @@ describe("the price table", () => {
       ["d", 0],
       ["e", 1],
       ["f", 1],
+      ["g", 1],
+      ["h", 1],
     ]);
     expect(rows.map((item) => item.cost)).toEqual([
       expect.closeTo(costOf(a as ModelPrice, tokens), 9),
@@ -471,6 +488,9 @@ describe("the price table", () => {
       expect.closeTo((100_000 * 2 + 400_000 * 0.5 + 100_000 * 2 + 1000 * 8) / 1e6, 9),
       // 1,000 at 2 and 500 at 0.5: the input is all uncached.
       expect.closeTo(costOf(a as ModelPrice, apart), 12),
+      expect.closeTo((5200 * 8) / 1e6, 12),
+      // Stored without saying, as rows before migration 0014: reasoning in the output.
+      expect.closeTo((200 * 8) / 1e6, 12),
     ]);
     expect(costOf(a as ModelPrice, apart)).toBeCloseTo((1000 * 2 + 500 * 0.5) / 1e6, 12);
     expect(costOf(a as ModelPrice, exclusive)).toBeCloseTo(

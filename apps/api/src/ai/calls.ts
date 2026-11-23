@@ -110,6 +110,8 @@ export interface AiCallRow {
   /** Whether input_tokens holds the cached tokens too (inputIncludesCache). */
   input_includes_cache: boolean;
   output_tokens: number;
+  /** Whether output_tokens holds the reasoning tokens too (outputIncludesReasoningByDefault). */
+  output_includes_reasoning: boolean;
   cache_read_tokens: number;
   cache_write_tokens: number;
   reasoning_tokens: number;
@@ -253,6 +255,24 @@ export function isAiCall(attributes: Record<string, string>): boolean {
   );
 }
 
+/**
+ * Whether a provider's own API counts reasoning tokens in the output, for
+ * a call that does not say: OpenAI's (`completion_tokens` holds
+ * `completion_tokens_details.reasoning_tokens`) and Anthropic's
+ * (`output_tokens` holds the thinking) do; Gemini's counts its thoughts
+ * apart (`thoughtsTokenCount` beside `candidatesTokenCount`), on Vertex AI
+ * too, and bills them as output. Every other provider: counted in, as the
+ * GenAI conventions count reasoning in the output.
+ */
+export function outputIncludesReasoningByDefault(provider: string, model: string): boolean {
+  const name = provider.toLowerCase();
+  if (name === "gcp.gemini" || name === "gcp.gen_ai" || name === "gemini") return false;
+  if (name === "gcp.vertex_ai" || name === "vertex_ai") {
+    return !model.toLowerCase().includes("gemini");
+  }
+  return true;
+}
+
 /** The ai_calls row of a stored span, or null when the span is not an AI call. */
 export function aiCallOf(span: SpanRow): AiCallRow | null {
   const { attributes } = span;
@@ -262,6 +282,8 @@ export function aiCallOf(span: SpanRow): AiCallRow | null {
   const cacheRead = count(AI_ATTRIBUTES.cacheReadTokens);
   const cacheWrite = count(AI_ATTRIBUTES.cacheWriteTokens);
   const errorType = cleanLabel(first(attributes, AI_ATTRIBUTES.errorType), MAX_AI_ERROR_TYPE_CHARS);
+  const provider = cleanLabel(first(attributes, AI_ATTRIBUTES.provider));
+  const model = cleanLabel(first(attributes, AI_ATTRIBUTES.model));
   const feature =
     cleanLabel(first(attributes, AI_ATTRIBUTES.feature)) ||
     cleanLabel(first(attributes, AI_ATTRIBUTES.agent));
@@ -274,8 +296,8 @@ export function aiCallOf(span: SpanRow): AiCallRow | null {
     service: span.service,
     environment: span.environment,
     release: span.release,
-    provider: cleanLabel(first(attributes, AI_ATTRIBUTES.provider)),
-    model: cleanLabel(first(attributes, AI_ATTRIBUTES.model)),
+    provider,
+    model,
     operation: cleanLabel(first(attributes, AI_ATTRIBUTES.operation)),
     feature,
     user_id: userIdOf(attributes) ?? "",
@@ -283,6 +305,8 @@ export function aiCallOf(span: SpanRow): AiCallRow | null {
     input_tokens: input,
     input_includes_cache: inputIncludesCache(true, input, cacheRead, cacheWrite),
     output_tokens: count(AI_ATTRIBUTES.outputTokens),
+    // Spans have no attribute that says: by the provider, as its instrumentation copies its counts.
+    output_includes_reasoning: outputIncludesReasoningByDefault(provider, model),
     cache_read_tokens: cacheRead,
     cache_write_tokens: cacheWrite,
     reasoning_tokens: count(AI_ATTRIBUTES.reasoningTokens),

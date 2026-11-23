@@ -27,6 +27,7 @@ import {
   conversationIdOf,
   inputIncludesCache,
   inputIncludesCacheByDefault,
+  outputIncludesReasoningByDefault,
   MAX_AI_LABEL_CHARS,
   MAX_CONVERSATION_ID_CHARS,
 } from "./calls.ts";
@@ -91,6 +92,8 @@ interface HttpAiCall {
   /** Whether inputTokens holds the cached tokens; by the provider when left out (calls.ts). */
   inputIncludesCache?: boolean;
   outputTokens?: number;
+  /** Whether outputTokens holds the reasoning tokens; by the provider when left out (calls.ts). */
+  outputIncludesReasoning?: boolean;
   cacheReadTokens?: number;
   cacheWriteTokens?: number;
   reasoningTokens?: number;
@@ -142,6 +145,7 @@ const batchSchema = {
           inputTokens: TOKENS,
           inputIncludesCache: { type: "boolean" },
           outputTokens: TOKENS,
+          outputIncludesReasoning: { type: "boolean" },
           cacheReadTokens: TOKENS,
           cacheWriteTokens: TOKENS,
           reasoningTokens: TOKENS,
@@ -499,6 +503,8 @@ export const aiCallIngestRoutes: FastifyPluginCallback<AiCallIngestOptions> = (
               call.cacheWriteTokens ?? 0,
             ),
             output_tokens: call.outputTokens ?? 0,
+            output_includes_reasoning:
+              call.outputIncludesReasoning ?? outputIncludesReasoningByDefault(provider, model),
             cache_read_tokens: call.cacheReadTokens ?? 0,
             cache_write_tokens: call.cacheWriteTokens ?? 0,
             reasoning_tokens: call.reasoningTokens ?? 0,

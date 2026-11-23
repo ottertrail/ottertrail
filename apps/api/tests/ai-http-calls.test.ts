@@ -163,6 +163,7 @@ describe("POST /api/ai-calls", () => {
       // Anthropic's API counts cached tokens apart from the input.
       input_includes_cache: false,
       output_tokens: "300",
+      output_includes_reasoning: true,
       cache_read_tokens: "800",
       cache_write_tokens: "40",
       reasoning_tokens: "12",
@@ -267,6 +268,37 @@ describe("POST /api/ai-calls", () => {
     // The copy written last is the one kept.
     expect(rows[0]?.timestamp).toBe(
       new Date(at + 3000).toISOString().replace("T", " ").replace("Z", "000000"),
+    );
+  });
+
+  test("whether the output holds the reasoning tokens: as sent, else by the provider", async () => {
+    const project = await newProject("Reasoning output");
+    const thinking = { outputTokens: 200, reasoningTokens: 5000 };
+    const cases = [
+      [aiCall({ ...thinking, provider: "openai", model: "o4-mini" }), true],
+      [aiCall({ ...thinking, provider: "anthropic" }), true],
+      [aiCall({ ...thinking, provider: "gcp.gemini", model: "gemini-2.5-flash" }), false],
+      [aiCall({ ...thinking, provider: "gcp.vertex_ai", model: "gemini-2.5-pro" }), false],
+      [aiCall({ ...thinking, provider: "gcp.vertex_ai", model: "claude-sonnet-4-6" }), true],
+      [aiCall({ ...thinking, provider: "openai", outputIncludesReasoning: false }), false],
+      [
+        aiCall({
+          ...thinking,
+          provider: "gcp.gemini",
+          model: "gemini-2.5-flash",
+          outputIncludesReasoning: true,
+        }),
+        true,
+      ],
+    ] as const;
+    const response = await send(
+      { v: 1, calls: cases.map(([call]) => call) },
+      { authorization: `Bearer ${project.key}` },
+    );
+    expect(response.statusCode).toBe(202);
+    const rows = new Map((await storedCalls(project.id)).map((row) => [row.id, row]));
+    expect(cases.map(([call]) => rows.get(call.id)?.output_includes_reasoning)).toEqual(
+      cases.map(([, includes]) => includes),
     );
   });
 
@@ -421,7 +453,12 @@ describe("POST /api/ai-calls", () => {
     );
     expect(response.statusCode).toBe(202);
     const rows = new Map((await storedCalls(project.id)).map((row) => [row.id, row]));
-    expect(rows.get(gemini.id)).toMatchObject({ output_tokens: "12", reasoning_tokens: "900" });
+    expect(rows.get(gemini.id)).toMatchObject({
+      output_tokens: "12",
+      reasoning_tokens: "900",
+      // Gemini's API counts thoughts apart from the output.
+      output_includes_reasoning: false,
+    });
     expect(rows.get(choices.id)?.finish_reasons).toHaveLength(16);
     expect(rows.get(failed.id)).toMatchObject({ failed: true, error_type: "Too Many Requests" });
     expect(rows.get(untidy.id)?.error_type).toBe("Rate limit");

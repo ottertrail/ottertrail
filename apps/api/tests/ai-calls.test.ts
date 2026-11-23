@@ -255,6 +255,7 @@ describe.each(["http/protobuf", "http/json"] as const)(
         // The GenAI conventions count cached tokens in the input.
         input_includes_cache: true,
         output_tokens: "300",
+        output_includes_reasoning: true,
         cache_read_tokens: "800",
         cache_write_tokens: "100",
         reasoning_tokens: "120",
@@ -372,6 +373,49 @@ describe("detection", () => {
       expect(isAiCall(attributes)).toBe(counted);
     },
   );
+
+  test("a span's output holds its reasoning unless its provider counts it apart (Gemini)", () => {
+    const now = nowNs();
+    const spanOf = (provider: string, model: string) => ({
+      traceId: hex(16),
+      spanId: hex(8),
+      name: "chat",
+      startTimeUnixNano: String(now - 2_000_000n),
+      endTimeUnixNano: String(now - 1_000_000n),
+      attributes: keyValues({
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": provider,
+        "gen_ai.request.model": model,
+        "gen_ai.usage.output_tokens": 200,
+        "gen_ai.usage.reasoning.output_tokens": 5000,
+      }),
+    });
+    const { rows } = normalizeTraces(
+      {
+        resourceSpans: [
+          {
+            scopeSpans: [
+              {
+                spans: [
+                  spanOf("gcp.gemini", "gemini-2.5-flash"),
+                  spanOf("gcp.vertex_ai", "gemini-2.5-pro"),
+                  spanOf("openai", "o4-mini"),
+                  spanOf("anthropic", "claude-sonnet-4-6"),
+                ],
+              },
+            ],
+          },
+        ],
+      },
+      { projectId: "0b0e5f1e-8a4e-4e43-9b0a-1f0c5d3e7a11", receivedAtNs: now, retentionDays: 30 },
+    );
+    expect(aiCallsOf(rows).map((call) => call.output_includes_reasoning)).toEqual([
+      false,
+      false,
+      true,
+      true,
+    ]);
+  });
 
   test("only the spans a request stores: a refused span makes no call", () => {
     const now = nowNs();

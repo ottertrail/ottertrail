@@ -720,4 +720,18 @@ export const CLICKHOUSE_MIGRATIONS: ClickHouseMigration[] = [
          MATERIALIZE INDEX received_at_index SETTINGS mutations_sync = 1`,
     ],
   },
+  {
+    name: "0014_ai_output_includes_reasoning",
+    /**
+     * Whether an AI call's output count holds its reasoning tokens
+     * (`output_includes_reasoning`, ai/calls.ts; docs/ai-usage.md, "Cost"):
+     * OpenAI's and Anthropic's do, Gemini's counts its thoughts apart, and
+     * the cost then adds them. Rows already stored take what the cost used
+     * to assume: included.
+     */
+    statements: (database) => [
+      `ALTER TABLE ${database}.${AI_CALLS_TABLE}
+         ADD COLUMN IF NOT EXISTS output_includes_reasoning Bool DEFAULT true AFTER output_tokens`,
+    ],
+  },
 ];

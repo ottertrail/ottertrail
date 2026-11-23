@@ -108,12 +108,16 @@ export interface TokenCounts {
    * smaller than them.
    */
   inputIncludesCache?: boolean;
+  /** Reasoning tokens, and whether `output` holds them (when left out, it does). */
+  reasoning?: number;
+  outputIncludesReasoning?: boolean;
 }
 
 /**
  * The estimated cost of one call's tokens at a price, in US dollars:
  * cache reads and writes at their own prices, the rest of the input at the
- * input price, and the output (reasoning included) at the output price.
+ * input price, and the output at the output price, with the reasoning
+ * tokens when the output does not hold them (outputIncludesReasoning).
  * The rest is the input less both when the input holds them (the GenAI
  * conventions, OpenAI's API), else all of the input (Anthropic's API):
  * each call says which (inputIncludesCache). An input smaller than its
@@ -127,7 +131,8 @@ export function costOf(price: Rates, tokens: TokenCounts): number {
     (base * price.input +
       tokens.cacheRead * (price.cacheRead ?? price.input) +
       tokens.cacheWrite * (price.cacheWrite ?? price.input) +
-      tokens.output * price.output) /
+      (tokens.output + (tokens.outputIncludesReasoning === false ? (tokens.reasoning ?? 0) : 0)) *
+        price.output) /
     1_000_000
   );
 }
@@ -461,7 +466,8 @@ export function pricedColumns(params: QueryParams, book: PriceBook = BUNDLED_BOO
     (${base} * ${at(arrays.input)}
       + cache_read_tokens * ${at(arrays.cacheRead)}
       + cache_write_tokens * ${at(arrays.cacheWrite)}
-      + output_tokens * ${at(arrays.output)}) / 1000000 AS cost,
+      + (output_tokens + if(output_includes_reasoning, 0, reasoning_tokens)) * ${at(arrays.output)})
+      / 1000000 AS cost,
     price_entry > 0 AS priced,
     if(input_includes_cache, input_tokens,
       input_tokens + cache_read_tokens + cache_write_tokens) AS all_input_tokens`;
