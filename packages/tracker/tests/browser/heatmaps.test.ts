@@ -1140,6 +1140,35 @@ describe("with the tracker", () => {
   });
 });
 
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+
+/**
+ * The keys and strings in the sent bodies, for the privacy search. Numbers
+ * and the records' random IDs are left out: a time like 1795054111000 or an
+ * ID like 7c3e9a01-2b5d-4111-... holds "4111" by chance, and page text can
+ * only leave as a string. An `id` that is not a random UUID is kept.
+ */
+function sentStrings(bodies: string[]): string {
+  const found: string[] = [];
+  const walk = (value: unknown, key?: string) => {
+    if (typeof value === "string") {
+      if (key !== "id" || !UUID.test(value)) found.push(value);
+    } else if (Array.isArray(value)) {
+      for (const item of value) walk(item);
+    } else if (typeof value === "object" && value !== null) {
+      for (const [name, item] of Object.entries(value)) {
+        found.push(name);
+        walk(item, name);
+      }
+    }
+  };
+  for (const body of bodies) walk(JSON.parse(body));
+  return found.join("\n");
+}
+
+/** A body with one record, for testing the search. */
+const oneRecord = (record: Record<string, unknown>) => JSON.stringify({ records: [record] });
+
 /** Planted on the page or typed into it: none may leave in a heatmap record. */
 const PLANTED = [
   "Wilhelmina",
@@ -1194,6 +1223,16 @@ const PRIVATE_PAGE = `
   </main>`;
 
 describe("privacy", () => {
+  test("the search skips only numbers and records' random IDs", () => {
+    // The failure this guards against: a record's time or ID matched "4111".
+    expect(
+      sentStrings([oneRecord({ id: "7c3e9a01-2b5d-4111-8a4f-0c6d1e2f3a4b", at: 1795054111000 })]),
+    ).not.toContain("4111");
+    expect(sentStrings([oneRecord({ id: "4111 1111 1111 1111" })])).toContain("4111");
+    expect(sentStrings([oneRecord({ label: "4111 1111 1111 1111" })])).toContain("4111");
+    expect(sentStrings([oneRecord({ "4111": 1 })])).toContain("4111");
+  });
+
   test("no text, value, ID, class, address, or other attribute of the page is ever sent", async () => {
     history.replaceState(null, "", `${location.pathname}?coupon=SECRETCOUPON#HashSecretLinden`);
     cleanups.push(() => history.replaceState(null, "", ADDRESS));
@@ -1237,7 +1276,7 @@ describe("privacy", () => {
     // Something was sent, so the search below means something.
     expect(records.filter((record) => record.type === "click").length).toBeGreaterThanOrEqual(7);
     expect(records.some((record) => record.type === "scroll")).toBe(true);
-    const text = bodies.join("\n");
+    const text = sentStrings(bodies);
     expect(PLANTED.filter((value) => text.includes(value))).toEqual([]);
     // Only these fields, ever.
     const fields = new Set(records.flatMap((record) => Object.keys(record)));
