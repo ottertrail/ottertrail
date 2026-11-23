@@ -349,6 +349,21 @@ describe("POST /api/events", () => {
       expect(response.json()).toMatchObject({ error: "invalid_request" });
     });
 
+    test("rejects a body with a __proto__ or constructor key, as Fastify's JSON parser does", async () => {
+      const project = await createProject();
+      const json = JSON.stringify(batch(project.public_key));
+      for (const body of [
+        json.replace("{", '{"__proto__":{"admin":true},'),
+        json.replace("{", '{"constructor":{"prototype":{"admin":true}},'),
+        json.replace('"name":"pageview"', '"name":"pageview","properties":{"__proto__":"x"}'),
+      ]) {
+        const response = await send(body);
+        expect(response.statusCode).toBe(400);
+        expect(response.json()).toMatchObject({ error: "invalid_request" });
+      }
+      expect(await storedEvents(project.id)).toHaveLength(0);
+    });
+
     test("rejects a page URL that is not http(s)", async () => {
       const project = await createProject();
       const response = await send(

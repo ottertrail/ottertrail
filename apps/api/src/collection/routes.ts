@@ -18,6 +18,7 @@ import { ENGAGEMENT, ERROR, VITALS } from "../visits/visits.ts";
 import { ENVIRONMENT_PATTERN, environmentOf, RELEASE_PATTERN } from "./environment.ts";
 import { type NewEvent, storeEvents } from "./event-store.ts";
 import { isSignedUserId, USER_ID_PATTERN, USER_SIGNATURE_PATTERN } from "./identity.ts";
+import { parseTextPlainAsJson } from "./json-body.ts";
 import { LastEventRecorder } from "./last-event.ts";
 import {
   cleanReferrer,
@@ -337,19 +338,7 @@ export const collectionRoutes: FastifyPluginCallback<CollectionOptions> = (app, 
   const projects = options.projectKeys ?? new ProjectKeyCache(db, { now });
   const lastEvents = new LastEventRecorder(db, { now });
 
-  // text/plain avoids browser CORS preflight. The body is JSON; this parser is
-  // scoped to this plugin.
-  app.addContentTypeParser(
-    "text/plain",
-    { parseAs: "string", bodyLimit: MAX_BODY_BYTES },
-    (_request, body, parsed) => {
-      try {
-        parsed(null, JSON.parse(String(body)));
-      } catch {
-        parsed(Object.assign(new Error("The body is not valid JSON"), { statusCode: 400 }));
-      }
-    },
-  );
+  parseTextPlainAsJson(app, MAX_BODY_BYTES);
 
   // Expose statuses and Retry-After so the tracker can distinguish failures worth
   // retrying. Responses contain no private data and use no cookies or credentials.

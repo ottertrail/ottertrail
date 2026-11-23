@@ -334,6 +334,11 @@ describe("POST /api/heatmaps", () => {
     // "x" stands for any other element.
     expect((await send(key, [click({ element: "body>main>x>a:2" })])).statusCode).toBe(202);
     expect((await send(key, [], { body: "{not json" })).statusCode).toBe(400);
+    const poisoned = JSON.stringify({ v: 1, key, sentAt: NOON, pages: [PAGE], records: [click()] });
+    expect(
+      (await send(key, [], { body: poisoned.replace("{", '{"__proto__":{"admin":true},') }))
+        .statusCode,
+    ).toBe(400);
     const large = await send(key, [], {
       body: JSON.stringify({
         v: 1,

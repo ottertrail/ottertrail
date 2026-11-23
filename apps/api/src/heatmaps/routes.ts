@@ -3,6 +3,7 @@ import type { FastifyError, FastifyPluginCallback, FastifyReply } from "fastify"
 import type { IngestActivity, IngestOutcome } from "../activity/activity.ts";
 import type { ClickHouseClient } from "../clickhouse/clickhouse.ts";
 import { ENVIRONMENT_PATTERN, environmentOf, RELEASE_PATTERN } from "../collection/environment.ts";
+import { parseTextPlainAsJson } from "../collection/json-body.ts";
 import {
   correctClock,
   isAllowedHostname,
@@ -281,18 +282,7 @@ export const heatmapCollectionRoutes: FastifyPluginCallback<{
     return;
   }
 
-  // text/plain, a "simple" cross-site request without a preflight, as events.
-  app.addContentTypeParser(
-    "text/plain",
-    { parseAs: "string", bodyLimit: MAX_BODY_BYTES },
-    (_request, body, parsed) => {
-      try {
-        parsed(null, JSON.parse(String(body)));
-      } catch {
-        parsed(Object.assign(new Error("The body is not valid JSON"), { statusCode: 400 }));
-      }
-    },
-  );
+  parseTextPlainAsJson(app, MAX_BODY_BYTES);
 
   // As for events: the page may read every answer, so h.js knows whether
   // sending again can help (collection/routes.ts).

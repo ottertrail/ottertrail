@@ -117,7 +117,7 @@ The worker (`apps/api/src/worker.ts`, a process of its own beside the API) delet
 - `touch` (optional, only ever `true`) says the device has a touchscreen; the tracker sends it when `navigator.maxTouchPoints` is over 1. It tells an iPad from a Mac (see [Enrichment](#4-enrichment)).
 - `environment` and `release` (optional) say where the site runs and which version of it, for every event of the batch ([below](#environments-and-releases)).
 - `userId` (optional, per event) is the site's own ID for the signed-in user who caused the event ([below](#known-users)).
-- Send it as `text/plain` from browsers (see [Cross-site requests](#cross-site-requests)); `application/json` also works.
+- Send it as `text/plain` from browsers (see [Cross-site requests](#cross-site-requests)); `application/json` also works. Both are parsed by Fastify's secure JSON parser, which refuses a body with a `__proto__` or `constructor` key anywhere in it (400).
 - Unknown fields are removed, not rejected, so a server accepts batches from a newer tracker.
 
 ### Environments and releases
