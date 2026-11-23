@@ -412,8 +412,14 @@ export const telemetryRoutes: FastifyPluginCallback<TelemetryOptions> = (app, op
               retentionDays,
             });
           } catch (error) {
-            if (error instanceof MalformedError || error instanceof RangeError) {
-              return invalid(400, error.message);
+            if (error instanceof MalformedError) return invalid(400, error.message);
+            // Its text is the runtime's, not written for senders: logged, not sent.
+            if (error instanceof RangeError) {
+              request.log.warn({ err: error }, "telemetry request held a value out of range");
+              return invalid(
+                400,
+                "The request holds a value out of range. Check the times and numbers the exporter sends.",
+              );
             }
             throw error;
           }

@@ -883,6 +883,32 @@ describe("requests in progress", () => {
     }
   });
 
+  test("a value out of range is refused with a fixed message, never the runtime's", async () => {
+    const app = Fastify();
+    await app.register(telemetryRoutes, {
+      clickhouse: { insert: async () => {} } as unknown as ClickHouseClient,
+      projects: {
+        findBySecret: async () => ({ id: "0b0e5f1e-8a4e-4e43-9b0a-1f0c5d3e7a11" }),
+      } as unknown as ProjectKeyCache,
+      activity: { add: () => {} } as unknown as IngestActivity,
+      // Not a whole number of days: normalizing throws a RangeError.
+      retentionDays: 0.5,
+    });
+    try {
+      const response = await post(
+        "/v1/traces",
+        protobufTraces([protobufSpan(randomHex(16), randomHex(8))]),
+        { key: `sk_${"a".repeat(32)}`, app },
+      );
+      expect(response.statusCode).toBe(400);
+      expect(statusOf(response.rawPayload).message).toBe(
+        "The request holds a value out of range. Check the times and numbers the exporter sends.",
+      );
+    } finally {
+      await app.close();
+    }
+  });
+
   test("an address's rate counts an IPv6 address by its /64", async () => {
     const app = buildApp({
       db: dashboard.db,
