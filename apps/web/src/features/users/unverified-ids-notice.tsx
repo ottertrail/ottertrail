@@ -15,7 +15,8 @@ export function UnverifiedIdsNotice({ projectId }: { projectId: string }) {
     <Alert role="note">
       <ShieldAlertIcon aria-hidden="true" />
       <AlertDescription className="text-pretty">
-        User IDs on this project aren&apos;t verified, so any page could send any ID.{" "}
+        User IDs on this project aren&apos;t verified, so anyone with the project&apos;s public key
+        could send any ID.{" "}
         <WhenAllowed permission="projects">
           <Link
             to="/projects/$projectId/settings"

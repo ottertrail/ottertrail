@@ -156,7 +156,9 @@ Go        mac := hmac.New(sha256.New, []byte(secretKey)); mac.Write([]byte(userI
 
 When signing is required, a user ID without a valid signature is left out and the event kept, anonymous: the response counts them (`unverifiedUsers`). Refusing the batch would lose the visitor's pageviews over a site's mistake. A signature that is not 64 hex digits is refused as malformed (400); the tracker leaves it out, with a warning, rather than send it. When signing is not required, user IDs are taken as sent.
 
-Signing is off by default, and stays optional (decided with the user, 23 November 2026): a site without a server it can change still gets known users. While it is off, anyone with the public key can send events as any user, so a user's timeline and an error's "users affected" can hold made-up events. The Users list and a user's page say so in one line, "User IDs on this project aren't verified, so any page could send any ID.", with a "Require signed IDs" link to the Your server tab for the owner and admins ([dashboard](dashboard.md#85-users)).
+Decided on 23 November 2026: signing is off by default, and stays optional. A site without a server it can change still gets known users. While it is off, anyone with the public key can send events as any user, so a user's timeline and an error's "users affected" can hold made-up events. The Users list and a user's page say so in one line, "User IDs on this project aren't verified, so anyone with the project's public key could send any ID.", with a "Require signed IDs" link to the Your server tab for the owner and admins ([dashboard](dashboard.md#85-users)).
+
+**Known limit:** the line follows the current setting, not the stored events. Once signing is on it goes, though IDs that arrived unsigned before stay in the lists and counts until their events pass the project's retention.
 
 A page shows its own user's signature, so whoever sees that page can send events as that user: as themselves. They still cannot sign any other ID.
 

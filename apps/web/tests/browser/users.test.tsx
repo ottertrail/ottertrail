@@ -250,7 +250,8 @@ describe("a user's page", () => {
   });
 });
 
-const UNVERIFIED = "User IDs on this project aren't verified, so any page could send any ID.";
+const UNVERIFIED =
+  "User IDs on this project aren't verified, so anyone with the project's public key could send any ID.";
 /** The notice as the owner and admins see it, with its link. */
 const UNVERIFIED_LINKED = `${UNVERIFIED} Require signed IDs`;
 const notices = () => document.querySelectorAll('[role="note"]');
@@ -276,6 +277,28 @@ describe("the notice that user IDs are unverified", () => {
       .poll(() => router.state.location.pathname)
       .toBe(`/projects/${PROJECT.id}/settings`);
     expect(router.state.location.search).toEqual({ tab: "server" });
+  });
+
+  test("goes once the owner requires signed IDs and comes back", async () => {
+    const api = installFakeApi({
+      users: (query) => ({
+        ...fakeUsers(query),
+        signedUserIdsRequired: api.bodies.some(
+          (item) => item.method === "PATCH" && item.path === `/api/projects/${PROJECT.id}`,
+        ),
+      }),
+    });
+    const router = renderApp(USERS);
+
+    await page.getByRole("note").getByRole("link", { name: "Require signed IDs" }).click();
+    await page.getByRole("switch", { name: "Only accept user IDs signed by your server" }).click();
+    await page.getByRole("button", { name: "Save changes" }).click();
+    await expect.poll(() => api.bodies.length).toBe(1);
+    router.history.back();
+
+    await expect.poll(() => router.state.location.pathname).toBe(USERS);
+    await expect.poll(() => listedUsers().length).toBe(50);
+    await expect.poll(() => notices().length).toBe(0);
   });
 
   test("shows a member no link, since they cannot change settings", async () => {

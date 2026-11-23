@@ -34,7 +34,7 @@ function accessOf(request: { projectAccess: ProjectAccess | null }): ProjectAcce
 /**
  * Whether the project accepts only user IDs signed by its server
  * (docs/web-analytics.md, "Signed user IDs"). The Users pages say when it
- * does not: any page with the public key could send any ID.
+ * does not: anyone with the public key could send any ID.
  */
 async function signedUserIdsRequired(db: Kysely<Database>, projectId: string): Promise<boolean> {
   const row = await db

@@ -18,7 +18,7 @@ export interface User {
 export interface UserList {
   timeZone: string;
   environment: string;
-  /** Whether the project accepts only user IDs signed by its server; if not, any page could send any ID. */
+  /** Whether the project accepts only user IDs signed by its server; if not, anyone with the public key could send any ID. */
   signedUserIdsRequired: boolean;
   environments: string[];
   users: User[];
@@ -58,7 +58,7 @@ export interface Activity {
 export interface UserActivity {
   timeZone: string;
   environment: string;
-  /** Whether the project accepts only user IDs signed by its server; if not, any page could send any ID. */
+  /** Whether the project accepts only user IDs signed by its server; if not, anyone with the public key could send any ID. */
   signedUserIdsRequired: boolean;
   user: User;
   activity: Activity[];

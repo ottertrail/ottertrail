@@ -59,6 +59,9 @@ export function ServerSettings({
       form.saved(values);
       queryClient.setQueryData(projectQuery(project.id).queryKey, updated);
       void queryClient.invalidateQueries({ queryKey: projectsQuery().queryKey, exact: true });
+      // The Users pages say whether IDs are signed.
+      void queryClient.invalidateQueries({ queryKey: ["users", project.id] });
+      void queryClient.invalidateQueries({ queryKey: ["user", project.id] });
     },
   });
   const switchId = React.useId();
