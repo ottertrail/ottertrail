@@ -65,6 +65,7 @@ import { storageRoutes } from "./storage/routes.ts";
 import type { StorageSources } from "./storage/usage.ts";
 import { DashboardQueryLimiter } from "./telemetry/dashboard-limit.ts";
 import { telemetryDashboardRoutes } from "./telemetry/dashboard-routes.ts";
+import { SecretKeyLookups } from "./telemetry/key-lookups.ts";
 import { type TelemetryOptions, telemetryBudget, telemetryRoutes } from "./telemetry/routes.ts";
 import { trackerScriptRoutes } from "./tracker-script/routes.ts";
 import { uptimeRoutes } from "./uptime/routes.ts";
@@ -422,12 +423,15 @@ export function buildApp({
     // address it is given (OTEL_EXPORTER_OTLP_ENDPOINT).
     // One budget for OTLP and the AI calls sent over HTTP.
     const budget = telemetryBudget(telemetry);
+    // And one queue for their key lookups, so together they hold at most 4 of the pool's connections.
+    const keyLookups = telemetry.keyLookups ?? new SecretKeyLookups();
     app.register(telemetryRoutes, {
       ...telemetry,
       clickhouse: telemetryClickHouse,
       projects: projectKeys,
       activity,
       budget,
+      keyLookups,
       retentionDays: telemetry.retentionDays ?? DEFAULT_TELEMETRY_RETENTION_DAYS,
       ...(collection.now === undefined ? {} : { now: collection.now }),
     });
@@ -437,6 +441,7 @@ export function buildApp({
       projects: projectKeys,
       activity,
       budget,
+      keyLookups,
       ...aiCalls,
       ...(collection.now === undefined ? {} : { now: collection.now }),
     });

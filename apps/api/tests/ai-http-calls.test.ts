@@ -681,6 +681,7 @@ describe("limits", () => {
     const real = `sk_${"a".repeat(32)}`;
     // Any other key's lookup waits for the gate, as a cache miss waits for the database.
     const projects = {
+      peekSecret: () => undefined,
       findBySecret: async (key: string) => {
         lookups += 1;
         if (key === real) return { id: "0b0e5f1e-8a4e-4e43-9b0a-1f0c5d3e7a11" };
@@ -725,6 +726,7 @@ describe("limits", () => {
     const fresh = `sk_${"c".repeat(32)}`;
     // Made-up keys' lookups wait for the gate, as a cache miss waits for the database.
     const projects = {
+      peekSecret: () => undefined,
       findBySecret: async (key: string) => {
         lookups += 1;
         if (key === real) return { id: "0b0e5f1e-8a4e-4e43-9b0a-1f0c5d3e7a11" };
@@ -740,7 +742,7 @@ describe("limits", () => {
       projects,
       activity: { add: () => {} } as unknown as IngestActivity,
       budget: telemetryBudget({}),
-      keyLookups: new SecretKeyLookups(1, 0),
+      keyLookups: new SecretKeyLookups({ max: 1, maxWaiting: 0 }),
     });
     try {
       const body = { v: 1, calls: [aiCall()] };

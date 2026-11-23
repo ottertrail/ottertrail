@@ -52,6 +52,9 @@ async function newProject(name: string) {
   };
 }
 
+const PROJECT_A = "0b0e5f1e-8a4e-4e43-9b0a-1f0c5d3e7a11";
+const PROJECT_B = "7c1d2e3f-4a5b-4c6d-8e7f-901a2b3c4d5e";
+
 /** A well-formed secret key no project has. */
 function unknownKey(n: number): string {
   return `sk_${n.toString(16).padStart(32, "0")}`;
@@ -912,6 +915,7 @@ describe("requests in progress", () => {
     const real = `sk_${"a".repeat(32)}`;
     // Any other key's lookup waits for the gate, as a cache miss waits for the database.
     const projects = {
+      peekSecret: () => undefined,
       findBySecret: async (key: string) => {
         lookups += 1;
         if (key === real) return { id: "0b0e5f1e-8a4e-4e43-9b0a-1f0c5d3e7a11" };
@@ -949,6 +953,7 @@ describe("requests in progress", () => {
     await app.register(telemetryRoutes, {
       clickhouse: { insert: async () => {} } as unknown as ClickHouseClient,
       projects: {
+        peekSecret: () => undefined,
         findBySecret: async () => ({ id: "0b0e5f1e-8a4e-4e43-9b0a-1f0c5d3e7a11" }),
       } as unknown as ProjectKeyCache,
       activity: { add: () => {} } as unknown as IngestActivity,
@@ -970,7 +975,7 @@ describe("requests in progress", () => {
     }
   });
 
-  test("lookups of keys not yet seen to be real wait their turn, one per address; real ones skip", async () => {
+  test("lookups of keys the cache lacks wait their turn, limited per address; cached ones skip", async () => {
     let open!: () => void;
     const gate = new Promise<void>((resolve) => {
       open = resolve;
@@ -978,18 +983,24 @@ describe("requests in progress", () => {
     let lookups = 0;
     const real = `sk_${"a".repeat(32)}`;
     const fresh = `sk_${"c".repeat(32)}`;
-    // Made-up keys' lookups wait for the gate, as a cache miss waits for the database.
+    // A cache of the real keys found; made-up keys' lookups wait for the
+    // gate, as a cache miss waits for the database.
+    const cached = new Map<string, { id: string }>();
     const projects = {
+      peekSecret: (key: string) => cached.get(key),
       findBySecret: async (key: string) => {
         lookups += 1;
-        if (key === real) return { id: "0b0e5f1e-8a4e-4e43-9b0a-1f0c5d3e7a11" };
-        if (key === fresh) return { id: "7c1d2e3f-4a5b-4c6d-8e7f-901a2b3c4d5e" };
+        if (key === real || key === fresh) {
+          const project = { id: key === real ? PROJECT_A : PROJECT_B };
+          cached.set(key, project);
+          return project;
+        }
         await gate;
         return null;
       },
     } as unknown as ProjectKeyCache;
     // One running, two waiting.
-    const keyLookups = new SecretKeyLookups(1, 2);
+    const keyLookups = new SecretKeyLookups({ max: 1, maxWaiting: 2, maxPerAddress: 1 });
     const app = Fastify();
     await app.register(telemetryRoutes, {
       clickhouse: { insert: async () => {} } as unknown as ClickHouseClient,
@@ -1005,7 +1016,7 @@ describe("requests in progress", () => {
       expect((await from(real, "192.0.2.1")).statusCode).toBe(200);
       const running = from(unknownKey(1), "2001:db8:1:2::1");
       await expect.poll(() => lookups).toBe(2);
-      // One lookup an address: another from its IPv6 /64 is refused.
+      // One lookup an address here: another from its IPv6 /64 is refused.
       const again = await from(unknownKey(2), "2001:db8:1:2::2");
       expect(again.statusCode).toBe(503);
       expect(statusOf(again.rawPayload).message).toBe(
@@ -1017,7 +1028,7 @@ describe("requests in progress", () => {
       await expect.poll(() => keyLookups.waiting).toBe(2);
       // The queue is full.
       expect((await from(unknownKey(5), "198.51.100.9")).statusCode).toBe(503);
-      // A key already found to be real does not wait.
+      // A key the cache holds does not wait.
       expect((await from(real, "192.0.2.1")).statusCode).toBe(200);
       open();
       expect((await running).statusCode).toBe(401);
@@ -1030,6 +1041,73 @@ describe("requests in progress", () => {
       await app.close();
     }
   });
+  test("a request that disconnects while its lookup waits gives up its turn, and is not counted", async () => {
+    let open!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      open = resolve;
+    });
+    let lookups = 0;
+    const real = `sk_${"a".repeat(32)}`;
+    // Every lookup waits for the gate; the real key then has a project.
+    const projects = {
+      peekSecret: () => undefined,
+      findBySecret: async (key: string) => {
+        lookups += 1;
+        await gate;
+        return key === real ? { id: PROJECT_A } : null;
+      },
+    } as unknown as ProjectKeyCache;
+    const counted: string[] = [];
+    const keyLookups = new SecretKeyLookups({ max: 1, maxPerAddress: 1 });
+    const app = Fastify();
+    // Requests that reached the routes' hooks.
+    let entered = 0;
+    app.addHook("onRequest", async () => {
+      entered += 1;
+    });
+    await app.register(telemetryRoutes, {
+      clickhouse: { insert: async () => {} } as unknown as ClickHouseClient,
+      projects,
+      activity: {
+        add: (_project: string, _source: string, outcome: string) => {
+          counted.push(outcome);
+        },
+      } as unknown as IngestActivity,
+      retentionDays: 30,
+      keyLookups,
+    });
+    try {
+      const body = protobufTraces([protobufSpan(randomHex(16), randomHex(8))]);
+      const headers = (key: string) => ({
+        "content-type": PROTOBUF,
+        authorization: `Bearer ${key}`,
+      });
+      const hangUp = await hangingUpClient(app);
+      const running = post("/v1/traces", body, {
+        key: unknownKey(1),
+        app,
+        remoteAddress: "198.51.100.1",
+      });
+      await expect.poll(() => lookups).toBe(1);
+      // Alone on its key, it leaves the queue, and its address is free again.
+      await hangUp("/v1/traces", headers(unknownKey(2)), body, () => keyLookups.waiting === 1);
+      await expect.poll(() => keyLookups.waiting).toBe(0);
+      // Sharing the real key with a request that stays, its lookup goes on;
+      // it then finds no slot, gone, and is not counted as refused.
+      const stays = post("/v1/traces", body, { key: real, app, remoteAddress: "203.0.113.7" });
+      await expect.poll(() => keyLookups.waiting).toBe(1);
+      const before = entered;
+      await hangUp("/v1/traces", headers(real), body, () => entered > before);
+      open();
+      expect((await running).statusCode).toBe(401);
+      expect((await stays).statusCode).toBe(200);
+      expect(counted).not.toContain("refused_rate_limited");
+    } finally {
+      open();
+      await app.close();
+    }
+  });
+
   test("an address's rate counts an IPv6 address by its /64", async () => {
     const app = buildApp({
       db: dashboard.db,

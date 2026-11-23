@@ -93,6 +93,32 @@ describe("ProjectKeyCache", () => {
     expect(counted.queries).toBe(3);
   });
 
+  test("peekSecret answers from the cache alone: a project, null, or undefined when unknown", async () => {
+    let now = 1_000_000;
+    const { db: database, counted } = counting();
+    const cache = new ProjectKeyCache(database, { now: () => now });
+    const project = await newProject();
+    const secret = (
+      await db()
+        .selectFrom("projects")
+        .select("secret_key")
+        .where("id", "=", project.id)
+        .executeTakeFirstOrThrow()
+    ).secret_key;
+    const unknown = `sk_${randomBytes(16).toString("hex")}`;
+    expect(cache.peekSecret(secret)).toBeUndefined();
+    expect(cache.peekSecret(unknown)).toBeUndefined();
+    await cache.findBySecret(secret);
+    await cache.findBySecret(unknown);
+    expect(cache.peekSecret(secret)?.id).toBe(project.id);
+    expect(cache.peekSecret(unknown)).toBeNull();
+    // Peeking never queries, and expired entries are not answered.
+    expect(counted.queries).toBe(2);
+    now += 61_000;
+    expect(cache.peekSecret(secret)).toBeUndefined();
+    expect(cache.peekSecret(unknown)).toBeUndefined();
+  });
+
   test("concurrent misses for one key make one query", async () => {
     const project = await newProject();
     const { db: database, counted } = counting();

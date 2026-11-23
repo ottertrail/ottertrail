@@ -128,6 +128,17 @@ export class ProjectKeyCache {
     return this.#lookup(this.#bySecret, "secret_key", secretKey);
   }
 
+  /**
+   * What the cache holds for a secret key, without a query: its project,
+   * null when no project has it, or undefined when the cache does not know.
+   */
+  peekSecret(secretKey: string): CollectingProject | null | undefined {
+    const now = this.#now();
+    const known = this.#bySecret.known.get(secretKey, now);
+    if (known !== undefined) return known;
+    return this.#bySecret.unknown.get(secretKey, now) === undefined ? undefined : null;
+  }
+
   async #lookup(
     table: KeyTable,
     column: "public_key" | "secret_key",

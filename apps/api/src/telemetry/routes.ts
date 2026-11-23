@@ -308,7 +308,7 @@ export const telemetryRoutes: FastifyPluginCallback<TelemetryOptions> = (app, op
     // keys cannot hold the slots real requests need.
     let project;
     try {
-      project = await keyLookups.find(projects, secretKey, clientKey(request.ip));
+      project = await keyLookups.findFor(projects, secretKey, request, reply);
     } catch (error) {
       request.log.error({ err: error }, "could not look up the secret key");
       return fail(request, reply, 503, "Telemetry was not stored. Retry later.", 5);
@@ -323,7 +323,8 @@ export const telemetryRoutes: FastifyPluginCallback<TelemetryOptions> = (app, op
       return fail(request, reply, 503, "Too many requests are in progress. Try again shortly.", 1);
     }
     if (!inFlight.takeForProject(request, project.id)) {
-      count(request, "refused_rate_limited", 0, project);
+      // A request that disconnected meanwhile has no slot, and was not refused.
+      if (!reply.raw.destroyed) count(request, "refused_rate_limited", 0, project);
       return fail(
         request,
         reply,

@@ -1,41 +1,68 @@
-import type { CollectingProject, ProjectKeyCache } from "../collection/project-keys.ts";
+import type { FastifyReply, FastifyRequest } from "fastify";
 
-/** Secret-key lookups of keys not yet known to be real that may run at once. */
+import type { CollectingProject, ProjectKeyCache } from "../collection/project-keys.ts";
+import { clientKey } from "../collection/rate-limiter.ts";
+
+/** Lookups of secret keys the cache lacks that may run at once. */
 export const DEFAULT_MAX_KEY_LOOKUPS = 4;
 /** Of those, the most that may wait for a place, in order. */
 export const DEFAULT_MAX_WAITING_LOOKUPS = 1000;
-/** Real keys remembered, so their lookups never wait. */
-const MAX_KNOWN_KEYS = 1000;
+/** Lookups one address may have running or waiting: a NAT or a gateway Collector sends several projects' keys. */
+export const DEFAULT_MAX_LOOKUPS_PER_ADDRESS = 2;
+/** How long a lookup may wait for a place before its requests get 503. */
+export const DEFAULT_MAX_LOOKUP_WAIT_MS = 5000;
 
 /** The lookup cannot be taken now: the answer is 503. */
 export const BUSY = Symbol("busy");
 
+type Found = CollectingProject | null | typeof BUSY;
+
+interface Lookup {
+  address: string;
+  /** Requests waiting on it that have not disconnected. */
+  sharers: number;
+  result: Promise<Found>;
+  /** While it waits for a place: gives the place up, answering BUSY. */
+  cancel: (() => void) | null;
+}
+
+export interface KeyLookupLimits {
+  max?: number;
+  maxWaiting?: number;
+  maxPerAddress?: number;
+  maxWaitMs?: number;
+}
+
 /**
- * Bounds the secret-key lookups of OTLP and POST /api/ai-calls, which run
- * before any other limit but the address's. Each lookup of a key the
- * cache lacks is a query on the PostgreSQL pool the dashboard shares, so
- * keys not yet seen to belong to a project take one of a few places; the
- * rest wait their turn. One address (an IPv6 address by its /64) has at
- * most one lookup running or waiting, so a flood of made-up keys needs many
- * addresses, and a real exporter waits behind at most one lookup of each.
- * Requests with the same key share its lookup. A key seen to be real
- * skips all this.
+ * Bounds the secret-key lookups of OTLP and POST /api/ai-calls together
+ * (one instance per app, app.ts), which run before any other limit but the
+ * address's. A key the cache holds, a project's or none, is answered at
+ * once. Any other is a query on the PostgreSQL pool the dashboard shares,
+ * so such lookups take one of a few places and the rest wait their turn,
+ * for a few seconds at most. One address (an IPv6 address by its /64) has
+ * at most two running or waiting, so a flood of made-up keys needs many
+ * addresses, and a real exporter waits behind at most two lookups of each.
+ * Requests with the same key share its lookup; a waiting lookup whose
+ * requests have all disconnected gives up its turn.
  */
 export class SecretKeyLookups {
   readonly #max: number;
   readonly #maxWaiting: number;
+  readonly #maxPerAddress: number;
+  readonly #maxWaitMs: number;
   #running = 0;
-  readonly #waiting: (() => void)[] = [];
-  /** Addresses with a lookup running or waiting. */
-  readonly #addresses = new Set<string>();
-  /** In the order last found, oldest first. */
-  readonly #known = new Set<string>();
+  /** Lookups waiting for a place: each starts when given one (true) or gives up (false). */
+  readonly #waiting: ((start: boolean) => void)[] = [];
+  /** Lookups running or waiting, by address. */
+  readonly #addresses = new Map<string, number>();
   /** Lookups running or waiting, by key. */
-  readonly #pending = new Map<string, Promise<CollectingProject | null>>();
+  readonly #pending = new Map<string, Lookup>();
 
-  constructor(max = DEFAULT_MAX_KEY_LOOKUPS, maxWaiting = DEFAULT_MAX_WAITING_LOOKUPS) {
-    this.#max = max;
-    this.#maxWaiting = maxWaiting;
+  constructor(limits: KeyLookupLimits = {}) {
+    this.#max = limits.max ?? DEFAULT_MAX_KEY_LOOKUPS;
+    this.#maxWaiting = limits.maxWaiting ?? DEFAULT_MAX_WAITING_LOOKUPS;
+    this.#maxPerAddress = limits.maxPerAddress ?? DEFAULT_MAX_LOOKUPS_PER_ADDRESS;
+    this.#maxWaitMs = limits.maxWaitMs ?? DEFAULT_MAX_LOOKUP_WAIT_MS;
   }
 
   /** Lookups waiting for a place. */
@@ -43,62 +70,100 @@ export class SecretKeyLookups {
     return this.#waiting.length;
   }
 
-  /** `address` is the client's, as the rate limiter keys it (clientKey). */
+  /**
+   * The key's project, null for none, or BUSY. `address` is the client's,
+   * as the rate limiter keys it (clientKey); `gone` aborts when the
+   * request disconnects.
+   */
   async find(
     projects: ProjectKeyCache,
     secretKey: string,
     address: string,
-  ): Promise<CollectingProject | null | typeof BUSY> {
-    if (this.#known.has(secretKey)) return this.#remember(secretKey, projects);
-    const pending = this.#pending.get(secretKey);
-    if (pending !== undefined) return pending;
-    if (this.#addresses.has(address)) return BUSY;
-    if (this.#running >= this.#max && this.#waiting.length >= this.#maxWaiting) return BUSY;
-    const lookup = this.#queued(projects, secretKey, address);
-    this.#pending.set(secretKey, lookup);
+    gone?: AbortSignal,
+  ): Promise<Found> {
+    const cached = projects.peekSecret(secretKey);
+    if (cached !== undefined) return cached;
+    let lookup = this.#pending.get(secretKey);
+    if (lookup === undefined) {
+      if ((this.#addresses.get(address) ?? 0) >= this.#maxPerAddress) return BUSY;
+      if (this.#running >= this.#max && this.#waiting.length >= this.#maxWaiting) return BUSY;
+      lookup = this.#start(projects, secretKey, address);
+    }
+    const shared = lookup;
+    shared.sharers += 1;
+    const leave = () => {
+      shared.sharers -= 1;
+      if (shared.sharers === 0) shared.cancel?.();
+    };
+    gone?.addEventListener("abort", leave, { once: true });
     try {
-      return await lookup;
+      return await shared.result;
     } finally {
-      this.#pending.delete(secretKey);
+      gone?.removeEventListener("abort", leave);
     }
   }
 
-  async #queued(
+  /** find() for a request: by its address, giving up its turn if it disconnects. */
+  async findFor(
     projects: ProjectKeyCache,
     secretKey: string,
-    address: string,
-  ): Promise<CollectingProject | null> {
-    this.#addresses.add(address);
+    request: FastifyRequest,
+    reply: FastifyReply,
+  ): Promise<Found> {
+    const gone = new AbortController();
+    const disconnected = () => {
+      gone.abort();
+    };
+    reply.raw.once("close", disconnected);
     try {
-      if (this.#running < this.#max) {
-        this.#running += 1;
-      } else {
-        // The place is handed over by the lookup that ends (below).
-        await new Promise<void>((resolve) => {
-          this.#waiting.push(resolve);
-        });
-      }
-      try {
-        return await this.#remember(secretKey, projects);
-      } finally {
-        const next = this.#waiting.shift();
-        if (next === undefined) this.#running -= 1;
-        else next();
-      }
+      return await this.find(projects, secretKey, clientKey(request.ip), gone.signal);
     } finally {
-      this.#addresses.delete(address);
+      reply.raw.off("close", disconnected);
     }
   }
 
-  async #remember(secretKey: string, projects: ProjectKeyCache) {
-    const project = await projects.findBySecret(secretKey);
-    this.#known.delete(secretKey);
-    if (project === null) return null;
-    this.#known.add(secretKey);
-    if (this.#known.size > MAX_KNOWN_KEYS) {
-      const oldest = this.#known.values().next().value;
-      if (oldest !== undefined) this.#known.delete(oldest);
-    }
-    return project;
+  #start(projects: ProjectKeyCache, secretKey: string, address: string): Lookup {
+    const lookup: Lookup = { address, sharers: 0, result: Promise.resolve(BUSY), cancel: null };
+    this.#addresses.set(address, (this.#addresses.get(address) ?? 0) + 1);
+    this.#pending.set(secretKey, lookup);
+    lookup.result = (async (): Promise<Found> => {
+      try {
+        if (this.#running < this.#max) this.#running += 1;
+        else if (!(await this.#turn(lookup))) return BUSY;
+        try {
+          return await projects.findBySecret(secretKey);
+        } finally {
+          // The place goes to the next waiting lookup, or is given back.
+          const next = this.#waiting.shift();
+          if (next === undefined) this.#running -= 1;
+          else next(true);
+        }
+      } finally {
+        const left = (this.#addresses.get(address) ?? 1) - 1;
+        if (left === 0) this.#addresses.delete(address);
+        else this.#addresses.set(address, left);
+        if (this.#pending.get(secretKey) === lookup) this.#pending.delete(secretKey);
+      }
+    })();
+    return lookup;
+  }
+
+  /** Waits for a place: true when given one, false past the wait or once every request left. */
+  async #turn(lookup: Lookup): Promise<boolean> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const started = await new Promise<boolean>((resolve) => {
+      const giveUp = () => {
+        const at = this.#waiting.indexOf(resolve);
+        if (at !== -1) this.#waiting.splice(at, 1);
+        resolve(false);
+      };
+      this.#waiting.push(resolve);
+      lookup.cancel = giveUp;
+      timer = setTimeout(giveUp, this.#maxWaitMs);
+      timer.unref();
+    });
+    clearTimeout(timer);
+    lookup.cancel = null;
+    return started;
   }
 }

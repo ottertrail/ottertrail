@@ -359,7 +359,7 @@ export const aiCallIngestRoutes: FastifyPluginCallback<AiCallIngestOptions> = (
         // As OTLP's: the key before a slot, so made-up keys hold none.
         let project;
         try {
-          project = await keyLookups.find(projects, secretKey, clientKey(request.ip));
+          project = await keyLookups.findFor(projects, secretKey, request, reply);
         } catch (error) {
           request.log.error({ err: error }, "could not look up the secret key");
           return storageUnavailable(reply);
@@ -380,7 +380,8 @@ export const aiCallIngestRoutes: FastifyPluginCallback<AiCallIngestOptions> = (
             .send(problem("busy", "Too many requests are in progress. Try again shortly."));
         }
         if (!inFlight.takeForProject(request, project.id)) {
-          count(request, "refused_rate_limited", 0, project);
+          // A request that disconnected meanwhile has no slot, and was not refused.
+          if (!reply.raw.destroyed) count(request, "refused_rate_limited", 0, project);
           return reply
             .code(429)
             .header("retry-after", "1")
