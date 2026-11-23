@@ -28,7 +28,7 @@ describe("a project's location data", () => {
 
     await source("Proxy headers").click();
     await expect
-      .element(section().getByText(/read only from requests that come through a proxy/))
+      .element(section().getByText(/With the shipped Caddy, the headers are read only/))
       .toBeVisible();
     await expect.element(header(/^Country header/)).toBeRequired();
     await header(/^Country header/).fill("X-Visitor-Country");

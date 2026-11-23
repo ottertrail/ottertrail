@@ -1,7 +1,9 @@
 import type { IncomingHttpHeaders } from "node:http";
+import { isIP } from "node:net";
 
 import type { LocationSource } from "../db/schema.ts";
 import type { Location } from "../enrichment/geo.ts";
+import { hasHiddenCharacters, truncate } from "./normalize.ts";
 
 /**
  * Locations from request headers (docs/web-analytics.md, "Locations"): a
@@ -57,10 +59,22 @@ export function projectLocationOf(row: {
   };
 }
 
-/** Headers Ottertrail sets or reads itself, and hop-by-hop headers, which proxies drop. */
+/**
+ * Refused as location headers:
+ * - those Ottertrail sets or reads itself;
+ * - those that carry the visitor's address, which must never be stored;
+ * - hop-by-hop headers, which proxies drop;
+ * - those Node keeps only the first of when repeated.
+ */
 const RESERVED = new Set([
   TRUSTED_PROXY_HEADER,
   "x-forwarded-for",
+  "forwarded",
+  "x-real-ip",
+  "x-client-ip",
+  "cf-connecting-ip",
+  "true-client-ip",
+  "fastly-client-ip",
   "x-forwarded-host",
   "x-forwarded-proto",
   "host",
@@ -81,6 +95,17 @@ const RESERVED = new Set([
   "trailer",
   "transfer-encoding",
   "upgrade",
+  "location",
+  "from",
+  "server",
+  "etag",
+  "age",
+  "expires",
+  "retry-after",
+  "max-forwards",
+  "if-modified-since",
+  "if-unmodified-since",
+  "last-modified",
 ]);
 
 const HEADER_NAME = new RegExp(`^[a-z0-9-]{1,${MAX_HEADER_NAME_LENGTH}}$`);
@@ -140,22 +165,45 @@ export function decodeHeaderValue(raw: string): string | undefined {
 function nameFrom(raw: string | undefined): string | undefined {
   if (raw === undefined) return undefined;
   const decoded = decodeHeaderValue(raw);
-  if (decoded === undefined || CONTROL.test(decoded)) return undefined;
-  const value = decoded.trim();
-  if (value === "") return undefined;
+  if (decoded === undefined || CONTROL.test(decoded) || hasHiddenCharacters(decoded)) {
+    return undefined;
+  }
   // Unpaired surrogates cannot be stored (collection/normalize.ts, isStorableText).
-  if (!value.isWellFormed()) return undefined;
-  return value.length > MAX_NAME_LENGTH ? value.slice(0, MAX_NAME_LENGTH).trim() : value;
+  if (!decoded.isWellFormed()) return undefined;
+  // Cut without splitting a character, then trim what the cut left at the end.
+  const value = truncate(decoded.trim(), MAX_NAME_LENGTH).trim();
+  // An address is never stored, even when a proxy puts one in a location header.
+  if (value === "" || isIP(value) !== 0) return undefined;
+  return value;
 }
 
-/** Codes that stand for no country: Cloudflare's unknown, and the user-assigned "ZZ". */
-const NO_COUNTRY = new Set(["XX", "ZZ"]);
+/**
+ * Codes ICU names that ISO 3166-1 has not assigned: reserved, withdrawn, and
+ * user-assigned ones (EU, UN, UK, ZZ, ...). Kosovo's XK stays: the location
+ * database uses it too.
+ */
+const NOT_ASSIGNED = new Set(
+  "AC AN BU CP CQ CS DD DG DY EA EU EZ FX HV IC NH QO RH SU TA TP UK UN VD XA XB YD YU ZR ZZ".split(
+    " ",
+  ),
+);
+
+const regionNames = new Intl.DisplayNames(["en"], { type: "region", fallback: "none" });
+
+/** The assigned ISO 3166-1 alpha-2 codes, and XK. */
+const COUNTRY_CODES: ReadonlySet<string> = new Set(
+  Array.from({ length: 26 * 26 }, (_, index) =>
+    String.fromCodePoint(65 + Math.floor(index / 26), 65 + (index % 26)),
+  ).filter((code) => regionNames.of(code) !== undefined && !NOT_ASSIGNED.has(code)),
+);
 
 function countryFrom(raw: string | undefined): string | undefined {
-  const code = raw?.trim().toUpperCase();
-  // Two letters, as the database path stores them; T1 (Tor) and others fail here.
-  if (code === undefined || !/^[A-Z]{2}$/.test(code) || NO_COUNTRY.has(code)) return undefined;
-  return code;
+  const text = raw?.trim();
+  // The shape before upper case, which would turn "ß" into "SS".
+  if (text === undefined || !/^[A-Za-z]{2}$/.test(text)) return undefined;
+  const code = text.toUpperCase();
+  // Cloudflare's XX (unknown) and T1 (Tor) are not countries.
+  return COUNTRY_CODES.has(code) ? code : undefined;
 }
 
 /** A header's value; Node joins a repeated one with ", ", which then fails the checks or reads as text. */

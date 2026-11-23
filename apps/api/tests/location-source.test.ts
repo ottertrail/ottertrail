@@ -5,6 +5,7 @@ import { afterAll, beforeAll, describe, expect, test } from "vite-plus/test";
 
 import { parseLocationHeaderName } from "../src/collection/location-headers.ts";
 import { migrations } from "../src/db/migrations/index.ts";
+import { updateProject } from "../src/projects/projects.ts";
 import { PUBLIC_URL, signedInDashboard, signedInUser } from "./helpers/dashboard.ts";
 import { storedEvents } from "./helpers/events.ts";
 import { insertProject } from "./helpers/projects.ts";
@@ -106,7 +107,25 @@ describe("a project's location source", () => {
     );
   });
 
+  test("a change that races another and leaves headers without a country is refused, not a 500", async () => {
+    const project = await newProject();
+    await patch(project.id, {
+      locationSource: "headers",
+      locationHeaders: { ...NO_HEADERS, country: "x-visitor-country" },
+    });
+    // As if another request had chosen headers after this one read the project.
+    expect(await updateProject(dashboard.db, project.id, { locationHeaders: NO_HEADERS })).toBe(
+      "country_header_required",
+    );
+    expect((await read(project.id)).json().project.locationHeaders.country).toBe(
+      "x-visitor-country",
+    );
+  });
+
   test.each([
+    ["an address header", "cf-connecting-ip"],
+    ["the standard address header", "Forwarded"],
+    ["a header Node keeps once", "last-modified"],
     ["spaces", "x visitor"],
     ["an underscore", "x_visitor_country"],
     ["a colon", "x-country:"],

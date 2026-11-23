@@ -876,6 +876,24 @@ describe("POST /api/events", () => {
         expect(event).toMatchObject({ country: "CH", region: null, city: "Zürich" });
       });
 
+      test("headers: a long city ending in an emoji is cut whole, and the batch is stored", async () => {
+        const { instance } = countingApp();
+        const project = await sourceProject(HEADERS);
+        const response = await send(batch(project.public_key), {
+          instance,
+          headers: {
+            ...FROM_PROXY,
+            "x-visitor-country": "DE",
+            "x-visitor-city": `${"a".repeat(99)}%F0%9F%98%80`,
+            "x-visitor-region": "203.0.113.10",
+          },
+        });
+        expect(response.statusCode).toBe(202);
+        const [event] = await storedEvents(project.id);
+        // The address is never stored, even as a region.
+        expect(event).toMatchObject({ country: "DE", region: null, city: "a".repeat(99) });
+      });
+
       test("headers: raw UTF-8 and Latin-1 bytes on the wire, as Node reads them", async () => {
         const { instance } = countingApp();
         await instance.listen({ host: "127.0.0.1", port: 0 });

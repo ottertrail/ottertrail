@@ -203,7 +203,23 @@ export async function createProject(
 const isForeignKeyViolation = (error: unknown) =>
   typeof error === "object" && error !== null && "code" in error && error.code === "23503";
 
-/** Returns null for missing projects, or no_such_goal if the goal belongs elsewhere. */
+/**
+ * PostgreSQL's check_violation of "headers" without a country header: two
+ * changes at once, one choosing headers and one clearing the country header.
+ */
+const isMissingCountryHeader = (error: unknown) =>
+  typeof error === "object" &&
+  error !== null &&
+  "code" in error &&
+  error.code === "23514" &&
+  "constraint" in error &&
+  error.constraint === "projects_location_headers_check";
+
+/**
+ * Returns null for missing projects, no_such_goal if the goal belongs
+ * elsewhere, or country_header_required when the change would leave the
+ * "headers" source without a country header.
+ */
 export async function updateProject(
   db: Kysely<Database>,
   id: string,
@@ -224,7 +240,7 @@ export async function updateProject(
     /** Already checked and normalised (parseLocationHeaderName). */
     locationHeaders?: { country: string | null; region: string | null; city: string | null };
   },
-): Promise<Project | null | "no_such_goal"> {
+): Promise<Project | null | "no_such_goal" | "country_header_required"> {
   const values = {
     ...(changes.name === undefined ? {} : { name: changes.name }),
     ...(changes.allowedHostnames === undefined
@@ -268,6 +284,7 @@ export async function updateProject(
     } catch (error) {
       // The main goal's foreign key: not one of this project's goals.
       if (isForeignKeyViolation(error)) return "no_such_goal";
+      if (isMissingCountryHeader(error)) return "country_header_required";
       throw error;
     }
   }

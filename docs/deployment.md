@@ -94,7 +94,7 @@ To go back to an earlier release, use its `compose.yaml` (or its version in `OTT
 
 An install that set `OTTERTRAIL_PROXY=cloudflare` (release 0.3.0) must replace it with `OTTERTRAIL_TRUSTED_PROXIES` and `OTTERTRAIL_CLIENT_IP_HEADER=CF-Connecting-IP` ([If you use Cloudflare](#if-you-use-cloudflare)). Releases after 0.3.0 ignore `OTTERTRAIL_PROXY`, so without the new settings every visitor gets Cloudflare's address. They also no longer ship Cloudflare's ranges: keep them current yourself in `.env`, and in any firewall lock.
 
-`GEO_SOURCE` was removed after release 0.3.0; use each project's settings, under **Location data**. An install that set it, in an override file or when running the image directly (the Compose file never passed it), must remove it: while it is set, to any value, the API, the worker, and `update-geo.mjs` stop at start. Every project starts with the location database, as `GEO_SOURCE=database` did; one that had `none` chooses Off.
+`GEO_SOURCE` was removed after release 0.3.0; use each project's settings, under **Location data**. An install that set it, in an override file or when running the image directly (the Compose file never passed it), must remove it: while it is set, to any value, Ottertrail's commands and services stop at start. Compose runs `migrate` first, so the message appears first in the migrate service's log. Every project starts with the location database, as `GEO_SOURCE=database` did; one that had `none` chooses Off.
 
 ## Behind a proxy or CDN
 

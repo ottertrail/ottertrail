@@ -86,6 +86,11 @@ function parseLocationHeaders(
   return { ok: true, headers };
 }
 
+const COUNTRY_HEADER_REQUIRED = problem(
+  "country_header_required",
+  "Enter the header that holds the visitor's country, such as x-visitor-country.",
+);
+
 const idParamsSchema = {
   type: "object",
   required: ["id"],
@@ -295,14 +300,7 @@ export const projectRoutes: FastifyPluginCallback<{
         const source = locationSource ?? current.locationSource;
         const country = (headers ?? current.locationHeaders).country;
         if (source === "headers" && country === null) {
-          return reply
-            .code(400)
-            .send(
-              problem(
-                "country_header_required",
-                "Enter the header that holds the visitor's country, such as x-visitor-country.",
-              ),
-            );
+          return reply.code(400).send(COUNTRY_HEADER_REQUIRED);
         }
       }
       const project = await updateProject(db, request.params.id, {
@@ -319,6 +317,10 @@ export const projectRoutes: FastifyPluginCallback<{
         ...(locationSource === undefined ? {} : { locationSource }),
         ...(headers === undefined ? {} : { locationHeaders: headers }),
       });
+      // Another change at the same time left "headers" without its country header.
+      if (project === "country_header_required") {
+        return reply.code(400).send(COUNTRY_HEADER_REQUIRED);
+      }
       if (project === "no_such_goal") {
         return reply
           .code(400)

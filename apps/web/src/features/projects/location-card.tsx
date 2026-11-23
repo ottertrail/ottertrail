@@ -146,8 +146,8 @@ export function LocationSettings({
       {form.values.source === "headers" && (
         <FieldGroup>
           <p id={trustId} className="text-sm text-muted-foreground">
-            The headers are read only from requests that come through a proxy listed in{" "}
-            <code className="font-mono">OTTERTRAIL_TRUSTED_PROXIES</code>.
+            With the shipped Caddy, the headers are read only from requests through a proxy listed
+            in <code className="font-mono">OTTERTRAIL_TRUSTED_PROXIES</code>.
           </p>
           {HEADER_FIELDS.map((field) => (
             <Field key={field.key}>

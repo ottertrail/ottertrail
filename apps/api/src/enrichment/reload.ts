@@ -19,6 +19,12 @@ export const RELOAD_INTERVAL_MS = 10 * 60 * 1000;
  */
 export const NEEDED_CHECK_MS = 60 * 1000;
 
+/**
+ * How long the check may take. A network that drops packets could otherwise
+ * hold the queue, and with it every reload, for as long as TCP waits.
+ */
+export const NEEDED_TIMEOUT_MS = 5_000;
+
 /** Whether any project's location source is "database" (projects/projects.ts). */
 export type LocationFileNeeded = () => Promise<boolean>;
 
@@ -42,6 +48,24 @@ export interface LoadedLocationData {
 export interface StartupMessage {
   ok: boolean;
   message: string;
+}
+
+/** The check's answer, or an error after NEEDED_TIMEOUT_MS. The query may go on; nothing waits for it. */
+async function bounded(needed: LocationFileNeeded): Promise<boolean> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      needed(),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error(`no answer within ${NEEDED_TIMEOUT_MS / 1000} seconds`)),
+          NEEDED_TIMEOUT_MS,
+        );
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 const modified = (stamp: FileStamp | null) => (stamp === null ? null : new Date(stamp.modifiedMs));
@@ -75,6 +99,8 @@ export class LiveLocationData {
   /** Runs reloads and checks one at a time. */
   #queue: Promise<void> = Promise.resolve();
   #log: ReloadLog = { info: () => {}, warn: () => {} };
+  /** Log each outage of the check once, and its end once. */
+  #failing = false;
 
   private constructor(needed: LocationFileNeeded, databasePath: string, dataCentersPath: string) {
     this.#needed = needed;
@@ -115,7 +141,7 @@ export class LiveLocationData {
     );
     const messages: StartupMessage[] = [];
     try {
-      data.#on = await options.needed();
+      data.#on = await bounded(options.needed);
     } catch (error) {
       // As if it were; the next check corrects it.
       messages.push({
@@ -165,14 +191,25 @@ export class LiveLocationData {
   async #checkNeeded(log: ReloadLog): Promise<void> {
     let on: boolean;
     try {
-      on = await this.#needed();
+      on = await bounded(this.#needed);
     } catch (error) {
-      log.warn(
-        `Could not check whether any project uses the location database; it stays as it is: ${message(error)}`,
-      );
+      if (!this.#failing) {
+        log.warn(
+          `Could not check whether any project uses the location database; it stays as it is: ${message(error)}`,
+        );
+      }
+      this.#failing = true;
       return;
     }
-    if (on === this.#on) return;
+    if (this.#failing)
+      log.info("Checking whether any project uses the location database works again");
+    this.#failing = false;
+    if (on === this.#on) {
+      // Needed and none loaded, as on a new install: a file the worker just
+      // downloaded loads within a minute, not at the next 10-minute look.
+      if (on && this.#loaded.locations === null) await this.#reloadLocations(log);
+      return;
+    }
     this.#on = on;
     // Either way, the next load reads the file afresh.
     this.#locationStamp = null;

@@ -4,11 +4,11 @@ import { join } from "node:path";
 import { setFlagsFromString } from "node:v8";
 import { runInNewContext } from "node:vm";
 
-import { afterAll, beforeAll, beforeEach, describe, expect, test } from "vite-plus/test";
+import { afterAll, beforeAll, beforeEach, describe, expect, test, vi } from "vite-plus/test";
 
 import type { DataCenterFile } from "../src/enrichment/data-centers.ts";
 import { GeoDatabase } from "../src/enrichment/geo.ts";
-import { LiveLocationData } from "../src/enrichment/reload.ts";
+import { LiveLocationData, NEEDED_TIMEOUT_MS } from "../src/enrichment/reload.ts";
 import { stampOf, updateLocationData } from "../src/enrichment/updates.ts";
 import { anyProjectUsesLocationDatabase } from "../src/projects/projects.ts";
 import { PUBLIC_URL, signedInDashboard, signedInUser } from "./helpers/dashboard.ts";
@@ -270,6 +270,60 @@ describe("the API reloads changed files without a restart", () => {
     await replace(databasePath, fakeMmdb({ city: "Later" }));
     await data.reload(log);
     expect(data.locate(ip).city).toBe("Later");
+  });
+
+  test("the minute check loads a file that appears while none is loaded, as on a new install", async () => {
+    const { data } = await open();
+    expect(data.loaded.locations).toBeNull();
+    await replace(databasePath, fakeMmdb({ city: "Downloaded" }));
+    await data.checkNeeded(log);
+    expect(data.locate(ip).city).toBe("Downloaded");
+  });
+
+  test("a check that fails is logged once per outage, and once when it works again", async () => {
+    const infos: string[] = [];
+    const counting = { info: (msg: string) => infos.push(msg), warn: log.warn };
+    let down = true;
+    const { data } = await LiveLocationData.open({
+      needed: async () => {
+        if (down) throw new Error("connection refused");
+        return true;
+      },
+      databasePath,
+      dataCentersPath,
+    });
+    await data.checkNeeded(counting);
+    await data.checkNeeded(counting);
+    await data.checkNeeded(counting);
+    expect(warnings.filter((line) => line.includes("connection refused"))).toHaveLength(1);
+    down = false;
+    await data.checkNeeded(counting);
+    await data.checkNeeded(counting);
+    expect(infos.filter((line) => line.includes("works again"))).toHaveLength(1);
+  });
+
+  test("a check with no answer gives up after a few seconds, so the queue moves on", async () => {
+    let answer = true;
+    const { data } = await LiveLocationData.open({
+      needed: () => (answer ? Promise.resolve(true) : new Promise<boolean>(() => {})),
+      databasePath,
+      dataCentersPath,
+    });
+    answer = false;
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const checking = data.checkNeeded(log);
+      await vi.advanceTimersByTimeAsync(NEEDED_TIMEOUT_MS);
+      await checking;
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(warnings.at(-1)).toMatch(/no answer within 5 seconds/);
+    // The queue is free: a reload runs.
+    answer = true;
+    await replace(dataCentersPath, JSON.stringify(rangesFile("203.0.113.0/24")));
+    await data.reload(log);
+    expect(data.isDataCenter("203.0.113.5")).toBe(true);
   });
 
   test("the timer checks every minute whether the file is needed", async () => {

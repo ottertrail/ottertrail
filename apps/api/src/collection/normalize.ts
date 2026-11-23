@@ -23,13 +23,22 @@ const UTM_PARAMS = [
   ["content", "utm_content"],
 ] as const;
 
+/**
+ * Format characters (bidi controls, zero-width characters) and the line and
+ * paragraph separators: they can hide or reorder displayed text. The AI
+ * ingestion schema refuses the same (ai/ingest-routes.ts, NO_FORMAT).
+ */
+export function hasHiddenCharacters(text: string): boolean {
+  return /[\p{Cf}\u2028\u2029]/u.test(text);
+}
+
 /** PostgreSQL text and jsonb reject NUL; jsonb also rejects unpaired UTF-16 surrogates. */
 export function isStorableText(text: string): boolean {
   return !text.includes("\u0000") && text.isWellFormed();
 }
 
 /** The first `max` characters, without cutting an emoji or other character in half. */
-function truncate(text: string, max: number): string {
+export function truncate(text: string, max: number): string {
   const cut = text.slice(0, max);
   return cut.isWellFormed() ? cut : cut.slice(0, -1);
 }
