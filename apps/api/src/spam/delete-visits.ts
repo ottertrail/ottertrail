@@ -21,22 +21,17 @@ import {
 } from "../visits/visits.ts";
 
 /**
- * The most visits one delete takes. Each statement names its visits in the
- * request's URL, which ClickHouse limits to 1 MiB, so they go
- * VISITS_PER_STATEMENT at a time, and each statement takes ClickHouse a
- * few seconds (docs/clickhouse.md, "Retention and deleting a project"): a
- * larger delete is refused, deleting nothing, and the dashboard asks for a
- * shorter period or narrower filters, to delete in parts.
+ * ClickHouse limits statement URLs to 1 MiB. Deletes use VISITS_PER_STATEMENT
+ * chunks, each taking seconds (docs/clickhouse.md, "Retention and deleting a project").
+ * Refuse larger requests so users can narrow the period or filters.
  */
 export const MAX_VISITS_PER_DELETE = 10_000;
 export const VISITS_PER_STATEMENT = 2_000;
 
 /**
- * How far around a visit's first and last event its delete reaches: a
- * retried event not merged yet is a second row whose time differs by the
- * seconds it spent on the way (docs/clickhouse.md, "Each event once"), and
- * must go too, or reads with FINAL would show it again. Less than the
- * gap that separates two visits of a visitor, so no other visit is touched.
+ * Include unmerged retries whose timestamps differ by network delay
+ * (docs/clickhouse.md, "Each event once"). Padding stays below the visit gap
+ * so it cannot reach another visit.
  */
 export const VISIT_PADDING_MS = VISIT_TIMEOUT_MS / 3;
 
@@ -48,13 +43,11 @@ export interface SpamFilters {
   to: Date;
   /** A referrer domain; its subdomains match too. */
   referrerDomain?: string | undefined;
-  /** A page path, exactly. */
   path?: string | undefined;
   /** An ISO 3166-1 country code, such as "DE". */
   country?: string | undefined;
 }
 
-/** What a delete takes, or took: visits, and their events by kind. */
 export interface SpamCounts {
   visits: number;
   events: number;
@@ -150,7 +143,6 @@ function visitsSql(filters: SpamFilters, params: QueryParams): string {
 /** Read-only and bounded, as the dashboard's reports: a period too large answers 503. */
 const FIND_SETTINGS = DASHBOARD_SETTINGS;
 
-/** What deleting with these filters would take (the preview). */
 export async function countSpamVisits(
   clickhouse: ClickHouseClient,
   filters: SpamFilters,
@@ -185,7 +177,6 @@ export type SpamDeletion =
   | {
       ok: true;
       counts: SpamCounts;
-      /** Replays of the deleted errors that `deleteReplays` deleted. */
       replaysDeleted: number;
     }
   /**
@@ -211,7 +202,6 @@ export class PartialSpamDeletionError extends Error {
   }
 }
 
-/** The visit as one delete names it: environment, visitor, and the times of its first and last event. */
 export interface VisitBounds {
   environment: string;
   /** The visitor ID, a 64-bit integer as text. */
@@ -221,12 +211,8 @@ export interface VisitBounds {
 }
 
 /**
- * The WHERE of one DELETE statement for these visits (one chunk), with its
- * values added to `params`: the project's events, of each visit's
- * environment and visitor, from its first event to its last widened by
- * VISIT_PADDING_MS either side, so a retried copy a few seconds out goes
- * too, and an event of the same visitor more than 30 minutes away (another
- * visit) does not. The project ID comes first, for the index.
+ * Filters project first for the index. Expand each visit by VISIT_PADDING_MS
+ * to include retries while excluding events in other visits.
  */
 export function visitsWhere(
   projectId: string,
@@ -301,9 +287,7 @@ export async function deleteSpamVisits(
     return { ok: false, reason: "changed", visits: visits.length };
   }
 
-  // Statement by statement; whatever happens, the visits that went take
-  // their replays and first-seen times with them (in finally), so a failure
-  // partway leaves nothing that points at deleted visits.
+  // Clean up replays and first-seen times in finally, including after partial failure.
   let deleted = 0;
   let replaysDeleted = 0;
   let failure: unknown;

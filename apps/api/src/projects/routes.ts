@@ -44,19 +44,19 @@ const nameSchema = {
 } as const;
 const hostnamesSchema = {
   type: "array",
-  // Generous here; parseHostnames enforces the real limit after removing duplicates.
+  // Allow duplicates here; parseHostnames applies the final limit.
   maxItems: MAX_ALLOWED_HOSTNAMES * 2,
   items: { type: "string", maxLength: 300 },
 } as const;
 const blockedAddressesSchema = {
   type: "array",
-  // Generous here; parseBlockedAddresses enforces the real limit after removing duplicates.
+  // Allow duplicates here; parseBlockedAddresses applies the final limit.
   maxItems: MAX_BLOCKED_ADDRESSES * 2,
   items: { type: "string", maxLength: 100 },
 } as const;
 const blockedReferrersSchema = {
   type: "array",
-  // Generous here; parseBlockedReferrers enforces the real limit after removing duplicates.
+  // Allow duplicates here; parseBlockedReferrers applies the final limit.
   maxItems: MAX_BLOCKED_REFERRERS * 2,
   items: { type: "string", maxLength: 300 },
 } as const;
@@ -75,10 +75,7 @@ function problem(code: string, message: string) {
   return { error: code, message };
 }
 
-/**
- * A project as this user may see it: in full for those who manage
- * projects, otherwise without its keys and settings (docs/access.md).
- */
+/** Hide keys and settings from users without project management access (docs/access.md). */
 function shownTo(access: UserAccess, project: Project) {
   if (can(access, "projects")) {
     return project;
@@ -88,17 +85,10 @@ function shownTo(access: UserAccess, project: Project) {
 }
 
 /**
- * Projects, for the signed-in dashboard. Every user sees the projects they
- * may reach; only the owner and admins see keys and settings, and create,
- * change, and delete projects (docs/access.md). Every route on one project
- * runs requireProjectAccess first.
- *
- * Changes to allowed hostnames reach the collection endpoint within a
- * minute, the lifetime of its project cache (collection/project-keys.ts);
- * changes to the collection rules (signed user IDs, data centers, replay
- * mode, heatmaps, blocked addresses and referrers) at once in this process.
- * A replaced key or a deleted project's key stops working at once: the
- * routes tell the cache to forget it.
+ * Only owner and admins manage projects or see keys and settings (docs/access.md).
+ * Hostname changes reach collection within the one-minute key-cache lifetime
+ * (collection/project-keys.ts). Collection rules, rotated keys, and deletions
+ * invalidate the cache immediately in this process.
  */
 export const projectRoutes: FastifyPluginCallback<{
   db: Kysely<Database>;
@@ -199,7 +189,6 @@ export const projectRoutes: FastifyPluginCallback<{
             replayMode: { type: "string", enum: ["off", "errors"] },
             // Heatmaps: clicks and scroll depth (docs/web-analytics.md, "Heatmaps"); off by default.
             heatmaps: { type: "boolean" },
-            // The overview's main goal: one of the project's goals, or null for none.
             mainGoalId: { type: ["string", "null"], pattern: UUID_PATTERN },
             // Addresses and ranges whose browser events are ignored (blocked-addresses.ts).
             blockedAddresses: blockedAddressesSchema,
@@ -240,7 +229,7 @@ export const projectRoutes: FastifyPluginCallback<{
       }
       let referrers: string[] | undefined;
       if (blockedReferrers !== undefined) {
-        // Against the allowed hostnames as they will be after this change.
+        // Validate against the hostnames that will remain after this change.
         const allowed =
           hostnames ?? (await findProject(db, request.params.id))?.allowedHostnames ?? [];
         const parsed = parseBlockedReferrers(blockedReferrers, allowed);
@@ -266,7 +255,7 @@ export const projectRoutes: FastifyPluginCallback<{
           .code(400)
           .send(problem("goal_not_found", "The project has no goal with this ID."));
       }
-      // Collection reads these rules from its cache: a change applies at once.
+      // Invalidate cached rules so changes apply immediately.
       if (
         requireSignedUserIds !== undefined ||
         ignoreDataCenters !== undefined ||
@@ -283,10 +272,7 @@ export const projectRoutes: FastifyPluginCallback<{
     },
   );
 
-  /**
-   * Deletes a project and all its events, for good. The request repeats the
-   * project's name, so a mistaken ID or a stray request cannot delete one.
-   */
+  /** Repeating the project name protects against a mistaken ID or stray request. */
   app.delete<{ Params: { id: string }; Body: { confirmName: string } }>(
     "/projects/:id",
     {
@@ -321,16 +307,13 @@ export const projectRoutes: FastifyPluginCallback<{
   );
 
   /**
-   * The requester's own address, as the API sees it (TRUST_PROXY applies),
-   * for "Add my address" in a project's blocked addresses. Not logged: the
-   * request log holds only the method and URL (app.ts), and the answer is
-   * not logged.
+   * TRUST_PROXY applies. Neither the address nor this response is logged; request
+   * logs keep only method and URL (app.ts). Used for "Add my address".
    */
   app.get("/client-address", { preHandler: [signedIn, manageProjects] }, async (request) =>
     ownAddress(request.ip),
   );
 
-  /** Replaces a project's public key: pages with the old snippet stop sending events. */
   app.post<{ Params: { id: string } }>(
     "/projects/:id/public-key",
     { preHandler: [fromDashboard, signedIn, manageProject], schema: { params: idParamsSchema } },
@@ -344,10 +327,7 @@ export const projectRoutes: FastifyPluginCallback<{
     },
   );
 
-  /**
-   * Replaces a project's secret key: servers with the old one stop sending
-   * events, and user IDs signed with it no longer pass.
-   */
+  /** Rotating the secret also invalidates user-ID signatures. */
   app.post<{ Params: { id: string } }>(
     "/projects/:id/secret-key",
     { preHandler: [fromDashboard, signedIn, manageProject], schema: { params: idParamsSchema } },
@@ -361,12 +341,9 @@ export const projectRoutes: FastifyPluginCallback<{
     },
   );
 
-  /*
-   * Starred projects: the signed-in user's own (stars.ts). They sit outside
-   * /projects/:id because they change nothing of the project, only the
-   * user's list; starring still needs the project, checked by the one
-   * access check (checkProjectAccess), so a project the user may not reach
-   * answers 404 as everywhere else.
+  /**
+   * Stars change the user's list, so routes sit outside /projects/:id (stars.ts).
+   * Starring still checks project access and returns 404 for inaccessible projects.
    */
   app.get("/starred-projects", { preHandler: [signedIn, anyUser] }, async (request) => ({
     projectIds: await listStarredProjects(db, userAccessOf(request)),

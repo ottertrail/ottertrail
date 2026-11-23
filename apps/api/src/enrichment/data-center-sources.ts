@@ -17,7 +17,6 @@ import {
 /** Fetches a URL's text; throws on a network error or an unsuccessful status. */
 export type FetchText = (url: string) => Promise<string>;
 
-/** Fetches a URL's body as a stream of bytes. */
 export type FetchStream = (url: string) => Promise<ReadableStream<Uint8Array<ArrayBuffer>>>;
 
 interface ListSource {
@@ -92,14 +91,12 @@ export function parseAzure(text: string): string[] {
   return strings(prefixes);
 }
 
-/** Oracle Cloud's public_ip_ranges.json. */
 export function parseOracle(text: string): string[] {
   return array(json(text).regions, "regions").flatMap((region) =>
     strings(array(region.cidrs, "cidrs").map((entry) => entry.cidr)),
   );
 }
 
-/** Vultr's geofeed, as JSON. */
 export function parseVultr(text: string): string[] {
   return strings(array(json(text).subnets, "subnets").map((subnet) => subnet.ip_prefix));
 }
@@ -167,7 +164,7 @@ export const HOSTING_NETWORKS: { id: string; name: string; asns: number[] }[] = 
   { id: "huawei-cloud", name: "Huawei Cloud", asns: [136907] },
 ];
 
-/** "2026-11" for offset 0, the previous month for offset 1. */
+/** offset counts months backward: 0 is this month, 1 is last month. */
 export function yearMonth(offset: number, now: Date): string {
   return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - offset, 1))
     .toISOString()
@@ -198,17 +195,14 @@ export async function rangesByNetwork(
     const provider = providerOf.get(Number(asn));
     if (provider !== undefined) ranges.get(provider)?.push(`${start}-${end}`);
   }
-  // The whole file has hundreds of thousands of rows: far fewer means it is
-  // not the file we expect.
+  // Far fewer rows than expected indicates the wrong file.
   if (rows < 10_000) throw new Error(`only ${rows} rows: not DB-IP's IP to ASN file`);
   return ranges;
 }
 
 /**
- * The lines of a gzipped text stream. A failed download or a corrupt file
- * rejects the loop that reads them, and stopping early cancels the download.
- * A line longer than `maxLineLength` rejects it too: DB-IP's lines are
- * short, and a stream without line breaks must not fill the memory.
+ * Corrupt or failed downloads reject iteration; stopping early cancels the download.
+ * Reject lines over maxLineLength so a stream without newlines cannot fill memory.
  */
 export async function* gunzippedLines(
   stream: ReadableStream<Uint8Array<ArrayBuffer>>,
@@ -246,9 +240,8 @@ export interface DataCenterDownload {
 }
 
 /**
- * Downloads every source. A source that fails keeps its ranges from
- * `previous`, with their old date, so one provider's outage or format
- * change does not drop the others' or its own.
+ * Failed sources keep their previous ranges and dates so an outage or format
+ * change does not remove coverage.
  */
 export async function downloadDataCenters(options: {
   fetchText: FetchText;
@@ -274,8 +267,7 @@ export async function downloadDataCenters(options: {
     try {
       let url = source.url;
       if (source.resolve !== undefined) url = source.resolve(await options.fetchText(url));
-      // Only well-formed ranges count: a page of HTML instead of the list
-      // must fail here, and keep the previous ranges.
+      // Reject malformed ranges or HTML responses and keep the previous ranges.
       const ranges = validRanges([...new Set(source.parse(await options.fetchText(url)))]);
       if (ranges.length < MIN_RANGES) throw new Error(`only ${ranges.length} valid ranges`);
       providers.push({ id: source.id, name: source.name, source: url, fetchedAt, ranges });

@@ -10,10 +10,8 @@ import { can, requirePermission, userAccessOf } from "./access.ts";
 import type { Permission } from "./areas.ts";
 
 /**
- * GET /api/me: who is signed in, the instance's name, timezone, and icon,
- * what they may reach (docs/access.md), read afresh on each request, and
- * whether avatars can be uploaded (an object store is set up). The
- * dashboard hides what the user cannot use; the routes refuse it regardless.
+ * Reread account and access on each request (docs/access.md). The dashboard
+ * hides unavailable features; server routes still enforce access.
  */
 export const meRoutes: FastifyPluginCallback<{
   db: Kysely<Database>;

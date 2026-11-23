@@ -1,15 +1,10 @@
 import { createCipheriv, createDecipheriv, hkdfSync, randomBytes } from "node:crypto";
 
 /**
- * Seals short secrets stored in PostgreSQL with AES-256-GCM, under a key
- * derived from AUTH_SECRET by HKDF, one key per purpose (`info`). A dump
- * of the database then holds nothing usable without AUTH_SECRET as well;
- * changing AUTH_SECRET makes every sealed value unreadable.
- *
- * Each sealed value is bound to what it is for (the GCM additional data),
- * so it cannot be moved to another row or field. Used for queued account
- * email links (notifications/link-sealer.ts) and for the backups' stored
- * secret and key (backups/secrets.ts).
+ * AES-256-GCM uses a purpose-specific HKDF key derived from AUTH_SECRET.
+ * Database dumps need AUTH_SECRET to decrypt; rotating it makes sealed values
+ * unreadable. GCM additional data binds each value to its row or field.
+ * Used by notifications/link-sealer.ts and backups/secrets.ts.
  */
 export class Sealer {
   readonly #key: Buffer;

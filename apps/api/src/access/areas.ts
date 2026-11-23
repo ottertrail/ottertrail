@@ -30,7 +30,6 @@ export const AREA_LEVELS: Record<Area, readonly AreaLevel[]> = {
   uptime_alerts: ["none", "view", "manage"],
 };
 
-/** A level for each area; those with nothing to change stop at view. */
 export interface Areas {
   web_analytics: "none" | "view";
   product_analytics: AreaLevel;
@@ -89,10 +88,8 @@ export const PRESETS = {
 } as const satisfies Record<string, Areas>;
 
 /**
- * What instance routes need, by role. Settings: the instance's name and
- * timezone. Members: the Members page. Channels: notification channels.
- * Projects: creating, changing, and deleting projects, their keys and
- * settings. Ownership: handing it to another user.
+ * Role permissions for instance routes. projects also covers project keys and
+ * settings; ownership permits transferring ownership.
  */
 export const PERMISSIONS = {
   settings: ["owner"],
@@ -105,7 +102,7 @@ export type Permission = keyof typeof PERMISSIONS;
 
 const LEVEL_RANK: Record<AreaLevel, number> = { none: 0, view: 1, manage: 2 };
 
-/** Whether `level` reaches `needed`: manage includes view. */
+/** manage includes view. */
 export function reaches(level: AreaLevel, needed: "view" | "manage"): boolean {
   return LEVEL_RANK[level] >= LEVEL_RANK[needed];
 }

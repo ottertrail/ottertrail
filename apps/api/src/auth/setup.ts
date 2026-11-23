@@ -9,17 +9,9 @@ import { hashToken, newToken } from "./tokens.ts";
 export const SETUP_LINK_TTL_MS = 60 * 60 * 1000;
 
 /**
- * Creating the owner, the first dashboard account.
- *
- * Nobody can sign up, and there is no default password. Whoever runs the
- * instance runs `vp run setup`, which prints a link with a random token;
- * opening it lets them choose the owner's name, email, and password. The
- * link works once, for an hour, and stops working for good once an owner
- * exists. A setup page that let the first visitor become the owner would
- * hand a freshly deployed instance to whoever found it first.
- *
- * The database keeps only a SHA-256 hash of the token, so reading the
- * database does not reveal a working link.
+ * vp run setup prints a random link, valid once for an hour and only before
+ * an owner exists. Requiring server access prevents the first visitor from
+ * claiming a new instance. PostgreSQL stores only the SHA-256 token hash.
  */
 
 export async function ownerExists(db: Kysely<Database>): Promise<boolean> {
@@ -31,10 +23,7 @@ export async function ownerExists(db: Kysely<Database>): Promise<boolean> {
   return owner !== undefined;
 }
 
-/**
- * A new setup link's token, replacing any earlier one, or null when the
- * instance already has an owner.
- */
+/** Replaces earlier setup links. Returns null if an owner exists. */
 export async function createSetupToken(
   db: Kysely<Database>,
   now = new Date(),
@@ -59,18 +48,14 @@ export interface OwnerDetails {
   name: string;
   email: string;
   password: string;
-  /** The instance's name, which the dashboard shows above the projects. */
   instanceName: string;
 }
 
 export type SetupResult = "created" | "invalid_link" | "already_set_up";
 
 /**
- * Creates the owner from a setup link, and names the instance and sets its
- * timezone. Everything happens in one transaction: the token is used up,
- * and the user, their password, and the settings are stored together or
- * not at all. Two requests with the same link cannot both
- * succeed: the first deletes the token, and the second finds nothing.
+ * Consumes the token and writes the owner, password, name, and timezone in one
+ * transaction. Deleting the token prevents concurrent requests from reusing it.
  */
 export async function completeSetup(
   db: Kysely<Database>,
@@ -80,14 +65,11 @@ export async function completeSetup(
     timeZone,
     now = new Date(),
   }: {
-    /** The instance's timezone, chosen on the setup page. */
     timeZone: string;
     now?: Date;
   },
 ): Promise<SetupResult> {
-  // Hashing a password is slow on purpose (scrypt: about 40 ms and 32 MB),
-  // so the cheap checks come first: a made-up token, or a request after the
-  // owner exists, costs one query, not a hash.
+  // Check cheaply before scrypt (about 40 ms and 32 MB) so invalid links cost no hash.
   if (await ownerExists(db)) {
     return "already_set_up";
   }
@@ -101,8 +83,7 @@ export async function completeSetup(
     return "invalid_link";
   }
 
-  // Better Auth's own hash, so its sign-in can verify it. Outside the
-  // transaction, which then checks the link again before using it.
+  // Use Better Auth's hash outside the transaction; recheck the link inside it.
   const passwordHash = await (await auth.$context).password.hash(password);
 
   const result = await db.transaction().execute(async (trx): Promise<SetupResult> => {
@@ -136,7 +117,7 @@ export async function completeSetup(
     await updateInstanceSettings(trx, { name: instanceName, timeZone });
     return "created";
   });
-  // Read again once committed: an earlier read may have cached the defaults.
+  // Discard cached defaults after committing settings.
   forgetInstanceSettings(db);
   return result;
 }

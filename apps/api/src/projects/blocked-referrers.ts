@@ -4,13 +4,9 @@ import { parseHostname } from "./projects.ts";
 export const MAX_BLOCKED_REFERRERS = 100;
 
 /**
- * One blocked referrer domain in its stored form, or null when it is not a
- * domain. A pasted address keeps only its hostname: "https://Spam.Example:8080/x"
- * is "spam.example". Lower case, without a trailing dot, internationalized
- * names in their ASCII form ("bücher.example" is "xn--bcher-kva.example"),
- * as browsers send them. At least two labels: "com" would block every
- * .com referrer. Each entry also matches its subdomains
- * (enrichment/referrer-spam.ts).
+ * Accept pasted URLs; store lowercase ASCII hostnames without a trailing dot.
+ * Require two labels to avoid blocking all of .com, for example. Entries also
+ * match subdomains (enrichment/referrer-spam.ts).
  */
 export function parseBlockedReferrer(raw: string): string | null {
   const text = raw.trim();
@@ -19,12 +15,12 @@ export function parseBlockedReferrer(raw: string): string | null {
     const url = URL.parse(text);
     hostname = url === null || url.hostname === "" ? null : parseHostname(url.hostname);
   } else {
-    // A host with a port or path, without a scheme: as typed from the address bar.
+    // Accept a pasted host with a port or path and no scheme.
     const host = /^[^/?#]*/.exec(text)?.[0].replace(/:\d+$/, "") ?? "";
     hostname = parseHostname(host);
   }
   if (hostname === null || hostname.startsWith("[") || !hostname.includes(".")) return null;
-  // An IP address is no domain: blocked addresses are the setting for those.
+  // IP addresses belong in blocked addresses.
   if (/^[\d.]+$/.test(hostname)) return null;
   // A public suffix would block every site under it.
   if (PUBLIC_SUFFIXES.has(hostname)) return null;
@@ -32,12 +28,9 @@ export function parseBlockedReferrer(raw: string): string | null {
 }
 
 /**
- * Common public suffixes of two labels, under which anyone registers a
- * domain: blocking one would block every site under it. Not the whole
- * Public Suffix List, which no dependency provides here: entries of one
- * label ("com") are refused anyway, and these are the second levels most
- * sites live under. Kept the same in the dashboard
- * (apps/web/src/features/projects/spam-rules.ts).
+ * A partial list of common two-label public suffixes; blocking one would block
+ * every site beneath it. Single-label suffixes are already rejected.
+ * Keep aligned with apps/web/src/features/projects/spam-rules.ts.
  */
 export const PUBLIC_SUFFIXES: ReadonlySet<string> = new Set([
   "co.uk",
@@ -105,9 +98,8 @@ export type BlockedReferrersResult =
   | { ok: false; message: string };
 
 /**
- * A project's blocked referrers, checked, normalised, and without repeats;
- * or what is wrong, naming the first bad entry. The dashboard checks the
- * same rules as the user types (apps/web/src/features/projects/spam-rules.ts).
+ * Returns normalized entries without duplicates or the first invalid entry.
+ * Keep validation aligned with apps/web/src/features/projects/spam-rules.ts.
  */
 export function parseBlockedReferrers(
   raw: readonly string[],

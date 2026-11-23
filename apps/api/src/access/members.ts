@@ -5,14 +5,12 @@ import type { Database } from "../db/schema.ts";
 import type { Areas, Role } from "./areas.ts";
 import { type AccessChange, setUserAccessIn } from "./grants.ts";
 
-/** A member's access as the Members page shows and sends it. */
 export interface MemberAccess {
   /** "all" includes projects created later. */
   projects: "all" | string[];
   areas: Areas;
 }
 
-/** A dashboard user on the Members page. */
 export interface Member {
   id: string;
   name: string;
@@ -24,7 +22,6 @@ export interface Member {
   createdAt: Date;
 }
 
-/** Who acts: the signed-in user's ID and role. */
 export interface Actor {
   id: string;
   role: Role;
@@ -116,9 +113,8 @@ export async function listMembers(db: Kysely<Database>): Promise<Member[]> {
 }
 
 /**
- * A user's ID and role, their row locked until the transaction ends, so a
- * role checked against stays the role acted on: the owner promoting
- * someone at the same moment waits, or is waited for.
+ * Lock the user until transaction end so concurrent role changes cannot invalidate
+ * the authorization check.
  */
 export async function lockUser(trx: Transaction<Database>, id: string): Promise<Actor | null> {
   return (
@@ -131,7 +127,7 @@ export async function lockUser(trx: Transaction<Database>, id: string): Promise<
   );
 }
 
-/** Deletes what a user made that their role no longer allows: invitations and reset links. */
+/** Remove invitations and reset links no longer allowed by the user's role. */
 async function dropWhatTheyMade(trx: Transaction<Database>, userId: string) {
   await trx.deleteFrom("dashboard_invitations").where("invited_by", "=", userId).execute();
   await trx.deleteFrom("dashboard_password_resets").where("created_by", "=", userId).execute();
@@ -140,10 +136,8 @@ async function dropWhatTheyMade(trx: Transaction<Database>, userId: string) {
 export type MemberResult = "done" | "not_found" | "forbidden";
 
 /**
- * Changes a user's role or a member's access, within the role rules,
- * their row locked first. Their own reset link goes (setUserAccessIn). An
- * admin made a member loses the invitations and reset links they made:
- * they could no longer make them.
+ * Lock before checking role rules. Invalidate the target's reset link
+ * (setUserAccessIn); demoted admins also lose links and invitations they made.
  */
 export async function changeMember(
   db: Kysely<Database>,
@@ -189,7 +183,6 @@ export async function removeMember(
   });
 }
 
-/** Whether `password` is the user's own, checked against Better Auth's hash. */
 export async function checkPassword(
   db: Kysely<Database>,
   auth: Auth,

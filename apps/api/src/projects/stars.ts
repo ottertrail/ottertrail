@@ -3,13 +3,10 @@ import type { Kysely } from "kysely";
 import { canReachProject, type UserAccess } from "../access/access.ts";
 import type { Database } from "../db/schema.ts";
 
-/*
- * Starred projects (docs/dashboard.md, "Starred projects"): each dashboard
- * user's own, kept in project_stars. Only a project the user may reach can
- * be starred (the routes check it through access.ts), and a star on one
- * they can no longer reach is never listed. Changing a member's projects
- * deletes their stars on the others (access/grants.ts); deleting the user
- * or the project deletes its stars (foreign keys).
+/**
+ * Stars require current project access (docs/dashboard.md, "Starred projects").
+ * Grant changes remove inaccessible stars (access/grants.ts). Foreign keys remove
+ * stars when a user or project is deleted.
  */
 
 /** The IDs of the projects `access`'s user starred and may still reach, oldest star first. */
@@ -27,7 +24,7 @@ export async function listStarredProjects(
   return rows.map((row) => row.project_id).filter((id) => canReachProject(access, id));
 }
 
-/** Stars a project for a user; starring it again changes nothing. The caller checks access. */
+/** Idempotent. The caller checks project access. */
 export async function starProject(
   db: Kysely<Database>,
   userId: string,
@@ -40,7 +37,6 @@ export async function starProject(
     .execute();
 }
 
-/** Takes a user's star off a project, if they had one. */
 export async function unstarProject(
   db: Kysely<Database>,
   userId: string,

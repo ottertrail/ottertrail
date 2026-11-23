@@ -57,20 +57,15 @@ export const DEFAULT_LINK_LIMIT: RateLimit = { capacity: 10, refillPerSecond: 1 
 /** Reset requests from the sign-in page per client address (IPv6 by its /64): 5 per 15 minutes. */
 export const DEFAULT_RESET_REQUEST_IP_LIMIT: RateLimit = { capacity: 5, refillPerSecond: 5 / 900 };
 
-/**
- * Reset requests per email address: 3 an hour, counted the same way
- * whether or not an account has it, so the limit tells nothing either.
- */
+/** Limit every email equally to 3 reset requests an hour to avoid revealing accounts. */
 export const DEFAULT_RESET_REQUEST_EMAIL_LIMIT: RateLimit = {
   capacity: 3,
   refillPerSecond: 3 / 3600,
 };
 
 /**
- * Reset requests for the whole instance: 30 at once, then 600 an hour.
- * Checked before the per-address limit, so it also bounds how many
- * addresses that limit keeps in a hour, and far below what the worker
- * sends, so the queue never grows without end.
+ * Instance reset requests: burst 30, then 600 an hour. Check first to bound the
+ * per-address limiter's memory and keep the queue below worker capacity.
  */
 export const DEFAULT_RESET_REQUEST_INSTANCE_LIMIT: RateLimit = {
   capacity: 30,
@@ -78,9 +73,8 @@ export const DEFAULT_RESET_REQUEST_INSTANCE_LIMIT: RateLimit = {
 };
 
 /**
- * Addresses the per-address limit keeps. The instance limit lets at most
- * about 630 new ones in an hour, and a bucket is full again an hour after
- * its last request, so one is never dropped while it still counts.
+ * The instance limit admits about 630 new addresses an hour. Buckets refill fully
+ * after an idle hour, so this cap cannot evict a bucket that still counts.
  */
 const RESET_REQUEST_EMAIL_KEYS = 100_000;
 
@@ -126,8 +120,7 @@ const accessSchema = {
   required: ["projects", "areas"],
   additionalProperties: false,
   properties: {
-    // anyOf, the text first: Fastify's validator coerces types, and would
-    // turn "all" into ["all"] if it tried the array first.
+    // Try text first: Fastify coercion would otherwise turn "all" into ["all"].
     projects: {
       anyOf: [
         { type: "string", const: "all" },
@@ -152,7 +145,6 @@ const roleProperties = {
 
 type RoleBody = { role: "admin" | "member"; access?: MemberAccess };
 
-/** What a body gives, or null for a member without their access. */
 function changeOf(body: RoleBody): AccessChange | null {
   if (body.role === "admin") return { role: "admin" };
   return body.access === undefined ? null : { role: "member", ...body.access };
@@ -172,7 +164,6 @@ const invitationParams = {
 } as const;
 const tokenSchema = { type: "string", minLength: 1, maxLength: 200 } as const;
 
-/** Who acts: the signed-in user, as the permission check read them. */
 function actorOf(request: FastifyRequest): Actor {
   const { userId, role } = userAccessOf(request);
   return { id: userId, role };
@@ -189,34 +180,12 @@ function answerOf(
 }
 
 /**
- * Members, invitations, reset links, and handing over ownership
- * (docs/access.md).
- *
- * For the owner and admins (`members`), within the role rules of members.ts:
- *   GET    /api/members                         users and pending invitations
- *   PATCH  /api/members/:userId                 { role, access? }
- *   DELETE /api/members/:userId
- *   POST   /api/members/:userId/reset-link      { email? }: a one-time link, valid 24 hours; emailed too with `email`
- *   POST   /api/invitations                     { email, role, access? }: a link to copy, emailed too with SMTP
- *   POST   /api/invitations/:invitationId/link  a new link; the old one stops working
- *   DELETE /api/invitations/:invitationId
- * For the owner only (`ownership`):
- *   POST   /api/members/:userId/ownership       { password }
- * Public, limited per client address, the token in the body:
- *   POST   /api/invite/preview                  { token }: who invited, to what
- *   POST   /api/invite/accept                   { token, name, password, confirmPassword }
- *   POST   /api/reset-password/preview          { token }: whose password
- *   POST   /api/reset-password                  { token, password, confirmPassword }
- * Public, with SMTP only, limited per client address and per email address:
- *   POST   /api/reset-password/request          { email }: one answer for every address
- *
- * Links are copied by whoever made them, and without SMTP sent by them
- * too. With SMTP (`emailConfigured`), invitations are emailed as well, a
- * reset link is emailed when asked, and a reset sends the "password
- * changed" notice, all through the worker's queue
- * (notifications/account-emails.ts). Each link carries its token in the
- * fragment, which browsers never send to a server, and starts with the
- * instance's PUBLIC_URL, never a request's Host.
+ * Members, invitations, reset links, and ownership (docs/access.md).
+ * Owner and admins need members permission and must follow members.ts role rules;
+ * only the owner may transfer ownership. Public link routes limit client IPs,
+ * and emailed reset requests also limit email addresses. SMTP enables queued
+ * account email (notifications/account-emails.ts). Links use PUBLIC_URL, never
+ * request Host, and keep tokens in fragments that browsers never send to servers.
  */
 export const memberRoutes: FastifyPluginCallback<{
   db: Kysely<Database>;
@@ -232,10 +201,7 @@ export const memberRoutes: FastifyPluginCallback<{
   invitationEmailLimit?: RateLimit;
   /** Seals the links queued emails carry; required with `emailConfigured`. */
   sealer?: LinkSealer | null;
-  /**
-   * Handing over ownership checks the owner's password: tries come from
-   * the app's one limiter for current-password checks (auth/password-tries.ts).
-   */
+  /** Share the app's current-password limiter (auth/password-tries.ts). */
   passwordTries?: TokenBucketLimiter;
   /** Where a removed user's avatar is deleted from; none without a store. */
   objectStore?: ObjectStore | null;
@@ -271,16 +237,12 @@ export const memberRoutes: FastifyPluginCallback<{
   });
   const requestsOfInstance = new TokenBucketLimiter(resetRequestInstanceLimit);
   const invitationEmails = new TokenBucketLimiter(invitationEmailLimit);
-  /** The sealer, there whenever email is set up. */
   const linkSealer = (): LinkSealer => {
     if (sealer === null) throw new Error("Account email needs a LinkSealer");
     return sealer;
   };
 
-  /**
-   * Spends one of the actor's emailed invitations, with email set up;
-   * answers 429 and false when none is left.
-   */
+  /** Consumes an emailed invitation allowance; returns false and 429 at the limit. */
   function invitationEmailAllowed(actorId: string, reply: FastifyReply): boolean {
     if (!emailConfigured) return true;
     const result = invitationEmails.take(actorId);
@@ -323,7 +285,6 @@ export const memberRoutes: FastifyPluginCallback<{
     });
   }
 
-  // Before the body is read or checked, as setup does.
   const limited = async (request: FastifyRequest, reply: FastifyReply) => {
     const result = limiter.take(clientKey(request.ip));
     if (result.allowed) return undefined;
@@ -373,7 +334,7 @@ export const memberRoutes: FastifyPluginCallback<{
     { preHandler: [fromDashboard, signedIn, manageMembers], schema: { params: userParams } },
     async (request, reply) => {
       const result = await removeMember(db, actorOf(request), request.params.userId);
-      // Their avatar goes with them, once the row that pointed to it is gone.
+      // Delete the avatar only after its referencing row is gone.
       if (result === "done") {
         await deleteUserAvatars(objectStore, request.params.userId.toLowerCase(), request.log);
       }
@@ -412,8 +373,7 @@ export const memberRoutes: FastifyPluginCallback<{
       if (made === "forbidden") return reply.code(403).send(FORBIDDEN);
       const url = resetUrl(made.token);
       await db.transaction().execute(async (trx) => {
-        // The earlier link no longer works: its email, if not sent yet, goes,
-        // whether or not this one is emailed.
+        // Remove queued email for the invalidated link, even if the new link is not emailed.
         await dropQueuedAccountEmails(trx, "reset_link", made.email);
         if (wantsEmail) {
           await enqueueAccountEmail(
@@ -492,7 +452,7 @@ export const memberRoutes: FastifyPluginCallback<{
     },
     async (request, reply) => {
       const email = request.body.email.trim();
-      // The check sign-in makes: an account it refuses could never sign in.
+      // Match sign-in validation so invited accounts can sign in.
       if (!canSignInWith(email)) {
         return reply
           .code(400)
@@ -641,7 +601,6 @@ export const memberRoutes: FastifyPluginCallback<{
     },
   );
 
-  // Before the body is read or checked, as the links' limit is.
   const requestLimited = async (request: FastifyRequest, reply: FastifyReply) => {
     const result = requestsByAddress.take(clientKey(request.ip));
     if (result.allowed) return undefined;
@@ -670,9 +629,8 @@ export const memberRoutes: FastifyPluginCallback<{
       // As sign-in looks addresses up, and as accounts store them.
       const email = request.body.email.trim().toLowerCase();
       if (!canSignInWith(email)) return reply.code(400).send(INVALID_EMAIL);
-      // The instance's limit first: it bounds the rows a flood from many
-      // client addresses can queue, and the addresses the next limit keeps.
-      // One after the other: an address is counted only past the instance's limit.
+      // Check instance first to bound queued rows and per-email limiter memory.
+      // Count an email only after the instance limit passes.
       for (const take of [
         () => requestsOfInstance.take("instance"),
         () => requestsByEmail.take(emailKey(email)),
@@ -685,9 +643,8 @@ export const memberRoutes: FastifyPluginCallback<{
             .send(RESET_REQUESTS_LIMITED);
         }
       }
-      // The same one insert for every address (none when a request for it
-      // already waits): the worker looks the account up, makes the link,
-      // and sends it, or sends nothing.
+      // Queue the same insert for every address to avoid revealing accounts. The worker
+      // looks up accounts and sends only when one exists.
       await enqueueAccountEmail(
         db,
         { kind: "password_reset", to: email, params: {} },

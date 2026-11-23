@@ -19,7 +19,6 @@ import type { Database } from "../db/schema.ts";
 import { dropQueuedAccountEmails, enqueueAccountEmail } from "../notifications/account-emails.ts";
 import type { LinkSealer } from "../notifications/link-sealer.ts";
 
-/** As the setup form's name. */
 export const MAX_NAME_LENGTH = 200;
 
 const problem = (error: string, message: string) => ({ error, message });
@@ -56,7 +55,6 @@ const isUniqueViolation = (error: unknown) =>
 
 const currentPassword = { type: "string", minLength: 1, maxLength: MAX_PASSWORD_LENGTH } as const;
 
-/** Spends one try of `userId`'s; answers 429 when none is left. */
 function limited(limiter: TokenBucketLimiter, userId: string, reply: FastifyReply) {
   const tried = limiter.take(userId);
   if (tried.allowed) return false;
@@ -70,26 +68,12 @@ function limited(limiter: TokenBucketLimiter, userId: string, reply: FastifyRepl
 }
 
 /**
- * The signed-in user's own account (docs/access.md, "Your account"):
- *
- *   PATCH  /api/account                 { name }
- *   POST   /api/account/email           { email, password }
- *   POST   /api/account/password        { currentPassword, password, confirmPassword, revokeOtherSessions }
- *   GET    /api/account/sessions        the user's sessions, without their tokens
- *   DELETE /api/account/sessions/:id    signs out one other session
- *   DELETE /api/account/sessions        signs out every other session
- *
- * Every signed-in user may change their own name, email, and password,
- * and nobody else's. Better Auth's own routes for these
- * (/api/auth/update-user, /change-email, /change-password) are turned off
- * (auth.ts), so these are the only way, with these checks.
- * With SMTP set up, an email change queues a notice to the old address
- * (notifications/account-emails.ts).
- *
- * Bodies are checked by schema before anything else; the password tries,
- * shared with handing over ownership, are counted per user once the
- * session is known. Nothing here logs a password or
- * an email: the request log has the method and URL only (app.ts).
+ * Users may change only their own account (docs/access.md, "Your account").
+ * Better Auth's alternative update routes are disabled (auth.ts). Current-password
+ * checks share the ownership-transfer limiter. Schema validation runs first.
+ * SMTP email changes queue a notice to the old address
+ * (notifications/account-emails.ts). Request logs contain only method and URL
+ * (app.ts), never passwords or email addresses.
  */
 export const accountRoutes: FastifyPluginCallback<{
   db: Kysely<Database>;
@@ -163,7 +147,7 @@ export const accountRoutes: FastifyPluginCallback<{
     },
     async (request, reply) => {
       const user = signedInUser(request);
-      // Sign-in looks addresses up in lower case, as setup and invitations store them.
+      // Normalize email to match sign-in lookup.
       const email = request.body.email.trim().toLowerCase();
       if (!canSignInWith(email)) return reply.code(400).send(INVALID_EMAIL);
       if (email === user.email.toLowerCase()) return reply.code(400).send(SAME_EMAIL);
@@ -172,11 +156,9 @@ export const accountRoutes: FastifyPluginCallback<{
         return reply.code(403).send(WRONG_PASSWORD);
       }
       try {
-        // Only the address changes: the role, the grants, and every session
-        // stay. An address with a pending invitation is the invitee's: in the
-        // same statement, so no invitation can slip in between a check and it.
-        // Links emailed to the old address stop working with it, in the same
-        // transaction: the old mailbox may be the one someone else reads.
+        // Reject pending invitee addresses in the update statement to avoid a race.
+        // Invalidate old-address links in the same transaction; another person may
+        // control that mailbox.
         const updated = await db.transaction().execute(async (trx) => {
           const old = await trx
             .selectFrom("dashboard_users")
@@ -201,10 +183,8 @@ export const accountRoutes: FastifyPluginCallback<{
             .returning(["id", "name", "email"])
             .executeTakeFirst();
           if (changed === undefined) return undefined;
-          // Every reset link goes, not only "Forgot password?"'s: an owner's
-          // or admin's may have been emailed to the old address too, and once
-          // sent nothing records it. The user, signed in with their password,
-          // needs none, and an owner or admin can make a new one.
+          // Remove all reset links because even admin-made links may have been emailed
+          // to the old address; delivery leaves no record of that association.
           await trx
             .deleteFrom("dashboard_password_resets")
             .where("user_id", "=", user.id)
@@ -212,7 +192,7 @@ export const accountRoutes: FastifyPluginCallback<{
           await dropQueuedAccountEmails(trx, "reset_link", old.email);
           await dropQueuedAccountEmails(trx, "password_reset", old.email);
           if (emailConfigured && sealer !== null) {
-            // The old address hears of it, so a change its owner didn't make is noticed.
+            // Notify the old address so its owner can detect an unauthorized change.
             await enqueueAccountEmail(
               trx,
               {
@@ -265,8 +245,6 @@ export const accountRoutes: FastifyPluginCallback<{
       if (body.password !== body.confirmPassword) return reply.code(400).send(PASSWORDS_DIFFER);
       if (limited(passwordTries, user.id, reply)) return reply;
       try {
-        // Better Auth checks the current password, hashes the new one, and,
-        // when asked, deletes every session and signs this one in afresh.
         const { headers } = await auth.api.changePassword({
           body: {
             currentPassword: body.currentPassword,
@@ -297,7 +275,7 @@ export const accountRoutes: FastifyPluginCallback<{
       .where("expires_at", ">", new Date())
       .orderBy("updated_at", "desc")
       .execute();
-    // No token: the page never needs one, and it names the session.
+    // Omit session tokens; the page only needs session IDs.
     return {
       sessions: rows.map((row) => ({
         id: row.id,
@@ -326,8 +304,7 @@ export const accountRoutes: FastifyPluginCallback<{
       if (request.params.id.toLowerCase() === sessionId) {
         return reply.code(400).send(CURRENT_SESSION);
       }
-      // Only the user's own: another user's session ID deletes nothing.
-      // Its heatmap overlay tokens go with it (a foreign key).
+      // Restrict deletion to the caller's sessions. Foreign keys remove overlay tokens.
       const deleted = await db
         .deleteFrom("dashboard_sessions")
         .where("id", "=", request.params.id)

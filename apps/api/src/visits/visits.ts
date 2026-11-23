@@ -4,13 +4,9 @@ import { fromClickHouseTime, QueryParams, queryRows, type Reader } from "../clic
 export const VISIT_TIMEOUT_MS = 30 * 60 * 1000;
 
 /**
- * How far before and after a range the query reads. Visitor IDs change at
- * midnight in the instance's timezone, so every visit lies within one
- * local day, and no local day is longer than 25 hours (when clocks go back).
- * With this much on each side, the query sees every visit that touches the
- * range from its first event to its last: whether it started inside the
- * range, and its exit page, duration, and bounce, which can depend on later
- * events.
+ * Read 25 hours around the range to include whole visits. IDs rotate at local
+ * midnight; DST can extend a local day to 25 hours. Entry, exit, duration, and
+ * bounce may depend on events outside the requested range.
  */
 export const VISIT_CONTEXT_MS = 25 * 60 * 60 * 1000;
 
@@ -18,10 +14,8 @@ export const VISIT_CONTEXT_MS = 25 * 60 * 60 * 1000;
 export const PAGEVIEW = "pageview";
 export const ENGAGEMENT = "engagement";
 /**
- * An error in the page (docs/errors.md): an event with this name and a
- * fingerprint. Not web analytics, so visits and reports leave it out. An
- * "error" event without a fingerprint is a custom event a site sent before
- * errors existed, and counts as one.
+ * Errors with fingerprints are excluded from web analytics (docs/errors.md).
+ * An "error" without a fingerprint remains a custom event for older senders.
  */
 export const ERROR = "error";
 /** A page load's Web Vitals, sent once when it is first hidden (speed/speed.ts). Not web analytics. */
@@ -38,7 +32,6 @@ export function analyticsEvent(table?: string): string {
 }
 
 export interface Visit {
-  /** The visitor ID on the day of the visit. */
   visitorId: string;
   startedAt: Date;
   /** The last event of the visit, including the final engagement report. */
@@ -66,7 +59,6 @@ export interface Visit {
   country: string | null;
   region: string | null;
   city: string | null;
-  /** The app's version, as the site named it. */
   release: string | null;
 }
 
@@ -141,14 +133,8 @@ export interface VisitsQueryOptions {
 }
 
 /**
- * ClickHouse SQL for the visits of a range (see VisitRange), with its values
- * added to `params`. Columns: visitor_id, started_at, ended_at, engaged_ms,
- * pageviews, interactions, entry_path, exit_path, duration_ms, bounce, and
- * the first-event columns (unless left out).
- *
- * Window functions follow each visitor's events in order: by time,
- * engagement reports before other events at the same moment, then by ID so
- * the order is always the same.
+ * Builds ClickHouse SQL and adds values to params. Orders by time, engagement
+ * before other events at the same time, then ID for a stable order.
  */
 export function visitsSql(
   { projectId, environment, from, to, until }: VisitRange,
@@ -159,10 +145,9 @@ export function visitsSql(
   const contextEnd = to.getTime() + VISIT_CONTEXT_MS;
   const readTo = new Date(until === undefined ? contextEnd : Math.min(contextEnd, until.getTime()));
   const order = "occurred_at, order_rank, event_id";
-  // The names are the constants above, never input.
+  // Column names come only from the constants above.
   const eventColumns = firstEventColumns === false ? "" : `, ${FIRST_EVENT_COLUMNS.join(", ")}`;
-  // The first event that is not an engagement report. A tuple keeps a
-  // first event's NULL: argMin skips NULL arguments.
+  // A tuple preserves NULL from the first event; argMin skips bare NULL arguments.
   const firstOf = (columns: readonly string[]) =>
     `argMinIf(tuple(${columns.join(", ")}), (occurred_at, event_id), name != '${ENGAGEMENT}')`;
   const visitColumns =

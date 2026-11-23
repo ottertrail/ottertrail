@@ -32,21 +32,17 @@ export const OVERLAY_LINK_TTL_MS = 5 * 60 * 1000;
 /** How long a session lasts from the exchange. */
 export const OVERLAY_SESSION_TTL_MS = 30 * 60 * 1000;
 /**
- * How long rows are kept after they expire: a link used or expired is
- * still known for this long, so the overlay can say so (rather than fail
- * without a reason, as for a token never made). Only hashes, of no use.
+ * Retain expired and spent hashes so the overlay can distinguish them from
+ * unknown tokens. They cannot authorize reads.
  */
 export const OVERLAY_TOKEN_KEEP_MS = 24 * 60 * 60 * 1000;
-/**
- * The only scope there is: heatmap aggregates of one project, and saving
- * a view of the link's page.
- */
+/** Allows heatmap reads and saving a view only of the link's page. */
 export const OVERLAY_SCOPE = "heatmap:read";
 /** A token as newToken() writes it: 32 bytes in base64url, 43 characters. */
 export const OVERLAY_TOKEN_PATTERN = "^[A-Za-z0-9_-]{43}$";
 const TOKEN = new RegExp(OVERLAY_TOKEN_PATTERN);
 
-/** Whether text has a token's shape: checked before any database work. */
+/** Validate shape before database work. */
 export const isOverlayToken = (text: string): boolean => TOKEN.test(text);
 
 /** Deletes rows that expired more than OVERLAY_TOKEN_KEEP_MS ago. Run on each insert. */
@@ -88,19 +84,17 @@ export async function mintOverlayLink(
   return { token, expiresAt };
 }
 
-/** A link as found by its hash: what it is for, with its project's allowed hostnames. */
 export interface OverlayLink {
   userId: string;
   sessionId: string;
   projectId: string;
   allowedHostnames: string[];
-  /** The page it was made for, or null. */
   path: string | null;
   /** Used already, or past its 5 minutes. */
   spent: boolean;
 }
 
-/** The link with this token, used or not, or null when none is known. */
+/** Includes spent links; null for unknown tokens. */
 export async function findOverlayLink(
   db: Kysely<Database>,
   token: string,
@@ -135,10 +129,7 @@ export async function findOverlayLink(
   };
 }
 
-/**
- * Uses the link: true for the one request that does so while it is valid,
- * false for every other (used already, expired, or another request won).
- */
+/** Atomically consumes a valid link; only one concurrent request can succeed. */
 export async function useOverlayLink(
   db: Kysely<Database>,
   token: string,
@@ -156,10 +147,7 @@ export async function useOverlayLink(
   return row !== undefined;
 }
 
-/**
- * A session for the link's user, project, and page. Returns the token
- * once; only its hash is kept.
- */
+/** Returns the token once; store only its hash. Carries the link's user, project, and page. */
 export async function startOverlaySession(
   db: Kysely<Database>,
   { userId, sessionId, path }: { userId: string; sessionId: string; path: string | null },

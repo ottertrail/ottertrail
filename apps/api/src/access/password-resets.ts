@@ -16,13 +16,10 @@ export const EMAILED_RESET_TTL_MS = 60 * 60 * 1000;
 export type ResetMaker = { userId: string } | "command" | "email";
 
 /**
- * A one-time link that sets a user's password (docs/access.md). A user has
- * one emailed link at most, and one other: a new one replaces the old of
- * its sort, so asking for an email never voids a link an owner or admin
- * made, nor the other way round. Only a hash of its token is kept.
- * `madeBy` names the user who made it, "command" for the server's
- * command, or "email" for a request on the sign-in page. Callers check
- * that a maker may reset the user; using the link checks it again.
+ * Keep at most one emailed and one other reset link per user, replacing only
+ * the same kind so public requests cannot void owner/admin links. Store only
+ * token hashes. Check the maker's authority both when creating and using links
+ * (docs/access.md).
  */
 export async function createPasswordReset(
   db: Kysely<Database> | Transaction<Database>,
@@ -56,7 +53,6 @@ function validReset(db: Kysely<Database>, token: string, now: Date) {
     .executeTakeFirst();
 }
 
-/** The account a reset link is for, or null when it no longer works. */
 export async function previewPasswordReset(
   db: Kysely<Database>,
   token: string,
@@ -67,10 +63,8 @@ export async function previewPasswordReset(
 }
 
 /**
- * Sets the password from a reset link, with Better Auth's hash, and
- * deletes all the user's sessions, in one transaction that uses up the
- * link. The old password works until then. Returns the email to sign in
- * with, or null when the link no longer works.
+ * Atomically consumes the link, changes the password with Better Auth's hash,
+ * and revokes all sessions. Returns the sign-in email, or null for invalid links.
  */
 export async function usePasswordReset(
   db: Kysely<Database>,
@@ -79,30 +73,26 @@ export async function usePasswordReset(
   password: string,
   now: Date,
 ): Promise<{ email: string } | null> {
-  // The cheap check first: hashing a password costs about 40 ms on purpose.
+  // Validate before paying the password hash cost (about 40 ms).
   if ((await validReset(db, token, now)) === undefined) return null;
   const passwordHash = await (await auth.$context).password.hash(password);
   return db.transaction().execute(async (trx) => {
-    // The users' rows are locked before the link's row, as an email change,
-    // a change of access, and making a link take them (user, then its
-    // links), so two of them never wait for each other in a circle.
+    // Lock users before links, matching email and access changes, to avoid deadlocks.
     const found = await trx
       .selectFrom("dashboard_password_resets")
       .select(["user_id", "created_by", "made_by_command", "emailed"])
       .where("token_hash", "=", hashToken(token))
       .executeTakeFirst();
     if (found === undefined) return null;
-    // A link a user made works only while they may still reset this user
-    // as they are now: a maker since demoted, or a target since promoted,
-    // makes it void. The rows are locked, so neither changes meanwhile.
-    // A link from the command or an emailed request has no maker to check.
+    // Recheck the maker and target roles under lock. Demotion of the maker or
+    // promotion of the target can invalidate user-made links. Command and email
+    // links have no maker to check.
     const byMaker = !found.made_by_command && !found.emailed;
     const maker =
       byMaker && found.created_by !== null ? await lockUser(trx, found.created_by) : null;
     const target = await lockUser(trx, found.user_id);
     if (target === null) return null;
     if (byMaker && (maker === null || !mayManage(maker, target))) return null;
-    // Used up now, unless something deleted or replaced it while this waited.
     const used = await trx
       .deleteFrom("dashboard_password_resets")
       .where("token_hash", "=", hashToken(token))
@@ -129,7 +119,7 @@ export async function usePasswordReset(
         .execute();
     }
     await trx.deleteFrom("dashboard_sessions").where("user_id", "=", used.user_id).execute();
-    // The user's other link, of the other sort, would set the password again: it goes too.
+    // Invalidate the other kind of reset link too; it could change the password again.
     await trx.deleteFrom("dashboard_password_resets").where("user_id", "=", used.user_id).execute();
     const user = await trx
       .selectFrom("dashboard_users")
@@ -141,9 +131,8 @@ export async function usePasswordReset(
 }
 
 /**
- * A reset link for `targetId` made by `actor`, within the role rules:
- * admins reset members; the owner anyone else. The target's row is locked
- * first, so its role cannot change between the check and the link.
+ * Admins may reset members; the owner may reset anyone else. Lock the target
+ * first so its role cannot change before the link is made.
  */
 export async function makeResetLink(
   db: Kysely<Database>,

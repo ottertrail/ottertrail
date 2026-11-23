@@ -11,10 +11,8 @@ const UUID_PATTERN =
   "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$";
 
 /**
- * GET /api/projects/:id/ingest-activity: what the project's ingestion
- * routes accepted, filtered, and refused this hour, in the 24 hours, and
- * in the 7 days that end with it, per source (activity.ts), for the Activity tab of its settings.
- * As the project's other settings: the owner and admins.
+ * The Activity tab uses whole-hour windows ending with the current hour
+ * (activity.ts). Access matches other project settings: owner and admins.
  */
 export const ingestActivityRoutes: FastifyPluginCallback<{
   db: Kysely<Database>;

@@ -2,28 +2,19 @@ import { readFile } from "node:fs/promises";
 import { BlockList, isIPv4, isIPv6 } from "node:net";
 
 /**
- * Address ranges of cloud and hosting providers. People browse from homes,
- * offices, and phones; a "browser" in a data center is almost always a
- * program: a scraper, a headless browser, a test run. Collection ignores
- * its events, as it does bots that say what they are
- * (docs/web-analytics.md, "Data centers").
- *
- * `vp run geo:update` downloads the ranges (data-center-sources.ts) into
- * one JSON file; the API reads it at startup.
+ * Collection ignores data-center browsers as likely automation
+ * (docs/web-analytics.md, "Data centers"). vp run geo:update writes the ranges
+ * to JSON (data-center-sources.ts); the API loads it at startup.
  */
 export interface DataCenterFile {
   version: 1;
-  /** When the file was written. */
   updatedAt: string;
   providers: DataCenterProvider[];
 }
 
 export interface DataCenterProvider {
-  /** Stable ID, such as "aws". */
   id: string;
-  /** For people, such as "Amazon Web Services (EC2)". */
   name: string;
-  /** Where the ranges came from. */
   source: string;
   /** When they were downloaded: older than the file's when a later download failed. */
   fetchedAt: string;
@@ -35,10 +26,8 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/** Whether an IP address belongs to a data center. */
 export type IsDataCenter = (ip: string) => boolean;
 
-/** No ranges loaded: nothing counts as a data center. */
 export const noDataCenters: IsDataCenter = () => false;
 
 type Family = "ipv4" | "ipv6";
@@ -49,7 +38,7 @@ function familyOf(address: string): Family | null {
   return null;
 }
 
-/** "::ffff:203.0.113.5", an IPv4 address on an IPv6 socket, as "203.0.113.5". */
+/** Unwrap IPv4-mapped IPv6 addresses before matching. */
 function unmapped(ip: string): string {
   const match = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/i.exec(ip);
   return match?.[1] ?? ip;
@@ -89,10 +78,9 @@ const v4 = (text: string) => addressValue(text)?.value ?? 0n;
 const v6 = (text: string) => addressValue(text)?.value ?? 0n;
 
 /**
- * Where no cloud server's public address can be: private, loopback,
- * link-local, shared (carrier-grade NAT), multicast, and reserved IPv4.
- * A range over any of them is a mistake, and could make the API's own
- * proxy, or every local test, count as a data center.
+ * Reject ranges covering private, loopback, link-local, shared (carrier-grade NAT),
+ * multicast, or reserved IPv4 addresses. They could classify the API proxy or local
+ * tests as data centers.
  */
 const RESERVED_IPV4: [bigint, bigint][] = [
   ["0.0.0.0", "0.255.255.255"],
@@ -124,9 +112,7 @@ export function parseRange(range: string): {
   family: Family;
   start: bigint;
   end: bigint;
-  /** The first and last address as written. */
   text: [string, string];
-  /** For a CIDR block: its prefix length. */
   prefix?: number;
 } | null {
   let startText: string;
@@ -176,20 +162,18 @@ export function parseRange(range: string): {
   };
 }
 
-/** The ranges parseRange accepts, in their order. */
 export function validRanges(ranges: string[]): string[] {
   return ranges.filter((range) => parseRange(range) !== null);
 }
 
 /**
- * The ranges, held in memory as Node.js's BlockList: a few microseconds a
- * lookup with the 20,000 ranges of November 2026.
+ * Holds ranges in Node.js BlockList. Lookups take a few microseconds with
+ * the 20,000 ranges of November 2026.
  */
 export class DataCenters {
   readonly #list: BlockList;
   readonly updatedAt: Date;
   readonly providers: { id: string; name: string; fetchedAt: Date; ranges: number }[];
-  /** Ranges in the file that were not well formed, and so not used. */
   readonly skipped: number;
 
   private constructor(
@@ -249,7 +233,6 @@ export class DataCenters {
   }
 }
 
-/** Whether a parsed JSON value has the shape of a file the update script writes. */
 export function isDataCenterFile(value: unknown): value is DataCenterFile {
   return (
     isRecord(value) &&

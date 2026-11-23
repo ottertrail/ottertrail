@@ -4,14 +4,11 @@ import * as z from "zod";
 
 import type { Database } from "../db/schema.ts";
 
-/** Where Better Auth's endpoints live: /api/auth/sign-in/email, /api/auth/get-session … */
 export const AUTH_BASE_PATH = "/api/auth";
 
 /**
- * The header Better Auth reads the client's address from, for rate-limiting
- * sign-in attempts. The API sets it from request.ip, which follows
- * TRUST_PROXY, and drops any value the client sent: a client that could set
- * it could dodge the limit with a new address on every attempt.
+ * Set from request.ip (TRUST_PROXY), replacing client input so callers cannot
+ * rotate this header to bypass sign-in limits.
  */
 export const CLIENT_IP_HEADER = "x-ottertrail-client-ip";
 
@@ -20,11 +17,8 @@ export const MIN_PASSWORD_LENGTH = 12;
 export const MAX_PASSWORD_LENGTH = 128;
 
 /**
- * Whether sign-in will accept an email address. Better Auth's email sign-in
- * refuses any address zod's z.email() rejects, which is stricter than the
- * usual email format: "ops!alerts@example.com" fails it. An account created
- * with such an address could never sign in, so the setup flow applies the
- * same check. zod is pinned to the version Better Auth uses.
+ * Match Better Auth's pinned zod email rule. Accounts it rejects, such as
+ * ops!alerts@example.com, could be created but never sign in otherwise.
  */
 const signInEmail = z.email();
 export function canSignInWith(email: string): boolean {
@@ -33,7 +27,6 @@ export function canSignInWith(email: string): boolean {
 
 export interface AuthOptions {
   db: Kysely<Database>;
-  /** The instance's address (Config.publicUrl). */
   publicUrl: string;
   trustedOrigins: string[];
   secret: string;
@@ -75,7 +68,6 @@ export function createAuth({
       maxPasswordLength: MAX_PASSWORD_LENGTH,
       revokeSessionsOnPasswordReset: true,
     },
-    // Our table and column names; Better Auth's own names are camelCase.
     user: {
       modelName: "dashboard_users",
       fields: {
@@ -84,16 +76,13 @@ export function createAuth({
         updatedAt: "updated_at",
       },
       additionalFields: {
-        // "owner", "admin", or "member" (docs/access.md). Set by Ottertrail's
-        // own code, never by a request; access checks read it from the
-        // database with the user's grants (access/access.ts).
+        // Only server code sets roles (docs/access.md). Access checks reread role and
+        // grants from the database (access/access.ts).
         role: { type: "string", required: true, defaultValue: "member", input: false },
       },
     },
-    // Ottertrail's own routes change the name, email, and password, with
-    // their own checks and limits (account/routes.ts); Better Auth's stay
-    // off, and so do deleting the user and unlinking their credential,
-    // which nothing in Ottertrail offers.
+    // Use account/routes.ts for checked and limited account updates. Disable Better
+    // Auth's alternatives, user deletion, and credential unlinking.
     disabledPaths: [
       "/update-user",
       "/change-email",
@@ -139,8 +128,7 @@ export function createAuth({
     databaseHooks: {
       session: {
         create: {
-          // Better Auth records the client's IP address on each session.
-          // Ottertrail keeps no IP addresses, so it is dropped here.
+          // Drop Better Auth's default session IP to avoid storing addresses.
           before: async (session) => ({ data: { ...session, ipAddress: undefined } }),
           // For the Members page: when each user last signed in.
           after: async (session) => {
@@ -155,8 +143,7 @@ export function createAuth({
     },
     rateLimit: { enabled: rateLimit, storage: "memory" },
     advanced: {
-      // Better Auth skips these checks when NODE_ENV is "test" unless they
-      // are set; setting them keeps them on everywhere, tests included.
+      // Keep origin checks active in tests; Better Auth otherwise skips them.
       disableOriginCheck: false,
       disableCSRFCheck: false,
       cookiePrefix: "ottertrail",

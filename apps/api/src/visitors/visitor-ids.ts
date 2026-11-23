@@ -5,12 +5,7 @@ import type { Kysely } from "kysely";
 import { MAX_EVENT_AGE_MS } from "../collection/normalize.ts";
 import type { Database } from "../db/schema.ts";
 
-/**
- * Returns the calendar day of a moment in a timezone, as "YYYY-MM-DD".
- * Salts change at midnight in the instance's timezone, the same days
- * that reports count in, so one visit is never split across two salts
- * within a reported day.
- */
+/** Uses local calendar days (YYYY-MM-DD) so salt rotation matches report days. */
 export function dayIn(timeZone: string): (moment: Date) => string {
   const format = new Intl.DateTimeFormat("en-US", {
     timeZone,
@@ -27,20 +22,13 @@ export function dayIn(timeZone: string): (moment: Date) => string {
 }
 
 /**
- * The official name of a timezone this Node.js runtime knows, or undefined.
- * Old aliases and other spellings become one name: "singapore" becomes
- * "Asia/Singapore", "GMT" becomes "UTC", "US/Pacific" becomes
- * "America/Los_Angeles". Ottertrail then stores and reports one name.
- *
- * Fixed offsets such as "+08:00" are refused. Node reads "+08:00" as eight
- * hours ahead of UTC, but PostgreSQL reads the same text as a POSIX offset,
- * eight hours behind, so visitor days and report days would disagree by 16
- * hours. Named zones come from the same timezone database in both.
+ * Canonicalizes timezone aliases, such as singapore to Asia/Singapore.
+ * Reject fixed offsets: Node reads +08:00 as UTC+8, PostgreSQL as UTC-8,
+ * which would shift report and visitor days by 16 hours.
  */
 export function canonicalTimeZone(name: string): string | undefined {
   let resolved: string;
   try {
-    // Throws a RangeError for names it does not know.
     resolved = new Intl.DateTimeFormat("en-US", { timeZone: name }).resolvedOptions().timeZone;
   } catch {
     return undefined;
@@ -63,11 +51,8 @@ export function visitorId(salt: Buffer, projectId: string, ip: string, userAgent
 }
 
 /**
- * How long a salt outlives the window in which events are accepted. The
- * endpoint and the cleanup each read the clock at a slightly different
- * moment; without this margin, an event accepted at the very edge of the
- * 24-hour window could find its salt deleted a moment later and be given a
- * new one, and with it the wrong visitor ID.
+ * Keep salts past the acceptance window to cover clock reads at different moments.
+ * Otherwise an event at the 24-hour boundary could get a new salt and visitor ID.
  */
 export const SALT_GRACE_MS = 60 * 60 * 1000;
 
@@ -78,7 +63,6 @@ export interface VisitorIdsOptions {
   now?: () => number;
 }
 
-/** A salt's key in this process's cache: its timezone and day. */
 interface SaltKey {
   timeZone: string;
   day: string;
@@ -97,7 +81,7 @@ interface SaltKey {
 export class VisitorIds {
   readonly #db: Kysely<Database>;
   readonly #now: () => number;
-  /** Day formatters by timezone: building one is far slower than using it. */
+  /** Cache formatters because constructing them is slow. */
   readonly #dayFormats = new Map<string, (moment: Date) => string>();
   /** Salts by `${timeZone} ${day}`. */
   readonly #salts = new Map<string, { key: SaltKey; salt: Promise<Buffer> }>();
@@ -107,13 +91,9 @@ export class VisitorIds {
     this.#now = now;
   }
 
-  /**
-   * The visitor ID for an event, using the salt of the day the event
-   * happened in the instance's timezone.
-   */
+  /** Uses the salt for the event's local day. */
   async idFor(input: {
     projectId: string;
-    /** The instance's timezone. */
     timeZone: string;
     ip: string;
     userAgent: string;
@@ -126,26 +106,19 @@ export class VisitorIds {
     return visitorId(salt, input.projectId, input.ip, input.userAgent);
   }
 
-  /** The day ("YYYY-MM-DD") a moment falls on in a timezone: the day whose salt its visitor ID uses. */
   dayOf(timeZone: string, moment: Date): string {
     return this.#day(timeZone)(moment);
   }
 
   /**
-   * The oldest day whose salt is still kept in a timezone. Events arrive up
-   * to 24 hours late, so a day's salt is needed until 24 hours after the
-   * day ends; it is kept one hour longer (SALT_GRACE_MS) so no accepted
-   * event can lose it.
+   * Retain a day's salt for 24 hours after its end, plus SALT_GRACE_MS (one hour),
+   * so accepted late events keep their visitor IDs.
    */
   oldestKeptDay(timeZone: string): string {
     return this.#day(timeZone)(new Date(this.#now() - MAX_EVENT_AGE_MS - SALT_GRACE_MS));
   }
 
-  /**
-   * Deletes salts no future event can need, in every timezone, from
-   * PostgreSQL and from this process's memory. Returns how many were
-   * deleted from PostgreSQL.
-   */
+  /** Deletes expired salts from PostgreSQL and memory; returns the database count. */
   async deleteExpiredSalts(): Promise<number> {
     for (const [cacheKey, { key }] of this.#salts) {
       if (key.day < this.oldestKeptDay(key.timeZone)) this.#salts.delete(cacheKey);
@@ -168,12 +141,9 @@ export class VisitorIds {
   }
 
   /**
-   * Deletes expired salts now and then every `intervalMs`, so they are
-   * removed on time even when no events arrive. Returns a function that
-   * stops the timer. The timer does not keep the process alive.
-   *
-   * Runs inside each API process for now (deleting twice is harmless); the
-   * background worker will take this over.
+   * Delete immediately and on a timer, even without traffic. Returns a stop function;
+   * the timer does not keep the process alive. Each API process runs it; duplicate
+   * deletes are harmless.
    */
   startCleanup(
     onError: (error: unknown) => void,
@@ -210,8 +180,7 @@ export class VisitorIds {
   }
 
   async #loadOrCreate({ timeZone, day }: SaltKey): Promise<Buffer> {
-    // Several requests or API processes may reach a new day at once; the
-    // first insert wins and everyone reads the same salt back.
+    // Concurrent requests and processes share the first inserted salt.
     await this.#db
       .insertInto("visitor_salts")
       .values({ time_zone: timeZone, day, salt: randomBytes(32) })
@@ -223,7 +192,6 @@ export class VisitorIds {
       .where("time_zone", "=", timeZone)
       .where("day", "=", day)
       .executeTakeFirstOrThrow();
-    // A new day is a good moment to drop salts that are no longer needed.
     await this.deleteExpiredSalts();
     return row.salt;
   }

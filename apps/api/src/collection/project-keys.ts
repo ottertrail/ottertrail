@@ -21,10 +21,7 @@ export interface CollectingProject {
   replayMode: "off" | "errors";
   /** Heatmaps: whether heatmap batches are taken (docs/web-analytics.md, "Heatmaps"). */
   heatmaps: boolean;
-  /**
-   * The project's blocked addresses (projects/blocked-addresses.ts), built
-   * once as the project is loaded here, never per request; null for none.
-   */
+  /** Built once per project load (projects/blocked-addresses.ts); null for none. */
   blocked: BlockList | null;
   /** The project's blocked referrer domains (projects/blocked-referrers.ts), as a set; null for none. */
   blockedReferrers: ReadonlySet<string> | null;
@@ -36,18 +33,10 @@ interface CacheEntry {
 }
 
 /**
- * Looks up projects by public key (browsers) or secret key (servers), with
- * a short in-memory cache.
- *
- * Every event request carries a key, so without a cache each request would
- * cost a database query. Unknown keys are cached too ("negative caching"),
- * so repeating a made-up key costs one query per cache lifetime. A stream of
- * different made-up keys still costs a query each; the per-IP rate limit,
- * checked first, bounds it. Changes to a project's allowed hostnames take
- * effect within the cache lifetime; a replaced key or a deleted project at
- * once in this process, because the project routes call forget(). A lookup
- * still running when they do answers its own request but is not cached: it
- * may have read the old row.
+ * Caches known and unknown keys to limit database lookups. The per-IP limit bounds
+ * lookups for distinct unknown keys. Hostname changes take effect within the cache
+ * lifetime; forget() invalidates replaced or deleted keys immediately in this process.
+ * In-flight lookups still answer their request but cannot cache a possibly stale row.
  */
 export class ProjectKeyCache {
   readonly #db: Kysely<Database>;
@@ -69,12 +58,10 @@ export class ProjectKeyCache {
     this.#now = options.now ?? Date.now;
   }
 
-  /** The project with this public key, the one in a page's script tag. */
   find(publicKey: string): Promise<CollectingProject | null> {
     return this.#lookup(this.#entries, "public_key", publicKey);
   }
 
-  /** The project with this secret key, the one a site's server sends events with. */
   findBySecret(secretKey: string): Promise<CollectingProject | null> {
     return this.#lookup(this.#bySecret, "secret_key", secretKey);
   }
@@ -133,16 +120,13 @@ export class ProjectKeyCache {
     return project;
   }
 
-  /** Drops a key, so its next request reads the database: after a key is replaced or its project deleted. */
+  /** Invalidate replaced or deleted keys before the next request. */
   forget(publicKey: string) {
     this.#forgotten += 1;
     this.#entries.delete(publicKey);
   }
 
-  /**
-   * Drops everything cached about one project, under either key: after its
-   * secret key is replaced, a collection setting changed, or it is deleted.
-   */
+  /** Invalidate both keys after project deletion, secret-key rotation, or collection changes. */
   forgetProject(projectId: string) {
     this.#forgotten += 1;
     for (const entries of [this.#entries, this.#bySecret]) {

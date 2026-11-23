@@ -18,7 +18,6 @@ export interface ReloadLog {
   warn(msg: string): void;
 }
 
-/** What the API has loaded, for the Settings page. */
 export interface LoadedLocationData {
   geoSource: GeoSource;
   /** The location database in use; null when none is loaded (or none is needed). */
@@ -42,14 +41,9 @@ const modified = (stamp: FileStamp | null) => (stamp === null ? null : new Date(
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
 /**
- * The location database and the data-center ranges the API uses, loaded
- * at startup and again whenever a file changes on disk (its size or
- * modification time), which the worker's updates (updates.ts) and the
- * manual command do. `locate` and `isDataCenter` always read the copy in
- * use: a new one replaces it only once it has loaded completely and
- * passed the update's check, so no lookup sees half a file. A file that
- * fails keeps the old copy, and is tried again only once it changes again.
- * Only the copy in use is referenced, so a replaced one is freed.
+ * Reloads files when size or modification time changes. Swap only after a full
+ * load and validation so lookups never see partial data. Failed loads keep the old
+ * copy and retry only after another file change; replaced copies can be freed.
  */
 export class LiveLocationData {
   readonly #geoSource: GeoSource;
@@ -78,10 +72,8 @@ export class LiveLocationData {
     };
   }
 
-  /** Finds the location for a request with the database in use now. */
   readonly locate: Locate = (request) => this.#locate(request);
 
-  /** Whether an address is in the data-center ranges in use now. */
   readonly isDataCenter: IsDataCenter = (ip) => this.#isDataCenter(ip);
 
   get loaded(): LoadedLocationData {
@@ -89,9 +81,8 @@ export class LiveLocationData {
   }
 
   /**
-   * Loads both files as the API always has: a missing or old file starts
-   * the API anyway, with a warning in `messages` to log. The messages hold
-   * text only, so nothing else keeps the startup copies once replaced.
+   * Missing or stale files allow startup with warnings in messages. Keep only text
+   * there so replaced startup data can be freed.
    */
   static async open(options: {
     geoSource: GeoSource;
@@ -104,7 +95,7 @@ export class LiveLocationData {
       options.databasePath,
       options.dataCentersPath,
     );
-    // Stamped before loading: a file replaced in between is loaded again at the next look.
+    // Stamp first so a file replaced during loading is retried at the next poll.
     data.#locationStamp = await stampOf(options.databasePath);
     data.#dataCenterStamp = await stampOf(options.dataCentersPath);
     const location = await setUpLocation(options.geoSource, options.databasePath, options.now);

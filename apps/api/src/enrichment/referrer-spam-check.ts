@@ -4,11 +4,8 @@ import { isListedHostname } from "./referrer-spam.ts";
 export const MIN_SPAM_DOMAINS = 1000;
 
 /**
- * Domains real visitors come from: search engines, social sites, and the
- * like. A new copy of the list that lists one of them, a parent of one, or
- * any subdomain of one (www.google.com, l.facebook.com, out.reddit.com,
- * which are how these sites refer their visitors) fails the update: it
- * would drop real visits.
+ * Reject real referral sources, their parents, and subdomains to avoid dropping
+ * real visits.
  */
 export const GUARD_DOMAINS = [
   "google.com",
@@ -35,10 +32,8 @@ const HOSTNAME =
   /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 
 /**
- * Hosting platforms whose users each get a subdomain. The list rightly
- * holds spam sites on them (eoriseome.netlify.app), so only the platform's
- * own domain, or a parent of it, fails the update: it would drop every
- * site the platform hosts.
+ * Reject hosting platform domains and their parents to protect all hosted sites.
+ * Spam subdomains such as eoriseome.netlify.app may still be listed.
  */
 export const GUARD_PLATFORMS = [
   "blogspot.com",
@@ -92,9 +87,7 @@ export function checkSpamList(
   if (domains.size < MIN_SPAM_DOMAINS) {
     return { ok: false, reason: `only ${domains.size} domains, fewer than ${MIN_SPAM_DOMAINS}` };
   }
-  // The listed entries at fault: a guard domain, a parent of one, or a
-  // subdomain of one; a platform, or a parent of one (its users'
-  // subdomains may be listed).
+  // Subdomains of guarded platforms may be listed; guarded referral subdomains may not.
   const caught = [...domains].filter(
     (domain) =>
       GUARD_DOMAINS.some(
@@ -111,7 +104,6 @@ export function checkSpamList(
   return { ok: true, domains: [...domains].toSorted(), ignored: left.toSorted() };
 }
 
-/** What changed between two lists, for the maintainer to review. */
 export function listChanges(
   before: Iterable<string>,
   after: Iterable<string>,

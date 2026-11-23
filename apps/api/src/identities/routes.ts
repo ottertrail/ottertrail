@@ -22,10 +22,8 @@ import {
 
 const UUID_PATTERN =
   "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$";
-/** An ISO time as the API writes them, such as "2026-11-16T09:30:00.000Z". */
 const TIME_PATTERN = "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,3})?Z$";
 
-/** The access requireProjectAccess set: these routes always run it. */
 function accessOf(request: { projectAccess: ProjectAccess | null }): ProjectAccess {
   if (request.projectAccess === null) {
     throw new Error("requireProjectAccess must run before this route");
@@ -34,13 +32,9 @@ function accessOf(request: { projectAccess: ProjectAccess | null }): ProjectAcce
 }
 
 /**
- * GET /api/projects/:id/users[?environment=staging&search=…&offset=0&limit=50]
- * GET /api/projects/:id/users/:userId[?environment=staging&before=…&beforeId=…&limit=100]
- *
- * The project's known users, and one user's activity (users.ts): each
- * error with its session replay's state, and on the first page the user's
- * latest replays (replays/list.ts). Like every project route, both run
- * requireProjectAccess first.
+ * Lists known users and their activity (users.ts). Error events include replay state;
+ * the first page also includes recent replays (replays/list.ts).
+ * Both routes require project access.
  */
 export const userRoutes: FastifyPluginCallback<{
   db: Kysely<Database>;
@@ -167,7 +161,6 @@ export const userRoutes: FastifyPluginCallback<{
       const [statuses, replays] = showReplays
         ? await Promise.all([
             replayStatuses(db, projectId, found.activity, current),
-            // The user's latest replays, on the first page only.
             before === undefined
               ? userReplays(db, projectId, request.params.userId, environment)
               : Promise.resolve([]),

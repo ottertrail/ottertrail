@@ -8,7 +8,7 @@ export interface Location {
   country?: string;
   /** First-level region by English name, such as "Bavaria" or "California". */
   region?: string;
-  /** English city name, such as "Munich". */
+  /** English name. */
   city?: string;
 }
 
@@ -16,9 +16,8 @@ export interface Location {
 export type Locate = (request: { ip: string; headers: Record<string, unknown> }) => Location;
 
 /**
- * The fields Ottertrail reads from a City record. DB-IP City Lite uses the
- * same layout as MaxMind's GeoIP2 and GeoLite2 City databases, but its
- * regions have English names only, no ISO codes.
+ * DB-IP City Lite follows the MaxMind GeoIP2/GeoLite2 layout, but regions have
+ * English names only, without ISO codes.
  */
 export type CityRecord = Pick<CityResponse, "country" | "subdivisions" | "city">;
 
@@ -40,7 +39,6 @@ function location(country: unknown, region: unknown, city: unknown): Location {
   return result;
 }
 
-/** Turns a database record into a Location, dropping anything malformed. */
 export function locationFromRecord(record: CityRecord | null): Location {
   if (record === null) return {};
   return location(
@@ -50,12 +48,7 @@ export function locationFromRecord(record: CityRecord | null): Location {
   );
 }
 
-/**
- * A geolocation database in MMDB format: a binary search tree of IP
- * ranges, loaded into memory once, so a lookup takes microseconds and
- * never leaves the server. The DB-IP City Lite file needs about 130 MB of
- * memory.
- */
+/** Loaded once for local lookups. DB-IP City Lite needs about 130 MB of memory. */
 export class GeoDatabase {
   readonly #reader: Reader<CityResponse>;
 
@@ -97,11 +90,9 @@ function header(headers: Record<string, unknown>, name: string): string | undefi
 }
 
 /**
- * Location from the headers Cloudflare adds in front of the API: the
- * country always (CF-IPCountry), region and city with Cloudflare's "Add
- * visitor location headers" managed transform. Cloudflare keeps its data
- * current. Only safe when every request really passes through Cloudflare;
- * otherwise anyone can send these headers.
+ * Trust only when every request passes through Cloudflare; clients can forge
+ * these headers otherwise. CF-IPCountry is always supplied. Region and city
+ * require the "Add visitor location headers" managed transform.
  */
 export function cloudflareLocation(headers: Record<string, unknown>): Location {
   const country = header(headers, "cf-ipcountry")?.toUpperCase();

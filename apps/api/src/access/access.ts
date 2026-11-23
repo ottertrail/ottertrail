@@ -26,13 +26,9 @@ export interface UserAccess {
   areas: Areas;
 }
 
-/**
- * What a signed-in user may reach of one project: set on the request by
- * requireProjectAccess before any project route runs.
- */
+/** Set by requireProjectAccess before project route handlers run. */
 export interface ProjectAccess {
   projectId: string;
-  /** The instance's timezone, which reports count days in. */
   timeZone: string;
   /** The user's role and grants, for a route that shows less to some users. */
   user: UserAccess;
@@ -47,7 +43,6 @@ declare module "fastify" {
   }
 }
 
-/** What a route on one project needs, besides the project being one the user may reach. */
 export type ProjectNeed =
   /** An area, at a level: a member needs it granted. */
   | { area: Area; level: "view" | "manage" }
@@ -56,7 +51,6 @@ export type ProjectNeed =
   /** Only the project itself, such as its name. */
   | "project";
 
-/** What an instance route needs: a permission, or only a signed-in user. */
 export type InstanceNeed = Permission | "signed_in";
 
 /** What a route declares, read by the test that walks every route (tests/access-routes.test.ts). */
@@ -71,7 +65,6 @@ type Guard = (request: FastifyRequest, reply: FastifyReply) => Promise<unknown>;
 /** Each guard's declaration, for the test that walks every route (tests/access-routes.test.ts). */
 const declarations = new WeakMap<object, AccessDeclaration>();
 
-/** What a preHandler declares, if it is one of these guards. */
 export function declarationOf(handler: object): AccessDeclaration | undefined {
   return declarations.get(handler);
 }
@@ -84,9 +77,8 @@ export const FORBIDDEN = {
 const UNAUTHORIZED = { error: "unauthorized", message: "Sign in to continue." } as const;
 
 /**
- * A user's role and grants, or null when the user no longer exists. The
- * owner and admins reach every project and area; a member, what their row
- * in dashboard_member_access grants, and nothing without one.
+ * Rereads role and grants. Members without dashboard_member_access have no
+ * access; owner and admins reach all projects and areas. Missing users return null.
  */
 export async function readUserAccess(
   db: Kysely<Database>,
@@ -137,7 +129,7 @@ export function canReachProject(access: UserAccess, projectId: string): boolean 
   return access.projects === "all" || access.projects.includes(projectId);
 }
 
-/** Whether the user has `area` at `level` or more. */
+/** manage includes view. */
 export function canUse(access: UserAccess, area: Area, level: "view" | "manage"): boolean {
   return reaches(access.areas[area], level);
 }
@@ -146,11 +138,7 @@ export function can(access: UserAccess, permission: Permission): boolean {
   return hasPermission(access.role, permission);
 }
 
-/**
- * What a user reaches, for lists filtered in SQL rather than one check per
- * row (the notifications inbox, notifications/inbox.ts): the projects, the
- * areas they have at view or more, and the instance permissions they hold.
- */
+/** For SQL-filtered lists such as notifications/inbox.ts, avoiding per-row checks. */
 export interface Reach {
   userId: string;
   projects: "all" | readonly string[];
@@ -171,12 +159,7 @@ export function reachOf(access: UserAccess): Reach {
   };
 }
 
-/**
- * The users who have `area` at `level` or more on `projectId`, by name: the
- * owner and admins, and the members granted it. For choosing someone, such
- * as an error's assignee; each choice is checked again with
- * checkProjectAccess.
- */
+/** Lists permitted assignees by name. Recheck each selection with checkProjectAccess. */
 export async function usersWithArea(
   db: Kysely<Database>,
   projectId: string,
@@ -228,7 +211,6 @@ function declare(guard: Guard, declaration: AccessDeclaration): Guard {
   return guard;
 }
 
-/** The outcome of checking a user against one project: their access, or the answer that refuses it. */
 export type ProjectCheck =
   | { ok: true; access: ProjectAccess }
   | {
@@ -274,14 +256,9 @@ export async function checkProjectAccess(
 }
 
 /**
- * The one check every route under /projects/:id runs, after requireSession.
- * Each route says what it needs. The user's role and grants are read from
- * the database on every request, so a change applies on the next one.
- *
- * - Not signed in: 401.
- * - Otherwise as checkProjectAccess answers.
- *
- * Fastify validates the route's params before this runs, so `id` is a UUID.
+ * Run after requireSession on every /projects/:id route. Rereads role and grants
+ * so changes apply on the next request. Fastify has already validated the UUID.
+ * Returns 401 without a session; otherwise follows checkProjectAccess.
  */
 export function requireProjectAccess(db: Kysely<Database>, need: ProjectNeed): Guard {
   return declare(
@@ -291,7 +268,7 @@ export function requireProjectAccess(db: Kysely<Database>, need: ProjectNeed): G
       const projectId =
         typeof params === "object" && params !== null && "id" in params ? params.id : undefined;
       if (user === null || typeof projectId !== "string") {
-        // A route registered without requireSession first: refuse rather than guess.
+        // Fail closed if requireSession was not registered first.
         return reply.code(401).send(UNAUTHORIZED);
       }
       const checked = await checkProjectAccess(db, user.id, projectId, need);
@@ -300,14 +277,12 @@ export function requireProjectAccess(db: Kysely<Database>, need: ProjectNeed): G
       }
       request.userAccess = checked.access.user;
       request.projectAccess = checked.access;
-      // Nothing sent: Fastify goes on to the route handler.
       return undefined;
     },
     { scope: "project", need },
   );
 }
 
-/** The answer to a heatmap overlay read without a live session. */
 export const OVERLAY_SESSION_ENDED = {
   error: "session_expired",
   message: "This heatmap session has ended. Open it again from the dashboard.",
@@ -371,10 +346,8 @@ export function bearerToken(header: string | undefined): string | null {
 }
 
 /**
- * The check every dashboard route outside a project runs, after
- * requireSession: the user has the permission, or the answer is 403.
- * "signed_in" lets every user through; such a route shows each user only
- * what they may reach (the project list, /api/me).
+ * Run after requireSession on dashboard routes outside projects. Missing
+ * permissions return 403. signed_in routes must filter results to user access.
  */
 export function requirePermission(db: Kysely<Database>, need: InstanceNeed): Guard {
   return declare(
@@ -397,7 +370,7 @@ export function requirePermission(db: Kysely<Database>, need: InstanceNeed): Gua
   );
 }
 
-/** The access a guard set. Routes that call it always run one first. */
+/** Requires an access guard to have run first. */
 export function userAccessOf(request: FastifyRequest): UserAccess {
   if (request.userAccess === null) {
     throw new Error("requireProjectAccess or requirePermission must run before this route");

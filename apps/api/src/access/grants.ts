@@ -27,7 +27,7 @@ export async function setUserAccess(
   return db.transaction().execute(async (trx) => setUserAccessIn(trx, userId, change));
 }
 
-/** setUserAccess inside a transaction the caller holds, such as accepting an invitation. */
+/** Uses the caller's transaction, such as when accepting invitations. */
 export async function setUserAccessIn(
   trx: Transaction<Database>,
   userId: string,
@@ -45,7 +45,7 @@ export async function setUserAccessIn(
   }
   // The projects go with it (a foreign key).
   await trx.deleteFrom("dashboard_member_access").where("user_id", "=", userId).execute();
-  // A reset link was judged against the role and access they had: it goes.
+  // Invalidate reset links authorized under the old role and grants.
   await trx.deleteFrom("dashboard_password_resets").where("user_id", "=", userId).execute();
   if (change.role === "admin") {
     return true;
@@ -55,7 +55,7 @@ export async function setUserAccessIn(
     .values({ user_id: userId, all_projects: change.projects === "all", ...change.areas })
     .execute();
   const { projects } = change;
-  // Error groups assigned to them where they no longer see errors go back to nobody.
+  // Unassign errors the user can no longer access.
   if (change.areas.errors === "none") {
     await trx.deleteFrom("error_assignments").where("assignee_id", "=", userId).execute();
   } else if (projects !== "all") {

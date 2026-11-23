@@ -45,7 +45,6 @@ function accessOf(row: InvitationRow): MemberAccess | null {
       };
 }
 
-/** An invitation's columns from what it gives. */
 function valuesOf(change: AccessChange) {
   if (change.role === "admin") {
     return { role: "admin" as const, all_projects: false, project_ids: [] };
@@ -98,7 +97,6 @@ export async function listInvitations(db: Kysely<Database>): Promise<Invitation[
   return rows.map(invitationOf);
 }
 
-/** Keeps the projects that still exist: a list may name one deleted since. */
 async function existingProjects(db: Kysely<Database>, ids: readonly string[]) {
   if (ids.length === 0) return [];
   const rows = await db.selectFrom("projects").select("id").where("id", "in", ids).execute();
@@ -190,8 +188,8 @@ export async function revokeInvitation(
 }
 
 /**
- * A new link for an invitation, valid 7 days from now. The old link stops
- * working: the plain token cannot be shown again, so a lost link is replaced.
+ * Returns a replacement link valid for 7 days. Stored hashes cannot recover the
+ * old token.
  */
 export async function renewInvitation(
   db: Kysely<Database>,
@@ -211,11 +209,7 @@ export async function renewInvitation(
   return invitation === null ? "not_found" : { invitation, token };
 }
 
-/**
- * What the accept page shows: who invited whom, and to which instance. Not
- * the role or access: the page does not show them, and whoever holds the
- * link would otherwise learn the instance's project names.
- */
+/** Omit role and grants so link holders cannot learn project names. */
 export interface InvitationPreview {
   email: string;
   invitedBy: string;
@@ -261,16 +255,15 @@ export async function acceptInvitation(
   { token, name, password }: { token: string; name: string; password: string },
   now: Date,
 ): Promise<{ email: string } | null> {
-  // The cheap checks first: hashing a password costs about 40 ms on purpose.
+  // Validate before paying the password hash cost (about 40 ms).
   const pending = await validRow(db, token, now);
   if (pending === undefined) return null;
   const passwordHash = await (await auth.$context).password.hash(password);
   try {
     return await acceptIn(db, token, name, passwordHash, now);
   } catch (error) {
-    // Someone took the address between the check and the insert (an
-    // account created or renamed to it): the link no longer works, as for
-    // an address with an account. The transaction rolled back.
+    // A concurrent account creation or email change took the address. The transaction
+    // rolled back; treat the link as invalid.
     if (typeof error === "object" && error !== null && "code" in error && error.code === "23505") {
       return null;
     }
@@ -278,7 +271,6 @@ export async function acceptInvitation(
   }
 }
 
-/** acceptInvitation's transaction, once the password is hashed. */
 function acceptIn(
   db: Kysely<Database>,
   token: string,

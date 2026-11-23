@@ -82,7 +82,6 @@ const MAX_REDIRECTS = 5;
 export const locationsUrl = (month: string) =>
   `https://download.db-ip.com/free/dbip-city-lite-${month}.mmdb.gz`;
 
-/** fetch(), or a fake of it in tests. */
 export type Fetch = (
   url: string,
   init?: { signal?: AbortSignal; redirect?: "manual" },
@@ -97,7 +96,6 @@ export type UpdateLog = (
   fields?: Record<string, unknown>,
 ) => void;
 
-/** A file as found on disk: what tells a replaced file from the same one. */
 export interface FileStamp {
   size: number;
   /** Modification time, whole milliseconds. */
@@ -117,14 +115,9 @@ export async function stampOf(path: string): Promise<FileStamp | null> {
 export const sameStamp = (a: FileStamp | null, b: FileStamp | null) =>
   a === null || b === null ? a === b : a.size === b.size && a.modifiedMs === b.modifiedMs;
 
-/**
- * The partial file one updater (`holder`) writes beside the real one,
- * before moving it over: named for the updater, so two never write the
- * same one.
- */
+/** Each holder writes a separate partial file to avoid collisions. */
 export const partialPath = (path: string, holder: string) => `${path}.${holder}.download`;
 
-/** A name safe in a file name and a lease: a new one per process, or per manual command. */
 export const newHolder = () => randomUUID();
 
 /**
@@ -155,7 +148,7 @@ async function readMonthMarker(path: string): Promise<MonthMarker | null> {
       return { month: value.month, size: value.size, modifiedMs: value.modifiedMs };
     }
   } catch {
-    // Missing or unreadable: the month comes from elsewhere.
+    // Fall back to recorded status or file time if the marker is unreadable.
   }
   return null;
 }
@@ -171,7 +164,6 @@ async function writeDurably(path: string, content: string): Promise<void> {
   }
 }
 
-/** Flushes a file written by a stream to disk. */
 async function sync(path: string): Promise<void> {
   const handle = await open(path, "r+");
   try {
@@ -188,10 +180,8 @@ async function writeMonthMarker(path: string, marker: MonthMarker, holder: strin
 }
 
 /**
- * Deletes partial downloads (`<file>.<holder>.download`, and the older
- * `<file>.download`) that stopped updates left behind: only those not
- * written to for longer than a lease lasts, so a download in progress,
- * whoever runs it, is never touched.
+ * Remove <file>.<holder>.download and legacy <file>.download partials only after
+ * a lease duration without writes, to protect active downloads.
  */
 export async function removeStalePartials(
   paths: string[],
@@ -220,7 +210,6 @@ export async function removeStalePartials(
   }
 }
 
-/** What a checked location database holds. */
 export interface LocationFileInfo {
   type: string;
   builtAt: Date;
@@ -240,9 +229,8 @@ export function checkLocationDatabase(geo: GeoDatabase): LocationFileInfo {
 }
 
 /**
- * Opens a location file and checks it (checkLocationDatabase). The file
- * is read into memory whole, about 130 MB for DB-IP City Lite; nothing
- * keeps it once this returns, so the next garbage collection frees it.
+ * Reads the full DB-IP City Lite file (about 130 MB). The copy can be freed after
+ * validation returns.
  */
 export async function checkLocationFile(path: string): Promise<LocationFileInfo> {
   return checkLocationDatabase(await GeoDatabase.open(path));
@@ -303,7 +291,6 @@ export async function readUpdateStatus(
   return { locations: byKind("locations"), data_centers: byKind("data_centers") };
 }
 
-/** What one attempt found, for recordAttempt(). */
 type Attempt =
   | {
       ok: true;
@@ -391,9 +378,8 @@ export function dataCentersDue(file: DataCenterFile | undefined, now: Date): boo
 }
 
 /**
- * How long after a failed attempt a file is tried again: a missing file
- * soon (15 minutes, doubling to 6 hours), a file in place at the next
- * check, and after 3 failures in a row once a day.
+ * Missing files retry after 15 minutes, doubling to 6 hours. Existing files retry
+ * at the next check, or daily after 3 consecutive failures.
  */
 export function retryDelayMs(failures: number, missing: boolean): number {
   if (missing) {
@@ -408,10 +394,7 @@ const deadline = (timeoutMs: number, stop: AbortSignal | undefined) =>
     ? AbortSignal.timeout(timeoutMs)
     : AbortSignal.any([AbortSignal.timeout(timeoutMs), stop]);
 
-/**
- * fetch(), following at most 5 redirects itself, and only to https: a
- * redirect to plain http, or anywhere else, is refused.
- */
+/** Follows at most 5 redirects, all HTTPS. */
 export async function fetchHttps(
   fetchFn: Fetch,
   url: string,
@@ -635,15 +618,9 @@ export async function downloadDataCenterRanges(
 }
 
 /**
- * Runs `work` while holding the update lease (the location_data_lease
- * row); when another process holds it, does nothing and returns
- * `{ ran: false }`. So two workers, or a worker and the manual command,
- * never download at once.
- *
- * A lease, not a lock held on a connection: no PostgreSQL connection sits
- * checked out and idle during a download of several minutes, so a
- * restarted or killed backend cannot break one. A process that dies with
- * the lease leaves it to expire after LEASE_MS.
+ * Allows one updater across workers and manual commands via location_data_lease.
+ * No PostgreSQL connection is held during downloads. A dead process's lease
+ * expires after LEASE_MS.
  */
 export async function withUpdateLease<T>(
   db: Kysely<Database>,
@@ -651,8 +628,7 @@ export async function withUpdateLease<T>(
   log: UpdateLog,
   holder: string = newHolder(),
 ): Promise<{ ran: true; value: T } | { ran: false; until: Date | null }> {
-  // A holder takes its own lease back too: a worker whose last release
-  // failed (PostgreSQL down at the end of a round) is not locked out of it.
+  // Reclaim our own lease if the previous release failed during a PostgreSQL outage.
   const taken = await sql<{ holder: string }>`
     insert into location_data_lease (id, holder, expires_at)
     values (true, ${holder}, now() + ${`${LEASE_MS} milliseconds`}::interval)
@@ -672,7 +648,6 @@ export async function withUpdateLease<T>(
     try {
       await db.deleteFrom("location_data_lease").where("holder", "=", holder).execute();
     } catch (error) {
-      // It expires on its own.
       log("warn", "the location data update could not give back its lease", {
         err: message(error),
       });
@@ -680,7 +655,6 @@ export async function withUpdateLease<T>(
   }
 }
 
-/** What happened to one file. */
 export type UpdateOutcome =
   /** GEO_SOURCE is not "database": no location file is needed. */
   | "not_needed"
@@ -700,7 +674,6 @@ export type UpdateRun =
       /** When the next round should run, by the failures and missing files it saw. */
       nextCheckInMs: number;
     }
-  /** The setting is off. */
   | { ran: false; reason: "off" }
   /** Another process holds the lease, until `until` at the latest. */
   | { ran: false; reason: "locked"; until: Date | null };
@@ -714,10 +687,7 @@ export interface UpdateOptions {
   fetch?: Fetch;
   now?: () => Date;
   log: UpdateLog;
-  /**
-   * The manual command: download both files whatever is due or waiting,
-   * and whatever the setting says.
-   */
+  /** Manual updates ignore due dates, retry delays, and the automatic-update setting. */
   force?: boolean;
   /**
    * Aborting it stops the downloads under way, as the worker does on
@@ -728,10 +698,7 @@ export interface UpdateOptions {
   /** First, delete partial downloads stopped updates left (the worker's first round). */
   removePartials?: boolean;
   limits?: DownloadLimits;
-  /**
-   * Who updates: the lease's holder and the partial files' name. The
-   * worker keeps one for its whole life; by default, a new one.
-   */
+  /** The worker reuses one holder for its lifetime; other callers default to a new one. */
   holder?: string;
   /** A round gives up after this, before its lease could expire. */
   roundTimeoutMs?: number;
@@ -749,7 +716,6 @@ export async function updateLocationData(options: UpdateOptions): Promise<Update
     updateFiles(
       { ...options, holder },
       {
-        // Downloads stop at shutdown, and before the lease could run out.
         signal: AbortSignal.any([
           ...(options.stop === undefined ? [] : [options.stop]),
           AbortSignal.timeout(options.roundTimeoutMs ?? LEASE_MS - LEASE_MARGIN_MS),
@@ -798,13 +764,11 @@ async function updateFiles(
       log("warn", "the update's status could not be recorded", { kind, err: message(error) });
     }
   };
-  /** When each file should be looked at again, by its failures. */
   const next: number[] = [];
   const failed = (status: UpdateStatus | null, missing: boolean) => {
     if (stop?.aborted === true) return;
     next.push(retryDelayMs((status?.failures ?? 0) + 1, missing));
   };
-  /** Whether a file's last attempt failed too recently to try again. */
   const waiting = (status: UpdateStatus | null, missing: boolean) => {
     if (force || status === null || status.failures === 0) return false;
     const retryAt = status.lastAttemptAt.getTime() + retryDelayMs(status.failures, missing);
@@ -819,8 +783,7 @@ async function updateFiles(
     const status = recorded?.locations ?? null;
     let due = locationsDue(file, status, now(), await readMonthMarker(databasePath));
     if (file !== null && !due.due && !due.known) {
-      // No update this worker knows of wrote it: if it does not open (cut
-      // short, or not a database), it is due now, not next month.
+      // An unrecorded file that fails validation is due immediately.
       try {
         await checkLocationFile(databasePath);
       } catch (error) {
@@ -931,7 +894,6 @@ export class UpdateSchedule {
   #nextAt = 0;
   #wasOn = false;
 
-  /** Whether to run a round now, with the setting `on`. */
   due(now: number, on: boolean): boolean {
     if (!on) {
       this.#wasOn = false;
@@ -969,7 +931,7 @@ export class LocationDataJob {
   readonly #abort = new AbortController();
   readonly #schedule = new UpdateSchedule();
   #firstRound = true;
-  /** Whether the last tick failed: an outage is logged once, and its end once. */
+  /** Log each outage and recovery once. */
   #failing = false;
   #running: Promise<void> = Promise.resolve();
   #stopped = false;
@@ -1009,7 +971,6 @@ export class LocationDataJob {
         });
       }
     } catch (error) {
-      // PostgreSQL could not be reached for the setting or the lease.
       this.#schedule.failed(Date.now());
       if (!this.#failing) {
         log("error", "checking for location data updates failed", { err: message(error) });

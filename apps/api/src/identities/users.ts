@@ -24,7 +24,6 @@ export interface User {
 
 /** Users per page of the list, and the most it ever returns. */
 export const USERS_PAGE_SIZE = 50;
-/** Rows a list can skip: far past any list worth paging through. */
 const MAX_OFFSET = 100_000;
 
 interface UserRowData {
@@ -42,9 +41,8 @@ const toUser = (row: UserRowData): User => ({
 });
 
 /**
- * A user's first and last pageview or custom event, and how many: an
- * engagement report says how long a page was visible, not that the user did
- * something, and a user with nothing else is not listed.
+ * Engagement and vitals do not count as user actions; users with no other events
+ * are omitted.
  */
 const USER_COLUMNS = `minIf(occurred_at, ${NOT_THEIRS}) AS first_seen,
   maxIf(occurred_at, ${NOT_THEIRS}) AS last_seen,
@@ -56,11 +54,7 @@ function scope(params: QueryParams, projectId: string, environment: string): str
     AND environment = ${params.add(environment, "String")}`;
 }
 
-/**
- * The project's known users, most recently seen first, `limit` at a time
- * after `offset`, optionally only those whose ID contains `search` (case
- * ignored), and whether more follow.
- */
+/** Most recently seen first, with case-insensitive ID search and pagination. */
 export async function listUsers(
   reader: Reader,
   options: {
@@ -118,7 +112,6 @@ export async function userEnvironments(
   return names;
 }
 
-/** One event of a user's activity. */
 export interface Activity {
   eventId: string;
   /** "pageview", "error", or a custom event's name. */
@@ -163,7 +156,6 @@ interface ActivityRowData {
 const isObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
-/** A stored properties object; a value that is not one counts as none. */
 function propertiesOf(text: string): Record<string, unknown> {
   try {
     const value: unknown = JSON.parse(text);
@@ -183,9 +175,8 @@ export interface ActivityCursor {
 export const ACTIVITY_PAGE_SIZE = 100;
 
 /**
- * One user: when first and last seen, and their pageviews and custom events,
- * newest first, `limit` at a time, going back from `before`. Null when the
- * environment has no event with this user's ID.
+ * Newest first, paged backward from before. Returns null when the environment
+ * has no events for this user.
  */
 export async function userActivity(
   reader: Reader,

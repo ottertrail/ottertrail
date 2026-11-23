@@ -1,10 +1,5 @@
 import type { Utm } from "./event-store.ts";
 
-/**
- * Turns what a browser sends into what Ottertrail stores. Pure functions:
- * no I/O, so every rule here is unit-tested on its own.
- */
-
 export const MAX_PATH_LENGTH = 2048;
 export const MAX_REFERRER_LENGTH = 2048;
 export const MAX_UTM_LENGTH = 200;
@@ -28,11 +23,7 @@ const UTM_PARAMS = [
   ["content", "utm_content"],
 ] as const;
 
-/**
- * Whether PostgreSQL can store a string: text and jsonb cannot hold the NUL
- * character, and jsonb rejects an unpaired UTF-16 surrogate (half of an
- * emoji, for example), which only broken or hostile senders produce.
- */
+/** PostgreSQL text and jsonb reject NUL; jsonb also rejects unpaired UTF-16 surrogates. */
 export function isStorableText(text: string): boolean {
   return !text.includes("\u0000") && text.isWellFormed();
 }
@@ -44,12 +35,8 @@ function truncate(text: string, max: number): string {
 }
 
 /**
- * Parses the page URL an event happened on.
- *
- * Keeps the hostname, the path, and the five UTM campaign tags. Drops the
- * rest of the query string and the fragment: they can hold secrets such as
- * reset tokens or session IDs. Returns null when the URL is not a valid
- * http(s) URL or its path is too long.
+ * Keeps the hostname, path, and five UTM tags. Other query fields and fragments
+ * can contain secrets. Returns null for invalid http(s) URLs or paths over the limit.
  */
 export function parsePageUrl(raw: string): PageUrl | null {
   const url = URL.parse(raw);
@@ -63,8 +50,7 @@ export function parsePageUrl(raw: string): PageUrl | null {
   const utm: Utm = {};
   for (const [field, param] of UTM_PARAMS) {
     const value = url.searchParams.get(param)?.trim();
-    // A tag that decodes to text PostgreSQL cannot store (`%00`) is dropped,
-    // like a broken referrer: it is not a reason to lose the event.
+    // Drop invalid tags such as %00 without losing the event.
     if (value && isStorableText(value)) {
       utm[field] = truncate(value, MAX_UTM_LENGTH);
     }
@@ -73,13 +59,8 @@ export function parsePageUrl(raw: string): PageUrl | null {
 }
 
 /**
- * Reduces a referrer to where the visitor came from, without its query
- * string or fragment, which can hold secrets from the previous site.
- *
- * - "https://news.ycombinator.com/item?id=1" becomes "https://news.ycombinator.com/item"
- * - App referrers such as "android-app://com.google.android.gm/" keep their scheme and host.
- * - Anything unparseable, empty, or too long becomes undefined: a bad
- *   referrer is not a reason to lose the event.
+ * Strips queries and fragments that may contain secrets. App referrers keep their
+ * scheme and host. Invalid, empty, or oversized referrers do not discard the event.
  */
 export function cleanReferrer(raw: string | undefined): string | undefined {
   if (raw === undefined || raw.trim() === "") {
@@ -97,21 +78,10 @@ export function cleanReferrer(raw: string | undefined): string | undefined {
 }
 
 /**
- * Converts a time on the sender's clock to the server's clock.
- *
- * The sender reports when the event happened (occurredAt) and when it sent
- * the batch (sentAt), both by its own clock, which may be wrong by minutes
- * or days. Only the difference between the two is trusted: the event
- * happened (sentAt - occurredAt) before the server received the batch.
- *
- * A retry, sent again with a new sentAt, spends another time on the way, so
- * its time comes out that much apart. ClickHouse matches events by project,
- * day, and ID (clickhouse/migrations.ts, 0008), so it is still the same row,
- * unless the two times fall either side of midnight UTC.
- *
- * An event cannot happen after it was sent, so a later occurredAt is
- * treated as sentAt. Returns null when the corrected time is older than
- * MAX_EVENT_AGE_MS.
+ * Trusts the sender's elapsed time (sentAt - occurredAt), relative to receipt.
+ * Retries can shift by network delay. ClickHouse deduplicates by project, day, and
+ * ID (clickhouse/migrations.ts, 0001), unless retries straddle midnight UTC.
+ * Clamps occurredAt to sentAt and rejects corrected ages over MAX_EVENT_AGE_MS.
  */
 export function correctClock(occurredAt: number, sentAt: number, receivedAt: number): Date | null {
   const ageAtSend = Math.max(0, sentAt - occurredAt);
@@ -121,17 +91,13 @@ export function correctClock(occurredAt: number, sentAt: number, receivedAt: num
   return new Date(receivedAt - ageAtSend);
 }
 
-/** Whether a hostname is one of the project's allowed hostnames (exact, case-insensitive). */
+/** Hostnames match exactly, ignoring case. */
 export function isAllowedHostname(hostname: string, allowed: readonly string[]): boolean {
   const wanted = hostname.toLowerCase();
   return allowed.some((candidate) => candidate.toLowerCase() === wanted);
 }
 
-/**
- * The hostname of a browser's Origin header, or null when the header is
- * "null" or not a valid origin (sandboxed iframes and file:// pages send
- * "null").
- */
+/** Sandboxed iframes and file:// pages send "null", which returns null here. */
 export function originHostname(origin: string): string | null {
   const url = URL.parse(origin);
   if (url === null || (url.protocol !== "https:" && url.protocol !== "http:")) {

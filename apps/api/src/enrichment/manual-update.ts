@@ -7,10 +7,8 @@ import type { Database } from "../db/schema.ts";
 import { type Fetch, updateLocationData } from "./updates.ts";
 
 /**
- * Aborts `controller` on SIGINT or SIGTERM, so a stopped manual command
- * still ends its round: the partial file goes, and the lease is given back.
- * Returns the exit code the signal asks for (130 or 143) once one came,
- * and a function that stops listening.
+ * Abort on SIGINT/SIGTERM so partial files and the lease are cleaned up.
+ * Returns the signal exit code (130 or 143) and a listener cleanup function.
  */
 export function stopOnSignals(
   controller: AbortController,
@@ -39,10 +37,8 @@ export function stopOnSignals(
 }
 
 /**
- * `vp run geo:update` (scripts/update-geo.ts): both files now, whatever is
- * due and whatever the setting. Prints what happened, and returns the
- * exit code: 0, or 1 when a download failed, the round was stopped, or
- * another update holds the lease.
+ * vp run geo:update (scripts/update-geo.ts) ignores due dates and the setting.
+ * Returns 1 for failure, cancellation, or a held lease; otherwise 0.
  */
 export async function manualUpdate(options: {
   db: Kysely<Database> | null;

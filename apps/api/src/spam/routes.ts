@@ -43,9 +43,7 @@ const FILTER_PROPERTIES = {
   to: { type: "string", pattern: DAY_PATTERN },
   // A domain; its subdomains match too.
   referrer: { type: "string", minLength: 1, maxLength: 300 },
-  // A page path, exactly as reports show it.
   path: { type: "string", minLength: 1, maxLength: 2048, pattern: "^/" },
-  // An ISO 3166-1 alpha-2 code.
   country: { type: "string", pattern: "^[A-Za-z]{2}$" },
 } as const;
 
@@ -66,7 +64,6 @@ function accessOf(request: { projectAccess: ProjectAccess | null }): ProjectAcce
   return request.projectAccess;
 }
 
-/** Whether "YYYY-MM-DD" is a real calendar day. */
 function isDay(text: string): boolean {
   const date = new Date(`${text}T00:00:00Z`);
   return !Number.isNaN(date.getTime()) && date.toISOString().startsWith(text);
@@ -78,14 +75,9 @@ function daysBetween(first: string, last: string): number {
 }
 
 /**
- * Deleting spam that got in (docs/web-analytics.md, "Deleting spam"):
- *
- * POST /api/projects/:id/spam-visits/preview  what a delete with these filters would take
- * POST /api/projects/:id/spam-visits/delete   deletes those visits, whole
- *
- * Both need the "projects" permission, as the project's other settings,
- * and the dashboard's origin. The delete repeats the number of visits the
- * user confirmed, and deletes nothing when it no longer matches.
+ * Spam deletion needs projects permission and the dashboard Origin
+ * (docs/web-analytics.md, "Deleting spam"). Refuse if the confirmed visit count
+ * changed since preview.
  */
 export const spamRoutes: FastifyPluginCallback<{
   db: Kysely<Database>;
@@ -100,7 +92,6 @@ export const spamRoutes: FastifyPluginCallback<{
   const manageProject = requireProjectAccess(db, { permission: "projects" });
   app.setErrorHandler(clickHouseErrorHandler);
 
-  /** The filters as the queries take them, or the answer that refuses them. */
   async function filtersOf(
     request: { body: FilterBody; projectAccess: ProjectAccess | null },
     reply: FastifyReply,
@@ -211,7 +202,6 @@ export const spamRoutes: FastifyPluginCallback<{
         );
       } catch (error) {
         if (!(error instanceof PartialSpamDeletionError)) throw error;
-        // Some statements may have run: say so, and log what is known.
         request.log.error(
           {
             err: error.cause,

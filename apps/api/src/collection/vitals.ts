@@ -4,7 +4,6 @@
  * docs/web-analytics.md, "Web Vitals").
  */
 
-/** The properties: Largest Contentful Paint, Interaction to Next Paint, and the rest. */
 export const VITAL_NAMES = ["lcp", "inp", "cls", "fcp", "ttfb"] as const;
 export type VitalName = (typeof VITAL_NAMES)[number];
 
@@ -18,12 +17,8 @@ export const VITAL_LIMITS: Record<VitalName, number> = {
 };
 
 /**
- * Keeps only the values a page load can have, and nothing else: removes
- * other properties, and values negative, too large, not a number, or a
- * fraction of a millisecond. The event and the rest of its batch are kept:
- * a measurement gone wrong in one browser is no reason to lose the other
- * values, or the batch's other events. Reports count a page load only with
- * a value left (speed/speed.ts).
+ * Discard invalid measurements without losing other values or events in the batch.
+ * Reports need at least one remaining value to count the page load (speed/speed.ts).
  */
 export function keepValidVitals(properties: Record<string, unknown>): void {
   for (const [name, value] of Object.entries(properties)) {
@@ -41,7 +36,7 @@ export function keepValidVitals(properties: Record<string, unknown>): void {
 
 /** SQL for a vital's value in an event's properties: NULL when missing or impossible. */
 export function vitalValue(name: VitalName): string {
-  // The name and its limit are the constants above, never input.
+  // SQL uses only the constants above.
   const raw = `JSONExtract(properties, '${name}', 'Nullable(Float64)')`;
   return `if(${raw} BETWEEN 0 AND ${VITAL_LIMITS[name]}, ${raw}, NULL)`;
 }

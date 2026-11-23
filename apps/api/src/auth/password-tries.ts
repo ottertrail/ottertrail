@@ -1,10 +1,8 @@
 import { type RateLimit, TokenBucketLimiter } from "../collection/rate-limiter.ts";
 
 /**
- * Every route that checks a signed-in user's current password (changing
- * their email or password, handing over ownership) spends from one bucket
- * per user: 5 tries, then one a minute, across all of them. Separate
- * buckets would give a stolen session 5 quick guesses per route.
+ * Share 5 tries, refilling one per minute, across all current-password checks.
+ * Separate route buckets would give stolen sessions more guesses.
  */
 export const PASSWORD_TRY_LIMIT: RateLimit = { capacity: 5, refillPerSecond: 1 / 60 };
 

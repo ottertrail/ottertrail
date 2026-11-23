@@ -7,7 +7,6 @@ import type { Database } from "../db/schema.ts";
 export const MAX_ALLOWED_HOSTNAMES = 50;
 export const MAX_PROJECT_NAME_LENGTH = 100;
 
-/** A project as the dashboard sees it. */
 export interface Project {
   id: string;
   name: string;
@@ -17,20 +16,15 @@ export interface Project {
   allowedHostnames: string[];
   createdAt: Date;
   /**
-   * When the most recent event happened, or null before the first one. Set
-   * as events are stored, at most once a minute (collection/last-event.ts).
+   * Updated at most once a minute as events are stored (collection/last-event.ts).
+   * Null until the first event.
    */
   lastEventAt: Date | null;
   /** Days of events kept; null keeps them forever. The worker deletes older ones. */
   retentionDays: number | null;
-  /**
-   * For the site's own server only: sends server-side events and signs user
-   * IDs. Shown in the dashboard, never put in a page.
-   */
+  /** Server-side events and user-ID signatures only. Never expose in a page. */
   secretKey: string;
-  /** Accept a browser's user ID only with a valid signature from the site's server. */
   requireSignedUserIds: boolean;
-  /** Ignore browser events from cloud and hosting providers' addresses: nearly all are programs. */
   ignoreDataCenters: boolean;
   /** Session replays: "off", or "errors", recorded around errors (docs/session-replay.md). */
   replayMode: "off" | "errors";
@@ -38,11 +32,7 @@ export interface Project {
   heatmaps: boolean;
   /** The goal the overview's business figures start with, or null (docs/dashboard.md, "Overview"). */
   mainGoalId: string | null;
-  /**
-   * IP addresses and CIDR ranges whose browser events are ignored
-   * (blocked-addresses.ts), as an owner or admin entered them. Only those
-   * who manage projects see them.
-   */
+  /** Only project managers see these IP and CIDR blocks (blocked-addresses.ts). */
   blockedAddresses: string[];
   /** Domains whose referrals are ignored, with their subdomains (blocked-referrers.ts). Only those who manage projects see them. */
   blockedReferrers: string[];
@@ -60,14 +50,9 @@ export const MIN_RETENTION_DAYS = 30;
 export const MAX_RETENTION_DAYS = 3650;
 
 /**
- * The hostname to store for one entry of the allowed list, or null when it
- * is not a hostname. Browsers send the page's hostname in the Origin header
- * and the collection endpoint compares it exactly, so entries are stored the
- * way browsers write hostnames: lowercase, and internationalized names in
- * their ASCII form ("bücher.example" becomes "xn--bcher-kva.example").
- *
- * Only a bare hostname is accepted: no scheme, port, path, or wildcard.
- * Each subdomain is its own entry (www.example.com is not example.com).
+ * Store lowercase ASCII hostnames to match browser Origin values exactly.
+ * Reject schemes, ports, paths, and wildcards. Each subdomain needs its own entry;
+ * IDNs such as bücher.example become xn--bcher-kva.example.
  */
 export function parseHostname(raw: string): string | null {
   const trimmed = raw.trim().toLowerCase().replace(/\.$/, "");
@@ -83,7 +68,6 @@ export function parseHostname(raw: string): string | null {
 
 export type HostnamesResult = { ok: true; hostnames: string[] } | { ok: false; message: string };
 
-/** Parses and de-duplicates an allowed-hostname list, or says what is wrong. */
 export function parseHostnames(raw: readonly string[]): HostnamesResult {
   const hostnames: string[] = [];
   for (const entry of raw) {
@@ -158,16 +142,13 @@ export async function listProjects(db: Kysely<Database>): Promise<Project[]> {
   return rows.map(toProject);
 }
 
-/**
- * A project by ID. Routes call it only after requireProjectAccess
- * (access/access.ts) has checked the request.
- */
+/** Call only after requireProjectAccess (access/access.ts). */
 export async function findProject(db: Kysely<Database>, id: string): Promise<Project | null> {
   const row = await baseQuery(db).where("projects.id", "=", id).executeTakeFirst();
   return row === undefined ? null : toProject(row);
 }
 
-/** A new project. Checking that the user may add one is the caller's job. */
+/** The caller must check permission to create projects. */
 export async function createProject(
   db: Kysely<Database>,
   input: { name: string; allowedHostnames: string[] },
@@ -191,10 +172,7 @@ export async function createProject(
 const isForeignKeyViolation = (error: unknown) =>
   typeof error === "object" && error !== null && "code" in error && error.code === "23503";
 
-/**
- * Changes a project's settings; null when no project has this ID, and
- * "no_such_goal" when the main goal is not one of the project's goals.
- */
+/** Returns null for missing projects, or no_such_goal if the goal belongs elsewhere. */
 export async function updateProject(
   db: Kysely<Database>,
   id: string,
@@ -255,11 +233,9 @@ export async function updateProject(
 }
 
 /**
- * Deletes a project and, with it, all its data: PostgreSQL's rows at once
- * (the database cascades the delete), its events and telemetry in
- * ClickHouse within a minute, by the worker, which a trigger asks to
- * (project_deletions).
- * Returns the project's public key, or null when no project has this ID.
+ * PostgreSQL cascades immediately. A project_deletions trigger asks the worker
+ * to remove ClickHouse events and telemetry within a minute. Returns the public
+ * key, or null if the project does not exist.
  */
 export async function deleteProject(
   db: Kysely<Database>,
@@ -274,9 +250,8 @@ export async function deleteProject(
 }
 
 /**
- * Gives a project a new public key; pages with the old one can no longer
- * send events. Returns the project and its old key, or null when no
- * project has this ID.
+ * Invalidates the old public key. Returns it with the updated project, or null
+ * if the project does not exist.
  */
 export async function replacePublicKey(
   db: Kysely<Database>,
@@ -301,9 +276,8 @@ export async function replacePublicKey(
 }
 
 /**
- * Gives a project a new server key; servers with the old one can no longer
- * send events, and user IDs signed with it no longer pass. Returns the
- * project, or null when no project has this ID.
+ * Invalidates server access and user signatures made with the old secret.
+ * Returns null if the project does not exist.
  */
 export async function replaceSecretKey(db: Kysely<Database>, id: string): Promise<Project | null> {
   const result = await db

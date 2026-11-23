@@ -6,9 +6,8 @@ import { ipv6Bytes } from "../outbound/addresses.ts";
 export const MAX_BLOCKED_ADDRESSES = 100;
 
 /**
- * The widest range an entry may be: a /8 of IPv4, a /16 of IPv6. Wider
- * would block a large part of the internet by one mistyped prefix, and
- * silently: blocked events are answered as stored.
+ * Reject ranges wider than /8 IPv4 or /16 IPv6 to limit damage from mistyped
+ * prefixes. Blocked events are acknowledged, so the mistake would be silent.
  */
 export const MIN_PREFIX = { ipv4: 8, ipv6: 16 } as const;
 
@@ -24,7 +23,6 @@ interface Entry {
 
 const WIDTH = { ipv4: 32, ipv6: 128 } as const;
 
-/** An IPv4 address as a number. */
 function ipv4Value(address: string): bigint {
   return address.split(".").reduce((value, part) => (value << 8n) | BigInt(Number(part)), 0n);
 }
@@ -93,7 +91,6 @@ export function parseBlockedAddress(raw: string): { ok: true; entry: Entry } | {
   };
 }
 
-/** An entry as it is stored and shown: the address, with its prefix for a range. */
 function entryText(entry: Entry): string {
   return entry.prefix === WIDTH[entry.family] ? entry.address : `${entry.address}/${entry.prefix}`;
 }
@@ -103,10 +100,8 @@ export type BlockedAddressesResult =
   | { ok: false; message: string };
 
 /**
- * A project's blocked addresses as entered, checked, in their canonical
- * form, and without repeats; or what is wrong, naming the first bad entry.
- * The dashboard checks the same rules as the user types
- * (apps/web/src/features/projects/blocked-addresses.ts).
+ * Returns canonical entries without duplicates or the first invalid entry.
+ * Keep validation aligned with apps/web/src/features/projects/blocked-addresses.ts.
  */
 export function parseBlockedAddresses(raw: readonly string[]): BlockedAddressesResult {
   const addresses: string[] = [];
@@ -131,10 +126,8 @@ export function parseBlockedAddresses(raw: readonly string[]): BlockedAddressesR
 }
 
 /**
- * The stored list as a BlockList, built once when the collection endpoint
- * loads the project into its key cache (collection/project-keys.ts), never
- * per request; null for an empty list. An entry that no longer parses (the
- * column was changed by hand) is left out.
+ * Built once per cached project (collection/project-keys.ts); null for no entries.
+ * Skip stored entries that no longer parse, such as manually edited values.
  */
 export function blockListOf(addresses: readonly string[]): BlockList | null {
   let list: BlockList | null = null;

@@ -1,24 +1,15 @@
 /**
- * Token bucket rate limiter, kept in this process's memory.
- *
- * Each key (an IP address, a project) has a bucket holding up to `capacity`
- * tokens. Every request spends tokens (one, or one per event), and the
- * bucket refills at `refillPerSecond`. A full bucket allows a short burst;
- * the refill rate is the sustained limit. When a bucket is empty, the
- * caller is told how many seconds until enough tokens return.
- *
- * Limits are per API process. Ottertrail runs one API process per instance
- * for now; several processes would each allow the full rate.
+ * In-memory token buckets allow bursts up to capacity and refill at refillPerSecond.
+ * Refusals include the seconds until enough tokens return. Each API process allows
+ * the full rate independently.
  */
 import { isIP } from "node:net";
 
 import { ipv6Bytes } from "../outbound/addresses.ts";
 
 /**
- * The key a client address is limited by: an IPv4 address as it is, and an
- * IPv6 address by its /64, the block one household or server usually
- * holds, so a client cannot dodge a limit with each of its addresses. An
- * IPv4-mapped address (::ffff:a.b.c.d) counts as its IPv4 address.
+ * Groups IPv6 clients by /64 to prevent rotating addresses around the limit.
+ * IPv4-mapped addresses (::ffff:a.b.c.d) share their IPv4 bucket.
  */
 export function clientKey(ip: string): string {
   if (isIP(ip) !== 6) return ip;
@@ -83,8 +74,7 @@ export class TokenBucketLimiter {
       result = { allowed: false, retryAfterSeconds: Math.ceil(missing / refillPerSecond) };
     }
 
-    // Re-insert so the Map's order is least recently used first, then drop
-    // the oldest buckets, so memory stays bounded however many keys arrive.
+    // Refresh LRU order and evict old buckets to bound memory.
     this.#buckets.delete(key);
     this.#buckets.set(key, bucket);
     while (this.#buckets.size > this.#maxKeys) {
@@ -122,14 +112,11 @@ export type BudgetResult =
   | { allowed: true }
   | { allowed: false; retryAfterSeconds: number; limit: "project" | "instance" };
 
-/** The instance budget's one key. */
 const INSTANCE = "instance";
 
 /**
- * Events a project may store: its own budget, inside the instance's.
- * Without the first, one busy project could take the whole instance's
- * budget from the others; without the second, adding projects would raise
- * what the instance takes in without bound.
+ * Separate project and instance budgets prevent one project from consuming the
+ * whole budget and new projects from raising the instance limit.
  */
 export class EventBudget {
   readonly #projects: TokenBucketLimiter;
@@ -140,11 +127,7 @@ export class EventBudget {
     this.#instance = instance;
   }
 
-  /**
-   * Spends `events` from both budgets, or from neither. A refusal waits for
-   * both: retrying when only the instance's has refilled would only be
-   * refused again.
-   */
+  /** Spends from both budgets or neither. Retry waits for both to refill. */
   take(projectId: string, events: number): BudgetResult {
     const instance = this.#instance.take(INSTANCE, events);
     if (!instance.allowed) {
@@ -160,13 +143,11 @@ export class EventBudget {
     return { ...own, limit: "project" };
   }
 
-  /** Puts back what take() spent, for records that were not stored after all. */
   refund(projectId: string, events: number): void {
     this.#projects.refund(projectId, events);
     this.#instance.refund(INSTANCE, events);
   }
 
-  /** The most one take() may ask for: more could never be allowed. */
   get capacity(): number {
     return Math.min(this.#projects.capacity, this.#instance.capacity);
   }

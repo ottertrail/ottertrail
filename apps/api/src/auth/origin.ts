@@ -1,9 +1,8 @@
 import type { FastifyReply, FastifyRequest } from "fastify";
 
 /**
- * Whether a browser's Origin header is one of the trusted origins
- * (Config.trustedOrigins). A pattern ending in ":*" accepts any port of
- * that protocol and host, as development needs ("http://localhost:*").
+ * Config.trustedOrigins may use :* to allow any port for a protocol and host
+ * in development, such as http://localhost:*.
  */
 export function isTrustedOrigin(origin: string, trustedOrigins: readonly string[]): boolean {
   const url = URL.parse(origin);
@@ -25,11 +24,8 @@ export function isTrustedOrigin(origin: string, trustedOrigins: readonly string[
 }
 
 /**
- * A preHandler for dashboard requests that change something. The session
- * cookie is SameSite=Lax, which already keeps it off other sites' form posts
- * and background requests, but sites on sibling subdomains count as the same
- * site. Requiring the dashboard's own Origin closes that gap (cross-site
- * request forgery). Browsers send Origin with every POST, PATCH, and DELETE.
+ * SameSite=Lax permits sibling subdomains. Requiring the dashboard Origin
+ * blocks cross-site request forgery from those subdomains too.
  */
 export function requireTrustedOrigin(trustedOrigins: readonly string[]) {
   return async (request: FastifyRequest, reply: FastifyReply) => {
@@ -45,12 +41,9 @@ export function requireTrustedOrigin(trustedOrigins: readonly string[]) {
 }
 
 /**
- * A preHandler for dashboard reads a page on another site must not open,
- * such as the Server log's stream, which holds one of a few places: a
- * browser marks a same-origin GET with `Sec-Fetch-Site: same-origin`, and
- * sends Origin only on some, so any other Sec-Fetch-Site, or an Origin
- * that is not the dashboard's, is refused. A client that sends neither
- * (curl, with the session's cookie) passes.
+ * Protect sensitive reads such as the Server log stream. Reject cross-site
+ * Sec-Fetch-Site or untrusted Origin headers. Clients sending neither header
+ * (such as curl with a session cookie) pass.
  */
 export function requireSameOriginRead(trustedOrigins: readonly string[]) {
   return async (request: FastifyRequest, reply: FastifyReply) => {

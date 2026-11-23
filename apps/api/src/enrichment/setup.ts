@@ -2,7 +2,6 @@ import type { GeoSource } from "../config.ts";
 import { DataCenters, type IsDataCenter, noDataCenters } from "./data-centers.ts";
 import { cloudflareLocation, GeoDatabase, type Locate, noLocation } from "./geo.ts";
 
-/** What to do about a missing or old file. */
 const UPDATE_HINT =
   'The worker downloads it while "Update location data automatically" is on in Settings; or run "vp run geo:update" (in the Docker image: "node dist/update-geo.mjs"). The API loads a new file within 10 minutes.';
 
@@ -14,7 +13,6 @@ export interface LocationSetup {
   /** False when locations will be missing or stale: log it as a warning. */
   ok: boolean;
   message: string;
-  /** The database loaded, when GEO_SOURCE is "database" and the file opened. */
   database?: { type: string; builtAt: Date };
 }
 
@@ -65,7 +63,6 @@ export interface DataCenterSetup {
   /** False when the ranges are missing or stale: log it as a warning. */
   ok: boolean;
   message: string;
-  /** The ranges loaded, when the file opened. */
   ranges?: { providers: number; updatedAt: Date };
 }
 

@@ -2,10 +2,8 @@ import { REFERRER_SPAM_ADDITIONS } from "./referrer-spam/additions.ts";
 import { REFERRER_SPAM_LIST } from "./referrer-spam/list.ts";
 
 /**
- * The domains of a referrer spam list, one per line, as a set: lower case,
- * without a trailing dot; blank lines, comments (from # to the end of the
- * line), and lines that are not a domain left out. Used for the shipped
- * lists and by the script that refreshes Matomo's.
+ * Normalizes hostnames to lowercase without trailing dots. Skips blank lines,
+ * # comments, and invalid domains. Used by shipped lists and Matomo's refresh script.
  */
 export function parseSpamList(text: string): Set<string> {
   const domains = new Set<string>();
@@ -15,7 +13,6 @@ export function parseSpamList(text: string): Set<string> {
       .trim()
       .toLowerCase()
       .replace(/\.$/, "");
-    // A domain: labels of letters, digits, and hyphens, with at least one dot.
     if (/^(?:[a-z0-9-]{1,63}\.)+[a-z0-9-]{1,63}$/.test(domain) && domain.length <= 253) {
       domains.add(domain);
     }
@@ -24,9 +21,8 @@ export function parseSpamList(text: string): Set<string> {
 }
 
 /**
- * Whether a hostname is one of `domains` or a subdomain of one:
- * "buttons.spam.example" and "spam.example" match "spam.example";
- * "notspam.example" does not.
+ * Matches domains and subdomains: spam.example matches buttons.spam.example,
+ * but not notspam.example.
  */
 export function isListedHostname(hostname: string, domains: ReadonlySet<string>): boolean {
   let name = hostname.toLowerCase().replace(/\.$/, "");
@@ -49,20 +45,14 @@ const SPAM_DOMAINS = new Set([
 ]);
 
 /**
- * Whether a referrer, as a browser sent it, comes from a referrer spam
- * domain (docs/web-analytics.md, "Referrer spam"): one of the shared lists,
- * or the project's own blocked referrers. A referrer that is not a URL is
- * not spam: it is dropped later, as before.
+ * Checks shared lists and project blocks (docs/web-analytics.md, "Referrer spam").
+ * Invalid URLs are dropped later without marking the visit as spam.
  */
 export function isReferrerSpam(
   referrer: string | undefined,
   projectDomains: ReadonlySet<string> | null = null,
   shared: ReadonlySet<string> = SPAM_DOMAINS,
-  /**
-   * The project's allowed hostnames. A referrer on one of them is the
-   * site's own previous page (the tracker sends it on every page after the
-   * first), never spam, whatever the lists hold.
-   */
+  /** Exempt the project's own hostnames so a listed domain cannot drop later pages. */
   allowedHostnames: readonly string[] = [],
 ): boolean {
   if (referrer === undefined || referrer === "") return false;

@@ -14,9 +14,8 @@ import type { ProjectKeyCache } from "./project-keys.ts";
 import type { EventBudget, RateLimit, TokenBucketLimiter } from "./rate-limiter.ts";
 
 /**
- * Requests per IP address to the server endpoint: a site's server sends
- * often, from few addresses, so far more than a browser; the limit only
- * bounds made-up keys, each of which costs a database lookup.
+ * Site servers send frequently from few addresses. This higher IP limit bounds
+ * database lookups for made-up keys.
  */
 export const DEFAULT_SERVER_IP_LIMIT: RateLimit = { capacity: 600, refillPerSecond: 50 };
 
@@ -36,7 +35,6 @@ interface ServerEvent {
   occurredAt: number;
   /** The site's own ID for the user: every server-side event belongs to one. */
   userId: string;
-  /** The page it relates to, if any, such as "/checkout". */
   path?: string;
   properties?: Record<string, PropertyValue>;
 }
@@ -60,24 +58,18 @@ function storageUnavailable(reply: FastifyReply) {
 }
 
 /**
- * POST /server-events: events a site's own server sends, authenticated by
- * the project's secret key (Authorization: Bearer sk_…), such as a payment
- * or a cancelled subscription. A browser cannot block or fake them, so they
- * need no Origin, hostname, or bot check, and a user ID needs no signature.
- * They belong to a user and to no visitor: they show in the user's
- * activity, not in web analytics, which counts what browsers send.
- *
- * The rest is as for browsers: a schema check before any database work,
- * the project's event budget, a retried event counted once, and 202 only
- * after ClickHouse has written the events. Each event keeps the time the
- * server sent, so a retry is the same row (event-store.ts).
+ * Authenticated by the project secret key (Authorization: Bearer sk_…).
+ * No Origin, hostname, bot, or user-signature checks are needed. Events belong
+ * to users and have no visitor ID, so web analytics excludes them.
+ * Schema validation precedes database work; the shared event budget applies.
+ * Retries keep the sender's timestamp (event-store.ts). Acknowledge only after
+ * ClickHouse writes; a storage failure returns 503.
  */
 export function serverEventsRoute(
   app: FastifyInstance,
   options: {
     clickhouse: ClickHouseClient;
     projects: ProjectKeyCache;
-    /** Counts for the Activity tab (activity/activity.ts). */
     activity: IngestActivity;
     /** Shared with browser events (last-event.ts). */
     lastEvents: LastEventRecorder;
@@ -130,7 +122,6 @@ export function serverEventsRoute(
                   name: options.schemas.name,
                   occurredAt: { type: "integer", minimum: 0, maximum: 8_640_000_000_000_000 },
                   userId: { type: "string", maxLength: 200, pattern: USER_ID_PATTERN },
-                  // A path, without a query or fragment.
                   path: { type: "string", minLength: 1, maxLength: 2048, pattern: "^/[^?#]*$" },
                   properties: options.schemas.properties,
                 },
@@ -171,7 +162,6 @@ export function serverEventsRoute(
       if (project === null) {
         return reply.code(401).send(problem("unknown_key", "No project has this secret key."));
       }
-      // Known from here: what becomes of the request is counted.
       const projectId = project.id;
       const invalid = (message: string) => {
         activity.add(projectId, "server_events", "refused_invalid");
@@ -250,19 +240,17 @@ export function serverEventsRoute(
       try {
         await storeEvents(clickhouse, project.id, accepted, { receivedAt: new Date(receivedAt) });
       } catch (error) {
-        // Not the sender's doing: the budget back, so its retries are not refused for it.
+        // Refund storage failures so retries retain their budget.
         budget.refund(project.id, accepted.length);
         request.log.error({ err: error }, "could not store server events");
         activity.add(projectId, "server_events", "refused_unavailable");
         return storageUnavailable(reply);
       }
-      // Stored events, and the ones too old to store: per item.
       if (accepted.length > 0) {
         activity.add(projectId, "server_events", "accepted", accepted.length);
       }
       if (tooOld > 0) activity.add(projectId, "server_events", "filtered_too_old", tooOld);
-      // Not waited for: the events are stored, and a slow PostgreSQL must
-      // not hold the answer up, nor fail it.
+      // PostgreSQL bookkeeping must not delay or fail an already stored batch.
       lastEvents.record(project.id, accepted).catch((error: unknown) => {
         request.log.warn({ err: error }, "could not record the project's latest event");
       });

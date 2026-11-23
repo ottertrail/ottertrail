@@ -18,7 +18,6 @@ import {
 } from "./auth.ts";
 import { completeSetup, ownerExists } from "./setup.ts";
 
-/** Who is signed in, as the session check finds it. */
 export interface DashboardUser {
   id: string;
   name: string;
@@ -43,7 +42,6 @@ function problem(code: string, message: string) {
   return { error: code, message };
 }
 
-/** Node's request headers as a Fetch API Headers object. */
 export function toHeaders(request: FastifyRequest): Headers {
   const headers = new Headers();
   for (const [name, value] of Object.entries(request.headers)) {
@@ -54,10 +52,7 @@ export function toHeaders(request: FastifyRequest): Headers {
   return headers;
 }
 
-/**
- * Passes /api/auth/* to Better Auth, which works with Fetch API requests and
- * responses, not Fastify's. Request bodies go through untouched.
- */
+/** Adapts /api/auth/* to Better Auth's Fetch API interface. Bodies pass through unchanged. */
 export const betterAuthRoutes: FastifyPluginCallback<{ auth: Auth; publicUrl: string }> = (
   app,
   { auth, publicUrl },
@@ -75,8 +70,7 @@ export const betterAuthRoutes: FastifyPluginCallback<{ auth: Auth; publicUrl: st
     url: "/auth/*",
     async handler(request, reply) {
       const headers = toHeaders(request);
-      // The client's address as Fastify sees it (following TRUST_PROXY),
-      // replacing anything the client sent under this name.
+      // Overwrite client input with Fastify's address (TRUST_PROXY).
       headers.set(CLIENT_IP_HEADER, request.ip);
       const body =
         typeof request.body === "string" && request.body !== "" ? request.body : undefined;
@@ -94,7 +88,7 @@ export const betterAuthRoutes: FastifyPluginCallback<{ auth: Auth; publicUrl: st
           reply.header(name, value);
         }
       }
-      // Each cookie is its own Set-Cookie header; joining them would break them.
+      // Keep Set-Cookie headers separate; joining them breaks cookies.
       const cookies = response.headers.getSetCookie();
       if (cookies.length > 0) {
         reply.header("set-cookie", cookies);
@@ -105,13 +99,11 @@ export const betterAuthRoutes: FastifyPluginCallback<{ auth: Auth; publicUrl: st
   done();
 };
 
-/** A new password and its confirmation, as the setup, invitation, and reset forms send them. */
 export const newPasswordProperties = {
   password: { type: "string", minLength: MIN_PASSWORD_LENGTH, maxLength: MAX_PASSWORD_LENGTH },
   confirmPassword: { type: "string", maxLength: MAX_PASSWORD_LENGTH },
 } as const;
 
-/** The answer when the confirmation differs, checked by the API as well as the page. */
 export const PASSWORDS_DIFFER = problem(
   "passwords_differ",
   "The passwords do not match. Enter the same password in both fields.",
@@ -141,11 +133,8 @@ const setupBodySchema = {
 export const DEFAULT_SETUP_LIMIT: RateLimit = { capacity: 10, refillPerSecond: 1 / 60 };
 
 /**
- * GET /api/setup says whether the instance still needs an owner, so the
- * dashboard can explain how to create one, and whether alert email is set
- * up (SMTP_URL), which the setup page shows. POST /api/setup creates the
- * owner from a setup link (see setup.ts), with the timezone chosen on the
- * page. Anyone can call it, so attempts are limited per client address.
+ * Setup links create the owner with a chosen timezone (setup.ts). Public attempts
+ * are limited per client address. GET also reports SMTP_URL availability.
  */
 export const setupRoutes: FastifyPluginCallback<{
   db: Kysely<Database>;
@@ -172,7 +161,6 @@ export const setupRoutes: FastifyPluginCallback<{
     "/setup",
     {
       schema: { body: setupBodySchema },
-      // Before the body is read or checked.
       onRequest: async (request, reply) => {
         const result = limiter.take(clientKey(request.ip));
         if (!result.allowed) {
@@ -254,12 +242,11 @@ export function requireSession(auth: Auth) {
       role: role === "owner" || role === "admin" ? role : "member",
       sessionId: session.session.id,
     };
-    // Nothing sent: Fastify goes on to the route handler.
     return undefined;
   };
 }
 
-/** The user requireSession set. Routes that call it always run requireSession first. */
+/** Requires requireSession to have run first. */
 export function signedInUser(request: FastifyRequest): DashboardUser {
   if (request.dashboardUser === null) {
     throw new Error("requireSession must run before this route");

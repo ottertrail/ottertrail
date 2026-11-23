@@ -36,9 +36,8 @@ import { keepValidVitals } from "./vitals.ts";
 export const MAX_EVENTS_PER_BATCH = 50;
 export const MAX_BODY_BYTES = 64 * 1024;
 /**
- * Size of an event's properties, measured as the JSON the sender sent. The
- * database keeps a looser limit as a safety net: PostgreSQL's own text form
- * of the same JSON is larger (it adds spaces and writes 1e21 out in full).
+ * Measured as the sender's JSON. PostgreSQL's looser safety limit allows for its
+ * text format, which adds spaces and expands numbers such as 1e21.
  */
 export const MAX_PROPERTIES_BYTES = 8 * 1024;
 /** Longest time on one page an engagement event may report. */
@@ -47,9 +46,8 @@ export const MAX_ENGAGED_MS = 24 * 60 * 60 * 1000;
 /** Requests per client IP address: bursts of 120, then 2 per second. */
 export const DEFAULT_IP_LIMIT: RateLimit = { capacity: 120, refillPerSecond: 2 };
 /**
- * Events per client (clientKey: an IPv4 address, or an IPv6 /64): bursts
- * of 200, then 20 per second. The request limit above lets a client send
- * 50 events in each of its requests; this one counts the events.
+ * Counts events per clientKey (IPv4 or IPv6 /64): bursts of 200, then 20 per second.
+ * The request limit alone allows 50 events per request.
  */
 export const DEFAULT_IP_EVENT_LIMIT: RateLimit = { capacity: 200, refillPerSecond: 20 };
 /** Events per project: bursts of 2,000, then 200 per second. */
@@ -66,7 +64,6 @@ export interface CollectionOptions {
   db: Kysely<Database>;
   /** What each project's requests came to, counted for its Activity tab (activity/activity.ts). */
   activity: IngestActivity;
-  /** Where events are stored (docs/clickhouse.md). */
   clickhouse: ClickHouseClient;
   ipLimit?: RateLimit;
   /** Events per client address (DEFAULT_IP_EVENT_LIMIT). */
@@ -79,7 +76,6 @@ export interface CollectionOptions {
   isDataCenter?: IsDataCenter;
   /** How often expired visitor salts are deleted. Default: hourly. */
   saltCleanupIntervalMs?: number;
-  /** Clock, replaceable in tests. */
   now?: () => number;
   /** Shared with the project routes, which must make it forget replaced and deleted keys. */
   projectKeys?: ProjectKeyCache;
@@ -96,7 +92,6 @@ interface IncomingEvent {
   name: string;
   /** Milliseconds since 1970, by the sender's clock. */
   occurredAt: number;
-  /** Full URL of the page the event happened on. */
   url: string;
   referrer?: string;
   properties?: Record<string, PropertyValue>;
@@ -146,7 +141,6 @@ const ERROR_SCHEMA = {
 } as const;
 
 interface EventBatch {
-  /** Version of this request format. */
   v: 1;
   key: string;
   /** When the batch was sent, in milliseconds since 1970, by the sender's clock. */
@@ -162,7 +156,6 @@ interface EventBatch {
 
 const MAX_TIMESTAMP = 8_640_000_000_000_000; // The largest date JavaScript can represent.
 
-/** An event name: 1 to 200 characters, no control characters. */
 export const EVENT_NAME_SCHEMA = {
   type: "string",
   minLength: 1,
@@ -170,7 +163,6 @@ export const EVENT_NAME_SCHEMA = {
   pattern: "^[^\\u0000-\\u001F\\u007F]+$",
 } as const;
 
-/** Custom details: a flat object of at most 30 values. */
 export const PROPERTIES_SCHEMA = {
   type: "object",
   maxProperties: 30,
@@ -181,9 +173,7 @@ export const PROPERTIES_SCHEMA = {
   },
 } as const;
 
-// Fastify validates every request against this before the handler runs.
-// Unknown fields are removed rather than rejected, so an older server
-// accepts batches from a newer tracker.
+// Remove unknown fields so older servers accept batches from newer trackers.
 const eventBatchSchema = {
   type: "object",
   required: ["v", "key", "sentAt", "events"],
@@ -194,7 +184,7 @@ const eventBatchSchema = {
     sentAt: { type: "integer", minimum: 0, maximum: MAX_TIMESTAMP },
     // The device has a touchscreen: tells an iPad (which says it is a Mac) from a Mac.
     touch: { type: "boolean" },
-    // The same for every event of the batch: one page runs in one environment and release.
+    // All events in a batch share one environment and release.
     environment: { type: "string", pattern: ENVIRONMENT_PATTERN },
     release: { type: "string", maxLength: 200, pattern: RELEASE_PATTERN },
     events: {
@@ -245,11 +235,7 @@ function problem(code: string, message: string) {
   return { error: code, message };
 }
 
-/**
- * Which source an event counts in on the Activity tab: errors and Web
- * Vitals ride in the same batches as pageviews and custom events, and are
- * counted apart, by their name.
- */
+/** Errors and Web Vitals share browser batches but have separate Activity counters. */
 function sourceOf(event: { name: string; error?: unknown }): IngestSource {
   // An "error" without its details is a custom event, as the route stores it.
   if (event.name === ERROR && event.error !== undefined) return "errors";
@@ -257,7 +243,6 @@ function sourceOf(event: { name: string; error?: unknown }): IngestSource {
   return "browser_events";
 }
 
-/** Events per source. */
 function countBySource(
   events: readonly { name: string; error?: unknown }[],
 ): Map<IngestSource, number> {
@@ -313,14 +298,12 @@ export const collectionRoutes: FastifyPluginCallback<CollectionOptions> = (app, 
     now = Date.now,
     activity,
   } = options;
-  // Projects whose events were ignored as coming from a data center, logged
-  // once each: a site that forwards its events through its own server in a
-  // cloud would otherwise lose them all without a trace.
+  // Log each affected project once so sites forwarding through cloud servers can
+  // diagnose why all their events were ignored.
   const dataCenterProjects = new Set<string>();
   const projectLimit = options.projectLimit ?? DEFAULT_PROJECT_LIMIT;
   const instanceLimit = options.instanceLimit ?? DEFAULT_INSTANCE_LIMIT;
   if (Math.min(projectLimit.capacity, instanceLimit.capacity) < MAX_EVENTS_PER_BATCH) {
-    // Plugins report setup errors through done(); app.ready() then rejects.
     done(
       new Error(
         `The project and instance limits must allow a full batch of ${MAX_EVENTS_PER_BATCH} events`,
@@ -349,10 +332,8 @@ export const collectionRoutes: FastifyPluginCallback<CollectionOptions> = (app, 
   const projects = options.projectKeys ?? new ProjectKeyCache(db, { now });
   const lastEvents = new LastEventRecorder(db, { now });
 
-  // Browsers send the batch as text/plain: that is a "simple" cross-site
-  // request, so the browser sends it directly instead of first asking
-  // permission with an OPTIONS (preflight) request. The body is still JSON.
-  // This parser only applies to routes in this plugin.
+  // text/plain avoids browser CORS preflight. The body is JSON; this parser is
+  // scoped to this plugin.
   app.addContentTypeParser(
     "text/plain",
     { parseAs: "string", bodyLimit: MAX_BODY_BYTES },
@@ -365,14 +346,9 @@ export const collectionRoutes: FastifyPluginCallback<CollectionOptions> = (app, 
     },
   );
 
-  // Every response, including errors and rate limits, lets the sending page
-  // read it: the tracker needs the status to know whether retrying can help.
-  // Without this header the browser hides a 403 or 429, and the tracker would
-  // see a network failure and retry a request that can never succeed. Safe
-  // because the endpoint uses no cookies or credentials and its responses
-  // hold nothing private. Origin checks still decide what is accepted.
-  // Retry-After must be exposed too: it is not one of the headers a browser
-  // shows a cross-site page by default, and the tracker waits as it says.
+  // Expose statuses and Retry-After so the tracker can distinguish failures worth
+  // retrying. Responses contain no private data and use no cookies or credentials.
+  // Origin checks still control collection.
   app.addHook("onSend", async (request, reply) => {
     const origin = request.headers.origin;
     // Not for server-side events: a page must never send the secret key.
@@ -422,9 +398,8 @@ export const collectionRoutes: FastifyPluginCallback<CollectionOptions> = (app, 
       const receivedAt = now();
       const { key, sentAt, events } = request.body;
 
-      // Events per client, as soon as their number is known and before the
-      // key costs a lookup: a client's requests may each carry 50 events.
-      // Shared by everyone behind one address (an office, a carrier's NAT).
+      // Count events before the key lookup. Requests can each hold 50 events; clients
+      // behind one address (an office or carrier NAT) share the limit.
       const perClient = ipEventLimiter.take(
         clientKey(request.ip),
         Math.min(events.length, ipEventLimit.capacity),
@@ -445,9 +420,7 @@ export const collectionRoutes: FastifyPluginCallback<CollectionOptions> = (app, 
       }
       const projectId = project.id;
 
-      // From here on the project is known, and what becomes of the request
-      // is counted (activity/activity.ts): once in each source the batch
-      // carries, with the number of that source's events where it matters.
+      // Count outcomes per source once the project is known (activity/activity.ts).
       const inBatch = countBySource(events);
       const count = (outcome: IngestOutcome, items?: ReadonlyMap<IngestSource, number>) => {
         for (const source of (items ?? inBatch).keys()) {
@@ -459,9 +432,7 @@ export const collectionRoutes: FastifyPluginCallback<CollectionOptions> = (app, 
         return reply.code(400).send(problem("invalid_request", message));
       };
 
-      // Browsers always send Origin on cross-site POSTs, and pages cannot
-      // change it. Servers and scripts may leave it out or set anything, so
-      // this filters misuse from other websites; it is not authentication.
+      // Browser Origin filters other websites. Servers can omit or forge it.
       const origin = request.headers.origin;
       if (origin !== undefined) {
         const hostname = originHostname(origin);
@@ -480,8 +451,7 @@ export const collectionRoutes: FastifyPluginCallback<CollectionOptions> = (app, 
         return invalid("release contains an unpaired surrogate, which cannot be stored.");
       }
 
-      // Accepted and ignored, as bots below: the project's owner chose to
-      // ignore this address. The address is checked here and never stored.
+      // Acknowledge blocked addresses without storing their events or address.
       const noneStored = {
         stored: 0,
         tooOld: 0,
@@ -496,10 +466,8 @@ export const collectionRoutes: FastifyPluginCallback<CollectionOptions> = (app, 
         return reply.code(202).send({ ...noneStored, blocked: events.length });
       }
 
-      // Bots are accepted and ignored: an error would only invite retries.
-      // They are checked before the budget, so they cannot use it up. A
-      // "browser" at a cloud provider's address is nearly always a program
-      // too; the address is checked here and, as ever, never stored.
+      // Acknowledge bots to avoid retries; check before the budget so they consume none.
+      // Data-center addresses are checked here and never stored.
       const userAgent = request.headers["user-agent"];
       const bot = isBot(userAgent);
       const dataCenter = !bot && project.ignoreDataCenters && isDataCenter(request.ip);
@@ -515,12 +483,8 @@ export const collectionRoutes: FastifyPluginCallback<CollectionOptions> = (app, 
         return reply.code(202).send({ ...noneStored, bots: events.length });
       }
 
-      // Referrer spam: a batch with one event from a spam referrer is a spam
-      // visit's page, and its other events (time on the page, its vitals)
-      // are the same visit's, so none is stored.
-      // A referrer on one of the project's own hostnames is its previous
-      // page: never spam, so a list that holds the site's domain cannot
-      // drop its visitors' later pages.
+      // One spam referrer drops the whole visit batch, including engagement and vitals.
+      // The project's own hostnames are exempt so a listed domain cannot drop later pages.
       if (
         events.some((event) =>
           isReferrerSpam(
@@ -541,9 +505,7 @@ export const collectionRoutes: FastifyPluginCallback<CollectionOptions> = (app, 
         return tooManyRequests(reply, spent.retryAfterSeconds);
       }
 
-      // Every event in a request comes from the same browser and address. The
-      // IP address is used for the location lookup here and then dropped:
-      // it is never stored or logged.
+      // Use the IP for location, then discard it. Never store or log it.
       const client = parseUserAgent(userAgent ?? "", { touch: request.body.touch === true });
       const location = locate(request);
 
@@ -611,15 +573,12 @@ export const collectionRoutes: FastifyPluginCallback<CollectionOptions> = (app, 
             );
           }
         }
-        // A page load's Web Vitals: only the values a page load can have.
         if (event.name === VITALS && event.properties !== undefined) {
           keepValidVitals(event.properties);
         }
 
-        // An error is an event named "error" with its details. One without
-        // them is a custom event, as before errors existed: an older tracker
-        // in a browser's cache may still send one, and refusing it would
-        // lose its whole batch.
+        // Cached trackers may send "error" as a custom event without details. Keep those
+        // events so they do not invalidate the whole batch.
         if (event.error !== undefined && event.name !== ERROR) {
           return invalid(`events[${index}].error is only for events named "error".`);
         }
@@ -639,9 +598,7 @@ export const collectionRoutes: FastifyPluginCallback<CollectionOptions> = (app, 
           tooOldBySource.set(source, (tooOldBySource.get(source) ?? 0) + 1);
           continue;
         }
-        // A project that requires signed user IDs keeps an unsigned or
-        // wrongly signed one out, and the event anonymous: only the site's
-        // server can name a user.
+        // When signatures are required, invalid ones leave events anonymous.
         let { userId } = event;
         if (
           userId !== undefined &&
@@ -683,7 +640,6 @@ export const collectionRoutes: FastifyPluginCallback<CollectionOptions> = (app, 
         });
       }
 
-      // Events past their visitor's daily cap, and the days they were counted on.
       let capped = 0;
       const cappedBySource = new Map<IngestSource, number>();
       const counted: { day: string; visitorId: string }[] = [];
@@ -701,7 +657,6 @@ export const collectionRoutes: FastifyPluginCallback<CollectionOptions> = (app, 
             occurredAt: event.occurredAt,
           });
         }
-        // The daily cap per visitor, counted in memory, nothing looked up.
         toStore = accepted.filter((event) => {
           const day = visitors.dayOf(timeZone, event.occurredAt);
           const visitorId = event.visitorId ?? "";
@@ -720,22 +675,18 @@ export const collectionRoutes: FastifyPluginCallback<CollectionOptions> = (app, 
           await storeEvents(clickhouse, project.id, toStore, { receivedAt: new Date(receivedAt) });
         }
       } catch (error) {
-        // Not the sender's doing: the budget back, so its retries are not
-        // refused for it, and its visitors' counts, so they are not counted twice.
+        // Refund budget and visitor counts so storage failures do not penalize retries.
         budget.refund(project.id, events.length - capped);
         for (const { day, visitorId } of counted) visitorCap.untake(project.id, day, visitorId);
         request.log.error({ err: error }, "could not store events");
         count("refused_unavailable");
         return storageUnavailable(reply);
       }
-      // Each part of the batch in its outcome, per source: stored, too
-      // old, or past its visitor's daily cap (counted as spam). A request
-      // that stored some events and dropped others counts in both.
+      // Mixed batches count in each outcome: stored, too old, or capped (spam).
       count("accepted", countBySource(toStore));
       count("filtered_too_old", tooOldBySource);
       count("filtered_spam", cappedBySource);
-      // Not waited for: the events are stored, and a slow PostgreSQL must
-      // not hold the answer up, nor fail it.
+      // PostgreSQL bookkeeping must not delay or fail an already stored batch.
       lastEvents.record(project.id, toStore).catch((error: unknown) => {
         request.log.warn({ err: error }, "could not record the project's latest event");
       });

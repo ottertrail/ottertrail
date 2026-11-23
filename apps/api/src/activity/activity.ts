@@ -21,7 +21,6 @@ import type { Database } from "../db/schema.ts";
  * is added to find one.
  */
 
-/** One per kind of data a project sends. */
 export const INGEST_SOURCES = [
   "browser_events",
   "server_events",
@@ -89,7 +88,6 @@ export interface IngestActivityOptions {
   now?: () => number;
   maxKeys?: number;
   flushIntervalMs?: number;
-  /** Where a flush's problems go: the API's log. */
   warn?: (message: string, fields: Record<string, unknown>) => void;
 }
 
@@ -105,9 +103,8 @@ export class IngestActivity {
   readonly #flushIntervalMs: number;
   readonly #warn: (message: string, fields: Record<string, unknown>) => void;
   #counters = new Map<string, Counter>();
-  /** Requests dropped at the cap since the last flush. */
   #dropped = 0;
-  /** The flush under way, so two never run at once. */
+  /** Share an active flush to prevent duplicate writes. */
   #flushing: Promise<void> | null = null;
 
   constructor(db: Kysely<Database>, options: IngestActivityOptions = {}) {
@@ -118,15 +115,11 @@ export class IngestActivity {
     this.#warn = options.warn ?? (() => undefined);
   }
 
-  /** Counters waiting for a flush. */
   get size(): number {
     return this.#counters.size;
   }
 
-  /**
-   * Counts one request of `projectId`'s `source` with `outcome`, standing
-   * for `items` items when the route knows how many (0 otherwise).
-   */
+  /** items is 0 when the route does not know the count. */
   add(projectId: string, source: IngestSource, outcome: IngestOutcome, items = 0): void {
     const now = this.#now();
     const hour = now - (now % HOUR_MS);
@@ -151,7 +144,7 @@ export class IngestActivity {
    * is thrown.
    */
   async flush(): Promise<void> {
-    // One at a time: a slow PostgreSQL must not have two flushes add the same counts.
+    // Serialize flushes so slow writes cannot double-count.
     while (this.#flushing !== null) await this.#flushing.catch(() => undefined);
     const flushing = this.#write();
     this.#flushing = flushing;
@@ -171,8 +164,7 @@ export class IngestActivity {
       this.#dropped = 0;
     }
     if (this.#counters.size === 0) return;
-    // In key order, so processes flushing the same rows take their locks
-    // in the same order and cannot deadlock each other.
+    // Match lock order across processes to prevent deadlocks.
     const pending = [...this.#counters.values()].toSorted(byKey);
     this.#counters = new Map();
     for (let start = 0; start < pending.length; start += ROWS_PER_STATEMENT) {
@@ -187,11 +179,8 @@ export class IngestActivity {
   }
 
   /**
-   * Puts unwritten counters back, merged with any added since, within the
-   * cap: through a long outage, or a flush that can never succeed, the
-   * kept counters stay bounded. Hours past the 7 days are dropped too: the
-   * worker would delete them. Dropped requests are warned about once, at
-   * the next flush.
+   * Merge unwritten counters with new ones within the cap to bound outage memory.
+   * Drop hours beyond 7 days, as the worker would. Warn once at the next flush.
    */
   #keep(counters: readonly Counter[]): void {
     const oldest = activityWindows(new Date(this.#now())).week.getTime();
@@ -220,7 +209,6 @@ export class IngestActivity {
         });
       });
     }, this.#flushIntervalMs);
-    // Never keeps the process alive on its own.
     timer.unref();
     return () => {
       clearInterval(timer);
@@ -231,7 +219,6 @@ export class IngestActivity {
 /** Text in code-unit order, as PostgreSQL's "C" collation and a UUID's bytes sort. */
 const compareText = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 
-/** Counters in their key's order: project, hour, source, outcome (as upsert's ORDER BY). */
 function byKey(a: Counter, b: Counter): number {
   return (
     compareText(a.projectId, b.projectId) ||
@@ -241,10 +228,7 @@ function byKey(a: Counter, b: Counter): number {
   );
 }
 
-/**
- * Adds counters to their rows. Rows of a project deleted meanwhile are
- * left out (the join), so one deletion cannot fail every later flush.
- */
+/** Skip deleted projects so one deletion cannot keep every later flush failing. */
 async function upsert(db: Kysely<Database>, rows: readonly Counter[]): Promise<void> {
   const values = sql.join(
     rows.map(
@@ -267,10 +251,8 @@ async function upsert(db: Kysely<Database>, rows: readonly Counter[]): Promise<v
 }
 
 /**
- * Where each window starts: this hour, since its start (UTC hours, which
- * the instance's timezone shows as its own), and the 24 and 168 whole
- * hours that end with it. The counts are kept by the hour, so no window
- * can start mid-hour.
+ * Windows start on UTC hour boundaries: the current hour and the 24 and 168
+ * whole hours ending with it. Stored hourly counts cannot split an hour.
  */
 export function activityWindows(now: Date): { hour: Date; day: Date; week: Date } {
   const hour = now.getTime() - (now.getTime() % HOUR_MS);
@@ -290,13 +272,11 @@ export async function pruneIngestActivity(db: Kysely<Database>, now = new Date()
   return Number(result.numDeletedRows);
 }
 
-/** One outcome's requests and items in a window. */
 export interface ActivityCount {
   count: number;
   items: number;
 }
 
-/** One source's counts, as the Activity tab shows them. */
 export interface SourceActivity {
   source: IngestSource;
   /** When the latest accepted request arrived in the 7 days; null when none did. */

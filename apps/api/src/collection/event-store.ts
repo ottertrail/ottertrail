@@ -26,15 +26,12 @@ export interface NewEvent {
   referrer?: string;
   utm?: Utm;
   properties?: JsonObject;
-  /** Browser, OS, and device, from the request's User-Agent. */
   client?: Client;
-  /** Country, region, and city, from the request's IP address. */
   location?: Location;
   /** Daily cookieless visitor ID (see visitors/visitor-ids.ts). */
   visitorId?: string;
   /** Where the app runs, in lower case; "production" when left out (collection/environment.ts). */
   environment?: string;
-  /** The app's version, such as "1.4.2". */
   release?: string;
   /** The site's own ID for the signed-in user (collection/identity.ts). */
   userId?: string;
@@ -44,7 +41,6 @@ export interface NewEvent {
   server?: ServerOrigin;
 }
 
-/** The service, trace, and span a server's exception happened in. */
 export interface ServerOrigin {
   /** The resource's service.name. */
   service: string;
@@ -63,10 +59,7 @@ export interface StoredError {
   replayId?: string;
 }
 
-/**
- * One event, column by column: what storeEvents() builds from a NewEvent
- * for ClickHouse, and how tests read events back (tests/helpers/events.ts).
- */
+/** Used by storeEvents() and tests/helpers/events.ts. */
 export interface EventRow {
   project_id: string;
   event_id: string;
@@ -129,7 +122,6 @@ export function toClickHouse(event: EventRow) {
     country: event.country,
     region: event.region,
     city: event.city,
-    // A string; ClickHouse reads it as Int64.
     visitor_id: event.visitor_id,
     environment: event.environment,
     release: event.release,
@@ -147,11 +139,7 @@ export function toClickHouse(event: EventRow) {
   };
 }
 
-/**
- * One event's row, as storeEvents() writes it. Exported for the
- * development seed (scripts/seed-data.ts), which stores events with the
- * times they arrived in the past, each its own.
- */
+/** The development seed (scripts/seed-data.ts) supplies a separate receivedAt for each event. */
 export function toRow(projectId: string, event: NewEvent, receivedAt: Date): EventRow {
   return {
     project_id: projectId,
@@ -191,16 +179,11 @@ export function toRow(projectId: string, event: NewEvent, receivedAt: Date): Eve
 }
 
 /**
- * Stores events for one project in ClickHouse, in one insert, and returns
- * once ClickHouse has written them (clickhouse/insert.ts): either all are
- * stored or the call fails.
- *
- * Senders retry when they do not hear back, so the same event can arrive
- * twice. Nothing is looked up: a retry is the same row, (project_id,
- * occurred_at, event_id), and the table keeps one of each when it merges
- * parts (ReplacingMergeTree), which reports read with FINAL. A browser
- * event's time is corrected the same way on every attempt for this
- * (correctClock in normalize.ts); a server's is stored as sent.
+ * Returns after ClickHouse writes the whole batch (clickhouse/insert.ts).
+ * No pre-insert lookup: ReplacingMergeTree deduplicates by project, UTC day,
+ * and event ID; reports use FINAL (clickhouse/migrations.ts). Browser clock
+ * correction can shift retries within the day (normalize.ts). Server events
+ * keep the sender's timestamp.
  */
 export async function storeEvents(
   clickhouse: ClickHouseClient,
