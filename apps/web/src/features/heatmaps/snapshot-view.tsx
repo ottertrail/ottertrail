@@ -13,6 +13,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { useAccess } from "@/lib/access";
 import type { PageRange } from "@/lib/analytics-api";
 import {
   deleteHeatmapSnapshot,
@@ -142,6 +143,8 @@ function SavedView({
 }) {
   const frameRef = React.useRef<HTMLIFrameElement>(null);
   const { theme } = useTheme();
+  // Deleting a saved view is the owner's and admins' (docs/access.md); members see it.
+  const canManage = useAccess().can("projects");
   const src = `${snapshotPlayerSrc(projectId, snapshot.device, path, range, environment)}&v=${encodeURIComponent(snapshot.savedAt)}`;
   // The theme of the moment the view opened, for its first paint; later ones as a message.
   const [opened, setOpened] = React.useState({ src, theme });
@@ -176,7 +179,7 @@ function SavedView({
           Saved {formatSavedAt(snapshot.savedAt, timeZone)}
           {snapshot.savedBy === null ? "" : ` by ${snapshot.savedBy}`} at {snapshot.width} px wide.
         </p>
-        <DeleteSnapshot projectId={projectId} path={path} device={snapshot.device} />
+        {canManage && <DeleteSnapshot projectId={projectId} path={path} device={snapshot.device} />}
       </div>
       {/* No sandbox: the player must run its script and read the snapshot as the
           signed-in user, and the page's own Content Security Policy keeps the
@@ -219,6 +222,7 @@ export function SnapshotSection({
   timeZone: string;
 }) {
   const snapshots = useQuery(heatmapSnapshotsQuery(projectId, path));
+  const canSave = useAccess().can("projects");
   if (snapshots.data === undefined || !snapshots.data.configured || device === undefined) {
     return null;
   }
@@ -226,8 +230,14 @@ export function SnapshotSection({
   if (snapshot === undefined) {
     return (
       <p className="max-w-4xl text-xs text-pretty text-ink-subtle" data-slot="no-saved-view">
-        To see this heatmap over the page here, open it with &ldquo;Open on your site&rdquo; and
-        press &ldquo;Save this view&rdquo;.
+        {canSave ? (
+          <>
+            To see this heatmap over the page here, open it with &ldquo;Open on your site&rdquo; and
+            press &ldquo;Save this view&rdquo;.
+          </>
+        ) : (
+          "No saved view of this page yet. Only the owner and admins can save one."
+        )}
       </p>
     );
   }

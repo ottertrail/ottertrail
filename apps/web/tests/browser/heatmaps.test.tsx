@@ -1273,6 +1273,34 @@ describe("a saved view", () => {
     expect(document.querySelector("iframe[title^='Saved view']")).toBeNull();
   });
 
+  test("a member sees the saved view, without Delete", async () => {
+    installFakeApi({
+      heatmapSnapshots: () => SAVED,
+      access: memberAccess({ web_analytics: "view" }),
+    });
+    renderApp(`${HEATMAPS}?path=%2Fpricing&device=desktop`);
+    await expect.element(ready()).toBeVisible();
+    await savedViewFrame();
+    expect(document.querySelector("[data-slot='saved-by']")).not.toBeNull();
+    await expect
+      .element(page.getByRole("button", { name: "Delete", exact: true }))
+      .not.toBeInTheDocument();
+  });
+
+  test("a member is told who can save a view, when the device has none", async () => {
+    installFakeApi({
+      heatmapSnapshots: () => SAVED,
+      access: memberAccess({ web_analytics: "view" }),
+    });
+    renderApp(`${HEATMAPS}?path=%2Fpricing&device=mobile`);
+    await expect.element(ready()).toBeVisible();
+    await expect
+      .element(
+        page.getByText("No saved view of this page yet. Only the owner and admins can save one."),
+      )
+      .toBeVisible();
+  });
+
   test.each([390, 1440])("at %i wide, the view fits without sideways scrolling", async (width) => {
     await page.viewport(width, 900);
     installFakeApi({ heatmapSnapshots: () => SAVED });
