@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "vite-plus/test";
 import { page } from "vite-plus/test/browser/context";
 
+import { formatTime } from "../../src/features/users/format.ts";
 import {
   ADMIN_ACCESS,
   ingestActivityOf,
@@ -8,6 +9,7 @@ import {
   memberAccess,
   outcomeCounts,
   PROJECT,
+  SETTINGS,
 } from "./fake-api.ts";
 import { renderApp } from "./render.tsx";
 
@@ -38,7 +40,7 @@ describe("the Activity tab", () => {
     expect([...table().element().querySelectorAll("th")].map((cell) => cell.textContent)).toEqual([
       "Source",
       "Last accepted",
-      "Accepted (1 h)",
+      "Accepted (this hour)",
       "Accepted (24 h)",
       "Refused (24 h)",
       "Filtered (24 h)",
@@ -66,7 +68,13 @@ describe("the Activity tab", () => {
   test("says what isn't counted, linking the owner to the Server log", async () => {
     installFakeApi();
     renderApp(ACTIVITY);
-    await expect.element(panel().getByText(/Requests, counted every 15 seconds\./)).toBeVisible();
+    await expect
+      .element(
+        panel().getByText(
+          /^Requests to this project, updated every 15 seconds\. A request with a wrong key can't be matched to a project, so it isn't counted; the Server log shows it\.$/,
+        ),
+      )
+      .toBeVisible();
     await expect
       .element(panel().getByRole("link", { name: "Server log" }))
       .toHaveAttribute("href", "/settings?tab=server-log");
@@ -101,6 +109,22 @@ describe("a source's sheet", () => {
     const counts = [...sheet().element().querySelectorAll("tbody tr")].map((row) =>
       [...row.querySelectorAll("td")].map((cell) => cell.textContent),
     );
+    // The windows are whole hours, named by where this hour starts, in the instance's timezone.
+    const start = formatTime(ingestActivityOf({}).since.hour, SETTINGS.timeZone);
+    expect(start).toMatch(/^\d{2}:00$/);
+    await expect
+      .element(
+        sheet().getByText(
+          `Requests, in whole hours: this hour since ${start}, and the 24 hours and 7 days that end with it.`,
+        ),
+      )
+      .toBeVisible();
+    expect([...sheet().element().querySelectorAll("th")].map((cell) => cell.textContent)).toEqual([
+      "Outcome",
+      "This hour",
+      "24 h",
+      "7 days",
+    ]);
     expect(counts).toEqual([
       ["Accepted", "120", "2,480", "15,310"],
       ["Filtered: bots", "0", "12", "80"],
@@ -129,6 +153,20 @@ describe("a source's sheet", () => {
     await expect.element(page.getByRole("textbox", { name: "Allowed sites" })).toBeVisible();
   });
 
+  test("a browser source's 503 names PostgreSQL too: visitor IDs come from it", async () => {
+    installFakeApi({
+      ingestActivity: () =>
+        ingestActivityOf({ web_vitals: { refused_unavailable: outcomeCounts(1, 1, 1) } }),
+    });
+    renderApp(ACTIVITY);
+    await table().getByRole("button", { name: "Web Vitals, details" }).click();
+    await expect
+      .element(
+        sheet().getByText(/^ClickHouse or PostgreSQL couldn't store the data\. Senders retry/),
+      )
+      .toBeVisible();
+  });
+
   test("says ClickHouse could not store the data, with the Server log for the owner", async () => {
     installFakeApi();
     renderApp(ACTIVITY);
@@ -144,6 +182,7 @@ describe("a source's sheet", () => {
       ingestActivity: () =>
         ingestActivityOf({
           replays: {
+            filtered_spam: outcomeCounts(0, 1, 1),
             refused_disabled: outcomeCounts(1, 4, 9),
             refused_volume: outcomeCounts(0, 2, 2),
           },
@@ -154,6 +193,14 @@ describe("a source's sheet", () => {
     await expect.element(sheet().getByText(/Session replay is off for this project/)).toBeVisible();
     await expect.element(sheet().getByRole("link", { name: "Session replay" })).toBeVisible();
     await expect.element(sheet().getByText(/The instance's replay storage is full/)).toBeVisible();
+    // Replays check blocked addresses only.
+    await expect
+      .element(
+        sheet().getByText(
+          "Dropped: sent from one of the project's blocked addresses. The list is on the Spam and bots tab.",
+        ),
+      )
+      .toBeVisible();
     // Nothing accepted: no last time, and no items row.
     await expect.element(sheet().getByText("Chunks stored")).not.toBeInTheDocument();
   });

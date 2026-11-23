@@ -44,6 +44,7 @@ export interface ActivityCount {
   items: number;
 }
 
+/** One outcome's counts: `hour` is this hour, `day` and `week` the 24 hours and 7 days ending with it. */
 export interface OutcomeCounts {
   hour: ActivityCount;
   day: ActivityCount;
@@ -60,9 +61,17 @@ export interface SourceActivity {
   outcomes: Partial<Record<IngestOutcome, OutcomeCounts>>;
 }
 
+/** Where each window starts, in whole hours: this hour, and the 24 hours and 7 days that end with it. */
+export interface ActivityWindows {
+  hour: string;
+  day: string;
+  week: string;
+}
+
 /** GET /api/projects/:id/ingest-activity */
 export interface IngestActivity {
   now: string;
+  since: ActivityWindows;
   /** Every source, in INGEST_SOURCES' order. */
   sources: SourceActivity[];
 }
@@ -96,6 +105,10 @@ const isSource = (value: unknown): value is SourceActivity =>
 const isActivity = (value: unknown): value is IngestActivity =>
   isRecord(value) &&
   typeof value.now === "string" &&
+  isRecord(value.since) &&
+  typeof value.since.hour === "string" &&
+  typeof value.since.day === "string" &&
+  typeof value.since.week === "string" &&
   Array.isArray(value.sources) &&
   value.sources.every(isSource);
 

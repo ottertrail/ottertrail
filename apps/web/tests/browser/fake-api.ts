@@ -1952,7 +1952,7 @@ export function fakeSourceMaps(): FakeSourceMaps {
   };
 }
 
-/** One outcome's requests (and items, ten a request by default) in the hour, 24 hours, and 7 days. */
+/** One outcome's requests (and items, ten a request by default) this hour, in the 24 hours, and in the 7 days. */
 export function outcomeCounts(
   hour: number,
   day: number,
@@ -1971,8 +1971,15 @@ export function outcomeCounts(
 export function ingestActivityOf(
   sources: Partial<Record<IngestSource, Partial<Record<IngestOutcome, OutcomeCounts>>>>,
 ): IngestActivity {
+  const now = Date.now();
+  const hour = now - (now % 3_600_000);
   return {
-    now: new Date().toISOString(),
+    now: new Date(now).toISOString(),
+    since: {
+      hour: new Date(hour).toISOString(),
+      day: new Date(hour - 23 * 3_600_000).toISOString(),
+      week: new Date(hour - 167 * 3_600_000).toISOString(),
+    },
     sources: INGEST_SOURCES.map((source): SourceActivity => {
       const outcomes = sources[source] ?? {};
       return { source, lastAcceptedAt: outcomes.accepted?.lastAt ?? null, outcomes };

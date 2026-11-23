@@ -39,6 +39,7 @@ import {
 import { useSearchParam } from "@/hooks/use-search-param";
 import { useAccess } from "@/lib/access";
 import {
+  type ActivityWindows,
   type IngestOutcome,
   type IngestSource,
   ingestActivityQuery,
@@ -47,7 +48,7 @@ import {
 } from "@/lib/ingest-activity-api";
 
 import { formatWhole } from "../analytics/format";
-import { formatMoment } from "../users/format";
+import { formatMoment, formatTime } from "../users/format";
 import { timeAgo } from "./format";
 
 /** The tab's value in the address: its counts are fetched only while it is the tab shown. */
@@ -152,18 +153,21 @@ function ServerLogLink({ links }: { links: Links }) {
   );
 }
 
-/** Sources whose data ClickHouse stores. */
-const IN_CLICKHOUSE = new Set<IngestSource>([
-  "browser_events",
-  "server_events",
-  "errors",
-  "web_vitals",
-  "heatmaps",
-  "traces",
-  "logs",
-  "metrics",
-  "ai_calls",
-]);
+/** What could not store a source's data when it answered 503. */
+const UNAVAILABLE: Record<IngestSource, string> = {
+  // Visitor IDs and the instance's timezone come from PostgreSQL before the insert.
+  browser_events: "ClickHouse or PostgreSQL couldn't store the data.",
+  errors: "ClickHouse or PostgreSQL couldn't store the data.",
+  web_vitals: "ClickHouse or PostgreSQL couldn't store the data.",
+  server_events: "ClickHouse couldn't store the data.",
+  heatmaps: "ClickHouse couldn't store the data.",
+  traces: "ClickHouse couldn't store the data.",
+  logs: "ClickHouse couldn't store the data.",
+  metrics: "ClickHouse couldn't store the data.",
+  ai_calls: "ClickHouse couldn't store the data.",
+  replays: "PostgreSQL couldn't store the chunk.",
+  source_maps: "The object store or PostgreSQL couldn't store the map.",
+};
 
 /** What one reason means for one source, and what to do: one plain line. */
 function reasonText(source: IngestSource, outcome: IngestOutcome, links: Links): React.ReactNode {
@@ -182,10 +186,20 @@ function reasonText(source: IngestSource, outcome: IngestOutcome, links: Links):
         </>
       );
     case "filtered_spam":
+      if (source === "replays") {
+        return (
+          <>
+            Dropped: sent from one of the project's blocked addresses. The list is on the{" "}
+            <TabLink links={links} tab="spam">
+              Spam and bots
+            </TabLink>{" "}
+            tab.
+          </>
+        );
+      }
       return (
         <>
-          Dropped as spam: a blocked address or referrer
-          {source === "replays" ? "" : ", or a referrer on the spam list"}
+          Dropped as spam: a blocked address or referrer, or a referrer on the spam list
           {source === "browser_events" || source === "errors" || source === "web_vitals"
             ? ", or a visitor past its 5,000 events a day"
             : ""}
@@ -267,12 +281,7 @@ function reasonText(source: IngestSource, outcome: IngestOutcome, links: Links):
     case "refused_unavailable":
       return (
         <>
-          {IN_CLICKHOUSE.has(source)
-            ? "ClickHouse couldn't store the data."
-            : source === "replays"
-              ? "PostgreSQL couldn't store the chunk."
-              : "The object store couldn't store the map."}{" "}
-          Senders retry; check <ServerLogLink links={links} />.
+          {UNAVAILABLE[source]} Senders retry; check <ServerLogLink links={links} />.
         </>
       );
     default:
@@ -286,11 +295,15 @@ function SourceSheet({
   open,
   onOpenChange,
   links,
+  since,
+  timeZone,
 }: {
   activity: SourceActivity | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   links: Links;
+  since: ActivityWindows;
+  timeZone: string | undefined;
 }) {
   const id = React.useId();
   if (activity === null) return null;
@@ -310,7 +323,8 @@ function SourceSheet({
         <SheetHeader className="border-b pr-12">
           <SheetTitle>{label}</SheetTitle>
           <SheetDescription className="text-pretty text-ink-subtle">
-            Requests in the last hour, 24 hours, and 7 days.
+            Requests, in whole hours: this hour since {formatTime(since.hour, timeZone)}, and the 24
+            hours and 7 days that end with it.
           </SheetDescription>
         </SheetHeader>
         <div className="flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto p-4">
@@ -319,7 +333,7 @@ function SourceSheet({
             <TableHeader>
               <TableRow>
                 <TableHead>Outcome</TableHead>
-                <TableHead className="text-right">1 h</TableHead>
+                <TableHead className="text-right">This hour</TableHead>
                 <TableHead className="text-right">24 h</TableHead>
                 <TableHead className="text-right">7 days</TableHead>
               </TableRow>
@@ -406,7 +420,7 @@ function SourceTable({
           <TableRow>
             <TableHead className={PINNED}>Source</TableHead>
             <TableHead>Last accepted</TableHead>
-            <TableHead className="text-right">Accepted (1 h)</TableHead>
+            <TableHead className="text-right">Accepted (this hour)</TableHead>
             <TableHead className="text-right">Accepted (24 h)</TableHead>
             <TableHead className="text-right">Refused (24 h)</TableHead>
             <TableHead className="text-right">Filtered (24 h)</TableHead>
@@ -493,8 +507,9 @@ export function ActivityTab({ projectId }: { projectId: string }) {
       title="Activity"
       description={
         <>
-          Requests, counted every 15 seconds. A request refused before its project is known, such as
-          one with a wrong key, isn't counted here; <ServerLogLink links={links} /> shows it.
+          Requests to this project, updated every 15 seconds. A request with a wrong key can&apos;t
+          be matched to a project, so it isn&apos;t counted; <ServerLogLink links={links} /> shows
+          it.
         </>
       }
       wide
@@ -562,7 +577,16 @@ export function ActivityTab({ projectId }: { projectId: string }) {
           )}
         </div>
       )}
-      <SourceSheet activity={sheetFor} open={open} onOpenChange={setOpen} links={links} />
+      {activity.data !== undefined && (
+        <SourceSheet
+          activity={sheetFor}
+          open={open}
+          onOpenChange={setOpen}
+          links={links}
+          since={activity.data.since}
+          timeZone={timeZone}
+        />
+      )}
     </SettingsSection>
   );
 }
